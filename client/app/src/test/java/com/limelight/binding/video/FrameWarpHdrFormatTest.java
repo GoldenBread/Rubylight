@@ -47,6 +47,8 @@ public class FrameWarpHdrFormatTest {
     @Before
     public void setUp() {
         ReflectionHelpers.setStaticField(MediaCodecHelper.class, "initialized", true);
+        // An earlier test class's cached codec list would hide the decoders added below.
+        MediaCodecHelper.forgetCodecList();
         // The Vulkan renderer runs here, without loading its native library.
         ReflectionHelpers.setStaticField(VulkanRendererBridge.class, "supported", Boolean.TRUE);
         ReflectionHelpers.setStaticField(VulkanRendererBridge.class, "hdrColorSpaces", true);
