@@ -176,6 +176,49 @@ public class RecentStreamRowTest {
         assertEquals(log, log.indexOf(line), log.lastIndexOf(line));
     }
 
+    // nightjar#119: eight judder rows, none saying its pacing or why 2-3% of the frames were not shown.
+    @Test
+    public void theRowSaysHowFramesWerePacedAndWhyTheyWereDropped() {
+        stream("AFTNE4E43F", "c2.mtk.hevc.decoder", 512);
+        PreferenceConfiguration prefs = ReflectionHelpers.getField(renderer, "prefs");
+        prefs.framePacing = PreferenceConfiguration.FRAME_PACING_BALANCED;
+        prefs.dropLateFrames = true;
+        ReflectionHelpers.setField(renderer, "hostPhaseLock", true);
+        ReflectionHelpers.setField(renderer, "balancedOnOutput", 2700L);
+        ReflectionHelpers.setField(renderer, "balancedOnVsync", 3L);
+        FrameLatencyStats stats = ReflectionHelpers.getField(renderer, "frameLatencyStats");
+        stats.onDropReason(101, "catch_up");
+        stats.onDropReason(102, "replaced");
+        stats.onDropReason(103, "catch_up");
+        // Ten out, four shown: three with a reason, three without one.
+        ReflectionHelpers.setField(renderer, "numFramesOut", 10);
+        VideoStats global = ReflectionHelpers.getField(renderer, "globalVideoStats");
+        VideoStats window = ReflectionHelpers.getField(renderer, "activeWindowVideoStats");
+        ReflectionHelpers.setField(global, "totalFramesRendered", 0);
+        ReflectionHelpers.setField(window, "totalFramesRendered", 4);
+        ReflectionHelpers.setField(renderer, "phaseReports", 2650L);
+        ReflectionHelpers.setField(renderer, "outputHasArrSupport", true);
+        renderer.cleanup();
+        String section = RecentStreams.section();
+        for (String part : new String[] {"out 10 rendered 4", "| pacing balanced (release passes as outputs came out 2700, " +
+                "outputs queued for vsync 3), PC frame times off, PC takes phase-lock reports on, sent 2650, ARR screen on, " +
+                "VRR off, newest only on, queue take-back off, vsync ",
+                "| dropped catch_up 2, replaced 1, other 3 |"}) {
+            assertTrue(part + " in " + section, section.contains(part));
+        }
+    }
+
+    @Test
+    public void lowestLatencyWithNothingDroppedSaysSo() {
+        stream("AFTNE4E43F", "c2.mtk.hevc.decoder", 512);
+        ReflectionHelpers.setField(renderer, "numFramesOut", 0);
+        renderer.cleanup();
+        String section = RecentStreams.section();
+        assertTrue(section, section.contains("| pacing lowest latency, PC frame times off, PC takes phase-lock reports off, sent 0"));
+        assertFalse("no Vulkan renderer", section.contains("Vulkan renderer"));
+        assertTrue(section, section.contains("| dropped none |"));
+    }
+
     @Test
     public void anotherDecoderShowsItsNetOffAndCleaningUpTwiceAddsOneRow() {
         stream("AFTMM", "c2.mtk.hevc.decoder", 128);

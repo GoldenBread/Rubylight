@@ -801,6 +801,11 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     // where codec recovery has quiesced them.
     private volatile int numFramesIn;
     private volatile int numFramesOut;
+    // For the problem-report row, decoder thread only (stop() joins it before cleanup reads them):
+    // Balanced's release passes as outputs came out and outputs queued for the vsync callback
+    // (balancedPacesOnVsync can switch mid-stream), outputs handed to the Vulkan renderer, and the
+    // phase-lock reports the PC took.
+    private long balancedOnOutput, balancedOnVsync, vulkanOutputs, phaseReports;
     private volatile int decoderDepthBase;
     // "Speed up frame hand-off" (prefs.submitHint, debug.nightjar.submit_adpf overrides): the submit
     // thread's CPU time goes into the renderer's ADPF report.
@@ -3466,6 +3471,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             slackNs = latchSlackNs(readyNs, vsyncTimeNs, intervalNs, vsyncPresentationDeadlineNs + roomNs);
         }
         if (slackNs >= 0 && MoonBridge.reportFrameSlack(slackNs, intervalNs)) {
+            phaseReports++;
             Handler handler = latencyHandler;
             if (handler != null && phaseFlushQueued.compareAndSet(false, true) &&
                     !handler.post(flushPhaseLockReport)) {
@@ -3868,18 +3874,21 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                                 checkRunningHdrStaticInfo();
 
                                 if (vulkanRenderer != null) {
+                                    vulkanOutputs++;
                                     handOutputToVulkan(outIndex, ptsUs);
                                 }
                                 // Render the latest frame now unless balanced paces it on vsync
                                 else if (prefs.framePacing != PreferenceConfiguration.FRAME_PACING_BALANCED ||
                                         !balancedPacesOnVsync()) {
                                     if (prefs.framePacing == PreferenceConfiguration.FRAME_PACING_BALANCED) {
+                                        balancedOnOutput++;
                                         dropOutputsQueuedForDisplay();
                                     }
                                     // A drain that ends on a format change returns it for the check below.
                                     outIndex = releaseNewestOutput(outIndex, ptsUs, info, outputDrainStartNs);
                                 }
                                 else {
+                                    balancedOnVsync++;
                                     queueOutputForDisplay(outIndex, ptsUs);
                                 }
                             }
@@ -4111,6 +4120,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 stale = outputBufferQueue.poll();
             }
             if (stale == null) return;
+            frameLatencyStats.onDropReason(stale, "pace_switch");
             frameLatencyStats.onOutputReleased(stale, System.nanoTime(), false, reportsRenderTimes());
             videoDecoder.releaseOutputBuffer(stale, false);
         }
@@ -4136,6 +4146,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         // codec. That call (or timing bookkeeping) can block; the display
         // callback must still find the ready replacement in the meantime.
         if (droppedIndex != null) {
+            // A newer output came before the vsync callback took this one.
+            frameLatencyStats.onDropReason(droppedIndex, "replaced");
             frameLatencyStats.onOutputReleased(droppedIndex, System.nanoTime(), false,
                     reportsRenderTimes());
             videoDecoder.releaseOutputBuffer(droppedIndex, false);
@@ -4435,6 +4447,9 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         if (streamStartMs < 0 || (!pyroWave && activeDecoderName == null)) return;
         long startMs = streamStartMs;
         streamStartMs = -1;
+        VulkanRendererBridge vulkan = vulkanRenderer;
+        // The last stats window's presents, which flipStatsWindow has not taken yet.
+        if (vulkan != null) activeWindowVideoStats.totalFramesRendered += vulkan.takePresentedFrames();
         VideoStats total = new VideoStats();
         total.add(globalVideoStats);
         total.add(activeWindowVideoStats);
@@ -4443,7 +4458,6 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         MediaFormat output = outputFormat;
         boolean rfi = refFrameInvalidationActive;
         boolean lowLatency = configuredFormat != null && MediaCodecHelper.asksForAndroidLowLatency(configuredFormat);
-        VulkanRendererBridge vulkan = vulkanRenderer;
         String vulkanLine = vulkan != null ? vulkan.getDiagnosticsText() : null;
         if (vulkanLine == null) vulkanLine = vulkanDiagnostics;
         vulkanDiagnostics = null;
@@ -4458,6 +4472,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 ", keyframe net " + onOff(safetyNet != null) +
                 " | frames in " + numFramesIn + " out " + numFramesOut + " rendered " + total.totalFramesRendered +
                 " lost " + total.framesLost + " in " + total.frameLossEvents + " events" +
+                " | " + describePacing() +
+                " | dropped " + frameLatencyStats.describeDrops(numFramesOut - total.totalFramesRendered) +
                 " | decode avg " + getAverageDecoderLatency() + " ms" +
                 " | keyframes " + keyframesReceived + ", largest " + largestKeyframeBytes + " B" +
                 (repairs != null ? " | " + repairs.describe() : "") +
@@ -4468,6 +4484,32 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 " | hottest " + thermalName(hottestThermalLevel) + ", thermal protection " + onOff(prefs.thermalProtection));
         repairCounts = null;
         hottestThermalLevel = ThermalMonitor.NORMAL;
+    }
+
+    /**
+     * The pacing this stream ran with, for its problem-report row: a judder report then shows which
+     * row was which mode and, for Balanced, whether frames waited for the vsync callback.
+     */
+    private String describePacing() {
+        long refreshNs;
+        synchronized (vsyncMonitor) {
+            refreshNs = outputVsyncAvailable ? vsyncIntervalNs : 0;
+        }
+        int pacing = prefs.framePacing;
+        return "pacing " + (pacing == PreferenceConfiguration.FRAME_PACING_MIN_LATENCY ? "lowest latency" :
+                pacing == PreferenceConfiguration.FRAME_PACING_BALANCED ? "balanced" :
+                pacing == PreferenceConfiguration.FRAME_PACING_CAP_FPS ? "FPS limit" :
+                pacing == PreferenceConfiguration.FRAME_PACING_MAX_SMOOTHNESS ? "smoothest" : "mode " + pacing) +
+                (pacing == PreferenceConfiguration.FRAME_PACING_BALANCED ? " (release passes as outputs came out " +
+                        balancedOnOutput + ", outputs queued for vsync " + balancedOnVsync + ")" : "") +
+                (vulkanOutputs > 0 ? ", Vulkan renderer " + vulkanOutputs + " outputs" : "") +
+                ", PC frame times " + onOff(hostFrameTimes) +
+                // Whether the PC takes 0x5530 at all (Rubylight always does), then how many it got.
+                ", PC takes phase-lock reports " + onOff(hostPhaseLock) + ", sent " + phaseReports +
+                ", ARR screen " + onOff(outputHasArrSupport) +
+                ", VRR " + onOff(prefs.vrr) + ", newest only " + onOff(prefs.dropLateFrames) +
+                ", queue take-back " + onOff(prefs.displayQueueRecovery) +
+                ", vsync " + (refreshNs > 0 ? String.format(java.util.Locale.ROOT, "%.2f ms", refreshNs / 1e6) : "unknown");
     }
 
     private static String thermalName(int level) {

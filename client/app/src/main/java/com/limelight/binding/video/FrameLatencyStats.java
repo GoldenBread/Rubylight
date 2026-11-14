@@ -75,6 +75,9 @@ class FrameLatencyStats {
     // Every renderer, decoder and display callback touches these per frame, under this lock:
     // primitive keys and recycled frames keep that path free of boxing and garbage.
     private final PendingFrames pending = new PendingFrames(MAX_PENDING);
+    // Why outputs were dropped this stream (onDropReason), sorted for a stable report row; one
+    // holder per reason, so counting allocates nothing after a reason's first drop.
+    private final java.util.TreeMap<String, int[]> dropCounts = new java.util.TreeMap<>();
     // Frames by output index. MediaCodec's buffer indices are small and live in a growing array;
     // any other index (PyroWave passes its presentation time truncated to an int, which can be
     // in the hundreds of millions or negative) goes to a fixed table keyed by Frame.outputIndex,
@@ -703,6 +706,24 @@ class FrameLatencyStats {
     synchronized void onDropReason(int outputIndex, String reason) {
         Frame frame = output(outputIndex);
         if (frame != null) frame.dropReason = reason;
+        int[] count = dropCounts.get(reason);
+        if (count == null) dropCounts.put(reason, count = new int[1]);
+        count[0]++;
+    }
+
+    /**
+     * The stream's drops by reason for its problem-report row, "other" for decoded frames not shown
+     * without one (flushes, failed releases): notShown is frames out of the decoder minus rendered.
+     */
+    synchronized String describeDrops(long notShown) {
+        StringBuilder text = new StringBuilder();
+        long counted = 0;
+        for (java.util.Map.Entry<String, int[]> drop : dropCounts.entrySet()) {
+            text.append(text.length() == 0 ? "" : ", ").append(drop.getKey()).append(' ').append(drop.getValue()[0]);
+            counted += drop.getValue()[0];
+        }
+        if (notShown > counted) text.append(text.length() == 0 ? "" : ", ").append("other ").append(notShown - counted);
+        return text.length() == 0 ? "none" : text.toString();
     }
 
     /** The local queue timestamp for a still-owned output buffer, or zero when untracked. */

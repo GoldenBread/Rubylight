@@ -64,6 +64,10 @@ public class MediaCodecBalancedQueueTest {
             assertEquals("queued before the switch, older than the new output", Collections.singletonList(OLD), fixture.state.dropped);
             assertEquals(Collections.singletonList(NEW), fixture.state.rendered);
             assertTrue(fixture.queue.isEmpty());
+            // The problem report's row tells this path and its drop apart (nightjar#119).
+            assertEquals("pace_switch 1", fixture.state.stats.describeDrops(1));
+            assertEquals(1L, (long) ReflectionHelpers.getField(fixture.renderer, "balancedOnOutput"));
+            assertEquals(0L, (long) ReflectionHelpers.getField(fixture.renderer, "balancedOnVsync"));
         }
     }
 
@@ -81,6 +85,8 @@ public class MediaCodecBalancedQueueTest {
             assertTrue(fixture.state.rendered.isEmpty());
             assertEquals(Collections.singletonList(OLD), fixture.state.dropped);
             assertEquals(Collections.singletonList(NEW), new ArrayList<>(fixture.queue));
+            assertEquals("replaced 1", fixture.state.stats.describeDrops(1));
+            assertEquals(1L, (long) ReflectionHelpers.getField(fixture.renderer, "balancedOnVsync"));
         }
     }
 

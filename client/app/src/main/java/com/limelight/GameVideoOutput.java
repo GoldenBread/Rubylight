@@ -995,8 +995,9 @@ final class GameVideoOutput {
         // The input pane must not hide a refresh-capability change on the video output.
         // Local output still tracks the phone's native size across folds and mode changes.
         String resolution = game.externalPresentation == null ? PreferenceConfiguration.nativeResolution(game) : "";
-        return display.getDisplayId() + ":" + resolution + "@" +
-                com.limelight.binding.video.DisplayFrameRatePolicy.maxRefreshRate(display);
+        // No "@": the problem report's redactor reads "1344x2992@120.0" as an e-mail address.
+        return display.getDisplayId() + ": " + (resolution == null || resolution.isEmpty() ? "" : resolution + ", ") + "up to " +
+                com.limelight.binding.video.DisplayFrameRatePolicy.maxRefreshRate(display) + " Hz";
     }
 
     // Display changes also fire for refresh rate switches; only a new panel or a new top refresh

@@ -230,6 +230,13 @@ public class GameQualityTest {
             String after = ReflectionHelpers.callInstanceMethod(game.videoOutput, "displaySignature");
             assertNotEquals(before, after);
             assertTrue(after.contains("2560x1440"));
+            // The problem report keeps the line whole: "2560x1440@60.0" read as an e-mail address
+            // and became "[email]" (nightjar#119).
+            com.limelight.utils.RedactedLog log = new com.limelight.utils.RedactedLog();
+            String line = "Display modes changed: " + before + " -> " + after;
+            log.add("INFO", line);
+            assertEquals("INFO " + line, log.snapshot());
+            assertTrue(after, after.endsWith(", up to 60.0 Hz"));
         } finally {
             ShadowDisplayManager.setSupportedModes(local.getDisplayId(), originalModes);
         }
