@@ -74,7 +74,36 @@ if ((Get-Process -Id $PID).SessionId -eq 0) {
     # The console's own account name: over ssh USERDOMAIN may name no account.
     $principal = New-ScheduledTaskPrincipal -UserId $console -LogonType Interactive
     Register-ScheduledTask -TaskName $name -Action $action -Principal $principal -Force | Out-Null
+    # The laptop-host rig (tools/hw/laptop-host.ps1) streams from this laptop's own test host: the
+    # two take the same lock and exclude each other. Taken atomically (the folder is created, as the
+    # rig creates it, so neither runs unlocked); waits up to 30 minutes while it or the old
+    # C:\tests\LAP-LOCK is held, never breaks it; only our own text is removed.
+    $laptopLock = 'C:\src\butterpollo-release\LAPTOP-LOCK'
+    $laptopLockText = $null
     try {
+        New-Item -ItemType Directory -Force (Split-Path $laptopLock) | Out-Null
+        $lockDeadline = (Get-Date).AddMinutes(30); $lockSaid = $false
+        while (-not $laptopLockText) {
+            $holder = $null
+            if (Test-Path 'C:\tests\LAP-LOCK') {
+                $holder = "C:\tests\LAP-LOCK ($(Get-Content 'C:\tests\LAP-LOCK' -Raw -ErrorAction SilentlyContinue))"
+            } else {
+                try {
+                    $stream = [IO.File]::Open($laptopLock, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+                    $text = "smoke $(Get-Date -Format s) pid=$PID"
+                    $writer = [IO.StreamWriter]::new($stream)
+                    $writer.Write($text)
+                    $writer.Dispose()
+                    $laptopLockText = $text
+                    break
+                } catch [IO.IOException] {
+                    $holder = "$laptopLock ($(Get-Content $laptopLock -Raw -ErrorAction SilentlyContinue))"
+                }
+            }
+            if ((Get-Date) -gt $lockDeadline) { throw "the laptop is in use: $holder is still held after 30 minutes" }
+            if (-not $lockSaid) { Write-Host "waiting for the laptop: $holder"; $lockSaid = $true }
+            Start-Sleep -Seconds 30
+        }
         Start-ScheduledTask -TaskName $name
         Write-Host "running in $env:USERNAME's desktop session (task $name)"
         $deadline = (Get-Date).AddSeconds($Codecs.Count * ($Seconds + 120) + 120)
@@ -84,6 +113,9 @@ if ((Get-Process -Id $PID).SessionId -eq 0) {
         }
     } finally {
         Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue
+        if ($laptopLockText -and (Test-Path $laptopLock) -and (Get-Content $laptopLock -Raw) -eq $laptopLockText) {
+            Remove-Item $laptopLock -Force
+        }
     }
     Get-Content $output
     exit [int](Get-Content $exitFile)

@@ -1,4 +1,4 @@
-import contextlib, io, pathlib, sys, tempfile, textwrap, unittest
+import contextlib, io, pathlib, re, sys, tempfile, textwrap, unittest
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / 'hw'))
@@ -72,6 +72,92 @@ class Catalog(unittest.TestCase):
         with self.assertRaisesRegex(run.CatalogError, 'no case typo'):
             run.select(cases, 'desktop', ['typo'])
 
+    def test_the_laptop_host_rig_is_a_device_and_its_case_waits_for_its_first_run(self):
+        _, cases = run.load(catalog(dict(id='lh', device='laptop-host')))
+        self.assertEqual(cases[0].device, 'laptop-host')
+        _, cases = run.load(run.CATALOG.read_text(encoding='utf-8'))
+        (case,) = [c for c in cases if c.id == 'laptop-host-desktop']
+        self.assertEqual((case.device, case.status, case.verdict, case.preconditions, case.manages_locks),
+                         ('laptop-host', 'pending', 'review', ['idle'], True))
+        self.assertIn(r'tools\hw\laptop-host.ps1', case.command)
+        todo, skipped = run.select(cases, 'laptop-host')
+        self.assertNotIn('laptop-host-desktop', [c.id for c in todo])
+        self.assertIn(('laptop-host-desktop', 'PENDING'), [(c.id, r) for c, r, _ in skipped])
+        todo, _ = run.select(cases, 'laptop-host', ['laptop-host-desktop'])
+        self.assertEqual([c.id for c in todo], ['laptop-host-desktop'])
+        self.assertEqual([c.id for c in run.select(cases, 'desktop')[0] if c.device != 'desktop'], [])
+        # run.ps1 offers the same devices as run.py.
+        wrapper = (run.ROOT / 'tools/hw/run.ps1').read_text(encoding='utf-8')
+        self.assertIn("ValidateSet(%s)" % ', '.join(repr(d) for d in run.DEVICES), wrapper)
+
+
+class LaptopHostScripts(unittest.TestCase):
+    """Static checks of the laptop-host rig; its behaviour needs the laptop."""
+    HW = pathlib.Path(__file__).resolve().parent / 'hw'
+    SCRIPTS = ('laptop-host.ps1', 'laptop-host/start.ps1', 'laptop-host/host.ps1')
+
+    def read(self, name):
+        return (self.HW / name).read_text(encoding='utf-8')
+
+    def test_no_variable_is_assigned_over_a_typed_parameter(self):
+        # PowerShell names ignore case: `$info = ...` beside `[switch]$Info` threw, and the
+        # installed host's sessions were never checked.
+        for name in self.SCRIPTS:
+            text = self.read(name)
+            body = text[text.index('\nparam(') :]
+            params = re.findall(r'\[(switch|int|hashtable|string\[\])\]\$(\w+)', body[: body.index('\n)\n')])
+            self.assertTrue(params, name)
+            for kind, param in params:
+                with self.subTest(script=name, param=param):
+                    self.assertIsNone(re.search(r'(?im)^\s*\$%s\s*=[^=]' % param, body), f'${param} is a [{kind}] parameter')
+
+    def test_the_laptop_lock_and_the_package_stay_with_their_run(self):
+        pc, start, host = (self.read(n) for n in self.SCRIPTS)
+        # -Stop is sent whenever the start may have taken the lock, and touches only this run's rig.
+        self.assertLess(pc.index('$rigTaken = $true'), pc.index('$start = Invoke-Start $startArgs'))
+        self.assertIn('$runOwner = "$Owner-$PID"', pc)
+        stop = start[start.index('if ($Stop) {'):start.index('# --- Lock')]
+        self.assertLess(stop.index('Test-OurRig'), stop.index('Set-Content "$Root\\stop"'))
+        # The host's end frees the lock, only while it is still this run's.
+        self.assertIn('Remove-OurLock\n}', host)
+        self.assertIn('-like "$Owner *"', host)
+        # Staging is per run; a failed rename puts the old package back.
+        self.assertIn('$staging = "$Package.new-$Owner"', start)
+        self.assertIn('.new-$runOwner', pc)
+        swap = start[start.index('if ($Swap) {'):start.index('Write-Host "host version')]
+        self.assertIn('Rename-Item "$Package.old" $leaf', swap)
+        # The installed host must answer, or its service must be stopped.
+        self.assertIn('Get-Service ApolloService', start)
+        # Idle: user_idle.py on both machines, never Windows' own idle time on the laptop.
+        self.assertIn('user_idle.idle()', host)
+        self.assertNotIn('GetLastInputInfo', host)
+        self.assertIn('user_idle.idle()', pc)
+
+    def test_a_failed_leg_looks_for_a_hang_before_the_next_codec(self):
+        pc = self.read('laptop-host.ps1')
+        at = pc.index('if ($legCode -ne 0) {')
+        failed = pc[at:pc.index('timing_breakdown.py', at)]
+        self.assertIn('Test-LaptopHang $mark', failed)
+        self.assertIn('return 3', failed)
+        self.assertIn("'unknown'", failed)
+
+    def test_each_leg_rechecks_this_pc_and_the_rig_and_a_running_task_holds_the_laptop(self):
+        pc, start, host = (self.read(n) for n in self.SCRIPTS)
+        at = pc.index('foreach ($codec in $Codecs) {')
+        before_leg = pc[at:pc.index('pyrowave-loopback.ps1', at)]
+        self.assertIn('Test-PcIdle', before_leg)
+        self.assertIn('rig-ours=yes', before_leg)
+        self.assertIn('rig-ours=', start)
+        # The last run's task still running is the lock held, checked before anything is changed.
+        self.assertLess(start.index("-eq 'Running') {"), start.index('$users = Get-PackageUsers'))
+        self.assertLess(start.index("-eq 'Running') {"), start.index(r'Set-Content "$Root\owner" $Owner'))
+        # Stale staging: only <leaf>.new-<owner> folders, never this run's.
+        self.assertIn('-Filter "$leaf.new-*"', start)
+        self.assertIn('$_.FullName -ne $staging', start)
+        # Python's stderr cannot throw under 'Stop' in Windows PowerShell or reach the parsed value.
+        self.assertIn("$ErrorActionPreference = 'Continue'", host)
+        self.assertNotIn('2>&1', host)
+
 
 class Preconditions(unittest.TestCase):
     def test_every_probe_of_a_precondition_runs_and_a_broken_probe_fails(self):
@@ -142,7 +228,10 @@ class Batch(unittest.TestCase):
         self.assertEqual(run.verdict(case, 0, 'EXITCODE 1\n'), 'FAIL')
         self.assertEqual(run.verdict(case, 0, 'x\nEXITCODE 0\n'), 'PASS')
         case.verdict = 'review'
-        self.assertEqual(run.verdict(case, 1, ''), 'REVIEW')
+        self.assertEqual(run.verdict(case, 0, 'EXITCODE 1\n'), 'REVIEW')
+        # A review case whose run failed (the laptop rig did not start, the laptop was busy) fails.
+        for code in (1, 2, 4):
+            self.assertEqual(run.verdict(case, code, ''), 'FAIL')
         self.assertEqual(run.verdict(case, 3, ''), 'HANG')
 
     def test_stream_timings_come_from_the_part_written_during_the_case(self):

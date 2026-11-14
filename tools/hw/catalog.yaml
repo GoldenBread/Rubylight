@@ -6,8 +6,10 @@
 #
 # Fields:
 #   id             unique, used with -Only
-#   device         desktop (this PC) | laptop (ramaz@192.168.4.12) | nuc (ssh nuc)
-#                  | retroid (adb) | user (the user runs it: steps, never run)
+#   device         desktop (this PC) | laptop (ramaz@192.168.4.12) | laptop-host
+#                  (the laptop runs the test host; the case names its client,
+#                  tools\hw\laptop-host.ps1) | nuc (ssh nuc) | retroid (adb)
+#                  | user (the user runs it: steps, never run)
 #   title          one line
 #   command        PowerShell, run from the repository root on this PC (remote
 #                  devices through ssh). {{name}} takes vars below, -Var name=value,
@@ -22,8 +24,9 @@
 #                                    the batch holds it until it ends,
 #                                    except through a manages_locks case
 #   pass           what passing means. The verdict is the exit code (0 passes,
-#                  3 is an AMD encoder hang and stops the batch) unless
-#                  verdict: review (a person reads the output against `pass`).
+#                  3 is an AMD encoder hang and stops the batch); with
+#                  verdict: review an exit 0 is not a pass but a person reads
+#                  the output against `pass` (any other exit still fails).
 #   pass_regex     optional: the output must also match it
 #   output         where the command writes its results
 #   collect        optional: more paths or globs copied into the case dir
@@ -337,6 +340,18 @@ cases:
     pass: exit 0, at least 115 fps received and host processing under 5 ms per codec (smoke.json)
     output: '{{out}}\smoke.json'
     note: no -Version, so nothing is uploaded to the release (add it to the smoke.ps1 line in a copy of this catalog, with --catalog, to upload REAL-CLIENT.json). The probe helper draws on the laptop's virtual display when it appears.
+
+  - id: laptop-host-desktop
+    device: laptop-host
+    title: Laptop as host (Radeon 780M), Nightjar on this PC's VRR monitor, PyroWave 120 fps, 45 s
+    command: 'pwsh -NoProfile -File tools\hw\laptop-host.ps1 -Out ''{{out}}''; exit $LASTEXITCODE'
+    preconditions: [idle]
+    manages_locks: true
+    verdict: review
+    pass: 'exit 0; a person reads <out>\PyroWave\breakdown.txt and summary.txt, and the timing CSVs beside them, for the receive-to-present cadence on this PC''s VRR panel; the laptop host log (laptop-butterpollo.log) has no hang line'
+    output: '{{out}}\PyroWave'
+    status: pending
+    note: 'Nightjar goes borderless fullscreen on this PC''s monitor, hence idle. The laptop side is tools/hw/laptop-host/ (LAPTOP-LOCK and the laptop''s BUILD-LOCK; refuses when the laptop is not idle or its installed host has a session). Becomes ready after its first run from the repo.'
 
   - id: net-fec-auto-nuc
     device: nuc

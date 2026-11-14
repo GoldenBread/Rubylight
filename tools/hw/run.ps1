@@ -6,7 +6,7 @@
 #   tools\hw\run.ps1 -Batch desktop -Only e2e-hevc,soak-30min
 #   tools\hw\run.ps1 -Batch desktop -Only couch-audio-71 -Var repo=C:\src\rl-audio-h2
 param(
-    [Parameter(Mandatory)][ValidateSet('desktop', 'laptop', 'nuc', 'retroid', 'user')] [string] $Batch,
+    [Parameter(Mandatory)][ValidateSet('desktop', 'laptop', 'laptop-host', 'nuc', 'retroid', 'user')] [string] $Batch,
     [string[]] $Only,
     [string[]] $Var,
     [string] $OutRoot,

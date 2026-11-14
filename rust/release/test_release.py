@@ -1812,5 +1812,19 @@ class SmokeDefaults(unittest.TestCase):
         self.assertIn('Unregister-ScheduledTask', block)
         self.assertIn('exit [int](Get-Content $exitFile)', block)
 
+    def test_the_smoke_test_and_the_laptop_host_rig_exclude_each_other(self):
+        script = (ROOT / 'rust/release/smoke.ps1').read_text(encoding='utf-8')
+        block = script[script.index('(Get-Process -Id $PID).SessionId -eq 0'):script.index('$tag = $Version')]
+        rig = (ROOT / 'tools/hw/laptop-host/start.ps1').read_text(encoding='utf-8')
+        self.assertIn(r"$laptopLock = 'C:\src\butterpollo-release\LAPTOP-LOCK'", block)
+        self.assertIn(r"$lockDir = 'C:\src\butterpollo-release'", rig)
+        self.assertIn(r'$lock = "$lockDir\LAPTOP-LOCK"', rig)
+        for text in (block, rig):
+            self.assertIn('[IO.FileMode]::CreateNew', text)
+            self.assertIn(r'C:\tests\LAP-LOCK', text)
+        finally_part = block[block.index('} finally {'):]
+        self.assertIn('Remove-Item $laptopLock', finally_part)
+        self.assertIn('-eq $laptopLockText', finally_part)
+
 if __name__ == '__main__':
     unittest.main()

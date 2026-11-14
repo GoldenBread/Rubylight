@@ -10,7 +10,7 @@ hang: never retried). Each case writes into
 stream-timings.txt, the `stream timings` lines the host logs wrote during the
 case), and the batch ends with summary.md there. --dry-run checks the
 preconditions and prints the plan without running anything or taking the
-GPU lock. Exits 0 if every case that ran passed (or needs review), 1 if one
+GPU lock. Exits 0 if every case that ran passed (or exited 0 and needs review), 1 if one
 failed, 3 on an encoder hang.
 """
 import argparse, ctypes, dataclasses, datetime, functools, glob, json, os, pathlib, re, shutil, subprocess, sys, time
@@ -26,7 +26,8 @@ OUT_ROOT = pathlib.Path(r'C:\src\butterpollo-release\hw')
 GPU_LOCK = pathlib.Path(r'C:\src\butterpollo-release\GPU-LOCK')
 HOST_LOG = pathlib.Path(r'C:\ProgramData\Butterpollo\config\logs\butterpollo.log')
 SERVERINFO = 'http://127.0.0.1:47989/serverinfo'
-DEVICES = ('desktop', 'laptop', 'nuc', 'retroid', 'user')
+# laptop-host: the laptop runs the test host; the case names its client.
+DEVICES = ('desktop', 'laptop', 'laptop-host', 'nuc', 'retroid', 'user')
 PRECONDITIONS = ('idle', 'isolated-ports', 'system', 'gpu-lock')
 TEST_PORTS = (48123, *range(48518, 48545))
 IDLE_SECONDS = 600
@@ -295,10 +296,10 @@ def check(preconditions, available=None):
 def verdict(case, code, output):
     if code == EXIT_GPU_HANG:
         return 'HANG'
+    if code != 0:
+        return 'FAIL'  # a review case too: its run failed, there is nothing to read
     if case.verdict == 'review':
         return 'REVIEW'
-    if code != 0:
-        return 'FAIL'
     if case.pass_regex and not re.search(case.pass_regex, output):
         return 'FAIL'
     return 'PASS'
