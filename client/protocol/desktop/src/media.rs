@@ -267,8 +267,8 @@ impl DeviceRef {
     /// its immediate context is flushed, and a swap chain kept that way stays on its window, which
     /// then takes no new one. A decoder sharing the device's immediate context made it
     /// multithread-protected (`open_for`), so the calls wait for the decoder's.
+    #[cfg(windows)]
     pub fn flush_released(&self) {
-        #[cfg(windows)]
         if let Some(device) = &self.0 {
             // SAFETY: a device this holds a reference on; its context is used on this thread alone
             // or serialized by the device's multithread protection.
