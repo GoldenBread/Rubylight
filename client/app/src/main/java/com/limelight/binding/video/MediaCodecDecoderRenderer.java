@@ -804,7 +804,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     // For the problem-report row, decoder thread only (stop() joins it before cleanup reads them):
     // Balanced's release passes as outputs came out and outputs queued for the vsync callback
     // (balancedPacesOnVsync can switch mid-stream), outputs handed to the Vulkan renderer, and the
-    // phase-lock reports the PC took.
+    // phase-lock report batches made ready for the sender (MoonBridge.reportFrameSlack true).
     private long balancedOnOutput, balancedOnVsync, vulkanOutputs, phaseReports;
     private volatile int decoderDepthBase;
     // "Speed up frame hand-off" (prefs.submitHint, debug.nightjar.submit_adpf overrides): the submit
@@ -4504,8 +4504,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                         balancedOnOutput + ", outputs queued for vsync " + balancedOnVsync + ")" : "") +
                 (vulkanOutputs > 0 ? ", Vulkan renderer " + vulkanOutputs + " outputs" : "") +
                 ", PC frame times " + onOff(hostFrameTimes) +
-                // Whether the PC takes 0x5530 at all (Rubylight always does), then how many it got.
-                ", PC takes phase-lock reports " + onOff(hostPhaseLock) + ", sent " + phaseReports +
+                // Whether the PC takes 0x5530 at all (Rubylight always does), then the batches queued.
+                ", PC takes phase-lock reports " + onOff(hostPhaseLock) + ", report batches " + phaseReports +
                 ", ARR screen " + onOff(outputHasArrSupport) +
                 ", VRR " + onOff(prefs.vrr) + ", newest only " + onOff(prefs.dropLateFrames) +
                 ", queue take-back " + onOff(prefs.displayQueueRecovery) +
