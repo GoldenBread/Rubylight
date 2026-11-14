@@ -194,7 +194,7 @@ if (-not $NoInstall) {
         if ((Get-Date) -gt $deadline) { throw 'The elevated step did not finish; was the UAC prompt declined?' }
         Start-Sleep -Seconds 2
     }
-    if ($ours.Count -eq 2) { & $python "$tools\user_idle.py" end \ours }
+    if ($ours.Count -eq 2) { & $python "$tools\user_idle.py" end @ours }
     if (-not (Test-Path "$run\elevated\installed.json")) { throw "The install did not finish; see $run\elevated\transcript.txt" }
     if (-not (Test-Path "$run\elevated\display-self-test.json")) {
         Write-Warning "The display self-test wrote no report; see $run\elevated\transcript.txt"
