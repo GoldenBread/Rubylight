@@ -1158,27 +1158,26 @@ NS = '{http://signpath.io/artifact-configuration/v1}'
 
 
 class PortedCredits(unittest.TestCase):
-    """Code ported from Foundation Sunshine is credited by file in NOTICE and AGENTS.md."""
+    """Code ported from Foundation Sunshine is credited by file in NOTICE, which AGENTS.md points to."""
 
     PORTED = ['rust/core/src/hdr_dynamic.rs', 'rust/windows/src/shaders/color.hlsl',
               'rust/windows/src/compute_hdr_stats.rs']
 
-    def test_notice_and_agents_name_every_ported_hdr_file(self):
+    def test_notice_names_every_ported_hdr_file(self):
         notice = ' '.join((ROOT / 'NOTICE').read_text(encoding='utf-8').split())
         agents = (ROOT / 'AGENTS.md').read_text(encoding='utf-8').split('\n## ')[0]
         for path in self.PORTED:
             self.assertIn('Foundation Sunshine', (ROOT / path).read_text(encoding='utf-8'), path)
             self.assertIn(path, notice)
-            self.assertIn(path, agents)
         self.assertIn('hdr_luminance_analysis_cs.hlsl', notice)
         self.assertIn('hdr_stats_cs', notice)
-        self.assertIn('hdr_stats_cs', agents)
+        self.assertIn('[NOTICE](NOTICE) credits each port file by file', agents)
         # The earlier credits stay.
         self.assertIn('video_hdr_metadata.cpp and video_hdr_bitstream.cpp', notice)
         self.assertIn('commit 3340d28', notice)
 
     def test_release_notes_and_setting_text_carry_no_port_credits(self):
-        # Credits live in the code, NOTICE, AGENTS.md and the README, not in what users read per release.
+        # Credits live in the code, NOTICE, THIRD_PARTY.md and the README, not in what users read per release.
         texts = [*sorted((ROOT / 'rust/release/notes.d').glob('*.md')),
                  *sorted((ROOT / 'client/notes.d').glob('*.md')),
                  *sorted((ROOT / 'rust/web/src/lib/schema').glob('*.ts'))]

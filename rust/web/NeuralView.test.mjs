@@ -85,7 +85,7 @@ test('the notice says what it is, where it comes from and who does not stand beh
     assert.match(NOTICE.message, words);
   }
   assert.notEqual(NOTICE.confirm, 'Continue');
-  // GPL-3.0 §7(e) in the mod's license: its name is not ours to brand with. Credits live in NOTICE and AGENTS.md.
+  // GPL-3.0 §7(e) in the mod's license: its name is not ours to brand with. Credits live in NOTICE.
   const shown = [NOTICE.title, NOTICE.message, NOTICE.confirm, ABOUT].join('\n') +
     readFileSync(new URL('./src/components/library/NeuralRendering.svelte', import.meta.url), 'utf8') +
     readFileSync(new URL('./src/lib/neural-view.ts', import.meta.url), 'utf8');
