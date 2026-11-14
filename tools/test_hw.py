@@ -4,6 +4,13 @@ from unittest import mock
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / 'hw'))
 import run  # noqa: E402
 
+# The runner marks each run for user_idle.py; a test's marks stay out of this machine's real file,
+# where they would count the user's input during them as a test's.
+_MARKS = tempfile.TemporaryDirectory()
+_BEGIN, _END = run.user_idle.begin, run.user_idle.end
+run.user_idle.begin = lambda **kw: _BEGIN(**{'path': pathlib.Path(_MARKS.name) / 'USER-IDLE.json', **kw})
+run.user_idle.end = lambda mark, **kw: _END(mark, **{'path': pathlib.Path(_MARKS.name) / 'USER-IDLE.json', **kw})
+
 CASE = '''
   - id: {id}
     device: {device}

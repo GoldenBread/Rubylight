@@ -171,9 +171,11 @@ function Invoke-Rig {
 
         # --- Start the laptop rig -------------------------------------------------------------
         $legs = [math]::Max(1, $(if ($Order) { $Order.Length } elseif ($ClientB) { 4 } else { 1 }))
-        # pyrowave-loopback.ps1 may wait up to 60 minutes for this PC's GPU-LOCK while the rig is up;
-        # the laptop's task stops after 2 hours.
-        $rigSeconds = [math]::Min(7000, $Codecs.Count * ($legs * ($Seconds + 60) + 180) + 300 + 3600)
+        # motion_probe runs for at most an hour, and the rig with it: the legs must fit, and the rest
+        # of the hour covers pyrowave-loopback.ps1's wait for this PC's GPU-LOCK.
+        $rigSeconds = 3600
+        $needed = $Codecs.Count * ($legs * ($Seconds + 60) + 180) + 300
+        if ($needed -gt $rigSeconds) { Write-Host "these legs need about $needed s and one rig runs for $rigSeconds s: use fewer codecs or legs"; return 2 }
         $startArgs = @("-Root '$LaptopRoot'", "-Port $Port", "-Bind '$LaptopAddress'", "-Seconds $rigSeconds", "-Motion '$Motion'",
             "-IdleSeconds $IdleSeconds", "-LaptopRepo '$LaptopRepo'") + $ownerArgs
         if ($WindowCapture) { $startArgs += '-WindowCapture' }

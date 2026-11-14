@@ -89,9 +89,10 @@ if (-not (Test-Path "$prof\sunshine_state.json")) {
 $probe = $null; $hostProc = $null
 try {
     $probe = Start-Process "$Root\motion_probe.exe" -PassThru -WindowStyle Hidden -RedirectStandardOutput "$Root\motion.log" `
-        -RedirectStandardError "$Root\motion.err.log" -ArgumentList $display, $Seconds, "$Root\motion.json", $Motion
+        -RedirectStandardError "$Root\motion.err.log" -ArgumentList $display, ([math]::Min($Seconds, 3600)), "$Root\motion.json", $Motion
     Start-Sleep -Seconds 3
-    if ($probe.HasExited) { throw "motion_probe exited $($probe.ExitCode)" }
+    # motion_probe takes 1..3600 seconds; the rig ends with it.
+    if ($probe.HasExited) { throw "motion_probe exited at once: $(Get-Content "$Root\motion.err.log" -TotalCount 1 -ErrorAction SilentlyContinue)" }
     if ($WindowCapture) {
         # Only the probe's own presents make frames: monitor capture also composed for other
         # desktop changes, about 16 extra frames a second at other times.
