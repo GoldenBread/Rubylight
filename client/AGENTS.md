@@ -6,11 +6,11 @@ Host-neutral Moonlight-protocol client for Android and desktop (public repo Rama
 - Gate host-specific extras by the `HostCapabilities` model, never by brand checks. User-facing text says Nightjar and stays host-neutral.
 - Android and desktop stay at parity: a feature or setting lands on both in one change, with shared logic in the `client/protocol` Rust crate. On-screen touch controls are Android-only.
 - Desktop (`protocol/desktop`) builds for Windows, Linux and macOS. `cfg(unix)` includes macOS: gate Linux-only code (VAAPI, Vulkan video, DMA-BUF, D-Bus, sysfs) with `target_os = "linux"`. No Mac is available here; the macOS CI job is the Mac gate. A changed shader `.spv` needs its Metal translation regenerated (`protocol/desktop/src/metal/generate.py`).
-- A behaviour whose default is in question becomes a setting in its fitting section (Debug is for diagnostic switches only); measurements decide the default. Never delete a setting.
+- A behaviour whose default is in question becomes a setting in its fitting section (Debug is for diagnostic switches only); measurements decide the default. Remove a setting only when it never has an effect, and clear its stored value; one that works only in some setups stays, with a reason shown where it does nothing.
 - A setting's help says, in this order, what the player gets, what it costs (delay, picture, network, battery, heat, or what stops working) and when to change it ("Leave it on unless ..."), in two short sentences. Facts from the code or our measurements only. Well-known terms (VRR, HDR, bitrate, HEVC) stay as they are; a lesser-known one gets a few words of explanation. Both apps and all translations change together.
 - The overlay's "Host processing" is the video header's per-frame value, as stock Moonlight shows it; other overlay timings cover only Nightjar's own interval.
 - Never change applicationId `com.butterpollo.client` or the signing key: in-place updates depend on them.
-- Never rename existing preference keys (`SettingsKeysTest` enforces this).
+- Rename a preference key only to replace a misleading or cryptic name, with a migration that carries every stored value (main, per-PC, game and profile values, presets, desktop `settings.json`) to the new key and a test of it. A retired name is never reused (`SettingsKeysTest`).
 - Native moonlight-common-c fixes live in `moonlight-core/patches/*.patch`; Gradle and `test-native.sh` reapply the set when its stamp changes.
 
 ## Release signing

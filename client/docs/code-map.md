@@ -87,7 +87,7 @@ Desktop:
 Android:
 
 1. The preference in `app/src/main/res/xml/preferences.xml`, its texts in `app/src/main/res/values/strings.xml` and each translated `strings.xml`.
-2. The key and its reading in [`PreferenceConfiguration`](../app/src/main/java/com/limelight/preferences/PreferenceConfiguration.java). Keys are never renamed and retired keys never return: [`SettingsKeysTest`](../app/src/test/java/com/limelight/preferences/SettingsKeysTest.java).
+2. The key and its reading in [`PreferenceConfiguration`](../app/src/main/java/com/limelight/preferences/PreferenceConfiguration.java). A key is renamed only with a migration of its stored values, and retired keys never return: [`SettingsKeysTest`](../app/src/test/java/com/limelight/preferences/SettingsKeysTest.java).
 3. Its help text in `scripts/generate-settings.py`, then run the script. It writes `docs/settings.md`, and the documentation check fails when that file is out of date.
 
 A decision both apps make from the setting goes into `protocol/policy/src/`.
