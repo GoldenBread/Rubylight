@@ -79,19 +79,18 @@ class Catalog(unittest.TestCase):
         with self.assertRaisesRegex(run.CatalogError, 'no case typo'):
             run.select(cases, 'desktop', ['typo'])
 
-    def test_the_laptop_host_rig_is_a_device_and_its_case_waits_for_its_first_run(self):
+    def test_the_laptop_host_rig_is_a_device_and_only_its_scripted_case_runs(self):
         _, cases = run.load(catalog(dict(id='lh', device='laptop-host')))
         self.assertEqual(cases[0].device, 'laptop-host')
         _, cases = run.load(run.CATALOG.read_text(encoding='utf-8'))
         (case,) = [c for c in cases if c.id == 'laptop-host-desktop']
         self.assertEqual((case.device, case.status, case.verdict, case.preconditions, case.manages_locks),
-                         ('laptop-host', 'pending', 'review', ['idle'], True))
+                         ('laptop-host', 'ready', 'review', ['idle'], True))
         self.assertIn(r'tools\hw\laptop-host.ps1', case.command)
+        # The NUC and the Retroid as its clients have no script yet: a batch leaves them out.
         todo, skipped = run.select(cases, 'laptop-host')
-        self.assertNotIn('laptop-host-desktop', [c.id for c in todo])
-        self.assertIn(('laptop-host-desktop', 'PENDING'), [(c.id, r) for c, r, _ in skipped])
-        todo, _ = run.select(cases, 'laptop-host', ['laptop-host-desktop'])
         self.assertEqual([c.id for c in todo], ['laptop-host-desktop'])
+        self.assertEqual(sorted((c.id, r) for c, r, _ in skipped), [('laptop-host-nuc', 'PENDING'), ('laptop-host-retroid', 'PENDING')])
         self.assertEqual([c.id for c in run.select(cases, 'desktop')[0] if c.device != 'desktop'], [])
         # run.ps1 offers the same devices as run.py.
         wrapper = (run.ROOT / 'tools/hw/run.ps1').read_text(encoding='utf-8')

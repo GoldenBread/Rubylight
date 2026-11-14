@@ -118,6 +118,12 @@ function Test-LaptopHang($Mark) {
     if ($null -eq $text) { Write-Host 'laptop host log: could not be read, hang state unknown'; return 'unknown' }
     $hangs = @($text -split "`n" | Where-Object { $_ -match '(?i)gpu hang|encoder hang|device removed' }).Count
     Write-Host "laptop host log: $hangs hang lines in this run"
+    # What the host sent, over every leg of this run: pyrowave-loopback.ps1 cannot read a remote host's log.
+    $sent = @([regex]::Matches($text, 'sent_mbps=([0-9.]+)') | ForEach-Object { [double]$_.Groups[1].Value } | Sort-Object)
+    if ($sent.Count) {
+        "host sent_mbps median $([math]::Round($sent[[int][math]::Floor(($sent.Count - 1) / 2)], 1)) over $($sent.Count) timing lines of this run" |
+            Tee-Object -FilePath "$Out\sent_mbps.txt" | Write-Host
+    }
     if ($hangs) { 'hang' } else { 'clean' }
 }
 

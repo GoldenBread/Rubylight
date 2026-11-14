@@ -350,8 +350,7 @@ cases:
     verdict: review
     pass: 'exit 0; a person reads <out>\PyroWave\breakdown.txt and summary.txt, and the timing CSVs beside them, for the receive-to-present cadence on this PC''s VRR panel; the laptop host log (laptop-butterpollo.log) has no hang line'
     output: '{{out}}\PyroWave'
-    status: pending
-    note: 'Nightjar goes borderless fullscreen on this PC''s monitor, hence idle. The laptop side is tools/hw/laptop-host/ (LAPTOP-LOCK and the laptop''s BUILD-LOCK; refuses when the laptop is not idle or its installed host has a session). Becomes ready after its first run from the repo.'
+    note: 'Nightjar goes borderless fullscreen on this PC''s monitor, hence idle. The laptop side is tools/hw/laptop-host/ (LAPTOP-LOCK and the laptop''s BUILD-LOCK; refuses when the laptop is not idle or its installed host has a session). The host is the package in the laptop''s firewall-approved folder (output.log names its version; 3.0.0-rc.4 on 2026-11-15): add -Package <release package folder> to the command to stream from a newer one. First run 2026-11-15: 82 fps shown for the probe''s 82 fps, receive to present p50 9.0 ms, p95 16.2 ms.'
 
   - id: laptop-host-nuc
     device: laptop-host
