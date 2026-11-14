@@ -2,7 +2,7 @@
 
 Rubylight is a Windows game-streaming host for Moonlight clients on AMD Radeon and NVIDIA, written by **RamazanKara** (<https://github.com/RamazanKara/Rubylight>) and licensed **GPL-3.0-only** ([LICENSE](LICENSE)). It builds on other people's work. [NOTICE](NOTICE) credits each port file by file, with the upstream project, its authors and license, and the commits and files it follows; [rust/THIRD_PARTY.md](rust/THIRD_PARTY.md) and the README credits section name them too. Read the NOTICE entry before changing or copying ported code, and keep each license notice with the ported code (license texts in `third-party/licenses/`).
 
-A port is credited in a code comment, in NOTICE with its files, in THIRD_PARTY.md and in the README credits; never in UI text or release notes. Rubylight bundles neither Nucleus Co-op (the user downloads it) nor AMDNR, the Neural Rendering mod (downloaded only at the user's request and copied unmodified into the game's folder); the console says Neural Rendering, never the mod's name (GPL-3.0 §7(e)).
+A port is credited in a code comment, in NOTICE with its files, in THIRD_PARTY.md and in the README credits; never in UI text or release notes. Rubylight bundles neither Nucleus Co-op (the user downloads it) nor ANR, Neural Rendering's frame generation (downloaded only at the user's request and copied unmodified into the game's folder); of AMDNR, the mod Rubylight 3.0 placed until frame generation replaced it on 2026-11-14, only its removal remains. The console and Nightjar say frame generation or Neural Rendering, never a mod's name (GPL-3.0 §7(e)).
 
 ## If you copy, port or derive from this code
 
