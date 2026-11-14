@@ -586,6 +586,9 @@ impl App {
     }
 
     fn dispatch_stream_event(&mut self, event: &SDL_Event) {
+        // The stream ends on it (`render_device_ended`); the launcher then makes the renderer again.
+        // SAFETY: reading the event type.
+        self.note_render_device(SDL_EventType(unsafe { event.r#type }));
         #[cfg(target_os = "macos")]
         if self.take_pairing_url(event) { return; }
         self.dispatch_stream_event_inner(event);

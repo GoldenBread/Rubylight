@@ -214,7 +214,6 @@ impl Ambient {
 
     /// A new renderer (Linux's switch to the GPU renderer): the bakes went with the old one and are
     /// made again as they are asked for; what the page wants shows again on the next frame.
-    #[cfg_attr(windows, allow(dead_code))]
     pub(super) fn renderer_changed(&mut self) {
         self.tiles.clear();
         self.skies.clear();

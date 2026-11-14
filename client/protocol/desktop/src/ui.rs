@@ -1000,7 +1000,6 @@ impl Launcher {
 
     /// A new renderer (Linux's switch to the GPU renderer): every texture the launcher made went with
     /// the old one; each is made again where it is next drawn.
-    #[cfg_attr(windows, allow(dead_code))]
     pub fn renderer_changed(&mut self, ctx: &egui::Context) {
         self.logo = None;
         #[cfg(any(test, feature = "demo-library"))]

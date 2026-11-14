@@ -162,6 +162,7 @@ impl App {
         }
         // SAFETY: reading the event type.
         let kind = SDL_EventType(unsafe { event.r#type });
+        self.note_render_device(kind);
         if kind == SDL_EVENT_SYSTEM_THEME_CHANGED {
             // The System theme follows at once: the next frame has the other look.
             self.launcher.system_light = sdl::system_light();
@@ -248,6 +249,11 @@ impl App {
         }
         if !self.running {
             return;
+        }
+        // Before anything this frame launches or draws: SDL lost its device (`recover_renderer`).
+        #[cfg(windows)]
+        if std::mem::take(&mut self.renderer_lost) {
+            self.recover_renderer();
         }
         self.repeat_navigation();
         self.open_waiting_link();
@@ -521,7 +527,8 @@ impl App {
                     } else if decodes_on_device(connecting.plan()) && !connecting.plan().device.holds(self.renderer_device()) {
                         // SDL made its Direct3D 11 device again while connecting (a driver reset):
                         // the decoder's pictures are on the old device, which nothing draws.
-                        eprintln!("nightjar: the renderer's Direct3D 11 device changed while connecting; the stream ends");
+                        let why = connecting.plan().device.removed_reason().map_or(String::new(), |why| format!(" (the old one was removed: {why})"));
+                        eprintln!("nightjar: the renderer's Direct3D 11 device changed while connecting{why}; the stream ends");
                         session.stop();
                         self.launcher.message(tr("The stream could not start"), tr("The graphics driver was reset, which ended the stream. Connect again."));
                     } else {
@@ -657,6 +664,13 @@ impl App {
                 eprintln!("{line}");
             }
         }
+        // A present that lost the device queued SDL's event about it, and SDL's device pointer may
+        // be freed: the renderer is made again before a command launches on it.
+        // SAFETY: on the main thread; the events stay queued.
+        #[cfg(windows)]
+        if unsafe { SDL_HasEvents(SDL_EVENT_RENDER_DEVICE_RESET.0, SDL_EVENT_RENDER_DEVICE_LOST.0) } {
+            self.recover_renderer();
+        }
         for command in commands {
             self.command(command);
         }
@@ -688,7 +702,7 @@ impl App {
     pub(crate) fn latency_device(&self) -> latency_bench::Device {
         let display = display_of(self.window);
         #[cfg(windows)]
-        let gpu = gpu_adapters::renderer_gpu(sdl::renderer_pointer(self.renderer, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER));
+        let gpu = gpu_adapters::renderer_gpu(self.renderer_device());
         #[cfg(not(windows))]
         let gpu = None;
         latency_bench::Device { panel_hz: display.refresh_reported.then_some(display.refresh_hz), audio: latency_bench::audio_format(), gpu }

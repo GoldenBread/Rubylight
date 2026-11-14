@@ -458,6 +458,59 @@ pub fn present_mode_name(mode: Option<i64>) -> &'static str {
     }
 }
 
+/// Makes Windows' renderer again on `window` after its device was lost (`App::recover_renderer`),
+/// in the colorspace the old one had (`linear`: scRGB, `create_renderer_with`'s `gpu`). While the
+/// driver restarts a try can fail, fall to another of SDL's renderers or to SDR: a try that is not
+/// of `kind` in that colorspace goes, and the next follows 250 ms later, until `patience` has
+/// passed; then whatever SDL makes is kept (null: none). The window keeps answering meanwhile.
+#[cfg(windows)]
+pub fn remake_renderer(window: *mut SDL_Window, linear: bool, kind: &str, patience: std::time::Duration) -> *mut SDL_Renderer {
+    let begun = std::time::Instant::now();
+    let mut tries = 0u32;
+    loop {
+        let made = create_renderer_with(window, linear, false);
+        tries += 1;
+        let name = (!made.is_null()).then(|| renderer_name(made));
+        let made_linear = !made.is_null() && renderer_linear(made);
+        if remake_keeps(name.as_deref(), made_linear == linear, kind, begun.elapsed() >= patience) {
+            if tries > 1 {
+                eprintln!("nightjar: the renderer was made again at try {tries}, after {} ms", begun.elapsed().as_millis());
+            }
+            return made;
+        }
+        if tries == 1 {
+            let what = name.map_or_else(|| format!("failed ({})", error()), |name| format!("made {name:?}, scRGB {made_linear}"));
+            eprintln!("nightjar: making the {kind:?} renderer again {what}; trying again while the driver restarts");
+        }
+        if !made.is_null() {
+            // SAFETY: the renderer just made, nothing on it.
+            unsafe { destroy_renderer(made) };
+        }
+        // SAFETY: on the main thread. A window that stops answering for 5 s is "not responding".
+        unsafe {
+            SDL_PumpEvents();
+            SDL_Delay(250);
+        }
+    }
+}
+
+/// Whether `remake_renderer` keeps what a try made (`made`: the renderer's name, None for none):
+/// the kind the lost one was (`kind`) in its colorspace (`space_kept`), or once its patience is
+/// out (`out_of_time`) whatever it is.
+#[cfg(any(windows, test))]
+pub fn remake_keeps(made: Option<&str>, space_kept: bool, kind: &str, out_of_time: bool) -> bool {
+    (made == Some(kind) && space_kept) || out_of_time
+}
+
+/// Whether `renderer` draws in scRGB (`SDL_COLORSPACE_SRGB_LINEAR`), as one made for the GPU
+/// renderer's start is.
+#[cfg(windows)]
+pub fn renderer_linear(renderer: *mut SDL_Renderer) -> bool {
+    // SAFETY: a live renderer; the call only reads its properties.
+    let space = unsafe { SDL_GetNumberProperty(SDL_GetRendererProperties(renderer), SDL_PROP_RENDERER_OUTPUT_COLORSPACE_NUMBER, 0) };
+    space == i64::from(SDL_COLORSPACE_SRGB_LINEAR.0)
+}
+
 /// Destroys `renderer` and forgets the cached swapchain answers, so a renderer made later at the
 /// same address asks its swapchain again.
 ///

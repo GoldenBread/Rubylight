@@ -250,6 +250,37 @@ impl DeviceRef {
         }
     }
 
+    /// Why the held device was removed (a driver reset, a hang, a removed adapter), as Direct3D
+    /// names it; None while it works or when none is held.
+    pub fn removed_reason(&self) -> Option<String> {
+        #[cfg(windows)]
+        {
+            // SAFETY: a device this holds a reference on; the call only reads its state.
+            let removed = self.0.as_ref().and_then(|device| unsafe { device.GetDeviceRemovedReason() }.err());
+            removed.map(|e| format!("{:#010X}: {}", e.code().0 as u32, e.message()))
+        }
+        #[cfg(not(windows))]
+        None
+    }
+
+    /// Has the held device destroy what its users already let go of. Direct3D defers that until
+    /// its immediate context is flushed, and a swap chain kept that way stays on its window, which
+    /// then takes no new one. A decoder sharing the device's immediate context made it
+    /// multithread-protected (`open_for`), so the calls wait for the decoder's.
+    pub fn flush_released(&self) {
+        #[cfg(windows)]
+        if let Some(device) = &self.0 {
+            // SAFETY: a device this holds a reference on; its context is used on this thread alone
+            // or serialized by the device's multithread protection.
+            unsafe {
+                if let Ok(context) = device.GetImmediateContext() {
+                    context.ClearState();
+                    context.Flush();
+                }
+            }
+        }
+    }
+
     /// Whether this holds the device at `raw` (null: whether it holds none). A held device is never
     /// freed, so a device made later cannot take its address. Always true off Windows.
     pub fn holds(&self, raw: *mut c_void) -> bool {

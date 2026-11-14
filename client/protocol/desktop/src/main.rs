@@ -124,6 +124,13 @@ use app::*;
 struct App {
     window: *mut SDL_Window,
     renderer: *mut SDL_Renderer,
+    /// Windows: SDL's Direct3D 11 device was lost or made again (`renderer_gone`), and the
+    /// launcher's next frame makes the renderer again (`recover_renderer`).
+    #[cfg(windows)]
+    renderer_lost: bool,
+    /// Windows: the times the renderer was made again.
+    #[cfg(windows)]
+    remakes: RemakeGuard,
     gui: Gui,
     /// The software renderer of a stream's overlay plane (`kms_scanout`) the gui's textures are
     /// on; null while they are on `renderer`.
@@ -835,6 +842,10 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     let mut app = App {
         window,
         renderer,
+        #[cfg(windows)]
+        renderer_lost: false,
+        #[cfg(windows)]
+        remakes: RemakeGuard::default(),
         gui,
         gui_overlay: std::ptr::null_mut(),
         store,

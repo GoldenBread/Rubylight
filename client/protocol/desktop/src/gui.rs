@@ -255,7 +255,6 @@ impl Gui {
 
     /// Frees everything made on the renderer, which is about to go. egui keeps no images, so the
     /// textures' owners make theirs again after [`Self::renderer_changed`].
-    #[cfg_attr(windows, allow(dead_code))]
     pub fn release_renderer(&mut self) {
         self.chain.release();
         self.overlay.digest = None;
@@ -267,7 +266,6 @@ impl Gui {
 
     /// A new renderer: egui sends the font atlas whole on the next frame ([`resend_fonts`]), and
     /// the next frame is drawn whole, glass tried and measured again on it, as at start.
-    #[cfg_attr(windows, allow(dead_code))]
     pub fn renderer_changed(&mut self) {
         self.overlay.digest = None;
         resend_fonts(&self.ctx);
@@ -707,7 +705,6 @@ impl Gui {
 
 /// Makes egui build its fonts again, so the next frame sends the font atlas whole instead of only
 /// the glyphs added since. Nightjar installs no glyph rasterizers: setting none changes nothing else.
-#[cfg_attr(windows, allow(dead_code))]
 fn resend_fonts(ctx: &egui::Context) {
     ctx.set_glyph_rasterizers(Vec::new());
 }

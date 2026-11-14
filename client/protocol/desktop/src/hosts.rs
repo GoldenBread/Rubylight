@@ -1144,7 +1144,6 @@ impl Hosts {
 
     /// A new renderer (Linux's switch to the GPU renderer): the covers and ambients went with the
     /// old one and load again from the art cache as they are asked for ([`Self::request_art`]).
-    #[cfg_attr(windows, allow(dead_code))]
     pub fn renderer_changed(&mut self) {
         for host in &mut self.list {
             host.art.retain(|_, art| !matches!(art, Art::Ready(_)));

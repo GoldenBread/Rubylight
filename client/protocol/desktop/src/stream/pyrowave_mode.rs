@@ -112,7 +112,6 @@ pub fn settings_probe(device: *mut std::ffi::c_void, ten_bit: bool) -> Option<Re
 
 /// Before the renderer goes (Linux's switch to the GPU renderer or back): waits for a probe still
 /// on its device, and forgets what the probes found on it, so the new device is probed again.
-#[cfg_attr(windows, allow(dead_code))]
 pub fn settings_probe_reset() {
     reset_in(settings_probe_state());
 }

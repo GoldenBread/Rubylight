@@ -481,3 +481,79 @@ fn removing_a_pc_leaves_nothing_of_it_behind() {
     assert!(store.art_path("kept", 1, "").exists());
     std::fs::remove_dir_all(dir).ok();
 }
+
+// nightjar#115: SDL's Direct3D 11 renderer lost its device while connecting and could not make
+// another, and the window kept the connecting screen for minutes with nothing answering. A lost or
+// remade device makes the renderer again; a resize of its targets alone does not.
+#[test]
+fn a_lost_or_remade_render_device_makes_the_renderer_again() {
+    assert!(renderer_gone(SDL_EVENT_RENDER_DEVICE_LOST));
+    assert!(renderer_gone(SDL_EVENT_RENDER_DEVICE_RESET), "SDL's own remake loses every texture");
+    assert!(!renderer_gone(SDL_EVENT_RENDER_TARGETS_RESET));
+    assert!(!renderer_gone(SDL_EVENT_WINDOW_RESIZED));
+}
+
+#[test]
+fn a_remade_renderer_keeps_its_kind_and_colorspace_until_the_wait_is_over() {
+    assert!(sdl::remake_keeps(Some("direct3d11"), true, "direct3d11", false));
+    assert!(!sdl::remake_keeps(None, false, "direct3d11", false), "a failed try while the driver restarts is tried again");
+    assert!(!sdl::remake_keeps(Some("direct3d12"), true, "direct3d11", false), "SDL's next renderer is not kept while there is time");
+    assert!(!sdl::remake_keeps(Some("direct3d11"), false, "direct3d11", false), "nor SDR in place of scRGB");
+    assert!(sdl::remake_keeps(Some("software"), false, "direct3d11", true), "then whatever SDL made");
+    assert!(sdl::remake_keeps(None, false, "direct3d11", true), "and none at all ends Nightjar");
+}
+
+#[test]
+fn a_driver_that_loses_each_new_device_is_not_followed_forever() {
+    let mut guard = RemakeGuard::default();
+    let start = Instant::now();
+    for i in 0..RemakeGuard::MOST {
+        assert!(guard.allow(start + Duration::from_secs(i as u64)), "remake {i}");
+    }
+    assert!(!guard.allow(start + Duration::from_secs(10)), "one more within the minute");
+    assert!(guard.allow(start + RemakeGuard::WITHIN + Duration::from_secs(1)), "the first has left the minute");
+}
+
+/// SDL lets a window take a new renderer once the old one is gone, of the same kind and in the
+/// same colorspace (what `App::recover_renderer` relies on).
+#[cfg(windows)]
+#[test]
+#[ignore = "requires a Direct3D 11 display"]
+fn a_lost_renderer_is_made_again_on_the_same_window_in_its_colorspace() {
+    let _guard = sdl::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // SAFETY: This test owns SDL and all its resources on one thread.
+    unsafe {
+        assert!(SDL_Init(SDL_INIT_VIDEO), "{}", sdl::error());
+        let window = SDL_CreateWindow(c"Remake test".as_ptr(), 128, 64, SDL_WINDOW_HIDDEN);
+        assert!(!window.is_null(), "{}", sdl::error());
+        for linear in [false, true] {
+            let old = sdl::create_renderer_with(window, linear, false);
+            assert!(!old.is_null(), "{}", sdl::error());
+            let kind = sdl::renderer_name(old);
+            assert_eq!(kind, "direct3d11");
+            sdl::destroy_renderer(old);
+            let made = sdl::remake_renderer(window, linear, &kind, Duration::from_secs(2));
+            assert!(!made.is_null(), "{}", sdl::error());
+            assert_eq!(sdl::renderer_name(made), kind);
+            let space = SDL_GetNumberProperty(SDL_GetRendererProperties(made), SDL_PROP_RENDERER_OUTPUT_COLORSPACE_NUMBER, 0);
+            assert_eq!(space, i64::from(if linear { SDL_COLORSPACE_SRGB_LINEAR.0 } else { SDL_COLORSPACE_SRGB.0 }));
+            assert!(!sdl::renderer_pointer(made, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER).is_null(), "a device to decode on");
+            sdl::destroy_renderer(made);
+        }
+        // A device still held elsewhere (a launch's, its decoder's) keeps the old swap chain on the
+        // window until that device is flushed; without the flush SDL fell to "direct3d" here.
+        let old = sdl::create_renderer_with(window, false, false);
+        assert!(!old.is_null(), "{}", sdl::error());
+        let held = media::DeviceRef::of_device(sdl::renderer_pointer(old, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER));
+        sdl::destroy_renderer(old);
+        held.flush_released();
+        // No patience: the first try is kept, whatever it is.
+        let made = sdl::remake_renderer(window, false, "direct3d11", Duration::ZERO);
+        assert!(!made.is_null(), "{}", sdl::error());
+        assert_eq!(sdl::renderer_name(made), "direct3d11", "the held device's swap chain left the window");
+        sdl::destroy_renderer(made);
+        drop(held);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+    }
+}
