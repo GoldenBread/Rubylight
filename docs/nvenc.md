@@ -71,7 +71,7 @@ The per-app settings, the one pre-encode slot that RTX HDR takes first, and the 
 
 ## Not run on NVIDIA hardware
 
-The rows above pass the fake-driver tests. No NVIDIA GPU is available to the project, so these behaviours follow NVIDIA's headers and other hosts' code and have not run on one:
+The rows above pass the fake-driver tests. These behaviours follow NVIDIA's headers and other hosts' code and have not yet run on an NVIDIA GPU:
 
 - Subframe completion: `hwEncodeStatus` 2 as the end of a picture, and the slice offsets a partial lock reports. The debug lines of the first four frames settle both.
 - Keyframes within the one-frame VBV, which the driver does not guarantee.

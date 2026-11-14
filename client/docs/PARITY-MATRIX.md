@@ -96,7 +96,7 @@ Linux decodes with VA-API, then Vulkan video, then V4L2 M2M, then NVDEC; NVIDIA 
 | Vulkan video | Status | Evidence |
 | --- | --- | --- |
 | Intel (Mesa ANV) | Tested | Pictures match software decoding through the presenter (`stream/vulkan_tests_unix.rs`: HEVC 8- and 10-bit, both ranges, HLG) on the NUC's Iris Plus 655; a 45 s HEVC 1080p60 stream at 20 Mbps (2026-11-01) opened `hevc vulkan`, showed 60 fps with no dropped frames or decoder errors, and took 2.7 ms median and 3.6 ms p95 from receive to present (VA-API with a copy through memory on the same NUC: 8.0 and 14.8 ms). Mesa 25.0 offers it only with `ANV_VIDEO_DECODE=1`. |
-| NVIDIA | Not run on hardware | The same code path; no NVIDIA GPU under Linux here. |
+| NVIDIA | Not run on hardware | The same code path; not run on an NVIDIA GPU under Linux. |
 
 Hardware pictures reach the GPU renderer without a copy through system memory on these paths too:
 
