@@ -233,11 +233,43 @@ fn display_of(window: *mut SDL_Window) -> Display {
         let id = SDL_GetDisplayForWindow(window);
         let mode = SDL_GetCurrentDisplayMode(id);
         if mode.is_null() {
-            return display_from_mode(None);
+            return display_from_mode(None, None);
         }
         let m = &*mode;
-        display_from_mode(Some((m.w, m.h, m.pixel_density, m.refresh_rate)))
+        display_from_mode(Some((m.w, m.h, m.pixel_density, m.refresh_rate)), panel_pixels(id))
     }
+}
+
+/// macOS: the panel's own size in pixels, from its native mode (`mac_display::native_pixels`),
+/// read once for each display. SDL's mode there is the desktop's backing store, which a scaled
+/// mode makes larger than the panel. None elsewhere, and on a Mac whose display lists no native
+/// mode: SDL's mode is used then.
+#[cfg(target_os = "macos")]
+fn panel_pixels(id: SDL_DisplayID) -> Option<(u32, u32)> {
+    /// The display last read, and its panel's size.
+    type Read = Option<(SDL_DisplayID, Option<(u32, u32)>)>;
+    static PANEL: std::sync::Mutex<Read> = std::sync::Mutex::new(None);
+    let mut panel = PANEL.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((known, pixels)) = *panel {
+        if known == id {
+            return pixels;
+        }
+    }
+    let mut bounds = SDL_Rect { x: 0, y: 0, w: 0, h: 0 };
+    // SAFETY: a display query with a valid out-pointer.
+    if !unsafe { SDL_GetDisplayBounds(id, &mut bounds) } {
+        // Not kept: the next call asks again.
+        return None;
+    }
+    let (x, y) = (f64::from(bounds.x) + f64::from(bounds.w) / 2.0, f64::from(bounds.y) + f64::from(bounds.h) / 2.0);
+    let pixels = mac_display::native_pixels(&mac_display::modes_at(x, y));
+    *panel = Some((id, pixels));
+    pixels
+}
+
+#[cfg(not(target_os = "macos"))]
+fn panel_pixels(_: SDL_DisplayID) -> Option<(u32, u32)> {
+    None
 }
 
 /// Whether the window now stands on another display, or its display on another mode.
@@ -246,13 +278,14 @@ fn another_display(kind: SDL_EventType) -> bool {
 }
 
 /// The display from SDL's current mode (width, height, pixel density, refresh rate), if it gave
-/// one. Without a mode or a refresh rate, pacing assumes 1920x1080 at 60 Hz, but the rate is not
+/// one, with the panel's own size (`panel_pixels`) in place of the mode's where it is known.
+/// Without a mode or a refresh rate, pacing assumes 1920x1080 at 60 Hz, but the rate is not
 /// marked reported, so the overlay does not judge frames against a guess.
-fn display_from_mode(mode: Option<(i32, i32, f32, f32)>) -> Display {
+fn display_from_mode(mode: Option<(i32, i32, f32, f32)>, panel: Option<(u32, u32)>) -> Display {
     let Some((w, h, pixel_density, refresh_rate)) = mode else {
         return Display { width: 1920, height: 1080, refresh_hz: 60.0, refresh_reported: false };
     };
-    let (width, height) = mode_pixels(w, h, pixel_density);
+    let (width, height) = panel.unwrap_or_else(|| mode_pixels(w, h, pixel_density));
     let reported = refresh_rate.is_finite() && refresh_rate > 0.0;
     Display { width, height, refresh_hz: if reported { refresh_rate } else { 60.0 }, refresh_reported: reported }
 }
@@ -260,7 +293,9 @@ fn display_from_mode(mode: Option<(i32, i32, f32, f32)>) -> Display {
 /// A display mode's size in pixels. SDL 3 gives a mode's size in its own units and
 /// `pixel_density` turns them into pixels: Windows (per-monitor DPI aware, which SDL declares)
 /// and X11 give pixels at density 1 whatever the desktop scaling, Wayland and macOS give points
-/// and the scale. The display's scaling (`SDL_GetDisplayContentScale`) is not part of it.
+/// and the scale. On macOS that is the backing store, the panel's size only at the default
+/// scaled mode (`panel_pixels`). The display's scaling (`SDL_GetDisplayContentScale`) is not part
+/// of it.
 fn mode_pixels(w: i32, h: i32, pixel_density: f32) -> (u32, u32) {
     let density = if pixel_density > 0.0 { pixel_density } else { 1.0 };
     let pixels = |points: i32| (points.max(0) as f32 * density).round() as u32;
@@ -295,14 +330,20 @@ fn mode_refresh_rates(id: SDL_DisplayID) -> Vec<f32> {
 /// What the display reported, for the log: the stream's "native" resolution comes from it.
 fn log_display(window: *mut SDL_Window, display: Display) {
     // SAFETY: a live window; the mode pointer is owned by SDL.
-    let (mode, scale) = unsafe {
+    let (mode, scale, id) = unsafe {
         let id = SDL_GetDisplayForWindow(window);
         let mode = SDL_GetCurrentDisplayMode(id).as_ref().map(|m| (m.w, m.h, m.pixel_density));
-        (mode, SDL_GetDisplayContentScale(id))
+        (mode, SDL_GetDisplayContentScale(id), id)
     };
     let mode = mode.map_or("no mode".to_owned(), |(w, h, d)| format!("mode {w}x{h} at density {d}"));
+    // Where a Mac's size came from: its native mode, or SDL's mode when none is listed.
+    let panel = match (cfg!(target_os = "macos"), panel_pixels(id)) {
+        (false, _) => String::new(),
+        (true, Some((w, h))) => format!(", native mode {w}x{h}"),
+        (true, None) => ", no native mode listed".to_owned(),
+    };
     eprintln!(
-        "nightjar: display {}x{}@{} ({mode}, scaling {scale})",
+        "nightjar: display {}x{}@{} ({mode}, scaling {scale}{panel})",
         display.width, display.height, display.refresh_hz
     );
 }

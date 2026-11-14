@@ -227,17 +227,33 @@ fn native_resolution_is_the_display_in_pixels_at_any_scaling() {
     assert_eq!(mode_pixels(2560, 1440, 0.0), (2560, 1440));
 }
 
+// nightjar#118: a Mac's scaled mode draws a backing store larger than the panel (a 3840x2160 Dell
+// at "looks like 2560x1440" is 5120x2880), and Native asked the PC for that. The panel's own size
+// from its native mode wins; without one SDL's mode stays.
+#[test]
+fn native_resolution_on_a_mac_is_the_panel_not_the_scaled_backing_store() {
+    let dell = display_from_mode(Some((2560, 1440, 2.0, 60.0)), Some((3840, 2160)));
+    assert_eq!((dell.width, dell.height), (3840, 2160));
+    let built_in = display_from_mode(Some((1512, 982, 2.0, 120.0)), Some((3024, 1964)));
+    assert_eq!((built_in.width, built_in.height), (3024, 1964), "the default scaled mode of a 14\" MacBook Pro");
+    let scaled = display_from_mode(Some((1800, 1169, 2.0, 120.0)), Some((3024, 1964)));
+    assert_eq!((scaled.width, scaled.height), (3024, 1964), "its \"more space\" mode draws 3600x2338");
+    let unlisted = display_from_mode(Some((2560, 1440, 2.0, 60.0)), None);
+    assert_eq!((unlisted.width, unlisted.height), (5120, 2880), "no native mode listed: SDL's mode");
+    assert_eq!(dell.refresh_hz, 60.0);
+}
+
 // Regression (review): a display without a reported rate paced at the 60 Hz fallback, and the
 // overlay judged frames against it and could say "60 Hz screen".
 #[test]
 fn the_overlay_only_gets_a_refresh_rate_the_display_reported() {
-    let reported = display_from_mode(Some((2560, 1440, 1.0, 143.9)));
+    let reported = display_from_mode(Some((2560, 1440, 1.0, 143.9)), None);
     assert_eq!((reported.refresh_hz, reported.reported_refresh_hz()), (143.9, Some(143.9)));
     for refresh in [0.0, -1.0, f32::NAN] {
-        let fallback = display_from_mode(Some((2560, 1440, 1.0, refresh)));
+        let fallback = display_from_mode(Some((2560, 1440, 1.0, refresh)), None);
         assert_eq!((fallback.refresh_hz, fallback.reported_refresh_hz()), (60.0, None), "pacing keeps 60 Hz");
     }
-    let none = display_from_mode(None);
+    let none = display_from_mode(None, None);
     assert_eq!((none.width, none.refresh_hz, none.reported_refresh_hz()), (1920, 60.0, None));
 }
 
