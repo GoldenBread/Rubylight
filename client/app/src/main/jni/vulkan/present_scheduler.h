@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 
 namespace vkr {
@@ -34,12 +35,36 @@ public:
 
     int delayVsyncs() const { return delay_; }
 
-    // The longest delay the swapchain can hold: each vsync of delay keeps one more presented
-    // image queued, and one more is drawn while another is on screen. A device that caps the
-    // swapchain at 4 images can't take kMaxDelay, or vkAcquireNextImageKHR waits and frames
-    // come at 3/4 of the refresh rate. Clamps the current delay too.
+    // The longest delay the swapchain can hold (maxDelayFor()): past it, vkAcquireNextImageKHR
+    // waits for the compositor to give an image back. Clamps the current delay too.
     void setMaxDelay(int maxDelay);
     int maxDelay() const { return maxDelay_; }
+
+    // The longest delay a swapchain holds without acquiring an image having to wait. Besides the
+    // buffers the compositor keeps (its minimum undequeued buffers), a delay of d leaves d - 1
+    // presented images waiting for their vsync while the next is drawn into one more, and a frame
+    // presented ahead first waits for its own vsync, which holds one more. Android's loader (AOSP
+    // vulkan/libvulkan/swapchain.cpp) returns, through release 14 (API 34), the count asked for
+    // less one plus what the compositor keeps, so the count asked for less one is free for the
+    // delay. Release 12 (API 31-32) returns at least what the compositor keeps plus two, which
+    // leaves what it keeps unknown: taken as at most two. From release 15 it returns the count
+    // asked for, at least minImageCount, which it reports as what the compositor keeps plus two.
+    // Either way the 3 images asked for outside presenting ahead hold the delay of 2 frames start at.
+    static int maxDelayFor(uint32_t requested, uint32_t images, uint32_t minImageCount, int apiLevel,
+                           bool presentAhead) {
+        int64_t delay = static_cast<int64_t>(requested) - 1;
+        if (apiLevel == 31 || apiLevel == 32) {
+            delay = std::min(delay, std::max<int64_t>(2, static_cast<int64_t>(images) - 2));
+        }
+        else if (apiLevel >= 35) {
+            const int64_t kept = static_cast<int64_t>(minImageCount) - 2;
+            delay = std::min(delay, static_cast<int64_t>(images) - std::max<int64_t>(kept, 0));
+        }
+        if (presentAhead) {
+            delay--;
+        }
+        return static_cast<int>(std::clamp<int64_t>(delay, kMinDelay, kMaxDelay));
+    }
 
     // Holds the delay (in vsyncs) or the guard (in ns) at a value rather than learning it, for
     // trying a setting on a device. Either can be left out (0, or below 0 for the guard).

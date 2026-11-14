@@ -344,6 +344,20 @@ public class VulkanRendererBridge {
     }
 
     /**
+     * One line for the log and the problem report: the output and swapchain chosen, and how often
+     * a render waited over half a refresh for a swapchain image or the GPU; null before the first
+     * swapchain.
+     */
+    public String getDiagnosticsText() {
+        if (!gate.enter()) return null;
+        try {
+            return handle != 0 ? nativeGetDiagnosticsText(handle) : null;
+        } finally {
+            gate.exit();
+        }
+    }
+
+    /**
      * Pacing numbers for the performance overlay: a headline and details, separated by a
      * newline. Either may be empty.
      */
@@ -422,6 +436,7 @@ public class VulkanRendererBridge {
     private static native int nativeTakePresentReports(long handle, long[] out);
     private static native String nativeGetRendererText(long handle);
     private static native String nativeGetPacingText(long handle);
+    private static native String nativeGetDiagnosticsText(long handle);
     private static native void nativeStop(long handle);
     private static native void nativeDestroy(long handle);
 }

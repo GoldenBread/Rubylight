@@ -196,6 +196,10 @@ public:
     // separated by a newline. Either part may be empty.
     std::string rendererText();
     std::string pacingText();
+    // One line for the log and the problem report: the output and swapchain chosen, and how often
+    // a render waited over half a refresh for a swapchain image or its slot's fence. Empty before
+    // the first swapchain.
+    std::string diagnosticsText();
 
 private:
     static constexpr int kFramesInFlight = 2;
@@ -627,6 +631,12 @@ private:
     bool hdrChanged_ = false;
     HdrMetadata hdrMetadata_;
     std::string outputDescription_;
+    // The output, format, colour space, image count, present mode and delay cap of the swapchain
+    std::string swapchainDescription_;
+    // Renders that waited over half a refresh for a swapchain image, or for their slot's fence
+    // (which waits on the compositor giving the image back): written by the render thread only
+    std::atomic<uint32_t> slowAcquires_ {0};
+    std::atomic<uint32_t> slowFenceWaits_ {0};
 
     // Render thread copy of the HDR state
     bool hdrActive_ = false;

@@ -185,6 +185,9 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private boolean vulkanPresentReports;
     private final long[] vulkanReports = new long[3 * 256];
     private long lastScanoutLogNs;
+    private long lastVulkanDiagnosticsNs;
+    // The Vulkan renderer's last diagnostics line, for this stream's row in the problem report
+    private volatile String vulkanDiagnostics;
     // The Vulkan notice (why it is unused, or that it replaces the upscaler) is shown once per stream
     private boolean vulkanNoticeShown;
     // Frame Warp (docs/frame-warp.md): this stream's renderer, Vulkan or the GLES presenter, draws the shift.
@@ -441,6 +444,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         if (vulkan == null) return;
         String fatal = vulkan.getFatalReason();
         if (fatal != null) failVulkan(fatal);
+        logVulkanDiagnostics(vulkan);
         if (!vulkanPresentReports) return;
         // How each frame ended up takes the place of MediaCodec's frame rendered callback, which
         // on this path only says a frame was handed to the renderer. Display wait counts to the
@@ -469,6 +473,18 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         lastScanoutLogNs = nowNs;
         String line = frameLatencyStats.takeScanoutLatency();
         if (line != null) LimeLog.info(line);
+    }
+
+    // Every 10 s, so a log started after the stream still has the output and swapchain the Vulkan
+    // renderer chose and how often it waited; the last line goes into the problem report too.
+    private void logVulkanDiagnostics(VulkanRendererBridge vulkan) {
+        long nowNs = System.nanoTime();
+        if (lastVulkanDiagnosticsNs != 0 && nowNs - lastVulkanDiagnosticsNs < 10_000_000_000L) return;
+        String text = vulkan.getDiagnosticsText();
+        if (text == null) return;
+        lastVulkanDiagnosticsNs = nowNs;
+        vulkanDiagnostics = text;
+        LimeLog.info(text);
     }
 
     /** Why the Vulkan renderer gave up, or null while it has not. */
@@ -4352,6 +4368,9 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         // waits for the GPU at most 2.5 s; destroy() on the shutdown worker waits for the rest (#73).
         VulkanRendererBridge vulkan = vulkanRenderer;
         if (vulkan != null) {
+            // The problem report's row is written after the stop, which the renderer no longer answers
+            String diagnostics = vulkan.getDiagnosticsText();
+            if (diagnostics != null) vulkanDiagnostics = diagnostics;
             vulkan.stop();
         }
 
@@ -4424,6 +4443,10 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         MediaFormat output = outputFormat;
         boolean rfi = refFrameInvalidationActive;
         boolean lowLatency = configuredFormat != null && MediaCodecHelper.asksForAndroidLowLatency(configuredFormat);
+        VulkanRendererBridge vulkan = vulkanRenderer;
+        String vulkanLine = vulkan != null ? vulkan.getDiagnosticsText() : null;
+        if (vulkanLine == null) vulkanLine = vulkanDiagnostics;
+        vulkanDiagnostics = null;
         RecentStreams.add(Instant.ofEpochMilli(startMs).truncatedTo(ChronoUnit.SECONDS) + " " +
                 (SystemClock.uptimeMillis() - streamStartUptimeMs) / 1000 + " s" +
                 " | " + (pyroWave ? "PyroWave" : activeDecoderName + " " + configuredMime()) +
@@ -4441,6 +4464,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 " | input waits " + inputStalls.total() + ", worst " + inputStalls.totalMaxMs() + " ms" +
                 ", input buffer " + inputBufferBytes + " B, " + receiveBufferStats() +
                 " | output " + (output == null ? "none" : outputDescription(output)) +
+                (vulkanLine != null ? " | " + vulkanLine : "") +
                 " | hottest " + thermalName(hottestThermalLevel) + ", thermal protection " + onOff(prefs.thermalProtection));
         repairCounts = null;
         hottestThermalLevel = ThermalMonitor.NORMAL;

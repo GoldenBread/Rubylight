@@ -48,6 +48,12 @@ namespace {
     std::string gLastError;
     std::atomic<bool> gProbeHdrColorSpaces {false};
 
+    // The Android release's API level, 0 if unknown (PresentScheduler::maxDelayFor())
+    int deviceApiLevel() {
+        char value[PROP_VALUE_MAX] = {};
+        return __system_property_get("ro.build.version.sdk", value) > 0 ? atoi(value) : 0;
+    }
+
     __attribute__((format(printf, 2, 3)))
     void recordError(int priority, const char* format, ...) {
         char text[256];
@@ -1135,6 +1141,17 @@ std::string VulkanRenderer::rendererText() {
     return "Vulkan " + outputDescription_;
 }
 
+std::string VulkanRenderer::diagnosticsText() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (swapchainDescription_.empty()) {
+        return {};
+    }
+    char text[96];
+    snprintf(text, sizeof(text), "; waits over half a refresh since the start: image %u, GPU %u",
+             slowAcquires_.load(std::memory_order_relaxed), slowFenceWaits_.load(std::memory_order_relaxed));
+    return "Vulkan output " + swapchainDescription_ + text;
+}
+
 std::string VulkanRenderer::pacingText() {
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -1828,6 +1845,11 @@ bool VulkanRenderer::renderFrame(const FramePtr& frame, uint64_t presentId, int6
         return false;
     }
     const int64_t fencedNs = nowNs();
+    // Waits that cost a refresh, counted for diagnosticsText() (0 before the period is known)
+    const int64_t slowWaitNs = offsetPeriodNs_.load(std::memory_order_relaxed) / 2;
+    if (fenceWaited && slowWaitNs > 0 && fencedNs - fenceWaitNs > slowWaitNs) {
+        slowFenceWaits_.fetch_add(1, std::memory_order_relaxed);
+    }
     // Gives MediaCodec's image back to the reader (see onImageAvailable())
     slotFrames_[slot].reset();
     const int64_t releasedNs = nowNs();
@@ -1858,7 +1880,9 @@ bool VulkanRenderer::renderFrame(const FramePtr& frame, uint64_t presentId, int6
         } while (acquired == VK_TIMEOUT && !quit_ && nowNs() < deadlineNs);
         return acquired;
     };
+    const int64_t acquireStartNs = nowNs();
     result = acquireImage();
+    const int64_t acquireWaitNs = nowNs() - acquireStartNs;
     if (result == VK_ERROR_OUT_OF_DATE_KHR) {
         swapchainDirty_ = true;
         if (!ensureSwapchain() || !ensurePipeline()) {
@@ -1877,6 +1901,9 @@ bool VulkanRenderer::renderFrame(const FramePtr& frame, uint64_t presentId, int6
             noteFailure("acquiring a swapchain image", result, kFatalFailures);
         }
         return false;
+    }
+    if (slowWaitNs > 0 && acquireWaitNs > slowWaitNs) {
+        slowAcquires_.fetch_add(1, std::memory_order_relaxed);
     }
 
     const int64_t acquiredNs = nowNs();
@@ -2652,9 +2679,10 @@ bool VulkanRenderer::createSwapchain() {
     vk_.vkGetSwapchainImagesKHR(device_, swapchain_, &count, nullptr);
     std::vector<VkImage> images(count);
     vk_.vkGetSwapchainImagesKHR(device_, swapchain_, &count, images.data());
-    // A driver may cap the swapchain below the 6 images asked for: the present delay must leave
-    // one image to draw into and one on screen, or acquiring an image waits a vsync each time.
-    presentScheduler_.setMaxDelay(static_cast<int>(images.size()) - 2);
+    // A driver may cap the swapchain below the images asked for: no longer delay than it holds
+    const int delayCap =
+            PresentScheduler::maxDelayFor(imageCount, count, caps.minImageCount, deviceApiLevel(), presentAhead_);
+    presentScheduler_.setMaxDelay(delayCap);
 
     for (VkImage image : images) {
         VkImageViewCreateInfo viewInfo {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
@@ -2702,12 +2730,15 @@ bool VulkanRenderer::createSwapchain() {
                  outputHdr_ ? (hlg ? "HLG" : "HDR10") : (outputBits_ == 10 ? "10-bit SDR" : "8-bit SDR"),
                  (hdrActive_ && !outputHdr_) ? " (tone mapped)" : "");
         outputDescription_ = description;
+        char swapchain[160];
+        snprintf(swapchain, sizeof(swapchain), "%s%s, format %d, color space %d, %u images (min %u), %s, delay cap %d",
+                 description, outputDataspace_ != 0 ? " (window dataspace)" : "", chosen.format, chosen.colorSpace,
+                 count, caps.minImageCount,
+                 shared ? "front buffer" : presentMode == VK_PRESENT_MODE_MAILBOX_KHR ? "mailbox" : "FIFO", delayCap);
+        swapchainDescription_ = swapchain;
     }
 
-    ALOGI("Swapchain %ux%u, format %d, color space %d, %s%s, %u images, %s, pre-rotated %d degrees", extent.width,
-          extent.height, chosen.format, chosen.colorSpace, outputDescription_.c_str(),
-          outputDataspace_ != 0 ? " (window dataspace)" : "", count,
-          shared ? "front buffer" : presentMode == VK_PRESENT_MODE_MAILBOX_KHR ? "mailbox" : "FIFO",
+    ALOGI("Swapchain %ux%u, %s, pre-rotated %d degrees", extent.width, extent.height, swapchainDescription_.c_str(),
           quarterTurns(transform) * 90);
     return true;
 }

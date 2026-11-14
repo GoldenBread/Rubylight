@@ -240,6 +240,16 @@ Java_com_limelight_binding_video_VulkanRendererBridge_nativeGetPacingText(JNIEnv
     return renderer ? env->NewStringUTF(renderer->pacingText().c_str()) : nullptr;
 }
 
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_limelight_binding_video_VulkanRendererBridge_nativeGetDiagnosticsText(JNIEnv* env, jclass, jlong handle) {
+    VulkanRenderer* renderer = fromHandle(handle);
+    if (!renderer) {
+        return nullptr;
+    }
+    const std::string text = renderer->diagnosticsText();
+    return text.empty() ? nullptr : env->NewStringUTF(text.c_str());
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_limelight_binding_video_VulkanRendererBridge_nativeStop(JNIEnv*, jclass, jlong handle) {
     VulkanRenderer* renderer = fromHandle(handle);
