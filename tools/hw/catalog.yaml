@@ -353,6 +353,30 @@ cases:
     status: pending
     note: 'Nightjar goes borderless fullscreen on this PC''s monitor, hence idle. The laptop side is tools/hw/laptop-host/ (LAPTOP-LOCK and the laptop''s BUILD-LOCK; refuses when the laptop is not idle or its installed host has a session). Becomes ready after its first run from the repo.'
 
+  - id: laptop-host-nuc
+    device: laptop-host
+    title: Laptop as host (Radeon 780M), Nightjar on the NUC (Linux, headless gamescope), 60 s
+    command: 'Write-Error "not scripted yet: see note"; exit 1'
+    preconditions: []
+    manages_locks: true
+    verdict: review
+    pass: 'exit 0; the NUC''s Nightjar log shows a stream that ran its 60 s and its timing CSV has frames for all of them; the laptop host log has no hang line'
+    output: '{{out}}'
+    status: pending
+    note: 'Not scripted. Needs neither this PC''s GPU nor its monitor, so it may run while the user is at the PC. To build: tools\hw\laptop-host.ps1 starts and stops the laptop rig (192.168.4.12:48123) around a client leg that is not pyrowave-loopback.ps1 but the NUC''s Nightjar from tools\hw\nuc-gamescope (its batch.sh streams from the PC''s test host today), paired once with the rig''s profile in C:\tests\laptop-host\profile.'
+
+  - id: laptop-host-retroid
+    device: laptop-host
+    title: Laptop as host (Radeon 780M), Nightjar Android on the Retroid, 60 s
+    command: 'Write-Error "not scripted yet: see note"; exit 1'
+    preconditions: []
+    manages_locks: true
+    verdict: review
+    pass: 'exit 0; Nightjar''s overlay statistics from the Retroid show the stream''s frame rate for its 60 s; the laptop host log has no hang line'
+    output: '{{out}}'
+    status: pending
+    note: 'Not scripted. Needs neither this PC''s GPU nor its monitor, so it may run while the user is at the PC. To build: the laptop rig as in laptop-host-nuc, the Retroid over adb from this PC (it must answer adb first), paired once with the rig''s profile.'
+
   - id: net-fec-auto-nuc
     device: nuc
     title: 'A/B under loss: the host''s adaptive FEC against FEC from the client''s loss reports (rlFecPercentage=auto), NUC wifi arms'
