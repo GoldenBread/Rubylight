@@ -227,8 +227,6 @@
     <string name="summary_checkbox_enable_sops">Lässt den PC die Spieleinstellungen für den Stream anpassen. Lass es an; schalte es aus, wenn der PC die Einstellungen eines Spiels ändert und du sie behalten willst.</string>
     <string name="title_checkbox_host_audio">Ton auch am PC wiedergeben</string>
     <string name="title_unlock_fps">Alle Bildraten anzeigen</string>
-    <string name="title_checkbox_reduce_refresh_rate">Niedrigere Display-Bildrate</string>
-    <string name="summary_checkbox_reduce_refresh_rate">Lässt den Bildschirm die niedrigste Bildwiederholrate nutzen, die noch zum Stream passt, etwa 60 Hz für 60 FPS, um Akku zu sparen. Ausgeschaltet bleibt die höchste Rate, für geringere Latenz.</string>
     <string name="title_checkbox_disable_warnings">Warnungen ausblenden</string>
     <string name="summary_checkbox_disable_warnings">Blendet die Warnungen zu schlechter Verbindung während des Streams aus. Schalte es ein, sobald deine Verbindung eingerichtet ist und du sie nicht mehr brauchst.</string>
     <string name="title_video_format">Videocodec</string>
@@ -283,6 +281,8 @@
     <string name="pacing_balanced">Ausgewogen</string>
     <string name="pacing_balanced_alt">Ausgewogen mit FPS-Limit</string>
     <string name="pacing_smoothness">Flüssigstes Bild (mehr Latenz)</string>
+    <string name="pacing_balanced_every">Ausgewogen, jedes Bild behalten</string>
+    <string name="pacing_host_times">Bildtakt des PCs</string>
     <string name="title_analog_scrolling">Stick zum Scrollen</string>
     <string name="summary_analog_scrolling">Der Stick, der im Controller-Mausmodus scrollt; der andere Stick bewegt den Zeiger. Ohne Scroll-Stick bewegen beide den Zeiger.</string>
     <string name="analogscroll_none">Beide Sticks bewegen die Maus</string>
@@ -308,10 +308,6 @@
         <item>Am schnellsten</item>
     </string-array>
     <string name="summary_vrr_unavailable">Braucht Android 6 oder neuer.</string>
-    <string name="title_host_frame_times">Bilder im Takt des PCs zeigen</string>
-    <string name="summary_host_frame_times">Hält jedes Bild kurz zurück, damit es im Takt des Spiels erscheint und Bewegungen gleichmäßig wirken. Kostet ein paar Millisekunden Latenz; schalte es ein, wenn Bewegungen ungleichmäßig wirken.</string>
-    <string name="title_content_rate_frame_rate">Bildwiederholrate an die Spielrate anpassen</string>
-    <string name="summary_content_rate_frame_rate">Schaltet den Bildschirm auf eine Bildwiederholrate, die zur echten Bildrate des Spiels passt, etwa 60 Hz für ein Spiel mit 60 FPS in einem Stream mit 120 FPS. Braucht Unterstützung durch den PC.</string>
     <string name="title_virtual_display_scale">Render-Auflösung des PCs</string>
     <string name="summary_virtual_display_scale">Die Größe, in der der PC rendert, in Prozent der Stream-Auflösung; das gesendete Video behält seine Größe. Über 100 zeichnet der PC mehr Pixel, als er sendet, darunter weniger.</string>
     <string name="title_virtual_display_dpi">Display-Skalierung am PC</string>
@@ -335,8 +331,6 @@
     <string name="summary_phone_performance_hints">Meldet Android, wie lange das Dekodieren dauert, damit es die CPU schneller taktet, wenn das Dekodieren nicht nachkommt. Lass es an; schalte es nur aus, um Dekodierzeiten zu vergleichen.</string>
     <string name="title_gpu_max_clocks">GPU-Leistung für PyroWave steigern</string>
     <string name="summary_gpu_max_clocks">Höhere GPU-Takte für schnelleres PyroWave-Dekodieren, bei mehr Energieverbrauch und Wärme. Lass es aus, solange das PyroWave-Dekodieren nicht zu langsam ist.</string>
-    <string name="title_drop_late_frames">Nur neueste Frames behalten</string>
-    <string name="summary_drop_late_frames">Überspringt Frames, die der Bildschirm nicht mehr rechtzeitig zeigen kann, damit das Bild nie hinterherhinkt. Lass es an; ausgeschaltet wird jeder Frame der Reihe nach gezeigt, was die Verzögerung erhöhen kann.</string>
     <string name="title_texture_view">Alternative Videoanzeige</string>
     <string name="summary_texture_view">Zur Fehlersuche: Probiere es, wenn das Video schwarz ist, flackert oder verschoben sitzt. Es kostet zusätzliche Arbeit pro Bild und wird mit HDR, „Weniger Farbbänder“ oder PyroWave nicht genutzt.</string>
     <string name="title_unbatched_input">Maus und Stift ohne Wartezeit</string>
@@ -495,4 +489,16 @@
     <string name="summary_stream_menu_button">Was diese Taste ausführt, solange das Stream-Menü offen ist. „Standard“ belässt es bei der Kachel, die die Taste in ihrer Ecke zeigt; ein Ausstieg wie „Trennen“ fragt vorher nach.</string>
     <string name="stream_menu_button_default">Standard</string>
     <string name="stream_menu_button_none">Aus</string>
+    <string name="title_lower_refresh">Niedrigere Bildwiederholrate</string>
+    <string name="summary_lower_refresh">Lässt den Bildschirm unter seine höchste Bildwiederholrate fallen, um Akku zu sparen: „An“ nimmt die niedrigste Rate, die zum Stream passt, etwa 60 Hz für 60 FPS; „An, am Spiel ausgerichtet“ folgt der Bildrate des Spiels, etwa 60 Hz für ein Spiel mit 60 FPS in einem Stream mit 120 FPS, und braucht Unterstützung durch den PC. „Aus“ behält die höchste Rate, für geringere Latenz.</string>
+    <string-array name="lower_refresh_choice_names">
+        <item>Aus</item>
+        <item>An</item>
+        <item>An, am Spiel ausgerichtet</item>
+    </string-array>
+    <string name="title_arr_fixed_timing">Feste Taktung auf adaptiven Bildschirmen</string>
+    <string name="summary_arr_fixed_timing">Behandelt auf einem Bildschirm mit adaptiver Bildwiederholrate die Bildwiederholung als fest, solange VRR aus ist, sodass Bilder auf deinen Bildschirm getaktet werden und die Verzögerung der Anzeige-Warteschlange zurückgeholt wird. Ein Bild, das seine Bildwiederholung verpasst, kann dann eine ganze Bildwiederholung warten statt auf den nächsten Schritt des Bildschirms; lass es aus, außer das Bild ruckelt auf diesem Bildschirm bei ausgeschaltetem VRR.</string>
+    <string name="tag_unused_adaptive_screen">Nicht verwendet: Dieser Bildschirm legt seine Bildwiederholung selbst fest</string>
+    <string name="tag_unused_with">Nicht mit %1$s verwendbar</string>
+    <string name="tag_every_frame_with">„Jedes Bild behalten“ wird nicht mit %1$s verwendet</string>
 </resources>

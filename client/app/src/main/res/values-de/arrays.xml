@@ -58,12 +58,6 @@
         <item>@string/videoformat_h264always</item>
         <item>@string/videoformat_pyrowave</item>
     </string-array>
-    <string-array name="video_frame_pacing_names">
-        <item>@string/pacing_latency</item>
-        <item>@string/pacing_balanced</item>
-        <item>@string/pacing_balanced_alt</item>
-        <item>@string/pacing_smoothness</item>
-    </string-array>
     <string-array name="analog_scrolling_names">
         <item>@string/analogscroll_none</item>
         <item>@string/analogscroll_right</item>

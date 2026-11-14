@@ -17,7 +17,7 @@
 use std::collections::VecDeque;
 use std::ffi::c_void;
 
-use rubylight_protocol::present_clock::{PresentClock, Settings as ClockSettings};
+use rubylight_protocol::present_clock::{Grid, PresentClock, Settings as ClockSettings};
 use sdl3_sys::everything::*;
 
 use super::pipeline::Decoded;

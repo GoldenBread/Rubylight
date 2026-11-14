@@ -227,8 +227,6 @@
     <string name="summary_checkbox_enable_sops">Permite que o PC ajuste as configurações do jogo para a transmissão. Deixe ativado; desative se o PC mudar as configurações de um jogo e você quiser mantê-las.</string>
     <string name="title_checkbox_host_audio">Reproduzir áudio também no PC</string>
     <string name="title_unlock_fps">Mostrar todas as taxas de quadros</string>
-    <string name="title_checkbox_reduce_refresh_rate">Permitir taxa de atualização menor</string>
-    <string name="summary_checkbox_reduce_refresh_rate">Permite que a tela use a menor taxa de atualização que ainda combine com a transmissão, como 60 Hz para 60 FPS, para economizar bateria. Desativado, mantém a taxa mais alta, para menor latência.</string>
     <string name="title_checkbox_disable_warnings">Ocultar avisos de conexão</string>
     <string name="summary_checkbox_disable_warnings">Oculta os avisos de conexão ruim durante as transmissões. Ative quando sua conexão estiver configurada e você não precisar mais deles.</string>
     <string name="title_video_format">Codec de vídeo</string>
@@ -283,6 +281,8 @@
     <string name="pacing_balanced">Equilibrado</string>
     <string name="pacing_balanced_alt">Equilibrado com limite de FPS</string>
     <string name="pacing_smoothness">Vídeo mais fluido (mais atraso)</string>
+    <string name="pacing_balanced_every">Equilibrado, manter cada quadro</string>
+    <string name="pacing_host_times">Ritmo do PC</string>
     <string name="title_analog_scrolling">Analógico para rolagem</string>
     <string name="summary_analog_scrolling">O analógico que rola no modo mouse do controle; o outro analógico move o ponteiro. Sem um analógico de rolagem, os dois movem o ponteiro.</string>
     <string name="analogscroll_none">Os dois analógicos movem o mouse</string>
@@ -308,10 +308,6 @@
         <item>Mais rápido</item>
     </string-array>
     <string name="summary_vrr_unavailable">Requer Android 6 ou mais recente.</string>
-    <string name="title_host_frame_times">Mostrar quadros no ritmo do PC</string>
-    <string name="summary_host_frame_times">Segura cada quadro por um instante para que apareça quando o jogo o desenhou, deixando o movimento mais uniforme. Adiciona alguns milissegundos de latência; ative se o movimento parecer irregular.</string>
-    <string name="title_content_rate_frame_rate">Ajustar a tela à taxa do jogo</string>
-    <string name="summary_content_rate_frame_rate">Muda a tela para uma taxa de atualização que combine com a taxa de quadros real do jogo, como 60 Hz para um jogo a 60 FPS em uma transmissão a 120 FPS. Requer suporte do PC.</string>
     <string name="title_virtual_display_scale">Resolução de renderização do PC</string>
     <string name="summary_virtual_display_scale">O tamanho em que o PC renderiza, como porcentagem da resolução da transmissão; o vídeo enviado mantém o tamanho. Acima de 100, o PC desenha mais pixels do que envia; abaixo, menos.</string>
     <string name="title_virtual_display_dpi">Escala da tela do PC</string>
@@ -335,8 +331,6 @@
     <string name="summary_phone_performance_hints">Informa ao Android quanto tempo a decodificação leva, para ele aumentar a velocidade da CPU quando ela se atrasa. Deixe ativado; desative só para comparar tempos de decodificação.</string>
     <string name="title_gpu_max_clocks">Melhorar o desempenho da GPU para PyroWave</string>
     <string name="summary_gpu_max_clocks">Clocks de GPU mais altos para decodificar PyroWave mais rápido, com mais consumo e calor. Deixe desativado, a menos que a decodificação PyroWave esteja lenta demais.</string>
-    <string name="title_drop_late_frames">Manter só o quadro mais recente</string>
-    <string name="summary_drop_late_frames">Descarta quadros que a tela não consegue mais exibir a tempo, para a imagem nunca ficar para trás. Deixe ativado; desativado, exibe todos os quadros em ordem e pode adicionar atraso.</string>
     <string name="title_texture_view">Visualização de vídeo compatível</string>
     <string name="summary_texture_view">Para solução de problemas: tente se o vídeo ficar preto, piscar ou aparecer fora do lugar. Adiciona trabalho por quadro e não é usado com HDR, Menos faixas de cor ou PyroWave.</string>
     <string name="title_unbatched_input">Entrada instantânea de mouse e caneta</string>
@@ -495,4 +489,16 @@
     <string name="summary_stream_menu_button">O que este botão faz enquanto o menu da transmissão está aberto. Padrão mantém o bloco que mostra o botão no canto; uma saída como Desconectar pede confirmação antes.</string>
     <string name="stream_menu_button_default">Padrão</string>
     <string name="stream_menu_button_none">Desligado</string>
+    <string name="title_lower_refresh">Taxa de atualização menor</string>
+    <string name="summary_lower_refresh">Permite que a tela desça abaixo da taxa de atualização máxima para economizar bateria: “Ativado” usa a menor taxa que atende à transmissão, como 60 Hz para 60 FPS; “Ativado, ajustado ao jogo” segue a taxa de quadros do jogo, como 60 Hz para um jogo a 60 FPS em uma transmissão a 120 FPS, e requer suporte do PC. “Desativado” mantém a taxa máxima, para menor latência.</string>
+    <string-array name="lower_refresh_choice_names">
+        <item>Desativado</item>
+        <item>Ativado</item>
+        <item>Ativado, ajustado ao jogo</item>
+    </string-array>
+    <string name="title_arr_fixed_timing">Sincronização fixa em telas adaptáveis</string>
+    <string name="summary_arr_fixed_timing">Em uma tela com atualização adaptável, trata a atualização como fixa enquanto o VRR está desativado, para que os quadros sejam sincronizados com sua tela e a recuperação do atraso da fila de exibição funcione. Um quadro que perde sua atualização pode então esperar uma atualização inteira em vez do próximo passo da tela; deixe desativado a menos que o movimento engasgue nesta tela com o VRR desativado.</string>
+    <string name="tag_unused_adaptive_screen">Não usado: esta tela define a própria atualização</string>
+    <string name="tag_unused_with">Não usado com %1$s</string>
+    <string name="tag_every_frame_with">Manter cada quadro não é usado com %1$s</string>
 </resources>

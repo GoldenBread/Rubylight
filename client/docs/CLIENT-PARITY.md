@@ -79,8 +79,10 @@ The tables below have no macOS column. The Mac client shares the desktop library
 | Dual screen mode | Yes | Yes | Yes | Off by default. A second stream of the same game on a second screen (the desktop: full screen on another monitor), with sound, controllers and the microphone on the first. Needs a host with `SecondScreenVersion` (Rubylight 3.11). |
 | Ready the decoder for folding | Yes | N/A | N/A | Foldables: a fold or turn needs no decoder restart. Off by default. |
 | Variable refresh rate | Yes | Yes | Yes | See [Variable refresh rate](#variable-refresh-rate). |
-| Frame pacing modes | Yes | Yes | Yes | Lowest latency, Balanced, Balanced with FPS limit, Smoothest video. |
-| Take back display queue delay | Yes | N/A | N/A | Lowest latency and Balanced. Desktop has no compositor display queue to watch. |
+| Frame pacing modes | Yes | Yes | Yes | One row on the main page: Lowest latency, Balanced, Balanced keeping every frame, Balanced with FPS limit, Smoothest video and PC's frame times (the desktop offers it with V-Sync on a fixed-refresh screen). |
+| Take back display queue delay | Yes | N/A | N/A | Lowest latency and Balanced, under **Advanced → More**. Desktop has no compositor display queue to watch. |
+| Lower refresh rate | Yes | N/A | N/A | Off, On, or On and matched to the game. |
+| Fixed timing on adaptive screens | Yes | N/A | N/A | Adaptive refresh (ARR) screens on Android 16 with VRR off; off by default. |
 | Phase-lock frame timing | Yes | Yes | Partial | Linux: X11 with the OpenGL renderer only. |
 | Beam racing and early decode (PyroWave, wired) | N/A | Yes | Yes | Both off by default; see [beam racing](beam-racing.md). |
 | Rotation, picture-in-picture, external displays | Yes | N/A | N/A | |

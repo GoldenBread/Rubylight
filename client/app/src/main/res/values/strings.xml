@@ -259,8 +259,6 @@
     <string name="title_checkbox_host_audio">Play audio on the PC too</string>
 
     <string name="title_unlock_fps">Show all frame rates</string>
-    <string name="title_checkbox_reduce_refresh_rate">Allow lower refresh rate</string>
-    <string name="summary_checkbox_reduce_refresh_rate">Lets the screen use the lowest refresh rate that still fits the stream, such as 60 Hz for 60 FPS, to save battery. Off keeps the highest rate, for lower latency.</string>
     <string name="title_checkbox_disable_warnings">Hide connection warnings</string>
     <string name="summary_checkbox_disable_warnings">Hides the warnings about a poor connection during streams. Turn it on once your connection is set up and you no longer need them.</string>
     <string name="title_video_format">Video codec</string>
@@ -326,6 +324,8 @@
     <string name="pacing_balanced">Balanced</string>
     <string name="pacing_balanced_alt">Balanced with FPS limit</string>
     <string name="pacing_smoothness">Smoothest video (more delay)</string>
+    <string name="pacing_balanced_every">Balanced, keep every frame</string>
+    <string name="pacing_host_times">PC’s frame times</string>
 
     <string name="title_analog_scrolling">Stick for scrolling</string>
     <string name="summary_analog_scrolling">The stick that scrolls in controller mouse mode; the other stick moves the pointer. Without a scroll stick, both move the pointer.</string>
@@ -351,11 +351,19 @@
         <item>On</item>
         <item>Fastest</item>
     </string-array>
+    <string name="title_lower_refresh">Lower refresh rate</string>
+    <string name="summary_lower_refresh">Lets the screen drop below its top refresh rate to save battery: On takes the lowest rate that fits the stream, such as 60 Hz for 60 FPS; matched to the game follows the game’s own frame rate, such as 60 Hz for a 60 FPS game in a 120 FPS stream, and needs PC support. Off keeps the top rate, for lower latency.</string>
+    <string-array name="lower_refresh_choice_names">
+        <item>Off</item>
+        <item>On</item>
+        <item>On, matched to the game</item>
+    </string-array>
+    <string name="title_arr_fixed_timing">Fixed timing on adaptive screens</string>
+    <string name="summary_arr_fixed_timing">On a screen with adaptive refresh, treats the refresh as fixed while VRR is off, so frames can be timed to your screen and the display queue take-back runs. A frame that misses its refresh can then wait a whole refresh instead of the screen’s next step; leave it off unless motion judders on this screen with VRR off.</string>
+    <string name="tag_unused_adaptive_screen">Not used: this screen sets its own refresh</string>
+    <string name="tag_unused_with">Not used with %1$s</string>
+    <string name="tag_every_frame_with">Keeping every frame isn’t used with %1$s</string>
     <string name="summary_vrr_unavailable">Needs Android 6 or newer.</string>
-    <string name="title_host_frame_times">Show frames at the PC’s frame times</string>
-    <string name="summary_host_frame_times">Holds each frame briefly so it appears when the game drew it, evening out motion. Adds a few milliseconds of latency; turn it on if motion looks uneven.</string>
-    <string name="title_content_rate_frame_rate">Match the screen to the game’s frame rate</string>
-    <string name="summary_content_rate_frame_rate">Switches the screen to a refresh rate that fits the game’s real frame rate, such as 60 Hz for a 60 FPS game in a 120 FPS stream. Needs PC support.</string>
     <string name="title_virtual_display_scale">PC render resolution</string>
     <string name="summary_virtual_display_scale">The size the PC renders at, as a percent of the stream resolution; the video sent keeps its size. Above 100 the PC draws more pixels than it sends, below fewer.</string>
     <string name="title_virtual_display_dpi">PC display scaling</string>
@@ -411,8 +419,6 @@
     <string name="summary_phone_performance_hints">Tells Android how long decoding takes, so it can raise CPU speed when decoding falls behind. Leave it on; turn it off only to compare decode times.</string>
     <string name="title_gpu_max_clocks">Boost GPU performance for PyroWave</string>
     <string name="summary_gpu_max_clocks">Higher GPU clocks for faster PyroWave decoding, at more power and heat. Leave it off unless PyroWave decoding is too slow.</string>
-    <string name="title_drop_late_frames">Keep only the newest frame</string>
-    <string name="summary_drop_late_frames">Skips frames the screen can no longer show in time, so the picture never falls behind. Leave it on; off shows every frame in turn and can add delay.</string>
     <string name="title_texture_view">Compatibility video view</string>
     <string name="summary_texture_view">For troubleshooting: try it if video is black, flickers or is misplaced. It adds work per frame and is not used with HDR, Less color banding or PyroWave.</string>
     <string name="title_unbatched_input">Instant mouse and pen input</string>

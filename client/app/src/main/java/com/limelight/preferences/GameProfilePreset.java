@@ -67,10 +67,10 @@ public enum GameProfilePreset {
     void apply(HostStreamProfile own, int qualityKbps) {
         switch (this) {
             case COMPETITIVE:
-                own.pacing = PreferenceConfiguration.DEFAULT_FRAME_PACING;
+                FramePacingChoice.save(own, PreferenceConfiguration.DEFAULT_FRAME_PACING);
                 break;
             case SMOOTHNESS:
-                own.pacing = "smoothness";
+                FramePacingChoice.save(own, FramePacingChoice.SMOOTHNESS);
                 VrrChoice.save(own, VrrChoice.OFF);
                 break;
             case QUALITY:
@@ -83,8 +83,10 @@ public enum GameProfilePreset {
 
     /** The one preset whose values {@code own} holds, or Custom when none or several match. */
     static GameProfilePreset of(HostStreamProfile own, int qualityKbps) {
-        boolean competitive = PreferenceConfiguration.DEFAULT_FRAME_PACING.equals(own.pacing);
-        boolean smoothness = "smoothness".equals(own.pacing) && Boolean.FALSE.equals(own.vrr);
+        // Layers saved before the PC's frame times joined Frame pacing hold no value for them (null) and still match.
+        boolean ownPacing = !Boolean.TRUE.equals(own.hostFrameTimes);
+        boolean competitive = ownPacing && PreferenceConfiguration.DEFAULT_FRAME_PACING.equals(own.pacing);
+        boolean smoothness = ownPacing && "smoothness".equals(own.pacing) && Boolean.FALSE.equals(own.vrr);
         boolean quality = own.bitrate != null && own.bitrate == qualityKbps;
         int matches = (competitive ? 1 : 0) + (smoothness ? 1 : 0) + (quality ? 1 : 0);
         if (matches != 1) {

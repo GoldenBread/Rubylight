@@ -1408,6 +1408,77 @@ fn host_times_show_a_picture_at_once_while_the_decoder_is_behind() {
     assert_eq!(got, (s.present_us, s.hold_us));
 }
 
+/// The PC's frame times without VRR wait for the refresh, whatever the V-Sync setting says, and a
+/// VRR stream keeps its own pacing.
+#[test]
+fn the_pcs_frame_times_without_vrr_wait_for_the_refresh() {
+    let host = crate::config::Settings { vrr: false, vsync: false, host_frame_times: true, ..Default::default() };
+    assert_eq!(pacing(&host, true), (PacingMode::Vsync, false));
+    assert_eq!(without_vrr(&host), PacingMode::Vsync);
+    let vrr = crate::config::Settings { host_frame_times: true, ..Default::default() };
+    assert_eq!(pacing(&vrr, true), (PacingMode::HostTimes, true), "VRR's own On");
+    assert_eq!(without_vrr(&vrr), PacingMode::Vsync, "and its fall back on a fixed refresh");
+    let grid = refresh_grid(1_000, 8_333_333);
+    assert_eq!((grid.anchor_us, grid.interval_us, grid.lead_us, grid.slack_us), (1_000, 8_333, 2_083, 4_166));
+}
+
+/// A picture of the PC's frame times goes out on the refresh grid: the deadline plus the lead
+/// before the refresh the clock picked for it (the clock sees it ready the deadline later), never
+/// before it is ready; every refresh gets one picture of a stream at the display's rate.
+#[test]
+fn the_pcs_frame_times_place_pictures_on_the_refresh_grid() {
+    let interval = 8_333;
+    let deadline = 5_000;
+    let mut pacer = Pacer::new(PacingMode::Vsync, interval).with_frame_pacing(FramePacing::Smoothness, 120).with_host_frame_times(true);
+    assert!(pacer.host_grid());
+    let grid = refresh_grid(0, interval * 1000);
+    pacer.set_grid(Some(grid), deadline);
+    let mut reference = pacer.clock.clone();
+    let mut refreshes = Vec::new();
+    for i in 1..=240u64 {
+        // Pictures from the PC every refresh, arriving with up to 3 ms of jitter.
+        let host = i * interval as u64;
+        let ready = 50_000 + host + (i * 7 % 4) * 1_000;
+        let mut picture = decoded(ready);
+        picture.rtp = (host * 9 / 100) as u32;
+        let rtp = picture.rtp;
+        pacer.accept(picture);
+        let p = crate::stream::pipeline::lock(&pacer.pending).pop_back().unwrap();
+        let s = reference.schedule_on_grid_queued(rtp, ready + deadline as u64, grid, 0);
+        assert_eq!(p.present_us, s.release_us.saturating_sub(deadline as u64).max(ready), "picture {i}");
+        assert!(p.present_us >= ready, "never before it is ready");
+        if s.release_us > ready + deadline as u64 {
+            // Held: it goes out the lead and the deadline before its refresh.
+            assert_eq!(p.present_us + deadline as u64 + grid.lead_us as u64, s.vsync_us, "picture {i}");
+        }
+        if i > 128 { refreshes.push(s.vsync_index); }
+    }
+    refreshes.dedup();
+    assert_eq!(refreshes.len(), 112, "one picture a refresh once the delay is learnt");
+    // The lowest latency's newest picture: the in-order pacing under it is not used.
+    assert!(pacer.skips_instead_of_waiting(120.0));
+    assert!(!pacer.paced(FramePacing::Smoothness));
+}
+
+/// Without the display's timing the picture goes out at its time and V-Sync takes the refresh
+/// after; the clock still sees it the deadline later, so the delay it learns does not jump when
+/// the timing comes and goes.
+#[test]
+fn the_pcs_frame_times_without_display_timing_present_at_their_time() {
+    let mut pacer = Pacer::new(PacingMode::Vsync, 8_333).with_host_frame_times(true);
+    pacer.set_grid(None, 5_000);
+    let mut reference = pacer.clock.clone();
+    let mut picture = decoded(20_000);
+    picture.rtp = 900;
+    pacer.accept(picture);
+    let p = crate::stream::pipeline::lock(&pacer.pending).pop_back().unwrap();
+    let s = reference.schedule_queued(900, 25_000, 0);
+    assert_eq!(p.present_us, s.present_us.saturating_sub(5_000).max(20_000));
+    // Off, or a VRR stream: no grid.
+    assert!(!Pacer::new(PacingMode::Vsync, 8_333).host_grid());
+    assert!(!Pacer::new(PacingMode::HostTimes, 8_333).with_host_frame_times(true).host_grid());
+}
+
 #[test]
 fn lowest_and_balanced_pacing_show_the_newest_due_picture() {
     for mode in [FramePacing::Latency, FramePacing::Balanced] {

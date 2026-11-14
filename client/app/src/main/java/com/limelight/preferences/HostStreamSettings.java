@@ -1040,9 +1040,10 @@ public class HostStreamSettings extends NightjarActivity {
             }
         }
 
+        /** The Frame pacing choice a stream with these values runs (FramePacingChoice), the PC's frame times included. */
         private String pacingText(PreferenceConfiguration config) {
-            String[] names = getResources().getStringArray(R.array.video_frame_pacing_names);
-            return names[Math.max(0, Math.min(names.length - 1, config.framePacing))];
+            String[] names = getResources().getStringArray(R.array.frame_pacing_choice_names);
+            return names[Math.max(0, FramePacingChoice.index(FramePacingChoice.of(config)))];
         }
 
         private String resolutionText(PreferenceConfiguration config) {
@@ -1127,7 +1128,7 @@ public class HostStreamSettings extends NightjarActivity {
                 findPreference(key).setSummary(summary(switchField(key), switchOverride(key) != null, switchText(key, switchValue(config, key))));
             }
             findPreference("vrr").setSummary(summary(HostStreamProfile.Field.VRR, own.vrr != null, vrrText(config)));
-            String pacing = summary(HostStreamProfile.Field.PACING, own.pacing != null, pacingText(config));
+            String pacing = summary(HostStreamProfile.Field.PACING, own.has(HostStreamProfile.Field.PACING), pacingText(config));
             findPreference("pacing").setSummary(config.vrr ? pacing + "\n" + getString(R.string.layers_pacing_vrr) : pacing);
             // Greyed before Android 6 (vrrOffered), as in Settings; a value saved here is kept, and pacing applies.
             Preference vrr = findPreference("vrr");
@@ -1267,17 +1268,23 @@ public class HostStreamSettings extends NightjarActivity {
                             }).setNegativeButton(android.R.string.cancel, null).show();
         }
 
+        /**
+         * Frame pacing for these values: the main settings', or one of its choices, which puts the pacing, the PC's
+         * frame times and Balanced's newest-frame choice on the layer together (FramePacingChoice). A layer saved
+         * before holds only the pacing and takes the other two from the main settings.
+         */
         private void showPacing() {
-            String[] names = getResources().getStringArray(R.array.video_frame_pacing_names);
-            String[] values = getResources().getStringArray(R.array.video_frame_pacing_values);
+            String[] names = getResources().getStringArray(R.array.frame_pacing_choice_names);
             CharSequence[] items = new CharSequence[names.length + 1];
             items[0] = sameAs(pacingText(activity.global));
             System.arraycopy(names, 0, items, 1, names.length);
-            String own = activity.overrides.pacing;
-            int checked = own == null ? 0 : java.util.Arrays.asList(values).indexOf(own) + 1;
+            HostStreamProfile own = activity.overrides;
+            int checked = own.pacing == null ? 0 : 1 + Math.max(0, FramePacingChoice.index(FramePacingChoice.of(own.pacing,
+                    own.dropLateFrames != null ? own.dropLateFrames : activity.global.dropLateFrames,
+                    own.hostFrameTimes != null ? own.hostFrameTimes : activity.global.gridHostFrameTimes)));
             new NavigationDialogBuilder(activity).setTitle(R.string.title_frame_pacing)
                     .setSingleChoiceItems(items, checked, (dialog, which) -> {
-                        activity.overrides.pacing = which == 0 ? null : values[which - 1];
+                        FramePacingChoice.save(activity.overrides, which == 0 ? null : FramePacingChoice.VALUES[which - 1]);
                         updateSummaries();
                         dialog.dismiss();
                     }).setNegativeButton(android.R.string.cancel, null).show();

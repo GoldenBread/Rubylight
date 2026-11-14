@@ -1359,7 +1359,9 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("How the picture fits a screen of another shape: Fit shows all of it with bars, Fill crops the edges, Stretch distorts it, 1:1 pixels shows it at its own size.", "영상을 비율이 다른 화면에 맞추는 방식입니다. ‘맞추기’는 여백을 두고 전체를 보여 주고, ‘채우기’는 가장자리를 잘라 내며, ‘늘이기’는 영상을 왜곡하고, ‘1:1 픽셀’은 원래 크기로 보여 줍니다."),
     ("Fastest", "가장 빠르게"),
     ("VRR: on a G-Sync, FreeSync or adaptive-refresh screen, frames are shown without waiting for the screen’s refresh. On shows each frame when the game drew it, and whole, so motion stays even; that adds about 1 to 4 ms of latency. Fastest shows each frame the moment it arrives, which can tear. Frame pacing is not used while VRR is on.", "VRR: G-Sync, FreeSync 또는 가변 주사율 화면에서 화면 새로 고침을 기다리지 않고 프레임을 표시합니다. ‘사용’은 각 프레임을 게임이 그린 시점에 온전하게 표시해 움직임을 고르게 유지하며, 지연 시간이 약 1~4ms 늘어납니다. ‘가장 빠르게’는 각 프레임을 도착하는 대로 표시하며, 화면 찢어짐이 생길 수 있습니다. VRR이 켜져 있는 동안에는 ‘프레임 페이싱’을 사용하지 않습니다."),
-    ("Trades latency against steady motion while VRR is off. Lowest latency shows frames at once; the other choices wait for the screen’s refresh: smoother, with more delay.", "VRR이 꺼져 있는 동안 지연 시간과 고른 움직임 중 무엇을 우선할지 정합니다. ‘최저 지연 시간’은 프레임을 즉시 표시합니다. 다른 선택 항목은 화면 새로 고침을 기다려 더 부드럽지만 지연이 늘어납니다."),
+    ("Trades latency against steady motion while VRR is off. Lowest latency shows frames at once; the other choices wait for the screen’s refresh: smoother, with more delay, and keeping every frame can add more. PC’s frame times shows each frame when the game drew it, a few milliseconds later.", "VRR이 꺼져 있는 동안 지연 시간과 고른 움직임 중 무엇을 우선할지 정합니다. ‘최저 지연 시간’은 프레임을 즉시 표시합니다. 다른 선택 항목은 화면 새로 고침을 기다려 더 부드럽지만 지연이 늘고, 모든 프레임을 유지하면 더 늘어날 수 있습니다. ‘PC의 프레임 타이밍’은 각 프레임을 게임이 그린 시점에 몇 밀리초 늦게 표시합니다."),
+    ("Balanced, keep every frame", "균형, 모든 프레임 유지"),
+    ("PC’s frame times", "PC의 프레임 타이밍"),
     ("Waits for the screen’s refresh, so the picture never tears; the wait adds latency. Turn it off for the lowest latency if tearing doesn’t bother you.", "화면 새로 고침을 기다리므로 화면이 찢어지지 않지만, 기다리는 만큼 지연 시간이 늘어납니다. 화면 찢어짐이 거슬리지 않는다면, 끄면 지연 시간이 가장 낮아집니다."),
     ("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; HDR streams are enlarged without them.", "화면보다 작은 스트림을 확대하는 방식입니다. FSR과 SGSR은 윤곽을 선명하게 하지만 GPU 시간과 배터리를 조금 더 씁니다. HDR 스트림은 이 기능 없이 확대됩니다."),
     ("Upscaling sharpness", "업스케일링 선명도"),
@@ -1472,7 +1474,7 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("Draws the PC’s cursor here in Desktop pointer mode, without video delay.", "데스크톱 포인터 모드에서 PC 커서를 비디오 지연 없이 여기에 그립니다."),
     ("1:1 pixels", "1:1 픽셀"),
     // Android features on the desktop: Presets, Theme, Check for updates now, About, small box art,
-    // the microphone’s noise suppression and automatic gain, Keep only the newest frame, the decode
+    // the microphone’s noise suppression and automatic gain, the decode
     // time after streaming, the latency CSV and benchmark, and the connection test’s ping, jitter and
     // loss (ui/settings.rs, ui/about.rs, ui/latency_bench.rs, latency_bench.rs, network_test.rs,
     // update_check.rs, main.rs).
@@ -1495,7 +1497,6 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("Filters fans and other steady background noise out of the microphone and adds about 7 ms of microphone delay. Leave it on.", "팬 소리 같은 일정한 배경 소음을 마이크에서 걸러내며, 마이크 지연이 약 7 ms 늘어납니다. 켜 두세요."),
     ("Finish a stream before exporting its timings.", "타이밍을 내보내려면 먼저 스트림을 마치세요."),
     ("Fits more games on screen in a PC’s library.", "PC 라이브러리 화면에 더 많은 게임을 표시합니다."),
-    ("Keep only the newest frame", "최신 프레임만 유지"),
     ("Latency CSV saved.", "지연 시간 CSV를 저장했습니다."),
     ("Looks for a newer version now.", "지금 최신 버전을 확인합니다."),
     ("Measures ping, jitter and loss, and download speed where the PC supports it.", "핑, 지터, 손실을 측정하고, PC가 지원하면 다운로드 속도도 측정합니다."),
@@ -1508,7 +1509,6 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("Saves the latest latency measurements.", "최근 지연 시간 측정 결과를 저장합니다."),
     ("Show decode time after streaming", "스트리밍 후 디코딩 시간 표시"),
     ("Shows the average decode time when a stream ends: this device’s decoding only, not the end-to-end latency.", "스트림이 끝나면 평균 디코딩 시간을 표시합니다. 이 기기의 디코딩 시간일 뿐, 엔드 투 엔드 지연 시간은 아닙니다."),
-    ("Skips frames the screen can no longer show in time, so the picture never falls behind. Leave it on; off shows every frame in turn and can add delay.", "화면에 제때 표시할 수 없게 된 프레임을 건너뛰어 영상이 뒤처지지 않게 합니다. 켜 두세요. 끄면 모든 프레임을 차례로 표시해 지연이 늘어날 수 있습니다."),
     ("Source and licenses", "소스 및 라이선스"),
     ("System", "시스템"),
     ("System follows the system’s light or dark setting; OLED black uses pure black surfaces.", "‘시스템’은 시스템의 밝은 모드 또는 어두운 모드 설정을 따릅니다. ‘OLED 블랙’은 배경을 완전한 검은색으로 표시합니다."),

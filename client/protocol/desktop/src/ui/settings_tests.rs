@@ -444,8 +444,6 @@ fn the_section_key_table_is_what_the_page_draws() {
         // A PC's own settings, for a host that reports them (NvidiaEnhancements).
         "rtx_hdr" | "rtx_video" => false,
         "frame_pacing" | "vsync" => !vrr,
-        // Balanced's, which the default pacing is not (its own test draws it).
-        "drop_late_frames" => false,
         "renderer" | "display_output" | "video_planes" | "high_performance_gpu_power" | "vulkan_video_first" | "vulkan_rfi" => cfg!(target_os = "linux"),
         "graphics_card" => graphics_card_here(),
         _ => true,
@@ -970,9 +968,9 @@ fn settings_screenshots() {
             f.l.ask(Dialog::ConfirmPreset(Preset::BatterySaver));
             shoot(&mut f, "dialog-preset");
             f.l.dialog = Dialog::None;
-            // The microphone's rows, and Balanced's Keep only the newest frame.
+            // The microphone's rows, and Frame pacing's PC's frame times (V-Sync's row gives way).
             f.l.settings.microphone = true;
-            f.l.settings.frame_pacing = crate::config::FramePacing::Balanced;
+            f.l.settings.host_frame_times = true;
             f.l.settings_view.more = [true; 8];
             f.l.settings_view.section = "Audio";
             f.l.settings_view.to_top = true;
@@ -981,7 +979,7 @@ fn settings_screenshots() {
             f.l.settings_view.to_top = true;
             f.settle();
             f.scroll_to_end();
-            shoot(&mut f, "settings-keep-newest-frame");
+            shoot(&mut f, "settings-frame-pacing-host");
             // About: the version, the source link and the credits, top and end.
             let mut f = fresh();
             f.l.go(Screen::Settings);
@@ -1321,11 +1319,14 @@ fn a_preset_sets_and_reads_the_desktops_settings() {
     let mut s = Settings {
         width: 1280, height: 720, fps: 144, bitrate_kbps: 50_000, vrr: false,
         upscaling: crate::config::Upscaling::Fsr1, frame_pacing: crate::config::FramePacing::Smoothness,
-        drop_late_frames: false, unbatched_input: false, network_priority: false,
+        drop_late_frames: false, unbatched_input: false, network_priority: false, host_frame_times: true,
         codec: CodecPreference::Av1, prefer_yuv444: true,
         ..Settings::default()
     };
     assert_eq!(presets::chosen(&preset_current(&s, true)), None);
+    // The PC's frame times are no preset's pacing, whatever pacing is under them.
+    let host_times = Settings { host_frame_times: true, ..Settings::default() };
+    assert_eq!(presets::chosen(&preset_current(&host_times, true)), None);
     apply_preset(&mut s, Preset::Native);
     assert_eq!(presets::chosen(&preset_current(&s, true)), Some(Preset::Native));
     assert_eq!(s, Settings { codec: CodecPreference::Av1, prefer_yuv444: true, ..Settings::default() }, "the rest are the defaults");
@@ -1341,29 +1342,74 @@ fn a_preset_sets_and_reads_the_desktops_settings() {
     assert_eq!(preset_value(Preset::BatterySaver), "Battery saver");
 }
 
-/// Keep only the newest frame is Balanced's choice: it shows with Balanced frame pacing and VRR
-/// off, after Frame pacing, and not for the pacings that decide it themselves.
+/// Frame pacing is one row over its three keys, as on Android: Balanced's newest frame and the
+/// PC's frame times are among its choices. Every saved combination reads as the pacing a stream
+/// runs, and saving that choice back changes nothing a stream uses.
 #[test]
-fn keep_only_the_newest_frame_shows_for_balanced_pacing_only() {
-    let row = "Keep only the newest frame";
-    for (pacing, vrr, shown) in [
-        (crate::config::FramePacing::Balanced, false, true),
-        (crate::config::FramePacing::Balanced, true, false),
-        (crate::config::FramePacing::Latency, false, false),
-        (crate::config::FramePacing::CapFps, false, false),
-        (crate::config::FramePacing::Smoothness, false, false),
+fn frame_pacing_reads_and_writes_its_three_keys_as_one_choice() {
+    use crate::config::FramePacing;
+    for pacing in FramePacing::ALL {
+        for drop_late_frames in [true, false] {
+            for host_frame_times in [true, false] {
+                let s = Settings { frame_pacing: pacing, drop_late_frames, host_frame_times, ..Settings::default() };
+                let choice = frame_pacing_choice(&s);
+                let expected = match (host_frame_times, pacing, drop_late_frames) {
+                    (true, ..) => FramePacingChoice::HostTimes,
+                    (_, FramePacing::Latency, _) => FramePacingChoice::Latency,
+                    (_, FramePacing::Balanced, true) => FramePacingChoice::Balanced,
+                    (_, FramePacing::Balanced, false) => FramePacingChoice::BalancedEvery,
+                    (_, FramePacing::CapFps, _) => FramePacingChoice::CapFps,
+                    (_, FramePacing::Smoothness, _) => FramePacingChoice::Smoothness,
+                };
+                assert_eq!(choice, expected, "{pacing:?} {drop_late_frames} {host_frame_times}");
+                let mut saved = s.clone();
+                set_frame_pacing_choice(&mut saved, choice);
+                assert_eq!(saved, s, "saving {choice:?} back changes nothing");
+                let paced = |s: &Settings| (crate::stream::present::without_vrr(s), s.host_frame_times);
+                assert_eq!(paced(&saved), paced(&s));
+            }
+        }
+    }
+    for choice in FramePacingChoice::ALL {
+        let mut s = Settings { frame_pacing: FramePacing::Smoothness, host_frame_times: true, ..Settings::default() };
+        set_frame_pacing_choice(&mut s, choice);
+        assert_eq!(frame_pacing_choice(&s), choice);
+    }
+    // The PC's frame times leave the pacing under them; another pacing leaves Balanced's choice.
+    let mut s = Settings { frame_pacing: FramePacing::Balanced, drop_late_frames: false, ..Settings::default() };
+    set_frame_pacing_choice(&mut s, FramePacingChoice::HostTimes);
+    assert_eq!((s.frame_pacing, s.drop_late_frames), (FramePacing::Balanced, false));
+    set_frame_pacing_choice(&mut s, FramePacingChoice::Smoothness);
+    assert!(!s.host_frame_times && !s.drop_late_frames);
+    // Its value line names the choice, under each of its keys.
+    let host = Settings { host_frame_times: true, ..Settings::default() };
+    for key in ["frame_pacing", "drop_late_frames", "host_frame_times"] {
+        assert_eq!(value_text(key, &host, &crate::stream::Display { width: 1920, height: 1080, refresh_hz: 120.0, refresh_reported: true }, crate::glyphs::Style::Xbox), "PC’s frame times");
+    }
+}
+
+/// The row shows while VRR is off, with no row of its own for Balanced's newest frame, and V-Sync
+/// gives way to a pacing that waits for the refresh and to the PC's frame times.
+#[test]
+fn frame_pacing_is_one_row_and_the_pcs_frame_times_wait_for_the_refresh() {
+    for (vrr, host_frame_times, pacing, frame_pacing_shown, vsync_shown) in [
+        (false, false, crate::config::FramePacing::Latency, true, true),
+        (false, false, crate::config::FramePacing::Balanced, true, false),
+        (false, true, crate::config::FramePacing::Latency, true, false),
+        (true, true, crate::config::FramePacing::Latency, false, false),
     ] {
-        let mut f = settings_with(Settings { frame_pacing: pacing, vrr, ..Settings::default() });
+        let mut f = settings_with(Settings { vrr, host_frame_times, frame_pacing: pacing, ..Settings::default() });
         f.l.tearing_supported = true;
         open_folds(&mut f);
         f.l.settings_view.section = "Display & image";
         f.settle();
-        assert_eq!(shows(&f, row), shown, "{pacing:?} VRR {vrr}: {:?}", f.drawn);
-        if shown {
-            let keys = setting_keys(&f);
-            let at = keys.iter().position(|k| *k == "frame_pacing").unwrap();
-            assert_eq!(keys.get(at + 1), Some(&"drop_late_frames"), "{keys:?}");
-            assert!(!shows(&f, "V-Sync"), "Balanced keeps V-Sync on");
+        let what = format!("VRR {vrr} host {host_frame_times} {pacing:?}: {:?}", f.drawn);
+        assert_eq!(shows(&f, "Frame pacing"), frame_pacing_shown, "{what}");
+        assert_eq!(shows(&f, "V-Sync"), vsync_shown, "{what}");
+        assert!(!shows(&f, "Keep only the newest frame"), "{what}");
+        if frame_pacing_shown {
+            assert!(setting_keys(&f).contains(&"frame_pacing"), "{what}");
+            assert!(!setting_keys(&f).contains(&"drop_late_frames"), "a key of the Frame pacing row, not a row: {what}");
         }
     }
 }

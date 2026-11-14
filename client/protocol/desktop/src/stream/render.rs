@@ -156,7 +156,7 @@ impl Streaming {
             self.doctor.arrived(decoded.rtp, decoded.host_latency, decoded.receive_us, self.facts.fps.max(0) as u32);
             // Frames still waiting to be decoded: a queue that stays non-empty makes this
             // picture's lateness the backlog's.
-            if self.pacer.mode == PacingMode::HostTimes {
+            if self.pacer.mode == PacingMode::HostTimes || self.pacer.host_grid() {
                 self.pacer.set_decode_queue(self.session.decode_queue_len());
             }
             self.pacer.accept(decoded);
@@ -488,6 +488,18 @@ impl Streaming {
     #[cfg(not(windows))]
     fn present_slices(&mut self, _renderer: *mut SDL_Renderer, _draw_overlay: &mut impl FnMut(&mut Self, *mut SDL_Renderer), _now: u64) -> bool {
         false
+    }
+
+    /// The PC's frame times at V-Sync: the display's refresh grid and the desktop's deadline before
+    /// a refresh, for the pictures accepted next (`Pacer::set_grid`). Exclusive fullscreen, which
+    /// nothing composes, has no deadline before the refresh.
+    fn sync_host_grid(&mut self, renderer: *mut SDL_Renderer) {
+        let refresh_hz = self.plan.display.refresh_hz;
+        let deadline_us = if exclusive_fullscreen(renderer) { 0 } else {
+            self.present_deadline_us.unwrap_or_else(|| present::deadline_before_refresh(refresh_hz))
+        };
+        let grid = phase::timing(renderer, refresh_hz).map(|(refresh_us, period_ns)| present::refresh_grid(refresh_us, period_ns));
+        self.pacer.set_grid(grid, deadline_us);
     }
 
     /// When the next picture that already waits is due.
@@ -848,6 +860,7 @@ impl Streaming {
         self.sync_race(renderer);
         self.sync_vrr(renderer);
         self.sync_keeper();
+        if self.pacer.host_grid() { self.sync_host_grid(renderer); }
         // The slices of a frame still being received go out ahead of the beam.
         // Slices are drawn by the renderer, which a display plane's pictures pass by.
         let sliced = !self.kms_engaged() && self.present_slices(renderer, &mut draw_overlay, session::now_us());
@@ -880,12 +893,9 @@ impl Streaming {
                 // With no refreshes to spare a picture has to make the desktop's deadline, which comes before the refresh.
                 let refresh_hz = self.plan.display.refresh_hz;
                 let skipping = self.no_wait_present && self.pacer.skips_instead_of_waiting(refresh_hz);
-                // SAFETY: a live renderer and its window.
-                let exclusive = unsafe {
-                    let window = SDL_GetRenderWindow(renderer);
-                    SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN != 0 && !SDL_GetWindowFullscreenMode(window).is_null()
-                };
-                let aim_us = present::phase_lock_aim_us(skipping, exclusive, self.present_deadline_us, refresh_hz);
+                let exclusive = exclusive_fullscreen(renderer);
+                let room_us = if self.pacer.host_grid() { present::HOST_GRID_LATCH_ROOM_US } else { 0 };
+                let aim_us = present::phase_lock_aim_us(skipping, exclusive, self.present_deadline_us, refresh_hz) + room_us;
                 let timing = phase::aimed(phase::timing(renderer, refresh_hz), aim_us);
                 let steady_windows = if skipping { self.phase_steady_windows } else { 0 };
                 if let Some(report) = self.phase.sample(p.decoded.ready_us, begin, timing, steady_windows) {
@@ -1225,5 +1235,14 @@ mod tests {
         let packed = session::VideoSetup { format: nightjar_core::sdp::VIDEO_FORMAT_H264, width: 3840, height: 1080, fps: 60, chroma_packing: 1, logical_width: 1920, logical_height: 1080, color_space: 1, color_range: 0 };
         assert_eq!(setup_size(&packed), (1920, 1080));
         assert_eq!(setup_size(&session::VideoSetup { logical_width: 0, logical_height: 0, chroma_packing: 0, width: 2560, height: 1440, ..packed }), (2560, 1440));
+    }
+}
+
+/// Whether the renderer's window is in exclusive fullscreen, where nothing composes its pictures.
+fn exclusive_fullscreen(renderer: *mut SDL_Renderer) -> bool {
+    // SAFETY: a live renderer and its window.
+    unsafe {
+        let window = SDL_GetRenderWindow(renderer);
+        SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN != 0 && !SDL_GetWindowFullscreenMode(window).is_null()
     }
 }

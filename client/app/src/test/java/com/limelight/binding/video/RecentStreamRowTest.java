@@ -201,8 +201,8 @@ public class RecentStreamRowTest {
         renderer.cleanup();
         String section = RecentStreams.section();
         for (String part : new String[] {"out 10 rendered 4", "| pacing balanced (release passes as outputs came out 2700, " +
-                "outputs queued for vsync 3), PC frame times off, PC takes phase-lock reports on, report batches 2650, ARR screen on, " +
-                "VRR off, newest only on, queue take-back off, vsync ",
+                "outputs queued for vsync 3), PC frame times off, timed to your screen on, report batches 2650, ARR screen on, " +
+                "fixed timing off, VRR off, newest only on, queue take-back off, vsync ",
                 "| dropped catch_up 2, replaced 1, other 3 |"}) {
             assertTrue(part + " in " + section, section.contains(part));
         }
@@ -214,7 +214,7 @@ public class RecentStreamRowTest {
         ReflectionHelpers.setField(renderer, "numFramesOut", 0);
         renderer.cleanup();
         String section = RecentStreams.section();
-        assertTrue(section, section.contains("| pacing lowest latency, PC frame times off, PC takes phase-lock reports off, report batches 0"));
+        assertTrue(section, section.contains("| pacing lowest latency, PC frame times off, timed to your screen off (other PC), report batches 0"));
         assertFalse("no Vulkan renderer", section.contains("Vulkan renderer"));
         assertTrue(section, section.contains("| dropped none |"));
     }

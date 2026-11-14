@@ -227,8 +227,6 @@
     <string name="summary_checkbox_enable_sops">PC がストリームに合わせてゲームの設定を調整できるようにします。オンのままにしてください。PC にゲームの設定を変えられたくない場合はオフにしてください。</string>
     <string name="title_checkbox_host_audio">PC でも音声を再生</string>
     <string name="title_unlock_fps">すべてのフレームレートを表示</string>
-    <string name="title_checkbox_reduce_refresh_rate">低いリフレッシュレートを許可</string>
-    <string name="summary_checkbox_reduce_refresh_rate">バッテリーを節約するため、ストリームに合う最も低いリフレッシュレート（60 FPS なら 60 Hz など）を画面が使えるようにします。オフでは最も高いリフレッシュレートを保ち、遅延が小さくなります。</string>
     <string name="title_checkbox_disable_warnings">接続の警告を非表示</string>
     <string name="summary_checkbox_disable_warnings">ストリーム中に、接続品質の低下に関する警告を表示しません。接続の調整が済み、警告が不要になったらオンにしてください。</string>
     <string name="title_video_format">動画コーデック</string>
@@ -283,6 +281,8 @@
     <string name="pacing_balanced">バランス</string>
     <string name="pacing_balanced_alt">バランス（FPS 制限あり）</string>
     <string name="pacing_smoothness">最も滑らかな映像（遅延増）</string>
+    <string name="pacing_balanced_every">バランス（全フレームを保持）</string>
+    <string name="pacing_host_times">PC のフレームタイミング</string>
     <string name="title_analog_scrolling">スクロール用スティック</string>
     <string name="summary_analog_scrolling">コントローラのマウスモードでスクロールに使うスティックです。もう一方のスティックはポインタを動かします。スクロール用のスティックがない場合は、両方でポインタを動かします。</string>
     <string name="analogscroll_none">両方のスティックでマウスを操作</string>
@@ -308,10 +308,6 @@
         <item>最速</item>
     </string-array>
     <string name="summary_vrr_unavailable">Android 6 以降が必要です。</string>
-    <string name="title_host_frame_times">PCのフレームタイミングで表示</string>
-    <string name="summary_host_frame_times">各フレームを少しだけ保持してゲームが描画したタイミングで表示し、動きを均一にします。遅延が数ミリ秒増えます。動きにムラがある場合はオンにしてください。</string>
-    <string name="title_content_rate_frame_rate">画面をゲームのフレームレートに合わせる</string>
-    <string name="summary_content_rate_frame_rate">画面を、ゲームの実際のフレームレートに合うリフレッシュレートに切り替えます（120 FPS のストリームで 60 FPS のゲームなら 60 Hz など）。PC の対応が必要です。</string>
     <string name="title_virtual_display_scale">PC のレンダリング解像度</string>
     <string name="summary_virtual_display_scale">PC がレンダリングするサイズを、ストリーム解像度に対する割合（パーセント）で表します。送られる映像のサイズは変わりません。100 を超えると PC は送る映像より多くのピクセルを描画し、100 未満では少なくなります。</string>
     <string name="title_virtual_display_dpi">PC のディスプレイ拡大率</string>
@@ -335,8 +331,6 @@
     <string name="summary_phone_performance_hints">デコードにかかる時間を Android に伝え、デコードが遅れたときに CPU の速度を上げられるようにします。オンのままにし、デコード時間を比較するときにのみオフにしてください。</string>
     <string name="title_gpu_max_clocks">PyroWave の GPU パフォーマンスを向上</string>
     <string name="summary_gpu_max_clocks">GPU クロックを上げて PyroWave のデコードを速くします。消費電力と発熱は増えます。PyroWave のデコードが遅すぎる場合以外は、オフのままにしてください。</string>
-    <string name="title_drop_late_frames">最新のフレームのみ表示</string>
-    <string name="summary_drop_late_frames">画面に間に合わなくなったフレームをスキップし、映像が遅れないようにします。オンのままにしてください。オフではすべてのフレームを順に表示するため、遅延が増えることがあります。</string>
     <string name="title_texture_view">互換性の高い映像表示</string>
     <string name="summary_texture_view">トラブルシューティング用です。映像が黒い、ちらつく、または位置がずれる場合に試してください。フレームごとの処理が増えます。HDR、「色のバンディングを軽減」、PyroWave では使われません。</string>
     <string name="title_unbatched_input">マウスとペンの即時入力</string>
@@ -495,4 +489,16 @@
     <string name="summary_stream_menu_button">ストリームメニューを開いているときに、このボタンで実行する操作です。「デフォルト」では、隅にこのボタンが表示されているタイルを実行します。「切断」のようにストリームを終える操作は、実行前に確認します。</string>
     <string name="stream_menu_button_default">デフォルト</string>
     <string name="stream_menu_button_none">オフ</string>
+    <string name="title_lower_refresh">リフレッシュレートを下げる</string>
+    <string name="summary_lower_refresh">バッテリーを節約するため、画面のリフレッシュレートを最高値より下げられるようにします。「オン」はストリームに合う最も低いレート（60 FPS なら 60 Hz など）を使い、「オン（ゲームに合わせる）」はゲーム自身のフレームレートに従います（120 FPS のストリームで 60 FPS のゲームなら 60 Hz など）。PC の対応が必要です。「オフ」は最高レートを維持し、遅延を抑えます。</string>
+    <string-array name="lower_refresh_choice_names">
+        <item>オフ</item>
+        <item>オン</item>
+        <item>オン（ゲームに合わせる）</item>
+    </string-array>
+    <string name="title_arr_fixed_timing">適応画面での固定タイミング</string>
+    <string name="summary_arr_fixed_timing">可変リフレッシュレート対応の画面で、VRR がオフの間はリフレッシュを固定として扱い、フレームを画面に合わせて送信し、表示キューの遅延の取り戻しが実行されます。リフレッシュに間に合わなかったフレームは、画面の次のステップではなく、リフレッシュ全体を待つことがあります。この画面で VRR オフ時に動きがかくつく場合以外はオフのままにしてください。</string>
+    <string name="tag_unused_adaptive_screen">使用されません：この画面は独自にリフレッシュを設定します</string>
+    <string name="tag_unused_with">%1$s とは併用できません</string>
+    <string name="tag_every_frame_with">全フレームの保持は %1$s とは併用できません</string>
 </resources>

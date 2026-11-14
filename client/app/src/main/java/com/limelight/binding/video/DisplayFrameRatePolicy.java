@@ -16,6 +16,31 @@ public final class DisplayFrameRatePolicy {
     /** Tests stand in for the device's screens with this; null asks Android. */
     @VisibleForTesting
     public static Boolean vrrOfferedOverride;
+    /** Tests stand in for an adaptive refresh (ARR) screen with this; null asks Android. */
+    @VisibleForTesting
+    public static Boolean arrScreenOverride;
+
+    /**
+     * Whether the screen streams start on reports adaptive refresh (ARR, Android 16): the Settings screens show
+     * "Fixed timing on adaptive screens" there. The stream asks its own screen (MediaCodecDecoderRenderer).
+     */
+    public static boolean arrScreen(Context context) {
+        if (arrScreenOverride != null) return arrScreenOverride;
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.BAKLAVA) return false;
+        Display display = com.limelight.preferences.PreferenceConfiguration.defaultDisplay(context);
+        return display != null && display.hasArrSupport();
+    }
+
+    /**
+     * Whether a screen is timed as adaptive: it has ARR, and either VRR is on or "Fixed timing on adaptive
+     * screens" is off. An ARR panel presents at any multiple of its tearing-effect signal after its minimum frame
+     * interval (source.android.com/docs/core/graphics/arr), so the refresh is a fixed grid only where that signal
+     * runs at the top rate; the setting says it does. Then phase-lock reports, the PC's-frame-times grid and the
+     * display queue take-back run as on a fixed refresh.
+     */
+    public static boolean adaptiveInUse(boolean arrSupported, boolean vrr, boolean arrFixedTiming) {
+        return arrSupported && (vrr || !arrFixedTiming);
+    }
 
     /**
      * Whether Variable refresh rate can be turned on: Android 6 and newer, where the stream picks the

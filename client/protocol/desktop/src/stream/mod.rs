@@ -870,7 +870,9 @@ impl Streaming {
         let hdr_stream = present::hdr_negotiated(settings.hdr, facts.format);
         let vrr_fallback = present::without_vrr(&settings);
         let stream_fps = u32::try_from(facts.fps).unwrap_or(0);
-        if settings.frame_pacing != config::FramePacing::Latency {
+        if settings.host_frame_times {
+            eprintln!("nightjar: PC's frame times without VRR at {stream_fps} fps");
+        } else if settings.frame_pacing != config::FramePacing::Latency {
             eprintln!("nightjar: frame pacing {:?} without VRR at {stream_fps} fps", settings.frame_pacing);
         }
         let vrr_check = checks_display_for_vrr(connecting.plan.vrr, connecting.pacing, vrr_fallback, env_flag("NIGHTJAR_VRR_CHECK"));
@@ -905,7 +907,8 @@ impl Streaming {
             session,
             shared: connecting.shared,
             facts,
-            pacer: Pacer::with_backlog(connecting.pacing, min_interval, backlog).with_frame_pacing(settings.frame_pacing, stream_fps).with_drop_late_frames(settings.drop_late_frames),
+            pacer: Pacer::with_backlog(connecting.pacing, min_interval, backlog).with_frame_pacing(settings.frame_pacing, stream_fps).with_drop_late_frames(settings.drop_late_frames)
+                .with_host_frame_times(settings.host_frame_times),
             texture: VideoTexture::new(connecting.settings.upscaling == config::Upscaling::Bilinear, hdr_stream),
             upscaler: None,
             #[cfg(windows)]

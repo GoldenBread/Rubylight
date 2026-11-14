@@ -233,6 +233,7 @@ public class PreferenceConfiguration {
     static final String HOST_FRAME_TIMES_PREF_STRING = "checkbox_host_frame_times";
     static final String REAL_VRR_PREF_STRING = "checkbox_real_vrr";
     static final String CONTENT_RATE_FRAME_RATE_PREF_STRING = "checkbox_content_rate_frame_rate";
+    static final String ARR_FIXED_TIMING_PREF_STRING = "checkbox_arr_fixed_timing";
     static final String UPSCALING_PREF_STRING = "upscaling_mode";
     static final String UPSCALING_SHARPNESS_PREF_STRING = "upscaling_sharpness";
     // "Render through OpenGL" is gone. Its key is only read once, to move its users to Vulkan, and
@@ -499,6 +500,9 @@ public class PreferenceConfiguration {
     public boolean hostFrameTimes;
     // Vote the content rate the host's frame times show to the display (Surface.setFrameRate).
     public boolean contentRateFrameRate;
+    // "Fixed timing on adaptive screens": with VRR off, an ARR screen is timed as a fixed refresh
+    // (FramePacingPolicy.adaptiveInUse).
+    public boolean arrFixedTiming;
     public int virtualDisplayScale;
     // The virtual display's Windows scale in percent; 0 keeps the PC's own.
     public int virtualDisplayDpi;
@@ -1213,7 +1217,7 @@ public class PreferenceConfiguration {
         return display == null ? 60 : DisplayFrameRatePolicy.maxRefreshRate(display);
     }
 
-    private static Display defaultDisplay(Context context) {
+    public static Display defaultDisplay(Context context) {
         DisplayManager displays = (DisplayManager) context.getSystemService(Context.DISPLAY_SERVICE);
         return displays == null ? null : displays.getDisplay(Display.DEFAULT_DISPLAY);
     }
@@ -1781,6 +1785,7 @@ public class PreferenceConfiguration {
         }
         config.realVrr = prefs.getBoolean(REAL_VRR_PREF_STRING, true);
         config.gridHostFrameTimes = prefs.getBoolean(HOST_FRAME_TIMES_PREF_STRING, false);
+        config.arrFixedTiming = prefs.getBoolean(ARR_FIXED_TIMING_PREF_STRING, false);
         config.resolveHostFrameTimes();
         // The vote is for a SurfaceView. It needs the lower refresh rate switch: the settings screen greys it
         // without that, so a stored choice must not act on its own. VRR turns it on: without ARR (known only

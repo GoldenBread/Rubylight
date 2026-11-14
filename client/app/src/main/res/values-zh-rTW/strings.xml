@@ -227,8 +227,6 @@
     <string name="summary_checkbox_enable_sops">允許電腦為串流調整遊戲設定。請保持開啟；如果電腦變更了遊戲的設定而你想保留原本的設定，請關閉。</string>
     <string name="title_checkbox_host_audio">同時在電腦上播放音訊</string>
     <string name="title_unlock_fps">顯示所有影格速率</string>
-    <string name="title_checkbox_reduce_refresh_rate">允許較低的更新率</string>
-    <string name="summary_checkbox_reduce_refresh_rate">允許螢幕使用仍能配合串流的最低更新率（例如 60 FPS 使用 60 Hz），以節省電力。關閉則維持最高更新率，延遲更低。</string>
     <string name="title_checkbox_disable_warnings">隱藏連線警告</string>
     <string name="summary_checkbox_disable_warnings">串流期間不顯示連線品質不佳的警告。連線已調整好、不再需要這些警告時，可以開啟。</string>
     <string name="title_video_format">視訊轉碼器</string>
@@ -283,6 +281,8 @@
     <string name="pacing_balanced">平衡</string>
     <string name="pacing_balanced_alt">平衡並限制 FPS</string>
     <string name="pacing_smoothness">最流暢的影像 (延遲較高)</string>
+    <string name="pacing_balanced_every">平衡，保留每個影格</string>
+    <string name="pacing_host_times">電腦的影格時間</string>
     <string name="title_analog_scrolling">捲動用搖桿</string>
     <string name="summary_analog_scrolling">控制器滑鼠模式下用於捲動的搖桿；另一支搖桿移動指標。未指定捲動搖桿時，兩支搖桿都會移動指標。</string>
     <string name="analogscroll_none">兩個搖桿都移動滑鼠</string>
@@ -308,10 +308,6 @@
         <item>最快</item>
     </string-array>
     <string name="summary_vrr_unavailable">需要 Android 6 或更新版本。</string>
-    <string name="title_host_frame_times">依電腦的影格時間顯示畫面</string>
-    <string name="summary_host_frame_times">將每個影格短暫保留，讓它在遊戲繪製的時刻顯示，使動態更平穩。會增加幾毫秒延遲；動態看起來不均勻時請開啟。</string>
-    <string name="title_content_rate_frame_rate">讓螢幕符合遊戲影格率</string>
-    <string name="summary_content_rate_frame_rate">將螢幕切換為符合遊戲實際影格速率的更新率，例如在 120 FPS 的串流中為 60 FPS 的遊戲使用 60 Hz。需要電腦支援。</string>
     <string name="title_virtual_display_scale">電腦轉譯解析度</string>
     <string name="summary_virtual_display_scale">電腦繪製的大小，以串流解析度的百分比表示；傳送的視訊大小不變。高於 100 時，電腦繪製的像素比傳送的多；低於 100 時則較少。</string>
     <string name="title_virtual_display_dpi">電腦顯示縮放</string>
@@ -335,8 +331,6 @@
     <string name="summary_phone_performance_hints">告訴 Android 解碼需要多久，讓它在解碼跟不上時提高 CPU 速度。請保持開啟；僅在比較解碼時間時關閉。</string>
     <string name="title_gpu_max_clocks">提升 PyroWave 的 GPU 效能</string>
     <string name="summary_gpu_max_clocks">提高 GPU 時脈以加快 PyroWave 解碼，但耗電和發熱更多。除非 PyroWave 解碼太慢，否則請保持關閉。</string>
-    <string name="title_drop_late_frames">只保留最新的影格</string>
-    <string name="summary_drop_late_frames">略過螢幕已無法及時顯示的影格，讓畫面始終不落後。請保持開啟；關閉後會依序顯示每個影格，可能增加延遲。</string>
     <string name="title_texture_view">相容性視訊檢視</string>
     <string name="summary_texture_view">用於疑難排解：視訊全黑、閃爍或位置不對時可以試試。它會增加每個影格的處理負擔，且不會用於 HDR、「減少色帶」或 PyroWave。</string>
     <string name="title_unbatched_input">即時滑鼠和觸控筆輸入</string>
@@ -495,4 +489,16 @@
     <string name="summary_stream_menu_button">串流選單開啟時此按鈕執行的動作。「預設」沿用角落標有此按鈕的圖塊；「中斷連線」這類離開的動作會先詢問。</string>
     <string name="stream_menu_button_default">預設</string>
     <string name="stream_menu_button_none">關閉</string>
+    <string name="title_lower_refresh">降低更新率</string>
+    <string name="summary_lower_refresh">讓螢幕降到最高更新率以下以節省電力：「開啟」會採用適合串流的最低更新率，例如 60 FPS 用 60 Hz；「開啟，跟隨遊戲」會依遊戲本身的影格率調整，例如 120 FPS 串流中的 60 FPS 遊戲用 60 Hz，需要電腦支援。「關閉」則維持最高更新率，延遲更低。</string>
+    <string-array name="lower_refresh_choice_names">
+        <item>關閉</item>
+        <item>開啟</item>
+        <item>開啟，跟隨遊戲</item>
+    </string-array>
+    <string name="title_arr_fixed_timing">自適應螢幕上的固定時序</string>
+    <string name="summary_arr_fixed_timing">在支援自適應更新率的螢幕上，VRR 關閉時將更新視為固定，讓影格能依你的螢幕定時，並收回顯示佇列延遲。錯過更新的影格可能會等待一整個更新週期，而不是螢幕的下一步；除非此螢幕在 VRR 關閉時畫面抖動，否則請保持關閉。</string>
+    <string name="tag_unused_adaptive_screen">未使用：此螢幕自行設定更新率</string>
+    <string name="tag_unused_with">無法與 %1$s 同時使用</string>
+    <string name="tag_every_frame_with">保留每個影格無法與 %1$s 同時使用</string>
 </resources>

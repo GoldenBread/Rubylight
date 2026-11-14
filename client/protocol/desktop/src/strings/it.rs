@@ -1359,7 +1359,9 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer di ricezione: il sistema ha conces
     ("How the picture fits a screen of another shape: Fit shows all of it with bars, Fill crops the edges, Stretch distorts it, 1:1 pixels shows it at its own size.", "Come l’immagine si adatta a uno schermo di forma diversa: «Adatta» la mostra tutta con le bande, «Riempi» ne ritaglia i bordi, «Allunga» la deforma, «Pixel 1:1» la mostra alle sue dimensioni."),
     ("Fastest", "Più veloce"),
     ("VRR: on a G-Sync, FreeSync or adaptive-refresh screen, frames are shown without waiting for the screen’s refresh. On shows each frame when the game drew it, and whole, so motion stays even; that adds about 1 to 4 ms of latency. Fastest shows each frame the moment it arrives, which can tear. Frame pacing is not used while VRR is on.", "VRR: su uno schermo G-Sync, FreeSync o ad aggiornamento adattivo, i fotogrammi vengono mostrati senza attendere l’aggiornamento dello schermo. «Attivo» mostra ogni fotogramma quando il gioco lo ha disegnato, e intero, per un movimento uniforme; questo aggiunge circa 1-4 ms di latenza. «Più veloce» mostra ogni fotogramma appena arriva, con possibile tearing. Finché il VRR è attivo, Frame pacing non viene usato."),
-    ("Trades latency against steady motion while VRR is off. Lowest latency shows frames at once; the other choices wait for the screen’s refresh: smoother, with more delay.", "Bilancia latenza e regolarità del movimento quando il VRR è disattivato. «Latenza minima» mostra subito i fotogrammi; le altre scelte attendono l’aggiornamento dello schermo: più fluide, con più ritardo."),
+    ("Trades latency against steady motion while VRR is off. Lowest latency shows frames at once; the other choices wait for the screen’s refresh: smoother, with more delay, and keeping every frame can add more. PC’s frame times shows each frame when the game drew it, a few milliseconds later.", "Bilancia latenza e regolarità del movimento quando il VRR è disattivato. «Latenza minima» mostra subito i fotogrammi; le altre scelte attendono l’aggiornamento dello schermo: più fluide, con più ritardo, e «Mantenere ogni fotogramma» può aggiungere altro ritardo. «Ritmo del PC» mostra ogni fotogramma quando il gioco lo ha disegnato, qualche millisecondo dopo."),
+    ("Balanced, keep every frame", "Bilanciato, mantieni ogni fotogramma"),
+    ("PC’s frame times", "Ritmo del PC"),
     ("Waits for the screen’s refresh, so the picture never tears; the wait adds latency. Turn it off for the lowest latency if tearing doesn’t bother you.", "Attende l’aggiornamento dello schermo, così l’immagine non ha mai tearing; l’attesa aggiunge latenza. Disattivalo per la latenza minima, se il tearing non ti dà fastidio."),
     ("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; HDR streams are enlarged without them.", "Come viene ingrandito uno stream più piccolo dello schermo. FSR e SGSR rendono i bordi più nitidi al costo di un po’ di lavoro della GPU e di batteria; gli stream HDR vengono ingranditi senza di essi."),
     ("Upscaling sharpness", "Nitidezza dell’upscaling"),
@@ -1472,7 +1474,7 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer di ricezione: il sistema ha conces
     ("Draws the PC’s cursor here in Desktop pointer mode, without video delay.", "Disegna qui il cursore del PC in modalità Puntatore del desktop, senza il ritardo del video."),
     ("1:1 pixels", "Pixel 1:1"),
     // Android features on the desktop: Presets, Theme, Check for updates now, About, small box art,
-    // the microphone’s noise suppression and automatic gain, Keep only the newest frame, the decode
+    // the microphone’s noise suppression and automatic gain, the decode
     // time after streaming, the latency CSV and benchmark, and the connection test’s ping, jitter and
     // loss (ui/settings.rs, ui/about.rs, ui/latency_bench.rs, latency_bench.rs, network_test.rs,
     // update_check.rs, main.rs).
@@ -1495,7 +1497,6 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer di ricezione: il sistema ha conces
     ("Filters fans and other steady background noise out of the microphone and adds about 7 ms of microphone delay. Leave it on.", "Filtra dal microfono le ventole e gli altri rumori di fondo costanti e aggiunge circa 7 ms di ritardo al microfono. Lascialo attivo."),
     ("Finish a stream before exporting its timings.", "Termina uno stream prima di esportarne i tempi."),
     ("Fits more games on screen in a PC’s library.", "Mostra più giochi sullo schermo nella libreria di un PC."),
-    ("Keep only the newest frame", "Mantieni solo il frame più recente"),
     ("Latency CSV saved.", "CSV della latenza salvato."),
     ("Looks for a newer version now.", "Cerca subito una versione più recente."),
     ("Measures ping, jitter and loss, and download speed where the PC supports it.", "Misura ping, jitter e perdita di pacchetti, e la velocità di download se il PC la supporta."),
@@ -1508,7 +1509,6 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer di ricezione: il sistema ha conces
     ("Saves the latest latency measurements.", "Salva le ultime misurazioni della latenza."),
     ("Show decode time after streaming", "Mostra tempo di decodifica a fine stream"),
     ("Shows the average decode time when a stream ends: this device’s decoding only, not the end-to-end latency.", "Mostra il tempo medio di decodifica al termine di uno stream: solo la decodifica di questo dispositivo, non la latenza end-to-end."),
-    ("Skips frames the screen can no longer show in time, so the picture never falls behind. Leave it on; off shows every frame in turn and can add delay.", "Salta i fotogrammi che lo schermo non può più mostrare in tempo, così l’immagine non resta mai indietro. Lascialo attivo; disattivato, mostra tutti i fotogrammi in ordine e può aggiungere ritardo."),
     ("Source and licenses", "Codice sorgente e licenze"),
     ("System", "Sistema"),
     ("System follows the system’s light or dark setting; OLED black uses pure black surfaces.", "Sistema segue l’impostazione chiara o scura del sistema; Nero OLED usa superfici completamente nere."),

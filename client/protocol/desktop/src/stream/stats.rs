@@ -276,6 +276,9 @@ impl Streaming {
             format!("{:.2} ms (GPU, display, compositor)", avg(w.present_us as f64, w.shown) / 1000.0),
         ));
         let mut pacing = pacing_label(self.pacer.mode, self.vrr.fell_back).to_owned();
+        if self.pacer.host_grid() {
+            pacing.push_str(", PC frame times");
+        }
         if self.vrr.sync != present::VrrSync::Off && self.pacer.mode != PacingMode::Vsync {
             match self.vrr.sync {
                 present::VrrSync::Scan => pacing.push_str(", tear-free"),
@@ -288,7 +291,7 @@ impl Streaming {
         if let Some(keeper) = self.keeper.as_ref().filter(|keeper| keeper.repeats > 0 || self.scan_waits.0 > 0) {
             pacing.push_str(&format!(", {} repeats, {} waited for a scan", keeper.repeats, self.scan_waits.0));
         }
-        if self.pacer.mode == PacingMode::HostTimes {
+        if self.pacer.mode == PacingMode::HostTimes || self.pacer.host_grid() {
             if let Some(delay) = self.pacer.clock.delay_us() {
                 pacing.push_str(&format!(
                     ", hold {:.1} ms, {} late",
@@ -303,7 +306,9 @@ impl Streaming {
         }
         lines.push(("Pacing".into(), pacing));
         if self.facts.phase_lock && self.pacer.mode == PacingMode::Vsync {
-            lines.push(("Phase lock".into(), self.phase.lead_us.map_or_else(|| "Waiting for display timing".into(), |lead| format!("{:.2} ms lead", f64::from(lead) / 1000.0))));
+            // The phase lock, named as Android's overlay names it.
+            lines.push(("Timed to your screen".into(), self.phase.lead_us.map_or_else(|| "Waiting for display timing".into(),
+                |lead| format!("ready {:.2} ms before its refresh", f64::from(lead) / 1000.0))));
         }
         // With the setting on: what the PC's model learnt and the shift, or that the PC refused it.
         let frame_warp_line = match (&self.frame_warp, self.facts.frame_warp_refused) {

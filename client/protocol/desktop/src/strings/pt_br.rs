@@ -1359,7 +1359,9 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer de recepção: o sistema concedeu 
     ("How the picture fits a screen of another shape: Fit shows all of it with bars, Fill crops the edges, Stretch distorts it, 1:1 pixels shows it at its own size.", "Como a imagem se encaixa em uma tela de outro formato: Ajustar mostra tudo com barras, Preencher corta as bordas, Esticar distorce a imagem e Pixels 1:1 a mostra no tamanho original."),
     ("Fastest", "Mais rápido"),
     ("VRR: on a G-Sync, FreeSync or adaptive-refresh screen, frames are shown without waiting for the screen’s refresh. On shows each frame when the game drew it, and whole, so motion stays even; that adds about 1 to 4 ms of latency. Fastest shows each frame the moment it arrives, which can tear. Frame pacing is not used while VRR is on.", "VRR: em uma tela G-Sync, FreeSync ou com atualização adaptável, os quadros são exibidos sem esperar a atualização da tela. Ativado mostra cada quadro quando o jogo o desenhou, e inteiro, para um movimento uniforme; isso adiciona cerca de 1 a 4 ms de latência. Mais rápido mostra cada quadro assim que chega, o que pode causar tearing. Ritmo de quadros não é usado enquanto o VRR estiver ativado."),
-    ("Trades latency against steady motion while VRR is off. Lowest latency shows frames at once; the other choices wait for the screen’s refresh: smoother, with more delay.", "Equilibra latência e movimento uniforme enquanto o VRR está desativado. Menor latência exibe os quadros na hora; as outras opções esperam a atualização da tela: mais fluido, com mais atraso."),
+    ("Trades latency against steady motion while VRR is off. Lowest latency shows frames at once; the other choices wait for the screen’s refresh: smoother, with more delay, and keeping every frame can add more. PC’s frame times shows each frame when the game drew it, a few milliseconds later.", "Equilibra latência e movimento uniforme enquanto o VRR está desativado. “Menor latência” exibe os quadros na hora; as outras opções esperam a atualização da tela: mais fluido, com mais atraso, e “Manter cada quadro” pode adicionar mais. “Ritmo do PC” mostra cada quadro quando o jogo o desenhou, alguns milissegundos depois."),
+    ("Balanced, keep every frame", "Equilibrado, manter cada quadro"),
+    ("PC’s frame times", "Ritmo do PC"),
     ("Waits for the screen’s refresh, so the picture never tears; the wait adds latency. Turn it off for the lowest latency if tearing doesn’t bother you.", "Espera a atualização da tela, então a imagem nunca tem tearing; a espera adiciona latência. Desative para a menor latência se o tearing não incomodar você."),
     ("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; HDR streams are enlarged without them.", "Como uma transmissão menor que a tela é ampliada. O FSR e o SGSR deixam as bordas mais nítidas ao custo de algum tempo de GPU e bateria; transmissões HDR são ampliadas sem eles."),
     ("Upscaling sharpness", "Nitidez da ampliação"),
@@ -1472,7 +1474,7 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer de recepção: o sistema concedeu 
     ("Draws the PC’s cursor here in Desktop pointer mode, without video delay.", "Desenha aqui o cursor do PC no modo Ponteiro da área de trabalho, sem o atraso do vídeo."),
     ("1:1 pixels", "Pixels 1:1"),
     // Android features on the desktop: Presets, Theme, Check for updates now, About, small box art,
-    // the microphone’s noise suppression and automatic gain, Keep only the newest frame, the decode
+    // the microphone’s noise suppression and automatic gain, the decode
     // time after streaming, the latency CSV and benchmark, and the connection test’s ping, jitter and
     // loss (ui/settings.rs, ui/about.rs, ui/latency_bench.rs, latency_bench.rs, network_test.rs,
     // update_check.rs, main.rs).
@@ -1495,7 +1497,6 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer de recepção: o sistema concedeu 
     ("Filters fans and other steady background noise out of the microphone and adds about 7 ms of microphone delay. Leave it on.", "Filtra do microfone ventiladores e outros ruídos de fundo constantes e adiciona cerca de 7 ms de atraso ao microfone. Deixe ativado."),
     ("Finish a stream before exporting its timings.", "Conclua uma transmissão antes de exportar os tempos dela."),
     ("Fits more games on screen in a PC’s library.", "Cabem mais jogos na tela da biblioteca de um PC."),
-    ("Keep only the newest frame", "Manter só o quadro mais recente"),
     ("Latency CSV saved.", "CSV de latência salvo."),
     ("Looks for a newer version now.", "Procura agora uma versão mais recente."),
     ("Measures ping, jitter and loss, and download speed where the PC supports it.", "Mede ping, jitter e perda, e a velocidade de download quando o PC oferece suporte."),
@@ -1508,7 +1509,6 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer de recepção: o sistema concedeu 
     ("Saves the latest latency measurements.", "Salva as medições de latência mais recentes."),
     ("Show decode time after streaming", "Mostrar tempo de decodificação após a transmissão"),
     ("Shows the average decode time when a stream ends: this device’s decoding only, not the end-to-end latency.", "Mostra o tempo médio de decodificação quando uma transmissão termina: só a decodificação deste dispositivo, não a latência de ponta a ponta."),
-    ("Skips frames the screen can no longer show in time, so the picture never falls behind. Leave it on; off shows every frame in turn and can add delay.", "Descarta quadros que a tela não consegue mais exibir a tempo, para a imagem nunca ficar para trás. Deixe ativado; desativado, exibe todos os quadros em ordem e pode adicionar atraso."),
     ("Source and licenses", "Código-fonte e licenças"),
     ("System", "Sistema"),
     ("System follows the system’s light or dark setting; OLED black uses pure black surfaces.", "Sistema segue a configuração clara ou escura do sistema; Preto OLED usa superfícies em preto puro."),

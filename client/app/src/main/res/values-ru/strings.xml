@@ -227,8 +227,6 @@
     <string name="summary_checkbox_enable_sops">Позволяет ПК настраивать параметры игры под трансляцию. Оставьте включённым; отключите, если ПК меняет настройки игры, а вы хотите их сохранить.</string>
     <string name="title_checkbox_host_audio">Воспроизводить звук и на ПК</string>
     <string name="title_unlock_fps">Показывать все частоты кадров</string>
-    <string name="title_checkbox_reduce_refresh_rate">Разрешить пониженную частоту обновления</string>
-    <string name="summary_checkbox_reduce_refresh_rate">Позволяет экрану работать на самой низкой частоте обновления, которой хватает для трансляции, например 60 Гц для 60 FPS, чтобы экономить заряд. Если выключено, остаётся самая высокая частота — ради меньшей задержки.</string>
     <string name="title_checkbox_disable_warnings">Скрывать предупреждения о подключении</string>
     <string name="summary_checkbox_disable_warnings">Скрывает предупреждения о плохом подключении во время трансляции. Включите, когда подключение настроено и они вам больше не нужны.</string>
     <string name="title_video_format">Видеокодек</string>
@@ -283,6 +281,8 @@
     <string name="pacing_balanced">Сбалансированно</string>
     <string name="pacing_balanced_alt">Сбалансированно с лимитом FPS</string>
     <string name="pacing_smoothness">Максимальная плавность (больше задержка)</string>
+    <string name="pacing_balanced_every">Сбалансированно, сохранять каждый кадр</string>
+    <string name="pacing_host_times">Ритм ПК</string>
     <string name="title_analog_scrolling">Стик для прокрутки</string>
     <string name="summary_analog_scrolling">Стик, который прокручивает в режиме мыши на контроллере; другой стик двигает указатель. Если стик для прокрутки не выбран, указатель двигают оба.</string>
     <string name="analogscroll_none">Оба стика двигают мышь</string>
@@ -308,10 +308,6 @@
         <item>Быстрее всего</item>
     </string-array>
     <string name="summary_vrr_unavailable">Нужен Android 6 или новее.</string>
-    <string name="title_host_frame_times">Показывать кадры в ритме ПК</string>
-    <string name="summary_host_frame_times">Ненадолго задерживает каждый кадр, чтобы он появлялся тогда, когда игра его нарисовала, и движение было ровнее. Добавляет несколько миллисекунд задержки; включите, если движение выглядит неровным.</string>
-    <string name="title_content_rate_frame_rate">Подстраивать экран под частоту кадров игры</string>
-    <string name="summary_content_rate_frame_rate">Переключает экран на частоту обновления, которая подходит к реальной частоте кадров игры, например 60 Гц для игры с 60 FPS в трансляции 120 FPS. Нужна поддержка ПК.</string>
     <string name="title_virtual_display_scale">Разрешение рендеринга на ПК</string>
     <string name="summary_virtual_display_scale">Размер, в котором ПК выполняет рендеринг, в процентах от разрешения трансляции; размер передаваемого видео не меняется. Выше 100 ПК рисует больше пикселей, чем передаёт, ниже — меньше.</string>
     <string name="title_virtual_display_dpi">Масштаб экрана ПК</string>
@@ -335,8 +331,6 @@
     <string name="summary_phone_performance_hints">Сообщает Android, сколько длится декодирование, чтобы система могла повысить скорость CPU, когда оно не успевает. Оставьте включённым; отключайте только для сравнения времени декодирования.</string>
     <string name="title_gpu_max_clocks">Повысить производительность GPU для PyroWave</string>
     <string name="summary_gpu_max_clocks">Повышенные частоты GPU для более быстрого декодирования PyroWave ценой большего энергопотребления и нагрева. Включайте, только если декодирование PyroWave слишком медленное.</string>
-    <string name="title_drop_late_frames">Оставлять только новейший кадр</string>
-    <string name="summary_drop_late_frames">Пропускает кадры, которые экран уже не успеет показать вовремя, чтобы изображение не отставало. Оставьте включённым: если выключить, каждый кадр показывается по очереди и может появиться задержка.</string>
     <string name="title_texture_view">Совместимый режим видео</string>
     <string name="summary_texture_view">Для устранения неполадок: попробуйте, если видео чёрное, мерцает или смещено. Добавляет работы на каждый кадр и не используется с HDR, «Меньше полос на градиентах» и PyroWave.</string>
     <string name="title_unbatched_input">Мгновенный ввод мыши и пера</string>
@@ -495,4 +489,16 @@
     <string name="summary_stream_menu_button">Что делает эта кнопка, пока открыто меню трансляции. «По умолчанию» оставляет плитку, в углу которой показана эта кнопка; выход, например «Отключиться», сначала запрашивает подтверждение.</string>
     <string name="stream_menu_button_default">По умолчанию</string>
     <string name="stream_menu_button_none">Выкл.</string>
+    <string name="title_lower_refresh">Пониженная частота обновления</string>
+    <string name="summary_lower_refresh">Позволяет экрану опускаться ниже максимальной частоты обновления, чтобы экономить заряд: «Вкл.» берёт самую низкую частоту, подходящую для трансляции, например 60 Гц для 60 FPS; «Вкл., по игре» следует частоте кадров игры, например 60 Гц для игры с 60 FPS в трансляции 120 FPS, и требует поддержки ПК. «Выкл.» сохраняет максимальную частоту ради меньшей задержки.</string>
+    <string-array name="lower_refresh_choice_names">
+        <item>Выкл.</item>
+        <item>Вкл.</item>
+        <item>Вкл., по игре</item>
+    </string-array>
+    <string name="title_arr_fixed_timing">Фиксированный такт на адаптивных экранах</string>
+    <string name="summary_arr_fixed_timing">На экране с адаптивной частотой обновления считает обновление фиксированным, пока VRR выключен, чтобы кадры можно было подстроить под ваш экран и возвращалась задержка очереди экрана. Кадр, опоздавший к обновлению, может тогда ждать целое обновление вместо следующего шага экрана; оставьте выключенным, если движение не дёргается на этом экране при выключенном VRR.</string>
+    <string name="tag_unused_adaptive_screen">Не используется: этот экран сам задаёт обновление</string>
+    <string name="tag_unused_with">Не используется с %1$s</string>
+    <string name="tag_every_frame_with">Сохранение каждого кадра не используется с %1$s</string>
 </resources>

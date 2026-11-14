@@ -49,8 +49,7 @@ public enum StreamPreset {
                 !fps.equals(preferences.getString(PreferenceConfiguration.FPS_PREF_STRING, PreferenceConfiguration.DEFAULT_FPS)) ||
                 preferences.getInt(PreferenceConfiguration.BITRATE_PREF_STRING, bitrate) != bitrate ||
                 vrrOffered && preferences.getBoolean("checkbox_vrr", false) ||
-                !pacing().equals(preferences.getString(PreferenceConfiguration.FRAME_PACING_PREF_STRING,
-                        PreferenceConfiguration.DEFAULT_FRAME_PACING)) ||
+                !pacing().equals(FramePacingChoice.read(preferences)) ||
                 !"off".equals(preferences.getString(PreferenceConfiguration.UPSCALING_PREF_STRING, "off")) ||
                 preferences.getBoolean("checkbox_reduce_refresh_rate", false) != (this == BATTERY_SAVER) ||
                 preferences.getBoolean("checkbox_codec_performance", true) != (this == NATIVE)) {
@@ -81,7 +80,9 @@ public enum StreamPreset {
                 // Variable refresh rate Off: Real VRR stays as it was (VrrChoice).
                 .putBoolean("checkbox_vrr", false)
                 .putString(PreferenceConfiguration.UPSCALING_PREF_STRING, "off")
+                // Frame pacing as its row shows it: this pacing, not the PC's frame times (FramePacingChoice).
                 .putString(PreferenceConfiguration.FRAME_PACING_PREF_STRING, pacing())
+                .putBoolean(PreferenceConfiguration.HOST_FRAME_TIMES_PREF_STRING, false)
                 .putBoolean("checkbox_reduce_refresh_rate", this == BATTERY_SAVER)
                 .putBoolean("checkbox_codec_performance", this == NATIVE);
         if (this == BATTERY_SAVER) {

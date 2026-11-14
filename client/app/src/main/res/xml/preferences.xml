@@ -149,51 +149,38 @@
             android:entries="@array/vrr_choice_names"
             android:entryValues="@array/vrr_choice_values"
             android:defaultValue="off" />
+        <!-- One choice over frame_pacing, checkbox_drop_late_frames (Balanced or Balanced, keep every frame) and
+             checkbox_host_frame_times (PC's frame times); frame_pacing keeps its four values (FramePacingChoice).
+             Hidden while Variable refresh rate replaces it. -->
+        <com.limelight.preferences.FramePacingPreference
+            android:key="frame_pacing"
+            android:title="@string/title_frame_pacing"
+            android:dialogMessage="@string/summary_frame_pacing"
+            android:entries="@array/frame_pacing_choice_names"
+            android:entryValues="@array/frame_pacing_choice_values"
+            android:defaultValue="latency" />
     </PreferenceCategory>
     <PreferenceCategory android:key="category_more_display">
         <Preference android:key="more_display" android:title="@string/settings_more" android:persistent="false" />
     </PreferenceCategory>
     <PreferenceCategory android:key="category_display_refresh" android:title="@string/settings_category_refresh">
-        <!-- The fixed refresh's switch for frames at the host's frame times, shown only without adaptive refresh; with it
-             the Variable refresh rate row's On does the same (StreamSettings, SettingRules,
-             PreferenceConfiguration.resolveHostFrameTimes). -->
-        <com.limelight.preferences.MaterialSwitchPreference
-            android:key="checkbox_host_frame_times"
-            android:title="@string/title_host_frame_times"
-            android:dialogMessage="@string/summary_host_frame_times"
-            android:defaultValue="false" />
-        <!-- Greyed while host frame times replace it. -->
-        <com.limelight.preferences.MaterialListPreference
-            android:key="frame_pacing"
-            android:title="@string/title_frame_pacing"
-            android:dialogMessage="@string/summary_frame_pacing"
-            android:entries="@array/video_frame_pacing_names"
-            android:entryValues="@array/video_frame_pacing_values"
-            android:defaultValue="latency" />
-        <!-- Part of Balanced frame pacing: shown only with it (StreamSettings, SettingRules). -->
-        <com.limelight.preferences.MaterialSwitchPreference
-            android:key="checkbox_drop_late_frames"
-            android:title="@string/title_drop_late_frames"
-            android:dialogMessage="@string/summary_drop_late_frames"
-            android:defaultValue="true" />
-        <com.limelight.preferences.MaterialSwitchPreference
+        <!-- Off, On or On, matched to the game: writes checkbox_reduce_refresh_rate and
+             checkbox_content_rate_frame_rate (LowerRefreshChoice). The game's rate needs a host that sends frame
+             times, and a vote never changes the mode with a blank screen. Hidden with Variable refresh rate. -->
+        <com.limelight.preferences.LowerRefreshPreference
             android:key="checkbox_reduce_refresh_rate"
-            android:title="@string/title_checkbox_reduce_refresh_rate"
-            android:dialogMessage="@string/summary_checkbox_reduce_refresh_rate"
-            android:defaultValue="false" />
-        <!-- Needs a host that sends frame times; a vote never changes the mode with a blank screen. Without
-             a lower refresh rate allowed the vote cannot drop below the stream's own, so it needs that switch. -->
+            android:title="@string/title_lower_refresh"
+            android:dialogMessage="@string/summary_lower_refresh"
+            android:entries="@array/lower_refresh_choice_names"
+            android:entryValues="@array/lower_refresh_choice_values"
+            android:defaultValue="off" />
+        <!-- Shown only on an ARR screen with Variable refresh rate off (SettingRules.arrFixedTimingShown);
+             DisplayFrameRatePolicy.adaptiveInUse. -->
         <com.limelight.preferences.MaterialSwitchPreference
-            android:key="checkbox_content_rate_frame_rate"
-            android:title="@string/title_content_rate_frame_rate"
-            android:dialogMessage="@string/summary_content_rate_frame_rate"
+            android:key="checkbox_arr_fixed_timing"
+            android:title="@string/title_arr_fixed_timing"
+            android:dialogMessage="@string/summary_arr_fixed_timing"
             android:defaultValue="false" />
-        <!-- Lowest latency and Balanced on a fixed refresh (DisplayQueueWatch); adaptive refresh greys it like frame pacing. -->
-        <com.limelight.preferences.MaterialSwitchPreference
-            android:key="checkbox_display_queue_recovery"
-            android:title="@string/title_display_queue_recovery"
-            android:dialogMessage="@string/summary_display_queue_recovery"
-            android:defaultValue="true" />
     </PreferenceCategory>
     <PreferenceCategory android:key="category_upscaling" android:title="@string/settings_category_image">
         <com.limelight.preferences.MaterialListPreference
@@ -1011,6 +998,13 @@
         <Preference android:key="more_advanced" android:title="@string/settings_more" android:persistent="false" />
     </PreferenceCategory>
     <PreferenceCategory android:key="category_advanced_compatibility" android:title="@string/settings_category_compatibility">
+        <!-- Lowest latency and Balanced on a fixed refresh (DisplayQueueWatch): hidden with the other pacings and
+             Variable refresh rate; where it does nothing, its line says why (SettingRules.displayQueueRecoveryUnused). -->
+        <com.limelight.preferences.MaterialSwitchPreference
+            android:key="checkbox_display_queue_recovery"
+            android:title="@string/title_display_queue_recovery"
+            android:dialogMessage="@string/summary_display_queue_recovery"
+            android:defaultValue="true" />
         <com.limelight.preferences.MaterialSwitchPreference
             android:key="checkbox_enable_sops"
             android:title="@string/title_checkbox_enable_sops"

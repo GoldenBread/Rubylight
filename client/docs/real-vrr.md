@@ -52,8 +52,8 @@ What it needs:
   it. Rubylight stamps each frame with the moment the game presented it; other hosts' stamps follow
   the game as closely as their capture does.
 
-On Android with Variable refresh rate off, the matching setting is **Show frames at the PC's
-frame times** (off by default): it shows each frame on the refresh nearest its time on the PC. See
+With Variable refresh rate off, the matching choice is Frame pacing's **PC's frame times** (not the
+default), on Android and the desktop: it shows each frame on the refresh nearest its time on the PC. See
 [refresh rate and VRR](video-and-latency.md#refresh-rate-and-vrr).
 
 <a id="tear-free-vrr-on-windows"></a>

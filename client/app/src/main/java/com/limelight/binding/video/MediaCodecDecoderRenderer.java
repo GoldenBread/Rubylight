@@ -806,6 +806,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     // (balancedPacesOnVsync can switch mid-stream), outputs handed to the Vulkan renderer, and the
     // phase-lock report batches made ready for the sender (MoonBridge.reportFrameSlack true).
     private long balancedOnOutput, balancedOnVsync, vulkanOutputs, phaseReports;
+    /** Why the last frame sent no phase-lock report ("timed to your screen"), for the report row; null when it did. */
+    private volatile String phaseLockOff;
     private volatile int decoderDepthBase;
     // "Speed up frame hand-off" (prefs.submitHint, debug.nightjar.submit_adpf overrides): the submit
     // thread's CPU time goes into the renderer's ADPF report.
@@ -1815,7 +1817,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         // both known since the constructor) is read here for its mode.
         boolean adaptive;
         synchronized (vsyncMonitor) {
-            adaptive = outputHasArrSupport;
+            adaptive = adaptiveInUse();
         }
         int pyroWavePacing = FramePacingPolicy.pyroWaveMode(prefs.framePacing, prefs.vrr, prefs.hostFrameTimes, adaptive);
         // As for MediaCodec's clock: frames are never shown closer than one refresh at the top rate.
@@ -3458,7 +3460,11 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      */
     private void reportPhaseSlack(long readyNs) {
         // Adaptive refresh has no fixed latch; an upscaled frame is not display-ready yet.
-        if (stopping || !outputVsyncAvailable || upscaler != null) return;
+        if (stopping || !outputVsyncAvailable) return;
+        if (upscaler != null) {
+            phaseLockOff = "upscaling";
+            return;
+        }
         // The scheduler gives each frame the first vsync its plan allows. With the cluster right at
         // the latch, ordinary jitter flips frames between two refreshes, so the host keeps it a
         // little earlier there.
@@ -3466,7 +3472,10 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 SCHEDULED_LATCH_ROOM_NS : 0;
         long slackNs, intervalNs;
         synchronized (vsyncMonitor) {
-            if (outputHasArrSupport) return;
+            if (adaptiveInUse()) {
+                phaseLockOff = "adaptive screen";
+                return;
+            }
             intervalNs = vsyncIntervalNs;
             slackNs = latchSlackNs(readyNs, vsyncTimeNs, intervalNs, vsyncPresentationDeadlineNs + roomNs);
         }
@@ -3779,7 +3788,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
         @Override public void timing(ScheduledRelease.Timing out) {
             synchronized (vsyncMonitor) {
-                out.grid = outputVsyncAvailable && upscaler == null && !outputHasArrSupport &&
+                out.grid = outputVsyncAvailable && upscaler == null && !adaptiveInUse() &&
                         vsyncTimeNs != 0 && vsyncIntervalNs > 0;
                 out.vsyncNs = vsyncTimeNs;
                 out.intervalNs = vsyncIntervalNs;
@@ -4075,7 +4084,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         boolean arr;
         synchronized (vsyncMonitor) {
             refreshNs = vsyncIntervalNs;
-            arr = outputHasArrSupport;
+            arr = adaptiveInUse();
         }
         boolean watched = DisplayQueueWatch.applies(prefs.displayQueueRecovery,
                 prefs.framePacing == PreferenceConfiguration.FRAME_PACING_MIN_LATENCY ||
@@ -4317,7 +4326,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         // (ReleasePort.timing), so a frame far behind the others is shown when it is ready.
         boolean adaptive;
         synchronized (vsyncMonitor) {
-            adaptive = outputHasArrSupport;
+            adaptive = adaptiveInUse();
         }
         hostFrameClock.start(hostFrameTimes ? maxDisplayRefreshRate() : 0, hostFrameTimes,
                 hostAnnouncesClockSync(), trackContentRate || hostFrameTimes, hostFrameTimes && adaptive);
@@ -4504,12 +4513,27 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                         balancedOnOutput + ", outputs queued for vsync " + balancedOnVsync + ")" : "") +
                 (vulkanOutputs > 0 ? ", Vulkan renderer " + vulkanOutputs + " outputs" : "") +
                 ", PC frame times " + onOff(hostFrameTimes) +
-                // Whether the PC takes 0x5530 at all (Rubylight always does), then the batches queued.
-                ", PC takes phase-lock reports " + onOff(hostPhaseLock) + ", report batches " + phaseReports +
-                ", ARR screen " + onOff(outputHasArrSupport) +
+                ", " + timedToScreen() +
+                ", ARR screen " + onOff(outputHasArrSupport) + ", fixed timing " + onOff(prefs.arrFixedTiming) +
                 ", VRR " + onOff(prefs.vrr) + ", newest only " + onOff(prefs.dropLateFrames) +
                 ", queue take-back " + onOff(prefs.displayQueueRecovery) +
                 ", vsync " + (refreshNs > 0 ? String.format(java.util.Locale.ROOT, "%.2f ms", refreshNs / 1e6) : "unknown");
+    }
+
+    /**
+     * Phase lock in the settings' words, "timed to your screen": on once reports went out, else why not (the PC
+     * takes none, the reasons reportPhaseSlack saw, Vulkan presents, Balanced on the vsync queue), then the batches
+     * queued (MoonBridge.reportFrameSlack).
+     */
+    private String timedToScreen() {
+        String off = !hostPhaseLock ? "other PC" : phaseReports > 0 ? null : phaseLockOff != null ? phaseLockOff :
+                vulkanOutputs > 0 ? "Vulkan" : balancedOnVsync > 0 ? "Balanced queue" : "no reports";
+        return "timed to your screen " + (off == null ? "on" : "off (" + off + ")") + ", report batches " + phaseReports;
+    }
+
+    /** Whether the stream's screen is timed as adaptive (DisplayFrameRatePolicy.adaptiveInUse). Under vsyncMonitor. */
+    private boolean adaptiveInUse() {
+        return DisplayFrameRatePolicy.adaptiveInUse(outputHasArrSupport, prefs.vrr, prefs.arrFixedTiming);
     }
 
     private static String thermalName(int level) {
@@ -4971,7 +4995,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             }
             int leadUs = MoonBridge.getPhaseLockLeadUs();
             if (leadUs != Integer.MIN_VALUE) {
-                decode.append("\nReady before screen refresh: ").append(metric(leadUs / 1000f, " ms"));
+                decode.append("\nTimed to your screen: ready ").append(metric(leadUs / 1000f, " ms")).append(" before its refresh");
             }
             String hostFrameLine = hostFrameTimes && mediaCodec ? hostFrameClock.overlayLine() : null;
             if (hostFrameLine != null) decode.append('\n').append(hostFrameLine);

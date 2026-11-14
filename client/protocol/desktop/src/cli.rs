@@ -187,7 +187,7 @@ impl StreamOptions {
         // A pacing already chosen that waits for the refresh is kept.
         match self.frame_pacing {
             Some(true) if settings.frame_pacing == FramePacing::Latency => settings.frame_pacing = FramePacing::Smoothness,
-            Some(false) => settings.frame_pacing = FramePacing::Latency,
+            Some(false) => (settings.frame_pacing, settings.host_frame_times) = (FramePacing::Latency, false),
             _ => {}
         }
         set(self.overlay, &mut settings.overlay);

@@ -1359,7 +1359,9 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приймання: систе
     ("How the picture fits a screen of another shape: Fit shows all of it with bars, Fill crops the edges, Stretch distorts it, 1:1 pixels shows it at its own size.", "Як зображення вписується в екран з іншими пропорціями: «Вписати» показує його повністю зі смугами, «Заповнити» обрізає краї, «Розтягнути» спотворює, «Пікселі 1:1» показує в початковому розмірі."),
     ("Fastest", "Найшвидше"),
     ("VRR: on a G-Sync, FreeSync or adaptive-refresh screen, frames are shown without waiting for the screen’s refresh. On shows each frame when the game drew it, and whole, so motion stays even; that adds about 1 to 4 ms of latency. Fastest shows each frame the moment it arrives, which can tear. Frame pacing is not used while VRR is on.", "VRR: на екрані з G-Sync, FreeSync або адаптивною частотою оновлення кадри показуються, не чекаючи оновлення екрана. «Увімкнено» показує кожен кадр тоді, коли гра його намалювала, і цілим, щоб рух залишався рівним; це додає близько 1–4 мс затримки. «Найшвидше» показує кожен кадр одразу після надходження, можливі розриви. Поки VRR увімкнено, «Рівномірність кадрів» не використовується."),
-    ("Trades latency against steady motion while VRR is off. Lowest latency shows frames at once; the other choices wait for the screen’s refresh: smoother, with more delay.", "Баланс між затримкою й рівним рухом, коли VRR вимкнено. «Найменша затримка» показує кадри одразу; інші варіанти чекають оновлення екрана: плавніше, але затримка більша."),
+    ("Trades latency against steady motion while VRR is off. Lowest latency shows frames at once; the other choices wait for the screen’s refresh: smoother, with more delay, and keeping every frame can add more. PC’s frame times shows each frame when the game drew it, a few milliseconds later.", "Баланс між затримкою й рівним рухом, коли VRR вимкнено. «Найменша затримка» показує кадри одразу; інші варіанти чекають оновлення екрана: плавніше, але з більшою затримкою, а збереження кожного кадру може додати ще. «Ритм ПК» показує кожен кадр тоді, коли гра його намалювала, на кілька мілісекунд пізніше."),
+    ("Balanced, keep every frame", "Збалансовано, зберігати кожен кадр"),
+    ("PC’s frame times", "Ритм ПК"),
     ("Waits for the screen’s refresh, so the picture never tears; the wait adds latency. Turn it off for the lowest latency if tearing doesn’t bother you.", "Чекає оновлення екрана, тому зображення ніколи не розривається; очікування додає затримку. Вимкніть заради найменшої затримки, якщо розриви вам не заважають."),
     ("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; HDR streams are enlarged without them.", "Як збільшується трансляція, менша за екран. FSR і SGSR роблять краї чіткішими ціною навантаження на GPU й витрати заряду; HDR-трансляції збільшуються без них."),
     ("Upscaling sharpness", "Різкість масштабування"),
@@ -1472,7 +1474,7 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приймання: систе
     ("Draws the PC’s cursor here in Desktop pointer mode, without video delay.", "Малює курсор ПК тут у режимі «Вказівник робочого столу», без затримки відео."),
     ("1:1 pixels", "Пікселі 1:1"),
     // Android features on the desktop: Presets, Theme, Check for updates now, About, small box art,
-    // the microphone’s noise suppression and automatic gain, Keep only the newest frame, the decode
+    // the microphone’s noise suppression and automatic gain, the decode
     // time after streaming, the latency CSV and benchmark, and the connection test’s ping, jitter and
     // loss (ui/settings.rs, ui/about.rs, ui/latency_bench.rs, latency_bench.rs, network_test.rs,
     // update_check.rs, main.rs).
@@ -1495,7 +1497,6 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приймання: систе
     ("Filters fans and other steady background noise out of the microphone and adds about 7 ms of microphone delay. Leave it on.", "Прибирає з мікрофона шум вентиляторів та інший рівний фоновий шум і додає близько 7 мс затримки мікрофона. Залиште ввімкненим."),
     ("Finish a stream before exporting its timings.", "Завершіть трансляцію, перш ніж експортувати її таймінги."),
     ("Fits more games on screen in a PC’s library.", "Більше ігор на екрані в бібліотеці ПК."),
-    ("Keep only the newest frame", "Лише найновіший кадр"),
     ("Latency CSV saved.", "CSV затримки збережено."),
     ("Looks for a newer version now.", "Шукає новішу версію просто зараз."),
     ("Measures ping, jitter and loss, and download speed where the PC supports it.", "Вимірює пінг, джитер і втрати, а також швидкість завантаження, якщо ПК це підтримує."),
@@ -1508,7 +1509,6 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приймання: систе
     ("Saves the latest latency measurements.", "Зберігає останні вимірювання затримки."),
     ("Show decode time after streaming", "Показувати час декодування після трансляції"),
     ("Shows the average decode time when a stream ends: this device’s decoding only, not the end-to-end latency.", "Показує середній час декодування після завершення трансляції: лише декодування на цьому пристрої, а не повну затримку від ПК до екрана."),
-    ("Skips frames the screen can no longer show in time, so the picture never falls behind. Leave it on; off shows every frame in turn and can add delay.", "Пропускає кадри, які екран уже не встигне показати вчасно, щоб зображення не відставало. Залиште ввімкненим: якщо вимкнути, кожен кадр показується по черзі й може з’явитися затримка."),
     ("Source and licenses", "Вихідний код і ліцензії"),
     ("System", "Системна"),
     ("System follows the system’s light or dark setting; OLED black uses pure black surfaces.", "«Системна» повторює світлу або темну тему системи; «Чорний OLED» робить тло повністю чорним."),

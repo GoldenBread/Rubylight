@@ -38,6 +38,12 @@ public final class HostStreamProfile {
     public Integer upscalingSharpness;
     /** A frame pacing choice as the global setting stores it, e.g. "balanced". */
     public String pacing;
+    /**
+     * The Frame pacing row's other two values, set with {@code pacing} by its choice (FramePacingChoice): the PC's
+     * frame times on a fixed refresh, and Balanced's "Keep only the newest frame". Null follows the layers below, as
+     * layers saved before them did: there the main switch for the PC's frame times still wins over a layer's pacing.
+     */
+    public Boolean hostFrameTimes, dropLateFrames;
     /** RTX HDR and RTX Video enhancement turned on or off for this PC's streams; null follows its app setting. */
     public Boolean rtxHdr, rtxVideo;
 
@@ -115,7 +121,7 @@ public final class HostStreamProfile {
         return nativeResolution == null && refreshRateX100 == null && bitrate == null && renderScale == null &&
                 displayScale == null && codec == null && virtualDisplay == null && hdr == null && fullRange == null &&
                 yuv444 == null && vrr == null && realVrr == null && upscalingMode == null && upscalingSharpness == null && pacing == null &&
-                rtxHdr == null && rtxVideo == null;
+                hostFrameTimes == null && dropLateFrames == null && rtxHdr == null && rtxVideo == null;
     }
 
     public boolean has(Field field) {
@@ -130,7 +136,7 @@ public final class HostStreamProfile {
             case VRR: return vrr != null;
             case YUV444: return yuv444 != null;
             case FULL_RANGE: return fullRange != null;
-            case PACING: return pacing != null;
+            case PACING: return pacing != null || hostFrameTimes != null || dropLateFrames != null;
             case VIRTUAL_DISPLAY: return virtualDisplay != null;
             case DISPLAY_SCALE: return displayScale != null;
             case RTX_HDR: return rtxHdr != null;
@@ -159,7 +165,11 @@ public final class HostStreamProfile {
                 break;
             case YUV444: yuv444 = from.yuv444; break;
             case FULL_RANGE: fullRange = from.fullRange; break;
-            case PACING: pacing = from.pacing; break;
+            case PACING:
+                pacing = from.pacing;
+                hostFrameTimes = from.hostFrameTimes;
+                dropLateFrames = from.dropLateFrames;
+                break;
             case VIRTUAL_DISPLAY: virtualDisplay = from.virtualDisplay; break;
             case DISPLAY_SCALE: displayScale = from.displayScale; break;
             case RTX_HDR: rtxHdr = from.rtxHdr; break;
@@ -218,6 +228,9 @@ public final class HostStreamProfile {
         if (upscalingMode != null) config.upscalingMode = upscalingMode;
         if (upscalingSharpness != null) config.upscalingSharpness = upscalingSharpness;
         if (pacing != null) config.framePacing = PreferenceConfiguration.framePacingValue(pacing);
+        // The caller resolves the PC's frame times against VRR afterwards (resolveHostFrameTimes).
+        if (hostFrameTimes != null) config.gridHostFrameTimes = hostFrameTimes;
+        if (dropLateFrames != null) config.dropLateFrames = dropLateFrames;
         if (rtxHdr != null) config.rtxHdr = rtxHdr;
         if (rtxVideo != null) config.rtxVideo = rtxVideo;
         if (config.enableHdr || config.videoFormat == PreferenceConfiguration.FormatOption.FORCE_PYROWAVE) {
@@ -272,6 +285,8 @@ public final class HostStreamProfile {
         if (upscalingMode != null) out.append(";upscaling=").append(upscalingMode.name());
         if (upscalingSharpness != null) out.append(";sharpness=").append(upscalingSharpness);
         if (pacing != null) out.append(";pacing=").append(pacing);
+        if (hostFrameTimes != null) out.append(";host_times=").append(hostFrameTimes);
+        if (dropLateFrames != null) out.append(";newest=").append(dropLateFrames);
         if (rtxHdr != null) out.append(";rtx_hdr=").append(rtxHdr);
         if (rtxVideo != null) out.append(";rtx_video=").append(rtxVideo);
         return out.toString();
@@ -356,6 +371,12 @@ public final class HostStreamProfile {
                 case "pacing":
                     profile.pacing = requirePacing(field);
                     break;
+                case "host_times":
+                    profile.hostFrameTimes = parseBoolean(field);
+                    break;
+                case "newest":
+                    profile.dropLateFrames = parseBoolean(field);
+                    break;
                 case "rtx_hdr":
                     profile.rtxHdr = parseBoolean(field);
                     break;
@@ -369,6 +390,9 @@ public final class HostStreamProfile {
         }
         // Real VRR is part of VRR on; alone it would change nothing a layer shows.
         if (!Boolean.TRUE.equals(profile.vrr)) profile.realVrr = null;
+        // Both belong to the layer's own pacing, and the newest-frame switch to Balanced alone.
+        if (profile.pacing == null) profile.hostFrameTimes = null;
+        if (!"balanced".equals(profile.pacing)) profile.dropLateFrames = null;
         return profile;
     }
 

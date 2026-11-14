@@ -26,7 +26,7 @@ pub(super) const SECTION_KEYS: [&[&[&str]]; 8] = [
         &["prefer_yuv444", "experimental_packed_444"], &["sdr_10bit"], &["frame_warp"], &["adaptive_quality"], &["quality_min_short_edge"], &["quality_min_fps"],
         &["hdr_desktop_brightness"], &["rtx_hdr"], &["rtx_video"]],
     &[&["window_mode"], &["video_scaling"], &["vrr", "present_at_host_times", "vrr_tear_free"],
-        &["frame_pacing"], &["drop_late_frames"], &["vsync"],
+        &["frame_pacing", "drop_late_frames", "host_frame_times"], &["vsync"],
         &["upscaling"], &["upscale_sharpness"], &["align_video_top"],
         &["virtual_display"], &["virtual_display_scale"], &["virtual_display_dpi"], &["host_display"]],
     &[&["mouse_mode"], &["controllers", "multi_controller"], &["clipboard_sync"],
@@ -876,25 +876,26 @@ impl Launcher {
             });
             rows.always();
             let vrr = s.vrr && vrr_offered;
-            rows.group(en("Refresh rate"));
             rows.when(!vrr);
-            setting_row(ui, s, &mut rows, &["frame_pacing"], "Frame pacing", "Trades latency against steady motion while VRR is off. Lowest latency shows frames at once; the other choices wait for the screen’s refresh: smoother, with more delay.", |ui, s| {
-                Combo::from_id_salt("frame-pacing").selected_text(tr(s.frame_pacing.label())).show_ui(ui, |ui| {
-                    for mode in crate::config::FramePacing::ALL {
-                        ui.selectable_value(&mut s.frame_pacing, mode, tr(mode.label()));
+            // A main row beside Variable refresh rate, as on Android. One choice over its three keys (`FramePacingChoice`, Android's own): Balanced's newest
+            // frame or every frame, and the PC's frame times, which take over from the pacing.
+            setting_row(ui, s, &mut rows, &["frame_pacing", "drop_late_frames", "host_frame_times"], "Frame pacing", "Trades latency against steady motion while VRR is off. Lowest latency shows frames at once; the other choices wait for the screen’s refresh: smoother, with more delay, and keeping every frame can add more. PC’s frame times shows each frame when the game drew it, a few milliseconds later.", |ui, s| {
+                let current = frame_pacing_choice(s);
+                let mut choice = current;
+                let response = Combo::from_id_salt("frame-pacing").selected_text(frame_pacing_choice_name(current)).show_ui(ui, |ui| {
+                    for each in FramePacingChoice::ALL {
+                        ui.selectable_value(&mut choice, each, frame_pacing_choice_name(each));
                     }
-                }).response
+                }).response;
+                if choice != current {
+                    set_frame_pacing_choice(s, choice);
+                }
+                response
             });
-            // Balanced's choice: the newest picture at each refresh, or each in turn (`Pacer::take_due`).
-            // The other pacings decide that themselves, as on Android (`SettingRules.dropLateFramesApplies`).
-            rows.when(s.frame_pacing == crate::config::FramePacing::Balanced);
-            setting_row(ui, s, &mut rows, &["drop_late_frames"], "Keep only the newest frame", "Skips frames the screen can no longer show in time, so the picture never falls behind. Leave it on; off shows every frame in turn and can add delay.", |ui, s| {
-                toggle(ui, &mut s.drop_late_frames)
-            });
-            rows.always();
-            rows.when(!vrr);
-            // Still narrowed to VRR off, as Frame pacing; a pacing that waits for the refresh keeps it on.
-            rows.when(!s.frame_pacing.forces_vsync());
+            rows.group(en("Refresh rate"));
+            // VRR off, as Frame pacing; a pacing that waits for the refresh keeps it on, and so do
+            // the PC's frame times.
+            rows.when(!vrr && !s.frame_pacing.forces_vsync() && !s.host_frame_times);
             setting_row(ui, s, &mut rows, &["vsync"], "V-Sync", "Waits for the screen’s refresh, so the picture never tears; the wait adds latency. Turn it off for the lowest latency if tearing doesn’t bother you.", |ui, s| toggle(ui, &mut s.vsync));
             rows.always();
             rows.group(en("Image"));
@@ -1667,7 +1668,9 @@ pub(super) fn preset_current(s: &Settings, vrr_offered: bool) -> presets::Curren
         default_bitrate: s.bitrate_kbps == 0,
         default_vrr: !vrr_offered || s.vrr == defaults.vrr,
         default_upscaling: s.upscaling == defaults.upscaling,
+        // The PC's frame times are no preset's pacing, as on Android (`StreamPreset.matches`).
         pacing: match s.frame_pacing {
+            _ if s.host_frame_times => None,
             FramePacing::Latency => Some(presets::Pacing::Latency),
             FramePacing::CapFps => Some(presets::Pacing::CapFps),
             FramePacing::Balanced | FramePacing::Smoothness => None,
@@ -1690,6 +1693,7 @@ pub(super) fn apply_preset(s: &mut Settings, preset: Preset) {
         presets::Pacing::Latency => FramePacing::Latency,
         presets::Pacing::CapFps => FramePacing::CapFps,
     };
+    s.host_frame_times = false;
     if preset.sets_latency_switches() {
         (s.drop_late_frames, s.unbatched_input, s.network_priority) = (true, true, true);
     }
@@ -1883,6 +1887,65 @@ pub(super) fn set_vrr_choice(s: &mut Settings, choice: VrrChoice) {
     }
 }
 
+/// "Frame pacing" as one choice over its three keys, which settings.json keeps as they are:
+/// `frame_pacing`, `drop_late_frames` (Balanced's newest frame) and `host_frame_times` (the PC's
+/// frame times, which take over from the pacing). Android's `FramePacingChoice`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum FramePacingChoice {
+    Latency,
+    /// Balanced, the newest picture at each refresh.
+    Balanced,
+    /// Balanced, each picture in turn.
+    BalancedEvery,
+    CapFps,
+    Smoothness,
+    HostTimes,
+}
+
+impl FramePacingChoice {
+    /// The choices the list offers, in Android's order.
+    pub(super) const ALL: [FramePacingChoice; 6] = [FramePacingChoice::Latency, FramePacingChoice::Balanced, FramePacingChoice::BalancedEvery,
+        FramePacingChoice::CapFps, FramePacingChoice::Smoothness, FramePacingChoice::HostTimes];
+}
+
+/// The choice the saved keys make: the PC's frame times whatever pacing is under them, and
+/// Balanced's newest-frame key only with Balanced.
+pub(super) fn frame_pacing_choice(s: &Settings) -> FramePacingChoice {
+    if s.host_frame_times { return FramePacingChoice::HostTimes; }
+    match s.frame_pacing {
+        FramePacing::Latency => FramePacingChoice::Latency,
+        FramePacing::Balanced if s.drop_late_frames => FramePacingChoice::Balanced,
+        FramePacing::Balanced => FramePacingChoice::BalancedEvery,
+        FramePacing::CapFps => FramePacingChoice::CapFps,
+        FramePacing::Smoothness => FramePacingChoice::Smoothness,
+    }
+}
+
+/// Saves a choice into the three keys: the PC's frame times leave the pacing under them for when
+/// another choice comes back, and only Balanced's two choices write its newest-frame key.
+pub(super) fn set_frame_pacing_choice(s: &mut Settings, choice: FramePacingChoice) {
+    s.host_frame_times = choice == FramePacingChoice::HostTimes;
+    match choice {
+        FramePacingChoice::Latency => s.frame_pacing = FramePacing::Latency,
+        FramePacingChoice::Balanced => (s.frame_pacing, s.drop_late_frames) = (FramePacing::Balanced, true),
+        FramePacingChoice::BalancedEvery => (s.frame_pacing, s.drop_late_frames) = (FramePacing::Balanced, false),
+        FramePacingChoice::CapFps => s.frame_pacing = FramePacing::CapFps,
+        FramePacingChoice::Smoothness => s.frame_pacing = FramePacing::Smoothness,
+        FramePacingChoice::HostTimes => {}
+    }
+}
+
+pub(super) fn frame_pacing_choice_name(choice: FramePacingChoice) -> &'static str {
+    match choice {
+        FramePacingChoice::Latency => tr(FramePacing::Latency.label()),
+        FramePacingChoice::Balanced => tr(FramePacing::Balanced.label()),
+        FramePacingChoice::BalancedEvery => tr("Balanced, keep every frame"),
+        FramePacingChoice::CapFps => tr(FramePacing::CapFps.label()),
+        FramePacingChoice::Smoothness => tr(FramePacing::Smoothness.label()),
+        FramePacingChoice::HostTimes => tr("PC’s frame times"),
+    }
+}
+
 fn vrr_choice_name(choice: VrrChoice) -> &'static str {
     match choice {
         VrrChoice::Off => tr("Off"),
@@ -2020,7 +2083,7 @@ pub(super) fn value_text(key: &str, s: &Settings, display: &Display, style: crat
         "host_display" => tr(host_display_name(s.host_display)).to_owned(),
         "virtual_display_scale" => format!("{}%", s.virtual_display_scale),
         "virtual_display_dpi" => display_scale_name(s.virtual_display_dpi),
-        "frame_pacing" => tr(s.frame_pacing.label()).to_owned(),
+        "frame_pacing" | "drop_late_frames" | "host_frame_times" => frame_pacing_choice_name(frame_pacing_choice(s)).to_owned(),
         "mouse_mode" => mouse_name(s.mouse_mode).to_owned(),
         "mouse_speed" => format!("{}%", s.mouse_speed),
         "deadzone" => format!("{}%", s.deadzone),
@@ -2060,7 +2123,7 @@ pub(super) fn value_text(key: &str, s: &Settings, display: &Display, style: crat
 /// by Android preference key, in `SETTINGS_SECTIONS` order. A test keeps the two equal.
 pub(super) const MAIN_KEYS: [(&str, &[&str]); 8] = [
     ("video", &["list_resolution", "list_fps", "automatic_bitrate", "seekbar_bitrate_kbps", "checkbox_auto_bitrate", "list_mobile_bitrate_kbps", "video_format", "checkbox_enable_hdr"]),
-    ("display", &["checkbox_stretch_video", "stream_orientation", "checkbox_vrr"]),
+    ("display", &["checkbox_stretch_video", "stream_orientation", "checkbox_vrr", "frame_pacing"]),
     ("input", &["checkbox_touchscreen_trackpad", "checkbox_absolute_mouse_mode", "controllers", "controller_button_mapping", "controller_test", "checkbox_show_onscreen_controls", "checkbox_keyboard_follows_text_fields", "checkbox_clipboard_sync"]),
     ("audio", &["list_audio_config", "checkbox_host_audio", "checkbox_enable_mic", "checkbox_mic_button"]),
     ("streaming", &["checkbox_enable_perf_overlay", "performance_overlay_position", "checkbox_auto_reconnect", "network_tests"]),
@@ -2083,7 +2146,7 @@ pub(super) const ANDROID_KEYS: &[(&str, &str)] = &[
     ("quality_min_fps", "adaptive_quality_min_fps"),
     // Display & image
     ("video_scaling", "checkbox_stretch_video"), ("vrr", "checkbox_vrr"), ("present_at_host_times", "checkbox_real_vrr"),
-    ("frame_pacing", "frame_pacing"), ("drop_late_frames", "checkbox_drop_late_frames"), ("upscaling", "upscaling_mode"),
+    ("frame_pacing", "frame_pacing"), ("upscaling", "upscaling_mode"),
     ("upscale_sharpness", "upscaling_sharpness"),
     ("align_video_top", "video_alignment"), ("virtual_display", "checkbox_virtual_display"),
     ("virtual_display_scale", "seekbar_virtual_display_scale"), ("virtual_display_dpi", "list_virtual_display_dpi"),

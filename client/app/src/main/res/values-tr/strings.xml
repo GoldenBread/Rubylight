@@ -227,8 +227,6 @@
     <string name="summary_checkbox_enable_sops">Bilgisayarın oyunun ayarlarını yayına göre düzenlemesine izin verir. Açık bırakın; bilgisayar bir oyunun ayarlarını değiştiriyor ve siz bunların korunmasını istiyorsanız kapatın.</string>
     <string name="title_checkbox_host_audio">Sesi bilgisayarda da çal</string>
     <string name="title_unlock_fps">Tüm kare hızlarını göster</string>
-    <string name="title_checkbox_reduce_refresh_rate">Daha düşük yenileme hızına izin ver</string>
-    <string name="summary_checkbox_reduce_refresh_rate">Pil tasarrufu için ekranın, yayına yeten en düşük yenileme hızını (ör. 60 FPS için 60 Hz) kullanmasına izin verir. Kapalıyken, daha düşük gecikme için en yüksek hız korunur.</string>
     <string name="title_checkbox_disable_warnings">Bağlantı uyarılarını gizle</string>
     <string name="summary_checkbox_disable_warnings">Yayın sırasında zayıf bağlantı uyarılarını gizler. Bağlantınızı kurup bu uyarılara ihtiyacınız kalmadığında açın.</string>
     <string name="title_video_format">Video codec’i</string>
@@ -283,6 +281,8 @@
     <string name="pacing_balanced">Dengeli</string>
     <string name="pacing_balanced_alt">FPS sınırı ile dengeli</string>
     <string name="pacing_smoothness">En akıcı video (daha fazla gecikme)</string>
+    <string name="pacing_balanced_every">Dengeli, her kareyi tut</string>
+    <string name="pacing_host_times">Bilgisayarın kare zamanlaması</string>
     <string name="title_analog_scrolling">Kaydırma için çubuk</string>
     <string name="summary_analog_scrolling">Kumandayla fare modunda kaydırma yapan çubuk; diğer çubuk imleci hareket ettirir. Kaydırma çubuğu seçilmezse ikisi de imleci hareket ettirir.</string>
     <string name="analogscroll_none">İki çubuk da fareyi hareket ettirir</string>
@@ -308,10 +308,6 @@
         <item>En hızlı</item>
     </string-array>
     <string name="summary_vrr_unavailable">Android 6 veya üstü gerekir.</string>
-    <string name="title_host_frame_times">Kareleri bilgisayarın zamanlamasıyla göster</string>
-    <string name="summary_host_frame_times">Her kareyi kısa süre tutar; böylece kare, oyunun çizdiği zamanlamayla görünür ve hareket dengelenir. Birkaç milisaniye gecikme ekler; hareket düzensiz görünüyorsa açın.</string>
-    <string name="title_content_rate_frame_rate">Ekranı oyunun kare hızına uydur</string>
-    <string name="summary_content_rate_frame_rate">Ekranı oyunun gerçek kare hızına uyan bir yenileme hızına geçirir; örneğin 120 FPS’lik bir yayındaki 60 FPS’lik oyun için 60 Hz. Bilgisayar desteği gerekir.</string>
     <string name="title_virtual_display_scale">Bilgisayarın işleme çözünürlüğü</string>
     <string name="summary_virtual_display_scale">Bilgisayarın işlediği boyut, yayın çözünürlüğünün yüzdesi olarak; gönderilen videonun boyutu değişmez. 100’ün üstünde bilgisayar gönderdiğinden daha fazla, altında daha az piksel çizer.</string>
     <string name="title_virtual_display_dpi">Bilgisayar ekran ölçeği</string>
@@ -335,8 +331,6 @@
     <string name="summary_phone_performance_hints">Android’e kod çözmenin ne kadar sürdüğünü bildirir; böylece kod çözme geride kalınca Android CPU hızını artırabilir. Açık bırakın; yalnızca kod çözme sürelerini karşılaştırmak için kapatın.</string>
     <string name="title_gpu_max_clocks">PyroWave için GPU performansını artır</string>
     <string name="summary_gpu_max_clocks">Daha hızlı PyroWave kod çözme için daha yüksek GPU saat hızları; karşılığında daha fazla güç tüketimi ve ısı. PyroWave kod çözme çok yavaş değilse kapalı bırakın.</string>
-    <string name="title_drop_late_frames">Yalnızca en yeni kareyi tut</string>
-    <string name="summary_drop_late_frames">Ekranın artık zamanında gösteremeyeceği kareleri atlar; böylece görüntü hiç geride kalmaz. Açık bırakın; kapalıyken her kare sırayla gösterilir ve gecikme artabilir.</string>
     <string name="title_texture_view">Uyumluluk video görünümü</string>
     <string name="summary_texture_view">Sorun giderme içindir: video siyahsa, titriyorsa veya yanlış yerdeyse deneyin. Her karede ek iş yükü getirir; HDR, “Daha az renk bantlanması” veya PyroWave ile kullanılmaz.</string>
     <string name="title_unbatched_input">Anında fare ve kalem girişi</string>
@@ -495,4 +489,16 @@
     <string name="summary_stream_menu_button">Yayın menüsü açıkken bu düğmenin çalıştırdığı işlem. “Varsayılan”, köşesinde bu düğmeyi gösteren kutucuğu korur; “Bağlantıyı kes” gibi bir çıkış işlemi önce onay ister.</string>
     <string name="stream_menu_button_default">Varsayılan</string>
     <string name="stream_menu_button_none">Kapalı</string>
+    <string name="title_lower_refresh">Daha düşük yenileme hızı</string>
+    <string name="summary_lower_refresh">Pil tasarrufu için ekranın en yüksek yenileme hızının altına inmesini sağlar: “Açık”, yayına uyan en düşük hızı alır, örneğin 60 FPS için 60 Hz; “Açık, oyuna göre” oyunun kendi kare hızını izler, örneğin 120 FPS’lik yayında 60 FPS’lik oyun için 60 Hz, ve bilgisayar desteği gerektirir. “Kapalı”, en yüksek hızı korur, daha düşük gecikme için.</string>
+    <string-array name="lower_refresh_choice_names">
+        <item>Kapalı</item>
+        <item>Açık</item>
+        <item>Açık, oyuna göre</item>
+    </string-array>
+    <string name="title_arr_fixed_timing">Uyarlanabilir ekranlarda sabit zamanlama</string>
+    <string name="summary_arr_fixed_timing">Uyarlanabilir yenileme hızlı bir ekranda, VRR kapalıyken yenilemeyi sabit sayar; böylece kareler ekranınıza göre zamanlanır ve ekran kuyruğu gecikmesi geri alınır. Yenilemesini kaçıran bir kare, ekranın sonraki adımı yerine tam bir yenileme bekleyebilir; bu ekranda VRR kapalıyken hareket titriyorsa açın, aksi halde kapalı bırakın.</string>
+    <string name="tag_unused_adaptive_screen">Kullanılmıyor: bu ekran yenilemesini kendi ayarlar</string>
+    <string name="tag_unused_with">%1$s ile kullanılmıyor</string>
+    <string name="tag_every_frame_with">Her kareyi tutma %1$s ile kullanılmıyor</string>
 </resources>

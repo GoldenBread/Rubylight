@@ -1359,7 +1359,9 @@ sudo sysctl -w net.core.rmem_max={}", "Bufor odbioru: system przydzielił {0} Ki
     ("How the picture fits a screen of another shape: Fit shows all of it with bars, Fill crops the edges, Stretch distorts it, 1:1 pixels shows it at its own size.", "Jak obraz mieści się na ekranie o innych proporcjach: „Dopasuj” pokazuje go w całości z pasami, „Wypełnij” przycina krawędzie, „Rozciągnij” go zniekształca, „Piksele 1:1” pokazuje go w jego własnym rozmiarze."),
     ("Fastest", "Najszybciej"),
     ("VRR: on a G-Sync, FreeSync or adaptive-refresh screen, frames are shown without waiting for the screen’s refresh. On shows each frame when the game drew it, and whole, so motion stays even; that adds about 1 to 4 ms of latency. Fastest shows each frame the moment it arrives, which can tear. Frame pacing is not used while VRR is on.", "VRR: na ekranie z G-Sync, FreeSync lub adaptacyjnym odświeżaniem klatki są wyświetlane bez czekania na odświeżenie ekranu. „Wł.” pokazuje każdą klatkę wtedy, gdy gra ją narysowała, i w całości, więc ruch pozostaje równy; dodaje to około 1–4 ms opóźnienia. „Najszybciej” pokazuje każdą klatkę zaraz po nadejściu, co może powodować rozrywanie. Gdy VRR jest włączone, „Tempo klatek” nie jest używane."),
-    ("Trades latency against steady motion while VRR is off. Lowest latency shows frames at once; the other choices wait for the screen’s refresh: smoother, with more delay.", "Kompromis między opóźnieniem a równym ruchem, gdy VRR jest wyłączone. „Najniższe opóźnienie” pokazuje klatki od razu; pozostałe opcje czekają na odświeżenie ekranu: płynniej, ale z większym opóźnieniem."),
+    ("Trades latency against steady motion while VRR is off. Lowest latency shows frames at once; the other choices wait for the screen’s refresh: smoother, with more delay, and keeping every frame can add more. PC’s frame times shows each frame when the game drew it, a few milliseconds later.", "Kompromis między opóźnieniem a równym ruchem, gdy VRR jest wyłączone. „Najniższe opóźnienie” pokazuje klatki od razu; pozostałe opcje czekają na odświeżenie ekranu: płynniej, ale z większym opóźnieniem, a zachowywanie każdej klatki może dodać jeszcze więcej. „Rytm komputera” pokazuje każdą klatkę wtedy, gdy gra ją narysowała, kilka milisekund później."),
+    ("Balanced, keep every frame", "Zrównoważone, zachowaj każdą klatkę"),
+    ("PC’s frame times", "Rytm komputera"),
     ("Waits for the screen’s refresh, so the picture never tears; the wait adds latency. Turn it off for the lowest latency if tearing doesn’t bother you.", "Czeka na odświeżenie ekranu, więc obraz nigdy się nie rozrywa; czekanie dodaje opóźnienie. Wyłącz, aby uzyskać najniższe opóźnienie, jeśli rozrywanie obrazu ci nie przeszkadza."),
     ("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; HDR streams are enlarged without them.", "Jak powiększany jest strumień mniejszy niż ekran. FSR i SGSR wyostrzają krawędzie kosztem pewnego obciążenia GPU i baterii; strumienie HDR są powiększane bez nich."),
     ("Upscaling sharpness", "Ostrość skalowania"),
@@ -1472,7 +1474,7 @@ sudo sysctl -w net.core.rmem_max={}", "Bufor odbioru: system przydzielił {0} Ki
     ("Draws the PC’s cursor here in Desktop pointer mode, without video delay.", "Rysuje tutaj kursor komputera w trybie Wskaźnik pulpitu, bez opóźnienia obrazu."),
     ("1:1 pixels", "Piksele 1:1"),
     // Android features on the desktop: Presets, Theme, Check for updates now, About, small box art,
-    // the microphone’s noise suppression and automatic gain, Keep only the newest frame, the decode
+    // the microphone’s noise suppression and automatic gain, the decode
     // time after streaming, the latency CSV and benchmark, and the connection test’s ping, jitter and
     // loss (ui/settings.rs, ui/about.rs, ui/latency_bench.rs, latency_bench.rs, network_test.rs,
     // update_check.rs, main.rs).
@@ -1495,7 +1497,6 @@ sudo sysctl -w net.core.rmem_max={}", "Bufor odbioru: system przydzielił {0} Ki
     ("Filters fans and other steady background noise out of the microphone and adds about 7 ms of microphone delay. Leave it on.", "Odfiltrowuje z mikrofonu wentylatory i inny stały szum tła oraz dodaje około 7 ms opóźnienia mikrofonu. Zostaw włączone."),
     ("Finish a stream before exporting its timings.", "Zakończ strumień przed wyeksportowaniem jego czasów."),
     ("Fits more games on screen in a PC’s library.", "Mieści więcej gier na ekranie biblioteki komputera."),
-    ("Keep only the newest frame", "Zachowuj tylko najnowszą klatkę"),
     ("Latency CSV saved.", "CSV opóźnień zapisany."),
     ("Looks for a newer version now.", "Szuka teraz nowszej wersji."),
     ("Measures ping, jitter and loss, and download speed where the PC supports it.", "Mierzy ping, jitter i straty pakietów oraz prędkość pobierania, jeśli komputer to obsługuje."),
@@ -1508,7 +1509,6 @@ sudo sysctl -w net.core.rmem_max={}", "Bufor odbioru: system przydzielił {0} Ki
     ("Saves the latest latency measurements.", "Zapisuje najnowsze pomiary opóźnienia."),
     ("Show decode time after streaming", "Pokaż czas dekodowania po strumieniowaniu"),
     ("Shows the average decode time when a stream ends: this device’s decoding only, not the end-to-end latency.", "Pokazuje średni czas dekodowania po zakończeniu strumienia: samo dekodowanie na tym urządzeniu, a nie całkowite opóźnienie (end-to-end)."),
-    ("Skips frames the screen can no longer show in time, so the picture never falls behind. Leave it on; off shows every frame in turn and can add delay.", "Pomija klatki, których ekran nie zdąży już wyświetlić, więc obraz nigdy nie zostaje w tyle. Zostaw włączone; po wyłączeniu wyświetlane są wszystkie klatki po kolei, co może dodać opóźnienie."),
     ("Source and licenses", "Kod źródłowy i licencje"),
     ("System", "Systemowy"),
     ("System follows the system’s light or dark setting; OLED black uses pure black surfaces.", "„Systemowy” podąża za jasnym lub ciemnym ustawieniem systemu; „Czerń OLED” używa czysto czarnych powierzchni."),

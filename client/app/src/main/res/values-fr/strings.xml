@@ -227,8 +227,6 @@
     <string name="summary_checkbox_enable_sops">Permet au PC d’ajuster les paramètres du jeu pour le stream. Laissez-le activé ; désactivez-le si le PC modifie les paramètres d’un jeu et que vous voulez les conserver.</string>
     <string name="title_checkbox_host_audio">Lire aussi le son sur le PC</string>
     <string name="title_unlock_fps">Afficher toutes les fréquences d’images</string>
-    <string name="title_checkbox_reduce_refresh_rate">Autoriser un rafraîchissement réduit</string>
-    <string name="summary_checkbox_reduce_refresh_rate">Laisse l’écran utiliser le rafraîchissement le plus bas qui convient encore au stream, par exemple 60 Hz pour 60 FPS, pour économiser la batterie. Désactivé, il garde le plus élevé, pour moins de latence.</string>
     <string name="title_checkbox_disable_warnings">Masquer les alertes de connexion</string>
     <string name="summary_checkbox_disable_warnings">Masque les avertissements de mauvaise connexion pendant les streams. Activez-le une fois votre connexion au point, quand vous n’en avez plus besoin.</string>
     <string name="title_video_format">Codec vidéo</string>
@@ -283,6 +281,8 @@
     <string name="pacing_balanced">Équilibré</string>
     <string name="pacing_balanced_alt">Équilibré avec limite de FPS</string>
     <string name="pacing_smoothness">Vidéo la plus fluide (plus de délai)</string>
+    <string name="pacing_balanced_every">Équilibré, garder chaque image</string>
+    <string name="pacing_host_times">Rythme du PC</string>
     <string name="title_analog_scrolling">Stick de défilement</string>
     <string name="summary_analog_scrolling">Le stick qui fait défiler en mode souris de la manette ; l’autre stick déplace le pointeur. Sans stick de défilement, les deux déplacent le pointeur.</string>
     <string name="analogscroll_none">Les deux sticks déplacent la souris</string>
@@ -308,10 +308,6 @@
         <item>Le plus rapide</item>
     </string-array>
     <string name="summary_vrr_unavailable">Nécessite Android 6 ou plus récent.</string>
-    <string name="title_host_frame_times">Afficher les images au rythme du PC</string>
-    <string name="summary_host_frame_times">Retient brièvement chaque image pour qu’elle apparaisse quand le jeu l’a dessinée, ce qui régularise les mouvements. Ajoute quelques millisecondes de latence ; activez-le si les mouvements semblent irréguliers.</string>
-    <string name="title_content_rate_frame_rate">Adapter l’écran à la cadence du jeu</string>
-    <string name="summary_content_rate_frame_rate">Passe l’écran à une fréquence de rafraîchissement adaptée à la vraie fréquence d’images du jeu, par exemple 60 Hz pour un jeu à 60 FPS dans un stream à 120 FPS. Nécessite un PC compatible.</string>
     <string name="title_virtual_display_scale">Résolution de rendu du PC</string>
     <string name="summary_virtual_display_scale">La taille de rendu du PC, en pourcentage de la résolution du stream ; la vidéo envoyée garde sa taille. Au-dessus de 100, le PC dessine plus de pixels qu’il n’en envoie ; en dessous, moins.</string>
     <string name="title_virtual_display_dpi">Mise à l’échelle de l’écran du PC</string>
@@ -335,8 +331,6 @@
     <string name="summary_phone_performance_hints">Indique à Android la durée du décodage, pour qu’il augmente la vitesse du CPU quand le décodage prend du retard. Laissez-le activé ; ne le désactivez que pour comparer les temps de décodage.</string>
     <string name="title_gpu_max_clocks">Améliorer les performances du GPU pour PyroWave</string>
     <string name="summary_gpu_max_clocks">Des fréquences GPU plus élevées pour un décodage PyroWave plus rapide, au prix de plus d’énergie et de chaleur. Laissez-le désactivé sauf si le décodage PyroWave est trop lent.</string>
-    <string name="title_drop_late_frames">Garder uniquement l’image la plus récente</string>
-    <string name="summary_drop_late_frames">Ignore les images que l’écran ne peut plus afficher à temps, pour que l’image ne prenne jamais de retard. Laissez-le activé ; désactivé, chaque image est affichée à son tour, ce qui peut ajouter du délai.</string>
     <string name="title_texture_view">Vue vidéo de compatibilité</string>
     <string name="summary_texture_view">Pour le dépannage : essayez-le si la vidéo est noire, scintille ou est mal placée. Il ajoute du travail à chaque image et n’est pas utilisé avec le HDR, « Moins de bandes de couleur » ou PyroWave.</string>
     <string name="title_unbatched_input">Souris et stylet instantanés</string>
@@ -495,4 +489,16 @@
     <string name="summary_stream_menu_button">Ce que fait ce bouton quand le menu du stream est ouvert. « Par défaut » garde la vignette qui affiche le bouton dans son coin ; une sortie comme « Se déconnecter » demande d’abord confirmation.</string>
     <string name="stream_menu_button_default">Par défaut</string>
     <string name="stream_menu_button_none">Désactivé</string>
+    <string name="title_lower_refresh">Rafraîchissement plus bas</string>
+    <string name="summary_lower_refresh">Laisse l\'écran descendre sous son rafraîchissement maximal pour économiser la batterie : « Activé » prend le rafraîchissement le plus bas qui convient au stream, par exemple 60 Hz pour 60 FPS ; « Activé, calé sur le jeu » suit la cadence du jeu, par exemple 60 Hz pour un jeu à 60 FPS dans un stream à 120 FPS, et nécessite le support du PC. « Désactivé » garde le rafraîchissement maximal, pour moins de latence.</string>
+    <string-array name="lower_refresh_choice_names">
+        <item>Désactivé</item>
+        <item>Activé</item>
+        <item>Activé, calé sur le jeu</item>
+    </string-array>
+    <string name="title_arr_fixed_timing">Cadence fixe sur écrans adaptatifs</string>
+    <string name="summary_arr_fixed_timing">Sur un écran à rafraîchissement adaptatif, traite le rafraîchissement comme fixe tant que le VRR est désactivé, pour que les images soient calées sur ton écran et que le retard de la file d\'affichage soit récupéré. Une image qui rate son rafraîchissement peut alors attendre un rafraîchissement entier au lieu du prochain pas de l\'écran ; laisse-le désactivé sauf si le mouvement saccade sur cet écran avec le VRR désactivé.</string>
+    <string name="tag_unused_adaptive_screen">Non utilisé : cet écran fixe son propre rafraîchissement</string>
+    <string name="tag_unused_with">Non utilisé avec %1$s</string>
+    <string name="tag_every_frame_with">Garder chaque image n\'est pas utilisé avec %1$s</string>
 </resources>

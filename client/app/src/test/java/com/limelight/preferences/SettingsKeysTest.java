@@ -86,6 +86,8 @@ public class SettingsKeysTest {
             "checkbox_yuv444", "experimental_packed_444", // Sharper colored text
             "checkbox_multi_controller", "checkbox_send_controllers", // Controllers
             "checkbox_real_vrr", // Variable refresh rate's On or Fastest (VrrChoice)
+            "checkbox_host_frame_times", "checkbox_drop_late_frames", // Frame pacing's choices (FramePacingChoice)
+            "checkbox_content_rate_frame_rate", // Lower refresh rate's "On, matched to the game" (LowerRefreshChoice)
             com.limelight.console.HomeSettings.PREF_KEY)); // When Nightjar opens
     // Stored settings that are read outside PreferenceConfiguration.
     private static final Set<String> READ_ELSEWHERE = new HashSet<>(Arrays.asList(
@@ -285,6 +287,7 @@ public class SettingsKeysTest {
         reads.put("checkbox_enable_sdr_10bit", new Read(false, true, c -> c.enableSdr10Bit));
         reads.put("checkbox_vrr", new Read(false, true, c -> c.vrr));
         reads.put("checkbox_host_frame_times", new Read(false, true, c -> c.hostFrameTimes));
+        reads.put("checkbox_arr_fixed_timing", new Read(false, true, c -> c.arrFixedTiming));
         // Applies with VRR, which this device doesn't offer (VrrOfferedTest checks that it applies there).
         reads.put("checkbox_real_vrr", new Read(true, false, c -> c.realVrr));
         reads.put("checkbox_content_rate_frame_rate", new Read(false, true, c -> c.contentRateFrameRate));

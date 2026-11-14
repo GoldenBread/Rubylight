@@ -587,9 +587,8 @@ public class SettingsStructureTest {
             int enabledTitle = ((TextView) row.findViewById(android.R.id.title)).getCurrentTextColor();
 
             // Rows that do not apply are hidden now; a row greyed for another reason (old SHIELD HDR) looks disabled.
-            Preference lower = display.findPreference("checkbox_reduce_refresh_rate");
-            lower.setEnabled(false);
-            View disabled = lower.getView(null, parent);
+            color.setEnabled(false);
+            View disabled = color.getView(null, parent);
             assertFalse(disabled.isEnabled());
             assertNotEquals(enabledTitle, ((TextView) disabled.findViewById(android.R.id.title)).getCurrentTextColor());
             // Its explanation still opens, to say why it is unavailable.

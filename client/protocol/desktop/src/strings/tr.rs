@@ -1359,7 +1359,9 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("How the picture fits a screen of another shape: Fit shows all of it with bars, Fill crops the edges, Stretch distorts it, 1:1 pixels shows it at its own size.", "Görüntünün farklı biçimdeki bir ekrana nasıl sığdığı: “Sığdır” tamamını şeritlerle gösterir, “Doldur” kenarları kırpar, “Uzat” görüntüyü bozar, “1:1 piksel” kendi boyutunda gösterir."),
     ("Fastest", "En hızlı"),
     ("VRR: on a G-Sync, FreeSync or adaptive-refresh screen, frames are shown without waiting for the screen’s refresh. On shows each frame when the game drew it, and whole, so motion stays even; that adds about 1 to 4 ms of latency. Fastest shows each frame the moment it arrives, which can tear. Frame pacing is not used while VRR is on.", "VRR: G-Sync, FreeSync veya uyarlanabilir yenileme hızlı bir ekranda kareler, ekranın yenilenmesi beklenmeden gösterilir. “Açık” her kareyi oyunun çizdiği anda ve bütün olarak gösterir; böylece hareket dengeli kalır, ancak yaklaşık 1-4 ms gecikme ekler. “En hızlı” her kareyi geldiği anda gösterir ve yırtılma olabilir. VRR açıkken “Kare zamanlama” kullanılmaz."),
-    ("Trades latency against steady motion while VRR is off. Lowest latency shows frames at once; the other choices wait for the screen’s refresh: smoother, with more delay.", "VRR kapalıyken gecikme ile düzgün hareket arasında denge kurar. “En düşük gecikme” kareleri hemen gösterir; diğer seçenekler ekranın yenilenmesini bekler: daha akıcı, ama daha gecikmeli."),
+    ("Trades latency against steady motion while VRR is off. Lowest latency shows frames at once; the other choices wait for the screen’s refresh: smoother, with more delay, and keeping every frame can add more. PC’s frame times shows each frame when the game drew it, a few milliseconds later.", "VRR kapalıyken gecikme ile düzgün hareket arasında denge kurar. “En düşük gecikme” kareleri hemen gösterir; diğer seçenekler ekranın yenilenmesini bekler: daha akıcı, ama daha gecikmeli, ve her kareyi tutmak daha da gecikme ekleyebilir. “Bilgisayarın kare zamanlaması” her kareyi oyunun çizdiği anda, birkaç milisaniye sonra gösterir."),
+    ("Balanced, keep every frame", "Dengeli, her kareyi tut"),
+    ("PC’s frame times", "Bilgisayarın kare zamanlaması"),
     ("Waits for the screen’s refresh, so the picture never tears; the wait adds latency. Turn it off for the lowest latency if tearing doesn’t bother you.", "Ekranın yenilenmesini bekler, böylece görüntü asla yırtılmaz; bu bekleme gecikme ekler. Yırtılma sizi rahatsız etmiyorsa en düşük gecikme için kapatın."),
     ("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; HDR streams are enlarged without them.", "Ekrandan küçük bir yayının nasıl büyütüldüğü. FSR ve SGSR kenarları keskinleştirir, karşılığında biraz GPU süresi ve pil harcar; HDR yayınlar bunlar olmadan büyütülür."),
     ("Upscaling sharpness", "Ölçekleme keskinliği"),
@@ -1472,7 +1474,7 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("Draws the PC’s cursor here in Desktop pointer mode, without video delay.", "Masaüstü işaretçisi modunda bilgisayarın imlecini burada, video gecikmesi olmadan çizer."),
     ("1:1 pixels", "1:1 piksel"),
     // Android features on the desktop: Presets, Theme, Check for updates now, About, small box art,
-    // the microphone’s noise suppression and automatic gain, Keep only the newest frame, the decode
+    // the microphone’s noise suppression and automatic gain, the decode
     // time after streaming, the latency CSV and benchmark, and the connection test’s ping, jitter and
     // loss (ui/settings.rs, ui/about.rs, ui/latency_bench.rs, latency_bench.rs, network_test.rs,
     // update_check.rs, main.rs).
@@ -1495,7 +1497,6 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("Filters fans and other steady background noise out of the microphone and adds about 7 ms of microphone delay. Leave it on.", "Fan sesi gibi sabit arka plan gürültülerini mikrofondan süzer ve mikrofona yaklaşık 7 ms gecikme ekler. Açık bırakın."),
     ("Finish a stream before exporting its timings.", "Zamanlamalarını dışa aktarmadan önce bir yayını bitirin."),
     ("Fits more games on screen in a PC’s library.", "Bir bilgisayarın kitaplığında ekrana daha fazla oyun sığdırır."),
-    ("Keep only the newest frame", "Yalnızca en yeni kareyi tut"),
     ("Latency CSV saved.", "Gecikme CSV’si kaydedildi."),
     ("Looks for a newer version now.", "Şimdi daha yeni bir sürüm arar."),
     ("Measures ping, jitter and loss, and download speed where the PC supports it.", "Ping, jitter ve kaybı, bilgisayar destekliyorsa indirme hızını da ölçer."),
@@ -1508,7 +1509,6 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("Saves the latest latency measurements.", "En son gecikme ölçümlerini kaydeder."),
     ("Show decode time after streaming", "Yayından sonra kod çözme süresini göster"),
     ("Shows the average decode time when a stream ends: this device’s decoding only, not the end-to-end latency.", "Yayın bittiğinde ortalama kod çözme süresini gösterir: yalnızca bu cihazın kod çözmesi, uçtan uca gecikme değil."),
-    ("Skips frames the screen can no longer show in time, so the picture never falls behind. Leave it on; off shows every frame in turn and can add delay.", "Ekranın artık zamanında gösteremeyeceği kareleri atlar; böylece görüntü hiç geride kalmaz. Açık bırakın; kapalıyken her kare sırayla gösterilir ve gecikme artabilir."),
     ("Source and licenses", "Kaynak kodu ve lisanslar"),
     ("System", "Sistem"),
     ("System follows the system’s light or dark setting; OLED black uses pure black surfaces.", "“Sistem”, sistemin açık veya koyu ayarını izler; “OLED siyahı” tam siyah yüzeyler kullanır."),

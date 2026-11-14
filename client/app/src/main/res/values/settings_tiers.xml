@@ -21,6 +21,7 @@
         <item>checkbox_stretch_video</item>
         <item>stream_orientation</item>
         <item>checkbox_vrr</item>
+        <item>frame_pacing</item>
     </string-array>
     <string-array name="settings_tier_input" translatable="false">
         <item>checkbox_touchscreen_trackpad</item>

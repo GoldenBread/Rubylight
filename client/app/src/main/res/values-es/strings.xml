@@ -227,8 +227,6 @@
     <string name="summary_checkbox_enable_sops">Permite que el PC ajuste la configuración del juego para la transmisión. Déjalo activado; desactívalo si el PC cambia la configuración de un juego y quieres conservarla.</string>
     <string name="title_checkbox_host_audio">Reproducir audio también en el PC</string>
     <string name="title_unlock_fps">Mostrar todas las velocidades de fotogramas</string>
-    <string name="title_checkbox_reduce_refresh_rate">Permitir una frecuencia de actualización menor</string>
-    <string name="summary_checkbox_reduce_refresh_rate">Permite que la pantalla use la frecuencia de actualización más baja que aún se ajuste a la transmisión, como 60 Hz para 60 FPS, para ahorrar batería. Desactivado, mantiene la más alta, para una latencia menor.</string>
     <string name="title_checkbox_disable_warnings">Ocultar avisos de conexión</string>
     <string name="summary_checkbox_disable_warnings">Oculta los avisos de mala conexión durante las transmisiones. Actívalo cuando tu conexión ya esté configurada y no los necesites.</string>
     <string name="title_video_format">Códec de vídeo</string>
@@ -283,6 +281,8 @@
     <string name="pacing_balanced">Equilibrado</string>
     <string name="pacing_balanced_alt">Equilibrado con límite de FPS</string>
     <string name="pacing_smoothness">Vídeo más fluido (más retraso)</string>
+    <string name="pacing_balanced_every">Equilibrado, conservar cada fotograma</string>
+    <string name="pacing_host_times">Ritmo del PC</string>
     <string name="title_analog_scrolling">Joystick para desplazarse</string>
     <string name="summary_analog_scrolling">El joystick que desplaza en el modo ratón del mando; el otro joystick mueve el puntero. Sin joystick de desplazamiento, ambos mueven el puntero.</string>
     <string name="analogscroll_none">Ambos joysticks mueven el ratón</string>
@@ -308,10 +308,6 @@
         <item>Más rápido</item>
     </string-array>
     <string name="summary_vrr_unavailable">Necesita Android 6 o posterior.</string>
-    <string name="title_host_frame_times">Mostrar fotogramas al ritmo del PC</string>
-    <string name="summary_host_frame_times">Retiene cada fotograma un instante para que aparezca cuando el juego lo dibujó, y así el movimiento es más uniforme. Añade unos milisegundos de latencia; actívalo si el movimiento se ve irregular.</string>
-    <string name="title_content_rate_frame_rate">Ajustar la pantalla a la tasa del juego</string>
-    <string name="summary_content_rate_frame_rate">Cambia la pantalla a una frecuencia de actualización acorde con la velocidad de fotogramas real del juego, como 60 Hz para un juego a 60 FPS en una transmisión a 120 FPS. Requiere un PC compatible.</string>
     <string name="title_virtual_display_scale">Resolución de renderizado del PC</string>
     <string name="summary_virtual_display_scale">El tamaño al que renderiza el PC, como porcentaje de la resolución de la transmisión; el vídeo enviado conserva su tamaño. Por encima de 100, el PC dibuja más píxeles de los que envía; por debajo, menos.</string>
     <string name="title_virtual_display_dpi">Escalado de pantalla del PC</string>
@@ -335,8 +331,6 @@
     <string name="summary_phone_performance_hints">Indica a Android cuánto tarda la decodificación, para que suba la velocidad de la CPU cuando se retrasa. Déjalo activado; desactívalo solo para comparar tiempos de decodificación.</string>
     <string name="title_gpu_max_clocks">Mejorar el rendimiento de la GPU para PyroWave</string>
     <string name="summary_gpu_max_clocks">Frecuencias de GPU más altas para decodificar PyroWave más rápido, con más consumo y calor. Déjalo desactivado salvo que PyroWave se decodifique demasiado lento.</string>
-    <string name="title_drop_late_frames">Conservar solo el fotograma más reciente</string>
-    <string name="summary_drop_late_frames">Omite los fotogramas que la pantalla ya no puede mostrar a tiempo, para que la imagen nunca se retrase. Déjalo activado; desactivado, muestra cada fotograma por orden y puede añadir retraso.</string>
     <string name="title_texture_view">Vista de vídeo de compatibilidad</string>
     <string name="summary_texture_view">Para solucionar problemas: pruébalo si el vídeo se ve negro, parpadea o aparece descolocado. Añade trabajo por fotograma y no se usa con HDR, Menos bandas de color ni PyroWave.</string>
     <string name="title_unbatched_input">Entrada instantánea de ratón y lápiz</string>
@@ -495,4 +489,16 @@
     <string name="summary_stream_menu_button">Lo que hace este botón mientras el menú de transmisión está abierto. Predeterminado mantiene el recuadro que muestra el botón en su esquina; una acción de salida como Desconectar pide confirmación antes.</string>
     <string name="stream_menu_button_default">Predeterminado</string>
     <string name="stream_menu_button_none">Desactivado</string>
+    <string name="title_lower_refresh">Frecuencia de actualización menor</string>
+    <string name="summary_lower_refresh">Permite que la pantalla baje de su frecuencia de actualización máxima para ahorrar batería: «Activado» toma la frecuencia más baja que se ajuste a la transmisión, como 60 Hz para 60 FPS; «Activado, ajustado al juego» sigue la tasa de fotogramas del juego, como 60 Hz para un juego a 60 FPS en una transmisión a 120 FPS, y requiere compatibilidad del PC. «Desactivado» mantiene la frecuencia máxima, para una latencia menor.</string>
+    <string-array name="lower_refresh_choice_names">
+        <item>Desactivado</item>
+        <item>Activado</item>
+        <item>Activado, ajustado al juego</item>
+    </string-array>
+    <string name="title_arr_fixed_timing">Sincronización fija en pantallas adaptativas</string>
+    <string name="summary_arr_fixed_timing">En una pantalla con frecuencia adaptativa, trata la actualización como fija mientras VRR está desactivado, para que los fotogramas se sincronicen con tu pantalla y se recupere el retraso de la cola de pantalla. Un fotograma que pierde su actualización puede entonces esperar una actualización entera en vez del siguiente paso de la pantalla; déjalo desactivado salvo que el movimiento se entrecorte en esta pantalla con VRR desactivado.</string>
+    <string name="tag_unused_adaptive_screen">No se usa: esta pantalla fija su propia actualización</string>
+    <string name="tag_unused_with">No se usa con %1$s</string>
+    <string name="tag_every_frame_with">Conservar cada fotograma no se usa con %1$s</string>
 </resources>

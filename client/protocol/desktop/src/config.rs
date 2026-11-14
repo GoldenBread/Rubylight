@@ -364,10 +364,17 @@ pub struct Settings {
     pub vsync: bool,
     /// Without VRR: how pictures wait for the display (Android's `frame_pacing`).
     pub frame_pacing: FramePacing,
-    /// "Keep only the newest frame" (Android's `checkbox_drop_late_frames`): with Balanced frame
-    /// pacing, the newest picture at each refresh. Off: each picture in turn, one a refresh, as
-    /// Smoothest video waits (`stream::present::Pacer::take_due`). On by default.
+    /// Balanced's "keep only the newest frame" (Android's `checkbox_drop_late_frames`), one of the
+    /// Frame pacing row's choices: the newest picture at each refresh. Off ("Balanced, keep every
+    /// frame"): each picture in turn, one a refresh, as Smoothest video waits
+    /// (`stream::present::Pacer::take_due`). On by default.
     pub drop_late_frames: bool,
+    /// "PC's frame times" without VRR (Android's `checkbox_host_frame_times`), a choice of the Frame
+    /// pacing row that takes over from the pacing: each picture waits for its time on the PC's
+    /// clock plus a delay learnt from recent frames, and goes out for the refresh that time falls
+    /// on, with V-Sync (`stream::present::Pacer::accept`). Off by default; a file without it reads
+    /// as off.
+    pub host_frame_times: bool,
     /// The performance overlay is on (Android's `checkbox_enable_perf_overlay`), showing
     /// `overlay_mode` in the `overlay_position` corner. The stream menu and its shortcut change
     /// these and keep them.
@@ -1075,6 +1082,7 @@ impl Default for Settings {
             vsync: true,
             frame_pacing: FramePacing::Latency,
             drop_late_frames: true,
+            host_frame_times: false,
             overlay: false,
             overlay_mode: OverlayMode::Compact,
             overlay_position: OverlayCorner::TopLeft,

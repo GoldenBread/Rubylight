@@ -227,8 +227,6 @@
     <string name="summary_checkbox_enable_sops">Cho phép PC điều chỉnh cài đặt của trò chơi cho stream. Nên để bật; tắt nếu PC thay đổi cài đặt của trò chơi mà bạn muốn giữ nguyên.</string>
     <string name="title_checkbox_host_audio">Phát âm thanh cả trên PC</string>
     <string name="title_unlock_fps">Hiện mọi tốc độ khung hình</string>
-    <string name="title_checkbox_reduce_refresh_rate">Cho phép tần số quét thấp hơn</string>
-    <string name="summary_checkbox_reduce_refresh_rate">Cho phép màn hình dùng tần số quét thấp nhất mà vẫn khớp với stream, chẳng hạn 60 Hz cho 60 FPS, để tiết kiệm pin. Khi tắt, màn hình giữ tần số cao nhất để độ trễ thấp hơn.</string>
     <string name="title_checkbox_disable_warnings">Ẩn cảnh báo kết nối</string>
     <string name="summary_checkbox_disable_warnings">Ẩn các cảnh báo về kết nối kém trong khi stream. Bật khi kết nối của bạn đã ổn và bạn không cần chúng nữa.</string>
     <string name="title_video_format">Codec video</string>
@@ -283,6 +281,8 @@
     <string name="pacing_balanced">Cân bằng</string>
     <string name="pacing_balanced_alt">Cân bằng với giới hạn FPS</string>
     <string name="pacing_smoothness">Video mượt nhất (trễ hơn)</string>
+    <string name="pacing_balanced_every">Cân bằng, giữ mọi khung hình</string>
+    <string name="pacing_host_times">Nhịp khung hình của PC</string>
     <string name="title_analog_scrolling">Cần để cuộn</string>
     <string name="summary_analog_scrolling">Cần analog dùng để cuộn trong chế độ chuột bằng tay cầm; cần analog còn lại di chuyển con trỏ. Nếu không chọn cần cuộn, cả hai cần analog đều di chuyển con trỏ.</string>
     <string name="analogscroll_none">Cả hai cần đều di chuyển chuột</string>
@@ -308,10 +308,6 @@
         <item>Nhanh nhất</item>
     </string-array>
     <string name="summary_vrr_unavailable">Cần Android 6 trở lên.</string>
-    <string name="title_host_frame_times">Hiển thị khung hình theo nhịp của PC</string>
-    <string name="summary_host_frame_times">Giữ mỗi khung hình trong chốc lát để nó hiện ra đúng nhịp trò chơi đã vẽ, giúp chuyển động đều hơn. Thêm vài mili giây độ trễ; bật nếu chuyển động trông không đều.</string>
-    <string name="title_content_rate_frame_rate">Khớp màn hình với tốc độ khung hình của trò chơi</string>
-    <string name="summary_content_rate_frame_rate">Chuyển màn hình sang tần số quét khớp với tốc độ khung hình thực của trò chơi, chẳng hạn 60 Hz cho trò chơi 60 FPS trong stream 120 FPS. Cần PC hỗ trợ.</string>
     <string name="title_virtual_display_scale">Độ phân giải kết xuất trên PC</string>
     <string name="summary_virtual_display_scale">Kích thước PC kết xuất, tính theo phần trăm độ phân giải stream; video gửi đi vẫn giữ nguyên kích thước. Trên 100, PC vẽ nhiều điểm ảnh hơn số nó gửi; dưới 100 thì ít hơn.</string>
     <string name="title_virtual_display_dpi">Tỷ lệ hiển thị trên PC</string>
@@ -335,8 +331,6 @@
     <string name="summary_phone_performance_hints">Báo cho Android biết giải mã mất bao lâu, để Android tăng tốc CPU khi giải mã bị chậm. Nên để bật; chỉ tắt để so sánh thời gian giải mã.</string>
     <string name="title_gpu_max_clocks">Tăng hiệu năng GPU cho PyroWave</string>
     <string name="summary_gpu_max_clocks">Xung nhịp GPU cao hơn để giải mã PyroWave nhanh hơn, đổi lại tốn điện và nóng hơn. Nên để tắt, trừ khi giải mã PyroWave quá chậm.</string>
-    <string name="title_drop_late_frames">Chỉ giữ khung hình mới nhất</string>
-    <string name="summary_drop_late_frames">Bỏ qua các khung hình mà màn hình không còn hiển thị kịp, để hình ảnh không bao giờ bị tụt lại. Nên để bật; khi tắt, mọi khung hình được hiện lần lượt và độ trễ có thể tăng.</string>
     <string name="title_texture_view">Chế độ xem video tương thích</string>
     <string name="summary_texture_view">Dùng để khắc phục sự cố: thử nếu video bị đen, nhấp nháy hoặc lệch vị trí. Mỗi khung hình tốn thêm công xử lý, và không dùng được với HDR, “Giảm sọc màu” hay PyroWave.</string>
     <string name="title_unbatched_input">Đầu vào chuột và bút tức thì</string>
@@ -495,4 +489,16 @@
     <string name="summary_stream_menu_button">Việc nút này thực hiện khi menu stream đang mở. “Mặc định” giữ ô có hiện nút này ở góc; lối thoát như “Ngắt kết nối” sẽ hỏi lại trước.</string>
     <string name="stream_menu_button_default">Mặc định</string>
     <string name="stream_menu_button_none">Tắt</string>
+    <string name="title_lower_refresh">Giảm tần số quét</string>
+    <string name="summary_lower_refresh">Cho phép màn hình giảm xuống dưới tần số quét cao nhất để tiết kiệm pin: “Bật” dùng tần số thấp nhất vừa với stream, chẳng hạn 60 Hz cho 60 FPS; “Bật, khớp với trò chơi” theo tốc độ khung hình của trò chơi, chẳng hạn 60 Hz cho trò chơi 60 FPS trong stream 120 FPS, và cần PC hỗ trợ. “Tắt” giữ tần số cao nhất để độ trễ thấp hơn.</string>
+    <string-array name="lower_refresh_choice_names">
+        <item>Tắt</item>
+        <item>Bật</item>
+        <item>Bật, khớp với trò chơi</item>
+    </string-array>
+    <string name="title_arr_fixed_timing">Nhịp cố định trên màn hình thích ứng</string>
+    <string name="summary_arr_fixed_timing">Trên màn hình có tần số quét thích ứng, coi việc làm mới là cố định khi VRR tắt, để khung hình được căn theo màn hình của bạn và độ trễ hàng đợi màn hình được lấy lại. Một khung hình lỡ nhịp làm mới có thể phải chờ cả một lần làm mới thay vì bước tiếp theo của màn hình; hãy để tắt trừ khi chuyển động bị giật trên màn hình này khi VRR tắt.</string>
+    <string name="tag_unused_adaptive_screen">Không dùng: màn hình này tự đặt tần số quét</string>
+    <string name="tag_unused_with">Không dùng với %1$s</string>
+    <string name="tag_every_frame_with">Giữ mọi khung hình không dùng với %1$s</string>
 </resources>

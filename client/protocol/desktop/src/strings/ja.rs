@@ -1359,7 +1359,9 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("How the picture fits a screen of another shape: Fit shows all of it with bars, Fill crops the edges, Stretch distorts it, 1:1 pixels shows it at its own size.", "縦横比が異なる画面への映像の合わせ方です。「フィット」は帯を付けて全体を表示し、「フィル」は端を切り取り、「引き伸ばし」は映像をゆがめ、「1:1ピクセル」は元のサイズで表示します。"),
     ("Fastest", "最速"),
     ("VRR: on a G-Sync, FreeSync or adaptive-refresh screen, frames are shown without waiting for the screen’s refresh. On shows each frame when the game drew it, and whole, so motion stays even; that adds about 1 to 4 ms of latency. Fastest shows each frame the moment it arrives, which can tear. Frame pacing is not used while VRR is on.", "VRR：G-Sync、FreeSync、または可変リフレッシュレート対応の画面で、画面のリフレッシュを待たずにフレームを表示します。「オン」は各フレームをゲームが描画したタイミングで欠けなく表示し、動きを均一に保ちます。遅延が約1〜4ミリ秒増えます。「最速」は各フレームを届いた時点で表示し、ティアリングが起きることがあります。VRRがオンの間、「フレームペーシング」は使われません。"),
-    ("Trades latency against steady motion while VRR is off. Lowest latency shows frames at once; the other choices wait for the screen’s refresh: smoother, with more delay.", "VRRがオフの間、遅延と動きの安定のどちらを優先するかを決めます。「最小遅延」はフレームをすぐに表示します。ほかの選択肢は画面のリフレッシュを待つため、滑らかになりますが遅延が増えます。"),
+    ("Trades latency against steady motion while VRR is off. Lowest latency shows frames at once; the other choices wait for the screen’s refresh: smoother, with more delay, and keeping every frame can add more. PC’s frame times shows each frame when the game drew it, a few milliseconds later.", "VRR がオフの間、遅延と動きの安定のどちらを優先するかを決めます。「最小遅延」はフレームをすぐに表示します。ほかの選択肢は画面のリフレッシュを待つため、滑らかになりますが遅延が増え、全フレームを保持するとさらに増えることがあります。「PC のフレームタイミング」は各フレームをゲームが描画したタイミングで、数ミリ秒後に表示します。"),
+    ("Balanced, keep every frame", "バランス（全フレームを保持）"),
+    ("PC’s frame times", "PC のフレームタイミング"),
     ("Waits for the screen’s refresh, so the picture never tears; the wait adds latency. Turn it off for the lowest latency if tearing doesn’t bother you.", "画面のリフレッシュを待つため、映像にティアリングが起きませんが、待つ分だけ遅延が増えます。ティアリングが気にならない場合は、オフにすると遅延が最小になります。"),
     ("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; HDR streams are enlarged without them.", "画面より小さいストリームを拡大する方法です。FSRとSGSRは輪郭をくっきりさせますが、GPUの処理時間とバッテリーを少し使います。HDRストリームはこれらを使わずに拡大されます。"),
     ("Upscaling sharpness", "アップスケーリングのシャープネス"),
@@ -1472,7 +1474,7 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("Draws the PC’s cursor here in Desktop pointer mode, without video delay.", "デスクトップポインターモードで、PCのカーソルを映像の遅延なしでここに描画します。"),
     ("1:1 pixels", "1:1ピクセル"),
     // Android features on the desktop: Presets, Theme, Check for updates now, About, small box art,
-    // the microphone’s noise suppression and automatic gain, Keep only the newest frame, the decode
+    // the microphone’s noise suppression and automatic gain, the decode
     // time after streaming, the latency CSV and benchmark, and the connection test’s ping, jitter and
     // loss (ui/settings.rs, ui/about.rs, ui/latency_bench.rs, latency_bench.rs, network_test.rs,
     // update_check.rs, main.rs).
@@ -1495,7 +1497,6 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("Filters fans and other steady background noise out of the microphone and adds about 7 ms of microphone delay. Leave it on.", "ファンの音などの一定の背景ノイズをマイクから除去します。マイクの遅延が約7 ms増えます。オンのままにしてください。"),
     ("Finish a stream before exporting its timings.", "タイミングをエクスポートするには、先にストリームを終了してください。"),
     ("Fits more games on screen in a PC’s library.", "PC のライブラリで、画面により多くのゲームを表示します。"),
-    ("Keep only the newest frame", "最新のフレームのみ表示"),
     ("Latency CSV saved.", "遅延の CSV を保存しました。"),
     ("Looks for a newer version now.", "今すぐ新しいバージョンを確認します。"),
     ("Measures ping, jitter and loss, and download speed where the PC supports it.", "Ping、ジッター、損失を測定し、PC が対応していればダウンロード速度も測定します。"),
@@ -1508,7 +1509,6 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("Saves the latest latency measurements.", "最新の遅延測定結果を保存します。"),
     ("Show decode time after streaming", "ストリーミング後にデコード時間を表示"),
     ("Shows the average decode time when a stream ends: this device’s decoding only, not the end-to-end latency.", "ストリーム終了時に平均デコード時間を表示します。これはこのデバイスのデコード時間だけで、エンドツーエンドの遅延ではありません。"),
-    ("Skips frames the screen can no longer show in time, so the picture never falls behind. Leave it on; off shows every frame in turn and can add delay.", "画面に間に合わなくなったフレームをスキップし、映像が遅れないようにします。オンのままにしてください。オフではすべてのフレームを順に表示するため、遅延が増えることがあります。"),
     ("Source and licenses", "ソースとライセンス"),
     ("System", "システム"),
     ("System follows the system’s light or dark setting; OLED black uses pure black surfaces.", "「システム」はシステムのライトまたはダークの設定に従います。「OLEDブラック」は背景を完全な黒にします。"),

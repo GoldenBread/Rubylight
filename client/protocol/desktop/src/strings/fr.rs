@@ -1359,7 +1359,9 @@ sudo sysctl -w net.core.rmem_max={}", "Tampon de réception : le système a acco
     ("How the picture fits a screen of another shape: Fit shows all of it with bars, Fill crops the edges, Stretch distorts it, 1:1 pixels shows it at its own size.", "La façon dont l’image s’adapte à un écran d’une autre forme : « Ajuster » la montre en entier avec des bandes, « Remplir » rogne les bords, « Étirer » la déforme, « Pixels 1:1 » l’affiche à sa propre taille."),
     ("Fastest", "Le plus rapide"),
     ("VRR: on a G-Sync, FreeSync or adaptive-refresh screen, frames are shown without waiting for the screen’s refresh. On shows each frame when the game drew it, and whole, so motion stays even; that adds about 1 to 4 ms of latency. Fastest shows each frame the moment it arrives, which can tear. Frame pacing is not used while VRR is on.", "VRR : sur un écran G-Sync, FreeSync ou à rafraîchissement adaptatif, les images s’affichent sans attendre le rafraîchissement de l’écran. « Activé » affiche chaque image quand le jeu l’a dessinée, et entière, pour des mouvements réguliers ; cela ajoute environ 1 à 4 ms de latence. « Le plus rapide » affiche chaque image dès son arrivée, ce qui peut causer un déchirement. Le frame pacing n’est pas utilisé tant que le VRR est activé."),
-    ("Trades latency against steady motion while VRR is off. Lowest latency shows frames at once; the other choices wait for the screen’s refresh: smoother, with more delay.", "Arbitre entre latence et régularité des mouvements tant que le VRR est désactivé. « Latence minimale » affiche les images aussitôt ; les autres choix attendent le rafraîchissement de l’écran : plus fluide, avec plus de délai."),
+    ("Trades latency against steady motion while VRR is off. Lowest latency shows frames at once; the other choices wait for the screen’s refresh: smoother, with more delay, and keeping every frame can add more. PC’s frame times shows each frame when the game drew it, a few milliseconds later.", "Arbitre entre latence et régularité des mouvements tant que le VRR est désactivé. « Latence minimale » affiche les images aussitôt ; les autres choix attendent le rafraîchissement de l’écran : plus fluide, avec plus de délai, et « Garder chaque image » peut en ajouter. « Rythme du PC » affiche chaque image quand le jeu l’a dessinée, quelques millisecondes plus tard."),
+    ("Balanced, keep every frame", "Équilibré, garder chaque image"),
+    ("PC’s frame times", "Rythme du PC"),
     ("Waits for the screen’s refresh, so the picture never tears; the wait adds latency. Turn it off for the lowest latency if tearing doesn’t bother you.", "Attend le rafraîchissement de l’écran, pour que l’image ne se déchire jamais ; cette attente ajoute de la latence. Désactivez-le pour la latence la plus faible si le déchirement ne vous gêne pas."),
     ("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; HDR streams are enlarged without them.", "La façon dont un stream plus petit que l’écran est agrandi. FSR et SGSR accentuent les contours au prix d’un peu de temps GPU et de batterie ; les streams HDR sont agrandis sans eux."),
     ("Upscaling sharpness", "Netteté de la mise à l’échelle"),
@@ -1472,7 +1474,7 @@ sudo sysctl -w net.core.rmem_max={}", "Tampon de réception : le système a acco
     ("Draws the PC’s cursor here in Desktop pointer mode, without video delay.", "Dessine ici le curseur du PC en mode Pointeur du bureau, sans le délai de la vidéo."),
     ("1:1 pixels", "Pixels 1:1"),
     // Android features on the desktop: Presets, Theme, Check for updates now, About, small box art,
-    // the microphone’s noise suppression and automatic gain, Keep only the newest frame, the decode
+    // the microphone’s noise suppression and automatic gain, the decode
     // time after streaming, the latency CSV and benchmark, and the connection test’s ping, jitter and
     // loss (ui/settings.rs, ui/about.rs, ui/latency_bench.rs, latency_bench.rs, network_test.rs,
     // update_check.rs, main.rs).
@@ -1495,7 +1497,6 @@ sudo sysctl -w net.core.rmem_max={}", "Tampon de réception : le système a acco
     ("Filters fans and other steady background noise out of the microphone and adds about 7 ms of microphone delay. Leave it on.", "Filtre du micro les ventilateurs et autres bruits de fond constants, et ajoute environ 7 ms de délai au micro. Laissez-le activé."),
     ("Finish a stream before exporting its timings.", "Terminez un stream avant d’exporter ses timings."),
     ("Fits more games on screen in a PC’s library.", "Affiche plus de jeux à l’écran dans la bibliothèque d’un PC."),
-    ("Keep only the newest frame", "Garder uniquement l’image la plus récente"),
     ("Latency CSV saved.", "CSV de latence enregistré."),
     ("Looks for a newer version now.", "Cherche dès maintenant une version plus récente."),
     ("Measures ping, jitter and loss, and download speed where the PC supports it.", "Mesure le ping, la gigue et les pertes, ainsi que la vitesse de téléchargement si le PC le permet."),
@@ -1508,7 +1509,6 @@ sudo sysctl -w net.core.rmem_max={}", "Tampon de réception : le système a acco
     ("Saves the latest latency measurements.", "Enregistre les dernières mesures de latence."),
     ("Show decode time after streaming", "Afficher le temps de décodage après le stream"),
     ("Shows the average decode time when a stream ends: this device’s decoding only, not the end-to-end latency.", "Affiche le temps de décodage moyen à la fin d’un stream : seulement le décodage de cet appareil, pas la latence de bout en bout."),
-    ("Skips frames the screen can no longer show in time, so the picture never falls behind. Leave it on; off shows every frame in turn and can add delay.", "Ignore les images que l’écran ne peut plus afficher à temps, pour que l’image ne prenne jamais de retard. Laissez-le activé ; désactivé, chaque image est affichée à son tour, ce qui peut ajouter du délai."),
     ("Source and licenses", "Code source et licences"),
     ("System", "Système"),
     ("System follows the system’s light or dark setting; OLED black uses pure black surfaces.", "« Système » suit le réglage clair ou sombre du système ; « Noir OLED » utilise des surfaces d’un noir pur."),

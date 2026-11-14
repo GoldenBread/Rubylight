@@ -1359,7 +1359,9 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("How the picture fits a screen of another shape: Fit shows all of it with bars, Fill crops the edges, Stretch distorts it, 1:1 pixels shows it at its own size.", "Cách hình ảnh vừa với màn hình có tỷ lệ khác: “Vừa khít” hiện toàn bộ hình kèm viền đen, “Lấp đầy” cắt các mép, “Kéo giãn” làm méo hình, “Pixel 1:1” hiện hình ở đúng kích thước gốc."),
     ("Fastest", "Nhanh nhất"),
     ("VRR: on a G-Sync, FreeSync or adaptive-refresh screen, frames are shown without waiting for the screen’s refresh. On shows each frame when the game drew it, and whole, so motion stays even; that adds about 1 to 4 ms of latency. Fastest shows each frame the moment it arrives, which can tear. Frame pacing is not used while VRR is on.", "VRR: trên màn hình G-Sync, FreeSync hoặc có tần số quét thích ứng, khung hình được hiển thị mà không chờ màn hình làm mới. “Bật” hiển thị mỗi khung hình đúng lúc trò chơi đã vẽ và trọn vẹn, giúp chuyển động luôn đều; việc này thêm khoảng 1–4 mili giây độ trễ. “Nhanh nhất” hiển thị mỗi khung hình ngay khi đến, có thể bị xé hình. Khi VRR bật, “Nhịp độ khung hình” không được dùng."),
-    ("Trades latency against steady motion while VRR is off. Lowest latency shows frames at once; the other choices wait for the screen’s refresh: smoother, with more delay.", "Đánh đổi giữa độ trễ và chuyển động đều khi VRR tắt. “Độ trễ thấp nhất” hiện khung hình ngay; các lựa chọn khác chờ màn hình làm mới: mượt hơn nhưng trễ hơn."),
+    ("Trades latency against steady motion while VRR is off. Lowest latency shows frames at once; the other choices wait for the screen’s refresh: smoother, with more delay, and keeping every frame can add more. PC’s frame times shows each frame when the game drew it, a few milliseconds later.", "Đánh đổi giữa độ trễ và chuyển động đều khi VRR tắt. “Độ trễ thấp nhất” hiện khung hình ngay; các lựa chọn khác chờ màn hình làm mới: mượt hơn nhưng trễ hơn, và giữ mọi khung hình có thể thêm nữa. “Nhịp khung hình của PC” hiện mỗi khung hình đúng lúc trò chơi đã vẽ, chậm vài mili giây."),
+    ("Balanced, keep every frame", "Cân bằng, giữ mọi khung hình"),
+    ("PC’s frame times", "Nhịp khung hình của PC"),
     ("Waits for the screen’s refresh, so the picture never tears; the wait adds latency. Turn it off for the lowest latency if tearing doesn’t bother you.", "Chờ màn hình làm mới nên hình ảnh không bao giờ bị xé; việc chờ làm tăng độ trễ. Tắt để có độ trễ thấp nhất nếu xé hình không làm bạn khó chịu."),
     ("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; HDR streams are enlarged without them.", "Cách phóng to stream nhỏ hơn màn hình. FSR và SGSR làm nét các cạnh, đổi lại tốn thêm chút thời gian GPU và pin; stream HDR được phóng to mà không dùng chúng."),
     ("Upscaling sharpness", "Độ sắc nét khi nâng độ phân giải"),
@@ -1472,7 +1474,7 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("Draws the PC’s cursor here in Desktop pointer mode, without video delay.", "Ở chế độ Con trỏ máy tính, vẽ con trỏ của PC ở đây, không có độ trễ video."),
     ("1:1 pixels", "Pixel 1:1"),
     // Android features on the desktop: Presets, Theme, Check for updates now, About, small box art,
-    // the microphone’s noise suppression and automatic gain, Keep only the newest frame, the decode
+    // the microphone’s noise suppression and automatic gain, the decode
     // time after streaming, the latency CSV and benchmark, and the connection test’s ping, jitter and
     // loss (ui/settings.rs, ui/about.rs, ui/latency_bench.rs, latency_bench.rs, network_test.rs,
     // update_check.rs, main.rs).
@@ -1495,7 +1497,6 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("Filters fans and other steady background noise out of the microphone and adds about 7 ms of microphone delay. Leave it on.", "Lọc tiếng quạt và các tiếng ồn nền đều đặn khác khỏi micrô và thêm khoảng 7 ms độ trễ micrô. Nên để bật."),
     ("Finish a stream before exporting its timings.", "Hãy hoàn tất một stream trước khi xuất số liệu thời gian."),
     ("Fits more games on screen in a PC’s library.", "Hiển thị nhiều trò chơi hơn trên màn hình trong thư viện của PC."),
-    ("Keep only the newest frame", "Chỉ giữ khung hình mới nhất"),
     ("Latency CSV saved.", "Đã lưu CSV độ trễ."),
     ("Looks for a newer version now.", "Tìm phiên bản mới hơn ngay bây giờ."),
     ("Measures ping, jitter and loss, and download speed where the PC supports it.", "Đo ping, độ dao động và mất gói, cùng tốc độ tải xuống nếu PC hỗ trợ."),
@@ -1508,7 +1509,6 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("Saves the latest latency measurements.", "Lưu các kết quả đo độ trễ mới nhất."),
     ("Show decode time after streaming", "Hiện thời gian giải mã sau khi stream"),
     ("Shows the average decode time when a stream ends: this device’s decoding only, not the end-to-end latency.", "Hiển thị thời gian giải mã trung bình khi stream kết thúc: chỉ phần giải mã của thiết bị này, không phải độ trễ đầu-cuối."),
-    ("Skips frames the screen can no longer show in time, so the picture never falls behind. Leave it on; off shows every frame in turn and can add delay.", "Bỏ qua các khung hình mà màn hình không còn hiển thị kịp, để hình ảnh không bao giờ bị tụt lại. Nên để bật; khi tắt, mọi khung hình được hiện lần lượt và độ trễ có thể tăng."),
     ("Source and licenses", "Mã nguồn và giấy phép"),
     ("System", "Hệ thống"),
     ("System follows the system’s light or dark setting; OLED black uses pure black surfaces.", "“Hệ thống” theo cài đặt sáng hoặc tối của hệ thống; “Đen OLED” dùng các bề mặt đen tuyệt đối."),

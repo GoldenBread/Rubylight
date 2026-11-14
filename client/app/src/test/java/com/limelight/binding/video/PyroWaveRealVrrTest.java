@@ -45,7 +45,8 @@ public class PyroWaveRealVrrTest {
     @Test
     public void thePresenterIsMadeWithTheStreamsSwitchAndItsDisplaysAdaptiveRefresh() throws Exception {
         String decoder = read(DECODER);
-        int adaptive = decoder.indexOf("adaptive = outputHasArrSupport;");
+        // The ARR screen counts as adaptive unless Fixed timing on adaptive screens says otherwise (adaptiveInUse).
+        int adaptive = decoder.indexOf("adaptive = adaptiveInUse();");
         int mode = decoder.indexOf("int pyroWavePacing = FramePacingPolicy.pyroWaveMode(prefs.framePacing, prefs.vrr, "
                 + "prefs.hostFrameTimes, adaptive);");
         int top = decoder.indexOf("float topRefreshRate = pyroWavePacing == FramePacingPolicy.PYROWAVE_HOST_TIMES ? "

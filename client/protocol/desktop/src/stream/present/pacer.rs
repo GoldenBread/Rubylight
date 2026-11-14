@@ -42,10 +42,25 @@ pub fn pacing(settings: &crate::config::Settings, tearing_supported: bool) -> (P
 }
 
 /// The pacing without VRR: V-Sync, or immediate when the settings turn V-Sync off and the frame
-/// pacing is the lowest latency (every other frame pacing waits for the refresh).
+/// pacing is the lowest latency (every other frame pacing waits for the refresh, and so do the
+/// PC's frame times, whose pictures go out for a refresh).
 pub fn without_vrr(settings: &crate::config::Settings) -> PacingMode {
-    if settings.vsync || settings.frame_pacing.forces_vsync() { PacingMode::Vsync } else { PacingMode::Immediate }
+    if settings.vsync || settings.frame_pacing.forces_vsync() || settings.host_frame_times { PacingMode::Vsync } else { PacingMode::Immediate }
 }
+
+/// The display's refresh grid for the PC's frame times without VRR, from a refresh time on the
+/// session clock and the refresh period: a picture goes out a quarter of a refresh before the
+/// desktop's deadline for its refresh (`Grid::lead_us`), and a time within half a refresh after
+/// a refresh takes that one (`Grid::slack_us`), as Android's grid does.
+pub fn refresh_grid(refresh_us: i64, period_ns: i64) -> Grid {
+    let interval_us = period_ns / 1000;
+    Grid { anchor_us: refresh_us, interval_us, lead_us: interval_us / 4, slack_us: interval_us / 2 }
+}
+
+/// What the phase lock adds to its aim while the PC's frame times place each picture on the grid:
+/// with the pictures right at the deadline, ordinary jitter moves them between two refreshes, so
+/// the PC keeps them a little earlier (Android's `SCHEDULED_LATCH_ROOM_NS`).
+pub const HOST_GRID_LATCH_ROOM_US: i64 = 1_000;
 
 /// Whether a stream asks the GPU renderer for IMMEDIATE before MAILBOX when it presents without
 /// V-Sync (`sdl::prefer_immediate`): MAILBOX never tears, so it would hold each picture for the
@@ -694,6 +709,16 @@ pub struct Pacer {
     /// `checkbox_drop_late_frames`): off, Balanced shows every picture in turn as the in-order
     /// pacings do instead of the newest due one.
     pub(super) drop_late_frames: bool,
+    /// The PC's frame times without VRR (`Settings::host_frame_times`): while the mode is V-Sync,
+    /// the clock places each picture on the display's refresh grid and the frame pacing setting
+    /// is not used (the lowest latency's newest picture is taken).
+    pub(super) host_frame_times: bool,
+    /// The display's refresh grid and the desktop's deadline before a refresh (µs), for the PC's
+    /// frame times; None until the render thread reads the display's timing (`set_grid`).
+    grid: Option<Grid>,
+    deadline_us: i64,
+    /// The display's shortest refresh interval, for a clock made again.
+    min_interval_us: i64,
     /// One frame of the stream (`frame_us`).
     frame_us: u64,
     /// The FPS limit's last present slot.
@@ -717,6 +742,10 @@ impl Pacer {
             pending,
             frame_pacing: FramePacing::Latency,
             drop_late_frames: true,
+            host_frame_times: false,
+            grid: None,
+            deadline_us: 0,
+            min_interval_us,
             frame_us: frame_us(60),
             last_slot_us: None,
             decode_queue: 0,
@@ -744,10 +773,40 @@ impl Pacer {
         self
     }
 
+    /// The PC's frame times for V-Sync. A stream that starts at V-Sync learns its delay for a
+    /// fixed refresh (the grid's share of frames, `PresentClock::schedule_on_grid`), not a VRR
+    /// panel's link; a VRR stream keeps its clock when the display check turns it to V-Sync.
+    pub fn with_host_frame_times(mut self, host_frame_times: bool) -> Self {
+        self.host_frame_times = host_frame_times;
+        if host_frame_times && self.mode == PacingMode::Vsync {
+            self.clock = PresentClock::new(ClockSettings { min_interval_us: self.min_interval_us, ..ClockSettings::default() });
+        }
+        self
+    }
+
+    /// Whether the PC's frame times place this stream's pictures on the refresh grid now.
+    pub fn host_grid(&self) -> bool {
+        self.mode == PacingMode::Vsync && self.host_frame_times
+    }
+
+    /// The display's refresh grid (None while its timing can't be read: pictures then go out at
+    /// their time and V-Sync takes the refresh after) and the desktop's deadline before a refresh,
+    /// for the pictures accepted next.
+    pub fn set_grid(&mut self, grid: Option<Grid>, deadline_us: i64) {
+        self.grid = grid;
+        self.deadline_us = deadline_us.max(0);
+    }
+
+    /// The frame pacing that shapes this stream's presents: the PC's frame times take the
+    /// lowest latency's newest picture.
+    fn effective_pacing(&self) -> FramePacing {
+        if self.host_frame_times { FramePacing::Latency } else { self.frame_pacing }
+    }
+
     /// Whether this stream skips a picture that would wait behind the last one, on this display.
     /// Balanced that keeps every picture keeps it as the in-order pacings do.
     pub fn skips_instead_of_waiting(&self, refresh_hz: f32) -> bool {
-        !self.keeps_every_picture() && skips_instead_of_waiting(self.mode, self.frame_pacing, self.frame_us, refresh_hz)
+        !self.keeps_every_picture() && skips_instead_of_waiting(self.mode, self.effective_pacing(), self.frame_us, refresh_hz)
     }
 
     /// Whether pictures are shown in turn, one a refresh, instead of the newest due one: the FPS
@@ -764,7 +823,7 @@ impl Pacer {
 
     /// Whether the frame pacing setting shapes this stream's presents now.
     pub(super) fn paced(&self, pacing: FramePacing) -> bool {
-        self.mode == PacingMode::Vsync && self.frame_pacing == pacing
+        self.mode == PacingMode::Vsync && self.effective_pacing() == pacing
     }
 
     /// The FPS limit's slot for a picture ready at `ready_us`: a frame after the last slot, but
@@ -783,6 +842,7 @@ impl Pacer {
                 let s = self.clock.schedule_queued(decoded.rtp, decoded.ready_us, self.decode_queue);
                 (s.present_us, s.hold_us, s.late)
             }
+            _ if self.host_grid() => self.schedule_on_grid(&decoded),
             _ if self.paced(FramePacing::CapFps) => {
                 let slot = self.cap_slot(decoded.ready_us);
                 (slot, (slot - decoded.ready_us) as i64, false)
@@ -795,6 +855,27 @@ impl Pacer {
             hold_us,
             late,
         });
+    }
+
+    /// When a picture of the PC's frame times goes out at V-Sync: its time on the PC's clock plus the
+    /// learnt delay, moved onto the refresh grid. The clock sees each picture ready the desktop's
+    /// deadline later than it is, so the refresh it picks is one the picture can still make; it is
+    /// presented that much before the clock's release (`lead_us` ahead of the deadline), never
+    /// before it is ready. Without a grid V-Sync takes the refresh after its time.
+    fn schedule_on_grid(&mut self, decoded: &Decoded) -> (u64, i64, bool) {
+        let deadline = self.deadline_us as u64;
+        let ready = decoded.ready_us + deadline;
+        let (release_us, hold_us, late) = match self.grid {
+            Some(grid) => {
+                let s = self.clock.schedule_on_grid_queued(decoded.rtp, ready, grid, self.decode_queue);
+                (s.release_us, s.hold_us, s.late)
+            }
+            None => {
+                let s = self.clock.schedule_queued(decoded.rtp, ready, self.decode_queue);
+                (s.present_us, s.hold_us, s.late)
+            }
+        };
+        (release_us.saturating_sub(deadline).max(decoded.ready_us), hold_us, late)
     }
 
     /// The raced frame number of the next picture and when it is due, if one is waiting.

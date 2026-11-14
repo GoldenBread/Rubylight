@@ -1359,7 +1359,9 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("How the picture fits a screen of another shape: Fit shows all of it with bars, Fill crops the edges, Stretch distorts it, 1:1 pixels shows it at its own size.", "畫面如何配合比例不同的螢幕：「適應」顯示完整畫面並留黑邊，「填充」會裁掉邊緣，「拉伸」會讓畫面變形，「1:1 像素」以原始大小顯示。"),
     ("Fastest", "最快"),
     ("VRR: on a G-Sync, FreeSync or adaptive-refresh screen, frames are shown without waiting for the screen’s refresh. On shows each frame when the game drew it, and whole, so motion stays even; that adds about 1 to 4 ms of latency. Fastest shows each frame the moment it arrives, which can tear. Frame pacing is not used while VRR is on.", "VRR：在 G-Sync、FreeSync 或自動調整更新率的螢幕上，不必等待螢幕更新即可顯示畫面。「開啟」在遊戲繪製每個影格的時刻完整顯示它，讓動態保持平穩；會增加約 1 到 4 毫秒延遲。「最快」在每個影格一到達時就顯示，可能出現撕裂。VRR 開啟時不使用「影格調步」。"),
-    ("Trades latency against steady motion while VRR is off. Lowest latency shows frames at once; the other choices wait for the screen’s refresh: smoother, with more delay.", "VRR 關閉時，在延遲和動態平穩之間取捨。「最低延遲」會立即顯示每個影格；其他選項會等待螢幕更新：更流暢，但延遲更高。"),
+    ("Trades latency against steady motion while VRR is off. Lowest latency shows frames at once; the other choices wait for the screen’s refresh: smoother, with more delay, and keeping every frame can add more. PC’s frame times shows each frame when the game drew it, a few milliseconds later.", "VRR 關閉時，在延遲和動態平穩之間取捨。「最低延遲」會立即顯示影格；其他選項會等待螢幕更新：更流暢，但延遲更高，保留每個影格還會再增加。「電腦的影格時間」會在遊戲繪製每個影格時顯示，晚幾毫秒。"),
+    ("Balanced, keep every frame", "平衡，保留每個影格"),
+    ("PC’s frame times", "電腦的影格時間"),
     ("Waits for the screen’s refresh, so the picture never tears; the wait adds latency. Turn it off for the lowest latency if tearing doesn’t bother you.", "等待螢幕更新，因此畫面絕不撕裂；等待會增加延遲。如果不介意撕裂，可關閉以獲得最低延遲。"),
     ("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; HDR streams are enlarged without them.", "比螢幕小的串流畫面如何放大。FSR 和 SGSR 會銳化邊緣，但會佔用一些 GPU 時間和電力；HDR 串流放大時不使用它們。"),
     ("Upscaling sharpness", "超解析度銳利度"),
@@ -1472,7 +1474,7 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("Draws the PC’s cursor here in Desktop pointer mode, without video delay.", "在「桌面指標」模式下於此處繪製電腦的游標，沒有視訊延遲。"),
     ("1:1 pixels", "1:1 像素"),
     // Android features on the desktop: Presets, Theme, Check for updates now, About, small box art,
-    // the microphone’s noise suppression and automatic gain, Keep only the newest frame, the decode
+    // the microphone’s noise suppression and automatic gain, the decode
     // time after streaming, the latency CSV and benchmark, and the connection test’s ping, jitter and
     // loss (ui/settings.rs, ui/about.rs, ui/latency_bench.rs, latency_bench.rs, network_test.rs,
     // update_check.rs, main.rs).
@@ -1495,7 +1497,6 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("Filters fans and other steady background noise out of the microphone and adds about 7 ms of microphone delay. Leave it on.", "濾除麥克風中風扇等持續的背景噪音，並使麥克風延遲增加約 7 ms。請保持開啟。"),
     ("Finish a stream before exporting its timings.", "請先完成一次串流，才能匯出其計時資料。"),
     ("Fits more games on screen in a PC’s library.", "在電腦的遊戲庫中，一個畫面可顯示更多遊戲。"),
-    ("Keep only the newest frame", "只保留最新的影格"),
     ("Latency CSV saved.", "已儲存延遲 CSV。"),
     ("Looks for a newer version now.", "立即尋找較新的版本。"),
     ("Measures ping, jitter and loss, and download speed where the PC supports it.", "測量 Ping、抖動和遺失率，電腦支援時也會測量下載速度。"),
@@ -1508,7 +1509,6 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("Saves the latest latency measurements.", "儲存最新的延遲測量結果。"),
     ("Show decode time after streaming", "串流後顯示解碼時間"),
     ("Shows the average decode time when a stream ends: this device’s decoding only, not the end-to-end latency.", "串流結束時顯示平均解碼時間：僅為此裝置的解碼時間，不是端對端延遲。"),
-    ("Skips frames the screen can no longer show in time, so the picture never falls behind. Leave it on; off shows every frame in turn and can add delay.", "略過螢幕已無法及時顯示的影格，讓畫面始終不落後。請保持開啟；關閉後會依序顯示每個影格，可能增加延遲。"),
     ("Source and licenses", "原始碼和授權"),
     ("System", "跟隨系統"),
     ("System follows the system’s light or dark setting; OLED black uses pure black surfaces.", "「跟隨系統」採用系統的淺色或深色設定；「OLED 純黑」使用純黑的介面背景。"),

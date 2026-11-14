@@ -227,8 +227,6 @@
     <string name="summary_checkbox_enable_sops">Дозволяє ПК налаштовувати параметри гри під трансляцію. Залиште ввімкненим; вимкніть, якщо ПК змінює налаштування гри, а ви хочете їх зберегти.</string>
     <string name="title_checkbox_host_audio">Відтворювати звук і на ПК</string>
     <string name="title_unlock_fps">Показувати всі частоти кадрів</string>
-    <string name="title_checkbox_reduce_refresh_rate">Дозволити нижчу частоту оновлення</string>
-    <string name="summary_checkbox_reduce_refresh_rate">Дозволяє екрану працювати з найнижчою частотою оновлення, якої вистачає для трансляції, наприклад 60 Гц для 60 FPS, щоб заощадити заряд. Якщо вимкнено, лишається найвища частота — заради меншої затримки.</string>
     <string name="title_checkbox_disable_warnings">Сховати попередження про з’єднання</string>
     <string name="summary_checkbox_disable_warnings">Ховає попередження про погане з’єднання під час трансляції. Увімкніть, коли з’єднання налаштовано й вони вам більше не потрібні.</string>
     <string name="title_video_format">Відеокодек</string>
@@ -283,6 +281,8 @@
     <string name="pacing_balanced">Збалансовано</string>
     <string name="pacing_balanced_alt">Збалансовано з обмеженням FPS</string>
     <string name="pacing_smoothness">Найплавніше відео (більша затримка)</string>
+    <string name="pacing_balanced_every">Збалансовано, зберігати кожен кадр</string>
+    <string name="pacing_host_times">Ритм ПК</string>
     <string name="title_analog_scrolling">Стік для прокручування</string>
     <string name="summary_analog_scrolling">Стік, що прокручує в режимі миші з контролера; інший стік рухає вказівник. Якщо стік для прокручування не вибрано, вказівник рухають обидва.</string>
     <string name="analogscroll_none">Обидва стіки рухають мишу</string>
@@ -308,10 +308,6 @@
         <item>Найшвидше</item>
     </string-array>
     <string name="summary_vrr_unavailable">Потрібен Android 6 або новіший.</string>
-    <string name="title_host_frame_times">Показувати кадри в ритмі ПК</string>
-    <string name="summary_host_frame_times">Ненадовго затримує кожен кадр, щоб він з’являвся тоді, коли гра його намалювала, і рух був рівнішим. Додає кілька мілісекунд затримки; увімкніть, якщо рух виглядає нерівним.</string>
-    <string name="title_content_rate_frame_rate">Підлаштовувати екран під частоту кадрів гри</string>
-    <string name="summary_content_rate_frame_rate">Перемикає екран на частоту оновлення, що відповідає справжній частоті кадрів гри, наприклад 60 Гц для гри з 60 FPS у трансляції 120 FPS. Потрібна підтримка ПК.</string>
     <string name="title_virtual_display_scale">Роздільність рендерингу на ПК</string>
     <string name="summary_virtual_display_scale">Розмір, у якому ПК виконує рендеринг, у відсотках від роздільної здатності трансляції; розмір надісланого відео не змінюється. Понад 100 ПК малює більше пікселів, ніж надсилає, нижче — менше.</string>
     <string name="title_virtual_display_dpi">Масштаб екрана ПК</string>
@@ -335,8 +331,6 @@
     <string name="summary_phone_performance_hints">Повідомляє Android, скільки триває декодування, щоб система могла підвищити швидкість CPU, коли воно не встигає. Залиште ввімкненим; вимикайте лише для порівняння часу декодування.</string>
     <string name="title_gpu_max_clocks">Підвищити продуктивність GPU для PyroWave</string>
     <string name="summary_gpu_max_clocks">Вищі частоти GPU для швидшого декодування PyroWave ціною більшого енергоспоживання й нагрівання. Вмикайте, лише якщо декодування PyroWave надто повільне.</string>
-    <string name="title_drop_late_frames">Лише найновіший кадр</string>
-    <string name="summary_drop_late_frames">Пропускає кадри, які екран уже не встигне показати вчасно, щоб зображення не відставало. Залиште ввімкненим: якщо вимкнути, кожен кадр показується по черзі й може з’явитися затримка.</string>
     <string name="title_texture_view">Сумісний відеовивід</string>
     <string name="summary_texture_view">Для усунення несправностей: спробуйте, якщо відео чорне, мерехтить або зміщене. Додає роботи на кожен кадр і не використовується з HDR, «Менше смуг на градієнтах» і PyroWave.</string>
     <string name="title_unbatched_input">Миттєве введення мишею та пером</string>
@@ -495,4 +489,16 @@
     <string name="summary_stream_menu_button">Що робить ця кнопка, поки відкрите меню трансляції. «За замовчуванням» залишає плитку, у кутку якої показано цю кнопку; вихід, наприклад «Відключитися», спершу просить підтвердження.</string>
     <string name="stream_menu_button_default">За замовчуванням</string>
     <string name="stream_menu_button_none">Вимк.</string>
+    <string name="title_lower_refresh">Нижча частота оновлення</string>
+    <string name="summary_lower_refresh">Дозволяє екрану опускатися нижче найвищої частоти оновлення, щоб заощаджувати заряд: «Увімкнено» бере найнижчу частоту, що пасує трансляції, наприклад 60 Гц для 60 FPS; «Увімкнено, за грою» йде за частотою кадрів гри, наприклад 60 Гц для гри з 60 FPS у трансляції 120 FPS, і потребує підтримки ПК. «Вимкнено» зберігає найвищу частоту — заради меншої затримки.</string>
+    <string-array name="lower_refresh_choice_names">
+        <item>Вимкнено</item>
+        <item>Увімкнено</item>
+        <item>Увімкнено, за грою</item>
+    </string-array>
+    <string name="title_arr_fixed_timing">Фіксований такт на адаптивних екранах</string>
+    <string name="summary_arr_fixed_timing">На екрані з адаптивною частотою оновлення вважає оновлення фіксованим, поки VRR вимкнено, щоб кадри можна було підлаштувати під ваш екран і поверталася затримка черги екрана. Кадр, що спізнився на оновлення, може тоді чекати ціле оновлення замість наступного кроку екрана; залиште вимкненим, якщо рух не смикається на цьому екрані з вимкненим VRR.</string>
+    <string name="tag_unused_adaptive_screen">Не використовується: цей екран сам задає оновлення</string>
+    <string name="tag_unused_with">Не використовується з %1$s</string>
+    <string name="tag_every_frame_with">Збереження кожного кадру не використовується з %1$s</string>
 </resources>

@@ -227,8 +227,6 @@
     <string name="summary_checkbox_enable_sops">Pozwala komputerowi dostosować ustawienia gry do strumienia. Zostaw włączone; wyłącz, jeśli komputer zmienia ustawienia gry, a chcesz je zachować.</string>
     <string name="title_checkbox_host_audio">Odtwarzaj dźwięk także na komputerze</string>
     <string name="title_unlock_fps">Pokaż wszystkie liczby klatek</string>
-    <string name="title_checkbox_reduce_refresh_rate">Zezwalaj na niższe odświeżanie</string>
-    <string name="summary_checkbox_reduce_refresh_rate">Pozwala ekranowi używać najniższej częstotliwości odświeżania, która wciąż pasuje do strumienia, np. 60 Hz przy 60 FPS, aby oszczędzać baterię. Po wyłączeniu zostaje najwyższa częstotliwość, co daje mniejsze opóźnienie.</string>
     <string name="title_checkbox_disable_warnings">Ukryj ostrzeżenia o połączeniu</string>
     <string name="summary_checkbox_disable_warnings">Ukrywa ostrzeżenia o słabym połączeniu podczas strumieniowania. Włącz, gdy połączenie jest już dopracowane i ostrzeżenia nie są ci potrzebne.</string>
     <string name="title_video_format">Kodek wideo</string>
@@ -283,6 +281,8 @@
     <string name="pacing_balanced">Zrównoważone</string>
     <string name="pacing_balanced_alt">Zrównoważone z limitem FPS</string>
     <string name="pacing_smoothness">Najpłynniejsze wideo (większe opóźnienie)</string>
+    <string name="pacing_balanced_every">Zrównoważone, zachowaj każdą klatkę</string>
+    <string name="pacing_host_times">Rytm komputera</string>
     <string name="title_analog_scrolling">Gałka do przewijania</string>
     <string name="summary_analog_scrolling">Gałka, która przewija w trybie myszy kontrolera; druga gałka porusza wskaźnikiem. Bez gałki do przewijania obie poruszają wskaźnikiem.</string>
     <string name="analogscroll_none">Obie gałki poruszają myszą</string>
@@ -308,10 +308,6 @@
         <item>Najszybciej</item>
     </string-array>
     <string name="summary_vrr_unavailable">Wymaga Androida 6 lub nowszego.</string>
-    <string name="title_host_frame_times">Pokazuj klatki w rytmie komputera</string>
-    <string name="summary_host_frame_times">Krótko przytrzymuje każdą klatkę, aby pojawiła się wtedy, gdy gra ją narysowała, co wyrównuje ruch. Dodaje kilka milisekund opóźnienia; włącz, jeśli ruch wygląda nierówno.</string>
-    <string name="title_content_rate_frame_rate">Dopasuj ekran do liczby klatek gry</string>
-    <string name="summary_content_rate_frame_rate">Przełącza ekran na częstotliwość odświeżania pasującą do rzeczywistej liczby klatek gry, np. 60 Hz dla gry w 60 FPS w strumieniu 120 FPS. Wymaga obsługi przez komputer.</string>
     <string name="title_virtual_display_scale">Rozdzielczość renderowania komputera</string>
     <string name="summary_virtual_display_scale">Rozmiar, w jakim komputer renderuje obraz, jako procent rozdzielczości strumienia; wysyłane wideo zachowuje swój rozmiar. Powyżej 100 komputer rysuje więcej pikseli, niż wysyła, poniżej mniej.</string>
     <string name="title_virtual_display_dpi">Skalowanie ekranu komputera</string>
@@ -335,8 +331,6 @@
     <string name="summary_phone_performance_hints">Informuje Androida, ile trwa dekodowanie, aby mógł przyspieszyć CPU, gdy dekodowanie nie nadąża. Zostaw włączone; wyłącz tylko po to, by porównać czasy dekodowania.</string>
     <string name="title_gpu_max_clocks">Zwiększ wydajność GPU dla PyroWave</string>
     <string name="summary_gpu_max_clocks">Wyższe taktowanie GPU dla szybszego dekodowania PyroWave, kosztem większego zużycia energii i ciepła. Zostaw wyłączone, chyba że dekodowanie PyroWave jest za wolne.</string>
-    <string name="title_drop_late_frames">Zachowuj tylko najnowszą klatkę</string>
-    <string name="summary_drop_late_frames">Pomija klatki, których ekran nie zdąży już wyświetlić, więc obraz nigdy nie zostaje w tyle. Zostaw włączone; po wyłączeniu wyświetlane są wszystkie klatki po kolei, co może dodać opóźnienie.</string>
     <string name="title_texture_view">Zgodny widok wideo</string>
     <string name="summary_texture_view">Do rozwiązywania problemów: wypróbuj, jeśli wideo jest czarne, miga lub jest przesunięte. Dodaje pracy przy każdej klatce i nie jest używane z HDR, opcją „Mniej pasmowania kolorów” ani PyroWave.</string>
     <string name="title_unbatched_input">Natychmiastowe sterowanie myszą i rysikiem</string>
@@ -495,4 +489,16 @@
     <string name="summary_stream_menu_button">Co robi ten przycisk, gdy menu strumienia jest otwarte. „Domyślnie” zostawia kafelek, który pokazuje ten przycisk w rogu; wyjście, takie jak „Rozłącz”, najpierw pyta o potwierdzenie.</string>
     <string name="stream_menu_button_default">Domyślnie</string>
     <string name="stream_menu_button_none">Wyłączone</string>
+    <string name="title_lower_refresh">Niższa częstotliwość odświeżania</string>
+    <string name="summary_lower_refresh">Pozwala ekranowi zejść poniżej najwyższej częstotliwości odświeżania, aby oszczędzać baterię: „Wł.” wybiera najniższą częstotliwość pasującą do strumienia, np. 60 Hz przy 60 FPS; „Wł., dopasowana do gry” podąża za liczbą klatek gry, np. 60 Hz dla gry w 60 FPS w strumieniu 120 FPS, i wymaga obsługi przez komputer. „Wył.” zachowuje najwyższą częstotliwość, dla mniejszego opóźnienia.</string>
+    <string-array name="lower_refresh_choice_names">
+        <item>Wył.</item>
+        <item>Wł.</item>
+        <item>Wł., dopasowana do gry</item>
+    </string-array>
+    <string name="title_arr_fixed_timing">Stałe taktowanie na ekranach adaptacyjnych</string>
+    <string name="summary_arr_fixed_timing">Na ekranie z adaptacyjnym odświeżaniem traktuje odświeżanie jako stałe, gdy VRR jest wyłączone, dzięki czemu klatki można taktować pod twój ekran i działa odzyskiwanie opóźnienia kolejki ekranu. Klatka, która spóźni się na odświeżenie, może wtedy czekać całe odświeżenie zamiast na następny krok ekranu; zostaw wyłączone, chyba że obraz drga na tym ekranie przy wyłączonym VRR.</string>
+    <string name="tag_unused_adaptive_screen">Nie używane: ten ekran sam ustawia odświeżanie</string>
+    <string name="tag_unused_with">Nie używane z %1$s</string>
+    <string name="tag_every_frame_with">Zachowywanie każdej klatki nie jest używane z %1$s</string>
 </resources>

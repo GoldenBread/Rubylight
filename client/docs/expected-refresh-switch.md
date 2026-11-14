@@ -6,7 +6,7 @@ How Nightjar for Android asks the screen for the stream's frame rate and explain
 
 ## What the app does
 
-- The stream votes its frame rate on the video surface with `Surface.setFrameRate()`: the base vote at connection (`CHANGE_FRAME_RATE_ALWAYS` on Android 12 and newer), and, with **Match the screen to the game's frame rate** on a Rubylight host, a content-rate vote (`CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS`, withdrawn when the game stops holding a rate). Android 11 has only the two-argument call, which switches seamlessly only.
+- The stream votes its frame rate on the video surface with `Surface.setFrameRate()`: the base vote at connection (`CHANGE_FRAME_RATE_ALWAYS` on Android 12 and newer), and, with Lower refresh rate's **On, matched to the game** on a Rubylight host, a content-rate vote (`CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS`, withdrawn when the game stops holding a rate). Android 11 has only the two-argument call, which switches seamlessly only.
 - `RefreshSwitchMonitor` checks once a second whether the screen follows the last vote. A screen follows when it runs at the vote or a whole multiple of it (30 on 60 or 120, 59.94 against 60). When it has not followed for 3 seconds, the Statistics and debug overlays show **why**, and the log gets one `Refresh switch:` line with the numbers (vote, active Hz, the modes of this screen size, the user limit if known).
 - The cause is inferred, because Android reports no reason when it ignores a vote. In order:
 
@@ -43,7 +43,7 @@ Looked at, with no code change because nothing can be decided without the hardwa
 
 ## Checking it on a multi-rate phone
 
-On a 60/90/120 phone with Adaptive or Smooth display on, stream a 120 fps host with **Match the screen to the game's frame rate** on, from a Rubylight host, and a game that holds 60:
+On a 60/90/120 phone with Adaptive or Smooth display on, stream a 120 fps host with Lower refresh rate set to **On, matched to the game**, from a Rubylight host, and a game that holds 60:
 
 1. The Display line shows the screen moving to 60 (or staying at 120) without a black flash.
 2. With the system setting on Standard or battery saver on, the overlay names it after about 3 seconds.

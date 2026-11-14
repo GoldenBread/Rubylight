@@ -141,23 +141,36 @@
         <item>50000</item>
     </string-array>
 
-    <string-array name="video_frame_pacing_names">
-        <item>@string/pacing_latency</item>
-        <item>@string/pacing_balanced</item>
-        <item>@string/pacing_balanced_alt</item>
-        <item>@string/pacing_smoothness</item>
-    </string-array>
     <!-- Variable refresh rate: Off, On or Fastest (VrrChoice.VALUES), stored in checkbox_vrr and checkbox_real_vrr. -->
     <string-array name="vrr_choice_values" translatable="false">
         <item>off</item>
         <item>on</item>
         <item>fastest</item>
     </string-array>
-    <string-array name="video_frame_pacing_values" translatable="false">
+    <!-- Frame pacing's row: FramePacingChoice.VALUES, stored in frame_pacing, checkbox_drop_late_frames and
+         checkbox_host_frame_times. -->
+    <string-array name="frame_pacing_choice_names">
+        <item>@string/pacing_latency</item>
+        <item>@string/pacing_balanced</item>
+        <item>@string/pacing_balanced_every</item>
+        <item>@string/pacing_balanced_alt</item>
+        <item>@string/pacing_smoothness</item>
+        <item>@string/pacing_host_times</item>
+    </string-array>
+    <string-array name="frame_pacing_choice_values" translatable="false">
         <item>latency</item>
         <item>balanced</item>
+        <item>balanced-every</item>
         <item>cap-fps</item>
         <item>smoothness</item>
+        <item>host</item>
+    </string-array>
+    <!-- Lower refresh rate: LowerRefreshChoice.VALUES, stored in checkbox_reduce_refresh_rate and
+         checkbox_content_rate_frame_rate. -->
+    <string-array name="lower_refresh_choice_values" translatable="false">
+        <item>off</item>
+        <item>on</item>
+        <item>matched</item>
     </string-array>
 
     <string-array name="analog_scrolling_names">

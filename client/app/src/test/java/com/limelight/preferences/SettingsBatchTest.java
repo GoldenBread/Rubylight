@@ -80,12 +80,9 @@ public class SettingsBatchTest {
         SharedPreferences p = prefs();
         p.edit().clear().commit();
         assertTrue(SettingRules.framePacingApplies(RuntimeEnvironment.getApplication(), p));
-        assertFalse(SettingRules.dropLateFramesApplies(RuntimeEnvironment.getApplication(), p));
-        p.edit().putString("frame_pacing", "balanced").commit();
-        assertTrue(SettingRules.dropLateFramesApplies(RuntimeEnvironment.getApplication(), p));
+        // The PC's frame times are one of Frame pacing's choices now, so the row stays.
         p.edit().putBoolean("checkbox_host_frame_times", true).commit();
-        assertFalse(SettingRules.framePacingApplies(RuntimeEnvironment.getApplication(), p));
-        assertFalse(SettingRules.dropLateFramesApplies(RuntimeEnvironment.getApplication(), p));
+        assertTrue(SettingRules.framePacingApplies(RuntimeEnvironment.getApplication(), p));
         p.edit().putBoolean("checkbox_host_frame_times", false).putBoolean("checkbox_vrr", true).commit();
         assertFalse(SettingRules.framePacingApplies(RuntimeEnvironment.getApplication(), p));
         assertFalse(SettingRules.upscalingUsesSharpness(p));
@@ -118,49 +115,74 @@ public class SettingsBatchTest {
     }
 
     @Test
-    public void framePacingIsHiddenWhileHostFrameTimesOrVariableRefreshReplaceIt() {
+    public void framePacingOffersThePcsFrameTimesAndHidesOnlyWithVariableRefresh() {
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             PreferenceScreen display = section(controller, "display");
-            assertNotNull(display.findPreference("frame_pacing"));
+            ListPreference pacing = (ListPreference) display.findPreference("frame_pacing");
+            assertNotNull(pacing);
+            // A main row, beside Variable refresh rate.
+            java.util.List<String> keys = SettingsStructureTest.keys(groupOf(display, "frame_pacing"));
+            assertEquals(keys.indexOf("checkbox_vrr") + 1, keys.indexOf("frame_pacing"));
+            assertEquals("latency", pacing.getValue());
             prefs().edit().putBoolean("checkbox_host_frame_times", true).commit();
-            assertNull(display.findPreference("frame_pacing"));
-            prefs().edit().putBoolean("checkbox_host_frame_times", false).commit();
-            assertNotNull(display.findPreference("frame_pacing"));
+            assertNotNull("the PC's frame times are one of its choices", display.findPreference("frame_pacing"));
+            assertEquals("host", ((ListPreference) display.findPreference("frame_pacing")).getValue());
             prefs().edit().putBoolean("checkbox_vrr", true).commit();
             assertNull(display.findPreference("frame_pacing"));
             // Hiding it never changes the stored choice.
             assertEquals("latency", prefs().getString("frame_pacing", "latency"));
+            assertTrue(prefs().getBoolean("checkbox_host_frame_times", false));
+            // The old switch has no row anywhere.
+            for (String name : StreamSettings.SECTIONS.keySet()) {
+                assertNull(name, section(controller, name).findPreference("checkbox_host_frame_times"));
+            }
         }
     }
 
     @Test
-    public void frameDroppingSitsBesideFramePacingAndShowsOnlyWithBalanced() {
+    public void keepOnlyTheNewestFrameIsBalancedsTwoChoices() {
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             PreferenceScreen display = section(controller, "display");
-            assertNull(display.findPreference("checkbox_drop_late_frames"));
-            prefs().edit().putString("frame_pacing", "balanced").commit();
-            Preference drop = display.findPreference("checkbox_drop_late_frames");
-            assertNotNull(drop);
-            Preference pacing = display.findPreference("frame_pacing");
-            java.util.List<String> keys = SettingsStructureTest.keys(groupOf(display, "frame_pacing"));
-            assertEquals(keys.indexOf("frame_pacing") + 1, keys.indexOf("checkbox_drop_late_frames"));
-            assertNotNull(pacing);
-            prefs().edit().putString("frame_pacing", "latency").commit();
-            assertNull(display.findPreference("checkbox_drop_late_frames"));
-            // Hiding it never changes the stored choice, and nothing else shows it.
-            assertTrue(prefs().getBoolean("checkbox_drop_late_frames", true));
-            assertNull(section(controller, "advanced").findPreference("checkbox_drop_late_frames"));
+            ListPreference pacing = (ListPreference) display.findPreference("frame_pacing");
+            pacing.setValue("balanced-every");
+            assertEquals("balanced", prefs().getString("frame_pacing", null));
+            assertFalse(prefs().getBoolean("checkbox_drop_late_frames", true));
+            pacing.setValue("balanced");
+            assertTrue(prefs().getBoolean("checkbox_drop_late_frames", false));
+            // Another pacing leaves Balanced's choice for when Balanced comes back.
+            pacing.setValue("balanced-every");
+            pacing.setValue("smoothness");
+            assertEquals("smoothness", prefs().getString("frame_pacing", null));
+            assertFalse(prefs().getBoolean("checkbox_drop_late_frames", true));
+            pacing.setValue("host");
+            assertTrue(prefs().getBoolean("checkbox_host_frame_times", false));
+            assertEquals("the pacing under it stays", "smoothness", prefs().getString("frame_pacing", null));
+            pacing.setValue("latency");
+            assertFalse(prefs().getBoolean("checkbox_host_frame_times", true));
+            // The old switch has no row anywhere.
+            for (String name : StreamSettings.SECTIONS.keySet()) {
+                assertNull(name, section(controller, name).findPreference("checkbox_drop_late_frames"));
+            }
         }
     }
 
     @Test
-    public void theContentRateVoteNeedsTheLowerRefreshRateSwitch() {
+    public void lowerRefreshRateIsOneRowOverItsTwoSwitches() {
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             PreferenceScreen display = section(controller, "display");
             assertNull(display.findPreference("checkbox_content_rate_frame_rate"));
-            ((SwitchPreference) display.findPreference("checkbox_reduce_refresh_rate")).setChecked(true);
-            assertNotNull(display.findPreference("checkbox_content_rate_frame_rate"));
-            // Variable refresh rate replaces both rows.
+            ListPreference lower = (ListPreference) display.findPreference("checkbox_reduce_refresh_rate");
+            assertEquals("off", lower.getValue());
+            lower.setValue("matched");
+            assertTrue(prefs().getBoolean("checkbox_reduce_refresh_rate", false));
+            assertTrue(prefs().getBoolean("checkbox_content_rate_frame_rate", false));
+            lower.setValue("on");
+            assertFalse(prefs().getBoolean("checkbox_content_rate_frame_rate", true));
+            lower.setValue("matched");
+            lower.setValue("off");
+            assertFalse(prefs().getBoolean("checkbox_reduce_refresh_rate", true));
+            assertTrue("Off keeps the matched choice", prefs().getBoolean("checkbox_content_rate_frame_rate", false));
+            // Variable refresh rate replaces the row.
             ((android.preference.ListPreference) display.findPreference("checkbox_vrr")).setValue("fastest");
             assertNull(display.findPreference("checkbox_reduce_refresh_rate"));
             assertNull(display.findPreference("checkbox_content_rate_frame_rate"));

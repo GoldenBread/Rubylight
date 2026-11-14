@@ -177,9 +177,11 @@ public class VrrOfferedTest {
             android.preference.PreferenceScreen display =
                     SettingsStructureTest.open(controller.get(), "display").getPreferenceScreen();
             assertNull("Real VRR is the Variable refresh rate row's On", display.findPreference(PreferenceConfiguration.REAL_VRR_PREF_STRING));
-            assertTrue(display.findPreference(PreferenceConfiguration.HOST_FRAME_TIMES_PREF_STRING) != null);
-            prefs().edit().putBoolean(PreferenceConfiguration.VRR_PREF_STRING, true).commit();
+            // The fixed refresh's PC's frame times are a Frame pacing choice, shown without VRR.
             assertNull(display.findPreference(PreferenceConfiguration.HOST_FRAME_TIMES_PREF_STRING));
+            assertTrue(display.findPreference(PreferenceConfiguration.FRAME_PACING_PREF_STRING) != null);
+            prefs().edit().putBoolean(PreferenceConfiguration.VRR_PREF_STRING, true).commit();
+            assertNull(display.findPreference(PreferenceConfiguration.FRAME_PACING_PREF_STRING));
             assertEquals("on by default", "on", ((android.preference.ListPreference) display.findPreference(
                     PreferenceConfiguration.VRR_PREF_STRING)).getValue());
         }

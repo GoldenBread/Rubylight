@@ -4,8 +4,10 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 
+import com.limelight.R;
 import com.limelight.binding.audio.MicProcessing;
 import com.limelight.binding.video.DisplayFrameRatePolicy;
+import com.limelight.binding.video.VideoRendererChoice;
 
 /**
  * Which settings apply given the others, so the Settings screens can hide the ones that would do
@@ -31,15 +33,48 @@ final class SettingRules {
                 DisplayFrameRatePolicy.vrrOffered(context);
     }
 
-    /** Frame pacing decides how frames are shown unless adaptive refresh or host frame times take over. */
+    /**
+     * Frame pacing decides how frames are shown unless adaptive refresh takes over; the PC's frame times and
+     * Balanced's newest-frame choice are among its choices (FramePacingChoice).
+     */
     static boolean framePacingApplies(Context context, SharedPreferences prefs) {
-        return !vrrOn(context, prefs) && !prefs.getBoolean(HOST_FRAME_TIMES, false);
+        return !vrrOn(context, prefs);
     }
 
-    /** Dropping late frames is part of Balanced frame pacing; the other modes ignore the choice. */
-    static boolean dropLateFramesApplies(Context context, SharedPreferences prefs) {
-        return framePacingApplies(context, prefs) &&
-                "balanced".equals(prefs.getString(FRAME_PACING, PreferenceConfiguration.DEFAULT_FRAME_PACING));
+    /**
+     * Render through Vulkan or Frame Warp, whichever puts frames through the Vulkan renderer (VideoRendererChoice),
+     * as the title of its setting; 0 when neither does. Before Android 10 neither runs.
+     */
+    static int vulkanPathTitle(SharedPreferences prefs) {
+        if (android.os.Build.VERSION.SDK_INT < VideoRendererChoice.MIN_SDK) return 0;
+        if (prefs.getBoolean(PreferenceConfiguration.VULKAN_RENDER_PREF_STRING, false)) return R.string.title_vulkan_render;
+        if (frameWarpApplies(prefs) && prefs.getBoolean(PreferenceConfiguration.FRAME_WARP_PREF_STRING, false)) {
+            return R.string.title_frame_warp;
+        }
+        return 0;
+    }
+
+    /** FSR or SGSR enlarges the picture: not under Vulkan, HDR or PyroWave (UpscalingPolicy). */
+    private static boolean upscalerOn(SharedPreferences prefs) {
+        return vulkanPathTitle(prefs) == 0 && !"off".equals(prefs.getString(PreferenceConfiguration.UPSCALING_PREF_STRING, "off")) &&
+                !prefs.getBoolean("checkbox_enable_hdr", false) && !pyroWaveChosen(prefs);
+    }
+
+    /**
+     * The tag for a Frame pacing choice that its renderer ignores, or null: the Vulkan renderer takes the pacing but
+     * neither the PC's frame times nor Balanced's newest-frame choice (MediaCodecDecoderRenderer.handOutputToVulkan).
+     */
+    static String framePacingUnused(Context context, SharedPreferences prefs) {
+        int vulkan = vulkanPathTitle(prefs);
+        if (vulkan == 0) return null;
+        String choice = FramePacingChoice.read(prefs);
+        if (FramePacingChoice.HOST_TIMES.equals(choice)) {
+            return context.getString(R.string.tag_unused_with, context.getString(vulkan));
+        }
+        if (FramePacingChoice.BALANCED_EVERY_FRAME.equals(choice)) {
+            return context.getString(R.string.tag_every_frame_with, context.getString(vulkan));
+        }
+        return null;
     }
 
     /**
@@ -142,14 +177,14 @@ final class SettingRules {
         return !pyroWaveChosen(prefs) && !prefs.getBoolean("checkbox_enable_hdr", false);
     }
 
-    /** A lower refresh rate is chosen while adaptive refresh is off. */
+    /** A lower refresh rate, and with it the game's rate (LowerRefreshChoice), is chosen while adaptive refresh is off. */
     static boolean reduceRefreshRateApplies(Context context, SharedPreferences prefs) {
         return !vrrOn(context, prefs);
     }
 
-    /** Matching the game's frame rate needs the screen to be allowed below the stream's rate. */
-    static boolean contentRateApplies(Context context, SharedPreferences prefs) {
-        return reduceRefreshRateApplies(context, prefs) && prefs.getBoolean("checkbox_reduce_refresh_rate", false);
+    /** "Fixed timing on adaptive screens" shows on an ARR screen while Variable refresh rate is off. */
+    static boolean arrFixedTimingShown(Context context, SharedPreferences prefs) {
+        return !vrrOn(context, prefs) && DisplayFrameRatePolicy.arrScreen(context);
     }
 
     /**
@@ -159,7 +194,26 @@ final class SettingRules {
      */
     static boolean displayQueueRecoveryApplies(Context context, SharedPreferences prefs) {
         String pacing = prefs.getString(FRAME_PACING, PreferenceConfiguration.DEFAULT_FRAME_PACING);
-        return framePacingApplies(context, prefs) && ("latency".equals(pacing) || "balanced".equals(pacing));
+        return framePacingApplies(context, prefs) && !prefs.getBoolean(HOST_FRAME_TIMES, false) &&
+                ("latency".equals(pacing) || "balanced".equals(pacing));
+    }
+
+    /**
+     * Why the display queue take-back does nothing where it shows, or null when it works: a screen timed as
+     * adaptive (DisplayFrameRatePolicy.adaptiveInUse), the Vulkan renderer, or an upscaler, none of which reports
+     * when frames are shown the way the watch needs (MediaCodecDecoderRenderer.displayQueueDropDue).
+     */
+    static String displayQueueRecoveryUnused(Context context, SharedPreferences prefs) {
+        if (DisplayFrameRatePolicy.adaptiveInUse(DisplayFrameRatePolicy.arrScreen(context), false,
+                prefs.getBoolean(PreferenceConfiguration.ARR_FIXED_TIMING_PREF_STRING, false))) {
+            return context.getString(R.string.tag_unused_adaptive_screen);
+        }
+        int vulkan = vulkanPathTitle(prefs);
+        if (vulkan != 0) return context.getString(R.string.tag_unused_with, context.getString(vulkan));
+        if (upscalerOn(prefs)) {
+            return context.getString(R.string.tag_unused_with, context.getString(R.string.title_upscaling));
+        }
+        return null;
     }
 
     /** Video position moves a picture that leaves room: Fit or 1:1 pixels. */

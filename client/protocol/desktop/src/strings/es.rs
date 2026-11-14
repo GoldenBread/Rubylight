@@ -1359,7 +1359,9 @@ sudo sysctl -w net.core.rmem_max={}", "Búfer de recepción: el sistema concedi�
     ("How the picture fits a screen of another shape: Fit shows all of it with bars, Fill crops the edges, Stretch distorts it, 1:1 pixels shows it at its own size.", "Cómo encaja la imagen en una pantalla de otra forma: Ajustar la muestra entera con barras, Rellenar recorta los bordes, Estirar la deforma y Píxeles 1:1 la muestra a su tamaño real."),
     ("Fastest", "Más rápido"),
     ("VRR: on a G-Sync, FreeSync or adaptive-refresh screen, frames are shown without waiting for the screen’s refresh. On shows each frame when the game drew it, and whole, so motion stays even; that adds about 1 to 4 ms of latency. Fastest shows each frame the moment it arrives, which can tear. Frame pacing is not used while VRR is on.", "VRR: en una pantalla G-Sync, FreeSync o de frecuencia adaptativa, los fotogramas se muestran sin esperar a la actualización de la pantalla. Activado muestra cada fotograma cuando el juego lo dibujó, y completo, para que el movimiento sea uniforme; eso añade entre 1 y 4 ms de latencia. Más rápido muestra cada fotograma en cuanto llega, lo que puede causar tearing. Ritmo de fotogramas no se usa mientras VRR está activado."),
-    ("Trades latency against steady motion while VRR is off. Lowest latency shows frames at once; the other choices wait for the screen’s refresh: smoother, with more delay.", "Equilibra la latencia y la uniformidad del movimiento mientras VRR está desactivado. Mínima latencia muestra los fotogramas al instante; las demás opciones esperan a la actualización de la pantalla: más fluido, con más retraso."),
+    ("Trades latency against steady motion while VRR is off. Lowest latency shows frames at once; the other choices wait for the screen’s refresh: smoother, with more delay, and keeping every frame can add more. PC’s frame times shows each frame when the game drew it, a few milliseconds later.", "Equilibra la latencia y la uniformidad del movimiento mientras VRR está desactivado. «Mínima latencia» muestra los fotogramas al instante; las demás opciones esperan a la actualización de la pantalla: más fluido, con más retraso, y «Conservar cada fotograma» puede añadir más. «Ritmo del PC» muestra cada fotograma cuando el juego lo dibujó, unos milisegundos después."),
+    ("Balanced, keep every frame", "Equilibrado, conservar cada fotograma"),
+    ("PC’s frame times", "Ritmo del PC"),
     ("Waits for the screen’s refresh, so the picture never tears; the wait adds latency. Turn it off for the lowest latency if tearing doesn’t bother you.", "Espera a la actualización de la pantalla, para que la imagen nunca tenga tearing; la espera añade latencia. Desactívalo para la mínima latencia si el tearing no te molesta."),
     ("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; HDR streams are enlarged without them.", "Cómo se amplía una transmisión más pequeña que la pantalla. FSR y SGSR dan más nitidez a los bordes a costa de algo de tiempo de GPU y batería; las transmisiones HDR se amplían sin ellos."),
     ("Upscaling sharpness", "Nitidez del escalado"),
@@ -1472,7 +1474,7 @@ sudo sysctl -w net.core.rmem_max={}", "Búfer de recepción: el sistema concedi�
     ("Draws the PC’s cursor here in Desktop pointer mode, without video delay.", "Dibuja aquí el cursor del PC en el modo Puntero de escritorio, sin el retardo del vídeo."),
     ("1:1 pixels", "Píxeles 1:1"),
     // Android features on the desktop: Presets, Theme, Check for updates now, About, small box art,
-    // the microphone’s noise suppression and automatic gain, Keep only the newest frame, the decode
+    // the microphone’s noise suppression and automatic gain, the decode
     // time after streaming, the latency CSV and benchmark, and the connection test’s ping, jitter and
     // loss (ui/settings.rs, ui/about.rs, ui/latency_bench.rs, latency_bench.rs, network_test.rs,
     // update_check.rs, main.rs).
@@ -1495,7 +1497,6 @@ sudo sysctl -w net.core.rmem_max={}", "Búfer de recepción: el sistema concedi�
     ("Filters fans and other steady background noise out of the microphone and adds about 7 ms of microphone delay. Leave it on.", "Filtra del micrófono los ventiladores y otros ruidos de fondo constantes, y añade unos 7 ms de retraso al micrófono. Déjalo activado."),
     ("Finish a stream before exporting its timings.", "Termina una transmisión antes de exportar sus tiempos."),
     ("Fits more games on screen in a PC’s library.", "Caben más juegos en pantalla en la biblioteca de un PC."),
-    ("Keep only the newest frame", "Conservar solo el fotograma más reciente"),
     ("Latency CSV saved.", "CSV de latencia guardado."),
     ("Looks for a newer version now.", "Busca ahora una versión más reciente."),
     ("Measures ping, jitter and loss, and download speed where the PC supports it.", "Mide ping, jitter y pérdida, y la velocidad de descarga si el PC lo admite."),
@@ -1508,7 +1509,6 @@ sudo sysctl -w net.core.rmem_max={}", "Búfer de recepción: el sistema concedi�
     ("Saves the latest latency measurements.", "Guarda las últimas mediciones de latencia."),
     ("Show decode time after streaming", "Mostrar tiempo de decodificación al terminar"),
     ("Shows the average decode time when a stream ends: this device’s decoding only, not the end-to-end latency.", "Muestra el tiempo medio de decodificación al terminar una transmisión: solo la de este dispositivo, no la latencia de extremo a extremo."),
-    ("Skips frames the screen can no longer show in time, so the picture never falls behind. Leave it on; off shows every frame in turn and can add delay.", "Omite los fotogramas que la pantalla ya no puede mostrar a tiempo, para que la imagen nunca se retrase. Déjalo activado; desactivado, muestra cada fotograma por orden y puede añadir retraso."),
     ("Source and licenses", "Código fuente y licencias"),
     ("System", "Sistema"),
     ("System follows the system’s light or dark setting; OLED black uses pure black surfaces.", "Sistema sigue el ajuste claro u oscuro del sistema; Negro OLED usa superficies de negro puro."),

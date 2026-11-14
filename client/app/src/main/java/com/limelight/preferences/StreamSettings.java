@@ -1309,9 +1309,8 @@ public class StreamSettings extends NightjarActivity {
             String upscaling = prefs.getString(PreferenceConfiguration.UPSCALING_PREF_STRING, "off");
             findPreference("display").setSummary(getString(R.string.settings_joined,
                     config.vrr ? getString(R.string.settings_display_adaptive) :
-                            entryFor(context, R.array.video_frame_pacing_names, R.array.video_frame_pacing_values,
-                                    prefs.getString(PreferenceConfiguration.FRAME_PACING_PREF_STRING,
-                                            PreferenceConfiguration.DEFAULT_FRAME_PACING)),
+                            entryFor(context, R.array.frame_pacing_choice_names, R.array.frame_pacing_choice_values,
+                                    FramePacingChoice.read(prefs)),
                     "off".equals(upscaling) ? getString(R.string.settings_display_no_upscaling) :
                             entryFor(context, R.array.upscaling_names, R.array.upscaling_values, upscaling)));
             findPreference("audio").setSummary(entryFor(context, R.array.audio_config_names, R.array.audio_config_values,
@@ -1645,9 +1644,7 @@ public class StreamSettings extends NightjarActivity {
 
         /**
          * A setting that does nothing for the current choices is hidden, not greyed, and keeps its value: frame
-         * pacing while adaptive refresh or host frame times replace it, the fixed refresh's host frame times with
-         * adaptive refresh (its On does the same), the frame-drop choice without Balanced
-         * pacing, the sharpness without an upscaler that sharpens, the two minimums while automatic quality is
+         * pacing while adaptive refresh replaces it (its On shows frames at the PC's frame times), the sharpness without an upscaler that sharpens, the two minimums while automatic quality is
          * off, a switch's own rows while it is off (SettingRules), and the new streaming engine's rows with the
          * classic one. Hidden settings leave search and their section's More count, and come back in their place.
          */
@@ -1657,10 +1654,8 @@ public class StreamSettings extends NightjarActivity {
             setShown(SHARP_COLOR_KEY, SettingRules.sharpColorApplies(prefs));
             setShown("checkbox_enable_sdr_10bit", SettingRules.sdr10Applies(prefs));
             setShown(SettingRules.FRAME_PACING, SettingRules.framePacingApplies(context, prefs));
-            // With adaptive refresh the Variable refresh rate row's On shows frames at the PC's frame times.
-            setShown(SettingRules.HOST_FRAME_TIMES, !SettingRules.vrrOn(context, prefs));
             setShown("checkbox_reduce_refresh_rate", SettingRules.reduceRefreshRateApplies(context, prefs));
-            setShown("checkbox_content_rate_frame_rate", SettingRules.contentRateApplies(context, prefs));
+            setShown(PreferenceConfiguration.ARR_FIXED_TIMING_PREF_STRING, SettingRules.arrFixedTimingShown(context, prefs));
             setShown("checkbox_display_queue_recovery", SettingRules.displayQueueRecoveryApplies(context, prefs));
             setShown(PreferenceConfiguration.UPSCALING_PREF_STRING, SettingRules.upscalingApplies(prefs));
             setShown("video_alignment", SettingRules.videoAlignmentApplies(prefs));
@@ -1682,7 +1677,6 @@ public class StreamSettings extends NightjarActivity {
             for (String key : SettingRules.MIC_ROWS) setShown(key, mic);
             setShown("performance_overlay_position", SettingRules.overlayOn(prefs));
             setShown("list_resolution_screen2", prefs.getBoolean("checkbox_dual_screen", false));
-            setShown(SettingRules.DROP_LATE_FRAMES, SettingRules.dropLateFramesApplies(getActivity(), prefs));
             setShown(PreferenceConfiguration.UPSCALING_SHARPNESS_PREF_STRING, SettingRules.upscalingUsesSharpness(prefs));
             boolean limits = SettingRules.qualityLimitsApply(prefs);
             setShown(SettingRules.ADAPTIVE_QUALITY_MIN_RESOLUTION, limits);
@@ -1838,6 +1832,10 @@ public class StreamSettings extends NightjarActivity {
                     // Off once the slider is moved; profiles and presets write the flag without this view.
                     ((SwitchPreference) pref).setChecked(!PreferenceConfiguration.isBitrateUserSet(prefs));
                     continue;
+                } else if ("checkbox_display_queue_recovery".equals(pref.getKey())) {
+                    // A switch has no value line; where the take-back does nothing it says why.
+                    pref.setSummary(SettingRules.displayQueueRecoveryUnused(getActivity(), prefs));
+                    continue;
                 } else if (SettingRules.micEffect(pref.getKey()) != null && !(pref instanceof ListPreference)) {
                     // The switches have no value line; it says when the device lacks the effect.
                     pref.setSummary(SettingRules.micEffectMissing(pref.getKey(), prefs, micEffects()) ?
@@ -1865,6 +1863,11 @@ public class StreamSettings extends NightjarActivity {
                                     com.limelight.binding.video.Sdr10Policy.Refusal.NONE) {
                         value = getString(R.string.settings_joined, value, getString(R.string.upscaling_tenbit_short));
                     }
+                }
+                if (value != null && SettingRules.FRAME_PACING.equals(pref.getKey())) {
+                    // A choice the renderer ignores says so in the value line, as Upscaling does.
+                    String unused = SettingRules.framePacingUnused(getActivity(), prefs);
+                    if (unused != null) value = getString(R.string.settings_joined, value, unused);
                 }
                 if (value != null && PreferenceConfiguration.BITRATE_PREF_STRING.equals(pref.getKey())) {
                     // A chosen bitrate below PyroWave's minimum stays; the value line says what it costs.
