@@ -1596,4 +1596,6 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer de recepção: o sistema concedeu 
     ("Not used: this computer has no on-screen keyboard", "Não usado: este computador não tem teclado na tela"),
     ("Not used outside a Wayland desktop", "Não usado fora de uma área de trabalho Wayland"),
     ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields; turn off to open it yourself.", "Abre o teclado na tela quando você seleciona um campo de texto no PC e o fecha depois. Requer um PC que informe os campos de texto; desative para abri-lo por conta própria."),
+    ("Fractional V-Sync", "V-Sync fracionado"),
+    ("On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. It adds 3 to 10 ms of delay; turn it on if motion judders with V-Sync.", "Em uma tela com 2 a 4 vezes a taxa de quadros do stream (60 fps em 120 Hz), mostra cada quadro pelo mesmo número de atualizações, para o movimento ficar uniforme. Adiciona de 3 a 10 ms de atraso; ative se o movimento engasgar com o V-Sync."),
 ];

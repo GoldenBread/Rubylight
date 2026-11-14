@@ -1596,4 +1596,6 @@ sudo sysctl -w net.core.rmem_max={2}"),
     ("Not used: this computer has no on-screen keyboard", "Nicht verwendet: Dieser Computer hat keine Bildschirmtastatur"),
     ("Not used outside a Wayland desktop", "Außerhalb eines Wayland-Desktops nicht verwendet"),
     ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields; turn off to open it yourself.", "Öffnet die Bildschirmtastatur, wenn du am PC ein Textfeld auswählst, und schließt sie danach wieder. Braucht einen PC, der Textfelder meldet; schalte es aus, um sie selbst zu öffnen."),
+    ("Fractional V-Sync", "Fraktionales V-Sync"),
+    ("On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. It adds 3 to 10 ms of delay; turn it on if motion judders with V-Sync.", "Auf einem Bildschirm mit dem 2- bis 4-Fachen der Bildrate des Streams (60 fps auf 120 Hz) bleibt jeder Frame gleich viele Bildwechsel lang stehen, damit Bewegungen gleichmäßig bleiben. Das kostet 3 bis 10 ms Verzögerung; schalte es ein, wenn Bewegungen mit V-Sync ruckeln."),
 ];

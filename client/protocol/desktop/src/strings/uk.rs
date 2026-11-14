@@ -1596,4 +1596,6 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приймання: систе
     ("Not used: this computer has no on-screen keyboard", "Не використовується: цей комп’ютер не має екранної клавіатури"),
     ("Not used outside a Wayland desktop", "Не використовується поза робочим столом Wayland"),
     ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields; turn off to open it yourself.", "Відкриває екранну клавіатуру, коли ви вибираєте текстове поле на ПК, і закриває її після цього. Потрібен ПК, який повідомляє про текстові поля; вимкніть, щоб відкривати її самостійно."),
+    ("Fractional V-Sync", "Дробова V-Sync"),
+    ("On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. It adds 3 to 10 ms of delay; turn it on if motion judders with V-Sync.", "На екрані з частотою у 2–4 рази вищою за частоту кадрів потоку (60 fps на 120 Гц) кожен кадр показується однакову кількість оновлень, і рух лишається рівним. Додає 3–10 мс затримки; увімкніть, якщо з V-Sync рух смикається."),
 ];

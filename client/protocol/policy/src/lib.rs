@@ -25,3 +25,4 @@ pub mod stats;
 pub mod stick;
 pub mod stream_menu;
 pub mod trace;
+pub mod vsync;
