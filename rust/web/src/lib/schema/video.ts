@@ -1,6 +1,6 @@
 // Settings for the categories named in settings-schema.ts: video, encoders and the HDR of the video.
 import type { ConfigValue } from '../api';
-import { NATIVE_ENCODERS, nvidiaGate, offersEnhancement, type Aliases, type Setting } from '../settings-types';
+import { NATIVE_ENCODERS, nvidiaGate, nvidiaReason, offersEnhancement, type Aliases, type Setting } from '../settings-types';
 import { SETTING, defaultPreset, presets } from '../stream-presets';
 
 type Values = Record<string, ConfigValue>;
@@ -381,6 +381,7 @@ const video: Setting[] = [
     default: false,
     visibleWhen: rtxVideo,
     hostGated: nvidiaGate,
+    hostReason: nvidiaReason('rtx_video'),
     inactiveHint: RTX_VIDEO_HINT,
   },
   {
@@ -394,6 +395,7 @@ const video: Setting[] = [
     default: 100,
     visibleWhen: rtxVideo,
     hostGated: nvidiaGate,
+    hostReason: nvidiaReason('rtx_video'),
     inactiveHint: RTX_VIDEO_HINT,
   },
   {

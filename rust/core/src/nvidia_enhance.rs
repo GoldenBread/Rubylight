@@ -222,20 +222,67 @@ pub fn select(config: &Config, offered: u8, stream_hdr: bool, source: Source) ->
     }
 }
 
+/// A capture on a GPU that is not NVIDIA's, where neither enhancement can
+/// run whatever the NVIDIA card offers: on a PC with an NVIDIA card beside
+/// another GPU, the stream captures and encodes on the display's GPU unless
+/// Graphics card names the NVIDIA one (issue #103).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Elsewhere<'a> {
+    /// The capture GPU's name.
+    pub gpu: &'a str,
+    /// The capture method (Desktop Duplication, AMD Direct Capture) captures
+    /// only on the GPU the display is connected to, whatever Graphics card
+    /// names.
+    pub display_bound: bool,
+}
+
+impl Elsewhere<'_> {
+    /// Why `name`, which the NVIDIA card offers, does not run on this capture.
+    fn reason(&self, name: &str) -> String {
+        let gpu = self.gpu;
+        let advice = if self.display_bound {
+            "Desktop Duplication and AMD Direct Capture capture only on the GPU the display is connected to: to use it, choose Automatic under Capture method (Settings › Picture › Video) and the NVIDIA card under Graphics card (Settings › Picture › Encoders)."
+        } else {
+            "To use it, choose the NVIDIA card under Graphics card (Settings › Picture › Encoders)."
+        };
+        format!(
+            "{name} is on, but this stream captures and encodes on {gpu}, and {name} runs only on an NVIDIA graphics card. {advice}"
+        )
+    }
+}
+
 /// Why an enhancement the stream asked for does not run, for the session's
 /// warning; `None` when everything asked for runs or nothing was asked.
-pub fn unavailable(config: &Config, offered: u8, source: Source) -> Option<String> {
-    let mut reasons = Vec::new();
-    if rtx_hdr_enabled(config) && offered & RTX_HDR == 0 {
-        reasons.push("RTX HDR is on, but this PC's NVIDIA GPU or driver does not offer it.");
+/// `offered` is what the NVIDIA card and driver offer; `elsewhere` is a
+/// capture on another GPU, named only for what the card does offer (RTX HDR
+/// only for an HDR stream, the one it would run for).
+pub fn unavailable(
+    config: &Config,
+    offered: u8,
+    stream_hdr: bool,
+    source: Source,
+    elsewhere: Option<Elsewhere>,
+) -> Option<String> {
+    let mut reasons: Vec<String> = Vec::new();
+    if rtx_hdr_enabled(config) {
+        if offered & RTX_HDR == 0 {
+            reasons.push(
+                "RTX HDR is on, but this PC's NVIDIA GPU or driver does not offer it.".into(),
+            );
+        } else if let Some(elsewhere) = elsewhere.filter(|_| stream_hdr) {
+            reasons.push(elsewhere.reason("RTX HDR"));
+        }
     }
     if rtx_video_enabled(config) {
         if offered & RTX_VIDEO == 0 {
             reasons.push(
-                "RTX Video enhancement is on, but this PC's NVIDIA GPU or driver does not offer it.",
+                "RTX Video enhancement is on, but this PC's NVIDIA GPU or driver does not offer it."
+                    .into(),
             );
+        } else if let Some(elsewhere) = elsewhere {
+            reasons.push(elsewhere.reason("RTX Video enhancement"));
         } else if source == Source::Pq10 {
-            reasons.push("RTX Video enhancement is on, but this capture delivers 10-bit HDR, which it cannot read. Turn on the FP16 HDR capture or stream in SDR.");
+            reasons.push("RTX Video enhancement is on, but this capture delivers 10-bit HDR, which it cannot read. Turn on the FP16 HDR capture or stream in SDR.".into());
         }
     }
     (!reasons.is_empty()).then(|| reasons.join(" "))
@@ -294,6 +341,16 @@ pub fn read_probe(line: Option<&str>, ended: ProbeEnd) -> Offer {
 /// Neither enhancement, both for `reason`.
 pub fn probe_failed(reason: String) -> Offer {
     (0, vec![("rtx_hdr", reason.clone()), ("rtx_video", reason)])
+}
+
+/// The adapter NVIDIA's check asks, by index among the adapters' PCI vendors
+/// in DXGI's order: the first NVIDIA one, never adapter 0 or the display's
+/// for its own sake, so an NVIDIA card beside an AMD or Intel GPU is the one
+/// asked (issue #103). None without an NVIDIA adapter.
+pub fn ngx_adapter(vendors: &[u32]) -> Option<usize> {
+    vendors
+        .iter()
+        .position(|vendor| crate::encoder_gpu::is_nvidia(*vendor))
 }
 
 #[cfg(test)]
@@ -400,19 +457,109 @@ mod tests {
 
     #[test]
     fn what_is_asked_for_and_cannot_run_is_said() {
-        let video = config("rtx_video = true\n");
-        assert_eq!(unavailable(&video, ALL, Source::Sdr), None);
+        let video = config(
+            "rtx_video = true
+",
+        );
+        assert_eq!(unavailable(&video, ALL, true, Source::Sdr, None), None);
         assert!(
-            unavailable(&video, RTX_HDR, Source::Sdr)
+            unavailable(&video, RTX_HDR, true, Source::Sdr, None)
                 .unwrap()
                 .contains("does not offer")
         );
         assert!(
-            unavailable(&video, ALL, Source::Pq10)
+            unavailable(&video, ALL, true, Source::Pq10, None)
                 .unwrap()
                 .contains("10-bit")
         );
-        assert_eq!(unavailable(&config(""), 0, Source::Sdr), None);
+        assert_eq!(unavailable(&config(""), 0, true, Source::Sdr, None), None);
+    }
+
+    #[test]
+    fn a_capture_on_another_gpu_says_where_it_runs() {
+        // Issue #103: the NVIDIA card offers both, and the stream captures on
+        // the AMD iGPU that drives the display.
+        let igpu = Elsewhere {
+            gpu: "AMD Radeon 780M Graphics",
+            display_bound: false,
+        };
+        let mut hdr = config(
+            "rtx_hdr = true
+",
+        );
+        hdr.values.insert(marker("rtx_hdr"), "true".into());
+        let reason = unavailable(&hdr, ALL, true, Source::Sdr, Some(igpu)).unwrap();
+        assert!(reason.starts_with("RTX HDR is on"), "{reason}");
+        assert!(reason.contains("AMD Radeon 780M Graphics"), "{reason}");
+        assert!(reason.contains("Graphics card"), "{reason}");
+        assert!(!reason.contains("Capture method"), "{reason}");
+        assert!(!reason.contains("driver"), "{reason}");
+        // RTX HDR runs only for an HDR stream, on any GPU.
+        assert_eq!(unavailable(&hdr, ALL, false, Source::Sdr, Some(igpu)), None);
+        let video = config(
+            "rtx_video = true
+",
+        );
+        let reason = unavailable(&video, ALL, true, Source::Pq10, Some(igpu)).unwrap();
+        assert!(
+            reason.starts_with("RTX Video enhancement is on"),
+            "{reason}"
+        );
+        assert!(!reason.contains("10-bit"), "{reason}");
+        // Nothing asked for, nothing said.
+        assert_eq!(
+            unavailable(&config(""), ALL, true, Source::Sdr, Some(igpu)),
+            None
+        );
+    }
+
+    #[test]
+    fn another_gpu_is_named_only_for_what_the_nvidia_card_offers() {
+        let igpu = Some(Elsewhere {
+            gpu: "AMD Radeon 780M Graphics",
+            display_bound: false,
+        });
+        let video = config(
+            "rtx_video = true
+",
+        );
+        // A PC without an NVIDIA card, or a check that failed: the card's own
+        // reason, not Graphics card.
+        let reason = unavailable(&video, 0, true, Source::Sdr, igpu).unwrap();
+        assert!(reason.contains("does not offer"), "{reason}");
+        assert!(!reason.contains("Graphics card"), "{reason}");
+    }
+
+    #[test]
+    fn a_capture_method_bound_to_the_display_says_to_change_it() {
+        // Graphics card already names the NVIDIA card; Desktop Duplication or
+        // AMD Direct Capture captures on the display's GPU anyway.
+        let bound = Some(Elsewhere {
+            gpu: "AMD Radeon 780M Graphics",
+            display_bound: true,
+        });
+        let video = config(
+            "rtx_video = true
+",
+        );
+        let reason = unavailable(&video, ALL, true, Source::Sdr, bound).unwrap();
+        assert!(reason.contains("Capture method"), "{reason}");
+        assert!(reason.contains("AMD Radeon 780M Graphics"), "{reason}");
+    }
+
+    #[test]
+    fn nvidias_check_asks_the_first_nvidia_adapter() {
+        const AMD: u32 = 0x1002;
+        const NVIDIA: u32 = 0x10de;
+        const INTEL: u32 = 0x8086;
+        const SOFTWARE: u32 = 0x1414;
+        // Issue #103: a Radeon 780M first, an RTX 5060 Ti on OCuLink second.
+        assert_eq!(ngx_adapter(&[AMD, NVIDIA]), Some(1));
+        assert_eq!(ngx_adapter(&[NVIDIA, AMD]), Some(0));
+        assert_eq!(ngx_adapter(&[INTEL, SOFTWARE, NVIDIA]), Some(2));
+        assert_eq!(ngx_adapter(&[INTEL, NVIDIA, NVIDIA]), Some(1));
+        assert_eq!(ngx_adapter(&[AMD, SOFTWARE]), None);
+        assert_eq!(ngx_adapter(&[]), None);
     }
 
     #[test]

@@ -6,7 +6,7 @@
 //! ([`butterpollo_core::nvidia_component::verify`]).
 use anyhow::{Context, Result, bail};
 use butterpollo_core::nvidia_component::{self, ABI, ADAPTER};
-use butterpollo_core::nvidia_enhance::{RTX_HDR, RTX_VIDEO};
+use butterpollo_core::nvidia_enhance::{RTX_HDR, RTX_VIDEO, ngx_adapter};
 use std::{
     ffi::c_void,
     os::windows::ffi::OsStrExt,
@@ -19,14 +19,12 @@ use windows::{
         Graphics::{
             Direct3D::D3D_DRIVER_TYPE_UNKNOWN,
             Direct3D11::*,
-            Dxgi::{CreateDXGIFactory1, IDXGIFactory1},
+            Dxgi::{CreateDXGIFactory1, IDXGIAdapter1, IDXGIFactory1},
         },
     },
     core::Interface,
 };
 
-/// NVIDIA's PCI vendor id.
-const NVIDIA: u32 = 0x10de;
 /// `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32`: the
 /// adapter's dependencies come from its own folder and System32 only.
 const SEARCH: u32 = 0x0000_0100 | 0x0000_0800;
@@ -183,49 +181,57 @@ fn unavailable(error: u32, minimum: u32) -> String {
     }
 }
 
-/// Whether this PC has an NVIDIA GPU, from DXGI's adapter list alone (no
-/// device is made).
-pub fn has_nvidia_gpu() -> bool {
-    // SAFETY: The factory and adapters are live COM objects returned by these calls.
+/// DXGI's adapters with their PCI vendors, in DXGI's order; an adapter whose
+/// description cannot be read counts as no vendor's.
+fn adapters() -> Result<Vec<(IDXGIAdapter1, u32)>> {
+    // SAFETY: The factory and adapters are live COM objects returned by these calls, and
+    // GetDesc1 returns an owned struct.
     unsafe {
-        let Ok(factory) = CreateDXGIFactory1::<IDXGIFactory1>() else {
-            return false;
-        };
-        (0..32)
+        let factory: IDXGIFactory1 = CreateDXGIFactory1()?;
+        Ok((0..32)
             .map_while(|index| factory.EnumAdapters1(index).ok())
-            .any(|adapter| adapter.GetDesc1().is_ok_and(|desc| desc.VendorId == NVIDIA))
+            .map(|adapter| {
+                let vendor = adapter.GetDesc1().map_or(0, |desc| desc.VendorId);
+                (adapter, vendor)
+            })
+            .collect())
     }
 }
 
-/// A D3D11 device on the first NVIDIA adapter.
+/// Whether this PC has an NVIDIA GPU, from DXGI's adapter list alone (no
+/// device is made).
+pub fn has_nvidia_gpu() -> bool {
+    adapters().is_ok_and(|adapters| {
+        let vendors: Vec<u32> = adapters.iter().map(|(_, vendor)| *vendor).collect();
+        ngx_adapter(&vendors).is_some()
+    })
+}
+
+/// A D3D11 device on the adapter NVIDIA's check asks ([`ngx_adapter`]: the
+/// first NVIDIA one, whichever GPU drives the display).
 fn nvidia_device() -> Result<ID3D11Device> {
-    // SAFETY: The factory and adapters are live COM objects returned by these calls; the
-    // out-parameter is a live local, unwrapped only after D3D11CreateDevice succeeded.
+    let adapters = adapters()?;
+    let vendors: Vec<u32> = adapters.iter().map(|(_, vendor)| *vendor).collect();
+    let Some(index) = ngx_adapter(&vendors) else {
+        bail!("this PC has no NVIDIA GPU");
+    };
+    let mut device = None;
+    // SAFETY: The adapter is a live COM object; the out-parameter is a live local, unwrapped
+    // only after D3D11CreateDevice succeeded.
     unsafe {
-        let factory: IDXGIFactory1 = CreateDXGIFactory1()?;
-        for index in 0..32 {
-            let Ok(adapter) = factory.EnumAdapters1(index) else {
-                break;
-            };
-            if adapter.GetDesc1()?.VendorId != NVIDIA {
-                continue;
-            }
-            let mut device = None;
-            D3D11CreateDevice(
-                &adapter,
-                D3D_DRIVER_TYPE_UNKNOWN,
-                HMODULE::default(),
-                D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-                None,
-                D3D11_SDK_VERSION,
-                Some(&mut device),
-                None,
-                None,
-            )?;
-            return device.context("D3D11 returned no device");
-        }
-        bail!("this PC has no NVIDIA GPU")
+        D3D11CreateDevice(
+            &adapters[index].0,
+            D3D_DRIVER_TYPE_UNKNOWN,
+            HMODULE::default(),
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            None,
+            D3D11_SDK_VERSION,
+            Some(&mut device),
+            None,
+            None,
+        )?;
     }
+    device.context("D3D11 returned no device")
 }
 
 #[cfg(test)]

@@ -101,6 +101,11 @@ export interface Setting {
    * the row's tag, what the host lacks, from the same values.
    */
   hostGated?: (values: Record<string, ConfigValue>) => string;
+  /**
+   * Why this host cannot run it, when the host knows (with hostGated): shown
+   * in place of inactiveHint, from the same values.
+   */
+  hostReason?: (values: Record<string, ConfigValue>) => string | undefined;
   /** Streams fail without a value while this holds, given the current (edited) values. */
   requiredWhen?: (values: Record<string, ConfigValue>) => boolean;
   /**
@@ -165,6 +170,30 @@ export function nvidiaGate(values: Record<string, ConfigValue>): string {
   if (gate === 'no_gpu') return 'Needs an NVIDIA graphics card';
   if (gate === 'ready') return 'Not available on this PC';
   return 'Needs the NVIDIA components';
+}
+
+/**
+ * Not a setting: visibleWhen also gets, under this name, why the GPU and
+ * driver do not offer each NVIDIA enhancement, by name ('rtx_hdr',
+ * 'rtx_video'), as the host's check said.
+ */
+export const NVIDIA_REASONS = '@nvidia_reasons';
+
+/**
+ * The hostReason of an RTX setting: with the NVIDIA components installed and
+ * the enhancement still not offered, what NVIDIA's check said (a crash, a
+ * driver too old), so the row found by search says why (issues #103, #111).
+ */
+export function nvidiaReason(name: 'rtx_hdr' | 'rtx_video') {
+  return (values: Record<string, ConfigValue>): string | undefined => {
+    if (values[NVIDIA_COMPONENT] !== 'ready') return undefined;
+    const reasons = values[NVIDIA_REASONS];
+    const reason = reasons && typeof reasons === 'object' && !Array.isArray(reasons) ? reasons[name] : undefined;
+    if (typeof reason !== 'string' || !reason.trim()) return undefined;
+    const text = reason.trim();
+    const sentence = text.charAt(0).toUpperCase() + text.slice(1);
+    return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
+  };
 }
 
 export interface Schema {

@@ -59,6 +59,7 @@
     NATIVE_ENCODERS,
     NVIDIA_COMPONENT,
     NVIDIA_ENHANCEMENTS,
+    NVIDIA_REASONS,
     componentGate,
     type Setting,
   } from '../lib/settings-types';
@@ -151,6 +152,7 @@
     // RTX HDR and RTX Video settings show where the host offers them.
     current[NVIDIA_ENHANCEMENTS] = nvidiaEnhancements(session.metadata?.features);
     current[NVIDIA_COMPONENT] = componentGate(session.metadata?.nvidia_enhancements?.component);
+    current[NVIDIA_REASONS] = session.metadata?.nvidia_enhancements?.errors ?? {};
     return current;
   });
   const changes = $derived(stored ? computeChanges(defaults, edits, stored, new Set(covered)) : {});
@@ -590,6 +592,7 @@
     showKey={showKeys || (searching && matchesWords(setting.key, words))}
     {inactive}
     unavailable={inactive ? setting.hostGated?.(values) : undefined}
+    reason={inactive ? setting.hostReason?.(values) : undefined}
     missing={missing(setting)}
     caution={caution(setting, values)}
     invalidText={invalid[setting.key]}

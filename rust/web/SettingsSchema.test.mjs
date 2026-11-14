@@ -943,7 +943,7 @@ test('the mouse input method and device touchpads sit with the mouse, on Automat
 });
 
 test('RTX HDR and RTX Video settings show only where the host offers them, with their defaults', () => {
-  const { NVIDIA_COMPONENT, NVIDIA_ENHANCEMENTS, componentGate } = types;
+  const { NVIDIA_COMPONENT, NVIDIA_ENHANCEMENTS, NVIDIA_REASONS, componentGate } = types;
   const expected = [
     ['rtx_hdr', 'rtx_hdr', false],
     ['rtx_hdr_sdr_brightness', 'rtx_hdr', 0],
@@ -970,6 +970,21 @@ test('RTX HDR and RTX Video settings show only where the host offers them, with 
     }
     assert.equal(setting.hostGated({ [NVIDIA_COMPONENT]: 'no_gpu' }), 'Needs an NVIDIA graphics card', key);
     assert.equal(setting.hostGated({ [NVIDIA_COMPONENT]: 'ready' }), 'Not available on this PC', key);
+    // Issues #103 and #111: installed, and still not offered, the row says what NVIDIA's check said.
+    const reasons = { [name]: "NVIDIA's check crashed (0xc0000005); update the NVIDIA driver" };
+    assert.equal(
+      setting.hostReason({ [NVIDIA_COMPONENT]: 'ready', [NVIDIA_REASONS]: reasons }),
+      "NVIDIA's check crashed (0xc0000005); update the NVIDIA driver.",
+      key,
+    );
+    assert.equal(
+      setting.hostReason({ [NVIDIA_COMPONENT]: 'ready', [NVIDIA_REASONS]: { [name]: 'the GPU does not support it' } }),
+      'The GPU does not support it.',
+      key,
+    );
+    assert.equal(setting.hostReason({ [NVIDIA_COMPONENT]: 'ready', [NVIDIA_REASONS]: { [other]: 'x' } }), undefined, key);
+    assert.equal(setting.hostReason({ [NVIDIA_COMPONENT]: 'missing', [NVIDIA_REASONS]: reasons }), undefined, key);
+    assert.equal(setting.hostReason({ [NVIDIA_COMPONENT]: 'ready' }), undefined, key);
     assert.doesNotMatch(`${setting.description} ${setting.inactiveHint}`, /NVIDIA build|nvidia-setup/, key);
     assert.doesNotMatch(`${setting.label} ${setting.description} ${setting.details ?? ''}`, /experimental|beta|preview/i, key);
   }

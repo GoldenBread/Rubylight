@@ -143,6 +143,36 @@ pub(crate) fn source(pixel: Pixel) -> Source {
     }
 }
 
+/// What a capture on the GPU with PCI vendor `vendor` and name `adapter` can
+/// run: the enhancements the NVIDIA card offers (`offered`) on an NVIDIA
+/// capture, none on another GPU, which is then described for the warning.
+/// The enhancements run on the capture's own device.
+fn for_capture<'a>(
+    config: &Config,
+    offered: u8,
+    vendor: u32,
+    adapter: &'a str,
+) -> (u8, Option<nvidia_enhance::Elsewhere<'a>>) {
+    if butterpollo_core::encoder_gpu::is_nvidia(vendor) {
+        return (offered, None);
+    }
+    let gpu = if adapter.is_empty() {
+        "a graphics card that is not NVIDIA's"
+    } else {
+        adapter
+    };
+    // Desktop Duplication and AMD Direct Capture (and their old spellings)
+    // capture on the display's own GPU whatever Graphics card names; so does
+    // Automatic when WGC fails and it falls back to Desktop Duplication,
+    // which shows as a capture on another GPU than the one Graphics card names.
+    let chosen = config.get("adapter_name", "");
+    let display_bound = matches!(
+        config.get("capture", "auto").to_ascii_lowercase().as_str(),
+        "ddx" | "dxgi" | "amd"
+    ) || (!chosen.is_empty() && chosen != adapter);
+    (0, Some(nvidia_enhance::Elsewhere { gpu, display_bound }))
+}
+
 /// A stream's enhancement: chooses it for each picture, keeps its NGX
 /// filter, and reports when the encoder must be rebuilt because the picture
 /// it receives changed kind (format, or an unshared filter output instead of
@@ -155,7 +185,9 @@ pub(crate) struct Enhancer {
 impl Enhancer {
     /// The picture to encode for `image`, and whether the encoder must be
     /// rebuilt for it. A failing enhancement is turned off for this capture
-    /// with a session warning, and the original picture is encoded.
+    /// with a session warning, and the original picture is encoded. A capture
+    /// on a GPU that is not NVIDIA's (the display's AMD iGPU beside an NVIDIA
+    /// card, issue #103) runs neither, and the warning names that GPU.
     pub(crate) fn apply(
         &mut self,
         s: &Session,
@@ -164,11 +196,17 @@ impl Enhancer {
     ) -> (Arc<GpuImage>, bool) {
         let source = source(image.pixel);
         let offered = nvidia_enhance::offered(config);
-        match nvidia_enhance::unavailable(config, offered, source) {
+        let (runs, elsewhere) = for_capture(
+            config,
+            offered,
+            image.gpu.vendor,
+            &image.gpu.display.adapter,
+        );
+        match nvidia_enhance::unavailable(config, offered, s.config.hdr, source, elsewhere) {
             Some(reason) => s.launch.warnings.set(WARNING, reason),
             None => s.launch.warnings.clear(WARNING),
         }
-        let wanted = nvidia_enhance::select(config, offered, s.config.hdr, source);
+        let wanted = nvidia_enhance::select(config, runs, s.config.hdr, source);
         self.inner.apply(s, config, wanted, image)
     }
 
@@ -379,6 +417,62 @@ mod tests {
         assert_eq!(source(Pixel::Bgra8), Source::Sdr);
         assert_eq!(source(Pixel::RgbaF16), Source::ScRgb);
         assert_eq!(source(Pixel::Rgba10Pq), Source::Pq10);
+    }
+
+    #[test]
+    fn only_a_capture_on_an_nvidia_gpu_runs_the_enhancements() {
+        use nvidia_enhance::{ALL, Elsewhere, Enhancement};
+        let config = |text: &str| Config::parse(text).unwrap();
+        let video = config(
+            "rtx_video = true
+",
+        );
+        // Issue #103: the display's Radeon 780M captures beside an RTX 5060 Ti
+        // that offers both: nothing runs there, and the warning names the 780M.
+        let (runs, elsewhere) = for_capture(&video, ALL, 0x1002, "AMD Radeon 780M Graphics");
+        assert_eq!(runs, 0);
+        assert_eq!(
+            elsewhere,
+            Some(Elsewhere {
+                gpu: "AMD Radeon 780M Graphics",
+                display_bound: false
+            })
+        );
+        assert_eq!(
+            nvidia_enhance::select(&video, runs, true, Source::Sdr),
+            Enhancement::None
+        );
+        // On the NVIDIA card everything it offers runs.
+        let (runs, elsewhere) = for_capture(&video, ALL, 0x10de, "NVIDIA GeForce RTX 5060 Ti");
+        assert_eq!((runs, elsewhere), (ALL, None));
+        assert_eq!(
+            nvidia_enhance::select(&video, runs, true, Source::Sdr),
+            Enhancement::RtxVideo
+        );
+        // Desktop Duplication and AMD Direct Capture stay on the display's GPU.
+        for method in ["ddx", "DXGI", "amd"] {
+            let bound = config(&format!(
+                "rtx_video = true
+capture = {method}
+"
+            ));
+            let (_, elsewhere) = for_capture(&bound, ALL, 0x1002, "AMD Radeon 780M Graphics");
+            assert!(elsewhere.unwrap().display_bound, "{method}");
+        }
+        // Graphics card names the NVIDIA card, and the capture still runs on
+        // the 780M: Automatic fell back to Desktop Duplication.
+        let chosen = config("rtx_video = true\nadapter_name = NVIDIA GeForce RTX 5060 Ti\n");
+        let (_, elsewhere) = for_capture(&chosen, ALL, 0x1002, "AMD Radeon 780M Graphics");
+        assert!(elsewhere.unwrap().display_bound);
+        // Graphics card names the 780M itself: choosing the NVIDIA card is the advice.
+        let igpu = config("rtx_video = true\nadapter_name = AMD Radeon 780M Graphics\n");
+        let (_, elsewhere) = for_capture(&igpu, ALL, 0x1002, "AMD Radeon 780M Graphics");
+        assert!(!elsewhere.unwrap().display_bound);
+        let (_, elsewhere) = for_capture(&video, ALL, 0x8086, "");
+        assert_eq!(
+            elsewhere.unwrap().gpu,
+            "a graphics card that is not NVIDIA's"
+        );
     }
 
     #[test]

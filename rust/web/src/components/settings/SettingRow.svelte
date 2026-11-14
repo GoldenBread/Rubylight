@@ -15,6 +15,7 @@
     showKey = false,
     inactive = false,
     unavailable,
+    reason,
     missing = false,
     caution,
     invalidText,
@@ -40,6 +41,8 @@
     inactive?: boolean;
     /** What this host lacks to run it (Setting.hostGated), as its tag: the row explains, and has no control. */
     unavailable?: string;
+    /** Why, when the host knows (Setting.hostReason): shown in place of the setting's inactiveHint. */
+    reason?: string;
     /** Empty although the current choices need a value. */
     missing?: boolean;
     /** What the current value costs the stream (Setting.cautionWhen). */
@@ -90,7 +93,7 @@
       </div>
       {#if setting.description}<p class="description" id="{uid}-description">{setting.description}</p>{/if}
       {#if inactive}
-        <p class="dependency">{setting.inactiveHint ?? 'This setting is conditional. Review the related choices in this category.'}</p>
+        <p class="dependency">{reason ?? setting.inactiveHint ?? 'This setting is conditional. Review the related choices in this category.'}</p>
       {/if}
     </div>
 

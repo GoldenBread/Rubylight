@@ -51,7 +51,11 @@ test('a setting this host cannot run shows in search without its control', () =>
   const page = read('pages/Settings.svelte');
   assert.match(page, /unavailable=\{inactive \? setting\.hostGated\?\.\(values\) : undefined\}/);
   assert.match(page, /current\[NVIDIA_COMPONENT\] = componentGate\(session\.metadata\?\.nvidia_enhancements\?\.component\);/);
+  // What NVIDIA's check said replaces the generic hint (issues #103, #111).
+  assert.match(page, /current\[NVIDIA_REASONS\] = session\.metadata\?\.nvidia_enhancements\?\.errors \?\? \{\};/);
+  assert.match(page, /reason=\{inactive \? setting\.hostReason\?\.\(values\) : undefined\}/);
   const row = read('components/settings/SettingRow.svelte');
+  assert.match(row, /<p class="dependency">\{reason \?\? setting\.inactiveHint/);
   assert.match(row, /\{#if !unavailable\}\s*<SettingControl/);
   assert.match(row, /\{#if unavailable\}<span class="tag" data-unavailable>\{unavailable\}<\/span>\{\/if\}/);
 });

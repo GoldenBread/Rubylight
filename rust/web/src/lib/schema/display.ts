@@ -1,6 +1,6 @@
 // Settings for the categories named in settings-schema.ts.
 import type { ConfigValue } from '../api';
-import { nvidiaGate, offersEnhancement, type Setting } from '../settings-types';
+import { nvidiaGate, nvidiaReason, offersEnhancement, type Setting } from '../settings-types';
 
 type Values = Record<string, ConfigValue>;
 
@@ -660,6 +660,7 @@ export const settings: Setting[] = [
     default: false,
     visibleWhen: rtxHdr,
     hostGated: nvidiaGate,
+    hostReason: nvidiaReason('rtx_hdr'),
     inactiveHint: RTX_HDR_HINT,
   },
   {
@@ -674,6 +675,7 @@ export const settings: Setting[] = [
     default: 0,
     visibleWhen: rtxHdr,
     hostGated: nvidiaGate,
+    hostReason: nvidiaReason('rtx_hdr'),
     inactiveHint: RTX_HDR_HINT,
   },
   {
@@ -687,6 +689,7 @@ export const settings: Setting[] = [
     default: 0,
     visibleWhen: rtxHdr,
     hostGated: nvidiaGate,
+    hostReason: nvidiaReason('rtx_hdr'),
     inactiveHint: RTX_HDR_HINT,
   },
   {
@@ -700,6 +703,7 @@ export const settings: Setting[] = [
     default: 0,
     visibleWhen: rtxHdr,
     hostGated: nvidiaGate,
+    hostReason: nvidiaReason('rtx_hdr'),
     inactiveHint: RTX_HDR_HINT,
   },
   {
@@ -713,6 +717,7 @@ export const settings: Setting[] = [
     default: 50,
     visibleWhen: rtxHdr,
     hostGated: nvidiaGate,
+    hostReason: nvidiaReason('rtx_hdr'),
     inactiveHint: RTX_HDR_HINT,
   },
 
