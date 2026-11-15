@@ -1057,6 +1057,19 @@ impl Ready {
     pub fn matches(&self, stream: &Negotiated) -> bool {
         self.mode == stream_mode(stream)
     }
+    /// Whether a launch for `stream` may resume it: the same size, HDR and VRR. At another
+    /// rate it is kept, and the stream's request retimes it ([`retime`]): a new display would
+    /// be made under the game that runs on this one.
+    pub fn resumes(&self, stream: &Negotiated) -> bool {
+        let (width, height, _, hdr, vrr) = self.mode;
+        (width, height, hdr, vrr)
+            == (
+                stream.width,
+                stream.height,
+                stream.hdr,
+                stream.vrr_low_latency,
+            )
+    }
     /// A retained display must not hide settings changed while it was paused.
     pub fn serves(&self, requested: Option<HostDisplay>, layout: &str) -> bool {
         HostDisplay::reusable(self.client_display, requested)
@@ -2313,15 +2326,12 @@ pub fn retime(
     config: &Config,
 ) -> Result<std::result::Result<StreamPreparation, StreamPreparation>> {
     let display = preparation.display.clone();
-    let (width, height, launch_rate, hdr, vrr) = display.mode;
-    if (width, height, hdr, vrr)
-        != (
-            stream.width,
-            stream.height,
-            stream.hdr,
-            stream.vrr_low_latency,
-        )
-    {
+    let launch_rate = display.mode.2;
+    if !display.resumes(stream) {
+        tracing::info!(
+            client = %launch.client.name,
+            "the stream asks for another size, HDR or VRR than its display has; it gets a new display"
+        );
         return Ok(Err(preparation));
     }
     let app = crate::stream::launch_app(h, launch);
@@ -2373,7 +2383,15 @@ pub fn retime(
     })?;
     let refresh = match raised {
         Raise::Raised(refresh) => refresh,
-        Raise::NotOwned => return Ok(Err(preparation)),
+        Raise::NotOwned => {
+            tracing::info!(
+                client = %launch.client.name,
+                launch_millihz = launch_rate,
+                stream_millihz = stream.fps_millihz(),
+                "the stream asks for another rate than its display, which is no virtual display of the stream's own; it is prepared again"
+            );
+            return Ok(Err(preparation));
+        }
         // Preparing the display again would recreate the virtual display
         // under a game that is already running on it. Keep it; the stream
         // gets the frames its refresh gives, as before this change.

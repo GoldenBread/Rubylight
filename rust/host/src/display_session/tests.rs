@@ -342,6 +342,59 @@ fn a_resume_leaves_its_own_kept_display_for_the_one_the_game_is_on() {
 }
 
 #[test]
+fn a_resume_at_another_rate_keeps_the_display_the_game_is_on() {
+    let fixture = crate::state::test_support::Fixture::new();
+    let host = &fixture.host;
+    let config = host.config.read().unwrap().clone();
+    let client = fixture.client(u32::MAX);
+    let launch = fixture.launch(client.clone(), Role::Stream);
+    let kept = retained_on(host, &config, &client.uuid, false);
+    host.app_display
+        .lock()
+        .unwrap()
+        .insert(client.uuid.clone(), (kept.clone(), None));
+    let launched = Negotiated::default();
+    let faster = Negotiated {
+        fps: 240,
+        rate_millihz: 240_000,
+        ..launched.clone()
+    };
+    assert!(!kept.matches(&faster));
+    // The launch's own filter: the same display comes back, for the stream to retime.
+    let resumed = take_retained_display(
+        host,
+        &launch,
+        &config,
+        None,
+        |lease| lease.resumes(&faster),
+        |_| false,
+    )
+    .unwrap();
+    assert!(
+        Arc::ptr_eq(&resumed, &kept),
+        "the kept display, not a new one"
+    );
+    assert_eq!(host.app_display.lock().unwrap().len(), 1);
+    for other in [
+        Negotiated {
+            width: launched.width + 2,
+            ..faster.clone()
+        },
+        Negotiated {
+            hdr: !launched.hdr,
+            ..faster.clone()
+        },
+        Negotiated {
+            vrr_low_latency: !launched.vrr_low_latency,
+            ..faster.clone()
+        },
+    ] {
+        assert!(!kept.resumes(&other), "{other:?}");
+    }
+    host.app_display.lock().unwrap().clear();
+}
+
+#[test]
 fn a_joined_stream_asks_for_the_display_as_it_is_whatever_its_own_size() {
     assert_eq!(
         display_ask(

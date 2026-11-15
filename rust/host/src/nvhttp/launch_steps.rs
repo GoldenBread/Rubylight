@@ -523,7 +523,8 @@ pub(super) fn prepare_launch_display(
     if launch.role == Role::Stream {
         // Reuse only this client's own retained display; another
         // client streaming the same app keeps its display. One set up for
-        // another display choice or layout is replaced.
+        // another display choice or layout is replaced; one at another
+        // rate is kept and retimed by the stream's request.
         let client_display = crate::display_session::client_display(launch);
         let app = crate::stream::launch_app(h, launch);
         let layout = crate::display_session::launch_display_layout(
@@ -537,7 +538,7 @@ pub(super) fn prepare_launch_display(
             launch,
             &config,
             app.as_ref(),
-            |lease| lease.matches(&stream) && lease.serves(client_display, layout),
+            |lease| lease.resumes(&stream) && lease.serves(client_display, layout),
             |display| butterpollo_windows::display::joinable_mode(display).is_some(),
         );
         match retained {
