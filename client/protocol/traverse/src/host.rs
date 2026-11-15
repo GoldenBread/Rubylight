@@ -430,6 +430,11 @@ impl HostService {
         {
             return;
         }
+        // A device that has to wait is told here, without a thread for each of its punches.
+        if self.busy(&self.shared.tunnels.read().unwrap(), &tag) {
+            self.waits(&peer);
+            return;
+        }
         // The path starts on a thread of its own: this thread takes every path's media. Punches
         // that come meanwhile are dropped; the device sends more.
         if !self.shared.starting.lock().unwrap().insert((tag, client)) {
