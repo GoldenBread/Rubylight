@@ -1018,23 +1018,26 @@ impl Ready {
     ) -> Result<StreamPreparation> {
         let framegen = self.framegen.lock().unwrap().clone();
         let limiter = limiter::Lease::acquire(directory, config, &framegen)?;
-        butterpollo_windows::input::on_input_desktop(|| -> Result<()> {
-            let mut prepared = self._state.lock().unwrap();
-            // A paused stream leaves local display changes alone. Resuming
-            // must reactivate its target and restore the layout before capture.
-            let fed = prepared.display.as_mut().map_or(Ok(false), Guard::resume);
-            prepared.finish_feed(fed)?;
-            if let Some(arrangement) = &prepared._arrangement {
-                prepared.lay_out_again(arrangement)?;
-                if let Some(display) = &prepared.display {
-                    display.apply_virtual_mode("after resume layout");
+        // Windows can refuse the layout after the PC sat idle as it does a launch's.
+        retry_refused_layout(|| {
+            butterpollo_windows::input::on_input_desktop(|| -> Result<()> {
+                let mut prepared = self._state.lock().unwrap();
+                // A paused stream leaves local display changes alone. Resuming
+                // must reactivate its target and restore the layout before capture.
+                let fed = prepared.display.as_mut().map_or(Ok(false), Guard::resume);
+                prepared.finish_feed(fed)?;
+                if let Some(arrangement) = &prepared._arrangement {
+                    prepared.lay_out_again(arrangement)?;
+                    if let Some(display) = &prepared.display {
+                        display.apply_virtual_mode("after resume layout");
+                    }
+                    self.mode_report.publish(applied_mode(&prepared.output));
                 }
-                self.mode_report.publish(applied_mode(&prepared.output));
-            }
-            prepared.put_scale_back()?;
-            self.target.publish(prepared.capture_target());
-            self.active.fetch_add(1, Ordering::AcqRel);
-            Ok(())
+                prepared.put_scale_back()?;
+                self.target.publish(prepared.capture_target());
+                self.active.fetch_add(1, Ordering::AcqRel);
+                Ok(())
+            })
         })?;
         self.mode_report.attach(warnings);
         if let Some(retained) = &self.retained {
@@ -2498,24 +2501,7 @@ pub fn prepare_stream(
             Ready::prepare(Prepared::create(h, launch, stream, config, physical_only)?)
         })
     };
-    let prepared = match prepare(false) {
-        // The first launch after the PC sat idle can find Windows refusing the
-        // layout to this desktop ("access denied") while the next launch works
-        // (issue #89). Try once more, on whichever desktop takes input then.
-        Err(error)
-            if butterpollo_windows::input::desktop_refused(&error)
-                && !butterpollo_windows::input::secure_desktop_shown() =>
-        {
-            tracing::warn!(
-                error = %format!("{error:#}"),
-                input_desktop = ?butterpollo_windows::input::input_desktop_name(),
-                "Windows refused the stream display's layout to this desktop; trying again"
-            );
-            std::thread::sleep(DESKTOP_REFUSED_RETRY);
-            prepare(false)
-        }
-        result => result,
-    };
+    let prepared = retry_refused_layout(|| prepare(false));
     match prepared {
         Err(error) if butterpollo_windows::input::secure_desktop_shown() => {
             tracing::warn!(error = %format!("{error:#}"), "stream display could not be prepared while Windows is locked; trying the physical display");
@@ -2531,6 +2517,41 @@ pub fn prepare_stream(
 /// How long a launch waits before preparing its display again after Windows
 /// refused the layout to this desktop.
 const DESKTOP_REFUSED_RETRY: Duration = Duration::from_secs(2);
+
+/// Runs `attempt`, and once more after `wait` when Windows `refused` the layout to this
+/// desktop while no lock or sign-in screen is shown (`secure`). The first launch or resume
+/// after the PC sat idle can find it refusing ("access denied") while the next one works
+/// (issue #89); the second try runs on whichever desktop takes input then.
+fn retry_refused<T>(
+    mut attempt: impl FnMut() -> Result<T>,
+    refused: impl Fn(&anyhow::Error) -> bool,
+    secure: impl Fn() -> bool,
+    wait: impl FnOnce(),
+) -> Result<T> {
+    match attempt() {
+        Err(error) if refused(&error) && !secure() => {
+            tracing::warn!(
+                error = %format!("{error:#}"),
+                input_desktop = ?butterpollo_windows::input::input_desktop_name(),
+                "Windows refused the stream display's layout to this desktop; trying again"
+            );
+            wait();
+            attempt()
+        }
+        result => result,
+    }
+}
+
+/// [`retry_refused`] with Windows' own answers and [`DESKTOP_REFUSED_RETRY`]: a launch's
+/// display and a kept display's resume alike.
+fn retry_refused_layout<T>(attempt: impl FnMut() -> Result<T>) -> Result<T> {
+    retry_refused(
+        attempt,
+        butterpollo_windows::input::desktop_refused,
+        butterpollo_windows::input::secure_desktop_shown,
+        || std::thread::sleep(DESKTOP_REFUSED_RETRY),
+    )
+}
 
 /// One window streamed instead of a display: `output_name` set to
 /// `window:<hwnd>/<pid>@<display>`, as the release harness does for its looped

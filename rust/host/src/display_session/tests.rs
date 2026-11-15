@@ -342,6 +342,34 @@ fn a_resume_leaves_its_own_kept_display_for_the_one_the_game_is_on() {
 }
 
 #[test]
+fn a_layout_windows_refused_after_idle_is_tried_once_more_unless_locked() {
+    let run = |failures: usize, refused: bool, secure: bool| {
+        let (mut attempts, mut waited) = (0, false);
+        let result = retry_refused(
+            || {
+                attempts += 1;
+                if attempts <= failures {
+                    anyhow::bail!("access denied")
+                }
+                Ok(attempts)
+            },
+            |_| refused,
+            || secure,
+            || waited = true,
+        );
+        (result.is_ok(), attempts, waited)
+    };
+    // A resume, as a launch, gets its second try after the wait.
+    assert_eq!(run(1, true, false), (true, 2, true));
+    // Only one: a second refusal fails it.
+    assert_eq!(run(2, true, false), (false, 2, true));
+    // The lock screen has its own way; another error is no refusal.
+    assert_eq!(run(1, true, true), (false, 1, false));
+    assert_eq!(run(1, false, false), (false, 1, false));
+    assert_eq!(run(0, true, false), (true, 1, false));
+}
+
+#[test]
 fn a_resume_at_another_rate_keeps_the_display_the_game_is_on() {
     let fixture = crate::state::test_support::Fixture::new();
     let host = &fixture.host;
