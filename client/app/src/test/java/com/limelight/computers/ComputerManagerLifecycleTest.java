@@ -639,4 +639,29 @@ public class ComputerManagerLifecycleTest {
             controller.destroy();
         }
     }
+
+    @Test
+    public void playOverTheInternetIsTakenInAtStartAndTurningItOffEndsTheTunnelsAtOnce() throws Exception {
+        List<String> asked = java.util.Collections.synchronizedList(new ArrayList<>());
+        CountDownLatch on = new CountDownLatch(1);
+        CountDownLatch off = new CountDownLatch(1);
+        InternetPlay.use(request -> {
+            asked.add(request);
+            if (request.contains("\"on\":true")) on.countDown();
+            if (request.contains("\"on\":false")) off.countDown();
+            return "{\"ok\":null}";
+        });
+        ServiceController<Manager> controller = Robolectric.buildService(Manager.class).create();
+        try {
+            // Without a poll: the service takes the setting in when it starts.
+            assertTrue(on.await(5, TimeUnit.SECONDS));
+            android.preference.PreferenceManager.getDefaultSharedPreferences(controller.get()).edit()
+                    .putBoolean(com.limelight.preferences.PreferenceConfiguration.INTERNET_PLAY_PREF_STRING, false).commit();
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            assertTrue("switching the setting off reaches the tunnels: " + asked, off.await(5, TimeUnit.SECONDS));
+        } finally {
+            controller.destroy();
+            InternetPlay.use(null);
+        }
+    }
 }

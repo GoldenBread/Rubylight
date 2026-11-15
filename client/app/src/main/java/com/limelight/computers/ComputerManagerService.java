@@ -53,6 +53,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.content.SharedPreferences;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
@@ -84,6 +85,11 @@ public class ComputerManagerService extends Service {
     private WakeTargetsPoll wakeTargets;
     // Its HTTPS requests, off the polling threads and their network locks.
     private ExecutorService wakeRequests;
+    // "Play over the internet" as it changes, in order and off the main thread: off ends the open tunnels at once.
+    private ExecutorService internetPlayCalls;
+    private final SharedPreferences.OnSharedPreferenceChangeListener internetPlaySetting = (preferences, key) -> {
+        if (PreferenceConfiguration.INTERNET_PLAY_PREF_STRING.equals(key)) applyInternetPlay(preferences);
+    };
     private final LinkedList<PollingTuple> pollingTuples = new LinkedList<>();
     // Orders a poll's save of a PC against removeComputer's delete (see runPoll).
     private final Object removalLock = new Object();
@@ -1106,6 +1112,11 @@ public class ComputerManagerService extends Service {
         }
     }
 
+    private void applyInternetPlay(SharedPreferences preferences) {
+        boolean on = preferences.getBoolean(PreferenceConfiguration.INTERNET_PLAY_PREF_STRING, true);
+        internetPlayCalls.execute(() -> InternetPlay.setEnabled(on));
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -1118,6 +1129,10 @@ public class ComputerManagerService extends Service {
         wakeRequests = Executors.newSingleThreadExecutor(task -> new Thread(task, "Wake targets"));
         wakeTargets = new WakeTargetsPoll(new WakeTargets(this), this::nativeClient, wakeRequests,
                 SystemClock::elapsedRealtime);
+        internetPlayCalls = Executors.newSingleThreadExecutor(task -> new Thread(task, "Internet play setting"));
+        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
+        preferences.registerOnSharedPreferenceChangeListener(internetPlaySetting);
+        applyInternetPlay(preferences);
 
         // Initialize the DB
         dbManager = new ComputerDatabaseManager(this);
@@ -1193,6 +1208,9 @@ public class ComputerManagerService extends Service {
         discoveryBinder = null;
         wakeRequests.shutdownNow();
         wakeTargets.shutdown();
+        PreferenceManager.getDefaultSharedPreferences(this).unregisterOnSharedPreferenceChangeListener(internetPlaySetting);
+        // A setting turned off just before still ends the tunnels.
+        internetPlayCalls.shutdown();
 
         // FIXME: Should await termination here but we have timeout issues in HttpURLConnection
 
