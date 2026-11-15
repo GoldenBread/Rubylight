@@ -1598,4 +1598,5 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("Fractional V-Sync", "分数V-Sync"),
     ("On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Measured on Windows, it adds 1 to 2 ms of delay on most frames and 2.5 to 4 ms on the slowest ones; turn it on if motion judders with V-Sync.", "画面のリフレッシュレートがストリームのフレームレートの2〜4倍のとき(120 Hzで60 fps)、各フレームを同じ回数のリフレッシュだけ表示し、動きを均一に保ちます。Windowsでの測定では、遅延がほとんどのフレームで1〜2 ms、最も遅いフレームで2.5〜4 ms増えます。V-Syncで動きがカクつく場合にオンにしてください。"),
     ("The PC streams from a virtual display that matches the stream, or from its own monitor. The PC’s own setting keeps the PC’s display settings, Virtual display leaves the arrangement to the PC, and the other choices place it beside the PC’s monitors or switch them off during the stream. Needs PC support.", "PC はストリームに合った仮想ディスプレイ、または自身のモニターから配信します。「PC 自体の設定」は PC のディスプレイ設定のままにし、「仮想ディスプレイ」は配置を PC に任せ、ほかの選択肢は PC のモニターの横に置くか、ストリーム中はモニターをオフにします。PC の対応が必要です。"),
+    ("This PC doesn’t take display arrangements: it streams as shown here, not as {}", "この PC はディスプレイの配置に対応していません。{} ではなく、ここに表示されているとおりに配信します"),
 ];

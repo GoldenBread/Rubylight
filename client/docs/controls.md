@@ -249,7 +249,7 @@ Open your PC's menu → **PC settings… → Display on the PC → Display arran
 | Extended and separated | Keep the other monitors on, but place the streamed display far away in the desktop layout. Choose which display is primary. Both displays share the same Windows session. |
 | Physical display | Stream the PC's monitor without adding a virtual display. |
 
-The host restores the display layout when the stream ends. These choices apply to normal streaming; Remote Monitor and Input-only retain their host-controlled behavior. A saved choice is sent only to a host with display modes.
+The host restores the display layout when the stream ends. These choices apply to normal streaming; Remote Monitor and Input-only keep the host's arrangement, and Remote Monitor still asks for a virtual display when the stored Virtual display value is on, which every virtual choice sets. A saved choice is sent only to a host with display modes.
 
 On every host except NVIDIA GameStream, **Open the PC's web UI** in an online PC's settings opens the host's web UI in your browser, at its default port six above the PC's HTTPS port. Manage applications, paired devices and host settings there. The web UI uses its own login; pairing does not sign you in. Remote access needs a reachable web UI port, which is separate from the streaming ports. The dialog's address can be selected and copied if no browser is available.
 

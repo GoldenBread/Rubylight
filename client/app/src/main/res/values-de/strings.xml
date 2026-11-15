@@ -297,7 +297,6 @@
     <string name="yuv444_fallback">Schärferer farbiger Text ist für diesen Stream nicht verfügbar.</string>
     <string name="yuv444_fallback_hdr">Schärferer farbiger Text ist mit HDR nicht verfügbar. HDR hat Vorrang.</string>
     <string name="title_virtual_display">Virtuelles Display</string>
-    <string name="summary_virtual_display">Der PC streamt von einem eigenen virtuellen Display, das zu Auflösung und Bildrate des Streams passt, egal welchen Monitor der PC hat. Ausgeschaltet entscheiden die Display-Einstellungen des PCs.</string>
     <string name="title_vrr">Variable Bildwiederholrate</string>
     <string name="summary_vrr">VRR: Auf einem Bildschirm mit G-Sync, FreeSync oder adaptiver Bildwiederholrate erscheinen Bilder, ohne auf die nächste Bildwiederholung zu warten, und Frame-Pacing wird nicht genutzt. „An“ zeigt jedes Bild dann, wenn das Spiel es gezeichnet hat, damit Bewegungen gleichmäßig bleiben, und kostet etwa 1 bis 4 ms Latenz; „Am schnellsten“ zeigt jedes Bild, sobald es ankommt, für die geringste Latenz. Ein Bildschirm ohne adaptive Bildwiederholrate läuft stattdessen mit seiner höchsten Bildwiederholrate oder mit einem niedrigeren Vielfachen der Bildrate des Spiels, wenn die höchste ruckeln würde, der PC seine Bildzeiten sendet und der Bildschirm ohne Schwarzbild umschaltet; jedes Bild wartet weiter auf die nächste Bildwiederholung (unter 8,3 ms bei 120 Hz). Lass es auf einem Bildschirm, der bei 60 Hz bleibt, aus: Dort erledigt das Frame-Pacing.</string>
     <string-array name="vrr_choice_names">

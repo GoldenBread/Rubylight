@@ -1598,4 +1598,5 @@ sudo sysctl -w net.core.rmem_max={}", "接收缓冲区：系统只分配了所�
     ("Fractional V-Sync", "分数 V-Sync"),
     ("On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Measured on Windows, it adds 1 to 2 ms of delay on most frames and 2.5 to 4 ms on the slowest ones; turn it on if motion judders with V-Sync.", "屏幕刷新率是串流帧率的 2 到 4 倍时(120 Hz 上的 60 fps),每帧显示相同次数的刷新,让动作保持均匀。在 Windows 上实测,大多数帧会增加 1 到 2 ms 延迟,最慢的帧增加 2.5 到 4 ms;如果开启 V-Sync 后动作卡顿,请打开。"),
     ("The PC streams from a virtual display that matches the stream, or from its own monitor. The PC’s own setting keeps the PC’s display settings, Virtual display leaves the arrangement to the PC, and the other choices place it beside the PC’s monitors or switch them off during the stream. Needs PC support.", "电脑从与串流匹配的虚拟显示器或其自身的显示器进行串流。“电脑自身的设置”保留电脑的显示设置，“虚拟显示器”将排列交给电脑决定，其他选项则将其放在电脑显示器旁边，或在串流期间关闭这些显示器。需要电脑支持。"),
+    ("This PC doesn’t take display arrangements: it streams as shown here, not as {}", "这台电脑不支持显示器排列：它按此处显示的方式串流，而不是“{}”"),
 ];

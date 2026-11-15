@@ -297,7 +297,6 @@
     <string name="yuv444_fallback">Không dùng được “Chữ màu sắc nét hơn” cho stream này.</string>
     <string name="yuv444_fallback_hdr">Không dùng được “Chữ màu sắc nét hơn” với HDR. HDR được ưu tiên.</string>
     <string name="title_virtual_display">Màn hình ảo</string>
-    <string name="summary_virtual_display">PC stream từ một màn hình ảo riêng khớp với độ phân giải và tốc độ khung hình của stream, bất kể PC có màn hình nào. Khi tắt, việc này tùy theo cài đặt hiển thị của PC.</string>
     <string name="title_vrr">Tần số quét biến thiên</string>
     <string name="summary_vrr">VRR: trên màn hình G-Sync, FreeSync hoặc có tần số quét thích ứng, khung hình được hiển thị mà không chờ lần làm mới kế tiếp, và “Nhịp độ khung hình” không được dùng. “Bật” hiển thị mỗi khung hình đúng lúc trò chơi đã vẽ, giúp chuyển động luôn đều, và thêm khoảng 1–4 mili giây độ trễ; “Nhanh nhất” hiển thị từng khung hình ngay khi đến, cho độ trễ thấp nhất. Màn hình không có tần số quét thích ứng sẽ chạy ở tần số quét cao nhất, hoặc ở một bội số thấp hơn của tốc độ khung hình trò chơi khi mức cao nhất bị giật, PC gửi thời điểm khung hình và màn hình chuyển được mà không tắt tối; mỗi khung hình vẫn chờ lần làm mới tiếp theo (dưới 8,3 ms ở 120 Hz). Hãy để tắt trên màn hình chỉ ở 60 Hz, nơi điều nhịp khung hình đã đủ.</string>
     <string-array name="vrr_choice_names">

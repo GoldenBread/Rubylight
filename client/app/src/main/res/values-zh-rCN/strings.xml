@@ -297,7 +297,6 @@
     <string name="yuv444_fallback">此串流无法使用更清晰的彩色文字。</string>
     <string name="yuv444_fallback_hdr">开启 HDR 时无法使用更清晰的彩色文字。HDR 优先。</string>
     <string name="title_virtual_display">虚拟显示器</string>
-    <string name="summary_virtual_display">电脑从自己的一个虚拟显示器进行串流，它与串流的分辨率和帧率一致，与电脑接的是什么显示器无关。关闭则由电脑的显示设置决定。</string>
     <string name="title_vrr">可变刷新率</string>
     <string name="summary_vrr">VRR：在 G-Sync、FreeSync 或自适应刷新屏幕上，帧无需等待下一次刷新即可显示，且不使用“帧速调节”。“开启”在游戏绘制每帧的时刻显示它，让动态保持平稳，会增加约 1 到 4 毫秒延迟；“最快”在每帧一到达时就显示，延迟最低。没有自适应刷新率的屏幕会改用其最高刷新率运行；若最高刷新率会卡顿、PC 发送帧时间且屏幕能不黑屏切换，则改用游戏帧率的较低倍数。每帧仍要等待下一次刷新（120 Hz 下不到 8.3 毫秒）。屏幕只能保持 60 Hz 时请保持关闭，帧同步已足够。</string>
     <string-array name="vrr_choice_names">

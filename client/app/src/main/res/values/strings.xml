@@ -343,7 +343,6 @@
     <string name="yuv444_fallback">Sharper colored text isn’t available for this stream.</string>
     <string name="yuv444_fallback_hdr">Sharper colored text isn’t available with HDR. HDR takes priority.</string>
     <string name="title_virtual_display">Virtual display</string>
-    <string name="summary_virtual_display">The PC streams from a virtual display of its own that matches the stream’s resolution and frame rate, whatever monitor the PC has. Off leaves it to the PC’s display settings.</string>
     <string name="title_vrr">Variable refresh rate</string>
     <string name="summary_vrr">VRR: on a G-Sync, FreeSync or adaptive-refresh screen, frames show without waiting for the next refresh, and frame pacing is not used. On shows each frame when the game drew it, so motion stays even, for about 1 to 4 ms of latency; Fastest shows each frame the moment it arrives, for the lowest latency. A screen without adaptive refresh runs at its highest refresh rate instead, or at a lower multiple of the game’s frame rate where the highest would judder, the PC sends its frame times and the screen switches without blanking; each frame still waits for the next refresh (under 8.3 ms at 120 Hz). Leave it off on a screen that stays at 60 Hz, where frame pacing does the job.</string>
     <string-array name="vrr_choice_names">

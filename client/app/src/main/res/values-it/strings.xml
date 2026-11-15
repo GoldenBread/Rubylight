@@ -297,7 +297,6 @@
     <string name="yuv444_fallback">Testo colorato più nitido non disponibile per questo stream.</string>
     <string name="yuv444_fallback_hdr">Testo colorato più nitido non disponibile con l’HDR. L’HDR ha la priorità.</string>
     <string name="title_virtual_display">Display virtuale</string>
-    <string name="summary_virtual_display">Il PC trasmette da un proprio display virtuale con la risoluzione e il frame rate dello stream, qualunque monitor abbia il PC. Disattivato, decidono le impostazioni del display del PC.</string>
     <string name="title_vrr">Frequenza di aggiornamento variabile</string>
     <string name="summary_vrr">VRR: su uno schermo G-Sync, FreeSync o ad aggiornamento adattivo, i fotogrammi appaiono senza attendere il prossimo aggiornamento e Frame pacing non viene usato. Attivo mostra ogni fotogramma quando il gioco lo ha disegnato, per un movimento uniforme, e aggiunge circa 1-4 ms di latenza; Più veloce mostra ogni fotogramma appena arriva, per la latenza più bassa. Uno schermo senza frequenza adattiva funziona invece alla sua frequenza massima, o a un multiplo più basso dei fotogrammi del gioco quando la massima scatterebbe, il PC invia i tempi dei fotogrammi e lo schermo cambia senza oscurarsi; ogni fotogramma attende comunque il prossimo aggiornamento (meno di 8,3 ms a 120 Hz). Lascialo disattivato su uno schermo che resta a 60 Hz, dove basta il frame pacing.</string>
     <string-array name="vrr_choice_names">

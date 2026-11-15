@@ -964,6 +964,12 @@ impl Launcher {
             let availability = |feature| test_host.and_then(|h| h.info.as_ref())
                 .map_or(nightjar_core::http::Availability::Unknown, |i| i.capabilities.availability(feature));
             let modes = display_scale_gate(availability(nightjar_core::http::Feature::HostDisplayModes));
+            // Such a PC streams as the switch says: a saved arrangement that implies otherwise says why
+            // until a choice is made here.
+            if !modes && s.host_display != HostDisplay::HostDefault
+                && nightjar_core::http::HostDisplay::from(s.host_display).requests_virtual_display(s.virtual_display) != s.virtual_display {
+                rows.note(trf("This PC doesn’t take display arrangements: it streams as shown here, not as {}", &[&tr(host_display_name(s.host_display))]), *TERTIARY);
+            }
             setting_row(ui, s, &mut rows, &["host_display", "virtual_display"], "Display arrangement", "The PC streams from a virtual display that matches the stream, or from its own monitor. The PC’s own setting keeps the PC’s display settings, Virtual display leaves the arrangement to the PC, and the other choices place it beside the PC’s monitors or switch them off during the stream. Needs PC support.", |ui, s| {
                 let current = display_choice(s, modes);
                 // Taller than egui's default menu, so all eight choices show.
@@ -2709,7 +2715,9 @@ pub(super) fn setting_row(
                     if boxed.changed() && !ticked {
                         overrides.clear(keys);
                         *settings = overrides.apply(inherited);
-                    } else if ticked {
+                    } else if ticked && (boxed.changed() || *settings != before) {
+                        // Only on a change: a row over several keys leaves a layer that holds some
+                        // of them, as older versions saved it, as it is until a value is chosen.
                         overrides.capture(settings, keys);
                     }
                     value.union(boxed)

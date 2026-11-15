@@ -1734,13 +1734,43 @@ fn a_pc_without_display_modes_offers_only_the_virtual_display_switch() {
     f.l.settings_view.section = "Display & image";
     f.l.settings_view.more = [true; 8];
     let id = f.hosts.list[0].id;
-    f.l.go(Screen::HostSettings(id));
+    f.l.open_host_settings(id, &f.hosts.list[0]);
     f.settle();
     let row = "Display arrangement";
+    let note = "This PC doesn’t take display arrangements: it streams as shown here, not as Virtual display only";
     assert_eq!(row_words(&f, row), ["The PC’s own setting"]);
+    assert!(shows(&f, note), "the row says why: {:?}", f.drawn);
     click_value(&mut f, row, "The PC’s own setting");
     assert!(shows(&f, "Virtual display") && !shows(&f, "Virtual display only"), "two choices: {:?}", f.drawn);
     click_last(&mut f, "Virtual display");
     f.settle();
     assert_eq!(row_words(&f, row), ["Virtual display"]);
+    assert!(!shows(&f, note), "a choice made here clears it");
+}
+
+#[test]
+fn a_layer_holding_one_key_of_a_row_keeps_it_alone_until_a_value_is_chosen() {
+    use crate::config::HostDisplay;
+    // As the separate Virtual display row saved it: the PC's own switch, its arrangement inherited.
+    let mut pc = record("PC", true, false);
+    pc.settings = Some(serde_json::from_str(r#"{"virtual_display":true}"#).unwrap());
+    let mut f = Frames::new(pc, Reach::Online);
+    f.size = vec2(1280.0, 12000.0);
+    f.l.settings = Settings { host_display: HostDisplay::Exclusive, ..Settings::default() };
+    f.l.settings_view.section = "Display & image";
+    f.l.settings_view.more = [true; 8];
+    let id = f.hosts.list[0].id;
+    f.l.open_host_settings(id, &f.hosts.list[0]);
+    f.settle();
+    f.settle();
+    let row = "Display arrangement";
+    assert!(row_words(&f, row).contains(&"Virtual display only"), "it streams the inherited arrangement: {:?}", row_words(&f, row));
+    assert!(!f.l.edit_overrides.has(&["host_display"]), "drawing the page adds nothing to the PC's layer");
+    assert!(f.l.edit_overrides.has(&["virtual_display"]));
+    // A pick writes both keys into the PC's layer.
+    click_value(&mut f, row, "Virtual display only");
+    click_last(&mut f, "Virtual display");
+    f.settle();
+    assert!(f.l.edit_overrides.has(&["host_display"]) && f.l.edit_overrides.has(&["virtual_display"]));
+    assert_eq!((f.l.edit_settings.host_display, f.l.edit_settings.virtual_display), (HostDisplay::HostDefault, true));
 }
