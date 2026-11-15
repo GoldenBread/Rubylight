@@ -307,6 +307,10 @@ impl Encoder {
                     idr,
                 });
                 (v.Release.unwrap())(buffer);
+                // The header repair's pooled rewrite has been copied on.
+                if let std::borrow::Cow::Owned(rewritten) = sent {
+                    crate::frame_pool::give(rewritten);
+                }
                 // Whether a frame is a keyframe is read from its first slice.
                 // If a later one says otherwise, that assumption is wrong for
                 // this driver: say so, once, rather than stream a keyframe.
@@ -339,7 +343,13 @@ impl Encoder {
                     frame_cap_bytes,
                     pushed.meta.idr,
                 );
-                let bytes = spliced.unwrap_or(bytes);
+                let bytes = match spliced {
+                    Some(spliced) => {
+                        crate::frame_pool::give(bytes);
+                        spliced
+                    }
+                    None => bytes,
+                };
                 let whole = unit == Unit::Whole;
                 // A joined or frame-mode keyframe is recovered as a whole.
                 let bytes =
@@ -386,11 +396,17 @@ impl Encoder {
                     frame_cap_bytes,
                     idr,
                 );
-                let owned = || match sent {
-                    std::borrow::Cow::Borrowed(bytes) => crate::frame_pool::copy(bytes),
-                    std::borrow::Cow::Owned(bytes) => bytes,
+                let owned = match (spliced, sent) {
+                    (Some(spliced), sent) => {
+                        if let std::borrow::Cow::Owned(rewritten) = sent {
+                            crate::frame_pool::give(rewritten);
+                        }
+                        spliced
+                    }
+                    (None, std::borrow::Cow::Borrowed(bytes)) => crate::frame_pool::copy(bytes),
+                    (None, std::borrow::Cow::Owned(bytes)) => bytes,
                 };
-                (spliced.unwrap_or_else(owned), cap)
+                (owned, cap)
             };
             (v.Release.unwrap())(buffer);
             self.frame_completed(timing, !bytes.is_empty());
