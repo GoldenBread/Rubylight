@@ -371,6 +371,12 @@ Its Native resolution on macOS is the display's own resolution as moonlight-qt f
 (app/streaming/streamutils.cpp, StreamUtils::getNativeDesktopMode, commit 67dbfddb2, same
 project and licence): CoreGraphics' modes of the display and the one IOKit flags native,
 whatever scaled mode the desktop runs (client/protocol/desktop/src/mac_display.rs).
+Its Settings screen predicts the display mode Windows' Fullscreen takes as SDL 3's
+SDL_GetClosestFullscreenDisplayMode chooses it (src/video/SDL_video.c, SDL 3.4.20,
+https://github.com/libsdl-org/SDL, zlib license, Copyright (C) 1997-2026 Sam Lantinga):
+the smallest mode that holds the stream, the closest aspect ratio, then the closest
+refresh with the slower one on a tie (client/protocol/desktop/src/ui/settings.rs,
+closest_fullscreen_mode).
 Nightjar desktop's high-performance GPU power while streaming on Linux, which holds an AMD
 GPU that drives a connected display at its peak stable power state (client/protocol/desktop/
 src/stream/gpu_hold.rs), is ported from Nonary's moonlight-qt fork

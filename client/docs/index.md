@@ -81,6 +81,8 @@ Apollo extension behavior draws on [Artemis Android](https://github.com/ClassicO
 
 The per-controller gyroscope mapping (axes, inversion, sensitivity and the Flydigi Apex 4 and Vader 4 Pro preset) and the in-stream motion readings are ported from [jvanderv42's Nightjar fork](https://github.com/jvanderv42/nightjar) at commit d0e14cf25 (GPL-3.0); the desktop client's gyroscope axes and sensitivity follow the same design.
 
+The desktop Settings screen predicts the display mode Windows' Fullscreen takes by SDL 3's own rule (`SDL_GetClosestFullscreenDisplayMode`, SDL 3.4.20, [libsdl-org/SDL](https://github.com/libsdl-org/SDL), zlib license, Copyright (C) 1997-2026 Sam Lantinga), in `protocol/desktop/src/ui/settings.rs`.
+
 The [DualSense waveform extension](dualsense-haptics.md) uses the GPL-3.0-or-later protocol definition from [Nonary/moonlight-common-c](https://github.com/Nonary/moonlight-common-c) and interoperates with Nonary's Vibepollo hosts. DualSense HID report handling is adapted from SDL and retains its original notice in the source.
 
 The optional Vulkan renderer for MediaCodec streams (`app/src/main/jni/vulkan`) is adapted from [MoreOrLessSoftware/moonlight-android](https://github.com/MoreOrLessSoftware/moonlight-android) at commit [3e6665e](https://github.com/MoreOrLessSoftware/moonlight-android/tree/3e6665e7d192ac5e7f639f8f8172cda04701924e) (GPL-3.0).

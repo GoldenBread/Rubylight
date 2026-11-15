@@ -810,7 +810,7 @@ mod tests {
         let render = include_str!("render.rs");
         let present = function(render, "pub fn present(");
         assert!(present.find("self.hold_for_turn_lending(").unwrap() < present.find("warp.draw(None)").unwrap());
-        // Held once: the presents themselves hold only without Frame Warp (KMS's `lends` asks for none).
+        // Held once: the presents themselves hold only without Frame Warp (KMS's commit lends the input with Frame Warp too, but holds only without it).
         for flip in ["fn render_flip(", "fn kms_flip(&mut self, window"] {
             let body = function(render, flip);
             for (at, _) in body.match_indices("self.hold_for_turn(") {

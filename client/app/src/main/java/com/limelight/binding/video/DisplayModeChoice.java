@@ -6,7 +6,9 @@ package com.limelight.binding.video;
  * fractional V-Sync row) and tests run without a screen. Without VRR it takes the highest refresh that
  * is a whole multiple of the frame rate, even below the current one (60 Hz for 60 fps on a 90 Hz
  * screen), or the lowest such with "Reduce refresh rate"; the resolution stays unless the stream needs
- * otherwise. With VRR the top rate among the modes that keep the whole stream.
+ * otherwise. With VRR the top rate among the modes that keep the whole stream. The choice is Moonlight
+ * Android's (Game.prepareDisplayForRendering, GPL-3.0, Cameron Gutman and contributors), moved here
+ * unchanged from GameVideoOutput.
  */
 public final class DisplayModeChoice {
     private DisplayModeChoice() { }
