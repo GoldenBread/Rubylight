@@ -558,17 +558,17 @@ fn lease_hdr(
                 match &result {
                     Ok(()) if enabled => tracing::info!(
                         output = %chosen.display_name,
-                        previous = chosen.hdr_enabled,
+                        previous,
                         "turned HDR on for the stream"
                     ),
                     Ok(()) => tracing::info!(
                         output = %chosen.display_name,
-                        previous = chosen.hdr_enabled,
+                        previous,
                         "turned HDR off for the stream"
                     ),
                     Err(error) => tracing::warn!(
                         output = %chosen.display_name,
-                        previous = chosen.hdr_enabled,
+                        previous,
                         applied = enabled,
                         error = %format!("{error:#}"),
                         "could not change HDR for the stream"
@@ -683,7 +683,9 @@ pub struct DisplayStatus {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DisplayDiagnostics {
     pub status: DisplayStatus,
-    pub ccd_active: bool,
+    /// None when the CCD query failed, as it does while the lock screen owns
+    /// the input desktop; false is a real "not on an active path".
+    pub ccd_active: Option<bool>,
 }
 
 pub struct Guard {
@@ -1090,7 +1092,7 @@ impl Guard {
         };
         let display = display.lock().unwrap();
         let status = display.status()?;
-        let active = display.active().unwrap_or(false);
+        let active = display.active().ok();
         Ok(Some(DisplayDiagnostics {
             status: DisplayStatus {
                 swap_chain: status.flags & rubylight_vdisplay_proto::control::MONITOR_SWAP_CHAIN

@@ -23,14 +23,18 @@ pub const DESCRIBE_ATTRIBUTE: &str = "x-rl-max-packet-size";
 /// ANNOUNCE attribute: Moonlight's video packet size, which a client may raise to the offer.
 pub const ANNOUNCE_ATTRIBUTE: &str = "x-nv-video[0].packetSize";
 
-/// The largest video packet a path whose interface MTU is `mtu` bytes offers, or 0 when that is no
-/// more than stock clients already send (below 1472 bytes). A 1500-byte path, Wi-Fi among them,
-/// offers 1424: 24 bytes above stock, safe but with little of jumbo's benefit. The size covers the
-/// client's 32-byte encryption header; the datagram adds [`DATAGRAM_OVERHEAD`] bytes on top, and the
-/// client's UDP probe must use the packet size less 32 bytes (whether or not the stream encrypts,
-/// because the probe adds its own framing), not the config value. Rounded down to a multiple of 16,
-/// as Moonlight rounds its packet size.
+/// The largest video packet a path whose interface MTU is `mtu` bytes offers, or 0 unless that is
+/// above 1500 bytes. A 1500-byte path (Wi-Fi, a tunnel, a failed lookup's fallback) offers nothing:
+/// 1424 would be only 2 % more payload than stock's 1392 yet would turn on fragmentation refusal,
+/// so paths below 1488 bytes would refuse datagrams they could otherwise fragment. The size covers
+/// the client's 32-byte encryption header; the datagram adds [`DATAGRAM_OVERHEAD`] bytes on top, and
+/// the client's UDP probe must use the packet size less 32 bytes (whether or not the stream
+/// encrypts, because the probe adds its own framing), not the config value. Rounded down to a
+/// multiple of 16, as Moonlight rounds its packet size.
 pub fn for_mtu(mtu: u32) -> u16 {
+    if mtu <= 1500 {
+        return 0;
+    }
     let room = mtu
         .saturating_sub(u32::from(DATAGRAM_OVERHEAD))
         .min(u32::from(MAX_VIDEO_PACKET));
@@ -64,14 +68,15 @@ mod tests {
         // A 9000-byte path just reaches the cap; 16 bytes less does not.
         assert_eq!(for_mtu(8256), MAX_VIDEO_PACKET);
         assert_eq!(for_mtu(8255), 8176);
-        // Ethernet and Wi-Fi (1500) offer 1424, not the 1392 stock clients send.
-        assert_eq!(for_mtu(1500), 1424);
-        assert_eq!(for_mtu(1499), 1424);
-        assert_eq!(for_mtu(1488), 1424);
-        assert_eq!(for_mtu(1487), 1408);
-        // Below 1472 (1408 + 64) there is nothing to offer.
-        assert_eq!(for_mtu(1471), 0);
-        assert_eq!(for_mtu(1472), 1408);
+        // A 1500-byte path (Ethernet, Wi-Fi) offers nothing: 1424 saves little
+        // and would turn on fragmentation refusal below 1488.
+        assert_eq!(for_mtu(1500), 0);
+        assert_eq!(for_mtu(1499), 0);
+        assert_eq!(for_mtu(1488), 0);
+        assert_eq!(for_mtu(1487), 0);
+        // Above 1500 the first offer is 1424.
+        assert_eq!(for_mtu(1501), 1424);
+        assert_eq!(for_mtu(1472), 0);
         assert_eq!(for_mtu(1464), 0);
         assert_eq!(for_mtu(1424), 0);
         assert_eq!(for_mtu(64), 0);

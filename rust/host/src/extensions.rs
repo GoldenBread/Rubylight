@@ -56,17 +56,21 @@ pub fn stream_offered(h: &Shared, config: &Config, dolby: u8, launch: &Launch) -
 /// Video: the largest video packet this stream's path carries (`MaxVideoPacket`'s
 /// per-stream `a=x-rl-max-packet-size`): the MTU of the interface Windows routes to the
 /// client through, less the datagram overhead, rounded down to 16. 0, and so no jumbo
-/// offer, when that is no more than stock clients send (below 1472 bytes); a
-/// 1500-byte path offers 1424, safe but with little of jumbo's benefit. A lookup that
-/// fails falls back to a 1500-byte path, the conservative default the client's own
-/// probe then checks, and says so.
+/// offer, on a path of 1500 bytes or less: 1424 would save little and turn on
+/// fragmentation refusal below 1488. A lookup that fails falls back to a 1500-byte
+/// path, which offers nothing, and says so.
 fn max_video_packet(peer: std::net::IpAddr) -> u16 {
-    let mtu = match butterpollo_windows::net::routed_mtu(std::net::SocketAddr::new(peer, 0)) {
+    let address = std::net::SocketAddr::new(peer, 0);
+    if !butterpollo_windows::net::routed_same_link(address) {
+        tracing::debug!(%peer, "the client is behind a gateway; offering no jumbo packets");
+        return 0;
+    }
+    let mtu = match butterpollo_windows::net::routed_mtu(address) {
         Some(mtu) => mtu,
         None => {
             tracing::warn!(
                 %peer,
-                "the route's MTU is unknown; offering a 1500-byte path's video packet size"
+                "the route's MTU is unknown; offering no jumbo packets"
             );
             1500
         }

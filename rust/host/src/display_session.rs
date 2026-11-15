@@ -861,7 +861,7 @@ impl Prepared {
                 frames_pushed = diagnostics.status.frames_pushed,
                 // A secure desktop (the lock screen) hides the CCD path, so
                 // an inactive path there says nothing about the display.
-                ccd_active = diagnostics.ccd_active,
+                ccd_active = ?diagnostics.ccd_active,
                 secure_desktop = secure,
                 idle_seconds = ?idle,
                 "stream display status while waiting for the first frame"

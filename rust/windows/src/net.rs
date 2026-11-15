@@ -683,6 +683,49 @@ pub fn routed_link(peer: SocketAddr) -> Link {
 pub fn routed_link_bps(peer: SocketAddr) -> u64 {
     routed_link(peer).bps
 }
+/// Whether Windows reaches `peer` without a gateway, so it is on this host's
+/// link. A route with a next hop crosses a router that may carry a smaller MTU,
+/// which the host cannot see, so jumbo packets are offered only on-link.
+pub fn routed_same_link(peer: SocketAddr) -> bool {
+    use windows::Win32::NetworkManagement::IpHelper::{GetBestRoute2, MIB_IPFORWARD_ROW2};
+    use windows::Win32::Networking::WinSock::SOCKADDR_INET;
+    let peer = SocketAddr::new(peer.ip().to_canonical(), peer.port());
+    let address = socket2::SockAddr::from(peer);
+    let mut route = MIB_IPFORWARD_ROW2::default();
+    let mut source = SOCKADDR_INET::default();
+    // SAFETY: `address` outlives the call; `route` and `source` are live locals
+    // the call fills before they are read on success.
+    unsafe {
+        GetBestRoute2(
+            None,
+            0,
+            None,
+            address.as_ptr().cast(),
+            0,
+            &mut route,
+            &mut source,
+        )
+        .ok()
+        .is_ok_and(|()| next_hop_unspecified(&route.NextHop))
+    }
+}
+
+/// Whether a route's next hop is unspecified: the destination is on-link.
+fn next_hop_unspecified(next: &windows::Win32::Networking::WinSock::SOCKADDR_INET) -> bool {
+    use windows::Win32::Networking::WinSock::{AF_INET, AF_INET6};
+    // SAFETY: `si_family` is the union's tag; matching it is the contract for
+    // reading the selected member, which Windows initialised.
+    unsafe {
+        if next.si_family == AF_INET {
+            next.Ipv4.sin_addr.S_un.S_addr == 0
+        } else if next.si_family == AF_INET6 {
+            next.Ipv6.sin6_addr.u.Byte.iter().all(|byte| *byte == 0)
+        } else {
+            true
+        }
+    }
+}
+
 /// The payload MTU of the interface Windows routes `peer` through, IPv4 or IPv6:
 /// the size a datagram may have before the network fragments it. None when the
 /// lookup fails or there is no route.
@@ -972,20 +1015,17 @@ impl Batch {
             })?;
             match result {
                 Ok(sent) => return Ok(sent),
-                // With fragmentation refused, this is the path's MTU speaking,
-                // not a missing segmentation offload: drop the batch and report
-                // it rather than ending the stream.
-                Err(error) if self.dont_fragment && error == WSAEMSGSIZE => {
-                    self.too_large(packets.len(), error);
-                    return Ok(0);
-                }
+                // WSAEMSGSIZE here can be the offload's own limit, not the
+                // path's MTU: turn segmentation off and send the datagrams one
+                // by one, where an oversized one is counted as such. Dropping
+                // the batch would leave every later batch dropped as well.
                 Err(error)
                     if [WSAEINVAL, WSAENOPROTOOPT, WSAEOPNOTSUPP, WSAEMSGSIZE].contains(&error) =>
                 {
                     self.offload = false;
                     tracing::warn!(
                         code = error.0,
-                        "UDP segmentation unavailable; using individual datagrams with more CPU overhead. Update the network driver or lower bitrate if sending stalls"
+                        "UDP segmentation unavailable or this batch could not be segmented; using individual datagrams with more CPU overhead. Update the network driver or lower bitrate if sending stalls"
                     );
                 }
                 Err(error) if transient(error) => {

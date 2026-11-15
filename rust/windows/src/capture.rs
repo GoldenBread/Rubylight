@@ -1761,6 +1761,9 @@ impl Capture {
             return None;
         }
         let window = target.as_ref().map(WindowTarget::handle);
+        // The target's #client suffix is the single source of truth for the
+        // crop, so input and capture cannot disagree on a hand-written target.
+        let client = target.as_ref().is_some_and(|target| target.client);
         let opened = (|| -> Result<Wgc> {
             if let Some(target) = &target {
                 window::require_capture(crate::display::windows_build())?;
@@ -1772,7 +1775,7 @@ impl Capture {
                 config.boolean("wgc_high_rate_capture", false),
                 window,
                 window_cursor(config),
-                window_client(config),
+                client,
             )?;
             capture.drain_to_newest = config.boolean("wgc_drain_to_newest", false);
             Ok(capture)
@@ -1812,6 +1815,7 @@ impl Capture {
             window::check(target.handle())?;
         }
         let window = target.as_ref().map(WindowTarget::handle);
+        let client = target.as_ref().is_some_and(|target| target.client);
         let name = target
             .as_ref()
             .map_or(name, |target| target.display.as_str());
@@ -1898,7 +1902,7 @@ impl Capture {
                 config.boolean("wgc_high_rate_capture", false),
                 window,
                 window_cursor(config),
-                window_client(config),
+                client,
             )?;
             capture.owned.warnings = warnings.clone();
             capture.drain_to_newest = config.boolean("wgc_drain_to_newest", false);

@@ -226,7 +226,7 @@ impl SessionThread<'_> {
         let first = {
             let waiting_since = Instant::now();
             let deadline = waiting_since + Duration::from_secs(10);
-            let mut next_diagnostics = waiting_since;
+            let mut next_diagnostics = waiting_since + Duration::from_secs(1);
             let mut woken = false;
             prepared.log_display_diagnostics("first frame wait");
             loop {
@@ -238,7 +238,7 @@ impl SessionThread<'_> {
                 }
                 let now = Instant::now();
                 if now >= next_diagnostics {
-                    next_diagnostics = now + Duration::from_millis(250);
+                    next_diagnostics = now + Duration::from_secs(1);
                     prepared.log_display_diagnostics("first frame wait");
                     // An off console display leaves an IddCx path committed
                     // inactive with no swap chain: no frame can arrive until

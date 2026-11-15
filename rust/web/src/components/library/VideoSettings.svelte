@@ -24,7 +24,7 @@
     { value: 'vhf_xbox_one', label: 'Xbox One' },
     { value: 'vhf_xbox', label: 'Xbox Series' },
     { value: 'vhf_ds4', label: 'DualShock 4' },
-    { value: 'vhf_ds5', label: 'DualSense', hint: 'Some games read the controller’s name and treat this pad as an unknown controller, so the camera or cursor drifts with no input; for such a game choose DualSense with waveform haptics (USB/IP) or Xbox Series instead.' },
+    { value: 'vhf_ds5', label: 'DualSense', hint: 'Some games read the controller’s name and can treat this pad as an unknown controller, so the camera or cursor can drift with no input; for such a game choose DualSense with waveform haptics (USB/IP) or Xbox Series instead.' },
     { value: 'usbip_ds5', label: 'DualSense with waveform haptics (USB/IP)', hint: 'Requires usbip-win2 on the host. Start the game after connecting the controller.' },
     { value: 'usbip_switch2', label: 'Switch 2 Pro (USB/IP)', hint: 'Requires usbip-win2 on the host. Start the game after connecting the controller.' },
     { value: 'vhf_switch', label: 'Switch Pro' },

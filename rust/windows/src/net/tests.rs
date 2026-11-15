@@ -1304,6 +1304,8 @@ fn a_loopback_route_reports_an_mtu_and_a_socket_can_refuse_fragmentation() -> Re
         // The loopback pseudo-interface carries any datagram size.
         let mtu = routed_mtu(peer).unwrap_or_else(|| panic!("no route MTU for {peer}"));
         assert!(mtu >= 1500, "{peer}: {mtu}");
+        // Loopback is on-link, so jumbo packets may be offered there.
+        assert!(routed_same_link(peer), "{peer}");
         // The packet size offered for it is the largest this version defines.
         assert_eq!(
             butterpollo_core::video_packet::for_mtu(mtu),

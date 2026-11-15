@@ -524,13 +524,6 @@ pub fn wake_console(reason: &str) -> Result<()> {
         INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_MOVE, MOUSEINPUT, SendInput,
     };
     let idle = idle_seconds().ok();
-    let followed = crate::input::follow_input_desktop();
-    if !followed {
-        tracing::debug!(
-            reason,
-            "could not attach to the input desktop before the display wake"
-        );
-    }
     let input = |dx: i32, dy: i32| INPUT {
         r#type: INPUT_MOUSE,
         Anonymous: INPUT_0 {
@@ -551,13 +544,18 @@ pub fn wake_console(reason: &str) -> Result<()> {
         anyhow::ensure!(sent == 1, "Windows refused the display wake input");
         Ok(())
     };
-    send(1, 1)?;
-    std::thread::sleep(Duration::from_millis(10));
-    send(-1, -1)?;
+    // The first-frame retry runs on the video session thread, which may own a
+    // window (COM, WGC) and cannot attach to the input desktop itself, or would
+    // stay there after unlock. `on_input_desktop` runs inline when the thread is
+    // already there and otherwise on a fresh scoped thread.
+    crate::input::on_input_desktop(|| -> Result<()> {
+        send(1, 1)?;
+        std::thread::sleep(Duration::from_millis(10));
+        send(-1, -1)
+    })?;
     tracing::info!(
         reason,
         idle_seconds = ?idle,
-        input_desktop = followed,
         "sent the console display wake with a net-zero mouse move"
     );
     Ok(())
