@@ -82,10 +82,13 @@ final class SettingRules {
             case PreferenceConfiguration.THERMAL_PROTECTION_PREF_STRING: {
                 // Heat acts through a controller that follows it (GameAdaptation.heatEasesLoad) or eases PyroWave's
                 // GPU boost (MediaCodecDecoderRenderer). A PC's own choice in the stream menu can still turn one on.
-                boolean lower = SwitchPairChoice.LOWER_BITRATE.read(prefs) != 0;
+                int lower = SwitchPairChoice.LOWER_BITRATE.read(prefs);
                 boolean quality = !"off".equals(prefs.getString("adaptive_quality_mode", "off"));
                 boolean boost = prefs.getBoolean(PreferenceConfiguration.GPU_MAX_CLOCKS_PREF_STRING, false) && pyroWaveChosen(prefs);
-                if (lower || quality || boost) return null;
+                if (lower == 1 || quality || boost) return null;
+                // The frame-loss controller follows no heat; it replaces the busy one where the PC takes rate
+                // changes (GameAdaptation.startStreamBitrate), and elsewhere the busy one runs instead.
+                if (lower == 2) return context.getString(R.string.tag_thermal_frames_lost);
                 return context.getString(R.string.tag_unused_without_any, context.getString(R.string.title_lower_bitrate),
                         context.getString(R.string.title_adaptive_quality_setting), context.getString(R.string.title_gpu_max_clocks));
             }
