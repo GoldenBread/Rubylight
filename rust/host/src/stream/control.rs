@@ -385,6 +385,8 @@ impl Media {
                                     id: l.id.clone(),
                                     injector: None,
                                     injector_tried: false,
+                                    pads_retry: None,
+                                    held_pads: Vec::new(),
                                     coop: None,
                                     coop_tried: false,
                                     sequence: 0,
@@ -1558,15 +1560,13 @@ impl Media {
                             }
                         };
                         let output = s.output.read().unwrap().clone();
-                        let pads = match h.controller_sessions.acquire(&s.launch, &c) {
-                            Ok(pads) => pads,
-                            Err(error) => {
-                                s.launch.warnings.set("input_initialization", format!("Controller recovery is still in progress ({error:#}); retrying."));
-                                drop_uninjectable_input(&mut p.inputs);
-                                p.injector_tried = false;
-                                continue;
-                            }
-                        };
+                        // Keys, clicks and moves need no controller: while the controllers
+                        // cannot be had, the injector works without them and they follow.
+                        let pads = h
+                            .controller_sessions
+                            .acquire(&s.launch, &c)
+                            .inspect_err(|error| controllers_wait(&s, error))
+                            .ok();
                         match Injector::new_options_reported(
                             if output.is_empty() {
                                 c.get("output_name", "")
@@ -1578,23 +1578,38 @@ impl Media {
                             s.launch.warnings.clone(),
                         ) {
                             Ok(mut i) => {
-                                i.use_gamepads(pads);
-                                // The client can announce USB audio before input
-                                // initialization finishes. Apply its scoped flags
-                                // to the acquired (possibly retained) devices now.
-                                for (id, flags) in p.controller_audio.iter().copied().enumerate() {
-                                    if flags != 0 {
-                                        i.controller_audio(id as u16, controller_audio::CONTROL,
-                                            &[1, 1, id as u8, 0, flags, 0, 0, 0]);
-                                    }
-                                }
-                                s.launch.warnings.clear("input_initialization");
                                 i.set_feedback_waker(self.control_wake.clone());
+                                match pads {
+                                    Some(pads) => {
+                                        attach_pads(&mut i, pads, &p.controller_audio);
+                                        s.launch.warnings.clear("input_initialization");
+                                    }
+                                    None => p.pads_retry = Some(Instant::now() + PADS_RETRY),
+                                }
                                 i.set_stream_size(s.config.width, s.config.height);
                                 p.injector = Some(i);
                                 p.keyboard_layout.refresh();
                             }
                             Err(e) => s.launch.warnings.set("input_initialization", format!("Input initialization failed ({e:#}); controls are unavailable. Check Input settings and the selected display, then reconnect.")),
+                        }
+                    }
+                    // The controllers' retry, on its own interval rather than every pass.
+                    if let (Some(i), Some(at)) = (&mut p.injector, p.pads_retry)
+                        && Instant::now() >= at
+                    {
+                        match effective_config(&h, &s.launch)
+                            .and_then(|c| h.controller_sessions.acquire(&s.launch, &c))
+                        {
+                            Ok(pads) => {
+                                attach_pads(i, pads, &p.controller_audio);
+                                s.launch.warnings.clear("input_initialization");
+                                tracing::info!(client = %s.launch.client.name, "the controllers are back");
+                                p.pads_retry = None;
+                                // What they missed that the client sends once, before what came since.
+                                let held = std::mem::take(&mut p.held_pads);
+                                p.inputs.splice(0..0, held);
+                            }
+                            Err(_) => p.pads_retry = Some(Instant::now() + PADS_RETRY),
                         }
                     }
                     follow_session(&h, p, &s);
@@ -1818,6 +1833,9 @@ fn apply_input(
     menus: &mut crate::couch_menu::Workers,
     received: Option<Instant>,
 ) {
+    if p.pads_retry.is_some() {
+        hold_pad_input(&mut p.inputs, &mut p.held_pads);
+    }
     let measured = !p.inputs.is_empty() && (p.injector.is_some() || p.coop.is_some());
     // Nor the couch menu, which the PC's display would show.
     if s.launch.nucleus.is_some() {
@@ -1908,6 +1926,11 @@ pub(super) struct ControlPeer {
     injector: Option<Injector>,
     /// Whether making the injector was tried.
     injector_tried: bool,
+    /// When the injector, made without the controllers because they could not be had, tries
+    /// for them again.
+    pads_retry: Option<Instant>,
+    /// Their input meanwhile ([`hold_pad_input`]).
+    held_pads: Vec<input::Input>,
     /// A co-op player's slot, which takes its input instead of an injector.
     coop: Option<crate::nucleus::Player>,
     /// Whether finding the co-op player was tried.
@@ -2197,6 +2220,67 @@ pub(super) fn queue_input(inputs: &mut Vec<input::Input>, event: input::Input) -
     }
     inputs.push(event);
     true
+}
+
+/// How often an injector made without the controllers tries for them again.
+const PADS_RETRY: Duration = Duration::from_millis(100);
+
+/// The controllers could not be had (the previous stream's are still closing): the stream's
+/// card says keyboard and mouse work meanwhile.
+fn controllers_wait(s: &Session, error: &anyhow::Error) {
+    tracing::warn!(client = %s.launch.client.name, error = %format!("{error:#}"), "the controllers are not ready yet; keyboard and mouse work meanwhile, and they are tried again");
+    s.launch.warnings.set(
+        "input_initialization",
+        "Controllers reconnect in a moment; keyboard and mouse work now.",
+    );
+}
+
+/// Gives the injector the controller session's pads, and the USB audio the client announced
+/// for them before they came.
+fn attach_pads(
+    i: &mut Injector,
+    pads: Arc<butterpollo_windows::input::GamepadThread>,
+    announced: &[u8; 16],
+) {
+    i.use_gamepads(pads);
+    for (id, flags) in announced.iter().copied().enumerate() {
+        if flags != 0 {
+            i.controller_audio(
+                id as u16,
+                controller_audio::CONTROL,
+                &[1, 1, id as u8, 0, flags, 0, 0, 0],
+            );
+        }
+    }
+}
+
+/// While the injector waits for the controllers, their input waits in `held` and the rest
+/// goes on: keys, clicks and moves need no controller. What waits is trimmed as
+/// [`drop_uninjectable_input`] says.
+pub(super) fn hold_pad_input(inputs: &mut Vec<input::Input>, held: &mut Vec<input::Input>) {
+    if !inputs.iter().any(waits_for_pads) {
+        return;
+    }
+    let (pads, rest): (Vec<_>, Vec<_>) =
+        std::mem::take(inputs).into_iter().partition(waits_for_pads);
+    *inputs = rest;
+    held.extend(pads);
+    drop_uninjectable_input(held);
+}
+
+/// Input only the controllers take.
+fn waits_for_pads(event: &input::Input) -> bool {
+    matches!(
+        event,
+        input::Input::Controller { .. }
+            | input::Input::SteamAttributes(_)
+            | input::Input::ControllerIdentity(_)
+            | input::Input::Arrival { .. }
+            | input::Input::ControllerTouch { .. }
+            | input::Input::Motion { .. }
+            | input::Input::Battery { .. }
+            | input::Input::Haptics(_)
+    )
 }
 
 /// While the controllers can't be acquired there is nothing to inject into:

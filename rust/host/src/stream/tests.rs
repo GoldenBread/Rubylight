@@ -1642,6 +1642,46 @@ fn a_refused_controller_acquire_keeps_the_state_the_client_sends_once() {
     );
 }
 #[test]
+fn keyboard_and_mouse_go_on_while_the_controllers_wait_and_theirs_is_held() {
+    let pad = |id, active, buttons| input::Input::Controller {
+        id,
+        active,
+        buttons,
+        left_trigger: 0,
+        right_trigger: 0,
+        sticks: [0; 4],
+    };
+    let key = input::Input::Keyboard {
+        key: 0x41,
+        modifiers: 0,
+        flags: 0,
+        down: true,
+    };
+    let click = input::Input::MouseButton {
+        button: 1,
+        down: true,
+    };
+    let mut held = Vec::new();
+    let mut inputs = vec![
+        pad(0, 0b1, 1),
+        key.clone(),
+        input::Input::Haptics(false),
+        click.clone(),
+    ];
+    hold_pad_input(&mut inputs, &mut held);
+    assert_eq!(inputs, [key.clone(), click.clone()]);
+    // A later pass: only the pad's latest state waits with what the client sends once.
+    let mut later = vec![pad(0, 0b1, 2), input::Input::Relative { x: 5, y: 5 }];
+    hold_pad_input(&mut later, &mut held);
+    assert_eq!(later, [input::Input::Relative { x: 5, y: 5 }]);
+    assert_eq!(held, [input::Input::Haptics(false), pad(0, 0b1, 2)]);
+    // Nothing of the controllers' in a pass leaves it as it was.
+    let mut plain = vec![key.clone()];
+    hold_pad_input(&mut plain, &mut held);
+    assert_eq!(plain, [key]);
+    assert_eq!(held.len(), 2);
+}
+#[test]
 fn an_arrived_pad_is_asked_for_the_sensors_it_has() {
     assert_eq!(
         motion_requests(3, 0x30),
