@@ -857,6 +857,11 @@ public class StreamSettings extends NightjarActivity {
                 .remove(PreferenceConfiguration.SEND_CONTROLLERS_PREF_STRING)
                 .remove(PreferenceConfiguration.MULTI_CONTROLLER_PREF_STRING)
                 .remove(com.limelight.console.HomeSettings.PREF_KEY)
+                // Stored by the Frame pacing, Variable refresh rate and Lower refresh rate pickers beside their row's key.
+                .remove(PreferenceConfiguration.HOST_FRAME_TIMES_PREF_STRING)
+                .remove(SettingRules.DROP_LATE_FRAMES)
+                .remove(PreferenceConfiguration.REAL_VRR_PREF_STRING)
+                .remove(PreferenceConfiguration.CONTENT_RATE_FRAME_RATE_PREF_STRING)
                 .commit();
         PreferenceManager.setDefaultValues(context, R.xml.preferences, true);
         PreferenceConfiguration.migrateToNativeDefaults(context);

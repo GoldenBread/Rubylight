@@ -825,6 +825,41 @@ public class SettingsKeysTest {
         assertEquals(StartScreenChoice.HOME, StartScreenChoice.read(prefs()));
     }
 
+    /**
+     * Every key a picker writes beside its row's key goes with Reset all settings: each picker saves each of its
+     * choices, and whatever key that leaves that has no row in preferences.xml must be gone after the reset.
+     */
+    @Test
+    public void resetAllClearsEveryKeyThePickersWrite() throws Exception {
+        prefs().edit().clear().commit();
+        SharedPreferences.Editor editor = prefs().edit();
+        for (int i = 0; i < 3; i++) {
+            ControllersChoice.save(editor, i);
+            LowerRefreshChoice.save(editor, i);
+            ThemeChoice.save(editor, i);
+            VrrChoice.save(editor, i);
+        }
+        for (int i = 0; i <= OverlayChoice.MODES.length; i++) OverlayChoice.save(editor, i);
+        for (int i = 0; i < DisplayArrangementChoice.ARRANGEMENTS.length; i++) DisplayArrangementChoice.saveMain(editor, i);
+        for (String screen : StartScreenChoice.SCREENS) StartScreenChoice.save(prefs(), editor, screen);
+        for (SwitchPairChoice pair : SwitchPairChoice.values()) {
+            for (int i = 0; i < 3; i++) pair.save(editor, i);
+        }
+        // The PC's frame times last, so the reset has to put Lowest latency back.
+        for (String choice : FramePacingChoice.VALUES) FramePacingChoice.save(editor, choice);
+        editor.commit();
+        Set<String> pickerOnly = new HashSet<>(prefs().getAll().keySet());
+        pickerOnly.removeAll(keysInXml().keySet());
+        assertTrue(pickerOnly.contains(PreferenceConfiguration.HOST_FRAME_TIMES_PREF_STRING));
+        assertEquals(FramePacingChoice.HOST_TIMES, FramePacingChoice.read(prefs()));
+
+        StreamSettings.resetAllSettings(RuntimeEnvironment.getApplication());
+
+        for (String key : pickerOnly) assertFalse("Reset all settings keeps " + key, prefs().contains(key));
+        assertEquals(FramePacingChoice.of(PreferenceConfiguration.DEFAULT_FRAME_PACING, true, false),
+                FramePacingChoice.read(prefs()));
+    }
+
     @Test
     public void lowLatencyDecodingMovesItsThreeSwitchesTogether() {
         SharedPreferences prefs = prefs();
