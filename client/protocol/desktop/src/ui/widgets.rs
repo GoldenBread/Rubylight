@@ -341,6 +341,67 @@ pub(crate) fn pin_key(ui: &mut Ui, icon: Option<Icon>, words: &str, said: &str, 
     response
 }
 
+/// A small keyboard on screen, for a controller where the system shows none: digits, letters with
+/// a one-time Shift, `.`, `:`, `-` and Space, and Delete for the last character. Each key types
+/// into `text`, up to `limit` characters. Returns the first key, to take the focus.
+pub(super) fn text_pad(ui: &mut Ui, text: &mut String, limit: Option<usize>) -> Response {
+    const ROWS: [&str; 4] = ["1234567890", "qwertyuiop", "asdfghjkl:", "zxcvbnm.-"];
+    let (key, gap) = (vec2(36.0, 40.0), 4.0);
+    let shift_id = Id::unique("text-pad-shift");
+    let mut shift = ui.data(|d| d.get_temp::<bool>(shift_id)).unwrap_or(false);
+    let room = limit.is_none_or(|most| text.chars().count() < most);
+    let mut first = None;
+    let mut typed = None;
+    let mut erase = false;
+    let indent = ((ui.available_width() - key.x * 10.0 - gap * 9.0) / 2.0).max(0.0);
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing = vec2(gap, gap);
+        for (n, row) in ROWS.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.add_space(indent);
+                if n == 3 {
+                    let r = pin_key(ui, None, "Aa", tr("Shift"), if shift { Tone::Selected } else { Tone::Quiet }, key);
+                    if r.clicked() {
+                        shift = !shift;
+                    }
+                }
+                for c in row.chars() {
+                    let c = if shift { c.to_ascii_uppercase() } else { c };
+                    let word = c.to_string();
+                    let r = pin_key(ui, None, &word, &word, Tone::Quiet, key);
+                    if r.clicked() {
+                        typed = Some(c);
+                    }
+                    first.get_or_insert(r);
+                }
+            });
+        }
+        ui.horizontal(|ui| {
+            ui.add_space(indent);
+            let space = pin_key(ui, None, tr("Space"), tr("Space"), Tone::Quiet, vec2(key.x * 6.0 + gap * 5.0, key.y));
+            if space.clicked() {
+                typed = Some(' ');
+            }
+            let said = tr("Delete");
+            if pin_key(ui, Some(Icon::Backspace), "", said, Tone::Quiet, vec2(key.x * 2.0 + gap, key.y)).on_hover_text(said).clicked() {
+                erase = true;
+            }
+        });
+    });
+    if let Some(c) = typed.filter(|_| room) {
+        text.push(c);
+        // Shift holds for one letter, as on a phone.
+        if c.is_ascii_alphabetic() {
+            shift = false;
+        }
+    }
+    if erase {
+        text.pop();
+    }
+    ui.data_mut(|d| d.insert_temp(shift_id, shift));
+    first.expect("the pad has keys")
+}
+
 /// A round icon button in a corner of a surface (a sheet's close): `rect` is its place.
 pub(crate) fn round_button(ui: &mut Ui, rect: Rect, icon: Icon, said: &str) -> Response {
     round_button_working(ui, rect, icon, said, false)

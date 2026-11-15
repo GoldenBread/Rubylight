@@ -250,8 +250,10 @@ impl Launcher {
         let mut leave: Option<Screen> = None;
         let focus_first = self.focus_dialog;
         let mut focused = false;
-        // Read before the match holds the dialog: Connection test's verdict weighs the speed by it.
+        // Read before the match holds the dialog: Connection test's verdict weighs the speed by it,
+        // and a text field gets keys on screen for a controller where the system shows none.
         let bitrate_kbps = self.stream_bitrate_kbps();
+        let keys_on_screen = self.wants_text_pad();
         match &mut self.dialog {
             Dialog::None => {
                 if self.next_queued() {
@@ -410,7 +412,14 @@ impl Launcher {
                             .margin(Margin::symmetric(12, 10)),
                     )
                     .labelled_by(title.id);
-                    if focus_first {
+                    if keys_on_screen {
+                        ui.add_space(space::S);
+                        let first = text_pad(ui, text, Some(crate::config::ALIAS_MAX_CHARS));
+                        if focus_first {
+                            first.request_focus();
+                            focused = true;
+                        }
+                    } else if focus_first {
                         edit.request_focus();
                         focused = true;
                     }
@@ -1265,12 +1274,19 @@ impl Launcher {
                             .margin(Margin::symmetric(12, 10)),
                     )
                     .labelled_by(title.id);
-                    if focus_first {
-                        edit.request_focus();
-                        focused = true;
-                    }
                     if let Some(e) = error {
                         ui.label(RichText::new(e.as_str()).color(ERROR));
+                    }
+                    if keys_on_screen {
+                        ui.add_space(space::S);
+                        let first = text_pad(ui, text, None);
+                        if focus_first {
+                            first.request_focus();
+                            focused = true;
+                        }
+                    } else if focus_first {
+                        edit.request_focus();
+                        focused = true;
                     }
                     let submitted = edit.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
                     dialog_buttons(ui, |ui| {
@@ -1763,6 +1779,12 @@ impl Launcher {
             Dialog::ConfirmSleep { host: asked, .. } | Dialog::ConfirmPcPower { host: asked, .. } if *asked == host => self.message(title, body),
             _ => self.queued.push_back(Dialog::Message { title, body }),
         }
+    }
+
+    /// Whether text fields get [`text_pad`]: a controller is in the hand and the system shows no
+    /// keyboard on screen.
+    pub(super) fn wants_text_pad(&self) -> bool {
+        !self.screen_keyboard && matches!(self.input_source, crate::input_source::InputSource::Pad(_))
     }
 
     /// The bitrate a stream with the main settings asks for: the one set, else the default for

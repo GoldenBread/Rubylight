@@ -2677,6 +2677,40 @@ fn a_pc_that_confirms_replacement_starts_without_the_client_prompt() {
     }
 }
 
+/// With a controller and no keyboard from the system, Add PC and Rename get keys on screen that
+/// type into the field, the focus on them; with a mouse they don't.
+#[test]
+fn a_controller_alone_can_type_in_add_pc_and_rename() {
+    let mut f = Frames::new(record("Den", true, false), Reach::Online);
+    let host = f.hosts.list[0].id;
+    f.l.screen_keyboard = false;
+    f.l.input_source = crate::input_source::InputSource::Pad(crate::glyphs::Style::Xbox);
+    f.l.ask(Dialog::AddHost { text: String::new(), error: None });
+    f.settle();
+    assert!(shows(&f, "q") && shows(&f, "Space"), "{:?}", f.drawn);
+    // A on the focused first key types it.
+    f.press(Key::Enter);
+    for key in [".", "2"] {
+        let at = f.placed.iter().find(|(t, ..)| t == key).map(|p| p.1.center()).unwrap_or_else(|| panic!("{key}: {:?}", f.drawn));
+        f.click_at(at, egui::PointerButton::Primary);
+    }
+    assert!(matches!(&f.l.dialog, Dialog::AddHost { text, .. } if text == "1.2"), "typed");
+    f.l.ask(Dialog::Rename { host, text: String::new() });
+    f.settle();
+    let at = f.placed.iter().find(|(t, ..)| t == "Aa").map(|p| p.1.center()).expect("Shift");
+    f.click_at(at, egui::PointerButton::Primary);
+    let at = f.placed.iter().find(|(t, ..)| t == "D").map(|p| p.1.center()).expect("a capital once Shift is down");
+    f.click_at(at, egui::PointerButton::Primary);
+    let at = f.placed.iter().find(|(t, ..)| t == "e").map(|p| p.1.center()).expect("Shift holds for one letter");
+    f.click_at(at, egui::PointerButton::Primary);
+    assert!(matches!(&f.l.dialog, Dialog::Rename { text, .. } if text == "De"));
+    // A mouse in the hand: the field alone.
+    f.l.input_source = crate::input_source::InputSource::None;
+    f.l.ask(Dialog::AddHost { text: String::new(), error: None });
+    f.settle();
+    assert!(!shows(&f, "Space"), "{:?}", f.drawn);
+}
+
 /// Quitting a game loses unsaved progress, so its questions start on Cancel: A twice (the
 /// action, then A again) leaves the game running.
 #[test]

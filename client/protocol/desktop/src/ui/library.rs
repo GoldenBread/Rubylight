@@ -252,6 +252,13 @@ impl Launcher {
 
     /// Every game of every PC under its filter chips: All, Installed, each store, Other apps.
     pub(super) fn all_games(&mut self, ui: &mut Ui, view: &View<'_>, commands: &mut Vec<Command>) {
+        // The search's keys for a controller where the system shows none: Down from the field
+        // lands on them first.
+        if self.search_open && self.wants_text_pad() {
+            let first = text_pad(ui, &mut self.library_query, None);
+            self.focus_item(&first, "search-pad", true);
+            ui.add_space(space::M);
+        }
         let sources: Vec<Source> = view.hosts.list.iter().map(Source::of).collect();
         let library = self.library.get(&sources, &self.hidden_games);
         let (entries, hidden) = (library.shown(), library.hidden());
