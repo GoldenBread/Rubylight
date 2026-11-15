@@ -1350,6 +1350,7 @@ fn place(
     // release has it stays; one to copy keeps the form the release before
     // left, if any.
     let mut wanted = Vec::new();
+    let mut adopted = Vec::new();
     let mut plan = Vec::new();
     for (path, placed) in &package.files {
         let Some(target) = neural::target(layout.mode, path, &layout.proxy, &layout.opti_dir)
@@ -1363,8 +1364,10 @@ fn place(
             .flatten()
             .collect();
         // The provider's settings an earlier install left in a folder taken
-        // over stay as the user left them, as an update keeps them; the
-        // manifest names them, so a removal takes them as it takes settings.
+        // over stay as the user left them, as an update keeps them. The
+        // manifest names them once the install is whole, so a removal takes
+        // them as it takes settings and a first install cut short leaves
+        // them where they were.
         let taken_over = target.rsplit_once('/').is_some_and(|(parent, _)| {
             layout
                 .adopt
@@ -1376,7 +1379,7 @@ fn place(
             && neural::settings(&target)
             && std::fs::symlink_metadata(folder.join(&target)).is_ok_and(|meta| meta.is_file())
         {
-            wanted.push((target, placed.clone()));
+            adopted.push((target, placed.clone()));
             continue;
         }
         if forms.is_empty() && std::fs::symlink_metadata(folder.join(&target)).is_ok() {
@@ -1542,6 +1545,9 @@ fn place(
                     manifest.files.remove(&path);
                 }
             }
+        }
+        for (target, placed) in &adopted {
+            manifest.files.insert(target.clone(), placed.clone());
         }
         manifest.release = package.tag.clone();
         manifest.previous.clear();

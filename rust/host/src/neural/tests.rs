@@ -3870,3 +3870,49 @@ fn what_an_earlier_install_left_is_named_as_such_and_its_settings_are_kept() {
     assert_eq!(remove(&exe), Response::Removed { kept: vec![] });
     assert_eq!(snapshot(folder), game_files);
 }
+
+/// Settings an earlier install left, taken over by a first install that is
+/// cut short, stay as they were: the manifest names them only once the
+/// install is whole.
+#[test]
+fn a_first_install_cut_short_leaves_the_settings_it_took_over() {
+    let temp = tempdir();
+    let cache = release(temp.path(), "FG-V.B16", b"OptiScaler proxy");
+    let exe = game(temp.path());
+    let folder = exe.parent().unwrap();
+    let game_files = snapshot(folder);
+    let settings = folder.join(PINI);
+    std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    std::fs::write(&settings, b"path = gpu\n").unwrap();
+    // The first manifest is written; the last fails once every file is copied.
+    let blocker = folder.join(format!("{MANIFEST}.rubylight-partial"));
+    let response = handle(
+        Request::Install {
+            exe: Some(exe.clone()),
+            install: None,
+            package: cached_at(&cache),
+        },
+        Writer::User,
+        &|done, total| {
+            if done == total {
+                let _ = std::fs::create_dir(&blocker);
+            }
+        },
+    );
+    let Response::Error { message } = response else {
+        panic!("{response:?}")
+    };
+    assert!(message.contains(MANIFEST), "{message}");
+    std::fs::remove_dir(&blocker).unwrap();
+    assert_eq!(std::fs::read(&settings).unwrap(), b"path = gpu\n");
+    assert!(!folder.join(MANIFEST).exists());
+    // Turned on again, they are taken over as they are, and go with the
+    // removal.
+    assert!(matches!(
+        install(Some(&exe), None, &cache),
+        Response::Placed { .. }
+    ));
+    assert_eq!(std::fs::read(&settings).unwrap(), b"path = gpu\n");
+    assert_eq!(remove(&exe), Response::Removed { kept: vec![] });
+    assert_eq!(snapshot(folder), game_files);
+}
