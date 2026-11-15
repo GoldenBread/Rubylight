@@ -125,7 +125,7 @@ Copyright (c) 2026 mattxslv
 
 ## Nightjar desktop's Fullscreen mode rule from SDL
 
-The desktop Settings screen predicts the display mode Windows' Fullscreen takes by SDL 3's `SDL_GetClosestFullscreenDisplayMode` (`src/video/SDL_video.c`, SDL 3.4.20, [libsdl-org/SDL](https://github.com/libsdl-org/SDL), zlib license, Copyright (C) 1997-2026 Sam Lantinga): `closest_fullscreen_mode` in `client/protocol/desktop/src/ui/settings.rs` follows its loop over the display's modes. The zlib notice is kept with SDL, which Nightjar desktop bundles.
+The desktop Settings screen predicts the display mode Windows' Fullscreen takes by SDL 3's `SDL_GetClosestFullscreenDisplayMode` (`src/video/SDL_video.c`, SDL 3.4.20, [libsdl-org/SDL](https://github.com/libsdl-org/SDL), zlib license, Copyright (C) 1997-2026 Sam Lantinga): `closest_fullscreen_mode` in `client/protocol/desktop/src/ui/settings.rs` follows its loop over the display's modes. The zlib notice is quoted with the port in that file and kept in `third-party/licenses/SDL-LICENSE.txt`.
 
 ## Nightjar gyroscope mapping from jvanderv42's fork
 

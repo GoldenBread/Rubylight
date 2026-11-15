@@ -376,7 +376,8 @@ SDL_GetClosestFullscreenDisplayMode chooses it (src/video/SDL_video.c, SDL 3.4.2
 https://github.com/libsdl-org/SDL, zlib license, Copyright (C) 1997-2026 Sam Lantinga):
 the smallest mode that holds the stream, the closest aspect ratio, then the closest
 refresh with the slower one on a tie (client/protocol/desktop/src/ui/settings.rs,
-closest_fullscreen_mode).
+closest_fullscreen_mode, which quotes SDL's notice). zlib License; full text in
+third-party/licenses/SDL-LICENSE.txt.
 Nightjar desktop's high-performance GPU power while streaming on Linux, which holds an AMD
 GPU that drives a connected display at its peak stable power state (client/protocol/desktop/
 src/stream/gpu_hold.rs), is ported from Nonary's moonlight-qt fork
