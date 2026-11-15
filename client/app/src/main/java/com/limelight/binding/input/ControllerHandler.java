@@ -172,6 +172,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     private volatile boolean stopped = false;
     private volatile boolean sensorsEnabled = true;
     private volatile boolean inputEnabled = true;
+    // Main thread: the sensors were turned off because the stream lost focus (not by picture-in-picture),
+    // so focus coming back turns them on again.
+    private boolean sensorsOffForFocus;
 
     private final PreferenceConfiguration prefConfig;
     /**
@@ -528,6 +531,15 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         inputEnabled = enabled;
         if (!enabled) {
             releaseInput();
+            // Every sample would be thrown away: unregister the motion sensors until focus returns.
+            if (sensorsEnabled && !stopped) {
+                stopSensors();
+                sensorsOffForFocus = true;
+            }
+        }
+        else if (sensorsOffForFocus) {
+            sensorsOffForFocus = false;
+            enableSensors();
         }
     }
 
@@ -612,7 +624,13 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         return false;
     }
 
+    /** Picture-in-picture: the sensors stay off until enableSensors(), whatever the focus does meanwhile. */
     public void disableSensors() {
+        sensorsOffForFocus = false;
+        stopSensors();
+    }
+
+    private void stopSensors() {
         sensorsEnabled = false;
         for (InputDeviceContext deviceContext : inputDeviceContexts.values()) {
             deviceContext.disableSensors();

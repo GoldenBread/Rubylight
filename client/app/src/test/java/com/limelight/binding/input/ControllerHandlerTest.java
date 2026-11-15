@@ -366,6 +366,62 @@ public class ControllerHandlerTest {
         }
     }
 
+    // A stream without focus (the notification shade, split screen, the stream menu) throws every motion
+    // sample away: its sensors are unregistered until focus returns, and picture-in-picture keeps them off.
+    @Test
+    public void motionSensorsStopWhileTheStreamHasNoFocus() {
+        // The test runs the main looper; the SHIELD accessory service is not on this device.
+        org.robolectric.Shadows.shadowOf(org.robolectric.RuntimeEnvironment.getApplication()).declareComponentUnbindable(
+                new android.content.ComponentName("com.nvidia.blakepairing", "com.nvidia.blakepairing.AccessoryService"));
+        ControllerInputReleaseTest.MenuGame activity = Robolectric.buildActivity(ControllerInputReleaseTest.MenuGame.class).get();
+        SensorManager device = (SensorManager) activity.getSystemService(Context.SENSOR_SERVICE);
+        ShadowSensorManager shadowDevice = Shadow.extract(device);
+        shadowDevice.addSensor(ShadowSensor.newInstance(Sensor.TYPE_GYROSCOPE));
+        shadowDevice.addSensor(ShadowSensor.newInstance(Sensor.TYPE_ACCELEROMETER));
+        PreferenceConfiguration prefs = new PreferenceConfiguration();
+        prefs.gamepadMotionSensorsFallbackToDevice = true;
+        ControllerHandler handler = new ControllerHandler(activity, new RecordingConnection(), null, prefs);
+        ControllerHandler.InputDeviceContext context = ReflectionHelpers.getField(handler, "defaultContext");
+        try {
+            context.assignedControllerNumber = true;
+            context.controllerNumber = 0;
+            context.gyroReportRateHz = 100;
+            context.accelReportRateHz = 100;
+            Map<Integer, ControllerHandler.InputDeviceContext> contexts =
+                    ReflectionHelpers.getField(handler, "inputDeviceContexts");
+            contexts.put(7, context);
+            handler.fallBackToDeviceSensors(context);
+            assertTrue(shadowDevice.hasListener(context.gyroListener));
+            assertTrue(shadowDevice.hasListener(context.accelListener));
+
+            android.hardware.SensorEventListener gyro = context.gyroListener;
+            android.hardware.SensorEventListener accel = context.accelListener;
+            handler.setInputEnabled(false);
+            assertFalse(shadowDevice.hasListener(gyro));
+            assertFalse(shadowDevice.hasListener(accel));
+            assertNull(context.gyroListener);
+            assertNull(context.accelListener);
+
+            // Focus back: registered again once the input device settled.
+            handler.setInputEnabled(true);
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(2, java.util.concurrent.TimeUnit.SECONDS);
+            assertNotNull(context.gyroListener);
+            assertNotNull(context.accelListener);
+            assertTrue(shadowDevice.hasListener(context.gyroListener));
+            assertTrue(shadowDevice.hasListener(context.accelListener));
+
+            // Picture-in-picture while unfocused: focus coming back leaves the sensors off.
+            handler.setInputEnabled(false);
+            handler.disableSensors();
+            handler.setInputEnabled(true);
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(2, java.util.concurrent.TimeUnit.SECONDS);
+            assertNull(context.gyroListener);
+            assertNull(context.accelListener);
+        } finally {
+            handler.destroy();
+        }
+    }
+
     private static android.hardware.SensorEvent gyroEvent(long timestampNs, float x) {
         android.hardware.SensorEvent event = ReflectionHelpers.callConstructor(android.hardware.SensorEvent.class,
                 ReflectionHelpers.ClassParameter.from(int.class, 3));
