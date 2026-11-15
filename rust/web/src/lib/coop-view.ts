@@ -1,4 +1,4 @@
-import { PERM, type Client, type CoopEnd, type CoopGame, type CoopInstall, type CoopSession, type CoopStatus } from './api';
+import { PERM, type Client, type CoopEnd, type CoopGame, type CoopInstall, type CoopSession, type CoopSessions, type CoopStatus } from './api';
 
 /**
  * What the game page's Play together panel shows for one app, from `GET /api/coop`. Pure, so every
@@ -243,7 +243,7 @@ export function entryName(title: string): string {
 }
 
 /** The co-op games running now: the ones Home invites players to. */
-export function liveCoop(status: CoopStatus | null): CoopSession[] {
+export function liveCoop(status: CoopSessions | null): CoopSession[] {
   return (status?.sessions ?? []).filter((session) => session.kind === 'coop' && session.phase !== 'ended');
 }
 
@@ -251,12 +251,12 @@ export function liveCoop(status: CoopStatus | null): CoopSession[] {
  * Home's cards: each running co-op game, and each background stream (one device's own game while
  * someone uses the PC), which only offers End.
  */
-export function homeSessions(status: CoopStatus | null): CoopSession[] {
+export function homeSessions(status: CoopSessions | null): CoopSession[] {
   return (status?.sessions ?? []).filter((session) => session.phase !== 'ended');
 }
 
 /** The session that ended last, while the host still lists it (a minute): Home says why it ended. */
-export function lastEnded(status: CoopStatus | null): CoopSession | null {
+export function lastEnded(status: CoopSessions | null): CoopSession | null {
   const ended = (status?.sessions ?? []).filter((session) => session.phase === 'ended' && session.end);
   return ended.reduce<CoopSession | null>((last, session) => (!last || session.id > last.id ? session : last), null);
 }

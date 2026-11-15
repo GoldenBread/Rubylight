@@ -659,6 +659,28 @@ test('Remove, End co-op and Let join post the right bodies', async () => {
   ]);
 });
 
+test('Home polls the co-op sessions alone, not every app’s co-op status', async () => {
+  const asked = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (path) => {
+    asked.push(path);
+    return new Response(JSON.stringify({ sessions: [running] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  let reply;
+  try {
+    reply = await api.coop.sessions();
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.deepEqual(asked, ['/api/coop/sessions']);
+  // Home's cards read the sessions-only reply as they read the full status.
+  assert.deepEqual(home.homeSessions(reply).map((session) => session.id), [running.id]);
+  const overview = readFileSync(new URL('./src/pages/Overview.svelte', import.meta.url), 'utf8');
+  assert.match(overview, /coop = await api\.coop\.sessions\(\);/);
+  assert.doesNotMatch(overview, /api\.coop\.status\(\)/);
+  assert.match(overview, /poll\(refreshCoop, 3000\)/);
+});
+
 test('the card’s Remove and End post nothing when the question is cancelled, and post once confirmed', async () => {
   const posted = [];
   globalThis.fetch = async (path, init) => {

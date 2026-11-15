@@ -954,6 +954,8 @@ export interface CoopStatus {
   catalog_error?: string | null;
   sessions: CoopSession[];
 }
+/** `GET /api/coop/sessions`: the sessions of `GET /api/coop` alone. */
+export type CoopSessions = Pick<CoopStatus, 'sessions'>;
 /** One streaming port as the router mapped (or refused) it. */
 export interface InternetPort {
   protocol: 'TCP' | 'UDP';
@@ -1377,6 +1379,8 @@ export const api = {
   },
   coop: {
     status: () => get<CoopStatus>('/api/coop'),
+    /** The sessions alone, for Home's poll: no app's co-op status or install is read. */
+    sessions: () => get<CoopSessions>('/api/coop/sessions'),
     /** Checks the folder Nucleus Co-op was unpacked into and keeps it; refused with the reason. Empty forgets it. */
     folder: (path: string) => post<CoopInstall>('/api/coop/folder', { path }),
     /** Opens Nucleus Co-op's window on the PC's screen, for adding a handler. */

@@ -151,6 +151,9 @@ if (home === 'streaming') {
   }] };
 }
 /** Answers that change while a page is open. */
+// Home polls the co-op sessions alone.
+replies['/api/coop/sessions'] = { sessions: replies['/api/coop'].sessions };
+
 function dynamic(pathname) {
   if (home !== 'paired-now') return undefined;
   if (pathname === '/api/clients/list') return { clients: ++clientLists > 1 ? [pixel] : [] };

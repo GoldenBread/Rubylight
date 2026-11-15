@@ -165,6 +165,25 @@ async fn the_panel_shows_the_mode_the_install_and_the_sessions() {
     assert_eq!(elevations(), asked);
 }
 
+/// Home polls the sessions alone: the panels' list, without the apps' co-op
+/// status or the install.
+#[tokio::test]
+async fn home_polls_the_sessions_alone() {
+    let c = coop();
+    let panel = value(
+        request(&c.f, "GET", "/api/coop", Value::Null).await,
+        StatusCode::OK,
+    )
+    .await;
+    let home = value(
+        request(&c.f, "GET", "/api/coop/sessions", Value::Null).await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(home, json!({"sessions": panel["sessions"]}));
+    assert_eq!(home["sessions"][0]["id"], c.session);
+}
+
 #[tokio::test]
 async fn kick_ends_that_players_stream_only() {
     let c = coop();

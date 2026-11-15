@@ -2,7 +2,8 @@
 //! Co-op panel. `GET /api/coop` shows the background mode and why, where
 //! Nucleus Co-op stands (the folder chosen, or why it can't run from it, and
 //! the release page the console links to), each app's co-op status and every
-//! session the host has. Rubylight downloads nothing: the user unpacks the
+//! session the host has; `GET /api/coop/sessions` the sessions alone, which
+//! Home polls. Rubylight downloads nothing: the user unpacks the
 //! release and `POST /api/coop/folder` checks the folder they chose and keeps
 //! it as `nucleus_path`. `POST /api/coop/open` opens Nucleus Co-op's
 //! window on the PC for adding a handler; `POST /api/coop/close` closes that
@@ -41,6 +42,9 @@ pub(super) async fn handle(h: &Shared, method: &Method, path: &str, data: &Value
         .and_then(|id| u32::try_from(id).ok());
     match (method.as_str(), path) {
         ("GET", "/api/coop") => blocking(move || Ok(status(&h))).await,
+        ("GET", "/api/coop/sessions") => {
+            blocking(move || Ok(json!({"sessions": session_list(&h)}))).await
+        }
         ("POST", "/api/coop/folder") => {
             let Some(path) = data.get("path").and_then(Value::as_str) else {
                 return error(
@@ -283,8 +287,40 @@ fn status(h: &Shared) -> Value {
             }))
         })
         .collect();
-    let sessions: Vec<Value> = h
-        .nucleus
+    let sessions = session_list(h);
+    json!({
+        "mode": {
+            "setting": setting,
+            "mode": decision.mode,
+            "label": decision.label,
+            "reason": decision.reason,
+        },
+        "install": install,
+        "games": games,
+        "catalog_error": catalog_error,
+        "available": unavailable.is_none(),
+        "reason": unavailable,
+        // Whether Windows gives the signed-in account an elevated token,
+        // which hub handlers, co-op and games that need administrator
+        // rights run with; null when unknown.
+        "elevates": account.map(Account::elevates),
+        // An administrator Windows' Administrator protection gives none:
+        // the console says what still runs, not to sign in as one.
+        "admin_protection": account == Some(Account::Protected),
+        // Why Open Nucleus Co-op on this PC would be refused: an account
+        // Windows doesn't elevate, in the words
+        // `butterpollo_windows::nucleus::session::open` refuses it with.
+        "open_refusal": refused_account.map(butterpollo_windows::nucleus::session::needs_administrator),
+        // The Nucleus Co-op window the console opened is still open.
+        "opened": h.nucleus.opened(),
+        "sessions": sessions,
+    })
+}
+
+/// Every co-op and background session the host has, for the panels and for
+/// Home, which polls them alone (`GET /api/coop/sessions`).
+fn session_list(h: &Shared) -> Vec<Value> {
+    h.nucleus
         .sessions()
         .into_iter()
         .map(|listed| {
@@ -328,34 +364,7 @@ fn status(h: &Shared) -> Value {
                 "kicked": session.kicked().collect::<Vec<_>>(),
             })
         })
-        .collect();
-    json!({
-        "mode": {
-            "setting": setting,
-            "mode": decision.mode,
-            "label": decision.label,
-            "reason": decision.reason,
-        },
-        "install": install,
-        "games": games,
-        "catalog_error": catalog_error,
-        "available": unavailable.is_none(),
-        "reason": unavailable,
-        // Whether Windows gives the signed-in account an elevated token,
-        // which hub handlers, co-op and games that need administrator
-        // rights run with; null when unknown.
-        "elevates": account.map(Account::elevates),
-        // An administrator Windows' Administrator protection gives none:
-        // the console says what still runs, not to sign in as one.
-        "admin_protection": account == Some(Account::Protected),
-        // Why Open Nucleus Co-op on this PC would be refused: an account
-        // Windows doesn't elevate, in the words
-        // `butterpollo_windows::nucleus::session::open` refuses it with.
-        "open_refusal": refused_account.map(butterpollo_windows::nucleus::session::needs_administrator),
-        // The Nucleus Co-op window the console opened is still open.
-        "opened": h.nucleus.opened(),
-        "sessions": sessions,
-    })
+        .collect()
 }
 
 /// Nucleus Co-op's calls (its folder, its handlers, stopping a session) leave

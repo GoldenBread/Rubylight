@@ -254,6 +254,7 @@ function answer(scene) {
     if (p === '/api/library/discovery') return discovery;
     if (p === '/api/radeon') return radeon;
     if (p === '/api/usb') return { status: true, devices: [] };
+    if (p === '/api/coop/sessions') return { sessions: (scene.coop || { sessions: [] }).sessions };
     if (p === '/api/coop') return scene.coop || { ...coop, sessions: [] };
     if (p === '/api/steam/status' || p === '/api/playnite/status') return { status: true, enabled: false, available: false };
     if (p === '/api/logs/tail') return { offset: 0, text: '', reset: false };

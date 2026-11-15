@@ -95,6 +95,7 @@ async function fixture(t, options = {}) {
     if (url.pathname === '/api/usb') return reply({ status: true, devices: [] });
     if (url.pathname === '/api/token/routes') return reply({ routes: [] });
     // Help's panels, so every page renders without a page error.
+    if (url.pathname === '/api/coop/sessions') return reply({ sessions: [] });
     if (url.pathname === '/api/coop') return reply({ mode: { setting: 'nucleus', mode: 'nucleus', label: 'Nucleus Co-op', reason: '' },
       install: { state: 'missing', path: null, chosen: '', version: null, problem: null, error: null }, available: true, reason: null, sessions: [] });
     if (url.pathname === '/api/logs/analysis') return reply({ status: true, findings: [], since: null, until: null, read_bytes: 0 });

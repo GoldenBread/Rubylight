@@ -20,7 +20,7 @@
   import StreamCard from '../components/overview/StreamCard.svelte';
   import { heroGame, liveFigures } from '../components/overview/now-playing';
   import {
-    api, type App, type Client, type CoopStatus, type PowerStatus, type SessionGuestsStatus, type SessionStatus,
+    api, type App, type Client, type CoopSessions, type PowerStatus, type SessionGuestsStatus, type SessionStatus,
     type StreamSession,
   } from '../lib/api';
   import { shown as guestsShown } from '../lib/session-guests';
@@ -63,7 +63,7 @@
   }
 
   // Live co-op games: one card each, with the paired devices to invite while one runs.
-  let coop = $state<CoopStatus | null>(null);
+  let coop = $state<CoopSessions | null>(null);
   let coopAt = $state(0);
   let coopError = $state('');
   let coopClients = $state<Client[] | null>(null);
@@ -74,7 +74,7 @@
   let coopDismissed = $state<number | null>(null);
   async function refreshCoop() {
     try {
-      coop = await api.coop.status();
+      coop = await api.coop.sessions();
       coopAt = Date.now();
       coopError = '';
     } catch (error) {

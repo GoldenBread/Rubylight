@@ -77,6 +77,7 @@ async function fixture(t, intercept = async () => false) {
       '/api/power': powerStatus(),
       '/api/coop': { mode: { setting: 'nucleus', mode: 'nucleus', label: 'Nucleus Co-op', reason: '' },
         install: { state: 'missing', path: null, chosen: '', version: null, problem: null, error: null }, available: true, reason: null, sessions: [] },
+      '/api/coop/sessions': { sessions: [] },
       '/api/logs/analysis': { status: true, findings: [], since: null, until: null, read_bytes: 0 },
       '/api/usb': { status: true, devices: [] },
       '/api/tokens': { status: true, tokens: [] },
