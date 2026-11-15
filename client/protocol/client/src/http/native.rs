@@ -511,6 +511,27 @@ impl HostClient {
     }
 }
 
+/// `path?query` as the path and its query, for [`HostClient::url_target`] to join with the
+/// identity's parameters.
+fn split_query(path: &str) -> (&str, Option<&str>) {
+    match path.split_once('?') {
+        Some((path, query)) => (path, Some(query).filter(|q| !q.is_empty())),
+        None => (path, None),
+    }
+}
+
+/// `text` percent-encoded for a query value: unreserved characters as they are.
+fn url_component(text: &str) -> String {
+    text.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -732,25 +753,4 @@ mod tests {
             ));
         }
     }
-}
-
-/// `path?query` as the path and its query, for [`HostClient::url_target`] to join with the
-/// identity's parameters.
-fn split_query(path: &str) -> (&str, Option<&str>) {
-    match path.split_once('?') {
-        Some((path, query)) => (path, Some(query).filter(|q| !q.is_empty())),
-        None => (path, None),
-    }
-}
-
-/// `text` percent-encoded for a query value: unreserved characters as they are.
-fn url_component(text: &str) -> String {
-    text.bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                (b as char).to_string()
-            }
-            _ => format!("%{b:02X}"),
-        })
-        .collect()
 }
