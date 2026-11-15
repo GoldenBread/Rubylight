@@ -413,15 +413,22 @@ public class AdvancedOptionsTest {
                 .putString(com.limelight.binding.input.touch.TouchMode.PREF, "native")
                 .putBoolean(com.limelight.binding.input.touch.TouchMode.NATIVE_TOUCH_PREF, true)
                 .putString(com.limelight.ui.VideoScaling.PREF, "fill")
-                .putBoolean(com.limelight.ui.VideoScaling.STRETCH_PREF, false).commit();
+                .putBoolean(com.limelight.ui.VideoScaling.STRETCH_PREF, true)
+                .putBoolean(com.limelight.binding.input.touch.TouchMode.TRACKPAD_PREF, false).commit();
         StreamSettings.resetAllSettings(RuntimeEnvironment.getApplication());
         // The pickers' own keys have no row in the XML; a reset must still clear them.
         assertFalse(prefs().contains(com.limelight.binding.input.touch.TouchMode.PREF));
         assertFalse(prefs().contains(com.limelight.ui.VideoScaling.PREF));
+        // Nor do the switches older versions read, which would otherwise bring the old mode back.
+        assertFalse(prefs().contains(com.limelight.binding.input.touch.TouchMode.TRACKPAD_PREF));
+        assertFalse(prefs().contains(com.limelight.binding.input.touch.TouchMode.NATIVE_TOUCH_PREF));
+        assertFalse(prefs().contains(com.limelight.ui.VideoScaling.STRETCH_PREF));
         assertFalse(prefs().contains("performance_overlay_mode"));
         assertFalse(prefs().contains(com.limelight.ui.AppTheme.THEME));
         assertFalse(prefs().getBoolean("checkbox_unlock_fps", false));
         assertFalse(PreferenceConfiguration.readPreferences(RuntimeEnvironment.getApplication()).unlockFps);
+        assertEquals(com.limelight.ui.VideoScaling.FIT,
+                PreferenceConfiguration.readPreferences(RuntimeEnvironment.getApplication()).videoScaling);
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             StreamSettings screen = controller.get();
             assertNull(root(screen).findPreference("developer"));

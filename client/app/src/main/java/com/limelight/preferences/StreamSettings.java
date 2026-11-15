@@ -832,7 +832,9 @@ public class StreamSettings extends NightjarActivity {
         // have no row of their own for them.
         editor.remove("checkbox_native_touch")
                 .remove(com.limelight.binding.input.touch.TouchMode.PREF)
+                .remove(com.limelight.binding.input.touch.TouchMode.TRACKPAD_PREF)
                 .remove(com.limelight.ui.VideoScaling.PREF)
+                .remove(com.limelight.ui.VideoScaling.STRETCH_PREF)
                 .remove(PreferenceConfiguration.UNLOCK_FPS_STRING)
                 .remove(PreferenceConfiguration.OVERLAY_MODE_PREF_STRING)
                 .remove(com.limelight.ui.AppTheme.RETIRED_OLED_BLACK)
