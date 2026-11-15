@@ -1845,6 +1845,10 @@ public class StreamSettings extends NightjarActivity {
                     // Off once the slider is moved; profiles and presets write the flag without this view.
                     ((SwitchPreference) pref).setChecked(!PreferenceConfiguration.isBitrateUserSet(prefs));
                     continue;
+                } else if (SettingRules.TAGGED_SWITCHES.contains(pref.getKey())) {
+                    // A switch has no value line; where it does nothing with the other settings it says why.
+                    pref.setSummary(SettingRules.unusedReason(getActivity(), pref.getKey(), prefs));
+                    continue;
                 } else if ("checkbox_display_queue_recovery".equals(pref.getKey())) {
                     // A switch has no value line; where the take-back does nothing it says why.
                     pref.setSummary(SettingRules.displayQueueRecoveryUnused(getActivity(), prefs));
@@ -1876,6 +1880,10 @@ public class StreamSettings extends NightjarActivity {
                                     com.limelight.binding.video.Sdr10Policy.Refusal.NONE) {
                         value = getString(R.string.settings_joined, value, getString(R.string.upscaling_tenbit_short));
                     }
+                }
+                if (value != null && !SettingRules.TAGGED_SWITCHES.contains(pref.getKey())) {
+                    String unused = SettingRules.unusedReason(getActivity(), pref.getKey(), prefs);
+                    if (unused != null) value = getString(R.string.settings_joined, value, unused);
                 }
                 if (value != null && SettingRules.FRAME_PACING.equals(pref.getKey())) {
                     // A choice the renderer ignores says so in the value line, as Upscaling does.

@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tag_unused_without_any">%1$s, %2$s, %3$s 중 하나가 켜져 있어야 사용됨</string>
+</resources>

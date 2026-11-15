@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tag_unused_without_any">Ohne %1$s, %2$s oder %3$s nicht verwendbar</string>
+</resources>

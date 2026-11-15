@@ -63,6 +63,51 @@ final class SettingRules {
     /** The codec's name in tags; it reads the same in every language. */
     private static final String PYROWAVE = "PyroWave";
 
+    /** The switches whose summary says why they do nothing ({@link #unusedReason}); they have no other summary. */
+    static final java.util.Set<String> TAGGED_SWITCHES = new java.util.HashSet<>(java.util.Arrays.asList(
+            "checkbox_texture_view", PreferenceConfiguration.THERMAL_PROTECTION_PREF_STRING,
+            "checkbox_onscreen_own_player", "checkbox_audio_passthrough"));
+
+    /**
+     * Why a row does nothing with the other settings as they are, or null. A setting that works only in some setups
+     * says so where it does nothing (client/AGENTS.md): a switch in its summary, a list in its value line.
+     */
+    static String unusedReason(Context context, String key, SharedPreferences prefs) {
+        switch (key) {
+            case "checkbox_texture_view":
+                // PreferenceConfiguration.readPreferences keeps the stream's own surface under these.
+                if (prefs.getBoolean("checkbox_enable_hdr", false)) return unusedWith(context, R.string.title_enable_hdr);
+                if (prefs.getBoolean("checkbox_enable_sdr_10bit", false)) return unusedWith(context, R.string.title_enable_sdr10);
+                return pyroWaveChosen(prefs) ? context.getString(R.string.tag_unused_with, PYROWAVE) : null;
+            case PreferenceConfiguration.THERMAL_PROTECTION_PREF_STRING: {
+                // Heat acts through a controller that follows it (GameAdaptation.heatEasesLoad) or eases PyroWave's
+                // GPU boost (MediaCodecDecoderRenderer). A PC's own choice in the stream menu can still turn one on.
+                boolean lower = SwitchPairChoice.LOWER_BITRATE.read(prefs) != 0;
+                boolean quality = !"off".equals(prefs.getString("adaptive_quality_mode", "off"));
+                boolean boost = prefs.getBoolean(PreferenceConfiguration.GPU_MAX_CLOCKS_PREF_STRING, false) && pyroWaveChosen(prefs);
+                if (lower || quality || boost) return null;
+                return context.getString(R.string.tag_unused_without_any, context.getString(R.string.title_lower_bitrate),
+                        context.getString(R.string.title_adaptive_quality_setting), context.getString(R.string.title_gpu_max_clocks));
+            }
+            case "adaptive_quality_mode":
+                // GameAdaptation.supportsAdaptiveQuality: PyroWave streams have no automatic quality.
+                return pyroWaveChosen(prefs) && !"off".equals(prefs.getString(key, "off")) ?
+                        context.getString(R.string.tag_unused_with, PYROWAVE) : null;
+            case "checkbox_onscreen_own_player":
+                // ControllerHandler.onscreenOwnsPlayerOne: L3 and R3 alone only join a pad.
+                return prefs.getBoolean("checkbox_only_show_L3R3", false) ? unusedWith(context, R.string.title_only_l3r3) : null;
+            case "checkbox_audio_passthrough":
+                // NvConnection.audioPassthroughCodecs: muted audio asks for nothing to pass through.
+                return prefs.getBoolean("checkbox_mute_audio", false) ? unusedWith(context, R.string.title_checkbox_mute_audio) : null;
+            default:
+                return null;
+        }
+    }
+
+    private static String unusedWith(Context context, int title) {
+        return context.getString(R.string.tag_unused_with, context.getString(title));
+    }
+
     /**
      * The tag for a Frame pacing choice that its renderer ignores, or null. PyroWave's presenter takes the pacing
      * under the PC's frame times, which those make Lowest latency (FramePacingPolicy.pyroWaveMode,

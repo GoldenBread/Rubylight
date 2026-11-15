@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tag_unused_without_any">Không dùng khi không có %1$s, %2$s hoặc %3$s</string>
+</resources>
