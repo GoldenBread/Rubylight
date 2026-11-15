@@ -12,7 +12,7 @@ use crate::{
     wire, Millis,
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io,
     net::{IpAddr, SocketAddr},
     sync::{
@@ -115,6 +115,24 @@ fn poll_interval(state: &DeviceState, open: &[[u8; 8]], now: Millis) -> Millis {
     }
 }
 
+/// What starting a device's path needs, copied out of its state so no lock is held meanwhile.
+#[derive(Clone)]
+struct Peer {
+    tag: [u8; 8],
+    keys: Keys,
+    device: Device,
+}
+
+impl Peer {
+    fn of(state: &DeviceState) -> Self {
+        Self {
+            tag: state.tag,
+            keys: state.keys.clone(),
+            device: state.device.clone(),
+        }
+    }
+}
+
 /// Each open tunnel by its path tag, with the device session it was opened for.
 type Tunnels = HashMap<[u8; 8], ([u8; 16], Tunnel)>;
 
@@ -129,6 +147,8 @@ struct Shared {
     tunnels: Mutex<Tunnels>,
     status: Mutex<Status>,
     path_errors: Mutex<PathErrors>,
+    /// Paths a punch is starting (tag and device session), so repeated punches start one.
+    starting: Mutex<HashSet<([u8; 8], [u8; 16])>>,
     /// The records are being published.
     publishing: AtomicBool,
     stop: AtomicBool,
@@ -150,6 +170,7 @@ impl HostService {
             tunnels: Mutex::new(HashMap::new()),
             status: Mutex::new(Status::default()),
             path_errors: Mutex::new(HashMap::new()),
+            starting: Mutex::new(HashSet::new()),
             publishing: AtomicBool::new(false),
             stop: AtomicBool::new(false),
         });
@@ -254,14 +275,14 @@ impl HostService {
         status
     }
 
-    /// Notes why `state`'s path did not start, for [`Status::path_errors`].
-    fn path_error(&self, state: &DeviceState, words: String) {
-        let entry = (state.device.name.clone(), words, self.shared.node.now());
+    /// Notes why `peer`'s path did not start, for [`Status::path_errors`].
+    fn path_error(&self, peer: &Peer, words: String) {
+        let entry = (peer.device.name.clone(), words, self.shared.node.now());
         self.shared
             .path_errors
             .lock()
             .unwrap()
-            .insert(state.tag, entry);
+            .insert(peer.tag, entry);
     }
 
     pub fn stop(&self) {
@@ -284,63 +305,88 @@ impl HostService {
         }
     }
 
-    /// Starts (or restarts) the path to a device for its session `client`.
-    fn open(
-        &self,
-        state: &DeviceState,
-        client: [u8; 16],
-        candidates: Vec<SocketAddr>,
-    ) -> Option<Tunnel> {
-        let mut tunnels = self.shared.tunnels.lock().unwrap();
-        if let Some((session, tunnel)) = tunnels.get(&state.tag) {
-            if *session == client && !tunnel.is_closed() {
-                tunnel.add_candidates(&candidates);
-                return Some(tunnel.clone());
-            }
-        }
-        // Without a source address per device, every tunnel reaches the host from the same
-        // address, and the host keys sessions and launches by address: one device at a time,
-        // so one device can never step into another's session.
-        if !self.shared.config.per_device_source {
-            let busy = tunnels
+    /// Without a source address per device, every tunnel reaches the host from the same
+    /// address, and the host keys sessions and launches by address: one device at a time, so
+    /// one device can never step into another's session.
+    fn busy(&self, tunnels: &Tunnels, tag: &[u8; 8]) -> bool {
+        !self.shared.config.per_device_source
+            && tunnels
                 .iter()
-                .any(|(tag, (_, tunnel))| *tag != state.tag && !tunnel.is_closed());
-            if busy {
-                self.path_error(state, format!(
-                    "{} waits: another device is playing over the internet, and the host listens on one address",
-                    state.device.name
-                ));
+                .any(|(other, (_, tunnel))| other != tag && !tunnel.is_closed())
+    }
+
+    fn waits(&self, peer: &Peer) {
+        self.path_error(peer, format!(
+            "{} waits: another device is playing over the internet, and the host listens on one address",
+            peer.device.name
+        ));
+    }
+
+    /// Starts (or restarts) the path to a device for its session `client`. The tunnel starts
+    /// (sockets bound, threads started) with no lock held, so other paths' media and the
+    /// console's status never wait on it.
+    fn open(&self, peer: &Peer, client: [u8; 16], candidates: Vec<SocketAddr>) -> Option<Tunnel> {
+        {
+            let tunnels = self.shared.tunnels.lock().unwrap();
+            if let Some((session, tunnel)) = tunnels.get(&peer.tag) {
+                if *session == client && !tunnel.is_closed() {
+                    tunnel.add_candidates(&candidates);
+                    return Some(tunnel.clone());
+                }
+            }
+            if self.busy(&tunnels, &peer.tag) {
+                drop(tunnels);
+                self.waits(peer);
                 return None;
             }
         }
-        let keys = state.keys.path(&self.shared.session, &client);
+        let keys = peer.keys.path(&self.shared.session, &client);
         let bridge = Bridge::Host {
             service: self.shared.config.service,
-            source: self.source(&state.device),
+            source: self.source(&peer.device),
             ports: self.shared.config.ports,
-            device: state.device.id.clone(),
+            device: peer.device.id.clone(),
         };
         let tunnel = match Tunnel::start(
             self.shared.node.clone(),
             Role::Host,
             keys,
             client,
-            candidates,
+            candidates.clone(),
             bridge,
         ) {
             Ok(tunnel) => tunnel,
             Err(error) => {
                 self.path_error(
-                    state,
-                    format!("a path to {} could not start: {error}", state.device.name),
+                    peer,
+                    format!("a path to {} could not start: {error}", peer.device.name),
                 );
                 return None;
             }
         };
-        self.shared.path_errors.lock().unwrap().remove(&state.tag);
-        if let Some((_, old)) = tunnels.insert(state.tag, (client, tunnel.clone())) {
+        let mut tunnels = self.shared.tunnels.lock().unwrap();
+        // Meanwhile a path for this session, or another device's path, may have started.
+        if let Some((session, existing)) = tunnels.get(&peer.tag) {
+            if *session == client && !existing.is_closed() {
+                let existing = existing.clone();
+                drop(tunnels);
+                tunnel.close("the path started twice");
+                existing.add_candidates(&candidates);
+                return Some(existing);
+            }
+        }
+        if self.busy(&tunnels, &peer.tag) {
+            drop(tunnels);
+            tunnel.close("another device is playing over the internet");
+            self.waits(peer);
+            return None;
+        }
+        let old = tunnels.insert(peer.tag, (client, tunnel.clone()));
+        drop(tunnels);
+        if let Some((_, old)) = old {
             old.close("the device connected again");
         }
+        self.shared.path_errors.lock().unwrap().remove(&peer.tag);
         Some(tunnel)
     }
 
@@ -362,22 +408,48 @@ impl HostService {
             }
         }
         let Some(client) = punch_session else { return };
-        let devices = self.shared.devices.lock().unwrap();
-        let Some(state) = devices.iter().find(|state| state.tag == tag) else {
-            return;
+        let peer = {
+            let devices = self.shared.devices.lock().unwrap();
+            let Some(state) = devices.iter().find(|state| state.tag == tag) else {
+                return;
+            };
+            Peer::of(state)
         };
         // Only a punch that opens with this device's keys starts a path.
-        let keys = state.keys.path(&self.shared.session, &client);
+        let keys = peer.keys.path(&self.shared.session, &client);
         if wire::Opener::new(&keys.client_to_host, keys.tag)
             .open(datagram)
             .is_none()
         {
             return;
         }
-        let tunnel = self.open(state, client, vec![from]);
-        drop(devices);
-        if let Some(tunnel) = tunnel {
-            tunnel.receive(datagram, from);
+        // The path starts on a thread of its own: this thread takes every path's media. Punches
+        // that come meanwhile are dropped; the device sends more.
+        if !self.shared.starting.lock().unwrap().insert((tag, client)) {
+            return;
+        }
+        let opening = self.clone();
+        let datagram = datagram.to_vec();
+        let spawned = thread::Builder::new()
+            .name("internet play open".into())
+            .spawn(move || {
+                let tunnel = opening.open(&peer, client, vec![from]);
+                opening
+                    .shared
+                    .starting
+                    .lock()
+                    .unwrap()
+                    .remove(&(tag, client));
+                if let Some(tunnel) = tunnel {
+                    tunnel.receive(&datagram, from);
+                }
+            });
+        if spawned.is_err() {
+            self.shared
+                .starting
+                .lock()
+                .unwrap()
+                .remove(&(tag, client));
         }
     }
 
@@ -606,8 +678,10 @@ impl HostService {
             return;
         }
         state.answered = Some(record.session);
+        let peer = Peer::of(state);
+        drop(devices);
         let candidates = punch::candidates(&record.endpoints, record.nat);
-        self.open(state, record.session, candidates);
+        self.open(&peer, record.session, candidates);
     }
 }
 
@@ -624,6 +698,19 @@ mod tests {
             stun_servers: Vec::new(),
             bootstrap: Vec::new(),
         }
+    }
+
+    /// The host's paths, once `count` of them are there (a punch starts its path on a thread of
+    /// its own), or after two seconds.
+    fn paths(host: &HostService, count: usize) -> Vec<PathStatus> {
+        for _ in 0..100 {
+            let paths = host.status().paths;
+            if paths.len() >= count && paths.iter().all(|path| path.connected) {
+                return paths;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        host.status().paths
     }
 
     #[test]
@@ -684,10 +771,10 @@ mod tests {
             &[],
         );
         host.receive(&punch, from);
-        let status = host.status();
-        assert_eq!(status.paths.len(), 1);
-        assert_eq!(status.paths[0].device, "Phone");
-        assert!(status.paths[0].connected);
+        let paths = paths(&host, 1);
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].device, "Phone");
+        assert!(paths[0].connected);
 
         // Unpairing closes it.
         host.set_devices(Vec::new());
@@ -721,7 +808,14 @@ mod tests {
         let from = probe.local_addr().unwrap();
 
         host.receive(&punch(&phone, [9; 16]), from);
+        assert_eq!(paths(&host, 1).len(), 1);
         host.receive(&punch(&tablet, [8; 16]), from);
+        for _ in 0..100 {
+            if !host.status().path_errors.is_empty() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
         let status = host.status();
         assert_eq!(status.paths.len(), 1);
         assert_eq!(status.paths[0].device, "Phone");
@@ -734,10 +828,10 @@ mod tests {
         // Once the phone's path is gone, the tablet gets one, and its wait is over.
         host.set_devices(vec![tablet.clone()]);
         host.receive(&punch(&tablet, [8; 16]), from);
-        let status = host.status();
-        assert_eq!(status.paths.len(), 1);
-        assert_eq!(status.paths[0].device, "Tablet");
-        assert!(status.path_errors.is_empty());
+        let paths = paths(&host, 1);
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].device, "Tablet");
+        assert!(host.status().path_errors.is_empty());
         host.stop();
     }
 }
