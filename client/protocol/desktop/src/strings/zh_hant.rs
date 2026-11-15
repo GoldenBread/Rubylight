@@ -1591,4 +1591,6 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("Except mobile data", "行動數據除外"),
     ("Any network", "任何網路"),
     ("The stream moves to the new address when this device switches networks, instead of waiting for the old one; Any network also moves it onto mobile data or another metered network, which uses a lot of data. Leave it on Except mobile data; needs PC support.", "這台裝置切換網路時，串流會轉到新位址，而不是等待原本的位址；「任何網路」也會轉到行動數據或其他計量付費網路，這會消耗大量數據。請保持「行動數據除外」；需要電腦支援。"),
+    ("Keyboard follows text fields", "鍵盤跟隨文字欄位"),
+    ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields and does nothing on a computer without an on-screen keyboard; turn off to open it yourself.", "在電腦上選取文字欄位時開啟螢幕鍵盤，之後自動關閉。需要電腦能回報文字欄位，在沒有螢幕鍵盤的電腦上不起作用；關閉後由你自行開啟鍵盤。"),
 ];

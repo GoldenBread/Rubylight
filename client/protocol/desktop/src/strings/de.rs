@@ -1591,4 +1591,6 @@ sudo sysctl -w net.core.rmem_max={2}"),
     ("Except mobile data", "Außer mobilen Daten"),
     ("Any network", "Jedes Netzwerk"),
     ("The stream moves to the new address when this device switches networks, instead of waiting for the old one; Any network also moves it onto mobile data or another metered network, which uses a lot of data. Leave it on Except mobile data; needs PC support.", "Der Stream zieht zur neuen Adresse um, wenn dieses Gerät das Netzwerk wechselt, statt auf die alte zu warten; „Jedes Netzwerk“ zieht ihn auch auf mobile Daten oder ein anderes getaktetes Netzwerk um, was viele Daten verbraucht. Lass es auf „Außer mobilen Daten“; braucht Unterstützung durch den PC."),
+    ("Keyboard follows text fields", "Tastatur folgt Textfeldern"),
+    ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields and does nothing on a computer without an on-screen keyboard; turn off to open it yourself.", "Öffnet die Bildschirmtastatur, wenn du am PC ein Textfeld auswählst, und schließt sie danach wieder. Braucht einen PC, der Textfelder meldet, und bewirkt auf einem Computer ohne Bildschirmtastatur nichts; schalte es aus, um sie selbst zu öffnen."),
 ];

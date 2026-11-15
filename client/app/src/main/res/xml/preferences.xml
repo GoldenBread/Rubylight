@@ -129,7 +129,7 @@
 
     <!-- Display & image -->
     <PreferenceCategory android:key="category_display_main">
-        <Preference android:key="checkbox_stretch_video"
+        <Preference android:key="video_scaling"
             android:title="@string/video_scaling_title" android:persistent="false" />
         <com.limelight.preferences.MaterialListPreference
             android:key="stream_orientation"
@@ -235,7 +235,7 @@
 
     <!-- Controls -->
     <PreferenceCategory android:key="category_input_main">
-        <Preference android:key="checkbox_touchscreen_trackpad"
+        <Preference android:key="touch_mode"
             android:title="@string/stream_touch_mode" android:persistent="false" />
         <!-- Captured or Desktop pointer: the switch checkbox_absolute_mouse_mode, drawn as the two-value choice. -->
         <Preference android:key="checkbox_absolute_mouse_mode" android:title="@string/title_checkbox_absolute_mouse_mode"
@@ -834,8 +834,8 @@
 
     <!-- App -->
     <PreferenceCategory android:key="category_app_main">
-        <!-- System, Dark or OLED black: writes checkbox_always_dark and checkbox_oled_black (ThemeChoice). -->
-        <Preference android:key="checkbox_always_dark"
+        <!-- System, Dark or OLED black, stored under theme (ThemeChoice). -->
+        <Preference android:key="theme"
             android:title="@string/title_theme" android:persistent="false" />
         <com.limelight.preferences.LanguagePreference
             android:key="list_languages"
@@ -990,32 +990,6 @@
             android:dialogMessage="@string/summary_checkbox_enable_sops"
             android:defaultValue="true" />
     </PreferenceCategory>
-    <PreferenceCategory android:key="category_advanced_diagnostics" android:title="@string/settings_category_diagnostics">
-        <com.limelight.preferences.MaterialSwitchPreference
-            android:key="checkbox_link_probe"
-            android:title="@string/title_link_probe"
-            android:dialogMessage="@string/summary_link_probe"
-            android:defaultValue="false" />
-        <com.limelight.preferences.MaterialSwitchPreference
-            android:key="checkbox_show_gyro_diagnostics"
-            android:title="@string/title_show_gyro_diagnostics"
-            android:dialogMessage="@string/summary_show_gyro_diagnostics"
-            android:defaultValue="false" />
-        <!-- A PC's PyroWave frame pace (its own settings page), shown where a paired PC can measure it or has one saved. -->
-        <Preference android:key="pace_calibration" android:title="@string/pace_calibration_title"
-            android:summary="@string/summary_pace_calibration_row" android:persistent="false" />
-        <com.limelight.preferences.MaterialSwitchPreference
-            android:key="checkbox_enable_post_stream_toast"
-            android:title="@string/title_enable_post_stream_toast"
-            android:dialogMessage="@string/summary_enable_post_stream_toast"
-            android:defaultValue="false"/>
-        <Preference android:key="latency_benchmark" android:title="@string/latency_benchmark_title"
-            android:summary="@string/settings_latency_benchmark_summary" />
-        <Preference
-            android:key="export_latency_csv"
-            android:title="@string/title_export_latency_csv"
-            android:summary="@string/settings_csv_summary" />
-    </PreferenceCategory>
 
     <!-- Debug: settings whose default is right for nearly everyone, kept for troubleshooting. -->
     <PreferenceCategory android:key="category_debug">
@@ -1079,5 +1053,31 @@
             android:title="@string/title_receive_decode_priority"
             android:dialogMessage="@string/summary_receive_decode_priority"
             android:defaultValue="false" />
+    </PreferenceCategory>
+    <PreferenceCategory android:key="category_debug_diagnostics" android:title="@string/settings_category_diagnostics">
+        <com.limelight.preferences.MaterialSwitchPreference
+            android:key="checkbox_link_probe"
+            android:title="@string/title_link_probe"
+            android:dialogMessage="@string/summary_link_probe"
+            android:defaultValue="false" />
+        <com.limelight.preferences.MaterialSwitchPreference
+            android:key="checkbox_show_gyro_diagnostics"
+            android:title="@string/title_show_gyro_diagnostics"
+            android:dialogMessage="@string/summary_show_gyro_diagnostics"
+            android:defaultValue="false" />
+        <!-- A PC's PyroWave frame pace (its own settings page), shown where a paired PC can measure it or has one saved. -->
+        <Preference android:key="pace_calibration" android:title="@string/pace_calibration_title"
+            android:summary="@string/summary_pace_calibration_row" android:persistent="false" />
+        <com.limelight.preferences.MaterialSwitchPreference
+            android:key="checkbox_enable_post_stream_toast"
+            android:title="@string/title_enable_post_stream_toast"
+            android:dialogMessage="@string/summary_enable_post_stream_toast"
+            android:defaultValue="false"/>
+        <Preference android:key="latency_benchmark" android:title="@string/latency_benchmark_title"
+            android:summary="@string/settings_latency_benchmark_summary" />
+        <Preference
+            android:key="export_latency_csv"
+            android:title="@string/title_export_latency_csv"
+            android:summary="@string/settings_csv_summary" />
     </PreferenceCategory>
 </PreferenceScreen>

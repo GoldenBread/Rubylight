@@ -502,6 +502,10 @@ pub struct Settings {
     /// here, as text, with a Rubylight PC that allows this device its clipboard (0x5508,
     /// stream/clipboard_sync.rs). Off by default.
     pub clipboard_sync: bool,
+    /// "Keyboard follows text fields" (Android's `checkbox_keyboard_follows_text_fields`): a PC that
+    /// reports its text fields (0x553B) is asked to, so the on-screen keyboard opens and closes
+    /// with them where SDL has one (stream/text_field.rs). On by default.
+    pub keyboard_follows_text_fields: bool,
     /// Dual screen mode (Android's `checkbox_dual_screen`): with a second monitor and a PC that keeps
     /// a device's second stream beside its first, a stream starts a second one of the same game,
     /// full screen on the other monitor (`second_screen.rs`). Off by default.
@@ -610,8 +614,9 @@ pub struct Settings {
     pub ui_zoom: u32,
     /// Brighter text, black surfaces and thicker outlines and focus rings.
     pub high_contrast: bool,
-    /// "Theme" (Android's `ThemeChoice`, stored there as `checkbox_always_dark` and
-    /// `checkbox_oled_black`): the system's light or dark, the night look, or OLED black.
+    /// "Theme" (Android's `ThemeChoice`, stored there as `theme`; the switches
+    /// `checkbox_always_dark` and `checkbox_oled_black` before): the system's light or dark, the
+    /// night look, or OLED black.
     pub theme: Theme,
     pub reduce_motion: ReduceMotion,
     pub language: Language,
@@ -1138,6 +1143,7 @@ impl Default for Settings {
             usb_forwarding: false,
             usb_auto: Vec::new(),
             clipboard_sync: false,
+            keyboard_follows_text_fields: true,
             dual_screen: false,
             second_screen_width: 0,
             second_screen_height: 0,

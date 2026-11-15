@@ -297,7 +297,7 @@ public class SettingsTiersTest {
             settle(screen);
             StreamSettings.SettingsFragment section = (StreamSettings.SettingsFragment) shown(screen);
             assertTrue(visible(section).contains("checkbox_link_probe"));
-            assertTrue(screen.moreOpen.contains("advanced"));
+            assertTrue(screen.moreOpen.contains("debug"));
         }
     }
 
@@ -315,18 +315,21 @@ public class SettingsTiersTest {
     }
 
     @Test
-    public void tellThePcSitsInDebugAndTheLinkTestInAdvancedDiagnostics() {
+    public void tellThePcAndDiagnosticsSitInDebug() {
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             StreamSettings screen = controller.get();
             for (String key : new String[] {"checkbox_tell_host_wireless", "checkbox_tell_host_link_speed"}) {
                 assertEquals(key, "debug", StreamSettings.sectionOfKey(screen, key));
             }
-            assertEquals("advanced", StreamSettings.sectionOfKey(screen, "checkbox_link_probe"));
-            screen.moreOpen.add("advanced");
-            screen.showSection("advanced");
+            for (String key : new String[] {"checkbox_link_probe", "checkbox_show_gyro_diagnostics",
+                    "checkbox_enable_post_stream_toast", "latency_benchmark", "export_latency_csv"}) {
+                assertEquals(key, "debug", StreamSettings.sectionOfKey(screen, key));
+            }
+            screen.moreOpen.add("debug");
+            screen.showSection("debug");
             settle(screen);
             PreferenceGroup diagnostics = (PreferenceGroup) ((StreamSettings.SettingsFragment) shown(screen))
-                    .getPreferenceScreen().findPreference("category_advanced_diagnostics");
+                    .getPreferenceScreen().findPreference("category_debug_diagnostics");
             assertEquals("checkbox_link_probe", SettingsStructureTest.keys(diagnostics).get(0));
             assertEquals("Test the link before starting", String.valueOf(diagnostics.findPreference("checkbox_link_probe").getTitle()));
             assertEquals("USB Switch Pro driver", screen.getString(R.string.title_usb_switch_pro));

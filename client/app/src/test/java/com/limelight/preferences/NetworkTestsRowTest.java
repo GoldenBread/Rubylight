@@ -78,7 +78,7 @@ public class NetworkTestsRowTest {
             assertNotNull(row);
             assertEquals(app.getString(R.string.network_tests_title), row.getTitle().toString());
             assertTrue(row.isEnabled());
-            // Its hint; the PyroWave frame pace has its own row in Advanced › Diagnostics.
+            // Its hint; the PyroWave frame pace has its own row in Debug › Diagnostics.
             assertEquals(app.getString(R.string.summary_network_tests), row.getSummary().toString());
         }
     }

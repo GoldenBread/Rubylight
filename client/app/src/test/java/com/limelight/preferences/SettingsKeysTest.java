@@ -84,7 +84,8 @@ public class SettingsKeysTest {
     private static final Set<String> WRITTEN_BY_PICKERS = new HashSet<>(Arrays.asList(
             "checkbox_unlock_fps", // the frame rate picker's button
             "performance_overlay_mode", // the performance overlay picker
-            com.limelight.ui.AppTheme.OLED_BLACK, // the theme picker
+            // Touch mode and Video size also write the switches older versions read.
+            "checkbox_touchscreen_trackpad", "checkbox_stretch_video",
             "checkbox_yuv444", "experimental_packed_444", // Sharper colored text
             "checkbox_multi_controller", "checkbox_send_controllers", // Controllers
             "checkbox_real_vrr", // Variable refresh rate's On or Fastest (VrrChoice)
@@ -99,8 +100,7 @@ public class SettingsKeysTest {
             "performance_overlay_mode", // Game and the overlay
             "list_stream_menu_button_y", "list_stream_menu_button_x", "list_stream_menu_button_lb", "list_stream_menu_button_rb", // StreamMenu
             com.limelight.console.OpenPlay.SETTING, // the launch screen, before any stream
-            com.limelight.ui.AppTheme.OLED_BLACK, // AppTheme, including activities opened directly
-            com.limelight.ui.AppTheme.ALWAYS_DARK,
+            com.limelight.ui.AppTheme.THEME, // AppTheme, including activities opened directly
             com.limelight.ui.AppTheme.HIGH_CONTRAST, // AppTheme and the contrast overlay
             com.limelight.binding.input.GyroDiagnosticOverlay.PREF_SHOW_DIAGNOSTICS, // Game's motion readings
             com.limelight.ui.AppTheme.UI_SCALE, // NightjarActivity.attachBaseContext
@@ -175,7 +175,8 @@ public class SettingsKeysTest {
     private static final Set<String> RETIRED = new HashSet<>(Arrays.asList(
             "checkbox_gl_render", // "Render through OpenGL", replaced by Render through Vulkan
             "checkbox_experimental_chipset_tuning", // "Chipset tuning": its value never reached the decoder
-            "checkbox_auto_bitrate")); // renamed adaptive_bitrate (PreferenceConfiguration.RENAMED_PREFS)
+            "checkbox_auto_bitrate", // renamed adaptive_bitrate (PreferenceConfiguration.RENAMED_PREFS)
+            "checkbox_always_dark", "checkbox_oled_black")); // the theme's switches, one value now (AppTheme.THEME)
 
     @Test
     public void everyKeyInPreferencesXmlIsUniqueAndNoRetiredKeyIsBack() throws Exception {
@@ -216,6 +217,29 @@ public class SettingsKeysTest {
         prefs().edit().putBoolean("checkbox_auto_bitrate", false).commit();
         assertFalse(PreferenceConfiguration.readPreferences(RuntimeEnvironment.getApplication()).autoBitrate);
         assertFalse(prefs().contains("checkbox_auto_bitrate"));
+    }
+
+    @Test
+    public void theThemeMovesFromItsTwoSwitchesToOneValue() {
+        Object[][] cases = {
+                {false, false, "system"}, {true, false, "dark"}, {true, true, "oled_black"},
+                // OLED black without Dark was a value the two switches could hold.
+                {false, true, "oled_black"},
+        };
+        for (Object[] row : cases) {
+            prefs().edit().clear().putBoolean("checkbox_always_dark", (Boolean) row[0])
+                    .putBoolean("checkbox_oled_black", (Boolean) row[1]).commit();
+            PreferenceConfiguration.readPreferences(RuntimeEnvironment.getApplication());
+            assertEquals(row[2], prefs().getString(com.limelight.ui.AppTheme.THEME, null));
+            assertFalse(prefs().contains("checkbox_always_dark"));
+            assertFalse(prefs().contains("checkbox_oled_black"));
+        }
+        // An older version's switch, written after the move, wins once.
+        prefs().edit().putString(com.limelight.ui.AppTheme.THEME, "oled_black").putBoolean("checkbox_always_dark", false).commit();
+        assertEquals("system", com.limelight.ui.AppTheme.theme(prefs()));
+        PreferenceConfiguration.readPreferences(RuntimeEnvironment.getApplication());
+        assertEquals("system", prefs().getString(com.limelight.ui.AppTheme.THEME, null));
+        assertFalse(com.limelight.ui.AppTheme.isDark(RuntimeEnvironment.getApplication()));
     }
 
     @Test
@@ -328,6 +352,7 @@ public class SettingsKeysTest {
         reads.put("upscaling_mode", new Read("off", "fsr1", c -> c.upscalingMode));
         reads.put("upscaling_sharpness", new Read(50, 80, c -> c.upscalingSharpness));
         reads.put("checkbox_stretch_video", new Read(false, true, c -> c.videoScaling));
+        reads.put(com.limelight.ui.VideoScaling.PREF, new Read("fit", "fill", c -> c.videoScaling));
         reads.put("video_alignment", new Read("center", "top", c -> c.videoAlignment));
         reads.put("stream_orientation", new Read("auto", "rotate", c -> c.streamOrientation));
         reads.put("checkbox_yuv444", new Read(false, true, c -> c.enableYuv444));
@@ -366,6 +391,7 @@ public class SettingsKeysTest {
         reads.put("checkbox_usb_switch_pro", new Read(false, true, c -> c.usbSwitchPro));
         reads.put("checkbox_usb_forwarding", new Read(false, true, c -> c.usbForwarding));
         reads.put("checkbox_touchscreen_trackpad", new Read(true, false, c -> c.touchscreenTrackpad));
+        reads.put(com.limelight.binding.input.touch.TouchMode.PREF, new Read("trackpad", "local_cursor", c -> c.touchMode));
         reads.put("seekbar_trackpad_speed", new Read(100, 200, c -> c.trackpadSpeed));
         reads.put("seekbar_local_cursor_speed", new Read(100, 200, c -> c.localCursorSpeed));
         reads.put("checkbox_trackpad_acceleration", new Read(false, true, c -> c.trackpadAcceleration));

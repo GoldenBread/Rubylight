@@ -1591,4 +1591,6 @@ sudo sysctl -w net.core.rmem_max={}", "Tampon de réception : le système a acco
     ("Except mobile data", "Sauf données mobiles"),
     ("Any network", "Tout réseau"),
     ("The stream moves to the new address when this device switches networks, instead of waiting for the old one; Any network also moves it onto mobile data or another metered network, which uses a lot of data. Leave it on Except mobile data; needs PC support.", "Le stream passe à la nouvelle adresse quand cet appareil change de réseau, au lieu d’attendre l’ancienne ; « Tout réseau » le fait aussi passer sur les données mobiles ou un autre réseau limité, ce qui consomme beaucoup de données. Laissez « Sauf données mobiles » ; nécessite un PC compatible."),
+    ("Keyboard follows text fields", "Le clavier suit les champs de texte"),
+    ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields and does nothing on a computer without an on-screen keyboard; turn off to open it yourself.", "Ouvre le clavier à l’écran quand vous sélectionnez un champ de texte sur le PC et le referme ensuite. Nécessite un PC qui signale les champs de texte et n’a aucun effet sur un ordinateur sans clavier à l’écran ; désactivez-le pour l’ouvrir vous-même."),
 ];

@@ -1452,6 +1452,7 @@ public class PreferenceConfiguration {
      * it; it changes nothing a second time.
      */
     static void migrateKeyNames(SharedPreferences prefs) {
+        com.limelight.ui.AppTheme.migrateTheme(prefs);
         SharedPreferences.Editor editor = null;
         for (String[] rename : RENAMED_PREFS) {
             if (!prefs.contains(rename[0])) continue;

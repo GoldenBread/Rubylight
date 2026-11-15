@@ -18,13 +18,13 @@
         <item>checkbox_enable_hdr</item>
     </string-array>
     <string-array name="settings_tier_display" translatable="false">
-        <item>checkbox_stretch_video</item>
+        <item>video_scaling</item>
         <item>stream_orientation</item>
         <item>checkbox_vrr</item>
         <item>frame_pacing</item>
     </string-array>
     <string-array name="settings_tier_input" translatable="false">
-        <item>checkbox_touchscreen_trackpad</item>
+        <item>touch_mode</item>
         <item>checkbox_absolute_mouse_mode</item>
         <item>controllers</item>
         <item>controller_button_mapping</item>
@@ -46,7 +46,7 @@
         <item>network_tests</item>
     </string-array>
     <string-array name="settings_tier_app" translatable="false">
-        <item>checkbox_always_dark</item>
+        <item>theme</item>
         <item>list_languages</item>
         <item>list_open_on_start</item>
         <item>checkbox_quick_resume</item>

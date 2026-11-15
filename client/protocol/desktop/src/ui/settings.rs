@@ -30,7 +30,7 @@ pub(super) const SECTION_KEYS: [&[&[&str]]; 8] = [
         &["frame_pacing", "drop_late_frames", "host_frame_times"], &["vsync"],
         &["upscaling"], &["upscale_sharpness"], &["align_video_top"],
         &["virtual_display"], &["virtual_display_scale"], &["virtual_display_dpi"], &["host_display"]],
-    &[&["mouse_mode"], &["controllers", "multi_controller"], &["clipboard_sync"],
+    &[&["mouse_mode"], &["controllers", "multi_controller"], &["keyboard_follows_text_fields"], &["clipboard_sync"],
         &["swap_face_buttons"], &["gamepad_quit_combo"], &["deadzone"], &["trigger_deadzone"], &["controller_motion"], &["disable_rumble"],
         &["controller_mouse"], &["analog_scrolling"], &["mouse_fixed_step"], &["gamepad_touchpad_as_mouse"], &["background_controllers"],
         &["guide_hold_ms"], &["back_opens_menu", "back_as_guide"], &["stream_menu_buttons"],
@@ -44,11 +44,12 @@ pub(super) const SECTION_KEYS: [&[&[&str]]; 8] = [
         &["dual_screen"], &["second_screen_width", "second_screen_height"], &["input_only_any_host"]],
     &[&["theme"], &["language"], &["open_on_start", "console_home"], &["quick_resume"], &["check_updates"], &["home_card_size"],
         &["ui_zoom"], &["high_contrast"], &["reduce_motion"]],
-    &[&["graphics_card"], &["renderer"], &["display_output"], &["video_planes"], &["high_performance_gpu_power"], &["sops"], &["link_probe"], &["post_stream_decode_time"]],
+    &[&["graphics_card"], &["renderer"], &["display_output"], &["video_planes"], &["high_performance_gpu_power"], &["sops"]],
     &[&["error_correction"], &["tell_host_wireless"], &["tell_host_link_speed"],
         &["network_priority"], &["unbatched_input"], &["full_range"],
         &["pyrowave_decoder"], &["pyrowave_async_compute"],
-        &["decoder"], &["software_slices"], &["vulkan_video_first"], &["vulkan_rfi"], &["cursor_shapes"]],
+        &["decoder"], &["software_slices"], &["vulkan_video_first"], &["vulkan_rfi"], &["cursor_shapes"],
+        &["link_probe"], &["post_stream_decode_time"]],
 ];
 
 /// The Resolution menu after Native: Android's 16:9 sizes with common PC and laptop ones, then
@@ -1010,6 +1011,9 @@ impl Launcher {
                     button
                 });
             }
+            setting_row(ui, s, &mut rows, &["keyboard_follows_text_fields"], "Keyboard follows text fields", "Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields and does nothing on a computer without an on-screen keyboard; turn off to open it yourself.", |ui, s| {
+                toggle(ui, &mut s.keyboard_follows_text_fields)
+            });
             setting_row(ui, s, &mut rows, &["clipboard_sync"], "Clipboard sync", "Copy text on this device and paste it on the PC, or the other way round, while streaming. Everything you copy as text is sent; the PC must offer clipboard sync.", |ui, s| {
                 toggle(ui, &mut s.clipboard_sync)
             });
@@ -1480,56 +1484,6 @@ impl Launcher {
             }
             rows.group(en("Compatibility"));
             setting_row(ui, s, &mut rows, &["sops"], "Game optimization hint", "Lets the PC adjust the game’s settings for the stream. Leave it on; turn it off if the PC changes a game’s settings and you want them kept.", |ui, s| toggle(ui, &mut s.sops));
-            rows.group(en("Diagnostics"));
-            setting_row(ui, s, &mut rows, &["link_probe"], "Test the link before starting", "A new stream at the automatic bitrate measures the connection first and starts no higher. Leave it off: in our measurements, streams then started lower, with more loss and freezes.", |ui, s| {
-                toggle(ui, &mut s.link_probe)
-            });
-            // Where a PC measures it, or a pace was saved; a PC's own page also has it.
-            if let Some(pc) = network_test_pc(&pace_pcs, *test_pc) {
-                let pace = pc.record.pace.as_ref();
-                if let Some(pace) = pace {
-                    rows.note(trf("{} Mbps · {}", &[&pace.pace_mbps, &if pace.qualified { tr("confirmed") } else { tr("best available") }]), *ON_SURFACE_VARIANT);
-                }
-                rows.action("pyrowave_pace");
-                rows.room((if pace_pcs.len() > 1 { TEST_PC_W } else { 0.0 }) + (if pace.is_some() { 80.0 } else { 0.0 }));
-                setting_row(ui, s, &mut rows, &[], "PyroWave frame pace", "Finds and saves the fastest pace at which a PC’s PyroWave frames arrive whole, for links that lose frame ends, such as a USB Ethernet dock. Takes one to three minutes.", |ui, _| {
-                    let online = pc.reach == Reach::Online;
-                    let mut action = None;
-                    if online && pc.info.as_ref().is_some_and(|i| i.pyrowave_burst_probe) {
-                        let button = quiet_button(ui, "Calibrate");
-                        if button.clicked() { commands.push(Command::NetworkTest { host: pc.id, calibrate: true }); }
-                        action = Some(button);
-                    } else if !online {
-                        action = Some(offline(ui));
-                    }
-                    if pace.is_some() {
-                        let clear = text_button(ui, "Clear");
-                        if clear.clicked() { commands.push(Command::ClearPace(pc.id)); }
-                        action.get_or_insert(clear);
-                    }
-                    if pace_pcs.len() > 1 { test_pc_choice(ui, "pace-pc", &pace_pcs, pc, test_pc); }
-                    action.unwrap_or_else(|| offline(ui))
-                });
-            }
-            if !layered {
-                setting_row(ui, s, &mut rows, &["post_stream_decode_time"], "Show decode time after streaming", "Shows the average decode time when a stream ends: this device’s decoding only, not the end-to-end latency.", |ui, s| {
-                    toggle(ui, &mut s.post_stream_decode_time)
-                });
-                rows.action("latency_benchmark");
-                setting_row(ui, s, &mut rows, &[], "Latency benchmark", "Tests this device’s decode and display timing without a PC.", |ui, _| {
-                    let button = quiet_button(ui, "Open");
-                    if button.clicked() { open_page = Some(Screen::LatencyBenchmark); }
-                    links.push(("latency-benchmark-link", button.clone()));
-                    button
-                });
-                rows.action("export_latency_csv");
-                setting_row(ui, s, &mut rows, &[], "Export latency CSV", "Saves the latest latency measurements.", |ui, _| {
-                    let button = quiet_button(ui, "Export");
-                    if button.clicked() { commands.push(Command::ExportLatencyCsv); }
-                    button
-                });
-            }
-
             rows.section(en("Debug"));
             // Android's main rows first, in its order.
             setting_row(ui, s, &mut rows, &["error_correction"], "Error correction", "FEC: extra data the PC adds to repair lost packets, taken from the picture’s bitrate. Leave it on PC’s setting; try Automatic if the picture breaks up often.", |ui, s| {
@@ -1607,6 +1561,55 @@ impl Launcher {
             setting_row(ui, s, &mut rows, &["cursor_shapes"], "Local cursor", "Draws the PC’s cursor here in Desktop pointer mode, without video delay.", |ui, s| {
                 toggle(ui, &mut s.cursor_shapes)
             });
+            rows.group(en("Diagnostics"));
+            setting_row(ui, s, &mut rows, &["link_probe"], "Test the link before starting", "A new stream at the automatic bitrate measures the connection first and starts no higher. Leave it off: in our measurements, streams then started lower, with more loss and freezes.", |ui, s| {
+                toggle(ui, &mut s.link_probe)
+            });
+            // Where a PC measures it, or a pace was saved; a PC's own page also has it.
+            if let Some(pc) = network_test_pc(&pace_pcs, *test_pc) {
+                let pace = pc.record.pace.as_ref();
+                if let Some(pace) = pace {
+                    rows.note(trf("{} Mbps · {}", &[&pace.pace_mbps, &if pace.qualified { tr("confirmed") } else { tr("best available") }]), *ON_SURFACE_VARIANT);
+                }
+                rows.action("pyrowave_pace");
+                rows.room((if pace_pcs.len() > 1 { TEST_PC_W } else { 0.0 }) + (if pace.is_some() { 80.0 } else { 0.0 }));
+                setting_row(ui, s, &mut rows, &[], "PyroWave frame pace", "Finds and saves the fastest pace at which a PC’s PyroWave frames arrive whole, for links that lose frame ends, such as a USB Ethernet dock. Takes one to three minutes.", |ui, _| {
+                    let online = pc.reach == Reach::Online;
+                    let mut action = None;
+                    if online && pc.info.as_ref().is_some_and(|i| i.pyrowave_burst_probe) {
+                        let button = quiet_button(ui, "Calibrate");
+                        if button.clicked() { commands.push(Command::NetworkTest { host: pc.id, calibrate: true }); }
+                        action = Some(button);
+                    } else if !online {
+                        action = Some(offline(ui));
+                    }
+                    if pace.is_some() {
+                        let clear = text_button(ui, "Clear");
+                        if clear.clicked() { commands.push(Command::ClearPace(pc.id)); }
+                        action.get_or_insert(clear);
+                    }
+                    if pace_pcs.len() > 1 { test_pc_choice(ui, "pace-pc", &pace_pcs, pc, test_pc); }
+                    action.unwrap_or_else(|| offline(ui))
+                });
+            }
+            if !layered {
+                setting_row(ui, s, &mut rows, &["post_stream_decode_time"], "Show decode time after streaming", "Shows the average decode time when a stream ends: this device’s decoding only, not the end-to-end latency.", |ui, s| {
+                    toggle(ui, &mut s.post_stream_decode_time)
+                });
+                rows.action("latency_benchmark");
+                setting_row(ui, s, &mut rows, &[], "Latency benchmark", "Tests this device’s decode and display timing without a PC.", |ui, _| {
+                    let button = quiet_button(ui, "Open");
+                    if button.clicked() { open_page = Some(Screen::LatencyBenchmark); }
+                    links.push(("latency-benchmark-link", button.clone()));
+                    button
+                });
+                rows.action("export_latency_csv");
+                setting_row(ui, s, &mut rows, &[], "Export latency CSV", "Saves the latest latency measurements.", |ui, _| {
+                    let button = quiet_button(ui, "Export");
+                    if button.clicked() { commands.push(Command::ExportLatencyCsv); }
+                    button
+                });
+            }
             rows.finish();
 
             if searching && rows.found.iter().sum::<usize>() == 0 {
@@ -2195,11 +2198,11 @@ pub(super) fn value_text(key: &str, s: &Settings, display: &Display, style: crat
 /// by Android preference key, in `SETTINGS_SECTIONS` order. A test keeps the two equal.
 pub(super) const MAIN_KEYS: [(&str, &[&str]); 8] = [
     ("video", &["list_resolution", "list_fps", "automatic_bitrate", "seekbar_bitrate_kbps", "adaptive_bitrate", "list_mobile_bitrate_kbps", "video_format", "checkbox_enable_hdr"]),
-    ("display", &["checkbox_stretch_video", "stream_orientation", "checkbox_vrr", "frame_pacing"]),
-    ("input", &["checkbox_touchscreen_trackpad", "checkbox_absolute_mouse_mode", "controllers", "controller_button_mapping", "controller_test", "checkbox_show_onscreen_controls", "checkbox_keyboard_follows_text_fields", "checkbox_clipboard_sync"]),
+    ("display", &["video_scaling", "stream_orientation", "checkbox_vrr", "frame_pacing"]),
+    ("input", &["touch_mode", "checkbox_absolute_mouse_mode", "controllers", "controller_button_mapping", "controller_test", "checkbox_show_onscreen_controls", "checkbox_keyboard_follows_text_fields", "checkbox_clipboard_sync"]),
     ("audio", &["list_audio_config", "checkbox_host_audio", "checkbox_enable_mic", "checkbox_mic_button"]),
     ("streaming", &["checkbox_enable_perf_overlay", "performance_overlay_position", "checkbox_auto_reconnect", "network_tests"]),
-    ("app", &["checkbox_always_dark", "list_languages", "list_open_on_start", "checkbox_quick_resume", "pin_lock", "help", "report_problem", "check_updates_now"]),
+    ("app", &["theme", "list_languages", "list_open_on_start", "checkbox_quick_resume", "pin_lock", "help", "report_problem", "check_updates_now"]),
     ("advanced", &["checkbox_rust_engine", "low_latency_decoding", "low_latency_customize", "gpu_driver", "checkbox_gpu_max_clocks", "checkbox_texture_view", "checkbox_vulkan_render"]),
     ("debug", &["list_fec_choice", "checkbox_tell_host_wireless", "checkbox_tell_host_link_speed", "checkbox_network_priority", "checkbox_unbatched_input", "checkbox_full_range"]),
 ];
@@ -2217,7 +2220,7 @@ pub(super) const ANDROID_KEYS: &[(&str, &str)] = &[
     ("adaptive_quality", "adaptive_quality_mode"), ("quality_min_short_edge", "adaptive_quality_min_resolution"),
     ("quality_min_fps", "adaptive_quality_min_fps"),
     // Display & image
-    ("video_scaling", "checkbox_stretch_video"), ("vrr", "checkbox_vrr"), ("present_at_host_times", "checkbox_real_vrr"),
+    ("video_scaling", "video_scaling"), ("vrr", "checkbox_vrr"), ("present_at_host_times", "checkbox_real_vrr"),
     ("frame_pacing", "frame_pacing"), ("upscaling", "upscaling_mode"),
     ("upscale_sharpness", "upscaling_sharpness"),
     ("align_video_top", "video_alignment"), ("virtual_display", "checkbox_virtual_display"),
@@ -2225,7 +2228,7 @@ pub(super) const ANDROID_KEYS: &[(&str, &str)] = &[
     ("host_display", "host_display_location"),
     // Controls
     ("mouse_mode", "checkbox_absolute_mouse_mode"), ("controllers", "controllers"), ("controller_buttons", "controller_button_mapping"),
-    ("controller_test", "controller_test"), ("clipboard_sync", "checkbox_clipboard_sync"), ("swap_face_buttons", "checkbox_flip_face_buttons"),
+    ("controller_test", "controller_test"), ("keyboard_follows_text_fields", "checkbox_keyboard_follows_text_fields"), ("clipboard_sync", "checkbox_clipboard_sync"), ("swap_face_buttons", "checkbox_flip_face_buttons"),
     ("gamepad_quit_combo", "list_gamepad_quit_combo"), ("deadzone", "seekbar_deadzone"), ("trigger_deadzone", "seekbar_trigger_deadzone"),
     ("controller_motion", "checkbox_gamepad_motion_sensors"), ("disable_rumble", "checkbox_disable_rumble"),
     ("controller_mouse", "checkbox_mouse_emulation"), ("analog_scrolling", "analog_scrolling"),
@@ -2249,19 +2252,20 @@ pub(super) const ANDROID_KEYS: &[(&str, &str)] = &[
     ("hide_connection_warnings", "checkbox_disable_warnings"), ("dual_screen", "checkbox_dual_screen"),
     ("second_screen_width", "list_resolution_screen2"), ("input_only_any_host", "checkbox_input_only_any_host"),
     // App
-    ("theme", "checkbox_always_dark"), ("language", "list_languages"), ("open_on_start", "list_open_on_start"),
+    ("theme", "theme"), ("language", "list_languages"), ("open_on_start", "list_open_on_start"),
     ("quick_resume", "checkbox_quick_resume"), ("pin_lock", "pin_lock"), ("help", "help"), ("report_problem", "report_problem"), ("check_updates_now", "check_updates_now"),
     ("check_updates", "checkbox_check_updates"), ("home_card_size", "checkbox_small_icon_mode"), ("about_app", "about_app"),
     ("reset_all", "reset_all"),
     ("ui_zoom", "list_ui_scale"), ("high_contrast", "checkbox_high_contrast"), ("reduce_motion", "list_reduce_motion"),
     // Advanced
-    ("sops", "checkbox_enable_sops"), ("link_probe", "checkbox_link_probe"), ("pyrowave_pace", "pace_calibration"),
-    ("post_stream_decode_time", "checkbox_enable_post_stream_toast"), ("latency_benchmark", "latency_benchmark"),
-    ("export_latency_csv", "export_latency_csv"),
+    ("sops", "checkbox_enable_sops"),
     // Debug
     ("error_correction", "list_fec_choice"),
     ("tell_host_wireless", "checkbox_tell_host_wireless"), ("tell_host_link_speed", "checkbox_tell_host_link_speed"),
     ("network_priority", "checkbox_network_priority"), ("unbatched_input", "checkbox_unbatched_input"), ("full_range", "checkbox_full_range"),
+    ("link_probe", "checkbox_link_probe"), ("pyrowave_pace", "pace_calibration"),
+    ("post_stream_decode_time", "checkbox_enable_post_stream_toast"), ("latency_benchmark", "latency_benchmark"),
+    ("export_latency_csv", "export_latency_csv"),
 ];
 
 /// Main rows Android has no match for: the desktop's window, and the graphics card and renderer

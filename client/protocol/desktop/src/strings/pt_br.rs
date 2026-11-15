@@ -1591,4 +1591,6 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer de recepção: o sistema concedeu 
     ("Except mobile data", "Exceto dados móveis"),
     ("Any network", "Qualquer rede"),
     ("The stream moves to the new address when this device switches networks, instead of waiting for the old one; Any network also moves it onto mobile data or another metered network, which uses a lot of data. Leave it on Except mobile data; needs PC support.", "A transmissão passa para o novo endereço quando este dispositivo troca de rede, em vez de esperar o antigo; “Qualquer rede” também a passa para dados móveis ou outra rede limitada, o que usa muitos dados. Deixe em “Exceto dados móveis”; precisa de um PC compatível."),
+    ("Keyboard follows text fields", "Teclado acompanha campos de texto"),
+    ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields and does nothing on a computer without an on-screen keyboard; turn off to open it yourself.", "Abre o teclado na tela quando você seleciona um campo de texto no PC e o fecha depois. Requer um PC que informe os campos de texto e não faz nada em um computador sem teclado na tela; desative para abri-lo por conta própria."),
 ];

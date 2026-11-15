@@ -74,7 +74,7 @@ public class AppThemeTest {
 
     private static void black(boolean enabled) {
         PreferenceManager.getDefaultSharedPreferences(RuntimeEnvironment.getApplication())
-                .edit().putBoolean(AppTheme.OLED_BLACK, enabled).commit();
+                .edit().putString(AppTheme.THEME, enabled ? AppTheme.THEME_OLED_BLACK : AppTheme.THEME_SYSTEM).commit();
     }
 
     @Test
@@ -102,7 +102,7 @@ public class AppThemeTest {
     @Test
     public void alwaysDarkUsesTheGreyNightPaletteInSystemLightMode() {
         PreferenceManager.getDefaultSharedPreferences(RuntimeEnvironment.getApplication())
-                .edit().putBoolean(AppTheme.ALWAYS_DARK, true).commit();
+                .edit().putString(AppTheme.THEME, AppTheme.THEME_DARK).commit();
         ActivityController<Screen> controller = Robolectric.buildActivity(Screen.class).setup();
         try {
             Screen screen = controller.get();
@@ -111,7 +111,7 @@ public class AppThemeTest {
             assertNotEquals(0xff000000, surface);
             assertEquals(0, screen.getWindow().getDecorView().getSystemUiVisibility() &
                     (View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR));
-            PreferenceManager.getDefaultSharedPreferences(screen).edit().putBoolean(AppTheme.ALWAYS_DARK, false).commit();
+            PreferenceManager.getDefaultSharedPreferences(screen).edit().putString(AppTheme.THEME, AppTheme.THEME_SYSTEM).commit();
             assertEquals(1, screen.recreationRequests);
         } finally {
             controller.pause().stop().destroy();

@@ -13,8 +13,14 @@ import com.limelight.R;
 
 /** App appearance is independent of stream profiles and the system's day/night setting. */
 public final class AppTheme {
-    public static final String OLED_BLACK = "checkbox_oled_black";
-    public static final String ALWAYS_DARK = "checkbox_always_dark";
+    /** The app theme, one of the THEME_ values (ThemeChoice); two switches before, which migrateTheme moves here. */
+    public static final String THEME = "theme";
+    public static final String THEME_SYSTEM = "system";
+    public static final String THEME_DARK = "dark";
+    public static final String THEME_OLED_BLACK = "oled_black";
+    // The two switches the theme was stored in; never a setting again (SettingsKeysTest.RETIRED).
+    public static final String RETIRED_OLED_BLACK = "checkbox_oled_black";
+    public static final String RETIRED_ALWAYS_DARK = "checkbox_always_dark";
     public static final String HIGH_CONTRAST = "checkbox_high_contrast";
     /** The app's interface size in percent, stored as a string like the other list settings. */
     public static final String UI_SCALE = "list_ui_scale";
@@ -40,7 +46,26 @@ public final class AppTheme {
     /** Black surfaces are in effect: the OLED black setting, or high contrast, which is always black. */
     public static boolean isOledBlack(Context context) {
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
-        return prefs.getBoolean(OLED_BLACK, false) || prefs.getBoolean(HIGH_CONTRAST, false);
+        return THEME_OLED_BLACK.equals(theme(prefs)) || prefs.getBoolean(HIGH_CONTRAST, false);
+    }
+
+    /**
+     * The stored theme. The two switches it replaced win while they are stored (an older version may have written
+     * them after the move); migrateTheme then moves them here.
+     */
+    public static String theme(SharedPreferences prefs) {
+        if (prefs.contains(RETIRED_OLED_BLACK) || prefs.contains(RETIRED_ALWAYS_DARK)) {
+            if (prefs.getBoolean(RETIRED_OLED_BLACK, false)) return THEME_OLED_BLACK;
+            return prefs.getBoolean(RETIRED_ALWAYS_DARK, false) ? THEME_DARK : THEME_SYSTEM;
+        }
+        String theme = prefs.getString(THEME, THEME_SYSTEM);
+        return THEME_DARK.equals(theme) || THEME_OLED_BLACK.equals(theme) ? theme : THEME_SYSTEM;
+    }
+
+    /** Moves the theme from its two older switches to {@link #THEME}; changes nothing a second time. */
+    public static void migrateTheme(SharedPreferences prefs) {
+        if (!prefs.contains(RETIRED_OLED_BLACK) && !prefs.contains(RETIRED_ALWAYS_DARK)) return;
+        prefs.edit().putString(THEME, theme(prefs)).remove(RETIRED_OLED_BLACK).remove(RETIRED_ALWAYS_DARK).apply();
     }
 
     /** The TV screens' canvas under their backdrops: tv_canvas, or black under OLED black. */
@@ -147,7 +172,8 @@ public final class AppTheme {
     }
 
     static boolean affectsAppearance(String key) {
-        return key == null || OLED_BLACK.equals(key) || ALWAYS_DARK.equals(key) || HIGH_CONTRAST.equals(key) ||
+        return key == null || THEME.equals(key) || RETIRED_OLED_BLACK.equals(key) || RETIRED_ALWAYS_DARK.equals(key) ||
+                HIGH_CONTRAST.equals(key) ||
                 UI_SCALE.equals(key) || UI_MODE.equals(key) || Motion.REDUCE_MOTION.equals(key);
     }
 
@@ -158,7 +184,7 @@ public final class AppTheme {
      */
     public static boolean isDark(Context context) {
         return isOledBlack(context) || isTelevision(context) ||
-                PreferenceManager.getDefaultSharedPreferences(context).getBoolean(ALWAYS_DARK, false);
+                THEME_DARK.equals(theme(PreferenceManager.getDefaultSharedPreferences(context)));
     }
 
     /** Whether the context lays out as a TV: a TV, or the TV interface chosen in Settings (see {@link #scaled}). */

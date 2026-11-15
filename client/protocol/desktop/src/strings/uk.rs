@@ -1591,4 +1591,6 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приймання: систе
     ("Except mobile data", "Крім мобільних даних"),
     ("Any network", "Будь-яка мережа"),
     ("The stream moves to the new address when this device switches networks, instead of waiting for the old one; Any network also moves it onto mobile data or another metered network, which uses a lot of data. Leave it on Except mobile data; needs PC support.", "Коли цей пристрій змінює мережу, трансляція переходить на нову адресу, а не чекає на стару; «Будь-яка мережа» переводить її й на мобільні дані чи іншу лімітну мережу, що витрачає багато даних. Залиште «Крім мобільних даних»; потрібна підтримка ПК."),
+    ("Keyboard follows text fields", "Клавіатура стежить за текстовими полями"),
+    ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields and does nothing on a computer without an on-screen keyboard; turn off to open it yourself.", "Відкриває екранну клавіатуру, коли ви вибираєте текстове поле на ПК, і закриває її після цього. Потрібен ПК, який повідомляє про текстові поля; на комп’ютері без екранної клавіатури нічого не робить. Вимкніть, щоб відкривати її самостійно."),
 ];

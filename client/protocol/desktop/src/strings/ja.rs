@@ -1591,4 +1591,6 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("Except mobile data", "モバイルデータ以外"),
     ("Any network", "すべてのネットワーク"),
     ("The stream moves to the new address when this device switches networks, instead of waiting for the old one; Any network also moves it onto mobile data or another metered network, which uses a lot of data. Leave it on Except mobile data; needs PC support.", "このデバイスがネットワークを切り替えると、ストリームは元のアドレスを待たずに新しいアドレスへ移ります。「すべてのネットワーク」ではモバイルデータなどの従量制ネットワークにも移り、大量のデータを使います。「モバイルデータ以外」のままにしてください。PC の対応が必要です。"),
+    ("Keyboard follows text fields", "テキスト欄に合わせてキーボードを表示"),
+    ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields and does nothing on a computer without an on-screen keyboard; turn off to open it yourself.", "PC のテキスト欄を選ぶとスクリーンキーボードが開き、入力が終わると閉じます。テキスト欄を通知する PC が必要で、スクリーンキーボードのないコンピューターでは何もしません。自分で開きたい場合はオフにしてください。"),
 ];

@@ -1591,4 +1591,6 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("Except mobile data", "Trừ dữ liệu di động"),
     ("Any network", "Mọi mạng"),
     ("The stream moves to the new address when this device switches networks, instead of waiting for the old one; Any network also moves it onto mobile data or another metered network, which uses a lot of data. Leave it on Except mobile data; needs PC support.", "Stream chuyển sang địa chỉ mới khi thiết bị này đổi mạng, thay vì chờ địa chỉ cũ; “Mọi mạng” còn chuyển stream sang dữ liệu di động hoặc mạng tính phí khác, vốn tốn nhiều dữ liệu. Để ở “Trừ dữ liệu di động”; cần PC hỗ trợ."),
+    ("Keyboard follows text fields", "Bàn phím theo trường văn bản"),
+    ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields and does nothing on a computer without an on-screen keyboard; turn off to open it yourself.", "Mở bàn phím ảo khi bạn chọn một trường văn bản trên PC và đóng lại sau đó. Cần PC có báo trường văn bản và không có tác dụng trên máy tính không có bàn phím ảo; tắt để tự mở bàn phím."),
 ];

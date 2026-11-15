@@ -448,7 +448,7 @@ public class SettingsBatchTest {
     // Pickers that write the two older switches
 
     @Test
-    public void themeChoiceWritesBothOlderSwitchesAndReadsOlderValues() {
+    public void themeChoiceWritesOneValueAndReadsTheOlderSwitches() {
         SharedPreferences p = prefs();
         assertEquals(ThemeChoice.SYSTEM, ThemeChoice.read(p));
         p.edit().putBoolean("checkbox_always_dark", true).commit();
@@ -463,8 +463,9 @@ public class SettingsBatchTest {
             ThemeChoice.save(editor, choice);
             editor.commit();
             assertEquals(choice, ThemeChoice.read(p));
-            assertEquals(choice != 0, p.getBoolean("checkbox_always_dark", false));
-            assertEquals(choice == 2, p.getBoolean("checkbox_oled_black", false));
+            assertEquals(new String[] {"system", "dark", "oled_black"}[choice], p.getString("theme", null));
+            assertFalse(p.contains("checkbox_always_dark"));
+            assertFalse(p.contains("checkbox_oled_black"));
         }
     }
 
@@ -500,7 +501,7 @@ public class SettingsBatchTest {
     public void highContrastIsNotedOnTheThemePickerBecauseItKeepsTheAppBlack() {
         prefs().edit().putBoolean("checkbox_high_contrast", true).commit();
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
-            Preference theme = section(controller, "app").findPreference("checkbox_always_dark");
+            Preference theme = section(controller, "app").findPreference("theme");
             assertEquals("System\nHigh contrast keeps the app black", theme.getSummary().toString());
         }
     }
@@ -512,21 +513,20 @@ public class SettingsBatchTest {
         // from a fresh screen.
         ActivityController<StreamSettings> first = Robolectric.buildActivity(StreamSettings.class).setup();
         PreferenceScreen app = section(first, "app");
-        Preference theme = app.findPreference("checkbox_always_dark");
+        Preference theme = app.findPreference("theme");
         assertNull(app.findPreference("checkbox_oled_black"));
         assertEquals("Theme", theme.getTitle().toString());
         assertEquals("Dark", theme.getSummary().toString());
         choose(theme, 2);
-        assertTrue(prefs().getBoolean("checkbox_always_dark", false));
-        assertTrue(prefs().getBoolean("checkbox_oled_black", false));
+        assertEquals("oled_black", prefs().getString("theme", null));
+        assertFalse(prefs().contains("checkbox_always_dark"));
         ActivityController<StreamSettings> second = Robolectric.buildActivity(StreamSettings.class).setup();
-        theme = section(second, "app").findPreference("checkbox_always_dark");
+        theme = section(second, "app").findPreference("theme");
         assertEquals("OLED black", theme.getSummary().toString());
         choose(theme, 0);
-        assertFalse(prefs().getBoolean("checkbox_always_dark", true));
-        assertFalse(prefs().getBoolean("checkbox_oled_black", true));
+        assertEquals("system", prefs().getString("theme", null));
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
-            assertEquals("System", section(controller, "app").findPreference("checkbox_always_dark").getSummary().toString());
+            assertEquals("System", section(controller, "app").findPreference("theme").getSummary().toString());
             PreferenceScreen streaming = section(controller, "streaming");
             Preference overlay = streaming.findPreference("checkbox_enable_perf_overlay");
             assertNull(streaming.findPreference("performance_overlay_mode"));

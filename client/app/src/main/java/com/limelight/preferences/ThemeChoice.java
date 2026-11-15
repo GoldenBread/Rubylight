@@ -5,9 +5,9 @@ import android.content.SharedPreferences;
 import com.limelight.ui.AppTheme;
 
 /**
- * The app theme as one choice: System, Dark or OLED black. It is stored as before, as two switches
- * ({@code checkbox_always_dark} and {@code checkbox_oled_black}), so older values keep working. OLED black is a
- * darker variant of Dark, so choosing it sets both; a store with only OLED black set reads as OLED black too.
+ * The app theme as one choice: System, Dark or OLED black, stored under {@link AppTheme#THEME}. Before, it was two
+ * switches ({@code checkbox_always_dark} and {@code checkbox_oled_black}); {@link AppTheme#theme} reads them while
+ * they remain, so a store with only OLED black set reads as OLED black too.
  */
 final class ThemeChoice {
     static final int SYSTEM = 0;
@@ -17,12 +17,13 @@ final class ThemeChoice {
     private ThemeChoice() { }
 
     static int read(SharedPreferences prefs) {
-        if (prefs.getBoolean(AppTheme.OLED_BLACK, false)) return OLED_BLACK;
-        return prefs.getBoolean(AppTheme.ALWAYS_DARK, false) ? DARK : SYSTEM;
+        String theme = AppTheme.theme(prefs);
+        return AppTheme.THEME_OLED_BLACK.equals(theme) ? OLED_BLACK : AppTheme.THEME_DARK.equals(theme) ? DARK : SYSTEM;
     }
 
     static void save(SharedPreferences.Editor editor, int choice) {
-        editor.putBoolean(AppTheme.ALWAYS_DARK, choice != SYSTEM);
-        editor.putBoolean(AppTheme.OLED_BLACK, choice == OLED_BLACK);
+        editor.putString(AppTheme.THEME, choice == OLED_BLACK ? AppTheme.THEME_OLED_BLACK :
+                        choice == DARK ? AppTheme.THEME_DARK : AppTheme.THEME_SYSTEM)
+                .remove(AppTheme.RETIRED_ALWAYS_DARK).remove(AppTheme.RETIRED_OLED_BLACK);
     }
 }

@@ -467,8 +467,8 @@ fn the_section_key_table_is_what_the_page_draws() {
 /// the main settings and a PC's own; the search still finds them there. Advanced holds the
 /// renderer, the game hint and the link and pace tests; Video position stays in Display & image.
 #[test]
-fn the_developer_rows_are_in_debug_and_the_tools_in_advanced() {
-    // Android's main rows in its order, then PyroWave's, the decoder's and the cursor.
+fn the_developer_rows_and_diagnostics_are_in_debug() {
+    // Android's main rows in its order, then PyroWave's, the decoder's, the cursor and Diagnostics.
     const DEBUG: [&str; 12] = ["error_correction", "tell_host_wireless", "tell_host_link_speed",
         "network_priority", "unbatched_input", "full_range", "pyrowave_decoder", "pyrowave_async_compute", "decoder",
         "vulkan_video_first", "vulkan_rfi", "cursor_shapes"];
@@ -491,7 +491,13 @@ fn the_developer_rows_are_in_debug_and_the_tools_in_advanced() {
             f.settle();
             let drawn = setting_keys(&f);
             match section {
-                "Debug" => assert_eq!(drawn, wanted, "{screen:?}: Debug holds exactly these"),
+                "Debug" => {
+                    // Diagnostics, last; decode time after streaming belongs to the whole app.
+                    let mut wanted = wanted.clone();
+                    wanted.push("link_probe");
+                    if screen == Screen::Settings { wanted.push("post_stream_decode_time"); }
+                    assert_eq!(drawn, wanted, "{screen:?}: Debug holds exactly these")
+                }
                 _ => assert!(!drawn.iter().any(|k| DEBUG.contains(k)), "{screen:?} {section}: {drawn:?}"),
             }
             assert_eq!(drawn.contains(&"align_video_top"), section == "Display & image", "{screen:?} {section}: {drawn:?}");
@@ -502,7 +508,7 @@ fn the_developer_rows_are_in_debug_and_the_tools_in_advanced() {
                 for key in ["display_output", "video_planes", "high_performance_gpu_power"] {
                     assert_eq!(drawn.contains(&key), cfg!(target_os = "linux") && screen == Screen::Settings, "{key}: {drawn:?}");
                 }
-                assert!(drawn.contains(&"sops") && drawn.contains(&"link_probe"), "{screen:?}: {drawn:?}");
+                assert!(drawn.contains(&"sops") && !drawn.contains(&"link_probe"), "{screen:?}: {drawn:?}");
             }
         }
     }
@@ -1069,7 +1075,7 @@ fn in_section(f: &mut Frames, section: &'static str) {
 }
 
 /// A customer looked for the PyroWave calibration in Settings: Connection test is one of
-/// Streaming's main rows, the frame pace is under Advanced › Diagnostics, as on a PC's own
+/// Streaming's main rows, the frame pace is under Debug › Diagnostics, as on a PC's own
 /// settings, and the search finds both.
 #[test]
 fn the_connection_test_and_frame_pace_are_in_the_main_settings_and_a_pcs_own() {
@@ -1085,7 +1091,7 @@ fn the_connection_test_and_frame_pace_are_in_the_main_settings_and_a_pcs_own() {
         assert_eq!(row_words(&f, "Connection test"), ["Test"], "{page:?}");
         let commands = click_text(&mut f, "Test");
         assert!(matches!(commands[..], [Command::NetworkTest { host, calibrate: false }] if host == id), "{page:?}: {} commands", commands.len());
-        in_section(&mut f, "Advanced");
+        in_section(&mut f, "Debug");
         assert!(shows(&f, "Diagnostics"), "{page:?}: {:?}", f.drawn);
         assert_eq!(row_words(&f, "PyroWave frame pace"), ["Calibrate"], "{page:?}: nothing to clear before a calibration");
         let commands = click_text(&mut f, "Calibrate");
@@ -1094,14 +1100,14 @@ fn the_connection_test_and_frame_pace_are_in_the_main_settings_and_a_pcs_own() {
     // A saved pace says so and can be cleared, from the main settings too.
     f.hosts.list[0].record.pace = Some(crate::config::PaceCalibration { pace_mbps: 180, client_link_mbps: 1000, host_link_mbps: 2500, wifi: false, ssid: None, qualified: true });
     f.l.go(Screen::Settings);
-    in_section(&mut f, "Advanced");
+    in_section(&mut f, "Debug");
     assert!(shows(&f, "180 Mbps · confirmed"), "{:?}", f.drawn);
     let commands = click_text(&mut f, "Clear");
     assert!(matches!(commands[..], [Command::ClearPace(host)] if host == id), "{} commands", commands.len());
 
     let at = |name: &str| SETTINGS_SECTIONS.iter().position(|s| *s == name).unwrap();
     for (query, row, section) in [("connection test", "Connection test", "Streaming"), ("download speed", "Connection test", "Streaming"),
-        ("pyrowave frame pace", "PyroWave frame pace", "Advanced"), ("diagnostics", "PyroWave frame pace", "Advanced")] {
+        ("pyrowave frame pace", "PyroWave frame pace", "Debug"), ("diagnostics", "PyroWave frame pace", "Debug")] {
         f.l.settings_view.query = query.into();
         f.settle();
         assert!(shows(&f, row) && f.l.settings_view.found[at(section)] > 0, "{query}: {:?} {:?}", f.l.settings_view.found, f.drawn);
@@ -1132,7 +1138,7 @@ fn the_main_settings_tests_choose_among_several_paired_pcs() {
     // It is off the network: both tests wait for it.
     let words = row_words(&f, "Connection test");
     assert!(words.contains(&"Desk") && words.contains(&"Offline") && !words.contains(&"Test"), "{words:?}");
-    in_section(&mut f, "Advanced");
+    in_section(&mut f, "Debug");
     let words = row_words(&f, "PyroWave frame pace");
     assert!(words.contains(&"Desk") && words.contains(&"Offline") && !words.contains(&"Calibrate"), "{words:?}");
     f.hosts.list[1].reach = Reach::Online;
@@ -1165,7 +1171,7 @@ fn the_tests_have_no_row_without_a_pc_that_runs_them() {
         let mut f = settings_with_pcs(pcs);
         in_section(&mut f, "Streaming");
         assert!(!shows(&f, "Connection test") && shows(&f, "Recover interrupted streams") && shows(&f, "Keep streaming when the network changes"), "{:?}", f.drawn);
-        in_section(&mut f, "Advanced");
+        in_section(&mut f, "Debug");
         assert!(!shows(&f, "PyroWave frame pace") && shows(&f, "Test the link before starting"), "{:?}", f.drawn);
         assert!(test_pcs(Screen::Settings, &f.hosts, Host::bandwidth_test).is_empty());
     }
@@ -1177,7 +1183,7 @@ fn the_tests_have_no_row_without_a_pc_that_runs_them() {
     let id = f.hosts.list[0].id;
     let commands = click_text(&mut f, "Test");
     assert!(matches!(commands[..], [Command::NetworkTest { host, calibrate: false }] if host == id), "{} commands", commands.len());
-    in_section(&mut f, "Advanced");
+    in_section(&mut f, "Debug");
     assert!(!shows(&f, "PyroWave frame pace"), "no calibration without PyroWave: {:?}", f.drawn);
 }
 
@@ -1198,6 +1204,29 @@ fn system_keys_only_in_full_screen_is_a_choice_of_send_system_keys() {
     let rows = setting_keys(&f);
     let at = rows.iter().position(|key| *key == "capture_system_keys").unwrap();
     assert_eq!(rows[at + 1], "right_alt_as_meta", "one row");
+}
+
+/// "Keyboard follows text fields", as on Android: on by default, also for a settings file from
+/// before it, a main row of Controls beside Clipboard sync, and a PC's own page has it too.
+#[test]
+fn keyboard_follows_text_fields_is_a_controls_setting_on_by_default() {
+    assert!(Settings::default().keyboard_follows_text_fields);
+    let old: Settings = serde_json::from_str("{}").unwrap();
+    assert!(old.keyboard_follows_text_fields, "a settings file from before");
+    let off: Settings = serde_json::from_str(r#"{"keyboard_follows_text_fields":false}"#).unwrap();
+    assert!(!off.keyboard_follows_text_fields);
+    let mut f = settings_with(Settings::default());
+    let id = f.hosts.list[0].id;
+    for screen in [Screen::Settings, Screen::HostSettings(id)] {
+        f.l.go(screen);
+        f.l.settings_view.section = "Controls";
+        f.settle();
+        let rows = setting_keys(&f);
+        let at = rows.iter().position(|key| *key == "keyboard_follows_text_fields").unwrap_or_else(|| panic!("{screen:?}: {rows:?}"));
+        assert_eq!(rows[at + 1], "clipboard_sync", "{screen:?}: a main row, as on Android");
+        assert!(shows(&f, "Keyboard follows text fields"), "{:?}", f.drawn);
+    }
+    assert!(ANDROID_KEYS.contains(&("keyboard_follows_text_fields", "checkbox_keyboard_follows_text_fields")));
 }
 
 /// The rows that were two switches each are one choice, and a value saved by an earlier version
@@ -1521,7 +1550,7 @@ fn the_app_and_diagnostics_rows_from_android_do_what_they_say() {
     f.settle();
     assert_eq!(f.l.screen, Screen::Settings);
 
-    f.l.settings_view.section = "Advanced";
+    f.l.settings_view.section = "Debug";
     f.settle();
     assert!(setting_keys(&f).contains(&"post_stream_decode_time"), "{:?}", setting_keys(&f));
     let commands = click_text(&mut f, "Export");
@@ -1536,7 +1565,7 @@ fn the_app_and_diagnostics_rows_from_android_do_what_they_say() {
     open_folds(&mut f);
     let id = f.hosts.list[0].id;
     f.l.open_host_settings(id, &f.hosts.list[0]);
-    f.l.settings_view.section = "Advanced";
+    f.l.settings_view.section = "Debug";
     f.settle();
     assert!(!shows(&f, "Show decode time after streaming") && !shows(&f, "Latency benchmark") && !shows(&f, "Export latency CSV"), "{:?}", f.drawn);
 }

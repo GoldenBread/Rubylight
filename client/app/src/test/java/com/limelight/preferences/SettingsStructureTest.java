@@ -122,7 +122,7 @@ public class SettingsStructureTest {
             screen.showSection("input");
             settle(screen);
             StreamSettings.SettingsFragment input = (StreamSettings.SettingsFragment) shown(screen);
-            assertEquals(R.layout.settings_preference_value, input.findPreference("checkbox_touchscreen_trackpad").getLayoutResource());
+            assertEquals(R.layout.settings_preference_value, input.findPreference("touch_mode").getLayoutResource());
         }
     }
 
@@ -201,7 +201,7 @@ public class SettingsStructureTest {
             PreferenceScreen controls = open(screen, "input").getPreferenceScreen();
             // The main rows in an untitled first group, then the More row (open here), then the groups behind it.
             assertEquals(Arrays.asList("category_input_main", "category_more_input"), keys(controls).subList(0, 2));
-            assertEquals(Arrays.asList("checkbox_touchscreen_trackpad", "checkbox_absolute_mouse_mode",
+            assertEquals(Arrays.asList("touch_mode", "checkbox_absolute_mouse_mode",
                     StreamSettings.CONTROLLERS_KEY, "controller_button_mapping", "controller_test",
                     "checkbox_show_onscreen_controls", "checkbox_keyboard_follows_text_fields", "checkbox_clipboard_sync"),
                     keys((PreferenceGroup) controls.getPreference(0)));
@@ -633,7 +633,7 @@ public class SettingsStructureTest {
     public void touchModeHelpKeepsThePickerOpen() {
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             StreamSettings screen = controller.get();
-            Preference touch = open(screen, "input").findPreference("checkbox_touchscreen_trackpad");
+            Preference touch = open(screen, "input").findPreference("touch_mode");
             assertEquals(screen.getResources().getStringArray(R.array.stream_touch_modes)[0], touch.getSummary().toString());
             touch.getOnPreferenceClickListener().onPreferenceClick(touch);
             AlertDialog picker = (AlertDialog) ShadowDialog.getLatestDialog();

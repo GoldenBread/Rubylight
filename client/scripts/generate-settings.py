@@ -13,7 +13,7 @@ SEEKBAR = "{http://schemas.moonlight-stream.com/apk/res/seekbar}"
 
 # Usage advice is editorial; labels, options, ranges, dependencies, sections and preset writes come from source.
 ADVICE = {
-    "checkbox_always_dark": "Choose System to follow the system theme, Dark for the dark grey theme on app screens, menus and dialogs even when the system uses a light theme (as most TVs do), or OLED black for pure black backgrounds. Applies immediately and stays separate from stream profiles. Stored as two switches, `checkbox_always_dark` and `checkbox_oled_black`; OLED black sets both, System clears both. High contrast keeps the app black whatever is chosen here.",
+    "theme": "Choose System to follow the system theme, Dark for the dark grey theme on app screens, menus and dialogs even when the system uses a light theme (as most TVs do), or OLED black for pure black backgrounds. Applies immediately and stays separate from stream profiles. Stored as two switches, `checkbox_always_dark` and `checkbox_oled_black`; OLED black sets both, System clears both. High contrast keeps the app black whatever is chosen here.",
     "list_ui_scale": "Raise for large, readable menus on a TV or a small phone; lower to fit more on screen. Scales the whole app layout, not the stream, and the system font size still applies on top. Applies immediately and stays separate from stream profiles.",
     "list_ui_mode": "Automatic follows the device. Choose TV on a handheld or phone that is connected to a TV (a Retroid Pocket docked over HDMI, for example) to get the TV layouts with focus, a remote or gamepad and larger rows; choose Handheld to get the touch layouts on a TV. The stream is not changed. Applies immediately and stays separate from stream profiles.",
     "checkbox_high_contrast": "Enable for a black background, body-coloured secondary text and outlines (7:1 against the background) and a 4 dp focus ring on every app screen. The stream is unchanged. Applies immediately and stays separate from stream profiles.",
@@ -42,7 +42,7 @@ ADVICE = {
     "seekbar_virtual_display_scale": "Change the PC's render resolution relative to the stream. Desktop text size stays as set on the host.",
     "list_virtual_display_dpi": "Raise for larger text and interface on the virtual display, for example on a small screen; the resolution does not change. PC's own keeps the scale set on the PC. Rubylight PCs read it; other hosts ignore it.",
     "sharp_color": "Off by default. On streams full color detail (4:4:4) so colored text and thin lines stay crisp: native 4:4:4 where this device decodes it and the PC encodes it, else packed full chroma where both offer it (New streaming engine, HEVC or AV1), else neither, and the app says once per PC why not. HDR keeps priority: packed full chroma runs with HDR only where both sides have a 10-bit packed mode. Hidden while the codec is PyroWave, whose own 4:4:4 choice applies. Stored as `checkbox_yuv444` and `experimental_packed_444`, both written; either one on from an older version reads as Automatic. The decision is nightjar-core's, the same as desktop Nightjar's.",
-    "checkbox_stretch_video": "How the stream fills a screen of another shape: Fit shows all of it with bars, Fill (crop) fills the screen and cuts off the edges that do not fit, Stretch fills it and distorts shapes, 1:1 pixels shows the stream at its own size, centred. The key is the older Stretch switch, still written (on only for Stretch) so older versions behave sensibly; the mode itself is stored as `video_scaling`. Also in the stream menu. See [video scaling](video-and-latency.md#video-scaling).",
+    "video_scaling": "How the stream fills a screen of another shape: Fit shows all of it with bars, Fill (crop) fills the screen and cuts off the edges that do not fit, Stretch fills it and distorts shapes, 1:1 pixels shows the stream at its own size, centred. The key is the older Stretch switch, still written (on only for Stretch) so older versions behave sensibly; the mode itself is stored as `video_scaling`. Also in the stream menu. See [video scaling](video-and-latency.md#video-scaling).",
     "video_alignment": "Top places a Fit or 1:1 picture at the top of the screen, leaving the space below for the soft keyboard or the lower half of a half-folded phone. No effect on Fill and Stretch, which cover the whole screen.",
     "stream_orientation": "Automatic uses landscape on phones and any orientation on tablets, squarish screens, windows and external displays. Landscape and Portrait lock the screen; Rotate with device follows it within the system rotation lock. A host streaming from its virtual display starts the stream in the screen's shape, and with Rotate with device asks for the turned size while the stream runs where the host takes in-stream reconfigure. Other hosts keep the stream's size and Video size fits it into the turned screen. Hidden on TVs. See [orientation](video-and-latency.md#orientation).",
     "seekbar_deadzone": "Raise to suppress stick drift; lower for small movements. Games can add their own deadzone on top.",
@@ -61,7 +61,7 @@ ADVICE = {
     "checkbox_mouse_emulation": "Leave on to toggle controller mouse mode by holding Start.",
     "analog_scrolling": "Choose which stick scrolls in controller mouse mode. The other moves the pointer; with None, both move it.",
     "checkbox_mouse_emulation_fixed_step": "Enable for precise pointing in controller mouse mode: hold X while moving the stick to move a fixed step; Y doubles the step from 1 to 128 pixels, then wraps to 1.",
-    "checkbox_touchscreen_trackpad": "Use Trackpad for relative cursor movement, Trackpad (touchpad gestures) for the same with a physical touchpad’s gestures (tap-and-a-half drag, flick momentum), Direct mouse to point at a screen location, Multi-touch for host touch input, Local cursor for a pointer drawn on this device with no round trip, or Touch off to ignore fingers while playing with a controller (Back still opens the stream menu). Unsupported native touch falls back to Direct mouse. The picker's Help explains each mode. See [touch modes](controls.md#touch-modes).",
+    "touch_mode": "Use Trackpad for relative cursor movement, Trackpad (touchpad gestures) for the same with a physical touchpad’s gestures (tap-and-a-half drag, flick momentum), Direct mouse to point at a screen location, Multi-touch for host touch input, Local cursor for a pointer drawn on this device with no round trip, or Touch off to ignore fingers while playing with a controller (Back still opens the stream menu). Unsupported native touch falls back to Direct mouse. The picker's Help explains each mode. See [touch modes](controls.md#touch-modes).",
     "seekbar_trackpad_speed": "Adjust Trackpad movement; 100% is normal speed.",
     "seekbar_local_cursor_speed": "Adjust Local cursor movement; at 100% the drawn pointer moves as far as your finger.",
     "checkbox_trackpad_acceleration": "Enable so slow finger movement aims precisely and fast swipes cover more distance. Trackpad and Local cursor; applies from the next stream.",
@@ -352,16 +352,16 @@ def generate():
         elif key == "checkbox_small_icon_mode":
             threshold = re.search(r"smallestScreenWidthDp < (\d+)", config)[1]
             default = f"On below {threshold} dp smallest screen width; Off on TVs and larger screens"
-        elif key == "checkbox_touchscreen_trackpad":
+        elif key == "touch_mode":
             trackpad = re.search(r"DEFAULT_TOUCHSCREEN_TRACKPAD = (true|false)", config)[1] == "true"
             default = array("@array/stream_touch_modes")[0 if trackpad else 1]
             choices = "; ".join(array("@array/stream_touch_modes"))
-        elif key == "checkbox_stretch_video":
+        elif key == "video_scaling":
             default = array("@array/video_scaling_modes")[0]
             choices = "; ".join(array("@array/video_scaling_modes"))
         elif key == "low_latency_decoding":
             default = "On (not stored: on while " + ", ".join(merged_titles) + " are all on)"
-        elif key == "checkbox_always_dark":
+        elif key == "theme":
             default = array("@array/theme_choice_names")[0]
             choices = "; ".join(array("@array/theme_choice_names"))
         elif key in PICKERS:

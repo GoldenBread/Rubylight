@@ -53,8 +53,7 @@ public class AdvancedOptionsTest {
     /** The controls Advanced shows with its More row open. The individual decoding switches sit behind Customize. */
     private static final String[] ADVANCED_CONTROLS = {
             "low_latency_customize", "checkbox_texture_view", "checkbox_vulkan_render",
-            "checkbox_enable_sops", "export_latency_csv", "latency_benchmark", "checkbox_enable_post_stream_toast",
-            "checkbox_rust_engine"
+            "checkbox_enable_sops", "checkbox_rust_engine"
     };
 
     /** Opens Customize under Low-latency decoding, once. */
@@ -173,7 +172,7 @@ public class AdvancedOptionsTest {
             settle(screen);
             assertEquals(screen.getString(R.string.settings_section_advanced),
                     ((MaterialToolbar) screen.findViewById(R.id.settings_toolbar)).getTitle().toString());
-            assertNotNull(((StreamSettings.SettingsFragment) shown(screen)).findPreference("export_latency_csv"));
+            assertNotNull(((StreamSettings.SettingsFragment) shown(screen)).findPreference("checkbox_enable_sops"));
         }
     }
 
@@ -232,7 +231,10 @@ public class AdvancedOptionsTest {
     private static final List<String> DEBUG_CONTROLS = new ArrayList<>(DEBUG_MAIN);
     static {
         DEBUG_CONTROLS.addAll(Arrays.asList("checkbox_submit_hint",
-                "checkbox_pyrowave_preacquire", "checkbox_codec_direct", "checkbox_receive_decode_priority"));
+                "checkbox_pyrowave_preacquire", "checkbox_codec_direct", "checkbox_receive_decode_priority",
+                // Diagnostics, last, as on desktop.
+                "checkbox_link_probe", "checkbox_show_gyro_diagnostics", "checkbox_enable_post_stream_toast",
+                "latency_benchmark", "export_latency_csv"));
     }
 
     @Test
@@ -294,7 +296,6 @@ public class AdvancedOptionsTest {
         // Off, saved by the older HEVC switch, shows in the list that replaced it.
         choices.put(HEVC, true);
         choices.put("checkbox_texture_view", true);
-        choices.put("checkbox_enable_post_stream_toast", true);
         choices.put(GPU_BOOST, true);
         // Now under Debug; the move keeps each one's stored choice, set opposite to its default.
         Map<String, Boolean> debugChoices = new LinkedHashMap<>();
@@ -408,7 +409,7 @@ public class AdvancedOptionsTest {
     public void resettingSettingsLeavesAdvancedAndDebugAvailable() {
         prefs().edit().putBoolean(LEGACY_UNLOCK, true).putString("performance_overlay_mode", "debug")
                 .putBoolean("checkbox_enable_perf_overlay", true)
-                .putBoolean(com.limelight.ui.AppTheme.OLED_BLACK, true).putBoolean("checkbox_unlock_fps", true)
+                .putString(com.limelight.ui.AppTheme.THEME, com.limelight.ui.AppTheme.THEME_OLED_BLACK).putBoolean("checkbox_unlock_fps", true)
                 .putString(com.limelight.binding.input.touch.TouchMode.PREF, "native")
                 .putBoolean(com.limelight.binding.input.touch.TouchMode.NATIVE_TOUCH_PREF, true)
                 .putString(com.limelight.ui.VideoScaling.PREF, "fill")
@@ -418,7 +419,7 @@ public class AdvancedOptionsTest {
         assertFalse(prefs().contains(com.limelight.binding.input.touch.TouchMode.PREF));
         assertFalse(prefs().contains(com.limelight.ui.VideoScaling.PREF));
         assertFalse(prefs().contains("performance_overlay_mode"));
-        assertFalse(prefs().contains(com.limelight.ui.AppTheme.OLED_BLACK));
+        assertFalse(prefs().contains(com.limelight.ui.AppTheme.THEME));
         assertFalse(prefs().getBoolean("checkbox_unlock_fps", false));
         assertFalse(PreferenceConfiguration.readPreferences(RuntimeEnvironment.getApplication()).unlockFps);
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {

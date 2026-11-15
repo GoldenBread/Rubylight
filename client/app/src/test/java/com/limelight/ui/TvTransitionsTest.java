@@ -161,7 +161,7 @@ public class TvTransitionsTest {
     @Config(qualifiers = "television")
     public void withOledBlackTheStreamStillHasNoWindowAnimationAndTheScreensKeepTheirs() {
         PreferenceManager.getDefaultSharedPreferences(RuntimeEnvironment.getApplication()).edit()
-                .putBoolean(AppTheme.OLED_BLACK, true).commit();
+                .putString(AppTheme.THEME, AppTheme.THEME_OLED_BLACK).commit();
         try (var controller = Robolectric.buildActivity(UiNavigationTest.Screen.class).setup()) {
             assertEquals(R.style.NightjarWindowAnimation, windowAnimationStyle(controller.get()));
         }

@@ -821,7 +821,8 @@ impl Streaming {
             // Every second, as the overlay refreshes.
             let _ = session.send(ClientMessage::PipelineRatesRequest(PipelineRatesRequest { enabled: true, interval_ms: 1000 }));
         }
-        if facts.text_input {
+        // Without the request the PC sends no notices, so the keyboard stays as the user leaves it.
+        if facts.text_input && connecting.settings.keyboard_follows_text_fields {
             if let Err(error) = session.send(ClientMessage::TextInputRequest(text_field::request())) {
                 eprintln!("nightjar: text field: could not ask for notices: {error}");
             }

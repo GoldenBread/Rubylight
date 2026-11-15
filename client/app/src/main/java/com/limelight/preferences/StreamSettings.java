@@ -111,7 +111,7 @@ public class StreamSettings extends NightjarActivity {
     static final String MOUSE_MODE_KEY = "checkbox_absolute_mouse_mode";
     /** The main Display arrangement (HostDisplayChoice); a PC's own wins. */
     static final String HOST_DISPLAY_KEY = "host_display_location";
-    /** A saved PC's PyroWave frame pace, opened from Advanced › Diagnostics. */
+    /** A saved PC's PyroWave frame pace, opened from Debug › Diagnostics. */
     static final String PACE_CALIBRATION_KEY = "pace_calibration";
     static final String LOW_LATENCY_DECODING_KEY = "low_latency_decoding";
     /** The Automatic bitrate switch: stores nothing itself, it shows and sets whether the bitrate is the user's. */
@@ -140,10 +140,10 @@ public class StreamSettings extends NightjarActivity {
         SECTIONS.put("app", new String[] {"category_app_main", "category_more_app", "category_ui_settings",
                 "category_accessibility"});
         SECTIONS.put("advanced", new String[] {"category_advanced_settings", "category_more_advanced",
-                "category_advanced_compatibility", "category_advanced_diagnostics"});
+                "category_advanced_compatibility"});
         // Settings whose default is right for nearly everyone, kept for troubleshooting.
         SECTIONS.put("debug", new String[] {"category_debug", "category_more_debug", "category_debug_pyrowave",
-                "category_debug_decoder"});
+                "category_debug_decoder", "category_debug_diagnostics"});
     }
     /**
      * The row ending each section, "more_" and the section: it shows and hides the rows settings_tiers.xml does not
@@ -835,7 +835,8 @@ public class StreamSettings extends NightjarActivity {
                 .remove(com.limelight.ui.VideoScaling.PREF)
                 .remove(PreferenceConfiguration.UNLOCK_FPS_STRING)
                 .remove(PreferenceConfiguration.OVERLAY_MODE_PREF_STRING)
-                .remove(com.limelight.ui.AppTheme.OLED_BLACK)
+                .remove(com.limelight.ui.AppTheme.RETIRED_OLED_BLACK)
+                .remove(com.limelight.ui.AppTheme.RETIRED_ALWAYS_DARK)
                 // The second switches of the rows that are one choice now (SwitchPairChoice).
                 .remove(PreferenceConfiguration.BACK_OPENS_MENU_PREF_STRING)
                 .remove(PreferenceConfiguration.BACK_AS_GUIDE_PREF_STRING)
@@ -1206,8 +1207,8 @@ public class StreamSettings extends NightjarActivity {
     static boolean showsValueAtEnd(Preference preference) {
         if (preference instanceof ListPreference || preference instanceof SeekBarPreference) return true;
         String key = preference.getKey();
-        return "checkbox_touchscreen_trackpad".equals(key) || VideoScaling.STRETCH_PREF.equals(key)
-                || OverlayChoice.ENABLED_KEY.equals(key) || AppTheme.ALWAYS_DARK.equals(key) || "gpu_driver".equals(key)
+        return TouchMode.PREF.equals(key) || VideoScaling.PREF.equals(key)
+                || OverlayChoice.ENABLED_KEY.equals(key) || AppTheme.THEME.equals(key) || "gpu_driver".equals(key)
                 || (SwitchPairChoice.forKey(key) != null && SwitchPairChoice.forKey(key) != SwitchPairChoice.LOWER_BITRATE);
     }
 
@@ -1793,7 +1794,7 @@ public class StreamSettings extends NightjarActivity {
                     }
                 } else if (pref instanceof SeekBarPreference) {
                     value = ((SeekBarPreference) pref).getValueText();
-                } else if ("checkbox_touchscreen_trackpad".equals(pref.getKey())) {
+                } else if (TouchMode.PREF.equals(pref.getKey())) {
                     int mode = storedTouchMode(prefs);
                     value = getResources().getStringArray(R.array.stream_touch_modes)[mode];
                 } else if (SHARP_COLOR_KEY.equals(pref.getKey())) {
@@ -1816,11 +1817,11 @@ public class StreamSettings extends NightjarActivity {
                     value = getString(HostDisplayChoice.loadMain(getActivity()).label);
                 } else if (PACE_CALIBRATION_KEY.equals(pref.getKey())) {
                     continue;
-                } else if (VideoScaling.STRETCH_PREF.equals(pref.getKey())) {
+                } else if (VideoScaling.PREF.equals(pref.getKey())) {
                     value = getResources().getStringArray(R.array.video_scaling_modes)[storedVideoScaling(prefs)];
                 } else if (OverlayChoice.ENABLED_KEY.equals(pref.getKey())) {
                     value = getResources().getStringArray(R.array.overlay_choice_names)[OverlayChoice.read(prefs)];
-                } else if (AppTheme.ALWAYS_DARK.equals(pref.getKey())) {
+                } else if (AppTheme.THEME.equals(pref.getKey())) {
                     value = getResources().getStringArray(R.array.theme_choice_names)[ThemeChoice.read(prefs)];
                     // High contrast is always black, whatever the picker says.
                     if (prefs.getBoolean(AppTheme.HIGH_CONTRAST, false)) {
@@ -2610,7 +2611,7 @@ public class StreamSettings extends NightjarActivity {
                 confirmReset();
                 return true;
             });
-            findPreference("checkbox_touchscreen_trackpad").setOnPreferenceClickListener(preference -> {
+            findPreference(TouchMode.PREF).setOnPreferenceClickListener(preference -> {
                 SharedPreferences prefs = getPreferenceManager().getSharedPreferences();
                 int selected = storedTouchMode(prefs);
                 AlertDialog picker = new NavigationDialogBuilder(getActivity()).setTitle(R.string.stream_touch_mode)
@@ -2627,7 +2628,7 @@ public class StreamSettings extends NightjarActivity {
                         showInfo(R.string.stream_touch_mode, R.string.settings_touch_mode_help));
                 return true;
             });
-            findPreference(VideoScaling.STRETCH_PREF).setOnPreferenceClickListener(preference -> {
+            findPreference(VideoScaling.PREF).setOnPreferenceClickListener(preference -> {
                 SharedPreferences prefs = getPreferenceManager().getSharedPreferences();
                 AlertDialog picker = new NavigationDialogBuilder(getActivity()).setTitle(R.string.video_scaling_title)
                         .setSingleChoiceItems(R.array.video_scaling_modes, storedVideoScaling(prefs), (dialog, which) -> {
@@ -2652,7 +2653,7 @@ public class StreamSettings extends NightjarActivity {
                         });
                 return true;
             });
-            findPreference(AppTheme.ALWAYS_DARK).setOnPreferenceClickListener(preference -> {
+            findPreference(AppTheme.THEME).setOnPreferenceClickListener(preference -> {
                 SharedPreferences prefs = getPreferenceManager().getSharedPreferences();
                 showChoices(R.string.title_theme, R.array.theme_choice_names, ThemeChoice.read(prefs), 0, which -> {
                     SharedPreferences.Editor editor = prefs.edit();

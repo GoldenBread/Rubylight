@@ -1303,7 +1303,7 @@ fn at_150_percent_in_german_every_settings_page_fits_the_width() {
 }
 
 #[test]
-fn at_150_percent_in_german_the_roaming_rows_fit_and_mobile_data_shows_only_with_roaming() {
+fn at_150_percent_in_german_the_roaming_row_fits_with_each_choice() {
     let mut f = Frames::new(record("PC", true, false), Reach::Online);
     fit_150(&mut f);
     // The 1280-pixel width is what is checked; the height lets the network rows be drawn
@@ -1313,18 +1313,23 @@ fn at_150_percent_in_german_the_roaming_rows_fit_and_mobile_data_shows_only_with
     f.l.settings_view.more = [true; 8];
     let shown = |f: &Frames, text: &str| f.placed.iter().any(|(t, _, _)| t.contains(text));
     let id = f.hosts.list[0].id;
-    for (screen, global) in [(Screen::Settings, true), (Screen::HostSettings(id), false)] {
-        f.l.settings.client_roaming = true;
-        f.l.go(screen);
-        f.settle();
-        assert!(shown(&f, "Netzwerkwechsel"), "{screen:?}: the roaming row is drawn in German");
-        assert!(shown(&f, "Über mobile Daten fortsetzen"), "{screen:?}: mobile data shows while roaming is on");
-        assert_fits(&f, &format!("{screen:?} with roaming"), false);
-        if global {
-            f.l.settings.client_roaming = false;
+    for screen in [Screen::Settings, Screen::HostSettings(id)] {
+        // One row with three choices; the longest German name must fit too. A PC's page shows
+        // the values it opened with, the default.
+        let choices: &[(bool, bool, &str)] = if screen == Screen::Settings {
+            &[(true, false, "Außer mobilen Daten"), (true, true, "Jedes Netzwerk")]
+        } else {
+            &[(true, false, "Außer mobilen Daten")]
+        };
+        for &(roaming, metered, value) in choices {
+            f.l.settings.client_roaming = roaming;
+            f.l.settings.roaming_metered = metered;
+            f.l.go(screen);
             f.settle();
-            assert!(shown(&f, "Netzwerkwechsel"));
-            assert!(!shown(&f, "Über mobile Daten fortsetzen"), "mobile data hides while roaming is off");
+            assert!(shown(&f, "Netzwerkwechsel"), "{screen:?}: the roaming row is drawn in German");
+            assert!(shown(&f, value), "{screen:?}: {value}");
+            assert!(!shown(&f, "Über mobile Daten fortsetzen"), "{screen:?}: no second row for mobile data");
+            assert_fits(&f, &format!("{screen:?} with {value}"), false);
         }
     }
 }

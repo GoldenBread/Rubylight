@@ -46,8 +46,8 @@ public final class DemoContext extends ContextWrapper {
 
     /** The Theme settings of that look. */
     static SharedPreferences.Editor putLook(SharedPreferences.Editor edit, String look) {
-        return edit.putBoolean(com.limelight.ui.AppTheme.ALWAYS_DARK, "dark".equals(look))
-                .putBoolean(com.limelight.ui.AppTheme.OLED_BLACK, "oled".equals(look))
+        return edit.putString(com.limelight.ui.AppTheme.THEME, "oled".equals(look) ? com.limelight.ui.AppTheme.THEME_OLED_BLACK :
+                        "dark".equals(look) ? com.limelight.ui.AppTheme.THEME_DARK : com.limelight.ui.AppTheme.THEME_SYSTEM)
                 .putBoolean(com.limelight.ui.AppTheme.HIGH_CONTRAST, "contrast".equals(look));
     }
 

@@ -154,7 +154,7 @@ Android needs no scan-line check: SurfaceFlinger never flips mid-scan.
 | Keyboard, mouse and pen | Yes | Yes | Yes | The desktop also sends pen rotation. |
 | Send system keys: In full screen | Yes | Yes | Yes | With **Send system keys** on **In full screen**, Alt+Tab, the Windows key and similar stay with this device while the stream is in a window (Android: split screen or a window). |
 | On-screen PC keyboard | Yes | N/A | N/A | |
-| Keyboard follows text fields | Yes | Yes | Yes | The desktop opens a keyboard only where the system provides an on-screen one. |
+| Keyboard follows text fields | Yes | Yes | Yes | A setting on both, on by default. The desktop opens a keyboard only where the system provides an on-screen one. |
 | Keyboard layout reported to the PC | Yes | Yes | Yes | |
 | Saved key chords, import and export | Yes | Yes | Yes | Same file format on both clients. |
 | Stream hotkeys, changeable | Yes | Yes | Yes | One table for both clients. Mouse mode, clipboard, fullscreen, minimize and the shortcut list are desktop-only; the PC keyboard and local cursor are Android-only. |

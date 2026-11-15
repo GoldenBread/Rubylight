@@ -34,7 +34,7 @@
     <string name="gyro_profile_vertical">Up and down sensitivity</string>
     <string name="gyro_profile_saved">Profile saved. It applies from the next stream.</string>
 
-    <!-- Settings › Advanced › Diagnostics › Show motion readings (GyroDiagnosticOverlay) -->
+    <!-- Settings › Debug › Diagnostics › Show motion readings (GyroDiagnosticOverlay) -->
     <string name="title_show_gyro_diagnostics">Show motion readings</string>
     <string name="summary_show_gyro_diagnostics">Shows the motion values each controller sends while streaming, with buttons to record them and share them as a CSV file. Covers the top left of the picture. Leave it off unless motion aiming misbehaves.</string>
     <string name="gyro_diag_title">Motion readings</string>
