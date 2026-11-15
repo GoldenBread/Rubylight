@@ -252,7 +252,11 @@ impl Launcher {
         let mut focused = false;
         // Read before the match holds the dialog: Connection test's verdict weighs the speed by it,
         // and a text field gets keys on screen for a controller where the system shows none.
-        let bitrate_kbps = self.stream_bitrate_kbps();
+        let tested = match &self.dialog {
+            Dialog::ConnectionTest { host, .. } => Some(*host),
+            _ => None,
+        };
+        let bitrate_kbps = self.stream_bitrate_kbps(view.hosts, tested);
         let keys_on_screen = self.wants_text_pad();
         match &mut self.dialog {
             Dialog::None => {
@@ -1787,10 +1791,14 @@ impl Launcher {
         !self.screen_keyboard && matches!(self.input_source, crate::input_source::InputSource::Pad(_))
     }
 
-    /// The bitrate a stream with the main settings asks for: the one set, else the default for
-    /// their size and rate (1080p and 60 when they follow the screen).
-    fn stream_bitrate_kbps(&self) -> u32 {
-        let s = &self.settings;
+    /// The bitrate a stream to PC `host` asks for, worked out as a launch does: the profile in use,
+    /// then the PC's own settings. The one set, else the default for their size and rate (1080p
+    /// and 60 when they follow the screen).
+    fn stream_bitrate_kbps(&self, hosts: &Hosts, host: Option<u64>) -> u32 {
+        let mut s = self.profiles.settings(&self.settings, self.network.kind(&self.profiles.home_wifi));
+        if let Some(host) = host.and_then(|id| hosts.get(id)) {
+            s = host.record.settings(&s);
+        }
         if s.bitrate_kbps != 0 {
             return s.bitrate_kbps;
         }
