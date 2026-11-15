@@ -63,7 +63,7 @@ export function neuralView(status: NeuralStatus): NeuralView {
   if (job?.phase === 'failed') {
     const title =
       job.action === 'remove'
-        ? 'Neural Rendering couldn’t be removed'
+        ? 'It couldn’t be removed from the game’s folder'
         : job.action === 'update'
           ? 'Frame generation couldn’t be checked for the launch'
           : 'Frame generation couldn’t be installed';
@@ -97,6 +97,14 @@ export function neuralHint(view: NeuralView, note: string | null | undefined): s
 }
 
 /** The panel polls while the host works. */
+/**
+ * Whether the earlier upscaling's Remove takes out only that upscaling: whenever frame generation is
+ * on, also after a failed job, so a retry never turns frame generation off.
+ */
+export function removesOnlyEarlier(view: NeuralView): boolean {
+  return view.kind === 'on' || (view.kind === 'failed' && view.on);
+}
+
 export function pollsNeural(view: NeuralView): boolean {
   return view.kind === 'working';
 }

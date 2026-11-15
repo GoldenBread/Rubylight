@@ -2009,7 +2009,13 @@ fn removal(h: &Shared, uuid: &str, earlier: bool) -> Result<(), Refusal> {
             fail_job(
                 &h,
                 &uuid,
-                format!("{folder} can't be reached; connect its drive and turn it off again"),
+                if earlier {
+                    format!(
+                        "{folder} can't be reached; connect its drive and remove the earlier upscaling again"
+                    )
+                } else {
+                    format!("{folder} can't be reached; connect its drive and turn it off again")
+                },
                 false,
             )
         }

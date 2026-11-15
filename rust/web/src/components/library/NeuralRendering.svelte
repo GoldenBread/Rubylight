@@ -11,7 +11,7 @@
   import { api, type NeuralStatus } from '../../lib/api';
   import { confirm, failed } from '../../lib/feedback.svelte';
   import { poll } from '../../lib/format';
-  import { ABOUT, NOTICE, neuralHint, neuralView, pollsNeural } from '../../lib/neural-view';
+  import { ABOUT, NOTICE, neuralHint, neuralView, pollsNeural, removesOnlyEarlier } from '../../lib/neural-view';
   import { statusLoader } from '../maintenance/status-loader';
   import { reason } from '../maintenance/util';
 
@@ -167,7 +167,7 @@
             The earlier neural upscaling{view.earlier ? ` (release ${view.earlier})` : ''} is still in the game’s folder. Rubylight
             no longer offers it; remove it here.
           </p>
-          <Button busy={busy} onclick={() => turnOff(view.kind === 'on')}>Remove</Button>
+          <Button busy={busy} onclick={() => turnOff(removesOnlyEarlier(view))}>Remove</Button>
         </div>
       {/if}
       {#if loadError}<p class="muted note" role="alert">Could not refresh Neural Rendering: {loadError}</p>{/if}

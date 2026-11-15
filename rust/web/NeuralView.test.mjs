@@ -6,7 +6,7 @@ import { createTestServer } from './test-server.mjs';
 globalThis.location = new URL('http://localhost/');
 globalThis.window = new EventTarget();
 const server = await createTestServer();
-const { neuralView, neuralHint, pollsNeural, NOTICE, ABOUT, REPLACES } = await server.ssrLoadModule('/src/lib/neural-view.ts');
+const { neuralView, neuralHint, pollsNeural, removesOnlyEarlier, NOTICE, ABOUT, REPLACES } = await server.ssrLoadModule('/src/lib/neural-view.ts');
 const { render } = await server.ssrLoadModule('svelte/server');
 const NeuralRendering = (await server.ssrLoadModule('/src/components/library/NeuralRendering.svelte')).default;
 await server.close();
@@ -146,8 +146,16 @@ test('the switch shows where it is, what stayed and why it failed', () => {
   assert.deepEqual(checked, { kind: 'failed', title: 'Frame generation couldn’t be checked for the launch', error: 'a file changed.', on: true, earlier: null });
   assert.equal(
     neuralView(status({ enabled: true, job: job({ action: 'remove', phase: 'failed', error: 'in use' }) })).title,
-    'Neural Rendering couldn’t be removed',
+    'It couldn’t be removed from the game’s folder',
   );
+  // With frame generation on, the earlier upscaling's Remove stays an earlier-only removal after a
+  // failed job too: a retry must not turn frame generation off.
+  const earlierLeft = { earlier_upscaling: { exe: 'C:\Games\Launcher.exe', release: null } };
+  assert.equal(removesOnlyEarlier(neuralView(status({ enabled: true, ...earlierLeft }))), true);
+  assert.equal(removesOnlyEarlier(neuralView(status({ enabled: true, ...earlierLeft, job: job({ action: 'remove', phase: 'failed', error: 'in use' }) }))), true);
+  assert.equal(removesOnlyEarlier(neuralView(status({ enabled: true, ...earlierLeft, job: job({ action: 'update', phase: 'failed', error: 'a file changed' }) }))), true);
+  assert.equal(removesOnlyEarlier(neuralView(status({ ...earlierLeft }))), false);
+  assert.equal(removesOnlyEarlier(neuralView(status({ ...earlierLeft, job: job({ action: 'install', phase: 'failed', error: 'refused' }) }))), false);
   const choose = neuralView(status({ job: job({ phase: 'failed', choose_exe: true, error: 'Rubylight can\'t tell which program in C:\\Games\\X is the game' }) }));
   assert.equal(choose.kind, 'choose');
   const html = render(NeuralRendering, { props: { uuid: 'game', initial: status({ job: job({ phase: 'failed', choose_exe: true, error: 'which' }) }) } }).body;
