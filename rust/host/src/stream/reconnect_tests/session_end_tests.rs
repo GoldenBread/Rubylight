@@ -104,6 +104,41 @@ async fn a_failure_outside_the_stream_worker_reaches_the_client_with_its_reason(
     h.finish().await
 }
 
+/// A stream refused at ANNOUNCE for a codec this PC cannot encode leaves the host's words in
+/// the device's `/serverinfo`, as a refused launch does; the retry that asks for one it has
+/// clears them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_codec_refused_at_announce_reaches_the_device_with_its_reason() -> Result<()> {
+    let h = Harness::new(10_000, 1).await?;
+    let launch = h.launch(0, false).await?;
+    assert_eq!(last_failure(&h).await?, "");
+    // The test host encodes H.264 and HEVC only: AV1 (format 2) is refused.
+    let refused = h
+        .rtsp(
+            &launch,
+            1,
+            "ANNOUNCE",
+            &format!("{VIEWPORT}a=x-nv-vqos[0].bitStreamFormat:2\r\n"),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(refused.contains("RTSP/1.0 406"), "{refused}");
+    let reason = last_failure(&h).await?;
+    assert!(reason.contains("AV1"), "{reason}");
+    h.rtsp(&launch, 2, "ANNOUNCE", VIEWPORT).await?;
+    assert_eq!(last_failure(&h).await?, "");
+    h.rtsp(&launch, 3, "PLAY", "").await?;
+    let session = h.h.sessions.lock().unwrap().active[&launch.id].clone();
+    let client = Client::new(h.ports, launch.clone())?;
+    assert!(
+        established(&session, &client).await,
+        "the retry did not stream"
+    );
+    h.end(&session, client).await?;
+    h.finish().await
+}
+
 /// A stream that ends on an encoder error tells the client so (0x800E9403, Moonlight's
 /// encoder hint), and the device's `/serverinfo` carries the host's words until its next
 /// launch.

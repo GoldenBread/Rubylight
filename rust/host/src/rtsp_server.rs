@@ -463,6 +463,8 @@ async fn connection(
                     if required_encryption && negotiated.encryption & 6 != 6 {
                         code = 403;
                         reason = "Required audio and video encryption was not negotiated";
+                        // The device reads why from `/serverinfo`, as for a refused launch.
+                        h.record_launch_failure(&launch.client.uuid, &encryption_refusal(peer));
                     } else if (negotiated.ten_bit() && negotiated.codec == 0) || flags & bit == 0 {
                         code = 406;
                         reason = "Requested codec is unavailable";
@@ -475,11 +477,13 @@ async fn connection(
                             negotiated.yuv444,
                         );
                         tracing::warn!(codec = negotiated.codec, ten_bit = negotiated.ten_bit(), %detail, "refusing stream: requested codec is unavailable");
+                        h.record_launch_failure(&launch.client.uuid, &detail);
                         note_codec_refusal(&launch.warnings, Some(detail));
                     } else {
                         // A retry that asks for an available codec drops the
                         // refusal the earlier attempt left on this launch.
                         note_codec_refusal(&launch.warnings, None);
+                        h.clear_failure(&launch.client.uuid);
                         configs
                             .lock()
                             .unwrap()
@@ -520,6 +524,7 @@ async fn connection(
         })();
         if let Err(error) = result {
             tracing::warn!(client = %launch.client.name, method = %req.method, error = %format!("{error:#}"), "RTSP request rejected");
+            h.record_launch_failure(&launch.client.uuid, &format!("{error:#}"));
             (code, reason) = if host_fault {
                 (500, "Internal Server Error")
             } else {
@@ -598,6 +603,18 @@ fn ffmpeg_directory(h: &Shared) -> Result<std::path::PathBuf> {
 /// Whether the host takes client microphones on this stream.
 fn takes_mic(config: &butterpollo_core::config::Config, media: &crate::stream::Media) -> bool {
     config.boolean("stream_mic", true) && media.mic.is_some()
+}
+/// Why a stream that must be encrypted was refused, as the device shows it: the words of the
+/// same refusal at launch, for a device that asked for encryption there but not at ANNOUNCE.
+fn encryption_refusal(peer: SocketAddr) -> String {
+    let (network, setting) = if crate::network::peer_reach(peer) <= crate::network::Reach::Lan {
+        ("the local network", "Local network encryption")
+    } else {
+        ("the internet", "Internet encryption")
+    };
+    format!(
+        "this PC requires encrypted streams on {network} and this device did not turn encryption on: update its Moonlight app, or set {setting} to When the device supports it"
+    )
 }
 /// Show why a launch was refused for its codec, or drop that refusal once a
 /// later attempt on the same launch asks for something the host has.
