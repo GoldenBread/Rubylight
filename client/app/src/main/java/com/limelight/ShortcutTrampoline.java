@@ -12,10 +12,13 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.SystemClock;
 
+import androidx.appcompat.app.AlertDialog;
+
 import com.limelight.computers.ComputerDatabaseManager;
 import com.limelight.computers.ComputerManagerListener;
 import com.limelight.computers.ComputerManagerService;
 import com.limelight.computers.HostCapabilityCache;
+import com.limelight.console.HomeSettings;
 import com.limelight.console.HostWaker;
 import com.limelight.pin.PinGate;
 import com.limelight.pin.PinLockActivity;
@@ -30,7 +33,9 @@ import com.limelight.utils.CacheHelper;
 import com.limelight.utils.Dialog;
 import com.limelight.utils.FrontendEntry;
 import com.limelight.utils.LaunchSource;
+import com.limelight.ui.NavigationDialogBuilder;
 import com.limelight.utils.ServerHelper;
+import com.limelight.utils.ShortcutHelper;
 import com.limelight.utils.SpinnerDialog;
 import com.limelight.utils.UiHelper;
 
@@ -60,6 +65,8 @@ public class ShortcutTrampoline extends Activity {
     // The wait ran out or no packet went out: the PC is not woken again.
     private volatile boolean wakeEnded;
     private SpinnerDialog blockingLoadSpinner;
+    /** What a shortcut whose PC or game is gone says, while it shows. */
+    private AlertDialog outdated;
 
     private volatile ComputerManagerService.ComputerManagerBinder managerBinder;
     private boolean managerServiceBound;
@@ -93,10 +100,7 @@ public class ShortcutTrampoline extends Activity {
                             if (stopped || isFinishing() || isDestroyed()) {
                                 return;
                             }
-                            Dialog.displayDialog(ShortcutTrampoline.this,
-                                    getResources().getString(R.string.conn_error_title),
-                                    getResources().getString(R.string.scut_pc_not_found),
-                                    true);
+                            pcGone();
                             if (blockingLoadSpinner != null) {
                                 blockingLoadSpinner.dismiss();
                                 blockingLoadSpinner = null;
@@ -314,11 +318,8 @@ public class ShortcutTrampoline extends Activity {
                     getResources().getString(R.string.error_pc_offline),
                     true);
         } else if (details.pairState != PairingManager.PairState.PAIRED) {
-            // Computer not paired - display an error dialog
-            Dialog.displayDialog(ShortcutTrampoline.this,
-                    getResources().getString(R.string.conn_error_title),
-                    getResources().getString(R.string.scut_not_paired),
-                    true);
+            // Computer not paired: pairing again from the list of PCs makes the shortcut work again
+            showOutdated(getString(R.string.scut_pc_unpaired), R.string.console_empty_open_hosts, pcList());
         }
 
         // We don't want any more callbacks from now on, so go ahead
@@ -331,13 +332,67 @@ public class ShortcutTrampoline extends Activity {
         }
     }
 
+    /** The PC is not saved any more: the app's own shortcuts to it are disabled, as removing the PC does. */
+    private void pcGone() {
+        if (uuidString != null && !uuidString.isEmpty()) {
+            ComputerDetails gone = new ComputerDetails();
+            gone.uuid = uuidString;
+            try {
+                new ShortcutHelper(this).disableComputerShortcut(gone, getString(R.string.scut_deleted_pc));
+            } catch (RuntimeException e) {
+                // A convenience: the system's shortcut service failing must not hide what happened.
+                LimeLog.warning("Could not disable the shortcuts of a removed PC: " + e);
+            }
+        }
+        showOutdated(getString(R.string.scut_pc_gone), R.string.console_empty_open_hosts, pcList());
+    }
+
+    /** The game is not among the PC's games this device knows: the PC's library shows what it has now. */
+    private void gameGone() {
+        Intent games = new Intent(this, AppView.class)
+                .putExtra(AppView.UUID_EXTRA, uuidString)
+                .putExtra(AppView.NAME_EXTRA, getIntent().getStringExtra(AppView.NAME_EXTRA));
+        showOutdated(getString(R.string.scut_game_gone), R.string.library_open, new Intent[]{pcList()[0], games});
+    }
+
+    /** The shortcut names no PC or game in a form this app reads. */
+    private void showUnreadable() {
+        showOutdated(getString(R.string.scut_unreadable), R.string.console_empty_open_hosts, pcList());
+    }
+
+    /** The list of PCs as the task's root, as a shortcut that opens a PC's games puts it under them. */
+    private Intent[] pcList() {
+        Intent pcs = HomeSettings.pcList(this);
+        pcs.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_NEW_TASK);
+        return new Intent[]{pcs};
+    }
+
+    /**
+     * A shortcut or frontend entry that no longer leads anywhere: says what is gone and offers the next step this
+     * app can take, then closes.
+     */
+    private void showOutdated(String message, int action, Intent[] next) {
+        if (blockingLoadSpinner != null) {
+            blockingLoadSpinner.dismiss();
+            blockingLoadSpinner = null;
+        }
+        if (isFinishing() || isDestroyed()) {
+            return;
+        }
+        // The button's start runs before the dismissal that closes this screen.
+        outdated = new NavigationDialogBuilder(this)
+                .setTitle(R.string.scut_outdated_title)
+                .setMessage(message)
+                .setNegativeButton(android.R.string.cancel, null)
+                .setPositiveButton(action, (dialog, which) -> startActivities(next))
+                .setOnDismissListener(dialog -> finish())
+                .show();
+    }
+
     protected boolean validateInput(String uuidString, String appIdString, String nameString) {
         // Validate PC UUID/Name
         if (uuidString == null && nameString == null) {
-            Dialog.displayDialog(ShortcutTrampoline.this,
-                    getResources().getString(R.string.conn_error_title),
-                    getResources().getString(R.string.scut_invalid_uuid),
-                    true);
+            showUnreadable();
             return false;
         }
 
@@ -345,19 +400,13 @@ public class ShortcutTrampoline extends Activity {
             try {
                 UUID.fromString(uuidString);
             } catch (IllegalArgumentException ex) {
-                Dialog.displayDialog(ShortcutTrampoline.this,
-                        getResources().getString(R.string.conn_error_title),
-                        getResources().getString(R.string.scut_invalid_uuid),
-                        true);
+                showUnreadable();
                 return false;
             }
         } else {
             // UUID is null, so fallback to Name
             if (nameString == null || nameString.isEmpty()) {
-                Dialog.displayDialog(ShortcutTrampoline.this,
-                        getResources().getString(R.string.conn_error_title),
-                        getResources().getString(R.string.scut_invalid_uuid),
-                        true);
+                showUnreadable();
                 return false;
             }
         }
@@ -367,10 +416,7 @@ public class ShortcutTrampoline extends Activity {
             try {
                 Integer.parseInt(appIdString);
             } catch (NumberFormatException ex) {
-                Dialog.displayDialog(ShortcutTrampoline.this,
-                        getResources().getString(R.string.conn_error_title),
-                        getResources().getString(R.string.scut_invalid_app_id),
-                        true);
+                showUnreadable();
                 return false;
             }
         }
@@ -422,10 +468,7 @@ public class ShortcutTrampoline extends Activity {
             }
 
             if (_computer == null) {
-                Dialog.displayDialog(ShortcutTrampoline.this,
-                        getResources().getString(R.string.conn_error_title),
-                        getResources().getString(R.string.scut_pc_not_found),
-                        true);
+                pcGone();
                 return;
             }
 
@@ -465,10 +508,7 @@ public class ShortcutTrampoline extends Activity {
                 String rawAppList = CacheHelper.readInputStreamToString(CacheHelper.openCacheFileForInput(getCacheDir(), "applist", uuidString));
 
                 if (rawAppList.isEmpty()) {
-                    Dialog.displayDialog(ShortcutTrampoline.this,
-                            getResources().getString(R.string.conn_error_title),
-                            getResources().getString(R.string.scut_invalid_app_id),
-                            true);
+                    gameGone();
                     return;
                 }
                 List<NvApp> applist = NvHTTP.getAppListByReader(new StringReader(rawAppList),
@@ -481,10 +521,7 @@ public class ShortcutTrampoline extends Activity {
                     }
                 }
                 if (app == null || app.getAppId() < 0) {
-                    Dialog.displayDialog(ShortcutTrampoline.this,
-                            getResources().getString(R.string.conn_error_title),
-                            getResources().getString(R.string.scut_invalid_app_id),
-                            true);
+                    gameGone();
                     return;
                 }
                 app.setHdrSupported(getIntent().getBooleanExtra(Game.EXTRA_APP_HDR, app.isHdrSupported()));
@@ -493,10 +530,8 @@ public class ShortcutTrampoline extends Activity {
                         .putExtra(Game.EXTRA_APP_UUID, app.getAppUuid())
                         .putExtra(Game.EXTRA_APP_HDR, app.isHdrSupported()));
             } catch (IOException | XmlPullParserException e) {
-                Dialog.displayDialog(ShortcutTrampoline.this,
-                        getResources().getString(R.string.conn_error_title),
-                        getResources().getString(R.string.scut_invalid_app_id),
-                        true);
+                // No readable list of the PC's games: its library loads it again.
+                gameGone();
                 return;
             }
         }
@@ -526,7 +561,7 @@ public class ShortcutTrampoline extends Activity {
         } catch (IOException | SecurityException e) {
             LimeLog.warning("Unreadable frontend entry: " + e.getMessage());
             Dialog.displayDialog(this,
-                    getResources().getString(R.string.conn_error_title),
+                    getString(R.string.scut_outdated_title),
                     getString(R.string.scut_invalid_entry, getString(R.string.app_name)),
                     true);
             return null;
@@ -585,6 +620,10 @@ public class ShortcutTrampoline extends Activity {
         }
 
         Dialog.closeDialogs(ShortcutTrampoline.this);
+        if (outdated != null) {
+            outdated.dismiss();
+            outdated = null;
+        }
 
         if (managerBinder != null) {
             managerBinder.stopPolling();

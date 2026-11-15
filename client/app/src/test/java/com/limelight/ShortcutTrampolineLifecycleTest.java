@@ -8,8 +8,11 @@ import android.net.Uri;
 import android.os.Looper;
 import android.widget.TextView;
 
+import androidx.appcompat.app.AlertDialog;
+
 import com.limelight.computers.ComputerManagerListener;
 import com.limelight.computers.ComputerManagerService;
+import com.limelight.console.HomeSettings;
 import com.limelight.console.HostWaker;
 import com.limelight.nativeapi.NativeApiFixtures;
 import com.limelight.nvstream.http.ComputerDetails;
@@ -67,8 +70,11 @@ public class ShortcutTrampolineLifecycleTest {
             assertEquals("A service binding must be released once", 0, unbinds++);
         }
 
+        Intent[] started;
+
         @Override public void startActivities(Intent[] intents) {
             launches++;
+            started = intents;
         }
 
         @Override public SQLiteDatabase openOrCreateDatabase(String name, int mode, SQLiteDatabase.CursorFactory factory) {
@@ -296,5 +302,65 @@ public class ShortcutTrampolineLifecycleTest {
         assertEquals("the packets were on their way", 2, polled.activity.wakes.size());
         assertEquals("but the stopped shortcut has the PC polled no more", 1, polled.invalidated.size());
         polled.controller.destroy();
+    }
+
+    private static String message(AlertDialog dialog) {
+        return ((TextView) dialog.findViewById(android.R.id.message)).getText().toString();
+    }
+
+    @Test
+    public void aShortcutToAPcNoLongerSavedSaysSoAndOpensTheListOfPcs() throws Exception {
+        ActivityController<Trampoline> controller = Robolectric.buildActivity(Trampoline.class, intent())
+                .create().start().resume();
+        Trampoline activity = controller.get();
+        ComputerManagerService service = new ComputerManagerService();
+        activity.connection.onServiceConnected(null, service.new ComputerManagerBinder() {
+            @Override public boolean waitForReady() { return true; }
+            @Override public ComputerDetails getComputer(String uuid) { return null; }
+        });
+        Thread waiter = ReflectionHelpers.getField(activity, "serviceWaitThread");
+        waiter.join(2000);
+        ShadowLooper.idleMainLooper();
+
+        AlertDialog dialog = (AlertDialog) ShadowDialog.getLatestDialog();
+        assertNotNull(dialog);
+        assertEquals("it names what is gone, not a connection error", activity.getString(R.string.scut_pc_gone),
+                message(dialog));
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
+        ShadowLooper.idleMainLooper();
+        assertEquals(1, activity.launches);
+        assertEquals(PcView.class.getName(), activity.started[0].getComponent().getClassName());
+        assertTrue("the list of PCs, not Home", activity.started[0].getBooleanExtra(HomeSettings.EXTRA_STAY, false));
+        assertTrue(activity.isFinishing());
+        controller.pause().stop().destroy();
+        assertEquals(1, activity.unbinds);
+    }
+
+    @Test
+    public void aGameThePcNoLongerListsSaysSoAndOpensThePcsLibrary() throws Exception {
+        String host = intent().getStringExtra(AppView.UUID_EXTRA);
+        try (OutputStream out = CacheHelper.openCacheFileForOutput(
+                RuntimeEnvironment.getApplication().getCacheDir(), "applist", host)) {
+            out.write(("<root status_code=\"200\"><App><AppTitle>Another game</AppTitle>" +
+                    "<ID>7</ID></App></root>").getBytes(StandardCharsets.UTF_8));
+        }
+        ActivityController<Trampoline> controller = Robolectric.buildActivity(Trampoline.class,
+                intent().putExtra(Game.EXTRA_APP_NAME, "Removed game")).create();
+        Trampoline activity = controller.get();
+        try {
+            AlertDialog dialog = (AlertDialog) ShadowDialog.getLatestDialog();
+            assertNotNull(dialog);
+            assertEquals(activity.getString(R.string.scut_game_gone), message(dialog));
+            assertNull("nothing is connected to", activity.connection);
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
+            ShadowLooper.idleMainLooper();
+            assertEquals(1, activity.launches);
+            assertEquals(2, activity.started.length);
+            assertEquals(AppView.class.getName(), activity.started[1].getComponent().getClassName());
+            assertEquals(host, activity.started[1].getStringExtra(AppView.UUID_EXTRA));
+            assertTrue(activity.isFinishing());
+        } finally {
+            controller.destroy();
+        }
     }
 }

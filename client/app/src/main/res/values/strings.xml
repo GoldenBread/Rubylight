@@ -21,6 +21,11 @@
     <string name="scut_pc_not_found">PC not found</string>
     <string name="scut_invalid_uuid">Invalid PC</string>
     <string name="scut_invalid_app_id">Invalid app</string>
+    <string name="scut_outdated_title">Shortcut out of date</string>
+    <string name="scut_pc_gone">The PC of this shortcut is no longer among your PCs. Add it again from your PCs.</string>
+    <string name="scut_pc_unpaired">This device is no longer paired with the PC of this shortcut. Pair it again from your PCs.</string>
+    <string name="scut_game_gone">Nightjar can’t find this game among the PC’s games. Open the library to pick it again.</string>
+    <string name="scut_unreadable">This shortcut can’t be read. Start the game from your PCs instead.</string>
 
     <!-- Help strings -->
     <string name="help_loading_title">Help</string>
