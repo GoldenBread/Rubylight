@@ -719,6 +719,9 @@ pub struct Pacer {
     deadline_us: i64,
     /// The display's shortest refresh interval, for a clock made again.
     min_interval_us: i64,
+    /// Whether the clock last learnt its delay on the refresh grid: a VRR stream that the display
+    /// check turns to V-Sync with the PC's frame times, or back, starts its delay again.
+    clock_on_grid: bool,
     /// One frame of the stream (`frame_us`).
     frame_us: u64,
     /// The FPS limit's last present slot.
@@ -746,6 +749,7 @@ impl Pacer {
             grid: None,
             deadline_us: 0,
             min_interval_us,
+            clock_on_grid: false,
             frame_us: frame_us(60),
             last_slot_us: None,
             decode_queue: 0,
@@ -781,6 +785,7 @@ impl Pacer {
         if host_frame_times && self.mode == PacingMode::Vsync {
             self.clock = PresentClock::new(ClockSettings { min_interval_us: self.min_interval_us, ..ClockSettings::default() });
         }
+        self.clock_on_grid = self.host_grid();
         self
     }
 
@@ -837,6 +842,12 @@ impl Pacer {
 
     /// Takes newly decoded pictures, scheduling each once, in order.
     pub fn accept(&mut self, decoded: Decoded) {
+        if self.host_frame_times && self.host_grid() != self.clock_on_grid {
+            // A grid's lateness under the desktop's deadline is no VRR delay, nor the other way
+            // round: the clock forgets the frames it saw (its clock sync stays).
+            self.clock.reset();
+            self.clock_on_grid = self.host_grid();
+        }
         let (present_us, hold_us, late) = match self.mode {
             PacingMode::HostTimes => {
                 let s = self.clock.schedule_queued(decoded.rtp, decoded.ready_us, self.decode_queue);

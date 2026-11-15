@@ -791,6 +791,13 @@ public class HostStreamSettings extends NightjarActivity {
     /** What the next stream uses: the layers below with the values edited here on top. */
     private PreferenceConfiguration effective() {
         PreferenceConfiguration config = baseConfig();
+        if (overrides.has(HostStreamProfile.Field.PACING)) {
+            // As when the stream starts (StreamLayers takes the field whole): what this pacing leaves unset
+            // follows the main settings, not the layers below.
+            PreferenceConfiguration main = PreferenceConfiguration.readPreferences(this);
+            config.gridHostFrameTimes = main.gridHostFrameTimes;
+            config.dropLateFrames = main.dropLateFrames;
+        }
         applyWithScreen(overrides, config, overrides.pacing != null ? overrides.pacing : below.values.pacing);
         config.automaticBitrate &= overrides.bitrate == null;
         return config;
@@ -1271,7 +1278,7 @@ public class HostStreamSettings extends NightjarActivity {
         /**
          * Frame pacing for these values: the main settings', or one of its choices, which puts the pacing, the PC's
          * frame times and Balanced's newest-frame choice on the layer together (FramePacingChoice). A layer saved
-         * before holds only the pacing and takes the other two from the main settings.
+         * before holds only the pacing and takes the other two from the main settings, as the stream does.
          */
         private void showPacing() {
             String[] names = getResources().getStringArray(R.array.frame_pacing_choice_names);
@@ -1279,9 +1286,10 @@ public class HostStreamSettings extends NightjarActivity {
             items[0] = sameAs(pacingText(activity.global));
             System.arraycopy(names, 0, items, 1, names.length);
             HostStreamProfile own = activity.overrides;
+            PreferenceConfiguration main = own.pacing == null ? null : PreferenceConfiguration.readPreferences(activity);
             int checked = own.pacing == null ? 0 : 1 + Math.max(0, FramePacingChoice.index(FramePacingChoice.of(own.pacing,
-                    own.dropLateFrames != null ? own.dropLateFrames : activity.global.dropLateFrames,
-                    own.hostFrameTimes != null ? own.hostFrameTimes : activity.global.gridHostFrameTimes)));
+                    own.dropLateFrames != null ? own.dropLateFrames : main.dropLateFrames,
+                    own.hostFrameTimes != null ? own.hostFrameTimes : main.gridHostFrameTimes)));
             new NavigationDialogBuilder(activity).setTitle(R.string.title_frame_pacing)
                     .setSingleChoiceItems(items, checked, (dialog, which) -> {
                         FramePacingChoice.save(activity.overrides, which == 0 ? null : FramePacingChoice.VALUES[which - 1]);

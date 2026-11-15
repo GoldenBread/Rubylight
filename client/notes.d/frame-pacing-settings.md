@@ -5,4 +5,4 @@
 - Rows that do nothing with your other choices say why.
 
 ## desktop
-- Frame pacing offers the PC's frame times with V-Sync on a fixed-refresh screen: each frame shows on the first refresh after the time the PC drew it.
+- Frame pacing offers the PC's frame times with V-Sync on a fixed-refresh screen: each frame shows on the refresh nearest its time on the PC.

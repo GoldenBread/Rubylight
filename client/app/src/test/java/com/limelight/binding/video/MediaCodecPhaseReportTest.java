@@ -71,6 +71,14 @@ public class MediaCodecPhaseReportTest {
             ReflectionHelpers.setField(renderer, "outputHasArrSupport", true);
             report(renderer, VSYNC_NS + 5_000_000L);
             assertTrue("adaptive refresh has no fixed latch", SlackBridge.slacks.isEmpty());
+            // Fixed timing on adaptive screens: with VRR off the ARR screen is timed as fixed and reports.
+            PreferenceConfiguration config = ReflectionHelpers.getField(renderer, "prefs");
+            config.arrFixedTiming = true;
+            report(renderer, VSYNC_NS + 5_000_000L);
+            assertEquals("fixed timing reports on an ARR screen", 1, SlackBridge.slacks.size());
+            config.arrFixedTiming = false;
+            SlackBridge.slacks.clear();
+            SlackBridge.intervals.clear();
             ReflectionHelpers.setField(renderer, "outputHasArrSupport", false);
 
             ReflectionHelpers.setField(renderer, "upscaler", unconstructed(GlesUpscaler.class));

@@ -408,6 +408,8 @@ impl PresentClock {
         self.rate.reset();
         self.rate_unwrap = None;
         self.queued_streak = 0;
+        // The next grid schedule says so again.
+        self.on_grid = false;
     }
 
     /// The current delay from host present to client present, beyond the clocks' offset.

@@ -980,6 +980,14 @@ fn settings_screenshots() {
             f.settle();
             f.scroll_to_end();
             shoot(&mut f, "settings-frame-pacing-host");
+            // Frame pacing's list on a screen without VRR, the PC's frame times among its choices.
+            let mut f = fresh();
+            f.l.go(Screen::Settings);
+            f.l.settings_view.section = "Display & image";
+            f.l.settings_view.to_top = true;
+            f.settle();
+            click_value(&mut f, "Frame pacing", "Lowest latency");
+            shoot(&mut f, "settings-frame-pacing-list");
             // About: the version, the source link and the credits, top and end.
             let mut f = fresh();
             f.l.go(Screen::Settings);

@@ -60,14 +60,22 @@ final class SettingRules {
                 !prefs.getBoolean("checkbox_enable_hdr", false) && !pyroWaveChosen(prefs);
     }
 
+    /** The codec's name in tags; it reads the same in every language. */
+    private static final String PYROWAVE = "PyroWave";
+
     /**
-     * The tag for a Frame pacing choice that its renderer ignores, or null: the Vulkan renderer takes the pacing but
-     * neither the PC's frame times nor Balanced's newest-frame choice (MediaCodecDecoderRenderer.handOutputToVulkan).
+     * The tag for a Frame pacing choice that its renderer ignores, or null. PyroWave's presenter takes the pacing
+     * under the PC's frame times, which those make Lowest latency (FramePacingPolicy.pyroWaveMode,
+     * PreferenceConfiguration.readPreferences). The Vulkan renderer takes the pacing but neither the PC's frame
+     * times nor Balanced's newest-frame choice (MediaCodecDecoderRenderer.handOutputToVulkan).
      */
     static String framePacingUnused(Context context, SharedPreferences prefs) {
+        String choice = FramePacingChoice.read(prefs);
+        if (FramePacingChoice.HOST_TIMES.equals(choice) && pyroWaveChosen(prefs)) {
+            return context.getString(R.string.tag_unused_with, PYROWAVE);
+        }
         int vulkan = vulkanPathTitle(prefs);
         if (vulkan == 0) return null;
-        String choice = FramePacingChoice.read(prefs);
         if (FramePacingChoice.HOST_TIMES.equals(choice)) {
             return context.getString(R.string.tag_unused_with, context.getString(vulkan));
         }

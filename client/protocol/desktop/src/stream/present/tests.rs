@@ -1479,6 +1479,44 @@ fn the_pcs_frame_times_without_display_timing_present_at_their_time() {
     assert!(!Pacer::new(PacingMode::HostTimes, 8_333).with_host_frame_times(true).host_grid());
 }
 
+/// A VRR stream with the PC's frame times that the display check turns to V-Sync learns its
+/// delay on the grid from the start, and learns Real VRR's again when the check brings VRR back.
+#[test]
+fn the_pcs_frame_times_start_their_delay_again_between_vrr_and_the_grid() {
+    let interval = 8_333;
+    let grid = refresh_grid(0, interval * 1000);
+    let mut pacer = Pacer::new(PacingMode::HostTimes, interval).with_host_frame_times(true);
+    pacer.set_grid(Some(grid), 0);
+    let mut i = 0u64;
+    let mut next = |pacer: &mut Pacer| {
+        i += 1;
+        let host = i * interval as u64;
+        let mut picture = decoded(50_000 + host + (i * 7 % 4) * 1_000);
+        picture.rtp = (host * 9 / 100) as u32;
+        let (rtp, ready) = (picture.rtp, picture.ready_us);
+        pacer.accept(picture);
+        (crate::stream::pipeline::lock(&pacer.pending).pop_back().unwrap().present_us, rtp, ready)
+    };
+    for _ in 0..60 {
+        next(&mut pacer);
+    }
+    // Fallen back to V-Sync: the first picture is scheduled as by a clock that saw nothing.
+    pacer.mode = PacingMode::Vsync;
+    let mut fresh = pacer.clock.clone();
+    fresh.reset();
+    let (present, rtp, ready) = next(&mut pacer);
+    assert_eq!(present, fresh.schedule_on_grid_queued(rtp, ready, grid, 0).release_us.max(ready));
+    for _ in 0..60 {
+        next(&mut pacer);
+    }
+    // VRR back: the same again, with Real VRR's schedule.
+    pacer.mode = PacingMode::HostTimes;
+    let mut fresh = pacer.clock.clone();
+    fresh.reset();
+    let (present, rtp, ready) = next(&mut pacer);
+    assert_eq!(present, fresh.schedule_queued(rtp, ready, 0).present_us);
+}
+
 #[test]
 fn lowest_and_balanced_pacing_show_the_newest_due_picture() {
     for mode in [FramePacing::Latency, FramePacing::Balanced] {
