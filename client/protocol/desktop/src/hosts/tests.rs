@@ -1358,6 +1358,21 @@ fn names_a_pc_reports_or_is_given_later_are_kept_out_of_the_log() {
 }
 
 #[test]
+fn a_pc_reads_as_away_before_its_punched_path_is_tried() {
+    // The first failed poll of a PC shown online or not known yet does not wait for the punch.
+    assert!(!punches_now(false, || false));
+    // Once it reads as away, or while a punched path is up (it answers at once), the punch is tried.
+    assert!(punches_now(true, || panic!("not asked")));
+    assert!(punches_now(false, || true));
+    // A failed poll marks the PC Offline, which the next poll punches from.
+    let mut hosts = Hosts::without_discovery(vec![paired_record("uid")], Arc::new(|| {}));
+    let id = hosts.list[0].id;
+    let seq = hosts.list[0].info_seq + 1;
+    send(&mut hosts, Event::Info { id, seq, address: "192.0.2.1".into(), result: Err("timed out".into()) });
+    assert!(hosts.list[0].reach == Reach::Offline);
+}
+
+#[test]
 fn a_failed_quit_names_the_game_and_the_next_step_not_the_pcs_words() {
     let failed = quit_failure("HTTP 500: internal error", "Portal");
     assert_eq!(failed, "Couldn’t quit Portal. Check that the PC is on and on this network, then try again.");

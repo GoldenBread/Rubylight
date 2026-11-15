@@ -641,6 +641,23 @@ public class ComputerManagerLifecycleTest {
     }
 
     @Test
+    public void aPcReadsAsAwayBeforeItsPunchedPathIsTried() {
+        ComputerDetails pc = new ComputerDetails();
+        // Its own addresses just failed: the poll fails at once, without the punch's minute.
+        pc.state = ComputerDetails.State.ONLINE;
+        assertFalse(ComputerManagerService.punchesNow(pc));
+        pc.state = ComputerDetails.State.UNKNOWN;
+        assertFalse(ComputerManagerService.punchesNow(pc));
+        // Once the failed polls marked it offline, the punch is tried.
+        pc.state = ComputerDetails.State.OFFLINE;
+        assertTrue(ComputerManagerService.punchesNow(pc));
+        // A punched path that reaches it already answers at once.
+        pc.state = ComputerDetails.State.ONLINE;
+        pc.activeAddress = new ComputerDetails.AddressTuple("127.78.0.1", 47989);
+        assertTrue(ComputerManagerService.punchesNow(pc));
+    }
+
+    @Test
     public void playOverTheInternetIsTakenInAtStartAndTurningItOffEndsTheTunnelsAtOnce() throws Exception {
         List<String> asked = java.util.Collections.synchronizedList(new ArrayList<>());
         CountDownLatch on = new CountDownLatch(1);

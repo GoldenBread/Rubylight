@@ -1121,6 +1121,7 @@ impl Hosts {
         let seq = host.poll_seq;
         let record = host.record.clone();
         let likely_online = host.reach == Reach::Online;
+        let away = host.reach == Reach::Offline;
         self.spawn("serverinfo", move || {
             let mut last_error = String::from(en("No address"));
             let mut tried = Vec::new();
@@ -1142,8 +1143,10 @@ impl Hosts {
                     }
                 }
             }
-            // Every direct path failed: a punched one, where the PC gave this device its key.
-            if let Some(reply) = internet_reply(&record).filter(|_| record.pinned_address.is_none()) {
+            // Every direct path failed: a punched one, where the PC gave this device its key, once
+            // the PC reads as away (`punches_now`).
+            let punch = punches_now(away, || nightjar_core::internet::connected(&record.unique_id).is_some());
+            if let Some(reply) = internet_reply(&record).filter(|_| record.pinned_address.is_none() && punch) {
                 let asked = |address: String| tried.contains(&address);
                 let tried = nightjar_core::internet::Tried {
                     lan: asked(record.address.clone()),
@@ -1227,6 +1230,14 @@ impl Hosts {
             Some(Event::Quit { id, result })
         });
     }
+}
+
+/// Whether a poll whose direct paths failed tries the punched path now: once the PC reads as away
+/// (`away`, a poll before failed), or while a punched path reaches it already (`tunnel_up`), which
+/// answers at once. Until then the poll fails as fast as for a PC without internet play, so a PC
+/// that is off reads as Offline at once instead of after the up to 50 s the punch may take.
+fn punches_now(away: bool, tunnel_up: impl FnOnce() -> bool) -> bool {
+    away || tunnel_up()
 }
 
 /// The addresses a poll tries in turn: the last that answered, the others, then the remote one,

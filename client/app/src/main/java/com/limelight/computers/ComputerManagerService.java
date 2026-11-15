@@ -1036,6 +1036,11 @@ public class ComputerManagerService extends Service {
         if (Thread.currentThread().isInterrupted()) {
             throw new InterruptedException();
         }
+        if (!punchesNow(details)) {
+            // The punched path can take most of a minute: the PC reads as away first, as one without it does.
+            details.unreachable = InternetPlay.unreachable(reply, tried);
+            return null;
+        }
         InternetPlay.setEnabled(PreferenceManager.getDefaultSharedPreferences(this)
                 .getBoolean(PreferenceConfiguration.INTERNET_PLAY_PREF_STRING, true));
         try {
@@ -1051,6 +1056,17 @@ public class ComputerManagerService extends Service {
         }
         LimeLog.info("Internet play: " + details.unreachable);
         return null;
+    }
+
+    /**
+     * Whether a poll whose direct paths failed tries the punched path now: once the PC reads as away (its failed
+     * polls marked it offline), or while a punched path reaches it already, which answers at once. Until then the
+     * poll fails as fast as for a PC without internet play, so a PC that is off is not shown as it was for the up to
+     * a minute the punch may take.
+     */
+    static boolean punchesNow(ComputerDetails details) {
+        return details.state == ComputerDetails.State.OFFLINE
+                || (details.activeAddress != null && InternetPlay.isTunnelAddress(details.activeAddress.address));
     }
 
     /**
