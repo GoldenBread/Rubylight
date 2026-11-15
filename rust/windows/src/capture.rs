@@ -1838,8 +1838,20 @@ impl Capture {
         if kind == "wgc"
             && (crate::process::is_system() || config.boolean("wgc_user_helper", false))
         {
+            // The helper parses the target without its #client suffix, so its
+            // crop comes from the forwarded config. Make the target's suffix
+            // authoritative there too, as it is in-process.
+            let mut helper_config = config.clone();
+            helper_config.values.insert(
+                butterpollo_core::app_window::FRAME.into(),
+                if client { "client" } else { "full" }.into(),
+            );
             return Ok(Self::WgcWorker(Box::new(bridge::Session::new(
-                name, window, hdr, config, warnings,
+                name,
+                window,
+                hdr,
+                &helper_config,
+                warnings,
             )?)));
         }
         // WGC captures a display on any GPU, so it opens on the encoding one;

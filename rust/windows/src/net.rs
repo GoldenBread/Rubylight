@@ -721,7 +721,8 @@ fn next_hop_unspecified(next: &windows::Win32::Networking::WinSock::SOCKADDR_INE
         } else if next.si_family == AF_INET6 {
             next.Ipv6.sin6_addr.u.Byte.iter().all(|byte| *byte == 0)
         } else {
-            true
+            // An unknown family is not proven on-link; offer nothing.
+            false
         }
     }
 }
