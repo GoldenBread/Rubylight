@@ -208,7 +208,6 @@ pub fn disconnect(h: &Shared, client: Option<&str>) {
         .into_iter()
         .partition(|(id, _)| client.is_some_and(|c| c != id));
     *monitors = kept;
-    let empty = monitors.is_empty();
     drop(monitors);
     // While their displays still exist to be named.
     for lease in removed.values() {
@@ -219,6 +218,11 @@ pub fn disconnect(h: &Shared, client: Option<&str>) {
     // Dropping the last lease joins its feeder, whose recovery callback takes
     // the monitors lock to lay out the displays: never drop one under it.
     drop(removed);
+    // One layout at a time, from what is left now: two monitors ending together, each on a
+    // thread of its own, would otherwise lay the displays out from each other's half-done state.
+    static LAYOUT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _layout = LAYOUT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let empty = h.monitors.lock().unwrap().is_empty();
     let result = if empty {
         display::restore_positions()
     } else {
