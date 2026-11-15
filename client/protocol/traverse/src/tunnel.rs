@@ -432,10 +432,12 @@ impl Tunnel {
             return;
         }
         let mut sent = false;
+        let mut sealed = Vec::new();
         while let Some(segment) = inner.reliable.poll_transmit(now) {
             self.shared
-                .node
-                .send(peer, &self.shared.sealer.seal(Kind::Stream, 0, &segment));
+                .sealer
+                .seal_into(Kind::Stream, 0, &segment, &mut sealed);
+            self.shared.node.send(peer, &sealed);
             sent = true;
         }
         if sent {
@@ -696,6 +698,8 @@ impl Tunnel {
             return;
         };
         let mut buffer = vec![0u8; 4096];
+        // Kept for every datagram, so sealing allocates nothing.
+        let mut sealed = Vec::with_capacity(buffer.len() + wire::OVERHEAD);
         while !self.is_closed() {
             let Ok((length, from)) = end.socket.recv_from(&mut buffer) else {
                 continue;
@@ -709,13 +713,10 @@ impl Tunnel {
             }
             let peer = *self.shared.connected.lock().unwrap();
             if let Some(peer) = peer {
-                self.shared.node.send(
-                    peer,
-                    &self
-                        .shared
-                        .sealer
-                        .seal(Kind::Media, channel, &buffer[..length]),
-                );
+                self.shared
+                    .sealer
+                    .seal_into(Kind::Media, channel, &buffer[..length], &mut sealed);
+                self.shared.node.send(peer, &sealed);
             }
         }
     }

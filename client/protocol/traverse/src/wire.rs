@@ -114,13 +114,22 @@ impl Sealer {
     }
 
     pub fn seal(&self, kind: Kind, channel: u8, payload: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        self.seal_into(kind, channel, payload, &mut out);
+        out
+    }
+
+    /// [`Sealer::seal`] into `out`, which is cleared first: a buffer kept for every datagram
+    /// allocates only when it grows.
+    pub fn seal_into(&self, kind: Kind, channel: u8, payload: &[u8], out: &mut Vec<u8>) {
         let seq = self.seq.fetch_add(1, Ordering::Relaxed);
         let session = if kind.carries_session() {
             SESSION_BYTES
         } else {
             0
         };
-        let mut out = Vec::with_capacity(OVERHEAD + session + payload.len());
+        out.clear();
+        out.reserve(OVERHEAD + session + payload.len());
         out.extend_from_slice(&MAGIC);
         out.push(VERSION);
         out.push(kind as u8);
@@ -133,8 +142,7 @@ impl Sealer {
         }
         let aad_bytes = out.len();
         out.extend_from_slice(payload);
-        self.key.seal_after(nonce(seq), &mut out, aad_bytes);
-        out
+        self.key.seal_after(nonce(seq), out, aad_bytes);
     }
 }
 
@@ -278,6 +286,40 @@ mod tests {
         let mut changed = sealer.seal(Kind::Media, CHANNEL_VIDEO, b"frame");
         changed[5] = CHANNEL_MIC;
         assert_eq!(opener.open(&changed), None);
+    }
+
+    /// The bytes of a sealed datagram, built from the format above with the AEAD alone.
+    fn reference(seq: u64, kind: Kind, channel: u8, payload: &[u8]) -> Vec<u8> {
+        let mut out = vec![0xa7, b'R', b'L', 1, kind as u8, channel, 0, 0];
+        out.extend_from_slice(&[2; 8]);
+        out.extend_from_slice(&seq.to_be_bytes());
+        if matches!(kind, Kind::Punch | Kind::PunchAck) {
+            out.extend_from_slice(&[3; 16]);
+        }
+        let mut body = payload.to_vec();
+        Aead::new(&[1; 32]).seal(nonce(seq), &out, &mut body);
+        out.extend_from_slice(&body);
+        out
+    }
+
+    #[test]
+    fn sealed_bytes_follow_the_format_whichever_way_they_are_sealed() {
+        let sealer = Sealer::new(&[1; 32], [2; 8], [3; 16]);
+        // Leftovers of a longer datagram in the kept buffer are cleared.
+        let mut kept = vec![0xee; 3000];
+        let cases: [(Kind, u8, &[u8]); 4] = [
+            (Kind::Media, CHANNEL_VIDEO, b"frame"),
+            (Kind::Punch, 0, b""),
+            (Kind::Stream, 0, &[7; 1100]),
+            (Kind::Keepalive, 0, b""),
+        ];
+        let mut seq = 1;
+        for (kind, channel, payload) in cases {
+            assert_eq!(sealer.seal(kind, channel, payload), reference(seq, kind, channel, payload));
+            sealer.seal_into(kind, channel, payload, &mut kept);
+            assert_eq!(kept, reference(seq + 1, kind, channel, payload));
+            seq += 2;
+        }
     }
 
     #[test]
