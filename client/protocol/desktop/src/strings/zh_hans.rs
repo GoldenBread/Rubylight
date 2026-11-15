@@ -1597,5 +1597,5 @@ sudo sysctl -w net.core.rmem_max={}", "接收缓冲区：系统只分配了所�
     ("Not used outside a Wayland desktop", "在 Wayland 桌面之外不使用"),
     ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields; turn off to open it yourself.", "在电脑上选中文本框时打开屏幕键盘，之后自动关闭。需要电脑能报告文本框；关闭后由你自行打开键盘。"),
     ("Fractional V-Sync", "分数 V-Sync"),
-    ("On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. It adds 3 to 10 ms of delay; turn it on if motion judders with V-Sync.", "屏幕刷新率是串流帧率的 2 到 4 倍时(120 Hz 上的 60 fps),每帧显示相同次数的刷新,让动作保持均匀。会增加 3 到 10 ms 延迟;如果开启 V-Sync 后动作卡顿,请打开。"),
+    ("On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. It adds 1 to 2 ms of delay; turn it on if motion judders with V-Sync.", "屏幕刷新率是串流帧率的 2 到 4 倍时(120 Hz 上的 60 fps),每帧显示相同次数的刷新,让动作保持均匀。会增加 1 到 2 ms 延迟;如果开启 V-Sync 后动作卡顿,请打开。"),
 ];
