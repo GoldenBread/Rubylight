@@ -82,6 +82,13 @@ void PltLockMutex(PLT_MUTEX* mutex) {
     enetLocked = true;
 }
 
+bool PltTryLockMutex(PLT_MUTEX* mutex) {
+    CHECK(mutex == &enetMutex);
+    if (enetLocked) return false;
+    enetLocked = true;
+    return true;
+}
+
 void PltUnlockMutex(PLT_MUTEX* mutex) {
     CHECK(mutex == &enetMutex && enetLocked);
     enetLocked = false;

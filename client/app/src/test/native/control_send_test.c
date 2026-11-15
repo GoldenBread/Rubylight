@@ -1,8 +1,9 @@
 // The real JNI control senders and encrypted ENet send path against fake ENet and JNI:
 // DualSense microphone packets larger than the old 256-byte plaintext buffer, Java-thread
-// sends and RTT reads racing stream teardown or the next stream's initialization, and
-// phase-lock reports that need the host's announcement.
+// sends and RTT reads racing stream teardown or the next stream's initialization, RTT reads
+// that never wait for a busy enetMutex, and phase-lock reports that need the host's announcement.
 #include <pthread.h>
+#include <time.h>
 #include <unistd.h>
 #include "android_control.c"
 
@@ -72,6 +73,16 @@ void PltLockMutex(PLT_MUTEX* mutex) {
         holdThisThreadInLock = false;
         holdUntil(&readerInside, &lockReleased);
     }
+}
+
+bool PltTryLockMutex(PLT_MUTEX* mutex) {
+    CHECK(mutex != &enetMutex || atomic_load(&enetMutexExists));
+    if (pthread_mutex_trylock(mutex) != 0) return false;
+    if (holdThisThreadInLock) {
+        holdThisThreadInLock = false;
+        holdUntil(&readerInside, &lockReleased);
+    }
+    return true;
 }
 
 void PltUnlockMutex(PLT_MUTEX* mutex) { CHECK(pthread_mutex_unlock(mutex) == 0); }
@@ -441,6 +452,41 @@ static void teardownWaitsForAnRttReadInFlight(void) {
     ConnectionInterrupted = false;
 }
 
+static void* holdEnetMutex(void* context) {
+    holdThisThreadInLock = true;
+    PltLockMutex(&enetMutex);
+    PltUnlockMutex(&enetMutex);
+    return NULL;
+}
+
+static uint64_t monotonicMs(void) {
+    struct timespec now;
+    CHECK(clock_gettime(CLOCK_MONOTONIC, &now) == 0);
+    return (uint64_t)now.tv_sec * 1000 + (uint64_t)now.tv_nsec / 1000000;
+}
+
+static void rttReadsNeverWaitForABusyLock(void) {
+    reset();
+    fakePeer.roundTripTime = 7;
+    fakePeer.roundTripTimeVariance = 3;
+
+    // The control receive thread holds enetMutex while a host disconnect is held back; the
+    // UI thread's timer read answers "unknown" at once instead of waiting for it.
+    pthread_t holder;
+    CHECK(pthread_create(&holder, NULL, holdEnetMutex, NULL) == 0);
+    waitFor(&readerInside, NULL);
+    uint32_t rtt = 0, variance = 0;
+    uint64_t start = monotonicMs();
+    CHECK(!LiGetEstimatedRttInfo(&rtt, &variance));
+    CHECK(monotonicMs() - start < 10);
+    CHECK(rtt == 0 && variance == 0);
+    CHECK(atomic_load(&enetSendersInFlight) == 0);
+
+    release(&lockReleased);
+    CHECK(pthread_join(holder, NULL) == 0);
+    CHECK(LiGetEstimatedRttInfo(&rtt, &variance) && rtt == 7 && variance == 3);
+}
+
 static void rttReadsStopOnceTeardownStarts(void) {
     reset();
     fakePeer.roundTripTime = 7;
@@ -710,6 +756,7 @@ static const struct { const char* name; void (*run)(void); } scenarios[] = {
     {"lifecycle", sendingStaysClosedFromAFailedStartUntilTheNextStreamIsReady},
     {"rtt-in-flight", teardownWaitsForAnRttReadInFlight},
     {"rtt-linger", rttReadsStopOnceTeardownStarts},
+    {"rtt-busy-lock", rttReadsNeverWaitForABusyLock},
 };
 
 // With an argument, only the named scenario runs. Each scenario starts from a freshly
