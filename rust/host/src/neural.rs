@@ -1567,7 +1567,7 @@ fn remove_at(name: &str, exe: &Path) -> Result<Removed> {
             if kept.is_empty() {
                 tracing::info!(app = %name, %folder, "Neural Rendering removed");
             } else {
-                tracing::warn!(app = %name, %folder, kept = ?kept, "Neural Rendering removed; files that changed since or are not Rubylight's were left");
+                tracing::warn!(app = %name, %folder, kept = ?kept, "Neural Rendering removed; files that changed since, are not Rubylight's or were held open were left");
             }
             Ok(Removed::Done(kept))
         }

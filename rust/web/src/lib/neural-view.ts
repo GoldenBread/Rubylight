@@ -6,8 +6,8 @@ import { megabytes, sentence } from './coop-view';
  * every state is checked from fixtures (NeuralView.test.mjs) without a host.
  *
  * `unavailable` (this PC's GPU can't run frame generation: the switch stays off and says why), `off`
- * and `on` (the frame generation switch; `kept` lists what a removal left: files that changed since
- * and what someone else put in the folders Rubylight made), `working` (downloading, installing or removing, with progress), `choose` (the game's
+ * and `on` (the frame generation switch; `kept` lists what a removal left: files that changed since,
+ * what someone else put in the folders Rubylight made and a folder of Rubylight's a program held open), `working` (downloading, installing or removing, with progress), `choose` (the game's
  * program could not be found: the user picks it) and `failed` (the install, the removal or a
  * launch's check failed or was refused; the switch shows where it is and `title` says which of them
  * it was). `earlier` is the release of Rubylight 3.0's neural upscaling still in the game's folder,

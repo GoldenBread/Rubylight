@@ -143,7 +143,7 @@
         />
         {#if view.kind === 'off' && view.kept.length > 0}
           <p class="muted note">
-            Left in the game’s folder because they changed since they were installed or are not Rubylight’s: {view.kept.join(', ')}.
+            Left in the game’s folder because they changed since they were installed, are not Rubylight’s or a program still held them open: {view.kept.join(', ')}.
           </p>
         {:else if view.kind === 'failed'}
           <Banner tone="danger" title={view.title} live>
