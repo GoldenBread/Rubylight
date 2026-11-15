@@ -28,7 +28,10 @@ const STUN_EVERY: Millis = 5 * 60_000;
 /// Republish a record this often, well inside the two hours DHT nodes keep it.
 const PUBLISH_EVERY: Millis = 30 * 60_000;
 /// Look for each device's record this often.
-const POLL_EVERY: Millis = 10_000;
+const POLL_EVERY: Millis = punch::HOST_POLL;
+/// At most this many devices' records are looked for at once, each on a thread of its own, so
+/// one device's slow lookups never hold another's back.
+const MAX_POLLS: usize = 4;
 
 #[derive(Clone, Debug)]
 pub struct HostConfig {
@@ -79,6 +82,8 @@ struct DeviceState {
     tag: [u8; 8],
     published: Option<(u64, Millis, Vec<SocketAddr>)>,
     last_poll: Option<Millis>,
+    /// A look for its record is under way.
+    polling: bool,
     answered: Option<[u8; 16]>,
 }
 
@@ -92,6 +97,8 @@ struct Shared {
     devices: Mutex<Vec<DeviceState>>,
     tunnels: Mutex<Tunnels>,
     status: Mutex<Status>,
+    /// The records are being published.
+    publishing: AtomicBool,
     stop: AtomicBool,
 }
 
@@ -110,6 +117,7 @@ impl HostService {
             devices: Mutex::new(Vec::new()),
             tunnels: Mutex::new(HashMap::new()),
             status: Mutex::new(Status::default()),
+            publishing: AtomicBool::new(false),
             stop: AtomicBool::new(false),
         });
         let handling = Arc::downgrade(&shared);
@@ -152,6 +160,7 @@ impl HostService {
                         tag,
                         published: None,
                         last_poll: None,
+                        polling: false,
                         answered: None,
                     });
                 }
@@ -370,81 +379,110 @@ impl HostService {
         }
     }
 
+    /// Starts the publications and the looks for devices' records that are due; both run on
+    /// threads of their own, so a slow DHT never holds this loop or another device back.
     fn serve_devices(&self) {
-        let ids: Vec<String> = self
-            .shared
-            .devices
-            .lock()
-            .unwrap()
-            .iter()
-            .map(|state| state.device.id.clone())
-            .collect();
         let (public, nat) = {
             let status = self.shared.status.lock().unwrap();
             (status.public.clone(), status.nat)
         };
-        let mut published = 0;
-        for id in ids {
+        let window = record::window(unix_now());
+        let now = self.shared.node.now();
+        let mut devices = self.shared.devices.lock().unwrap();
+        let publish: Vec<(String, Keys)> = devices
+            .iter()
+            .filter(|state| {
+                !public.is_empty()
+                    && match &state.published {
+                        None => true,
+                        Some((at_window, at, endpoints)) => {
+                            *at_window != window || now - at > PUBLISH_EVERY || *endpoints != public
+                        }
+                    }
+            })
+            .map(|state| (state.device.id.clone(), state.keys.clone()))
+            .collect();
+        // The longest waiting first, while threads are free.
+        let mut due: Vec<usize> = (0..devices.len())
+            .filter(|&index| {
+                let state = &devices[index];
+                !state.polling && state.last_poll.map_or(true, |at| now - at >= POLL_EVERY)
+            })
+            .collect();
+        due.sort_by_key(|&index| devices[index].last_poll);
+        let free = MAX_POLLS.saturating_sub(devices.iter().filter(|state| state.polling).count());
+        let mut poll = Vec::new();
+        for index in due.into_iter().take(free) {
+            devices[index].polling = true;
+            poll.push((devices[index].device.id.clone(), devices[index].keys.clone()));
+        }
+        let published = devices
+            .iter()
+            .filter(|state| state.published.is_some())
+            .count();
+        drop(devices);
+        self.shared.status.lock().unwrap().published = published;
+
+        for (id, keys) in poll {
+            let polling = self.clone();
+            let device = id.clone();
+            let spawned = thread::Builder::new()
+                .name("internet play poll".into())
+                .spawn(move || polling.poll_device(&device, &keys, unix_now()));
+            if spawned.is_err() {
+                let mut devices = self.shared.devices.lock().unwrap();
+                if let Some(state) = devices.iter_mut().find(|state| state.device.id == id) {
+                    state.polling = false;
+                }
+            }
+        }
+        if !publish.is_empty() && !self.shared.publishing.swap(true, Ordering::AcqRel) {
+            let publishing = self.clone();
+            let spawned = thread::Builder::new()
+                .name("internet play publish".into())
+                .spawn(move || {
+                    publishing.publish(publish, public, nat);
+                    publishing.shared.publishing.store(false, Ordering::Release);
+                });
+            if spawned.is_err() {
+                self.shared.publishing.store(false, Ordering::Release);
+            }
+        }
+    }
+
+    /// Publishes the host's record for each device in `due`, one after another.
+    fn publish(&self, due: Vec<(String, Keys)>, public: Vec<SocketAddr>, nat: Nat) {
+        for (id, keys) in due {
             if self.stopped() {
                 return;
             }
             let unix = unix_now();
             let window = record::window(unix);
             let now = self.shared.node.now();
-            // Copy what the slow DHT work needs, so the lock isn't held through it.
-            let (keys, publish, poll) = {
-                let devices = self.shared.devices.lock().unwrap();
-                let Some(state) = devices.iter().find(|state| state.device.id == id) else {
-                    continue;
-                };
-                let publish = !public.is_empty()
-                    && match &state.published {
-                        None => true,
-                        Some((at_window, at, endpoints)) => {
-                            *at_window != window || now - at > PUBLISH_EVERY || *endpoints != public
-                        }
-                    };
-                let poll = state.last_poll.map_or(true, |at| now - at >= POLL_EVERY);
-                (state.keys.clone(), publish, poll)
+            let record = Record {
+                role: Role::Host,
+                time: unix,
+                session: self.shared.session,
+                peer_session: [0; 16],
+                nat,
+                endpoints: public.clone(),
+                ports: Some(self.shared.config.ports),
             };
-            if publish {
-                let record = Record {
-                    role: Role::Host,
-                    time: unix,
-                    session: self.shared.session,
-                    peer_session: [0; 16],
-                    nat,
-                    endpoints: public.clone(),
-                    ports: Some(self.shared.config.ports),
-                };
-                let confirmed =
-                    self.shared
-                        .node
-                        .put(&record.item(&keys, window, crate::crypto::random()));
-                let mut devices = self.shared.devices.lock().unwrap();
-                if let Some(state) = devices.iter_mut().find(|state| state.device.id == id) {
-                    if confirmed > 0 {
-                        state.published = Some((window, now, public.clone()));
-                    }
+            let confirmed = self
+                .shared
+                .node
+                .put(&record.item(&keys, window, crate::crypto::random()));
+            let mut devices = self.shared.devices.lock().unwrap();
+            if let Some(state) = devices.iter_mut().find(|state| state.device.id == id) {
+                if confirmed > 0 {
+                    state.published = Some((window, now, public.clone()));
                 }
-                drop(devices);
-                self.shared.status.lock().unwrap().dht_error = (confirmed == 0).then(|| {
-                    "no DHT node stored the PC's record: UDP to the internet may be blocked"
-                        .to_owned()
-                });
             }
-            if poll {
-                self.poll_device(&id, &keys, unix);
-            }
-            let devices = self.shared.devices.lock().unwrap();
-            if devices
-                .iter()
-                .any(|state| state.device.id == id && state.published.is_some())
-            {
-                published += 1;
-            }
+            drop(devices);
+            self.shared.status.lock().unwrap().dht_error = (confirmed == 0).then(|| {
+                "no DHT node stored the PC's record: UDP to the internet may be blocked".to_owned()
+            });
         }
-        self.shared.status.lock().unwrap().published = published;
     }
 
     fn poll_device(&self, id: &str, keys: &Keys, unix: u64) {
@@ -468,6 +506,7 @@ impl HostService {
             return;
         };
         state.last_poll = Some(now);
+        state.polling = false;
         let Some(record) = found else { return };
         let fresh = unix.abs_diff(record.time) <= record::CLIENT_FRESH_SECONDS;
         if !fresh
