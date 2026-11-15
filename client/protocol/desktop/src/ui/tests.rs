@@ -46,6 +46,35 @@ fn an_answer_that_arrives_by_itself_waits_for_the_open_dialog() {
 }
 
 #[test]
+fn a_worker_s_message_waits_for_the_pin_and_the_replace_prompt_but_not_for_a_running_test() {
+    let mut l = launcher(true, true);
+    // A wake for another PC fails while the PIN is up: the PIN stays, the message comes after it.
+    l.ask(Dialog::Pairing { host: 1, pin: "1234".into() });
+    l.notify(tr("Could not wake the PC"), "no route");
+    assert!(matches!(&l.dialog, Dialog::Pairing { pin, .. } if pin == "1234"));
+    l.ask(Dialog::ConfirmReplace { app: "Hades".into(), running: "Celeste".into() });
+    l.notify(tr("Could not quit the app"), "busy");
+    assert!(matches!(l.dialog, Dialog::ConfirmReplace { .. }), "the launch waits on this answer");
+    l.dialog = Dialog::None;
+    assert!(l.next_queued());
+    assert!(matches!(&l.dialog, Dialog::Message { body, .. } if body == "no route"));
+    l.dialog = Dialog::None;
+    assert!(l.next_queued());
+    assert!(matches!(&l.dialog, Dialog::Message { body, .. } if body == "busy"));
+    assert!(!l.next_queued());
+
+    // Over nothing or a running test's progress: at once.
+    l.dialog = Dialog::NetworkTest { stage: "Measuring".into(), calibrate: false };
+    l.notify(tr("Network test failed"), "timed out");
+    assert!(matches!(&l.dialog, Dialog::Message { body, .. } if body == "timed out"));
+    assert!(l.focus_dialog);
+    // A click's own answer still shows at once.
+    l.ask(Dialog::Rename { host: 1, text: "Den".into() });
+    l.message(tr("Could not unpair"), "now");
+    assert!(matches!(&l.dialog, Dialog::Message { body, .. } if body == "now"));
+}
+
+#[test]
 fn a_prompt_that_said_the_game_moved_says_it_came_back() {
     let mut l = launcher(true, true);
     assert_eq!(l.moved_prompt(), None);

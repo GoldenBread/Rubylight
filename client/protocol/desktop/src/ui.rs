@@ -968,6 +968,16 @@ impl Launcher {
         self.focus_dialog = true;
     }
 
+    /// A message that arrives by itself, from a worker or a timer: shown at once over nothing, a
+    /// running network test or a failed start's card, else once the dialog the player is reading
+    /// or answering is closed (a PIN, a typed name, the replace prompt).
+    pub fn notify(&mut self, title: impl Into<String>, body: impl Into<String>) {
+        match self.dialog {
+            Dialog::None | Dialog::NetworkTest { .. } | Dialog::ConnectFailed { .. } => self.message(title, body),
+            _ => self.queued.push_back(Dialog::Message { title: title.into(), body: body.into() }),
+        }
+    }
+
     /// Whether a link from the system can be shown now, in front of nothing the user is doing.
     pub fn can_open_link(&self) -> bool {
         matches!(self.dialog, Dialog::None) && !self.pin.as_ref().is_some_and(crate::pin_ui::PinLock::app_locked)

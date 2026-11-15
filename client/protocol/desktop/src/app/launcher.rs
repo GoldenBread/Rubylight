@@ -187,7 +187,7 @@ impl App {
                 SDL_EVENT_QUIT | SDL_EVENT_WINDOW_CLOSE_REQUESTED => self.running = false,
                 SDL_EVENT_GAMEPAD_ADDED => {
                     if let Err(why) = self.pads.added(event.gdevice.which) {
-                        self.launcher.message(tr("Controller not connected"), why.message());
+                        self.launcher.notify(tr("Controller not connected"), why.message());
                     }
                 }
                 SDL_EVENT_GAMEPAD_REMOVED => {
@@ -274,9 +274,9 @@ impl App {
                                 &[&calibration.pace_mbps, &if calibration.qualified { tr("confirmed twice") } else { tr("best measured result; some loss limits exceeded") },
                                 &format!("{:.2}", measurement.loss), &format!("{:.2}", measurement.worst_window_loss), &format!("{:.2}", measurement.tail_loss())]);
                             if let Some(host) = self.hosts.get_mut(host) { host.record.pace = Some(calibration); self.save_hosts(); }
-                            self.launcher.message(tr("PyroWave calibration"), text);
+                            self.launcher.notify(tr("PyroWave calibration"), text);
                         }
-                        Err(error) => self.launcher.message(tr("Network test failed"), error),
+                        Err(error) => self.launcher.notify(tr("Network test failed"), error),
                     }
                 }
             }
@@ -334,7 +334,7 @@ impl App {
             self.power_request = None;
             if let Err(why) = result {
                 eprintln!("nightjar: {:?} failed: {why}", offer.action);
-                self.launcher.message(tr(offer.action.failed()), why);
+                self.launcher.notify(tr(offer.action.failed()), why);
             }
         }
         if let Some(result) = self.folder_pick.as_ref().and_then(|(_, receiver)| receiver.try_recv().ok()) {
@@ -358,7 +358,7 @@ impl App {
                         self.launcher.identity_ready = true;
                         self.hosts.poll();
                     }
-                    Err(e) => self.launcher.message(tr("No pairing key"), e),
+                    Err(e) => self.launcher.notify(tr("No pairing key"), e),
                 }
             }
         }
@@ -397,7 +397,7 @@ impl App {
                 HostEvent::Quit { id, result } => match result {
                     Err(e) if self.quitting_on_leave.as_ref().is_some_and(|(host, _)| *host == id) => {
                         let (_, name) = self.quitting_on_leave.take().expect("checked above");
-                        self.launcher.message(tr("Could not quit the app"), trf("Couldn’t quit {} on the PC, so it is still running. {}", &[&name, &e]));
+                        self.launcher.notify(tr("Could not quit the app"), trf("Couldn’t quit {} on the PC, so it is still running. {}", &[&name, &e]));
                     }
                     Ok(()) => {
                         if self.quitting_on_leave.as_ref().is_some_and(|(host, _)| *host == id) { self.quitting_on_leave = None; }
@@ -409,14 +409,14 @@ impl App {
                     }
                     Err(e) => {
                         self.pending_launch = None;
-                        self.launcher.message(tr("Could not quit the app"), e);
+                        self.launcher.notify(tr("Could not quit the app"), e);
                     }
                 },
                 // A packet that could not be sent at all (no network, no route) ends the wait.
                 // Only the running wake ends: a send of a cancelled one may fail after a new one began.
                 HostEvent::Wake { id, run, result: Err(e) } => {
                     if self.waking.failed(id, run) {
-                        self.launcher.message(tr("Could not wake the PC"), e);
+                        self.launcher.notify(tr("Could not wake the PC"), e);
                     }
                 }
                 HostEvent::Sleep { id, ask, name, confirmed, result } => self.launcher.sleep_answered(id, ask, &name, confirmed, result),
@@ -432,7 +432,7 @@ impl App {
                         self.forget_library(id);
                     }
                     if let Err(e) = result {
-                        self.launcher.message(tr("Could not unpair"), e);
+                        self.launcher.notify(tr("Could not unpair"), e);
                     }
                 }
                 HostEvent::Session { action, result: Err(e), .. } => {
@@ -441,13 +441,13 @@ impl App {
                         ActionId::End => tr("Could not end the session"),
                         _ => tr("The session action failed"),
                     };
-                    self.launcher.message(title, e);
+                    self.launcher.notify(title, e);
                 }
                 // Nothing changed on the PC: the game keeps running and the prompt says why not. No
                 // stream follows to use the PIN's grant.
                 HostEvent::ContinueHere { result: Err(e), .. } => {
                     self.forget_pin_grant();
-                    self.launcher.message(tr("Could not continue here"), e);
+                    self.launcher.notify(tr("Could not continue here"), e);
                 }
                 HostEvent::ContinueHere { id, app, result: Ok(()) } => self.launch(id, app, true, LaunchKind::Stream, LaunchFrom::Launcher),
                 HostEvent::SelectRead { id, app, resume, too, read } => {
@@ -498,7 +498,7 @@ impl App {
                         self.watch_moved_prompt();
                     }
                 }
-                HostEvent::Action { result: Err(e), .. } => self.launcher.message(tr("The PC action failed"), e),
+                HostEvent::Action { result: Err(e), .. } => self.launcher.notify(tr("The PC action failed"), e),
                 _ => {}
             }
         }
@@ -530,7 +530,7 @@ impl App {
                         let why = connecting.plan().device.removed_reason().map_or(String::new(), |why| format!(" (the old one was removed: {why})"));
                         eprintln!("nightjar: the renderer's Direct3D 11 device changed while connecting{why}; the stream ends");
                         session.stop();
-                        self.launcher.message(tr("The stream could not start"), tr("The graphics driver was reset, which ended the stream. Connect again."));
+                        self.launcher.notify(tr("The stream could not start"), tr("The graphics driver was reset, which ended the stream. Connect again."));
                     } else {
                         self.begin_stream(connecting, session, facts);
                         return;

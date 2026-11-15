@@ -21,7 +21,7 @@ impl App {
             wol::Step::TimedOut => {
                 let name = host.display_name().to_owned();
                 self.waking.end();
-                self.launcher.message(
+                self.launcher.notify(
                     tr("The PC did not wake up"),
                     trf(
                         "{} did not answer within {} seconds. Check that Wake-on-LAN is on in its firmware and its network adapter settings.",
