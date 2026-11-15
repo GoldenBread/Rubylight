@@ -50,9 +50,13 @@ test('the library loads what the host offers when opened directly', () => {
 test('a setting this host cannot run shows in search without its control', () => {
   const page = read('pages/Settings.svelte');
   assert.match(page, /unavailable=\{inactive \? setting\.hostGated\?\.\(values\) : undefined\}/);
-  assert.match(page, /current\[NVIDIA_COMPONENT\] = componentGate\(session\.metadata\?\.nvidia_enhancements\?\.component\);/);
+  // Both settings pages take what this PC can run from one place.
+  assert.match(page, /withHostGates\(currentValues\(described, edits, config\), session\.metadata\)/);
+  assert.match(read('pages/SettingsHome.svelte'), /withHostGates\(currentValues\(described, edits, config\), host\.metadata\)/);
+  const gates = read('components/settings/values.ts');
+  assert.match(gates, /values\[NVIDIA_COMPONENT\] = componentGate\(metadata\?\.nvidia_enhancements\?\.component\);/);
   // What NVIDIA's check said replaces the generic hint (issues #103, #111).
-  assert.match(page, /current\[NVIDIA_REASONS\] = session\.metadata\?\.nvidia_enhancements\?\.errors \?\? \{\};/);
+  assert.match(gates, /values\[NVIDIA_REASONS\] = metadata\?\.nvidia_enhancements\?\.errors \?\? \{\};/);
   assert.match(page, /reason=\{inactive \? setting\.hostReason\?\.\(values\) : undefined\}/);
   const row = read('components/settings/SettingRow.svelte');
   assert.match(row, /<p class="dependency">\{reason \?\? setting\.inactiveHint/);
