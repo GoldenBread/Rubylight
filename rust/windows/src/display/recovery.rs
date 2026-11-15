@@ -556,18 +556,22 @@ fn lease_hdr(
                 settings.color = Some((chosen.clone(), previous, enabled));
                 let result = set(chosen, enabled);
                 match &result {
+                    Ok(()) if enabled => tracing::info!(
+                        output = %chosen.display_name,
+                        previous = chosen.hdr_enabled,
+                        "turned HDR on for the stream"
+                    ),
                     Ok(()) => tracing::info!(
                         output = %chosen.display_name,
                         previous = chosen.hdr_enabled,
-                        applied = enabled,
-                        "turned HDR for the stream"
+                        "turned HDR off for the stream"
                     ),
                     Err(error) => tracing::warn!(
                         output = %chosen.display_name,
                         previous = chosen.hdr_enabled,
                         applied = enabled,
                         error = %format!("{error:#}"),
-                        "could not turn HDR for the stream"
+                        "could not change HDR for the stream"
                     ),
                 }
                 return result;

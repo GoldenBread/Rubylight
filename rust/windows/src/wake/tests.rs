@@ -1,13 +1,11 @@
 use super::*;
 
 #[test]
-fn a_launch_wakes_only_an_idle_or_off_console_display() {
-    assert!(should_wake(0, Some(false)));
-    assert!(should_wake(WAKE_IDLE_SECONDS, Some(true)));
-    assert!(!should_wake(WAKE_IDLE_SECONDS - 1, Some(true)));
-    // An unreadable power setting still wakes after the idle threshold.
-    assert!(should_wake(WAKE_IDLE_SECONDS, None));
-    assert!(!should_wake(0, None));
+fn a_launch_wakes_the_console_display_only_after_the_idle_threshold() {
+    assert!(should_wake(WAKE_IDLE_SECONDS));
+    assert!(should_wake(WAKE_IDLE_SECONDS + 1));
+    assert!(!should_wake(WAKE_IDLE_SECONDS - 1));
+    assert!(!should_wake(0));
 }
 
 #[test]

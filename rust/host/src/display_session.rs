@@ -846,7 +846,7 @@ impl Prepared {
     /// Log what the display layer and Windows report, with the console state
     /// and idle time that explain a display Windows switched off.
     fn log_display_diagnostics(&mut self, stage: &str) {
-        let console = butterpollo_windows::wake::console_display_on().ok();
+        let secure = butterpollo_windows::input::secure_desktop_shown();
         let idle = butterpollo_windows::wake::idle_seconds().ok();
         match self
             .display
@@ -859,21 +859,23 @@ impl Prepared {
                 ring = diagnostics.status.ring,
                 frames_acquired = diagnostics.status.frames_acquired,
                 frames_pushed = diagnostics.status.frames_pushed,
+                // A secure desktop (the lock screen) hides the CCD path, so
+                // an inactive path there says nothing about the display.
                 ccd_active = diagnostics.ccd_active,
-                console_on = ?console,
+                secure_desktop = secure,
                 idle_seconds = ?idle,
                 "stream display status while waiting for the first frame"
             ),
             Some(Ok(None)) | None => tracing::info!(
                 stage,
-                console_on = ?console,
+                secure_desktop = secure,
                 idle_seconds = ?idle,
                 "stream display status while waiting for the first frame (physical display)"
             ),
             Some(Err(error)) => tracing::warn!(
                 stage,
                 error = %format!("{error:#}"),
-                console_on = ?console,
+                secure_desktop = secure,
                 idle_seconds = ?idle,
                 "could not read the virtual display status while waiting for the first frame"
             ),

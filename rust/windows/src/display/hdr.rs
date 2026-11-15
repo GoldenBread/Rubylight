@@ -44,8 +44,24 @@ pub(super) fn restore_hdr(
         .iter()
         .find(|m| m.device_id == recorded.device_id && m.hdr_enabled == applied)
     {
-        Some(monitor) => set(monitor, previous),
-        None => Ok(()),
+        Some(monitor) => {
+            tracing::info!(
+                output = %monitor.display_name,
+                previous,
+                applied,
+                "restoring HDR after a stream"
+            );
+            set(monitor, previous)
+        }
+        None => {
+            tracing::info!(
+                output = %recorded.display_name,
+                previous,
+                applied,
+                "leaving HDR as it is; the display no longer has the value the stream applied"
+            );
+            Ok(())
+        }
     }
 }
 

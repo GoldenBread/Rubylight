@@ -245,7 +245,7 @@ impl SessionThread<'_> {
                     // it is woken, as a client's first mouse move does.
                     if !woken
                         && now.duration_since(waiting_since) >= Duration::from_secs(1)
-                        && prepared.display_swap_chain() != Some(true)
+                        && prepared.display_swap_chain() == Some(false)
                     {
                         woken = true;
                         if let Err(error) = butterpollo_windows::wake::wake_console("first frame wait") {
