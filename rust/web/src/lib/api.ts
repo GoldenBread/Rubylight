@@ -987,6 +987,8 @@ export interface InternetPlayStatus {
     published: number;
     dhtError: string | null;
     paths: { device: string; peer: string | null; connected: boolean }[];
+    /** Devices whose path did not start lately, and why. */
+    pathErrors: { device: string; error: string }[];
   } | null;
   notes: string[];
 }

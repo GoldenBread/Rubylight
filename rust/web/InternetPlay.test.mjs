@@ -35,6 +35,7 @@ const base = {
     published: 2,
     dhtError: null,
     paths: [{ device: 'Phone', peer: '198.51.100.7:50000', connected: true }],
+    pathErrors: [],
   },
   notes: [],
 };
@@ -82,6 +83,19 @@ test('carrier-grade NAT and an unreachable rendezvous are explained', () => {
   const off = html({ ...base, enabled: false, rendezvous: null });
   assert.match(off, /Off/);
   assert.doesNotMatch(off, /Reachable|Router type/);
+});
+
+test('a device waiting for its path is shown beside the devices, and the PC stays reachable', () => {
+  const out = html({
+    ...base,
+    rendezvous: {
+      ...base.rendezvous,
+      pathErrors: [{ device: 'Tablet', error: 'Tablet waits: another device is playing over the internet' }],
+    },
+  });
+  assert.match(out, /Reachable/);
+  assert.doesNotMatch(out, /Not reachable/);
+  assert.match(out, /Tablet waits: another device is playing/);
 });
 
 test('Play over the internet is a Network setting, off by default, with its STUN servers beside it', () => {

@@ -37,6 +37,9 @@ const ACTIVE_FOR: Millis = 10 * 60_000;
 // A record published just after a slow poll began is found within the device's punch budget:
 // the wait, one lookup (both windows run at once), and the punches.
 const _: () = assert!(POLL_IDLE + crate::node::LOOKUP_DEADLINE < punch::AFTER_PUBLISH);
+/// A device's path problem shows this long after the device last tried: one still trying
+/// renews it with every punch or record.
+const PATH_ERROR_FOR: Millis = 30_000;
 /// At most this many devices' records are looked for at once, each on a thread of its own, so
 /// one device's slow lookups never hold another's back.
 const MAX_POLLS: usize = 4;
@@ -82,6 +85,8 @@ pub struct Status {
     pub devices: usize,
     pub dht_error: Option<String>,
     pub paths: Vec<PathStatus>,
+    /// Devices whose path did not start lately, by name, and why.
+    pub path_errors: Vec<(String, String)>,
 }
 
 struct DeviceState {
@@ -113,6 +118,9 @@ fn poll_interval(state: &DeviceState, open: &[[u8; 8]], now: Millis) -> Millis {
 /// Each open tunnel by its path tag, with the device session it was opened for.
 type Tunnels = HashMap<[u8; 8], ([u8; 16], Tunnel)>;
 
+/// Why a device's path did not start, by its tag: (device name, words, when).
+type PathErrors = HashMap<[u8; 8], (String, String, Millis)>;
+
 struct Shared {
     node: Node,
     config: HostConfig,
@@ -120,6 +128,7 @@ struct Shared {
     devices: Mutex<Vec<DeviceState>>,
     tunnels: Mutex<Tunnels>,
     status: Mutex<Status>,
+    path_errors: Mutex<PathErrors>,
     /// The records are being published.
     publishing: AtomicBool,
     stop: AtomicBool,
@@ -140,6 +149,7 @@ impl HostService {
             devices: Mutex::new(Vec::new()),
             tunnels: Mutex::new(HashMap::new()),
             status: Mutex::new(Status::default()),
+            path_errors: Mutex::new(HashMap::new()),
             publishing: AtomicBool::new(false),
             stop: AtomicBool::new(false),
         });
@@ -231,7 +241,27 @@ impl HostService {
                 }
             })
             .collect();
+        let now = self.shared.node.now();
+        status.path_errors = self
+            .shared
+            .path_errors
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|(_, _, at)| now.saturating_sub(*at) < PATH_ERROR_FOR)
+            .map(|(name, words, _)| (name.clone(), words.clone()))
+            .collect();
         status
+    }
+
+    /// Notes why `state`'s path did not start, for [`Status::path_errors`].
+    fn path_error(&self, state: &DeviceState, words: String) {
+        let entry = (state.device.name.clone(), words, self.shared.node.now());
+        self.shared
+            .path_errors
+            .lock()
+            .unwrap()
+            .insert(state.tag, entry);
     }
 
     pub fn stop(&self) {
@@ -276,7 +306,7 @@ impl HostService {
                 .iter()
                 .any(|(tag, (_, tunnel))| *tag != state.tag && !tunnel.is_closed());
             if busy {
-                self.shared.status.lock().unwrap().dht_error = Some(format!(
+                self.path_error(state, format!(
                     "{} waits: another device is playing over the internet, and the host listens on one address",
                     state.device.name
                 ));
@@ -300,13 +330,14 @@ impl HostService {
         ) {
             Ok(tunnel) => tunnel,
             Err(error) => {
-                self.shared.status.lock().unwrap().dht_error = Some(format!(
-                    "a path to {} could not start: {error}",
-                    state.device.name
-                ));
+                self.path_error(
+                    state,
+                    format!("a path to {} could not start: {error}", state.device.name),
+                );
                 return None;
             }
         };
+        self.shared.path_errors.lock().unwrap().remove(&state.tag);
         if let Some((_, old)) = tunnels.insert(state.tag, (client, tunnel.clone())) {
             old.close("the device connected again");
         }
@@ -364,6 +395,12 @@ impl HostService {
                 .lock()
                 .unwrap()
                 .retain(|_, (_, tunnel)| !tunnel.is_closed());
+            let now = self.shared.node.now();
+            self.shared
+                .path_errors
+                .lock()
+                .unwrap()
+                .retain(|_, (_, _, at)| now.saturating_sub(*at) < PATH_ERROR_FOR);
             for _ in 0..10 {
                 if self.stopped() {
                     return;
@@ -688,13 +725,19 @@ mod tests {
         let status = host.status();
         assert_eq!(status.paths.len(), 1);
         assert_eq!(status.paths[0].device, "Phone");
+        // The tablet's wait is its own, not the DHT's.
+        assert_eq!(status.path_errors.len(), 1);
+        assert_eq!(status.path_errors[0].0, "Tablet");
+        assert!(status.path_errors[0].1.contains("waits"));
+        assert_eq!(status.dht_error, None);
 
-        // Once the phone's path is gone, the tablet gets one.
+        // Once the phone's path is gone, the tablet gets one, and its wait is over.
         host.set_devices(vec![tablet.clone()]);
         host.receive(&punch(&tablet, [8; 16]), from);
         let status = host.status();
         assert_eq!(status.paths.len(), 1);
         assert_eq!(status.paths[0].device, "Tablet");
+        assert!(status.path_errors.is_empty());
         host.stop();
     }
 }

@@ -111,6 +111,10 @@
               {/if}
             </dd>
           {/each}
+          {#each status.rendezvous.pathErrors ?? [] as problem}
+            <dt>{problem.device || 'A device'}</dt>
+            <dd><span class="muted">{problem.error}</span></dd>
+          {/each}
         {/if}
       </dl>
       {#each status.notes as note (note)}

@@ -170,6 +170,10 @@ pub fn console_status(h: &Shared) -> Result<Value> {
                 "peer": path.peer,
                 "connected": path.connected,
             })).collect::<Vec<_>>(),
+            "pathErrors": status.path_errors.iter().map(|(device, error)| json!({
+                "device": device,
+                "error": error,
+            })).collect::<Vec<_>>(),
         })),
         "notes": notes,
     }))
@@ -373,6 +377,7 @@ pub fn start(h: Shared, bind: IpAddr) -> Option<InternetPlay> {
     *SERVICE.lock().unwrap() = Some(host);
     let refresh = tokio::spawn(async move {
         let mut reported: Option<String> = None;
+        let mut reported_paths: Vec<(String, String)> = Vec::new();
         loop {
             tokio::time::sleep(Duration::from_secs(15)).await;
             let Some(service) = service() else { return };
@@ -394,6 +399,16 @@ pub fn start(h: Shared, bind: IpAddr) -> Option<InternetPlay> {
                 }
                 reported = Some(summary);
             }
+            // A device's own path problem is no sign that others cannot reach this PC.
+            for (device, error) in &status.path_errors {
+                if !reported_paths
+                    .iter()
+                    .any(|(d, e)| d == device && e == error)
+                {
+                    tracing::info!(%device, %error, "Play over the internet: a device's path did not start");
+                }
+            }
+            reported_paths = status.path_errors;
         }
     });
     Some(InternetPlay { refresh })
