@@ -81,6 +81,31 @@ impl StreamSizes {
     }
 }
 
+/// Pictures in a row the presenter could not show before the decoder that made them gives way
+/// (`Shared::present_refused`): one that fails alone may be a passing fault, not its format.
+const UNSHOWN_BEFORE_FALLBACK: u32 = 5;
+
+/// Pictures in a row the presenter could not show.
+#[derive(Debug, Default)]
+pub(super) struct Unshown {
+    count: u32,
+}
+
+impl Unshown {
+    /// A picture was shown.
+    pub(super) fn shown(&mut self) { self.count = 0; }
+
+    /// A picture ready at `ready_us` could not be shown: Some(the time to hand the decoder,
+    /// never 0) once `UNSHOWN_BEFORE_FALLBACK` did in a row; the next decoder's pictures count
+    /// anew.
+    pub(super) fn failed(&mut self, ready_us: u64) -> Option<u64> {
+        self.count += 1;
+        if self.count < UNSHOWN_BEFORE_FALLBACK { return None; }
+        self.count = 0;
+        Some(ready_us.max(1))
+    }
+}
+
 /// A shown frame's two shares in microseconds: Nightjar's own work on the render thread, from the
 /// first look at the picture (`begin_us`) to the present call (upload or mapping, the draws, the
 /// overlay, a wait for the scan), and the present call itself, where the thread waits on what is
@@ -1033,23 +1058,26 @@ impl Streaming {
                     rows = race::scissor(first, end, p.decoded.setup.height as u32);
                 }
             }
-            if !self.scan_out(&p.decoded) && !self.texture.upload(renderer, &p.decoded, rows) {
-                if p.decoded.setup.format & VIDEO_FORMAT_MASK_PYROWAVE != 0 {
-                    let reason = self.texture.failure.take().unwrap_or_else(|| "PyroWave GPU reconstruction failed.".into());
-                    self.exit = Some(Exit::Ended(Some(reason)));
-                } else if p.decoded.setup.chroma_packing != 0 {
-                    self.exit = Some(Exit::Ended(Some("Packed full-chroma reconstruction failed: the decoded planes, GPU, or HDR output are unsupported.".into())));
-                } else {
-                    let format = p.decoded.picture.format_name();
-                    let toast = match self.texture.failure.take() {
-                        Some(reason) => trf("Cannot show {} pictures: {}", &[&format, &reason]),
-                        None => trf("Cannot show {} pictures", &[&format]),
-                    };
-                    self.show_toast(toast);
-                }
-            }
-            if !self.first_frame {
+            // Only a picture on the screen counts as the stream's video (`has_picture`, the
+            // no-video watchdog, `video_started`).
+            if self.scan_out(&p.decoded) || self.texture.upload(renderer, &p.decoded, rows) {
+                self.unshown.shown();
                 self.first_frame = true;
+            } else if p.decoded.setup.format & VIDEO_FORMAT_MASK_PYROWAVE != 0 {
+                let reason = self.texture.failure.take().unwrap_or_else(|| "PyroWave GPU reconstruction failed.".into());
+                self.exit = Some(Exit::Ended(Some(reason)));
+            } else if p.decoded.setup.chroma_packing != 0 {
+                self.exit = Some(Exit::Ended(Some("Packed full-chroma reconstruction failed: the decoded planes, GPU, or HDR output are unsupported.".into())));
+            } else {
+                // A picture format this presenter cannot show: after a few in a row the decoder
+                // gives way as a refused one does (the next backend, then software, from a key
+                // frame), saying so; when software's cannot be shown either, the stream ends.
+                let reason = self.texture.failure.take();
+                if let Some(ready_us) = self.unshown.failed(p.decoded.ready_us) {
+                    eprintln!("nightjar: {UNSHOWN_BEFORE_FALLBACK} {} pictures in a row could not be shown ({}); the decoder gives way",
+                        p.decoded.picture.format_name(), reason.as_deref().unwrap_or("no reason given"));
+                    self.shared.present_refused.store(ready_us, Ordering::Relaxed);
+                }
             }
         }
         #[cfg(target_os = "linux")]
@@ -1319,6 +1347,20 @@ fn exclusive_fullscreen(renderer: *mut SDL_Renderer) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A picture format the presenter cannot show hands the decoder over after a few pictures in
+    /// a row, with the time the last was ready (never 0, which means none); a shown picture
+    /// starts the count over, and so does the hand-over, for the next decoder's pictures.
+    #[test]
+    fn pictures_that_cannot_be_shown_hand_the_decoder_over_after_a_few_in_a_row() {
+        let mut unshown = Unshown::default();
+        for ready_us in 1..UNSHOWN_BEFORE_FALLBACK as u64 { assert_eq!(unshown.failed(ready_us), None); }
+        unshown.shown();
+        for ready_us in 1..UNSHOWN_BEFORE_FALLBACK as u64 { assert_eq!(unshown.failed(ready_us), None, "a shown picture starts over"); }
+        assert_eq!(unshown.failed(9_000), Some(9_000));
+        for _ in 1..UNSHOWN_BEFORE_FALLBACK { assert_eq!(unshown.failed(9_500), None, "the next decoder counts anew"); }
+        assert_eq!(unshown.failed(0), Some(1), "never 0");
+    }
 
     /// The overlay's Render ends where the present call begins: a V-Sync wait or a compositor's
     /// layer inside the call is the system's share, not Nightjar's drawing.

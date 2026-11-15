@@ -710,6 +710,8 @@ pub struct Streaming {
     last_video: (u64, u64, u64),
     started: Instant,
     first_frame: bool,
+    /// Pictures in a row the presenter could not show.
+    unshown: render::Unshown,
     /// Pictures shown at least once since the last overlay redraw.
     pub needs_redraw: bool,
     /// Whether an HDR stream is shown on HDR output, as it settles (`present` follows it); None
@@ -1102,6 +1104,7 @@ impl Streaming {
             last_video: (0, 0, 0),
             started: Instant::now(),
             first_frame: false,
+            unshown: render::Unshown::default(),
             needs_redraw: true,
             hdr_output: hdr_stream.then(|| HdrOutput::new(true)),
             timings: VecDeque::new(),

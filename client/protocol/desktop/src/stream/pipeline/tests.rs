@@ -651,6 +651,27 @@ fn a_refused_decoder_is_replaced_and_said_on_the_frame_that_shows_it() {
     assert_eq!(*lock(&shared.decoder_name), replaced.name);
 }
 
+/// Pictures the presenter could not show from the software decoder end the stream with a reason
+/// in the user's words; pictures from before the decoder was installed say nothing about it.
+#[test]
+fn pictures_the_presenter_cannot_show_from_software_end_the_stream_saying_why() {
+    let (mut decoder, shared) = decoder();
+    let setup = VideoSetup { format: nightjar_core::sdp::VIDEO_FORMAT_H264, width: 128, height: 128, fps: 60, chroma_packing: 0, logical_width: 128, logical_height: 128, color_space: 1, color_range: 0 };
+    decoder.setup(&setup).unwrap();
+    assert!(!decoder.presenter_refused(), "nothing refused");
+    shared.present_refused.store(decoder.installed_us.saturating_sub(1).max(1), Ordering::Relaxed);
+    if decoder.installed_us > 1 {
+        assert!(!decoder.presenter_refused(), "an older decoder's picture");
+        assert!(notices(&shared).is_empty());
+    }
+    shared.present_refused.store(session::now_us().max(1), Ordering::Relaxed);
+    assert!(decoder.presenter_refused());
+    let ended = notices(&shared);
+    let [Notice::DecoderFailed(text)] = ended.as_slice() else { panic!("expected exactly the DecoderFailed notice") };
+    assert_eq!(text, crate::strings::tr(PICTURES_UNSHOWN));
+    assert_eq!(shared.present_refused.load(Ordering::Relaxed), 0, "taken");
+}
+
 /// NVDEC pictures that go through memory after all, because CUDA's copy into the renderer's
 /// Vulkan images failed, are said in a toast once, on the frame that shows it.
 #[cfg(unix)]

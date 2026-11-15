@@ -178,6 +178,9 @@ pub struct Shared {
     pub roam_watch: Mutex<Option<crate::network::RoamWatch>>,
     /// The toast that the microphone runs without the echo cancellation asked for was shown.
     pub echo_cancel_noted: std::sync::atomic::AtomicBool,
+    /// When the last of the pictures in a row the presenter could not show was ready (session
+    /// clock, us; 0 for none): the decoder that made it gives way (`Decoder::presenter_refused`).
+    pub present_refused: AtomicU64,
     waker: Waker,
 }
 
@@ -211,6 +214,7 @@ impl Shared {
             host_times: std::sync::atomic::AtomicBool::new(false),
             roam_watch: Mutex::new(None),
             echo_cancel_noted: std::sync::atomic::AtomicBool::new(false),
+            present_refused: AtomicU64::new(0),
             waker,
         })
     }
@@ -405,6 +409,9 @@ pub struct Decoder {
     /// The backends FFmpeg took to software for a stream format (`VideoSetup::format`), left
     /// out when the decoder is opened again for it.
     refused: Vec<(Hardware, u32)>,
+    /// When the FFmpeg decoder was installed (session clock, us): pictures ready before that are
+    /// another decoder's.
+    installed_us: u64,
 }
 
 /// The times of a frame sent to the FFmpeg decoder, for its picture.
@@ -721,6 +728,7 @@ impl Decoder {
             vaapi_mapped: false,
             stands_in: None,
             refused: Vec::new(),
+            installed_us: 0,
         }
     }
 
@@ -880,6 +888,9 @@ fn packed_map_dropped(setup: &VideoSetup, was_mapped: bool, still_mapped: bool) 
 /// The toast for NVDEC pictures that go through memory to the GPU renderer because CUDA's copy into
 /// its Vulkan images could not be set up or failed; the reason, in English, is in the log.
 const CUDA_FALLBACK_TOAST: &str = crate::strings::en("NVDEC pictures can’t be copied into the renderer’s images on the graphics card, so each one goes through memory, which takes longer. The log says why.");
+
+/// The end of a stream whose pictures the presenter could not show from any decoder, software last.
+const PICTURES_UNSHOWN: &str = crate::strings::en("This stream's picture cannot be shown with any decoder on this device. Choose another Video codec or Decoder in Settings, then start the stream again.");
 
 /// Says once in a toast when `decoder`'s NVDEC pictures went through memory instead of CUDA's copy.
 fn say_cuda_fallback(shared: &Shared, decoder: &mut media::VideoDecoder) {
@@ -1158,6 +1169,25 @@ impl Decoder {
         self.decoder = Some(decoder);
         self.in_flight.clear();
         self.pictured = false;
+        self.installed_us = session::now_us();
+    }
+
+    /// The presenter could not show this decoder's pictures (`Shared::present_refused`): a
+    /// hardware decoder gives way as one FFmpeg refused does, to the next backend or software,
+    /// and software ends the stream saying why. Pictures ready before this decoder was installed
+    /// say nothing about it. Returns whether it acted.
+    fn presenter_refused(&mut self) -> bool {
+        let ready_us = self.shared.present_refused.swap(0, Ordering::Relaxed);
+        if ready_us == 0 || ready_us < self.installed_us { return false; }
+        let Some(backend) = self.decoder.as_ref().map(|decoder| decoder.hardware) else { return false };
+        if backend == Hardware::None {
+            eprintln!("nightjar: the software decoder's pictures cannot be shown either; ending the stream");
+            self.shared.notify(Notice::DecoderFailed(crate::strings::tr(PICTURES_UNSHOWN).to_owned()));
+        } else {
+            eprintln!("nightjar: {}'s pictures cannot be shown; trying the next decoder", backend.label());
+            self.replace_refused(backend);
+        }
+        true
     }
 
     /// FFmpeg took the `refused` backend to software (`media::VideoDecoder::refused`): says so,
@@ -1240,6 +1270,8 @@ impl Decoder {
             self.shared.queue(decoded);
             return DecodeStatus::Ok;
         }
+        // The next decoder starts from a key frame.
+        if self.presenter_refused() { return DecodeStatus::NeedIdr; }
         let Some(decoder) = self.decoder.as_mut() else {
             return DecodeStatus::Ok;
         };
