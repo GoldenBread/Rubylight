@@ -278,6 +278,9 @@ public class UsbForwardingTest {
     public void choosingAnAttachedDeviceDetachesIt() {
         UsbDevice tablet = attachTablet();
         forwarding.choose(tablet);
+        // The engine may wait for the device's transfers: never on the main thread.
+        assertTrue(bridge.detached.isEmpty());
+        worker.runAll();
         assertEquals(Collections.singletonList(7), bridge.detached);
         assertEquals("closed once the engine says it is detached", 0, connections.get(0).closes);
         bridge.changed("[" + entry(7, "ended", "\"state\":\"detached\",\"reason\":\"none\"") + "]");
@@ -291,6 +294,8 @@ public class UsbForwardingTest {
         context.sendBroadcast(new Intent(UsbManager.ACTION_USB_DEVICE_DETACHED).setPackage(context.getPackageName())
                 .putExtra(UsbManager.EXTRA_DEVICE, tablet));
         shadowOf(Looper.getMainLooper()).idle();
+        assertTrue("detached off the main thread", bridge.detached.isEmpty());
+        worker.runAll();
         assertEquals(Collections.singletonList(7), bridge.detached);
         assertEquals(1, connections.get(0).closes);
         assertEquals(text(R.string.usb_forwarding_unplugged, "Drawing Tablet"), messages.get(messages.size() - 1));
@@ -304,6 +309,9 @@ public class UsbForwardingTest {
     public void stoppingDetachesEverythingAndStopsListening() {
         attachTablet();
         forwarding.stop();
+        // Queued before the attach thread was shut down, so it still runs there.
+        assertTrue(bridge.detached.isEmpty());
+        worker.runAll();
         assertEquals(Collections.singletonList(7), bridge.detached);
         assertEquals(1, connections.get(0).closes);
         assertNull(bridge.listener);

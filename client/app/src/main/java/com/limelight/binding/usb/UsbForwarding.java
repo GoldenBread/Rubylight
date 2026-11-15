@@ -38,10 +38,11 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 
 /**
  * Hands USB devices plugged into this device to the PC for one stream (the Rust engine's
- * forwarder does the rest). Main thread only; attaching runs on its own thread.
+ * forwarder does the rest). Main thread only; attaching and detaching run on their own thread.
  */
 public final class UsbForwarding {
     // Not the input drivers' "com.limelight.USB_PERMISSION": their receiver would open the device too.
@@ -309,10 +310,14 @@ public final class UsbForwarding {
         if (entry != null) {
             if (entry.attaching) {
                 say(R.string.usb_forwarding_asking, entry.name);
-            } else if (!bridge.detach(entry.requestId)) {
-                // Not attached any more: the list says why, or it never got that far.
-                end(device.getDeviceName(), entry);
-                say(R.string.usb_forwarding_detached, entry.name);
+            } else {
+                String path = device.getDeviceName();
+                detach(entry.requestId, () -> {
+                    // Not attached any more: the list says why, or it never got that far.
+                    if (forwarded.get(path) != entry) return;
+                    end(path, entry);
+                    say(R.string.usb_forwarding_detached, entry.name);
+                });
             }
             // Otherwise the forwarder's list says when it is detached.
             return;
@@ -350,12 +355,28 @@ public final class UsbForwarding {
             context.unregisterReceiver(receiver);
         }
         for (Map.Entry<String, Forwarded> e : new ArrayList<>(forwarded.entrySet())) {
-            if (e.getValue().requestId != PENDING) bridge.detach(e.getValue().requestId);
+            if (e.getValue().requestId != PENDING) detach(e.getValue().requestId, null);
             end(e.getKey(), e.getValue());
         }
         asking.clear();
-        // An attach still on its way finds its entry gone, detaches what it attached and closes.
+        // An attach still on its way finds its entry gone, detaches what it attached and closes. The detaches
+        // queued above still run.
         worker.shutdown();
+    }
+
+    /**
+     * Detaches on the attach thread: the engine waits there for the device's outstanding transfers, up to seconds,
+     * which the main thread must not. {@code notAttached} runs on the main thread when it was not attached any more.
+     * Once stopped, the thread takes no more work and the detach runs here, as before.
+     */
+    private void detach(int requestId, Runnable notAttached) {
+        try {
+            worker.execute(() -> {
+                if (!bridge.detach(requestId) && notAttached != null) main.post(notAttached);
+            });
+        } catch (RejectedExecutionException e) {
+            if (!bridge.detach(requestId) && notAttached != null) notAttached.run();
+        }
     }
 
     private void start() {
@@ -399,7 +420,7 @@ public final class UsbForwarding {
         entry.attaching = false;
         if (forwarded.get(path) != entry) {
             // Unplugged or stopped while it was being attached.
-            if (result >= 0) bridge.detach(result);
+            if (result >= 0) detach(result, null);
             entry.connection.close();
             return;
         }
@@ -418,7 +439,7 @@ public final class UsbForwarding {
         asking.remove(path);
         Forwarded entry = forwarded.get(path);
         if (entry == null) return;
-        if (entry.requestId != PENDING) bridge.detach(entry.requestId);
+        if (entry.requestId != PENDING) detach(entry.requestId, null);
         end(path, entry);
         say(R.string.usb_forwarding_unplugged, entry.name);
     }
