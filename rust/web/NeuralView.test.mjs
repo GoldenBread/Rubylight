@@ -6,7 +6,7 @@ import { createTestServer } from './test-server.mjs';
 globalThis.location = new URL('http://localhost/');
 globalThis.window = new EventTarget();
 const server = await createTestServer();
-const { neuralView, pollsNeural, NOTICE, ABOUT, REPLACES } = await server.ssrLoadModule('/src/lib/neural-view.ts');
+const { neuralView, neuralHint, pollsNeural, NOTICE, ABOUT, REPLACES } = await server.ssrLoadModule('/src/lib/neural-view.ts');
 const { render } = await server.ssrLoadModule('svelte/server');
 const NeuralRendering = (await server.ssrLoadModule('/src/components/library/NeuralRendering.svelte')).default;
 await server.close();
@@ -64,6 +64,20 @@ test('the earlier neural upscaling is offered only for removal, also where frame
     const page = render(NeuralRendering, { props: { uuid: 'game', initial: status({ earlier_upscaling, job: failed }) } }).body;
     assert.match(page, />Remove</, view.kind);
   }
+});
+
+test('a GPU Rubylight does not stream with is named with when frame generation runs', () => {
+  const gpu_note = 'Frame generation runs when the game renders on NVIDIA GeForce RTX 3060 Laptop GPU; Rubylight streams with AMD Radeon(TM) Graphics.';
+  const off = status({ gpu: 'NVIDIA GeForce RTX 3060 Laptop GPU', gpu_note });
+  assert.equal(neuralHint(neuralView(off), gpu_note), gpu_note);
+  assert.ok(render(NeuralRendering, { props: { uuid: 'game', initial: off } }).body.includes('runs when the game renders on NVIDIA GeForce RTX 3060'));
+  const on = status({ gpu_note, enabled: true, exe: 'C:\\Games\\Game.exe', release: 'FG-V.B16', mode: 'full' });
+  assert.equal(neuralHint(neuralView(on), gpu_note), `Installed beside C:\\Games\\Game.exe; release FG-V.B16. ${gpu_note}`);
+  const earlier = status({ gpu_note, earlier_upscaling: { exe: null, release: 'Alpha0.3.5.8R2' } });
+  assert.equal(neuralHint(neuralView(earlier), gpu_note), `${REPLACES} ${gpu_note}`);
+  // Without one, the hint is as before; a failure shows no note.
+  assert.equal(neuralHint(neuralView(status()), null), undefined);
+  assert.equal(neuralHint(neuralView(status({ job: job({ phase: 'failed', error: 'x' }) })), gpu_note), undefined);
 });
 
 test('the download, the install and the removal show their progress and poll', () => {

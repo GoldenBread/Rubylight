@@ -410,8 +410,8 @@ async fn capabilities(State(h): State<Shared>, Extension(c): Extension<Connectio
     };
     let coop = h.nucleus.unavailable().is_none();
     let update = crate::updater::install_supported(&h);
-    // Frame generation only where the GPU a stream uses is AMD's or NVIDIA's,
-    // by its DXGI vendor ID (no probe; one that can't be found stays offered).
+    // Frame generation only where one of the PC's GPUs is AMD's or NVIDIA's,
+    // by its DXGI vendor ID (no probe; GPUs that can't be listed keep it offered).
     let neural = {
         let h = h.clone();
         tokio::task::spawn_blocking(move || crate::neural::offered(&h))

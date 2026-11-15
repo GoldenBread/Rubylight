@@ -122,6 +122,15 @@ pub enum Request {
         install: Option<PathBuf>,
         package: Cached,
     },
+    /// Every refusal [`Request::Install`] of `package` would give, with
+    /// Rubylight 3.0's AMDNR in the game's folder taken as removed already,
+    /// writing nothing ([`Response::Found`]): asked before that install is
+    /// taken out, so a game that is refused keeps it.
+    Check {
+        exe: Option<PathBuf>,
+        install: Option<PathBuf>,
+        package: Cached,
+    },
     /// Before a launch: refuse anti-cheat, finish an update cut short with
     /// `package`, and check that the placed files are still as placed.
     Prepare {
@@ -202,6 +211,20 @@ pub fn handle(request: Request, writer: Writer, progress: &dyn Fn(u64, u64)) -> 
             refuse_anti_cheat(&exe, install.as_deref())?;
             refuse_without_frame_generation(&exe, install.as_deref())?;
             place(&exe, &package, writer, progress)
+        }),
+        Request::Check {
+            exe,
+            install,
+            package,
+        } => find_exe(exe, install.as_deref()).and_then(|exe| {
+            let exe = followed(exe, writer);
+            package
+                .package
+                .inside(&package.folder)
+                .map_err(Failure::Error)?;
+            refuse_anti_cheat(&exe, install.as_deref())?;
+            refuse_without_frame_generation(&exe, install.as_deref())?;
+            check(&exe, &package, writer)
         }),
         Request::Prepare {
             exe,
@@ -1066,6 +1089,7 @@ fn leftover(
     folder: &Path,
     root: &str,
     writer: Writer,
+    gone: &Gone,
 ) -> Outcome<Result<Vec<String>, Vec<String>>> {
     guard(folder, root, writer)?;
     let mut folders = vec![root.to_owned()];
@@ -1088,6 +1112,9 @@ fn leftover(
             }
             let name = entry.file_name().to_string_lossy().into_owned();
             let path = format!("{relative}/{name}");
+            if gone.has(&path) {
+                continue;
+            }
             let link = entry
                 .metadata()
                 .is_ok_and(|meta| meta.file_attributes() & LINK != 0);
@@ -1147,12 +1174,84 @@ fn in_the_way(paths: &[String]) -> String {
     format!("{}: move {it} out first", clauses.join("; "))
 }
 
+/// What a removal of Rubylight 3.0's AMDNR would take out of the game's
+/// folder, for [`Request::Check`] to ask about the folder as it will be:
+/// the files its manifest names that are still as placed and its settings
+/// ([`neural::removal`]), OptiScaler's logs, and its folders once nothing
+/// else is in them. Empty for an install, which sees the folder as it is.
+#[derive(Default)]
+struct Gone {
+    /// AMDNR's manifest is in the folder, and goes too.
+    legacy: bool,
+    /// In ASCII lower case, with `/`.
+    paths: Vec<String>,
+}
+impl Gone {
+    fn has(&self, relative: &str) -> bool {
+        let relative = relative.to_ascii_lowercase();
+        self.paths.contains(&relative)
+    }
+    fn of_legacy(folder: &Path, writer: Writer) -> Outcome<Self> {
+        guard(folder, LEGACY_MANIFEST, writer)?;
+        let Some(legacy) = manifest(folder, LEGACY_MANIFEST).map_err(Failure::Error)? else {
+            return Ok(Self::default());
+        };
+        for path in legacy.files.keys().chain(&legacy.folders) {
+            guard(folder, path, writer)?;
+        }
+        // By size for a big file, as before a launch: the removal itself
+        // hashes, and keeps (and so stops at) what changed.
+        let removal = neural::removal(&legacy, |path| state(folder, &legacy, path, true));
+        let mut paths: Vec<String> = removal
+            .delete
+            .iter()
+            .map(|path| path.to_ascii_lowercase())
+            .collect();
+        paths.extend(
+            std::fs::read_dir(folder)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| neural::logs(name))
+                .map(|name| name.to_ascii_lowercase()),
+        );
+        // Deepest first: a folder goes once all that is in it goes.
+        for relative in legacy.folders.iter().rev() {
+            let Ok(entries) = std::fs::read_dir(folder.join(relative)) else {
+                continue;
+            };
+            let empty = entries.flatten().all(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                paths.contains(&format!("{relative}/{name}").to_ascii_lowercase())
+                    || (neural::provider_dlssg(relative)
+                        && entry.file_type().is_ok_and(|kind| kind.is_file())
+                        && neural::provider_files(&name))
+            });
+            if empty {
+                paths.push(relative.to_ascii_lowercase());
+            }
+        }
+        Ok(Self {
+            legacy: true,
+            paths,
+        })
+    }
+}
+
 /// The layout for the game's folder, or why it is refused: Rubylight 3.0's
 /// AMDNR still there, an OptiScaler of the user's that can't load the
 /// provider, another mod, or every name taken. An earlier install keeps its
-/// mode.
-fn layout(folder: &Path, exe: &Path, old: Option<&Manifest>, writer: Writer) -> Outcome<Layout> {
-    if folder.join(LEGACY_MANIFEST).exists() {
+/// mode. What `gone` names counts as not there.
+fn layout(
+    folder: &Path,
+    exe: &Path,
+    old: Option<&Manifest>,
+    writer: Writer,
+    gone: &Gone,
+) -> Outcome<Layout> {
+    if !gone.legacy && folder.join(LEGACY_MANIFEST).exists() {
         return Err(Failure::Refused(
             "the earlier Neural Rendering upscaling is in the game's folder: remove it on the game's page first"
                 .into(),
@@ -1163,7 +1262,7 @@ fn layout(folder: &Path, exe: &Path, old: Option<&Manifest>, writer: Writer) -> 
         .copied()
         .filter(|name| {
             let ours = old.is_some_and(|m| m.mode == Mode::Full && m.proxy == *name);
-            !ours && occupant(folder, name, old) == Occupant::OptiScaler
+            !ours && !gone.has(name) && occupant(folder, name, old) == Occupant::OptiScaler
         })
         .collect();
     let addon = old.map_or(!users.is_empty(), |m| m.mode == Mode::Addon);
@@ -1187,6 +1286,7 @@ fn layout(folder: &Path, exe: &Path, old: Option<&Manifest>, writer: Writer) -> 
         {
             let name = entry.file_name().to_string_lossy().into_owned();
             if let Some(other) = neural::other_mod(&name)
+                && !gone.has(&name)
                 && other != "OptiScaler"
                 && !other.starts_with("fakenvapi")
             {
@@ -1203,14 +1303,20 @@ fn layout(folder: &Path, exe: &Path, old: Option<&Manifest>, writer: Writer) -> 
             )));
         }
         let ini = folder.join(SETTINGS);
-        let bytes = std::fs::read(&ini).map_err(|_| {
-            Failure::Refused(format!(
-                "the OptiScaler in the game's folder ({proxy}) has no {SETTINGS} beside it"
-            ))
-        })?;
-        let opti_dir = neural::opti_dir(&bytes, folder.join("OptiScaler").is_dir())
-            .map_err(Failure::Refused)?;
-        if !opti_dir.is_empty() && !folder.join(&opti_dir).is_dir() {
+        let bytes = (!gone.has(SETTINGS))
+            .then(|| std::fs::read(&ini).ok())
+            .flatten()
+            .ok_or_else(|| {
+                Failure::Refused(format!(
+                    "the OptiScaler in the game's folder ({proxy}) has no {SETTINGS} beside it"
+                ))
+            })?;
+        let opti_dir = neural::opti_dir(
+            &bytes,
+            folder.join("OptiScaler").is_dir() && !gone.has("OptiScaler"),
+        )
+        .map_err(Failure::Refused)?;
+        if !opti_dir.is_empty() && (!folder.join(&opti_dir).is_dir() || gone.has(&opti_dir)) {
             return Err(Failure::Refused(format!(
                 "OptiScaler's folder {opti_dir} is not in the game's folder"
             )));
@@ -1223,7 +1329,10 @@ fn layout(folder: &Path, exe: &Path, old: Option<&Manifest>, writer: Writer) -> 
         // The provider's folder an earlier add-on left is taken over when
         // only what the provider wrote is in it.
         let mut adopt = Vec::new();
-        if old.is_none() && std::fs::symlink_metadata(folder.join(&provider)).is_ok() {
+        if old.is_none()
+            && !gone.has(&provider)
+            && std::fs::symlink_metadata(folder.join(&provider)).is_ok()
+        {
             if !std::fs::symlink_metadata(folder.join(&provider))
                 .is_ok_and(|meta| meta.is_dir() && meta.file_attributes() & LINK == 0)
             {
@@ -1231,7 +1340,7 @@ fn layout(folder: &Path, exe: &Path, old: Option<&Manifest>, writer: Writer) -> 
                     "{provider} is already in the game's folder and is not Rubylight's"
                 )));
             }
-            adopt = leftover(folder, &provider, writer)?
+            adopt = leftover(folder, &provider, writer, gone)?
                 .map_err(|foreign| Failure::Refused(in_the_way(&foreign)))?;
         }
         return Ok(Layout {
@@ -1255,7 +1364,7 @@ fn layout(folder: &Path, exe: &Path, old: Option<&Manifest>, writer: Writer) -> 
         .flatten()
     {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if ours(&name) {
+        if ours(&name) || gone.has(&name) {
             continue;
         }
         let Some(other) = neural::other_mod(&name) else {
@@ -1278,7 +1387,7 @@ fn layout(folder: &Path, exe: &Path, old: Option<&Manifest>, writer: Writer) -> 
     // but what the provider wrote; a folder of that name without it may be
     // the game's own.
     let adopt = match left {
-        Some(name) => match leftover(folder, &name, writer)? {
+        Some(name) => match leftover(folder, &name, writer, gone)? {
             Ok(folders)
                 if folders.iter().any(|relative| {
                     relative.eq_ignore_ascii_case(&format!("{name}/custom/{}", neural::PROVIDER))
@@ -1296,8 +1405,14 @@ fn layout(folder: &Path, exe: &Path, old: Option<&Manifest>, writer: Writer) -> 
         None => Vec::new(),
     };
     let vulkan = std::fs::read(exe).is_ok_and(|program| neural::vulkan_only(&program));
-    let proxy =
-        neural::proxy(vulkan, |name| occupant(folder, name, old)).map_err(Failure::Refused)?;
+    let proxy = neural::proxy(vulkan, |name| {
+        if gone.has(name) {
+            Occupant::Free
+        } else {
+            occupant(folder, name, old)
+        }
+    })
+    .map_err(Failure::Refused)?;
     Ok(Layout {
         mode: Mode::Full,
         proxy: proxy.into(),
@@ -1327,11 +1442,32 @@ fn place(
     writer: Writer,
     progress: &dyn Fn(u64, u64),
 ) -> Outcome<Response> {
+    place_or_check(exe, cached, writer, progress, None)
+}
+
+/// [`Request::Check`]: what [`place`] refuses before it writes anything,
+/// with Rubylight 3.0's AMDNR taken as removed.
+fn check(exe: &Path, cached: &Cached, writer: Writer) -> Outcome<Response> {
+    let gone = Gone::of_legacy(folder_of(exe), writer)?;
+    place_or_check(exe, cached, writer, &|_, _| {}, Some(&gone))
+}
+
+/// [`place`], or with `check` only what it refuses before it writes,
+/// counting what `check` names as not there.
+fn place_or_check(
+    exe: &Path,
+    cached: &Cached,
+    writer: Writer,
+    progress: &dyn Fn(u64, u64),
+    check: Option<&Gone>,
+) -> Outcome<Response> {
     let folder = folder_of(exe);
     let package = &cached.package;
+    let nothing = Gone::default();
+    let gone = check.unwrap_or(&nothing);
     guard(folder, MANIFEST, writer)?;
     let old = manifest(folder, MANIFEST).map_err(Failure::Error)?;
-    let layout = layout(folder, exe, old.as_ref(), writer)?;
+    let layout = layout(folder, exe, old.as_ref(), writer, gone)?;
     writable(folder, writer)?;
     // The user's OptiScaler.ini with the three values set, its lines as
     // they were kept from the first install.
@@ -1377,17 +1513,23 @@ fn place(
         if forms.is_empty()
             && (in_taken_over || old.as_ref().is_some_and(|m| m.taken_over.contains(&target)))
             && neural::settings(&target)
+            && !gone.has(&target)
             && std::fs::symlink_metadata(folder.join(&target)).is_ok_and(|meta| meta.is_file())
         {
             taken_over.push(target);
             continue;
         }
-        if forms.is_empty() && std::fs::symlink_metadata(folder.join(&target)).is_ok() {
+        if forms.is_empty()
+            && !gone.has(&target)
+            && std::fs::symlink_metadata(folder.join(&target)).is_ok()
+        {
             return Err(Failure::Refused(format!(
                 "{target} is already in the game's folder and is not Rubylight's"
             )));
         }
+        // What the check takes as gone is copied anew.
         let before = match matched(folder, &target, &forms, false) {
+            _ if gone.has(&target) => None,
             Ok(form) if form == placed => {
                 wanted.push((target, placed.clone()));
                 continue;
@@ -1425,7 +1567,7 @@ fn place(
             if make.contains(&relative) {
                 continue;
             }
-            if !path.exists() {
+            if !path.exists() || gone.has(&relative) {
                 if !folders.contains(&relative) {
                     folders.push(relative.clone());
                 }
@@ -1436,6 +1578,11 @@ fn place(
                 )));
             }
         }
+    }
+    if check.is_some() {
+        return Ok(Response::Found {
+            exe: exe.to_path_buf(),
+        });
     }
     let mut files = old.as_ref().map(|m| m.files.clone()).unwrap_or_default();
     let mut previous = old.as_ref().map(|m| m.previous.clone()).unwrap_or_default();
@@ -1671,7 +1818,9 @@ fn remove(folder: &Path, writer: Writer) -> Outcome<Response> {
     Ok(Response::Removed { kept })
 }
 
-/// Delete what the manifest `name` names and is still as placed, put the
+/// Delete what the manifest `name` names and is still as placed, the DLLs
+/// first ([`neural::Removal::delete`]), so a game that holds them stops the
+/// removal before anything changed; then put the
 /// user's OptiScaler.ini lines back, delete OptiScaler's logs, what the
 /// provider wrote in its folder ([`neural::provider_files`]) and the folders
 /// it created once empty. A file someone changed stays, as do the settings
@@ -1693,31 +1842,57 @@ fn remove_by(folder: &Path, name: &str, writer: Writer) -> Outcome<Vec<String>> 
     {
         guard(folder, path, writer)?;
     }
-    // The ini first: OptiScaler stops looking for the provider before it goes.
-    if let Some(record) = &manifest.ini {
-        match std::fs::read(folder.join(&record.path)) {
+    // The user's ini as it goes back, before anything changes: one that
+    // can't be put back stops the removal with nothing gone.
+    let ini = match &manifest.ini {
+        Some(record) => match std::fs::read(folder.join(&record.path)) {
             Ok(bytes) => {
                 let restored = neural::ini_restore(&bytes, record).map_err(Failure::Error)?;
-                if restored != bytes {
-                    write_whole(folder, &record.path, &restored, writer)?;
-                }
+                (restored != bytes).then_some((&record.path, restored))
             }
             // The user removed OptiScaler meanwhile: nothing to put back.
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(e) => {
                 return Err(Failure::Error(format!(
                     "cannot read {}: {e}",
                     folder.join(&record.path).display()
                 )));
             }
-        }
-    }
+        },
+        None => None,
+    };
     let removal = neural::removal(&manifest, |path| state(folder, &manifest, path, false));
-    for path in &removal.delete {
+    let (dlls, others): (Vec<&String>, Vec<&String>) = removal
+        .delete
+        .iter()
+        .partition(|path| path.to_ascii_lowercase().ends_with(".dll"));
+    let delete = |path: &str| {
         guard(folder, path, writer)?;
         let file = folder.join(path);
-        std::fs::remove_file(&file)
-            .map_err(|e| Failure::Error(format!("cannot remove {}: {e}", file.display())))?;
+        std::fs::remove_file(&file).map_err(|e| {
+            // A loaded DLL refuses its delete (access denied), a file held
+            // open without delete sharing too (a sharing violation).
+            let held = matches!(e.raw_os_error(), Some(5 | 32));
+            Failure::Error(if held {
+                format!(
+                    "cannot remove {}: a program holds it, most likely the game: close the game and try again",
+                    file.display()
+                )
+            } else {
+                format!("cannot remove {}: {e}", file.display())
+            })
+        })
+    };
+    for path in dlls {
+        delete(path)?;
+    }
+    // Then the ini: OptiScaler, gone or no longer loaded, looks for the
+    // provider no more.
+    if let Some((path, restored)) = &ini {
+        write_whole(folder, path, restored, writer)?;
+    }
+    for path in others {
+        delete(path)?;
     }
     let mut leftovers: Vec<String> = manifest
         .files

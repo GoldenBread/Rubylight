@@ -518,12 +518,26 @@ fn removal_deletes_what_is_still_as_placed_and_keeps_what_changed() {
     assert_eq!(
         removal.delete,
         [
+            "OptiScaler/custom/Apex Neural Rendering FG/dlssg/nvngx_dlssg.dll",
             "OptiScaler.ini",
-            "OptiScaler/custom/Apex Neural Rendering FG/dlssg/nr_fg.ini",
-            "OptiScaler/custom/Apex Neural Rendering FG/dlssg/nvngx_dlssg.dll"
+            "OptiScaler/custom/Apex Neural Rendering FG/dlssg/nr_fg.ini"
         ]
     );
     assert_eq!(removal.keep, ["dxgi.dll"]);
+    // The DLLs go first, OptiScaler's proxy before the others: a game that
+    // runs holds them, so its removal stops before OptiScaler.ini is gone.
+    let all = super::removal(&manifest(), |_| Now::Same).delete;
+    assert_eq!(all[0], "dxgi.dll", "{all:?}");
+    let dlls = all.iter().take_while(|path| path.ends_with(".dll")).count();
+    assert!(dlls >= 2, "{all:?}");
+    assert!(
+        all[dlls..].iter().all(|path| !path.ends_with(".dll")),
+        "{all:?}"
+    );
+    assert!(
+        all[dlls..].iter().any(|path| path == "OptiScaler.ini"),
+        "{all:?}"
+    );
     // Settings the host found and took over are the user's: never deleted,
     // named unless gone.
     let mut found = manifest();
@@ -624,7 +638,16 @@ fn the_addon_sets_three_values_and_puts_back_exactly_what_was_there() {
         "OptiDllPath=auto",
     ];
     let none = ["[Upscalers]", "Dx12Upscaler=fsr31"];
-    for lines in [&stock[..], &partial[..], &none[..], &[][..]] {
+    // The section's header is the last line, which may end the file with no
+    // line break after it.
+    let header_last = ["[Upscalers]", "Dx12Upscaler=fsr31", "[FrameGen]"];
+    for lines in [
+        &stock[..],
+        &partial[..],
+        &none[..],
+        &header_last[..],
+        &[][..],
+    ] {
         for ending in ["\r\n", "\n"] {
             for bom in [false, true] {
                 for trailing in [false, true] {
@@ -643,7 +666,8 @@ fn the_addon_sets_three_values_and_puts_back_exactly_what_was_there() {
                     assert_eq!(after.starts_with(b"\xef\xbb\xbf"), bom);
                     let text = String::from_utf8_lossy(&after);
                     if ending == "\r\n" && !lines.is_empty() {
-                        assert!(!text.replace("\r\n", "").contains('\n'), "{text:?}");
+                        let bare = text.replace("\r\n", "");
+                        assert!(!bare.contains('\n') && !bare.contains('\r'), "{text:?}");
                     }
                     // The other section's DisableHudless is not touched.
                     if lines == stock {
@@ -715,10 +739,14 @@ fn optiscalers_folder_comes_from_its_ini_and_stays_in_the_game_folder() {
     }
 }
 
-fn streams(vendor: u32, device: u32) -> Streams {
-    Streams {
-        name: "GPU".into(),
-        luid: 7,
+fn streams(vendor: u32, device: u32) -> Adapter {
+    adapter("GPU", 7, vendor, device)
+}
+
+fn adapter(name: &str, luid: u64, vendor: u32, device: u32) -> Adapter {
+    Adapter {
+        name: name.into(),
+        luid,
         vendor,
         device,
     }
@@ -733,68 +761,162 @@ fn gpu(arch: &str, luid: Option<u64>) -> Gpu {
     }
 }
 
+/// The GPU the host streams with alone.
+fn alone(streams: &Adapter, gpus: Result<&[Gpu], &str>) -> Result<Capable, String> {
+    capable(streams, std::slice::from_ref(streams), gpus)
+}
+
 #[test]
 fn the_switch_is_offered_on_the_gpus_the_provider_runs_on() {
-    let none: [&str; 0] = [];
     // NVIDIA: Turing (GTX 16, RTX 20) and every newer device ID.
-    assert!(capable(&streams(NVIDIA, 0x1e04), Err("no HIP"), &none).is_ok());
-    assert!(capable(&streams(NVIDIA, 0x2684), Err("no HIP"), &none).is_ok());
-    assert!(capable(&streams(NVIDIA, 0x3100), Err("no HIP"), &none).is_ok());
-    let pascal = capable(&streams(NVIDIA, 0x1b80), Err("no HIP"), &none).unwrap_err();
-    assert!(pascal.contains("older"), "{pascal}");
+    assert!(alone(&streams(NVIDIA, 0x1e04), Err("no HIP")).is_ok());
+    assert!(alone(&streams(NVIDIA, 0x2684), Err("no HIP")).is_ok());
+    assert!(alone(&streams(NVIDIA, 0x3100), Err("no HIP")).is_ok());
+    let pascal = alone(&streams(NVIDIA, 0x1b80), Err("no HIP")).unwrap_err();
+    assert!(pascal.contains("which is older"), "{pascal}");
     // AMD by the compute runtime's architecture.
     for arch in ["gfx1010", "gfx1030", "gfx1103", "gfx1151", "gfx1201"] {
         assert!(
-            capable(&streams(AMD, 0xffff), Ok(&[gpu(arch, Some(7))]), &none).is_ok(),
+            alone(&streams(AMD, 0xffff), Ok(&[gpu(arch, Some(7))])).is_ok(),
             "{arch}"
         );
     }
-    let vega = capable(&streams(AMD, 0x15d8), Ok(&[gpu("gfx90c", Some(7))]), &none).unwrap_err();
+    let vega = alone(&streams(AMD, 0x15d8), Ok(&[gpu("gfx90c", Some(7))])).unwrap_err();
     assert!(vega.contains("older"), "{vega}");
     // By name when the runtime gives no LUID, and only when the name is unique.
-    assert!(capable(&streams(AMD, 0xffff), Ok(&[gpu("gfx1100", None)]), &none).is_ok());
+    assert!(alone(&streams(AMD, 0xffff), Ok(&[gpu("gfx1100", None)])).is_ok());
     // The runtime can't say: the PCI device ID (this laptop's 780M is 0x1900).
     for device in [0x1900, 0x15bf, 0x744c, 0x7550, 0x731f, 0x150e] {
         assert!(
-            capable(&streams(AMD, device), Err("no HIP"), &none).is_ok(),
+            alone(&streams(AMD, device), Err("no HIP")).is_ok(),
             "{device:#x}"
         );
     }
-    let unknown = capable(&streams(AMD, 0x15d8), Err("no HIP"), &none).unwrap_err();
+    let unknown = alone(&streams(AMD, 0x15d8), Err("no HIP")).unwrap_err();
     assert!(
         unknown.contains("can't identify") && unknown.contains("no HIP"),
         "{unknown}"
     );
     let twins = [gpu("gfx1100", None), gpu("gfx1100", None)];
     assert!(
-        capable(&streams(AMD, 0x15d8), Ok(&twins), &none)
+        alone(&streams(AMD, 0x15d8), Ok(&twins))
             .unwrap_err()
             .contains("can't identify")
     );
     // Neither AMD nor NVIDIA.
-    assert!(capable(&streams(0x8086, 0x56a0), Err("no HIP"), &none).is_err());
-    // The GPU comes before the Visual C++ runtime OptiScaler links: a PC
-    // whose GPU can't run it is not sent to install the runtime.
-    let older = capable(
-        &streams(NVIDIA, 0x1b80),
-        Err("no HIP"),
-        &["VCRUNTIME140_1.dll"],
-    )
-    .unwrap_err();
-    assert!(
-        older.contains("which is older") && !older.contains("Visual C++"),
-        "{older}"
-    );
-    let missing = capable(
-        &streams(NVIDIA, 0x2684),
-        Err("no HIP"),
-        &["VCRUNTIME140_1.dll"],
-    )
-    .unwrap_err();
+    assert!(alone(&streams(0x8086, 0x56a0), Err("no HIP")).is_err());
+    // The Visual C++ runtime OptiScaler links.
+    assert_eq!(runtime(&[]), Ok(()));
+    let missing = runtime(&["VCRUNTIME140_1.dll"]).unwrap_err();
     assert!(
         missing.contains("Visual C++") && missing.contains("VCRUNTIME140_1.dll"),
         "{missing}"
     );
+}
+
+/// The host can't know which GPU a game renders on: any of the PC's AMD
+/// RDNA or NVIDIA Turing-and-newer GPUs admits it, the one it streams with
+/// first, and the switch names the GPU and, when it is not the one the host
+/// streams with, says frame generation runs when the game renders there.
+#[test]
+fn any_gpu_of_the_pc_that_runs_it_admits_it() {
+    let m780 = adapter("AMD Radeon 780M Graphics", 1, AMD, 0x1900);
+    let vega = adapter("AMD Radeon(TM) Graphics", 2, AMD, 0x1638);
+    let rtx5060ti = adapter("NVIDIA GeForce RTX 5060 Ti", 3, NVIDIA, 0x2d04);
+    let rtx3060 = adapter("NVIDIA GeForce RTX 3060 Laptop GPU", 4, NVIDIA, 0x2560);
+    let pascal = adapter("NVIDIA GeForce GTX 1060", 5, NVIDIA, 0x1c03);
+    let intel = adapter("Intel(R) UHD Graphics", 6, 0x8086, 0x9a49);
+    let rx7900 = adapter("AMD Radeon RX 7900 XT", 8, AMD, 0x744c);
+    let hip = |arch: &str, luid: u64| Gpu {
+        name: "AMD Radeon".into(),
+        arch: arch.into(),
+        compute_units: 12,
+        luid: Some(luid),
+    };
+    let runs = |gpu: &Adapter| Capable {
+        gpu: gpu.name.clone(),
+        streams: None,
+    };
+    let elsewhere = |gpu: &Adapter, streams: &Adapter| Capable {
+        gpu: gpu.name.clone(),
+        streams: Some(streams.name.clone()),
+    };
+    // A 780M that streams beside an RTX 5060 Ti: the 780M runs it.
+    let both = [m780.clone(), rtx5060ti.clone()];
+    assert_eq!(
+        capable(&m780, &both, Ok(&[hip("gfx1103", 1)])),
+        Ok(runs(&m780))
+    );
+    assert_eq!(
+        capable(&rtx5060ti, &both, Err("no HIP")),
+        Ok(runs(&rtx5060ti))
+    );
+    // A Vega iGPU (gfx90c) that streams beside an RTX 3060: the RTX, named.
+    let hybrid = [vega.clone(), rtx3060.clone()];
+    let found = capable(&vega, &hybrid, Ok(&[hip("gfx90c", 2)])).unwrap();
+    assert_eq!(found, elsewhere(&rtx3060, &vega));
+    let note = found.note().unwrap();
+    assert!(
+        note.contains("runs when the game renders on NVIDIA GeForce RTX 3060")
+            && note.contains("streams with AMD Radeon(TM) Graphics"),
+        "{note}"
+    );
+    assert_eq!(runs(&vega).note(), None);
+    // An RDNA iGPU beside a Pascal card: the iGPU, whichever streams.
+    let rdna_pascal = [m780.clone(), pascal.clone()];
+    assert_eq!(capable(&m780, &rdna_pascal, Err("no HIP")), Ok(runs(&m780)));
+    assert_eq!(
+        capable(&pascal, &rdna_pascal, Err("no HIP")),
+        Ok(elsewhere(&m780, &pascal))
+    );
+    // Intel graphics that stream beside an NVIDIA card: the NVIDIA card.
+    let intel_nvidia = [intel.clone(), rtx3060.clone()];
+    assert_eq!(
+        capable(&intel, &intel_nvidia, Err("no HIP")),
+        Ok(elsewhere(&rtx3060, &intel))
+    );
+    // Intel never counts, nor a GPU of another vendor.
+    let intel_pascal = [intel.clone(), pascal.clone()];
+    let refused = capable(&intel, &intel_pascal, Err("no HIP")).unwrap_err();
+    assert!(
+        refused.contains("streams with Intel(R) UHD Graphics")
+            && refused.contains("also has NVIDIA GeForce GTX 1060, which is older"),
+        "{refused}"
+    );
+    assert!(capable(&pascal, &[intel.clone(), pascal.clone()], Err("no HIP")).is_err());
+    // A single AMD GPU, and a single Pascal card.
+    assert_eq!(
+        capable(
+            &rx7900,
+            std::slice::from_ref(&rx7900),
+            Ok(&[hip("gfx1100", 8)])
+        ),
+        Ok(runs(&rx7900))
+    );
+    let older = capable(&pascal, std::slice::from_ref(&pascal), Err("no HIP")).unwrap_err();
+    assert!(
+        older.contains("GTX 1060, which is older") && !older.contains("also"),
+        "{older}"
+    );
+    // Two Vega iGPU and Pascal: both named.
+    let neither = capable(
+        &vega,
+        &[vega.clone(), pascal.clone()],
+        Ok(&[hip("gfx90c", 2)]),
+    )
+    .unwrap_err();
+    assert!(
+        neither.contains("(gfx90c), which is older")
+            && neither.contains("also has NVIDIA GeForce GTX 1060"),
+        "{neither}"
+    );
+    // Offered: any AMD or NVIDIA GPU, by vendor alone.
+    assert!(offered(&hybrid) && offered(&intel_nvidia) && offered(std::slice::from_ref(&pascal)));
+    assert!(!offered(std::slice::from_ref(&intel)) && !offered(&[]));
+    // The compute runtime is asked only when an AMD GPU is there and the
+    // GPU that streams is no NVIDIA one that runs it.
+    assert!(needs_probe(&vega, &hybrid) && needs_probe(&pascal, &rdna_pascal));
+    assert!(!needs_probe(&rtx5060ti, &both) && !needs_probe(&intel, &intel_nvidia));
 }
 
 /// What reaches a console or a client never names the mod: a path through

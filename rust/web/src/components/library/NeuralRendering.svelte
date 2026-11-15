@@ -11,7 +11,7 @@
   import { api, type NeuralStatus } from '../../lib/api';
   import { confirm, failed } from '../../lib/feedback.svelte';
   import { poll } from '../../lib/format';
-  import { ABOUT, NOTICE, REPLACES, neuralView, pollsNeural } from '../../lib/neural-view';
+  import { ABOUT, NOTICE, neuralHint, neuralView, pollsNeural } from '../../lib/neural-view';
   import { statusLoader } from '../maintenance/status-loader';
   import { reason } from '../maintenance/util';
 
@@ -130,13 +130,7 @@
         {@const on = view.kind === 'on' || (view.kind === 'failed' && view.on)}
         <Toggle
           label="Frame generation"
-          hint={view.kind === 'on' && view.release
-            ? view.addon
-              ? `Added to the upscaler mod beside ${view.exe ?? 'the game'}; release ${view.release}.`
-              : `Installed beside ${view.exe ?? 'the game'}; release ${view.release}.`
-            : view.kind === 'off' && view.earlier !== null
-              ? REPLACES
-              : undefined}
+          hint={neuralHint(view, status?.gpu_note)}
           checked={wanted ?? on}
           disabled={busy}
           onchange={change}

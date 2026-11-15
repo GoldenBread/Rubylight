@@ -736,6 +736,66 @@ fn hold(path: &Path) -> std::fs::File {
         .unwrap()
 }
 
+/// A game that runs outside a stream holds its DLLs: turning frame
+/// generation off then stops at the first, before anything changed, and
+/// says to close the game, so the game still launches with OptiScaler.ini
+/// beside it. The same for the provider in the user's own OptiScaler, whose
+/// ini keeps the three values while the provider stays.
+#[test]
+fn a_removal_while_the_game_runs_changes_nothing_and_says_to_close_it() {
+    let temp = tempdir();
+    let cache = release(temp.path(), "FG-V.B16", b"OptiScaler proxy");
+    let exe = game(temp.path());
+    let folder = exe.parent().unwrap();
+    let before = snapshot(folder);
+    let Response::Placed { proxy, .. } = install(Some(&exe), None, &cache) else {
+        panic!()
+    };
+    let placed = snapshot(folder);
+    let held = hold(&folder.join(&proxy));
+    let Response::Error { message } = remove(&exe) else {
+        panic!()
+    };
+    assert!(message.contains("close the game"), "{message}");
+    assert_eq!(snapshot(folder), placed);
+    assert!(matches!(
+        prepare(&exe, None),
+        Response::Placed { updated: false, .. }
+    ));
+    drop(held);
+    assert_eq!(remove(&exe), Response::Removed { kept: vec![] });
+    assert_eq!(snapshot(folder), before);
+
+    // The add-on: the provider's DLL is what the game holds.
+    std::fs::write(
+        folder.join("dxgi.dll"),
+        b"MZ OptiScaler ... Custom DLSSG ...",
+    )
+    .unwrap();
+    std::fs::write(
+        folder.join("OptiScaler.ini"),
+        b"[FrameGen]\r\nFGInput=auto\r\n",
+    )
+    .unwrap();
+    let before = snapshot(folder);
+    let Response::Placed {
+        mode: Mode::Addon, ..
+    } = install(Some(&exe), None, &cache)
+    else {
+        panic!()
+    };
+    let placed = snapshot(folder);
+    let held = hold(&folder.join("custom/Apex Neural Rendering FG/dlssg/nvngx_dlssg.dll"));
+    let Response::Error { message } = remove(&exe) else {
+        panic!()
+    };
+    assert!(message.contains("close the game"), "{message}");
+    assert_eq!(snapshot(folder), placed);
+    drop(held);
+    assert_eq!(remove(&exe), Response::Removed { kept: vec![] });
+    assert_eq!(snapshot(folder), before);
+}
+
 /// An update cut short (a file the game holds open) leaves each file it
 /// replaces in one of its two forms, both the host's: the game does not
 /// launch on half an update, the next launch with the release cached
@@ -2118,6 +2178,71 @@ fn the_console_cannot_set_the_hosts_key() {
     assert!(!new.extra.contains_key(KEY));
 }
 
+/// [`capability`]'s GPU, by name.
+fn gpu_of(h: &Shared) -> Result<String, String> {
+    capability(h, None).map(|capable| capable.gpu)
+}
+
+/// A laptop that streams with its integrated graphics, whose game renders on
+/// its NVIDIA card: frame generation is offered, and the switch names the
+/// card and says it runs when the game renders there. Intel graphics alone
+/// are not offered; beside an NVIDIA card they are.
+#[test]
+fn a_hybrid_pc_is_offered_frame_generation_on_its_dedicated_gpu() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    let adapter = |name: &str, luid: u64, vendor: u32, device: u32| neural::Adapter {
+        name: name.into(),
+        luid,
+        vendor,
+        device,
+    };
+    let vega = adapter("AMD Radeon(TM) Graphics", 2, neural::AMD, 0x1638);
+    let rtx = adapter(
+        "NVIDIA GeForce RTX 3060 Laptop GPU",
+        4,
+        neural::NVIDIA,
+        0x2560,
+    );
+    let intel = adapter("Intel(R) UHD Graphics", 6, 0x8086, 0x9a49);
+    let set = |streams: &neural::Adapter, adapters: &[&neural::Adapter]| {
+        *h.neural.streams.lock().unwrap() = Some(streams.clone());
+        *h.neural.adapters.lock().unwrap() =
+            Some(adapters.iter().map(|adapter| (*adapter).clone()).collect());
+        let mut state = h.neural.lock();
+        (state.probe, state.offered) = (None, None);
+    };
+    *h.neural.probe.lock().unwrap() = Some(Probe {
+        gpus: vec![Gpu {
+            name: vega.name.clone(),
+            arch: "gfx90c".into(),
+            compute_units: 8,
+            luid: Some(2),
+        }],
+        error: None,
+    });
+    set(&vega, &[&vega, &rtx]);
+    assert!(offered(h));
+    let shown = status(h, "missing");
+    assert_eq!(shown["available"], true, "{shown}");
+    assert_eq!(shown["gpu"], rtx.name.as_str());
+    let note = shown["gpu_note"].as_str().unwrap();
+    assert!(
+        note.contains("runs when the game renders on NVIDIA GeForce RTX 3060 Laptop GPU"),
+        "{note}"
+    );
+    // Without the card, the Vega graphics alone are refused.
+    set(&vega, &[&vega]);
+    let shown = status(h, "missing");
+    assert_eq!(shown["available"], false);
+    assert!(shown["gpu_note"].is_null());
+    set(&intel, &[&intel]);
+    assert!(!offered(h));
+    set(&intel, &[&intel, &rtx]);
+    assert!(offered(h));
+    assert_eq!(gpu_of(h), Ok(rtx.name.clone()));
+}
+
 /// A streaming GPU that can't be found keeps the switch offered, and is
 /// looked for again next time instead of being held for the whole run.
 #[test]
@@ -2128,7 +2253,7 @@ fn offered_asks_again_after_the_gpu_lookup_fails() {
     *h.neural.probe.lock().unwrap() = None;
     assert!(offered(h));
     assert!(h.neural.lock().offered.is_none());
-    *h.neural.streams.lock().unwrap() = Some(neural::Streams {
+    *h.neural.streams.lock().unwrap() = Some(neural::Adapter {
         name: "Intel Arc A770".into(),
         luid: 7,
         vendor: 0x8086,
@@ -2145,7 +2270,7 @@ async fn the_switch_is_offered_only_on_a_capable_gpu_after_the_notice() {
     let f = crate::state::test_support::Fixture::new();
     let h = &f.host;
     let streams = |name: &str, vendor: u32, device: u32| {
-        *h.neural.streams.lock().unwrap() = Some(neural::Streams {
+        *h.neural.streams.lock().unwrap() = Some(neural::Adapter {
             name: name.into(),
             luid: 7,
             vendor,
@@ -2175,15 +2300,15 @@ async fn the_switch_is_offered_only_on_a_capable_gpu_after_the_notice() {
         Err(Refusal::Unavailable(_))
     ));
     // The answer is kept: a new one only after a while.
-    *h.neural.streams.lock().unwrap() = Some(neural::Streams {
+    *h.neural.streams.lock().unwrap() = Some(neural::Adapter {
         name: "NVIDIA GeForce RTX 2060".into(),
         luid: 7,
         vendor: neural::NVIDIA,
         device: 0x1F08,
     });
-    assert!(capability(h).is_err());
+    assert!(gpu_of(h).is_err());
     h.neural.lock().probe = None;
-    assert_eq!(capability(h), Ok("NVIDIA GeForce RTX 2060".into()));
+    assert_eq!(gpu_of(h), Ok("NVIDIA GeForce RTX 2060".into()));
     // Without the Visual C++ runtime OptiScaler needs.
     h.neural
         .vc_missing
@@ -2191,9 +2316,19 @@ async fn the_switch_is_offered_only_on_a_capable_gpu_after_the_notice() {
         .unwrap()
         .push("VCRUNTIME140_1.dll");
     h.neural.lock().probe = None;
-    let error = capability(h).unwrap_err();
+    let error = gpu_of(h).unwrap_err();
     assert!(error.contains("Visual C++"), "{error}");
+    // A copy beside the game's program counts: its DLL finds it there first.
+    let game = tempdir();
+    std::fs::write(game.path().join("VCRUNTIME140_1.dll"), "runtime").unwrap();
+    assert_eq!(
+        capability(h, Some(game.path())).map(|capable| capable.gpu),
+        Ok("NVIDIA GeForce RTX 2060".into())
+    );
+    // Installed: the switch says so at once, with the GPU's answer still held.
     h.neural.vc_missing.lock().unwrap().clear();
+    assert!(h.neural.lock().probe.is_some());
+    assert_eq!(gpu_of(h), Ok("NVIDIA GeForce RTX 2060".into()));
 
     // AMD: the compute runtime's architecture of the GPU that streams.
     let probe = |arch: Option<&str>| {
@@ -2215,21 +2350,21 @@ async fn the_switch_is_offered_only_on_a_capable_gpu_after_the_notice() {
     };
     probe(Some("gfx1030"));
     streams("AMD Radeon RX 6800 XT", neural::AMD, 0);
-    assert_eq!(capability(h), Ok("AMD Radeon RX 6800 XT".into()));
+    assert_eq!(gpu_of(h), Ok("AMD Radeon RX 6800 XT".into()));
     probe(Some("gfx906"));
     streams("AMD Radeon VII", neural::AMD, 0x66AF);
-    let error = capability(h).unwrap_err();
+    let error = gpu_of(h).unwrap_err();
     assert!(error.contains("which is older"), "{error}");
     // The runtime can't say: the PCI device ID decides, else it is refused.
     probe(None);
     streams("AMD Radeon 780M Graphics", neural::AMD, 0x1900);
-    assert_eq!(capability(h), Ok("AMD Radeon 780M Graphics".into()));
+    assert_eq!(gpu_of(h), Ok("AMD Radeon 780M Graphics".into()));
     streams("AMD Radeon VII", neural::AMD, 0x66AF);
-    let error = capability(h).unwrap_err();
+    let error = gpu_of(h).unwrap_err();
     assert!(error.contains("can't identify the GPU"), "{error}");
     // Neither AMD nor NVIDIA.
     streams("Intel Arc A770", 0x8086, 0x56A0);
-    let error = capability(h).unwrap_err();
+    let error = gpu_of(h).unwrap_err();
     assert!(error.contains("AMD Radeon RX 5000"), "{error}");
     streams("AMD Radeon 780M Graphics", neural::AMD, 0x1900);
     assert!(matches!(enable(h, "missing", None), Err(Refusal::NotFound)));
@@ -2254,9 +2389,9 @@ fn the_gpu_check_is_asked_again_once_the_streaming_gpu_is_set_otherwise() {
         });
     };
     answer("AMD Radeon RX 7900 XT");
-    assert_eq!(capability(h), Ok("AMD Radeon RX 7900 XT".into()));
+    assert_eq!(gpu_of(h), Ok("AMD Radeon RX 7900 XT".into()));
     answer("AMD Radeon RX 7900 XTX");
-    assert_eq!(capability(h), Ok("AMD Radeon RX 7900 XT".into()));
+    assert_eq!(gpu_of(h), Ok("AMD Radeon RX 7900 XT".into()));
     // Each of the three settings, changed alone, asks again.
     for (n, config) in [
         "adapter_name=AMD Radeon RX 7900 XTX",
@@ -2269,9 +2404,9 @@ fn the_gpu_check_is_asked_again_once_the_streaming_gpu_is_set_otherwise() {
         *h.config.write().unwrap() = butterpollo_core::config::Config::parse(config).unwrap();
         let name = format!("AMD Radeon PRO W7900 {n}");
         answer(&name);
-        assert_eq!(capability(h), Ok(name.clone()), "{config}");
+        assert_eq!(gpu_of(h), Ok(name.clone()), "{config}");
         answer("AMD Radeon RX 9070 XT");
-        assert_eq!(capability(h), Ok(name), "{config}");
+        assert_eq!(gpu_of(h), Ok(name), "{config}");
     }
 }
 
@@ -3345,6 +3480,166 @@ async fn frame_generation_replaces_an_earlier_amdnr_install() {
     let job = ended(h, "game").await;
     assert_eq!(job.phase, "done", "{job:?}");
     assert_eq!(snapshot(folder), before);
+}
+
+/// A host that turns frame generation on for `games`, each with Rubylight
+/// 3.0's AMDNR under the proxy given, from a release that also places
+/// `amd_fidelityfx_dx12.dll` beside the game.
+fn amdnr_host(f: &crate::state::test_support::Fixture, games: &[(&str, &Path, &str)]) {
+    let h = &f.host;
+    *h.neural.probe.lock().unwrap() = Some(Probe {
+        gpus: vec![Gpu {
+            name: "AMD Radeon RX 7900 XT".into(),
+            arch: "gfx1100".into(),
+            compute_units: 84,
+            luid: None,
+        }],
+        error: None,
+    });
+    accept(h).unwrap();
+    for (uuid, exe, proxy) in games {
+        amdnr(exe.parent().unwrap(), proxy);
+        crate::steam::update_library(h, |apps, _| {
+            apps.push(json!({
+                "name": format!("Game {uuid}"),
+                "uuid": uuid,
+                LEGACY_KEY: {"exe": exe, "release": "Alpha0.3.5.8R2", "proxy": proxy},
+            }));
+            true
+        })
+        .unwrap();
+    }
+    let (pdll, pini, pak) = (
+        format!("full/game/{PDLL}"),
+        format!("full/game/{PINI}"),
+        format!("full/game/{PAK}"),
+    );
+    let cache = package(
+        &cache_root(h),
+        "FG-V.B16",
+        &[
+            ("full/game/dxgi.dll", b"OptiScaler proxy"),
+            ("full/game/OptiScaler.ini", b"[FrameGen]\nFGInput=nvngxfg\n"),
+            ("full/game/OptiScaler/libxess.dll", b"xess"),
+            ("full/game/amd_fidelityfx_dx12.dll", b"FidelityFX"),
+            (&pdll, b"provider"),
+            (&pini, b"path = auto\n"),
+            (&pak, b"model"),
+            ("full/LICENSES/OptiScaler-GPL-3.0.txt", b"GPL"),
+        ],
+    );
+    pin_to(h, &cache);
+}
+
+/// Every refusal the install gives comes before Rubylight 3.0's AMDNR is
+/// taken out: a game refused keeps it, byte for byte, and its app the
+/// record of it, so it is still offered for removal and still launches.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_install_leaves_the_earlier_upscaling_as_it_was() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    let temp = tempdir();
+    type Prepare = fn(&Path, &Path);
+    let cases: [(&str, &str, Prepare, &str); 6] = [
+        (
+            "special-k",
+            "winmm.dll",
+            |folder, _| std::fs::write(folder.join("SpecialK64.dll"), "Special K").unwrap(),
+            "Special K is installed",
+        ),
+        (
+            "left-in-its-folder",
+            "winmm.dll",
+            |folder, _| std::fs::write(folder.join("OptiScaler/notes.txt"), "mine").unwrap(),
+            "OptiScaler/notes.txt is in the game's folder",
+        ),
+        (
+            "changed-in-its-folder",
+            "winmm.dll",
+            |folder, _| std::fs::write(folder.join("OptiScaler/libxess.dll"), "XeSS 2").unwrap(),
+            "OptiScaler/libxess.dll",
+        ),
+        (
+            "users-optiscaler",
+            "winmm.dll",
+            |folder, _| std::fs::write(folder.join("version.dll"), "OptiScaler 0.7").unwrap(),
+            "can't load another frame generation",
+        ),
+        (
+            "every-name-taken",
+            "dxgi.dll",
+            |folder, exe| {
+                std::fs::write(exe, b"MZ ... vulkan-1.dll ... kernel32.dll").unwrap();
+                std::fs::write(folder.join("winmm.dll"), "a sound mod").unwrap();
+                std::fs::write(folder.join("version.dll"), "a loader").unwrap();
+            },
+            "every name OptiScaler can load under",
+        ),
+        (
+            "target-taken",
+            "winmm.dll",
+            |folder, _| {
+                std::fs::write(folder.join("amd_fidelityfx_dx12.dll"), "the game's").unwrap()
+            },
+            "amd_fidelityfx_dx12.dll is already in the game's folder",
+        ),
+    ];
+    let exes: Vec<PathBuf> = cases
+        .iter()
+        .map(|(uuid, ..)| game(&temp.path().join(uuid)))
+        .collect();
+    let games: Vec<(&str, &Path, &str)> = cases
+        .iter()
+        .zip(&exes)
+        .map(|((uuid, proxy, ..), exe)| (*uuid, exe.as_path(), *proxy))
+        .collect();
+    amdnr_host(&f, &games);
+    for ((uuid, _, prepare, refusal), exe) in cases.iter().zip(&exes) {
+        let folder = exe.parent().unwrap();
+        prepare(folder, exe);
+        let before = snapshot(folder);
+        enable(h, uuid, None).unwrap();
+        let job = ended(h, uuid).await;
+        assert_eq!(job.phase, "failed", "{uuid}: {job:?}");
+        assert!(
+            job.error.as_deref().unwrap().contains(refusal),
+            "{uuid}: {job:?}"
+        );
+        assert_eq!(snapshot(folder), before, "{uuid}");
+        let app = app(h, uuid).unwrap();
+        assert_eq!(legacy_exe(&app).as_ref(), Some(exe), "{uuid}");
+        assert_eq!(placed_exe(&app), None, "{uuid}");
+    }
+}
+
+/// A file of Rubylight 3.0's AMDNR that changed since stays when AMDNR is
+/// taken out, and stops frame generation's install: the job names it, and
+/// the app no longer names AMDNR, whose manifest went with the rest.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_file_the_earlier_upscalings_removal_kept_stops_the_install() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    let temp = tempdir();
+    let exe = game(temp.path());
+    let folder = exe.parent().unwrap();
+    amdnr_host(&f, &[("game", &exe, "winmm.dll")]);
+    std::fs::write(folder.join("LmxxfNrRuntime.pak"), "the user's model").unwrap();
+    enable(h, "game", None).unwrap();
+    let job = ended(h, "game").await;
+    assert_eq!(job.phase, "failed", "{job:?}");
+    let error = job.error.as_deref().unwrap();
+    assert!(
+        error.contains("LmxxfNrRuntime.pak is still in the game's folder"),
+        "{error}"
+    );
+    assert_eq!(job.kept, ["LmxxfNrRuntime.pak"]);
+    assert!(folder.join("LmxxfNrRuntime.pak").exists());
+    assert!(!folder.join(LEGACY_MANIFEST).exists());
+    assert!(!folder.join("winmm.dll").exists());
+    assert!(!folder.join(MANIFEST).exists());
+    let app = app(h, "game").unwrap();
+    assert_eq!(legacy_exe(&app), None);
+    assert_eq!(placed_exe(&app), None);
 }
 
 /// The console's Remove for a game that has only Rubylight 3.0's

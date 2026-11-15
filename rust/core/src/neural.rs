@@ -641,6 +641,9 @@ pub enum Now {
 /// What removal deletes and keeps.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Removal {
+    /// The DLLs first, OptiScaler's proxy before the others: a game that
+    /// runs holds them, so a removal stops at the first before anything
+    /// else changed.
     pub delete: Vec<String>,
     /// Placed files that changed since (they may be someone else's now),
     /// and the settings the host took over, which are the user's.
@@ -661,6 +664,15 @@ pub fn removal(manifest: &Manifest, now: impl Fn(&str) -> Now) -> Removal {
             Now::Changed => removal.keep.push(path.clone()),
         }
     }
+    removal.delete.sort_by_key(|path| {
+        if *path == manifest.proxy {
+            0
+        } else if path.to_ascii_lowercase().ends_with(".dll") {
+            1
+        } else {
+            2
+        }
+    });
     for path in &manifest.taken_over {
         if now(path) != Now::Missing {
             removal.keep.push(path.clone());
@@ -773,7 +785,8 @@ pub struct IniRecord {
     /// The ini had no `[FrameGen]` section; the add-on added it.
     #[serde(default)]
     pub section_added: bool,
-    /// The added section needed a line break after the ini's last line.
+    /// A line break was added after the ini's last line: before the added
+    /// section, or after a `[FrameGen]` header that ended the file.
     #[serde(default)]
     pub break_added: bool,
 }
@@ -893,6 +906,14 @@ pub fn ini_apply(
         break_added: false,
     };
     let span = match ini.section(INI_SECTION)? {
+        // A header that ends the file with no line break after it gets the
+        // file's own, as an added section does, before lines go under it.
+        Some((header, _)) if header == ini.lines.len() - 1 => {
+            new.break_added = true;
+            ini.lines[header].push_str(ending);
+            ini.lines.push(String::new());
+            (header, header + 2)
+        }
         Some(span) => span,
         None => {
             new.section_added = true;
@@ -964,6 +985,22 @@ pub fn ini_restore(bytes: &[u8], record: &IniRecord) -> Result<Vec<u8>, String> 
         remove.sort_unstable();
         for at in remove.into_iter().rev() {
             ini.lines.remove(at);
+        }
+        // The line break added after a header that ended the file goes once
+        // nothing is under it again.
+        if record.break_added
+            && !record.section_added
+            && let Some((header, end)) = ini.section(INI_SECTION)?
+            && end == ini.lines.len()
+            && header + 2 == end
+            && ini.lines[header + 1].is_empty()
+        {
+            ini.lines.pop();
+            if let Some(line) = ini.lines.last_mut()
+                && line.ends_with('\r')
+            {
+                line.pop();
+            }
         }
         // A section the add-on added goes once nothing else is in it: at the
         // end, only what follows the last line break may follow it.
@@ -1040,9 +1077,10 @@ pub struct Gpu {
     pub luid: Option<u64>,
 }
 
-/// The GPU the host captures and encodes with, as DXGI names it.
+/// A hardware GPU as DXGI names it: the one the host captures and encodes
+/// with, or another in the PC.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Streams {
+pub struct Adapter {
     pub name: String,
     /// Its LUID: the low part, then the high part.
     pub luid: u64,
@@ -1092,45 +1130,139 @@ const RDNA: [(u32, u32); 19] = [
     (0x73f0, 0x73f0),
 ];
 
-/// What the provider runs on, as its release says: AMD RDNA (Radeon RX 5000
-/// and newer, and RDNA integrated graphics) and NVIDIA Turing and newer
-/// (GeForce GTX 16, RTX 20 and newer), with the Visual C++ runtime
-/// OptiScaler needs (`missing` lists the runtime's files this PC lacks).
-/// Only the GPU the host streams with counts. An AMD GPU is judged by the
-/// compute runtime's architecture (`gpus`, matched by LUID, else by a name
-/// no other GPU has), else by its PCI device ID; one neither identifies is
-/// refused. Returns the GPU's name.
-pub fn capable(
-    streams: &Streams,
-    gpus: Result<&[Gpu], &str>,
-    missing: &[&str],
-) -> Result<String, String> {
-    // The GPU first: a runtime to install helps no PC whose GPU can't run it.
-    let name = gpu_capable(streams, gpus)?;
-    if !missing.is_empty() {
-        return Err(format!(
-            "frame generation needs the Microsoft Visual C++ 2015-2022 Redistributable (x64), which this PC lacks ({})",
-            missing.join(", ")
-        ));
+/// The GPU frame generation runs on, as [`capable`] found it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Capable {
+    pub gpu: String,
+    /// The GPU the host streams with, when it is not that one.
+    pub streams: Option<String>,
+}
+impl Capable {
+    /// What the switch says when frame generation runs on a GPU the host
+    /// does not stream with: the host can't know which GPU a game renders on.
+    pub fn note(&self) -> Option<String> {
+        self.streams.as_ref().map(|streams| {
+            format!(
+                "Frame generation runs when the game renders on {}; Rubylight streams with {streams}.",
+                self.gpu
+            )
+        })
     }
-    Ok(name)
 }
 
-/// [`capable`]'s GPU half.
-fn gpu_capable(streams: &Streams, gpus: Result<&[Gpu], &str>) -> Result<String, String> {
-    let name = &streams.name;
+/// Whether devices are offered frame generation at all: any of the PC's
+/// hardware GPUs (`adapters`) is AMD's or NVIDIA's, by vendor alone.
+pub fn offered(adapters: &[Adapter]) -> bool {
+    adapters
+        .iter()
+        .any(|adapter| matches!(adapter.vendor, AMD | NVIDIA))
+}
+
+/// Whether [`capable`] needs the AMD compute runtime's GPUs: an AMD GPU is
+/// among them, and the GPU the host streams with is no NVIDIA one that runs
+/// it already.
+pub fn needs_probe(streams: &Adapter, adapters: &[Adapter]) -> bool {
+    !(streams.vendor == NVIDIA && streams.device >= MIN_NVIDIA_DEVICE)
+        && std::iter::once(streams)
+            .chain(adapters)
+            .any(|adapter| adapter.vendor == AMD)
+}
+
+/// What the provider runs on, as its release says: AMD RDNA (Radeon RX 5000
+/// and newer, and RDNA integrated graphics) and NVIDIA Turing and newer
+/// (GeForce GTX 16, RTX 20 and newer). The GPU the host streams with
+/// (`streams`) counts first; else any other of the PC's hardware GPUs
+/// (`adapters`, AMD or NVIDIA), since a game may render on a GPU the host
+/// does not stream with, as on a laptop whose display runs on its
+/// integrated graphics. An AMD GPU is judged by the compute runtime's
+/// architecture (`gpus`, matched by LUID, else by a name no other GPU has),
+/// else by its PCI device ID; one neither identifies is refused.
+pub fn capable(
+    streams: &Adapter,
+    adapters: &[Adapter],
+    gpus: Result<&[Gpu], &str>,
+) -> Result<Capable, String> {
     let supported = "frame generation runs on AMD Radeon RX 5000 and newer graphics (RDNA) and NVIDIA GeForce GTX 16, RTX 20 and newer";
-    match streams.vendor {
-        NVIDIA if streams.device >= MIN_NVIDIA_DEVICE => Ok(name.clone()),
-        NVIDIA => Err(format!(
-            "{supported}; this PC streams with {name}, which is older"
-        )),
+    let first = verdict(streams, gpus);
+    if first == Verdict::Runs {
+        return Ok(Capable {
+            gpu: streams.name.clone(),
+            streams: None,
+        });
+    }
+    let others: Vec<(&Adapter, Verdict)> = adapters
+        .iter()
+        .filter(|adapter| adapter.luid != streams.luid && matches!(adapter.vendor, AMD | NVIDIA))
+        .map(|adapter| (adapter, verdict(adapter, gpus)))
+        .collect();
+    if let Some((adapter, _)) = others.iter().find(|(_, verdict)| *verdict == Verdict::Runs) {
+        return Ok(Capable {
+            gpu: adapter.name.clone(),
+            streams: Some(streams.name.clone()),
+        });
+    }
+    let name = &streams.name;
+    let mut reason = match first {
+        Verdict::Older(None) => format!("{supported}; this PC streams with {name}, which is older"),
+        Verdict::Older(Some(arch)) => {
+            format!("{supported}; this PC streams with {name} ({arch}), which is older")
+        }
+        Verdict::Unknown(why) => format!(
+            "Rubylight can't identify the GPU it streams with ({name}, device {:#06x}) as one frame generation runs on: {why}",
+            streams.device
+        ),
+        Verdict::Other | Verdict::Runs => format!("{supported}; this PC streams with {name}"),
+    };
+    for (adapter, verdict) in others {
+        let name = &adapter.name;
+        reason.push_str(&match verdict {
+            Verdict::Older(None) => format!("; it also has {name}, which is older"),
+            Verdict::Older(Some(arch)) => format!("; it also has {name} ({arch}), which is older"),
+            Verdict::Unknown(why) => format!(
+                "; it also has {name} (device {:#06x}), which Rubylight can't identify: {why}",
+                adapter.device
+            ),
+            Verdict::Other | Verdict::Runs => String::new(),
+        });
+    }
+    Err(reason)
+}
+
+/// The Visual C++ runtime OptiScaler needs, of which this PC lacks
+/// `missing`.
+pub fn runtime(missing: &[&str]) -> Result<(), String> {
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "frame generation needs the Microsoft Visual C++ 2015-2022 Redistributable (x64), which this PC lacks ({})",
+            missing.join(", ")
+        ))
+    }
+}
+
+/// Whether frame generation runs on one GPU ([`capable`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Verdict {
+    Runs,
+    /// Older than it runs on; an AMD GPU's architecture when the runtime said.
+    Older(Option<String>),
+    /// An AMD GPU neither the runtime nor its device ID identifies, and why.
+    Unknown(String),
+    /// Neither AMD's nor NVIDIA's.
+    Other,
+}
+
+fn verdict(adapter: &Adapter, gpus: Result<&[Gpu], &str>) -> Verdict {
+    match adapter.vendor {
+        NVIDIA if adapter.device >= MIN_NVIDIA_DEVICE => Verdict::Runs,
+        NVIDIA => Verdict::Older(None),
         AMD => {
             let found = gpus.ok().and_then(|gpus| {
                 gpus.iter()
-                    .find(|gpu| gpu.luid == Some(streams.luid))
+                    .find(|gpu| gpu.luid == Some(adapter.luid))
                     .or_else(|| {
-                        let mut named = gpus.iter().filter(|gpu| gpu.name == *name);
+                        let mut named = gpus.iter().filter(|gpu| gpu.name == adapter.name);
                         match (named.next(), named.next()) {
                             (Some(gpu), None) => Some(gpu),
                             _ => None,
@@ -1143,30 +1275,23 @@ fn gpu_capable(streams: &Streams, gpus: Result<&[Gpu], &str>) -> Result<String, 
                 let rdna =
                     number.len() >= 4 && number[..2].parse::<u32>().is_ok_and(|major| major >= 10);
                 return if rdna {
-                    Ok(name.clone())
+                    Verdict::Runs
                 } else {
-                    Err(format!(
-                        "{supported}; this PC streams with {name} ({}), which is older",
-                        gpu.arch
-                    ))
+                    Verdict::Older(Some(gpu.arch.clone()))
                 };
             }
             if RDNA
                 .iter()
-                .any(|(first, last)| (*first..=*last).contains(&streams.device))
+                .any(|(first, last)| (*first..=*last).contains(&adapter.device))
             {
-                return Ok(name.clone());
+                return Verdict::Runs;
             }
-            let why = match gpus {
+            Verdict::Unknown(match gpus {
                 Err(error) => format!("the AMD compute runtime can't say ({error})"),
                 Ok(_) => "the AMD compute runtime doesn't list it".into(),
-            };
-            Err(format!(
-                "Rubylight can't identify the GPU it streams with ({name}, device {:#06x}) as one frame generation runs on: {why}",
-                streams.device
-            ))
+            })
         }
-        _ => Err(format!("{supported}; this PC streams with {name}")),
+        _ => Verdict::Other,
     }
 }
 

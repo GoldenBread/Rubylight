@@ -8,13 +8,13 @@ use butterpollo_core::native_api::{
     neural::{FRAME_GENERATION, Neural},
     radeon::ControlState,
 };
-use butterpollo_core::neural::{AMD, NVIDIA, Streams};
+use butterpollo_core::neural::{AMD, Adapter, NVIDIA};
 use serde_json::json;
 
 /// The host streams with `name`; `game` (and `old`, with Rubylight 3.0's
 /// upscaling) are in its library.
 fn host(s: &Setup, name: &str, vendor: u32, device: u32) {
-    *s.host().neural.streams.lock().unwrap() = Some(Streams {
+    *s.host().neural.streams.lock().unwrap() = Some(Adapter {
         name: name.into(),
         luid: 1,
         vendor,

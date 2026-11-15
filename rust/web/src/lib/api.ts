@@ -812,7 +812,10 @@ export interface NeuralStatus {
   accepted: boolean;
   /** Whether this PC's GPU can run frame generation; `reason` says why not. */
   available: boolean;
+  /** The GPU it runs on: the one Rubylight streams with, else another of the PC's. */
   gpu: string | null;
+  /** When `gpu` is not the GPU Rubylight streams with: that it runs when the game renders there. */
+  gpu_note?: string | null;
   reason: string | null;
   found: boolean;
   enabled: boolean;

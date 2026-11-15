@@ -78,7 +78,10 @@ pub struct Neural {
     pub probe: Mutex<Option<Probe>>,
     /// A test's streaming GPU in place of this PC's.
     #[cfg(test)]
-    pub streams: Mutex<Option<neural::Streams>>,
+    pub streams: Mutex<Option<neural::Adapter>>,
+    /// A test's GPUs in place of this PC's; the streaming GPU alone if none.
+    #[cfg(test)]
+    pub adapters: Mutex<Option<Vec<neural::Adapter>>>,
     /// A test's missing Visual C++ runtime files in place of this PC's.
     #[cfg(test)]
     pub vc_missing: Mutex<Vec<&'static str>>,
@@ -95,9 +98,10 @@ pub struct Neural {
 
 #[derive(Default)]
 struct State {
-    /// The last probe's answer, when it came and the settings it holds for.
-    probe: Option<(Instant, GpuSetting, Result<String, String>)>,
-    /// Whether the GPU a stream uses is AMD's or NVIDIA's ([`offered`]),
+    /// The last GPU check's answer ([`gpu_capability`]), when it came and
+    /// the settings it holds for.
+    probe: Option<(Instant, GpuSetting, Result<neural::Capable, String>)>,
+    /// Whether one of the PC's GPUs is AMD's or NVIDIA's ([`offered`]),
     /// and the settings it holds for.
     offered: Option<(GpuSetting, bool)>,
     jobs: BTreeMap<String, Job>,
@@ -193,11 +197,21 @@ pub fn probe_main() -> i32 {
     }
 }
 
-/// The GPU Neural Rendering runs on, or why this PC cannot have it: the GPU
-/// a stream uses ([`neural::capable`]), an AMD one asked about in a helper
-/// process. Asked once, again a while after a failure, and again once the
-/// GPU or display a stream uses is set otherwise. Blocks.
-pub fn capability(h: &Shared) -> Result<String, String> {
+/// The GPU frame generation runs on, or why this PC cannot have it: the
+/// GPU a stream uses, else another of the PC's ([`neural::capable`]), an
+/// AMD one asked about in a helper process; then the Visual C++ runtime,
+/// beside the game's program (`game`, its folder) or in System32, looked for
+/// at every call, so an install shows at once. The GPU is asked once, again
+/// a while after a failure, and again once the GPU or display a stream uses
+/// is set otherwise. Blocks.
+pub fn capability(h: &Shared, game: Option<&Path>) -> Result<neural::Capable, String> {
+    let capable = gpu_capability(h)?;
+    neural::runtime(&vc_missing(h, game))?;
+    Ok(capable)
+}
+
+/// [`capability`]'s GPU half, held.
+fn gpu_capability(h: &Shared) -> Result<neural::Capable, String> {
     let setting = gpu_setting(h);
     if let Some((at, probed, result)) = &h.neural.lock().probe
         && *probed == setting
@@ -205,30 +219,39 @@ pub fn capability(h: &Shared) -> Result<String, String> {
     {
         return result.clone();
     }
-    let result = streams_with(h, &setting).and_then(|streams| {
+    let result = gpus_with(h, &setting).and_then(|(streams, adapters)| {
         // Only an AMD GPU needs the compute runtime, which no other driver has.
-        let probe = if streams.vendor == neural::AMD {
+        let probe = if neural::needs_probe(&streams, &adapters) {
             run_probe(h).and_then(|probe| match probe.error {
                 Some(error) if probe.gpus.is_empty() => Err(error),
                 _ => Ok(probe.gpus),
             })
         } else {
-            Err("not an AMD GPU".into())
+            Err("not asked: no AMD GPU".into())
         };
-        let missing = vc_missing(h);
-        neural::capable(&streams, probe.as_deref().map_err(String::as_str), &missing)
+        neural::capable(
+            &streams,
+            &adapters,
+            probe.as_deref().map_err(String::as_str),
+        )
     });
-    if let Err(reason) = &result {
-        tracing::info!(%reason, "Neural Rendering is not available on this PC");
+    match &result {
+        Err(reason) => tracing::info!(%reason, "Neural Rendering is not available on this PC"),
+        Ok(capable) => {
+            if let Some(streams) = &capable.streams {
+                tracing::info!(gpu = %capable.gpu, %streams, "Neural Rendering runs on a GPU Rubylight does not stream with");
+            }
+        }
     }
     h.neural.lock().probe = Some((Instant::now(), setting, result.clone()));
     result
 }
 
-/// Whether devices are offered frame generation at all: the GPU a stream
-/// uses is AMD's or NVIDIA's, by its DXGI vendor ID alone, with no probe. A
-/// GPU that can't be found keeps it offered, and the switch says why. Asked
-/// again once the GPU or display a stream uses is set otherwise. Blocks.
+/// Whether devices are offered frame generation at all: one of the PC's
+/// GPUs is AMD's or NVIDIA's, by its DXGI vendor ID alone, with no probe
+/// ([`neural::offered`]). GPUs that can't be listed keep it offered, and
+/// the switch says why. Asked again once the GPU or display a stream uses
+/// is set otherwise. Blocks.
 pub fn offered(h: &Shared) -> bool {
     let setting = gpu_setting(h);
     if let Some((held, offered)) = &h.neural.lock().offered
@@ -236,13 +259,13 @@ pub fn offered(h: &Shared) -> bool {
     {
         return *offered;
     }
-    match streams_with(h, &setting) {
-        Ok(streams) => {
-            let offered = matches!(streams.vendor, neural::AMD | neural::NVIDIA);
+    match gpus_with(h, &setting) {
+        Ok((_, adapters)) => {
+            let offered = neural::offered(&adapters);
             h.neural.lock().offered = Some((setting, offered));
             offered
         }
-        // Offered while the GPU is not known, and asked again next time.
+        // Offered while the GPUs are not known, and asked again next time.
         Err(_) => true,
     }
 }
@@ -255,56 +278,114 @@ fn gpu_setting(h: &Shared) -> GpuSetting {
     ["output_name", "adapter_name", "adapter_pnp_id"].map(|key| config.get(key, "").to_string())
 }
 
-/// The Visual C++ runtime files OptiScaler needs that this PC lacks.
+/// The Visual C++ runtime files OptiScaler needs that this PC lacks: in
+/// none of `folders`.
+fn missing_in(folders: &[&Path]) -> Vec<&'static str> {
+    neural::VC_RUNTIME
+        .into_iter()
+        .filter(|file| !folders.iter().any(|folder| folder.join(file).is_file()))
+        .collect()
+}
+
+/// The Visual C++ runtime files OptiScaler needs that this PC lacks: in
+/// System32, and beside the game's program (`game`, its folder), where the
+/// DLL OptiScaler loads as finds them first.
 #[cfg(not(test))]
-fn vc_missing(_: &Shared) -> Vec<&'static str> {
+fn vc_missing(_: &Shared, game: Option<&Path>) -> Vec<&'static str> {
     let system = std::env::var_os("SystemRoot")
         .map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from)
         .join("System32");
-    neural::VC_RUNTIME
+    missing_in(
+        &std::iter::once(system.as_path())
+            .chain(game)
+            .collect::<Vec<_>>(),
+    )
+}
+/// Tests miss the runtime files they name, unless the game's folder has them.
+#[cfg(test)]
+fn vc_missing(h: &Shared, game: Option<&Path>) -> Vec<&'static str> {
+    let named = h.neural.vc_missing.lock().unwrap().clone();
+    let missing = game.map_or_else(|| neural::VC_RUNTIME.to_vec(), |game| missing_in(&[game]));
+    named
         .into_iter()
-        .filter(|file| !system.join(file).is_file())
+        .filter(|file| missing.contains(file))
         .collect()
 }
-#[cfg(test)]
-fn vc_missing(h: &Shared) -> Vec<&'static str> {
-    h.neural.vc_missing.lock().unwrap().clone()
+
+/// The folder of the game's program as far as the app tells without the
+/// helper: where the files are, else where the earlier upscaling was, else
+/// the app's command when it is a program in the install.
+fn game_folder(app: &App) -> Option<PathBuf> {
+    placed_exe(app)
+        .or_else(|| legacy_exe(app))
+        .or_else(|| game_command(app))
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
 }
 
-/// The GPU this host captures and encodes with: the Graphics card setting's,
-/// or the one that drives the display it streams.
+/// The GPU this host captures and encodes with (the Graphics card
+/// setting's, or the one that drives the display it streams), and every
+/// hardware GPU of the PC, that one among them.
 #[cfg(not(test))]
-fn streams_with(_: &Shared, setting: &GpuSetting) -> Result<neural::Streams, String> {
+fn gpus_with(
+    _: &Shared,
+    setting: &GpuSetting,
+) -> Result<(neural::Adapter, Vec<neural::Adapter>), String> {
     let [display, adapter_name, pnp_id] = setting;
     let (name, (low, high)) =
         butterpollo_windows::capture::stream_gpu(display, adapter_name, pnp_id)
             .map_err(|e| format!("the GPU Rubylight streams with can't be found: {e:#}"))?;
-    let gpu = butterpollo_windows::capture::gpus()
-        .map_err(|e| format!("the GPUs can't be listed: {e:#}"))?
-        .into_iter()
+    let gpus = butterpollo_windows::capture::gpus()
+        .map_err(|e| format!("the GPUs can't be listed: {e:#}"))?;
+    let luid = |(low, high): (u32, i32)| (u64::from(high as u32) << 32) | u64::from(low);
+    let gpu = gpus
+        .iter()
         .find(|gpu| gpu.luid == (low, high))
         .ok_or_else(|| format!("the GPU Rubylight streams with ({name}) can't be identified"))?;
-    Ok(neural::Streams {
+    let streams = neural::Adapter {
         name,
-        luid: (u64::from(high as u32) << 32) | u64::from(low),
+        luid: luid((low, high)),
         vendor: gpu.vendor,
         device: gpu.device,
-    })
+    };
+    let adapters = gpus
+        .iter()
+        .map(|gpu| neural::Adapter {
+            name: gpu.name.clone(),
+            luid: luid(gpu.luid),
+            vendor: gpu.vendor,
+            device: gpu.device,
+        })
+        .collect();
+    Ok((streams, adapters))
 }
-/// Tests stream with their own GPU, else the probe's first one.
+/// Tests stream with their own GPU, else the probe's first one, among their
+/// own GPUs, else alone.
 #[cfg(test)]
-fn streams_with(h: &Shared, _: &GpuSetting) -> Result<neural::Streams, String> {
-    if let Some(streams) = h.neural.streams.lock().unwrap().clone() {
-        return Ok(streams);
-    }
-    let probe = run_probe(h)?;
-    let gpu = probe.gpus.first().ok_or("no GPU in this test")?;
-    Ok(neural::Streams {
-        name: gpu.name.clone(),
-        luid: gpu.luid.unwrap_or_default(),
-        vendor: neural::AMD,
-        device: 0,
-    })
+fn gpus_with(
+    h: &Shared,
+    _: &GpuSetting,
+) -> Result<(neural::Adapter, Vec<neural::Adapter>), String> {
+    let streams = match h.neural.streams.lock().unwrap().clone() {
+        Some(streams) => streams,
+        None => {
+            let probe = run_probe(h)?;
+            let gpu = probe.gpus.first().ok_or("no GPU in this test")?;
+            neural::Adapter {
+                name: gpu.name.clone(),
+                luid: gpu.luid.unwrap_or_default(),
+                vendor: neural::AMD,
+                device: 0,
+            }
+        }
+    };
+    let adapters = h
+        .neural
+        .adapters
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap_or_else(|| vec![streams.clone()]);
+    Ok((streams, adapters))
 }
 
 #[cfg(test)]
@@ -1298,8 +1379,9 @@ pub fn enable(h: &Shared, uuid: &str, exe: Option<PathBuf>) -> Result<(), Refusa
     if !accepted(h) {
         return Err(Refusal::NotAccepted);
     }
-    capability(h).map_err(Refusal::Unavailable)?;
-    let app = app(h, uuid).ok_or(Refusal::NotFound)?;
+    let app = app(h, uuid);
+    capability(h, app.as_ref().and_then(game_folder).as_deref()).map_err(Refusal::Unavailable)?;
+    let app = app.ok_or(Refusal::NotFound)?;
     // A console that still shows the switch off may name another program: the files
     // beside the first would stay in the game's folder with no record left of them.
     if placed_exe(&app).is_some() {
@@ -1370,11 +1452,31 @@ pub fn enable(h: &Shared, uuid: &str, exe: Option<PathBuf>) -> Result<(), Refusa
                     other => return Ok(other),
                 };
                 // Rubylight 3.0's AMDNR goes first: the two can't share a
-                // game. Once it is out, the app no longer names it, whatever
-                // the install does next.
+                // game. Every refusal the install gives is asked before, with
+                // AMDNR taken as gone, so a game refused keeps it. Once it is
+                // out, the app no longer names it, whatever the install does
+                // next; a file of it that stayed stops the install.
                 if let Some(legacy) = legacy_exe(&app) {
+                    let check = Request::Check {
+                        exe: Some(exe.clone()),
+                        install: install.clone(),
+                        package: package.clone(),
+                    };
+                    match run_folder(check, &|_, _| {})? {
+                        Response::Found { .. } => {}
+                        other => return Ok(other),
+                    }
                     update_job(&worker, &task_uuid, |job| job.phase = "remove");
                     match remove_at(&app.name, &legacy)? {
+                        Removed::Done(kept) if !kept.is_empty() => {
+                            set_key(&worker, &task_uuid, LEGACY_KEY, None)?;
+                            update_job(&worker, &task_uuid, |job| {
+                                job.kept = kept.iter().map(|path| neural::shown(path)).collect();
+                            });
+                            return Ok(Response::Error {
+                                message: kept_earlier(&kept),
+                            });
+                        }
                         Removed::Done(_) => set_key(&worker, &task_uuid, LEGACY_KEY, None)?,
                         Removed::Unreachable(folder) => {
                             return Ok(Response::Error {
@@ -1412,6 +1514,28 @@ pub fn enable(h: &Shared, uuid: &str, exe: Option<PathBuf>) -> Result<(), Refusa
         }
     });
     Ok(())
+}
+
+/// Why an install stopped after the earlier upscaling's removal left `kept`.
+fn kept_earlier(kept: &[String]) -> String {
+    let mut named: Vec<String> = kept
+        .iter()
+        .take(3)
+        .map(|path| neural::shown(path))
+        .collect();
+    if kept.len() > 3 {
+        named.push(format!("{} more", kept.len() - 3));
+    }
+    let (be, it) = if kept.len() == 1 {
+        ("is", "it")
+    } else {
+        ("are", "them")
+    };
+    format!(
+        "the earlier upscaling was removed, but {} {be} still in the game's folder: {} changed since or {be} not Rubylight's, so frame generation was not installed; move {it} out and turn it on again",
+        named.join(", "),
+        if kept.len() == 1 { "it" } else { "they" },
+    )
 }
 
 /// What the app's key says once the files are in.
@@ -2016,8 +2140,8 @@ fn launch_check(h: &Shared, app: &App, uuid: &str, exe: PathBuf, legacy: bool) -
 /// The switch as the console and Nightjar show it for one app. Blocks (the
 /// first call checks the GPU).
 pub fn status(h: &Shared, uuid: &str) -> Value {
-    let capability = capability(h);
     let app = app(h, uuid);
+    let capability = capability(h, app.as_ref().and_then(game_folder).as_deref());
     let state = h.neural.lock();
     let setting = app.as_ref().and_then(|app| app.extra.get(KEY)).cloned();
     let legacy = app
@@ -2027,7 +2151,8 @@ pub fn status(h: &Shared, uuid: &str) -> Value {
     json!({
         "accepted": accepted(h),
         "available": capability.is_ok(),
-        "gpu": capability.as_ref().ok(),
+        "gpu": capability.as_ref().ok().map(|capable| &capable.gpu),
+        "gpu_note": capability.as_ref().ok().and_then(neural::Capable::note),
         "reason": capability.as_ref().err(),
         "found": app.is_some(),
         "enabled": setting.is_some(),

@@ -73,6 +73,24 @@ export function neuralView(status: NeuralStatus): NeuralView {
   return { kind: 'off', kept: job?.action === 'remove' ? job.kept : [], earlier };
 }
 
+/**
+ * The switch's hint: where frame generation is installed, or that turning it on removes the earlier
+ * upscaling first; then `note`, the host's word that it runs only when the game renders on a GPU
+ * Rubylight doesn't stream with.
+ */
+export function neuralHint(view: NeuralView, note: string | null | undefined): string | undefined {
+  const where =
+    view.kind === 'on' && view.release
+      ? view.addon
+        ? `Added to the upscaler mod beside ${view.exe ?? 'the game'}; release ${view.release}.`
+        : `Installed beside ${view.exe ?? 'the game'}; release ${view.release}.`
+      : view.kind === 'off' && view.earlier !== null
+        ? REPLACES
+        : undefined;
+  const shown = view.kind === 'on' || view.kind === 'off' ? note : null;
+  return [where, shown].filter(Boolean).join(' ') || undefined;
+}
+
 /** The panel polls while the host works. */
 export function pollsNeural(view: NeuralView): boolean {
   return view.kind === 'working';

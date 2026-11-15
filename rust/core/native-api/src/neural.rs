@@ -19,7 +19,9 @@ pub struct Neural {
     /// The one-time notice was accepted on this host. Until it is, a write
     /// that turns a switch on carries `accept_notice`.
     pub accepted: bool,
-    /// The GPU the host streams with, when the switches can run on it.
+    /// The GPU the switches run on, when the PC has one: the one the host
+    /// streams with, else another of the PC's, used when the game renders
+    /// on it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gpu: Option<String>,
     pub switches: Vec<Switch>,
