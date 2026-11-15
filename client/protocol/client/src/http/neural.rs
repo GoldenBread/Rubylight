@@ -152,6 +152,7 @@ mod tests {
       "gpu": "AMD Radeon RX 7900 XT",
       "switches": [
         { "id": "frame_generation", "state": "needs_external_setup", "on": false,
+          "why": "choose_program",
           "reason": "Choose the game's program in the Rubylight console on the PC." }
       ],
       "replaces_earlier_upscaling": true,
@@ -180,7 +181,12 @@ mod tests {
     /// re-serialisation, and the old answer above (none of them) still reads as before.
     #[test]
     fn the_why_mode_and_release_read_and_round_trip() {
-        let old: Neural = serde_json::from_str(DOCUMENTED).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Neural>(DOCUMENTED).unwrap().frame_generation().unwrap().why,
+            Some(NeuralWhy::ChooseProgram)
+        );
+        // A host before the codes: no `why`, `mode` or `release`.
+        let old: Neural = serde_json::from_str(&DOCUMENTED.replace(r#""why": "choose_program","#, "")).unwrap();
         assert_eq!(old.frame_generation().unwrap().why, None);
         assert_eq!((old.mode, old.release.as_deref()), (None, None));
         let state: Neural = serde_json::from_str(

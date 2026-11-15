@@ -156,11 +156,17 @@ public class NeuralSheetTest {
     public void theNoticeStartsOnCancel() {
         script("neural", OFF);
         NeuralSheet sheet = sheet();
+        // A pad or a remote: out of touch mode, as the Retroid is once its D-pad was pressed.
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().setInTouchMode(false);
         fg(sheet).performClick();
         Shadows.shadowOf(Looper.getMainLooper()).idle();
         AlertDialog notice = (AlertDialog) ShadowDialog.getLatestDialog();
-        assertTrue(notice.getButton(DialogInterface.BUTTON_NEGATIVE).isFocusedByDefault());
+        android.view.View cancel = notice.getButton(DialogInterface.BUTTON_NEGATIVE);
+        assertTrue(cancel.isFocusedByDefault());
         assertFalse(notice.getButton(DialogInterface.BUTTON_POSITIVE).isFocusedByDefault());
+        // Where the window's first focus lands when it gets focus: on Cancel.
+        notice.getWindow().getDecorView().restoreDefaultFocus();
+        assertEquals(cancel, notice.getCurrentFocus());
     }
 
     /** A game the PC refuses says why before any try, in the app's words, and choosing it sends nothing. */
