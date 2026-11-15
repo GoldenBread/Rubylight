@@ -276,7 +276,8 @@ impl App {
                 if read_list_for_launch(&mut self.hosts, host_id) {
                     self.network_launch = Some((host_id, app_id, resume, kind));
                 } else {
-                    self.start_failed((host_id, app_id, resume, kind), None, None, trf("The app list could not be loaded. {}", &[&tr("Creating this device’s pairing key…")]));
+                    let why = unreadable_list(&self.hosts, host_id);
+                    self.start_failed((host_id, app_id, resume, kind), None, None, why.to_owned());
                 }
                 return;
             }
@@ -765,6 +766,12 @@ fn running_app_unlisted(host: &hosts::Host, app_id: i32) -> nightjar_core::http:
         control: nightjar_core::http::AppControl::None,
         monitor_resume: false,
     }
+}
+
+/// Why no read of the list a launch waits for could start: the PC was removed, or this device's
+/// key is still being made.
+pub(crate) fn unreadable_list(hosts: &Hosts, host: u64) -> &'static str {
+    if hosts.get(host).is_none() { tr("This PC is no longer in your list.") } else { tr("This device’s pairing key is not ready yet. Try again in a moment.") }
 }
 
 /// Starts reading the list a launch waits for; false when no read could start.

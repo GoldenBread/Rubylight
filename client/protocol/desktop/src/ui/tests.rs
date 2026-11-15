@@ -7511,6 +7511,9 @@ fn a_launch_with_no_list_read_loads_it_or_fails_out_loud() {
     let id = hosts.list[0].id;
     assert!(matches!(crate::launch_target(&hosts.list[0], 5, false), crate::LaunchApp::Gone));
     assert!(!crate::read_list_for_launch(&mut hosts, id), "no key, no read");
+    // The reason is a finished sentence with a next step, not a progress line.
+    assert_eq!(crate::unreadable_list(&hosts, id), "This device’s pairing key is not ready yet. Try again in a moment.");
+    assert_eq!(crate::unreadable_list(&hosts, id + 1), "This PC is no longer in your list.");
     hosts.set_identity(Arc::new(nightjar_core::http::ClientIdentity::generate().expect("a key")));
     assert!(crate::read_list_for_launch(&mut hosts, id), "the launch holds for this read");
     assert!(matches!(crate::launch_target(&hosts.list[0], 5, false), crate::LaunchApp::Wait));
