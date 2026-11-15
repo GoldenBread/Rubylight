@@ -1509,6 +1509,32 @@ fn a_quit_a_closed_game_and_a_stream_end_ask_the_pc_again_for_a_while() {
     assert_eq!(hosts.list[0].poll_interval(until), POLL_INTERVAL, "and it ends");
 }
 
+/// While the window is minimized or hidden an idle PC is left alone, but the PC being woken and a
+/// PC just quit or left are still asked: a wake would otherwise time out on a PC that is up.
+#[test]
+fn a_pc_being_woken_or_rechecked_is_polled_while_the_window_is_away() {
+    let records = [("a", "192.0.2.1"), ("b", "192.0.2.2"), ("c", "192.0.2.3")]
+        .map(|(uid, address)| HostRecord { address: address.into(), ..paired_record(uid) });
+    let mut hosts = Hosts::without_discovery(records.to_vec(), Arc::new(|| {}));
+    let ids: Vec<u64> = hosts.list.iter().map(|h| h.id).collect();
+    let (waking, rechecked, idle) = (ids[0], ids[1], ids[2]);
+    let now = Instant::now();
+    hosts.get_mut(rechecked).unwrap().recheck_until = Some(now + RECHECK_WINDOW);
+    let mut due = hosts.due(now, false, Some(waking));
+    due.sort_unstable();
+    let mut kept = vec![waking, rechecked];
+    kept.sort_unstable();
+    assert_eq!(due, kept, "the idle PC waits for the window");
+    assert_eq!(hosts.due(now, false, None), vec![rechecked], "no wake, no waking PC");
+    assert_eq!(hosts.due(now + RECHECK_WINDOW, false, None), Vec::<u64>::new(), "the recheck window ends");
+    assert_eq!(hosts.due(now, true, None).len(), 3, "a shown window polls every PC");
+    // Still only when due: a PC asked a moment ago waits for its interval.
+    hosts.get_mut(waking).unwrap().last_poll = Some(now);
+    assert!(!hosts.due(now, false, Some(waking)).contains(&waking));
+    assert!(hosts.due(now + POLL_INTERVAL, false, Some(waking)).contains(&waking));
+    assert!(hosts.due(now, true, None).contains(&idle) && !hosts.due(now, true, None).contains(&waking));
+}
+
 #[test]
 fn the_library_is_read_again_every_few_seconds_while_rechecking_only() {
     let mut hosts = Hosts::without_discovery(vec![paired_record("uid")], Arc::new(|| {}));

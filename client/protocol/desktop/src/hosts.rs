@@ -1129,17 +1129,23 @@ impl Hosts {
         self.pc_workers.remove(&id);
     }
 
-    /// Checks every host that is due.
-    pub fn poll(&mut self) {
-        let due: Vec<u64> = self
-            .list
-            .iter()
-            .filter(|h| !h.polling && h.last_poll.is_none_or(|t| t.elapsed() >= h.poll_interval(Instant::now())))
-            .map(|h| h.id)
-            .collect();
-        for id in due {
+    /// Checks every host that is due. While the window is away (`shown` false) only the PC being
+    /// woken (`waking`) and those in their recheck window are: a wake waits for its PC's answer,
+    /// and a quit or a stream's end for the PC's new state. The others wait for the window.
+    pub fn poll(&mut self, shown: bool, waking: Option<u64>) {
+        for id in self.due(Instant::now(), shown, waking) {
             self.poll_one(id);
         }
+    }
+
+    /// The hosts [`Self::poll`] asks at `now`.
+    fn due(&self, now: Instant, shown: bool, waking: Option<u64>) -> Vec<u64> {
+        self.list
+            .iter()
+            .filter(|h| shown || Some(h.id) == waking || h.recheck_until.is_some_and(|until| now < until))
+            .filter(|h| !h.polling && h.last_poll.is_none_or(|t| now.saturating_duration_since(t) >= h.poll_interval(now)))
+            .map(|h| h.id)
+            .collect()
     }
 
     /// A quit, a closed game or a stream has ended: ask the PC what runs now, and keep asking

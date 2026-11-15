@@ -365,17 +365,18 @@ impl App {
                         });
                         self.hosts.set_identity(Arc::new(identity));
                         self.launcher.identity_ready = true;
-                        self.hosts.poll();
+                        self.hosts.poll(true, None);
                     }
                     Err(e) => self.launcher.notify(tr("No pairing key"), e),
                 }
             }
         }
-        // No polls while the window is minimized or hidden: the PCs are asked again, all at once,
-        // when it is back.
-        // SAFETY: a live window, read on the main thread.
-        if self.connecting.is_none() && window_shown(unsafe { SDL_GetWindowFlags(self.window) }) {
-            self.hosts.poll();
+        // While the window is minimized or hidden only the PC being woken and those just quit or
+        // left are polled: the others are asked again, all at once, when it is back.
+        if self.connecting.is_none() {
+            // SAFETY: a live window, read on the main thread.
+            let shown = window_shown(unsafe { SDL_GetWindowFlags(self.window) });
+            self.hosts.poll(shown, self.waking.host());
         }
         let (events, changed) = self.hosts.drain(&self.gui.ctx);
         if changed {

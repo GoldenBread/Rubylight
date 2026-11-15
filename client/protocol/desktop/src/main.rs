@@ -939,7 +939,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     match identity {
         Some(identity) => {
             app.hosts.set_identity(Arc::new(identity));
-            app.hosts.poll();
+            app.hosts.poll(true, None);
         }
         // The demo library has no identity: without one nothing can ask a PC.
         None if cfg!(feature = "demo-library") => {}
