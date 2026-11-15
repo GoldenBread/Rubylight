@@ -968,16 +968,17 @@ impl Hosts {
     }
 
     /// Runs `work` on PC `id`'s worker for `lane`, started on its first request: the lane's
-    /// requests wait for each other rather than each starting a thread.
-    fn run_on(&mut self, id: u64, lane: Lane, work: impl FnOnce() -> Option<Event> + Send + 'static) {
+    /// requests wait for each other rather than each starting a thread. False when no worker
+    /// could take it.
+    fn run_on(&mut self, id: u64, lane: Lane, work: impl FnOnce() -> Option<Event> + Send + 'static) -> bool {
         // The demo library never reaches for a network, even by accident.
         if cfg!(feature = "demo-library") {
-            return;
+            return true;
         }
         let mut job: PcJob = Box::new(work);
         if let Some(worker) = self.pc_workers.get(&(id, lane)) {
             match worker.send(job) {
-                Ok(()) => return,
+                Ok(()) => return true,
                 // Its thread ended (a request panicked): a new one takes the job.
                 Err(std::sync::mpsc::SendError(back)) => job = back,
             }
@@ -998,9 +999,11 @@ impl Hosts {
                 }
             }
         });
-        if started.is_ok() && jobs.send(job).is_ok() {
+        let accepted = started.is_ok() && jobs.send(job).is_ok();
+        if accepted {
             self.pc_workers.insert((id, lane), jobs);
         }
+        accepted
     }
 
     /// Ends PC `id`'s workers, once the requests they hold are done.
@@ -1250,7 +1253,7 @@ impl Hosts {
         let record = host.record.clone();
         let likely_online = host.reach == Reach::Online;
         let away = host.reach == Reach::Offline;
-        self.run_on(id, lane, move || {
+        let poll = move || {
             let mut last_error = String::from(en("No address"));
             let mut tried = Vec::new();
             for address in poll_addresses(&record) {
@@ -1301,7 +1304,20 @@ impl Hosts {
                 address: record.address.clone(),
                 result: Err(last_error),
             })
-        });
+        };
+        let accepted = self.run_on(id, lane, poll);
+        if !accepted {
+            // No worker could take it (no thread to be had): the lane is free for the next poll, or
+            // the PC would read Checking… and take none until Nightjar is started again.
+            if let Some(host) = self.get_mut(id) {
+                match lane {
+                    Lane::Asked => host.asked_poll = None,
+                    Lane::Background => host.background_poll = None,
+                }
+                host.polling = false;
+                host.checking = false;
+            }
+        }
     }
 
     /// A new renderer (Linux's switch to the GPU renderer): the covers and ambients went with the
