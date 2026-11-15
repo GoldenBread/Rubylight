@@ -39,6 +39,7 @@ pub(super) struct PortMapper {
     socket: UdpSocket,
     local: IpAddr,
     method: Option<Method>,
+    /// PCP's mapping nonce ([`nonce`]): the same for every mapper of this host at `local`.
     nonce: [u8; 12],
     leases: Vec<Lease>,
     pub(super) external: Option<IpAddr>,
@@ -51,6 +52,21 @@ pub(super) struct Outcome {
     pub(super) failed: Vec<(Mapping, String)>,
 }
 
+/// The PCP mapping nonce of this host at `local`, from `secret` (the host's private key). A PCP
+/// router refuses to renew or delete a mapping under another nonce than the one that made it
+/// (RFC 6887 11.3, NOT_AUTHORIZED) until its lease runs out, so it stays the same across new
+/// mappers and host restarts, and others cannot work it out.
+fn nonce(secret: &[u8], local: IpAddr) -> [u8; 12] {
+    let mut nonce = [0; 12];
+    rubylight_traverse::crypto::derive(
+        secret,
+        b"pcp mapping nonce",
+        local.to_string().as_bytes(),
+        &mut nonce,
+    );
+    nonce
+}
+
 fn protocol_number(protocol: Protocol) -> u8 {
     if protocol == Protocol::TCP {
         pcp::TCP
@@ -60,16 +76,28 @@ fn protocol_number(protocol: Protocol) -> u8 {
 }
 
 impl PortMapper {
-    /// A mapper for the IPv4 router `gateway`, from this PC's `local` address.
-    pub(super) async fn ipv4(gateway: Ipv4Addr, local: Ipv4Addr) -> Result<Self> {
+    /// A mapper for the IPv4 router `gateway`, from this PC's `local` address; `secret` makes
+    /// the nonce ([`nonce`]).
+    pub(super) async fn ipv4(gateway: Ipv4Addr, local: Ipv4Addr, secret: &[u8]) -> Result<Self> {
         let socket = UdpSocket::bind((local, 0)).await?;
         socket.connect((gateway, pcp::PORT)).await?;
-        Ok(Self::new(socket, IpAddr::V4(local)))
+        Ok(Self::new(socket, IpAddr::V4(local), secret))
+    }
+
+    /// Whether this mapper asks `gateway` from `local`.
+    pub(super) fn serves(&self, gateway: Ipv4Addr, local: Ipv4Addr) -> bool {
+        self.local == IpAddr::V4(local)
+            && self.socket.peer_addr().ok() == Some(SocketAddr::from((gateway, pcp::PORT)))
     }
 
     /// A PCP mapper for pinholes in the IPv6 router `gateway`'s firewall, for this PC's global
     /// address `local` on interface `index` (a link-local router needs it).
-    pub(super) async fn ipv6(gateway: Ipv6Addr, local: Ipv6Addr, index: u32) -> Result<Self> {
+    pub(super) async fn ipv6(
+        gateway: Ipv6Addr,
+        local: Ipv6Addr,
+        index: u32,
+        secret: &[u8],
+    ) -> Result<Self> {
         let socket = UdpSocket::bind(SocketAddrV6::new(local, 0, 0, index)).await?;
         let scope = if gateway.is_unicast_link_local() {
             index
@@ -79,18 +107,18 @@ impl PortMapper {
         socket
             .connect(SocketAddrV6::new(gateway, pcp::PORT, 0, scope))
             .await?;
-        let mut mapper = Self::new(socket, IpAddr::V6(local));
+        let mut mapper = Self::new(socket, IpAddr::V6(local), secret);
         // NAT-PMP knows no IPv6.
         mapper.method = Some(Method::Pcp);
         Ok(mapper)
     }
 
-    fn new(socket: UdpSocket, local: IpAddr) -> Self {
+    fn new(socket: UdpSocket, local: IpAddr, secret: &[u8]) -> Self {
         Self {
             socket,
             local,
             method: None,
-            nonce: rubylight_traverse::crypto::random(),
+            nonce: nonce(secret, local),
             leases: Vec::new(),
             external: None,
         }
@@ -122,22 +150,36 @@ impl PortMapper {
         None
     }
 
+    fn pcp_request(&self, mapping: Mapping, lifetime: u32) -> [u8; pcp::REQUEST_BYTES] {
+        let suggested = self.local.is_ipv6().then_some(self.local);
+        pcp::map_request(
+            self.local,
+            lifetime,
+            &self.nonce,
+            protocol_number(mapping.protocol),
+            mapping.port,
+            mapping.port,
+            suggested,
+        )
+    }
+
+    fn natpmp_request(mapping: Mapping, lifetime: u32) -> [u8; 12] {
+        let protocol = if mapping.protocol == Protocol::TCP {
+            natpmp::Protocol::Tcp
+        } else {
+            natpmp::Protocol::Udp
+        };
+        let external = if lifetime == 0 { 0 } else { mapping.port };
+        natpmp::map_request(protocol, mapping.port, external, lifetime)
+    }
+
     async fn pcp(
         &mut self,
         mapping: Mapping,
         lifetime: u32,
     ) -> Result<std::result::Result<pcp::MapResponse, pcp::Error>> {
         let protocol = protocol_number(mapping.protocol);
-        let suggested = self.local.is_ipv6().then_some(self.local);
-        let request = pcp::map_request(
-            self.local,
-            lifetime,
-            &self.nonce,
-            protocol,
-            mapping.port,
-            mapping.port,
-            suggested,
-        );
+        let request = self.pcp_request(mapping, lifetime);
         let nonce = self.nonce;
         let reply = self
             .exchange(&request, |reply| match pcp::parse_map(reply) {
@@ -166,8 +208,7 @@ impl PortMapper {
         } else {
             natpmp::Protocol::Udp
         };
-        let external = if lifetime == 0 { 0 } else { mapping.port };
-        let request = natpmp::map_request(protocol, mapping.port, external, lifetime);
+        let request = Self::natpmp_request(mapping, lifetime);
         let reply = self
             .exchange(&request, |reply| match natpmp::parse(reply) {
                 Ok(natpmp::Response::Mapping {
@@ -309,6 +350,22 @@ impl PortMapper {
     }
 }
 
+impl Drop for PortMapper {
+    /// A mapper dropped without [`PortMapper::close`] (its task ended early, or its pinholes
+    /// were searched again) still asks the router to delete its leases: once each, without
+    /// waiting for an answer.
+    fn drop(&mut self) {
+        let socket = socket2::SockRef::from(&self.socket);
+        for lease in &self.leases {
+            let _ = match self.method {
+                Some(Method::Pcp) => socket.send(&self.pcp_request(lease.mapping, 0)),
+                Some(Method::NatPmp) => socket.send(&Self::natpmp_request(lease.mapping, 0)),
+                None => continue,
+            };
+        }
+    }
+}
+
 /// The IPv4 default gateway and this PC's address towards it.
 pub(super) fn ipv4_route(gateways: &[IpAddr], bind: IpAddr) -> Option<(Ipv4Addr, Ipv4Addr)> {
     let gateway = gateways.iter().find_map(|gateway| match gateway {
@@ -383,7 +440,7 @@ mod tests {
         });
         let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         socket.connect(address).await.unwrap();
-        let mut mapper = PortMapper::new(socket, "127.0.0.1".parse().unwrap());
+        let mut mapper = PortMapper::new(socket, "127.0.0.1".parse().unwrap(), b"key");
         let wanted = [
             Mapping {
                 protocol: Protocol::TCP,
@@ -430,7 +487,7 @@ mod tests {
         });
         let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         socket.connect(address).await.unwrap();
-        let mut mapper = PortMapper::new(socket, "127.0.0.1".parse().unwrap());
+        let mut mapper = PortMapper::new(socket, "127.0.0.1".parse().unwrap(), b"key");
         let wanted = [
             Mapping {
                 protocol: Protocol::TCP,
@@ -451,5 +508,92 @@ mod tests {
             outcome.failed
         );
         assert_eq!(mapper.external, Some("203.0.113.9".parse().unwrap()));
+    }
+
+    /// A PCP router that holds each mapping for the nonce that made it, as RFC 6887 asks: a
+    /// mapper made after the first one went (a lost renewal, a host restart) renews the same
+    /// ports, and a dropped mapper deletes its leases.
+    #[tokio::test]
+    async fn a_new_mapper_renews_what_an_earlier_one_mapped() {
+        use std::{
+            collections::HashMap,
+            sync::{Arc, Mutex},
+        };
+        let router = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let address = router.local_addr().unwrap();
+        // Internal port and protocol to (nonce, lifetime).
+        let held: Arc<Mutex<HashMap<(u16, u8), ([u8; 12], u32)>>> = Arc::default();
+        let table = held.clone();
+        tokio::spawn(async move {
+            let mut buffer = [0u8; 128];
+            loop {
+                let Ok((length, from)) = router.recv_from(&mut buffer).await else {
+                    return;
+                };
+                let request = buffer[..length].to_vec();
+                let lifetime = u32::from_be_bytes(request[4..8].try_into().unwrap());
+                let nonce: [u8; 12] = request[24..36].try_into().unwrap();
+                let key = (u16::from_be_bytes([request[40], request[41]]), request[36]);
+                let result = {
+                    let mut table = table.lock().unwrap();
+                    match table.get(&key) {
+                        Some((held, _)) if *held != nonce => 2,
+                        _ if lifetime == 0 => {
+                            table.remove(&key);
+                            0
+                        }
+                        _ => {
+                            table.insert(key, (nonce, lifetime));
+                            0
+                        }
+                    }
+                };
+                let mut reply = vec![2, 0x81, 0, result];
+                reply.extend_from_slice(&lifetime.to_be_bytes());
+                reply.extend_from_slice(&[0, 0, 0, 1]);
+                reply.extend_from_slice(&[0; 12]);
+                reply.extend_from_slice(&request[24..44]);
+                reply.extend_from_slice(&Ipv4Addr::new(203, 0, 113, 9).to_ipv6_mapped().octets());
+                router.send_to(&reply, from).await.unwrap();
+            }
+        });
+        let mapper = move || async move {
+            let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            socket.connect(address).await.unwrap();
+            PortMapper::new(socket, "127.0.0.1".parse().unwrap(), b"key")
+        };
+        let wanted = [Mapping {
+            protocol: Protocol::UDP,
+            port: 47998,
+        }];
+        let mut first = mapper().await;
+        assert_eq!(first.renew(&wanted).await.unwrap().mapped.len(), 1);
+        // The first mapper is forgotten without a word (its renewal got no answer, or the host
+        // crashed); the next one still renews the port.
+        first.leases.clear();
+        drop(first);
+        let mut second = mapper().await;
+        let outcome = second.renew(&wanted).await.unwrap();
+        assert_eq!(
+            outcome.mapped,
+            vec![(wanted[0], 47998)],
+            "{:?}",
+            outcome.failed
+        );
+        // Another host's nonce is refused, so the router does hold the rule.
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        socket.connect(address).await.unwrap();
+        let mut other = PortMapper::new(socket, "127.0.0.1".parse().unwrap(), b"other");
+        assert_eq!(other.renew(&wanted).await.unwrap().failed.len(), 1);
+        other.leases.clear();
+        // Dropped with its lease, the second mapper deletes it.
+        drop(second);
+        for _ in 0..50 {
+            if held.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(held.lock().unwrap().is_empty());
     }
 }

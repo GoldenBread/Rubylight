@@ -786,6 +786,8 @@ pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
         let config = h.config.read().unwrap().clone();
         let wanted = mappings(&config, config.ports().unwrap());
         let description = format!("Butterpollo Rust {}", h.paired.read().unwrap().unique_id);
+        // Makes the PCP mapping nonce, which must survive new mappers and restarts.
+        let nonce_secret = h.identity.private_pem.clone();
         let mut next_search = Instant::now();
         let mut current = None;
         let mut firewall = None;
@@ -861,12 +863,21 @@ pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
                         status.error = None;
                     });
                 } else {
-                    if mapper.is_none() {
-                        let route = default_gateways()
-                            .ok()
-                            .and_then(|gateways| portmap::ipv4_route(&gateways, bind));
-                        if let Some((gateway, local)) = route {
-                            mapper = portmap::PortMapper::ipv4(gateway, local).await.ok();
+                    let route = default_gateways()
+                        .ok()
+                        .and_then(|gateways| portmap::ipv4_route(&gateways, bind));
+                    if let Some((gateway, local)) = route {
+                        // Another router or address: dropping the old mapper asks its router
+                        // to delete the leases, without waiting on a router that may be gone.
+                        if mapper
+                            .as_ref()
+                            .is_some_and(|mapper| !mapper.serves(gateway, local))
+                        {
+                            mapper = None;
+                        }
+                        if mapper.is_none() {
+                            let secret = nonce_secret.as_bytes();
+                            mapper = portmap::PortMapper::ipv4(gateway, local, secret).await.ok();
                         }
                     }
                     let result = match mapper.as_mut() {
@@ -897,8 +908,8 @@ pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
                             });
                         }
                         Err(error) => {
-                            // Look for a router again next time: it may come up later.
-                            mapper = None;
+                            // The mapper and its leases stay for next time: the router may
+                            // answer then, and the same nonce renews what it mapped.
                             let message = format!(
                                 "the router answers none of UPnP, PCP and NAT-PMP: turn UPnP on in the router, or forward the ports by hand ({})",
                                 upnp_error.as_deref().unwrap_or("no UPnP router found")
@@ -935,8 +946,13 @@ pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
                             let gateways = ipv6_gateways();
                             for (local, index) in portmap::ipv6_locals(bind) {
                                 for gateway in &gateways {
-                                    if let Ok(mapper) =
-                                        portmap::PortMapper::ipv6(*gateway, local, index).await
+                                    if let Ok(mapper) = portmap::PortMapper::ipv6(
+                                        *gateway,
+                                        local,
+                                        index,
+                                        nonce_secret.as_bytes(),
+                                    )
+                                    .await
                                     {
                                         pinholes.push(mapper);
                                     }
