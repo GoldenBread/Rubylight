@@ -2961,8 +2961,16 @@ fn settings_row(
             let to_state = (COMBO_HEIGHT + 18.0).max(full + GAP);
             let height = state_g.as_ref().map_or(full, |g| to_state + g.size().y);
             let (text_rect, _) = ui.allocate_exact_size(vec2(text_w, height), Sense::hover());
-            let align = if state.is_some() { Align::Min } else { Align::Center };
-            ui.with_layout(Layout::right_to_left(align), |ui| out = Some(control(ui)));
+            if state.is_some() {
+                ui.with_layout(Layout::right_to_left(Align::Min), |ui| out = Some(control(ui)));
+            } else {
+                // Centred on the row as it is with a one-line hint: a hint that wraps grows the row
+                // downwards and the control stays under the pointer that opened it.
+                let wrapped = hint_h - hint_h / hint_g.rows.len().max(1) as f32;
+                let free = ui.available_rect_before_wrap();
+                let slot = Rect::from_min_max(Pos2::new(free.left(), text_rect.top()), Pos2::new(free.right(), text_rect.bottom() - wrapped));
+                ui.scope_builder(UiBuilder::new().max_rect(slot).layout(Layout::right_to_left(Align::Center)), |ui| out = Some(control(ui)));
+            }
             // The hint while the pointer is over the row or focus is in it.
             let row = ui.min_rect().expand2(vec2(18.0, 8.0));
             let focused = ui.memory(|m| m.focused()).and_then(|id| ui.ctx().read_response(id)).is_some_and(|r| row.contains(r.rect.center()));
