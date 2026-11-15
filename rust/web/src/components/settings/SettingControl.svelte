@@ -216,7 +216,7 @@
   });
   const hasValue = $derived(invalidText !== undefined || (control.kind === 'number' ? toNumber(value) !== null : current.trim() !== ''));
   /** The field for a value of one's own shows. */
-  const custom = $derived(presets.length > 0 && !dailyChosen && (customChosen || (presetValue === '' && hasValue)));
+  const custom = $derived(presets.length > 0 && presetValue !== DAILY && (customChosen || (presetValue === '' && hasValue)));
   /** The id of the field that edits the value: the menu has the row's own id when there are presets. */
   const fieldId = $derived(presets.length ? `${id}-custom` : id);
 
