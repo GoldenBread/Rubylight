@@ -1116,3 +1116,21 @@ fn a_touchpad_that_does_not_work_is_reported_once_per_reason() {
     injector.touchpad_unavailable("touchpad_not_precision", "not precision");
     assert_eq!(codes(&injector), ["touchpad_not_precision"]);
 }
+
+#[test]
+fn making_an_injector_starts_no_controller_thread_until_a_controller_needs_one() {
+    let mut injector = Injector::new(r"\\.\DISPLAY99", "vhf").unwrap();
+    assert!(!injector.has_gamepads());
+    // Nothing that only follows the controllers starts their thread either.
+    injector.apply(&Event::Haptics(false)).unwrap();
+    injector.set_feedback_waker(std::sync::Arc::new(
+        std::net::UdpSocket::bind("127.0.0.1:0").unwrap(),
+    ));
+    injector.controller_audio(0, 0, &[]);
+    assert!(!injector.controller_audio_ready(0));
+    assert_eq!(injector.gamepad_reports().count(), 0);
+    injector.release_all();
+    injector.detach_gamepads();
+    assert!(!injector.has_gamepads());
+    assert!(!injector.haptics);
+}

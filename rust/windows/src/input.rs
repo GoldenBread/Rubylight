@@ -113,7 +113,13 @@ pub struct Injector {
     /// When touch contacts and the pen were last injected.
     touch_refreshed: std::time::Instant,
     pen_refreshed: std::time::Instant,
-    gamepads: std::sync::Arc<GamepadThread>,
+    /// The controllers' thread: a controller session's ([`Self::use_gamepads`]), or one of
+    /// its own started with the first controller event.
+    gamepads: Option<std::sync::Arc<GamepadThread>>,
+    /// The `gamepad` profile its own thread opens.
+    gamepad_profile: u16,
+    /// What wakes the control socket wait, for whichever thread the controllers get.
+    feedback_waker: Option<std::sync::Arc<std::net::UdpSocket>>,
     /// The display's desktop rectangle, None until the display exists.
     rect: Option<RECT>,
     policy: butterpollo_core::input_policy::Policy,
@@ -326,11 +332,9 @@ impl Injector {
             pen: Default::default(),
             touch_refreshed: std::time::Instant::now(),
             pen_refreshed: std::time::Instant::now(),
-            gamepads: std::sync::Arc::new(GamepadThread::new(
-                profile,
-                policy.clone(),
-                warnings.clone(),
-            )?),
+            gamepads: None,
+            gamepad_profile: profile,
+            feedback_waker: None,
             policy,
             layout: None,
             next_layout: None,
@@ -1133,7 +1137,9 @@ impl Injector {
             )?,
             Haptics(enabled) => {
                 self.haptics = *enabled;
-                self.gamepads.set_haptics(*enabled);
+                if let Some(gamepads) = &self.gamepads {
+                    gamepads.set_haptics(*enabled);
+                }
             }
             Touchpad {
                 buttons,
@@ -1149,25 +1155,55 @@ impl Injector {
             | Arrival { .. }
             | ControllerTouch { .. }
             | Motion { .. }
-            | Battery { .. } => self.gamepads.send(e.clone()),
+            | Battery { .. } => self.gamepads()?.send(e.clone()),
         }
         Ok(None)
+    }
+    /// The controllers' thread, started here when the injector has none yet: making an
+    /// injector starts no thread a controller session's would replace at once.
+    fn gamepads(&mut self) -> std::io::Result<&std::sync::Arc<GamepadThread>> {
+        if self.gamepads.is_none() {
+            let gamepads = GamepadThread::new(
+                self.gamepad_profile,
+                self.policy.clone(),
+                self.warnings.clone(),
+            )?;
+            if let Some(waker) = &self.feedback_waker {
+                gamepads.set_feedback_waker(waker.clone());
+            }
+            if !self.haptics {
+                gamepads.set_haptics(false);
+            }
+            self.gamepads = Some(std::sync::Arc::new(gamepads));
+        }
+        Ok(self.gamepads.as_ref().expect("started above"))
     }
     /// Feedback and motion-sensor requests from the virtual gamepads for the
     /// client, collected since the last call.
     pub fn controller_audio(&self, id: u16, kind: u16, payload: &[u8]) {
-        self.gamepads.audio(id, kind, payload);
+        if let Some(gamepads) = &self.gamepads {
+            gamepads.audio(id, kind, payload);
+        }
     }
     pub fn controller_audio_ready(&self, id: u16) -> bool {
-        self.gamepads.controller_audio_ready(id)
+        self.gamepads
+            .as_ref()
+            .is_some_and(|gamepads| gamepads.controller_audio_ready(id))
     }
     pub fn gamepad_reports(&self) -> impl Iterator<Item = PadReport> + '_ {
-        self.gamepads.reports()
+        self.gamepads.iter().flat_map(|gamepads| gamepads.reports())
+    }
+    /// Whether the controllers have their thread: a controller session's, or the injector's own.
+    pub fn has_gamepads(&self) -> bool {
+        self.gamepads.is_some()
     }
     /// Wake the control socket wait when the driver posts feedback. The socket
     /// must be connected and nonblocking before accepting controller input.
-    pub fn set_feedback_waker(&self, waker: std::sync::Arc<std::net::UdpSocket>) {
-        self.gamepads.set_feedback_waker(waker);
+    pub fn set_feedback_waker(&mut self, waker: std::sync::Arc<std::net::UdpSocket>) {
+        if let Some(gamepads) = &self.gamepads {
+            gamepads.set_feedback_waker(waker.clone());
+        }
+        self.feedback_waker = Some(waker);
     }
     pub fn feedback_allowed(&self, kind: u16) -> bool {
         // 0x5504: Steam Controller haptics, withheld like rumble; its
@@ -1178,14 +1214,24 @@ impl Injector {
     /// The driver worker keeps ownership of its slots until unplug completes.
     /// Disconnecting a peer must not wait for that driver on the control thread.
     pub fn use_gamepads(&mut self, gamepads: std::sync::Arc<GamepadThread>) {
-        drop(self.gamepads.stop());
-        self.gamepads = gamepads;
-        self.gamepads.activate();
+        if let Some(own) = self.gamepads.take() {
+            drop(own.stop());
+        }
+        gamepads.activate();
+        if let Some(waker) = &self.feedback_waker {
+            gamepads.set_feedback_waker(waker.clone());
+        }
+        if !self.haptics {
+            gamepads.set_haptics(false);
+        }
+        self.gamepads = Some(gamepads);
     }
     pub fn detach_gamepads(&mut self) {
-        self.gamepads.park();
-        if std::sync::Arc::strong_count(&self.gamepads) == 1 {
-            drop(self.gamepads.stop());
+        if let Some(gamepads) = &self.gamepads {
+            gamepads.park();
+            if std::sync::Arc::strong_count(gamepads) == 1 {
+                drop(gamepads.stop());
+            }
         }
     }
     /// Lets go of the keys, mouse buttons and touches this injector holds and keeps its
@@ -1197,7 +1243,9 @@ impl Injector {
         }
     }
     pub fn release_all(&mut self) {
-        self.gamepads.release_all();
+        if let Some(gamepads) = &self.gamepads {
+            gamepads.release_all();
+        }
         if let Err(error) = self.release_pointers() {
             tracing::warn!(%error, "input cleanup incomplete");
         }

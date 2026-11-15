@@ -277,19 +277,20 @@ fn steam_rumble_stops_when_its_controller_leaves() {
 fn steam_rumble_follows_the_clients_haptics_setting() {
     let (pads, reports) = steam_fake();
     let mut injector = super::super::Injector::new(r"\\.\DISPLAY99", "vhf").unwrap();
-    injector.gamepads = Arc::new(pads);
-    injector.gamepads.send(state(0, 1, 0, 0));
+    let pads = Arc::new(pads);
+    injector.gamepads = Some(pads.clone());
+    pads.send(state(0, 1, 0, 0));
     steam_tone(&reports);
-    assert_eq!(rumbles_until(&injector.gamepads, Some(ON)), [ON]);
+    assert_eq!(rumbles_until(&pads, Some(ON)), [ON]);
     injector.apply(&Event::Haptics(false)).unwrap();
-    assert_eq!(rumbles_until(&injector.gamepads, Some(OFF)), [OFF]);
+    assert_eq!(rumbles_until(&pads, Some(OFF)), [OFF]);
     // Reports while haptics are off are dropped, not held for later.
     steam_tone(&reports);
-    assert!(quiet(&injector.gamepads));
+    assert!(quiet(&pads));
     injector.apply(&Event::Haptics(true)).unwrap();
-    assert!(quiet(&injector.gamepads));
+    assert!(quiet(&pads));
     steam_tone(&reports);
-    assert_eq!(rumbles_until(&injector.gamepads, Some(ON)), [ON]);
+    assert_eq!(rumbles_until(&pads, Some(ON)), [ON]);
 }
 
 #[test]
