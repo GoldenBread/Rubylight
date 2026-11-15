@@ -902,6 +902,11 @@ async fn transfer(
         h.updates.lock().unwrap()["downloaded_bytes"] = json!(size);
     }
     file.sync_all().await?;
+    // A body that ends early without a transport error (a proxy or server closing cleanly) is a
+    // broken-off transfer to try again, not an installer to refuse.
+    if size < candidate.size {
+        bail!("The download ended before the whole installer arrived");
+    }
     verify(size, &hex::encode(hash.finalize()), candidate)?;
     if h.updates.lock().unwrap()["download_id"] != id {
         bail!("Download cancelled");
