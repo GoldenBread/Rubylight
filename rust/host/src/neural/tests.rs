@@ -3755,3 +3755,54 @@ fn the_users_optiscaler_with_a_left_provider_folder_gets_it_taken_over() {
     expected.sort();
     assert_eq!(snapshot(folder), expected);
 }
+
+/// A folder open in a program (read and write sharing, no delete sharing):
+/// it can't be removed until dropped.
+fn hold_folder(path: &Path) -> std::fs::File {
+    use std::os::windows::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(3)
+        // FILE_FLAG_BACKUP_SEMANTICS: a handle on a folder.
+        .custom_flags(0x0200_0000)
+        .open(path)
+        .unwrap()
+}
+
+#[test]
+fn a_folder_of_the_hosts_that_cannot_go_is_named_and_taken_over_later() {
+    let temp = tempdir();
+    let cache = release(temp.path(), "FG-V.B16", b"OptiScaler proxy");
+    let exe = game(temp.path());
+    let folder = exe.parent().unwrap();
+    let game_files = snapshot(folder);
+    assert!(matches!(
+        install(Some(&exe), None, &cache),
+        Response::Placed { .. }
+    ));
+    provider_ran(folder, DLSSG);
+    // A program holds the provider's folder open: its files go, the empty
+    // folder stays, and the removal names it instead of saying nothing.
+    let held = hold_folder(&folder.join(DLSSG));
+    assert_eq!(
+        remove(&exe),
+        Response::Removed {
+            kept: vec![DLSSG.into()]
+        }
+    );
+    assert_eq!(names(&folder.join(DLSSG)), Vec::<String>::new());
+    assert_eq!(
+        neural::shown(DLSSG),
+        "frame generation's dlssg",
+        "the console names no mod"
+    );
+    drop(held);
+    // Turned on again, the empty folders are taken over and go with the
+    // next removal.
+    assert!(matches!(
+        install(Some(&exe), None, &cache),
+        Response::Placed { .. }
+    ));
+    assert_eq!(remove(&exe), Response::Removed { kept: vec![] });
+    assert_eq!(snapshot(folder), game_files);
+}

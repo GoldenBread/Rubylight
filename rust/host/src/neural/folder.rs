@@ -1727,8 +1727,10 @@ fn remove_by(folder: &Path, name: &str, writer: Writer) -> Outcome<Vec<String>> 
 
 /// What is still in the folders the host created (`folders`) once its
 /// files are out: each file, link or other folder someone else put there,
-/// by its path in the game folder (with `/`). It stays, and the removal
-/// names it, so the folder it holds is never a surprise.
+/// by its path in the game folder (with `/`), and a folder of the host's
+/// that is still there with nothing in it (a program holds it open). It
+/// stays, and the removal names it, so the folder it holds is never a
+/// surprise.
 fn left_in(folder: &Path, folders: &[String]) -> Vec<String> {
     let ours = |relative: &str| folders.iter().any(|f| f.eq_ignore_ascii_case(relative));
     let mut left = Vec::new();
@@ -1736,7 +1738,13 @@ fn left_in(folder: &Path, folders: &[String]) -> Vec<String> {
         let Ok(entries) = std::fs::read_dir(folder.join(relative)) else {
             continue;
         };
-        for entry in entries.flatten() {
+        // Whatever is in it names it: its own entries here, a folder of the
+        // host's in it by its own.
+        let mut entries = entries.flatten().peekable();
+        if entries.peek().is_none() {
+            left.push(relative.clone());
+        }
+        for entry in entries {
             let path = format!("{relative}/{}", entry.file_name().to_string_lossy());
             // A folder the host made is named by its own contents.
             let made = entry
