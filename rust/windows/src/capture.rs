@@ -1509,7 +1509,9 @@ mod idd_push;
 mod window;
 pub use window::WindowTarget;
 mod app_window;
-pub(crate) use app_window::{Crop, client_box, window_client_box};
+pub(crate) use app_window::Crop;
+#[cfg(test)]
+pub(crate) use app_window::client_box;
 pub use app_window::{app_window_target, app_windows, target_rect as window_target_rect};
 
 /// Whether WGC can capture the input desktop without crossing into Winlogon.

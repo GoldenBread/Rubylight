@@ -29,7 +29,9 @@ pub struct WindowTarget {
     /// handle Windows gave to another window is then refused.
     pub process: Option<u32>,
     /// Stream only the window's client area, without its title bar and
-    /// borders (`capture_window_frame = client`).
+    /// borders (`capture_window_frame = client`). Only `app_window_target`
+    /// writes this, from the setting; a hand-written target is not a
+    /// supported way to choose it.
     pub client: bool,
 }
 
@@ -64,7 +66,7 @@ impl WindowTarget {
         let (handle, display) = rest.split_once('@').with_context(shape)?;
         let (display, client) = match display.split_once('#') {
             Some((display, suffix)) if suffix.eq_ignore_ascii_case("client") => (display, true),
-            Some(_) => return Err(shape().into()),
+            Some(_) => anyhow::bail!(shape()),
             None => (display, false),
         };
         let (handle, process) = match handle.split_once('/') {

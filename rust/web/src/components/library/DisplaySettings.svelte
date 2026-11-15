@@ -214,7 +214,7 @@
         {draft}
         key="capture-window-frame"
         label="Window’s frame"
-        hint="The whole window, or only the game’s content without the title bar and borders."
+        hint="The whole window, or only the game’s content without the title bar and borders. Leave it on Full window unless the game runs windowed and you want only its content."
         options={FRAME}
       />
     {/if}

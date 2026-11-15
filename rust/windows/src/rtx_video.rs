@@ -150,7 +150,7 @@ impl Filter {
             locked(&mut || {
                 enhanced = Some(
                     self.pool
-                        .copy(&self.device, &texture)?
+                        .copy(&self.device, &texture, None)?
                         .context("the enhanced pictures are all still being encoded")?,
                 );
                 Ok(())

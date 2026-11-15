@@ -90,7 +90,7 @@ impl Filter {
             let result = (|| {
                 let mut converted = self
                     .pool
-                    .copy(&self.device, texture)?
+                    .copy(&self.device, texture, None)?
                     .context("the RTX HDR pictures are all still being encoded")?;
                 converted.inherit(image);
                 Ok(converted)
