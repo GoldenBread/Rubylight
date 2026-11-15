@@ -150,7 +150,8 @@ pub enum Response {
         mode: Mode,
     },
     Removed {
-        /// Placed files that changed since and stayed.
+        /// What stayed: placed files that changed since, and what someone
+        /// else put in the folders the host created.
         kept: Vec<String>,
     },
     /// The folder's drive or share is not there now; the mod may still be in it.
@@ -1050,6 +1051,83 @@ struct Layout {
     proxy: String,
     /// OptiScaler's folder (with `/`, empty for the game folder).
     opti_dir: String,
+    /// Folders an earlier install left behind ([`leftover`]), parents
+    /// first: the new manifest takes them over as its own.
+    adopt: Vec<String>,
+}
+
+/// The folder `root` in the game's folder as an earlier install left it
+/// once its manifest went: `Ok` with its folders, parents first, when it
+/// holds nothing but folders and what the provider writes in its own
+/// folder ([`neural::provider_files`]); otherwise `Err` with what in it is
+/// not Rubylight's. A link in it is never Rubylight's.
+fn leftover(
+    folder: &Path,
+    root: &str,
+    writer: Writer,
+) -> Outcome<Result<Vec<String>, Vec<String>>> {
+    guard(folder, root, writer)?;
+    let mut folders = vec![root.to_owned()];
+    let mut foreign = Vec::new();
+    let mut seen = 0;
+    let mut next = 0;
+    while let Some(relative) = folders.get(next).cloned() {
+        next += 1;
+        guard(folder, &relative, writer)?;
+        let entries = std::fs::read_dir(folder.join(&relative)).map_err(|e| {
+            Failure::Error(format!(
+                "cannot read {}: {e}",
+                folder.join(&relative).display()
+            ))
+        })?;
+        for entry in entries.flatten() {
+            seen += 1;
+            if seen > ENTRIES {
+                return Ok(Err(vec![root.to_owned()]));
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let path = format!("{relative}/{name}");
+            let link = entry
+                .metadata()
+                .is_ok_and(|meta| meta.file_attributes() & LINK != 0);
+            // A folder the manifest could not name is not taken over either.
+            let nameable = neural::entry_path(&path).as_deref() == Some(path.as_str());
+            match entry.file_type() {
+                Ok(kind) if kind.is_dir() && !link && nameable => folders.push(path),
+                Ok(kind)
+                    if kind.is_file()
+                        && !link
+                        && neural::provider_dlssg(&relative)
+                        && neural::provider_files(&name) => {}
+                _ => foreign.push(path),
+            }
+        }
+    }
+    foreign.sort();
+    Ok(if foreign.is_empty() {
+        Ok(folders)
+    } else {
+        Err(foreign)
+    })
+}
+
+/// Why paths in the game's folder that are not Rubylight's stop an install.
+fn not_ours(paths: &[String]) -> String {
+    match paths {
+        [one] => format!("{one} is in the game's folder and is not Rubylight's: remove it first"),
+        _ => {
+            let named = paths.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+            let more = paths.len().saturating_sub(3);
+            let more = if more > 0 {
+                format!(" and {more} more")
+            } else {
+                String::new()
+            };
+            format!(
+                "{named}{more} are in the game's folder and are not Rubylight's: remove them first"
+            )
+        }
+    }
 }
 
 /// The layout for the game's folder, or why it is refused: Rubylight 3.0's
@@ -1125,15 +1203,25 @@ fn layout(folder: &Path, exe: &Path, old: Option<&Manifest>, writer: Writer) -> 
         } else {
             format!("{opti_dir}/custom/{}", neural::PROVIDER)
         };
-        if old.is_none() && folder.join(&provider).exists() {
-            return Err(Failure::Refused(format!(
-                "{provider} is already in the game's folder and is not Rubylight's"
-            )));
+        // The provider's folder an earlier add-on left is taken over when
+        // only what the provider wrote is in it.
+        let mut adopt = Vec::new();
+        if old.is_none() && std::fs::symlink_metadata(folder.join(&provider)).is_ok() {
+            if !std::fs::symlink_metadata(folder.join(&provider))
+                .is_ok_and(|meta| meta.is_dir() && meta.file_attributes() & LINK == 0)
+            {
+                return Err(Failure::Refused(format!(
+                    "{provider} is already in the game's folder and is not Rubylight's"
+                )));
+            }
+            adopt = leftover(folder, &provider, writer)?
+                .map_err(|foreign| Failure::Refused(not_ours(&foreign)))?;
         }
         return Ok(Layout {
             mode: Mode::Addon,
             proxy,
             opti_dir,
+            adopt,
         });
     }
     let ours = |name: &str| {
@@ -1141,19 +1229,55 @@ fn layout(folder: &Path, exe: &Path, old: Option<&Manifest>, writer: Writer) -> 
             m.files.contains_key(name) || m.folders.iter().any(|f| f == name) || (m.proxy == name)
         })
     };
+    // The OptiScaler folder an earlier install left once its manifest went
+    // (the provider writes there while the game runs) is asked about after
+    // every other mod, which refuses first.
+    let mut left = None;
     for entry in std::fs::read_dir(folder)
         .map_err(|e| Failure::Error(format!("cannot read {}: {e}", folder.display())))?
         .flatten()
     {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if !ours(&name)
-            && let Some(other) = neural::other_mod(&name)
-        {
-            return Err(Failure::Refused(format!(
-                "{other} is installed in the game's folder ({name}): remove it first"
-            )));
+        if ours(&name) {
+            continue;
         }
+        let Some(other) = neural::other_mod(&name) else {
+            continue;
+        };
+        let folder_of_ours = old.is_none()
+            && name.eq_ignore_ascii_case("OptiScaler")
+            && entry
+                .metadata()
+                .is_ok_and(|meta| meta.is_dir() && meta.file_attributes() & LINK == 0);
+        if folder_of_ours {
+            left = Some(name);
+            continue;
+        }
+        return Err(Failure::Refused(format!(
+            "{other} is installed in the game's folder ({name}): remove it first"
+        )));
     }
+    // Taken over only when it holds the provider's folder and nothing else
+    // but what the provider wrote; a folder of that name without it may be
+    // the game's own.
+    let adopt = match left {
+        Some(name) => match leftover(folder, &name, writer)? {
+            Ok(folders)
+                if folders.iter().any(|relative| {
+                    relative.eq_ignore_ascii_case(&format!("{name}/custom/{}", neural::PROVIDER))
+                }) =>
+            {
+                folders
+            }
+            Ok(_) => {
+                return Err(Failure::Refused(format!(
+                    "OptiScaler is installed in the game's folder ({name}): remove it first"
+                )));
+            }
+            Err(foreign) => return Err(Failure::Refused(not_ours(&foreign))),
+        },
+        None => Vec::new(),
+    };
     let vulkan = std::fs::read(exe).is_ok_and(|program| neural::vulkan_only(&program));
     let proxy =
         neural::proxy(vulkan, |name| occupant(folder, name, old)).map_err(Failure::Refused)?;
@@ -1161,6 +1285,7 @@ fn layout(folder: &Path, exe: &Path, old: Option<&Manifest>, writer: Writer) -> 
         mode: Mode::Full,
         proxy: proxy.into(),
         opti_dir: String::new(),
+        adopt,
     })
 }
 
@@ -1246,8 +1371,14 @@ fn place(
         plan.push((path.clone(), target.clone(), placed.clone(), before));
         wanted.push((target, placed.clone()));
     }
-    // Folders the files need that are not there yet, parents first.
+    // Folders an earlier install left, then those the files need that are
+    // not there yet, parents first.
     let mut folders = old.as_ref().map(|m| m.folders.clone()).unwrap_or_default();
+    for relative in &layout.adopt {
+        if !folders.contains(relative) {
+            folders.push(relative.clone());
+        }
+    }
     let mut make = Vec::new();
     for (_, target, _, _) in &plan {
         let parts: Vec<&str> = target.split('/').collect();
@@ -1493,9 +1624,10 @@ fn remove(folder: &Path, writer: Writer) -> Outcome<Response> {
 }
 
 /// Delete what the manifest `name` names and is still as placed, put the
-/// user's OptiScaler.ini lines back, delete OptiScaler's and the provider's
-/// logs and the folders it created once empty; a file someone changed
-/// stays, and is returned.
+/// user's OptiScaler.ini lines back, delete OptiScaler's logs, what the
+/// provider wrote in its folder ([`neural::provider_files`]) and the folders
+/// it created once empty. A file someone changed stays, as does anything
+/// else in those folders ([`left_in`]); both are returned.
 fn remove_by(folder: &Path, name: &str, writer: Writer) -> Outcome<Vec<String>> {
     guard(folder, name, writer)?;
     let Some(manifest) = manifest(folder, name).map_err(Failure::Error)? else {
@@ -1551,11 +1683,12 @@ fn remove_by(folder: &Path, name: &str, writer: Writer) -> Outcome<Vec<String>> 
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
             .filter(|name| neural::logs(name)),
     );
-    // The provider's logs in the dlssg folders the host created.
+    // What the provider wrote in its dlssg folder, when the host created
+    // that folder: its logs and its copy of the Vulkan loader.
     for dlssg in manifest
         .folders
         .iter()
-        .filter(|relative| relative.ends_with("/dlssg"))
+        .filter(|relative| neural::provider_dlssg(relative))
     {
         leftovers.extend(
             std::fs::read_dir(folder.join(dlssg))
@@ -1564,7 +1697,7 @@ fn remove_by(folder: &Path, name: &str, writer: Writer) -> Outcome<Vec<String>> 
                 .flatten()
                 .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
                 .map(|entry| entry.file_name().to_string_lossy().into_owned())
-                .filter(|name| neural::provider_logs(name))
+                .filter(|name| neural::provider_files(name))
                 .map(|name| format!("{dlssg}/{name}")),
         );
     }
@@ -1581,9 +1714,39 @@ fn remove_by(folder: &Path, name: &str, writer: Writer) -> Outcome<Vec<String>> 
         guard(folder, relative, writer)?;
         let _ = std::fs::remove_dir(folder.join(relative));
     }
+    let mut kept = removal.keep;
+    kept.extend(left_in(folder, &manifest.folders));
+    kept.sort();
+    kept.dedup();
     guard(folder, name, writer)?;
     let path = folder.join(name);
     std::fs::remove_file(&path)
         .map_err(|e| Failure::Error(format!("cannot remove {}: {e}", path.display())))?;
-    Ok(removal.keep)
+    Ok(kept)
+}
+
+/// What is still in the folders the host created (`folders`) once its
+/// files are out: each file, link or other folder someone else put there,
+/// by its path in the game folder (with `/`). It stays, and the removal
+/// names it, so the folder it holds is never a surprise.
+fn left_in(folder: &Path, folders: &[String]) -> Vec<String> {
+    let ours = |relative: &str| folders.iter().any(|f| f.eq_ignore_ascii_case(relative));
+    let mut left = Vec::new();
+    for relative in folders {
+        let Ok(entries) = std::fs::read_dir(folder.join(relative)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = format!("{relative}/{}", entry.file_name().to_string_lossy());
+            // A folder the host made is named by its own contents.
+            let made = entry
+                .file_type()
+                .is_ok_and(|kind| kind.is_dir() && !kind.is_symlink())
+                && ours(&path);
+            if !made {
+                left.push(path);
+            }
+        }
+    }
+    left
 }

@@ -1539,7 +1539,8 @@ pub fn disable(h: &Shared, uuid: &str) -> Result<(), Refusal> {
 /// How a removal from a game folder ended.
 #[derive(Debug, PartialEq, Eq)]
 enum Removed {
-    /// The files that changed since and stayed.
+    /// The files that changed since, or that someone else put in the
+    /// folders the host created, and stayed.
     Done(Vec<String>),
     /// The folder's drive or share is not there now.
     Unreachable(String),
@@ -1566,7 +1567,7 @@ fn remove_at(name: &str, exe: &Path) -> Result<Removed> {
             if kept.is_empty() {
                 tracing::info!(app = %name, %folder, "Neural Rendering removed");
             } else {
-                tracing::warn!(app = %name, %folder, kept = ?kept, "Neural Rendering removed; files changed since were left");
+                tracing::warn!(app = %name, %folder, kept = ?kept, "Neural Rendering removed; files that changed since or are not Rubylight's were left");
             }
             Ok(Removed::Done(kept))
         }

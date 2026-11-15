@@ -269,10 +269,12 @@ fn the_mod_goes_beside_the_game_under_a_free_name_and_leaves_with_only_its_own_f
     std::fs::write(folder.join(format!("{provider}/dlssg/nr_fg.log")), "log").unwrap();
     std::fs::write(folder.join(PDLL), "someone else's").unwrap();
     std::fs::write(folder.join("OptiScaler/user.txt"), "mine").unwrap();
+    // Both stay, and the removal names both: the changed provider and the
+    // file someone else put in a folder the host made.
     assert_eq!(
         remove(&exe),
         Response::Removed {
-            kept: vec![PDLL.into()]
+            kept: vec![PDLL.into(), "OptiScaler/user.txt".into()]
         }
     );
     let mut expected = before.clone();
@@ -3075,15 +3077,25 @@ fn the_users_own_optiscaler_gets_the_provider_and_its_settings_back_exactly() {
         expected
     );
 
-    // A provider folder already there that is not Rubylight's is never
-    // written over.
+    // A provider folder already there that holds someone's provider is
+    // never written over (an empty one is taken over: nothing in it to
+    // write over).
     std::fs::write(folder.join("OptiScaler.ini"), ini).unwrap();
     std::fs::create_dir_all(folder.join(provider)).unwrap();
+    std::fs::write(
+        folder.join(format!("{provider}/nvngx_dlssg.dll")),
+        b"theirs",
+    )
+    .unwrap();
     let Response::Refused { reason } = install(Some(&exe), None, &cache) else {
         panic!()
     };
     assert!(reason.contains("not Rubylight's"), "{reason}");
     assert_eq!(std::fs::read(folder.join("OptiScaler.ini")).unwrap(), ini);
+    assert_eq!(
+        std::fs::read(folder.join(format!("{provider}/nvngx_dlssg.dll"))).unwrap(),
+        b"theirs"
+    );
 }
 
 /// A game without DLSS frame generation is refused; the game's own (a
@@ -3451,7 +3463,29 @@ async fn no_text_the_console_shows_names_the_mod() {
     )
     .unwrap();
     std::fs::write(folder.join("OptiScaler.ini"), b"[FrameGen]\n").unwrap();
-    std::fs::create_dir_all(folder.join(format!("custom/{}", neural::PROVIDER))).unwrap();
+    // The user's own add-on in it: its files are named, not the mod.
+    let dlssg = format!("custom/{}/dlssg", neural::PROVIDER);
+    std::fs::create_dir_all(folder.join(&dlssg)).unwrap();
+    std::fs::write(folder.join(format!("{dlssg}/nvngx_dlssg.dll")), b"theirs").unwrap();
+    std::fs::write(folder.join(format!("{dlssg}/nr_fg.ini")), b"theirs").unwrap();
+    let Response::Refused { reason } = install(Some(&exe), None, &cache) else {
+        panic!()
+    };
+    fail_job_for_test(h, "game", reason);
+    let shown = serde_json::to_string(&status(h, "game")).unwrap();
+    assert!(!shown.contains("Apex") && !shown.contains("ANR"), "{shown}");
+    assert!(
+        shown.contains("frame generation's nr_fg.ini, frame generation's nvngx_dlssg.dll are in the game's folder"),
+        "{shown}"
+    );
+    // A file where the provider's folder goes.
+    std::fs::remove_dir_all(folder.join("custom")).unwrap();
+    std::fs::create_dir(folder.join("custom")).unwrap();
+    std::fs::write(
+        folder.join(format!("custom/{}", neural::PROVIDER)),
+        b"a file",
+    )
+    .unwrap();
     let Response::Refused { reason } = install(Some(&exe), None, &cache) else {
         panic!()
     };
@@ -3465,4 +3499,259 @@ async fn no_text_the_console_shows_names_the_mod() {
 fn fail_job_for_test(h: &Shared, uuid: &str, error: String) {
     start_job(h, uuid, "update", "place").unwrap();
     fail_job(h, uuid, error, false);
+}
+
+/// The provider's folder as the full package places it.
+const DLSSG: &str = "OptiScaler/custom/Apex Neural Rendering FG/dlssg";
+
+/// What the provider writes into its folder in `dlssg` once a game runs
+/// it, as FG-V.B16 did in Final Fantasy XVI: its log and its copy of the
+/// system's Vulkan loader.
+fn provider_ran(folder: &Path, dlssg: &str) {
+    std::fs::write(
+        folder.join(format!("{dlssg}/anr-vkloader.dll")),
+        b"MZ vulkan-1.dll",
+    )
+    .unwrap();
+    std::fs::write(
+        folder.join(format!("{dlssg}/nr_fg-20261115-063120.log")),
+        b"[info] frame generation feature: 5120x1440",
+    )
+    .unwrap();
+}
+
+fn manifest_of(folder: &Path) -> Manifest {
+    Manifest::parse(&std::fs::read_to_string(folder.join(MANIFEST)).unwrap()).unwrap()
+}
+
+#[test]
+fn what_the_provider_wrote_goes_with_it_and_anything_else_left_is_named() {
+    let temp = tempdir();
+    let cache = release(temp.path(), "FG-V.B16", b"OptiScaler proxy");
+    let exe = game(temp.path());
+    let folder = exe.parent().unwrap();
+    let game_files = snapshot(folder);
+
+    // A game ran it: removal leaves the folder byte for byte as it was.
+    assert!(matches!(
+        install(Some(&exe), None, &cache),
+        Response::Placed { .. }
+    ));
+    provider_ran(folder, DLSSG);
+    std::fs::write(folder.join("OptiScaler.log"), b"").unwrap();
+    assert_eq!(remove(&exe), Response::Removed { kept: vec![] });
+    assert_eq!(snapshot(folder), game_files);
+
+    // The same name anywhere but the provider's folder is not the
+    // provider's: the game's own beside it stays and is no concern of the
+    // removal; one in OptiScaler's folder, another provider's folder (named
+    // once, not looked into) and a file of someone's in the provider's
+    // folder stay and are named.
+    assert!(matches!(
+        install(Some(&exe), None, &cache),
+        Response::Placed { .. }
+    ));
+    provider_ran(folder, DLSSG);
+    std::fs::write(folder.join("anr-vkloader.dll"), b"the game's").unwrap();
+    std::fs::write(folder.join("OptiScaler/anr-vkloader.dll"), b"someone's").unwrap();
+    let other = "OptiScaler/custom/Other FG/dlssg";
+    std::fs::create_dir_all(folder.join(other)).unwrap();
+    std::fs::write(
+        folder.join(format!("{other}/anr-vkloader.dll")),
+        b"another provider's",
+    )
+    .unwrap();
+    std::fs::write(folder.join(format!("{DLSSG}/notes.txt")), b"mine").unwrap();
+    assert_eq!(
+        remove(&exe),
+        Response::Removed {
+            kept: vec![
+                "OptiScaler/anr-vkloader.dll".into(),
+                format!("{DLSSG}/notes.txt"),
+                "OptiScaler/custom/Other FG".into(),
+            ]
+        }
+    );
+    let notes = format!("{DLSSG}/notes.txt");
+    let others = format!("{other}/anr-vkloader.dll");
+    let mut expected: Vec<String> = game_files.iter().map(|(name, _)| name.clone()).collect();
+    expected.extend(
+        [
+            "anr-vkloader.dll",
+            "OptiScaler",
+            "OptiScaler/anr-vkloader.dll",
+            "OptiScaler/custom",
+            "OptiScaler/custom/Apex Neural Rendering FG",
+            DLSSG,
+            notes.as_str(),
+            "OptiScaler/custom/Other FG",
+            other,
+            others.as_str(),
+        ]
+        .map(|name: &str| name.to_owned()),
+    );
+    expected.sort();
+    assert_eq!(names(folder), expected);
+    for (path, bytes) in [
+        ("anr-vkloader.dll", &b"the game's"[..]),
+        ("OptiScaler/anr-vkloader.dll", b"someone's"),
+        (others.as_str(), b"another provider's"),
+    ] {
+        assert_eq!(std::fs::read(folder.join(path)).unwrap(), bytes, "{path}");
+    }
+    // Its record is gone with its files: nothing more to remove.
+    assert_eq!(remove(&exe), Response::Removed { kept: vec![] });
+}
+
+#[test]
+fn turning_on_over_what_a_removal_left_takes_it_over_or_names_what_is_in_the_way() {
+    let temp = tempdir();
+    let cache = release(temp.path(), "FG-V.B16", b"OptiScaler proxy");
+    let exe = game(temp.path());
+    let folder = exe.parent().unwrap();
+    let game_files = snapshot(folder);
+    let provider = "OptiScaler/custom/Apex Neural Rendering FG";
+
+    // What a removal before this release left in Final Fantasy XVI: the
+    // provider's Vulkan loader copy in the folders the host had made, and no
+    // record of them. Turning on takes them over, parents first, and the
+    // next removal leaves nothing.
+    std::fs::create_dir_all(folder.join(DLSSG)).unwrap();
+    std::fs::write(
+        folder.join(format!("{DLSSG}/anr-vkloader.dll")),
+        b"MZ vulkan-1.dll",
+    )
+    .unwrap();
+    assert!(matches!(
+        install(Some(&exe), None, &cache),
+        Response::Placed { .. }
+    ));
+    let folders = manifest_of(folder).folders;
+    let at = |relative: &str| {
+        folders
+            .iter()
+            .position(|f| f == relative)
+            .unwrap_or_else(|| panic!("{relative} not in {folders:?}"))
+    };
+    assert!(at("OptiScaler") < at("OptiScaler/custom"));
+    assert!(at("OptiScaler/custom") < at(provider) && at(provider) < at(DLSSG));
+    assert_eq!(remove(&exe), Response::Removed { kept: vec![] });
+    assert_eq!(snapshot(folder), game_files);
+
+    // A removal kept a file of someone's in the provider's folder: turning
+    // on names it and changes nothing.
+    assert!(matches!(
+        install(Some(&exe), None, &cache),
+        Response::Placed { .. }
+    ));
+    provider_ran(folder, DLSSG);
+    std::fs::write(folder.join(format!("{DLSSG}/notes.txt")), b"mine").unwrap();
+    assert_eq!(
+        remove(&exe),
+        Response::Removed {
+            kept: vec![format!("{DLSSG}/notes.txt")]
+        }
+    );
+    let left = snapshot(folder);
+    assert_eq!(
+        install(Some(&exe), None, &cache),
+        Response::Refused {
+            reason: format!(
+                "{DLSSG}/notes.txt is in the game's folder and is not Rubylight's: remove it first"
+            )
+        }
+    );
+    assert_eq!(snapshot(folder), left);
+    // So does the provider's file name anywhere but its folder.
+    std::fs::write(folder.join("OptiScaler/anr-vkloader.dll"), b"someone's").unwrap();
+    let Response::Refused { reason } = install(Some(&exe), None, &cache) else {
+        panic!()
+    };
+    assert!(
+        reason.starts_with(&format!(
+            "OptiScaler/anr-vkloader.dll, {DLSSG}/notes.txt are in the game's folder"
+        )),
+        "{reason}"
+    );
+    assert!(!folder.join(MANIFEST).exists());
+    // Once they are out, the empty folders are taken over.
+    std::fs::remove_file(folder.join("OptiScaler/anr-vkloader.dll")).unwrap();
+    std::fs::remove_file(folder.join(format!("{DLSSG}/notes.txt"))).unwrap();
+    assert!(matches!(
+        install(Some(&exe), None, &cache),
+        Response::Placed { .. }
+    ));
+    assert_eq!(remove(&exe), Response::Removed { kept: vec![] });
+    assert_eq!(snapshot(folder), game_files);
+
+    // A link in it is never taken over, nor anything done through it.
+    let elsewhere = temp.path().join("elsewhere");
+    std::fs::create_dir(&elsewhere).unwrap();
+    std::fs::create_dir_all(folder.join(provider)).unwrap();
+    junction(&folder.join(DLSSG), &elsewhere);
+    let Response::Refused { reason } = install(Some(&exe), None, &cache) else {
+        panic!()
+    };
+    assert_eq!(
+        reason,
+        format!("{DLSSG} is in the game's folder and is not Rubylight's: remove it first")
+    );
+    assert_eq!(names(&elsewhere), Vec::<String>::new());
+    assert!(!folder.join(MANIFEST).exists());
+    std::fs::remove_dir(folder.join(DLSSG)).unwrap();
+    std::fs::remove_dir_all(folder.join("OptiScaler")).unwrap();
+    assert_eq!(snapshot(folder), game_files);
+}
+
+#[test]
+fn the_users_optiscaler_with_a_left_provider_folder_gets_it_taken_over() {
+    let temp = tempdir();
+    let cache = release(temp.path(), "FG-V.B16", b"OptiScaler proxy");
+    let exe = game(temp.path());
+    let folder = exe.parent().unwrap();
+    std::fs::write(
+        folder.join("dxgi.dll"),
+        b"MZ OptiScaler ... Custom DLSSG ...",
+    )
+    .unwrap();
+    std::fs::write(
+        folder.join("OptiScaler.ini"),
+        b"[FrameGen]\r\nFGInput=auto\r\nDisableHudless=auto\r\n",
+    )
+    .unwrap();
+    std::fs::create_dir(folder.join("OptiScaler")).unwrap();
+    std::fs::write(folder.join("OptiScaler/libxess.dll"), b"the user's").unwrap();
+    let users = snapshot(folder);
+    // An earlier add-on's folder, with what the provider wrote in it.
+    let provider = "OptiScaler/custom/Apex Neural Rendering FG";
+    std::fs::create_dir_all(folder.join(DLSSG)).unwrap();
+    provider_ran(folder, DLSSG);
+
+    assert_eq!(
+        install(Some(&exe), None, &cache),
+        Response::Placed {
+            exe: exe.clone(),
+            release: "FG-V.B16".into(),
+            proxy: "dxgi.dll".into(),
+            updated: false,
+            mode: Mode::Addon,
+        }
+    );
+    let folders = manifest_of(folder).folders;
+    assert!(
+        folders.iter().any(|f| f == provider) && folders.iter().any(|f| f == DLSSG),
+        "{folders:?}"
+    );
+    // The custom folder above it is the user's OptiScaler's: never taken.
+    assert!(
+        !folders.iter().any(|f| f == "OptiScaler/custom"),
+        "{folders:?}"
+    );
+    assert_eq!(remove(&exe), Response::Removed { kept: vec![] });
+    // The user's OptiScaler as it was, its ini back byte for byte; only the
+    // empty custom folder the earlier add-on made is left.
+    let mut expected = users.clone();
+    expected.push(("OptiScaler/custom".into(), None));
+    expected.sort();
+    assert_eq!(snapshot(folder), expected);
 }

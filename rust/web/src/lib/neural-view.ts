@@ -6,8 +6,8 @@ import { megabytes, sentence } from './coop-view';
  * every state is checked from fixtures (NeuralView.test.mjs) without a host.
  *
  * `unavailable` (this PC's GPU can't run frame generation: the switch stays off and says why), `off`
- * and `on` (the frame generation switch; `kept` lists files a removal left because they changed
- * since), `working` (downloading, installing or removing, with progress), `choose` (the game's
+ * and `on` (the frame generation switch; `kept` lists what a removal left: files that changed since
+ * and what someone else put in the folders Rubylight made), `working` (downloading, installing or removing, with progress), `choose` (the game's
  * program could not be found: the user picks it) and `failed` (the install, the removal or a
  * launch's check failed or was refused; the switch shows where it is and `title` says which of them
  * it was). `earlier` is the release of Rubylight 3.0's neural upscaling still in the game's folder,
@@ -35,6 +35,7 @@ export const NOTICE = {
 /** What the panel says it is for. */
 export const ABOUT =
   'Frame generation for games that offer DLSS frame generation, through a third-party mod Rubylight puts in the game’s folder and takes out again: turn on DLSS frame generation in the game, and this takes its place. ' +
+  'The first launch after turning it on can spend several minutes compiling the game’s shaders. ' +
   'Leave it off for online games: one may treat a mod as cheating.';
 
 /** What turning the switch on does to the earlier upscaling. */

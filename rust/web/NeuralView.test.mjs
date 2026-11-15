@@ -130,6 +130,8 @@ test('the notice says what it is, where it comes from and who does not stand beh
 });
 
 test('the text claims nothing the host neither checks nor measured', () => {
+  // Measured: Final Fantasy XVI compiled its shaders for about 10 minutes at the first launch.
+  assert.match(ABOUT, /first launch after turning it on can spend several minutes compiling the game’s shaders/);
   for (const text of [ABOUT, ...Object.values(NOTICE).flat()].filter((t) => typeof t === 'string')) {
     assert.doesNotMatch(text, /video memory|VRAM|\bGB of\b/i, text);
   }

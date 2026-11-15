@@ -697,11 +697,31 @@ pub fn shown(text: &str) -> String {
     out
 }
 
-/// Whether `name` in the provider's `dlssg` folder is one of its logs
-/// (`nr_fg-<time>.log`), which go with it.
-pub fn provider_logs(name: &str) -> bool {
+/// The files the provider writes into its own `dlssg` folder once a game
+/// runs it, besides its logs ([`provider_files`]): `anr-vkloader.dll`, its
+/// copy of the system's Vulkan loader. FG-V.B16's log says so on the
+/// first frame: "native bridge: our Vulkan loader
+/// ...\dlssg\anr-vkloader.dll, a copy of the system's vulkan-1.dll apart
+/// from the game's".
+pub const PROVIDER_RUNTIME: [&str; 1] = ["anr-vkloader.dll"];
+
+/// Whether `name` in the provider's `dlssg` folder ([`provider_dlssg`]) is
+/// a file the provider writes there itself, which goes with it: its logs
+/// (`nr_fg-<date>-<time>.log`) and [`PROVIDER_RUNTIME`]. Nowhere else.
+pub fn provider_files(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    lower.starts_with("nr_fg") && lower.ends_with(".log")
+    (lower.starts_with("nr_fg") && lower.ends_with(".log"))
+        || PROVIDER_RUNTIME
+            .iter()
+            .any(|file| file.eq_ignore_ascii_case(name))
+}
+
+/// Whether `relative` (with `/`) in the game folder is the provider's
+/// `dlssg` folder, whichever OptiScaler folder holds it.
+pub fn provider_dlssg(relative: &str) -> bool {
+    let lower = relative.to_ascii_lowercase();
+    let end = format!("{PROVIDER}/dlssg").to_ascii_lowercase();
+    lower == end || lower.ends_with(&format!("/{end}"))
 }
 
 // ---- OptiScaler.ini ----

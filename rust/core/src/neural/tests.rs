@@ -511,7 +511,32 @@ fn removal_deletes_what_is_still_as_placed_and_keeps_what_changed() {
             && logs("OptiScaler.previous-1.Game.exe.log")
     );
     assert!(!logs("Game.log") && !logs("OptiScaler.ini"));
-    assert!(provider_logs("nr_fg-20261114-101500.log") && !provider_logs("nr_fg.ini"));
+    // What the provider writes in its dlssg folder: its logs and its copy
+    // of the Vulkan loader; its settings and DLL are placed files.
+    assert!(
+        provider_files("nr_fg-20261114-101500.log")
+            && provider_files("NR_FG-20261115-063120.LOG")
+            && provider_files("anr-vkloader.dll")
+            && provider_files("ANR-VKLoader.DLL")
+    );
+    assert!(
+        !provider_files("nr_fg.ini")
+            && !provider_files("nvngx_dlssg.dll")
+            && !provider_files("vulkan-1.dll")
+            && !provider_files("anr-vkloader.dll.bak")
+            && !provider_files("user.txt")
+    );
+    assert!(
+        provider_dlssg("OptiScaler/custom/Apex Neural Rendering FG/dlssg")
+            && provider_dlssg("custom/apex neural rendering fg/DLSSG")
+            && provider_dlssg("Apex Neural Rendering FG/dlssg")
+    );
+    assert!(
+        !provider_dlssg("OptiScaler/custom/Apex Neural Rendering FG")
+            && !provider_dlssg("OptiScaler/custom/Other FG/dlssg")
+            && !provider_dlssg("Not Apex Neural Rendering FG/dlssg")
+            && !provider_dlssg("dlssg")
+    );
 }
 
 /// An ini as `lines` joined with `ending`, a BOM in front when `bom`.
