@@ -522,7 +522,8 @@ mod tests {
         let router = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let address = router.local_addr().unwrap();
         // Internal port and protocol to (nonce, lifetime).
-        let held: Arc<Mutex<HashMap<(u16, u8), ([u8; 12], u32)>>> = Arc::default();
+        type Held = HashMap<(u16, u8), ([u8; 12], u32)>;
+        let held: Arc<Mutex<Held>> = Arc::default();
         let table = held.clone();
         tokio::spawn(async move {
             let mut buffer = [0u8; 128];
