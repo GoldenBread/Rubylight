@@ -46,6 +46,11 @@ final class GameRecovery {
     // An earlier connection of this automatic reconnect chain showed video (videoStarted).
     private static final String EXTRA_RECOVERY_VIDEO = "RecoveryVideoShown";
 
+    // The bitrate an automatic reconnect keeps (putSessionBitrate): one the player set in the stream menu, or
+    // the rate automatic bitrate had cut to.
+    static final String EXTRA_RECOVERY_MANUAL_BITRATE = "rubylight.recoveryManualBitrate";
+    static final String EXTRA_RECOVERY_AUTO_BITRATE = "rubylight.recoveryAutoBitrate";
+
     // On a resume after the user's own trip away: the failure budget {attempts, started, left at,
     // connected for} as the trip began, which the resumed activity starts with.
     private static final String EXTRA_TRIP_BUDGET = "rubylight.tripBudget";
@@ -72,6 +77,7 @@ final class GameRecovery {
         again.removeExtra(Game.EXTRA_TRIP_RESUME_STARTED);
         // Only the press that asked for it joins: a recovery checks what it finds.
         again.removeExtra(EXTRA_JOIN_RUNNING);
+        putSessionBitrate(again, false);
         return again;
     }
 
@@ -416,9 +422,48 @@ final class GameRecovery {
         Intent retry = createStreamHandoffIntent(LaunchSource.RECOVERY)
                 .putExtra(Game.EXTRA_APP_ID, resumeId).putExtra(Game.EXTRA_APP_UUID, resumeUuid);
         if (packedOff) retry.putExtra(Game.EXTRA_PACKED_OFF, true);
+        putSessionBitrate(retry, true);
         // Only a drop after video marks the chain; a restart before it (packed chroma) carries what it had.
         if (videoStarted()) retry.putExtra(EXTRA_RECOVERY_VIDEO, true);
         return queueAutomaticRecovery(retry, packedOff, false, immediate);
+    }
+
+    /**
+     * The bitrate this stream settled on, for the next start of it (desktop's Streaming::reconnect_plan does the
+     * same): a bitrate the player set starts every reconnect, with automatic bitrate off as it was; on an
+     * {@code automatic} reconnect, a rate automatic bitrate had cut to is where it starts again, below the same
+     * ceiling it may climb back to.
+     */
+    void putSessionBitrate(Intent retry, boolean automatic) {
+        retry.removeExtra(EXTRA_RECOVERY_MANUAL_BITRATE);
+        retry.removeExtra(EXTRA_RECOVERY_AUTO_BITRATE);
+        if (game.sessionManualBitrate > 0) {
+            retry.putExtra(EXTRA_RECOVERY_MANUAL_BITRATE, game.sessionManualBitrate);
+        } else if (automatic && (game.adaptiveBitrate != null || game.pyroWaveBitrate != null) && game.currentBitrate > 0) {
+            retry.putExtra(EXTRA_RECOVERY_AUTO_BITRATE, game.currentBitrate);
+        }
+    }
+
+    /** Before the stream's configuration is built: a reconnect starts at the bitrate the player set. */
+    void restoreSessionBitrate() {
+        int manual = game.getIntent().getIntExtra(EXTRA_RECOVERY_MANUAL_BITRATE, 0);
+        if (manual <= 0 || game.prefConfig == null) return;
+        game.sessionManualBitrate = manual;
+        game.prefConfig.bitrate = manual;
+        // Set by the player, not the default for the stream's size: no link test lowers it.
+        game.prefConfig.automaticBitrate = false;
+    }
+
+    /** The rate automatic bitrate had cut to before an automatic reconnect, once; 0 without one. */
+    int takeAutomaticBitrateStart() {
+        int kbps = game.getIntent().getIntExtra(EXTRA_RECOVERY_AUTO_BITRATE, 0);
+        game.getIntent().removeExtra(EXTRA_RECOVERY_AUTO_BITRATE);
+        return kbps;
+    }
+
+    /** Where automatic bitrate's first claim starts: the encoder's rate, or the earlier cut when that is lower. */
+    static int automaticBitrateStart(int encoderKbps, int resumeKbps) {
+        return resumeKbps > 0 && resumeKbps < encoderKbps ? resumeKbps : encoderKbps;
     }
 
     /**

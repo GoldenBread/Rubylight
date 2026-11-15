@@ -46,6 +46,42 @@ public class GameRecoveryTest {
         assertFalse(RuntimeEnvironment.getApplication().getString(R.string.stream_recovery_attempt, 2, 5).contains("Back"));
     }
 
+    /** A bitrate the player set starts every reconnect; an automatic cut is where an automatic one starts again. */
+    @Test public void aReconnectKeepsTheBitrateTheStreamSettledOn() {
+        Game game = Robolectric.buildActivity(Game.class, new Intent()).get();
+        game.currentBitrate = 12000;
+        game.adaptiveBitrate = new com.limelight.nvstream.AdaptiveBitrateController(30000, 12000, 60, 0, 1920, 1080, null);
+        Intent automatic = new Intent();
+        game.streamRecovery.putSessionBitrate(automatic, true);
+        assertEquals(12000, automatic.getIntExtra(GameRecovery.EXTRA_RECOVERY_AUTO_BITRATE, 0));
+        assertFalse(automatic.hasExtra(GameRecovery.EXTRA_RECOVERY_MANUAL_BITRATE));
+        // A Reconnect the player pressed starts from the saved bitrate again.
+        Intent manualPress = new Intent(automatic);
+        game.streamRecovery.putSessionBitrate(manualPress, false);
+        assertFalse(manualPress.hasExtra(GameRecovery.EXTRA_RECOVERY_AUTO_BITRATE));
+        // The automatic start is taken once, and only lowers the encoder's rate.
+        Game replacement = Robolectric.buildActivity(Game.class, automatic).get();
+        assertEquals(12000, replacement.streamRecovery.takeAutomaticBitrateStart());
+        assertEquals(0, replacement.streamRecovery.takeAutomaticBitrateStart());
+        assertEquals(12000, GameRecovery.automaticBitrateStart(30000, 12000));
+        assertEquals(20000, GameRecovery.automaticBitrateStart(20000, 30000));
+        assertEquals(30000, GameRecovery.automaticBitrateStart(30000, 0));
+
+        // A bitrate the player set wins over the cut and starts the new stream with automatic bitrate off.
+        game.sessionManualBitrate = 8000;
+        Intent manual = new Intent();
+        game.streamRecovery.putSessionBitrate(manual, true);
+        assertEquals(8000, manual.getIntExtra(GameRecovery.EXTRA_RECOVERY_MANUAL_BITRATE, 0));
+        assertFalse(manual.hasExtra(GameRecovery.EXTRA_RECOVERY_AUTO_BITRATE));
+        Game restored = Robolectric.buildActivity(Game.class, manual).get();
+        restored.prefConfig = PreferenceConfiguration.readPreferences(restored);
+        restored.prefConfig.automaticBitrate = true;
+        restored.streamRecovery.restoreSessionBitrate();
+        assertEquals(8000, restored.prefConfig.bitrate);
+        assertEquals(8000, restored.sessionManualBitrate);
+        assertFalse(restored.prefConfig.automaticBitrate);
+    }
+
     @Test public void mergedManifestAllowsReturningToAStoppedStream() throws Exception {
         Game game = Robolectric.buildActivity(Game.class).get();
         ActivityInfo info = game.getPackageManager().getActivityInfo(new ComponentName(game, Game.class), 0);

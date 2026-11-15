@@ -182,6 +182,9 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         }
     };
     int currentBitrate;
+    // A bitrate the player set in the stream menu this session (0: none), which an automatic reconnect keeps
+    // (GameRecovery.putSessionBitrate). Automatic bitrate stays off while it is set.
+    int sessionManualBitrate;
     AdaptiveBitrateController adaptiveBitrate;
     PyroWaveBitrateController pyroWaveBitrate;
     boolean poorConnection;

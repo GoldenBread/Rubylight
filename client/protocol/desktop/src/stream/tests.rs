@@ -283,6 +283,22 @@ fn controllers_reach_the_host_only_when_on_and_not_from_a_remote_monitor() {
     assert!(!sends_controllers(&off, AppRole::Stream));
 }
 
+/// A reconnect keeps the bitrate the stream settled on: an automatic cut is where automatic
+/// bitrate starts again on an automatic reconnect, below the same ceiling; a bitrate the player
+/// set is the plan's own and no cut is carried with it.
+#[test]
+fn a_reconnect_keeps_the_bitrate_the_stream_settled_on() {
+    assert_eq!(reconnect_bitrate_start(true, true, false, 12_000), Some(12_000));
+    assert_eq!(reconnect_bitrate_start(false, true, false, 12_000), None, "a Reconnect the player pressed");
+    assert_eq!(reconnect_bitrate_start(true, false, false, 12_000), None, "automatic bitrate did not own the rate");
+    assert_eq!(reconnect_bitrate_start(true, true, true, 12_000), None, "the player's bitrate is in the settings");
+    assert_eq!(reconnect_bitrate_start(true, true, false, 0), None);
+    assert_eq!(automatic_bitrate_start(30_000, Some(12_000)), 12_000);
+    assert_eq!(automatic_bitrate_start(20_000, Some(30_000)), 20_000, "never above the encoder's rate");
+    assert_eq!(automatic_bitrate_start(30_000, None), 30_000);
+    assert_eq!(automatic_bitrate_start(30_000, Some(0)), 30_000);
+}
+
 #[test]
 fn frames_waiting_for_the_decoder_reach_the_engine() {
     let config = |decode_queue_frames| {

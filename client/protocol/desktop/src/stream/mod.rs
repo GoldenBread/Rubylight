@@ -218,6 +218,25 @@ pub struct LaunchPlan {
     pub confirm_replace: bool,
     /// The display's luminance for hosts other than Rubylight (`sdl::launch_luminance`).
     pub display_luminance: Option<nightjar_core::http::DisplayLuminance>,
+    /// The player set the bitrate in the stream menu: `settings` start at it with automatic
+    /// bitrate off, and automatic quality does not turn automatic bitrate on for itself
+    /// ([`Streaming::keep_manual_bitrate`]).
+    pub manual_bitrate: bool,
+    /// An automatic reconnect's starting point for automatic bitrate: the rate it had cut to
+    /// ([`reconnect_bitrate_start`]), below the stream's start bitrate it may climb back to.
+    pub resume_bitrate_kbps: Option<u32>,
+}
+
+/// Where automatic bitrate starts after a reconnect, as Android's `GameRecovery.putSessionBitrate`
+/// decides it: on an `automatic` reconnect of a stream whose automatic bitrate owned the rate, the
+/// rate it had cut to; none after a bitrate the player set, which the plan's settings carry.
+pub(super) fn reconnect_bitrate_start(automatic: bool, automatic_owned: bool, manual: bool, kbps: u32) -> Option<u32> {
+    (automatic && automatic_owned && !manual && kbps > 0).then_some(kbps)
+}
+
+/// Automatic bitrate's first rate: the encoder's, or an earlier cut when that is lower.
+pub(super) fn automatic_bitrate_start(encoder_kbps: u32, resume_kbps: Option<u32>) -> u32 {
+    resume_kbps.filter(|&kbps| kbps > 0 && kbps < encoder_kbps).unwrap_or(encoder_kbps)
 }
 
 /// The stream's negotiated shape.
@@ -1255,7 +1274,17 @@ impl Streaming {
             plan
         };
         plan.microphone_muted = self.microphone_muted;
+        plan.resume_bitrate_kbps = reconnect_bitrate_start(automatic, self.bitrate_policy.is_some(), self.plan.manual_bitrate, self.bitrate_kbps);
         Some(plan)
+    }
+
+    /// A bitrate the player set in the stream menu: every reconnect of this stream starts at it,
+    /// with automatic bitrate off as it is now (Android's `GameRecovery.putSessionBitrate`).
+    pub(super) fn keep_manual_bitrate(&mut self, kbps: u32) {
+        self.settings.bitrate_kbps = kbps;
+        self.settings.adaptive_bitrate = false;
+        self.plan.settings = self.settings.clone();
+        self.plan.manual_bitrate = true;
     }
 
     pub fn display_changed(&mut self, renderer: *mut SDL_Renderer) {
@@ -1760,12 +1789,16 @@ impl Streaming {
         let shared = self.shared.clone();
         self.bitrate_busy = true;
         let limit = self.plan.bitrate_limit_kbps;
+        // After an automatic reconnect the first start is from the rate it had cut to, once; the
+        // stream's start bitrate stays the ceiling.
+        let resume = self.plan.resume_bitrate_kbps.take();
         std::thread::spawn(move || {
             let result = client.server_info_https().map_err(|e| e.to_string()).and_then(|info| {
                 if !info.capabilities.has(Feature::RuntimeBitrate) || info.encoder_bitrate_kbps == 0 || info.initial_encoder_bitrate_kbps == 0 {
                     return Err("The PC did not provide an encoder budget for automatic bitrate.".into());
                 }
-                let applied = client.set_bitrate(capped_bitrate(info.encoder_bitrate_kbps, limit)).map_err(|e| e.to_string())?;
+                let start = automatic_bitrate_start(info.encoder_bitrate_kbps, resume);
+                let applied = client.set_bitrate(capped_bitrate(start, limit)).map_err(|e| e.to_string())?;
                 Ok((capped_bitrate(info.initial_encoder_bitrate_kbps.max(applied), limit), applied))
             });
             shared.notify(Notice::AdaptiveBitrate(result));

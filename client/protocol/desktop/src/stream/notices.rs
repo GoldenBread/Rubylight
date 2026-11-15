@@ -138,7 +138,8 @@ impl Streaming {
                             if let Some(policy) = &mut self.bitrate_policy {
                                 policy.applied(requested, kbps, self.started.elapsed().as_millis() as u64);
                             } else {
-                                // A manual change replaces the doctor's trial.
+                                // A manual change replaces the doctor's trial, and a reconnect keeps it.
+                                self.keep_manual_bitrate(kbps);
                                 self.doctor.trial.clear();
                                 self.show_toast(trf("Bitrate set to {} kbps.", &[&kbps]));
                             }

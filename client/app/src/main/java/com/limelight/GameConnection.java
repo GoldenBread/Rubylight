@@ -158,6 +158,7 @@ final class GameConnection {
         HdrPolicy.setDebugHlgOnly(BuildConfig.DEBUG, game.prefConfig.debugHdrHlgOnly);
         game.overlays.showStreamLayers(game.prefConfig, startNetwork == null);
         game.streamRecovery.readRecoveryBudget(SystemClock.elapsedRealtime());
+        game.streamRecovery.restoreSessionBitrate();
         game.panelMaxRefreshRate = com.limelight.binding.video.DisplayFrameRatePolicy.maxRefreshRate(
                 game.videoOutput.getVideoDisplay(), game.prefConfig.width, game.prefConfig.height);
         if (game.prefConfig.vrr) {

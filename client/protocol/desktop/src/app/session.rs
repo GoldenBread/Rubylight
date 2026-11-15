@@ -114,6 +114,8 @@ impl App {
         if let Some(host) = self.hosts.get_mut(connecting.host_id) {
             if full_chroma::started(&mut host.record, packed, describe_modes) { self.save_hosts(); }
         }
+        // A bitrate the player set before a reconnect keeps automatic bitrate off, as it was.
+        let manual_bitrate = connecting.plan().manual_bitrate;
         let mut streaming = Streaming::new(connecting, session, facts, display);
         // Before automatic bitrate is turned on below. Another PC's off is not this stream's to wait
         // for: it stays for the app's end.
@@ -123,7 +125,7 @@ impl App {
         streaming.watch_microphone_busy(self.waker.clone());
         self.pads.prepare_audio(settings.controllers && settings.controller_audio && streaming.facts.role != nightjar_core::http::AppRole::RemoteMonitor);
         streaming.display_changed(self.renderer);
-        if settings.adaptive_bitrate || streaming.quality_mode != config::QualityMode::Off { streaming.enable_adaptive_bitrate(true); }
+        if !manual_bitrate && (settings.adaptive_bitrate || streaming.quality_mode != config::QualityMode::Off) { streaming.enable_adaptive_bitrate(true); }
         if settings.controllers && streaming.facts.role != nightjar_core::http::AppRole::RemoteMonitor {
             streaming.session.input(|q| self.pads.announce_all(q));
         }

@@ -277,6 +277,7 @@ final class GameAdaptation {
                 int applied = game.conn.setBitrate(kbps);
                 game.runOnUiThread(() -> {
                     game.currentBitrate = applied;
+                    game.sessionManualBitrate = applied;
                     game.healthOriginalBitrate = game.healthTrialBitrate = 0;
                     // The open menu's slider shows the rate it asked for; one the host changed is news.
                     boolean onSlider = applied == kbps && game.menuActions.streamMenuOpen();
@@ -416,6 +417,10 @@ final class GameAdaptation {
         LimeLog.info("Rate change: " + result + " (" + answer + (outcome.takesBitrate ? ")" : ", older bitrate)"));
         // An answer that came after a later request's keeps that one's bitrate.
         if (outcome.takesBitrate) game.currentBitrate = result.bitrateKbps;
+        // The player's own rate, which an automatic reconnect keeps.
+        if (answer == StreamRateChanges.Answer.MANUAL && outcome.takesBitrate && result.bitrateKbps > 0) {
+            game.sessionManualBitrate = result.bitrateKbps;
+        }
         if (result.fpsChanged() && result.fpsMillihz > 0 && result.fpsMillihz != game.reconfigureRequester.fpsMillihz()) {
             game.reconfigureRequester.rateChanged(result.fpsMillihz);
             game.videoOutput.setStreamFrameRate(result.fpsMillihz);
@@ -443,7 +448,11 @@ final class GameAdaptation {
 
     void startStreamBitrate(StreamRateChanges changes) {
         game.rateChanges = changes;
-        if (game.rateChanges != null && game.prefConfig.rateChangeBitrate) {
+        if (game.sessionManualBitrate > 0) {
+            // An automatic reconnect after the player set a bitrate: it started at that rate, and a manual
+            // bitrate keeps automatic bitrate off for the rest of the session.
+            LimeLog.info("Automatic bitrate stays off: the player set " + game.sessionManualBitrate + " kbps before the reconnect");
+        } else if (game.rateChanges != null && game.prefConfig.rateChangeBitrate) {
             setRateChangeBitrateEnabled(true);
         } else if (autoBitrateAtStart()) {
             setAdaptiveBitrateEnabled(true, false);
@@ -599,7 +608,7 @@ final class GameAdaptation {
                 game.reconfigureRequester.fpsMillihz() != qualityCeilingFrameRateMilliHz()) &&
                 !applyAdaptiveQuality(game.adaptiveQuality.current(), SystemClock.uptimeMillis())) return;
         // Automatic quality needs it for this session only; the saved choice stays the user's own.
-        if (supportsAdaptiveBitrate() && !isAdaptiveBitrateEnabled() && !isRateChangeBitrateOn()) {
+        if (supportsAdaptiveBitrate() && !isAdaptiveBitrateEnabled() && !isRateChangeBitrateOn() && game.sessionManualBitrate == 0) {
             setAdaptiveBitrateEnabled(true, false);
             game.qualityAutoBitrate = true;
         }
@@ -732,6 +741,9 @@ final class GameAdaptation {
     void applyAdaptiveBitrate(int target) {
         AdaptiveBitrateController controller = game.adaptiveBitrate;
         PyroWaveBitrateController pyroController = game.pyroWaveBitrate;
+        // After an automatic reconnect, the first claim starts from the rate automatic bitrate had cut to,
+        // and the stream's start bitrate stays the ceiling it may climb back to.
+        final int resumeKbps = target == 0 ? game.streamRecovery.takeAutomaticBitrateStart() : 0;
         game.hostActionInProgress = true;
         new Thread(() -> {
             try {
@@ -743,7 +755,8 @@ final class GameAdaptation {
                             new EncoderBitrateUnsupported();
                 }
                 // Claim bitrate ownership on hosts with their own controller, without probing a new rate.
-                int applied = game.conn.setBitrate(details == null ? target : details.encoderBitrateKbps);
+                int applied = game.conn.setBitrate(details == null ? target :
+                        GameRecovery.automaticBitrateStart(details.encoderBitrateKbps, resumeKbps));
                 game.runOnUiThread(() -> {
                     if (game.connected && !game.isFinishing()) {
                         if (game.adaptiveBitrate == controller && game.pyroWaveBitrate == pyroController) {
