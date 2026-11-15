@@ -1249,11 +1249,12 @@ impl Streaming {
         }
         // Keys, clicks and controllers leave from their own threads while fractional V-Sync holds the
         // picture and the commit waits for its refresh, as in the renderer's present (`render_flip`);
-        // the overlay is drawn before.
-        let lends = picture && self.frame_warp.is_none() && self.vrr.held(self.pacer.mode) > 1;
+        // the overlay is drawn before. With Frame Warp the hold came before its shift and gave the
+        // input back (`hold_for_turn_lending`), so it is lent again only for the commit's wait.
+        let lends = picture && self.vrr.held(self.pacer.mode) > 1;
         if lends { self.direct_motion.presenting(Some(self.direct_rules(window))); }
         // KMS has no margin to call for a renderer: `held_margin_us` answers before it would.
-        if lends { self.hold_for_turn(std::ptr::null_mut()); }
+        if lends && self.frame_warp.is_none() { self.hold_for_turn(std::ptr::null_mut()); }
         let issued_us = session::now_us();
         let committed = self.kms.as_mut().map_or(Ok(()), kms_scanout::Scanout::commit);
         let returned_us = session::now_us();

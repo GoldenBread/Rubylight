@@ -815,10 +815,9 @@ mod tests {
             let body = function(render, flip);
             for (at, _) in body.match_indices("self.hold_for_turn(") {
                 let line = body[..at].rsplit('\n').next().unwrap();
-                assert!(line.contains("self.frame_warp.is_none()") || line.contains("if lends"), "{flip}");
+                assert!(line.contains("self.frame_warp.is_none()"), "{flip}");
             }
         }
-        assert!(function(render, "fn kms_flip(&mut self, window").contains("let lends = picture && self.frame_warp.is_none()"));
     }
 
     /// Keys, clicks and controllers leave from their own threads while a hold waits (`direct_motion`),
@@ -837,6 +836,13 @@ mod tests {
         let back = kms.find("self.direct_motion.presenting(None)").unwrap();
         assert!(lent < hold && hold < commit && commit < back, "lent from the hold until the commit returns");
         assert!(back < kms.find("if committed.is_err()").unwrap(), "given back on the failed commit's path too");
+        // With Frame Warp too: its hold before the shift gave the input back (never nested), and the
+        // commit still waits for the turn's refresh.
+        assert!(kms.contains("let lends = picture && self.vrr.held("), "lent whether or not Frame Warp held before");
+        let lend_line = kms[..lent].rsplit('\n').next().unwrap();
+        assert!(lend_line.contains("if lends {"), "{lend_line}");
+        let back_line = kms[..back].rsplit('\n').next().unwrap();
+        assert!(back_line.contains("if lends {"), "given back on the same condition: {back_line}");
         // Without Frame Warp the renderer's present lends it before its own hold.
         let flip = function(render, "fn render_flip(");
         assert!(flip.find("self.direct_motion.presenting(Some(").unwrap() < flip.find("self.hold_for_turn(").unwrap());
