@@ -301,6 +301,36 @@ fn a_focused_controls_glow_ends_before_anything_cuts_it() {
     assert!((reach - crate::ui::design_tokens::FOCUS_HALO_BLUR).abs() < 1.0, "outside a menu the glow keeps its reach: {reach}");
 }
 
+/// Quit game in the footer is a quiet capsule with red words, not a solid red block louder than
+/// Disconnect beside it.
+#[test]
+fn quit_game_in_the_footer_is_quiet_with_red_words() {
+    crate::theme::own_palette();
+    let ctx = egui::Context::default();
+    crate::theme::apply(&ctx);
+    let layout = layout(&everything(), 0);
+    let input = || egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 800.0))), ..Default::default() };
+    let mut output = ctx.run_ui(input(), |ui| { menu_style::show(ui.ctx(), "Stream menu", "footer-test", |ui| { footer(ui, &layout); }); });
+    for _ in 0..3 {
+        output = ctx.run_ui(input(), |ui| { menu_style::show(ui.ctx(), "Stream menu", "footer-test", |ui| { footer(ui, &layout); }); });
+    }
+    output.textures_delta.clear();
+    let solid = crate::theme::shade::COLOR_DANGER_FILL.get();
+    fn walk(shape: &egui::Shape, solid: egui::Color32, red_fill: &mut bool, quit_ink: &mut Option<egui::Color32>) {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, solid, red_fill, quit_ink)),
+            egui::Shape::Rect(r) if r.fill == solid => *red_fill = true,
+            egui::Shape::Mesh(mesh) if mesh.vertices.iter().any(|v| v.color == solid) => *red_fill = true,
+            egui::Shape::Text(t) if t.galley.text() == "Quit game" => *quit_ink = t.galley.job.sections.first().map(|s| s.format.color),
+            _ => {}
+        }
+    }
+    let (mut red_fill, mut quit_ink) = (false, None);
+    output.shapes.iter().for_each(|c| walk(&c.shape, solid, &mut red_fill, &mut quit_ink));
+    assert!(!red_fill, "no solid red block");
+    assert_eq!(quit_ink, Some(*crate::theme::ERROR), "Quit game's words are red");
+}
+
 /// Disconnect and Quit game side by side in equal widths, as Starwire's menu has them; End
 /// session is not a third one.
 #[test]

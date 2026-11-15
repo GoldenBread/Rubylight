@@ -344,7 +344,9 @@ pub fn footer(ui: &mut Ui, layout: &Layout) -> Option<Leave> {
                     });
                     menu_style::exit_button(ui, width, Icon::Leave, tr("Disconnect"), keys.as_deref(), Tone::Quiet)
                 }
-                Leave::Exit(exit) => menu_style::exit_button(ui, width, Icon::Power, tr(exit.label()), button_cap(layout, leave), Tone::Danger),
+                // Quiet with red words: Disconnect is the everyday way out, and the question that
+                // follows keeps the solid red.
+                Leave::Exit(exit) => menu_style::quiet_danger_exit_button(ui, width, Icon::Power, tr(exit.label()), button_cap(layout, leave)),
                 Leave::Close => continue,
             };
             if response.clicked() {

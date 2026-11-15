@@ -250,9 +250,19 @@ pub fn danger(ui: &mut Ui, glyph: Icon, label: &str, shortcut: Option<Action>) -
 /// One of the ways out side by side under the grid, `width` wide: Disconnect a quiet capsule, ending
 /// something on the PC a red one. The keys that do it show on hover and are read out with the label.
 pub fn exit_button(ui: &mut Ui, width: f32, glyph: Icon, label: &str, keys: Option<&str>, tone: Tone) -> Response {
+    exit_button_inked(ui, width, glyph, label, keys, tone, None)
+}
+
+/// [`exit_button`] for a way out that can't be taken back beside an everyday one: a quiet capsule
+/// with red words and icon, so it is not the loudest control. Its question keeps the solid red.
+pub fn quiet_danger_exit_button(ui: &mut Ui, width: f32, glyph: Icon, label: &str, keys: Option<&str>) -> Response {
+    exit_button_inked(ui, width, glyph, label, keys, Tone::Quiet, Some(*ERROR))
+}
+
+fn exit_button_inked(ui: &mut Ui, width: f32, glyph: Icon, label: &str, keys: Option<&str>, tone: Tone, ink: Option<Color32>) -> Response {
     let enabled = ui.is_enabled();
     let (hovered, pressed) = (false, false);
-    let base_ink = tone.colors(hovered, pressed).1;
+    let base_ink = ink.unwrap_or(tone.colors(hovered, pressed).1);
     let ink = if enabled { base_ink } else { base_ink.gamma_multiply(0.4) };
     let mut job = egui::text::LayoutJob::simple(label.to_owned(), semibold(text::LABEL), ink, (width - 2.0 * PAD - ICON - space::S).max(space::L));
     job.wrap.max_rows = 2;
