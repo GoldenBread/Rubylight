@@ -712,8 +712,9 @@ pub struct Streaming {
     first_frame: bool,
     /// Pictures shown at least once since the last overlay redraw.
     pub needs_redraw: bool,
-    /// An HDR stream is shown on HDR output: `display_changed` says when that changes.
-    hdr_output: bool,
+    /// Whether an HDR stream is shown on HDR output, as it settles (`present` follows it); None
+    /// for a stream without HDR.
+    hdr_output: Option<HdrOutput>,
     timings: VecDeque<(u32, u64)>,
     /// Frame Warp's shift for each present, while the stream runs it (`Facts::frame_warp`).
     frame_warp: Option<frame_warp::Presenter>,
@@ -742,9 +743,34 @@ fn sends_controllers(settings: &Settings, role: AppRole) -> bool {
     settings.controllers && role != AppRole::RemoteMonitor
 }
 
-/// Whether an HDR stream's output changed, and to what. A stream without HDR is never on HDR output.
-fn hdr_output_change(was: bool, now: bool) -> Option<bool> {
-    (was != now).then_some(now)
+/// How long an HDR stream's output has to stay without HDR, or with it again, before the picture's
+/// drawing follows: a mode switch or a window moving between monitors flickers it.
+const HDR_OUTPUT_SETTLES: Duration = Duration::from_secs(1);
+
+/// Whether an HDR stream is shown on HDR output, changed only by an answer that held for
+/// [`HDR_OUTPUT_SETTLES`].
+#[derive(Clone, Copy, Debug)]
+struct HdrOutput {
+    shown: bool,
+    /// Since when the output has answered the other way.
+    other_since: Option<Instant>,
+}
+
+impl HdrOutput {
+    fn new(shown: bool) -> Self { Self { shown, other_since: None } }
+
+    /// The output's answer at `now`: the new answer once it has held for `HDR_OUTPUT_SETTLES`.
+    fn observe(&mut self, shown: bool, now: Instant) -> Option<bool> {
+        if shown == self.shown {
+            self.other_since = None;
+            return None;
+        }
+        let since = *self.other_since.get_or_insert(now);
+        if now.saturating_duration_since(since) < HDR_OUTPUT_SETTLES { return None; }
+        self.shown = shown;
+        self.other_since = None;
+        Some(shown)
+    }
 }
 
 /// The end-of-stream line for how the GPU renderer's frames reached the swapchain: `direct` of the
@@ -1077,7 +1103,7 @@ impl Streaming {
             started: Instant::now(),
             first_frame: false,
             needs_redraw: true,
-            hdr_output: hdr_stream,
+            hdr_output: hdr_stream.then(|| HdrOutput::new(true)),
             timings: VecDeque::new(),
             frame_warp: warp_presenter,
         };
@@ -1238,12 +1264,6 @@ impl Streaming {
         self.display_change = Some(Instant::now());
         if self.facts.display_caps && self.facts.role != AppRole::InputOnly {
             let _ = self.session.send(ClientMessage::DisplayCaps(crate::sdl::display_caps(renderer)));
-        }
-        let shown = present::hdr_negotiated(self.settings.hdr, self.facts.format) && crate::sdl::hdr_available(renderer);
-        if let Some(on) = hdr_output_change(self.hdr_output, shown) {
-            self.hdr_output = shown;
-            eprintln!("nightjar: an HDR stream's output is now {}", if on { "HDR" } else { "SDR" });
-            self.show_toast(if on { tr("HDR is back on this display.") } else { tr("This display stopped showing HDR. The stream is drawn in SDR.") });
         }
     }
 

@@ -43,12 +43,25 @@ fn an_overlay_change_names_only_what_the_user_changed() {
         Some((None, Some(OverlayMode::Statistics), Some(OverlayCorner::TopLeft))));
 }
 
+/// HDR output gone mid-stream never ends it: the drawing goes to SDR once the loss has held for
+/// a second, and back to HDR once HDR has held again; a flicker in between changes nothing.
 #[test]
-fn an_hdr_streams_output_change_is_said_once() {
-    assert_eq!(hdr_output_change(true, false), Some(false), "the window went to an SDR display");
-    assert_eq!(hdr_output_change(false, true), Some(true), "and came back");
-    assert_eq!(hdr_output_change(true, true), None);
-    assert_eq!(hdr_output_change(false, false), None, "an SDR stream says nothing");
+fn an_hdr_streams_output_change_is_followed_once_it_held_for_a_second() {
+    let start = Instant::now();
+    let at = |ms| start + Duration::from_millis(ms);
+    let mut output = HdrOutput::new(true);
+    assert_eq!(output.observe(true, at(0)), None);
+    // A mode switch: HDR gone for half a second, then back.
+    assert_eq!(output.observe(false, at(100)), None);
+    assert_eq!(output.observe(false, at(600)), None);
+    assert_eq!(output.observe(true, at(700)), None, "a flicker is not followed");
+    assert_eq!(output.observe(false, at(1_500)), None, "the held time starts over");
+    assert_eq!(output.observe(false, at(2_400)), None);
+    assert_eq!(output.observe(false, at(2_500)), Some(false), "the window went to an SDR display");
+    assert_eq!(output.observe(false, at(4_000)), None, "said once");
+    assert_eq!(output.observe(true, at(4_100)), None);
+    assert_eq!(output.observe(true, at(5_100)), Some(true), "and came back");
+    assert_eq!(output.observe(true, at(9_000)), None);
 }
 
 #[test]

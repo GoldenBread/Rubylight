@@ -10,7 +10,6 @@ impl VideoTexture {
     fn prepare_planes(&mut self, renderer: *mut SDL_Renderer, setup: nightjar_core::session::VideoSetup) -> Option<[u32; 8]> {
         let ten = setup.format & nightjar_core::sdp::VIDEO_FORMAT_MASK_10BIT != 0;
         let hdr = self.hdr_mode.unwrap_or(ten);
-        if hdr && !crate::sdl::hdr_available(renderer) { self.destroy(); return None; }
         // SAFETY: The live renderer belongs to the presenting thread.
         let white_level = if hdr { unsafe { SDL_GetFloatProperty(SDL_GetRendererProperties(renderer), SDL_PROP_RENDERER_SDR_WHITE_POINT_FLOAT, 1.0) }.max(0.001) } else { 1.0 };
         let flags = u32::from(setup.color_range != 0) | (u32::from(hdr) << 1) | ((setup.color_space as u32) << 2)
@@ -86,7 +85,6 @@ impl VideoTexture {
         let setup = decoded.setup;
         let ten = setup.format & nightjar_core::sdp::VIDEO_FORMAT_MASK_10BIT != 0;
         let hdr = self.hdr_mode.unwrap_or(ten);
-        if hdr && !crate::sdl::hdr_available(renderer) { self.destroy(); return false; }
         // SAFETY: The live renderer belongs to the presenting thread.
         let white_level = if hdr { unsafe { SDL_GetFloatProperty(SDL_GetRendererProperties(renderer), SDL_PROP_RENDERER_SDR_WHITE_POINT_FLOAT, 1.0) }.max(0.001) } else { 1.0 };
         let flags = u32::from(setup.color_range != 0) | (u32::from(hdr) << 1) | ((setup.color_space as u32) << 2)

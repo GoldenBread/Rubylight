@@ -948,11 +948,17 @@ impl Streaming {
         renderer: *mut SDL_Renderer,
         mut draw_overlay: impl FnMut(&mut Self, *mut SDL_Renderer),
     ) -> bool {
-        // A display plane shows HDR itself, whatever the renderer's swapchain takes.
-        if self.texture.needs_hdr_output() && !self.kms_usable() && !crate::sdl::hdr_available(renderer) {
-            self.texture.destroy();
-            self.exit = Some(Exit::Ended(Some("HDR presentation stopped because the current display/swapchain no longer supports HDR.".into())));
-            self.needs_redraw = true;
+        // An HDR stream whose output stops showing HDR for a held second plays on in SDR: an HDR10
+        // picture is drawn tone mapped to the output (SDL's draw of the texture, or the direct and
+        // plane passes, with SDL's tone map to the output's headroom), and HDR output that comes
+        // back for a held second is used again. A display plane shows HDR itself.
+        if self.hdr_output.is_some() && !self.kms_usable() {
+            let shown = crate::sdl::hdr_available(renderer);
+            if let Some(on) = self.hdr_output.as_mut().and_then(|output| output.observe(shown, Instant::now())) {
+                eprintln!("nightjar: an HDR stream's output is now {}", if on { "HDR" } else { "SDR, tone mapped" });
+                self.show_toast(if on { tr("HDR is back on this display.") } else { tr("This display stopped showing HDR. The stream is drawn in SDR.") });
+                self.needs_redraw = true;
+            }
         }
         self.sync_race(renderer);
         self.sync_vrr(renderer);

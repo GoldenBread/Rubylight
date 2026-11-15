@@ -180,7 +180,6 @@ impl VideoTexture {
             let setup = decoded.setup;
             let ten = setup.format & nightjar_core::sdp::VIDEO_FORMAT_MASK_10BIT != 0;
             let hdr = self.hdr_mode.unwrap_or(ten);
-            if hdr && !crate::sdl::hdr_available(renderer) { self.destroy(); return false; }
             let flags = u32::from(setup.color_range != 0) | (u32::from(hdr) << 1) | ((setup.color_space as u32) << 2)
                 | (u32::from(ten) << 4) | (u32::from(setup.format & nightjar_core::sdp::VIDEO_FORMAT_MASK_YUV444 != 0) << 5);
             let parameters = [setup.width as u32, setup.height as u32, info.width as u32, info.height as u32, 0, 0, flags, white_level.to_bits()];
@@ -213,10 +212,6 @@ impl VideoTexture {
             let hdr = self
                 .hdr_mode
                 .unwrap_or(setup.format & nightjar_core::sdp::VIDEO_FORMAT_MASK_10BIT != 0);
-            if hdr && !crate::sdl::hdr_available(renderer) {
-                self.destroy();
-                return false;
-            }
             let parameters = [
                 layout.width,
                 layout.height,
