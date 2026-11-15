@@ -4,6 +4,7 @@ import android.app.Application;
 import android.content.Intent;
 import android.os.Looper;
 import android.preference.Preference;
+import android.preference.PreferenceGroup;
 import android.widget.ListView;
 
 import androidx.appcompat.app.AlertDialog;
@@ -23,6 +24,9 @@ import org.robolectric.Shadows;
 import org.robolectric.android.controller.ActivityController;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowDialog;
+
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.junit.Assert.*;
 
@@ -59,6 +63,13 @@ public class NetworkTestsRowTest {
         }
     }
 
+    /** Settings that read the saved PCs at once, on the test's thread, instead of on a thread of their own. */
+    private static ActivityController<StreamSettings> open() {
+        ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).create();
+        controller.get().savedPcReader = Runnable::run;
+        return controller.start().postCreate(null).resume().visible();
+    }
+
     /** The row in the Streaming section, with the network rows behind its More row open. */
     private static Preference row(StreamSettings screen) {
         SettingsStructureTest.settle(screen);
@@ -73,7 +84,7 @@ public class NetworkTestsRowTest {
     @Test
     public void streamingShowsTheRowBesideTheNetworkSettings() {
         save("one-pc", "Den PC");
-        try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
+        try (ActivityController<StreamSettings> controller = open()) {
             Preference row = row(controller.get());
             assertNotNull(row);
             assertEquals(app.getString(R.string.network_tests_title), row.getTitle().toString());
@@ -86,7 +97,7 @@ public class NetworkTestsRowTest {
     @Test
     public void itIsAMainRowThatShowsWithStreamingFolded() {
         save("one-pc", "Den PC");
-        try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
+        try (ActivityController<StreamSettings> controller = open()) {
             StreamSettings screen = controller.get();
             assertFalse(StreamSettings.foldsInSection(screen, "streaming", StreamSettings.NETWORK_TESTS_KEY));
             SettingsStructureTest.settle(screen);
@@ -102,7 +113,7 @@ public class NetworkTestsRowTest {
 
     @Test
     public void withoutASavedPcTheRowIsHidden() {
-        try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
+        try (ActivityController<StreamSettings> controller = open()) {
             StreamSettings screen = controller.get();
             StreamSettings.SettingsFragment streaming = SettingsStructureTest.open(screen, "streaming");
             android.preference.PreferenceGroup main = (android.preference.PreferenceGroup) streaming.findPreference("category_streaming_main");
@@ -113,7 +124,7 @@ public class NetworkTestsRowTest {
     @Test
     public void searchFindsItByItsTitleAndWhatItMeasures() {
         save("one-pc", "Den PC");
-        try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
+        try (ActivityController<StreamSettings> controller = open()) {
             StreamSettings screen = controller.get();
             SettingsStructureTest.settle(screen);
             // Its title and its hint, which names what it measures.
@@ -127,7 +138,7 @@ public class NetworkTestsRowTest {
     @Test
     public void oneSavedPcOpensItsTestsAtOnce() {
         save("one-pc", "Den PC");
-        try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
+        try (ActivityController<StreamSettings> controller = open()) {
             StreamSettings screen = controller.get();
             click(row(screen));
             assertNull("no picker for one PC", ShadowDialog.getLatestDialog());
@@ -143,7 +154,7 @@ public class NetworkTestsRowTest {
         save("pc-zed", "Zed");
         save("pc-den", "Den PC");
         HostNames.set(app, "pc-zed", "Attic");
-        try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
+        try (ActivityController<StreamSettings> controller = open()) {
             StreamSettings screen = controller.get();
             click(row(screen));
             assertNull(Shadows.shadowOf(screen).getNextStartedActivity());
@@ -162,6 +173,31 @@ public class NetworkTestsRowTest {
         } finally {
             HostNames.forget(app, "pc-zed");
         }
+    }
+
+    @Test
+    public void theSavedPcsAreReadOffTheUiThreadAndAnAnswerAfterTheScreenIsGoneChangesNothing() {
+        save("one-pc", "Den PC");
+        List<Runnable> reads = new ArrayList<>();
+        ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).create();
+        controller.get().savedPcReader = reads::add;
+        controller.start().postCreate(null).resume().visible();
+        StreamSettings screen = controller.get();
+        StreamSettings.SettingsFragment streaming = SettingsStructureTest.open(screen, "streaming");
+        PreferenceGroup main = (PreferenceGroup) streaming.findPreference("category_streaming_main");
+        assertFalse("the screen asked for the saved PCs without waiting for them", reads.isEmpty());
+        assertFalse("the row waits for the answer", SettingsStructureTest.keys(main).contains(StreamSettings.NETWORK_TESTS_KEY));
+        for (Runnable read : new ArrayList<>(reads)) read.run();
+        Shadows.shadowOf(Looper.getMainLooper()).idle();
+        assertTrue("the answer shows it", SettingsStructureTest.keys(main).contains(StreamSettings.NETWORK_TESTS_KEY));
+
+        reads.clear();
+        controller.pause().resume();
+        assertFalse("each return to the screen reads again", reads.isEmpty());
+        controller.pause().stop().destroy();
+        // The read ends after the screen is gone: nothing is touched, nothing throws.
+        for (Runnable read : new ArrayList<>(reads)) read.run();
+        Shadows.shadowOf(Looper.getMainLooper()).idle();
     }
 
     @Test

@@ -187,6 +187,11 @@ public class StreamSettings extends NightjarActivity {
     private boolean customizeOpen;
     /** The sections whose More row is open: all their rows show. */
     final Set<String> moreOpen = new HashSet<>();
+    /** Reads the saved PCs off the UI thread; tests replace it. */
+    java.util.concurrent.Executor savedPcReader = task -> new Thread(task, "Saved PCs").start();
+    /** What the last read of the saved PCs found: any PC, and any whose PyroWave frame pace can be measured or is saved. */
+    private boolean anySavedPc;
+    private boolean anyPacePc;
     private static final String MORE_STATE_PREFS = "SettingsScreenState";
     private static final String MORE_STATE_OPEN = "more_open";
     /** The two-pane screen shows a section before one is picked; this one is only that default, not the user's choice. */
@@ -1580,18 +1585,18 @@ public class StreamSettings extends NightjarActivity {
             return getString(R.string.summary_network_tests);
         }
 
-        /** The saved PCs by name: the network tests are a PC's own, on its settings screen. */
-        private List<com.limelight.nvstream.http.ComputerDetails> savedPcs() {
+        /** The saved PCs by name: the network tests are a PC's own, on its settings screen. Reads the database. */
+        private static List<com.limelight.nvstream.http.ComputerDetails> savedPcs(Context context) {
             List<com.limelight.nvstream.http.ComputerDetails> pcs;
             com.limelight.computers.ComputerDatabaseManager database =
-                    new com.limelight.computers.ComputerDatabaseManager(getActivity());
+                    new com.limelight.computers.ComputerDatabaseManager(context);
             try {
                 pcs = new ArrayList<>(database.getAllComputers());
             } finally {
                 database.close();
             }
             // The name the user gave a PC, as on Home.
-            for (com.limelight.nvstream.http.ComputerDetails pc : pcs) pc.alias = com.limelight.computers.HostNames.get(getActivity(), pc.uuid);
+            for (com.limelight.nvstream.http.ComputerDetails pc : pcs) pc.alias = com.limelight.computers.HostNames.get(context, pc.uuid);
             pcs.sort((a, b) -> String.CASE_INSENSITIVE_ORDER.compare(String.valueOf(a.displayName()),
                     String.valueOf(b.displayName())));
             return pcs;
@@ -1602,19 +1607,63 @@ public class StreamSettings extends NightjarActivity {
          * one saved: without them the rows are hidden (they leave the More count and search).
          */
         private void refreshNetworkTests() {
-            if (getActivity() == null) return;
-            List<com.limelight.nvstream.http.ComputerDetails> pcs = savedPcs();
-            setShown(NETWORK_TESTS_KEY, !pcs.isEmpty());
-            setShown(PACE_CALIBRATION_KEY, !pacePcs(pcs).isEmpty());
-            placeRows();
+            withSavedPcs((pcs, pace) -> {
+                StreamSettings activity = (StreamSettings) getActivity();
+                activity.anySavedPc = !pcs.isEmpty();
+                activity.anyPacePc = !pace.isEmpty();
+                if (showKnownPcRows()) {
+                    placeRows();
+                    // Results already on screen were found without the rows' new state.
+                    if (!activity.searchQuery.isEmpty()) filterPreferences();
+                }
+            });
+        }
+
+        /**
+         * Shows or hides the rows as the last read of the saved PCs found (hidden before the first answers); true when
+         * that changed them.
+         */
+        private boolean showKnownPcRows() {
+            StreamSettings activity = (StreamSettings) getActivity();
+            boolean testsHidden = hidden.contains(NETWORK_TESTS_KEY);
+            boolean paceHidden = hidden.contains(PACE_CALIBRATION_KEY);
+            setShown(NETWORK_TESTS_KEY, activity.anySavedPc);
+            setShown(PACE_CALIBRATION_KEY, activity.anyPacePc);
+            return testsHidden != hidden.contains(NETWORK_TESTS_KEY) || paceHidden != hidden.contains(PACE_CALIBRATION_KEY);
+        }
+
+        /**
+         * Reads the saved PCs off the UI thread, and hands them and the ones whose frame pace can be measured to
+         * {@code then} on it; nothing happens when this screen is gone by then.
+         */
+        private void withSavedPcs(java.util.function.BiConsumer<List<com.limelight.nvstream.http.ComputerDetails>,
+                List<com.limelight.nvstream.http.ComputerDetails>> then) {
+            StreamSettings activity = (StreamSettings) getActivity();
+            if (activity == null) return;
+            Context context = activity.getApplicationContext();
+            activity.savedPcReader.execute(() -> {
+                List<com.limelight.nvstream.http.ComputerDetails> pcs;
+                List<com.limelight.nvstream.http.ComputerDetails> pace;
+                try {
+                    pcs = savedPcs(context);
+                    pace = pacePcs(context, pcs);
+                } catch (RuntimeException e) {
+                    LimeLog.warning("Settings could not read the saved PCs: " + e);
+                    return;
+                }
+                activity.runOnUiThread(() -> {
+                    if (isAdded() && getActivity() == activity && !activity.isFinishing()) then.accept(pcs, pace);
+                });
+            });
         }
 
         /** The saved PCs whose PyroWave frame pace can be measured, or that have one saved. */
-        private List<com.limelight.nvstream.http.ComputerDetails> pacePcs(List<com.limelight.nvstream.http.ComputerDetails> pcs) {
+        private static List<com.limelight.nvstream.http.ComputerDetails> pacePcs(Context context,
+                List<com.limelight.nvstream.http.ComputerDetails> pcs) {
             List<com.limelight.nvstream.http.ComputerDetails> pace = new ArrayList<>();
             for (com.limelight.nvstream.http.ComputerDetails pc : pcs) {
                 if (pc.supportsPyroWavePaceCalibration() ||
-                        com.limelight.utils.PyroWavePaceStore.get(getActivity(), pc.uuid) != null) pace.add(pc);
+                        com.limelight.utils.PyroWavePaceStore.get(context, pc.uuid) != null) pace.add(pc);
             }
             return pace;
         }
@@ -1642,7 +1691,7 @@ public class StreamSettings extends NightjarActivity {
 
         /** One saved PC opens its tests; several ask which PC first. */
         private void openNetworkTests() {
-            openPcTests(savedPcs(), R.string.network_tests_title);
+            withSavedPcs((pcs, pace) -> openPcTests(pcs, R.string.network_tests_title));
         }
 
         /** Records whether a setting applies; placeRows then puts it in or out of the list. */
@@ -2567,7 +2616,7 @@ public class StreamSettings extends NightjarActivity {
                 return true;
             });
             findPreference(PACE_CALIBRATION_KEY).setOnPreferenceClickListener(preference -> {
-                openPcTests(pacePcs(savedPcs()), R.string.pace_calibration_title);
+                withSavedPcs((pcs, pace) -> openPcTests(pace, R.string.pace_calibration_title));
                 return true;
             });
             findPreference("about_app").setSummary(getString(R.string.settings_version, BuildConfig.VERSION_NAME));
@@ -3053,6 +3102,8 @@ public class StreamSettings extends NightjarActivity {
                     searchCategories.put(category, preferences);
                 }
             }
+            // The network rows as the last read of the saved PCs found; onResume reads them again.
+            showKnownPcRows();
             refreshState();
             screen.removeAll();
             filterPreferences();
