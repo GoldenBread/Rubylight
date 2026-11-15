@@ -83,16 +83,34 @@ final class StreamRecoveryPolicy {
         }
     }
 
+    /**
+     * The start stages whose transport failures retry during a recovery, by LiGetStageName (nightjar-policy's
+     * recovery::RETRYABLE_STAGES mirrors it for the traces). Desktop's table is RETRYABLE_START_STAGES in
+     * protocol/desktop/src/stream/recovery.rs and lists the same stages. Video and audio stages stay out: a decoder
+     * or audio device that fails reports codes a transport failure uses too.
+     */
+    static final String[] RETRYABLE_STAGES = {
+            "name resolution",
+            "RTSP handshake",
+            "control stream initialization",
+            "control stream establishment",
+            "input stream establishment",
+    };
+
     static boolean transientStartup(String stage, int portFlags, int error) {
         // Startup retries are only used while recovering a previously connected session.
         // Host rejection, pairing, permission and decoder errors require a user decision.
         // NvConnection reports Java transport failures with the two HTTP port flags and
         // error 0. Its stage is the game's display name, not a native startup stage.
         if (portFlags == (0x0001 | 0x0002) && error == 0) return true;
-        // Native RTSP/control startup propagates positive errno values (for example
-        // ETIMEDOUT), while Java transport failures use 0. Positive host status codes
-        // must still stay manual, so accept only the known transport errors here.
-        return portFlags != 0 && (error <= 0 || transientTermination(error)) && stage != null &&
-                !stage.toLowerCase(java.util.Locale.ROOT).contains("video");
+        if (stage == null) return false;
+        // Native startup propagates positive errno values (for example ETIMEDOUT), while Java
+        // transport failures use 0. Positive host status codes must still stay manual, so accept
+        // only the known transport errors here. Only RTSP and control startup carry port flags.
+        if (error > 0 && !transientTermination(error)) return false;
+        for (String retryable : RETRYABLE_STAGES) {
+            if (retryable.equalsIgnoreCase(stage)) return true;
+        }
+        return portFlags != 0 && !stage.toLowerCase(java.util.Locale.ROOT).contains("video");
     }
 }

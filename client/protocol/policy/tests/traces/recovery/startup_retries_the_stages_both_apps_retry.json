@@ -1,0 +1,18 @@
+{
+  "source": "StreamRecoveryPolicyTest.startupRetriesTheStagesBothAppsRetry",
+  "rust": "recovery::StreamRecoveryPolicy",
+  "java": "com.limelight.StreamRecoveryPolicy",
+  "new": null,
+  "calls": [
+    {"call": "transient_startup", "args": ["name resolution", 0, -1], "expect": true},
+    {"call": "transient_startup", "args": ["control stream initialization", 0, 110], "expect": true},
+    {"call": "transient_startup", "args": ["input stream establishment", 0, 111], "expect": true},
+    {"call": "transient_startup", "args": ["Name Resolution", 0, 113], "expect": true},
+    {"call": "transient_startup", "args": ["name resolution", 0, 403], "expect": false},
+    {"call": "transient_startup", "args": ["audio stream establishment", 0, -1], "expect": false},
+    {"call": "transient_startup", "args": ["audio stream initialization", 0, 110], "expect": false},
+    {"call": "transient_startup", "args": ["video stream establishment", 0, 110], "expect": false},
+    {"call": "transient_startup", "args": ["platform initialization", 0, -1], "expect": false},
+    {"call": "transient_startup", "args": ["A game called name resolution", 0, 0], "expect": false}
+  ]
+}

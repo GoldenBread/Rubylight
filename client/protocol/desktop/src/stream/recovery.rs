@@ -11,15 +11,20 @@ pub fn now_ms() -> u64 {
     session::now_us() / 1000
 }
 
+/// The start stages whose transport failures retry during a recovery. Android's table is
+/// `StreamRecoveryPolicy.RETRYABLE_STAGES` (mirrored as nightjar-policy's
+/// `recovery::RETRYABLE_STAGES`) and lists the same stages by name. Video and audio stages stay
+/// out: a decoder or audio device that fails reports codes a transport failure uses too.
+pub const RETRYABLE_START_STAGES: [Stage; 5] = [
+    Stage::NameResolution,
+    Stage::RtspHandshake,
+    Stage::ControlStreamInit,
+    Stage::ControlStreamStart,
+    Stage::InputStreamStart,
+];
+
 pub fn transient_start(stage: Stage, code: i32) -> bool {
-    matches!(
-        stage,
-        Stage::NameResolution
-            | Stage::RtspHandshake
-            | Stage::ControlStreamInit
-            | Stage::ControlStreamStart
-            | Stage::InputStreamStart
-    ) && transient_termination(code)
+    RETRYABLE_START_STAGES.contains(&stage) && transient_termination(code)
 }
 
 pub fn transient_http(error: &nightjar_core::http::Error) -> bool {
@@ -43,6 +48,24 @@ pub fn route_missing(error: &std::io::Error) -> bool {
 mod tests {
     use super::*;
     use nightjar_policy::recovery::{STABLE_MS, WINDOW_MS};
+
+    #[test]
+    fn both_apps_retry_the_same_start_stages() {
+        let android = nightjar_policy::recovery::RETRYABLE_STAGES;
+        assert_eq!(RETRYABLE_START_STAGES.len(), android.len());
+        for (ours, theirs) in RETRYABLE_START_STAGES.iter().zip(android) {
+            assert!(ours.name().eq_ignore_ascii_case(theirs), "{ours:?} / {theirs}");
+        }
+        for stage in RETRYABLE_START_STAGES {
+            assert!(transient_start(stage, 110), "{stage:?}");
+            assert!(!transient_start(stage, 403), "{stage:?}");
+            assert!(nightjar_policy::recovery::transient_startup(Some(stage.name()), 0, 110), "{stage:?}");
+        }
+        for stage in [Stage::VideoStreamInit, Stage::VideoStreamStart, Stage::AudioStreamInit, Stage::AudioStreamStart, Stage::PlatformInit] {
+            assert!(!transient_start(stage, 110), "{stage:?}");
+            assert!(!nightjar_policy::recovery::transient_startup(Some(stage.name()), 0, 110), "{stage:?}");
+        }
+    }
 
     #[test]
     fn only_an_immediate_no_route_error_waits_for_the_route() {

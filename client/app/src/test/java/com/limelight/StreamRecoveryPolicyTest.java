@@ -112,6 +112,21 @@ public class StreamRecoveryPolicyTest {
         }
     }
 
+    /** The stages desktop retries too (its RETRYABLE_START_STAGES), though only RTSP and control carry port flags. */
+    @Test public void startupRetriesTheStagesBothAppsRetry() {
+        for (String stage : StreamRecoveryPolicy.RETRYABLE_STAGES) {
+            assertTrue(stage, StreamRecoveryPolicy.transientStartup(stage, 0, 110));
+            assertTrue(stage, StreamRecoveryPolicy.transientStartup(stage, 0, -1));
+            assertFalse(stage, StreamRecoveryPolicy.transientStartup(stage, 0, 403));
+        }
+        assertTrue(StreamRecoveryPolicy.transientStartup("Name Resolution", 0, 113));
+        assertFalse(StreamRecoveryPolicy.transientStartup("audio stream establishment", 0, -1));
+        assertFalse(StreamRecoveryPolicy.transientStartup("audio stream initialization", 0, 110));
+        assertFalse(StreamRecoveryPolicy.transientStartup("video stream establishment", 0, 110));
+        assertFalse(StreamRecoveryPolicy.transientStartup("platform initialization", 0, -1));
+        assertFalse(StreamRecoveryPolicy.transientStartup("A game called name resolution", 0, 0));
+    }
+
     @Test public void javaTransportFailuresDoNotInterpretTheGameTitleAsADecoderStage() {
         assertTrue(StreamRecoveryPolicy.transientStartup("Video Game", 0x0003, 0));
         assertTrue(StreamRecoveryPolicy.transientStartup("VIDEO", 0x0003, 0));

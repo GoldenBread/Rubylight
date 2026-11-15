@@ -90,6 +90,19 @@ pub fn transport_termination(code: i32) -> bool {
         | 10050..=10054 | 10057 | 10060 | 10061 | 10064 | 10065)
 }
 
+/// The start stages whose transport failures Android retries during a recovery, by
+/// `LiGetStageName` (Android's `StreamRecoveryPolicy.RETRYABLE_STAGES`, mirrored here for the
+/// traces). The desktop's table is `RETRYABLE_START_STAGES` in its `stream/recovery.rs`, and
+/// lists the same stages. Video and audio stages stay out: a decoder or audio device that fails
+/// reports codes a transport failure uses too.
+pub const RETRYABLE_STAGES: [&str; 5] = [
+    "name resolution",
+    "RTSP handshake",
+    "control stream initialization",
+    "control stream establishment",
+    "input stream establishment",
+];
+
 /// Whether a failed start may retry while recovering a previously connected session. Host
 /// rejection, pairing, permission and decoder errors need a user decision.
 pub fn transient_startup(stage: Option<&str>, port_flags: i32, error: i32) -> bool {
@@ -98,11 +111,14 @@ pub fn transient_startup(stage: Option<&str>, port_flags: i32, error: i32) -> bo
     if port_flags == 0x0001 | 0x0002 && error == 0 {
         return true;
     }
-    // Native RTSP and control startup report positive errno values; positive host status codes
-    // stay manual, so only known transport errors pass.
-    port_flags != 0
-        && (error <= 0 || transient_termination(error))
-        && stage.is_some_and(|stage| !stage.to_lowercase().contains("video"))
+    let Some(stage) = stage else {
+        return false;
+    };
+    // Native startup reports positive errno values; positive host status codes stay manual, so
+    // only known transport errors pass. Only RTSP and control startup carry port flags.
+    (error <= 0 || transient_termination(error))
+        && (RETRYABLE_STAGES.iter().any(|s| stage.eq_ignore_ascii_case(s))
+            || (port_flags != 0 && !stage.to_lowercase().contains("video")))
 }
 
 /// Between two route checks while the PC is not reachable (Android's `NetworkReturnRecovery`).
