@@ -626,6 +626,10 @@ async fn run(args: Args, assets: PathBuf) -> Result<()> {
         _=runtime::maintain(h.clone(), stop_signal, actions, ports.web)=>Ok(())
     };
     h.stop.store(true, Ordering::Release);
+    // The service ends the host 20 s after it asked it to stop (`shutdown_host`). Every wait
+    // below takes at most what is left of SHUTDOWN_WAITS, so the host finishes on its own.
+    let shutdown_deadline = Instant::now() + SHUTDOWN_WAITS;
+    let left = |cap: Duration| cap.min(shutdown_deadline.saturating_duration_since(Instant::now()));
     // UPnP mappings and IPv6 pinholes come down while the rest shuts down.
     if let Some(port_forward) = &port_forward {
         port_forward.stop();
@@ -634,7 +638,18 @@ async fn run(args: Args, assets: PathBuf) -> Result<()> {
     butterpollo_windows::display_arrangement::close_wake_watch();
     let canceled = h.sessions.lock().unwrap().request_stop(None);
     drop(canceled);
-    let deadline = Instant::now() + Duration::from_secs(10);
+    // The Radeon settings and game file keys the sessions changed go back from now on, on
+    // their own threads, while the streams and the game close: neither needs the game gone
+    // (End session puts them back under a running game too).
+    h.radeon.release_all();
+    let files = h.clone();
+    if let Err(error) = std::thread::Builder::new()
+        .name("game file restore at shutdown".into())
+        .spawn(move || files.game_files.release_all(&files.directory))
+    {
+        tracing::error!(%error, "the game file restore could not start early; it runs below");
+    }
+    let deadline = Instant::now() + left(Duration::from_secs(5));
     while !h.sessions.lock().unwrap().idle() && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
@@ -646,34 +661,47 @@ async fn run(args: Args, assets: PathBuf) -> Result<()> {
     if let Some(internet_play) = internet_play {
         internet_play.stop();
     }
-    h.stop_app(state::AppStop::Shutdown);
-    h.session_shutdown();
+    // Closing the game waits for it and runs its undo commands: for what is left of the
+    // shutdown's time, after which the host goes on and the rest ends with it.
+    let stopping = h.clone();
+    if !within(
+        left(Duration::from_secs(8)),
+        "application stop at shutdown",
+        move || stopping.stop_app(state::AppStop::Shutdown),
+    )
+    .await
+    {
+        tracing::warn!("the application had not closed when the host's shutdown time ran out");
+    }
+    let resetting = h.clone();
+    within(
+        left(Duration::from_secs(5)),
+        "session reset at shutdown",
+        move || resetting.session_shutdown(),
+    )
+    .await;
     // Whatever a session changed goes back before the host exits; the restore thread has had the
-    // work since the session reset above. The wait is blocking, so it leaves the async executor.
-    // 30 s is shorter than the worker's 150 s limit on one driver call: a restore still stuck
+    // work since the start of the shutdown. The wait is blocking, so it leaves the async executor.
+    // It is shorter than the worker's 150 s limit on one driver call: a restore still stuck
     // then stays journaled, is logged, and the next host start puts it back.
     let radeon = h.clone();
-    if let Err(error) =
-        tokio::task::spawn_blocking(move || radeon.radeon.shutdown(Duration::from_secs(30))).await
-    {
+    let wait = left(Duration::from_secs(30));
+    if let Err(error) = tokio::task::spawn_blocking(move || radeon.radeon.shutdown(wait)).await {
         tracing::error!(%error, "waiting for the Radeon restore at shutdown failed; the next host start restores what is left");
     }
     // Every game file key goes back too, on its own thread; one it cannot reach in time stays
     // journaled for the next start.
     let files = h.clone();
-    if let Err(error) = tokio::task::spawn_blocking(move || {
-        files
-            .game_files
-            .shutdown(&files.directory, Duration::from_secs(10))
-    })
-    .await
+    let wait = left(Duration::from_secs(10));
+    if let Err(error) =
+        tokio::task::spawn_blocking(move || files.game_files.shutdown(&files.directory, wait)).await
     {
         tracing::error!(%error, "waiting for the game file restore at shutdown failed; the next host start restores what is left");
     }
     remote_display::disconnect(&h, None);
     drop(discovery);
     if let Some(port_forward) = port_forward {
-        port_forward.finish(Duration::from_secs(10)).await;
+        port_forward.finish(left(Duration::from_secs(10))).await;
     }
     drop(tray);
     if h.restart.load(Ordering::Acquire) {
@@ -689,6 +717,28 @@ async fn run(args: Args, assets: PathBuf) -> Result<()> {
         }
     }
     outcome
+}
+/// What the host's own waits at a service stop take together, at most: under the 20 s after
+/// which the service ends it, with room for the steps that do not wait.
+const SHUTDOWN_WAITS: Duration = Duration::from_secs(17);
+/// Runs `work` on a thread of its own and waits for it, at most `wait`. A thread still running
+/// then ends with the host, and does not hold up the runtime's shutdown as a blocking task
+/// would. True when it finished.
+async fn within(wait: Duration, name: &str, work: impl FnOnce() + Send + 'static) -> bool {
+    let (done, finished) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name(name.into())
+        .spawn(move || {
+            work();
+            let _ = done.send(());
+        });
+    if let Err(error) = spawned {
+        tracing::error!(%error, name, "a shutdown step could not start");
+        return false;
+    }
+    tokio::task::spawn_blocking(move || finished.recv_timeout(wait).is_ok())
+        .await
+        .unwrap_or(false)
 }
 fn smoke(args: &Args) -> Result<()> {
     let _com = butterpollo_windows::capture::ComGuard::new()?;
@@ -760,4 +810,24 @@ fn smoke(args: &Args) -> Result<()> {
     }
     println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_shutdown_step_is_waited_for_only_while_the_shutdown_has_time_left() {
+        // The service ends the host 20 s after it asked it to stop.
+        assert!(SHUTDOWN_WAITS < Duration::from_secs(20));
+        let started = Instant::now();
+        // A game that ignores the close request: the host goes on without it.
+        let slow = within(Duration::from_millis(200), "slow step", || {
+            std::thread::sleep(Duration::from_secs(3))
+        })
+        .await;
+        assert!(!slow);
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(within(Duration::from_secs(5), "quick step", || {}).await);
+    }
 }
