@@ -29,7 +29,7 @@
         class="input mono"
         aria-label="File {index + 1}"
         aria-invalid={error ? 'true' : undefined}
-        placeholder="OptiScaler.ini"
+        placeholder="settings.ini"
         autocomplete="off"
         spellcheck="false"
         bind:value={row.path}

@@ -53,3 +53,17 @@ test('no fork or credit names in setting text; Moonlight alone is the client', (
     }
   }
 });
+
+test('no placeholder in the console names a mod', () => {
+  // Frame generation and its mods are never named in the console's own text, including example values.
+  const src = new URL('./src', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+  const placeholders = files(src).flatMap(path => [...shown(readFileSync(path, 'utf8'))
+    .matchAll(/placeholder(?:=|:\s*)(?:"([^"]*)"|'([^']*)'|\{['"`]([^'"`]*)['"`]\})/g)]
+    .map(match => [path, match[1] ?? match[2] ?? match[3]]));
+  assert(placeholders.length > 20, `only ${placeholders.length} placeholders found: the pattern no longer matches the code`);
+  assert.deepEqual(placeholders.filter(([, text]) => /OptiScaler|AMDNR|AMD-NR|\bANR\b/i.test(text)), []);
+  for (const setting of all) {
+    const placeholder = setting.control?.placeholder;
+    if (typeof placeholder === 'string') assert.doesNotMatch(placeholder, /OptiScaler|AMDNR|AMD-NR|\bANR\b/i, setting.key);
+  }
+});
