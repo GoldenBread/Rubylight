@@ -25,7 +25,7 @@ use std::{
     net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream, UdpSocket},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        mpsc, Arc, Condvar, Mutex,
+        mpsc, Arc, Condvar, Mutex, RwLock,
     },
     thread,
     time::Duration,
@@ -123,7 +123,7 @@ struct Shared {
     inner: Mutex<Inner>,
     /// The peer while the path is connected and open, else None: `inner`'s state, kept here so
     /// media needs no `inner` lock. Written only with `inner` held ([`Tunnel::publish`]).
-    connected: Mutex<Option<SocketAddr>>,
+    connected: RwLock<Option<SocketAddr>>,
     /// When an authenticated datagram last came in.
     last_heard: AtomicU64,
     /// When the path last carried media or a stream segment, or a connection opened.
@@ -145,7 +145,7 @@ struct Shared {
 
 struct MediaEnd {
     socket: UdpSocket,
-    client: Mutex<Option<SocketAddr>>,
+    client: RwLock<Option<SocketAddr>>,
     /// The host side's registration of this socket as a tunnelled peer.
     _mark: Option<peers::Mark>,
 }
@@ -178,7 +178,7 @@ impl Tunnel {
                     match media_port(ports, channel).filter(|port| *port != 0) {
                         Some(port) => Some(MediaEnd {
                             socket: node::bind_udp(SocketAddr::new(*local, port))?,
-                            client: Mutex::new(None),
+                            client: RwLock::new(None),
                             _mark: None,
                         }),
                         None => None,
@@ -190,7 +190,7 @@ impl Tunnel {
                     let mark = peers::register(socket.local_addr()?, device);
                     Some(MediaEnd {
                         socket,
-                        client: Mutex::new(None),
+                        client: RwLock::new(None),
                         _mark: Some(mark),
                     })
                 }
@@ -213,7 +213,7 @@ impl Tunnel {
                 connections: HashMap::new(),
                 closed: None,
             }),
-            connected: Mutex::new(None),
+            connected: RwLock::new(None),
             last_heard: AtomicU64::new(now),
             last_used: AtomicU64::new(now),
             node,
@@ -319,7 +319,10 @@ impl Tunnel {
             punch::State::Connected(_) if inner.closed.is_none() => inner.peer,
             _ => None,
         };
-        *self.shared.connected.lock().unwrap() = peer;
+        // Written only when it changes: the media threads read it for every datagram.
+        if *self.shared.connected.read().unwrap() != peer {
+            *self.shared.connected.write().unwrap() = peer;
+        }
     }
 
     /// Ends the path and tells the peer.
@@ -371,7 +374,7 @@ impl Tunnel {
         }
         // Media from the connected peer's address changes nothing in `inner`: it skips the
         // reliable layer's lock entirely.
-        if kind == Kind::Media && *self.shared.connected.lock().unwrap() == Some(from) {
+        if kind == Kind::Media && *self.shared.connected.read().unwrap() == Some(from) {
             self.media_in(channel, payload);
             return;
         }
@@ -708,12 +711,14 @@ impl Tunnel {
             };
             if let Bridge::Device { .. } = self.shared.bridge {
                 // Replies go back to wherever the client last sent from.
-                *end.client.lock().unwrap() = Some(from);
+                if *end.client.read().unwrap() != Some(from) {
+                    *end.client.write().unwrap() = Some(from);
+                }
                 self.shared
                     .last_used
                     .fetch_max(self.shared.node.now(), Ordering::Relaxed);
             }
-            let peer = *self.shared.connected.lock().unwrap();
+            let peer = *self.shared.connected.read().unwrap();
             if let Some(peer) = peer {
                 self.shared
                     .sealer
@@ -729,7 +734,7 @@ impl Tunnel {
             return;
         };
         let to = match &self.shared.bridge {
-            Bridge::Device { .. } => *end.client.lock().unwrap(),
+            Bridge::Device { .. } => *end.client.read().unwrap(),
             Bridge::Host { service, ports, .. } => {
                 media_port(ports, channel).map(|port| SocketAddr::new(*service, port))
             }

@@ -17,7 +17,7 @@ use std::{
     net::{IpAddr, SocketAddr},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, RwLock,
     },
     thread,
     time::Duration,
@@ -144,7 +144,8 @@ struct Shared {
     config: HostConfig,
     session: [u8; 16],
     devices: Mutex<Vec<DeviceState>>,
-    tunnels: Mutex<Tunnels>,
+    /// Read for every datagram, written when a path starts or ends.
+    tunnels: RwLock<Tunnels>,
     status: Mutex<Status>,
     path_errors: Mutex<PathErrors>,
     /// Paths a punch is starting (tag and device session), so repeated punches start one.
@@ -167,7 +168,7 @@ impl HostService {
             config,
             session: crate::crypto::random(),
             devices: Mutex::new(Vec::new()),
-            tunnels: Mutex::new(HashMap::new()),
+            tunnels: RwLock::new(HashMap::new()),
             status: Mutex::new(Status::default()),
             path_errors: Mutex::new(HashMap::new()),
             starting: Mutex::new(HashSet::new()),
@@ -224,7 +225,7 @@ impl HostService {
         *states = next;
         let tags: Vec<[u8; 8]> = states.iter().map(|state| state.tag).collect();
         drop(states);
-        let mut tunnels = self.shared.tunnels.lock().unwrap();
+        let mut tunnels = self.shared.tunnels.write().unwrap();
         tunnels.retain(|tag, (_, tunnel)| {
             let keep = tags.contains(tag);
             if !keep {
@@ -246,7 +247,7 @@ impl HostService {
         status.paths = self
             .shared
             .tunnels
-            .lock()
+            .read()
             .unwrap()
             .iter()
             .filter(|(_, (_, tunnel))| !tunnel.is_closed())
@@ -287,7 +288,7 @@ impl HostService {
 
     pub fn stop(&self) {
         self.shared.stop.store(true, Ordering::Release);
-        for (_, (_, tunnel)) in self.shared.tunnels.lock().unwrap().drain() {
+        for (_, (_, tunnel)) in self.shared.tunnels.write().unwrap().drain() {
             tunnel.close("the host stopped");
         }
         self.shared.node.stop();
@@ -327,7 +328,7 @@ impl HostService {
     /// console's status never wait on it.
     fn open(&self, peer: &Peer, client: [u8; 16], candidates: Vec<SocketAddr>) -> Option<Tunnel> {
         {
-            let tunnels = self.shared.tunnels.lock().unwrap();
+            let tunnels = self.shared.tunnels.read().unwrap();
             if let Some((session, tunnel)) = tunnels.get(&peer.tag) {
                 if *session == client && !tunnel.is_closed() {
                     tunnel.add_candidates(&candidates);
@@ -364,7 +365,7 @@ impl HostService {
                 return None;
             }
         };
-        let mut tunnels = self.shared.tunnels.lock().unwrap();
+        let mut tunnels = self.shared.tunnels.write().unwrap();
         // Meanwhile a path for this session, or another device's path, may have started.
         if let Some((session, existing)) = tunnels.get(&peer.tag) {
             if *session == client && !existing.is_closed() {
@@ -395,17 +396,21 @@ impl HostService {
         let Some(tag) = wire::tag(datagram) else {
             return;
         };
-        let existing = self.shared.tunnels.lock().unwrap().get(&tag).cloned();
         let punch_session = wire::punch_session(datagram);
-        if let Some((session, tunnel)) = &existing {
-            if !tunnel.is_closed() && punch_session.map_or(true, |punched| punched == *session) {
-                tunnel.receive(datagram, from);
-                return;
-            }
-            // A new session replaces a connected path only once the old one is gone, so an old
-            // punch replayed by someone on the way can't break a working stream.
-            if !tunnel.is_closed() && matches!(tunnel.state(), State::Connected(_)) {
-                return;
+        {
+            // Read-locked through the tunnel's handling, which never touches this map.
+            let tunnels = self.shared.tunnels.read().unwrap();
+            if let Some((session, tunnel)) = tunnels.get(&tag) {
+                if !tunnel.is_closed() && punch_session.map_or(true, |punched| punched == *session)
+                {
+                    tunnel.receive(datagram, from);
+                    return;
+                }
+                // A new session replaces a connected path only once the old one is gone, so an
+                // old punch replayed by someone on the way can't break a working stream.
+                if !tunnel.is_closed() && matches!(tunnel.state(), State::Connected(_)) {
+                    return;
+                }
             }
         }
         let Some(client) = punch_session else { return };
@@ -466,7 +471,7 @@ impl HostService {
             self.serve_devices();
             self.shared
                 .tunnels
-                .lock()
+                .write()
                 .unwrap()
                 .retain(|_, (_, tunnel)| !tunnel.is_closed());
             let now = self.shared.node.now();
@@ -525,7 +530,7 @@ impl HostService {
         let open: Vec<[u8; 8]> = self
             .shared
             .tunnels
-            .lock()
+            .read()
             .unwrap()
             .iter()
             .filter(|(_, (_, tunnel))| !tunnel.is_closed())

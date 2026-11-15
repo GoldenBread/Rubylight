@@ -15,7 +15,7 @@ use std::{
     io,
     net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc, Mutex,
     },
     thread,
@@ -70,6 +70,9 @@ struct Shared {
     id: Id,
     bootstrap: Vec<String>,
     state: Mutex<State>,
+    /// Counts [`Node::set_handler`] calls, so the receive thread takes `state`'s lock for the
+    /// handler only when it changed.
+    handler_version: AtomicU64,
 }
 
 type DhtAnswer = (Tid, SocketAddr, Message);
@@ -95,6 +98,7 @@ impl Node {
             id: crate::crypto::random(),
             bootstrap,
             state: Mutex::new(State::default()),
+            handler_version: AtomicU64::new(0),
         });
         let receiver = shared.clone();
         thread::Builder::new()
@@ -118,7 +122,9 @@ impl Node {
     }
 
     pub fn set_handler(&self, handler: Handler) {
-        self.shared.state.lock().unwrap().handler = Some(Arc::new(handler));
+        let mut state = self.shared.state.lock().unwrap();
+        state.handler = Some(Arc::new(handler));
+        self.shared.handler_version.fetch_add(1, Ordering::Release);
     }
 
     pub fn is_stopped(&self) -> bool {
@@ -309,7 +315,16 @@ impl Node {
 
 fn receive(shared: Arc<Shared>) {
     let mut buffer = vec![0u8; 4096];
+    let mut handler: Option<Arc<Handler>> = None;
+    let mut version = 0;
     while !shared.stop.load(Ordering::Acquire) {
+        // Checked every round, timeouts included, so a replaced handler (and the path it holds)
+        // goes within a read timeout.
+        let current = shared.handler_version.load(Ordering::Acquire);
+        if current != version {
+            handler = shared.state.lock().unwrap().handler.clone();
+            version = current;
+        }
         let (length, from) = match shared.socket.recv_from(&mut buffer) {
             Ok(received) => received,
             // Timeouts, and on Windows the ICMP port-unreachable a punch can draw.
@@ -317,8 +332,7 @@ fn receive(shared: Arc<Shared>) {
         };
         let datagram = &mut buffer[..length];
         if crate::wire::is_wire(datagram) {
-            let handler = shared.state.lock().unwrap().handler.clone();
-            if let Some(handler) = handler {
+            if let Some(handler) = &handler {
                 handler(datagram, from);
             }
         } else if stun::is_stun(datagram) {
