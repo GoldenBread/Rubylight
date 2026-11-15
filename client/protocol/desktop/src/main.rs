@@ -146,8 +146,9 @@ struct App {
     waking: wol::Wakes,
     streaming: Option<(Streaming, TimerResolution)>,
     /// The request that turns the PC's automatic bitrate off after the last stream, while it may
-    /// still be in flight: the next stream (a reconnect too) turns it on only after it.
-    abr_stop: Option<stream::host_abr::AbrStop>,
+    /// still be in flight, and the PC it went to: the next stream to that PC (a reconnect too)
+    /// turns it on only after it.
+    abr_stop: Option<(u64, stream::host_abr::AbrStop)>,
     pending_launch: Option<(u64, i32)>,
     /// The launch the PC refused until the user confirms closing the app it runs, while the
     /// launcher asks (`Dialog::ConfirmReplace`).
