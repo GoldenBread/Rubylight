@@ -35,7 +35,7 @@ export const NOTICE = {
 /** What the panel says it is for. */
 export const ABOUT =
   'Frame generation for games that offer DLSS frame generation, through a third-party mod Rubylight puts in the game’s folder and takes out again: turn on DLSS frame generation in the game, and this takes its place. ' +
-  'The first launch after turning it on can spend several minutes compiling the game’s shaders. ' +
+  'Final Fantasy XVI’s first launch after turning it on spent about 10 minutes compiling its shaders; that launch also followed a driver update, so how much of the wait comes from frame generation is not measured. ' +
   'Leave it off for online games: one may treat a mod as cheating.';
 
 /** What turning the switch on does to the earlier upscaling. */
