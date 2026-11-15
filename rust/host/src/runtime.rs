@@ -442,6 +442,7 @@ pub async fn maintain(
     let mut wake_at = Instant::now();
     let waking = Arc::new(AtomicBool::new(false));
     let library_ticking = Arc::new(AtomicBool::new(false));
+    let updating = Arc::new(AtomicBool::new(false));
     let mut library_tick_watch = LibraryTickWatch::default();
     let mut hotkey = RestoreHotkey::default();
     let mut tray = butterpollo_core::tray::Tracker::default();
@@ -517,7 +518,11 @@ pub async fn maintain(
                 tokio::task::spawn_blocking(move || crate::neural::remove_pending(&h));
             }
         }
-        crate::updater::poll(&h);
+        {
+            // It hashes the downloaded installer, up to hundreds of megabytes.
+            let h = h.clone();
+            spawn_exclusive(&updating, move || crate::updater::poll(&h));
+        }
         auto_lock.poll(&h);
         start_deferred(&h);
         if actions.is_some() {
