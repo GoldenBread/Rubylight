@@ -532,18 +532,7 @@ fn poll_with(h: &Shared, hashed: Option<Hashed>, hash: &dyn Fn(&std::path::Path)
                 }
                 return;
             }
-            match result {
-                Ok(path) => {
-                    state["installer_path"] = json!(path);
-                    state["phase"] = json!("ready");
-                }
-                Err(error) if error.is::<DownloadPaused>() => {
-                    state["phase"] = json!("waiting");
-                    state["idle_since"] = json!(0);
-                    state["downloaded_bytes"] = json!(0);
-                }
-                Err(error) => failed(&mut state, error),
-            }
+            finish_download(&mut state, result);
         });
     } else {
         // Hashing up to MAX_INSTALLER bytes holds neither lock, so status
@@ -651,6 +640,30 @@ fn setup_failure(
     anyhow::anyhow!("Installer exited before replacing this host ({exit}). See the setup log.")
 }
 
+/// Publish the result of the download for the current `download_id`.
+fn finish_download(state: &mut Value, result: Result<PathBuf>) {
+    match result {
+        Ok(path) => {
+            state["installer_path"] = json!(path);
+            state["phase"] = json!("ready");
+        }
+        Err(error) if error.is::<DownloadPaused>() => {
+            state["phase"] = json!("waiting");
+            state["idle_since"] = json!(0);
+            state["downloaded_bytes"] = json!(0);
+        }
+        Err(error) => {
+            // A transfer that broke off (network, disk) is tried again at the
+            // next scheduled check; an installer that does not match its
+            // release is not downloaded again automatically.
+            if !error.is::<InstallerRejected>() {
+                state["attempted_version"] = Value::Null;
+            }
+            failed(state, error)
+        }
+    }
+}
+
 fn failed(state: &mut Value, error: anyhow::Error) {
     tracing::warn!(%error, "update failed");
     state["phase"] = json!("failed");
@@ -659,7 +672,9 @@ fn failed(state: &mut Value, error: anyhow::Error) {
 
 fn verify(size: u64, digest: &str, candidate: &Installer) -> Result<()> {
     if size != candidate.size || digest != candidate.digest {
-        bail!("Installer verification failed; no files were installed");
+        return Err(
+            InstallerRejected("Installer verification failed; no files were installed").into(),
+        );
     }
     Ok(())
 }
@@ -880,7 +895,7 @@ async fn transfer(
         }
         size += chunk.len() as u64;
         if size > candidate.size {
-            bail!("Installer exceeds its advertised size");
+            return Err(InstallerRejected("Installer exceeds its advertised size").into());
         }
         file.write_all(&chunk).await?;
         hash.update(&chunk);
@@ -902,6 +917,16 @@ impl std::fmt::Display for DownloadPaused {
     }
 }
 impl std::error::Error for DownloadPaused {}
+
+/// The downloaded installer does not match its release's size or digest.
+#[derive(Debug)]
+struct InstallerRejected(&'static str);
+impl std::fmt::Display for InstallerRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+impl std::error::Error for InstallerRejected {}
 
 #[cfg(test)]
 mod tests;

@@ -681,6 +681,33 @@ fn truncated_or_changed_installer_is_rejected() {
     assert!(verify(31, &candidate.digest, &candidate).is_err());
     assert!(verify(32, &"00".repeat(32), &candidate).is_err());
 }
+#[test]
+fn a_broken_off_download_is_retried_but_a_rejected_installer_is_not() {
+    let candidate = installer(&release()).unwrap();
+    let downloading = || json!({"phase":"downloading","attempted_version":candidate.version});
+    // The network dropped mid-transfer: the next check may queue it again.
+    let mut state = downloading();
+    finish_download(&mut state, Err(anyhow::anyhow!("connection reset")));
+    assert_eq!(state["phase"], "failed");
+    assert!(state["attempted_version"].is_null());
+    // A wrong size or digest keeps that version from downloading again.
+    let mut state = downloading();
+    finish_download(
+        &mut state,
+        verify(31, &candidate.digest, &candidate).map(|()| PathBuf::new()),
+    );
+    assert_eq!(state["phase"], "failed");
+    assert_eq!(state["attempted_version"], candidate.version);
+    assert_eq!(
+        state["error"],
+        "Installer verification failed; no files were installed"
+    );
+    // A paused download waits and keeps its place.
+    let mut state = downloading();
+    finish_download(&mut state, Err(DownloadPaused.into()));
+    assert_eq!(state["phase"], "waiting");
+    assert_eq!(state["attempted_version"], candidate.version);
+}
 /// A temporary folder, removed with what is in it.
 struct Temporary(PathBuf);
 impl Temporary {
