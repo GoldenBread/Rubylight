@@ -203,6 +203,7 @@ pub enum FramePacing {
 }
 
 impl FramePacing {
+    #[cfg(test)]
     pub const ALL: [Self; 4] = [Self::Latency, Self::Balanced, Self::CapFps, Self::Smoothness];
 
     pub fn label(self) -> &'static str {

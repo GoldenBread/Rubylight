@@ -1143,6 +1143,15 @@ impl Streaming {
     }
 }
 
+/// Whether the renderer's window is in exclusive fullscreen, where nothing composes its pictures.
+fn exclusive_fullscreen(renderer: *mut SDL_Renderer) -> bool {
+    // SAFETY: a live renderer and its window.
+    unsafe {
+        let window = SDL_GetRenderWindow(renderer);
+        SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN != 0 && !SDL_GetWindowFullscreenMode(window).is_null()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1235,14 +1244,5 @@ mod tests {
         let packed = session::VideoSetup { format: nightjar_core::sdp::VIDEO_FORMAT_H264, width: 3840, height: 1080, fps: 60, chroma_packing: 1, logical_width: 1920, logical_height: 1080, color_space: 1, color_range: 0 };
         assert_eq!(setup_size(&packed), (1920, 1080));
         assert_eq!(setup_size(&session::VideoSetup { logical_width: 0, logical_height: 0, chroma_packing: 0, width: 2560, height: 1440, ..packed }), (2560, 1440));
-    }
-}
-
-/// Whether the renderer's window is in exclusive fullscreen, where nothing composes its pictures.
-fn exclusive_fullscreen(renderer: *mut SDL_Renderer) -> bool {
-    // SAFETY: a live renderer and its window.
-    unsafe {
-        let window = SDL_GetRenderWindow(renderer);
-        SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN != 0 && !SDL_GetWindowFullscreenMode(window).is_null()
     }
 }
