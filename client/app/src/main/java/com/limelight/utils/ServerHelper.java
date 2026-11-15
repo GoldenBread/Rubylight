@@ -2,6 +2,7 @@ package com.limelight.utils;
 
 import android.app.Activity;
 import android.app.ActivityOptions;
+import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.view.View;
@@ -9,6 +10,7 @@ import android.widget.Toast;
 
 import com.limelight.AppView;
 import com.limelight.Game;
+import com.limelight.LimeLog;
 import com.limelight.R;
 import com.limelight.ShortcutTrampoline;
 import com.limelight.binding.PlatformBinding;
@@ -246,6 +248,24 @@ public class ServerHelper {
         });
     }
 
+    /**
+     * What a failed quit tells the player: what happened and what to try, in their language. {@code error} is null when
+     * the PC answered but did not quit the game.
+     */
+    static String quitFailure(Context context, String appName, Exception error) {
+        if (error instanceof HostHttpResponseException && ((HostHttpResponseException) error).getErrorCode() == 599) {
+            // The host lets only the device that started the session end it.
+            return context.getString(R.string.applist_quit_other_device);
+        }
+        if (error instanceof UnknownHostException) {
+            return context.getString(R.string.error_unknown_host);
+        }
+        if (error instanceof FileNotFoundException) {
+            return context.getString(R.string.error_404);
+        }
+        return context.getString(R.string.applist_quit_fail_check, appName);
+    }
+
     /** Like the plain quit, but {@code onDone} learns whether the host closed the game; it runs on any thread. */
     public static void doQuitReporting(final Activity parent,
                               final ComputerDetails computer,
@@ -283,27 +303,13 @@ public class ServerHelper {
                             quit = true;
                             message = parent.getResources().getString(R.string.applist_quit_success) + " " + app.getAppName();
                         } else {
-                            message = parent.getResources().getString(R.string.applist_quit_fail) + " " + app.getAppName();
+                            message = quitFailure(parent, app.getAppName(), null);
                         }
                     }
-                } catch (NativeApiException e) {
-                    message = e.getMessage();
-                } catch (HostHttpResponseException e) {
-                    if (e.getErrorCode() == 599) {
-                        message = "This session wasn't started by this device," +
-                                " so it cannot be quit. End streaming on the original " +
-                                "device or the PC itself. (Error code: "+e.getErrorCode()+")";
-                    }
-                    else {
-                        message = e.getMessage();
-                    }
-                } catch (UnknownHostException e) {
-                    message = parent.getResources().getString(R.string.error_unknown_host);
-                } catch (FileNotFoundException e) {
-                    message = parent.getResources().getString(R.string.error_404);
-                } catch (IOException | XmlPullParserException e) {
-                    message = e.getMessage();
-                    e.printStackTrace();
+                } catch (NativeApiException | IOException | XmlPullParserException e) {
+                    // The error's own wording is for the log; the player is told what happened and what to try.
+                    LimeLog.warning("Quit failed: " + e);
+                    message = quitFailure(parent, app.getAppName(), e);
                 } finally {
                     onDone.accept(quit);
                 }

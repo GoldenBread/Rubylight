@@ -142,6 +142,8 @@
     <string name="applist_quit_app">Quitting</string>
     <string name="applist_quit_success">Successfully quit</string>
     <string name="applist_quit_fail">Failed to quit</string>
+    <string name="applist_quit_fail_check">Couldn’t quit %1$s. Check that the PC is on and on this network, then try again.</string>
+    <string name="applist_quit_other_device">Another device started this game, so it can only be quit from that device or on the PC.</string>
     <string name="applist_quit_confirmation">Quit the running app?\nUnsaved progress will be lost.</string>
     <string name="applist_details_id">App ID:</string>
 
