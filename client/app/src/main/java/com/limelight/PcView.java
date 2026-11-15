@@ -1136,6 +1136,7 @@ public class PcView extends NightjarActivity implements AdapterFragmentCallbacks
     public void receiveAbsListView(AbsListView listView) {
         pcList = listView;
         listView.setAdapter(pcGridAdapter);
+        pcGridAdapter.setList(listView);
         applyListFoot();
         pcGridAdapter.setActions(new PcGridAdapter.Actions() {
             @Override public void onResume(ComputerObject computer) { onComputerAction(computer, RESUME_ID); }

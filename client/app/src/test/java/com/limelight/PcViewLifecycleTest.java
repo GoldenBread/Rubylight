@@ -1095,6 +1095,34 @@ public class PcViewLifecycleTest {
         }
     }
 
+    /** A PC that changes group moves in the sorted list; the ring moves with it, so OK acts on the PC it shows. */
+    @Test
+    @Config(qualifiers = "w960dp-h540dp-land-television-xhdpi")
+    public void theRingFollowsItsPcWhenARefreshSortsItBehindAnother() {
+        ActivityController<Library> controller = emptyScreen(new CountDownLatch(0));
+        try {
+            Library screen = controller.get();
+            com.limelight.ui.TvScreensPreviewTest.leaveTouchMode(screen);
+            Shadows.shadowOf(Looper.getMainLooper()).idle();
+            report(pc("a", "Alpha", ComputerDetails.State.ONLINE, PairingManager.PairState.PAIRED));
+            report(pc("b", "Beta", ComputerDetails.State.ONLINE, PairingManager.PairState.PAIRED));
+            GridView grid = screen.findViewById(R.id.fragmentView);
+            assertTrue("the list holds focus", grid.hasFocus());
+            assertEquals(0, grid.getSelectedItemPosition());
+            assertEquals("Alpha", ((PcView.ComputerObject) grid.getSelectedItem()).details.name);
+
+            // Alpha stops answering: the PCs that answer come first, so Beta overtakes it.
+            report(pc("a", "Alpha", ComputerDetails.State.OFFLINE, PairingManager.PairState.PAIRED));
+            assertEquals("Beta", ((PcView.ComputerObject) grid.getItemAtPosition(0)).details.name);
+            assertEquals(1, grid.getSelectedItemPosition());
+            assertEquals("Alpha", ((PcView.ComputerObject) grid.getSelectedItem()).details.name);
+            assertTrue("the ring is on Alpha's tile", wearsRing(grid, 1));
+            assertFalse(wearsRing(grid, 0));
+        } finally {
+            controller.pause().stop().destroy();
+        }
+    }
+
     /** A touched phone keeps no selection as its first PCs arrive: no row wears the ring until a key is pressed. */
     @Test
     @Config(qualifiers = "w411dp-h891dp-xxhdpi")

@@ -7,6 +7,7 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.AbsListView;
 import android.widget.AdapterView;
 import android.widget.ImageButton;
 import android.widget.ImageView;
@@ -63,6 +64,7 @@ public class PcGridAdapter extends GenericGridAdapter<PcView.ComputerObject> {
     }
 
     public void addComputer(PcView.ComputerObject computer) {
+        holdSelection();
         itemList.add(computer);
         sortList();
     }
@@ -73,14 +75,42 @@ public class PcGridAdapter extends GenericGridAdapter<PcView.ComputerObject> {
     }
 
     public boolean removeComputer(PcView.ComputerObject computer) {
+        holdSelection();
         return itemList.remove(computer);
     }
 
     @Override
     public void notifyDataSetChanged() {
+        holdSelection();
         // A PC changes group when it starts a game, pairs or stops answering.
         sortList();
+        // The ring stays on its PC, not on the slot the PC left. The grid is given the PC's new position before it hears
+        // of the change, which it then keeps as it would have kept the old one. A PC that is gone leaves the grid's own.
+        int position = held == null || list == null ? -1 : itemList.indexOf(held);
+        if (position >= 0) list.setSelection(position);
+        held = null;
+        rowsMoved = false;
         super.notifyDataSetChanged();
+    }
+
+    /** The grid that shows these rows; a refresh keeps its selection on the same PC. */
+    public void setList(AbsListView list) {
+        this.list = list;
+        held = null;
+        rowsMoved = false;
+    }
+
+    /**
+     * Notes the PC the D-pad's ring is on before the rows first change since the grid last heard of them; afterwards the
+     * grid's selected position no longer names it. A grid without focus, or in touch mode, shows no ring and keeps none.
+     */
+    private void holdSelection() {
+        if (rowsMoved) return;
+        rowsMoved = true;
+        held = null;
+        if (list == null || list.isInTouchMode() || !list.hasFocus()) return;
+        int position = list.getSelectedItemPosition();
+        if (position >= 0 && position < itemList.size()) held = itemList.get(position);
     }
 
     public static RowState rowState(ComputerDetails details, boolean waking) {
@@ -361,6 +391,11 @@ public class PcGridAdapter extends GenericGridAdapter<PcView.ComputerObject> {
 
     private Actions actions;
     private TileBackdrops tiles;
+    private AbsListView list;
+    /** The PC the ring was on when the rows began to change, or null. */
+    private PcView.ComputerObject held;
+    /** The rows changed since the grid last heard of them. */
+    private boolean rowsMoved;
 
     /** A TV tile part's height at the current font scale: its height at scale 1, plus what the text stack grows by. */
     static int tileHeight(Context context, int dimen) {
