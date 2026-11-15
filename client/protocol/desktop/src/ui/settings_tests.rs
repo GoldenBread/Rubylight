@@ -1658,23 +1658,59 @@ fn fractional_vsync_names_the_refresh_where_it_holds_nothing() {
     let at = |hz: f32| crate::stream::Display { width: 1920, height: 1080, refresh_hz: hz, refresh_reported: true };
     let s = |fps: u32, window_mode: WindowMode| Settings { fps, window_mode, ..Settings::default() };
     let borderless = WindowMode::Borderless;
-    assert_eq!(fractional_vsync_display_reason(&s(60, borderless), &at(120.0), &[], true), None, "twice");
-    assert_eq!(fractional_vsync_display_reason(&s(30, borderless), &at(119.88), &[], true), None, "four times, within the tolerance");
-    assert_eq!(fractional_vsync_display_reason(&s(60, borderless), &at(144.0), &[], true).as_deref(),
+    assert_eq!(fractional_vsync_display_reason(&s(60, borderless), &at(120.0), &[], true, false), None, "twice");
+    assert_eq!(fractional_vsync_display_reason(&s(30, borderless), &at(119.88), &[], true, false), None, "four times, within the tolerance");
+    assert_eq!(fractional_vsync_display_reason(&s(60, borderless), &at(144.0), &[], true, false).as_deref(),
         Some("Not used at this display’s 144 Hz: that isn’t 2 to 4 times the frame rate"));
-    assert!(fractional_vsync_display_reason(&s(60, borderless), &at(60.0), &[], true).is_some(), "the stream's own rate");
-    assert!(fractional_vsync_display_reason(&s(0, borderless), &at(120.0), &[], true).is_some(), "Display: the display's rate");
-    assert!(fractional_vsync_display_reason(&s(24, borderless), &at(120.0), &[], true).is_some(), "five times is past the hold's 4");
+    assert!(fractional_vsync_display_reason(&s(60, borderless), &at(60.0), &[], true, false).is_some(), "the stream's own rate");
+    assert!(fractional_vsync_display_reason(&s(0, borderless), &at(120.0), &[], true, false).is_some(), "Display: the display's rate");
+    assert!(fractional_vsync_display_reason(&s(24, borderless), &at(120.0), &[], true, false).is_some(), "five times is past the hold's 4");
     let unreported = crate::stream::Display { refresh_reported: false, ..at(144.0) };
-    assert_eq!(fractional_vsync_display_reason(&s(60, borderless), &unreported, &[], true), None, "no refresh known");
+    assert_eq!(fractional_vsync_display_reason(&s(60, borderless), &unreported, &[], true, false), None, "no refresh known");
 
+    // Windows' Fullscreen takes the mode closest to the stream's size and rate (SDL's order).
     let full = WindowMode::Fullscreen;
-    assert_eq!(fractional_vsync_display_reason(&s(60, full), &at(120.0), &[120.0, 60.0], true).as_deref(),
-        Some("Not used in Fullscreen with VRR off: the display switches to the stream’s frame rate"));
-    assert_eq!(fractional_vsync_display_reason(&s(30, full), &at(120.0), &[120.0, 60.0], true), None,
-        "no 30 Hz mode: the closest is a multiple, which holds");
-    assert_eq!(fractional_vsync_display_reason(&s(60, full), &at(120.0), &[120.0, 60.0], false), None,
-        "Wayland's Fullscreen keeps the display's refresh");
+    let modes = |w: i32, h: i32, rates: &[f32]| rates.iter().map(|&refresh_hz| FullscreenMode { w, h, refresh_hz, bytes_per_pixel: 4 }).collect::<Vec<_>>();
+    let fhd = |rates: &[f32]| modes(1920, 1080, rates);
+    let reason = |fps, desktop: f32, list: &[FullscreenMode], windows, kms| {
+        fractional_vsync_display_reason(&s(fps, full), &at(desktop), list, windows, kms)
+    };
+    assert_eq!(reason(60, 120.0, &fhd(&[120.0, 60.0]), true, false).as_deref(),
+        Some("Not used at the 60 Hz Fullscreen switches to: that isn’t 2 to 4 times the frame rate"));
+    assert_eq!(reason(30, 120.0, &fhd(&[120.0, 60.0]), true, false), None, "no 30 Hz mode: the closest, 60 Hz, holds 2");
+    assert_eq!(reason(30, 144.0, &fhd(&[144.0, 120.0, 60.0]), true, false), None, "60 Hz, the closest to 30, holds 2");
+    assert_eq!(reason(40, 120.0, &fhd(&[120.0, 60.0, 50.0]), true, false).as_deref(),
+        Some("Not used at the 50 Hz Fullscreen switches to: that isn’t 2 to 4 times the frame rate"), "50 Hz, the closest to 40");
+    assert_eq!(reason(50, 144.0, &fhd(&[60.0, 40.0]), true, false).as_deref(),
+        Some("Not used at the 40 Hz Fullscreen switches to: that isn’t 2 to 4 times the frame rate"), "a tie goes to the later, slower mode");
+    assert_eq!(reason(60, 120.0, &fhd(&[120.0]), true, false), None, "the closest is the desktop's own 120 Hz, which holds 2");
+    // The size comes first: the smallest that holds the stream, its rates alone.
+    let sizes = [modes(2560, 1440, &[144.0, 60.0, 30.0]), fhd(&[60.0])].concat();
+    assert_eq!(reason(30, 144.0, &sizes, true, false), None, "1080p's 60 Hz, not 1440p's 30 Hz");
+    // No mode holds the stream: SDL keeps the desktop's mode.
+    let small = modes(1280, 720, &[60.0]);
+    assert_eq!(reason(60, 144.0, &small, true, false).as_deref(), Some("Not used at this display’s 144 Hz: that isn’t 2 to 4 times the frame rate"));
+    assert_eq!(reason(60, 120.0, &small, true, false), None);
+    assert_eq!(reason(60, 120.0, &fhd(&[120.0, 60.0]), false, false), None, "Wayland's Fullscreen keeps the display's refresh");
+    // KMS's planes switch to a mode of the connector's, which the settings can't list.
+    let borderless_kms = fractional_vsync_display_reason(&s(60, borderless), &at(144.0), &fhd(&[144.0, 120.0]), false, true);
+    assert_eq!(borderless_kms, None, "KMS: 144 Hz now, but the planes may switch to 120 Hz and hold");
+}
+
+/// SDL's own choice (`SDL_GetClosestFullscreenDisplayMode`), mode for mode.
+#[test]
+fn the_closest_fullscreen_mode_is_sdls() {
+    let m = |w, h, refresh_hz, bytes_per_pixel| FullscreenMode { w, h, refresh_hz, bytes_per_pixel };
+    let list = [m(3840, 2160, 60.0, 4), m(2560, 1440, 144.0, 4), m(2560, 1440, 60.0, 4), m(1920, 1080, 120.0, 4), m(1920, 1080, 60.0, 4), m(1920, 1080, 60.0, 2)];
+    assert_eq!(closest_fullscreen_mode(&list, 1920, 1080, 60.0, 144.0), Some(list[4]), "the deeper format of two at 60 Hz");
+    assert_eq!(closest_fullscreen_mode(&list, 1920, 1080, 90.0, 144.0), Some(list[4]), "equally close: the later");
+    assert_eq!(closest_fullscreen_mode(&list, 1920, 1080, 0.0, 144.0), Some(list[3]), "0 asks for the desktop's rate");
+    assert_eq!(closest_fullscreen_mode(&list, 2000, 1100, 60.0, 144.0), Some(list[2]), "the smallest size that holds it");
+    assert_eq!(closest_fullscreen_mode(&list, 1920, 1200, 60.0, 144.0), Some(list[2]), "taller than 1080: 1440p");
+    assert_eq!(closest_fullscreen_mode(&list, 5120, 2880, 60.0, 144.0), None, "none holds it");
+    // A wider ratio's mode that holds the stream gives way to one closer to the stream's.
+    let ratios = [m(3440, 1440, 100.0, 4), m(2560, 1440, 144.0, 4)];
+    assert_eq!(closest_fullscreen_mode(&ratios, 2560, 1440, 60.0, 144.0), Some(ratios[1]));
 }
 
 #[test]

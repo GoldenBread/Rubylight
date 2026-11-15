@@ -1595,7 +1595,7 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("Not used outside a Wayland desktop", "在 Wayland 桌面之外不使用"),
     ("Not used: this desktop doesn’t report when pictures are shown", "未使用：此桌面不回報畫面何時顯示"),
     ("Not used at this display’s {} Hz: that isn’t 2 to 4 times the frame rate", "未使用：此顯示器的 {} Hz 不是畫面更新率的 2 到 4 倍"),
-    ("Not used in Fullscreen with VRR off: the display switches to the stream’s frame rate", "未使用：關閉 VRR 的全屏會把顯示器切換到串流的畫面更新率"),
+    ("Not used at the {} Hz Fullscreen switches to: that isn’t 2 to 4 times the frame rate", "未使用：全螢幕切換到的 {} Hz 不是畫面更新率的 2 到 4 倍"),
     ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields; turn off to open it yourself.", "在電腦上選取文字欄位時開啟螢幕鍵盤，之後自動關閉。需要電腦能回報文字欄位；關閉後由你自行開啟鍵盤。"),
     ("Fractional V-Sync", "分數 V-Sync"),
     ("On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Measured on Windows, it adds 1 to 2 ms of delay on most frames and 2.5 to 4 ms on the slowest ones; turn it on if motion judders with V-Sync.", "螢幕更新率是串流影格率的 2 到 4 倍時(120 Hz 上的 60 fps),每個影格顯示相同次數的更新,讓動作保持平順。在 Windows 上實測,大多數影格會增加 1 到 2 ms 延遲,最慢的影格增加 2.5 到 4 ms;如果開啟 V-Sync 後動作卡頓,請開啟。"),

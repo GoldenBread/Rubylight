@@ -925,7 +925,7 @@ impl Launcher {
                 unused_with(&mut rows, frame_pacing_choice_name(FramePacingChoice::HostTimes));
             } else if !fractional_vsync_applies(&video_driver()) {
                 rows.note(tr("Not used: this desktop doesn’t report when pictures are shown").to_owned(), *TERTIARY);
-            } else if let Some(reason) = fractional_vsync_display_reason(s, &display, &self.fullscreen_rates, cfg!(windows)) {
+            } else if let Some(reason) = fractional_vsync_display_reason(s, &display, &self.fullscreen_modes, cfg!(windows), crate::kms::active()) {
                 rows.note(reason, *TERTIARY);
             }
             setting_row(ui, s, &mut rows, &["fractional_vsync"], "Fractional V-Sync", "On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Measured on Windows, it adds 1 to 2 ms of delay on most frames and 2.5 to 4 ms on the slowest ones; turn it on if motion judders with V-Sync.", |ui, s| toggle(ui, &mut s.fractional_vsync));
@@ -2039,26 +2039,83 @@ pub(super) fn fractional_vsync_applies(video_driver: &str) -> bool {
     cfg!(windows) || (cfg!(target_os = "linux") && video_driver != "x11")
 }
 
+/// One of a display's fullscreen modes, as `SDL_GetFullscreenDisplayModes` lists them (in its order:
+/// largest first, then the deepest format, then the fastest refresh).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct FullscreenMode {
+    /// In SDL's units, as the stream's Fullscreen asks for its size in.
+    pub w: i32,
+    pub h: i32,
+    pub refresh_hz: f32,
+    /// `SDL_BYTESPERPIXEL` of the mode's format.
+    pub bytes_per_pixel: u8,
+}
+
+/// The mode exclusive fullscreen takes for a stream of `w` x `h` at `refresh_hz` (0: the desktop's
+/// `desktop_hz`), high-density modes included as the stream asks: SDL's
+/// `SDL_GetClosestFullscreenDisplayMode` (SDL 3.4.20, `src/video/SDL_video.c`, zlib license, by
+/// Sam Lantinga and the SDL contributors) over `modes` in SDL's order. The smallest size that holds
+/// the stream with the closest aspect ratio, and at that size the closest refresh, the later (the
+/// slower) one on a tie. None where no mode holds the stream: SDL then keeps the desktop's mode.
+pub(crate) fn closest_fullscreen_mode(modes: &[FullscreenMode], w: i32, h: i32, refresh_hz: f32, desktop_hz: f32) -> Option<FullscreenMode> {
+    let aspect = if h > 0 { w as f32 / h as f32 } else { 1.0 };
+    let refresh_hz = if refresh_hz == 0.0 { desktop_hz } else { refresh_hz };
+    let mut closest: Option<FullscreenMode> = None;
+    for mode in modes {
+        if w > mode.w {
+            break;
+        }
+        if h > mode.h {
+            continue;
+        }
+        if let Some(c) = closest {
+            let (current_aspect, closest_aspect) = (mode.w as f32 / mode.h as f32, c.w as f32 / c.h as f32);
+            if (aspect - closest_aspect).abs() < (aspect - current_aspect).abs() {
+                continue;
+            }
+            if mode.w == c.w && mode.h == c.h {
+                if (c.refresh_hz - refresh_hz).abs() < (mode.refresh_hz - refresh_hz).abs() {
+                    continue;
+                }
+                if c.bytes_per_pixel > mode.bytes_per_pixel {
+                    continue;
+                }
+            }
+        }
+        closest = Some(*mode);
+    }
+    closest
+}
+
 /// Why fractional V-Sync holds nothing at the display the settings screen is on, or None; VRR is off
-/// here (the row says so before). Fullscreen on Windows takes the display mode closest to the
-/// stream's rate (`fullscreen_refresh_hz`): one of `fullscreen_rates` at that rate holds nothing.
-/// Elsewhere the display keeps its refresh, which has to be 2 to 4 times the frame rate
-/// (`rate_multiple`); the display can change, so the note names the refresh it is about. Wayland's
-/// Fullscreen is the compositor's and keeps the refresh too. Nothing without a reported refresh.
-pub(super) fn fractional_vsync_display_reason(s: &Settings, display: &Display, fullscreen_rates: &[f32], windows: bool) -> Option<String> {
+/// here (the row says so before). The refresh has to be 2 to 4 times the frame rate
+/// (`rate_multiple`). Fullscreen on Windows switches to the mode closest to the stream's size and
+/// rate (`fullscreen_refresh_hz`, `closest_fullscreen_mode` over `fullscreen_modes`), so the note
+/// names that mode's refresh; elsewhere the display keeps its own, and the display can change, so
+/// the note names the refresh it is about. Wayland's Fullscreen is the compositor's and keeps the
+/// refresh too. Under KMS (`kms`) the video planes switch to a mode of the connector's
+/// (`kms::plan::pick_mode`), which the settings screen can't list (SDL's list says nothing of
+/// interlaced modes), so there is no note. Nothing without a reported refresh.
+pub(super) fn fractional_vsync_display_reason(s: &Settings, display: &Display, fullscreen_modes: &[FullscreenMode], windows: bool, kms: bool) -> Option<String> {
     use nightjar_policy::vsync::rate_multiple;
-    if !display.refresh_reported || display.refresh_hz <= 0.0 {
+    if kms || !display.refresh_reported || display.refresh_hz <= 0.0 {
         return None;
     }
-    let (_, _, fps, _) = crate::stream::stream_mode(s, *display);
-    let fps = f64::from(fps);
-    if windows && s.window_mode == WindowMode::Fullscreen && fullscreen_rates.iter().any(|&hz| rate_multiple(f64::from(hz), fps) == Some(1)) {
-        return Some(tr("Not used in Fullscreen with VRR off: the display switches to the stream’s frame rate").to_owned());
+    let (w, h, fps, _) = crate::stream::stream_mode(s, *display);
+    let switched = (windows && s.window_mode == WindowMode::Fullscreen)
+        .then(|| closest_fullscreen_mode(fullscreen_modes, w as i32, h as i32, fps as f32, display.refresh_hz))
+        .flatten()
+        .map(|mode| mode.refresh_hz)
+        .filter(|&hz| hz > 0.0 && (hz - display.refresh_hz).abs() > 0.01);
+    let refresh_hz = switched.unwrap_or(display.refresh_hz);
+    if let Some(2..) = rate_multiple(f64::from(refresh_hz), f64::from(fps)) {
+        return None;
     }
-    match rate_multiple(f64::from(display.refresh_hz), fps) {
-        Some(2..) => None,
-        _ => Some(trf("Not used at this display’s {} Hz: that isn’t 2 to 4 times the frame rate", &[&(display.refresh_hz.round() as u32)])),
-    }
+    let shown = refresh_hz.round() as u32;
+    Some(match switched {
+        Some(_) => trf("Not used at the {} Hz Fullscreen switches to: that isn’t 2 to 4 times the frame rate", &[&shown]),
+        None => trf("Not used at this display’s {} Hz: that isn’t 2 to 4 times the frame rate", &[&shown]),
+    })
 }
 
 /// SDL's video driver, which only Linux asks for.

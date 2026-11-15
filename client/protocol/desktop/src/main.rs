@@ -326,6 +326,11 @@ fn fullscreen_refresh_hz(vrr: bool, modes: &[f32], stream_fps: i32) -> f32 {
 
 /// The refresh rates of a display's fullscreen modes, empty when SDL has none.
 fn mode_refresh_rates(id: SDL_DisplayID) -> Vec<f32> {
+    fullscreen_modes(id).iter().map(|mode| mode.refresh_hz).collect()
+}
+
+/// A display's fullscreen modes in SDL's order, empty when SDL has none.
+fn fullscreen_modes(id: SDL_DisplayID) -> Vec<ui::FullscreenMode> {
     let mut count = 0;
     // SAFETY: SDL allocates the list of mode pointers, which is read here and then freed.
     unsafe {
@@ -333,9 +338,13 @@ fn mode_refresh_rates(id: SDL_DisplayID) -> Vec<f32> {
         if modes.is_null() {
             return Vec::new();
         }
-        let rates = (0..count.max(0) as usize).filter_map(|i| (*modes.add(i)).as_ref().map(|mode| mode.refresh_rate)).collect();
+        let list = (0..count.max(0) as usize)
+            .filter_map(|i| {
+                (*modes.add(i)).as_ref().map(|mode| ui::FullscreenMode { w: mode.w, h: mode.h, refresh_hz: mode.refresh_rate, bytes_per_pixel: SDL_BYTESPERPIXEL(mode.format) })
+            })
+            .collect();
         SDL_free(modes.cast());
-        rates
+        list
     }
 }
 
@@ -710,7 +719,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     shortcuts::set_hotkeys(store.hotkeys());
     let mut launcher = Launcher::new(settings.clone(), profiles, store.shortcuts(), display);
     // SAFETY: a live window.
-    launcher.fullscreen_rates = mode_refresh_rates(unsafe { SDL_GetDisplayForWindow(window) });
+    launcher.fullscreen_modes = fullscreen_modes(unsafe { SDL_GetDisplayForWindow(window) });
     // The System theme's light or dark; SDL tells of a change (SDL_EVENT_SYSTEM_THEME_CHANGED).
     launcher.system_light = sdl::system_light();
     // SAFETY: a query without arguments, on the main thread after SDL_Init.

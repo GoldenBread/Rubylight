@@ -1595,7 +1595,7 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("Not used outside a Wayland desktop", "Wayland 데스크톱이 아니면 사용되지 않음"),
     ("Not used: this desktop doesn’t report when pictures are shown", "사용되지 않음: 이 데스크톱은 화면이 표시된 시점을 알려 주지 않습니다"),
     ("Not used at this display’s {} Hz: that isn’t 2 to 4 times the frame rate", "사용되지 않음: 이 디스플레이의 {} Hz는 프레임 속도의 2~4배가 아닙니다"),
-    ("Not used in Fullscreen with VRR off: the display switches to the stream’s frame rate", "사용되지 않음: VRR이 꺼진 전체 화면에서는 디스플레이가 스트림의 프레임 속도로 바뀝니다"),
+    ("Not used at the {} Hz Fullscreen switches to: that isn’t 2 to 4 times the frame rate", "사용되지 않음: 전체 화면이 전환하는 {} Hz는 프레임 속도의 2~4배가 아닙니다"),
     ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields; turn off to open it yourself.", "PC에서 텍스트 필드를 선택하면 화면 키보드가 열리고, 입력이 끝나면 닫힙니다. 텍스트 필드를 알려 주는 PC가 필요합니다. 직접 열려면 끄세요."),
     ("Fractional V-Sync", "분수 V-Sync"),
     ("On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Measured on Windows, it adds 1 to 2 ms of delay on most frames and 2.5 to 4 ms on the slowest ones; turn it on if motion judders with V-Sync.", "화면 주사율이 스트림 프레임 속도의 2~4배일 때(120 Hz에서 60 fps) 모든 프레임을 같은 횟수의 새로 고침 동안 보여 주어 움직임이 고르게 유지됩니다. Windows에서 측정한 결과 지연이 대부분의 프레임에서 1~2 ms, 가장 느린 프레임에서 2.5~4 ms 늘어납니다. V-Sync에서 움직임이 끊겨 보이면 켜세요."),
