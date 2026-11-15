@@ -1061,7 +1061,7 @@ impl GpuStream {
                 race.bands.push(band);
                 race.events.push(SliceReady { seq: race.seq, band, pin: lease.pin() });
             }
-            Err(error) => race.failure = Some(format!("PyroWave GPU decode failed: {error}")),
+            Err(error) => race.failure = Some(error.to_string()),
         }
         stages.add(GPU_SLICES, step);
     }
@@ -1149,10 +1149,10 @@ impl GpuStream {
             let after = if self.race.is_some() { after.max(self.planes.wait_for(lease.set())) } else { after };
             // The set of a sliced frame holds its slices (see `decode_due_slice`); a set that holds nothing is overwritten.
             let decoded = if sliced { self.gpu.decode_again(lease.set(), after) } else { self.gpu.decode(lease.set(), after) };
-            let fence_value = decoded.map_err(|e| Failure::Device(format!("PyroWave GPU decode failed: {e}")))?;
+            let fence_value = decoded.map_err(|e| Failure::Device(e.to_string()))?;
             self.stages.add(GPU_SUBMIT, step);
             let step = Instant::now();
-            self.gpu.wait(fence_value, GPU_DECODE_TIMEOUT).map_err(|e| Failure::Device(format!("PyroWave GPU decode failed: {e}")))?;
+            self.gpu.wait(fence_value, GPU_DECODE_TIMEOUT).map_err(|e| Failure::Device(e.to_string()))?;
             self.stages.add(GPU_WAIT, step);
             fence_value
         };
@@ -1172,7 +1172,7 @@ impl GpuStream {
                 // A decode that missed its deadline may still write into this set once the
                 // device comes back: the set is never given back, so nothing reads or reuses it.
                 if self.gpu.stalled() { std::mem::forget(lease); }
-                return Err(Failure::Device(format!("PyroWave GPU decode failed: {e}")));
+                return Err(Failure::Device(e.to_string()));
             }
             let submitted = submit_split(step, self.gpu.submitted_at());
             self.stages.add_between(GPU_SUBMIT, step, submitted);

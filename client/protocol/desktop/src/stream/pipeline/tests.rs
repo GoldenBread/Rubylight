@@ -106,12 +106,12 @@ fn chunks_through_a_decoder_with_the_beam_race_off_queue_no_slice_and_wake_nobod
 #[test]
 fn a_gpu_device_failure_ends_the_stream_with_its_message() {
     let (mut decoder, shared) = decoder();
-    let status = decoder.failed(Failure::Device("PyroWave GPU decode failed: device removed".into()));
+    let status = decoder.failed(Failure::Device("device removed".into()));
     assert!(matches!(status, DecodeStatus::NeedIdr));
     assert_eq!(shared.counters.decode_errors.load(Ordering::Relaxed), 1);
     let notices = notices(&shared);
     let [Notice::DecoderFailed(text)] = notices.as_slice() else { panic!("expected exactly the DecoderFailed notice") };
-    assert_eq!(text, "PyroWave GPU decode failed: device removed");
+    assert_eq!(text, "PyroWave GPU decoding unavailable: device removed");
     // The stream shows it as the reason it ended and does not reconnect on its own.
     assert!(!crate::stream::Exit::Ended(Some(text.clone())).retryable(true));
 }
@@ -399,7 +399,7 @@ fn gpu_mode_without_a_device_never_builds_a_cpu_decoder() {
     assert!(decoder.setup(&setup).is_err());
     assert!(decoder.pyrowave.is_none());
     let notices = notices(&shared);
-    assert!(matches!(notices.as_slice(), [Notice::DecoderFailed(text)] if text.contains("PyroWave GPU decoding is unavailable")));
+    assert!(matches!(notices.as_slice(), [Notice::DecoderFailed(text)] if text.contains("PyroWave GPU decoding unavailable: ")));
     #[cfg(target_os = "macos")]
     assert!(matches!(notices.as_slice(), [Notice::DecoderFailed(text)] if text.contains("no macOS backend")));
     #[cfg(target_os = "linux")]

@@ -17,3 +17,4 @@
 - PCs are not polled while the window is minimised, and nothing is redrawn while nobody sees it.
 - A PC that is off reads as Offline at once, and an offline PC says why it did not answer.
 - Layout fixes: long PC names and cover titles, menus in a short window, Help's section chips, settings sections and presets.
+- A failure of PyroWave GPU decoding is named in the app's language, followed by the graphics driver's own words.

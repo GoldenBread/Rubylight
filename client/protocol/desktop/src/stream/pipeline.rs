@@ -138,6 +138,12 @@ pub struct Counters {
     pub audio_channels: AtomicU64,
 }
 
+/// A failure of PyroWave's GPU decoding, for the dialog that ends the stream: what happened in the
+/// user's language, then the device's own words.
+fn pyrowave_gpu_failed(error: &dyn std::fmt::Display) -> Notice {
+    Notice::DecoderFailed(format!("{}: {error}", crate::strings::tr("PyroWave GPU decoding unavailable")))
+}
+
 impl Counters {
     /// Counts one received frame's header processing time; frames without one are not counted.
     pub fn count_host_latency(&self, units: u16) {
@@ -820,9 +826,9 @@ impl Decoder {
                 DecodeStatus::Ok
             }
             Failure::Device(error) => {
-                eprintln!("nightjar: PyroWave: {error}");
+                eprintln!("nightjar: PyroWave GPU decode failed: {error}");
                 counters.decode_errors.fetch_add(1, Ordering::Relaxed);
-                self.shared.notify(Notice::DecoderFailed(error));
+                self.shared.notify(pyrowave_gpu_failed(&error));
                 DecodeStatus::NeedIdr
             }
         }
@@ -985,7 +991,7 @@ impl VideoDecoder for Decoder {
                     { self.shared.queue_limit + 2 }
                 })
                     .map(|decoder| (decoder, "PyroWave (GPU decode, SDK)"))
-                    .map_err(|error| Notice::DecoderFailed(format!("PyroWave GPU decoding is unavailable: {error}"))),
+                    .map_err(|error| pyrowave_gpu_failed(&error)),
                 None => super::pyrowave::Pyrowave::cpu(width, height, chroma444)
                     .map(|decoder| (decoder, "PyroWave (Rust, GPU wavelets)"))
                     .map_err(|error| Notice::DecoderFallback(error.into())),
