@@ -169,6 +169,8 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
                     return;
                 }
                 // A share names no PC: the held transfers go on, and the PC picked decides (joinHeld).
+            } else if (held != null && pc == null && held.kept()) {
+                // Nor does a share end failed transfers the page has not shown: picked for their PC, it shows them.
             } else if (held != null) {
                 held.end();
             }
