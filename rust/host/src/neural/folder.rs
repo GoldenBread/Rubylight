@@ -129,11 +129,14 @@ pub enum Request {
     /// Every refusal [`Request::Install`] of `package` would give, with
     /// Rubylight 3.0's AMDNR in the game's folder taken as removed already,
     /// writing nothing ([`Response::Found`]): asked before that install is
-    /// taken out, so a game that is refused keeps it.
+    /// taken out, so a game that is refused keeps it. `legacy` is the .exe
+    /// AMDNR was placed beside, which need not be the program chosen now.
     Check {
         exe: Option<PathBuf>,
         install: Option<PathBuf>,
         package: Cached,
+        #[serde(default)]
+        legacy: Option<PathBuf>,
     },
     /// Before a launch: refuse anti-cheat, finish an update cut short with
     /// `package`, and check that the placed files are still as placed.
@@ -220,6 +223,7 @@ pub fn handle(request: Request, writer: Writer, progress: &dyn Fn(u64, u64)) -> 
             exe,
             install,
             package,
+            legacy,
         } => find_exe(exe, install.as_deref()).and_then(|exe| {
             let exe = followed(exe, writer);
             package
@@ -228,7 +232,8 @@ pub fn handle(request: Request, writer: Writer, progress: &dyn Fn(u64, u64)) -> 
                 .map_err(Failure::Error)?;
             refuse_anti_cheat(&exe, install.as_deref())?;
             refuse_without_frame_generation(&exe, install.as_deref())?;
-            check(&exe, &package, writer)
+            let legacy = legacy.map(|legacy| followed(legacy, writer));
+            check(&exe, legacy.as_deref(), &package, writer)
         }),
         Request::Prepare {
             exe,
@@ -1194,10 +1199,12 @@ impl Gone {
         let relative = relative.to_ascii_lowercase();
         self.paths.contains(&relative)
     }
-    fn of_legacy(folder: &Path, writer: Writer) -> Outcome<Self> {
+    /// AMDNR in `folder` as its removal would leave it, and the files that
+    /// removal would keep there, sorted.
+    fn of_legacy(folder: &Path, writer: Writer) -> Outcome<(Self, Vec<String>)> {
         guard(folder, LEGACY_MANIFEST, writer)?;
         let Some(legacy) = manifest(folder, LEGACY_MANIFEST).map_err(Failure::Error)? else {
-            return Ok(Self::default());
+            return Ok((Self::default(), Vec::new()));
         };
         for path in legacy.files.keys().chain(&legacy.folders) {
             guard(folder, path, writer)?;
@@ -1261,15 +1268,15 @@ impl Gone {
                 paths.push(relative.to_ascii_lowercase());
             }
         }
-        if !kept.is_empty() {
-            kept.sort();
-            kept.dedup();
-            return Err(Failure::Refused(kept_text(&kept, false)));
-        }
-        Ok(Self {
-            legacy: true,
-            paths,
-        })
+        kept.sort();
+        kept.dedup();
+        Ok((
+            Self {
+                legacy: true,
+                paths,
+            },
+            kept,
+        ))
     }
 }
 
@@ -1508,10 +1515,28 @@ fn place(
 }
 
 /// [`Request::Check`]: what [`place`] refuses before it writes anything,
-/// with Rubylight 3.0's AMDNR taken as removed.
-fn check(exe: &Path, cached: &Cached, writer: Writer) -> Outcome<Response> {
-    let gone = Gone::of_legacy(folder_of(exe), writer)?;
+/// with Rubylight 3.0's AMDNR beside `legacy` (else `exe`) taken as
+/// removed. A file its removal would keep stops the install only in the
+/// folder the install goes to; AMDNR in another folder leaves this one as
+/// it is.
+fn check(exe: &Path, legacy: Option<&Path>, cached: &Cached, writer: Writer) -> Outcome<Response> {
+    let folder = legacy.map_or(folder_of(exe), folder_of);
+    let (gone, kept) = Gone::of_legacy(folder, writer)?;
+    if !same_folder(folder, folder_of(exe)) {
+        return place_or_check(exe, cached, writer, &|_, _| {}, Some(&Gone::default()));
+    }
+    if !kept.is_empty() {
+        return Err(Failure::Refused(kept_text(&kept, false)));
+    }
     place_or_check(exe, cached, writer, &|_, _| {}, Some(&gone))
+}
+
+/// Whether two folders are one: the same path, or the same folder on the disk.
+pub fn same_folder(a: &Path, b: &Path) -> bool {
+    a.as_os_str().eq_ignore_ascii_case(b.as_os_str())
+        || std::fs::canonicalize(a)
+            .ok()
+            .is_some_and(|a| std::fs::canonicalize(b).is_ok_and(|b| a == b))
 }
 
 /// [`place`], or with `check` only what it refuses before it writes,

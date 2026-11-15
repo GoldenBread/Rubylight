@@ -229,6 +229,13 @@ fn state(h: &Shared, app: &str, host_control: bool, wait: bool) -> Result<Neural
                 _ => Why::Gpu,
             }),
         )
+    } else if crate::updater::streaming(h) {
+        // Above the game's own check, which a stream holds at its last answer.
+        (
+            ControlState::TemporarilyUnavailable,
+            Some(streaming(on).into()),
+            Some(Why::Streaming),
+        )
     } else if let Some(why) = game_why.filter(|why| *why != Why::ChooseProgram && !on) {
         (
             ControlState::Unsupported,
@@ -241,12 +248,6 @@ fn state(h: &Shared, app: &str, host_control: bool, wait: bool) -> Result<Neural
             ControlState::ReadOnly,
             Some(NO_HOST_CONTROL.into()),
             Some(Why::NoHostControl),
-        )
-    } else if crate::updater::streaming(h) {
-        (
-            ControlState::TemporarilyUnavailable,
-            Some(streaming(on).into()),
-            Some(Why::Streaming),
         )
     } else if (choose || game_why == Some(Why::ChooseProgram)) && !on {
         (

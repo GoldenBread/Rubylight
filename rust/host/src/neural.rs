@@ -113,6 +113,9 @@ pub struct Neural {
     /// A test's wait for a game's own check in place of [`GAME_WAIT`].
     #[cfg(test)]
     pub game_wait: Mutex<Option<Duration>>,
+    /// The GPU check waits for this test to send or hang up, once.
+    #[cfg(test)]
+    pub probe_gate: Mutex<Option<mpsc::Receiver<()>>>,
 }
 
 #[derive(Default)]
@@ -120,12 +123,18 @@ struct State {
     /// The last GPU check's answer ([`gpu_capability`]), when it came, the
     /// settings it holds for, and whether it held the GPU that streams.
     probe: Option<(Instant, GpuSetting, Result<neural::Capable, String>, bool)>,
+    /// A GPU check asks again in the background while a read is answered
+    /// with the last one.
+    probing: bool,
     /// Whether one of the PC's GPUs is AMD's or NVIDIA's ([`offered`]),
     /// and the settings it holds for.
     offered: Option<(GpuSetting, bool)>,
     jobs: BTreeMap<String, Job>,
-    /// Each app's own check ([`game_check`]): when, for which program and
-    /// install, and what it found (None: the check itself failed).
+    /// Each app's game folder as [`game_check`] last looked: when, for
+    /// which record, and the Visual C++ runtime files beside the game.
+    lookups: BTreeMap<String, Lookup>,
+    /// Each app's own check ([`game_check`]): when, for which record, and
+    /// what it found (None: the check itself failed).
     games: BTreeMap<String, GameChecked>,
     /// The apps whose own check runs now.
     checking: BTreeSet<String>,
@@ -141,7 +150,36 @@ struct State {
     using: BTreeMap<PathBuf, usize>,
 }
 
-type GameChecked = (Instant, Option<PathBuf>, Option<PathBuf>, Option<GameCheck>);
+type GameChecked = (Instant, GameKey, Option<GameCheck>);
+
+/// What of an app's record a game's own check depends on, all read without
+/// touching the disk: its command's program, its install, and the programs
+/// the files sit beside now and sat beside in Rubylight 3.0.
+type GameKey = [Option<PathBuf>; 4];
+fn game_key(app: &App) -> GameKey {
+    [
+        command_exe(app),
+        install(app),
+        legacy_exe(app),
+        placed_exe(app),
+    ]
+}
+
+/// A look at an app's game folder ([`game_check`]).
+struct Lookup {
+    at: Instant,
+    key: GameKey,
+    /// The Visual C++ runtime files beside the game's program.
+    beside: Vec<&'static str>,
+}
+
+/// What a status read holds of an app's game folder ([`game_check`]).
+#[derive(Default)]
+struct Looked {
+    /// The runtime files beside the game's program, once looked for.
+    beside: Option<Vec<&'static str>>,
+    check: Option<GameCheck>,
+}
 
 /// What a game's own check found before any switch: what the install asks
 /// of the game itself ([`find_game`]), without the download.
@@ -257,22 +295,52 @@ fn capability_of(
     h: &Shared,
     game: Option<&Path>,
 ) -> Result<neural::Capable, (&'static str, String)> {
-    let capable = gpu_capability(h).map_err(|reason| ("gpu", reason))?;
+    let capable = gpu_capability(h, false).map_err(|reason| ("gpu", reason))?;
     neural::runtime(&vc_missing(h, game)).map_err(|reason| ("runtime", reason))?;
     Ok(capable)
 }
 
-/// [`capability`]'s GPU half, held.
-fn gpu_capability(h: &Shared) -> Result<neural::Capable, String> {
+/// [`capability`]'s GPU half, held. An answer made without the GPU that
+/// streams is asked again after a while, like a failure, so its note comes
+/// once that GPU is found. With `serve`, a read's, the answer held for these
+/// settings is given while that asks again in the background; the first
+/// answer, and one after the settings changed, is waited for.
+fn gpu_capability(h: &Shared, serve: bool) -> Result<neural::Capable, String> {
     let setting = gpu_setting(h);
-    // An answer made without the GPU that streams is asked again after a
-    // while, like a failure, so its note comes once that GPU is found.
-    if let Some((at, probed, result, whole)) = &h.neural.lock().probe
-        && *probed == setting
-        && ((result.is_ok() && *whole) || at.elapsed() < PROBE_RETRY)
     {
-        return result.clone();
+        let mut state = h.neural.lock();
+        if let Some((at, probed, result, whole)) = &state.probe
+            && *probed == setting
+        {
+            let result = result.clone();
+            if (result.is_ok() && *whole) || at.elapsed() < PROBE_RETRY {
+                return result;
+            }
+            if serve {
+                if !std::mem::replace(&mut state.probing, true) {
+                    let h = h.clone();
+                    std::thread::spawn(move || {
+                        /// Ends the background check however it ends.
+                        struct Ending<'a>(&'a Shared);
+                        impl Drop for Ending<'_> {
+                            fn drop(&mut self) {
+                                self.0.neural.lock().probing = false;
+                            }
+                        }
+                        let _ending = Ending(&h);
+                        let _ = probe_gpu(&h, setting);
+                    });
+                }
+                return result;
+            }
+        }
     }
+    probe_gpu(h, setting)
+}
+
+/// [`gpu_capability`]'s check itself, held for `setting` unless the
+/// settings changed meanwhile. Blocks.
+fn probe_gpu(h: &Shared, setting: GpuSetting) -> Result<neural::Capable, String> {
     let mut whole = true;
     let result = gpus_with(h, &setting).and_then(|(streams, adapters)| {
         whole = streams.is_ok();
@@ -304,7 +372,9 @@ fn gpu_capability(h: &Shared) -> Result<neural::Capable, String> {
             }
         }
     }
-    h.neural.lock().probe = Some((Instant::now(), setting, result.clone(), whole));
+    if gpu_setting(h) == setting {
+        h.neural.lock().probe = Some((Instant::now(), setting, result.clone(), whole));
+    }
     result
 }
 
@@ -340,103 +410,167 @@ fn gpu_setting(h: &Shared) -> GpuSetting {
 }
 
 /// The Visual C++ runtime files OptiScaler needs that this PC lacks: in
-/// none of `folders`.
-fn missing_in(folders: &[&Path]) -> Vec<&'static str> {
-    neural::VC_RUNTIME
+/// System32, and beside the game's program (`game`, its folder), where the
+/// DLL OptiScaler loads as finds them first. Blocks on the game's folder.
+fn vc_missing(h: &Shared, game: Option<&Path>) -> Vec<&'static str> {
+    let system = system_missing(h);
+    if system.is_empty() {
+        return system;
+    }
+    let beside = game.map(runtime_beside).unwrap_or_default();
+    without(system, &beside)
+}
+
+/// `missing` less the files in `found`.
+fn without(missing: Vec<&'static str>, found: &[&'static str]) -> Vec<&'static str> {
+    missing
         .into_iter()
-        .filter(|file| !folders.iter().any(|folder| folder.join(file).is_file()))
+        .filter(|file| !found.contains(file))
         .collect()
 }
 
-/// The Visual C++ runtime files OptiScaler needs that this PC lacks: in
-/// System32, and beside the game's program (`game`, its folder), where the
-/// DLL OptiScaler loads as finds them first.
+/// The Visual C++ runtime files OptiScaler needs that System32 lacks.
 #[cfg(not(test))]
-fn vc_missing(_: &Shared, game: Option<&Path>) -> Vec<&'static str> {
+fn system_missing(_: &Shared) -> Vec<&'static str> {
     let system = std::env::var_os("SystemRoot")
         .map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from)
         .join("System32");
-    missing_in(
-        &std::iter::once(system.as_path())
-            .chain(game)
-            .collect::<Vec<_>>(),
-    )
+    without(neural::VC_RUNTIME.to_vec(), &runtime_in(&system))
 }
-/// Tests miss the runtime files they name, unless the game's folder has them.
+/// Tests miss the runtime files they name.
 #[cfg(test)]
-fn vc_missing(h: &Shared, game: Option<&Path>) -> Vec<&'static str> {
-    let named = h.neural.vc_missing.lock().unwrap().clone();
-    let missing = game.map_or_else(|| neural::VC_RUNTIME.to_vec(), |game| missing_in(&[game]));
-    named
+fn system_missing(h: &Shared) -> Vec<&'static str> {
+    h.neural.vc_missing.lock().unwrap().clone()
+}
+
+/// The Visual C++ runtime files OptiScaler needs that are in `folder`.
+fn runtime_in(folder: &Path) -> Vec<&'static str> {
+    neural::VC_RUNTIME
         .into_iter()
-        .filter(|file| missing.contains(file))
+        .filter(|file| folder.join(file).is_file())
         .collect()
 }
 
-/// The game's own check for `app` (saved as `uuid`), as turning the switch on
-/// asks it before the download: its program, anti-cheat, DLSS frame
-/// generation and Valve Anti-Cheat, through the user's helper as the
-/// install does. Held per app for [`GAME_RECHECK`] while its program and
-/// install stay; a job drops it. None when the check itself failed: the
-/// switch stays usable and the install says why. Blocks.
+/// [`runtime_in`] the game's folder, which may be on a share that stalls. Blocks.
+fn runtime_beside(folder: &Path) -> Vec<&'static str> {
+    stalls(folder);
+    runtime_in(folder)
+}
+
+/// Where a look into a game's folder may wait (a network share that
+/// stalls): tests hold a folder of theirs here ([`tests::Stall`]).
+#[cfg(not(test))]
+fn stalls(_: &Path) {}
+#[cfg(test)]
+fn stalls(path: &Path) {
+    tests::stall_at(path);
+}
+
+/// What a status read knows of `app`'s game folder (saved as `uuid`): the
+/// Visual C++ runtime beside its program, and with `ask` the game's own
+/// check, as turning the switch on asks it before the download: its
+/// program, anti-cheat, DLSS frame generation and Valve Anti-Cheat, through
+/// the user's helper as the install does. The check is None when it failed:
+/// the switch stays usable and the install says why. `system` is what
+/// System32 lacks of the runtime; with nothing lacking, the game's folder
+/// is not looked into for it.
 ///
-/// One check per app runs at a time, in its own thread: a reader waits for
-/// it up to `wait` and then answers without it (None), and the check's
-/// answer is kept for the next read unless a job began meanwhile.
-fn game_check(h: &Shared, uuid: &str, app: &App, wait: Duration) -> Option<GameCheck> {
-    let exe = legacy_exe(app).or_else(|| game_command(app));
-    let install = install(app);
-    let held = |state: &State| {
-        state
-            .games
-            .get(uuid)
-            .filter(|(at, held_exe, held_install, _)| {
-                *held_exe == exe && *held_install == install && at.elapsed() < GAME_RECHECK
-            })
-            .map(|(.., check)| check.clone())
+/// Nothing here touches the game's folder, which may be on a share that
+/// stalls: one thread per app at a time finds the game's program and looks
+/// beside it, then runs the check where it decides something (`ask`, and
+/// the runtime is there). A reader waits for it up to `wait`, then answers
+/// with what it last found for the app's record, however old, and the
+/// thread's answer serves the next read. Both are held for
+/// [`GAME_RECHECK`]; a job drops the check's, and one that began before a
+/// job is not kept. While `streaming`, no check starts and the last answer
+/// is given.
+fn game_check(
+    h: &Shared,
+    uuid: &str,
+    app: &App,
+    system: &[&'static str],
+    wait: Duration,
+    ask: bool,
+    streaming: bool,
+) -> Looked {
+    let key = game_key(app);
+    let fresh = |at: &Instant| at.elapsed() < GAME_RECHECK;
+    fn held_lookup<'a>(state: &'a State, uuid: &str, key: &GameKey) -> Option<&'a Lookup> {
+        state.lookups.get(uuid).filter(|lookup| lookup.key == *key)
+    }
+    fn held_check<'a>(state: &'a State, uuid: &str, key: &GameKey) -> Option<&'a GameChecked> {
+        state.games.get(uuid).filter(|(_, held, _)| held == key)
+    }
+    // Whether what is held answers the read: the check only matters while
+    // the runtime is there.
+    let current = |state: &State| match held_lookup(state, uuid, &key) {
+        Some(lookup) if fresh(&lookup.at) => {
+            !ask || system.iter().any(|file| !lookup.beside.contains(file))
+                || held_check(state, uuid, &key).is_some_and(|(at, ..)| fresh(at))
+        }
+        _ => false,
     };
     let mut state = h.neural.lock();
-    if let Some(check) = held(&state) {
-        return check;
-    }
-    if state.checking.insert(uuid.to_owned()) {
-        let generation = state.generation.get(uuid).copied().unwrap_or(0);
-        let (h, uuid, app) = (h.clone(), uuid.to_owned(), app.clone());
-        let (exe, install) = (exe.clone(), install.clone());
-        std::thread::spawn(move || {
-            /// Ends the check however it ends, a panic too.
-            struct Ending<'a>(&'a Shared, &'a str);
-            impl Drop for Ending<'_> {
-                fn drop(&mut self) {
-                    self.0.neural.lock().checking.remove(self.1);
-                    self.0.neural.checked.notify_all();
+    let quiet = streaming
+        && (held_lookup(&state, uuid, &key).is_some() || held_check(&state, uuid, &key).is_some());
+    if !current(&state) && !quiet {
+        if state.checking.insert(uuid.to_owned()) {
+            let generation = state.generation.get(uuid).copied().unwrap_or(0);
+            let (h, uuid, app, key) = (h.clone(), uuid.to_owned(), app.clone(), key.clone());
+            let system = system.to_vec();
+            std::thread::spawn(move || {
+                /// Ends the check however it ends, a panic too.
+                struct Ending<'a>(&'a Shared, &'a str);
+                impl Drop for Ending<'_> {
+                    fn drop(&mut self) {
+                        self.0.neural.lock().checking.remove(self.1);
+                        self.0.neural.checked.notify_all();
+                    }
                 }
+                let _ending = Ending(&h, &uuid);
+                let command = game_command(&app);
+                let beside = match game_folder_with(&app, command.clone()) {
+                    Some(folder) if !system.is_empty() => runtime_beside(&folder),
+                    _ => Vec::new(),
+                };
+                let runtime = system.iter().all(|file| beside.contains(file));
+                let lookup = Lookup {
+                    at: Instant::now(),
+                    key: key.clone(),
+                    beside,
+                };
+                h.neural.lock().lookups.insert(uuid.clone(), lookup);
+                h.neural.checked.notify_all();
+                if !ask || !runtime {
+                    return;
+                }
+                let exe = legacy_exe(&app).or(command);
+                let check = run_game_check(&h, &app, exe, install(&app));
+                let mut state = h.neural.lock();
+                if state.generation.get(&uuid).copied().unwrap_or(0) == generation {
+                    state
+                        .games
+                        .insert(uuid.clone(), (Instant::now(), key, check));
+                }
+            });
+        }
+        let deadline = Instant::now() + wait;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if current(&state) || !state.checking.contains(uuid) || left.is_zero() {
+                break;
             }
-            let _ending = Ending(&h, &uuid);
-            let check = run_game_check(&h, &app, exe.clone(), install.clone());
-            let mut state = h.neural.lock();
-            if state.generation.get(&uuid).copied().unwrap_or(0) == generation {
-                state
-                    .games
-                    .insert(uuid.clone(), (Instant::now(), exe, install, check));
-            }
-        });
+            state = h
+                .neural
+                .checked
+                .wait_timeout(state, left)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
     }
-    let deadline = Instant::now() + wait;
-    loop {
-        if let Some(check) = held(&state) {
-            return check;
-        }
-        let left = deadline.saturating_duration_since(Instant::now());
-        if !state.checking.contains(uuid) || left.is_zero() {
-            return None;
-        }
-        state = h
-            .neural
-            .checked
-            .wait_timeout(state, left)
-            .unwrap_or_else(PoisonError::into_inner)
-            .0;
+    Looked {
+        beside: held_lookup(&state, uuid, &key).map(|lookup| lookup.beside.clone()),
+        check: held_check(&state, uuid, &key).and_then(|(.., check)| check.clone()),
     }
 }
 
@@ -488,11 +622,17 @@ fn game_why(reason: &str) -> &'static str {
 
 /// The folder of the game's program as far as the app tells without the
 /// helper: where the files are, else where the earlier upscaling was, else
-/// the app's command when it is a program in the install.
+/// the app's command when it is a program in the install. Blocks on the
+/// game's folder.
 fn game_folder(app: &App) -> Option<PathBuf> {
+    game_folder_with(app, None).or_else(|| game_folder_with(app, game_command(app)))
+}
+
+/// [`game_folder`], with the app's command as [`game_command`] found it.
+fn game_folder_with(app: &App, command: Option<PathBuf>) -> Option<PathBuf> {
     placed_exe(app)
         .or_else(|| legacy_exe(app))
-        .or_else(|| game_command(app))
+        .or(command)
         .and_then(|exe| exe.parent().map(Path::to_path_buf))
 }
 
@@ -582,6 +722,10 @@ fn gpus_with(h: &Shared, _: &GpuSetting) -> Result<StreamsAmong, String> {
 
 #[cfg(test)]
 fn run_probe(h: &Shared) -> Result<Probe, String> {
+    let gate = h.neural.probe_gate.lock().unwrap().take();
+    if let Some(gate) = gate {
+        let _ = gate.recv();
+    }
     h.neural
         .probe
         .lock()
@@ -1393,6 +1537,7 @@ fn command_exe(app: &App) -> Option<PathBuf> {
 fn game_command(app: &App) -> Option<PathBuf> {
     let install = install(app)?;
     command_exe(app).filter(|exe| {
+        stalls(exe);
         exe.is_file() && folder::inside(exe, &install) && folder::not_the_game(exe).is_none()
     })
 }
@@ -1662,19 +1807,33 @@ pub fn enable(h: &Shared, uuid: &str, exe: Option<PathBuf>) -> Result<(), Refusa
                 // game. Every refusal the install gives is asked before, with
                 // AMDNR taken as gone, so a game refused keeps it. Once it is
                 // out, the app no longer names it, whatever the install does
-                // next; a file of it that stayed stops the install.
+                // next; a file of it that stayed in the folder the install
+                // goes to stops the install. AMDNR beside another program
+                // (the launcher, with the game's own .exe chosen now) is
+                // judged in its own folder, and what stays there is named.
                 if let Some(legacy) = legacy_exe(&app) {
                     let check = Request::Check {
                         exe: Some(exe.clone()),
                         install: install.clone(),
                         package: package.clone(),
+                        legacy: Some(legacy.clone()),
                     };
                     match run_folder(check, &|_, _| {})? {
                         Response::Found { .. } => {}
                         other => return Ok(other),
                     }
                     update_job(&worker, &task_uuid, |job| job.phase = "remove");
+                    let elsewhere = !folder::same_folder(
+                        legacy.parent().unwrap_or(&legacy),
+                        exe.parent().unwrap_or(&exe),
+                    );
                     match remove_at(&app.name, &legacy)? {
+                        Removed::Done(kept) if !kept.is_empty() && elsewhere => {
+                            set_key(&worker, &task_uuid, LEGACY_KEY, None)?;
+                            update_job(&worker, &task_uuid, |job| {
+                                job.kept = kept.iter().map(|path| neural::shown(path)).collect();
+                            });
+                        }
                         Removed::Done(kept) if !kept.is_empty() => {
                             set_key(&worker, &task_uuid, LEGACY_KEY, None)?;
                             update_job(&worker, &task_uuid, |job| {
@@ -2341,19 +2500,33 @@ pub fn found(h: &Shared, uuid: &str) -> bool {
 /// answer waits for none.
 pub fn status_waiting(h: &Shared, uuid: &str, wait: Duration) -> Value {
     let app = app(h, uuid);
-    let capability = capability_of(h, app.as_ref().and_then(game_folder).as_deref());
+    // Only what is held and System32: the game's folder, which may be on a
+    // share that stalls, is looked into by the game's own check's thread.
+    let gpu = gpu_capability(h, true);
+    let system = system_missing(h);
     // The game's own check, only where it decides something: the switch is
-    // off, nothing runs for the game and the PC can run frame generation.
+    // off, nothing runs for the game, no stream (the check's helper would
+    // take its disk and CPU) and the PC can run frame generation.
     let idle = !h
         .neural
         .lock()
         .jobs
         .get(uuid)
         .is_some_and(|job| !matches!(job.phase, "done" | "failed"));
-    let game = app
-        .as_ref()
-        .filter(|app| idle && capability.is_ok() && !app.extra.contains_key(KEY))
-        .and_then(|app| game_check(h, uuid, app, wait));
+    let streaming = crate::updater::streaming(h);
+    let looked = app.as_ref().map_or_else(Looked::default, |app| {
+        let ask = idle && !streaming && gpu.is_ok() && !app.extra.contains_key(KEY);
+        game_check(h, uuid, app, &system, wait, ask, streaming)
+    });
+    let missing = without(system, looked.beside.as_deref().unwrap_or_default());
+    let capability = gpu.map_err(|reason| ("gpu", reason)).and_then(|capable| {
+        neural::runtime(&missing)
+            .map(|()| capable)
+            .map_err(|reason| ("runtime", reason))
+    });
+    let game = looked.check.filter(|_| {
+        idle && capability.is_ok() && app.as_ref().is_some_and(|app| !app.extra.contains_key(KEY))
+    });
     let state = h.neural.lock();
     let setting = app.as_ref().and_then(|app| app.extra.get(KEY)).cloned();
     let legacy = app

@@ -357,6 +357,11 @@ async fn the_game_is_checked_before_any_write_and_each_state_has_a_code() {
         switch(&neural(&s.get("/neural?app=fits").await)).why,
         Some(Why::Streaming)
     );
+    // A stream outranks the game's own check, which it holds at its last answer.
+    assert_eq!(
+        switch(&neural(&s.get("/neural?app=without").await)).why,
+        Some(Why::Streaming)
+    );
     let s = Setup::new();
     host(&s, "NVIDIA GeForce GTX 1080", NVIDIA, 0x1B80);
     assert_eq!(

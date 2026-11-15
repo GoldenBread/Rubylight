@@ -3728,6 +3728,40 @@ async fn a_legacy_file_changed_in_size_leaves_the_earlier_upscaling_as_it_was() 
     );
 }
 
+/// Rubylight 3.0's AMDNR beside the launcher while the game's own program
+/// is chosen in `Binaries/Win64`: the check before its removal judges the
+/// launcher's folder, where a file that changed since only stays and is
+/// named, and frame generation goes in beside the chosen program.
+#[tokio::test(flavor = "multi_thread")]
+async fn amdnr_beside_the_launcher_is_judged_in_its_own_folder() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    let temp = tempdir();
+    let launcher = game(temp.path());
+    let folder = launcher.parent().unwrap();
+    let win64 = folder.join("Binaries/Win64");
+    std::fs::create_dir_all(&win64).unwrap();
+    for name in ["Game.exe", "nvngx_dlssg.dll"] {
+        std::fs::copy(folder.join(name), win64.join(name)).unwrap();
+    }
+    let chosen = win64.join("Game.exe");
+    amdnr_host(&f, &[("game", &launcher, "winmm.dll")]);
+    std::fs::write(folder.join("LmxxfNrRuntime.pak"), "the user's model").unwrap();
+    enable(h, "game", Some(chosen.clone())).unwrap();
+    let job = ended(h, "game").await;
+    assert_eq!(job.phase, "done", "{job:?}");
+    assert_eq!(job.kept, ["LmxxfNrRuntime.pak"]);
+    assert!(!folder.join(LEGACY_MANIFEST).exists());
+    assert_eq!(
+        std::fs::read(folder.join("LmxxfNrRuntime.pak")).unwrap(),
+        b"the user's model"
+    );
+    assert!(win64.join(MANIFEST).exists());
+    let app = app(h, "game").unwrap();
+    assert_eq!(placed_exe(&app), Some(chosen));
+    assert_eq!(legacy_exe(&app), None);
+}
+
 /// The console's Remove for a game that has only Rubylight 3.0's
 /// upscaling: the job ends done, the folder is as it was and the record goes.
 #[tokio::test(flavor = "multi_thread")]
@@ -4490,4 +4524,207 @@ fn an_unknown_streaming_gpu_leaves_the_others_judged() {
         shown["reason"].as_str().unwrap().contains("can't be found"),
         "{shown}"
     );
+}
+
+/// Folders a test holds as a share that stalls: a look into one waits
+/// until its [`Stall`] drops ([`stalls`]).
+static STALLED: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+static UNSTALLED: Condvar = Condvar::new();
+
+/// A folder held as a share that stalls until dropped.
+pub(super) struct Stall(PathBuf);
+impl Stall {
+    fn new(folder: &Path) -> Self {
+        STALLED.lock().unwrap().push(folder.to_path_buf());
+        Self(folder.to_path_buf())
+    }
+}
+impl Drop for Stall {
+    fn drop(&mut self) {
+        STALLED
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|folder| *folder != self.0);
+        UNSTALLED.notify_all();
+    }
+}
+
+/// Waits while `path` is in a folder held as stalled.
+pub(super) fn stall_at(path: &Path) {
+    let mut stalled = STALLED.lock().unwrap_or_else(PoisonError::into_inner);
+    while stalled.iter().any(|folder| path.starts_with(folder)) {
+        stalled = UNSTALLED
+            .wait(stalled)
+            .unwrap_or_else(PoisonError::into_inner);
+    }
+}
+
+/// Runs `release` once `done` is sent, or after a while all the same, so
+/// a test of something that should not wait fails rather than hangs.
+fn release_later(release: impl FnOnce() + Send + 'static) -> mpsc::Sender<()> {
+    let (done, wait) = mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        let _ = wait.recv_timeout(Duration::from_secs(8));
+        release();
+    });
+    done
+}
+
+/// Waits for `uuid`'s game check to end.
+fn check_ended(h: &Shared, uuid: &str) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while h.neural.lock().checking.contains(uuid) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(!h.neural.lock().checking.contains(uuid));
+}
+
+/// Holds `uuid`'s game folder lookup and check as made longer ago than
+/// [`GAME_RECHECK`].
+fn expire(h: &Shared, uuid: &str) {
+    let old = Instant::now()
+        .checked_sub(GAME_RECHECK + Duration::from_secs(1))
+        .unwrap();
+    let mut state = h.neural.lock();
+    state.lookups.get_mut(uuid).unwrap().at = old;
+    state.games.get_mut(uuid).unwrap().0 = old;
+}
+
+/// A game folder on a share that stalls holds no status read: the game's
+/// program and the Visual C++ runtime beside it are looked for in the
+/// check's thread, the read answers from System32 within its wait, and the
+/// thread's answer serves the next read.
+#[test]
+fn a_stalled_game_folder_never_holds_a_status_read() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    *h.neural.streams.lock().unwrap() = Some(neural::Adapter {
+        name: "NVIDIA GeForce RTX 2060".into(),
+        luid: 7,
+        vendor: neural::NVIDIA,
+        device: 0x1F08,
+    });
+    h.neural
+        .vc_missing
+        .lock()
+        .unwrap()
+        .push("VCRUNTIME140_1.dll");
+    let temp = tempdir();
+    let folder = temp.path().join("stalled");
+    std::fs::create_dir_all(&folder).unwrap();
+    let exe = folder.join("Game.exe");
+    std::fs::write(&exe, "MZ game").unwrap();
+    std::fs::write(folder.join("VCRUNTIME140_1.dll"), "runtime").unwrap();
+    crate::steam::update_library(h, |apps, _| {
+        apps.push(json!({"name": "Stalled", "uuid": "stalled", "cmd": exe, "launcher-install-dir": folder}));
+        true
+    })
+    .unwrap();
+    let stall = Stall::new(&folder);
+    let done = release_later(move || drop(stall));
+    let started = Instant::now();
+    let shown = status_waiting(h, "stalled", Duration::from_millis(300));
+    let waited = started.elapsed();
+    let _ = done.send(());
+    assert!(waited < Duration::from_secs(4), "{waited:?}");
+    assert_eq!(shown["unavailable"], "runtime", "{shown}");
+    assert!(shown["game"].is_null(), "{shown}");
+    let shown = status(h, "stalled");
+    assert_eq!(shown["available"], true, "{shown}");
+    assert_eq!(shown["game"]["why"], "no_frame_generation", "{shown}");
+}
+
+/// A game's own check held longer than [`GAME_RECHECK`] still answers
+/// while it is asked again: a refused game never shows as one that can
+/// have it for a check that takes longer than the read waits.
+#[test]
+fn an_expired_game_check_answers_while_it_is_asked_again() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    let temp = tempdir();
+    checked_game(&f, temp.path());
+    assert_eq!(status(h, "without")["game"]["why"], "no_frame_generation");
+    assert_eq!(game_checks(h), 1);
+    expire(h, "without");
+    let (release, gate) = mpsc::channel::<()>();
+    *h.neural.game_gate.lock().unwrap() = Some(gate);
+    let done = release_later(move || drop(release));
+    let started = Instant::now();
+    let shown = status_waiting(h, "without", Duration::from_millis(200));
+    let waited = started.elapsed();
+    let _ = done.send(());
+    assert_eq!(shown["game"]["why"], "no_frame_generation", "{shown}");
+    assert!(waited < Duration::from_secs(4), "{waited:?}");
+    check_ended(h, "without");
+    assert_eq!(game_checks(h), 2);
+}
+
+/// A GPU answer due to be asked again is given to a read while the check
+/// runs in the background, and the new one serves the next read.
+#[test]
+fn a_gpu_answer_due_again_is_given_while_it_is_asked_again() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    let shown = status(h, "missing");
+    assert_eq!(shown["available"], false, "{shown}");
+    *h.neural.probe.lock().unwrap() = Some(Probe {
+        gpus: vec![Gpu {
+            name: "AMD Radeon RX 7900 XT".into(),
+            arch: "gfx1100".into(),
+            compute_units: 84,
+            luid: None,
+        }],
+        error: None,
+    });
+    if let Some((at, ..)) = &mut h.neural.lock().probe {
+        *at = Instant::now()
+            .checked_sub(PROBE_RETRY + Duration::from_secs(1))
+            .unwrap();
+    }
+    let (release, gate) = mpsc::channel::<()>();
+    *h.neural.probe_gate.lock().unwrap() = Some(gate);
+    let done = release_later(move || drop(release));
+    let started = Instant::now();
+    let shown = status_waiting(h, "missing", Duration::ZERO);
+    let waited = started.elapsed();
+    let _ = done.send(());
+    assert!(waited < Duration::from_secs(4), "{waited:?}");
+    assert_eq!(shown["available"], false, "{shown}");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while h.neural.lock().probing && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let shown = status(h, "missing");
+    assert_eq!(shown["available"], true, "{shown}");
+}
+
+/// A stream holds a game's own check at its last answer, however old: no
+/// helper starts beside the streamed game, and a game never checked gets
+/// none until the stream ends.
+#[test]
+fn a_stream_holds_the_game_check_at_its_last_answer() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    let temp = tempdir();
+    checked_game(&f, temp.path());
+    assert_eq!(status(h, "without")["game"]["why"], "no_frame_generation");
+    assert_eq!(game_checks(h), 1);
+    f.session(f.client(u32::MAX), butterpollo_core::session::Role::Stream);
+    expire(h, "without");
+    let shown = status(h, "without");
+    assert_eq!(shown["game"]["why"], "no_frame_generation", "{shown}");
+    let other = temp.path().join("other");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(other.join("Game.exe"), "MZ game").unwrap();
+    crate::steam::update_library(h, |apps, _| {
+        apps.push(json!({"name": "Other", "uuid": "other", "launcher-install-dir": other}));
+        true
+    })
+    .unwrap();
+    assert!(status(h, "other")["game"].is_null());
+    check_ended(h, "other");
+    assert_eq!(game_checks(h), 1);
+    h.sessions.lock().unwrap().active.clear();
+    assert_eq!(status(h, "other")["game"]["why"], "no_frame_generation");
+    assert_eq!(game_checks(h), 2);
 }
