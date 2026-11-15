@@ -122,7 +122,7 @@ Each of these sits beside the paths above; none replaces one.
 
 ## Recovery and updates
 
-An encoder that returns no frame is recreated with the same encoder settings after 250 ms, then 500 ms, 1 s and 2 s; the session ends after 20 s without output. AMF and NVENC share this policy; on NVENC a frame still unfinished 3 s after submission counts as a hung driver. After a second encoder failure in one session, colour conversion moves to the graphics queue for the rest of it. A session that hears nothing from its client for the ping timeout (10 s by default) ends as a disconnect does.
+An encoder that returns no frame is recreated with the same encoder settings after 250 ms, then 500 ms, 1 s and 2 s; the session ends after 20 s without output. AMF and NVENC share this policy; on NVENC a frame still unfinished 3 s after submission counts as a hung driver. After two encoder failures within 60 s while the compute queue converted, colour conversion moves to the graphics queue; it returns to compute after 5 minutes without an encoder failure. A session that hears nothing from its client for the ping timeout (10 s by default) ends as a disconnect does.
 
 A GPU device loss triggers a broader rebuild: capture consumers first release their encoders, images and filters, then capture and encoding restart together. This has a separate [30-second recovery deadline](../rust/host/src/stream/device_recovery.rs); repeated failures do not extend it. If the GPU stays unavailable, the stream ends while the host console remains available.
 

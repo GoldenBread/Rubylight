@@ -1360,7 +1360,6 @@ impl Encoder {
         Ok(frames)
     }
     /// Whether the first slot converts on the compute queue.
-    #[cfg(test)]
     pub(crate) fn converts_on_compute(&self) -> bool {
         self.slots
             .first()

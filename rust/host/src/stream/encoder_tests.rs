@@ -697,3 +697,43 @@ fn an_idle_full_encoder_sleeps_on_its_event_or_prediction_but_not_after_a_device
     assert!(started.elapsed() < Duration::from_secs(1));
     Ok(())
 }
+
+#[test]
+fn compute_conversion_moves_after_two_failures_within_the_window_only() {
+    let start = Instant::now();
+    let mut demotion = ComputeDemotion::default();
+    // Two failures ten minutes apart keep compute.
+    assert!(!demotion.failed(start, true));
+    assert!(!demotion.failed(start + Duration::from_secs(600), true));
+    assert!(!demotion.demoted());
+    // Failures while the graphics queue converted do not count against compute.
+    assert!(!demotion.failed(start + Duration::from_secs(610), false));
+    assert!(!demotion.demoted());
+    // A second compute failure within the window moves it, once.
+    let moved = start + Duration::from_secs(600) + COMPUTE_FAILURE_WINDOW;
+    assert!(demotion.failed(moved, true));
+    assert!(demotion.demoted());
+    assert!(!demotion.failed(moved + Duration::from_secs(1), true));
+}
+
+#[test]
+fn a_demoted_session_tries_compute_again_after_quiet_minutes() {
+    let start = Instant::now();
+    let mut demotion = ComputeDemotion::default();
+    assert!(!demotion.failed(start, true));
+    assert!(demotion.failed(start + Duration::from_secs(5), true));
+    let moved = start + Duration::from_secs(5);
+    let almost = moved + COMPUTE_RETRY_QUIET - Duration::from_secs(1);
+    assert!(!demotion.retry_due(almost));
+    // A failure on the graphics queue restarts the quiet period.
+    let failed = moved + Duration::from_secs(120);
+    assert!(!demotion.failed(failed, false));
+    assert!(!demotion.retry_due(moved + COMPUTE_RETRY_QUIET));
+    assert!(demotion.retry_due(failed + COMPUTE_RETRY_QUIET));
+    assert!(!demotion.demoted());
+    assert!(!demotion.retry_due(failed + COMPUTE_RETRY_QUIET * 2));
+    // Back on compute, one failure alone does not move it again.
+    let back = failed + COMPUTE_RETRY_QUIET;
+    assert!(!demotion.failed(back + Duration::from_secs(1), true));
+    assert!(demotion.failed(back + Duration::from_secs(30), true));
+}

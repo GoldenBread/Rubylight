@@ -44,8 +44,9 @@ pub(crate) use instance_audio::{InstanceRoutes, instance_routes, plays_on_pc, pu
 use qos::Tagged;
 #[cfg(test)]
 use video::{
-    ENCODER_RECOVERY, EncoderOutput, EncoderRecovery, OUTPUT_POLL, QueryTrace, encoder_progress,
-    next_output_poll, observe_foreground_game, poll_fits, wait_for_output,
+    COMPUTE_FAILURE_WINDOW, COMPUTE_RETRY_QUIET, ComputeDemotion, ENCODER_RECOVERY, EncoderOutput,
+    EncoderRecovery, OUTPUT_POLL, QueryTrace, encoder_progress, next_output_poll,
+    observe_foreground_game, poll_fits, wait_for_output,
 };
 #[cfg(test)]
 pub(crate) mod reconnect_tests;

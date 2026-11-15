@@ -93,8 +93,12 @@ impl SessionThread<'_> {
             progress: Some(progress.clone()),
             ..Default::default()
         };
-        // Separate encoder failures in this session, each counted once.
-        let (mut failures, mut counted_failure) = (0u32, None);
+        // Encoder failures in this session, each counted once, and whether
+        // they moved conversion off the compute queue.
+        let (mut compute_demotion, mut counted_failure) = (ComputeDemotion::default(), None);
+        // Whether the last encoder made converted on a compute queue: a
+        // failing one is dropped before its failure is counted.
+        let mut converting_on_compute = encoder.as_ref().is_some_and(|encoder| encoder.converts_on_compute());
         // The failure (its start) that was a GPU reset or device loss: not the compute path's
         // fault, so it does not count towards converting on the graphics queue.
         let mut device_loss_failure: Option<Instant> = None;
@@ -1063,6 +1067,11 @@ impl SessionThread<'_> {
                     rebuild_encoder = true;
                     tracing::info!(client = %s.launch.client.name, "amd_vpe: the converter refused every frame for a lasting reason; rebuilding the encoder without it for the rest of the session");
                 }
+                if compute_demotion.demoted() && compute_demotion.retry_due(Instant::now()) {
+                    rebuild_encoder = true;
+                    s.launch.warnings.clear("encoder_compute_recovery");
+                    tracing::info!(client = %s.launch.client.name, quiet_secs = COMPUTE_RETRY_QUIET.as_secs(), "encoder conversion returns to the compute queue: no encoder failure since it moved to the graphics queue");
+                }
                 if rebuild_encoder {
                     pacer.reset_source_phase();
                 }
@@ -1234,27 +1243,25 @@ impl SessionThread<'_> {
                 let rebuilt = rebuild_encoder;
                 if rebuild_encoder {
                     *encoder = None;
-                    // Some drivers accept the compute path at creation and
-                    // fail on it later, every time: after a second failure
-                    // in the session, convert on the graphics queue. One
-                    // failure (a game holding the GPU, a driver reset) must
-                    // not cost the rest of the session the slower path,
-                    // 6-9 ms a frame beside a GPU-bound game.
+                    // Failures while compute converted can move conversion
+                    // to the graphics queue for a while ([`ComputeDemotion`]).
                     if let Some(since) = recovery.failing
                         && counted_failure != Some(since)
                         && device_loss_failure != Some(since)
                     {
                         counted_failure = Some(since);
-                        failures += 1;
+                        if compute_demotion.failed(Instant::now(), converting_on_compute) {
+                            tracing::warn!(client = %s.launch.client.name, window_secs = COMPUTE_FAILURE_WINDOW.as_secs(), retry_quiet_secs = COMPUTE_RETRY_QUIET.as_secs(), "encoder conversion moves to the graphics queue: a second encoder failure within the window while the compute queue converted");
+                        }
                     }
                     let mut tuning = c.clone();
                     if vpe_gave_way {
                         tuning.values.insert("amd_vpe".into(), "false".into());
                     }
-                    if failures >= 2 {
+                    if compute_demotion.demoted() {
                         tuning.values.insert("gpu_compute_conversion".into(), "false".into());
                         if butterpollo_windows::compute::enabled(&c) {
-                            s.launch.warnings.set("encoder_compute_recovery", "Compute conversion disabled after repeated encoder failures; using the graphics queue for the rest of this session. A busy game can delay frames; lower game GPU load or update the graphics driver, then reconnect to retry compute.");
+                            s.launch.warnings.set("encoder_compute_recovery", "Compute conversion paused after two encoder failures within a minute; converting on the graphics queue, where a busy game can delay frames. Compute is tried again after 5 minutes without a failure; lower game GPU load or update the graphics driver if this repeats.");
                         }
                     }
                     progress.mark(crate::stall_watch::Phase::EncoderCreate);
@@ -1265,6 +1272,7 @@ impl SessionThread<'_> {
                         &s.launch.warnings,
                     ) {
                         Ok(mut created) => {
+                            converting_on_compute = created.converts_on_compute();
                             *s.encoder.write().unwrap() = created.backend().into();
                             created.set_hdr_target(s.hdr_target_nits());
                             // A mode switch can turn `auto` slices on or off.

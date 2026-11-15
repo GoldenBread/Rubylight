@@ -2970,6 +2970,10 @@ impl Encoder {
     pub fn accepts_gpu_device(&self, image: &GpuImage) -> bool {
         self.gpu.device.as_raw() == image.gpu.device.as_raw()
     }
+    /// Whether this encoder's frames are converted on the D3D12 compute queue.
+    pub fn converts_on_compute(&self) -> bool {
+        self.compute.is_some()
+    }
     /// A CPU image, such as the codec probe's, goes through the same GPU
     /// conversion as a capture.
     pub fn encode(&mut self, image: &Image, idr: bool, bitrate: u32) -> Result<Vec<Encoded>> {

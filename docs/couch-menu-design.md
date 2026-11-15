@@ -277,7 +277,7 @@ The menu PSOs and root are created on the first open, and that first-open cost i
 
 ### 6.3 D3D11 graphics fallback (`gpu_color.rs`, `amf/gpu.rs`)
 
-This path runs when textures cannot be shared, after two encoder failures, for AMF yuv444, and for the PyroWave graphics path.
+This path runs when textures cannot be shared, for 5 minutes after two encoder failures within a minute, for AMF yuv444, and for the PyroWave graphics path.
 - After each plane's normal draw, when an overlay is set, it draws a full-plane triangle with the matching `*_menu` PS: `menu_luma`, `menu_chroma`, `menu_chroma_pack_y`, `menu_chroma_pack_uv`, `menu_pyro_y`, `menu_pyro_u`, `menu_pyro_v`, `menu_pyro_444`.
 - Each `*_menu` PS calls `discard` when its target pixel is outside the rect.
 - The PS entries are the existing bodies with `menu = true`.

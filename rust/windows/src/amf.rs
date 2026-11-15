@@ -304,6 +304,10 @@ impl Encoder {
     pub fn vpe_gave_way(&self) -> bool {
         self.vpe.as_ref().is_some_and(|vpe| vpe.gave_way)
     }
+    /// Whether this encoder's frames are converted on a compute queue.
+    pub fn converts_on_compute(&self) -> bool {
+        self.compute.is_some()
+    }
     /// Start recording every output unit (see [`OutputUnit`]). With slice or
     /// tile output, `poll` then keeps a frame in flight until its last unit.
     pub fn record_units(&mut self) {

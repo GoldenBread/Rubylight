@@ -132,6 +132,66 @@ impl AdmissionTrace {
 /// stream. Moonlight keeps waiting with a frozen picture meanwhile.
 pub(super) const ENCODER_RECOVERY: Duration = Duration::from_secs(20);
 
+/// Two encoder failures this close together, while compute was converting,
+/// move the session's conversion to the graphics queue.
+pub(super) const COMPUTE_FAILURE_WINDOW: Duration = Duration::from_secs(60);
+/// A session converting on the graphics queue after failures tries compute
+/// again once this long has passed without an encoder failure.
+pub(super) const COMPUTE_RETRY_QUIET: Duration = Duration::from_secs(5 * 60);
+
+/// Whether encoder failures have moved a session's colour conversion from the
+/// compute queue to the graphics queue. Some drivers accept the compute path
+/// at creation and fail on it later, every time; a single failure (a game
+/// holding the GPU, a driver reset) must not cost the session the slower
+/// path, 6-9 ms a frame beside a GPU-bound game. Only failures while compute
+/// was converting count, two within [`COMPUTE_FAILURE_WINDOW`] move it, and
+/// [`COMPUTE_RETRY_QUIET`] without a failure moves it back.
+#[derive(Debug, Default)]
+pub(super) struct ComputeDemotion {
+    /// The last failure that counted against compute and has no pair yet.
+    last_failure: Option<Instant>,
+    /// While on the graphics queue: the move or the last failure since.
+    quiet_since: Option<Instant>,
+}
+
+impl ComputeDemotion {
+    pub(super) fn demoted(&self) -> bool {
+        self.quiet_since.is_some()
+    }
+    /// An encoder failure at `at`, `on_compute` when the failing encoder
+    /// converted on a compute queue. True when it moves the session to the
+    /// graphics queue.
+    pub(super) fn failed(&mut self, at: Instant, on_compute: bool) -> bool {
+        if let Some(quiet) = self.quiet_since.as_mut() {
+            *quiet = (*quiet).max(at);
+            return false;
+        }
+        if !on_compute {
+            return false;
+        }
+        match self.last_failure.replace(at) {
+            Some(previous) if at.saturating_duration_since(previous) <= COMPUTE_FAILURE_WINDOW => {
+                self.last_failure = None;
+                self.quiet_since = Some(at);
+                true
+            }
+            _ => false,
+        }
+    }
+    /// True once, when a session on the graphics queue has gone
+    /// [`COMPUTE_RETRY_QUIET`] without a failure and may convert on compute
+    /// again.
+    pub(super) fn retry_due(&mut self, now: Instant) -> bool {
+        match self.quiet_since {
+            Some(since) if now.saturating_duration_since(since) >= COMPUTE_RETRY_QUIET => {
+                self.quiet_since = None;
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
 pub(super) fn encoder_progress(
     failing: &mut Option<Instant>,
     produced_frame: bool,

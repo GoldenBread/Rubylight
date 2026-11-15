@@ -438,6 +438,14 @@ impl Encoder {
             Self::Nvenc(_) | Self::Pyrowave(_) => false,
         }
     }
+    /// Whether this encoder's frames are converted on a compute queue.
+    pub fn converts_on_compute(&self) -> bool {
+        match self {
+            Self::Amf(e) => e.converts_on_compute(),
+            Self::Nvenc(e) => e.converts_on_compute(),
+            Self::Pyrowave(e) => e.converts_on_compute(),
+        }
+    }
     pub fn accepts_gpu_device(&self, image: &GpuImage) -> bool {
         match self {
             Self::Amf(e) => e.accepts_gpu_device(image),
