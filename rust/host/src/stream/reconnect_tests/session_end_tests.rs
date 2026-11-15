@@ -135,7 +135,15 @@ async fn a_codec_refused_at_announce_reaches_the_device_with_its_reason() -> Res
         established(&session, &client).await,
         "the retry did not stream"
     );
-    h.end(&session, client).await?;
+    // The harness's own end sends its TEARDOWN as message 3, which the PLAY above took.
+    h.rtsp(&launch, 4, "TEARDOWN", "").await?;
+    until("normal termination delivered", WAIT * 3, || {
+        client.reason.load(Ordering::Acquire) != 0
+    })
+    .await;
+    assert_eq!(session.termination_reason(), CLOSED);
+    drop(client);
+    h.empty().await?;
     h.finish().await
 }
 
