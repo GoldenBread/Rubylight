@@ -229,6 +229,7 @@ impl Media {
         });
         let mut sink = String::new();
         let mut audio_check = Instant::now();
+        let mut capture_opened = Instant::now();
         let mut audio_error: Option<String> = None;
         let directory = audio_encoder::ffmpeg_directory()?;
         // A GameStream client may pick PCM, AC3 or E-AC3 in its ANNOUNCE; WebRTC is Opus.
@@ -393,6 +394,7 @@ impl Media {
                                     "WASAPI audio capture started"
                                 );
                                 capture = Some(value);
+                                capture_opened = Instant::now();
                                 s.launch.warnings.clear("audio_capture");
                                 audio_error = None;
                             }
@@ -443,6 +445,9 @@ impl Media {
                         "audio_capture",
                         format!("Audio capture interrupted ({error:#}); {recovery}"),
                     );
+                    // The capture is gone: open it again on the next pass, not at the next
+                    // once-a-second check.
+                    audio_check = audio_sink::reopen_check(audio_check, capture_opened);
                 },
             );
             if let (Some(cadence), Some(capturing)) = (&mut cadence, &mut capture) {

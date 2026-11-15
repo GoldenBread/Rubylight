@@ -609,3 +609,17 @@ fn gamestream_audio_wire_bytes_are_pinned() {
         }
     }
 }
+
+#[test]
+fn a_capture_that_fails_reopens_at_once_but_not_right_after_it_opened() {
+    let now = Instant::now();
+    let check = now + Duration::from_millis(800);
+    // Running for a while: the next pass opens it again.
+    let opened = now - Duration::from_secs(5);
+    assert!(reopen_check(check, opened) <= now);
+    // Opened a moment ago: the planned check stays, a second after the open.
+    let opened = now - Duration::from_millis(200);
+    assert_eq!(reopen_check(check, opened), check);
+    let opened = now - Duration::from_millis(500);
+    assert_eq!(reopen_check(check, opened), opened + REOPEN_SPACING);
+}

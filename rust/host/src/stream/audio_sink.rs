@@ -321,6 +321,17 @@ fn retire_read<C: AudioCapture>(
     old.take_discarded()
 }
 
+/// The least time between opening the capture and opening it again, so an endpoint that fails
+/// right after it opens is not reopened on every pass.
+pub(super) const REOPEN_SPACING: Duration = Duration::from_secs(1);
+
+/// When the audio thread next opens a capture a read error just closed, given the `check` it
+/// had planned and when the capture `opened`: at once, unless it opened less than
+/// [`REOPEN_SPACING`] ago.
+pub(super) fn reopen_check(check: Instant, opened: Instant) -> Instant {
+    check.min(opened + REOPEN_SPACING)
+}
+
 /// One pass of the audio thread's read side: every whole packet the capture has, with where each
 /// sits in the stream, or one packet of `silence` for a quiet endpoint. What Windows skipped,
 /// what this host trimmed and a capture that fails are all counted before the positions are
