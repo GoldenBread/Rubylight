@@ -7,7 +7,7 @@
     <string name="pair_otp_invalid_pin">Введіть чотиризначний PIN-код із ПК.</string>
     <string name="pair_otp_invalid_passphrase">Введіть парольну фразу ПК (щонайменше чотири символи).</string>
     <string name="guide_title">Підключення до ПК</string>
-    <string name="guide_text">1. Запустіть на ПК застосунок для трансляції, сумісний із Moonlight, наприклад Apollo, Rubylight, Sunshine або Vibepollo.\n2. На Android виберіть ПК у тій самій мережі.\n3. Введіть PIN-код, показаний на Android, у налаштуваннях або вебінтерфейсі ПК.</string>
+    <string name="guide_text">Nightjar знаходить ПК у цій мережі, на яких працює застосунок для трансляції, сумісний із Moonlight. Виберіть свій, потім введіть PIN-код, показаний на цьому пристрої, у налаштуваннях або вебінтерфейсі ПК.</string>
     <string name="guide_done">Зрозуміло</string>
     <string name="guide_troubleshooting">Довідка</string>
 </resources>

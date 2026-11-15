@@ -59,5 +59,12 @@
     <string name="discovery_help">Eşleştirme yardımı</string>
     <string name="wol_help_title">Wake-on-LAN’i ayarla</string>
     <string name="summary_wol_help">Uyku modundaki bir bilgisayarı uygulamadan nasıl uyandıracağınızı öğrenin.</string>
-    <string name="wol_help_text">1. Bilgisayar uyanıkken eşleştirin.\n2. Bilgisayarda Wake-on-LAN’i etkinleştirin.\n3. Yerel ağı kullanın, ardından Uyandır’ı seçin.</string>
+    <string name="wol_help_text">Uyuyan bir bilgisayarı bu cihazdan uyandırır. Bilgisayarda Wake-on-LAN’in açık ve kablolu bir ağ bağlantısının olması gerekir; bu cihaz da bilgisayar uyanıkken ona en az bir kez bağlanmış olmalıdır.</string>
+    <string name="connection_test_cant_connect">Bu bilgisayara bağlanılamıyor</string>
+    <string name="connection_test_cant_connect_step">Bilgisayarın açık ve bu ağda olduğunu kontrol edin, ardından tekrar deneyin.</string>
+    <string name="connection_test_stutters">Yayın takılacak</string>
+    <string name="connection_test_step_loss">Ağ veri kaybediyor. Bu cihazı veya bilgisayarı kabloyla bağlayın ya da yönlendiriciye yaklaşın.</string>
+    <string name="connection_test_step_jitter">Gecikme sürekli değişiyor. Kabloyla bağlanın veya bu ağdaki diğer indirmeleri duraklatın.</string>
+    <string name="connection_test_step_speed">Bağlantı, yayının gerektirdiğinden daha yavaş. Ayarlar’dan bit hızını düşürün.</string>
+    <string name="connection_test_good">Yayın için uygun</string>
 </resources>

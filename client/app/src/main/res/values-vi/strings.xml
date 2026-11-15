@@ -40,7 +40,7 @@
     <string name="pair_pairing_title">Ghép đôi với PC</string>
     <string name="pair_pairing_help">Nhập mã PIN này vào giao diện web của PC, thường ở trang PIN hoặc ghép đôi.</string>
     <string name="pair_incorrect_pin">Mã PIN bị từ chối. Hãy thử ghép đôi lại và nhập mã PIN mới hiển thị trên thiết bị này vào giao diện web của PC.</string>
-    <string name="pair_fail">Hãy hủy yêu cầu cũ trong giao diện web của PC rồi thử lại.</string>
+    <string name="pair_fail">PC đã kết thúc ghép đôi, ví dụ vì mã PIN không được nhập kịp lúc. Hãy bắt đầu ghép đôi lại và nhập mã PIN mới trên PC.</string>
     <string name="pair_already_in_progress">Hãy hoàn tất hoặc hủy yêu cầu đang chờ trên PC.</string>
     <string name="wol_pc_online">Máy tính đang trực tuyến</string>
     <string name="wol_no_mac">Hãy kết nối khi PC đang thức trước.\nXem Thiết lập Wake-on-LAN trong menu PC.</string>
@@ -122,7 +122,7 @@
     <string name="applist_refresh_error_msg">Không thể lấy danh sách ứng dụng</string>
     <string name="applist_quit_app">Đang thoát</string>
     <string name="applist_quit_success">Thoát thành công</string>
-    <string name="applist_quit_confirmation">Thoát ứng dụng đang chạy?\nTiến trình chưa lưu sẽ bị mất.</string>
+    <string name="applist_quit_confirmation">Thoát trò chơi trên PC?\nTiến trình chưa lưu trong trò chơi đang chạy sẽ bị mất.</string>
     <string name="applist_details_id">ID ứng dụng:</string>
     <string name="title_add_pc">Thêm PC</string>
     <string name="msg_add_pc">Đang kết nối với PC…</string>
@@ -397,9 +397,9 @@
     <string name="stream_end_monitor">Kết thúc phiên giám sát</string>
     <string name="stream_end_input">Kết thúc phiên đầu vào</string>
     <string name="launch_confirm_title">Xác nhận trên thiết bị này</string>
-    <string name="launch_confirm_replace">Thoát ứng dụng đang chạy và mở ứng dụng này?\nHãy xác nhận trong vòng 60 giây.</string>
+    <string name="launch_confirm_replace">Thoát trò chơi đang chạy và mở trò chơi này?\nHãy xác nhận trong vòng 60 giây.</string>
     <string name="launch_confirm_replace_named">Thoát %1$s và bắt đầu %2$s?\nHãy xác nhận trong vòng 60 giây.</string>
-    <string name="launch_confirm_terminate">Thoát ứng dụng?\nCác thiết bị giám sát/đầu vào vẫn được kết nối.\nHãy xác nhận trong vòng 60 giây.</string>
+    <string name="launch_confirm_terminate">Thoát trò chơi?\nCác thiết bị giám sát/đầu vào vẫn được kết nối.\nHãy xác nhận trong vòng 60 giây.</string>
     <string name="launch_confirm">Xác nhận</string>
     <string name="summary_about">Phiên bản %1$s · Dựa trên Moonlight (GPL-3.0)</string>
     <string name="settings_search_hint">Tìm trong cài đặt</string>
@@ -503,4 +503,18 @@
     <string name="tag_unused_refresh_switched">Không dùng ở %1$d Hz mà luồng phát chuyển màn hình này sang: không gấp 2 đến 4 lần tốc độ khung hình</string>
     <string name="tag_unused_with">Không dùng với %1$s</string>
     <string name="tag_every_frame_with">Giữ mọi khung hình không dùng với %1$s</string>
+    <string name="scut_outdated_title">Lối tắt đã lỗi thời</string>
+    <string name="scut_pc_gone">PC của lối tắt này không còn trong danh sách PC của bạn. Hãy thêm lại từ mục PC.</string>
+    <string name="scut_pc_unpaired">Thiết bị này không còn được ghép đôi với PC của lối tắt này. Hãy ghép đôi lại từ mục PC.</string>
+    <string name="scut_game_gone">Nightjar không tìm thấy trò chơi này trong các trò chơi của PC. Hãy mở thư viện để chọn lại.</string>
+    <string name="scut_unreadable">Không thể đọc lối tắt này. Hãy khởi động trò chơi từ mục PC.</string>
+    <string name="pair_unverified">PC không vượt qua bước kiểm tra danh tính nên chưa ghép đôi gì cả. Một thiết bị khác trong mạng này có thể đang giả làm PC của bạn: chỉ ghép đôi trên mạng bạn tin cậy.</string>
+    <string name="conn_stage_finding">Đang tìm PC</string>
+    <string name="conn_stage_setup">Đang thiết lập stream</string>
+    <string name="conn_stage_stream">Đang bắt đầu stream</string>
+    <string name="conn_stage_video">Đang bắt đầu video</string>
+    <string name="conn_stage_audio">Đang bắt đầu âm thanh</string>
+    <string name="conn_stage_input">Đang kết nối đầu vào</string>
+    <string name="applist_quit_fail_check">Không thể thoát %1$s. Hãy kiểm tra PC đang bật và ở trong mạng này, rồi thử lại.</string>
+    <string name="applist_quit_other_device">Một thiết bị khác đã khởi động trò chơi này nên chỉ có thể thoát từ thiết bị đó hoặc trên PC.</string>
 </resources>

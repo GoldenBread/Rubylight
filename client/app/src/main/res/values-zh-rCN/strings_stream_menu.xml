@@ -26,8 +26,7 @@
     <string name="stream_end_session">结束会话</string>
     <string name="stream_end_session_confirm">要结束电脑上的会话吗？\n电脑会恢复自己的屏幕和声音，游戏仍在电脑上运行。</string>
     <string name="stream_close_game">退出游戏</string>
-    <string name="stream_close_game_confirm">要关闭电脑上的游戏吗？
-未保存的进度将会丢失。</string>
+    <string name="stream_close_game_confirm">要退出电脑上的游戏吗？\n未保存的进度将会丢失。</string>
     <string name="stream_choice_selected">已选择</string>
     <string name="stream_choice_not_selected">未选择</string>
     <string name="stream_web_ui_leaves">打开浏览器会离开串流；游戏会继续在电脑上运行。</string>

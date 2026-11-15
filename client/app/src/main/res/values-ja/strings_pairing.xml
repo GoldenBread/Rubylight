@@ -7,7 +7,7 @@
     <string name="pair_otp_invalid_pin">PC に表示された 4 桁の PIN を入力してください。</string>
     <string name="pair_otp_invalid_passphrase">PC のパスフレーズを入力してください（4 文字以上）。</string>
     <string name="guide_title">PC に接続</string>
-    <string name="guide_text">1. PC で Apollo、Rubylight、Sunshine、Vibepollo などの Moonlight 互換ストリーミングアプリを起動します。\n2. Android で、同じネットワーク上の PC を選択します。\n3. Android に表示された PIN を、PC の設定またはウェブ UI に入力します。</string>
+    <string name="guide_text">Nightjar は、このネットワーク上で Moonlight 互換ストリーミングアプリを実行している PC を見つけます。自分の PC を選び、このデバイスに表示された PIN を PC の設定またはウェブ UI に入力してください。</string>
     <string name="guide_done">OK</string>
     <string name="guide_troubleshooting">ヘルプ</string>
 </resources>

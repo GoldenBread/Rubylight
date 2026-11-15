@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_decode_queue_frames">Кадри в черзі декодера</string>
+    <string name="summary_decode_queue_frames">Що менше кадрів, то раніше кадри в черзі відкидаються, коли декодер не встигає, тож затримка не накопичується, але зображення частіше смикається. Залиште 15, якщо тільки зображення не відстає дедалі більше на повільному пристрої. Більшість апаратних декодерів приймають кожен кадр одразу й не мають черги, тож для них цей вибір нічого не змінює.</string>
+    <string name="decode_queue_frames_3">3 кадри</string>
+    <string name="decode_queue_frames_5">5 кадрів</string>
+    <string name="decode_queue_frames_8">8 кадрів</string>
+    <string name="decode_queue_frames_15">15 кадрів</string>
+</resources>

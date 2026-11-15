@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_decode_queue_frames">Fotogrammi in attesa del decoder</string>
+    <string name="summary_decode_queue_frames">Con meno fotogrammi, quelli in attesa vengono scartati prima quando il decoder resta indietro, così il ritardo non si accumula, ma l’immagine scatta più spesso. Lascia 15, a meno che l’immagine non resti sempre più indietro su un dispositivo lento. La maggior parte dei decoder hardware riceve ogni fotogramma direttamente e non ha coda, quindi per loro la scelta non cambia nulla.</string>
+    <string name="decode_queue_frames_3">3 fotogrammi</string>
+    <string name="decode_queue_frames_5">5 fotogrammi</string>
+    <string name="decode_queue_frames_8">8 fotogrammi</string>
+    <string name="decode_queue_frames_15">15 fotogrammi</string>
+</resources>

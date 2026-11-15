@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_decode_queue_frames">Images en attente du décodeur</string>
+    <string name="summary_decode_queue_frames">Avec moins d’images, celles en attente sont abandonnées plus tôt quand le décodeur prend du retard : le délai ne peut pas s’accumuler, mais l’image saccade plus souvent. Laissez 15, sauf si l’image prend de plus en plus de retard sur un appareil lent. La plupart des décodeurs matériels prennent chaque image directement et n’ont pas de file d’attente : ce choix n’a alors aucun effet.</string>
+    <string name="decode_queue_frames_3">3 images</string>
+    <string name="decode_queue_frames_5">5 images</string>
+    <string name="decode_queue_frames_8">8 images</string>
+    <string name="decode_queue_frames_15">15 images</string>
+</resources>

@@ -40,7 +40,7 @@
     <string name="pair_pairing_title">與電腦配對</string>
     <string name="pair_pairing_help">請在電腦的網頁 UI 中輸入這組 PIN 碼，通常位於 PIN 碼或配對頁面。</string>
     <string name="pair_incorrect_pin">PIN 碼遭拒。請重新配對，並在電腦的網頁 UI 中輸入這部裝置上顯示的新 PIN 碼。</string>
-    <string name="pair_fail">請在電腦的網頁 UI 中取消舊的要求，然後重試。</string>
+    <string name="pair_fail">電腦結束了配對，例如因為沒有及時輸入 PIN 碼。請重新開始配對，並在電腦上輸入新的 PIN 碼。</string>
     <string name="pair_already_in_progress">請在電腦上完成或取消待處理的要求。</string>
     <string name="wol_pc_online">電腦已上線</string>
     <string name="wol_no_mac">請先在電腦處於喚醒狀態時連線。\n請參閱電腦選單中的 Wake-on-LAN 設定。</string>
@@ -122,7 +122,7 @@
     <string name="applist_refresh_error_msg">無法取得應用程式清單</string>
     <string name="applist_quit_app">正在結束</string>
     <string name="applist_quit_success">已成功結束</string>
-    <string name="applist_quit_confirmation">要結束執行中的應用程式嗎？\n未儲存的進度將會遺失。</string>
+    <string name="applist_quit_confirmation">要結束電腦上的遊戲嗎？\n執行中遊戲未儲存的進度將會遺失。</string>
     <string name="applist_details_id">應用程式 ID：</string>
     <string name="title_add_pc">新增電腦</string>
     <string name="msg_add_pc">正在連線至電腦…</string>
@@ -397,9 +397,9 @@
     <string name="stream_end_monitor">結束監看工作階段</string>
     <string name="stream_end_input">結束輸入工作階段</string>
     <string name="launch_confirm_title">在這部裝置上確認</string>
-    <string name="launch_confirm_replace">要結束執行中的應用程式並啟動這個應用程式嗎？\n請在 60 秒內確認。</string>
+    <string name="launch_confirm_replace">要結束執行中的遊戲並啟動這款遊戲嗎？\n請在 60 秒內確認。</string>
     <string name="launch_confirm_replace_named">要結束 %1$s 並啟動 %2$s 嗎？\n請在 60 秒內確認。</string>
-    <string name="launch_confirm_terminate">要結束應用程式嗎？\n監看/輸入用戶端會保持連線。\n請在 60 秒內確認。</string>
+    <string name="launch_confirm_terminate">要結束遊戲嗎？\n監看/輸入用戶端會保持連線。\n請在 60 秒內確認。</string>
     <string name="launch_confirm">確認</string>
     <string name="summary_about">版本 %1$s · 以 Moonlight 為基礎 (GPL-3.0)</string>
     <string name="settings_search_hint">搜尋設定</string>
@@ -503,4 +503,18 @@
     <string name="tag_unused_refresh_switched">未使用：串流將此螢幕切換到的 %1$d Hz 不是畫面更新率的 2 到 4 倍</string>
     <string name="tag_unused_with">無法與 %1$s 同時使用</string>
     <string name="tag_every_frame_with">保留每個影格無法與 %1$s 同時使用</string>
+    <string name="scut_outdated_title">捷徑已過期</string>
+    <string name="scut_pc_gone">這個捷徑對應的電腦已不在你的電腦清單中。請從電腦清單重新新增。</string>
+    <string name="scut_pc_unpaired">這部裝置已不再與這個捷徑對應的電腦配對。請從電腦清單重新配對。</string>
+    <string name="scut_game_gone">Nightjar 在電腦的遊戲中找不到這款遊戲。請開啟遊戲庫重新選擇。</string>
+    <string name="scut_unreadable">無法讀取這個捷徑。請改從電腦清單啟動遊戲。</string>
+    <string name="pair_unverified">電腦未通過身分驗證，因此沒有進行配對。這個網路上的另一台裝置可能在冒充你的電腦：請只在可信任的網路中配對。</string>
+    <string name="conn_stage_finding">正在尋找電腦</string>
+    <string name="conn_stage_setup">正在設定串流</string>
+    <string name="conn_stage_stream">正在啟動串流</string>
+    <string name="conn_stage_video">正在啟動視訊</string>
+    <string name="conn_stage_audio">正在啟動音訊</string>
+    <string name="conn_stage_input">正在連接輸入</string>
+    <string name="applist_quit_fail_check">無法結束 %1$s。請確認電腦已開機並連上這個網路，然後重試。</string>
+    <string name="applist_quit_other_device">這款遊戲由另一台裝置啟動，因此只能在那台裝置或電腦上結束。</string>
 </resources>

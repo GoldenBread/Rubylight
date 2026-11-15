@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_decode_queue_frames">等待解碼器的影格數</string>
+    <string name="summary_decode_queue_frames">影格數越少，解碼器跟不上時就越早捨棄等待中的影格，延遲不會累積，但畫面更容易卡頓。除非在較慢的裝置上畫面越來越落後，否則請保持 15。大多數硬體解碼器會直接接收每個影格、沒有佇列，因此這個選項對它們無效。</string>
+    <string name="decode_queue_frames_3">3 個影格</string>
+    <string name="decode_queue_frames_5">5 個影格</string>
+    <string name="decode_queue_frames_8">8 個影格</string>
+    <string name="decode_queue_frames_15">15 個影格</string>
+</resources>

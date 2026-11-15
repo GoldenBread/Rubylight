@@ -40,7 +40,7 @@
     <string name="pair_pairing_title">Bilgisayarla eşleştir</string>
     <string name="pair_pairing_help">Bu PIN’i bilgisayarın web arayüzüne, genellikle PIN ya da eşleştirme sayfasına girin.</string>
     <string name="pair_incorrect_pin">PIN reddedildi. Yeniden eşleştirmeyi deneyin ve bu cihazda gösterilen yeni PIN’i bilgisayarın web arayüzüne girin.</string>
-    <string name="pair_fail">Eski isteği bilgisayarın web arayüzünden iptal edin, ardından tekrar deneyin.</string>
+    <string name="pair_fail">Bilgisayar eşleştirmeyi sonlandırdı; örneğin PIN zamanında girilmedi. Eşleştirmeyi yeniden başlatın ve yeni PIN’i bilgisayara girin.</string>
     <string name="pair_already_in_progress">Bilgisayardaki bekleyen isteği tamamlayın veya iptal edin.</string>
     <string name="wol_pc_online">Bilgisayar çevrimiçi</string>
     <string name="wol_no_mac">Önce bilgisayar uyanıkken bağlanın.\nBilgisayar menüsündeki Wake-on-LAN kurulumuna bakın.</string>
@@ -122,7 +122,7 @@
     <string name="applist_refresh_error_msg">Uygulama listesi alınamadı</string>
     <string name="applist_quit_app">Çıkılıyor</string>
     <string name="applist_quit_success">Başarıyla çıkıldı</string>
-    <string name="applist_quit_confirmation">Çalışan uygulamadan çıkılsın mı?\nKaydedilmemiş ilerleme kaybolur.</string>
+    <string name="applist_quit_confirmation">Bilgisayardaki oyundan çıkılsın mı?\nÇalışan oyundaki kaydedilmemiş ilerleme kaybolur.</string>
     <string name="applist_details_id">Uygulama kimliği:</string>
     <string name="title_add_pc">Bilgisayar ekle</string>
     <string name="msg_add_pc">Bilgisayara bağlanılıyor…</string>
@@ -397,9 +397,9 @@
     <string name="stream_end_monitor">Monitör oturumunu sonlandır</string>
     <string name="stream_end_input">Giriş oturumunu sonlandır</string>
     <string name="launch_confirm_title">Bu cihazda onaylayın</string>
-    <string name="launch_confirm_replace">Çalışan uygulamadan çıkılıp bu uygulama başlatılsın mı?\n60 saniye içinde onaylayın.</string>
+    <string name="launch_confirm_replace">Çalışan oyundan çıkılıp bu oyun başlatılsın mı?\n60 saniye içinde onaylayın.</string>
     <string name="launch_confirm_replace_named">%1$s oyunundan çıkılıp %2$s başlatılsın mı?\n60 saniye içinde onaylayın.</string>
-    <string name="launch_confirm_terminate">Uygulamadan çıkılsın mı?\nMonitör/giriş istemcileri bağlı kalır.\n60 saniye içinde onaylayın.</string>
+    <string name="launch_confirm_terminate">Oyundan çıkılsın mı?\nMonitör/giriş istemcileri bağlı kalır.\n60 saniye içinde onaylayın.</string>
     <string name="launch_confirm">Onayla</string>
     <string name="summary_about">Sürüm %1$s · Moonlight tabanlı (GPL-3.0)</string>
     <string name="settings_search_hint">Ayarlarda ara</string>
@@ -503,4 +503,18 @@
     <string name="tag_unused_refresh_switched">Kullanılmıyor: yayınların bu ekranı geçirdiği %1$d Hz kare hızının 2 ila 4 katı değil</string>
     <string name="tag_unused_with">%1$s ile kullanılmıyor</string>
     <string name="tag_every_frame_with">Her kareyi tutma %1$s ile kullanılmıyor</string>
+    <string name="scut_outdated_title">Kısayol güncel değil</string>
+    <string name="scut_pc_gone">Bu kısayolun bilgisayarı artık bilgisayarlarınız arasında değil. Bilgisayarlar’dan yeniden ekleyin.</string>
+    <string name="scut_pc_unpaired">Bu cihaz artık bu kısayolun bilgisayarıyla eşleştirilmiş değil. Bilgisayarlar’dan yeniden eşleştirin.</string>
+    <string name="scut_game_gone">Nightjar bu oyunu bilgisayarın oyunları arasında bulamıyor. Yeniden seçmek için kitaplığı açın.</string>
+    <string name="scut_unreadable">Bu kısayol okunamıyor. Oyunu bunun yerine Bilgisayarlar’dan başlatın.</string>
+    <string name="pair_unverified">Bilgisayar kimlik denetimini geçemedi, bu yüzden eşleştirme yapılmadı. Bu ağdaki başka bir cihaz kendini bilgisayarınız gibi gösteriyor olabilir: yalnızca güvendiğiniz bir ağda eşleştirin.</string>
+    <string name="conn_stage_finding">Bilgisayar aranıyor</string>
+    <string name="conn_stage_setup">Yayın hazırlanıyor</string>
+    <string name="conn_stage_stream">Yayın başlatılıyor</string>
+    <string name="conn_stage_video">Video başlatılıyor</string>
+    <string name="conn_stage_audio">Ses başlatılıyor</string>
+    <string name="conn_stage_input">Giriş bağlanıyor</string>
+    <string name="applist_quit_fail_check">%1$s oyunundan çıkılamadı. Bilgisayarın açık ve bu ağda olduğunu kontrol edin, ardından tekrar deneyin.</string>
+    <string name="applist_quit_other_device">Bu oyunu başka bir cihaz başlattı, bu yüzden oyundan yalnızca o cihazdan veya bilgisayarda çıkılabilir.</string>
 </resources>

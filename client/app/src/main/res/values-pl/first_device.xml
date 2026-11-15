@@ -59,5 +59,12 @@
     <string name="discovery_help">Pomoc w parowaniu</string>
     <string name="wol_help_title">Skonfiguruj Wake-on-LAN</string>
     <string name="summary_wol_help">Dowiedz się, jak wybudzić uśpiony komputer z aplikacji.</string>
-    <string name="wol_help_text">1. Sparuj, gdy komputer jest włączony.\n2. Włącz Wake-on-LAN na komputerze.\n3. Użyj sieci LAN, a potem wybierz „Wybudź”.</string>
+    <string name="wol_help_text">Wybudza uśpiony komputer z tego urządzenia. Komputer musi mieć włączone Wake-on-LAN i przewodowe połączenie z siecią, a to urządzenie musiało już raz połączyć się z nim, gdy był wybudzony.</string>
+    <string name="connection_test_cant_connect">Nie można połączyć się z tym komputerem</string>
+    <string name="connection_test_cant_connect_step">Sprawdź, czy komputer jest włączony i w tej sieci, a potem spróbuj ponownie.</string>
+    <string name="connection_test_stutters">Strumień będzie się zacinał</string>
+    <string name="connection_test_step_loss">Sieć gubi dane. Podłącz to urządzenie lub komputer kablem albo podejdź bliżej routera.</string>
+    <string name="connection_test_step_jitter">Opóźnienie ciągle się zmienia. Połącz się kablem albo wstrzymaj inne pobierania w tej sieci.</string>
+    <string name="connection_test_step_speed">Połączenie jest wolniejsze, niż wymaga strumień. Zmniejsz szybkość transmisji w Ustawieniach.</string>
+    <string name="connection_test_good">Nadaje się do strumieniowania</string>
 </resources>

@@ -40,7 +40,7 @@
     <string name="pair_pairing_title">Associer au PC</string>
     <string name="pair_pairing_help">Saisissez ce code PIN dans l’interface Web du PC, généralement sur sa page PIN ou d’association.</string>
     <string name="pair_incorrect_pin">Code PIN refusé. Relancez l’association et saisissez le nouveau code PIN affiché sur cet appareil dans l’interface Web du PC.</string>
-    <string name="pair_fail">Annulez l’ancienne demande dans l’interface Web du PC, puis réessayez.</string>
+    <string name="pair_fail">Le PC a mis fin à l’association, par exemple parce que le code PIN n’a pas été saisi à temps. Relancez l’association et saisissez le nouveau code PIN sur le PC.</string>
     <string name="pair_already_in_progress">Terminez ou annulez la demande en attente sur le PC.</string>
     <string name="wol_pc_online">Le PC est en ligne</string>
     <string name="wol_no_mac">Connectez-vous d’abord pendant que le PC est allumé.\nVoir Configurer Wake-on-LAN dans le menu du PC.</string>
@@ -122,7 +122,7 @@
     <string name="applist_refresh_error_msg">Impossible d’obtenir la liste des applications</string>
     <string name="applist_quit_app">Fermeture de</string>
     <string name="applist_quit_success">Application fermée</string>
-    <string name="applist_quit_confirmation">Quitter l’application en cours ?\nLa progression non sauvegardée sera perdue.</string>
+    <string name="applist_quit_confirmation">Quitter le jeu sur le PC ?\nLa progression non enregistrée du jeu en cours est perdue.</string>
     <string name="applist_details_id">ID de l’application :</string>
     <string name="title_add_pc">Ajouter un PC</string>
     <string name="msg_add_pc">Connexion au PC…</string>
@@ -397,9 +397,9 @@
     <string name="stream_end_monitor">Terminer la session de visualisation</string>
     <string name="stream_end_input">Terminer la session de saisie</string>
     <string name="launch_confirm_title">Confirmer sur cet appareil</string>
-    <string name="launch_confirm_replace">Quitter l’application en cours et lancer celle-ci ?\nConfirmez dans les 60 secondes.</string>
+    <string name="launch_confirm_replace">Quitter le jeu en cours et lancer celui-ci ?\nConfirmez dans les 60 secondes.</string>
     <string name="launch_confirm_replace_named">Quitter %1$s et lancer %2$s ?\nConfirmez dans les 60 secondes.</string>
-    <string name="launch_confirm_terminate">Quitter l’application ?\nLes clients de visualisation/saisie restent connectés.\nConfirmez dans les 60 secondes.</string>
+    <string name="launch_confirm_terminate">Quitter le jeu ?\nLes clients de visualisation/saisie restent connectés.\nConfirmez dans les 60 secondes.</string>
     <string name="launch_confirm">Confirmer</string>
     <string name="summary_about">Version %1$s · Basé sur Moonlight (GPL-3.0)</string>
     <string name="settings_search_hint">Rechercher dans les paramètres</string>
@@ -503,4 +503,18 @@
     <string name="tag_unused_refresh_switched">Non utilisé aux %1$d Hz que les streams donnent à cet écran : ce n’est pas 2 à 4 fois la fréquence d’images</string>
     <string name="tag_unused_with">Non utilisé avec %1$s</string>
     <string name="tag_every_frame_with">Garder chaque image n\'est pas utilisé avec %1$s</string>
+    <string name="scut_outdated_title">Raccourci obsolète</string>
+    <string name="scut_pc_gone">Le PC de ce raccourci ne fait plus partie de vos PC. Ajoutez-le de nouveau depuis vos PC.</string>
+    <string name="scut_pc_unpaired">Cet appareil n’est plus associé au PC de ce raccourci. Associez-le de nouveau depuis vos PC.</string>
+    <string name="scut_game_gone">Nightjar ne trouve pas ce jeu parmi les jeux du PC. Ouvrez la bibliothèque pour le choisir de nouveau.</string>
+    <string name="scut_unreadable">Impossible de lire ce raccourci. Lancez plutôt le jeu depuis vos PC.</string>
+    <string name="pair_unverified">Le PC a échoué à la vérification d’identité, rien n’a donc été associé. Un autre appareil de ce réseau se fait peut-être passer pour votre PC : n’associez que sur un réseau de confiance.</string>
+    <string name="conn_stage_finding">Recherche du PC</string>
+    <string name="conn_stage_setup">Configuration du stream</string>
+    <string name="conn_stage_stream">Démarrage du stream</string>
+    <string name="conn_stage_video">Démarrage de la vidéo</string>
+    <string name="conn_stage_audio">Démarrage de l’audio</string>
+    <string name="conn_stage_input">Connexion des entrées</string>
+    <string name="applist_quit_fail_check">Impossible de quitter %1$s. Vérifiez que le PC est allumé et sur ce réseau, puis réessayez.</string>
+    <string name="applist_quit_other_device">Un autre appareil a lancé ce jeu : il ne peut être quitté que depuis cet appareil ou sur le PC.</string>
 </resources>

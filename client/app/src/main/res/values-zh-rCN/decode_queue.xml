@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_decode_queue_frames">等待解码器的帧数</string>
+    <string name="summary_decode_queue_frames">帧数越少，解码器跟不上时就越早丢弃等待中的帧，延迟不会累积，但画面更容易卡顿。除非在较慢的设备上画面越来越滞后，否则请保持 15。大多数硬件解码器直接接收每一帧、没有队列，因此此选项对它们无效。</string>
+    <string name="decode_queue_frames_3">3 帧</string>
+    <string name="decode_queue_frames_5">5 帧</string>
+    <string name="decode_queue_frames_8">8 帧</string>
+    <string name="decode_queue_frames_15">15 帧</string>
+</resources>

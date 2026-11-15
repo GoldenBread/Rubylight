@@ -55,4 +55,6 @@
     <string name="files_problem_host">Bilgisayar bir hatayla yanıt verdi.</string>
     <string name="files_save_lost">Kaydetme penceresi açıkken indirme kayboldu, bu yüzden hiçbir şey kaydedilmedi. Yeniden İndir’e dokunun.</string>
     <string name="files_partial_left">Bitmemiş bir indirme silinemedi: %1$s hâlâ kaydettiğiniz yerde ve tam dosya değil. Onu orada silin.</string>
+    <string name="files_running">Süren dosya aktarımları: %1$d</string>
+    <string name="files_busy_other_pc">Dosyalar hâlâ başka bir bilgisayarla aktarılıyor. Bitmelerini bekleyin veya o bilgisayarın Dosyalar sayfasından iptal edin, ardından tekrar deneyin.</string>
 </resources>

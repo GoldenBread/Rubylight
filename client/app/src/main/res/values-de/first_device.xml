@@ -59,5 +59,12 @@
     <string name="discovery_help">Hilfe beim Koppeln</string>
     <string name="wol_help_title">Wake-on-LAN einrichten</string>
     <string name="summary_wol_help">Wecke deinen PC mit der App aus dem Ruhezustand.</string>
-    <string name="wol_help_text">1. Kopple den eingeschalteten PC.\n2. Aktiviere Wake-on-LAN am PC.\n3. Mit LAN: „Aufwecken“ wählen.</string>
+    <string name="wol_help_text">Weckt einen schlafenden PC von diesem Gerät aus. Der PC braucht aktiviertes Wake-on-LAN und eine Netzwerkverbindung per Kabel, und dieses Gerät muss sich einmal mit ihm verbunden haben, während er wach war.</string>
+    <string name="connection_test_cant_connect">Keine Verbindung zu diesem PC möglich</string>
+    <string name="connection_test_cant_connect_step">Prüfe, ob der PC eingeschaltet und in diesem Netzwerk ist, und versuche es dann erneut.</string>
+    <string name="connection_test_stutters">Der Stream wird ruckeln</string>
+    <string name="connection_test_step_loss">Im Netzwerk gehen Daten verloren. Verbinde dieses Gerät oder den PC per Kabel oder geh näher an den Router.</string>
+    <string name="connection_test_step_jitter">Die Verzögerung schwankt ständig. Verbinde per Kabel oder pausiere andere Downloads in diesem Netzwerk.</string>
+    <string name="connection_test_step_speed">Die Verbindung ist langsamer, als der Stream braucht. Senke die Bitrate in den Einstellungen.</string>
+    <string name="connection_test_good">Gut zum Streamen</string>
 </resources>

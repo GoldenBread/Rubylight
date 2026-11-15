@@ -40,7 +40,7 @@
     <string name="pair_pairing_title">PC とペアリング</string>
     <string name="pair_pairing_help">この PIN を、PC のウェブ UI（通常は PIN またはペアリングのページ）に入力してください。</string>
     <string name="pair_incorrect_pin">PIN が拒否されました。もう一度ペアリングし、このデバイスに表示された新しい PIN を PC のウェブ UI に入力してください。</string>
-    <string name="pair_fail">PC のウェブ UI で古いリクエストをキャンセルしてから、再試行してください。</string>
+    <string name="pair_fail">PIN が時間内に入力されなかったなどの理由で、PC がペアリングを終了しました。もう一度ペアリングを始め、新しい PIN を PC に入力してください。</string>
     <string name="pair_already_in_progress">PC で保留中のリクエストを完了するか、キャンセルしてください。</string>
     <string name="wol_pc_online">PC はオンラインです</string>
     <string name="wol_no_mac">先に PC の電源が入っているときに接続してください。\nPC のメニューにある Wake-on-LAN の設定をご覧ください。</string>
@@ -122,7 +122,7 @@
     <string name="applist_refresh_error_msg">アプリ一覧を取得できませんでした</string>
     <string name="applist_quit_app">終了しています</string>
     <string name="applist_quit_success">終了しました</string>
-    <string name="applist_quit_confirmation">実行中のアプリを終了しますか？\n保存していない進行状況は失われます。</string>
+    <string name="applist_quit_confirmation">PC 上のゲームを終了しますか？\n実行中のゲームの保存していない進行状況は失われます。</string>
     <string name="applist_details_id">アプリ ID:</string>
     <string name="title_add_pc">PC を追加</string>
     <string name="msg_add_pc">PC に接続しています…</string>
@@ -397,9 +397,9 @@
     <string name="stream_end_monitor">モニターセッションを終了</string>
     <string name="stream_end_input">入力セッションを終了</string>
     <string name="launch_confirm_title">このデバイスで確認</string>
-    <string name="launch_confirm_replace">実行中のアプリを終了して、このアプリを起動しますか？\n60 秒以内に確定してください。</string>
+    <string name="launch_confirm_replace">実行中のゲームを終了して、このゲームを起動しますか？\n60 秒以内に確定してください。</string>
     <string name="launch_confirm_replace_named">%1$s を終了して %2$s を開始しますか？\n60 秒以内に確定してください。</string>
-    <string name="launch_confirm_terminate">アプリを終了しますか？\nモニター/入力クライアントは接続されたままです。\n60 秒以内に確定してください。</string>
+    <string name="launch_confirm_terminate">ゲームを終了しますか？\nモニター/入力クライアントは接続されたままです。\n60 秒以内に確定してください。</string>
     <string name="launch_confirm">確定</string>
     <string name="summary_about">バージョン %1$s · Moonlight（GPL-3.0）ベース</string>
     <string name="settings_search_hint">設定を検索</string>
@@ -503,4 +503,18 @@
     <string name="tag_unused_refresh_switched">使用されません：ストリームで切り替わるこの画面の %1$d Hz はフレームレートの 2～4 倍ではありません</string>
     <string name="tag_unused_with">%1$s とは併用できません</string>
     <string name="tag_every_frame_with">全フレームの保持は %1$s とは併用できません</string>
+    <string name="scut_outdated_title">ショートカットが古くなっています</string>
+    <string name="scut_pc_gone">このショートカットの PC は、PC 一覧にもうありません。PC 一覧から追加し直してください。</string>
+    <string name="scut_pc_unpaired">このデバイスは、このショートカットの PC とのペアリングが解除されています。PC 一覧からもう一度ペアリングしてください。</string>
+    <string name="scut_game_gone">Nightjar は PC のゲームの中にこのゲームを見つけられません。ライブラリを開いて選び直してください。</string>
+    <string name="scut_unreadable">このショートカットを読み取れません。代わりに PC 一覧からゲームを起動してください。</string>
+    <string name="pair_unverified">PC が識別情報の確認に失敗したため、ペアリングは行われませんでした。このネットワーク上の別のデバイスが PC になりすましている可能性があります。信頼できるネットワークでのみペアリングしてください。</string>
+    <string name="conn_stage_finding">PC を探しています</string>
+    <string name="conn_stage_setup">ストリームを準備しています</string>
+    <string name="conn_stage_stream">ストリームを開始しています</string>
+    <string name="conn_stage_video">映像を開始しています</string>
+    <string name="conn_stage_audio">音声を開始しています</string>
+    <string name="conn_stage_input">入力を接続しています</string>
+    <string name="applist_quit_fail_check">%1$s を終了できませんでした。PC の電源が入っていて、このネットワークにつながっていることを確認してから、もう一度お試しください。</string>
+    <string name="applist_quit_other_device">このゲームは別のデバイスが起動したため、そのデバイスか PC からのみ終了できます。</string>
 </resources>

@@ -59,5 +59,12 @@
     <string name="discovery_help">ペアリングのヘルプ</string>
     <string name="wol_help_title">Wake-on-LAN を設定</string>
     <string name="summary_wol_help">スリープ中の PC をアプリからウェイクする方法を確認します。</string>
-    <string name="wol_help_text">1. PC の電源が入っているときにペアリングします。\n2. PC で Wake-on-LAN を有効にします。\n3. LAN に接続し、[ウェイク] を選択します。</string>
+    <string name="wol_help_text">このデバイスからスリープ中の PC をウェイクします。PC で Wake-on-LAN を有効にして有線で接続し、このデバイスが PC の起動中に一度接続している必要があります。</string>
+    <string name="connection_test_cant_connect">この PC に接続できません</string>
+    <string name="connection_test_cant_connect_step">PC の電源が入っていて、このネットワークにつながっていることを確認してから、もう一度お試しください。</string>
+    <string name="connection_test_stutters">ストリーミングがカクつきます</string>
+    <string name="connection_test_step_loss">ネットワークでデータが失われています。このデバイスか PC を有線で接続するか、ルーターに近づいてください。</string>
+    <string name="connection_test_step_jitter">遅延が変動し続けています。有線で接続するか、このネットワークでの他のダウンロードを一時停止してください。</string>
+    <string name="connection_test_step_speed">接続速度がストリームに必要な速度を下回っています。「設定」でビットレートを下げてください。</string>
+    <string name="connection_test_good">ストリーミングに適しています</string>
 </resources>

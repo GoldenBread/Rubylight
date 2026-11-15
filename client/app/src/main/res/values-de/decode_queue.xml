@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_decode_queue_frames">Auf den Decoder wartende Frames</string>
+    <string name="summary_decode_queue_frames">Mit weniger Frames werden wartende Frames früher verworfen, wenn der Decoder nicht nachkommt. So staut sich keine Verzögerung auf, aber das Bild ruckelt öfter. Lass es bei 15, außer das Bild hängt auf einem langsamen Gerät immer weiter hinterher. Die meisten Hardware-Decoder übernehmen jedes Frame direkt und haben keine Warteschlange, daher ändert die Auswahl bei ihnen nichts.</string>
+    <string name="decode_queue_frames_3">3 Frames</string>
+    <string name="decode_queue_frames_5">5 Frames</string>
+    <string name="decode_queue_frames_8">8 Frames</string>
+    <string name="decode_queue_frames_15">15 Frames</string>
+</resources>

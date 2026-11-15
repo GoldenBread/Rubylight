@@ -22,12 +22,11 @@
     <string name="stream_overlay_page">Superposition et diagnostics</string>
     <string name="stream_picture_in_picture">Picture-in-picture</string>
     <string name="stream_quit_game">Quitter le jeu</string>
-    <string name="stream_quit_game_confirm">Quitter le jeu sur le PC ?\nLa progression non sauvegardée sera perdue.</string>
+    <string name="stream_quit_game_confirm">Quitter le jeu sur le PC ?\nLa progression non enregistrée est perdue.</string>
     <string name="stream_end_session">Terminer la session</string>
     <string name="stream_end_session_confirm">Terminer la session sur le PC ?\nLe PC retrouve son affichage et son audio. Le jeu continue de tourner dessus.</string>
     <string name="stream_close_game">Quitter le jeu</string>
-    <string name="stream_close_game_confirm">Fermer le jeu sur le PC ?
-La progression non enregistrée sera perdue.</string>
+    <string name="stream_close_game_confirm">Quitter le jeu sur le PC ?\nLa progression non enregistrée est perdue.</string>
     <string name="stream_choice_selected">Sélectionné</string>
     <string name="stream_choice_not_selected">Non sélectionné</string>
     <string name="stream_web_ui_leaves">Ouvrir le navigateur quitte le stream ; le jeu continue de tourner sur le PC.</string>

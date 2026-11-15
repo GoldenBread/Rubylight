@@ -59,5 +59,12 @@
     <string name="discovery_help">Ayuda con la vinculación</string>
     <string name="wol_help_title">Configurar Wake-on-LAN</string>
     <string name="summary_wol_help">Descubre cómo activar un PC en suspensión desde la aplicación.</string>
-    <string name="wol_help_text">1. Vincula el PC mientras está activo.\n2. Habilita Wake-on-LAN en el PC.\n3. Usa la LAN y elige «Activar».</string>
+    <string name="wol_help_text">Activa un PC suspendido desde este dispositivo. El PC necesita Wake-on-LAN activado y una conexión de red por cable, y este dispositivo debe haberse conectado a él una vez mientras estaba encendido.</string>
+    <string name="connection_test_cant_connect">No se puede conectar con este PC</string>
+    <string name="connection_test_cant_connect_step">Comprueba que el PC esté encendido y en esta red, y vuelve a intentarlo.</string>
+    <string name="connection_test_stutters">La transmisión dará tirones</string>
+    <string name="connection_test_step_loss">La red pierde datos. Conecta este dispositivo o el PC por cable, o acércate al router.</string>
+    <string name="connection_test_step_jitter">El retardo cambia constantemente. Conéctate por cable o pausa otras descargas en esta red.</string>
+    <string name="connection_test_step_speed">La conexión es más lenta de lo que necesita la transmisión. Baja la tasa de bits en Ajustes.</string>
+    <string name="connection_test_good">Buena para transmitir</string>
 </resources>

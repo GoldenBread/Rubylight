@@ -59,5 +59,12 @@
     <string name="discovery_help">Довідка зі сполучення</string>
     <string name="wol_help_title">Налаштування Wake-on-LAN</string>
     <string name="summary_wol_help">Дізнайтеся, як розбудити сплячий ПК із застосунку.</string>
-    <string name="wol_help_text">1. Сполучіть, поки ПК не спить.\n2. Увімкніть Wake-on-LAN на ПК.\n3. Підключіться до локальної мережі й виберіть «Розбудити».</string>
+    <string name="wol_help_text">Пробуджує сплячий ПК із цього пристрою. ПК потрібні увімкнений Wake-on-LAN і дротове підключення до мережі, а цей пристрій має хоча б раз підключитися до нього, поки він не спав.</string>
+    <string name="connection_test_cant_connect">Не вдається підключитися до цього ПК</string>
+    <string name="connection_test_cant_connect_step">Переконайтеся, що ПК увімкнений і перебуває в цій мережі, потім спробуйте ще раз.</string>
+    <string name="connection_test_stutters">Трансляція смикатиметься</string>
+    <string name="connection_test_step_loss">Мережа втрачає дані. Під’єднайте цей пристрій або ПК кабелем чи підійдіть ближче до роутера.</string>
+    <string name="connection_test_step_jitter">Затримка постійно змінюється. Під’єднайтеся кабелем або призупиніть інші завантаження в цій мережі.</string>
+    <string name="connection_test_step_speed">З’єднання повільніше, ніж потрібно для трансляції. Знизьте бітрейт у «Налаштуваннях».</string>
+    <string name="connection_test_good">Підходить для трансляції</string>
 </resources>

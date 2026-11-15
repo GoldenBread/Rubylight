@@ -7,7 +7,7 @@
     <string name="pair_otp_invalid_pin">Wpisz czterocyfrowy kod PIN z komputera.</string>
     <string name="pair_otp_invalid_passphrase">Wpisz hasło komputera (co najmniej cztery znaki).</string>
     <string name="guide_title">Połącz się z komputerem</string>
-    <string name="guide_text">1. Uruchom na komputerze aplikację do strumieniowania zgodną z Moonlight, np. Apollo, Rubylight, Sunshine lub Vibepollo.\n2. Na Androidzie wybierz komputer w tej samej sieci.\n3. Wpisz kod PIN wyświetlony na Androidzie w ustawieniach lub interfejsie WWW komputera.</string>
+    <string name="guide_text">Nightjar znajduje komputery w tej sieci, na których działa aplikacja do strumieniowania zgodna z Moonlight. Wybierz swój, a potem wpisz kod PIN wyświetlany na tym urządzeniu w ustawieniach lub interfejsie WWW komputera.</string>
     <string name="guide_done">OK</string>
     <string name="guide_troubleshooting">Pomoc</string>
 </resources>

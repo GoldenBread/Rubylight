@@ -7,7 +7,7 @@
     <string name="pair_otp_invalid_pin">Insira o PIN de quatro dígitos do PC.</string>
     <string name="pair_otp_invalid_passphrase">Insira a senha do PC (pelo menos quatro caracteres).</string>
     <string name="guide_title">Conectar ao seu PC</string>
-    <string name="guide_text">1. Inicie no PC um app de transmissão compatível com Moonlight, como Apollo, Rubylight, Sunshine ou Vibepollo.\n2. No Android, selecione o PC na mesma rede.\n3. Insira o PIN mostrado no Android nas configurações ou na interface web do PC.</string>
+    <string name="guide_text">O Nightjar encontra os PCs desta rede que executam um app de transmissão compatível com Moonlight. Escolha o seu e insira o PIN que este dispositivo mostra nas configurações ou na interface web do PC.</string>
     <string name="guide_done">Entendi</string>
     <string name="guide_troubleshooting">Ajuda</string>
 </resources>

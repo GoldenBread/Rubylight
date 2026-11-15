@@ -7,7 +7,7 @@
     <string name="pair_otp_invalid_pin">请输入电脑上显示的四位数 PIN 码。</string>
     <string name="pair_otp_invalid_passphrase">请输入电脑的口令（至少四个字符）。</string>
     <string name="guide_title">连接到你的电脑</string>
-    <string name="guide_text">1. 在电脑上启动兼容 Moonlight 的串流应用，例如 Apollo、Rubylight、Sunshine 或 Vibepollo。\n2. 在 Android 上，选择同一网络中的电脑。\n3. 在电脑的设置或网页界面中输入 Android 上显示的 PIN 码。</string>
+    <string name="guide_text">Nightjar 会查找此网络上运行兼容 Moonlight 的串流应用的电脑。选择你的电脑，然后在电脑的设置或网页界面中输入此设备上显示的 PIN 码。</string>
     <string name="guide_done">知道了</string>
     <string name="guide_troubleshooting">帮助</string>
 </resources>

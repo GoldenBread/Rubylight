@@ -40,7 +40,7 @@
     <string name="pair_pairing_title">Parear com o PC</string>
     <string name="pair_pairing_help">Insira este PIN na interface web do PC, geralmente na página de PIN ou de pareamento.</string>
     <string name="pair_incorrect_pin">PIN recusado. Tente parear novamente e insira o novo PIN mostrado neste dispositivo na interface web do PC.</string>
-    <string name="pair_fail">Cancele a solicitação antiga na interface web do PC e tente novamente.</string>
+    <string name="pair_fail">O PC encerrou o pareamento, por exemplo porque o PIN não foi inserido a tempo. Inicie o pareamento de novo e insira o novo PIN no PC.</string>
     <string name="pair_already_in_progress">Conclua ou cancele a solicitação pendente no PC.</string>
     <string name="wol_pc_online">O PC está on-line</string>
     <string name="wol_no_mac">Conecte-se primeiro com o PC ligado.\nVeja Configurar Wake-on-LAN no menu do PC.</string>
@@ -122,7 +122,7 @@
     <string name="applist_refresh_error_msg">Falha ao obter a lista de apps</string>
     <string name="applist_quit_app">Encerrando</string>
     <string name="applist_quit_success">Encerrado com sucesso</string>
-    <string name="applist_quit_confirmation">Encerrar o app em execução?\nO progresso não salvo será perdido.</string>
+    <string name="applist_quit_confirmation">Encerrar o jogo no PC?\nO progresso não salvo no jogo em execução é perdido.</string>
     <string name="applist_details_id">ID do app:</string>
     <string name="title_add_pc">Adicionar PC</string>
     <string name="msg_add_pc">Conectando ao PC…</string>
@@ -397,9 +397,9 @@
     <string name="stream_end_monitor">Encerrar sessão de monitoramento</string>
     <string name="stream_end_input">Encerrar sessão de entrada</string>
     <string name="launch_confirm_title">Confirmar neste dispositivo</string>
-    <string name="launch_confirm_replace">Encerrar o app em execução e iniciar este?\nConfirme em até 60 segundos.</string>
+    <string name="launch_confirm_replace">Encerrar o jogo em execução e iniciar este?\nConfirme em até 60 segundos.</string>
     <string name="launch_confirm_replace_named">Encerrar %1$s e iniciar %2$s?\nConfirme em até 60 segundos.</string>
-    <string name="launch_confirm_terminate">Encerrar o app?\nOs clientes de monitoramento/entrada continuam conectados.\nConfirme em até 60 segundos.</string>
+    <string name="launch_confirm_terminate">Encerrar o jogo?\nOs clientes de monitoramento/entrada continuam conectados.\nConfirme em até 60 segundos.</string>
     <string name="launch_confirm">Confirmar</string>
     <string name="summary_about">Versão %1$s · Baseado no Moonlight (GPL-3.0)</string>
     <string name="settings_search_hint">Pesquisar configurações</string>
@@ -503,4 +503,18 @@
     <string name="tag_unused_refresh_switched">Não usado com os %1$d Hz para os quais as transmissões mudam esta tela: não são de 2 a 4 vezes a taxa de quadros</string>
     <string name="tag_unused_with">Não usado com %1$s</string>
     <string name="tag_every_frame_with">Manter cada quadro não é usado com %1$s</string>
+    <string name="scut_outdated_title">Atalho desatualizado</string>
+    <string name="scut_pc_gone">O PC deste atalho não está mais entre os seus PCs. Adicione-o novamente em PCs.</string>
+    <string name="scut_pc_unpaired">Este dispositivo não está mais pareado com o PC deste atalho. Pareie-o novamente em PCs.</string>
+    <string name="scut_game_gone">O Nightjar não encontra este jogo entre os jogos do PC. Abra a biblioteca para escolhê-lo de novo.</string>
+    <string name="scut_unreadable">Não é possível ler este atalho. Inicie o jogo em PCs.</string>
+    <string name="pair_unverified">O PC não passou na verificação de identidade, então nada foi pareado. Outro dispositivo nesta rede pode estar se passando pelo seu PC: pareie somente em uma rede confiável.</string>
+    <string name="conn_stage_finding">Procurando o PC</string>
+    <string name="conn_stage_setup">Configurando a transmissão</string>
+    <string name="conn_stage_stream">Iniciando a transmissão</string>
+    <string name="conn_stage_video">Iniciando o vídeo</string>
+    <string name="conn_stage_audio">Iniciando o áudio</string>
+    <string name="conn_stage_input">Conectando a entrada</string>
+    <string name="applist_quit_fail_check">Não foi possível encerrar %1$s. Verifique se o PC está ligado e nesta rede e tente novamente.</string>
+    <string name="applist_quit_other_device">Outro dispositivo iniciou este jogo, então ele só pode ser encerrado nesse dispositivo ou no PC.</string>
 </resources>

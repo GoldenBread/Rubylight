@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_decode_queue_frames">Khung hình chờ bộ giải mã</string>
+    <string name="summary_decode_queue_frames">Ít khung hình hơn thì các khung đang chờ bị bỏ sớm hơn khi bộ giải mã bị chậm, nên độ trễ không thể dồn lại, nhưng hình ảnh giật thường xuyên hơn. Hãy để 15 trừ khi hình ảnh ngày càng trễ hơn trên thiết bị chậm. Hầu hết bộ giải mã phần cứng nhận thẳng từng khung hình và không có hàng đợi, nên lựa chọn này không có tác dụng với chúng.</string>
+    <string name="decode_queue_frames_3">3 khung hình</string>
+    <string name="decode_queue_frames_5">5 khung hình</string>
+    <string name="decode_queue_frames_8">8 khung hình</string>
+    <string name="decode_queue_frames_15">15 khung hình</string>
+</resources>

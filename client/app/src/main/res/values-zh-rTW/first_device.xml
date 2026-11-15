@@ -59,5 +59,12 @@
     <string name="discovery_help">配對說明</string>
     <string name="wol_help_title">設定 Wake-on-LAN</string>
     <string name="summary_wol_help">瞭解如何從應用程式喚醒處於睡眠狀態的電腦。</string>
-    <string name="wol_help_text">1. 在電腦處於喚醒狀態時配對。\n2. 在電腦上啟用 Wake-on-LAN。\n3. 使用區域網路，然後選擇「喚醒」。</string>
+    <string name="wol_help_text">從這部裝置喚醒睡眠中的電腦。電腦需要開啟 Wake-on-LAN 並使用有線網路連線，且這部裝置必須曾在電腦喚醒時連線過一次。</string>
+    <string name="connection_test_cant_connect">無法連線到這台電腦</string>
+    <string name="connection_test_cant_connect_step">請確認電腦已開機並連上這個網路，然後重試。</string>
+    <string name="connection_test_stutters">串流會卡頓</string>
+    <string name="connection_test_step_loss">網路正在遺失資料。請用網路線連接這部裝置或電腦，或靠近路由器。</string>
+    <string name="connection_test_step_jitter">延遲一直在變動。請使用有線連線，或暫停這個網路上的其他下載。</string>
+    <string name="connection_test_step_speed">連線速度低於串流所需。請在「設定」中降低位元速率。</string>
+    <string name="connection_test_good">適合串流</string>
 </resources>

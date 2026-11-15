@@ -2,11 +2,13 @@
 <resources>
     <string name="title_auto_reconnect">Kesilen yayınları kurtar</string>
     <string name="summary_auto_reconnect">Bağlantı koptuktan sonra aynı oyuna dakikada en fazla beş kez yeniden bağlanır; hiçbir zaman oyun başlatmaz veya oyunu değiştirmez. Açık bırakın.</string>
-    <string name="stream_recovery_attempt">Oyununuza yeniden bağlanılıyor… Deneme %1$d / %2$d. İptal etmek için Geri’ye basın.</string>
+    <string name="stream_recovery_attempt">Oyununuza yeniden bağlanılıyor… Deneme %1$d / %2$d.</string>
     <string name="stream_recovery_session_changed">Önceki oyun oturumu artık kullanılamıyor. Bir oyunun başlatılmasını veya değiştirilmesini önlemek için otomatik kurtarma durduruldu.</string>
     <string name="continue_here_browser_stream">Başka bir cihaz bu oyunu tarayıcıda oynuyor ve bu yayın onunla birlikte çalışamaz. Önce o yayını sonlandırın.</string>
     <string name="stream_recovery_exhausted">Otomatik kurtarma bir dakika içinde yeniden bağlanamadı. Oyununuz kapatılmadı. Bağlantıyı kontrol edin, ardından tekrar denemek için Yeniden bağlan’ı seçin.</string>
     <string name="stream_recovery_paused">Yayından ayrıldığınız için otomatik kurtarma durduruldu. Devam etmek için Yeniden bağlan’ı seçin.</string>
     <string name="stream_stop_timeout">Önceki bağlantı henüz kapanmadı. Birazdan tekrar deneyin.</string>
     <string name="startup_launch_timeout">PC başlatmaya %1$d saniye içinde yanıt vermedi. Tekrar deneyin veya PC\'nin ne yaptığını kontrol edin.</string>
+    <string name="stream_recovery_stopped">Otomatik yeniden bağlanma durdu. Oyununuz kapatılmadı; bağlantıyı kontrol edip tekrar deneyin.</string>
+    <string name="stream_recovery_unreachable">Bilgisayara ulaşılamadı.</string>
 </resources>

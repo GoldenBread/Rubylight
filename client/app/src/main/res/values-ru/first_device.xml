@@ -59,5 +59,12 @@
     <string name="discovery_help">Помощь с сопряжением</string>
     <string name="wol_help_title">Настройка Wake-on-LAN</string>
     <string name="summary_wol_help">Узнайте, как разбудить спящий ПК из приложения.</string>
-    <string name="wol_help_text">1. Выполните сопряжение, пока ПК включён.\n2. Включите Wake-on-LAN на ПК.\n3. Подключитесь к локальной сети и выберите «Разбудить».</string>
+    <string name="wol_help_text">Пробуждает спящий ПК с этого устройства. ПК нужны включённый Wake-on-LAN и проводное подключение к сети, а это устройство должно хотя бы раз подключиться к нему, пока он не спал.</string>
+    <string name="connection_test_cant_connect">Не удаётся подключиться к этому ПК</string>
+    <string name="connection_test_cant_connect_step">Убедитесь, что ПК включён и находится в этой сети, затем повторите попытку.</string>
+    <string name="connection_test_stutters">Трансляция будет дёргаться</string>
+    <string name="connection_test_step_loss">Сеть теряет данные. Подключите это устройство или ПК кабелем или подойдите ближе к роутеру.</string>
+    <string name="connection_test_step_jitter">Задержка постоянно меняется. Подключитесь кабелем или приостановите другие загрузки в этой сети.</string>
+    <string name="connection_test_step_speed">Соединение медленнее, чем нужно для трансляции. Снизьте битрейт в «Настройках».</string>
+    <string name="connection_test_good">Подходит для трансляции</string>
 </resources>

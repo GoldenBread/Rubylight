@@ -57,4 +57,6 @@
     <string name="files_problem_host">Komputer odpowiedział błędem.</string>
     <string name="files_save_lost">Pobieranie zostało utracone, gdy okno zapisu było otwarte, więc nic nie zapisano. Dotknij ponownie Pobierz.</string>
     <string name="files_partial_left">Nie udało się usunąć niedokończonego pobierania: %1$s nadal jest tam, gdzie go zapisano, i nie jest kompletnym plikiem. Usuń go stamtąd.</string>
+    <string name="files_running">Trwające transfery plików: %1$d</string>
+    <string name="files_busy_other_pc">Pliki są nadal przesyłane z innym komputerem. Poczekaj na nie albo anuluj je na stronie Pliki tamtego komputera, a potem spróbuj ponownie.</string>
 </resources>

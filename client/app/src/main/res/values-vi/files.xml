@@ -54,4 +54,6 @@
     <string name="files_problem_host">PC đã trả lời bằng một lỗi.</string>
     <string name="files_save_lost">Bản tải xuống bị mất khi hộp thoại lưu đang mở, nên không có gì được lưu. Hãy chạm Tải xuống lần nữa.</string>
     <string name="files_partial_left">Không thể xóa một bản tải xuống chưa xong: %1$s vẫn nằm ở nơi bạn đã lưu và không phải là tệp hoàn chỉnh. Hãy xóa nó ở đó.</string>
+    <string name="files_running">Đang truyền tệp: %1$d</string>
+    <string name="files_busy_other_pc">Tệp vẫn đang được truyền với một PC khác. Hãy chờ xong, hoặc hủy chúng trong trang Tệp của PC đó, rồi thử lại.</string>
 </resources>

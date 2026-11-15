@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_decode_queue_frames">Kod çözücüyü bekleyen kareler</string>
+    <string name="summary_decode_queue_frames">Daha az kare, kod çözücü geride kaldığında bekleyen kareleri daha erken atar; böylece gecikme birikmez, ancak görüntü daha sık takılır. Yavaş bir cihazda görüntü giderek daha fazla geride kalmıyorsa 15’te bırakın. Çoğu donanım kod çözücü her kareyi doğrudan alır ve kuyruğu yoktur, bu yüzden bu seçim onlarda hiçbir şey değiştirmez.</string>
+    <string name="decode_queue_frames_3">3 kare</string>
+    <string name="decode_queue_frames_5">5 kare</string>
+    <string name="decode_queue_frames_8">8 kare</string>
+    <string name="decode_queue_frames_15">15 kare</string>
+</resources>

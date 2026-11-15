@@ -59,5 +59,12 @@
     <string name="discovery_help">Aide à l’association</string>
     <string name="wol_help_title">Configurer Wake-on-LAN</string>
     <string name="summary_wol_help">Découvrez comment réveiller un PC en veille depuis l’appli.</string>
-    <string name="wol_help_text">1. Associez le PC pendant qu’il est allumé.\n2. Activez Wake-on-LAN sur le PC.\n3. Utilisez le réseau local, puis choisissez « Réveiller ».</string>
+    <string name="wol_help_text">Réveille un PC en veille depuis cet appareil. Le PC doit avoir Wake-on-LAN activé et une connexion réseau filaire, et cet appareil doit s’y être connecté une fois pendant qu’il était allumé.</string>
+    <string name="connection_test_cant_connect">Impossible de se connecter à ce PC</string>
+    <string name="connection_test_cant_connect_step">Vérifiez que le PC est allumé et sur ce réseau, puis réessayez.</string>
+    <string name="connection_test_stutters">Le stream va saccader</string>
+    <string name="connection_test_step_loss">Le réseau perd des données. Branchez cet appareil ou le PC par câble, ou rapprochez-vous du routeur.</string>
+    <string name="connection_test_step_jitter">Le délai varie sans cesse. Branchez-vous par câble ou mettez en pause les autres téléchargements sur ce réseau.</string>
+    <string name="connection_test_step_speed">La connexion est plus lente que ce qu’il faut au stream. Baissez le débit dans Paramètres.</string>
+    <string name="connection_test_good">Bon pour le streaming</string>
 </resources>

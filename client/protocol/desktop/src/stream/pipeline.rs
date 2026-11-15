@@ -903,7 +903,7 @@ fn no_decoder(shared: &Shared, error: &dyn std::fmt::Display) {
 }
 
 /// The end of a stream whose pictures the presenter could not show from any decoder, software last.
-const PICTURES_UNSHOWN: &str = crate::strings::en("This stream's picture cannot be shown with any decoder on this device. Choose another Video codec or Decoder in Settings, then start the stream again.");
+const PICTURES_UNSHOWN: &str = crate::strings::en("This stream’s picture cannot be shown with any decoder on this device. Choose another Video codec or Decoder in Settings, then start the stream again.");
 
 /// Says once in a toast when `decoder`'s NVDEC pictures went through memory instead of CUDA's copy.
 fn say_cuda_fallback(shared: &Shared, decoder: &mut media::VideoDecoder) {

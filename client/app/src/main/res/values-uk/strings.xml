@@ -40,7 +40,7 @@
     <string name="pair_pairing_title">Сполучення з ПК</string>
     <string name="pair_pairing_help">Введіть цей PIN-код у вебінтерфейсі ПК, зазвичай на сторінці PIN-коду або сполучення.</string>
     <string name="pair_incorrect_pin">PIN-код відхилено. Спробуйте сполучити знову й введіть новий PIN-код, показаний на цьому пристрої, у вебінтерфейсі ПК.</string>
-    <string name="pair_fail">Скасуйте старий запит у вебінтерфейсі ПК й спробуйте ще раз.</string>
+    <string name="pair_fail">ПК перервав сполучення, наприклад тому, що PIN-код не було введено вчасно. Почніть сполучення знову й введіть новий PIN-код на ПК.</string>
     <string name="pair_already_in_progress">Завершіть або скасуйте очікуваний запит на ПК.</string>
     <string name="wol_pc_online">Комп’ютер у мережі</string>
     <string name="wol_no_mac">Спершу підключіться, поки ПК не спить.\nДив. «Налаштування Wake-on-LAN» у меню ПК.</string>
@@ -122,7 +122,7 @@
     <string name="applist_refresh_error_msg">Не вдалося отримати список застосунків</string>
     <string name="applist_quit_app">Закриття</string>
     <string name="applist_quit_success">Успішно закрито</string>
-    <string name="applist_quit_confirmation">Закрити запущений застосунок?\nНезбережений прогрес буде втрачено.</string>
+    <string name="applist_quit_confirmation">Закрити гру на ПК?\nНезбережений прогрес у запущеній грі буде втрачено.</string>
     <string name="applist_details_id">ID застосунку:</string>
     <string name="title_add_pc">Додати ПК</string>
     <string name="msg_add_pc">Підключення до ПК…</string>
@@ -397,9 +397,9 @@
     <string name="stream_end_monitor">Завершити сеанс моніторингу</string>
     <string name="stream_end_input">Завершити сеанс введення</string>
     <string name="launch_confirm_title">Підтвердьте на цьому пристрої</string>
-    <string name="launch_confirm_replace">Закрити запущений застосунок і запустити цей?\nПідтвердьте протягом 60 секунд.</string>
+    <string name="launch_confirm_replace">Закрити запущену гру й запустити цю?\nПідтвердьте протягом 60 секунд.</string>
     <string name="launch_confirm_replace_named">Закрити %1$s і запустити %2$s?\nПідтвердьте протягом 60 секунд.</string>
-    <string name="launch_confirm_terminate">Закрити застосунок?\nКлієнти моніторингу/введення залишаться підключеними.\nПідтвердьте протягом 60 секунд.</string>
+    <string name="launch_confirm_terminate">Закрити гру?\nКлієнти моніторингу/введення залишаться підключеними.\nПідтвердьте протягом 60 секунд.</string>
     <string name="launch_confirm">Підтвердити</string>
     <string name="summary_about">Версія %1$s · На основі Moonlight (GPL-3.0)</string>
     <string name="settings_search_hint">Пошук у налаштуваннях</string>
@@ -503,4 +503,18 @@
     <string name="tag_unused_refresh_switched">Не використовується при %1$d Гц, на які трансляції перемикають цей екран: це не в 2–4 рази більше за частоту кадрів</string>
     <string name="tag_unused_with">Не використовується з %1$s</string>
     <string name="tag_every_frame_with">Збереження кожного кадру не використовується з %1$s</string>
+    <string name="scut_outdated_title">Ярлик застарів</string>
+    <string name="scut_pc_gone">ПК цього ярлика більше немає серед ваших ПК. Додайте його знову зі списку ПК.</string>
+    <string name="scut_pc_unpaired">Цей пристрій більше не сполучено з ПК цього ярлика. Сполучіть його знову зі списку ПК.</string>
+    <string name="scut_game_gone">Nightjar не знаходить цю гру серед ігор ПК. Відкрийте бібліотеку, щоб вибрати її знову.</string>
+    <string name="scut_unreadable">Не вдається прочитати цей ярлик. Запустіть гру зі списку ПК.</string>
+    <string name="pair_unverified">ПК не пройшов перевірку автентичності, тому сполучення не виконано. Можливо, інший пристрій у цій мережі видає себе за ваш ПК: сполучайте лише в мережі, якій довіряєте.</string>
+    <string name="conn_stage_finding">Пошук ПК</string>
+    <string name="conn_stage_setup">Підготовка трансляції</string>
+    <string name="conn_stage_stream">Запуск трансляції</string>
+    <string name="conn_stage_video">Запуск відео</string>
+    <string name="conn_stage_audio">Запуск звуку</string>
+    <string name="conn_stage_input">Підключення введення</string>
+    <string name="applist_quit_fail_check">Не вдалося закрити %1$s. Переконайтеся, що ПК увімкнений і перебуває в цій мережі, потім спробуйте ще раз.</string>
+    <string name="applist_quit_other_device">Цю гру запустив інший пристрій, тому закрити її можна лише з того пристрою або на ПК.</string>
 </resources>

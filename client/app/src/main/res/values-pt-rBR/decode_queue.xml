@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_decode_queue_frames">Quadros aguardando o decodificador</string>
+    <string name="summary_decode_queue_frames">Com menos quadros, os que aguardam são descartados mais cedo quando o decodificador fica para trás, então o atraso não se acumula, mas a imagem trava com mais frequência. Deixe em 15, a menos que a imagem fique cada vez mais atrasada em um dispositivo lento. A maioria dos decodificadores de hardware recebe cada quadro diretamente e não tem fila, então a opção não muda nada para eles.</string>
+    <string name="decode_queue_frames_3">3 quadros</string>
+    <string name="decode_queue_frames_5">5 quadros</string>
+    <string name="decode_queue_frames_8">8 quadros</string>
+    <string name="decode_queue_frames_15">15 quadros</string>
+</resources>

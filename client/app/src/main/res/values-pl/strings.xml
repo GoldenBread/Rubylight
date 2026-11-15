@@ -40,7 +40,7 @@
     <string name="pair_pairing_title">Parowanie z komputerem</string>
     <string name="pair_pairing_help">Wpisz ten kod PIN w interfejsie WWW komputera, zwykle na stronie kodu PIN lub parowania.</string>
     <string name="pair_incorrect_pin">Kod PIN odrzucony. Spróbuj sparować ponownie i wpisz nowy kod PIN wyświetlony na tym urządzeniu w interfejsie WWW komputera.</string>
-    <string name="pair_fail">Anuluj stare żądanie w interfejsie WWW komputera, a potem spróbuj ponownie.</string>
+    <string name="pair_fail">Komputer zakończył parowanie, na przykład dlatego, że kod PIN nie został wpisany na czas. Rozpocznij parowanie ponownie i wpisz nowy kod PIN na komputerze.</string>
     <string name="pair_already_in_progress">Dokończ lub anuluj oczekujące żądanie na komputerze.</string>
     <string name="wol_pc_online">Komputer jest online</string>
     <string name="wol_no_mac">Najpierw połącz się, gdy komputer jest włączony.\nZobacz Konfigurację Wake-on-LAN w menu komputera.</string>
@@ -122,7 +122,7 @@
     <string name="applist_refresh_error_msg">Nie udało się pobrać listy aplikacji</string>
     <string name="applist_quit_app">Zamykanie</string>
     <string name="applist_quit_success">Zamknięto</string>
-    <string name="applist_quit_confirmation">Zamknąć uruchomioną aplikację?\nNiezapisany postęp zostanie utracony.</string>
+    <string name="applist_quit_confirmation">Zamknąć grę na komputerze?\nNiezapisany postęp w uruchomionej grze zostanie utracony.</string>
     <string name="applist_details_id">ID aplikacji:</string>
     <string name="title_add_pc">Dodaj komputer</string>
     <string name="msg_add_pc">Łączenie z komputerem…</string>
@@ -397,9 +397,9 @@
     <string name="stream_end_monitor">Zakończ sesję monitora</string>
     <string name="stream_end_input">Zakończ sesję sterowania</string>
     <string name="launch_confirm_title">Potwierdź na tym urządzeniu</string>
-    <string name="launch_confirm_replace">Zamknąć uruchomioną aplikację i uruchomić tę?\nPotwierdź w ciągu 60 sekund.</string>
+    <string name="launch_confirm_replace">Zamknąć uruchomioną grę i uruchomić tę?\nPotwierdź w ciągu 60 sekund.</string>
     <string name="launch_confirm_replace_named">Zamknąć %1$s i uruchomić %2$s?\nPotwierdź w ciągu 60 sekund.</string>
-    <string name="launch_confirm_terminate">Zamknąć aplikację?\nKlienci monitora/sterowania pozostaną połączeni.\nPotwierdź w ciągu 60 sekund.</string>
+    <string name="launch_confirm_terminate">Zamknąć grę?\nKlienci monitora/sterowania pozostaną połączeni.\nPotwierdź w ciągu 60 sekund.</string>
     <string name="launch_confirm">Potwierdź</string>
     <string name="summary_about">Wersja %1$s · Oparte na Moonlight (GPL-3.0)</string>
     <string name="settings_search_hint">Szukaj w ustawieniach</string>
@@ -503,4 +503,18 @@
     <string name="tag_unused_refresh_switched">Nie używane przy %1$d Hz, na które strumienie przełączają ten ekran: to nie jest 2–4 razy liczba klatek na sekundę</string>
     <string name="tag_unused_with">Nie używane z %1$s</string>
     <string name="tag_every_frame_with">Zachowywanie każdej klatki nie jest używane z %1$s</string>
+    <string name="scut_outdated_title">Nieaktualny skrót</string>
+    <string name="scut_pc_gone">Komputera z tego skrótu nie ma już wśród twoich komputerów. Dodaj go ponownie w sekcji Komputery.</string>
+    <string name="scut_pc_unpaired">To urządzenie nie jest już sparowane z komputerem z tego skrótu. Sparuj je ponownie w sekcji Komputery.</string>
+    <string name="scut_game_gone">Nightjar nie może znaleźć tej gry wśród gier komputera. Otwórz bibliotekę, aby wybrać ją ponownie.</string>
+    <string name="scut_unreadable">Nie można odczytać tego skrótu. Uruchom grę z sekcji Komputery.</string>
+    <string name="pair_unverified">Komputer nie przeszedł weryfikacji tożsamości, więc nic nie zostało sparowane. Inne urządzenie w tej sieci może podszywać się pod twój komputer: paruj tylko w zaufanej sieci.</string>
+    <string name="conn_stage_finding">Wyszukiwanie komputera</string>
+    <string name="conn_stage_setup">Konfigurowanie strumienia</string>
+    <string name="conn_stage_stream">Uruchamianie strumienia</string>
+    <string name="conn_stage_video">Uruchamianie wideo</string>
+    <string name="conn_stage_audio">Uruchamianie dźwięku</string>
+    <string name="conn_stage_input">Łączenie sterowania</string>
+    <string name="applist_quit_fail_check">Nie udało się zamknąć %1$s. Sprawdź, czy komputer jest włączony i w tej sieci, a potem spróbuj ponownie.</string>
+    <string name="applist_quit_other_device">Tę grę uruchomiło inne urządzenie, więc można ją zamknąć tylko z tamtego urządzenia lub na komputerze.</string>
 </resources>

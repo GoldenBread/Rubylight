@@ -59,5 +59,12 @@
     <string name="discovery_help">Trợ giúp ghép đôi</string>
     <string name="wol_help_title">Thiết lập Wake-on-LAN</string>
     <string name="summary_wol_help">Tìm hiểu cách đánh thức PC đang ngủ từ ứng dụng.</string>
-    <string name="wol_help_text">1. Ghép đôi khi PC đang thức.\n2. Bật Wake-on-LAN trên PC.\n3. Dùng mạng LAN, rồi chọn “Đánh thức”.</string>
+    <string name="wol_help_text">Đánh thức PC đang ngủ từ thiết bị này. PC cần bật Wake-on-LAN và có kết nối mạng có dây, và thiết bị này phải từng kết nối với PC một lần khi PC đang thức.</string>
+    <string name="connection_test_cant_connect">Không thể kết nối với PC này</string>
+    <string name="connection_test_cant_connect_step">Hãy kiểm tra PC đang bật và ở trong mạng này, rồi thử lại.</string>
+    <string name="connection_test_stutters">Stream sẽ bị giật</string>
+    <string name="connection_test_step_loss">Mạng đang mất dữ liệu. Hãy nối thiết bị này hoặc PC bằng cáp, hoặc đến gần bộ định tuyến hơn.</string>
+    <string name="connection_test_step_jitter">Độ trễ liên tục thay đổi. Hãy kết nối bằng cáp, hoặc tạm dừng các lượt tải xuống khác trong mạng này.</string>
+    <string name="connection_test_step_speed">Kết nối chậm hơn mức stream cần. Hãy giảm tốc độ bit trong Cài đặt.</string>
+    <string name="connection_test_good">Tốt cho stream</string>
 </resources>

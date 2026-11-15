@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_decode_queue_frames">Klatki czekające na dekoder</string>
+    <string name="summary_decode_queue_frames">Przy mniejszej liczbie klatek czekające klatki są odrzucane wcześniej, gdy dekoder nie nadąża, więc opóźnienie nie narasta, ale obraz częściej się zacina. Zostaw 15, chyba że na wolnym urządzeniu obraz coraz bardziej się opóźnia. Większość dekoderów sprzętowych przyjmuje każdą klatkę od razu i nie ma kolejki, więc ten wybór nic dla nich nie zmienia.</string>
+    <string name="decode_queue_frames_3">3 klatki</string>
+    <string name="decode_queue_frames_5">5 klatek</string>
+    <string name="decode_queue_frames_8">8 klatek</string>
+    <string name="decode_queue_frames_15">15 klatek</string>
+</resources>

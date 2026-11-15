@@ -56,4 +56,6 @@
     <string name="files_problem_host">Il PC ha risposto con un errore.</string>
     <string name="files_save_lost">Il download è andato perso mentre la finestra di salvataggio era aperta, quindi non è stato salvato nulla. Tocca di nuovo Scarica.</string>
     <string name="files_partial_left">Non è stato possibile eliminare un download incompleto: %1$s è ancora dove l’hai salvato e non è il file completo. Eliminalo da lì.</string>
+    <string name="files_running">Trasferimenti di file in corso: %1$d</string>
+    <string name="files_busy_other_pc">Ci sono ancora file in trasferimento con un altro PC. Attendi che finiscano o annullali nella pagina File di quel PC, poi riprova.</string>
 </resources>

@@ -54,4 +54,6 @@
     <string name="files_problem_host">PC がエラーを返しました。</string>
     <string name="files_save_lost">保存ダイアログを開いている間にダウンロードが失われたため、何も保存されませんでした。もう一度ダウンロードをタップしてください。</string>
     <string name="files_partial_left">未完了のダウンロードを削除できませんでした: %1$s は保存した場所に残っており、完全なファイルではありません。そこで削除してください。</string>
+    <string name="files_running">実行中のファイル転送：%1$d</string>
+    <string name="files_busy_other_pc">別の PC とのファイル転送がまだ続いています。完了を待つか、その PC の「ファイル」ページでキャンセルしてから、もう一度お試しください。</string>
 </resources>

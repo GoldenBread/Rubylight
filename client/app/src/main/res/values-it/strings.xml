@@ -40,7 +40,7 @@
     <string name="pair_pairing_title">Accoppia con il PC</string>
     <string name="pair_pairing_help">Inserisci questo PIN nell’interfaccia web del PC, di solito nella pagina PIN o di accoppiamento.</string>
     <string name="pair_incorrect_pin">PIN rifiutato. Riprova l’accoppiamento e inserisci il nuovo PIN mostrato su questo dispositivo nell’interfaccia web del PC.</string>
-    <string name="pair_fail">Annulla la richiesta precedente nell’interfaccia web del PC, poi riprova.</string>
+    <string name="pair_fail">Il PC ha interrotto l’accoppiamento, ad esempio perché il PIN non è stato inserito in tempo. Avvia di nuovo l’accoppiamento e inserisci il nuovo PIN sul PC.</string>
     <string name="pair_already_in_progress">Completa o annulla la richiesta in sospeso sul PC.</string>
     <string name="wol_pc_online">Il PC è online</string>
     <string name="wol_no_mac">Prima connettiti mentre il PC è acceso.\nVedi Configura Wake-on-LAN nel menu del PC.</string>
@@ -122,7 +122,7 @@
     <string name="applist_refresh_error_msg">Impossibile ottenere l’elenco delle app</string>
     <string name="applist_quit_app">Chiusura</string>
     <string name="applist_quit_success">Chiusura completata</string>
-    <string name="applist_quit_confirmation">Chiudere l’app in esecuzione?\nI progressi non salvati andranno persi.</string>
+    <string name="applist_quit_confirmation">Chiudere il gioco sul PC?\nI progressi non salvati del gioco in esecuzione vanno persi.</string>
     <string name="applist_details_id">ID app:</string>
     <string name="title_add_pc">Aggiungi PC</string>
     <string name="msg_add_pc">Connessione al PC…</string>
@@ -397,9 +397,9 @@
     <string name="stream_end_monitor">Termina sessione monitor</string>
     <string name="stream_end_input">Termina sessione di input</string>
     <string name="launch_confirm_title">Conferma su questo dispositivo</string>
-    <string name="launch_confirm_replace">Chiudere l’app in esecuzione e avviare questa?\nConferma entro 60 secondi.</string>
+    <string name="launch_confirm_replace">Chiudere il gioco in esecuzione e avviare questo?\nConferma entro 60 secondi.</string>
     <string name="launch_confirm_replace_named">Chiudere %1$s e avviare %2$s?\nConferma entro 60 secondi.</string>
-    <string name="launch_confirm_terminate">Chiudere l’app?\nI client monitor/input restano connessi.\nConferma entro 60 secondi.</string>
+    <string name="launch_confirm_terminate">Chiudere il gioco?\nI client monitor/input restano connessi.\nConferma entro 60 secondi.</string>
     <string name="launch_confirm">Conferma</string>
     <string name="summary_about">Versione %1$s · Basato su Moonlight (GPL-3.0)</string>
     <string name="settings_search_hint">Cerca nelle impostazioni</string>
@@ -503,4 +503,18 @@
     <string name="tag_unused_refresh_switched">Non usato ai %1$d Hz a cui gli stream portano questo schermo: non è da 2 a 4 volte la frequenza dei fotogrammi</string>
     <string name="tag_unused_with">Non usato con %1$s</string>
     <string name="tag_every_frame_with">Mantenere ogni fotogramma non è usato con %1$s</string>
+    <string name="scut_outdated_title">Scorciatoia non aggiornata</string>
+    <string name="scut_pc_gone">Il PC di questa scorciatoia non è più tra i tuoi PC. Aggiungilo di nuovo dai tuoi PC.</string>
+    <string name="scut_pc_unpaired">Questo dispositivo non è più accoppiato con il PC di questa scorciatoia. Accoppialo di nuovo dai tuoi PC.</string>
+    <string name="scut_game_gone">Nightjar non trova questo gioco tra i giochi del PC. Apri la libreria per sceglierlo di nuovo.</string>
+    <string name="scut_unreadable">Impossibile leggere questa scorciatoia. Avvia il gioco dai tuoi PC.</string>
+    <string name="pair_unverified">Il PC non ha superato il controllo d’identità, quindi non è stato accoppiato nulla. Un altro dispositivo su questa rete potrebbe fingersi il tuo PC: accoppia solo su una rete di cui ti fidi.</string>
+    <string name="conn_stage_finding">Ricerca del PC</string>
+    <string name="conn_stage_setup">Configurazione dello stream</string>
+    <string name="conn_stage_stream">Avvio dello stream</string>
+    <string name="conn_stage_video">Avvio del video</string>
+    <string name="conn_stage_audio">Avvio dell’audio</string>
+    <string name="conn_stage_input">Connessione dell’input</string>
+    <string name="applist_quit_fail_check">Impossibile chiudere %1$s. Verifica che il PC sia acceso e su questa rete, poi riprova.</string>
+    <string name="applist_quit_other_device">Questo gioco è stato avviato da un altro dispositivo, quindi può essere chiuso solo da quel dispositivo o sul PC.</string>
 </resources>

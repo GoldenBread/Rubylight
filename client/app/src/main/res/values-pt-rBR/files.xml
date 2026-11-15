@@ -56,4 +56,6 @@
     <string name="files_problem_host">O PC respondeu com um erro.</string>
     <string name="files_save_lost">O download se perdeu enquanto a caixa de salvar estava aberta, então nada foi salvo. Toque em Baixar de novo.</string>
     <string name="files_partial_left">Não foi possível excluir um download incompleto: %1$s ainda está onde você o salvou e não é o arquivo completo. Exclua-o lá.</string>
+    <string name="files_running">Transferências de arquivos em andamento: %1$d</string>
+    <string name="files_busy_other_pc">Ainda há arquivos sendo transferidos com outro PC. Aguarde ou cancele-os na página Arquivos desse PC e tente novamente.</string>
 </resources>

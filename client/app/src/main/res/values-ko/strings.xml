@@ -40,7 +40,7 @@
     <string name="pair_pairing_title">PC와 페어링</string>
     <string name="pair_pairing_help">PC 웹 UI에 이 PIN을 입력하세요. 보통 PIN 또는 페어링 페이지에 있습니다.</string>
     <string name="pair_incorrect_pin">PIN이 거부되었습니다. 다시 페어링하고 이 기기에 표시된 새 PIN을 PC 웹 UI에 입력하세요.</string>
-    <string name="pair_fail">PC 웹 UI에서 이전 요청을 취소한 후 다시 시도하세요.</string>
+    <string name="pair_fail">PIN을 제시간에 입력하지 않는 등의 이유로 PC가 페어링을 끝냈습니다. 페어링을 다시 시작하고 새 PIN을 PC에 입력하세요.</string>
     <string name="pair_already_in_progress">PC에서 대기 중인 요청을 완료하거나 취소하세요.</string>
     <string name="wol_pc_online">컴퓨터가 온라인 상태입니다</string>
     <string name="wol_no_mac">먼저 PC가 켜져 있을 때 연결하세요.\nPC 메뉴의 Wake-on-LAN 설정을 참고하세요.</string>
@@ -122,7 +122,7 @@
     <string name="applist_refresh_error_msg">앱 목록을 가져오지 못했습니다</string>
     <string name="applist_quit_app">종료 중</string>
     <string name="applist_quit_success">종료했습니다</string>
-    <string name="applist_quit_confirmation">실행 중인 앱을 종료할까요?\n저장하지 않은 진행 상황은 사라집니다.</string>
+    <string name="applist_quit_confirmation">PC에서 게임을 종료할까요?\n실행 중인 게임의 저장하지 않은 진행 상황이 사라집니다.</string>
     <string name="applist_details_id">앱 ID:</string>
     <string name="title_add_pc">PC 추가</string>
     <string name="msg_add_pc">PC에 연결 중…</string>
@@ -397,9 +397,9 @@
     <string name="stream_end_monitor">모니터 세션 종료</string>
     <string name="stream_end_input">입력 세션 종료</string>
     <string name="launch_confirm_title">이 기기에서 확인</string>
-    <string name="launch_confirm_replace">실행 중인 앱을 종료하고 이 앱을 시작할까요?\n60초 안에 확인하세요.</string>
+    <string name="launch_confirm_replace">실행 중인 게임을 종료하고 이 게임을 시작할까요?\n60초 안에 확인하세요.</string>
     <string name="launch_confirm_replace_named">%1$s을(를) 종료하고 %2$s을(를) 시작할까요?\n60초 안에 확인하세요.</string>
-    <string name="launch_confirm_terminate">앱을 종료할까요?\n모니터/입력 클라이언트는 연결된 상태로 유지됩니다.\n60초 안에 확인하세요.</string>
+    <string name="launch_confirm_terminate">게임을 종료할까요?\n모니터/입력 클라이언트는 연결된 상태로 유지됩니다.\n60초 안에 확인하세요.</string>
     <string name="launch_confirm">확인</string>
     <string name="summary_about">버전 %1$s · Moonlight 기반(GPL-3.0)</string>
     <string name="settings_search_hint">설정 검색</string>
@@ -503,4 +503,18 @@
     <string name="tag_unused_refresh_switched">사용 안함: 스트림이 이 화면을 전환하는 %1$d Hz는 프레임 속도의 2~4배가 아닙니다</string>
     <string name="tag_unused_with">%1$s에서는 사용할 수 없음</string>
     <string name="tag_every_frame_with">모든 프레임 유지는 %1$s에서 사용할 수 없음</string>
+    <string name="scut_outdated_title">오래된 바로가기</string>
+    <string name="scut_pc_gone">이 바로가기의 PC가 더 이상 PC 목록에 없습니다. PC 목록에서 다시 추가하세요.</string>
+    <string name="scut_pc_unpaired">이 기기는 더 이상 이 바로가기의 PC와 페어링되어 있지 않습니다. PC 목록에서 다시 페어링하세요.</string>
+    <string name="scut_game_gone">Nightjar가 PC의 게임에서 이 게임을 찾을 수 없습니다. 라이브러리를 열어 다시 선택하세요.</string>
+    <string name="scut_unreadable">이 바로가기를 읽을 수 없습니다. 대신 PC 목록에서 게임을 시작하세요.</string>
+    <string name="pair_unverified">PC가 ID 확인에 실패해 페어링되지 않았습니다. 이 네트워크의 다른 기기가 PC로 위장하고 있을 수 있으니 신뢰할 수 있는 네트워크에서만 페어링하세요.</string>
+    <string name="conn_stage_finding">PC 찾는 중</string>
+    <string name="conn_stage_setup">스트림 설정 중</string>
+    <string name="conn_stage_stream">스트림 시작 중</string>
+    <string name="conn_stage_video">비디오 시작 중</string>
+    <string name="conn_stage_audio">오디오 시작 중</string>
+    <string name="conn_stage_input">입력 연결 중</string>
+    <string name="applist_quit_fail_check">%1$s을(를) 종료하지 못했습니다. PC가 켜져 있고 이 네트워크에 연결되어 있는지 확인한 다음 다시 시도하세요.</string>
+    <string name="applist_quit_other_device">다른 기기에서 시작한 게임이므로 그 기기나 PC에서만 종료할 수 있습니다.</string>
 </resources>

@@ -56,4 +56,6 @@
     <string name="files_problem_host">Le PC a répondu par une erreur.</string>
     <string name="files_save_lost">Le téléchargement a été perdu pendant que la boîte de dialogue d’enregistrement était ouverte, rien n’a donc été enregistré. Touchez à nouveau Télécharger.</string>
     <string name="files_partial_left">Un téléchargement inachevé n’a pas pu être supprimé : %1$s se trouve toujours là où vous l’avez enregistré, et ce n’est pas le fichier complet. Supprimez-le à cet endroit.</string>
+    <string name="files_running">Transferts de fichiers en cours : %1$d</string>
+    <string name="files_busy_other_pc">Des fichiers sont encore en cours de transfert avec un autre PC. Attendez la fin ou annulez-les sur la page Fichiers de ce PC, puis réessayez.</string>
 </resources>

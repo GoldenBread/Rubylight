@@ -40,7 +40,7 @@
     <string name="pair_pairing_title">Mit PC koppeln</string>
     <string name="pair_pairing_help">Gib diese PIN in der Web-UI des PCs ein, meist auf der PIN- oder Kopplungsseite.</string>
     <string name="pair_incorrect_pin">PIN abgelehnt. Kopple erneut und gib die neue PIN dieses Geräts in der Web-UI des PCs ein.</string>
-    <string name="pair_fail">Brich die alte Anfrage in der Web-UI des PCs ab und versuch es erneut.</string>
+    <string name="pair_fail">Der PC hat das Koppeln beendet, zum Beispiel weil die PIN nicht rechtzeitig eingegeben wurde. Starte das Koppeln erneut und gib die neue PIN am PC ein.</string>
     <string name="pair_already_in_progress">Schließe die offene Anfrage am PC ab oder brich sie ab.</string>
     <string name="wol_pc_online">PC ist online</string>
     <string name="wol_no_mac">Verbinde dich mit dem wachen PC.\nWake-on-LAN-Hilfe: im PC-Menü.</string>
@@ -122,7 +122,7 @@
     <string name="applist_refresh_error_msg">App-Liste konnte nicht geladen werden</string>
     <string name="applist_quit_app">Wird beendet</string>
     <string name="applist_quit_success">App beendet</string>
-    <string name="applist_quit_confirmation">App beenden?\nUngespeicherter Fortschritt geht verloren.</string>
+    <string name="applist_quit_confirmation">Spiel auf dem PC beenden?\nNicht gespeicherter Fortschritt im laufenden Spiel geht verloren.</string>
     <string name="applist_details_id">App-ID:</string>
     <string name="title_add_pc">PC hinzufügen</string>
     <string name="msg_add_pc">Verbinde mit PC…</string>
@@ -397,9 +397,9 @@
     <string name="stream_end_monitor">Zuschauen beenden</string>
     <string name="stream_end_input">Steuerung beenden</string>
     <string name="launch_confirm_title">Hier bestätigen</string>
-    <string name="launch_confirm_replace">App beenden und neue starten?\nBestätige in 60 Sekunden.</string>
+    <string name="launch_confirm_replace">Laufendes Spiel beenden und dieses starten?\nBestätige in 60 Sekunden.</string>
     <string name="launch_confirm_replace_named">%1$s beenden und %2$s starten?\nBestätige in 60 Sekunden.</string>
-    <string name="launch_confirm_terminate">App beenden? Zuschauen und Steuern bleiben aktiv.\nBestätige in 60 Sekunden.</string>
+    <string name="launch_confirm_terminate">Spiel beenden?\nZuschauer- und Eingabe-Clients bleiben verbunden.\nBestätige in 60 Sekunden.</string>
     <string name="launch_confirm">Bestätigen</string>
     <string name="summary_about">Version %1$s · Basiert auf Moonlight (GPL-3.0)</string>
     <string name="settings_search_hint">Einstellungen suchen</string>
@@ -503,4 +503,18 @@
     <string name="tag_unused_refresh_switched">Nicht verwendet bei den %1$d Hz, auf die Streams diesen Bildschirm umschalten: Das ist nicht das 2- bis 4-Fache der Bildrate</string>
     <string name="tag_unused_with">Nicht mit %1$s verwendbar</string>
     <string name="tag_every_frame_with">„Jedes Bild behalten“ wird nicht mit %1$s verwendet</string>
+    <string name="scut_outdated_title">Verknüpfung veraltet</string>
+    <string name="scut_pc_gone">Der PC dieser Verknüpfung ist nicht mehr unter deinen PCs. Füge ihn über deine PCs erneut hinzu.</string>
+    <string name="scut_pc_unpaired">Dieses Gerät ist nicht mehr mit dem PC dieser Verknüpfung gekoppelt. Kopple es über deine PCs erneut.</string>
+    <string name="scut_game_gone">Nightjar findet dieses Spiel nicht unter den Spielen des PCs. Öffne die Bibliothek, um es erneut auszuwählen.</string>
+    <string name="scut_unreadable">Diese Verknüpfung kann nicht gelesen werden. Starte das Spiel stattdessen über deine PCs.</string>
+    <string name="pair_unverified">Der PC hat die Identitätsprüfung nicht bestanden, daher wurde nichts gekoppelt. Ein anderes Gerät in diesem Netzwerk gibt sich womöglich als dein PC aus: Kopple nur in einem Netzwerk, dem du vertraust.</string>
+    <string name="conn_stage_finding">PC wird gesucht</string>
+    <string name="conn_stage_setup">Stream wird eingerichtet</string>
+    <string name="conn_stage_stream">Stream wird gestartet</string>
+    <string name="conn_stage_video">Video wird gestartet</string>
+    <string name="conn_stage_audio">Audio wird gestartet</string>
+    <string name="conn_stage_input">Eingabe wird verbunden</string>
+    <string name="applist_quit_fail_check">%1$s konnte nicht beendet werden. Prüfe, ob der PC eingeschaltet und in diesem Netzwerk ist, und versuche es dann erneut.</string>
+    <string name="applist_quit_other_device">Ein anderes Gerät hat dieses Spiel gestartet. Es lässt sich nur von dort oder am PC beenden.</string>
 </resources>

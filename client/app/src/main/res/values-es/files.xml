@@ -56,4 +56,6 @@
     <string name="files_problem_host">El PC respondió con un error.</string>
     <string name="files_save_lost">La descarga se perdió mientras el diálogo de guardado estaba abierto, así que no se guardó nada. Toca Descargar de nuevo.</string>
     <string name="files_partial_left">No se pudo eliminar una descarga sin terminar: %1$s sigue donde la guardaste y no es el archivo completo. Elimínala allí.</string>
+    <string name="files_running">Transferencias de archivos en curso: %1$d</string>
+    <string name="files_busy_other_pc">Aún se están transfiriendo archivos con otro PC. Espera a que terminen o cancélalos en la página Archivos de ese PC y vuelve a intentarlo.</string>
 </resources>

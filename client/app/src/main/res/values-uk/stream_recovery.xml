@@ -2,11 +2,13 @@
 <resources>
     <string name="title_auto_reconnect">Відновлювати перервані трансляції</string>
     <string name="summary_auto_reconnect">Повторно підключається до тієї самої гри після обриву з’єднання, до п’яти разів на хвилину; ніколи не запускає й не замінює гру. Залиште ввімкненим.</string>
-    <string name="stream_recovery_attempt">Повторне підключення до гри… Спроба %1$d з %2$d. Натисніть «Назад», щоб скасувати.</string>
+    <string name="stream_recovery_attempt">Повторне підключення до гри… Спроба %1$d з %2$d.</string>
     <string name="stream_recovery_session_changed">Попередній ігровий сеанс більше недоступний. Автоматичне відновлення зупинено, щоб не запустити й не замінити гру.</string>
     <string name="continue_here_browser_stream">Інший пристрій грає в цю гру в браузері, і ця трансляція не може працювати паралельно. Спочатку завершіть ту трансляцію.</string>
     <string name="stream_recovery_exhausted">Автоматичному відновленню не вдалося підключитися протягом однієї хвилини. Гру не закрито. Перевірте з’єднання та виберіть «Підключитися знову», щоб повторити спробу.</string>
     <string name="stream_recovery_paused">Автоматичне відновлення зупинено, коли ви вийшли з трансляції. Виберіть «Підключитися знову», щоб продовжити.</string>
     <string name="stream_stop_timeout">Попереднє з’єднання ще не завершено. Спробуйте ще раз за мить.</string>
     <string name="startup_launch_timeout">ПК не відповів на запуск за %1$d с. Спробуйте ще раз або перевірте, чим зайнятий ПК.</string>
+    <string name="stream_recovery_stopped">Автоматичне перепідключення зупинено. Гру не закрито; перевірте з’єднання й спробуйте ще раз.</string>
+    <string name="stream_recovery_unreachable">Не вдалося зв’язатися з ПК.</string>
 </resources>

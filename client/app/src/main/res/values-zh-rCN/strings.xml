@@ -40,7 +40,7 @@
     <string name="pair_pairing_title">与电脑配对</string>
     <string name="pair_pairing_help">请在电脑的网页界面中输入此 PIN 码，通常位于 PIN 码或配对页面。</string>
     <string name="pair_incorrect_pin">PIN 码被拒绝。请重新配对，并在电脑的网页界面中输入此设备上显示的新 PIN 码。</string>
-    <string name="pair_fail">请在电脑的网页界面中取消旧的请求，然后重试。</string>
+    <string name="pair_fail">电脑结束了配对，例如因为没有及时输入 PIN 码。请重新开始配对，并在电脑上输入新的 PIN 码。</string>
     <string name="pair_already_in_progress">请在电脑上完成或取消待处理的请求。</string>
     <string name="wol_pc_online">电脑在线</string>
     <string name="wol_no_mac">请先在电脑处于唤醒状态时连接。\n请参阅电脑菜单中的 Wake-on-LAN 设置。</string>
@@ -122,7 +122,7 @@
     <string name="applist_refresh_error_msg">无法获取应用列表</string>
     <string name="applist_quit_app">正在退出</string>
     <string name="applist_quit_success">已成功退出</string>
-    <string name="applist_quit_confirmation">要退出正在运行的应用吗？\n未保存的进度将会丢失。</string>
+    <string name="applist_quit_confirmation">要退出电脑上的游戏吗？\n正在运行的游戏中未保存的进度将会丢失。</string>
     <string name="applist_details_id">应用 ID：</string>
     <string name="title_add_pc">添加电脑</string>
     <string name="msg_add_pc">正在连接电脑…</string>
@@ -397,9 +397,9 @@
     <string name="stream_end_monitor">结束监视会话</string>
     <string name="stream_end_input">结束输入会话</string>
     <string name="launch_confirm_title">在此设备上确认</string>
-    <string name="launch_confirm_replace">要退出正在运行的应用并启动此应用吗？\n请在 60 秒内确认。</string>
+    <string name="launch_confirm_replace">要退出正在运行的游戏并启动这款游戏吗？\n请在 60 秒内确认。</string>
     <string name="launch_confirm_replace_named">要退出 %1$s 并启动 %2$s 吗？\n请在 60 秒内确认。</string>
-    <string name="launch_confirm_terminate">要退出该应用吗？\n监视/输入客户端将保持连接。\n请在 60 秒内确认。</string>
+    <string name="launch_confirm_terminate">要退出该游戏吗？\n监视/输入客户端将保持连接。\n请在 60 秒内确认。</string>
     <string name="launch_confirm">确认</string>
     <string name="summary_about">版本 %1$s · 基于 Moonlight (GPL-3.0)</string>
     <string name="settings_search_hint">搜索设置</string>
@@ -503,4 +503,18 @@
     <string name="tag_unused_refresh_switched">未使用：串流将此屏幕切换到的 %1$d Hz 不是帧率的 2 到 4 倍</string>
     <string name="tag_unused_with">不能与 %1$s 同时使用</string>
     <string name="tag_every_frame_with">保留每一帧不能与 %1$s 同时使用</string>
+    <string name="scut_outdated_title">快捷方式已过期</string>
+    <string name="scut_pc_gone">此快捷方式对应的电脑已不在你的电脑列表中。请在电脑列表中重新添加。</string>
+    <string name="scut_pc_unpaired">此设备已不再与此快捷方式对应的电脑配对。请在电脑列表中重新配对。</string>
+    <string name="scut_game_gone">Nightjar 在电脑的游戏中找不到这款游戏。请打开游戏库重新选择。</string>
+    <string name="scut_unreadable">无法读取此快捷方式。请改为从电脑列表启动游戏。</string>
+    <string name="pair_unverified">电脑未通过身份验证，因此没有进行配对。此网络上的另一台设备可能在冒充你的电脑：请只在可信的网络中配对。</string>
+    <string name="conn_stage_finding">正在查找电脑</string>
+    <string name="conn_stage_setup">正在设置串流</string>
+    <string name="conn_stage_stream">正在启动串流</string>
+    <string name="conn_stage_video">正在启动视频</string>
+    <string name="conn_stage_audio">正在启动音频</string>
+    <string name="conn_stage_input">正在连接输入</string>
+    <string name="applist_quit_fail_check">无法退出 %1$s。请确认电脑已开机并连接到此网络，然后重试。</string>
+    <string name="applist_quit_other_device">这款游戏由另一台设备启动，因此只能在那台设备或电脑上退出。</string>
 </resources>

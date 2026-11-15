@@ -59,5 +59,12 @@
     <string name="discovery_help">Ajuda com pareamento</string>
     <string name="wol_help_title">Configurar Wake-on-LAN</string>
     <string name="summary_wol_help">Saiba como despertar um PC em suspensão pelo app.</string>
-    <string name="wol_help_text">1. Pareie com o PC ligado.\n2. Ative o Wake-on-LAN no PC.\n3. Use a rede local e escolha “Despertar”.</string>
+    <string name="wol_help_text">Desperta um PC em suspensão a partir deste dispositivo. O PC precisa do Wake-on-LAN ativado e de uma conexão de rede cabeada, e este dispositivo precisa ter se conectado a ele uma vez enquanto estava ligado.</string>
+    <string name="connection_test_cant_connect">Não é possível conectar a este PC</string>
+    <string name="connection_test_cant_connect_step">Verifique se o PC está ligado e nesta rede e tente novamente.</string>
+    <string name="connection_test_stutters">A transmissão vai travar</string>
+    <string name="connection_test_step_loss">A rede está perdendo dados. Conecte este dispositivo ou o PC por cabo, ou aproxime-se do roteador.</string>
+    <string name="connection_test_step_jitter">O atraso varia o tempo todo. Conecte por cabo ou pause outros downloads nesta rede.</string>
+    <string name="connection_test_step_speed">A conexão é mais lenta do que a transmissão precisa. Reduza a taxa de bits em Configurações.</string>
+    <string name="connection_test_good">Boa para transmitir</string>
 </resources>

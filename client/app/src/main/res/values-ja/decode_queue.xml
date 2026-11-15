@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_decode_queue_frames">デコーダー待ちのフレーム数</string>
+    <string name="summary_decode_queue_frames">数を減らすと、デコーダーが追いつかないときに待機中のフレームを早めに破棄するので遅延はたまりませんが、映像がカクつきやすくなります。低速なデバイスで映像の遅れがどんどん大きくなる場合以外は 15 のままにしてください。ほとんどのハードウェアデコーダーはフレームを直接受け取りキューを持たないため、この設定は効果がありません。</string>
+    <string name="decode_queue_frames_3">3 フレーム</string>
+    <string name="decode_queue_frames_5">5 フレーム</string>
+    <string name="decode_queue_frames_8">8 フレーム</string>
+    <string name="decode_queue_frames_15">15 フレーム</string>
+</resources>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_decode_queue_frames">디코더 대기 프레임</string>
+    <string name="summary_decode_queue_frames">프레임 수를 줄이면 디코더가 따라가지 못할 때 대기 중인 프레임을 더 빨리 버려 지연이 쌓이지 않지만, 화면이 더 자주 끊깁니다. 느린 기기에서 화면이 점점 더 늦어지는 경우가 아니면 15로 두세요. 대부분의 하드웨어 디코더는 각 프레임을 바로 받아 대기열이 없으므로 이 설정이 효과가 없습니다.</string>
+    <string name="decode_queue_frames_3">3 프레임</string>
+    <string name="decode_queue_frames_5">5 프레임</string>
+    <string name="decode_queue_frames_8">8 프레임</string>
+    <string name="decode_queue_frames_15">15 프레임</string>
+</resources>

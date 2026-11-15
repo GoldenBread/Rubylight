@@ -59,5 +59,12 @@
     <string name="discovery_help">Aiuto accoppiamento</string>
     <string name="wol_help_title">Configura Wake-on-LAN</string>
     <string name="summary_wol_help">Scopri come riattivare dall’app un PC in sospensione.</string>
-    <string name="wol_help_text">1. Accoppia mentre il PC è acceso.\n2. Attiva Wake-on-LAN sul PC.\n3. Usa la LAN, poi scegli «Riattiva».</string>
+    <string name="wol_help_text">Riattiva un PC in sospensione da questo dispositivo. Il PC deve avere Wake-on-LAN attivo e una connessione di rete cablata, e questo dispositivo deve essersi connesso a esso una volta mentre era acceso.</string>
+    <string name="connection_test_cant_connect">Impossibile connettersi a questo PC</string>
+    <string name="connection_test_cant_connect_step">Verifica che il PC sia acceso e su questa rete, poi riprova.</string>
+    <string name="connection_test_stutters">Lo stream andrà a scatti</string>
+    <string name="connection_test_step_loss">La rete perde dati. Collega questo dispositivo o il PC via cavo, oppure avvicinati al router.</string>
+    <string name="connection_test_step_jitter">Il ritardo cambia di continuo. Collegati via cavo o metti in pausa gli altri download su questa rete.</string>
+    <string name="connection_test_step_speed">La connessione è più lenta di quanto serve allo stream. Abbassa il bitrate nelle Impostazioni.</string>
+    <string name="connection_test_good">Adatta allo streaming</string>
 </resources>
