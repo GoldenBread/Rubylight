@@ -9,6 +9,8 @@
     <string name="files_send">Send files</string>
     <string name="files_refresh">Check again</string>
     <string name="files_clear_finished">Clear finished</string>
+    <string name="files_running">File transfers running: %1$d</string>
+    <string name="files_busy_other_pc">Files are still transferring with another PC. Wait for them, or cancel them on that PC’s Files page, then try again.</string>
     <string name="files_transfers">Transfers</string>
     <string name="files_on_pc">On the PC</string>
     <string name="files_folder">%1$s · %2$s free</string>

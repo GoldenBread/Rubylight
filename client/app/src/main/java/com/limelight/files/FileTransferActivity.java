@@ -32,7 +32,7 @@ import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
-import androidx.lifecycle.AndroidViewModel;
+import androidx.lifecycle.ViewModel;
 import androidx.lifecycle.ViewModelProvider;
 
 import com.limelight.LimeLog;
@@ -71,7 +71,8 @@ import java.util.concurrent.Executors;
  * another app's files.
  *
  * <p>Transfers run while the screen exists, also in the background, and through a configuration change (dark
- * theme, font or display size, language: {@link TransferWork}); leaving it cancels what has not finished.
+ * theme, font or display size, language: {@link TransferWork}). Leaving it keeps unfinished ones going while the
+ * app runs ({@link RunningTransfers}), one PC at a time; with nothing unfinished the work ends with the screen.
  */
 public class FileTransferActivity extends NightjarActivity implements FileTransferController.Ui {
     public static final String EXTRA_PC_UUID = "files_pc_uuid";
@@ -151,7 +152,23 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
         super.onCreate(state);
         FrameLayout content = TopAppBar.setUpPage(this, R.string.files_title, this::finish);
         content.addView(buildPage());
-        work = new ViewModelProvider(this).get(TransferWork.class);
+        Keeper keeper = new ViewModelProvider(this).get(Keeper.class);
+        if (keeper.work == null) {
+            String pc = chosenPc(getIntent());
+            TransferWork held = RunningTransfers.held();
+            if (held != null && pc != null && pc.equalsIgnoreCase(held.uuid) && sharedUris(getIntent()).isEmpty()) {
+                // Back to the PC whose transfers went on: the page shows them again.
+                keeper.work = RunningTransfers.take();
+            } else if (held != null && held.running()) {
+                Toast.makeText(this, R.string.files_busy_other_pc, Toast.LENGTH_LONG).show();
+                finish();
+                return;
+            } else if (held != null) {
+                held.end();
+            }
+            if (keeper.work == null) keeper.work = new TransferWork(getApplication());
+        }
+        work = keeper.work;
         // Recreated after a configuration change, the screen goes on with what it had: a share is taken once.
         if (!work.opened) {
             work.opened = true;
@@ -877,8 +894,8 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
     @Override
     protected void onDestroy() {
         generation++;
-        // The transfers stay with the work: it closes them once the screen is gone for good.
-        if (work.screen == this) work.screen = null;
+        // The transfers stay with the work: it closes them once the screen is gone for good and nothing runs.
+        if (work != null && work.screen == this) work.screen = null;
         stopPolling();
         if (bound) unbindService(service);
         super.onDestroy();
@@ -887,10 +904,12 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
     /**
      * The screen's transfers and what they are for, kept across a configuration change, which recreates the
      * screen: cancelling there would delete the documents of unfinished downloads, and a share taken again would
-     * be sent twice. Read and written on the main thread. Cleared when the screen goes for good, which cancels
-     * what has not finished.
+     * be sent twice. Read and written on the main thread. When the screen goes for good, unfinished transfers go
+     * on in {@link RunningTransfers} until they finish or are cancelled on the page opened again; otherwise the
+     * work ends.
      */
-    public static final class TransferWork extends AndroidViewModel implements FileTransferController.Ui {
+    public static final class TransferWork implements FileTransferController.Ui {
+        private final Application application;
         final Handler handler = new Handler(Looper.getMainLooper());
         final ExecutorService workers = Executors.newCachedThreadPool(r -> new Thread(r, "File transfer"));
         final Map<String, ComputerDetails> computers = new LinkedHashMap<>();
@@ -909,10 +928,37 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
         /** The screen showing the work; null between the old screen's end and the new one's start. */
         FileTransferActivity screen;
 
-        public TransferWork(Application application) { super(application); }
+        public TransferWork(Application application) { this.application = application; }
+
+        Application getApplication() { return application; }
 
         @Override public void onTransfersChanged(List<FileRow> rows) {
-            if (screen != null) screen.onTransfersChanged(rows);
+            if (screen != null) {
+                screen.onTransfersChanged(rows);
+            } else if (RunningTransfers.held() == this) {
+                RunningTransfers.changed();
+                // The last one finished with no page open: nothing is left to keep.
+                if (!running()) handler.post(() -> { if (screen == null && !running()) end(); });
+            }
+        }
+
+        /** Whether a transfer has not finished yet. */
+        boolean running() {
+            return controller != null && controller.isActive();
+        }
+
+        /** The screen went for good: unfinished transfers go on in {@link RunningTransfers}; otherwise all ends. */
+        void screenGone() {
+            screen = null;
+            if (running()) RunningTransfers.hold(this);
+            else end();
+        }
+
+        /** Cancels what has not finished and lets the workers end. */
+        void end() {
+            RunningTransfers.release(this);
+            if (controller != null) controller.close();
+            workers.shutdown();
         }
 
         @Override public void onUploaded() {
@@ -941,10 +987,14 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
             return false;
         }
 
+    }
+
+    /** Holds the screen's {@link TransferWork} through a configuration change; cleared when the screen goes for good. */
+    public static final class Keeper extends ViewModel {
+        TransferWork work;
+
         @Override protected void onCleared() {
-            screen = null;
-            if (controller != null) controller.close();
-            workers.shutdown();
+            if (work != null) work.screenGone();
         }
     }
 }

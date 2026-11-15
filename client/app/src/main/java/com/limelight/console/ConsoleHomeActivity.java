@@ -609,7 +609,11 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
         scheduleReload();
         // However Home was opened: after pairing or from a task brought back, no PC list is under it to ask.
         checkForUpdates();
+        transfersButton = com.limelight.files.RunningTransfers.showOn(this);
     }
+
+    // Takes the button of transfers a closed Files page left running away again (RunningTransfers.showOn).
+    private Runnable transfersButton;
 
     /** At most every 12 hours, a limit shared with the PC list; the offer shows only while Home is in front. */
     protected void checkForUpdates() {
@@ -619,6 +623,7 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
     @Override
     protected void onPause() {
         shown = false;
+        if (transfersButton != null) { transfersButton.run(); transfersButton = null; }
         pairingWatch.pause();
         wake.cancel();
         feed.pause();

@@ -465,7 +465,11 @@ public class PcView extends NightjarActivity implements AdapterFragmentCallbacks
         if (completeOnCreateCalled) {
             checkForUpdates();
         }
+        transfersButton = com.limelight.files.RunningTransfers.showOn(this);
     }
+
+    // Takes the button of transfers a closed Files page left running away again (RunningTransfers.showOn).
+    private Runnable transfersButton;
 
     /** At most every 12 hours; the PC list is never in front during a stream. */
     protected void checkForUpdates() {
@@ -477,6 +481,7 @@ public class PcView extends NightjarActivity implements AdapterFragmentCallbacks
         super.onPause();
 
         inForeground = false;
+        if (transfersButton != null) { transfersButton.run(); transfersButton = null; }
         if (pcMenu != null) pcMenu.dismiss();
         // Pairing keeps running: people leave to type the PIN into the host's web page on this
         // phone, or the screen turns off on the way to the PC.
