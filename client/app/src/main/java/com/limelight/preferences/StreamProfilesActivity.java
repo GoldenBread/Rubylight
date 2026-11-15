@@ -98,6 +98,18 @@ public class StreamProfilesActivity extends NightjarActivity {
         private StreamProfilesActivity activity;
         private PreferenceCategory list, choice, home;
         private Preference footer;
+        /** The text dialog open now, shown again with its text after a rotation or a fold; null when none is open. */
+        private AlertDialog textDialog;
+        private EditText textField;
+        /** Which text dialog it is ({@link #TEXT_NEW}, {@link #TEXT_RENAME} or {@link #TEXT_HOME}), and the profile renamed. */
+        private String textKind;
+        private String textProfile;
+        private static final String TEXT_NEW = "new";
+        private static final String TEXT_RENAME = "rename";
+        private static final String TEXT_HOME = "home";
+        private static final String STATE_TEXT_KIND = "text_dialog";
+        private static final String STATE_TEXT_PROFILE = "text_dialog_profile";
+        private static final String STATE_TEXT = "text_dialog_text";
 
         @Override
         public void onActivityCreated(Bundle state) {
@@ -114,6 +126,41 @@ public class StreamProfilesActivity extends NightjarActivity {
             footer.setSelectable(false);
             screen.addPreference(footer);
             refresh();
+            if (state != null && state.getString(STATE_TEXT_KIND) != null) {
+                reopenText(state.getString(STATE_TEXT_KIND), state.getString(STATE_TEXT_PROFILE),
+                        state.getString(STATE_TEXT, ""));
+            }
+        }
+
+        @Override
+        public void onSaveInstanceState(Bundle state) {
+            super.onSaveInstanceState(state);
+            // A rotation or a fold recreates the screen: a half-typed name comes back in its dialog.
+            if (textDialog != null && textDialog.isShowing()) {
+                state.putString(STATE_TEXT_KIND, textKind);
+                state.putString(STATE_TEXT_PROFILE, textProfile);
+                state.putString(STATE_TEXT, textField.getText().toString());
+            }
+        }
+
+        private void reopenText(String kind, String profile, String text) {
+            if (TEXT_NEW.equals(kind)) {
+                askNewProfile(text);
+            } else if (TEXT_RENAME.equals(kind)) {
+                // Unless the profile went meanwhile.
+                if (profile != null && StreamProfiles.load(activity).exists(profile)) askRename(profile, text);
+            } else if (TEXT_HOME.equals(kind)) {
+                typeHomeWifi(text);
+            }
+        }
+
+        private void showText(AlertDialog dialog, EditText field, String kind, String profile) {
+            textDialog = dialog;
+            textField = field;
+            textKind = kind;
+            textProfile = profile;
+            UiHelper.showDialog(activity, dialog);
+            field.requestFocus();
         }
 
         @Override
@@ -164,15 +211,7 @@ public class StreamProfilesActivity extends NightjarActivity {
                 row(list, "profile:" + id, entry.getValue(), profileSummary(profiles, id), () -> showProfileActions(id));
             }
             row(list, "new", getString(R.string.profiles_new), getString(R.string.profiles_new_summary),
-                    () -> askName(R.string.profiles_new, "", null, name -> {
-                        String id = StreamProfiles.create(activity, name, new HostStreamProfile());
-                        if (id == null) {
-                            Toast.makeText(activity, getString(R.string.profiles_too_many, StreamProfiles.MAX_PROFILES),
-                                    Toast.LENGTH_LONG).show();
-                            return;
-                        }
-                        HostStreamSettings.showProfile(activity, id);
-                    }));
+                    () -> askNewProfile(""));
 
             choice.removeAll();
             row(choice, "in_use", getString(R.string.profiles_in_use),
@@ -222,7 +261,7 @@ public class StreamProfilesActivity extends NightjarActivity {
             row(home, "home_add", getString(R.string.profiles_home_add_current), addSummary, this::addCurrentWifiAsked)
                     .setEnabled(profiles.auto);
             row(home, "home_type", getString(R.string.profiles_home_type), getString(R.string.profiles_home_type_summary),
-                    this::typeHomeWifi).setEnabled(profiles.auto);
+                    () -> typeHomeWifi("")).setEnabled(profiles.auto);
         }
 
         private String profileSummary(StreamProfiles.Snapshot profiles, String id) {
@@ -273,10 +312,7 @@ public class StreamProfilesActivity extends NightjarActivity {
                                 HostStreamSettings.showProfile(activity, id);
                                 break;
                             case 1:
-                                askName(R.string.profiles_rename, name, id, newName -> {
-                                    StreamProfiles.rename(activity, id, newName);
-                                    refresh();
-                                });
+                                askRename(id, name);
                                 break;
                             case 2:
                                 duplicate(id);
@@ -319,7 +355,26 @@ public class StreamProfilesActivity extends NightjarActivity {
             void onPick(String id);
         }
 
-        /** Asks for a profile name and checks it before closing. */
+        private void askNewProfile(String text) {
+            askName(R.string.profiles_new, text, null, name -> {
+                String id = StreamProfiles.create(activity, name, new HostStreamProfile());
+                if (id == null) {
+                    Toast.makeText(activity, getString(R.string.profiles_too_many, StreamProfiles.MAX_PROFILES),
+                            Toast.LENGTH_LONG).show();
+                    return;
+                }
+                HostStreamSettings.showProfile(activity, id);
+            });
+        }
+
+        private void askRename(String id, String text) {
+            askName(R.string.profiles_rename, text, id, newName -> {
+                StreamProfiles.rename(activity, id, newName);
+                refresh();
+            });
+        }
+
+        /** Asks for a profile name and checks it before closing; {@code exceptId} is the profile renamed, null for a new one. */
         private void askName(int title, String current, String exceptId, NameListener listener) {
             LinearLayout form = new LinearLayout(activity);
             form.setOrientation(LinearLayout.VERTICAL);
@@ -351,8 +406,7 @@ public class StreamProfilesActivity extends NightjarActivity {
                 dialog.dismiss();
                 listener.onName(name.trim());
             }));
-            UiHelper.showDialog(activity, dialog);
-            field.requestFocus();
+            showText(dialog, field, exceptId == null ? TEXT_NEW : TEXT_RENAME, exceptId);
         }
 
         /** A choice of None (or the profile in use) and every profile. */
@@ -428,7 +482,7 @@ public class StreamProfilesActivity extends NightjarActivity {
             refresh();
         }
 
-        private void typeHomeWifi() {
+        private void typeHomeWifi(String text) {
             LinearLayout form = new LinearLayout(activity);
             form.setOrientation(LinearLayout.VERTICAL);
             int padding = Math.round(24 * getResources().getDisplayMetrics().density);
@@ -440,6 +494,7 @@ public class StreamProfilesActivity extends NightjarActivity {
             field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
             field.setSingleLine(true);
             field.setFilters(new InputFilter[] {new InputFilter.LengthFilter(32)});
+            field.setText(text);
             container.addView(field);
             form.addView(container);
             AlertDialog dialog = new NavigationDialogBuilder(activity).setTitle(R.string.profiles_home_type)
@@ -454,8 +509,7 @@ public class StreamProfilesActivity extends NightjarActivity {
                 dialog.dismiss();
                 addHome(name);
             }));
-            UiHelper.showDialog(activity, dialog);
-            field.requestFocus();
+            showText(dialog, field, TEXT_HOME, null);
         }
 
         @Override

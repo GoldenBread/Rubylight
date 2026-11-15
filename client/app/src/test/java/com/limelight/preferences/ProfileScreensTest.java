@@ -8,6 +8,7 @@ import android.preference.Preference;
 import android.preference.PreferenceCategory;
 import android.preference.PreferenceFragment;
 import android.preference.PreferenceScreen;
+import android.widget.EditText;
 
 import com.google.android.material.appbar.MaterialToolbar;
 import com.limelight.R;
@@ -22,6 +23,7 @@ import org.robolectric.RuntimeEnvironment;
 import org.robolectric.Shadows;
 import org.robolectric.android.controller.ActivityController;
 import org.robolectric.annotation.Config;
+import org.robolectric.shadows.ShadowDialog;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -200,6 +202,36 @@ public class ProfileScreensTest {
         } finally {
             controller.pause().stop().destroy();
             settings.edit().clear().commit();
+        }
+    }
+
+    /** Types into the text dialog a row opens, recreates the screen as a rotation or a fold does, and reads it back. */
+    private static String typedAcrossARecreate(ActivityController<StreamProfilesActivity> controller, String row, int field) {
+        PreferenceFragment fragment = (PreferenceFragment) controller.get().getFragmentManager()
+                .findFragmentById(R.id.page_content);
+        Preference opener = fragment.findPreference(row);
+        opener.getOnPreferenceClickListener().onPreferenceClick(opener);
+        Shadows.shadowOf(Looper.getMainLooper()).idle();
+        android.app.Dialog dialog = ShadowDialog.getLatestDialog();
+        ((EditText) dialog.findViewById(field)).setText("Hot");
+        controller.recreate();
+        Shadows.shadowOf(Looper.getMainLooper()).idle();
+        android.app.Dialog again = ShadowDialog.getLatestDialog();
+        assertNotSame("the screen was recreated", dialog, again);
+        assertTrue(again.isShowing());
+        return ((EditText) again.findViewById(field)).getText().toString();
+    }
+
+    @Test
+    public void aHalfTypedProfileNameOrHomeWifiNameComesBackAfterARotation() {
+        ActivityController<StreamProfilesActivity> controller = Robolectric.buildActivity(StreamProfilesActivity.class).setup();
+        try {
+            Shadows.shadowOf(Looper.getMainLooper()).idle();
+            assertEquals("Hot", typedAcrossARecreate(controller, "new", R.id.profiles_name_field));
+            ShadowDialog.getLatestDialog().dismiss();
+            assertEquals("Hot", typedAcrossARecreate(controller, "home_type", R.id.profiles_wifi_field));
+        } finally {
+            controller.pause().stop().destroy();
         }
     }
 
