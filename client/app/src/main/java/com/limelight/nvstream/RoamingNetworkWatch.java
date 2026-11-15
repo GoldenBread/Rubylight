@@ -35,13 +35,18 @@ final class RoamingNetworkWatch {
             @Override
             public int networkChanged(boolean metered) {
                 // Without roaming on both sides the engine only tells whether the connection
-                // carries on; the C engine cannot tell, and carries on.
+                // carries on; the C engine cannot tell, and the tracker answers for it.
                 int change = MoonBridge.networkChanged(metered);
                 LimeLog.info("Roaming: the default network changed (" + (metered ? "metered" : "not metered") +
                         "), " + (change == MoonBridge.NETWORK_ROAMED ? "roaming" :
                         change == MoonBridge.NETWORK_CANNOT_CONTINUE ? "not roaming, the connection cannot carry on" :
                         "not roaming, the connection carries on"));
                 return change;
+            }
+
+            @Override
+            public boolean answersForTheRoute() {
+                return MoonBridge.isRustStream();
             }
 
             @Override

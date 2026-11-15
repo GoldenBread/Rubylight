@@ -63,7 +63,7 @@ public class RoamingNetworkTrackerTest {
     }
 
     /** Records the loss and return reports, answering networkChanged with {@code answer}. */
-    private static final class Events implements RoamingNetworkTracker.Reporter {
+    private static class Events implements RoamingNetworkTracker.Reporter {
         final List<String> seen = new ArrayList<>();
         int answer = MoonBridge.NETWORK_CARRIES_ON;
 
@@ -167,6 +167,73 @@ public class RoamingNetworkTrackerTest {
         tracker.stop();
         tracker.addresses(WIFI, "192.168.1.23");
         assertEquals(java.util.Arrays.asList("changed", "returned " + MoonBridge.NETWORK_CARRIES_ON), events.seen);
+    }
+
+    /** The C engine: always answers that its connection carries on. */
+    private static final class CEngineEvents extends Events {
+        @Override public boolean answersForTheRoute() { return false; }
+    }
+
+    // As RoamingNetworkWatch passes them: the network's InetAddresses (literals, so no lookup).
+    private static java.util.Set<java.net.InetAddress> addresses(String... values) {
+        java.util.Set<java.net.InetAddress> set = new java.util.HashSet<>();
+        for (String value : values) {
+            try {
+                set.add(java.net.InetAddress.getByName(value));
+            } catch (java.net.UnknownHostException e) {
+                throw new AssertionError(e);
+            }
+        }
+        return set;
+    }
+
+    // Wi-Fi to mobile data on the C engine: its sockets stay on the Wi-Fi address, so the
+    // mobile network's addresses strand the connection and the return says it cannot carry on.
+    @Test public void theCEngineCannotCarryOnOverADifferentNetworksAddresses() {
+        CEngineEvents events = new CEngineEvents();
+        RoamingNetworkTracker tracker = new RoamingNetworkTracker(WIFI, events, () -> 0);
+        tracker.addresses(WIFI, addresses("fe80::1", "192.168.1.20"));
+        tracker.lost(WIFI);
+        tracker.capabilities(CELLULAR, false);
+        // Link-local only: no route toward the PC yet, so nothing is decided.
+        tracker.addresses(CELLULAR, addresses("fe80::5"));
+        tracker.addresses(CELLULAR, addresses("fe80::5", "10.0.0.5"));
+        assertEquals(java.util.Arrays.asList("lost", "changed metered",
+                "returned " + MoonBridge.NETWORK_CARRIES_ON + " metered", "changed metered", "changed metered",
+                "returned " + MoonBridge.NETWORK_CANNOT_CONTINUE + " metered"), events.seen);
+
+        // The addresses already known when the network returns: answered at once.
+        events.seen.clear();
+        tracker.lost(CELLULAR);
+        tracker.addresses(OTHER_WIFI, addresses("192.168.2.30"));
+        tracker.capabilities(OTHER_WIFI, true);
+        assertEquals(java.util.Arrays.asList("lost", "changed",
+                "returned " + MoonBridge.NETWORK_CANNOT_CONTINUE), events.seen);
+    }
+
+    // Wi-Fi back as a new network object with the same lease: the connection can carry on.
+    @Test public void theCEngineCarriesOnWhileAnAddressOfTheLostNetworkIsBack() {
+        CEngineEvents events = new CEngineEvents();
+        RoamingNetworkTracker tracker = new RoamingNetworkTracker(WIFI, events, () -> 0);
+        tracker.addresses(WIFI, addresses("fe80::1", "192.168.1.20"));
+        tracker.lost(WIFI);
+        tracker.capabilities(OTHER_WIFI, true);
+        tracker.addresses(OTHER_WIFI, addresses("fe80::2"));
+        tracker.addresses(OTHER_WIFI, addresses("fe80::2", "192.168.1.20"));
+        assertEquals(java.util.Arrays.asList("lost", "changed", "returned " + MoonBridge.NETWORK_CARRIES_ON,
+                "changed", "changed"), events.seen);
+    }
+
+    // An engine that tells is never overruled: its "carries on" stands on other addresses.
+    @Test public void anEngineThatTellsKeepsItsOwnAnswer() {
+        Events events = new Events();
+        RoamingNetworkTracker tracker = new RoamingNetworkTracker(WIFI, events, () -> 0);
+        tracker.addresses(WIFI, addresses("192.168.1.20"));
+        tracker.lost(WIFI);
+        tracker.capabilities(CELLULAR, false);
+        tracker.addresses(CELLULAR, addresses("10.0.0.5"));
+        assertEquals(java.util.Arrays.asList("lost", "changed metered",
+                "returned " + MoonBridge.NETWORK_CARRIES_ON + " metered", "changed metered"), events.seen);
     }
 
     @Test public void aNewNetworkWhileTheStreamsOwnStaysIsNoReturn() {

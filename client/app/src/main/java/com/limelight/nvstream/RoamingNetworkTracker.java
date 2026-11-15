@@ -17,6 +17,11 @@ import com.limelight.nvstream.jni.MoonBridge;
  * address toward the PC (IPv6 first, DHCP later), and then the connection carries on for now;
  * so for {@link #RECHECK_MS} each change of its addresses asks again, and an answer that is no
  * longer "carries on" is reported as the return.
+ *
+ * <p>An engine that cannot tell whether its connection carries on (the C engine, whose sockets
+ * stay on the address they started from) gets the answer from here: a return whose addresses
+ * share none with the lost network's cannot carry on, so the stream reconnects at once instead
+ * of freezing until its connection times out.
  */
 final class RoamingNetworkTracker {
     interface Reporter {
@@ -34,6 +39,13 @@ final class RoamingNetworkTracker {
          * metered the new network's.
          */
         default void streamNetworkReturned(int change, boolean metered) {}
+
+        /**
+         * Whether networkChanged's answer tells if the connection carries on. False for an engine
+         * that always answers that it does (the C engine): then a return onto other addresses
+         * is reported as NETWORK_CANNOT_CONTINUE.
+         */
+        default boolean answersForTheRoute() { return true; }
     }
 
     /** Elapsed milliseconds on a monotonic clock. */
@@ -57,6 +69,10 @@ final class RoamingNetworkTracker {
     private boolean recheckMetered;
     private long recheckUntil;
     private Object recheckAddresses;
+    // The newest addresses reported and whose they are; those of the stream's network when it was lost.
+    private Object addressesNetwork;
+    private Object latestAddresses;
+    private Object lostAddresses;
 
     /** streamNetwork: the default network when the stream started, or null if unknown. */
     RoamingNetworkTracker(Object streamNetwork, Reporter reporter) {
@@ -92,6 +108,9 @@ final class RoamingNetworkTracker {
         // Under the lock, so stop() returning means no report is still on its way.
         int change = reporter.networkChanged(!notMetered);
         if (returned) {
+            if (network.equals(addressesNetwork)) {
+                change = routeAnswer(change, latestAddresses);
+            }
             if (change == MoonBridge.NETWORK_CARRIES_ON) {
                 // The same address back, or no route yet: ask again when its addresses change.
                 recheck = network;
@@ -110,7 +129,12 @@ final class RoamingNetworkTracker {
      * after the return (DHCP) may strand the connection, and then it is reported as the return.
      */
     synchronized void addresses(Object network, Object addresses) {
-        if (stopped || lost || recheck == null || !network.equals(recheck)) {
+        if (stopped) {
+            return;
+        }
+        addressesNetwork = network;
+        latestAddresses = addresses;
+        if (lost || recheck == null || !network.equals(recheck)) {
             return;
         }
         if (clock.millis() > recheckUntil) {
@@ -121,7 +145,7 @@ final class RoamingNetworkTracker {
             return;
         }
         recheckAddresses = addresses;
-        int change = reporter.networkChanged(recheckMetered);
+        int change = routeAnswer(reporter.networkChanged(recheckMetered), addresses);
         if (change != MoonBridge.NETWORK_CARRIES_ON) {
             recheck = null;
             reporter.streamNetworkReturned(change, recheckMetered);
@@ -135,7 +159,38 @@ final class RoamingNetworkTracker {
         }
         lost = true;
         recheck = null;
+        lostAddresses = network.equals(addressesNetwork) ? latestAddresses : null;
         reporter.streamNetworkLost();
+    }
+
+    /**
+     * The engine's answer for a returned network with these addresses. An engine that cannot
+     * tell carries on while the network has no routable address yet (link-local only), while
+     * an address of the lost network is back, or when the lost network's addresses are unknown;
+     * routable addresses without any of the lost ones strand its connection.
+     */
+    private int routeAnswer(int change, Object addresses) {
+        if (change != MoonBridge.NETWORK_CARRIES_ON || reporter.answersForTheRoute() ||
+                addresses == null || lostAddresses == null) {
+            return change;
+        }
+        if (!(addresses instanceof java.util.Collection) || !(lostAddresses instanceof java.util.Collection)) {
+            return addresses.equals(lostAddresses) ? change : MoonBridge.NETWORK_CANNOT_CONTINUE;
+        }
+        boolean routable = false;
+        for (Object address : (java.util.Collection<?>) addresses) {
+            if (!routable(address)) continue;
+            if (((java.util.Collection<?>) lostAddresses).contains(address)) return change;
+            routable = true;
+        }
+        return routable ? MoonBridge.NETWORK_CANNOT_CONTINUE : change;
+    }
+
+    /** Whether an address can carry a route toward the PC: not link-local, loopback or unspecified. */
+    private static boolean routable(Object address) {
+        if (!(address instanceof java.net.InetAddress)) return true;
+        java.net.InetAddress inet = (java.net.InetAddress) address;
+        return !inet.isLinkLocalAddress() && !inet.isLoopbackAddress() && !inet.isAnyLocalAddress();
     }
 
     /** The stream ends: nothing is reported after this returns. */

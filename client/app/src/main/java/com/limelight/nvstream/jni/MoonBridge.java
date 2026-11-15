@@ -779,7 +779,8 @@ public class MoonBridge {
     /**
      * The default network changed while a stream runs; metered is the new network's
      * !NET_CAPABILITY_NOT_METERED. Returns what it means for the stream (NETWORK_*). The C
-     * engine cannot tell: it carries on, and its own timeout decides.
+     * engine cannot tell and answers that it carries on; RoamingNetworkTracker then decides
+     * from the network's addresses.
      */
     public static int networkChanged(boolean metered) {
         return rustStream ? RustBridge.networkChanged(metered) : NETWORK_CARRIES_ON;
