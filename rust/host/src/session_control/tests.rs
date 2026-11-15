@@ -310,6 +310,13 @@ fn a_host_stop_stops_any_launch_in_progress_without_waiting() {
     drop(started);
     drop(transition);
     assert!(!host.launch_stopped());
+    // A launch that waited behind it, or came while the host was stopping, is stopped as it starts.
+    host.stop.store(true, std::sync::atomic::Ordering::Release);
+    let transition = host.launch_transition.lock().unwrap();
+    let started = host.launch_started("another device");
+    assert!(host.launch_stopped());
+    drop(started);
+    drop(transition);
 }
 
 #[test]

@@ -471,6 +471,11 @@ impl Host {
             .map_err(|error| tracing::warn!(%error, "this launch cannot be stopped early"))
             .ok();
         *locked(&self.launch_cancel) = cancel.clone().map(|cancel| (device.to_owned(), cancel));
+        // A launch that waited for the lock, or arrived, while the host was stopping: it is
+        // named first, so the stop's own pass or this one stops it, and it starts no game.
+        if self.stop.load(std::sync::atomic::Ordering::Acquire) {
+            self.stop_launch_for_shutdown();
+        }
         LaunchStarted { host: self, cancel }
     }
     /// What ends the running launch's preparation commands; none outside a launch.
@@ -488,6 +493,7 @@ impl Host {
     }
     /// The host stops: the launch in progress, whoever's, is told to stop as `stop_launch` does,
     /// without waiting for it, so it never starts its game after the host closed the running app.
+    /// A launch that takes the lock later is stopped as it starts (`launch_started`).
     pub(crate) fn stop_launch_for_shutdown(&self) {
         if let Some(cancel) = self.launch_cancellation()
             && let Err(error) = cancel.cancel()

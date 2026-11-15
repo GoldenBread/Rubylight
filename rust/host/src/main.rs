@@ -639,6 +639,12 @@ async fn run(args: Args, assets: PathBuf) -> Result<()> {
     }
     // Nothing waits on a monitor's wake on the way out; the next start puts back what is left.
     butterpollo_windows::display_arrangement::close_wake_watch();
+    // A game moved to another device whose new stream came since the last tick stays with that
+    // device: the move is settled while the stream still counts as arrived. A launch that holds
+    // the lock settles its own.
+    if let Ok(_transition) = h.launch_transition.try_lock() {
+        h.settle_move();
+    }
     let canceled = h.sessions.lock().unwrap().request_stop(None);
     drop(canceled);
     // The Radeon settings and game file keys the sessions changed go back from now on, on
