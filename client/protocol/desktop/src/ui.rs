@@ -1120,7 +1120,7 @@ impl Launcher {
             Screen::Game { host, app } => Some((host, app)),
             _ => None,
         });
-        // Likewise a Files page that was left cancels its transfers.
+        // Likewise a Files page that was left goes, once its transfers are done.
         let files = std::iter::once(&self.screen).chain(self.trail.iter().map(|(screen, _)| screen)).find_map(|screen| match screen {
             Screen::Files(id) => Some(*id),
             _ => None,
@@ -1274,6 +1274,13 @@ impl Launcher {
             waking(&ctx, host, &mut commands);
         }
         self.button_hints(&ctx, &view);
+        // A Files page left while it transfers: its transfers go on, and this opens it again.
+        let files_shown = match self.screen { Screen::Files(id) => Some(id), _ => None };
+        if let Some((host, count)) = self.files.running_away(files_shown) {
+            if files::running_button(&ctx, count) {
+                commands.push(Command::OpenFiles(host));
+            }
+        }
         self.draw_toast(&ctx);
         commands
     }
@@ -1404,7 +1411,8 @@ impl Launcher {
                 }
                 self.open_settings();
             }
-            // Home and PCs drop the trail, and with it a Files or PC page and its transfers.
+            // Home and PCs drop the trail, and with it a PC page and its shared folders' transfer.
+            // A Files page's transfers go on.
             _ if self.transferring() => {
                 self.dialog = Dialog::ConfirmLeave { to: screen };
                 self.focus_dialog = true;
@@ -1421,9 +1429,9 @@ impl Launcher {
         self.switch(to);
     }
 
-    /// Whether a file transfer runs, on a Files page or a PC page's shared folders.
+    /// Whether a shared folders' transfer runs on a PC page, which leaving it cancels.
     fn transferring(&self) -> bool {
-        self.files.transferring() || self.folders.transferring()
+        self.folders.transferring()
     }
 
     /// The page's actions at the right edge of its row, registered left to right so Tab reaches

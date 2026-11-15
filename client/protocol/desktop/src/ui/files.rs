@@ -7,9 +7,10 @@
 //! The page asks the PC's native API what this device may do, then lists the folder. Each
 //! transfer runs on its own worker thread and reports through a channel; the UI thread owns the
 //! list, and the workers wake the UI loop. Leaving the page (it is neither shown nor on the way
-//! back to) cancels every transfer that has not finished: a download then leaves no partial file
-//! behind, an upload no file on the PC. Downloads land in the user's Downloads folder under a
-//! name no file there has yet.
+//! back to) keeps the transfers that have not finished: they go on, a button over the launcher
+//! says how many and opens the page again, where each can be cancelled, and the page is forgotten
+//! once they are done. A cancelled download leaves no partial file behind, an upload no file on
+//! the PC. Downloads land in the user's Downloads folder under a name no file there has yet.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -358,9 +359,9 @@ pub struct Files {
 
 impl Files {
     /// Takes in what the workers reported. `open` is the PC whose page is shown or on the way
-    /// back to: leaving the page cancels its transfers and forgets it.
+    /// back to: a page left is forgotten once no transfer of it is queued or running.
     pub fn poll(&mut self, open: Option<u64>) {
-        if self.page.as_ref().is_some_and(|p| open != Some(p.host)) {
+        if self.page.as_ref().is_some_and(|p| open != Some(p.host) && !p.transfers.is_active()) {
             self.page = None;
         }
         if let Some(page) = &mut self.page {
@@ -372,9 +373,16 @@ impl Files {
         self.page.as_ref().is_some_and(Page::busy)
     }
 
-    /// Whether a transfer is queued or running, which leaving the page cancels.
+    /// Whether a transfer is queued or running.
     pub fn transferring(&self) -> bool {
         self.page.as_ref().is_some_and(|p| p.transfers.is_active())
+    }
+
+    /// The PC whose transfers go on while its page is not shown (`shown`), and how many are
+    /// queued or running.
+    pub fn running_away(&self, shown: Option<u64>) -> Option<(u64, usize)> {
+        let page = self.page.as_ref().filter(|p| shown != Some(p.host) && p.transfers.is_active())?;
+        Some((page.host, page.transfers.items().iter().filter(|t| !t.state.is_finished()).count()))
     }
 
     /// Command::ChooseFiles: `pick` shows the system's file dialog and calls back with the files
@@ -396,9 +404,17 @@ impl Files {
 /// Command::OpenFiles: opens `host`'s Files page, which asks the PC at once. One that cannot
 /// start says why.
 pub fn open(launcher: &mut Launcher, identity: Option<&Arc<ClientIdentity>>, host: &Host, waker: Waker) {
-    // Still on the way back to: the same page, with its transfers.
+    // Still on the way back to, or transferring: the same page, with its transfers.
     if launcher.files.page.as_ref().is_some_and(|p| p.host == host.id) {
         launcher.open(Screen::Files(host.id));
+        return;
+    }
+    // One page at a time: another PC's transfers are not cancelled by opening this one.
+    if launcher.files.transferring() {
+        launcher.message(
+            tr("Files could not open"),
+            tr("Files are still transferring with another PC. Wait for them, or cancel them on that PC’s Files page, then try again."),
+        );
         return;
     }
     let client = match identity {
@@ -549,6 +565,16 @@ fn item(ui: &mut Ui, name: &str, line: &str, color: egui::Color32, control: impl
     out
 }
 
+/// The button over the launcher while a Files page that is not shown still transfers: how many,
+/// and a click opens that page again, where each transfer can be cancelled. True when clicked.
+pub(super) fn running_button(ctx: &egui::Context, count: usize) -> bool {
+    egui::Area::new(egui::Id::new("files-running"))
+        .order(egui::Order::Foreground)
+        .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(24.0, -24.0))
+        .show(ctx, |ui| quiet_button(ui, &trf("File transfers running: {}", &[&count])).clicked())
+        .inner
+}
+
 impl Launcher {
     pub(super) fn files_page(&mut self, ui: &mut Ui, view: &View<'_>, id: u64, commands: &mut Vec<Command>) {
         // The page is taken out while it is drawn, so focus can be handed out on `self`.
@@ -567,7 +593,7 @@ impl Launcher {
         let folder = page.folder.as_ref().ok().cloned();
         let may_send = page.may(Feature::FileUpload);
         let may_download = page.may(Feature::FileDownload) && folder.is_some();
-        ui.label(RichText::new(tr("Leaving this page cancels the transfers that have not finished. A transfer tried again starts from its first byte.")).color(ON_SURFACE_VARIANT));
+        ui.label(RichText::new(tr("Transfers go on when you leave this page. A transfer tried again starts from its first byte.")).color(ON_SURFACE_VARIANT));
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             let send = ui.add_enabled_ui(may_send && !page.choosing, |ui| primary_button(ui, "Send files…")).inner;

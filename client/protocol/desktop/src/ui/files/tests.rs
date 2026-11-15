@@ -393,7 +393,7 @@ fn a_refused_transfer_says_why_and_a_file_that_wont_open_fails_here() {
 }
 
 #[test]
-fn leaving_the_page_cancels_what_runs() {
+fn leaving_the_page_keeps_what_runs_until_it_is_done() {
     let downloads = Folder::new("leave");
     let here = Folder::new("leave-here");
     let api = fake(true, true);
@@ -406,6 +406,16 @@ fn leaving_the_page_cancels_what_runs() {
     assert!(cancel.is_empty(), "already running");
     files.poll(Some(7));
     assert!(files.page.is_some() && files.busy(), "shown or on the way back: kept");
+    assert_eq!(files.running_away(Some(7)), None, "the page shows them itself");
+    // Left: the upload goes on, and the launcher says so.
+    files.poll(None);
+    assert!(files.page.is_some() && files.transferring(), "leaving cancels nothing");
+    assert_eq!(files.running_away(None), Some((7, 1)));
+    // Cancelled on the page, it ends; the page left is forgotten then.
+    let p = files.page.as_mut().unwrap();
+    let id = p.transfers.items()[0].id;
+    p.cancel(id);
+    until(p, "the cancel", |p| !p.transfers.is_active());
     files.poll(None);
     assert!(files.page.is_none() && !files.busy());
     // The upload's worker saw the cancel and gave up: nothing reached the PC.

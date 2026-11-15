@@ -6599,7 +6599,7 @@ fn the_settings_destination_opens_over_a_page_and_back_returns_to_it() {
 /// first. Stay keeps the page and the upload; Leave goes. Settings opens over the page and keeps
 /// the upload without asking.
 #[test]
-fn leaving_a_files_page_by_the_top_bar_asks_while_a_transfer_runs() {
+fn leaving_a_files_page_keeps_its_transfers_and_a_button_says_so() {
     let (downloads, here) = (files::tests::Folder::new("top-bar"), files::tests::Folder::new("top-bar-here"));
     let mut f = Frames::with(record("Desk", true, true), Reach::Online, Some(files::tests::native_answer()), Vec::new());
     let id = f.hosts.list[0].id;
@@ -6607,28 +6607,15 @@ fn leaving_a_files_page_by_the_top_bar_asks_while_a_transfer_runs() {
     f.l.open(Screen::Files(id));
     f.settle();
     assert!(f.l.files.transferring());
+    assert!(!shows(&f, "File transfers running: 1"), "the page itself shows them");
+    // PCs leaves without asking: the upload goes on, and a button over the launcher says so.
     f.click_at(destination_at(&f, "PCs").center(), egui::PointerButton::Primary);
-    assert!(matches!(f.l.dialog, Dialog::ConfirmLeave { to: Screen::Hosts }), "PCs asks first");
-    assert!(shows(&f, "Cancel the transfers?"), "{:?}", f.drawn);
-    assert_eq!(f.l.screen, Screen::Files(id));
-    // Stay has the focus, so A does not cancel anything.
-    f.press(Key::Enter);
-    assert!(f.no_dialog());
-    assert_eq!(f.l.screen, Screen::Files(id));
-    assert!(f.l.files.transferring(), "Stay keeps the upload");
-    // Settings opens over the page: the upload goes on, and Back returns to it.
-    f.click_at(destination_at(&f, "Settings").center(), egui::PointerButton::Primary);
-    assert!(f.no_dialog() && f.l.screen == Screen::Settings, "Settings does not ask");
-    assert!(f.l.files.transferring(), "the upload goes on under Settings");
-    f.press(Key::Escape);
-    assert_eq!(f.l.screen, Screen::Files(id));
-    // Leave goes, and the upload is cancelled with the page.
-    f.click_at(destination_at(&f, "PCs").center(), egui::PointerButton::Primary);
-    let leave = f.placed.iter().find(|(t, ..)| t == "Leave").map(|p| p.1).expect("Leave");
-    f.click_at(leave.center(), egui::PointerButton::Primary);
-    assert!(f.no_dialog());
+    assert!(f.no_dialog(), "nothing to cancel");
     assert_eq!(f.l.screen, Screen::Hosts);
-    assert!(f.l.files.page.is_none(), "the page and its upload are gone");
+    f.settle();
+    assert!(f.l.files.transferring(), "the upload goes on");
+    assert_eq!(f.l.files.running_away(None), Some((id, 1)));
+    assert!(shows(&f, "File transfers running: 1"), "{:?}", f.drawn);
 }
 
 /// Hover lightens a card one step and draws no outline; focus adds a single amber ring outside it
