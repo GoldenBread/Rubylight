@@ -84,6 +84,14 @@ impl StreamSizes {
 /// The end of a stream whose packed 4:4:4 ("Sharper colored text") pictures cannot be shown.
 const PACKED_UNSHOWN: &str = en("This device cannot show Sharper colored text for this stream. Turn off Sharper colored text in Settings, then start the stream again.");
 
+/// Whether AI enhancement is the upscaling in effect: chosen, not failed this stream, and the
+/// picture is one it reads (`VideoTexture::enhance_source`: hardware-decoded NV12 or P010 in the
+/// video texture). Otherwise the picture is drawn as with bilinear scaling, at its cost, and the
+/// statistics say so (`upscaling_line`).
+fn ai_in_effect(upscaling: config::Upscaling, failed: bool, readable: bool) -> bool {
+    upscaling == config::Upscaling::Ai && !failed && readable
+}
+
 /// What the toast says when the PC did not confirm a requested size or frame rate in time:
 /// automatic quality stops only where it was on for the stream.
 fn unconfirmed_mode_toast(quality_on: bool) -> &'static str {
@@ -737,6 +745,21 @@ impl Streaming {
         None
     }
 
+    /// Whether AI enhancement draws the current picture (`ai_in_effect`); where it does not, its
+    /// enhancer goes.
+    #[cfg(windows)]
+    fn ai_enhances(&mut self) -> bool {
+        let ai = ai_in_effect(self.settings.upscaling, self.upscale_failed, self.texture.enhance_source().is_some());
+        if !ai { self.enhancer = None; }
+        ai
+    }
+
+    /// AI enhancement runs on Direct3D 11 only.
+    #[cfg(not(windows))]
+    fn ai_enhances(&mut self) -> bool {
+        ai_in_effect(self.settings.upscaling, self.upscale_failed, false)
+    }
+
     #[cfg(windows)]
     fn enhance_failed(&mut self, error: String) -> Option<*mut SDL_Texture> {
         eprintln!("nightjar: AI enhancement failed: {error}; the stream continues with bilinear scaling");
@@ -865,15 +888,18 @@ impl Streaming {
             let use_upscaler = self.settings.upscaling.is_shader() && !self.upscale_failed
                 && !self.texture.is_hdr() && output.0 >= input.0 && output.1 >= input.1 && output != input
                 && output.0 <= 16384 && output.1 <= 16384;
+            // AI enhancement only where it runs: a picture it does not read, or a failed
+            // enhancer, costs what bilinear scaling costs.
+            let ai = self.ai_enhances();
             // The video texture's picture goes into the window's target as it is, by the plane
             // pass or SDL, not through an upscaler or AI enhancement.
-            let unscaled = !self.texture.texture.is_null() && !use_upscaler && self.settings.upscaling != config::Upscaling::Ai;
+            let unscaled = !self.texture.texture.is_null() && !use_upscaler && !ai;
             self.clear_window(renderer, unscaled);
             #[cfg(windows)]
             if !unscaled { self.texture.release_back_buffers(); }
             if !self.texture.texture.is_null() {
                 let mut texture = self.texture.texture;
-                if self.settings.upscaling == config::Upscaling::Ai {
+                if ai {
                     // AI enhancement reads the YUV picture in the video texture.
                     self.texture.copy_held();
                     self.upscaler = None;
@@ -1363,6 +1389,17 @@ fn exclusive_fullscreen(renderer: *mut SDL_Renderer) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// With Upscaling set to AI, a picture AI enhancement does not read, or a failed enhancer,
+    /// draws as bilinear scaling does: straight into the window's target, with no copy for it.
+    #[test]
+    fn ai_enhancement_is_in_effect_only_where_it_runs() {
+        use config::Upscaling;
+        assert!(ai_in_effect(Upscaling::Ai, false, true));
+        assert!(!ai_in_effect(Upscaling::Ai, true, true), "failed this stream");
+        assert!(!ai_in_effect(Upscaling::Ai, false, false), "a picture it does not read");
+        assert!(!ai_in_effect(Upscaling::default(), false, true));
+    }
 
     /// A size or frame rate the PC did not confirm says automatic quality stopped only when it
     /// was on: a change from the stream menu or a window on another monitor says the change did
