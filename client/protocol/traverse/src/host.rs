@@ -396,7 +396,10 @@ impl HostService {
                     && match &state.published {
                         None => true,
                         Some((at_window, at, endpoints)) => {
-                            *at_window != window || now - at > PUBLISH_EVERY || *endpoints != public
+                            // Saturating: a publication that ended after `now` was taken.
+                            *at_window != window
+                                || now.saturating_sub(*at) > PUBLISH_EVERY
+                                || *endpoints != public
                         }
                     }
             })
@@ -406,7 +409,10 @@ impl HostService {
         let mut due: Vec<usize> = (0..devices.len())
             .filter(|&index| {
                 let state = &devices[index];
-                !state.polling && state.last_poll.map_or(true, |at| now - at >= POLL_EVERY)
+                !state.polling
+                    && state
+                        .last_poll
+                        .map_or(true, |at| now.saturating_sub(at) >= POLL_EVERY)
             })
             .collect();
         due.sort_by_key(|&index| devices[index].last_poll);
