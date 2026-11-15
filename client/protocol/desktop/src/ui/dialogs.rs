@@ -250,6 +250,8 @@ impl Launcher {
         let mut leave: Option<Screen> = None;
         let focus_first = self.focus_dialog;
         let mut focused = false;
+        // Read before the match holds the dialog: Connection test's verdict weighs the speed by it.
+        let bitrate_kbps = self.stream_bitrate_kbps();
         match &mut self.dialog {
             Dialog::None => {
                 if self.next_queued() {
@@ -931,17 +933,29 @@ impl Launcher {
                     });
                 });
             }
-            // Android's result: the delay line, then the speed or why it is missing; OK, and Try
-            // again to run it once more.
+            // What it means for streaming and the next step; Android's numbers (the delay line, then
+            // the speed or why it is missing) under Details. OK, and Try again to run it once more.
             Dialog::ConnectionTest { host, result } => {
                 let host = *host;
                 let (delay, speed) = (result.delay_line(), result.speed_line());
+                let verdict = result.verdict(bitrate_kbps);
                 modal(ctx, "connection-test", |ui| {
                     ui.set_width(440.0);
                     ui.label(RichText::new(tr("Connection test")).font(semibold(text::SECTION)));
-                    ui.label(RichText::new(delay).color(ON_SURFACE_VARIANT));
-                    if let Some(speed) = speed {
-                        ui.label(RichText::new(speed).color(ON_SURFACE_VARIANT));
+                    ui.label(RichText::new(tr(verdict.title)).font(semibold(text::BODY)).color(ON_SURFACE));
+                    if let Some(step) = verdict.step {
+                        ui.label(RichText::new(tr(step)).color(ON_SURFACE_VARIANT));
+                    }
+                    let open_id = Id::new("connection-test-details");
+                    let open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
+                    if link_button(ui, "Details").clicked() {
+                        ui.data_mut(|d| d.insert_temp(open_id, !open));
+                    }
+                    if open {
+                        ui.label(RichText::new(delay).font(regular(text::CAPTION)).color(ON_SURFACE_VARIANT));
+                        if let Some(speed) = speed {
+                            ui.label(RichText::new(speed).font(regular(text::CAPTION)).color(ON_SURFACE_VARIANT));
+                        }
                     }
                     dialog_buttons(ui, |ui| {
                         let ok = primary_button(ui, "OK");
@@ -1749,6 +1763,17 @@ impl Launcher {
             Dialog::ConfirmSleep { host: asked, .. } | Dialog::ConfirmPcPower { host: asked, .. } if *asked == host => self.message(title, body),
             _ => self.queued.push_back(Dialog::Message { title, body }),
         }
+    }
+
+    /// The bitrate a stream with the main settings asks for: the one set, else the default for
+    /// their size and rate (1080p and 60 when they follow the screen).
+    fn stream_bitrate_kbps(&self) -> u32 {
+        let s = &self.settings;
+        if s.bitrate_kbps != 0 {
+            return s.bitrate_kbps;
+        }
+        let (width, height) = if s.width == 0 || s.height == 0 { (1920, 1080) } else { (s.width, s.height) };
+        crate::config::default_bitrate_kbps(width, height, if s.fps == 0 { 60 } else { s.fps })
     }
 
     /// Shows why pairing failed, with a way to try again.

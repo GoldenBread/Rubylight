@@ -8587,11 +8587,18 @@ fn the_connection_test_result_shows_its_lines_and_runs_again() {
     let result = |speed| crate::network_test::Connection { latency_ms: Some(2.5), jitter_ms: Some(1.0), loss_percent: Some(25.0), speed };
     f.l.ask(Dialog::ConnectionTest { host, result: result(Some(Speed::Measured { mbps: 312.4, link_mbps: 1000 })) });
     f.settle();
+    // The verdict and its next step first; the numbers wait under Details.
+    assert!(shows(&f, "Streaming will stutter") && shows(&f, "Details"), "{:?}", f.drawn);
+    assert!(!shows(&f, "Ping 2.5 ms · Jitter 1.0 ms · Loss 25.0 %"), "{:?}", f.drawn);
+    let commands = f.press(Key::Enter);
+    assert!(f.no_dialog() && !commands.iter().any(|c| matches!(c, Command::NetworkTest { .. })), "OK has the focus and only closes it");
+    f.l.ask(Dialog::ConnectionTest { host, result: result(Some(Speed::Measured { mbps: 312.4, link_mbps: 1000 })) });
+    f.settle();
+    click_in_dialog(&mut f, "Details");
     for line in ["Connection test", "Ping 2.5 ms · Jitter 1.0 ms · Loss 25.0 %", "Speed 312.4 Mbps · PC link 1000 Mbps", "OK", "Try again"] {
         assert!(shows(&f, line), "{line}: {:?}", f.drawn);
     }
-    let commands = f.press(Key::Enter);
-    assert!(f.no_dialog() && !commands.iter().any(|c| matches!(c, Command::NetworkTest { .. })), "OK has the focus and only closes it");
+    f.l.dialog = Dialog::None;
 
     f.l.ask(Dialog::ConnectionTest { host, result: result(None) });
     f.settle();

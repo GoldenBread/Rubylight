@@ -52,6 +52,44 @@ impl Connection {
     }
 }
 
+/// What Connection test means for streaming, in plain words, with one next step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Verdict {
+    pub title: &'static str,
+    pub step: Option<&'static str>,
+}
+
+/// Loss above this many percent shows as stutter.
+const LOSS_STUTTERS: f64 = 1.0;
+/// Jitter above this many milliseconds shows as uneven frames.
+const JITTER_STUTTERS: f64 = 10.0;
+/// The measured speed should carry the stream's bitrate this many times over.
+const SPEED_HEADROOM: f64 = 1.5;
+
+impl Connection {
+    /// Good for streaming, will stutter, or cannot connect, for a stream of `bitrate_kbps`.
+    pub fn verdict(&self, bitrate_kbps: u32) -> Verdict {
+        let finite = |v: Option<f64>| v.filter(|v| v.is_finite());
+        let loss = finite(self.loss_percent);
+        if finite(self.latency_ms).is_none() || loss.is_some_and(|l| l >= 100.0) {
+            return Verdict { title: en("Can’t connect to this PC"), step: Some(en("Check that the PC is on and on this network, then try again.")) };
+        }
+        let stutters = en("Streaming will stutter");
+        if loss.is_some_and(|l| l > LOSS_STUTTERS) {
+            return Verdict { title: stutters, step: Some(en("The network loses data. Connect this device or the PC by cable, or move closer to the router.")) };
+        }
+        if finite(self.jitter_ms).is_some_and(|j| j > JITTER_STUTTERS) {
+            return Verdict { title: stutters, step: Some(en("The delay keeps changing. Connect by cable, or pause other downloads on this network.")) };
+        }
+        if let Some(Speed::Measured { mbps, .. }) = self.speed {
+            if mbps * 1000.0 < f64::from(bitrate_kbps) * SPEED_HEADROOM {
+                return Verdict { title: stutters, step: Some(en("The connection is slower than the stream needs. Lower the bitrate in Settings.")) };
+            }
+        }
+        Verdict { title: en("Good for streaming"), step: None }
+    }
+}
+
 /// A number with the language's decimal comma.
 fn local(number: String) -> String {
     if crate::strings::current().decimal_comma() { number.replace('.', ",") } else { number }
@@ -196,6 +234,22 @@ impl Drop for Test {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_verdict_says_good_stutter_or_no_connection() {
+        let at = |latency: Option<f64>, jitter: f64, loss: f64, speed: Option<Speed>| Connection { latency_ms: latency, jitter_ms: Some(jitter), loss_percent: Some(loss), speed }.verdict(20_000);
+        let fast = Some(Speed::Measured { mbps: 300.0, link_mbps: 1000 });
+        assert_eq!(at(Some(4.0), 1.0, 0.0, fast), Verdict { title: "Good for streaming", step: None });
+        assert_eq!(at(Some(4.0), 1.0, 0.0, None).title, "Good for streaming", "no speed test: the delay decides");
+        assert_eq!(at(None, 0.0, 100.0, None).title, "Can’t connect to this PC");
+        assert_eq!(at(Some(4.0), 1.0, 100.0, None).title, "Can’t connect to this PC");
+        let stutter = |v: Verdict| v.title == "Streaming will stutter" && v.step.is_some();
+        assert!(stutter(at(Some(4.0), 1.0, 1.5, fast)), "loss");
+        assert!(!stutter(at(Some(4.0), 1.0, 1.0, fast)), "1 % is still fine");
+        assert!(stutter(at(Some(4.0), 12.0, 0.0, fast)), "jitter");
+        assert!(stutter(at(Some(4.0), 1.0, 0.0, Some(Speed::Measured { mbps: 25.0, link_mbps: 1000 }))), "25 Mbps for a 20 Mbps stream");
+        assert!(!stutter(at(Some(4.0), 1.0, 0.0, Some(Speed::Measured { mbps: 30.0, link_mbps: 1000 }))), "30 Mbps carries it");
+    }
 
     // Foundation Sunshine's test is offered to paired Sunshine PCs; Rubylight keeps its own.
     #[test]
