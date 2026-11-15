@@ -354,23 +354,25 @@ impl Tunnel {
         self.shared.stopped.load(Ordering::Acquire)
     }
 
-    /// Takes a datagram the node received for this path's tag.
-    pub fn receive(&self, datagram: &[u8], from: SocketAddr) {
+    /// Takes a datagram the node received for this path's tag, and decrypts it in place.
+    pub fn receive(&self, datagram: &mut [u8], from: SocketAddr) {
         let now = self.shared.node.now();
         if self.is_closed() {
             return;
         }
-        let Some(opened) = self.shared.opener.lock().unwrap().open(datagram) else {
+        let opened = self.shared.opener.lock().unwrap().open_in_place(datagram);
+        let Some((kind, channel, payload)) = opened else {
             return;
         };
+        let payload = &datagram[payload];
         self.shared.last_heard.fetch_max(now, Ordering::Relaxed);
-        if matches!(opened.kind, Kind::Media | Kind::Stream) {
+        if matches!(kind, Kind::Media | Kind::Stream) {
             self.shared.last_used.fetch_max(now, Ordering::Relaxed);
         }
         // Media from the connected peer's address changes nothing in `inner`: it skips the
         // reliable layer's lock entirely.
-        if opened.kind == Kind::Media && *self.shared.connected.lock().unwrap() == Some(from) {
-            self.media_in(opened.channel, &opened.payload);
+        if kind == Kind::Media && *self.shared.connected.lock().unwrap() == Some(from) {
+            self.media_in(channel, payload);
             return;
         }
         let mut inner = self.shared.inner.lock().unwrap();
@@ -380,7 +382,7 @@ impl Tunnel {
         // Any authenticated datagram moves the path to where it came from: a NAT that changed
         // the peer's port keeps working.
         inner.peer = Some(from);
-        match opened.kind {
+        match kind {
             Kind::Punch => {
                 inner.puncher.on_punch(from);
                 self.publish(&inner);
@@ -393,12 +395,12 @@ impl Tunnel {
                 if !matches!(inner.puncher.state(), punch::State::Connected(_)) {
                     inner.puncher.on_ack(from);
                 }
-                inner.reliable.handle(&opened.payload, now);
+                inner.reliable.handle(payload, now);
             }
             Kind::Media => {
                 self.publish(&inner);
                 drop(inner);
-                self.media_in(opened.channel, &opened.payload);
+                self.media_in(channel, payload);
                 return;
             }
             Kind::Close => {

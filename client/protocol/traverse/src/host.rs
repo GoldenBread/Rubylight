@@ -390,7 +390,8 @@ impl HostService {
         Some(tunnel)
     }
 
-    fn receive(&self, datagram: &[u8], from: SocketAddr) {
+    /// Takes a datagram for a path; an open path decrypts it in place.
+    fn receive(&self, datagram: &mut [u8], from: SocketAddr) {
         let Some(tag) = wire::tag(datagram) else {
             return;
         };
@@ -417,6 +418,7 @@ impl HostService {
         };
         // Only a punch that opens with this device's keys starts a path.
         let keys = peer.keys.path(&self.shared.session, &client);
+        // On a copy: the path the punch starts opens it again.
         if wire::Opener::new(&keys.client_to_host, keys.tag)
             .open(datagram)
             .is_none()
@@ -429,7 +431,7 @@ impl HostService {
             return;
         }
         let opening = self.clone();
-        let datagram = datagram.to_vec();
+        let mut datagram = datagram.to_vec();
         let spawned = thread::Builder::new()
             .name("internet play open".into())
             .spawn(move || {
@@ -441,7 +443,7 @@ impl HostService {
                     .unwrap()
                     .remove(&(tag, client));
                 if let Some(tunnel) = tunnel {
-                    tunnel.receive(&datagram, from);
+                    tunnel.receive(&mut datagram, from);
                 }
             });
         if spawned.is_err() {
@@ -762,7 +764,7 @@ mod tests {
             0,
             &[],
         );
-        host.receive(&forged, from);
+        host.receive(&mut forged.clone(), from);
         assert!(host.status().paths.is_empty());
 
         let punch = wire::Sealer::new(&path.client_to_host, path.tag, [9; 16]).seal(
@@ -770,7 +772,7 @@ mod tests {
             0,
             &[],
         );
-        host.receive(&punch, from);
+        host.receive(&mut punch.clone(), from);
         let paths = paths(&host, 1);
         assert_eq!(paths.len(), 1);
         assert_eq!(paths[0].device, "Phone");
@@ -807,9 +809,9 @@ mod tests {
         let probe = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         let from = probe.local_addr().unwrap();
 
-        host.receive(&punch(&phone, [9; 16]), from);
+        host.receive(&mut punch(&phone, [9; 16]), from);
         assert_eq!(paths(&host, 1).len(), 1);
-        host.receive(&punch(&tablet, [8; 16]), from);
+        host.receive(&mut punch(&tablet, [8; 16]), from);
         for _ in 0..100 {
             if !host.status().path_errors.is_empty() {
                 break;
@@ -827,7 +829,7 @@ mod tests {
 
         // Once the phone's path is gone, the tablet gets one, and its wait is over.
         host.set_devices(vec![tablet.clone()]);
-        host.receive(&punch(&tablet, [8; 16]), from);
+        host.receive(&mut punch(&tablet, [8; 16]), from);
         let paths = paths(&host, 1);
         assert_eq!(paths.len(), 1);
         assert_eq!(paths[0].device, "Tablet");

@@ -22,8 +22,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Takes the datagrams of punched paths: (datagram, sender).
-pub type Handler = Box<dyn Fn(&[u8], SocketAddr) + Send + Sync>;
+/// Takes the datagrams of punched paths: (datagram, sender). The datagram is the receive
+/// buffer itself, which the handler may decrypt in place.
+pub type Handler = Box<dyn Fn(&mut [u8], SocketAddr) + Send + Sync>;
 
 /// How long a lookup may take in all.
 pub const LOOKUP_DEADLINE: Millis = 20_000;
@@ -314,7 +315,7 @@ fn receive(shared: Arc<Shared>) {
             // Timeouts, and on Windows the ICMP port-unreachable a punch can draw.
             Err(_) => continue,
         };
-        let datagram = &buffer[..length];
+        let datagram = &mut buffer[..length];
         if crate::wire::is_wire(datagram) {
             let handler = shared.state.lock().unwrap().handler.clone();
             if let Some(handler) = handler {

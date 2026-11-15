@@ -19,7 +19,10 @@
 //! and a DHT message always starts with `d`, so the three share one socket.
 
 use crate::crypto::{Aead, Key, TAG_BYTES};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::{
+    ops::Range,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 pub const MAGIC: [u8; 3] = [0xa7, b'R', b'L'];
 pub const VERSION: u8 = 1;
@@ -182,6 +185,32 @@ impl Opener {
     /// Opens a datagram for this path; None when it is not this path's, does not authenticate
     /// or repeats one already taken.
     pub fn open(&mut self, datagram: &[u8]) -> Option<Opened> {
+        let (kind, seq, aad_bytes) = self.check(datagram)?;
+        let mut body = datagram[aad_bytes..].to_vec();
+        if !self.key.open(nonce(seq), &datagram[..aad_bytes], &mut body) {
+            return None;
+        }
+        self.accept(seq);
+        Some(Opened {
+            kind,
+            channel: datagram[5],
+            payload: body,
+        })
+    }
+
+    /// [`Opener::open`] where the datagram lies: decrypts its body in place and returns its
+    /// kind, its channel and where in `datagram` the payload now is. Allocates nothing.
+    pub fn open_in_place(&mut self, datagram: &mut [u8]) -> Option<(Kind, u8, Range<usize>)> {
+        let (kind, seq, aad_bytes) = self.check(datagram)?;
+        let (aad, body) = datagram.split_at_mut(aad_bytes);
+        let length = self.key.open_slice(nonce(seq), aad, body)?;
+        self.accept(seq);
+        Some((kind, datagram[5], aad_bytes..aad_bytes + length))
+    }
+
+    /// A datagram's kind, sequence number and AAD length, when it is this path's and not taken
+    /// yet; it is not authenticated so far.
+    fn check(&self, datagram: &[u8]) -> Option<(Kind, u64, usize)> {
         if !is_wire(datagram) || datagram[8..16] != self.tag {
             return None;
         }
@@ -196,16 +225,7 @@ impl Opener {
         if datagram.len() < aad_bytes + TAG_BYTES || seq == 0 || !self.fresh(seq) {
             return None;
         }
-        let mut body = datagram[aad_bytes..].to_vec();
-        if !self.key.open(nonce(seq), &datagram[..aad_bytes], &mut body) {
-            return None;
-        }
-        self.accept(seq);
-        Some(Opened {
-            kind,
-            channel: datagram[5],
-            payload: body,
-        })
+        Some((kind, seq, aad_bytes))
     }
 
     fn fresh(&self, seq: u64) -> bool {
@@ -320,6 +340,39 @@ mod tests {
             assert_eq!(kept, reference(seq + 1, kind, channel, payload));
             seq += 2;
         }
+    }
+
+    #[test]
+    fn opening_in_place_agrees_with_opening_a_copy() {
+        let sealer = Sealer::new(&[1; 32], [2; 8], [3; 16]);
+        let mut datagrams: Vec<Vec<u8>> = vec![
+            sealer.seal(Kind::Media, CHANNEL_AUDIO, b"opus"),
+            sealer.seal(Kind::Punch, 0, b""),
+            sealer.seal(Kind::Stream, 0, &[9; 1100]),
+        ];
+        // A replay, a changed byte, another path's tag, and one cut short.
+        datagrams.push(datagrams[0].clone());
+        let mut changed = sealer.seal(Kind::Media, CHANNEL_VIDEO, b"frame");
+        changed[30] ^= 1;
+        datagrams.push(changed);
+        datagrams.push(Sealer::new(&[1; 32], [7; 8], [3; 16]).seal(Kind::Stream, 0, b"x"));
+        datagrams.push(sealer.seal(Kind::Keepalive, 0, b"")[..OVERHEAD - 1].to_vec());
+        let mut copy = Opener::new(&[1; 32], [2; 8]);
+        let mut in_place = Opener::new(&[1; 32], [2; 8]);
+        for datagram in &datagrams {
+            let opened = copy.open(datagram);
+            let mut buffer = datagram.clone();
+            let placed = in_place
+                .open_in_place(&mut buffer)
+                .map(|(kind, channel, range)| Opened {
+                    kind,
+                    channel,
+                    payload: buffer[range].to_vec(),
+                });
+            assert_eq!(placed, opened);
+        }
+        assert_eq!(copy.highest, in_place.highest);
+        assert_eq!(copy.window, in_place.window);
     }
 
     #[test]

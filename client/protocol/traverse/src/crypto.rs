@@ -127,6 +127,18 @@ impl Aead {
         data.truncate(length);
         true
     }
+    /// [`Aead::open`] on a slice: decrypts `data` (ciphertext and tag) where it lies and
+    /// returns the plaintext's length at its start; None when it does not authenticate.
+    pub fn open_slice(&self, nonce: [u8; 12], aad: &[u8], data: &mut [u8]) -> Option<usize> {
+        self.0
+            .open_in_place(
+                aead::Nonce::assume_unique_for_key(nonce),
+                aead::Aad::from(aad),
+                data,
+            )
+            .ok()
+            .map(|plain| plain.len())
+    }
 }
 
 #[cfg(test)]
