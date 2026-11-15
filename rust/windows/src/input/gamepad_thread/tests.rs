@@ -863,7 +863,7 @@ fn keyboard_and_mouse_do_not_wait_for_a_stalled_driver() {
     static INJECTED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let (pads, gate, _) = fake();
     let mut injector = super::super::Injector::new(r"\\.\DISPLAY99", "vhf").unwrap();
-    injector.gamepads = Arc::new(pads);
+    injector.gamepads = Some(Arc::new(pads));
     injector.inject = |inputs| {
         INJECTED.fetch_add(inputs.len(), Ordering::Relaxed);
         inputs.len()
@@ -912,8 +912,8 @@ fn keyboard_and_mouse_do_not_wait_for_a_stalled_driver() {
 fn disconnect_does_not_wait_for_the_gamepad_driver() {
     let (pads, gate, log) = fake();
     let mut injector = super::super::Injector::new(r"\\.\DISPLAY99", "vhf").unwrap();
-    injector.gamepads = Arc::new(pads);
-    injector.gamepads.send(state(0, 1, 1, 42));
+    injector.gamepads = Some(Arc::new(pads));
+    injector.gamepads.as_ref().unwrap().send(state(0, 1, 1, 42));
     gate.wait_entered(1);
     injector.detach_gamepads();
     drop(injector);
