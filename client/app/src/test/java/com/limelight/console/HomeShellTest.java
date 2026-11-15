@@ -1071,6 +1071,36 @@ public class HomeShellTest {
     }
 
     @Test
+    public void aWakeFromHomeShowsItsWaitUntilItEndsAndASecondTapShowsTheSameWait() throws Exception {
+        ActivityController<Home> controller = home();
+        try {
+            Home home = controller.get();
+            ComputerDetails attic = nativeHost("attic", "Attic", false);
+            attic.macAddress = "aa:bb:cc:dd:ee:ff";
+            showHosts(home, attic);
+            assertTrue(hostCard(home, "attic").performClick());
+            await(() -> home.woken.size() == 1);
+            AlertDialog wait = (AlertDialog) ShadowDialog.getLatestDialog();
+            assertNotNull(wait);
+            assertTrue("the wait shows for as long as it lasts", wait.isShowing());
+            assertEquals(home.getString(R.string.console_wake_waiting, "Attic"),
+                    ((TextView) wait.findViewById(android.R.id.message)).getText().toString());
+            hostCard(home, "attic").performClick();
+            shadowOf(Looper.getMainLooper()).idle();
+            assertSame("a second tap shows the same wait", wait, ShadowDialog.getLatestDialog());
+            assertTrue(wait.isShowing());
+            assertEquals("and sends nothing new", 1, home.woken.size());
+            wait.getButton(AlertDialog.BUTTON_NEGATIVE).performClick();
+            shadowOf(Looper.getMainLooper()).idle();
+            assertFalse(wait.isShowing());
+            HomeWake wake = ReflectionHelpers.getField(home, "wake");
+            assertFalse("Cancel ends the wait", wake.isWaiting());
+        } finally {
+            controller.pause().stop().destroy();
+        }
+    }
+
+    @Test
     public void tappingAPcThatIsAwayWithoutAMacAddressOpensThePcList() throws Exception {
         ActivityController<Home> controller = home();
         try {
