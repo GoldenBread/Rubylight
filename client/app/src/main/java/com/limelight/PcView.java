@@ -262,8 +262,7 @@ public class PcView extends NightjarActivity implements AdapterFragmentCallbacks
         // app updates, which this screen does when it stays.
         Intent openPlay = com.limelight.console.OpenPlay.atEntry(this, savedInstanceState);
         if (savedInstanceState == null && opensHome()) {
-            Intent home = new Intent(this, com.limelight.console.ConsoleHomeActivity.class)
-                    .putExtra(com.limelight.console.ConsoleHomeActivity.EXTRA_LAUNCH_SCREEN, true);
+            Intent home = new Intent(this, com.limelight.console.ConsoleHomeActivity.class);
             if (openPlay != null) {
                 // The game's page over Home: Cancel, a failed start and the stream's end all land there.
                 startActivities(new Intent[] {home, openPlay});

@@ -81,6 +81,9 @@ public class HomeShellTest {
 
     /** Home without the computer manager service: tests report hosts themselves. */
     public static class Home extends ConsoleHomeActivity {
+        /** The real check would ask GitHub. */
+        @Override protected void checkForUpdates() { }
+
         /** The PCs a wake packet was asked for; the real sender would use the network. */
         final List<String> woken = Collections.synchronizedList(new ArrayList<>());
 

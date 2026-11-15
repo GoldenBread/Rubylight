@@ -55,6 +55,9 @@ public class HomeEmptyStateTest {
 
     /** Home without the computer manager service, over the test's repository. */
     public static class Home extends ConsoleHomeActivity {
+        /** The real check would ask GitHub. */
+        @Override protected void checkForUpdates() { }
+
         @Override public boolean bindService(Intent intent, ServiceConnection connection, int flags) {
             return managerHangs;
         }

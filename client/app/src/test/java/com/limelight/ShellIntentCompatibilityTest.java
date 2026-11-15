@@ -148,9 +148,12 @@ public class ShellIntentCompatibilityTest {
         }
     }
 
-    /** Home as the launch screen looks for app updates in the PC list's place; Home opened any other way leaves that to the PC list. */
+    /**
+     * Home looks for app updates however it was opened: as the launch screen, after pairing, or in a task brought
+     * back, no PC list is in front to do it.
+     */
     @Test
-    public void homeAsTheLaunchScreenLooksForAppUpdates() throws Exception {
+    public void homeLooksForAppUpdatesHoweverItWasOpened() throws Exception {
         cacheALibrary();
         ActivityController<PcViewLifecycleTest.Library> controller =
                 Robolectric.buildActivity(PcViewLifecycleTest.Library.class, new Intent(Intent.ACTION_MAIN)).create();
@@ -160,7 +163,6 @@ public class ShellIntentCompatibilityTest {
         } finally {
             controller.destroy();
         }
-        assertTrue(forwarded.getBooleanExtra(ConsoleHomeActivity.EXTRA_LAUNCH_SCREEN, false));
 
         ActivityController<CountingHome> launched =
                 Robolectric.buildActivity(CountingHome.class, new Intent(forwarded).setClass(context, CountingHome.class)).setup();
@@ -175,7 +177,7 @@ public class ShellIntentCompatibilityTest {
 
         ActivityController<CountingHome> other = Robolectric.buildActivity(CountingHome.class).setup();
         try {
-            assertEquals(0, other.get().checks);
+            assertEquals(1, other.get().checks);
         } finally {
             other.pause().stop().destroy();
         }

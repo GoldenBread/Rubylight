@@ -63,6 +63,9 @@ public class HomeHeroTouchTest {
     public static class Home extends ConsoleHomeActivity {
         final List<String> played = new ArrayList<>();
 
+        /** The real check would ask GitHub. */
+        @Override protected void checkForUpdates() { }
+
         @Override protected void play(NvApp app, ComputerDetails computer, String source) {
             played.add(app.getAppName());
         }

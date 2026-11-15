@@ -341,6 +341,11 @@ public class AddComputerManually extends NightjarActivity {
     private void cancelAdd(Thread attempt) {
         if (addThread != attempt) return;
         attempt.interrupt();
+        if (openedFromLink) {
+            // A link typed nothing into the form: Back leaves, as it does on the form itself.
+            finish();
+            return;
+        }
         startAddThread();
         setSubmitting(false);
     }
