@@ -525,6 +525,7 @@ impl App {
             display_luminance: sdl::launch_luminance(self.renderer),
             bitrate_before_manual: None,
             resume_bitrate_kbps: None,
+            resume_quality: None,
         };
         self.cancelled = false;
         self.connecting = Some(Connecting::start(plan, self.waker.clone()));

@@ -37,6 +37,19 @@ public final class AdaptiveQualityController {
     private int devicePressureSamples, networkPressureSamples;
     private int tailPressureSamples;
     private long timingGeneration = Long.MIN_VALUE, timingWindowEndNs, timingTickMs = -1;
+    // The step the stream before an automatic reconnect had reached (resumeAt), -1 for none.
+    private int resumeLevel = -1;
+
+    /**
+     * After an automatic reconnect: the first decision returns to widthxheight@fps, the step the stream before had
+     * reached, when it is a step down on this ladder; the ladder may climb back (nightjar-policy's resume_at).
+     */
+    public void resumeAt(int width, int height, int fps) {
+        resumeLevel = -1;
+        for (int i = level + 1; i < levels.size(); i++) {
+            if (levels.get(i).matches(width, height, fps)) { resumeLevel = i; return; }
+        }
+    }
 
     public AdaptiveQualityController(Mode mode, int width, int height, int fps, int minShortEdge,
                                      int minFps, int alignWidth, int alignHeight, long now) {
@@ -125,6 +138,11 @@ public final class AdaptiveQualityController {
                           float decodeMs, float jitterMs, float queueMs, int thermalLevel,
                           boolean bitrateHasRoom, DecodeTiming timing, boolean observeTail) {
         if (mode == Mode.OFF || !recentVideo) { suspend(); return null; }
+        if (resumeLevel >= 0) {
+            int resume = resumeLevel;
+            resumeLevel = -1;
+            if (resume > level && resume < levels.size()) return levels.get(resume);
+        }
         float frameMs = 1000f / current().fps;
         double decodeBudgetMs = DecodeTiming.decodeBudgetMs(current().fps);
         boolean validTiming = observeTail && acceptTiming(now, timing);

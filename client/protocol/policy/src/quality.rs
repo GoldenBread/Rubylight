@@ -149,9 +149,17 @@ pub struct AdaptiveQualityController {
     timing_generation: i64,
     timing_window_end_ns: i64,
     timing_tick_ms: Option<u64>,
+    /// The step the stream before an automatic reconnect had reached ([`Self::resume_at`]).
+    resume_level: Option<usize>,
 }
 
 impl AdaptiveQualityController {
+    /// After an automatic reconnect: the first decision returns to `target`, the step the stream
+    /// before had reached, when it is a step down on this ladder; the ladder may climb back.
+    pub fn resume_at(&mut self, target: Target) {
+        self.resume_level = self.levels.iter().position(|t| *t == target).filter(|&level| level > self.level);
+    }
+
     /// The ladder starts at `width`x`height`@`fps`. Floors below 240 lines, 15 FPS or an
     /// alignment of 2 are raised to them.
     pub fn new(
@@ -182,6 +190,7 @@ impl AdaptiveQualityController {
             timing_generation: i64::MIN,
             timing_window_end_ns: 0,
             timing_tick_ms: None,
+            resume_level: None,
         };
         controller.rebuild(width, height, fps)?;
         Ok(controller)
@@ -318,6 +327,11 @@ impl AdaptiveQualityController {
         if self.mode == Mode::Off || !s.recent_video {
             self.suspend();
             return None;
+        }
+        if let Some(level) = self.resume_level.take() {
+            if level > self.level && level < self.levels.len() {
+                return Some(self.levels[level]);
+            }
         }
         let fps = self.current().fps;
         let frame_ms = 1000.0f32 / fps as f32;
@@ -648,6 +662,27 @@ mod tests {
             })
             .last()
             .flatten()
+    }
+
+    /// An automatic reconnect returns to the step the stream before had reached, once.
+    #[test]
+    fn a_resumed_ladder_returns_to_its_step_once() {
+        let mut quality =
+            AdaptiveQualityController::new(Mode::Motion, 1920, 1080, 120, BOUNDS, 0).unwrap();
+        let step = hot(&mut quality, 15_000).unwrap();
+        let mut resumed =
+            AdaptiveQualityController::new(Mode::Motion, 1920, 1080, 120, BOUNDS, 0).unwrap();
+        resumed.resume_at(step);
+        let tick = Stats { now_ms: 1000, recent_video: true, ..Stats::default() };
+        assert_eq!(resumed.sample(&tick, true), Some(step));
+        resumed.applied(step, 1000).unwrap();
+        assert_eq!(resumed.current(), step);
+        assert_eq!(resumed.ceiling(), quality.ceiling(), "the same ceiling to climb back to");
+        assert_eq!(resumed.sample(&Stats { now_ms: 2000, ..tick }, true), None, "once");
+        let mut top =
+            AdaptiveQualityController::new(Mode::Motion, 1920, 1080, 120, BOUNDS, 0).unwrap();
+        top.resume_at(top.ceiling());
+        assert_eq!(top.sample(&tick, true), None, "the top is no step down");
     }
 
     #[test]

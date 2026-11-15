@@ -85,6 +85,10 @@ impl Quality {
         request
     }
 
+    /// After an automatic reconnect: the first decision returns to `request`, the step the stream
+    /// before had reached.
+    pub fn resume_at(&mut self, request: Reconfigure) { self.policy.resume_at(Self::rung(request)); }
+
     pub fn applied(&mut self, request: Reconfigure, now: u64) -> Result<(), QualityError> {
         self.policy.applied(Self::rung(request), now)
     }

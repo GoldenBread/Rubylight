@@ -24,6 +24,16 @@ public final class ClientHintBitrateController {
     private boolean lastDown;
     private int pendingKbps;
     private boolean stopped;
+    // A cut the stream before an automatic reconnect had made (resumeFrom), 0 for none.
+    private int resumeKbps;
+
+    /**
+     * After an automatic reconnect: the first decision returns to the rate the stream before had cut to, inside the
+     * range of the stream's own bitrate, which it may climb back to (nightjar-policy's client_hint::Bitrate::resume_from).
+     */
+    public void resumeFrom(int kbps) {
+        resumeKbps = kbps > 0 && kbps < currentKbps ? kbps : 0;
+    }
 
     /** limitKbps is this client's own cap, 0 for none. */
     public ClientHintBitrateController(int initialKbps, int limitKbps, long nowMs) {
@@ -52,6 +62,14 @@ public final class ClientHintBitrateController {
             return 0;
         }
         if (nowMs < startedMs + START_DELAY_MS || (lastChangeMs >= 0 && nowMs < lastChangeMs + COOLDOWN_MS)) return 0;
+        if (resumeKbps > 0) {
+            int resume = Math.max(minKbps, Math.min(maxKbps, resumeKbps));
+            resumeKbps = 0;
+            if (resume < currentKbps) {
+                pendingKbps = resume;
+                return resume;
+            }
+        }
         // Unknown (negative or NaN) loss is no decision, and no clean sample.
         if (!(lossPercent >= 0)) {
             stableSamples = 0;
@@ -118,6 +136,7 @@ public final class ClientHintBitrateController {
         lossStreak = 0;
         lastDown = false;
         pendingKbps = 0;
+        resumeKbps = 0;
     }
 
     public int currentKbps() {

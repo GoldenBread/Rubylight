@@ -23,6 +23,22 @@ public class StreamRateChangesTest {
         return true;
     });
 
+    /** An automatic reconnect starts loss-based bitrate again from the cut, below the stream's own ceiling. */
+    @Test public void aResumedHintControllerReturnsToTheCutAndMayClimbBack() {
+        ClientHintBitrateController c = new ClientHintBitrateController(20_000, 0, 0);
+        c.resumeFrom(9_000);
+        assertEquals("the start delay holds", 0, c.sample(2000, true, 0, 0));
+        assertEquals(9_000, c.sample(ClientHintBitrateController.START_DELAY_MS, true, 0, 0));
+        c.applied(9_000, 3000);
+        assertEquals("the ceiling is the stream's own", 40_000, c.maxKbps());
+        int climbed = 0;
+        for (long now = 5000; now < 30_000 && climbed == 0; now += 1000) climbed = c.sample(now, true, 0, 0);
+        assertTrue("climbs back: " + climbed, climbed > 9_000);
+        ClientHintBitrateController higher = new ClientHintBitrateController(20_000, 0, 0);
+        higher.resumeFrom(25_000);
+        assertEquals("no cut to return to", 0, higher.sample(ClientHintBitrateController.START_DELAY_MS, true, 0, 0));
+    }
+
     private static RateChangeResult bitrate(int serial, int kbps, int status, int reason) {
         return new RateChangeResult(serial, kbps, 0, status, reason, STATUS_UNCHANGED, REASON_NONE);
     }

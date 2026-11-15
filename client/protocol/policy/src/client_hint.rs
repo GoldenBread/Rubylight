@@ -50,9 +50,17 @@ pub struct Bitrate {
     last_down: bool,
     pending_kbps: Option<u32>,
     stopped: bool,
+    /// A cut the stream before an automatic reconnect had made ([`Self::resume_from`]).
+    resume_kbps: Option<u32>,
 }
 
 impl Bitrate {
+    /// After an automatic reconnect: the first decision returns to the rate the stream before had
+    /// cut to, inside the range of the stream's own bitrate, which it may climb back to.
+    pub fn resume_from(&mut self, kbps: u32) {
+        self.resume_kbps = (kbps > 0 && kbps < self.current_kbps).then_some(kbps);
+    }
+
     /// `initial_kbps` is the stream's bitrate and `limit_kbps` this client's own cap (0 for
     /// none), which the range never exceeds.
     pub fn new(initial_kbps: u32, limit_kbps: u32, now_ms: u64) -> Self {
@@ -74,6 +82,7 @@ impl Bitrate {
             last_down: false,
             pending_kbps: None,
             stopped: false,
+            resume_kbps: None,
         }
     }
 
@@ -96,6 +105,13 @@ impl Bitrate {
                 .is_some_and(|at| now_ms < at + COOLDOWN_MS)
         {
             return None;
+        }
+        if let Some(kbps) = self.resume_kbps.take() {
+            let kbps = kbps.clamp(self.min_kbps, self.max_kbps);
+            if kbps < self.current_kbps {
+                self.pending_kbps = Some(kbps);
+                return Some(kbps);
+            }
         }
         // Unknown loss is no decision, and no clean sample.
         let Some(loss) = known(stats.loss_percent) else {
@@ -277,6 +293,22 @@ mod tests {
         assert_eq!(range(100_000), (30_000, 150_000));
         assert_eq!(range(500_000), (150_000, 500_000));
         assert_eq!(range(u32::MAX), (240_000, 800_000));
+    }
+
+    /// An automatic reconnect starts again from the cut, below the same ceiling.
+    #[test]
+    fn a_resumed_controller_returns_to_the_cut_and_may_climb_back() {
+        let mut c = Bitrate::new(20_000, 0, 0);
+        c.resume_from(9_000);
+        assert_eq!(c.sample(&tick(2, 0.0)), None, "the start delay holds");
+        assert_eq!(c.sample(&tick(3, 0.0)), Some(9_000));
+        c.applied(9_000, 3000);
+        assert_eq!(c.max_kbps(), 40_000, "the ceiling is the stream's own");
+        let climbed = (5..30).find_map(|s| c.sample(&tick(s, 0.0)));
+        assert!(climbed.is_some_and(|kbps| kbps > 9_000), "{climbed:?}");
+        let mut higher = Bitrate::new(20_000, 0, 0);
+        higher.resume_from(25_000);
+        assert_eq!(higher.sample(&tick(3, 0.0)), None, "no cut to return to");
     }
 
     #[test]

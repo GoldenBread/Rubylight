@@ -2,6 +2,7 @@ package com.limelight;
 
 import com.limelight.binding.video.PackedFallback;
 import com.limelight.binding.video.MediaCodecDecoderRenderer;
+import com.limelight.nvstream.AdaptiveQualityController;
 import com.limelight.nvstream.NvConnection;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.NvApp;
@@ -50,6 +51,8 @@ final class GameRecovery {
     // the rate automatic bitrate had cut to.
     static final String EXTRA_RECOVERY_MANUAL_BITRATE = "rubylight.recoveryManualBitrate";
     static final String EXTRA_RECOVERY_AUTO_BITRATE = "rubylight.recoveryAutoBitrate";
+    // The step automatic quality had reached, {width, height, fps}, which an automatic reconnect returns to.
+    static final String EXTRA_RECOVERY_QUALITY_STEP = "rubylight.recoveryQualityStep";
 
     // On a resume after the user's own trip away: the failure budget {attempts, started, left at,
     // connected for} as the trip began, which the resumed activity starts with.
@@ -441,16 +444,32 @@ final class GameRecovery {
      * The bitrate this stream settled on, for the next start of it (desktop's Streaming::reconnect_plan does the
      * same): a bitrate the player set starts every reconnect, with automatic bitrate off as it was; on an
      * {@code automatic} reconnect, a rate automatic bitrate had cut to is where it starts again, below the same
-     * ceiling it may climb back to.
+     * ceiling it may climb back to. Loss-based bitrate (the client-hint controller) carries its cut the same way, and
+     * automatic quality the step it had reached. A Foundation PC's own controller cannot be told where to start, so
+     * its cut is not carried.
      */
     void putSessionBitrate(Intent retry, boolean automatic) {
         retry.removeExtra(EXTRA_RECOVERY_MANUAL_BITRATE);
         retry.removeExtra(EXTRA_RECOVERY_AUTO_BITRATE);
+        retry.removeExtra(EXTRA_RECOVERY_QUALITY_STEP);
+        boolean hint = game.rateChanges != null && game.rateChanges.automaticOn();
         if (game.sessionManualBitrate > 0) {
             retry.putExtra(EXTRA_RECOVERY_MANUAL_BITRATE, game.sessionManualBitrate);
-        } else if (automatic && (game.adaptiveBitrate != null || game.pyroWaveBitrate != null) && game.currentBitrate > 0) {
+        } else if (automatic && (game.adaptiveBitrate != null || game.pyroWaveBitrate != null || hint) && game.currentBitrate > 0) {
             retry.putExtra(EXTRA_RECOVERY_AUTO_BITRATE, game.currentBitrate);
         }
+        AdaptiveQualityController quality = game.adaptiveQuality;
+        if (automatic && quality != null && quality.current() != quality.ceiling()) {
+            AdaptiveQualityController.Target step = quality.current();
+            retry.putExtra(EXTRA_RECOVERY_QUALITY_STEP, new int[] {step.width, step.height, step.fps});
+        }
+    }
+
+    /** The step automatic quality had reached before an automatic reconnect, {width, height, fps}, once; null without one. */
+    int[] takeQualityStep() {
+        int[] step = game.getIntent().getIntArrayExtra(EXTRA_RECOVERY_QUALITY_STEP);
+        game.getIntent().removeExtra(EXTRA_RECOVERY_QUALITY_STEP);
+        return step != null && step.length == 3 ? step : null;
     }
 
     /** Before the stream's configuration is built: a reconnect starts at the bitrate the player set. */

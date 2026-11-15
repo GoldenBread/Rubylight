@@ -224,8 +224,12 @@ pub struct LaunchPlan {
     /// turning automatic bitrate on again restores.
     pub bitrate_before_manual: Option<u32>,
     /// An automatic reconnect's starting point for automatic bitrate: the rate it had cut to
-    /// ([`reconnect_bitrate_start`]), below the stream's start bitrate it may climb back to.
+    /// ([`reconnect_bitrate_start`]), below the stream's start bitrate it may climb back to. The
+    /// client-hint controller starts from it the same way when it owned the rate.
     pub resume_bitrate_kbps: Option<u32>,
+    /// An automatic reconnect's starting point for automatic quality: the step it had reached,
+    /// below the stream's own mode it may climb back to.
+    pub resume_quality: Option<Reconfigure>,
 }
 
 /// Where automatic bitrate starts after a reconnect, as Android's `GameRecovery.putSessionBitrate`
@@ -923,7 +927,11 @@ impl Streaming {
         let quality_policy = match quality_mode {
             QualityMode::Off => None,
             _ => match quality::Quality::new(quality_mode, mode, settings.quality_min_short_edge, settings.quality_min_fps, 0) {
-                Ok(policy) => Some(policy),
+                Ok(mut policy) => {
+                    // After an automatic reconnect it returns to the step it had reached.
+                    if let Some(step) = connecting.plan.resume_quality { policy.resume_at(step); }
+                    Some(policy)
+                }
                 Err(error) => {
                     eprintln!("nightjar: automatic quality off for {}x{}@{}: {error}", facts.width, facts.height, facts.fps);
                     quality_mode = QualityMode::Off;
@@ -932,8 +940,13 @@ impl Streaming {
                 }
             },
         };
-        let rate_change = facts.rate_change.then(|| rate_change::RateChange::new(
-            bitrate_kbps, facts.fps.max(1) as u32 * 1000, settings.client_hint_bitrate, connecting.plan.bitrate_limit_kbps, 0));
+        let rate_change = facts.rate_change.then(|| {
+            let mut rates = rate_change::RateChange::new(
+                bitrate_kbps, facts.fps.max(1) as u32 * 1000, settings.client_hint_bitrate, connecting.plan.bitrate_limit_kbps, 0);
+            // After an automatic reconnect the client-hint controller returns to the rate it had cut to.
+            if let Some(kbps) = connecting.plan.resume_bitrate_kbps { rates.resume_hint(kbps); }
+            rates
+        });
         let backlog = connecting.shared.pacer_backlog.clone();
         // The stream controls read the attachments each time they are drawn.
         let usb_refused = if settings.usb_forwarding { crate::usb::refusal(facts.usb) } else { None };
@@ -1279,8 +1292,12 @@ impl Streaming {
             plan
         };
         plan.microphone_muted = self.microphone_muted;
-        plan.resume_bitrate_kbps =
-            reconnect_bitrate_start(automatic, self.bitrate_policy.is_some(), self.plan.bitrate_before_manual.is_some(), self.bitrate_kbps);
+        // Automatic bitrate and the client-hint controller never run together; whichever owned the
+        // rate leaves its cut. A Foundation PC's own controller cannot be told where to start
+        // (`AbrRequest` has no starting rate), so its cut is not carried.
+        let owned = self.bitrate_policy.is_some() || self.client_hint_active();
+        plan.resume_bitrate_kbps = reconnect_bitrate_start(automatic, owned, self.plan.bitrate_before_manual.is_some(), self.bitrate_kbps);
+        plan.resume_quality = if automatic { self.quality_policy.as_ref().and_then(quality::Quality::current) } else { None };
         Some(plan)
     }
 

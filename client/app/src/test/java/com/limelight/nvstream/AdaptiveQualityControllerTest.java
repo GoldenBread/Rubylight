@@ -200,6 +200,22 @@ public class AdaptiveQualityControllerTest {
         return result;
     }
 
+    /** An automatic reconnect returns to the step the stream before had reached, once, under the same ceiling. */
+    @Test public void aResumedLadderReturnsToItsStepOnce() {
+        AdaptiveQualityController.Target step = hot(controller(AdaptiveQualityController.Mode.MOTION), 15000);
+        AdaptiveQualityController resumed = controller(AdaptiveQualityController.Mode.MOTION);
+        resumed.resumeAt(step.width, step.height, step.fps);
+        AdaptiveQualityController.Target first = resumed.sample(1000, true, false, 0, 2, 0, 0, 0, true);
+        assertNotNull(first);
+        assertTrue(first.matches(step.width, step.height, step.fps));
+        resumed.applied(first, 1000);
+        assertTrue(resumed.ceiling().matches(1920, 1080, 120));
+        assertNull("once", resumed.sample(2000, true, false, 0, 2, 0, 0, 0, true));
+        AdaptiveQualityController top = controller(AdaptiveQualityController.Mode.MOTION);
+        top.resumeAt(1920, 1080, 120);
+        assertNull("the top is no step down", top.sample(1000, true, false, 0, 2, 0, 0, 0, true));
+    }
+
     @Test public void motionLowersResolutionFirstAndDetailLowersFrameRateFirst() {
         AdaptiveQualityController motion = controller(AdaptiveQualityController.Mode.MOTION);
         AdaptiveQualityController.Target m = hot(motion, 15000);

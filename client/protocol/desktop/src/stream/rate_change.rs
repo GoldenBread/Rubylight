@@ -100,6 +100,12 @@ impl RateChange {
         }
     }
 
+    /// After an automatic reconnect: the client-hint controller returns to the rate the stream
+    /// before had cut to.
+    pub fn resume_hint(&mut self, kbps: u32) {
+        if let Some(hint) = &mut self.hint { hint.resume_from(kbps); }
+    }
+
     /// The client-hint controller steers this stream's bitrate.
     pub fn hint_active(&self) -> bool {
         self.hint.as_ref().is_some_and(|hint| !hint.stopped())
@@ -416,6 +422,18 @@ mod tests {
         assert_eq!(answer.toast.as_deref(), Some("Loss-based bitrate stopped: this stream’s codec keeps its rates"));
         assert!(!rates.hint_active() && !rates.hint_has_room());
         assert!((11..60).all(|s| rates.tick(&stats(s, 10.0)).is_none()));
+    }
+
+    /// After an automatic reconnect the client-hint controller's first request is the cut the
+    /// stream before had made; without a controller nothing is asked.
+    #[test]
+    fn a_resumed_hint_asks_for_the_earlier_cut_first() {
+        let mut rates = RateChange::new(20_000, 60_000, true, 0, 0);
+        rates.resume_hint(9_000);
+        assert_eq!(rates.tick(&stats(4, 0.0)).map(|request| request.bitrate_kbps), Some(9_000));
+        let mut off = RateChange::new(20_000, 60_000, false, 0, 0);
+        off.resume_hint(9_000);
+        assert!(off.tick(&stats(4, 0.0)).is_none());
     }
 
     #[test]

@@ -556,6 +556,9 @@ final class GameAdaptation {
                 StreamRateChanges.clientLimitKbps(game.prefConfig.layers == null ? null : game.prefConfig.layers.network,
                         game.prefConfig.mobileBitrateLimit),
                 SystemClock.uptimeMillis());
+        // After an automatic reconnect it returns to the rate it had cut to, below the same ceiling.
+        int resumeKbps = game.streamRecovery.takeAutomaticBitrateStart();
+        if (resumeKbps > 0) game.rateChanges.automatic().resumeFrom(resumeKbps);
         game.bitrateHandler.postDelayed(game.updateRateChangeBitrate, 1000);
     }
 
@@ -603,6 +606,9 @@ final class GameAdaptation {
         int[] limits = game.decoderRenderer.getReconfigureLimits();
         game.adaptiveQuality = new AdaptiveQualityController(mode, game.qualityMaxWidth, game.qualityMaxHeight, game.qualityMaxFps,
                 game.prefConfig.qualityMinShortEdge, game.prefConfig.qualityMinFps, limits[2], limits[3], SystemClock.uptimeMillis());
+        // After an automatic reconnect it returns to the step it had reached; the ladder may climb back.
+        int[] step = game.streamRecovery.takeQualityStep();
+        if (step != null) game.adaptiveQuality.resumeAt(step[0], step[1], step[2]);
         // A user changing the mode returns to the session's ceiling before the new policy starts.
         int[] shown = game.decoderRenderer.getStreamSize();
         if ((!game.adaptiveQuality.current().matches(shown[0], shown[1], game.streamFps) ||
