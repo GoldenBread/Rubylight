@@ -214,15 +214,27 @@ impl AudioPace {
         }
     }
 
-    /// Numbers the packets read at `now`, in order. With none, and the endpoint quiet for 50 ms,
-    /// one packet of `silence` is made for it. Returns each packet's position in the stream.
+    /// [`Self::stamp_into`] for packets of their own. Returns each packet's position.
+    #[cfg(test)]
     pub(super) fn stamp(
         &mut self,
         now: Instant,
         packets: &mut Vec<Vec<f32>>,
         silence: &[f32],
     ) -> Vec<u64> {
-        if !packets.is_empty() {
+        let mut kept = Packets {
+            samples: std::mem::take(packets),
+            ..Packets::default()
+        };
+        self.stamp_into(now, &mut kept, silence);
+        *packets = kept.samples;
+        kept.positions
+    }
+
+    /// Numbers the packets read at `now`, in order, into their positions in the stream. With
+    /// none, and the endpoint quiet for 50 ms, one packet of `silence` is made for it.
+    pub(super) fn stamp_into(&mut self, now: Instant, packets: &mut Packets, silence: &[f32]) {
+        if !packets.samples.is_empty() {
             self.counted = 0;
             self.heard = now;
             self.next = now + self.interval;
@@ -236,7 +248,9 @@ impl AudioPace {
                 .clock
                 .idle(now.saturating_duration_since(self.heard), self.counted);
             self.counted = 0;
-            packets.push(silence.to_vec());
+            let mut room = packets.room();
+            room.extend_from_slice(silence);
+            packets.samples.push(room);
             self.next += self.interval;
             if self.next < now {
                 // One packet covers one interval; the rest of the late time (a blocked device
@@ -248,17 +262,43 @@ impl AudioPace {
                 self.next = now + self.interval;
             }
         }
+        let count = packets.samples.len();
+        packets.positions.clear();
         packets
-            .iter()
-            .map(|_| self.clock.packet(self.frames))
-            .collect()
+            .positions
+            .extend((0..count).map(|_| self.clock.packet(self.frames)));
+    }
+}
+
+/// The audio thread's packets of one pass and their positions in the stream, kept from pass
+/// to pass with their room: no packet makes a buffer of its own.
+#[derive(Default)]
+pub(super) struct Packets {
+    pub(super) samples: Vec<Vec<f32>>,
+    pub(super) positions: Vec<u64>,
+    /// The room of packets sent, for the next ones.
+    spare: Vec<Vec<f32>>,
+}
+
+impl Packets {
+    /// Empties it for the next pass, keeping each packet's room.
+    fn clear(&mut self) {
+        self.spare.append(&mut self.samples);
+        self.positions.clear();
+    }
+    /// Room for one packet, empty.
+    fn room(&mut self) -> Vec<f32> {
+        let mut room = self.spare.pop().unwrap_or_default();
+        room.clear();
+        room
     }
 }
 
 /// What the audio thread needs from the sound card's capture; `Loopback` is the real one.
 pub(super) trait AudioCapture {
     fn since_drained(&mut self) -> Option<Duration>;
-    fn read(&mut self, frames: usize) -> Result<Option<Vec<f32>>>;
+    /// One packet of `frames` into `out`, emptied first: whether a whole one was there.
+    fn read_into(&mut self, frames: usize, out: &mut Vec<f32>) -> Result<bool>;
     fn take_delivered(&mut self) -> Option<Duration>;
     fn buffer(&self) -> Duration;
     /// Audio this host discarded after Windows delivered it, in 48 kHz samples.
@@ -271,8 +311,8 @@ impl AudioCapture for Loopback {
     fn since_drained(&mut self) -> Option<Duration> {
         Loopback::since_drained(self)
     }
-    fn read(&mut self, frames: usize) -> Result<Option<Vec<f32>>> {
-        Loopback::read(self, frames)
+    fn read_into(&mut self, frames: usize, out: &mut Vec<f32>) -> Result<bool> {
+        Loopback::read_into(self, frames, out)
     }
     fn take_delivered(&mut self) -> Option<Duration> {
         Loopback::take_delivered(self)
@@ -332,10 +372,8 @@ pub(super) fn reopen_check(check: Instant, opened: Instant) -> Instant {
     check.min(opened + REOPEN_SPACING)
 }
 
-/// One pass of the audio thread's read side: every whole packet the capture has, with where each
-/// sits in the stream, or one packet of `silence` for a quiet endpoint. What Windows skipped,
-/// what this host trimmed and a capture that fails are all counted before the positions are
-/// made. `interrupted` hears each read error; the capture is then gone.
+/// [`collect_into`] for packets of their own.
+#[cfg(test)]
 pub(super) fn collect<C: AudioCapture>(
     capture: &mut Option<C>,
     frames: usize,
@@ -343,17 +381,52 @@ pub(super) fn collect<C: AudioCapture>(
     pace: &mut AudioPace,
     silence: &[f32],
     now: impl Fn() -> Instant,
-    mut interrupted: impl FnMut(&anyhow::Error),
+    interrupted: impl FnMut(&anyhow::Error),
 ) -> (Vec<Vec<f32>>, Vec<u64>) {
-    let mut packets = Vec::new();
+    let mut packets = Packets::default();
+    collect_into(
+        capture,
+        frames,
+        loss,
+        pace,
+        silence,
+        now,
+        interrupted,
+        &mut packets,
+    );
+    (packets.samples, packets.positions)
+}
+
+/// One pass of the audio thread's read side, into `packets`: every whole packet the capture
+/// has, with where each sits in the stream, or one packet of `silence` for a quiet endpoint.
+/// What Windows skipped, what this host trimmed and a capture that fails are all counted
+/// before the positions are made. `interrupted` hears each read error; the capture is then
+/// gone.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn collect_into<C: AudioCapture>(
+    capture: &mut Option<C>,
+    frames: usize,
+    loss: &mut HostLoss,
+    pace: &mut AudioPace,
+    silence: &[f32],
+    now: impl Fn() -> Instant,
+    mut interrupted: impl FnMut(&anyhow::Error),
+    packets: &mut Packets,
+) {
+    packets.clear();
     // What a failed capture still queued: it comes after the packets it handed over first.
     let mut queued = 0;
     let waited = capture.as_mut().and_then(AudioCapture::since_drained);
     while let Some(capturing) = capture.as_mut() {
-        match capturing.read(frames) {
-            Ok(Some(samples)) => packets.push(samples),
-            Ok(None) => break,
+        let mut room = packets.room();
+        match capturing.read_into(frames, &mut room) {
+            Ok(true) => packets.samples.push(room),
+            Ok(false) => {
+                packets.spare.push(room);
+                break;
+            }
             Err(error) => {
+                packets.spare.push(room);
                 interrupted(&error);
                 queued += retire_read(capturing, waited, loss, pace, now());
                 *capture = None;
@@ -385,12 +458,11 @@ pub(super) fn collect<C: AudioCapture>(
     }
     // Packets read before a failure belong to the capture that is gone: they do not end its gap.
     let at = now();
-    if capture.is_some() && !packets.is_empty() {
+    if capture.is_some() && !packets.samples.is_empty() {
         pace.capture_delivered(at);
     }
-    let positions = pace.stamp(at, &mut packets, silence);
+    pace.stamp_into(at, packets, silence);
     pace.host_dropped(queued);
-    (packets, positions)
 }
 
 /// RTP with FEC on the client's audio port.

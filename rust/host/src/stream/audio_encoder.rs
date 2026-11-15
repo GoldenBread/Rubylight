@@ -207,7 +207,7 @@ impl AudioEncoder {
         position: u64,
     ) -> Result<usize> {
         match self {
-            Self::Opus(opus) => output.send(&opus.encode(samples)?, captured, position),
+            Self::Opus(opus) => output.send(opus.encode_frame(samples)?, captured, position),
             Self::Pcm => output.send(&audio_passthrough::pcm_s16le(samples), captured, position),
             Self::Dolby { encoder, frame } => {
                 let parts = audio_passthrough::chunks(&encoder.encode(samples)?, *frame);

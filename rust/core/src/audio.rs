@@ -143,16 +143,24 @@ impl Resampler {
         self.queue.len() / self.channels
     }
     pub fn read(&mut self, frames: usize) -> Option<Vec<f32>> {
+        let mut out = Vec::new();
+        self.read_into(frames, &mut out).then_some(out)
+    }
+    /// As [`Self::read`], into `out` (emptied first), whose room the audio thread reuses for
+    /// every packet. False, with `out` empty, while fewer frames are queued.
+    pub fn read_into(&mut self, frames: usize, out: &mut Vec<f32>) -> bool {
+        out.clear();
         if frames == 0 {
-            return Some(Vec::new());
+            return true;
         }
         // 48 kHz with no fractional phase needs no interpolation.
         if self.rate == 48_000 && self.phase == 0.0 {
             let needed = frames * self.channels;
             if self.queue.len() < needed {
-                return None;
+                return false;
             }
-            return Some(self.queue.drain(..needed).collect());
+            out.extend(self.queue.drain(..needed));
+            return true;
         }
         let ratio = f64::from(self.rate) / 48000.;
         let last = self.phase + (frames - 1) as f64 * ratio;
@@ -160,9 +168,9 @@ impl Resampler {
         let needed = (last.floor() as usize + if last.fract() > 1e-10 { 2 } else { 1 })
             .max(consumed.floor() as usize);
         if self.queue.len() / self.channels < needed {
-            return None;
+            return false;
         }
-        let mut out = Vec::with_capacity(frames * self.channels);
+        out.reserve(frames * self.channels);
         for i in 0..frames {
             let pos = self.phase + i as f64 * ratio;
             let lo = pos.floor() as usize;
@@ -180,7 +188,7 @@ impl Resampler {
         let whole = consumed.floor() as usize;
         self.phase = consumed - whole as f64;
         self.queue.drain(..whole * self.channels);
-        Some(out)
+        true
     }
 }
 /// Audio the host lost before it reached the network. Windows keeps about

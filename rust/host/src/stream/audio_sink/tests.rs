@@ -204,11 +204,15 @@ impl AudioCapture for Fake {
     fn since_drained(&mut self) -> Option<Duration> {
         self.waited
     }
-    fn read(&mut self, _: usize) -> Result<Option<Vec<f32>>> {
+    fn read_into(&mut self, _: usize, out: &mut Vec<f32>) -> Result<bool> {
+        out.clear();
         match self.reads.pop_front() {
-            Some(Ok(samples)) => Ok(samples),
+            Some(Ok(samples)) => {
+                out.extend(samples.iter().flatten());
+                Ok(samples.is_some())
+            }
             Some(Err(error)) => Err(anyhow::anyhow!(error)),
-            None => Ok(None),
+            None => Ok(false),
         }
     }
     fn take_delivered(&mut self) -> Option<Duration> {
@@ -264,6 +268,47 @@ impl Thread {
     }
 }
 
+/// [`Thread::pass`] into packets kept from pass to pass, as the audio thread keeps them.
+fn pass_into(audio: &mut Thread, capture: &mut Option<Fake>, ms: u64, packets: &mut Packets) {
+    let now = audio.at(ms);
+    collect_into(
+        capture,
+        240,
+        &mut audio.loss,
+        &mut audio.pace,
+        &[0.; 480],
+        || now,
+        |_| {},
+        packets,
+    );
+}
+
+#[test]
+fn the_audio_thread_reuses_each_packets_room_from_pass_to_pass() {
+    let mut audio = Thread::new();
+    let mut capture = Some(Fake::playing(2));
+    let mut packets = Packets::default();
+    pass_into(&mut audio, &mut capture, 0, &mut packets);
+    assert_eq!(packets.positions, [0, 240]);
+    assert_eq!(packets.samples, [vec![0.5; 480], vec![0.5; 480]]);
+    let mut rooms: Vec<*const f32> = packets.samples.iter().map(|p| p.as_ptr()).collect();
+    rooms.sort();
+    capture
+        .as_mut()
+        .unwrap()
+        .reads
+        .extend(Fake::playing(2).reads);
+    pass_into(&mut audio, &mut capture, 10, &mut packets);
+    assert_eq!(packets.samples, [vec![0.5; 480], vec![0.5; 480]]);
+    assert_eq!(packets.positions.len(), 2);
+    let mut again: Vec<*const f32> = packets.samples.iter().map(|p| p.as_ptr()).collect();
+    again.sort();
+    assert_eq!(again, rooms, "the same room, no new buffers");
+    // A quiet endpoint's silence goes in that room too.
+    pass_into(&mut audio, &mut capture, 70, &mut packets);
+    assert_eq!(packets.samples, [vec![0.; 480]]);
+    assert!(rooms.contains(&packets.samples[0].as_ptr()));
+}
 #[test]
 fn an_endpoint_delivering_10_ms_per_wake_sends_two_contiguous_packets_each_wake() {
     let mut audio = Thread::new();

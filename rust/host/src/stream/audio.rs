@@ -287,6 +287,8 @@ impl Media {
         let mut upkeep: Option<RouteUpkeep> = None;
         let timer = butterpollo_windows::timing::Timer::new()?;
         let silence = couch.silence(frames);
+        // Each pass's packets, in room kept from pass to pass.
+        let mut packets = audio_sink::Packets::default();
         while !s.stopping() && !h.stop.load(Ordering::Acquire) {
             match capture
                 .as_ref()
@@ -428,7 +430,7 @@ impl Media {
             // Every whole packet the endpoint has delivered goes out at once, as
             // Sunshine sends them. On a fixed tick each waited up to a packet,
             // and a tick just before a late chunk sent silence in its place.
-            let (mut packets, positions) = audio_sink::collect(
+            audio_sink::collect_into(
                 &mut capture,
                 frames,
                 &mut loss,
@@ -449,13 +451,14 @@ impl Media {
                     // once-a-second check.
                     audio_check = audio_sink::reopen_check(audio_check, capture_opened);
                 },
+                &mut packets,
             );
             if let (Some(cadence), Some(capturing)) = (&mut cadence, &mut capture) {
                 capturing.drain_trace(&mut cadence.trace);
             }
             let now = Instant::now();
             if ready {
-                for (samples, at) in packets.iter_mut().zip(positions) {
+                for (samples, &at) in packets.samples.iter_mut().zip(&packets.positions) {
                     couch.process(&s.audio, &s.launch.warnings, samples);
                     for _ in 0..encoder.send(output.as_mut(), samples, now, at)? {
                         loss.unsent();

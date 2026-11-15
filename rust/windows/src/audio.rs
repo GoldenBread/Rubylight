@@ -360,6 +360,12 @@ impl Loopback {
         }
     }
     pub fn read(&mut self, frames: usize) -> Result<Option<Vec<f32>>> {
+        let mut out = Vec::new();
+        Ok(self.read_into(frames, &mut out)?.then_some(out))
+    }
+    /// As [`Self::read`], into `out` (emptied first), whose room the audio thread reuses for
+    /// every packet: whether a whole packet was there.
+    pub fn read_into(&mut self, frames: usize, out: &mut Vec<f32>) -> Result<bool> {
         anyhow::ensure!(
             self.process.as_ref().is_none_or(|process| process.alive()),
             "game audio process exited; waiting for a verified surviving game process"
@@ -408,7 +414,7 @@ impl Loopback {
                 self.samples.push_packet(data, count as usize, flags);
                 self.capture.ReleaseBuffer(count)?;
             }
-            Ok(self.samples.read(frames))
+            Ok(self.samples.read_into(frames, out))
         }
     }
 }
@@ -484,7 +490,13 @@ impl CaptureSamples {
             self.trimmed += self.resampler.push(&self.output) as u64;
         }
     }
+    #[cfg(test)]
     fn read(&mut self, frames: usize) -> Option<Vec<f32>> {
+        let mut out = Vec::new();
+        self.read_into(frames, &mut out).then_some(out)
+    }
+    /// One packet of `frames` into `out` (emptied first), when that much is queued.
+    fn read_into(&mut self, frames: usize, out: &mut Vec<f32>) -> bool {
         // Steady state queues under one WASAPI period plus a packet;
         // keep two packets once a stall left more than 30 ms.
         let packet_ms = (frames / 48).max(1) as u32;
@@ -493,7 +505,7 @@ impl CaptureSamples {
             self.trimmed += dropped as u64;
             tracing::debug!("audio capture backlog dropped");
         }
-        self.resampler.read(frames)
+        self.resampler.read_into(frames, out)
     }
 }
 impl Drop for Loopback {
@@ -504,6 +516,9 @@ impl Drop for Loopback {
         }
     }
 }
+/// The most an Opus packet may take: room for RTP, AES padding and parity headers is left
+/// within the previous Moonlight receiver's fixed 1400-byte UDP buffer.
+const OPUS_PACKET_ROOM: usize = 1360;
 type Create = unsafe extern "C" fn(i32, i32, i32, i32, *const u8, i32, *mut i32) -> *mut c_void;
 type Encode = unsafe extern "C" fn(*mut c_void, *const f32, i32, *mut u8, i32) -> i32;
 type Destroy = unsafe extern "C" fn(*mut c_void);
@@ -514,6 +529,8 @@ pub struct Opus {
     destroy: Destroy,
     _library: libloading::Library,
     channels: usize,
+    /// Each packet's room, made once.
+    output: Vec<u8>,
 }
 impl Opus {
     pub fn new(directory: &Path, channels: usize, quality: bool) -> Result<Self> {
@@ -572,6 +589,7 @@ impl Opus {
                 destroy,
                 _library: library,
                 channels: layout.channels,
+                output: vec![0; OPUS_PACKET_ROOM],
             };
             for (request, value) in [(4002, bitrate), (4006, 0i32)] {
                 let result = ctl(state, request, value);
@@ -583,28 +601,30 @@ impl Opus {
         }
     }
     pub fn encode(&mut self, samples: &[f32]) -> Result<Vec<u8>> {
+        self.encode_frame(samples).map(<[u8]>::to_vec)
+    }
+    /// As [`Self::encode`], in the encoder's own room: the audio thread's way, which makes
+    /// nothing per packet.
+    pub fn encode_frame(&mut self, samples: &[f32]) -> Result<&[u8]> {
         if !samples.len().is_multiple_of(self.channels) {
             bail!("incomplete audio frame");
         }
-        // Leave room for RTP, AES padding and parity headers within the
-        // previous Moonlight receiver's fixed 1400-byte UDP buffer.
-        let mut output = vec![0; 1360];
         // SAFETY: `self.state` is a live encoder, `samples` holds whole frames for `channels`, and
-        // `output` is writable for the length passed.
+        // `self.output` is writable for the length passed.
         let n = unsafe {
             (self.encode)(
                 self.state,
                 samples.as_ptr(),
                 (samples.len() / self.channels) as i32,
-                output.as_mut_ptr(),
-                output.len() as i32,
+                self.output.as_mut_ptr(),
+                self.output.len() as i32,
             )
         };
         if n < 0 {
             bail!("Opus encoding error {n}");
         }
-        output.truncate(n as usize);
-        Ok(output)
+        // The room stays whole: the next packet is allowed the same length.
+        Ok(&self.output[..n as usize])
     }
 }
 impl Drop for Opus {
