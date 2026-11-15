@@ -81,12 +81,14 @@ public class SettingsBatchTest {
         SharedPreferences p = prefs();
         p.edit().clear().commit();
         assertTrue("Lowest latency, the default", SettingRules.fractionalVsyncApplies(app, p));
-        p.edit().putString("frame_pacing", "balanced").commit();
-        assertTrue(SettingRules.fractionalVsyncApplies(app, p));
-        for (String pacing : new String[] {"cap-fps", "smoothness"}) {
+        // Balanced shows a stream at a half to a quarter of the refresh at that cadence already.
+        for (String pacing : new String[] {"balanced", "cap-fps", "smoothness"}) {
             p.edit().putString("frame_pacing", pacing).commit();
             assertFalse(pacing, SettingRules.fractionalVsyncApplies(app, p));
         }
+        p.edit().putString("frame_pacing", "balanced").putBoolean(SettingRules.DROP_LATE_FRAMES, false).commit();
+        assertFalse("Balanced, keep every frame", SettingRules.fractionalVsyncApplies(app, p));
+        p.edit().remove(SettingRules.DROP_LATE_FRAMES).commit();
         p.edit().putString("frame_pacing", "latency").putBoolean("checkbox_host_frame_times", true).commit();
         assertFalse("host frame times", SettingRules.fractionalVsyncApplies(app, p));
     }
