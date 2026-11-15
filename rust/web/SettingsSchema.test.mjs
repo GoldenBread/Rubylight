@@ -437,11 +437,16 @@ test('the troubleshooting fold counts customized and unsaved settings and opens 
 test('bitrate and pacing controllers say which one wins', () => {
   // The finer points live behind More; descriptions are capped at two short sentences.
   const says = (key, pattern) => assert.match(settings.get(key).details, pattern, key);
-  says('link_rate_adaptation', /Adapt bitrate on this PC wins[^.]*sets its own bitrate takes over/);
-  says('host_adaptive_bitrate', /replaces Lower the bitrate when the link cannot carry it/);
+  says('link_rate_adaptation', /A device that sets its own bitrate takes over/);
   says('pacing_max_bitrate_kbps', /turns off Adaptive packet pacing and Slow down after video loss/);
-  says('host_adaptive_pacing', /manual pacing rate or Adapt bitrate on this PC turns it off/);
-  says('keyframe_loss_pacing', /manual pacing rate, Adaptive packet pacing or Adapt bitrate on this PC turns it off/);
+  says('host_adaptive_pacing', /A manual pacing rate turns it off/);
+  says('keyframe_loss_pacing', /A manual pacing rate or Adaptive packet pacing turns it off/);
+  // The retired host bitrate controller no longer switches the others off.
+  for (const key of ['host_adaptive_pacing', 'wireless_adaptive_pacing', 'keyframe_loss_pacing', 'link_rate_adaptation', 'congestion_control']) {
+    const setting = settings.get(key);
+    assert.doesNotMatch(`${setting.details} ${setting.inactiveHint ?? ''}`, /Adapt bitrate on this PC/, key);
+    assert.equal(setting.visibleWhen?.({ host_adaptive_bitrate: true }) ?? true, true, key);
+  }
 });
 
 test('the still-picture resend rate is not named like a floor on game frame rate', () => {
@@ -1068,12 +1073,9 @@ test('a row that does nothing in the current setup says why', () => {
     ['auto_capture_sink', { virtual_sink: 'Speakers' }, {}],
     ['frame_limiter_enable', { frame_limiter_provider: 'none' }, {}],
     ['frame_limiter_fps_limit', { frame_limiter_provider: 'disabled' }, {}],
-    ['host_adaptive_pacing', { host_adaptive_bitrate: true }, {}],
     ['host_adaptive_pacing', { pacing_max_bitrate_kbps: 50000 }, {}],
-    ['wireless_adaptive_pacing', { host_adaptive_bitrate: true }, {}],
+    ['wireless_adaptive_pacing', { pacing_max_bitrate_kbps: 50000 }, {}],
     ['keyframe_loss_pacing', { host_adaptive_pacing: true }, {}],
-    ['link_rate_adaptation', { host_adaptive_bitrate: true }, {}],
-    ['congestion_control', { host_adaptive_bitrate: true }, {}],
     ['playnite_sync_categories', { playnite_enabled: true, playnite_auto_sync: true, playnite_sync_all_installed: true },
       { playnite_enabled: true, playnite_auto_sync: true, playnite_sync_all_installed: false }],
     ['playnite_sync_plugins', { playnite_enabled: true, playnite_auto_sync: true },
@@ -1110,7 +1112,7 @@ test('Display HDR is one choice, and the folded request is no setting of its own
 });
 
 test('removed and renamed settings are gone from the console under their old names', () => {
-  for (const key of ['touch_keyboard_digitizer', 'frame_limiter_auto_virtual_framegen', 'experimental_packed_444', 'dd_hdr_request_override']) {
+  for (const key of ['touch_keyboard_digitizer', 'host_adaptive_bitrate', 'frame_limiter_auto_virtual_framegen', 'experimental_packed_444', 'dd_hdr_request_override']) {
     assert.equal(settings.has(key), false, key);
     assert.equal(pending.some(setting => setting.key === key), false, key);
   }

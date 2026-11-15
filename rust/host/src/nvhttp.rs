@@ -579,9 +579,10 @@ async fn abr(State(h): State<Shared>, Extension(c): Extension<Connection>) -> Re
         return axum::http::StatusCode::UNAUTHORIZED.into_response();
     }
     // Keep the legacy flag false: it means a client may delegate its complete
-    // controller to the host. Our conservative opt-in only starts after real
-    // feedback and explicitly yields to every client /bitrate request.
-    axum::Json(json!({"supported":false,"version":1,"features":["runtime_bitrate","host_loss_adaptation"],"host_adaptive_bitrate":h.config.read().unwrap().boolean("host_adaptive_bitrate",false),"client_bitrate_takes_ownership":true}))
+    // controller to the host. The host's own controllers yield to every client
+    // /bitrate request; `host_adaptive_bitrate` stays in the answer, always
+    // false, for clients that read it.
+    axum::Json(json!({"supported":false,"version":1,"features":["runtime_bitrate","host_loss_adaptation"],"host_adaptive_bitrate":false,"client_bitrate_takes_ownership":true}))
         .into_response()
 }
 

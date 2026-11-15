@@ -45,7 +45,6 @@ Everything the current Rubylight release does, by area, with a link to where eac
 - **Play over the internet.** Automatic port forwarding asks the router through UPnP, PCP or NAT-PMP and opens IPv6 pinholes, and the console shows each port mapped or refused and why. Where no port can be forwarded, such as behind carrier-grade NAT, Nightjar reaches the PC over a direct path both sides punch through their routers, found through public STUN servers and a public peer-to-peer directory that holds only encrypted notes, without any server of ours ([Play over the internet](internet-play.md)).
 - **Roaming.** A client whose address changes, such as a phone moving from Wi-Fi to mobile data, keeps its stream ([Configuration](configuration.md#roaming)). Control messages are resent as soon as the client is heard from after an outage.
 - **Prioritized stream traffic.** Video and audio for devices on the local network carry DSCP marks, so Wi-Fi sends them ahead of other traffic; a switch turns the marks off for a router that mishandles them ([Configuration](configuration.md#prioritize-stream-traffic-dscp)).
-- **Host bitrate adaptation** (off by default). For conventional Moonlight streams, the host adapts the bitrate to observed loss, accounting for FEC and audio, and yields to the client's own bitrate control ([Configuration](configuration.md#host-bitrate-adaptation)).
 
 ## Capture
 

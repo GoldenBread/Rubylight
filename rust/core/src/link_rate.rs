@@ -28,9 +28,7 @@
 //! PyroWave client is judged by its FEC status reports alone.
 //!
 //! Inactive (`State::Off`) when disabled in the configuration and once the
-//! client sets the bitrate itself. The caller also passes
-//! `enabled = false` while `host_adaptive_bitrate` is on
-//! ([`crate::config::Config::link_rate_adaptation`] folds that in).
+//! client sets the bitrate itself.
 //!
 //! # Calling it (brief 3)
 //!
@@ -673,9 +671,8 @@ impl LinkRate {
         self.pyrowave_no_room
     }
 
-    /// `enabled` is the configuration (`link_rate_adaptation` and no
-    /// `host_adaptive_bitrate`). `max_kbps` is the user's `max_bitrate` (0 for
-    /// none), `fec` the FEC percentage in use.
+    /// `enabled` is the configuration (`link_rate_adaptation`). `max_kbps` is
+    /// the user's `max_bitrate` (0 for none), `fec` the FEC percentage in use.
     pub fn new(enabled: bool, stream: &Negotiated, max_kbps: u32, fec: usize) -> Self {
         let mut this = Self::off("disabled");
         if !enabled {

@@ -10,7 +10,7 @@ This guide covers each feature's settings by topic. [All settings](#all-settings
 | --- | --- |
 | Basics | [How configuration works](#how-configuration-works) · [Defaults and why](#defaults-and-why) · [Stream presets](#stream-presets) |
 | Picture and displays | [Capture and video](#capture-and-video) ([capture](#graphics-card-and-capture-method) · [codecs and HDR](#codecs-full-chroma-and-hdr) · [PyroWave](#pyrowave) · [packet pacing](#packet-pacing) · [AMD AMF](#amd-amf-encoder-settings) · [encoder focus](#encoder-focus) · [NVIDIA NVENC](#nvidia-nvenc)) · [Displays and RTSS](#displays-and-rtss) |
-| Network | [Lower bitrate when the link cannot carry it](#lower-bitrate-when-the-link-cannot-carry-it) · [Host bitrate adaptation](#host-bitrate-adaptation) · [Error correction chosen by the device](#error-correction-chosen-by-the-device) · [Roaming](#roaming) |
+| Network | [Lower bitrate when the link cannot carry it](#lower-bitrate-when-the-link-cannot-carry-it) · [Error correction chosen by the device](#error-correction-chosen-by-the-device) · [Roaming](#roaming) |
 | Sound | [Game-only audio](#game-only-audio) · [PCM and Dolby Digital audio](#pcm-and-dolby-digital-audio) · [Surround, night mode and headphone surround](#surround-night-mode-and-headphone-surround) |
 | Input | [Keyboard, touch, pen and cursor](#keyboard-touch-pen-and-cursor) · [Controllers](#controllers) · [MoonDeck](#moondeck) · [Couch menu](#couch-menu) |
 | Games | [Close apps on disconnect](#close-apps-on-disconnect) · [When a Playnite game closes](#when-a-playnite-game-closes) · [Playnite launch focus](#playnite-launch-focus) · [Radeon settings per game](#radeon-settings-per-game) · [Managed game files](#managed-game-files) · [Game settings per device](#game-settings-per-device) · [Neural Rendering](#neural-rendering) · [Background streaming](#background-streaming) |
@@ -106,7 +106,6 @@ Each default below is what a fresh install uses, checked against the host code. 
 | Slow down after video loss — `keyframe_loss_pacing` | `true` | Only loss that lasts slows packet delivery; the bitrate stays. |
 | Lower the bitrate when the link cannot carry it — `link_rate_adaptation` | `true` | Always on. Acts only on loss error correction cannot repair, so a healthy link never changes. See [Lower bitrate when the link cannot carry it](#lower-bitrate-when-the-link-cannot-carry-it). |
 | Adapt to network congestion — `congestion_control` | `false` | Off until its A/B on our Wi-Fi devices shows lower latency without fewer frames or more drops. See [Adapt to network congestion](#adapt-to-network-congestion). |
-| Adapt bitrate on this PC — `host_adaptive_bitrate` | `false` | Devices that control their own bitrate do it better from their side; this is for clients that do not. |
 | Most error correction a device may ask for — `fec_max_percentage` | `50` % | A device that chooses its own error correction may go up to half the video packets. In the October 27 runs this cut Wi-Fi loss and freezes against the host's own share ([October 27](../rust/PERFORMANCE.md#october-27-client-error-correction-and-a-link-test-before-the-first-bitrate-nuc)). |
 | Prioritize stream traffic (DSCP) — `dscp_tagging` | `true` | Marked video and audio go first on Wi-Fi; turn it off for a router that mishandles marked packets. |
 | Bandwidth test — `bandwidth_probe` | `true` | Lets a paired device time a short download before it picks a bitrate. The device decides whether to run it. |
@@ -168,7 +167,7 @@ These are defaults for **unset** keys, not a list of values you must copy into a
 
 Under **All settings → Picture**, the collapsed **Capture troubleshooting** group holds the capture options that matter only when a capture or encoder problem needs isolating: `wgc_direct_encoder_input`, `gpu_compute_conversion` and `idd_push_fence_ring`. The capture timing diagnostics `capture_poll_interval_us`, `capture_predictive_poll` and `wgc_slot_aligned_publish` are under **Advanced → Debug switches**. **Use the launch frame rate** (`limit_framerate`) and **Follow client size and frame rate changes** (`stream_reconfigure`), in the **Frame pacing** group, matter only to Artemis's Warp frame pacing and to Rubylight clients. `minimum_fps_target` is **Still-picture resend rate**: how often an unchanged picture is sent again, not a floor on a game's frame rate.
 
-When several bitrate and pacing controllers are on, **Adapt bitrate on this PC** (`host_adaptive_bitrate`) wins over **Lower the bitrate when the link cannot carry it** (`link_rate_adaptation`) and **Adapt to network congestion** (`congestion_control`), which apply together (the lower bitrate wins), and a device that sets its own bitrate takes over from all of them. A manual **Pacing rate** (`pacing_max_bitrate_kbps`) turns off **Adaptive packet pacing** and **Slow down after video loss**; **Adapt bitrate on this PC** turns off both of those too, and **Adaptive packet pacing** turns off **Slow down after video loss**.
+**Lower the bitrate when the link cannot carry it** (`link_rate_adaptation`) and **Adapt to network congestion** (`congestion_control`) apply together (the lower bitrate wins), and a device that sets its own bitrate takes over from both. A manual **Pacing rate** (`pacing_max_bitrate_kbps`) turns off **Adaptive packet pacing** and **Slow down after video loss**, and **Adaptive packet pacing** turns off **Slow down after video loss**. The earlier **Adapt bitrate on this PC** (`host_adaptive_bitrate`) is retired: a saved value is dropped when the host loads it, and a script or client that still sends it is accepted and ignored.
 
 ## Stream presets
 
@@ -377,7 +376,7 @@ Under **All settings → Picture**, in the **Frame limiter** and **RTSS** groups
 - **What you see.** The first cut writes a WARN line to the host log (`the network to this device cannot carry the stream; lowering the video bitrate`, with the evidence and the old and new bitrate), later changes are INFO lines with `link_rate_change`, and the console's stream card shows "Bitrate limited by the network" with the current and requested bitrate while the stream is below the requested rate. The session API has a `link_rate` object (`state`, `ceiling_kbps`, `current_kbps`, `delivered_kbps`, `steps_down`, `probes`) and the five-second `stream timings` line carries the same as `link_*` fields. The `link_rate` object also has `bad_kbps` (the rate that last failed), `encoder_floor_kbps` and `last_change_ms_ago`. The warning gives the lowest bitrate of the episode ("as low as"), the card the current one. If even the lowest bitrate the host uses cannot be carried, the warning says so and tells you to check the network path.
 - **An encoder that will not go lower.** Some encoders stay above the bitrate they are asked for on some pictures (H.264 on AMD sends about 14 Mbps on noisy content at 1080p60 and about 5 Mbps on milder content). When the stream stays more than 20% above the new target in two rounds, the host takes what the encoder sends as its floor, stops cutting below it, says so in the warning and on the card, and probes upward from there instead of cutting down to 2 Mbps.
 - **PyroWave.** PyroWave streams have it too. Only a lost coarse block loses a PyroWave picture: detail blocks carry no parity while the picture moves, so a lost detail packet blurs part of one picture and counts only toward the loss share. Its keyframe requests count for nothing (every picture is intra), so it is judged by its FEC status alone. The cuts stop at PyroWave's severe-loss floor for the stream (the table above, 187 Mbps at 1080p60) instead of 2 Mbps, and when even that is too much the warning says to use HEVC or AV1 for the device. A stream at or below its floor (200 Mbps at 1080p120 is under the 373 Mbps floor) has nothing to cut: it keeps its bitrate and gets that warning once, saying this link loses PyroWave at that rate. A PyroWave client that sends no FEC status gets no reaction at all. The ceiling is the requested bitrate up to 2 Gbps (500 Mbps for the other codecs).
-- **When it is off.** `link_rate_adaptation = false`, `host_adaptive_bitrate = true` (which controls the bitrate itself), and a session in which the client has set the bitrate through `/bitrate` (Nightjar's Automatic bitrate does).
+- **When it is off.** `link_rate_adaptation = false`, and a session in which the client has set the bitrate through `/bitrate` (Nightjar's Automatic bitrate does).
 
 ## Adapt to network congestion
 
@@ -387,43 +386,8 @@ Under **All settings → Picture**, in the **Frame limiter** and **RTSS** groups
 - **What it does.** It follows the delay-based and loss-based controller of the IETF's Google Congestion Control draft with WebRTC's constants: packets are grouped every 5 ms, a trend line over the last 20 groups says whether the delay is rising, and an adaptive threshold decides when that is overuse. On overuse the bitrate goes to 85% of what arrived, at most once a round trip and never below half at once. While the delay holds, the bitrate grows by 8% a second, and in small steps once it is near the rate that last failed. Loss above what error correction repairs (at least 10%) cuts it as well; lower loss is left to error correction. When packets arrive more slowly than they were sent, video is paced at that measured rate (with room above the bitrate), so bursts do not fill the queue.
 - **Bounds.** It never raises the bitrate above the one requested (or `max_bitrate`) and never cuts below 2 Mbps (PyroWave's severe-loss floor for PyroWave). With **Lower the bitrate when the link cannot carry it** on as well, the lower of the two applies, and when both let go the requested bitrate comes back. If reports stop for two seconds, its limit and pacing are released.
 - **What you see.** A cut writes a WARN line `congestion control` to the host log with the kind (`overuse` or `loss`), the old and new rate, the rate that arrived and the loss; a release is an INFO line. The stream card shows "Bitrate limited by the network" as for link-rate adaptation. The session API has a `congestion` object (state, target, arrived rate, loss, trend, queueing delay, cuts, recovery times), the five-second `stream timings` line has the same as `cc_*` fields with the queueing delay p50/p95 of those five seconds, and the end of the stream logs a `congestion summary`.
-- **When it is off.** `congestion_control = false` (the default), `host_adaptive_bitrate = true`, a device that does not report arrivals, and a session in which the device has set the bitrate.
+- **When it is off.** `congestion_control = false` (the default), a device that does not report arrivals, and a session in which the device has set the bitrate.
 
-
-## Host bitrate adaptation
-
-**All settings → Picture → Bitrate and network → Adapt bitrate on this PC** enables
-`host_adaptive_bitrate = true` for the next connection. It is off by default.
-For H.264, HEVC, AV1 and PyroWave, the host reduces the video budget when a Moonlight
-client reports loss, or when sustained traffic shows a rising control RTT.
-The budget includes packet headers, FEC (including minimum parity), and a
-reserve for audio and control. Video pacing enforces the remaining video
-budget; bitrate targets leave additional headroom for encoder overshoot.
-Observed controller speaker, actuator and microphone PCM each reserve another
-2 Mbps, including transport overhead and shared wireless airtime. Each reserve
-expires after five seconds without that path's packets, including controller
-removal or microphone mute. Released headroom still follows slow bitrate
-recovery; it never takes ownership back from a client's controller.
-The ceiling is the client's configured network bitrate, bounded by Maximum
-bitrate when set. No change can exceed the initial encoder bitrate.
-If the budget cannot fit negotiated audio and even minimum video packets,
-adaptation remains inactive with a warning instead of slowing the pacer to an
-unusable rate. Lower the audio channel count/FPS or increase the budget.
-
-The controller starts only after a valid report for a recently sent video
-frame. Clients without those reports retain their existing behavior. It waits
-for eight seconds of busy video, recent control pings and stable RTT before
-raising the budget slowly. A static desktop, a stopped game, missing feedback
-or a quiet encoder cannot prove that more bandwidth is available. PyroWave
-accounts for its record wire budget or legacy container overhead and respects
-the client's measured pace and link ceilings. A successful client `/bitrate` request takes
-ownership for the rest of that connection, including removal of the host's
-adaptive pacing cap. Clients starting their own controller should send their
-current bitrate once to claim ownership immediately.
-
-Session API reports include `adaptive_bitrate` with the owner, reason, observed
-feedback and wire budget. The controller does not promise lower latency on
-every connection.
 
 ## Error correction chosen by the device
 
@@ -1187,7 +1151,6 @@ Every setting in the console, by the console's tabs and groups, with its key and
 | RTX Video enhancement: Strength | `rtx_video_intensity` | `100` | How strongly RTX Video enhancement works, from 0 to 100. 0 leaves the picture unchanged. |
 | Bitrate and network: Maximum bitrate | `max_bitrate` | `0` Kbps | Caps the bitrate a device can request, in Kbps (50000 is 50 Mbps). Leave it at 0, which uses the device's bitrate, unless your network or data plan needs a limit. |
 | Bitrate and network: Error correction | `fec_percentage` | `20` % | Error correction (FEC): extra data that repairs lost packets. More survives a worse network but leaves less bitrate for the picture; leave it at 20% unless the picture breaks up. |
-| Bitrate and network: Adapt bitrate on this PC | `host_adaptive_bitrate` | `false` | Lowers the bitrate when a Moonlight device reports video loss, then slowly raises it again. Leave it off: it takes over from the other automatic bitrate and pacing controls here. |
 | Bitrate and network: Adapt error correction | `adaptive_fec` | `true` | Uses less error correction (FEC) while the device reports a clean link, which frees bitrate for the picture, and returns to the percentage above when it reports loss. Leave it on. |
 | Bitrate and network: Most error correction a device may ask for | `fec_max_percentage` | `50` % | The most error correction (FEC) a device such as Nightjar may choose for itself, as a percentage of the video packets. Leave it at 50%; a lower cap limits the loss it can repair. |
 | Bitrate and network: PyroWave error correction | `pyrowave_critical_fec_percentage` | `20` % | Error correction (FEC: extra data that repairs lost packets) for PyroWave pictures. More leaves less bitrate for the picture; leave it at 20% unless PyroWave breaks up. |
@@ -1196,7 +1159,7 @@ Every setting in the console, by the console's tabs and groups, with its key and
 | Bitrate and network: Adaptive packet pacing | `host_adaptive_pacing` | `false` | Sends video packets slowly at first, then faster, and backs off when the device reports loss. It adds delay when a stream starts; turn it on only for a link that loses bursts. |
 | Bitrate and network: Adaptive packet pacing for Wi-Fi clients | `wireless_adaptive_pacing` | `true` | Paces video adaptively from the first frame, not after the first lost frames, for a client that reports Wi-Fi or cellular. Leave it on: streams lost fewer frames on weak Wi-Fi. |
 | Bitrate and network: Slow down after video loss | `keyframe_loss_pacing` | `true` | After a lost keyframe (a full picture the stream restarts from) or repeated lost frames, spaces packets more evenly for the rest of the stream; the bitrate stays. Leave it on. |
-| Bitrate and network: Adapt to network congestion | `congestion_control` | `false` | For devices that report packet arrival times, such as Nightjar: lowers the bitrate and paces video at the network's rate as delay builds up, before packets are lost, then raises it again. The lower of this and Lower the bitrate when the link cannot carry it applies. Off while Adapt bitrate on this PC is on or the device sets the bitrate. Reconnect after saving. |
+| Bitrate and network: Adapt to network congestion | `congestion_control` | `false` | For devices that report packet arrival times, such as Nightjar: lowers the bitrate and paces video at the network's rate as delay builds up, before packets are lost, then raises it again. The lower of this and Lower the bitrate when the link cannot carry it applies. Off while the device sets the bitrate. Reconnect after saving. |
 | Frame pacing: Frame pacing | `frame_pacing` | `arrival` (On arrival) | On arrival encodes each new frame as soon as it is captured; leave it there. Fixed grid encodes the newest frame at fixed intervals, so frames wait for their slot, adding delay. |
 | Frame pacing: Steady grid timing | `wgc_pacing_smoothing` | `true` | Keeps the fixed grid on a steady schedule. Leave it on: off starts each interval from the previous encode, so one late frame delays the ones after it. |
 | Frame pacing: Still-picture resend rate | `minimum_fps_target` | `20` fps | How often an unchanged picture is sent again, not a limit on a game’s frame rate. Lower values save bandwidth on a still desktop; leave it at 20 fps unless you need that. |

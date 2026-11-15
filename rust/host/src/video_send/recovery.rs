@@ -169,8 +169,6 @@ pub(crate) fn report(session: &Session, config: &Config, frame: RecoveryFrame) {
             .adaptive_packet_pacing(session.config.codec, session.config.client_wireless)
         {
             "adaptive packet pacing"
-        } else if config.boolean("host_adaptive_bitrate", false) {
-            "adaptive bitrate pacing"
         } else {
             "route pacing"
         }

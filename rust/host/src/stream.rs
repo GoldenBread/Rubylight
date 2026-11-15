@@ -452,7 +452,6 @@ fn restart_on_new_path(s: &Session, c: &Config) {
     s.stream_mode().apply_to(&mut stream);
     s.rebuild_link_rate(&stream, c.link_rate_adaptation(), max_bitrate_kbps(s, c));
     rebuild_congestion(s, &stream, c);
-    configure_adaptive_bitrate(s, c);
 }
 /// The stream's video FEC at its start: the configured percentage is adaptive
 /// FEC's ceiling (with `adaptive_fec` off, or a client that sends no FEC status,
@@ -490,20 +489,11 @@ fn configure_video_fec(s: &Session, c: &Config) -> Result<()> {
     }
     Ok(())
 }
-/// Host bitrate adaptation (`host_adaptive_bitrate`), from scratch.
-fn configure_adaptive_bitrate(s: &Session, c: &Config) {
-    s.configure_adaptive_bitrate(
-        c.boolean("host_adaptive_bitrate", false),
-        max_bitrate_kbps(s, c),
-    );
-}
 /// Packet-level congestion control from the client's arrival feedback: `(enabled, shadow)`.
 /// `congestion_control` turns it on; `BUTTERPOLLO_CONGESTION_SHADOW=1` runs it measure-only
 /// for the A/B (`rust/release/congestion_ab.py`): it logs what it would do, applies nothing.
-/// Host adaptive bitrate owns the bitrate when on, so neither runs then.
 pub(crate) fn congestion_mode(c: &Config) -> (bool, bool) {
-    let shadow = std::env::var("BUTTERPOLLO_CONGESTION_SHADOW").is_ok_and(|v| v == "1")
-        && !c.boolean("host_adaptive_bitrate", false);
+    let shadow = std::env::var("BUTTERPOLLO_CONGESTION_SHADOW").is_ok_and(|v| v == "1");
     (c.congestion_control() || shadow, shadow)
 }
 /// Congestion control for a stream whose mode or path changed; call after

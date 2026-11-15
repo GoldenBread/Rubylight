@@ -268,7 +268,7 @@ impl SessionThread<'_> {
                     let wire = butterpollo_core::network_pacing::video_frame_wire_rate_bps(&frame_packetizer, frame.bytes.len(), stream_period.get(), peer.ip().to_canonical().is_ipv6());
                     butterpollo_core::network_pacing::paced(bps, wire)
                 });
-                if std::mem::take(&mut inline_paced) || loss_paced || large_frame || automatic_pacing || send_jitter_set || c.boolean("host_adaptive_bitrate", false) || butterpollo_core::network_pacing::paced(bps, needed) {
+                if std::mem::take(&mut inline_paced) || loss_paced || large_frame || automatic_pacing || send_jitter_set || butterpollo_core::network_pacing::paced(bps, needed) {
                     // The sender continues the inline sends' frame,
                     // packet and IV numbering; nothing sends inline
                     // after this.

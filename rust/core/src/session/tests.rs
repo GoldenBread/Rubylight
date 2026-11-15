@@ -1180,7 +1180,6 @@ fn a_wireless_client_stream_starts_at_the_controllers_seed_and_climbs_toward_the
         ("wireless_adaptive_pacing=false", 1),
         ("", 3),
         ("pacing_max_bitrate_kbps=80000", 1),
-        ("host_adaptive_bitrate=true", 1),
     ] {
         let config = crate::config::Config::parse(setting).unwrap();
         let s = Session::new(
@@ -2450,7 +2449,6 @@ fn repeated_loss_guard_preserves_disabled_manual_and_adaptive_owners() {
         "keyframe_loss_pacing=false",
         "pacing_max_bitrate_kbps=80000",
         "host_adaptive_pacing=true",
-        "host_adaptive_bitrate=true",
     ] {
         let config = crate::config::Config::parse(text).unwrap();
         let s = Session::new(launch("owner", Role::Stream), Negotiated::default());

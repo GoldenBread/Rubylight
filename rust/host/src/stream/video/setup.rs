@@ -278,7 +278,6 @@ impl SessionThread<'_> {
         workers.client_commands = Some(crate::process::ClientCommands::start(&h, &s)?);
         workers.audio = Some(m.spawn_audio(&h, &s)?);
         configure_video_fec(&s, &c)?;
-        configure_adaptive_bitrate(&s, &c);
         s.configure_link_rate(c.link_rate_adaptation(), max_bitrate_kbps(&s, &c));
         {
             let (enabled, shadow) = congestion_mode(&c);

@@ -436,9 +436,10 @@ fn packet_pacing_requires_opt_in_and_yields_to_manual_bitrate_and_codec_policies
             "host_adaptive_pacing=true\npacing_max_bitrate_kbps=80000",
             [false, false, false, false],
         ),
+        // A saved retired host bitrate controller changes nothing.
         (
             "host_adaptive_pacing=true\nhost_adaptive_bitrate=true",
-            [false, false, false, false],
+            [true, true, true, true],
         ),
         (
             "host_adaptive_pacing=true\nhost_adaptive_bitrate=false",
@@ -503,7 +504,7 @@ fn a_wireless_client_gets_adaptive_pacing_on_h26x_and_av1_unless_something_owns_
             all,
             [false; 4],
         ),
-        // A manual limit or host bitrate adaptation owns pacing.
+        // A manual limit owns pacing.
         (
             "pacing_max_bitrate_kbps=80000",
             off,
@@ -517,13 +518,6 @@ fn a_wireless_client_gets_adaptive_pacing_on_h26x_and_av1_unless_something_owns_
             [false, false, false, true],
             off,
             [true; 4],
-        ),
-        (
-            "host_adaptive_bitrate=true",
-            off,
-            [false; 4],
-            off,
-            [false; 4],
         ),
         // Keyframe-loss pacing can still be switched off.
         (
@@ -633,7 +627,8 @@ fn keyframe_loss_pacing_is_on_unless_a_manual_limit_or_adaptation_owns_pacing() 
         ("pacing_max_bitrate_kbps=0", true),
         ("pacing_max_bitrate_kbps=80000", false),
         ("host_adaptive_pacing=true", false),
-        ("host_adaptive_bitrate=true", false),
+        // The retired host bitrate controller no longer turns it off.
+        ("host_adaptive_bitrate=true", true),
     ] {
         let config = super::Config::parse(text).unwrap();
         assert_eq!(config.keyframe_loss_pacing(0, false), enabled, "{text}");
@@ -642,15 +637,16 @@ fn keyframe_loss_pacing_is_on_unless_a_manual_limit_or_adaptation_owns_pacing() 
 }
 
 #[test]
-fn link_rate_adaptation_is_on_unless_disabled_or_the_opt_in_owns_the_bitrate() {
+fn link_rate_adaptation_is_on_unless_disabled() {
     for (text, enabled) in [
         ("", true),
         ("link_rate_adaptation=true", true),
         ("link_rate_adaptation=invalid", true),
         ("link_rate_adaptation=false", false),
-        ("host_adaptive_bitrate=true", false),
+        // The retired host bitrate controller no longer turns it off.
+        ("host_adaptive_bitrate=true", true),
         (
-            "host_adaptive_bitrate=true\nlink_rate_adaptation=true",
+            "host_adaptive_bitrate=true\nlink_rate_adaptation=false",
             false,
         ),
         ("host_adaptive_bitrate=false", true),
@@ -663,13 +659,13 @@ fn link_rate_adaptation_is_on_unless_disabled_or_the_opt_in_owns_the_bitrate() {
 }
 
 #[test]
-fn congestion_control_is_off_unless_set_and_yields_to_the_opt_in() {
+fn congestion_control_is_off_unless_set() {
     for (text, enabled) in [
         ("", false),
         ("congestion_control=true", true),
         ("congestion_control=invalid", false),
         ("congestion_control=false", false),
-        ("congestion_control=true\nhost_adaptive_bitrate=true", false),
+        ("congestion_control=true\nhost_adaptive_bitrate=true", true),
         ("congestion_control=true\nlink_rate_adaptation=false", true),
     ] {
         let config = super::Config::parse(text).unwrap();
@@ -1899,6 +1895,40 @@ fn the_touch_keyboard_setting_is_removed_with_its_stored_value() {
         !SETTINGS_30
             .iter()
             .any(|(key, _)| *key == "touch_keyboard_digitizer")
+    );
+}
+/// The retired host bitrate controller's switch, true or false, is dropped
+/// wherever it is stored, and no other value changes with it.
+#[test]
+fn the_host_bitrate_controller_setting_is_dropped_without_changing_others() {
+    for value in ["true", "false"] {
+        let text = format!(
+            "host_adaptive_bitrate = {value}
+link_rate_adaptation = false
+host_adaptive_pacing = true
+"
+        );
+        let (c, retired) = Config::parse_retiring(&text).unwrap();
+        assert!(retired.is_empty(), "{value}");
+        assert!(!c.values.contains_key("host_adaptive_bitrate"), "{value}");
+        assert!(!c.text().contains("host_adaptive_bitrate"), "{value}");
+        assert!(!c.link_rate_adaptation(), "{value}");
+        assert!(c.adaptive_packet_pacing(0, false), "{value}");
+        // A console, script or client that still sends it is accepted.
+        let mut config = Config::default();
+        change(&mut config, "host_adaptive_bitrate", value).unwrap();
+        assert!(!config.values.contains_key("host_adaptive_bitrate"), "{value}");
+        // An app's or a device's overrides lose it and keep the rest.
+        let mut layer = serde_json::json!({"host_adaptive_bitrate": value, "max_bitrate": 50000});
+        assert!(migrate_overrides(layer.as_object_mut().unwrap()));
+        assert_eq!(layer, serde_json::json!({"max_bitrate": 50000}));
+    }
+    assert!(removed("host_adaptive_bitrate"));
+    assert!(!override_allowed("host_adaptive_bitrate"));
+    assert!(
+        !SETTINGS_30
+            .iter()
+            .any(|(key, _)| *key == "host_adaptive_bitrate")
     );
 }
 /// An app record from Apollo, Vibepollo or an earlier Rubylight, as

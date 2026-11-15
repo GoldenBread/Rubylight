@@ -309,8 +309,8 @@ mod tests {
         }
     }
 
-    /// Arrival feedback is offered only while congestion control is on, and never beside
-    /// host adaptive bitrate, which owns the bitrate then.
+    /// Arrival feedback is offered only while congestion control is on; a saved
+    /// `host_adaptive_bitrate`, which is retired, changes nothing.
     #[test]
     fn transport_feedback_follows_congestion_control() {
         for (text, offered) in [
@@ -318,7 +318,7 @@ mod tests {
             ("congestion_control = true\n", true),
             (
                 "congestion_control = true\nhost_adaptive_bitrate = true\n",
-                false,
+                true,
             ),
             ("congestion_control = false\n", false),
         ] {

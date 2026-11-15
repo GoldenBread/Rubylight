@@ -561,18 +561,6 @@ const video: Setting[] = [
     default: 20,
   },
   {
-    key: 'host_adaptive_bitrate',
-    label: 'Adapt bitrate on this PC',
-    description:
-      'Lowers the bitrate when a Moonlight device reports video loss, then slowly raises it again. Leave it off: it takes over from the other automatic bitrate and pacing controls here.',
-    details:
-      'It replaces Lower the bitrate when the link cannot carry it, and turns off Adapt to network congestion, Adaptive packet pacing and Slow down after video loss. It is for devices that do not adjust their own bitrate: one that does takes control. The bitrate rises again only while traffic is sustained and latency is stable. Includes error correction and audio in the network budget. Requires observed client feedback. Works on H.264, HEVC, AV1 and PyroWave. Changes apply on the next connection.',
-    category: 'video',
-    group: 'Bitrate and network',
-    control: { kind: 'toggle' },
-    default: false,
-  },
-  {
     key: 'adaptive_fec',
     label: 'Adapt error correction',
     description:
@@ -647,13 +635,13 @@ const video: Setting[] = [
     description:
       'Sends video packets slowly at first, then faster, and backs off when the device reports loss. It adds delay when a stream starts; turn it on only for a link that loses bursts.',
     details:
-      'A manual pacing rate or Adapt bitrate on this PC turns it off, and while it is on, Slow down after video loss stays off. Adds startup delay without changing picture bitrate or FPS; probing can still lose packets. Off by default, including for PyroWave. Changes apply on the next connection.',
+      'A manual pacing rate turns it off, and while it is on, Slow down after video loss stays off. Adds startup delay without changing picture bitrate or FPS; probing can still lose packets. Off by default, including for PyroWave. Changes apply on the next connection.',
     category: 'video',
     group: 'Bitrate and network',
     control: { kind: 'toggle' },
     default: false,
-    inactiveHint: "Adapt bitrate on this PC is on, or a Pacing rate is set, and either one turns adaptive pacing off. Turn it off, or set the Pacing rate to 0, to use this setting.",
-    visibleWhen: (values) => !flag(values, 'host_adaptive_bitrate', false) && Number(values.pacing_max_bitrate_kbps ?? 0) <= 0,
+    inactiveHint: "A Pacing rate is set, which turns adaptive pacing off. Set the Pacing rate to 0 to use this setting.",
+    visibleWhen: (values) => Number(values.pacing_max_bitrate_kbps ?? 0) <= 0,
     advanced: true,
   },
   {
@@ -662,13 +650,13 @@ const video: Setting[] = [
     description:
       'Paces video adaptively from the first frame, not after the first lost frames, for a client that reports Wi-Fi or cellular. Leave it on: streams lost fewer frames on weak Wi-Fi.',
     details:
-      'Applies to H.264, HEVC and AV1 for clients that report a wireless route, such as Nightjar. Starts at twice the encoder bitrate, probes up in small steps while the link stays clean, up to the route limit, and backs off on loss, without changing picture bitrate or FPS. Slow down after video loss does not run on such a stream. PyroWave keeps its own pacing. Changes apply on the next connection. A manual pacing rate or Adapt bitrate on this PC turns it off. With Adapt bitrate on this PC or this setting off, H.264, HEVC and AV1 are still paced with the Wi-Fi route policy (twice the encoder bitrate, no probing) from the first frame; a manual pacing rate always wins. With an RX 7900 XT host and a Ryzen 7 8845HS laptop on a weak 2.4 GHz Wi-Fi link, it cut unrecoverable frames from 61 to 15.7 per 90-second stream; on a clean 5 GHz link it changed nothing.',
+      'Applies to H.264, HEVC and AV1 for clients that report a wireless route, such as Nightjar. Starts at twice the encoder bitrate, probes up in small steps while the link stays clean, up to the route limit, and backs off on loss, without changing picture bitrate or FPS. Slow down after video loss does not run on such a stream. PyroWave keeps its own pacing. Changes apply on the next connection. A manual pacing rate turns it off. With this setting off, H.264, HEVC and AV1 are still paced with the Wi-Fi route policy (twice the encoder bitrate, no probing) from the first frame; a manual pacing rate always wins. With an RX 7900 XT host and a Ryzen 7 8845HS laptop on a weak 2.4 GHz Wi-Fi link, it cut unrecoverable frames from 61 to 15.7 per 90-second stream; on a clean 5 GHz link it changed nothing.',
     category: 'video',
     group: 'Bitrate and network',
     control: { kind: 'toggle' },
     default: true,
-    inactiveHint: "Adapt bitrate on this PC is on, or a Pacing rate is set, and either one turns adaptive pacing off. Turn it off, or set the Pacing rate to 0, to use this setting.",
-    visibleWhen: (values) => !flag(values, 'host_adaptive_bitrate', false) && Number(values.pacing_max_bitrate_kbps ?? 0) <= 0,
+    inactiveHint: "A Pacing rate is set, which turns adaptive pacing off. Set the Pacing rate to 0 to use this setting.",
+    visibleWhen: (values) => Number(values.pacing_max_bitrate_kbps ?? 0) <= 0,
     advanced: true,
   },
   {
@@ -677,14 +665,13 @@ const video: Setting[] = [
     description:
       'After a lost keyframe (a full picture the stream restarts from) or repeated lost frames, spaces packets more evenly for the rest of the stream; the bitrate stays. Leave it on.',
     details:
-      'A manual pacing rate, Adaptive packet pacing or Adapt bitrate on this PC turns it off. It also stays off on a stream that Adaptive packet pacing for Wi-Fi clients paces. Activates after a keyframe the client could not rebuild, a repeated request for the keyframe it was just sent (only from clients that do not report their own losses; a decoder that asks twice is not network loss), or three distinct unrecoverable frames within two seconds. Changes Rubylight makes itself (Alt+Tab, a bitrate change, a restarted capture or encoder) do not count. Frames this PC could not send whole, such as when the network send buffer fills at a high pacing rate, do: three within two seconds, or one keyframe; when only this PC saw that loss, it is lifted after 10 clean seconds, unless the stream already slowed down once (an earlier lift, or a remembered route), and it is never remembered. Loss the client reported is remembered for this device, address and network adapter for 24 hours, with a fast-rate retry every second eligible reconnect; a lost first keyframe alone is lifted after 10 clean seconds and not remembered. Reset remembered routes in Devices. Paces at twice the encoder bitrate, with room for error correction. Isolated ordinary-frame losses and fully repaired frames keep the fast rate.',
+      'A manual pacing rate or Adaptive packet pacing turns it off. It also stays off on a stream that Adaptive packet pacing for Wi-Fi clients paces. Activates after a keyframe the client could not rebuild, a repeated request for the keyframe it was just sent (only from clients that do not report their own losses; a decoder that asks twice is not network loss), or three distinct unrecoverable frames within two seconds. Changes Rubylight makes itself (Alt+Tab, a bitrate change, a restarted capture or encoder) do not count. Frames this PC could not send whole, such as when the network send buffer fills at a high pacing rate, do: three within two seconds, or one keyframe; when only this PC saw that loss, it is lifted after 10 clean seconds, unless the stream already slowed down once (an earlier lift, or a remembered route), and it is never remembered. Loss the client reported is remembered for this device, address and network adapter for 24 hours, with a fast-rate retry every second eligible reconnect; a lost first keyframe alone is lifted after 10 clean seconds and not remembered. Reset remembered routes in Devices. Paces at twice the encoder bitrate, with room for error correction. Isolated ordinary-frame losses and fully repaired frames keep the fast rate.',
     category: 'video',
     group: 'Bitrate and network',
     control: { kind: 'toggle' },
     default: true,
-    inactiveHint: "Adapt bitrate on this PC or Adaptive packet pacing is on, or a Pacing rate is set, and each one keeps this off. Change them to use this setting.",
-    visibleWhen: (values) =>
-      !flag(values, 'host_adaptive_bitrate', false) && !flag(values, 'host_adaptive_pacing', false) && Number(values.pacing_max_bitrate_kbps ?? 0) <= 0,
+    inactiveHint: "Adaptive packet pacing is on, or a Pacing rate is set, and each one keeps this off. Change them to use this setting.",
+    visibleWhen: (values) => !flag(values, 'host_adaptive_pacing', false) && Number(values.pacing_max_bitrate_kbps ?? 0) <= 0,
     advanced: true,
   },
   {
@@ -693,13 +680,11 @@ const video: Setting[] = [
     description:
       'Cuts the picture bitrate when the network loses more than error correction can repair, then probes back up. Does nothing on a healthy link.',
     details:
-      'Acts on three unrecoverable frames in two seconds, 5% of packets reported missing for two half-second windows, three frames lost on send, or three network keyframe requests from a client that sends no error-correction status. Each cut aims at 85% of what the link delivered, then this PC probes back up in small steps and returns to the requested bitrate after ten clean seconds. Reports for frames sent before a cut took effect are ignored. On PyroWave, client-loss cuts stop at its severe-loss floor. Send losses on this PC can cut a stream below that floor, down to half its bitrate ceiling (at least 1 Mbps). Adapt bitrate on this PC wins when both are on, and a device that sets its own bitrate takes over bitrate control.',
+      'Acts on three unrecoverable frames in two seconds, 5% of packets reported missing for two half-second windows, three frames lost on send, or three network keyframe requests from a client that sends no error-correction status. Each cut aims at 85% of what the link delivered, then this PC probes back up in small steps and returns to the requested bitrate after ten clean seconds. Reports for frames sent before a cut took effect are ignored. On PyroWave, client-loss cuts stop at its severe-loss floor. Send losses on this PC can cut a stream below that floor, down to half its bitrate ceiling (at least 1 Mbps). A device that sets its own bitrate takes over bitrate control.',
     category: 'video',
     group: 'Bitrate and network',
     control: { kind: 'toggle' },
     default: true,
-    inactiveHint: "Adapt bitrate on this PC is on and takes over the bitrate, so this does nothing. Turn it off to use this setting.",
-    visibleWhen: (values) => !flag(values, 'host_adaptive_bitrate', false),
     advanced: true,
   },
   {
@@ -708,13 +693,11 @@ const video: Setting[] = [
     description:
       'Lowers the bitrate and paces video as network delay builds, before packets are lost, then raises it. Try it on busy Wi-Fi with a device that reports packet arrivals, like Nightjar.',
     details:
-      'Off while Adapt bitrate on this PC is on, and a device that sets its own bitrate takes over bitrate control. Works together with Lower the bitrate when the link cannot carry it: the lower of both applies. Reconnect after saving. The device reports when each video packet arrived. When packets take longer and longer to arrive, a queue is building on the way, so this PC lowers the bitrate to just under what arrived and paces video at the rate of the slowest link; loss past what error correction repairs lowers it as well. When the delay settles, the bitrate climbs back to the requested one.',
+      'A device that sets its own bitrate takes over bitrate control. Works together with Lower the bitrate when the link cannot carry it: the lower of both applies. Reconnect after saving. The device reports when each video packet arrived. When packets take longer and longer to arrive, a queue is building on the way, so this PC lowers the bitrate to just under what arrived and paces video at the rate of the slowest link; loss past what error correction repairs lowers it as well. When the delay settles, the bitrate climbs back to the requested one.',
     category: 'video',
     group: 'Bitrate and network',
     control: { kind: 'toggle' },
     default: false,
-    inactiveHint: "Adapt bitrate on this PC is on and takes over the bitrate, so this does nothing. Turn it off to use this setting.",
-    visibleWhen: (values) => !flag(values, 'host_adaptive_bitrate', false),
     advanced: true,
   },
 ];

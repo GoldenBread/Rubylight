@@ -180,23 +180,19 @@ The host also takes and sends these, with the wire formats of the projects that 
 
 Moonlight's own FEC status message (`0x5502`, `SS_FRAME_FEC_STATUS` in moonlight-common-c) needs no announcement. A client that sends it for frames it had to repair or could not rebuild gets adaptive error correction from 2.2.0: the share of recovery packets rises with reported loss, returns to the configured `fec_percentage` when a frame could not be rebuilt, and falls slowly towards 5 % while no loss is reported. A client that never sends it keeps the configured percentage.
 
-With the optional `host_adaptive_bitrate` setting, these validated reports also
-activate host bitrate adaptation for conventional codecs. Reports are checked
-against sent frame numbers and deduplicated before affecting either controller.
-Standard `0x0200` periodic pings (8-byte payload beginning with little-endian 4)
-provide feedback freshness. FEC report silence alone is not a clean-link signal:
-upward probes also require sustained sent frames/bytes and stable ENet RTT.
-The controller reserves audio, framing and FEC inside one wire budget.
+Reports are checked against sent frame numbers and deduplicated before they
+affect a controller.
 
 `/api/abr/capabilities` retains `supported: false` for older client controllers
-and adds `host_adaptive_bitrate`, `client_bitrate_takes_ownership: true` and the
+and adds `host_adaptive_bitrate` (always `false`: the host controller it named
+is retired), `client_bitrate_takes_ownership: true` and the
 `host_loss_adaptation` feature. A successful authenticated `/bitrate` request
 atomically disables host bitrate and adaptive pacing control for that client's
 current sessions. A client should send its current encoder bitrate once when
 starting its own controller; no lease renewal is needed. New sessions reset
-ownership. PyroWave is excluded from this host controller.
+ownership.
 
-By default (`link_rate_adaptation`, [configuration](configuration.md#lower-bitrate-when-the-link-cannot-carry-it)) the host also lowers the bitrate when the network cannot carry the stream. It reads the same validated `0x5502` reports (frames the client could not rebuild, and the share of packets reported missing), and the same `0x0200` pings for freshness. The keyframe request `0x0302` and reference invalidation count as network evidence only from a client that sends no `0x5502` at all, and only when the host or the client's decode queue did not cause them. A `/bitrate` request from the client turns it off for that session, as it does for the controller above.
+By default (`link_rate_adaptation`, [configuration](configuration.md#lower-bitrate-when-the-link-cannot-carry-it)) the host also lowers the bitrate when the network cannot carry the stream. It reads the same validated `0x5502` reports (frames the client could not rebuild, and the share of packets reported missing), and the standard `0x0200` periodic pings (8-byte payload beginning with little-endian 4) for freshness. The keyframe request `0x0302` and reference invalidation count as network evidence only from a client that sends no `0x5502` at all, and only when the host or the client's decode queue did not cause them. A `/bitrate` request from the client turns it off for that session.
 
 ## 3.0 extensions
 

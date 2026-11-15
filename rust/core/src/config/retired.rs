@@ -143,6 +143,9 @@ pub const REMOVED_KEYS: &[&str] = &[
     "dd_virtual_display_permanent_count",
     // Defined for the Windows touch keyboard and never read.
     "touch_keyboard_digitizer",
+    // The opt-in host bitrate controller; link-rate adaptation and
+    // congestion control run in its place.
+    "host_adaptive_bitrate",
 ];
 /// The settings of the removed Quick Sync and software encoders.
 pub const REMOVED_PREFIXES: &[&str] = &["qsv_", "sw_"];

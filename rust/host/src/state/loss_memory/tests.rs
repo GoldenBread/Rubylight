@@ -434,7 +434,6 @@ fn explicit_policies_and_pyrowave_neither_inherit_nor_consume_probes() {
         "keyframe_loss_pacing=false",
         "pacing_max_bitrate_kbps=80000",
         "host_adaptive_pacing=true",
-        "host_adaptive_bitrate=true",
     ] {
         let config = Config::parse(text).unwrap();
         let s = session(&f, &c, "192.0.2.1", 0);

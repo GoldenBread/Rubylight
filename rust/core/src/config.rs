@@ -250,7 +250,7 @@ impl Config {
         }
     }
     /// Experimental packet-rate adaptation is explicitly enabled per stream.
-    /// Manual pacing and host bitrate adaptation own their respective limits;
+    /// Manual pacing owns its own limit;
     /// Both conventional and PyroWave streams use the loss controller when
     /// `host_adaptive_pacing` is set. A client that reports a Wi-Fi or cellular
     /// route (`client_wireless`) gets it by default on H.264, HEVC and AV1
@@ -259,7 +259,6 @@ impl Config {
     pub fn adaptive_packet_pacing(&self, codec: u8, client_wireless: bool) -> bool {
         self.pacing_controller_chosen(codec, client_wireless)
             && self.integer("pacing_max_bitrate_kbps", 0) <= 0
-            && !self.boolean("host_adaptive_bitrate", false)
             && codec <= 3
     }
     fn pacing_controller_chosen(&self, codec: u8, client_wireless: bool) -> bool {
@@ -267,23 +266,22 @@ impl Config {
             || (client_wireless && codec <= 2 && self.boolean("wireless_adaptive_pacing", true))
     }
     /// Pace like Wi-Fi after a lost keyframe or repeated frame loss (on by default). A
-    /// manual pacing limit and the opt-in adaptations keep their own policies,
-    /// and so does a stream the adaptive pacing controller owns.
+    /// manual pacing limit keeps its own policy, and so does a stream the
+    /// adaptive pacing controller owns.
     pub fn keyframe_loss_pacing(&self, codec: u8, client_wireless: bool) -> bool {
         self.boolean("keyframe_loss_pacing", true)
             && self.integer("pacing_max_bitrate_kbps", 0) <= 0
             && !self.pacing_controller_chosen(codec, client_wireless)
-            && !self.boolean("host_adaptive_bitrate", false)
     }
     /// Lower the encoder bitrate when the link cannot carry the stream (on by
-    /// default). The opt-in `host_adaptive_bitrate` owns the bitrate when set.
+    /// default).
     pub fn link_rate_adaptation(&self) -> bool {
-        self.boolean("link_rate_adaptation", true) && !self.boolean("host_adaptive_bitrate", false)
+        self.boolean("link_rate_adaptation", true)
     }
     /// Packet-level congestion control from the client's arrival feedback (off until the A/B
-    /// decides). The opt-in `host_adaptive_bitrate` owns the bitrate when set.
+    /// decides).
     pub fn congestion_control(&self) -> bool {
-        self.boolean("congestion_control", false) && !self.boolean("host_adaptive_bitrate", false)
+        self.boolean("congestion_control", false)
     }
     /// An integer setting; Vibepollo also writes quoted (`"756"`) and
     /// hexadecimal (`0x2a`) values.

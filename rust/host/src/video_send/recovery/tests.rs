@@ -313,7 +313,6 @@ fn the_wireless_hint_sets_the_route_pace_only_when_no_controller_owns_the_stream
             "pacing_max_bitrate_kbps=0\nwireless_adaptive_pacing=false",
             0,
         ),
-        ("host_adaptive_bitrate=true", 2),
     ] {
         for (hint, expected) in [(true, wifi), (false, 800_000_000)] {
             let (session, config, _) = wireless_hint_stream(&fixture, settings, codec, hint);

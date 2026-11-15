@@ -1376,14 +1376,6 @@ impl Media {
                     {
                         tracing::info!(client = %s.launch.client.name, old_bps = old, new_bps = new, "automatic video burst pacing; encoder bitrate unchanged");
                     }
-                    if poll_feedback
-                        && let Some((old, new)) = s.tick_adaptive_bitrate(
-                            Instant::now(),
-                            host.peer(*peer_id).round_trip_time(),
-                        )
-                    {
-                        tracing::info!(client = %s.launch.client.name, old_kbps = old, new_kbps = new, "host adaptive bitrate");
-                    }
                     if poll_feedback {
                         s.tick_link_rate(Instant::now(), host.peer(*peer_id).round_trip_time());
                         let (change, applied) = s
