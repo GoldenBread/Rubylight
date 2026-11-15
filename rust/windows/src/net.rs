@@ -329,6 +329,24 @@ pub fn configure_udp(socket: &UdpSocket) -> Result<()> {
     socket2::SockRef::from(socket).set_send_buffer_size(1 << 20)?;
     Ok(())
 }
+/// Refuse to fragment this socket's later datagrams: `IP_DONTFRAGMENT` on IPv4
+/// and `IPV6_DONTFRAG` on IPv6, so an oversized jumbo packet fails with
+/// WSAEMSGSIZE at the sender instead of being fragmented and lost whole on a
+/// hop that cannot reassemble it. Harmless for stock packet sizes.
+pub fn set_dont_fragment(socket: &UdpSocket) -> Result<()> {
+    let raw = SOCKET(socket.as_raw_socket() as usize);
+    let (level, option) = if socket.local_addr()?.is_ipv6() {
+        (IPPROTO_IPV6, IPV6_DONTFRAG)
+    } else {
+        (IPPROTO_IP, IP_DONTFRAGMENT)
+    };
+    // SAFETY: the borrowed socket stays open, and the option takes this 4-byte BOOL.
+    if unsafe { setsockopt(raw, level.0, option, Some(&1u32.to_ne_bytes())) } == SOCKET_ERROR {
+        // SAFETY: WSAGetLastError only reads this thread's last Winsock error.
+        return Err(std::io::Error::from_raw_os_error(unsafe { WSAGetLastError() }.0).into());
+    }
+    Ok(())
+}
 /// Send errors after which the socket still works and only these datagrams
 /// are lost: a full send buffer, no buffer space, or a route that is down for
 /// the moment. Vibepollo drops the packets and keeps streaming; so do we.
@@ -650,6 +668,33 @@ pub fn routed_link(peer: SocketAddr) -> Link {
 pub fn routed_link_bps(peer: SocketAddr) -> u64 {
     routed_link(peer).bps
 }
+/// The payload MTU of the interface Windows routes `peer` through, IPv4 or IPv6:
+/// the size a datagram may have before the network fragments it. None when the
+/// lookup fails or there is no route.
+pub fn routed_mtu(peer: SocketAddr) -> Option<u32> {
+    use windows::Win32::NetworkManagement::IpHelper::{
+        GetBestInterfaceEx, GetIpInterfaceEntry, MIB_IPINTERFACE_ROW,
+    };
+    let peer = SocketAddr::new(peer.ip().to_canonical(), peer.port());
+    let address = socket2::SockAddr::from(peer);
+    let mut index = 0;
+    // SAFETY: `address` outlives the call that only reads it, and `row` is
+    // filled by the call before `NlMtu` is read on success.
+    unsafe {
+        if GetBestInterfaceEx(address.as_ptr().cast(), &mut index) != 0 {
+            return None;
+        }
+        let mut row = MIB_IPINTERFACE_ROW {
+            Family: if peer.is_ipv4() { AF_INET } else { AF_INET6 },
+            InterfaceIndex: index,
+            ..Default::default()
+        };
+        if GetIpInterfaceEntry(&mut row).0 != 0 {
+            return None;
+        }
+        Some(row.NlMtu)
+    }
+}
 /// qWAVE, loaded at run time as Vibepollo does: Windows Server has
 /// qwave.dll only with its Quality Windows Audio Video Experience feature.
 struct Qwave {
@@ -777,6 +822,13 @@ pub struct Batch {
     pub system_calls: u64,
     /// Datagrams lost to transient send errors.
     pub dropped: u64,
+    /// Datagrams the path refused because they are larger than its MTU with
+    /// `IP_DONTFRAGMENT`/`IPV6_DONTFRAG` set; also counted in `dropped`.
+    pub oversized: u64,
+    /// The sender set the socket to refuse fragmentation ([`set_dont_fragment`]),
+    /// so an oversized jumbo datagram is a lost packet to report, not a send
+    /// error that ends the stream.
+    pub dont_fragment: bool,
     /// Enabled by the sender only for pacing traces.
     pub waits: Option<WritableWaits>,
     unreported: u64,
@@ -788,6 +840,8 @@ impl Default for Batch {
             offload: true,
             system_calls: 0,
             dropped: 0,
+            oversized: 0,
+            dont_fragment: false,
             waits: None,
             unreported: 0,
             reported: None,
@@ -851,6 +905,27 @@ impl Batch {
     pub fn refuse(&mut self, count: usize) {
         self.dropped(count, WSAEWOULDBLOCK);
     }
+    /// Count datagrams the path refused for their size with fragmentation
+    /// refused: lost like a full buffer's, and reported once every 5 seconds as
+    /// the jumbo path's fault rather than a transient socket error.
+    fn too_large(&mut self, count: usize, error: WSA_ERROR) {
+        if let Some(trace) = self.waits.as_mut() {
+            trace.last_error = error.0;
+        }
+        self.dropped += count as u64;
+        self.oversized += count as u64;
+        if self
+            .reported
+            .is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(5))
+        {
+            tracing::warn!(
+                code = error.0,
+                dropped = count,
+                "video datagrams exceed the path MTU and are dropped: jumbo packets need an MTU of at least 9000 on every hop"
+            );
+            self.reported = Some(std::time::Instant::now());
+        }
+    }
     /// Bytes handed to Winsock. Datagrams that hit a transient error are
     /// dropped, as Vibepollo does, rather than ending the stream. The batch
     /// shares one writable wait: under congestion it drops rather than
@@ -882,6 +957,13 @@ impl Batch {
             })?;
             match result {
                 Ok(sent) => return Ok(sent),
+                // With fragmentation refused, this is the path's MTU speaking,
+                // not a missing segmentation offload: drop the batch and report
+                // it rather than ending the stream.
+                Err(error) if self.dont_fragment && error == WSAEMSGSIZE => {
+                    self.too_large(packets.len(), error);
+                    return Ok(0);
+                }
                 Err(error)
                     if [WSAEINVAL, WSAENOPROTOOPT, WSAEOPNOTSUPP, WSAEMSGSIZE].contains(&error) =>
                 {
@@ -914,6 +996,9 @@ impl Batch {
             })?;
             match result {
                 Ok(()) => sent += packet.len(),
+                Err(error) if self.dont_fragment && error == WSAEMSGSIZE => {
+                    self.too_large(1, error);
+                }
                 Err(error) if transient(error) => self.dropped(1, error),
                 Err(error) => return Err(std::io::Error::from_raw_os_error(error.0).into()),
             }

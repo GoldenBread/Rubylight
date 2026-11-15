@@ -285,12 +285,15 @@ pub struct Sent {
     pub abandoned: bool,
     /// The batch's refused-datagram count when the frame began.
     pub dropped_at_start: u64,
+    /// The batch's oversized-datagram count when the frame began.
+    pub oversized_at_start: u64,
 }
 
 impl Sent {
-    pub fn new(dropped_at_start: u64) -> Self {
+    pub fn new(dropped_at_start: u64, oversized_at_start: u64) -> Self {
         Self {
             dropped_at_start,
+            oversized_at_start,
             lost: SendLoss::streamed(),
             first_sent: None,
             packets: 0,

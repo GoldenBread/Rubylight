@@ -174,6 +174,8 @@ impl SessionThread<'_> {
         let mut first_seen: Option<(usize, Instant, Option<Duration>, Option<Instant>)> = None;
         let mut video_qos = Tagged::default();
         let mut batch = butterpollo_windows::net::Batch::default();
+        batch.dont_fragment = packetizer.packet_size
+            > usize::from(butterpollo_core::video_packet::STOCK_MAX_VIDEO_PACKET);
         let mut packets = Vec::new();
         let trace_send = tracing::enabled!(target: "pacing", tracing::Level::TRACE);
         let mut admission_trace = trace_send.then(AdmissionTrace::default);
@@ -367,7 +369,7 @@ impl SessionThread<'_> {
                             Ok(streamed) => Some(slices::Streaming {
                                 frame: streamed, wire_frame, timestamp, claim, claimed, age, started, packetize_started,
                                 first_polled: polled, last_polled: polled, payload_bytes: 0, processing, bps,
-                                sent: slices::Sent::new(batch.dropped), failed: false,
+                                sent: slices::Sent::new(batch.dropped, batch.oversized), failed: false,
                             }),
                             Err(error) => {
                                 delivery.turn_off();
@@ -488,6 +490,7 @@ impl SessionThread<'_> {
                     if batch.dropped != sent.dropped_at_start {
                         s.launch.warnings.event("network_send", "Video packets were dropped by the host after transient socket send failures. You may see stutter or recovery frames; lower bitrate and check the network adapter. The log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
                     }
+                    crate::video_send::report_oversized(&s, &batch, sent.oversized_at_start);
                     // As the whole-frame path judges it, from the frame's size, so an
                     // abandoned frame reports as well as a finished one.
                     if (streamed.fec_limited() || packetizer.fec_limited(payload_bytes)) && fec_reported.is_none_or(|at: Instant| at.elapsed() >= Duration::from_secs(1)) {
@@ -604,6 +607,7 @@ impl SessionThread<'_> {
                 }
                 let frame_bytes = (packet_count * packet_bytes) as u64;
                 let dropped = batch.dropped;
+                let oversized = batch.oversized;
                 let waits_before = batch.waits;
                 let mut pacing_wait = Duration::ZERO;
                 let mut send_time = Duration::ZERO;
@@ -705,6 +709,7 @@ impl SessionThread<'_> {
                 if batch.dropped != dropped {
                     s.launch.warnings.event("network_send", "Video packets were dropped by the host after transient socket send failures. You may see stutter or recovery frames; lower bitrate and check the network adapter. The log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
                 }
+                crate::video_send::report_oversized(&s, &batch, oversized);
                 s.stats.frames.fetch_add(1, Ordering::Relaxed);
                 let sent = Instant::now();
                 crate::video_send::recovery::report(&s, &c, crate::video_send::recovery::RecoveryFrame {

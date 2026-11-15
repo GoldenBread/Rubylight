@@ -382,7 +382,9 @@ impl VideoPacketizer {
         bool,
         impl FnMut(&mut PacketBlock) -> Result<usize> + 'a,
     )> {
-        if !(256..=1400).contains(&self.packet_size) || self.fec_percent > 100 {
+        if !(256..=usize::from(crate::video_packet::MAX_VIDEO_PACKET)).contains(&self.packet_size)
+            || self.fec_percent > 100
+        {
             bail!("invalid packetizer parameters");
         }
         let block_size = self.packet_size + 16;
@@ -678,7 +680,7 @@ impl VideoPacketizer {
     /// Whether a P-frame capped at `cap` payload bytes can be streamed in
     /// `blocks` FEC blocks: even all at 0% parity its shards must fit.
     pub fn streamable(&self, blocks: usize, cap: usize) -> bool {
-        (256..=1400).contains(&self.packet_size)
+        (256..=usize::from(crate::video_packet::MAX_VIDEO_PACKET)).contains(&self.packet_size)
             && self.fec_percent <= 100
             && (2..=4).contains(&blocks)
             && (cap + 8).div_ceil(self.packet_size + 16 - 32) <= blocks * 1023

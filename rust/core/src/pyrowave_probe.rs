@@ -30,8 +30,9 @@ pub struct Burst {
 }
 
 /// The probe a query asks for, or None for any value out of range: 5-3000
-/// Mbps, an unprivileged port, 256-1392 byte packets, and for a burst 10-500
-/// fps at a pace no lower than the rate.
+/// Mbps, an unprivileged port, 256-8192 byte packets (1400 and above for a
+/// client that measured a jumbo path), and for a burst 10-500 fps at a pace no
+/// lower than the rate.
 pub fn parse<'a>(arg: impl Fn(&str) -> Option<&'a str>) -> Option<Request> {
     let number = |key: &str| -> Option<u32> {
         let value = arg(key)?;
@@ -41,7 +42,9 @@ pub fn parse<'a>(arg: impl Fn(&str) -> Option<&'a str>) -> Option<Request> {
     };
     let kbps = number("kbps").filter(|k| (5_000..=3_000_000).contains(k))?;
     let port = number("port").filter(|p| (1024..=65535).contains(p))? as u16;
-    let packet_size = number("packetsize").filter(|s| (256..=1392).contains(s))? as usize;
+    let packet_size = number("packetsize")
+        .filter(|s| (256..=u32::from(crate::video_packet::MAX_VIDEO_PACKET)).contains(s))?
+        as usize;
     let token = arg("token")?;
     if token.len() != TOKEN_LEN
         || !token
@@ -165,7 +168,7 @@ mod tests {
             ("kbps", "3000001"),
             ("kbps", "-5000"),
             ("port", "1023"),
-            ("packetsize", "1393"),
+            ("packetsize", "8193"),
             ("packetsize", "255"),
             ("token", "0123456789ABCDEF0123456789ABCDEF"),
             ("token", "0123"),
@@ -206,6 +209,25 @@ mod tests {
         assert_eq!(&packet[..32], TOKEN.as_bytes());
         assert_eq!(&packet[32..36], &[1, 2, 3, 4]);
         assert!(packet[36..].iter().all(|b| *b == 0x5a));
+    }
+
+    #[test]
+    fn a_jumbo_probe_takes_the_largest_offered_packet() {
+        let request = query(&[
+            ("kbps", "200000"),
+            ("port", "50000"),
+            ("packetsize", "8192"),
+            ("token", TOKEN),
+        ])
+        .unwrap();
+        assert_eq!(request.packet_size, 8192);
+        assert_eq!(packet(TOKEN, request.packet_size).len(), 8192 + 48);
+        // 200 Mbps for 2 s at 8326 wire bytes a packet.
+        assert_eq!(expected(200_000, 8192), 6_005);
+        let steps = schedule(&request, true);
+        assert_eq!(steps.len(), 2000);
+        assert_eq!(steps.last().unwrap().1, 6_005);
+        assert!(steps.windows(2).all(|w| w[0].1 <= w[1].1));
     }
 
     #[test]

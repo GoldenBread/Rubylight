@@ -23,6 +23,7 @@ const ALL_ON: Offered = Offered {
     clipboard_sync: true,
     transport_feedback: true,
     nvidia_enhancements: crate::nvidia_enhance::ALL,
+    max_video_packet: video_packet::MAX_VIDEO_PACKET,
 };
 
 #[test]
@@ -48,6 +49,7 @@ fn everything_offered_gives_the_exact_fields_and_lines() {
         fields,
         [
             ("HdrFormats", "31"),
+            ("MaxVideoPacket", "8192"),
             ("FecControlVersion", "1"),
             ("BandwidthProbeVersion", "1"),
             ("AudioCodecs", "15"),
@@ -67,6 +69,7 @@ fn everything_offered_gives_the_exact_fields_and_lines() {
     assert_eq!(
         ALL_ON.describe_lines(),
         "a=x-rl-video.hdrFormats:31\r\n\
+             a=x-rl-max-packet-size:8192\r\n\
              a=x-rl-audio.codecs:15\r\n\
              a=x-rl-audio.layout714:12,8,4,0,1,2,3,4,5,6,7,8,9,10,11\r\n\
              a=x-rl-audio.layout714Hq:12,12,0,0,1,2,3,4,5,6,7,8,9,10,11\r\n\
@@ -174,6 +177,59 @@ fn a_stock_announce_passes_whatever_is_offered() {
     Offered::NONE
         .check_announce(&announce("a=x-rl-audio.codec:1\n"))
         .unwrap();
+}
+
+#[test]
+fn jumbo_packets_are_offered_and_checked_against_the_offer() {
+    // The size is one constant, 8192 bytes, a multiple of 16.
+    assert_eq!(video_packet::MAX_VIDEO_PACKET, 8192);
+    assert_eq!(video_packet::MAX_VIDEO_PACKET % 16, 0);
+    let packet = |packet_size: usize| {
+        let mut n = Negotiated::default();
+        n.packet_size = packet_size;
+        n
+    };
+    // Stock Moonlight's 1400 is accepted whatever is offered.
+    for offered in [Offered::NONE, ALL_ON] {
+        offered.check_announce(&packet(1400)).unwrap();
+    }
+    // A jumbo size needs the offer.
+    let error = Offered::NONE
+        .check_announce(&packet(8192))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("x-nv-video[0].packetSize"), "{error}");
+    assert!(error.contains("was not offered"), "{error}");
+    ALL_ON.check_announce(&packet(8192)).unwrap();
+    // Above the offer is refused.
+    let offered = Offered {
+        max_video_packet: 4096,
+        ..Offered::NONE
+    };
+    offered.check_announce(&packet(4096)).unwrap();
+    let error = offered
+        .check_announce(&packet(4097))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("exceeds the offered 4096"), "{error}");
+    // Serverinfo and DESCRIBE carry the size, and nothing else does.
+    assert_eq!(
+        offered.serverinfo_fields(),
+        [("MaxVideoPacket", "4096".to_owned())]
+    );
+    assert_eq!(offered.describe_lines(), "a=x-rl-max-packet-size:4096\r\n");
+}
+
+#[test]
+fn an_announce_takes_a_jumbo_packet_size_through_the_sdp() {
+    let negotiated = announce("a=x-nv-video[0].packetSize:8192\n");
+    assert_eq!(negotiated.packet_size, 8192);
+    ALL_ON.check_announce(&negotiated).unwrap();
+    assert!(Offered::NONE.check_announce(&negotiated).is_err());
+    // Past the constant the ANNOUNCE does not parse.
+    assert!(Negotiated::from_sdp(b"a=x-nv-video[0].packetSize:8193\r\n").is_err());
+    // A stock size below the minimum is still refused.
+    assert!(Negotiated::from_sdp(b"a=x-nv-video[0].packetSize:255\r\n").is_err());
 }
 
 #[test]

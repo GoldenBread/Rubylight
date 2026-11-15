@@ -371,6 +371,9 @@ Each is absent until the host offers it.
 | serverinfo | `HdrFormats` | HDR formats as bits: 1 PQ, 2 HLG, 4 Dolby Vision 8.1, 8 Dolby Vision 8.4, 16 Dolby Vision 10.1; and offer flags, which are not formats: 128 HLG is also offered on PyroWave Main10 streams |
 | `DESCRIBE` | `a=x-rl-video.hdrFormats:{bits}` | the formats this stream can carry, with the same offer flags |
 | `ANNOUNCE` | `x-rl-video[0].hdrFormat:{bit}` | one format; 0 or absent is Moonlight's HDR (PQ). It needs HDR on; Dolby Vision 8.1 and 8.4 need HEVC, 10.1 needs AV1, and HLG needs HEVC or AV1, or PyroWave when flag 128 was offered. An offer flag is never a format. |
+| serverinfo | `MaxVideoPacket` | the largest video packet this host accepts, in bytes: 8192, a multiple of 16. Absent or 0 without jumbo packets |
+| `DESCRIBE` | `a=x-rl-max-packet-size:{bytes}` | the largest video packet this stream's path carries: the interface MTU Windows routes to the client through, less the 64 bytes of RTP, UDP and IPv6 headers, rounded down to 16. It is a client's packet size including its 32-byte encryption header, so an encrypted client announces 32 less. 0 or absent on a path no larger than stock clients' 1400-byte packets |
+| `ANNOUNCE` | `x-nv-video[0].packetSize:{bytes}` | Moonlight's video packet size. Above 1400 the host accepts it only up to what that stream offered, and refuses anything larger with 400 naming the attribute; the packetizer, its FEC, and the host's PyroWave UDP probe (`packetsize`, up to 8192) carry it |
 | serverinfo | `AudioCodecs` | audio codecs as bits: 1 Opus (always set), 2 PCM, 4 AC-3, 8 E-AC-3 |
 | `DESCRIBE` | `a=x-rl-audio.codecs:{bits}` | the codecs of this stream |
 | `ANNOUNCE` | `x-rl-audio.codec:{bit}` | one codec; 0, 1 or absent is Opus |
@@ -391,3 +394,5 @@ Each is absent until the host offers it.
 | `/launch` | `rlConfirmReplace` | `1` closes the running game for this launch, as the user's answer to the host's 410 prompt; any other value never closes it and asks again. Absent keeps Vibepollo's rule: the same launch again within 60 seconds confirms |
 
 A host refuses an `ANNOUNCE` that picks something it did not offer, with 400 and the attribute's name.
+
+Jumbo video packets need an MTU of at least 9000 on every hop: the host's NIC, a virtual switch's physical NIC, a VM's adapter, the switch and the client's adapter. Wi-Fi does not qualify. The host sets `IP_DONTFRAGMENT`/`IPV6_DONTFRAG` on a jumbo stream's video socket, so a hop that carries less drops the datagram at the sender and the host shows a stream warning instead of fragmenting it, and it runs the PyroWave UDP probe at the same size before the stream so a hop without jumbo frames is found first.

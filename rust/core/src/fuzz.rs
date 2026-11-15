@@ -267,7 +267,7 @@ proptest! {
         fps in 1u32..=1000,
         bitrate in 1u32..=2_000_000,
         channels in select(&[2u32, 6, 8][..]),
-        packet in 256u32..=1400,
+        packet in 256u32..=u32::from(crate::video_packet::MAX_VIDEO_PACKET),
     ) {
         let n = Negotiated::from_sdp(&sdp(&[
             ("x-nv-video[0].clientViewportWd", width.to_string()),

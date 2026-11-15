@@ -13,6 +13,7 @@ use anyhow::{Result, bail};
 use rubylight_protocol::{
     audio_ext, clipboard_sync, controller_identity, cursor_shape, fec_report, frame_warp, hdr,
     keyboard_layout, pen, pipeline_rates, rate_change, text_input, transport_feedback, usb,
+    video_packet,
 };
 
 pub use rubylight_protocol::fec_report::FecChoice;
@@ -111,6 +112,13 @@ pub struct Offered {
     /// driver offer with the NVIDIA component (`nvidia_enhance` bits), which a
     /// launch may ask for with `rlRtxHdr` and `rlRtxVideo`. 0 without it.
     pub nvidia_enhancements: u8,
+    /// `MaxVideoPacket` and `a=x-rl-max-packet-size`: the largest video packet
+    /// this path accepts, in bytes, for a client whose jumbo packets carry more
+    /// than stock Moonlight's 1400. The serverinfo element is the host's cap;
+    /// per stream it is the route's MTU less the datagram overhead, rounded down
+    /// to 16. 0 is not offered, and then `x-nv-video[0].packetSize` above 1400
+    /// is refused.
+    pub max_video_packet: u16,
 }
 
 impl Offered {
@@ -135,6 +143,7 @@ impl Offered {
         clipboard_sync: false,
         transport_feedback: false,
         nvidia_enhancements: 0,
+        max_video_packet: 0,
     };
 
     /// The serverinfo elements of what is offered, in a fixed order; none for
@@ -144,6 +153,12 @@ impl Offered {
         let mut fields = Vec::new();
         if self.hdr_formats & hdr::ALL != 0 {
             fields.push((hdr::SERVERINFO_FIELD, self.hdr_bits().to_string()));
+        }
+        if self.max_video_packet != 0 {
+            fields.push((
+                video_packet::SERVERINFO_FIELD,
+                self.max_video_packet.to_string(),
+            ));
         }
         if self.client_fec {
             fields.push((fec_report::SERVERINFO_FIELD, version()));
@@ -210,6 +225,13 @@ impl Offered {
                 "a={}:{}\r\n",
                 hdr::DESCRIBE_ATTRIBUTE,
                 self.hdr_bits()
+            ));
+        }
+        if self.max_video_packet != 0 {
+            lines.push_str(&format!(
+                "a={}:{}\r\n",
+                video_packet::DESCRIBE_ATTRIBUTE,
+                self.max_video_packet
             ));
         }
         if let Some(codecs) = self.codecs() {
@@ -316,6 +338,25 @@ impl Offered {
         }
         if n.audio_channels == audio_ext::CHANNELS_714 && !self.surround_714 {
             bail!("unsupported audio layout: 7.1.4 (12 channels) was not offered");
+        }
+        // Stock Moonlight never sends more than 1400, so this only refuses a
+        // client that asks for jumbo packets the host did not offer.
+        if n.packet_size > usize::from(video_packet::STOCK_MAX_VIDEO_PACKET) {
+            let attribute = video_packet::ANNOUNCE_ATTRIBUTE;
+            if self.max_video_packet == 0 {
+                bail!(
+                    "{attribute} {} was not offered (the most is {})",
+                    n.packet_size,
+                    video_packet::STOCK_MAX_VIDEO_PACKET
+                );
+            }
+            if n.packet_size > usize::from(self.max_video_packet) {
+                bail!(
+                    "{attribute} {} exceeds the offered {}",
+                    n.packet_size,
+                    self.max_video_packet
+                );
+            }
         }
         Ok(())
     }

@@ -643,7 +643,7 @@ async fn serverinfo_for_a_default_config_is_byte_identical() {
              <SleepAllowed>0</SleepAllowed>\
              <RustHostInternetPlayVersion>0</RustHostInternetPlayVersion>\
              <Packed444Modes>0</Packed444Modes>\
-             <HdrFormats>15</HdrFormats>\
+             <HdrFormats>15</HdrFormats><MaxVideoPacket>8192</MaxVideoPacket>\
              <FecControlVersion>1</FecControlVersion>\
              <BandwidthProbeVersion>1</BandwidthProbeVersion>\
              <AudioCodecs>3</AudioCodecs>\
@@ -707,7 +707,7 @@ async fn serverinfo_for_a_default_config_is_byte_identical() {
              <ControllerPreparation>1</ControllerPreparation>\
              <VirtualDisplayHDRCapable>true</VirtualDisplayHDRCapable>\
              <Packed444Modes>0</Packed444Modes>\
-             <HdrFormats>15</HdrFormats>\
+             <HdrFormats>15</HdrFormats><MaxVideoPacket>8192</MaxVideoPacket>\
              <FecControlVersion>1</FecControlVersion>\
              <BandwidthProbeVersion>1</BandwidthProbeVersion>\
              <AudioCodecs>3</AudioCodecs>\

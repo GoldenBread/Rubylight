@@ -144,6 +144,8 @@ pub mod tray;
 mod update_files;
 pub mod update_recovery;
 pub mod usbip;
+/// Video packet sizes above stock Moonlight's, offered to clients that ask.
+pub use rubylight_protocol::video_packet;
 /// USB forwarding's control message (0x553A) and the USB/IP framing its tunnel carries.
 pub use rubylight_protocol::{usb as usb_forward, usbip as usbip_wire};
 pub mod version;

@@ -17,6 +17,8 @@ pub(super) fn run(
         crate::video_send::send_priority(config.boolean("video_send_mmcss_only", false));
     let timer = Timer::new()?;
     let mut batch = Batch::default();
+    batch.dont_fragment = current.config.packet_size
+        > usize::from(butterpollo_core::video_packet::STOCK_MAX_VIDEO_PACKET);
     let mut pacer = Pacer::new(Instant::now());
     let mut route_check = RouteCheck::new(Instant::now());
     let mut send_buffer = SendBuffer::default();
@@ -65,6 +67,7 @@ pub(super) fn run(
         let mut sent_packets = 0;
         let mut first_sent = None;
         let packets_dropped = batch.dropped;
+        let packets_oversized = batch.oversized;
         let ipv6 = frame.peer.ip().to_canonical().is_ipv6();
         current
             .stats
@@ -122,7 +125,11 @@ pub(super) fn run(
             std::mem::take(&mut ready.abandoned)
         };
         if batch.dropped != packets_dropped {
-            host_dropped(&current, frame.wire_frame);
+            host_dropped(
+                &current,
+                frame.wire_frame,
+                batch.oversized != packets_oversized,
+            );
         }
         // What left for the client, which the link-rate controller weighs the
         // client's loss reports against.
@@ -321,9 +328,12 @@ fn pace(current: &Session, config: &Config, kbps: u32, wire_frame: u32, route: L
 /// The socket refused packets of this frame. That is the host's loss, not
 /// the network's: the client's report of the frame is not counted against the
 /// link, and the link-rate controller counts it as a send loss (E3).
-fn host_dropped(current: &Session, wire_frame: u32) {
+fn host_dropped(current: &Session, wire_frame: u32, oversized: bool) {
     current.keyframe_abandoned(wire_frame);
     current.request_send_loss_recovery();
+    if oversized {
+        crate::video_send::oversized_warning(current);
+    }
     current.launch.warnings.event("network_send", "PyroWave video packets were dropped by the host after transient socket send failures. Lower bitrate and check the network adapter; the log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
 }
 
@@ -459,7 +469,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        host_dropped(&session, 7);
+        host_dropped(&session, 7, false);
         assert_eq!(session.stats.frames_lost_on_send.load(Ordering::Relaxed), 1);
         assert_eq!(
             session.stats.send_loss_recoveries.load(Ordering::Relaxed),
@@ -475,7 +485,7 @@ mod tests {
         }
         session.stats.video_frame.store(70, Ordering::Release);
         for frame in 50..=52 {
-            host_dropped(&session, frame);
+            host_dropped(&session, frame, false);
         }
         let (from, to) = session
             .tick_link_rate(

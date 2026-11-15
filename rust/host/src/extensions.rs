@@ -46,10 +46,37 @@ pub async fn probe_serverinfo_audio(config: &Config) -> anyhow::Result<()> {
 /// launch, whose parameters ask for the per-stream offers.
 pub fn stream_offered(h: &Shared, config: &Config, dolby: u8, launch: &Launch) -> Offered {
     Offered {
+        max_video_packet: max_video_packet(launch.peer),
         rate_change: rate_change(&launch.options),
         clipboard_sync: clipboard_sync(config, launch),
         ..offer(h, config, dolby)
     }
+}
+
+/// Video: the largest video packet this stream's path carries (`MaxVideoPacket`'s
+/// per-stream `a=x-rl-max-packet-size`): the MTU of the interface Windows routes to the
+/// client through, less the datagram overhead, rounded down to 16. 0, and so no jumbo
+/// offer, when that is no more than stock clients send (a 1500-byte path or smaller).
+/// A lookup that fails falls back to a 1500-byte path, the conservative default the
+/// client's own probe then checks, and says so.
+fn max_video_packet(peer: std::net::IpAddr) -> u16 {
+    let mtu = match butterpollo_windows::net::routed_mtu(std::net::SocketAddr::new(peer, 0)) {
+        Some(mtu) => mtu,
+        None => {
+            tracing::warn!(
+                %peer,
+                "the route's MTU is unknown; offering a 1500-byte path's video packet size"
+            );
+            1500
+        }
+    };
+    let packet = butterpollo_core::video_packet::for_mtu(mtu);
+    if packet != 0 {
+        tracing::info!(%peer, mtu, packet, "jumbo video packets offered");
+    } else {
+        tracing::debug!(%peer, mtu, "stock video packet size only");
+    }
+    packet
 }
 
 /// Clipboard sync (0x5508), Moonlight V+'s message: for a launch that asked
@@ -91,6 +118,8 @@ fn offer(h: &Shared, config: &Config, dolby: u8) -> Offered {
         nvidia_enhancements: h
             .nvidia_enhancements
             .load(std::sync::atomic::Ordering::Acquire),
+        // The most this host accepts at all; `stream_offered` has the path's own.
+        max_video_packet: butterpollo_core::video_packet::MAX_VIDEO_PACKET,
     }
 }
 

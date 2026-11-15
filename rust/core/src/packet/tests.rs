@@ -1288,3 +1288,128 @@ fn parity_matches_the_scalar_reference_at_the_wire_sizes() {
         );
     }
 }
+
+/// A PyroWave bitstream of `records` records: its header, the record count and
+/// per record the size and index words, then filler.
+fn record_bitstream(records: &[(u32, usize)]) -> Vec<u8> {
+    let mut out = vec![];
+    out.extend_from_slice(&(0x80000000u32 | 1919 | (1079 << 14)).to_le_bytes());
+    out.extend_from_slice(&(records.len() as u32).to_le_bytes());
+    for &(index, size) in records {
+        out.extend_from_slice(&((size as u32 / 4) << 16).to_le_bytes());
+        out.extend_from_slice(&(index << 8).to_le_bytes());
+        out.resize(out.len() + size - 8, 42);
+    }
+    out
+}
+
+/// Issue #113: jumbo PyroWave records packetize at 8192 bytes, and a lost data
+/// shard of the first FEC block is recoverable from its parity.
+#[test]
+fn jumbo_pyrowave_records_packetize_and_recover_fec() {
+    use crate::pyrowave;
+    let packet_size = usize::from(crate::video_packet::MAX_VIDEO_PACKET);
+    assert_eq!(packet_size, 8192);
+    let bitstream = record_bitstream(&(0..6).map(|index| (index, 8192)).collect::<Vec<_>>());
+    let payload = pyrowave::record_frame(
+        &bitstream,
+        pyrowave::aligned_payload(packet_size),
+        pyrowave::max_frame_bytes(packet_size, true),
+    )
+    .unwrap();
+    let critical = pyrowave::layout(&payload, pyrowave::aligned_payload(packet_size))
+        .unwrap()
+        .critical_shards;
+    assert!(critical > 0);
+    let mut packetizer = VideoPacketizer {
+        sequence: 0,
+        iv_counter: 0,
+        frame: 1,
+        packet_size,
+        fec_percent: 0,
+        min_fec: 2,
+        key: None,
+    };
+    let packets = packetizer
+        .encode_pyrowave(
+            &payload,
+            9000,
+            500,
+            PyrowaveFec {
+                records: true,
+                critical_percentage: 20,
+                detail_percentage: 0,
+                wire_budget: 0,
+                ipv6: true,
+            },
+        )
+        .unwrap();
+    // Every datagram is the negotiated size plus Moonlight's 16-byte header.
+    assert!(
+        packets
+            .iter()
+            .all(|packet| packet.len() == packet_size + 16)
+    );
+    assert!(packets.len() > critical);
+    // Recover a lost data shard of the first block from its parity, as the
+    // client does: the advertised counts select both size and coefficients.
+    let info = u32::from_le_bytes(packets[0][28..32].try_into().unwrap());
+    let data = (info >> 22) as usize;
+    let percentage = ((info >> 4) & 255) as usize;
+    let parity = (data * percentage).div_ceil(100);
+    assert!(data > 2 && parity > 0);
+    let block = &packets[..data + parity];
+    let missing = data / 2;
+    for offset in [32, 40, packet_size + 15] {
+        let mut recovered = block[data][offset];
+        for (column, packet) in block[..data].iter().enumerate() {
+            if column != missing {
+                recovered ^= gf_mul(packet[offset], inverse((parity + column) as u8));
+            }
+        }
+        recovered = gf_mul(recovered, (parity + missing) as u8);
+        assert_eq!(recovered, block[missing][offset], "offset {offset}");
+    }
+}
+
+#[test]
+fn jumbo_packets_are_streamable() {
+    let packetizer = VideoPacketizer {
+        sequence: 0,
+        iv_counter: 0,
+        frame: 1,
+        packet_size: usize::from(crate::video_packet::MAX_VIDEO_PACKET),
+        fec_percent: 0,
+        min_fec: 0,
+        key: None,
+    };
+    let cap = 2 * 1023 * (8192 - 16) - 8;
+    assert!(packetizer.streamable(2, cap));
+    assert!(!packetizer.streamable(2, cap + 8176));
+    let mut framed = packetizer.clone();
+    let mut streamed = framed.streamed(0, 0, 2, 1, cap).unwrap();
+    let mut shards = Vec::new();
+    let mut packets_seen = 0;
+    streamed
+        .push(
+            &mut framed,
+            &[7u8; 20_000],
+            true,
+            &mut shards,
+            |packets: &mut [Vec<u8>], _| {
+                assert!(packets.iter().all(|packet| packet.len() == 8192 + 16));
+                packets_seen += packets.len();
+                Ok(())
+            },
+        )
+        .unwrap();
+    assert!(packets_seen > 0);
+    assert!(streamed.is_done());
+    // A stock packet size is still accepted, and above the constant is not.
+    let mut stock = packetizer.clone();
+    stock.packet_size = 1400;
+    assert!(stock.streamable(2, 2 * 1023 * (1400 - 16) - 8));
+    let mut past = packetizer;
+    past.packet_size = 8192 + 16;
+    assert!(!past.streamable(2, cap));
+}

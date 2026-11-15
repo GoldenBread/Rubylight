@@ -474,3 +474,25 @@ fn low_cadence_static_detail_gets_parity_and_motion_disables_it() {
         (0, 0)
     );
 }
+
+/// Issue #113: at 8192-byte packets the frame limits and the picture budget
+/// scale, so a frame the stock packet size caps at ~1.84 Gbps keeps its bytes.
+#[test]
+fn jumbo_packets_scale_the_frame_budget() {
+    let max = usize::from(crate::video_packet::MAX_VIDEO_PACKET);
+    assert_eq!(max, 8192);
+    assert_eq!(aligned_payload(max), 8176);
+    assert_eq!(max_frame_bytes(max, false), 8176 * 4000 - 8);
+    assert_eq!(max_frame_bytes(max, true), 8176 * 3000 - 8);
+    let period = Duration::from_secs_f64(1. / 60.);
+    // 3 Gbps: the stock packet size's critical-FEC cap binds, the jumbo one does not.
+    let stock = budget(3_000_000, period, 1392, true, 20);
+    let jumbo = budget(3_000_000, period, max, true, 20);
+    assert_eq!(stock, max_frame_bytes(1392, true) * 95 / 100, "{stock}");
+    assert!(jumbo > 5_500_000 && jumbo < 6_000_000, "{jumbo}");
+    assert!(jumbo <= max_frame_bytes(max, true) * 95 / 100);
+    // A larger packet carries more picture in the same wire allowance at a high
+    // rate, where the fixed parity shards cost less of it.
+    let allowance = 3_000_000 * 125 / 60;
+    assert!(image_bytes(allowance, max, 20) > image_bytes(allowance, 1392, 20));
+}

@@ -107,7 +107,7 @@ fn streaming(packetizer: &mut VideoPacketizer, spare: Vec<u8>, cap: usize) -> St
         payload_bytes: 0,
         processing: 0,
         bps: 0,
-        sent: Sent::new(0),
+        sent: Sent::new(0, 0),
         failed: false,
     }
 }

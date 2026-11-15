@@ -1294,3 +1294,24 @@ fn failed_sends_check_the_route_at_most_once_per_recheck() -> Result<()> {
     assert_eq!(LOOKUPS.load(Ordering::Relaxed), 2, "once per RECHECK");
     Ok(())
 }
+
+#[test]
+fn a_loopback_route_reports_an_mtu_and_a_socket_can_refuse_fragmentation() -> Result<()> {
+    for (peer, bind) in [
+        ("127.0.0.1:9".parse::<SocketAddr>()?, "127.0.0.1:0"),
+        ("[::1]:9".parse::<SocketAddr>()?, "[::1]:0"),
+    ] {
+        // The loopback pseudo-interface carries any datagram size.
+        let mtu = routed_mtu(peer).unwrap_or_else(|| panic!("no route MTU for {peer}"));
+        assert!(mtu >= 1500, "{peer}: {mtu}");
+        // The packet size offered for it is the largest this version defines.
+        assert_eq!(
+            butterpollo_core::video_packet::for_mtu(mtu),
+            butterpollo_core::video_packet::MAX_VIDEO_PACKET,
+            "{peer}: {mtu}"
+        );
+        let socket = UdpSocket::bind(bind)?;
+        set_dont_fragment(&socket)?;
+    }
+    Ok(())
+}

@@ -44,6 +44,25 @@ pub(crate) fn reached_socket(
     (packets, wire as u64)
 }
 
+/// A stream warning when the path refused jumbo datagrams for their size with
+/// fragmentation refused: a hop carries less than the host's MTU, which the
+/// client's probe should have caught, so name the path rather than only the
+/// socket error.
+pub(crate) fn oversized_warning(s: &Session) {
+    s.launch.warnings.event(
+        "network_mtu",
+        "Video packets larger than the network path's MTU were refused and dropped. A network adapter, switch or the device's link does not carry jumbo frames; lower the device's video packet size or make every hop's MTU at least 9000.",
+        butterpollo_core::session::EVENT_PERIOD,
+    );
+}
+
+/// [`oversized_warning`] when `batch` refused oversized datagrams since `before`.
+pub(crate) fn report_oversized(s: &Session, batch: &butterpollo_windows::net::Batch, before: u64) {
+    if batch.oversized != before {
+        oversized_warning(s);
+    }
+}
+
 struct Frame {
     encoded: Encoded,
     peer: SocketAddr,

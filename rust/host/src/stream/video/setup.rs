@@ -324,6 +324,23 @@ impl SessionThread<'_> {
                 None
             },
         };
+        // A jumbo stream's datagrams must fail at the sender, visibly, rather
+        // than be fragmented and lost whole on a hop that carries less than the
+        // path's MTU. Stock sizes fit every path, so this stays off for them.
+        if packetizer.packet_size > usize::from(butterpollo_core::video_packet::STOCK_MAX_VIDEO_PACKET)
+        {
+            match butterpollo_windows::net::set_dont_fragment(&m.video) {
+                Ok(()) => tracing::info!(
+                    packet_size = packetizer.packet_size,
+                    "video socket refuses fragmentation"
+                ),
+                Err(error) => tracing::warn!(
+                    packet_size = packetizer.packet_size,
+                    %error,
+                    "video socket could not refuse fragmentation; jumbo packets may fragment"
+                ),
+            }
+        }
         let next_wire_frame = std::cell::Cell::new(u64::from(packetizer.frame));
         // New pictures claimed and not yet sent, for the stage timings.
         let claims = std::cell::RefCell::new(butterpollo_core::performance::Claims::default());

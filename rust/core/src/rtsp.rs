@@ -483,7 +483,9 @@ impl Negotiated {
         {
             bail!("invalid encoder parameters");
         }
-        if !(256..=1400).contains(&self.packet_size) || self.min_fec > 255 {
+        if !(256..=usize::from(crate::video_packet::MAX_VIDEO_PACKET)).contains(&self.packet_size)
+            || self.min_fec > 255
+        {
             bail!("invalid packet size or FEC count");
         }
         // 12 is 7.1.4, which `extensions::Offered::check_announce` refuses unless offered.

@@ -41,3 +41,4 @@ pub mod text_input;
 pub mod transport_feedback;
 pub mod usb;
 pub mod usbip;
+pub mod video_packet;

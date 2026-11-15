@@ -125,6 +125,7 @@ struct Sending {
     frame_wire_known: bool,
     recovery_overlap_safe: bool,
     dropped: u64,
+    oversized: u64,
     before: WritableWaits,
     pacing_wait: Duration,
     send_time: Duration,
@@ -247,6 +248,7 @@ impl Transport<'_> {
             frame_wire_known: false,
             recovery_overlap_safe: true,
             dropped: self.batch.dropped,
+            oversized: self.batch.oversized,
             before: waits,
             pacing_wait: Duration::ZERO,
             send_time: Duration::ZERO,
@@ -504,6 +506,7 @@ impl Transport<'_> {
             frame_bytes,
             wire_bytes,
             dropped,
+            oversized,
             before,
             pacing_wait,
             send_time,
@@ -535,6 +538,7 @@ impl Transport<'_> {
         if self.batch.dropped != dropped {
             s.launch.warnings.event("network_send", "Video packets were dropped by the host after transient socket send failures. You may see stutter or recovery frames; lower bitrate and check the network adapter. The log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
         }
+        super::report_oversized(s, &self.batch, oversized);
         s.stats.latency_us.store(frame.latency, Ordering::Relaxed);
         s.stats.frames.fetch_add(1, Ordering::Relaxed);
         let sent = Instant::now();
@@ -696,6 +700,8 @@ pub(super) fn run_with(
 ) -> Result<()> {
     let mut batch = Batch::default();
     batch.waits = Some(Default::default());
+    batch.dont_fragment =
+        s.config.packet_size > usize::from(butterpollo_core::video_packet::STOCK_MAX_VIDEO_PACKET);
     let batch_kb = match c.integer("video_max_batch_size_kb", 64) {
         16 => 16,
         32 => 32,
