@@ -1326,7 +1326,27 @@ fn a_loopback_route_reports_an_mtu_and_a_socket_can_refuse_fragmentation() -> Re
     dual.bind(&"[::]:0".parse::<SocketAddr>()?.into())?;
     let dual: UdpSocket = dual.into();
     set_dont_fragment(&dual, true)?;
+    let read = |level: i32, option: i32| {
+        let mut value = 0u32;
+        let mut length = std::mem::size_of::<u32>() as i32;
+        // SAFETY: `value` and `length` are live locals; the socket is open.
+        let read = unsafe {
+            windows::Win32::Networking::WinSock::getsockopt(
+                SOCKET(dual.as_raw_socket() as usize),
+                level,
+                option,
+                windows::core::PSTR((&mut value as *mut u32).cast()),
+                &mut length,
+            )
+        };
+        assert_eq!(read, 0);
+        value
+    };
+    assert_eq!(read(IPPROTO_IP.0, IP_DONTFRAGMENT), 1);
+    assert_eq!(read(IPPROTO_IPV6.0, IPV6_DONTFRAG), 1);
     set_dont_fragment(&dual, false)?;
+    assert_eq!(read(IPPROTO_IP.0, IP_DONTFRAGMENT), 0);
+    assert_eq!(read(IPPROTO_IPV6.0, IPV6_DONTFRAG), 0);
     Ok(())
 }
 

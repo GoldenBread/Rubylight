@@ -56,9 +56,10 @@ pub fn stream_offered(h: &Shared, config: &Config, dolby: u8, launch: &Launch) -
 /// Video: the largest video packet this stream's path carries (`MaxVideoPacket`'s
 /// per-stream `a=x-rl-max-packet-size`): the MTU of the interface Windows routes to the
 /// client through, less the datagram overhead, rounded down to 16. 0, and so no jumbo
-/// offer, when that is no more than stock clients send (a 1500-byte path or smaller).
-/// A lookup that fails falls back to a 1500-byte path, the conservative default the
-/// client's own probe then checks, and says so.
+/// offer, when that is no more than stock clients send (below 1472 bytes); a
+/// 1500-byte path offers 1424, safe but with little of jumbo's benefit. A lookup that
+/// fails falls back to a 1500-byte path, the conservative default the client's own
+/// probe then checks, and says so.
 fn max_video_packet(peer: std::net::IpAddr) -> u16 {
     let mtu = match butterpollo_windows::net::routed_mtu(std::net::SocketAddr::new(peer, 0)) {
         Some(mtu) => mtu,

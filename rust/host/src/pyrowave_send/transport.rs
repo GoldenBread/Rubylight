@@ -129,6 +129,8 @@ pub(super) fn run(
                 &current,
                 frame.wire_frame,
                 batch.oversized != packets_oversized,
+                batch.dropped.saturating_sub(batch.oversized)
+                    != packets_dropped.saturating_sub(packets_oversized),
             );
         }
         // What left for the client, which the link-rate controller weighs the
@@ -328,15 +330,16 @@ fn pace(current: &Session, config: &Config, kbps: u32, wire_frame: u32, route: L
 /// The socket refused packets of this frame. That is the host's loss, not
 /// the network's: the client's report of the frame is not counted against the
 /// link, and the link-rate controller counts it as a send loss (E3).
-fn host_dropped(current: &Session, wire_frame: u32, oversized: bool) {
+fn host_dropped(current: &Session, wire_frame: u32, oversized: bool, transient: bool) {
     current.keyframe_abandoned(wire_frame);
     current.request_send_loss_recovery();
     if oversized {
         // The path's MTU refused the datagrams, not a transient socket error.
         crate::video_send::oversized_warning(current);
-        return;
     }
-    current.launch.warnings.event("network_send", "PyroWave video packets were dropped by the host after transient socket send failures. Lower bitrate and check the network adapter; the log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
+    if transient {
+        current.launch.warnings.event("network_send", "PyroWave video packets were dropped by the host after transient socket send failures. Lower bitrate and check the network adapter; the log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
+    }
 }
 
 #[cfg(test)]
