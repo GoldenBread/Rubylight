@@ -908,9 +908,11 @@ final class GameConnection {
             game.streamGuests.stop();
             game.streamGuests = null;
         }
-        // Before the connection stops: detaching tells the host.
-        if (game.usbForwarding != null) {
-            game.usbForwarding.stop();
+        // Before the connection stops: detaching tells the host. The detaches run on the forwarding's own thread,
+        // and the stop below waits for them there.
+        com.limelight.binding.usb.UsbForwarding detaching = game.usbForwarding;
+        if (detaching != null) {
+            detaching.stop();
             game.usbForwarding = null;
         }
         if (game.usbDriverBinder != null) {
@@ -937,7 +939,15 @@ final class GameConnection {
             // thread to keep things smooth for the UI. Inside moonlight-common,
             // we prevent another thread from starting a connection before and
             // during the process of stopping this one.
-            Thread stopping = new Thread(game.conn::stop, "Stop stream");
+            // The USB detaches queued above go out first, or the PC keeps a device that is gone; a detach also waits
+            // for the device's transfers, so the wait is bounded.
+            NvConnection stoppingConn = game.conn;
+            Thread stopping = new Thread(() -> {
+                if (detaching != null && !detaching.awaitDetaches(USB_DETACH_WAIT_MS)) {
+                    LimeLog.warning("USB: detaches still running when the stream stopped");
+                }
+                stoppingConn.stop();
+            }, "Stop stream");
             game.connectionStopThread = stopping;
             stopping.start();
             LimeLog.info("Stream stopping");
@@ -952,6 +962,8 @@ final class GameConnection {
 
     // How long a stream's stop may run before it is reported as stuck.
     static final long STOP_REPORT_MS = 10_000;
+    // How long a stream's stop waits for its USB detaches to reach the PC.
+    static final long USB_DETACH_WAIT_MS = 500;
 
     /** Where a stop still running is stuck, or null once it has ended. */
     static String stuckStopReport(Thread stopping) {

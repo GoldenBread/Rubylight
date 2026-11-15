@@ -39,6 +39,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Hands USB devices plugged into this device to the PC for one stream (the Rust engine's
@@ -360,8 +361,21 @@ public final class UsbForwarding {
         }
         asking.clear();
         // An attach still on its way finds its entry gone, detaches what it attached and closes. The detaches
-        // queued above still run.
+        // queued above still run: the stream's stop waits for them (awaitDetaches) before the connection ends.
         worker.shutdown();
+    }
+
+    /**
+     * After {@link #stop}: waits up to {@code timeoutMs} for the detaches it queued, so that the PC hears of them
+     * before the connection stops. Never on the main thread. False when they had not all run by then.
+     */
+    public boolean awaitDetaches(long timeoutMs) {
+        try {
+            return worker.awaitTermination(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     /**

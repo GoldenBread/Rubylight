@@ -49,14 +49,23 @@ public class UsbForwardingTest {
         int result = 7;
         String list = "[]";
         Runnable listener;
-        final List<Integer> detached = new ArrayList<>();
+        final List<Integer> detached = Collections.synchronizedList(new ArrayList<>());
         final List<String> attached = new ArrayList<>();
+        // How long a detach takes, as the engine waits for the device's transfers.
+        volatile long detachMs;
 
         @Override public int attach(int fd, String path, String name) {
             attached.add(fd + " " + path + " " + name);
             return result;
         }
         @Override public boolean detach(int requestId) {
+            if (detachMs > 0) {
+                try {
+                    Thread.sleep(detachMs);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
             detached.add(requestId);
             return true;
         }
@@ -316,6 +325,41 @@ public class UsbForwardingTest {
         assertEquals(1, connections.get(0).closes);
         assertNull(bridge.listener);
         assertTrue(worker.shutdown);
+    }
+
+    @Test
+    public void theStreamsStopWaitsForTheDetachesBoundedly() throws Exception {
+        java.util.concurrent.ExecutorService thread = java.util.concurrent.Executors.newSingleThreadExecutor();
+        forwarding = new UsbForwarding(context, usbManager, prefs, bridge, device -> {
+            FakeConnection connection = new FakeConnection(40 + connections.size());
+            connections.add(connection);
+            return connection;
+        }, thread, text -> messages.add(text.toString()));
+        UsbDevice tablet = tablet();
+        shadowUsb().addOrUpdateUsbDevice(tablet, true);
+        forwarding.choose(tablet);
+        thread.submit(() -> {}).get(5, TimeUnit.SECONDS);
+        shadowOf(Looper.getMainLooper()).idle();
+        assertEquals(1, bridge.attached.size());
+
+        // The detach takes a while on its thread; the stream's stop (off the main thread) waits for it.
+        bridge.detachMs = 100;
+        forwarding.stop();
+        // 500 ms: GameConnection.USB_DETACH_WAIT_MS.
+        assertTrue("the detach ran before the wait ended", forwarding.awaitDetaches(500));
+        assertEquals(Collections.singletonList(7), bridge.detached);
+
+        // A detach that takes longer holds the stop only for the bound.
+        java.util.concurrent.ExecutorService slowThread = java.util.concurrent.Executors.newSingleThreadExecutor();
+        UsbForwarding slow = new UsbForwarding(context, usbManager, prefs, bridge, device -> new FakeConnection(60),
+                slowThread, text -> {});
+        bridge.detachMs = 300;
+        slowThread.execute(() -> bridge.detach(8));
+        slow.stop();
+        long started = System.nanoTime();
+        assertFalse(slow.awaitDetaches(20));
+        assertTrue(System.nanoTime() - started < TimeUnit.MILLISECONDS.toNanos(250));
+        assertTrue(slow.awaitDetaches(2000));
     }
 
     @Test
