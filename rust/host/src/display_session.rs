@@ -1051,6 +1051,52 @@ impl Ready {
             _limiter: limiter,
         })
     }
+    /// What the console changed while the stream was paused, for its resume at `stream`: the
+    /// frame limiter's policy, the device's HDR profile and whether the layout holds while
+    /// paused. The device's own display mode keeps the launch's size and refresh: another
+    /// would change the display under the game running on it.
+    pub fn follow_settings(
+        &self,
+        app: Option<&butterpollo_core::state::App>,
+        launch: &Launch,
+        stream: &Negotiated,
+        config: &Config,
+    ) -> Result<()> {
+        let virtual_mode = self._state.lock().unwrap().virtual_mode;
+        let (framegen, _) = frame_policy(app, launch, stream, config, virtual_mode)?;
+        let choice = profile_choice(launch);
+        let mut prepared = self._state.lock().unwrap();
+        prepared.framegen = framegen.clone();
+        *self.framegen.lock().unwrap() = framegen;
+        prepared.hold_layout_while_paused = holds_layout_while_paused(
+            config,
+            prepared
+                ._arrangement
+                .as_ref()
+                .is_some_and(display_arrangement::Lease::exclusive),
+        );
+        let applies = prepared.mode.3 && !prepared.joined;
+        let Some(profile) = resumed_profile(
+            applies,
+            prepared.profile_choice.as_deref(),
+            choice.as_deref(),
+        ) else {
+            return Ok(());
+        };
+        tracing::info!(output = %prepared.output, profile = ?profile, "the device's HDR profile changed while its stream was paused; the resume applies it");
+        prepared.profile_choice = choice;
+        prepared.recovery_profile = profile.clone();
+        let state: &mut Prepared = &mut prepared;
+        butterpollo_windows::input::on_input_desktop(|| {
+            state._profile.take();
+            state._profile = profile.as_ref().and_then(|profile| {
+                hdr_profile::Lease::acquire(&state.output, profile)
+                    .inspect_err(|error| tracing::warn!(error = %format!("{error:#}"), "the HDR profile could not be applied on resume"))
+                    .ok()
+            });
+        });
+        Ok(())
+    }
     /// Whether the device's next stream may reuse this one. A game window's
     /// is not kept: resuming would skip the window's check, and its warnings
     /// would keep going to the first session.
@@ -1234,7 +1280,35 @@ pub struct Prepared {
     recovery_scale: i64,
     recovery_dimensions: (u32, u32),
     recovery_profile: Option<String>,
+    /// The stream uses a virtual display, as its frame policy was resolved for.
+    virtual_mode: bool,
+    /// The HDR profile the device had chosen (`hdr_profile`), which a resume compares.
+    profile_choice: Option<String>,
     host: std::sync::Weak<crate::state::Host>,
+}
+
+/// The HDR profile the device chose (`hdr_profile`), if any.
+fn profile_choice(launch: &Launch) -> Option<String> {
+    launch
+        .client
+        .extra
+        .get("hdr_profile")
+        .and_then(serde_json::Value::as_str)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+}
+
+/// The HDR profile a kept display takes at its resume when the device's choice changed from
+/// `launched` to `now` while it was paused: Some(the new one, or None to take it off), None
+/// when nothing changes. Only where the stream applies a profile at all (`applies`: an HDR
+/// stream on a display of its own). A Windows HDR Calibration carried over at the launch
+/// stays: reading it needs the physical display on, as it was before the stream.
+fn resumed_profile(
+    applies: bool,
+    launched: Option<&str>,
+    now: Option<&str>,
+) -> Option<Option<String>> {
+    (applies && launched != now).then(|| now.map(str::to_owned))
 }
 
 /// A device's own display mode (`display_mode`): width, height and refresh.
@@ -1403,6 +1477,8 @@ impl Prepared {
             recovery_scale: 0,
             recovery_dimensions: (mode.0, mode.1),
             recovery_profile: None,
+            virtual_mode: false,
+            profile_choice: None,
             host: Arc::downgrade(h),
         }
     }
@@ -2277,6 +2353,8 @@ impl Prepared {
                 recovery_scale: scale,
                 recovery_dimensions: (width, height),
                 recovery_profile,
+                virtual_mode,
+                profile_choice: profile_choice(launch),
                 host: Arc::downgrade(h),
             },
             limiter,

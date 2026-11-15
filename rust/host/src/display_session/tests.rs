@@ -370,6 +370,37 @@ fn a_layout_windows_refused_after_idle_is_tried_once_more_unless_locked() {
 }
 
 #[test]
+fn a_resume_takes_the_frame_limiter_and_hdr_profile_changed_while_paused() {
+    let fixture = crate::state::test_support::Fixture::new();
+    let host = &fixture.host;
+    let kept = retained_on(host, &Config::default(), "a", false);
+    assert!(!kept.framegen.lock().unwrap().enabled);
+    let launch = fixture.launch(fixture.client(u32::MAX), Role::Stream);
+    let changed = Config::parse("frame_limiter_enable=true").unwrap();
+    kept.follow_settings(None, &launch, &Negotiated::default(), &changed)
+        .unwrap();
+    assert!(
+        kept.framegen.lock().unwrap().enabled,
+        "the limiter's policy"
+    );
+    assert!(kept._state.lock().unwrap().framegen.enabled);
+    // The device's profile: chosen, changed or taken off while paused; only for an HDR
+    // stream on a display of its own.
+    assert_eq!(resumed_profile(true, None, None), None);
+    assert_eq!(resumed_profile(true, Some("tv"), Some("tv")), None);
+    assert_eq!(
+        resumed_profile(true, None, Some("tv")),
+        Some(Some("tv".into()))
+    );
+    assert_eq!(
+        resumed_profile(true, Some("tv"), Some("oled")),
+        Some(Some("oled".into()))
+    );
+    assert_eq!(resumed_profile(true, Some("tv"), None), Some(None));
+    assert_eq!(resumed_profile(false, None, Some("tv")), None);
+}
+
+#[test]
 fn a_resume_at_another_rate_keeps_the_display_the_game_is_on() {
     let fixture = crate::state::test_support::Fixture::new();
     let host = &fixture.host;
@@ -1319,6 +1350,8 @@ fn test_prepared(host: &Shared) -> Prepared {
         recovery_scale: 0,
         recovery_dimensions: (640, 480),
         recovery_profile: None,
+        virtual_mode: false,
+        profile_choice: None,
         host: Arc::downgrade(host),
     }
 }
@@ -2399,6 +2432,8 @@ fn a_faster_stream_request_keeps_only_a_display_that_can_follow_it() {
         recovery_scale: 0,
         recovery_dimensions: (2560, 1440),
         recovery_profile: None,
+        virtual_mode: false,
+        profile_choice: None,
         host: Arc::downgrade(&fixture.host),
     };
     let limiter = limiter::Lease::acquire(&fixture.host.directory, &config, &policy).unwrap();

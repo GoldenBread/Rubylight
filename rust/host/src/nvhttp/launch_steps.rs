@@ -542,7 +542,10 @@ pub(super) fn prepare_launch_display(
             |display| butterpollo_windows::display::joinable_mode(display).is_some(),
         );
         match retained {
-            Ok(lease) => return lease.resume(&h.directory, &config, launch.warnings.clone()),
+            Ok(lease) => {
+                lease.follow_settings(app.as_ref(), launch, &stream, &config)?;
+                return lease.resume(&h.directory, &config, launch.warnings.clone());
+            }
             // Dropped here, after the lock: releasing restores Windows.
             Err(released) => drop(released),
         }
