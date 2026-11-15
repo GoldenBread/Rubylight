@@ -27,8 +27,16 @@ use std::{
 const STUN_EVERY: Millis = 5 * 60_000;
 /// Republish a record this often, well inside the two hours DHT nodes keep it.
 const PUBLISH_EVERY: Millis = 30 * 60_000;
-/// Look for each device's record this often.
+/// Look for the record of a device heard from in the last [`ACTIVE_FOR`] this often,
 const POLL_EVERY: Millis = punch::HOST_POLL;
+/// and for every other device's this often. The device's punch budget covers this wait.
+const POLL_IDLE: Millis = punch::HOST_POLL_IDLE;
+/// How long a device counts as active after its record last answered this host, or while it
+/// has a path open.
+const ACTIVE_FOR: Millis = 10 * 60_000;
+// A record published just after a slow poll began is found within the device's punch budget:
+// the wait, one lookup (both windows run at once), and the punches.
+const _: () = assert!(POLL_IDLE + crate::node::LOOKUP_DEADLINE < punch::AFTER_PUBLISH);
 /// At most this many devices' records are looked for at once, each on a thread of its own, so
 /// one device's slow lookups never hold another's back.
 const MAX_POLLS: usize = 4;
@@ -84,7 +92,22 @@ struct DeviceState {
     last_poll: Option<Millis>,
     /// A look for its record is under way.
     polling: bool,
+    /// When a fresh record of the device last named this host's session.
+    heard: Option<Millis>,
     answered: Option<[u8; 16]>,
+}
+
+/// How often a device's record is looked for: more often while it is trying to connect, or was
+/// lately (its record answered this host, or it has a path open in `open`).
+fn poll_interval(state: &DeviceState, open: &[[u8; 8]], now: Millis) -> Millis {
+    let heard = state
+        .heard
+        .is_some_and(|at| now.saturating_sub(at) < ACTIVE_FOR);
+    if heard || open.contains(&state.tag) {
+        POLL_EVERY
+    } else {
+        POLL_IDLE
+    }
 }
 
 /// Each open tunnel by its path tag, with the device session it was opened for.
@@ -161,6 +184,7 @@ impl HostService {
                         published: None,
                         last_poll: None,
                         polling: false,
+                        heard: None,
                         answered: None,
                     });
                 }
@@ -387,6 +411,15 @@ impl HostService {
             (status.public.clone(), status.nat)
         };
         let window = record::window(unix_now());
+        let open: Vec<[u8; 8]> = self
+            .shared
+            .tunnels
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, (_, tunnel))| !tunnel.is_closed())
+            .map(|(tag, _)| *tag)
+            .collect();
         let now = self.shared.node.now();
         let mut devices = self.shared.devices.lock().unwrap();
         let publish: Vec<(String, Keys)> = devices
@@ -410,9 +443,9 @@ impl HostService {
             .filter(|&index| {
                 let state = &devices[index];
                 !state.polling
-                    && state
-                        .last_poll
-                        .map_or(true, |at| now.saturating_sub(at) >= POLL_EVERY)
+                    && state.last_poll.map_or(true, |at| {
+                        now.saturating_sub(at) >= poll_interval(state, &open, now)
+                    })
             })
             .collect();
         due.sort_by_key(|&index| devices[index].last_poll);
@@ -493,19 +526,32 @@ impl HostService {
 
     fn poll_device(&self, id: &str, keys: &Keys, unix: u64) {
         let window = record::window(unix);
-        let mut found = None;
-        for window in [window, window.saturating_sub(1)] {
+        let get = |window: u64| {
             let (item, _) = self
                 .shared
                 .node
                 .get(&keys.public(Role::Client), &keys.salt(Role::Client, window));
-            if let Some(record) =
-                item.and_then(|item| Record::from_item(keys, Role::Client, window, &item))
-            {
-                found = Some(record);
-                break;
-            }
-        }
+            item.and_then(|item| Record::from_item(keys, Role::Client, window, &item))
+        };
+        // A record of the previous window is older than the seconds this window has run, so it
+        // can be fresh only in this window's first CLIENT_FRESH_SECONDS; then both windows are
+        // asked at once, so the look takes one lookup's time.
+        let fresh_previous = unix % record::WINDOW_SECONDS <= record::CLIENT_FRESH_SECONDS;
+        let previous = window.saturating_sub(1);
+        let found = if fresh_previous {
+            thread::scope(|scope| {
+                let earlier = thread::Builder::new()
+                    .name("internet play poll".into())
+                    .spawn_scoped(scope, || get(previous));
+                let current = get(window);
+                match earlier {
+                    Ok(earlier) => current.or_else(|| earlier.join().ok().flatten()),
+                    Err(_) => current.or_else(|| get(previous)),
+                }
+            })
+        } else {
+            get(window)
+        };
         let now = self.shared.node.now();
         let mut devices = self.shared.devices.lock().unwrap();
         let Some(state) = devices.iter_mut().find(|state| state.device.id == id) else {
@@ -515,10 +561,11 @@ impl HostService {
         state.polling = false;
         let Some(record) = found else { return };
         let fresh = unix.abs_diff(record.time) <= record::CLIENT_FRESH_SECONDS;
-        if !fresh
-            || record.peer_session != self.shared.session
-            || state.answered == Some(record.session)
-        {
+        if !fresh || record.peer_session != self.shared.session {
+            return;
+        }
+        state.heard = Some(now);
+        if state.answered == Some(record.session) {
             return;
         }
         state.answered = Some(record.session);
@@ -540,6 +587,34 @@ mod tests {
             stun_servers: Vec::new(),
             bootstrap: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_device_that_is_not_trying_is_looked_for_less_often() {
+        let device = Device {
+            id: "a".into(),
+            name: "Phone".into(),
+            secret: [3; 32],
+        };
+        let keys = Keys::new(device.secret);
+        let mut state = DeviceState {
+            tag: keys.device_tag(&[1; 16]),
+            keys,
+            device,
+            published: None,
+            last_poll: None,
+            polling: false,
+            heard: None,
+            answered: None,
+        };
+        let now = 3_600_000;
+        assert_eq!(poll_interval(&state, &[], now), POLL_IDLE);
+        // An open path, or a record that answered lately, keeps it fast.
+        assert_eq!(poll_interval(&state, &[state.tag], now), POLL_EVERY);
+        state.heard = Some(now - ACTIVE_FOR + 1);
+        assert_eq!(poll_interval(&state, &[], now), POLL_EVERY);
+        state.heard = Some(now - ACTIVE_FOR);
+        assert_eq!(poll_interval(&state, &[], now), POLL_IDLE);
     }
 
     #[test]

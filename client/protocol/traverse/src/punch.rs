@@ -22,12 +22,15 @@ pub const TIMEOUT: Millis = 30_000;
 
 /// The longest a record takes to be stored in the DHT: a lookup, then the nodes' confirmations.
 pub const PUBLISH: Millis = LOOKUP_DEADLINE + PUT_WAIT;
-/// How often the host looks for a device's record ([`crate::host`]).
+/// How often the host looks for the record of a device it heard from lately ([`crate::host`]),
 pub const HOST_POLL: Millis = 10_000;
-/// How long a device keeps punching after its record is stored: the host's next look for it,
-/// that lookup, and a margin for the punches to meet. A host behind a NAT that filters by port
-/// learns the device's endpoints only this way.
-pub const AFTER_PUBLISH: Millis = HOST_POLL + LOOKUP_DEADLINE + 15_000;
+/// and of every other paired device: the DHT is asked half as often for devices that are not
+/// trying to connect.
+pub const HOST_POLL_IDLE: Millis = 20_000;
+/// How long a device keeps punching after its record is stored: the host's next look for it at
+/// the slower rate, that lookup, and a margin for the punches to meet. A host behind a NAT that
+/// filters by port learns the device's endpoints only this way.
+pub const AFTER_PUBLISH: Millis = HOST_POLL_IDLE + LOOKUP_DEADLINE + 15_000;
 
 /// Until when a device keeps punching that starts publishing its record at `now`.
 pub fn device_deadline(now: Millis) -> Millis {
@@ -191,7 +194,7 @@ mod tests {
         assert!(puncher.poll(device_deadline(0)).is_empty());
         assert_eq!(puncher.state(), State::Failed);
         // The budget covers the host's poll and lookup after the longest publication.
-        assert!(device_deadline(0) >= PUBLISH + HOST_POLL + LOOKUP_DEADLINE);
+        assert!(device_deadline(0) >= PUBLISH + HOST_POLL_IDLE + LOOKUP_DEADLINE);
     }
 
     #[test]
