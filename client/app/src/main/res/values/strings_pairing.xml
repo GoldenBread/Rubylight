@@ -7,7 +7,7 @@
     <string name="pair_otp_invalid_pin">Enter the four-digit PIN from the PC.</string>
     <string name="pair_otp_invalid_passphrase">Enter the PC’s passphrase (at least four characters).</string>
     <string name="guide_title">Connect to your PC</string>
-    <string name="guide_text">1. Start a Moonlight-compatible streaming app on the PC, such as Apollo, Rubylight, Sunshine or Vibepollo.\n2. On Android, select the PC on the same network.\n3. Enter the PIN shown on Android in the PC’s settings or web UI.</string>
+    <string name="guide_text">Nightjar finds the PCs on this network that run a Moonlight-compatible streaming app. Pick yours, then enter the PIN this device shows in the PC’s settings or web UI.</string>
     <string name="guide_done">Got it</string>
     <string name="guide_troubleshooting">Help</string>
 </resources>
