@@ -233,6 +233,8 @@ impl Launcher {
         let height = title.size().y + pc_h + stage_gap + stage.size().y + button_gap + Size::CONTROL.height;
         let mut y = cover.center().y - height / 2.0;
         let words_top = y;
+        // Under the words and Cancel where they reach onto the moon.
+        let scrim = ui.painter().add(egui::Shape::Noop);
         let painter = ui.painter();
         let title_h = title.size().y;
         painter.galley(pos2(middle, y), title, *ON_SURFACE);
@@ -258,6 +260,7 @@ impl Launcher {
             .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &said));
         y += button_gap;
         let row = Rect::from_x_y_ranges(middle - width / 2.0..=middle + width / 2.0, y..=y + Size::CONTROL.height);
+        super::pcs::scrim_on_moon(ui, scrim, words.union(row).expand(space::M));
         ui.scope_builder(UiBuilder::new().max_rect(row).layout(Layout::top_down(Align::Center)), |ui| {
             let cancel = button_at_least(ui, Some(Id::unique("launch-cancel")), None, tr("Cancel"), None, Tone::Quiet, Size::CONTROL, 140.0);
             // The one thing to press: it keeps the focus, so A or Enter cancels at once.

@@ -181,6 +181,16 @@ pub(super) fn canvas_on_moon(out: &mut Vec<Shape>, ctx: &egui::Context, card: Re
     }
 }
 
+/// The same canvas under words or controls drawn straight on the sky where they reach onto the
+/// moon, so they never sit on the bright disc. `slot` is a placeholder added before them.
+pub(super) fn scrim_on_moon(ui: &Ui, slot: egui::layers::ShapeIdx, rect: Rect) {
+    let mut out = Vec::new();
+    canvas_on_moon(&mut out, ui.ctx(), rect, rect.height().min(48.0) / 2.0);
+    if !out.is_empty() {
+        ui.painter().set(slot, Shape::Vec(out));
+    }
+}
+
 /// The game a PC's card shows on its screen, as Android's PC tile does: the one it runs, else the
 /// last this device played there. None for a PC that is away or not paired. The id its cover is
 /// kept under: a library game is found again by its install id, which outlasts a changed app id.
