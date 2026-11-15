@@ -3094,19 +3094,13 @@ fn section_item(ui: &mut Ui, name: &str, current: bool, badge: Badge, role: egui
     response
 }
 
-/// A section's chip on a narrow window, where the list beside the rows has no room.
+/// A section's chip on a narrow window, where the list beside the rows has no room, and a preset's
+/// chip. The current one differs only in colour: the same size and type as the others.
 fn section_chip(ui: &mut Ui, name: &str, current: bool) -> Response {
     if !current {
         return chip(ui, name);
     }
-    let button = egui::Button::new(RichText::new(tr(name)).color(*ON_MOON_CONTAINER).font(semibold(text::CAPTION)))
-        .fill(*MOON_CONTAINER)
-        .selected(true)
-        .corner_radius(CornerRadius::same(14))
-        .min_size(vec2(0.0, 28.0));
-    let response = ui.add(button);
-    focus_ring(ui, response.rect, &response, 14);
-    response
+    button(ui, None, tr(name), Tone::Selected, Size::CHIP)
 }
 
 /// A card across the page above the rows: words on the left, an action on the right.
