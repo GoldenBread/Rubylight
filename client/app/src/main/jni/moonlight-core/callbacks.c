@@ -621,6 +621,11 @@ Java_com_limelight_nvstream_jni_MoonBridge_cSetNetworkGracePeriodMs(JNIEnv *env,
     LiSetNetworkGracePeriodMs(gracePeriodMs);
 }
 
+JNIEXPORT void JNICALL
+Java_com_limelight_nvstream_jni_MoonBridge_cSetDecodeQueueBound(JNIEnv *env, jclass clazz, jint frames) {
+    LiSetDecodeUnitQueueBound(frames);
+}
+
 // What this connection's ANNOUNCE asked for (one rubylight_protocol::hdr bit), 0 for stock HDR
 // or before the handshake; the decoder is chosen for it.
 JNIEXPORT jint JNICALL

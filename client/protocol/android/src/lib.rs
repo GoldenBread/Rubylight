@@ -135,6 +135,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_startConnectio
     receive_decode_priority: jboolean,
     frame_warp_requested: jboolean,
     receive_coalescing: jboolean,
+    decode_queue_bound: jint,
 ) -> jint {
     let Some(bridge) = bridge::get() else {
         platform::error("RustBridge.startConnection before init");
@@ -187,6 +188,8 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_startConnectio
         network_priority: network_priority == JNI_TRUE,
         receive_decode_priority: receive_decode_priority == JNI_TRUE,
         receive_coalescing: receive_coalescing == JNI_TRUE,
+        // 0 and anything out of range keep the 15-frame bound (`video::decode_queue_bound`).
+        decode_queue_bound: usize::try_from(decode_queue_bound).unwrap_or(0),
         roaming: extras::roaming_config(roaming == JNI_TRUE, roaming_metered == JNI_TRUE),
         // Shifts pictures, so not for a stream without them or one that sends no input.
         frame_warp: (frame_warp_requested == JNI_TRUE && !input_only && remote_monitor != JNI_TRUE)

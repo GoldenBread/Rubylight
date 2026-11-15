@@ -1,6 +1,6 @@
-//! The video stream's threads: UDP receive with pings and the startup timeouts, the 15-frame
-//! decode-unit queue and its decoder thread (or direct submission on the receive thread),
-//! and the routing of [`VideoSignal`]s to the control stream.
+//! The video stream's threads: UDP receive with pings and the startup timeouts, the bounded
+//! decode-unit queue (15 frames unless the session sets fewer) and its decoder thread (or
+//! direct submission on the receive thread), and the routing of [`VideoSignal`]s to the control stream.
 //!
 //! Ported from moonlight-common-c's `VideoStream.c` and the queue handling of
 //! `VideoDepacketizer.c` (GPL-3.0, Cameron Gutman and contributors).
@@ -19,8 +19,21 @@ use crate::control::driver::ControlHandle;
 use crate::control::FrameFecStatus;
 use crate::video::{Frame, FrameType, VideoReceiver, VideoSignal, VideoSink};
 
-/// `decodeUnitQueue`'s bound.
+/// `decodeUnitQueue`'s bound, the most frames [`FrameQueue`] holds and its default.
 pub const DECODE_UNIT_QUEUE_BOUND: usize = 15;
+
+/// The decode-unit queue's bound for [`SessionConfig::decode_queue_bound`]: 0 (unset) and
+/// anything above [`DECODE_UNIT_QUEUE_BOUND`] keep that bound, which the frame pool is sized for.
+///
+/// [`SessionConfig::decode_queue_bound`]: super::SessionConfig::decode_queue_bound
+pub fn decode_queue_bound(setting: usize) -> usize {
+    if setting == 0 {
+        DECODE_UNIT_QUEUE_BOUND
+    } else {
+        setting.min(DECODE_UNIT_QUEUE_BOUND)
+    }
+}
+
 /// No video packet, or no complete key frame after the first packet, for this long ends the
 /// stream (`FIRST_FRAME_TIMEOUT_SEC`).
 const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(10);
@@ -129,28 +142,53 @@ impl StagedChunks {
 }
 
 /// The bounded decode-unit queue between the receive and decoder threads.
-#[derive(Default)]
 pub struct FrameQueue {
     state: Mutex<QueueState>,
     ready: Condvar,
     /// Flushes so far, which [`StagedChunks`] reads without the lock. Changed under the lock.
     flushes: AtomicU64,
+    /// Frames queued at most: a frame over it is refused, and the receiver flushes the queue
+    /// and asks for a key frame.
+    bound: usize,
     /// Wakeups of the decoder thread.
     #[cfg(test)]
     wakes: AtomicU64,
 }
 
+impl Default for FrameQueue {
+    fn default() -> Self {
+        Self::with_bound(DECODE_UNIT_QUEUE_BOUND)
+    }
+}
+
 impl FrameQueue {
+    /// A queue of at most [`decode_queue_bound`]`(bound)` frames.
+    pub fn with_bound(bound: usize) -> Self {
+        Self {
+            state: Mutex::default(),
+            ready: Condvar::new(),
+            flushes: AtomicU64::new(0),
+            bound: decode_queue_bound(bound),
+            #[cfg(test)]
+            wakes: AtomicU64::new(0),
+        }
+    }
+
+    /// The most frames the queue holds.
+    pub fn bound(&self) -> usize {
+        self.bound
+    }
+
     fn wake(&self) {
         #[cfg(test)]
         self.wakes.fetch_add(1, Ordering::Relaxed);
         self.ready.notify_one();
     }
 
-    /// Queues a frame, or hands it back when the queue holds [`DECODE_UNIT_QUEUE_BOUND`].
+    /// Queues a frame, or hands it back when the queue holds its [`bound`](Self::bound).
     pub fn offer(&self, frame: Frame) -> Result<(), Frame> {
         let mut state = lock(&self.state);
-        if state.shutdown || state.frames >= DECODE_UNIT_QUEUE_BOUND {
+        if state.shutdown || state.frames >= self.bound {
             return Err(frame);
         }
         state.items.push_back(Item::Frame(frame));
@@ -170,7 +208,7 @@ impl FrameQueue {
         let mut state = lock(&self.state);
         let empty = state.items.is_empty();
         let dropped = self.take_staged(&mut state, staged);
-        let result = if state.shutdown || state.frames >= DECODE_UNIT_QUEUE_BOUND {
+        let result = if state.shutdown || state.frames >= self.bound {
             Err(frame)
         } else {
             state.items.push_back(Item::Frame(frame));
@@ -427,10 +465,15 @@ pub struct VideoShared {
 
 impl VideoShared {
     pub fn new(receiver: VideoReceiver) -> Self {
+        Self::with_queue_bound(receiver, DECODE_UNIT_QUEUE_BOUND)
+    }
+
+    /// With a decode-unit queue of at most [`decode_queue_bound`]`(bound)` frames.
+    pub fn with_queue_bound(receiver: VideoReceiver, bound: usize) -> Self {
         Self {
             stats: Mutex::new(receiver.stats()),
             receiver: Mutex::new(receiver),
-            queue: FrameQueue::default(),
+            queue: FrameQueue::with_bound(bound),
             counters: VideoCounters::default(),
             key_frame: AtomicBool::new(false),
         }

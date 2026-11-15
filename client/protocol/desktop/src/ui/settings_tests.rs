@@ -1892,3 +1892,17 @@ fn an_arrangement_picked_on_a_pcs_page_leaves_its_virtual_display_switch_to_the_
     assert!(f.l.edit_overrides.has(&["host_display"]) && f.l.edit_overrides.has(&["virtual_display"]));
     assert_eq!((f.l.edit_settings.host_display, f.l.edit_settings.virtual_display), (HostDisplay::HostDefault, true));
 }
+
+#[test]
+fn frames_waiting_for_the_decoder_show_their_choice() {
+    let mut s = Settings::default();
+    assert_eq!(decode_queue_choice(s.decode_queue_frames), 15);
+    for (saved, shown) in [(0, 15), (1, 3), (3, 3), (4, 5), (8, 8), (9, 15), (40, 15)] {
+        assert_eq!(decode_queue_choice(saved), shown, "{saved}");
+    }
+    assert!(DECODE_QUEUE_CHOICES.iter().all(|&c| c == decode_queue_choice(c)));
+    let row = ANDROID_KEYS.iter().find(|(desktop, _)| *desktop == "decode_queue_frames");
+    assert_eq!(row, Some(&("decode_queue_frames", "list_decode_queue_frames")));
+    s.decode_queue_frames = 5;
+    assert_eq!(value_text("decode_queue_frames", &s, &crate::stream::Display { width: 1920, height: 1080, refresh_hz: 60.0, refresh_reported: true }, crate::glyphs::Style::Xbox), "5 frames");
+}

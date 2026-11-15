@@ -162,6 +162,11 @@ pub struct SessionConfig {
     /// Android still take `recvmmsg` batches). A Windows adapter that loses the size of a
     /// coalesced read turns it off for the stream by itself (`net::BatchReceiver`).
     pub receive_coalescing: bool,
+    /// Nightjar's "Frames waiting for the decoder": complete frames that may wait for a decoder
+    /// without direct submission before the queue overflows, is flushed and a key frame is
+    /// requested. 0 (the default) keeps moonlight-common-c's 15, and so does anything larger
+    /// ([`video::decode_queue_bound`]). A direct-submit decoder has no queue.
+    pub decode_queue_bound: usize,
     /// Client roaming (Experimental), with hosts that advertise it.
     pub roaming: RoamingConfig,
     /// Frame Warp: the session counts input for it, asks a host that lists 0x5543 for its
@@ -1224,7 +1229,16 @@ fn start(
             .shared
             .log("Video arrival feedback is on: the host adapts to the network from it");
     }
-    let video_shared = Arc::new(video::VideoShared::new(receiver));
+    let video_shared = Arc::new(video::VideoShared::with_queue_bound(
+        receiver,
+        config.decode_queue_bound,
+    ));
+    if video_shared.queue.bound() != DECODE_UNIT_QUEUE_BOUND {
+        parts.shared.log(&format!(
+            "Decode queue holds up to {} frames (setting); a decoder that takes frames directly has none",
+            video_shared.queue.bound()
+        ));
+    }
     parts.video_shared = Some(video_shared.clone());
     listener.stage_complete(Stage::VideoStreamInit);
 

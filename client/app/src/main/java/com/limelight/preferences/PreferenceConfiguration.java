@@ -225,6 +225,10 @@ public class PreferenceConfiguration {
     // "Group incoming video packets" (Rust engine): UDP_GRO on the video socket. On by default;
     // the desktop's receive coalescing on Windows is the same setting.
     static final String RECEIVE_COALESCING_PREF_STRING = "checkbox_receive_coalescing";
+    // "Frames waiting for the decoder" (both engines): the decode unit queue's bound, 15 by default as in
+    // moonlight-common-c. Desktop's decode_queue_frames is the same setting.
+    static final String DECODE_QUEUE_FRAMES_PREF_STRING = "list_decode_queue_frames";
+    static final int DEFAULT_DECODE_QUEUE_FRAMES = 15;
     public static final String INTERNET_PLAY_PREF_STRING = "checkbox_internet_play";
     private static final String VIRTUAL_DISPLAY_PREF_STRING = "checkbox_virtual_display";
     private static final String VIRTUAL_DISPLAY_SCALE_PREF_STRING = "seekbar_virtual_display_scale";
@@ -491,6 +495,8 @@ public class PreferenceConfiguration {
     public boolean fractionalVsync;
     public boolean submitHint, coveringDecoderSize, pyroWavePreacquire, codecDirect, receiveDecodePriority;
     public boolean clientRoaming, roamingMetered, receiveCoalescing;
+    // Frames that may wait for a decoder without direct submission (MoonBridge.setDecodeQueueBound).
+    public int decodeQueueFrames;
     /** Play over the internet: a punched path to a PC that offers it, after every direct path (InternetPlay). */
     public boolean internetPlay;
     public boolean virtualDisplay, enableYuv444, vrr;
@@ -821,6 +827,16 @@ public class PreferenceConfiguration {
         }
 
         return framePacingValue(prefs.getString(FRAME_PACING_PREF_STRING, DEFAULT_FRAME_PACING));
+    }
+
+    /** A stored "Frames waiting for the decoder": 1 to 15 frames; anything else reads as the default 15. */
+    static int decodeQueueFrames(String stored) {
+        try {
+            int frames = Integer.parseInt(stored.trim());
+            return frames >= 1 && frames <= DEFAULT_DECODE_QUEUE_FRAMES ? frames : DEFAULT_DECODE_QUEUE_FRAMES;
+        } catch (NumberFormatException e) {
+            return DEFAULT_DECODE_QUEUE_FRAMES;
+        }
     }
 
     static int mobileBitrateLimit(String stored) {
@@ -1809,6 +1825,8 @@ public class PreferenceConfiguration {
         config.clientRoaming = prefs.getBoolean(CLIENT_ROAMING_PREF_STRING, true);
         config.roamingMetered = prefs.getBoolean(ROAMING_METERED_PREF_STRING, false);
         config.receiveCoalescing = prefs.getBoolean(RECEIVE_COALESCING_PREF_STRING, true);
+        config.decodeQueueFrames = decodeQueueFrames(prefs.getString(DECODE_QUEUE_FRAMES_PREF_STRING,
+                String.valueOf(DEFAULT_DECODE_QUEUE_FRAMES)));
         config.internetPlay = prefs.getBoolean(INTERNET_PLAY_PREF_STRING, true);
         config.virtualDisplay = prefs.getBoolean(VIRTUAL_DISPLAY_PREF_STRING, false);
         config.virtualDisplayScale = Math.max(50, Math.min(200, prefs.getInt(VIRTUAL_DISPLAY_SCALE_PREF_STRING, 100)));

@@ -868,6 +868,15 @@ fn play_over_the_internet_is_on_by_default_and_in_old_files() {
 }
 
 #[test]
+fn frames_waiting_for_the_decoder_are_fifteen_by_default_and_in_old_files() {
+    assert_eq!(Settings::default().decode_queue_frames, 15);
+    let old: Settings = serde_json::from_str(r#"{"fps":60,"sops":false}"#).unwrap();
+    assert_eq!(old.decode_queue_frames, 15);
+    let set: Settings = serde_json::from_str(r#"{"decode_queue_frames":5}"#).unwrap();
+    assert_eq!(set.decode_queue_frames, 5);
+}
+
+#[test]
 fn grouped_video_packets_are_on_by_default_and_in_old_files() {
     assert!(Settings::default().receive_coalescing);
     let old: Settings = serde_json::from_str(r#"{"fps":60,"client_roaming":false}"#).unwrap();

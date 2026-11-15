@@ -35,6 +35,25 @@ fn the_queue_is_bounded_and_shuts_down() {
 }
 
 #[test]
+fn a_set_queue_bound_refuses_the_frame_over_it_and_unset_or_larger_keeps_fifteen() {
+    assert_eq!(decode_queue_bound(0), DECODE_UNIT_QUEUE_BOUND);
+    assert_eq!(decode_queue_bound(40), DECODE_UNIT_QUEUE_BOUND);
+    assert_eq!(decode_queue_bound(3), 3);
+    assert_eq!(FrameQueue::default().bound(), DECODE_UNIT_QUEUE_BOUND);
+    let queue = FrameQueue::with_bound(3);
+    for _ in 0..3 {
+        assert!(queue.offer(Frame::default()).is_ok());
+    }
+    assert!(queue.offer(Frame::default()).is_err());
+    let mut staged = StagedChunks::default();
+    assert!(queue.offer_behind(&mut staged, Frame::default()).1.is_err());
+    assert_eq!(queue.flush().len(), 3);
+    assert!(queue.offer(Frame::default()).is_ok());
+    let shared = VideoShared::with_queue_bound(records(true), 5);
+    assert_eq!(shared.queue.bound(), 5);
+}
+
+#[test]
 fn chunks_have_their_own_bound_and_a_drop_is_reported() {
     let queue = FrameQueue::default();
     for i in 0..CHUNK_QUEUE_BOUND {

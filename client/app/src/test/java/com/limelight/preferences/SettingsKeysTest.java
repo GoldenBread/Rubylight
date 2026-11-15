@@ -468,6 +468,7 @@ public class SettingsKeysTest {
         reads.put("checkbox_client_roaming", new Read(true, false, c -> c.clientRoaming));
         reads.put("checkbox_roaming_metered", new Read(false, true, c -> c.roamingMetered));
         reads.put("checkbox_receive_coalescing", new Read(true, false, c -> c.receiveCoalescing));
+        reads.put("list_decode_queue_frames", new Read("15", "5", c -> c.decodeQueueFrames));
         reads.put("checkbox_internet_play", new Read(true, false, c -> c.internetPlay));
         reads.put("checkbox_enable_post_stream_toast", new Read(false, true, c -> c.enableLatencyToast));
         reads.put("checkbox_rust_engine", new Read(false, true, c -> c.rustEngine));
@@ -549,6 +550,15 @@ public class SettingsKeysTest {
                 prefs().edit().putBoolean(key, true).commit();
             }
         }
+    }
+
+    @Test
+    public void framesWaitingForTheDecoderDefaultToFifteenAndAnUnknownValueReadsAsIt() {
+        assertEquals(15, PreferenceConfiguration.readPreferences(RuntimeEnvironment.getApplication()).decodeQueueFrames);
+        assertEquals(3, PreferenceConfiguration.decodeQueueFrames("3"));
+        assertEquals(15, PreferenceConfiguration.decodeQueueFrames("0"));
+        assertEquals(15, PreferenceConfiguration.decodeQueueFrames("40"));
+        assertEquals(15, PreferenceConfiguration.decodeQueueFrames("many"));
     }
 
     @Test

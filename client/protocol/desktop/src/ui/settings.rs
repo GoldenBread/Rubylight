@@ -44,7 +44,7 @@ pub(super) const SECTION_KEYS: [&[&[&str]]; 8] = [
         &["dual_screen"], &["second_screen_width", "second_screen_height"], &["input_only_any_host"]],
     &[&["theme"], &["language"], &["open_on_start", "console_home"], &["quick_resume"], &["check_updates"], &["home_card_size"],
         &["ui_zoom"], &["high_contrast"], &["reduce_motion"]],
-    &[&["graphics_card"], &["renderer"], &["display_output"], &["video_planes"], &["high_performance_gpu_power"], &["sops"]],
+    &[&["graphics_card"], &["renderer"], &["display_output"], &["video_planes"], &["high_performance_gpu_power"], &["sops"], &["decode_queue_frames"]],
     &[&["error_correction"], &["tell_host_wireless"], &["tell_host_link_speed"],
         &["network_priority"], &["unbatched_input"], &["full_range"],
         &["pyrowave_decoder"], &["pyrowave_async_compute"],
@@ -1527,6 +1527,16 @@ impl Launcher {
             }
             rows.group(en("Compatibility"));
             setting_row(ui, s, &mut rows, &["sops"], "Game optimization hint", "Lets the PC adjust the game’s settings for the stream. Leave it on; turn it off if the PC changes a game’s settings and you want them kept.", |ui, s| toggle(ui, &mut s.sops));
+            setting_row(ui, s, &mut rows, &["decode_queue_frames"], "Frames waiting for the decoder", "Fewer frames drop the waiting ones sooner when the decoder falls behind, so delay cannot build up, but the picture stutters more often. Leave it at 15 unless the picture lags further and further behind on a slow device.", |ui, s| {
+                let current = decode_queue_choice(s.decode_queue_frames);
+                Combo::from_id_salt("decode-queue-frames").selected_text(decode_queue_name(current)).show_ui(ui, |ui| {
+                    for frames in DECODE_QUEUE_CHOICES {
+                        if ui.selectable_label(current == frames, decode_queue_name(frames)).clicked() {
+                            s.decode_queue_frames = frames;
+                        }
+                    }
+                }).response
+            });
             rows.section(en("Debug"));
             // Android's main rows first, in its order.
             setting_row(ui, s, &mut rows, &["error_correction"], "Error correction", "FEC: extra data the PC adds to repair lost packets, taken from the picture’s bitrate. Leave it on PC’s setting; try Automatic if the picture breaks up often.", |ui, s| {
@@ -2253,6 +2263,22 @@ fn short_edge_name(edge: u32) -> String {
 }
 
 /// A Wait through network dropouts choice in seconds; 0 is Off.
+/// "Frames waiting for the decoder"'s choices, as Android's `decode_queue_frames_values`.
+pub(super) const DECODE_QUEUE_CHOICES: [u32; 4] = [3, 5, 8, 15];
+
+/// The choice a saved bound shows as: the engine reads anything outside 1 to 15 as 15, and a
+/// value between the choices as the next larger one.
+pub(super) fn decode_queue_choice(frames: u32) -> u32 {
+    if frames == 0 || frames > 15 {
+        return 15;
+    }
+    DECODE_QUEUE_CHOICES.into_iter().find(|&c| c >= frames).unwrap_or(15)
+}
+
+fn decode_queue_name(frames: u32) -> String {
+    trf("{} frames", &[&frames])
+}
+
 fn network_grace_name(seconds: u32) -> String {
     if seconds == 0 { tr("Off").to_owned() } else { trf("{} s", &[&seconds]) }
 }
@@ -2393,6 +2419,7 @@ pub(super) fn value_text(key: &str, s: &Settings, display: &Display, style: crat
         "second_screen_width" | "second_screen_height" if s.second_screen_width == 0 => tr("Second screen’s own size").to_owned(),
         "second_screen_width" | "second_screen_height" => format!("{}x{}", s.second_screen_width, s.second_screen_height),
         "network_grace_ms" => network_grace_name(nightjar_policy::recovery::network_grace_choice_s(s.network_grace_ms)),
+        "decode_queue_frames" => decode_queue_name(decode_queue_choice(s.decode_queue_frames)),
         "error_correction" => error_correction_name(s.error_correction),
         "rtx_hdr" => enhancement_name(s.rtx_hdr),
         "rtx_video" => enhancement_name(s.rtx_video),
@@ -2474,7 +2501,7 @@ pub(super) const ANDROID_KEYS: &[(&str, &str)] = &[
     ("reset_all", "reset_all"),
     ("ui_zoom", "list_ui_scale"), ("high_contrast", "checkbox_high_contrast"), ("reduce_motion", "list_reduce_motion"),
     // Advanced
-    ("sops", "checkbox_enable_sops"),
+    ("sops", "checkbox_enable_sops"), ("decode_queue_frames", "list_decode_queue_frames"),
     // Debug
     ("error_correction", "list_fec_choice"),
     ("tell_host_wireless", "checkbox_tell_host_wireless"), ("tell_host_link_speed", "checkbox_tell_host_link_speed"),

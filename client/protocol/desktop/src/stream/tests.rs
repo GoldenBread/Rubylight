@@ -284,6 +284,16 @@ fn controllers_reach_the_host_only_when_on_and_not_from_a_remote_monitor() {
 }
 
 #[test]
+fn frames_waiting_for_the_decoder_reach_the_engine() {
+    let config = |decode_queue_frames| {
+        let settings = Settings { decode_queue_frames, ..Default::default() };
+        session_config(&settings, AppRole::Stream, StreamConfig::default(), Location::Auto, true).decode_queue_bound
+    };
+    assert_eq!(config(15), 15);
+    assert_eq!(config(5), 5);
+}
+
+#[test]
 fn the_input_and_priority_settings_reach_the_engine() {
     let on = session_config(&Settings::default(), AppRole::Stream, StreamConfig::default(), Location::Local, true);
     assert!(on.unbatched_input && on.network_priority);

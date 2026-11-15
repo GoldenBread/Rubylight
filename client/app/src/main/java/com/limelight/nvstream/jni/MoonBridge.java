@@ -586,6 +586,7 @@ public class MoonBridge {
     private static volatile boolean codecDirectRequested;
     private static volatile boolean receiveDecodePriorityRequested;
     private static volatile boolean receiveCoalescingRequested = true;
+    private static volatile int decodeQueueBound;
     private static volatile boolean frameWarpWanted;
     private static volatile boolean frameWarpRequested;
 
@@ -894,7 +895,7 @@ public class MoonBridge {
                     remoteMonitor, unbatchedInput, networkPriority, roamingRequested, roamingMeteredRequested,
                     audioPassthroughRequested, hdrFormatRequested, videoFecRequested, pyrowaveEarlyRequested,
                     codecDirectRequested, receiveDecodePriorityRequested, frameWarpRequested,
-                    receiveCoalescingRequested);
+                    receiveCoalescingRequested, decodeQueueBound);
         }
         return cStartConnection(address, appVersion, gfeVersion, rtspSessionUrl, serverCodecModeSupport,
                 width, height, fps, bitrate, packetSize, streamingRemotely, audioConfiguration,
@@ -924,6 +925,17 @@ public class MoonBridge {
         cSetNetworkGracePeriodMs(gracePeriodMs);
     }
     private static native void cSetNetworkGracePeriodMs(int gracePeriodMs);
+
+    /**
+     * Call before startConnection(): "Frames waiting for the decoder", the complete frames that may wait
+     * for a decoder without direct submission before they are dropped and a key frame is requested. 0 keeps
+     * 15, the bound both engines had before it was a setting; so does anything above 15.
+     */
+    public static void setDecodeQueueBound(int frames) {
+        decodeQueueBound = frames;
+        cSetDecodeQueueBound(frames);
+    }
+    private static native void cSetDecodeQueueBound(int frames);
 
     public static void stopConnection() {
         if (rustStream) RustBridge.stopConnection(); else cStopConnection();

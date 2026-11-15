@@ -591,6 +591,11 @@ pub struct Settings {
     /// "Game optimization hint": the launch lets the PC adjust the game's settings for the stream
     /// (`sops`). On by default, as the launch always asked before it was a setting.
     pub sops: bool,
+    /// "Frames waiting for the decoder" (Android's `list_decode_queue_frames`): complete frames
+    /// that may wait for the decoder before they are dropped and a key frame is requested
+    /// (`SessionConfig::decode_queue_bound`). 15 by default, the engine's bound before it was a
+    /// setting; the engine reads 0 or more than 15 as 15.
+    pub decode_queue_frames: u32,
     pub full_range: bool,
     pub upscaling: Upscaling,
     pub upscale_sharpness: u32,
@@ -1173,6 +1178,7 @@ impl Default for Settings {
             rtx_video: None,
             link_probe: false,
             sops: true,
+            decode_queue_frames: 15,
             full_range: false,
             upscaling: Upscaling::Bilinear,
             upscale_sharpness: 50,

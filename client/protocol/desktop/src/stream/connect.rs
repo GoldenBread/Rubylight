@@ -637,6 +637,7 @@ pub(super) fn session_config(settings: &Settings, role: AppRole, stream: StreamC
         // On for the desktop; NIGHTJAR_DECODE_PRIORITY=0 turns it off for A/B runs.
         receive_decode_priority: true,
         receive_coalescing: settings.receive_coalescing,
+        decode_queue_bound: settings.decode_queue_frames as usize,
         roaming: roaming_config(settings, watching),
         // Set by the start for a PC that offers it (`frame_warp_for`).
         frame_warp: None,

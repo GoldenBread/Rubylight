@@ -995,6 +995,14 @@
             android:title="@string/title_experimental_chipset_tuning"
             android:dialogMessage="@string/summary_experimental_chipset_tuning"
             android:defaultValue="false" />
+        <!-- Both engines; a decoder that takes frames directly has no queue (MoonBridge.setDecodeQueueBound). -->
+        <com.limelight.preferences.MaterialListPreference
+            android:key="list_decode_queue_frames"
+            android:title="@string/title_decode_queue_frames"
+            android:dialogMessage="@string/summary_decode_queue_frames"
+            android:entries="@array/decode_queue_frames_names"
+            android:entryValues="@array/decode_queue_frames_values"
+            android:defaultValue="15" />
     </PreferenceCategory>
 
     <!-- Debug: settings whose default is right for nearly everyone, kept for troubleshooting. -->

@@ -42,6 +42,7 @@ public class RustEngineJniParityTest {
     /** MoonBridge c* natives that the Rust engine does not need, and why. */
     private static final Map<String, String> C_ONLY = new TreeMap<>();
     static {
+        C_ONLY.put("cSetDecodeQueueBound", "folded into RustBridge.startConnection (decodeQueueBound)");
         C_ONLY.put("cSetNetworkGracePeriodMs", "folded into RustBridge.startConnection (networkGracePeriodMs)");
         C_ONLY.put("cStartConnection", "RustBridge.startConnection has its own parameter list");
     }

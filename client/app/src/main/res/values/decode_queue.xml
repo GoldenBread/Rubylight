@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_decode_queue_frames">Frames waiting for the decoder</string>
+    <string name="summary_decode_queue_frames">Fewer frames drop the waiting ones sooner when the decoder falls behind, so delay cannot build up, but the picture stutters more often. Leave it at 15 unless the picture lags further and further behind on a slow device.</string>
+    <string name="decode_queue_frames_3">3 frames</string>
+    <string name="decode_queue_frames_5">5 frames</string>
+    <string name="decode_queue_frames_8">8 frames</string>
+    <string name="decode_queue_frames_15">15 frames</string>
+    <string-array name="decode_queue_frames_names"><item>@string/decode_queue_frames_3</item><item>@string/decode_queue_frames_5</item><item>@string/decode_queue_frames_8</item><item>@string/decode_queue_frames_15</item></string-array>
+    <string-array name="decode_queue_frames_values" translatable="false"><item>3</item><item>5</item><item>8</item><item>15</item></string-array>
+</resources>

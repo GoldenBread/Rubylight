@@ -1,0 +1,50 @@
+Let the client choose how many complete frames wait for a decoder that does not take them
+directly (Nightjar's "Frames waiting for the decoder"). LiSetDecodeUnitQueueBound() sets the
+decode unit queue's bound for the next connection; 0 and anything above 15 keep 15, the bound
+so far. A lower bound overflows sooner: the queued frames are dropped and a key frame is
+requested, so a slow decoder costs a stutter instead of delay that builds up. The Rust engine
+takes the same value (SessionConfig::decode_queue_bound). Applies after decoder-drops.patch.
+
+diff --git a/src/Limelight.h b/src/Limelight.h
+index b917f3e..a1083c8 100644
+--- a/src/Limelight.h
++++ b/src/Limelight.h
+@@ -583,6 +583,11 @@ void LiInterruptConnection(void);
+ // next LiStartConnection(); smaller values change nothing.
+ void LiSetNetworkGracePeriodMs(int gracePeriodMs);
+ 
++// Sets how many complete frames may wait for a decoder that does not take them directly before
++// the queue overflows: then the queued frames are dropped and a key frame is requested. 15, the
++// default, is kept for 0 and for values above it. Applies from the next LiStartConnection().
++void LiSetDecodeUnitQueueBound(int frames);
++
+ // Whether the host's own disconnect ended this connection: it ended the stream, it did not go
+ // silent past the timeout. Valid in and after the termination callback.
+ bool LiHostSaidGoodbye(void);
+diff --git a/src/VideoDepacketizer.c b/src/VideoDepacketizer.c
+index 8942f58..4ffee16 100644
+--- a/src/VideoDepacketizer.c
++++ b/src/VideoDepacketizer.c
+@@ -40,6 +40,13 @@ static unsigned int consecutiveFrameDrops;
+ 
+ static LINKED_BLOCKING_QUEUE decodeUnitQueue;
+ 
++#define DECODE_UNIT_QUEUE_BOUND 15
++static int decodeUnitQueueBound = DECODE_UNIT_QUEUE_BOUND;
++
++void LiSetDecodeUnitQueueBound(int frames) {
++    decodeUnitQueueBound = (frames <= 0 || frames > DECODE_UNIT_QUEUE_BOUND) ? DECODE_UNIT_QUEUE_BOUND : frames;
++}
++
+ typedef struct _BUFFER_DESC {
+     char* data;
+     unsigned int offset;
+@@ -68,7 +75,7 @@ typedef struct _LENTRY_INTERNAL {
+ 
+ // Init
+ void initializeVideoDepacketizer(int pktSize) {
+-    LbqInitializeLinkedBlockingQueue(&decodeUnitQueue, 15);
++    LbqInitializeLinkedBlockingQueue(&decodeUnitQueue, decodeUnitQueueBound);
+ 
+     nextFrameNumber = 1;
+     startFrameNumber = 0;

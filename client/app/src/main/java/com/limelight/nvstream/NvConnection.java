@@ -1540,6 +1540,7 @@ public class NvConnection {
                         MoonBridge.requestCodecDirect(prefs.codecDirect);
                         MoonBridge.requestReceiveDecodePriority(prefs.receiveDecodePriority);
                         MoonBridge.requestReceiveCoalescing(prefs.receiveCoalescing);
+                        MoonBridge.setDecodeQueueBound(prefs.decodeQueueFrames);
                         MoonBridge.requestRoaming(prefs.clientRoaming, prefs.roamingMetered);
                         MoonBridge.requestAudioPassthrough(audioPassthroughCodecs(prefs.audioPassthrough, prefs.muteAudio,
                                 context.streamConfig.getAudioConfiguration().channelCount));
