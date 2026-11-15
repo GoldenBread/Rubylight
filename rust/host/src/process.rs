@@ -411,6 +411,17 @@ impl RunningApp {
         Ok((owned, processes))
     }
     pub fn with_environment(app: &App, environment: BTreeMap<String, String>) -> Result<Self> {
+        Self::with_environment_cancellable(app, environment, None)
+    }
+    /// As `with_environment`; `cancel` ends a running preparation command and fails the
+    /// launch with [`LAUNCH_STOPPED`] before the next one or the app starts. The commands that
+    /// finished are undone, as on any failed launch.
+    pub fn with_environment_cancellable(
+        app: &App,
+        environment: BTreeMap<String, String>,
+        cancel: Option<&CommandCancellation>,
+    ) -> Result<Self> {
+        let stopped = || cancel.is_some_and(CommandCancellation::requested);
         let mut running = Self {
             id: app.id(),
             name: app.name.clone(),
@@ -511,6 +522,9 @@ impl RunningApp {
             });
         }
         for (index, prep) in app.prep.iter().enumerate() {
+            if stopped() {
+                bail!(LAUNCH_STOPPED);
+            }
             if !prep.r#do.is_empty() {
                 let child = Process::shell(
                     &prep.r#do,
@@ -519,17 +533,28 @@ impl RunningApp {
                     &running.environment,
                 )
                 .with_context(|| format!("preparation command {} could not start", index + 1))?;
-                let code = child.wait(Duration::from_secs(120)).with_context(|| {
+                let waited = match cancel {
+                    Some(cancel) => child.wait_cancellable(Duration::from_secs(120), cancel),
+                    None => child.wait(Duration::from_secs(120)).map(Some),
+                };
+                let code = waited.with_context(|| {
                     format!(
                         "preparation command {} did not finish within 120 seconds",
                         index + 1
                     )
                 })?;
+                // Ended by a stop: this command's own undo does not run, the earlier ones' do.
+                let Some(code) = code else {
+                    bail!(LAUNCH_STOPPED);
+                };
                 if code != 0 {
                     bail!("preparation command {} exited with {code}", index + 1);
                 }
             }
             running.undo.push(prep.clone());
+        }
+        if stopped() {
+            bail!(LAUNCH_STOPPED);
         }
         let imported = app
             .extra
@@ -1310,6 +1335,8 @@ fn runs_commands(h: &crate::state::Shared, app: &App) -> bool {
 /// The launch argument the host sets for a background stream's app; see
 /// [`butterpollo_core::background`].
 pub const BACKGROUND_ARG: &str = "rubylightBackgroundStream";
+/// Why a launch that Quit, End session or the device's next launch stopped failed.
+pub const LAUNCH_STOPPED: &str = "The launch was stopped before the game started.";
 pub fn launch(
     h: &crate::state::Shared,
     app: &App,
@@ -1631,7 +1658,12 @@ fn launch_with_environment(
         cancel(settings_swap);
         return Err(error);
     }
-    let mut running = match RunningApp::with_environment(&app, environment) {
+    let cancellation = h.launch_cancellation();
+    let mut running = match RunningApp::with_environment_cancellable(
+        &app,
+        environment,
+        cancellation.as_deref(),
+    ) {
         Ok(running) => running,
         Err(error) => {
             cancel(settings_swap);

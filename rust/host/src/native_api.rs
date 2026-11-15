@@ -663,6 +663,15 @@ pub(crate) fn session_action(h: &Shared, client: &Client, action: Action) -> Res
     // after its stream ended they still end its background stream (#56). Nightjar's Quit is
     // Close game where the device has host control.
     let disconnect = matches!(action, Action::Disconnect);
+    // End session and Close game during the device's own launch stop that launch rather than
+    // answer busy (Close game the launch of either of its screens); Disconnect waits, as before.
+    let stopped_launch = match action {
+        Action::Disconnect => false,
+        Action::End => h.stop_launch(|launching| launching == device),
+        Action::CloseGame => {
+            h.stop_launch(|launching| crate::nvhttp::same_device(launching, device))
+        }
+    };
     if crate::nvhttp::quit_nucleus_stream(h, device, disconnect)? {
         return Ok(());
     }
@@ -672,6 +681,8 @@ pub(crate) fn session_action(h: &Shared, client: &Client, action: Action) -> Res
         Action::CloseGame => h.close_game(device),
     };
     match done {
+        // The stopped launch was the whole session: nothing is left to end.
+        Err(Refusal::NoSession) if stopped_launch => Ok(()),
         // The session the host follows is its first screen's: a second screen's Disconnect or
         // End ends its own stream, End its kept display too.
         Err(Refusal::NotOwner)

@@ -101,7 +101,13 @@ pub(super) fn start(h: Shared, connection: Connection, args: Args, resume: bool)
             );
         }
     };
+    // The device's earlier launch that still prepares is given up for this one, as its
+    // queued launch is (`Sessions::supersede`), rather than waited for.
+    if plain {
+        h.stop_launch(|device| device == client.uuid);
+    }
     let _transition = h.launch_transition.lock().unwrap();
+    let _started = h.launch_started(&client.uuid);
     // Whatever refuses this launch below, a press of Continue here it was for ends with it.
     let attempt = crate::continue_here::Attempt::new(
         &h,
@@ -296,6 +302,9 @@ fn launch_back_half(
             return Err(LaunchFailure(503, "Another stream operation is still running").into());
         }
     }
+    if h.launch_stopped() {
+        return Err(LaunchFailure(503, crate::process::LAUNCH_STOPPED).into());
+    }
     // The state machine follows stream launches; a failure before the
     // reply returns it to what it was.
     let mut session = (role == Role::Stream && !in_nucleus).then(|| {
@@ -423,6 +432,14 @@ fn launch_back_half(
         drop(canceled);
         return Err(error);
     }
+    // Stopped meanwhile (Quit, End session, the device's next launch): the game this launch
+    // started is closed again, and nothing of it is kept.
+    if h.launch_stopped() {
+        let canceled = h.sessions.lock().unwrap().pending.remove(&id);
+        drop(prepared_app);
+        drop(canceled);
+        return Err(LaunchFailure(503, crate::process::LAUNCH_STOPPED).into());
+    }
     // The client has 30 s to connect from now on.
     match h.sessions.lock().unwrap().pending.get_mut(&id) {
         Some(pending) => pending.created = Instant::now(),
@@ -513,7 +530,9 @@ pub(crate) fn launch_webrtc(
     h: &Shared,
     request: WebRtcLaunch,
 ) -> std::result::Result<Launch, WebRtcLaunchError> {
+    h.stop_launch(|device| device == request.client.uuid);
     let _transition = h.launch_transition.lock().unwrap();
+    let _started = h.launch_started(&request.client.uuid);
     let attempt = crate::continue_here::Attempt::new(h, &request.client.uuid, true);
     let outcome = (|| -> Result<Launch> {
         check_streaming_session(h, "launch_request")?;

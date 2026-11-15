@@ -382,6 +382,46 @@ fn preparation_undo_and_failed_preparation_keep_global_order_and_rollback() {
 }
 
 #[test]
+fn a_stopped_launch_ends_its_running_preparation_command_and_undoes_the_finished_ones() {
+    let elevated = butterpollo_windows::process::user_environment().is_err();
+    let f = Fixture::new();
+    let trace = f.host.directory.join("commands.txt");
+    let command = |name: &str| format!("echo {name}>>\"{}\"", trace.display());
+    let app: App = serde_json::from_value(json!({"name":"Commands","prep-cmd":[
+        {"do":command("first"),"undo":command("undo-first"),"elevated":elevated},
+        {"do":"ping -n 60 127.0.0.1 >nul","undo":command("must-not-run"),"elevated":elevated},
+        {"do":command("must-not-run"),"undo":"","elevated":elevated}
+    ]}))
+    .unwrap();
+    // The launch names itself, as `/launch` does under the launch lock; Quit then stops it.
+    let started = f.host.launch_started("device");
+    let cancel = f.host.launch_cancellation().unwrap();
+    let stopper = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(500));
+        cancel.cancel().unwrap();
+    });
+    let begun = std::time::Instant::now();
+    let error = launch_with_environment(&f.host, &app, &HashMap::new(), Ok(BTreeMap::new()))
+        .err()
+        .unwrap();
+    stopper.join().unwrap();
+    assert_eq!(error.to_string(), LAUNCH_STOPPED);
+    // Not the 60 s of the command, nor its 120 s limit.
+    assert!(begun.elapsed() < Duration::from_secs(20));
+    assert!(f.host.launch_stopped());
+    assert_eq!(
+        std::fs::read_to_string(&trace)
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        ["first", "undo-first"]
+    );
+    drop(started);
+    assert!(f.host.launch_cancellation().is_none());
+    assert!(!f.host.launch_stopped());
+}
+
+#[test]
 fn application_executable_paths_preserve_shell_environment_expansion() {
     let elevated = butterpollo_windows::process::user_environment().is_err();
     let system_root = std::env::var("SystemRoot").unwrap();

@@ -20,6 +20,10 @@ pub(crate) fn terminate_refused(h: &Shared, client: &str) -> bool {
             != butterpollo_core::state::device_uuid(client))
         || h.claimed_by_other(client)
 }
+/// Whether two clients are one device's screens: a quit closes the game of both.
+pub(crate) fn same_device(a: &str, b: &str) -> bool {
+    butterpollo_core::state::device_uuid(a) == butterpollo_core::state::device_uuid(b)
+}
 /// Unplug the controllers that streams which ended still park and wait until XInput shows them
 /// gone, so a new Nucleus Co-op session's players take the first free slots (#56). A pending
 /// launch's controllers stay: Nightjar prepares them before its stream takes them. So do a
@@ -150,6 +154,9 @@ pub(crate) enum StopStreams {
 /// as the `cancel` request does, for WebRTC's stop-host-session and switch-session. Remote Monitor
 /// and Remote Input sessions stay, and are not waited for.
 pub(crate) fn stop_streams(h: &Shared, terminate_app: Option<&str>) -> StopStreams {
+    if let Some(client) = terminate_app {
+        h.stop_launch(|device| same_device(device, client));
+    }
     let _transition = h.launch_transition.lock().unwrap();
     if let Some(ids) = terminate_app.and_then(|client| quit_nucleus_player(h, client, false, false))
     {
@@ -197,6 +204,8 @@ fn cancel_app(h: Shared, connection: Connection) -> Response {
         Ok(client) => client,
         Err(e) => return xml(401, &[], Some(e.to_string())),
     };
+    // A Quit during the device's own launch stops that launch instead of waiting for it.
+    h.stop_launch(|device| same_device(device, &client.uuid));
     let _transition = h.launch_transition.lock().unwrap();
     if quit_nucleus_player(&h, &client.uuid, false, true).is_some() {
         return xml(200, &[("cancel", "1".into())], None);

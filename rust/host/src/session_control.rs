@@ -46,6 +46,11 @@ thread_local! {
     static TEARDOWN_WAIT_OVERRIDE: std::cell::Cell<Option<Duration>> =
         const { std::cell::Cell::new(None) };
 }
+/// How long `Host::stop_launch` looks for a launch that holds the launch lock to name itself.
+const LAUNCH_NAME_WAIT: Duration = Duration::from_millis(250);
+/// How long `Host::stop_launch` waits for a stopped launch to let go of the lock: the undo
+/// commands of its finished preparation commands run first.
+const LAUNCH_STOP_WAIT: Duration = Duration::from_secs(30);
 fn teardown_wait() -> Duration {
     #[cfg(test)]
     if let Some(wait) = TEARDOWN_WAIT_OVERRIDE.get() {
@@ -457,6 +462,58 @@ impl Host {
             Err(TryLockError::WouldBlock) => Err(Refusal::Busy),
         }
     }
+    /// Names the launch that holds `launch_transition` (`device` asked for it) until the
+    /// returned guard drops, so Quit, End session, Close game and the device's next launch can
+    /// stop it (`stop_launch`). The caller holds `launch_transition`.
+    pub(crate) fn launch_started(&self, device: &str) -> LaunchStarted<'_> {
+        let cancel = butterpollo_windows::process::CommandCancellation::new()
+            .map(std::sync::Arc::new)
+            .map_err(|error| tracing::warn!(%error, "this launch cannot be stopped early"))
+            .ok();
+        *locked(&self.launch_cancel) = cancel.clone().map(|cancel| (device.to_owned(), cancel));
+        LaunchStarted { host: self, cancel }
+    }
+    /// What ends the running launch's preparation commands; none outside a launch.
+    pub(crate) fn launch_cancellation(
+        &self,
+    ) -> Option<std::sync::Arc<butterpollo_windows::process::CommandCancellation>> {
+        locked(&self.launch_cancel).as_ref().map(|(_, cancel)| cancel.clone())
+    }
+    /// Whether the running launch was stopped: it must not go on to start or keep the game.
+    pub(crate) fn launch_stopped(&self) -> bool {
+        self.launch_cancellation().is_some_and(|cancel| cancel.requested())
+    }
+    /// Stops the launch in progress when `device_may(its device)` allows it: its running
+    /// preparation command is ended at once, the undo commands of those that finished still
+    /// run, and the launch fails before it starts the game. Then waits, holding no lock, until
+    /// the launch has let go of `launch_transition`. False, after at most a short look, when
+    /// no such launch runs: the caller goes on as it always did.
+    pub(crate) fn stop_launch(&self, device_may: impl Fn(&str) -> bool) -> bool {
+        let started = std::time::Instant::now();
+        let mut stopped = false;
+        loop {
+            if !matches!(self.launch_transition.try_lock(), Err(TryLockError::WouldBlock)) {
+                return stopped;
+            }
+            if !stopped
+                && let Some((device, cancel)) = locked(&self.launch_cancel).as_ref()
+                && device_may(device)
+            {
+                if let Err(error) = cancel.cancel() {
+                    tracing::warn!(%error, "the launch's preparation could not be stopped");
+                }
+                tracing::info!(device, "a launch in progress is stopped");
+                stopped = true;
+            }
+            // A launch names itself right after it takes the lock: holding it without a name
+            // for longer is something else, which the caller waits for as before.
+            let waited = started.elapsed();
+            if (!stopped && waited > LAUNCH_NAME_WAIT) || waited > LAUNCH_STOP_WAIT {
+                return stopped;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
     /// Wait for the streams being stopped (the owner's, or all) to release
     /// their resources.
     fn wait_for_streams(&self, owner: Option<&str>) {
@@ -642,6 +699,23 @@ impl LaunchSession<'_> {
     }
     pub fn succeed(&mut self) {
         self.ok = true;
+    }
+}
+/// The running launch named by `Host::launch_started`, until it drops.
+pub(crate) struct LaunchStarted<'a> {
+    host: &'a Host,
+    cancel: Option<std::sync::Arc<butterpollo_windows::process::CommandCancellation>>,
+}
+impl Drop for LaunchStarted<'_> {
+    fn drop(&mut self) {
+        let mut slot = locked(&self.host.launch_cancel);
+        let ours = match (slot.as_ref(), self.cancel.as_ref()) {
+            (Some((_, named)), Some(cancel)) => std::sync::Arc::ptr_eq(named, cancel),
+            _ => false,
+        };
+        if ours {
+            *slot = None;
+        }
     }
 }
 impl Drop for LaunchSession<'_> {

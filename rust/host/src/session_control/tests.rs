@@ -296,6 +296,38 @@ fn end_session_and_close_game_are_busy_while_the_launch_lock_is_held() {
 }
 
 #[test]
+fn a_quit_stops_only_its_own_device_s_launch_and_waits_just_for_it_to_let_go() {
+    let setup = Setup::new("");
+    let host = setup.host();
+    // Nothing holds the launch lock: nothing to stop, at once.
+    assert!(!host.stop_launch(|_| true));
+    let (named, named_rx) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        let launch = scope.spawn(move || {
+            let _transition = host.launch_transition.lock().unwrap();
+            let _started = host.launch_started("device");
+            named.send(()).unwrap();
+            // The launch's preparation command runs until it is stopped.
+            let begun = Instant::now();
+            while !host.launch_stopped() && begun.elapsed() < Duration::from_secs(10) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            host.launch_stopped()
+        });
+        named_rx.recv().unwrap();
+        // Another device's quit leaves it alone, and waits for the lock as it always did.
+        assert!(!host.stop_launch(|device| device == "other"));
+        assert!(host.launch_transition.try_lock().is_err());
+        let begun = Instant::now();
+        assert!(host.stop_launch(|device| device == "device"));
+        assert!(begun.elapsed() < Duration::from_secs(5));
+        assert!(host.launch_transition.try_lock().is_ok());
+        assert!(launch.join().unwrap());
+    });
+    assert!(host.launch_cancellation().is_none());
+}
+
+#[test]
 fn a_disconnect_or_resume_cannot_cancel_the_launch_of_the_same_device() {
     let setup = Setup::new("");
     let session = setup.streaming();
