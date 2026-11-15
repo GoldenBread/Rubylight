@@ -458,7 +458,8 @@ impl Hosts {
                 if kept.remote_address.is_none() {
                     kept.remote_address = dropped.remote_address;
                 }
-                self.list.remove(drop);
+                let gone = self.list.remove(drop).id;
+                self.pc_workers.remove(&gone);
                 changed = true;
                 let index = self.list.iter().position(|h| h.id == keep_id).unwrap_or(0);
                 return self.store_info(index, address, result) || changed;

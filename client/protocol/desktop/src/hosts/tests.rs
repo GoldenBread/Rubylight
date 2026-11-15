@@ -43,6 +43,28 @@ pub(crate) fn native_info() -> ServerInfo {
 }
 
 /// `native_info` from the PC `unique_id`, which lists this device as paired or not.
+/// A PC's requests run one after another on its own worker, which is started once and kept,
+/// not a thread for each; a removed PC's worker goes with it.
+#[test]
+fn a_pcs_requests_share_one_worker_that_goes_with_the_pc() {
+    let mut hosts = Hosts::without_discovery(vec![paired_record("uid")], Arc::new(|| {}));
+    let id = hosts.list[0].id;
+    let (tx, rx) = channel();
+    for _ in 0..3 {
+        let tx = tx.clone();
+        hosts.run_on(id, move || {
+            let _ = tx.send(std::thread::current().id());
+            None
+        });
+    }
+    let threads: Vec<_> = (0..3).map(|_| rx.recv_timeout(Duration::from_secs(5)).expect("the job ran")).collect();
+    assert!(threads.iter().all(|t| *t == threads[0]), "one worker: {threads:?}");
+    assert_ne!(threads[0], std::thread::current().id());
+    assert_eq!(hosts.pc_workers.len(), 1);
+    hosts.remove(id);
+    assert!(hosts.pc_workers.is_empty());
+}
+
 fn native_info_of(unique_id: &str, paired: bool) -> ServerInfo {
     let xml = format!("<?xml version=\"1.0\" encoding=\"utf-8\"?><root status_code=\"200\"><hostname>PC</hostname><uniqueid>{unique_id}</uniqueid>\
              <HttpsPort>47984</HttpsPort><ExternalPort>47989</ExternalPort><PairStatus>{}</PairStatus><currentgame>0</currentgame>\

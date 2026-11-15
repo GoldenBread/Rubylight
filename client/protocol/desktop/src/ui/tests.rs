@@ -6496,6 +6496,9 @@ fn animations_wait_while_the_window_is_away() {
         assert!(!crate::animations_seen(SDL_WINDOW_INPUT_FOCUS | away));
     }
     assert!(!crate::animations_seen(0 as SDL_WindowFlags), "in the background");
+    // PCs are polled while the window is on screen, in front or not.
+    assert!(crate::window_shown(0 as SDL_WindowFlags) && crate::window_shown(SDL_WINDOW_OCCLUDED));
+    assert!(!crate::window_shown(SDL_WINDOW_MINIMIZED) && !crate::window_shown(SDL_WINDOW_HIDDEN));
 }
 
 /// While a PC's library is on its way, All games says so as Home does instead of calling the

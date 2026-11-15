@@ -37,6 +37,9 @@ pub use power::*;
 /// Wakes the UI thread after an event was queued.
 pub type Waker = Arc<dyn Fn() + Send + Sync>;
 
+/// A request a PC's own worker runs; what it returns is queued for the UI thread.
+type PcJob = Box<dyn FnOnce() -> Option<Event> + Send>;
+
 const POLL_INTERVAL: Duration = Duration::from_secs(4);
 /// After a quit, a closed game or a stream's end the PC changes its state a moment later, so it is
 /// asked every second for this long (`Host::recheck_until`).
@@ -686,6 +689,9 @@ pub struct Hosts {
     _mdns: Option<mdns_sd::ServiceDaemon>,
     /// Whether this network is being searched for PCs: the first run's orbit runs on it.
     pub(crate) discovering: bool,
+    /// Each PC's worker: one thread that lives as long as the PC is listed runs its polls and
+    /// native reads in turn, instead of a new thread for each. Dropping the sender ends it.
+    pc_workers: HashMap<u64, Sender<PcJob>>,
     /// The demo's PCs while a first-run page shows a shorter list.
     #[cfg(feature = "demo-library")]
     pub(crate) demo_shelf: Vec<Host>,
@@ -832,6 +838,7 @@ impl Hosts {
             stun: false,
             _mdns: None,
             discovering: false,
+            pc_workers: HashMap::new(),
             #[cfg(feature = "demo-library")]
             demo_shelf: Vec::new(),
         };
@@ -938,6 +945,38 @@ impl Hosts {
                     waker();
                 }
             });
+    }
+
+    /// Runs `work` on PC `id`'s own worker, started on its first request: the PC's requests wait
+    /// for each other rather than each starting a thread.
+    fn run_on(&mut self, id: u64, work: impl FnOnce() -> Option<Event> + Send + 'static) {
+        // The demo library never reaches for a network, even by accident.
+        if cfg!(feature = "demo-library") {
+            return;
+        }
+        let mut job: PcJob = Box::new(work);
+        if let Some(worker) = self.pc_workers.get(&id) {
+            match worker.send(job) {
+                Ok(()) => return,
+                // Its thread ended (a request panicked): a new one takes the job.
+                Err(std::sync::mpsc::SendError(back)) => job = back,
+            }
+        }
+        let (jobs, queue) = channel::<PcJob>();
+        let (sender, waker) = (self.sender.clone(), self.waker.clone());
+        let started = std::thread::Builder::new().name("pc-worker".into()).spawn(move || {
+            for job in queue {
+                if let Some(event) = job() {
+                    if sender.send(event).is_err() {
+                        return;
+                    }
+                    waker();
+                }
+            }
+        });
+        if started.is_ok() && jobs.send(job).is_ok() {
+            self.pc_workers.insert(id, jobs);
+        }
     }
 
     /// Starts looking for PCs on the network again, when it could not start (a network not up yet,
@@ -1087,6 +1126,7 @@ impl Hosts {
     pub fn remove(&mut self, id: u64) {
         self.list.retain(|h| h.id != id);
         self.link_claims.remove(&id);
+        self.pc_workers.remove(&id);
     }
 
     /// Checks every host that is due.
@@ -1134,7 +1174,7 @@ impl Hosts {
         let record = host.record.clone();
         let likely_online = host.reach == Reach::Online;
         let away = host.reach == Reach::Offline;
-        self.spawn("serverinfo", move || {
+        self.run_on(id, move || {
             let mut last_error = String::from(en("No address"));
             let mut tried = Vec::new();
             for address in poll_addresses(&record) {

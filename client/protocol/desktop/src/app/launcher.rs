@@ -371,7 +371,10 @@ impl App {
                 }
             }
         }
-        if self.connecting.is_none() {
+        // No polls while the window is minimized or hidden: the PCs are asked again, all at once,
+        // when it is back.
+        // SAFETY: a live window, read on the main thread.
+        if self.connecting.is_none() && window_shown(unsafe { SDL_GetWindowFlags(self.window) }) {
             self.hosts.poll();
         }
         let (events, changed) = self.hosts.drain(&self.gui.ctx);
@@ -838,4 +841,9 @@ pub(crate) fn finish_folder_pick(
 /// front. Otherwise no animation asks for frames.
 pub(crate) fn animations_seen(flags: SDL_WindowFlags) -> bool {
     flags & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_HIDDEN | SDL_WINDOW_OCCLUDED) == 0 && flags & SDL_WINDOW_INPUT_FOCUS != 0
+}
+
+/// Whether the window is on screen at all: not minimized or hidden.
+pub(crate) fn window_shown(flags: SDL_WindowFlags) -> bool {
+    flags & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_HIDDEN) == 0
 }

@@ -56,7 +56,7 @@ impl Hosts {
         host.native_seq += 1;
         let (epoch, seq) = (host.native_epoch, host.native_seq);
         let record = host.connect_record();
-        self.spawn("native-api", move || {
+        self.run_on(id, move || {
             let result = client_for(&identity, &record, &record.address).and_then(|client| {
                 let (capabilities, library) = if full {
                     (
