@@ -6229,6 +6229,24 @@ fn an_empty_filter_and_an_empty_library_say_so() {
     assert!(!shows(&f, "All") && !shows(&f, "No games match this filter."), "no chips: {:?}", f.drawn);
 }
 
+/// An empty library offers the way to games: wake the paired PC that sleeps, else go to the PCs.
+#[test]
+fn an_empty_library_offers_a_way_to_games() {
+    let mut f = home_with_stores(&[]);
+    f.l.open(Screen::AllGames);
+    f.settle();
+    let go = f.placed.iter().find(|(t, ..)| t == "Go to PCs").map(|p| p.1).unwrap_or_else(|| panic!("{:?}", f.drawn));
+    f.click_at(go.center(), egui::PointerButton::Primary);
+    assert!(f.l.screen == Screen::Hosts);
+    let mut f = home_with_stores(&[]);
+    f.hosts.list[0].reach = Reach::Offline;
+    f.l.open(Screen::AllGames);
+    f.settle();
+    let wake = f.placed.iter().find(|(t, ..)| t == "Wake Desk").map(|p| p.1).unwrap_or_else(|| panic!("{:?}", f.drawn));
+    let commands = f.click_at(wake.center(), egui::PointerButton::Primary);
+    assert!(commands.iter().any(|c| matches!(c, Command::Wake(_))));
+}
+
 /// All games is reachable over Home's first shelf even when every row fits and no All tile shows.
 /// It opens on All, whatever chip was chosen last.
 #[test]

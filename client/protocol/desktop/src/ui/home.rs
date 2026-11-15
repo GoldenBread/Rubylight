@@ -328,6 +328,7 @@ impl Launcher {
                             loading_covers(ui, tr("Loading the games…"), 1, true, this.cover_widest());
                         } else {
                             ui.label(RichText::new(tr("No games to show yet. They appear here once a PC that shares its game library is online.")).color(ON_SURFACE_VARIANT));
+                            this.empty_library_way(ui, view, commands);
                         }
                     }
                     // One row per store (or one for the library), as many covers as fit and an All tile for

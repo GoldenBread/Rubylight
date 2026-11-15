@@ -23,6 +23,27 @@ const BARE_LEAST: f32 = 200.0;
 const MIN_TITLE_ROOM: f32 = 160.0;
 
 impl Launcher {
+    /// Under an empty library, the way to games: wake a paired PC that can be woken, else go to the
+    /// PCs, else add one.
+    pub(super) fn empty_library_way(&mut self, ui: &mut Ui, view: &View<'_>, commands: &mut Vec<Command>) {
+        let asleep = view.hosts.list.iter().find(|h| h.paired() && h.reach == Reach::Offline && h.record.can_wake());
+        ui.add_space(space::S);
+        let (words, key) = match asleep {
+            Some(host) => (trf("Wake {}", &[&host.display_name()]), "empty-library-wake"),
+            None if !view.hosts.list.is_empty() => (en("Go to PCs").to_owned(), "empty-library-pcs"),
+            None => (en("Add PC").to_owned(), "empty-library-add"),
+        };
+        let r = ui.horizontal(|ui| quiet_button(ui, &words)).inner;
+        self.focus_item(&r, key, true);
+        if r.clicked() {
+            match asleep {
+                Some(host) => commands.push(Command::Wake(host.id)),
+                None if !view.hosts.list.is_empty() => self.go(Screen::Hosts),
+                None => self.add_host_dialog(),
+            }
+        }
+    }
+
     pub(super) fn add_host_dialog(&mut self) {
         self.dialog = Dialog::AddHost {
             text: String::new(),
@@ -252,6 +273,7 @@ impl Launcher {
                 return;
             }
             ui.label(RichText::new(tr("No games to show yet. They appear here once a PC that shares its game library is online.")).color(ON_SURFACE_VARIANT));
+            self.empty_library_way(ui, view, commands);
             return;
         }
         // While words narrow them each chip counts what it would show, and one that would show
