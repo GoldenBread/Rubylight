@@ -32,9 +32,15 @@ fn the_table_covers_only_overridable_settings_and_lists_only_covered_ones() {
                 "{} sets {key}, which is not covered",
                 preset.id
             );
-            // Each value is backed by a measurement that the table cites.
+            // Each value is backed by a measurement or documented vendor
+            // behaviour that the table cites.
             let evidence = preset.evidence.get(key).map_or("", String::as_str);
-            assert!(evidence.contains("PERFORMANCE"), "{} {key}", preset.id);
+            assert!(
+                evidence.contains("PERFORMANCE")
+                    || evidence.contains("NVIDIA's NVENC programming guide"),
+                "{} {key}",
+                preset.id
+            );
         }
     }
 }
@@ -60,6 +66,8 @@ fn balanced_sets_nothing_so_it_is_todays_defaults() {
     let nvenc = crate::nvenc::Tuning::new(&nothing, &stream(1)).unwrap();
     assert_eq!((nvenc.vbv_increase, nvenc.preset), (0, 1));
     assert!(!nvenc.temporal_aq);
+    assert_eq!(nvenc.split, 0);
+    assert!(!nvenc.split_driver_decides);
     for covered in &table().covered {
         let default = match covered.key.as_str() {
             "amd_max_frame_size" => "auto",
@@ -68,6 +76,7 @@ fn balanced_sets_nothing_so_it_is_todays_defaults() {
             "nvenc_vbv_increase" => "0",
             "nvenc_preset" => "1",
             "nvenc_temporal_aq" => "false",
+            "nvenc_split_encode" => "auto",
             other => panic!("{other} is covered but this test does not know its default"),
         };
         assert_eq!(covered.default, default);
@@ -105,6 +114,7 @@ fn each_preset_fills_the_settings_nobody_set() {
     assert_eq!(latency.get("amd_quality", ""), "speed");
     assert!(latency.values.contains_key("amd_preanalysis"));
     assert!(!latency.boolean("amd_preanalysis", true));
+    assert_eq!(latency.get("nvenc_split_encode", ""), "enabled");
     let reference = filled("stream_preset = reference");
     assert_eq!(reference.get("amd_max_frame_size", ""), "0");
     assert!(!reference.values.contains_key("amd_quality"));
@@ -274,7 +284,13 @@ fn every_amf_setting_a_preset_fills_has_its_nvenc_counterpart() {
     ];
     for preset in &table().presets {
         let amd = preset.settings.keys().filter(|k| k.starts_with("amd_"));
-        let nvenc = preset.settings.keys().filter(|k| k.starts_with("nvenc_"));
+        // NVENC-only settings have no AMF counterpart: AMF's split-frame
+        // encoding is always on, so a preset cannot set it.
+        let nvenc_only = ["nvenc_split_encode"];
+        let nvenc = preset
+            .settings
+            .keys()
+            .filter(|k| k.starts_with("nvenc_") && !nvenc_only.contains(&k.as_str()));
         assert_eq!(amd.count(), nvenc.count(), "{}", preset.id);
         for (key, value) in &preset.settings {
             if !key.starts_with("amd_") {
@@ -302,10 +318,12 @@ fn the_presets_reach_the_nvenc_tuning() {
         // One frame at 40 Mbps and 60 fps is 666,667 bits.
         let one_frame = tuning("").vbv(stream.bitrate_kbps, 60_000);
         assert_eq!(one_frame, 666_666, "codec {codec}");
-        // Lowest latency is P1, no temporal AQ and a one-frame VBV, as the defaults.
+        // Lowest latency is P1, no temporal AQ, a one-frame VBV and forced
+        // split; Balanced and Reference leave split on automatic.
         let latency = tuning("stream_preset = lowest_latency");
         assert_eq!(latency.preset, 1);
         assert!(!latency.temporal_aq);
+        assert_eq!(latency.split, 1);
         assert_eq!(latency.vbv(stream.bitrate_kbps, 60_000), one_frame);
         // Reference quality loosens the VBV to five frames and leaves the rest alone.
         let reference = tuning("stream_preset = reference");
@@ -314,6 +332,7 @@ fn the_presets_reach_the_nvenc_tuning() {
             one_frame * 5 + 3
         );
         assert_eq!(reference.preset, 1);
+        assert_eq!(reference.split, 0);
         assert_eq!(reference.rate_control, tuning("").rate_control);
         // An explicit value still wins.
         let explicit =

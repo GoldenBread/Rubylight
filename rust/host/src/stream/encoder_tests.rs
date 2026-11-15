@@ -1,4 +1,5 @@
 use super::*;
+use crate::stream::video::{CountedFailures, count_rebuild_failure};
 use butterpollo_windows::encoder::Encoded;
 use std::{collections::VecDeque, path::PathBuf};
 
@@ -470,6 +471,7 @@ fn output_resets_the_stall_even_if_the_encoder_backlog_stays_full() -> Result<()
     let start = Instant::now();
     let mut recovery = EncoderRecovery {
         failing: Some(start),
+        failure_epoch: 0,
         backlog_since: Some(start),
         recreations: 3,
         device_loss: None,
@@ -703,37 +705,142 @@ fn compute_conversion_moves_after_two_failures_within_the_window_only() {
     let start = Instant::now();
     let mut demotion = ComputeDemotion::default();
     // Two failures ten minutes apart keep compute.
-    assert!(!demotion.failed(start, true));
-    assert!(!demotion.failed(start + Duration::from_secs(600), true));
+    assert!(!demotion.failed(start, true, false));
+    assert!(!demotion.failed(start + Duration::from_secs(600), true, false));
     assert!(!demotion.demoted());
     // Failures while the graphics queue converted do not count against compute.
-    assert!(!demotion.failed(start + Duration::from_secs(610), false));
+    assert!(!demotion.failed(start + Duration::from_secs(610), false, false));
     assert!(!demotion.demoted());
     // A second compute failure within the window moves it, once.
     let moved = start + Duration::from_secs(600) + COMPUTE_FAILURE_WINDOW;
-    assert!(demotion.failed(moved, true));
+    assert!(demotion.failed(moved, true, false));
     assert!(demotion.demoted());
-    assert!(!demotion.failed(moved + Duration::from_secs(1), true));
+    assert!(!demotion.failed(moved + Duration::from_secs(1), true, false));
 }
 
 #[test]
 fn a_demoted_session_tries_compute_again_after_quiet_minutes() {
     let start = Instant::now();
     let mut demotion = ComputeDemotion::default();
-    assert!(!demotion.failed(start, true));
-    assert!(demotion.failed(start + Duration::from_secs(5), true));
+    assert!(!demotion.failed(start, true, false));
+    assert!(demotion.failed(start + Duration::from_secs(5), true, false));
     let moved = start + Duration::from_secs(5);
     let almost = moved + COMPUTE_RETRY_QUIET - Duration::from_secs(1);
     assert!(!demotion.retry_due(almost));
     // A failure on the graphics queue restarts the quiet period.
     let failed = moved + Duration::from_secs(120);
-    assert!(!demotion.failed(failed, false));
+    assert!(!demotion.failed(failed, false, false));
     assert!(!demotion.retry_due(moved + COMPUTE_RETRY_QUIET));
     assert!(demotion.retry_due(failed + COMPUTE_RETRY_QUIET));
     assert!(!demotion.demoted());
     assert!(!demotion.retry_due(failed + COMPUTE_RETRY_QUIET * 2));
     // Back on compute, one failure alone does not move it again.
     let back = failed + COMPUTE_RETRY_QUIET;
-    assert!(!demotion.failed(back + Duration::from_secs(1), true));
-    assert!(demotion.failed(back + Duration::from_secs(30), true));
+    assert!(!demotion.failed(back + Duration::from_secs(1), true, false));
+    assert!(demotion.failed(back + Duration::from_secs(30), true, false));
+}
+
+#[test]
+fn a_creation_fallback_keeps_the_graphics_queue_sticky() {
+    let start = Instant::now();
+    let mut demotion = ComputeDemotion::default();
+    demotion.demote_sticky(start);
+    assert!(demotion.demoted() && demotion.sticky());
+    assert!(!demotion.retry_due(start + COMPUTE_RETRY_QUIET * 10));
+    // A later failure keeps the graphics queue without a second move.
+    assert!(!demotion.failed(start + Duration::from_secs(1), false, true));
+}
+
+#[test]
+fn a_running_nvenc_d3d12_failure_demotes_on_its_second_failure_and_sticks() {
+    let start = Instant::now();
+    let mut demotion = ComputeDemotion::default();
+    // A failure, a rebuild on D3D12, then a second failure in the window.
+    assert!(!demotion.failed(start, true, true));
+    assert!(demotion.failed(start + Duration::from_secs(1), true, true));
+    assert!(demotion.demoted() && demotion.sticky());
+    assert!(!demotion.retry_due(start + COMPUTE_RETRY_QUIET * 10));
+}
+
+#[test]
+fn a_rebuild_without_a_new_failure_does_not_count_twice() {
+    let start = Instant::now();
+    let mut recovery = EncoderRecovery::default();
+    let mut counted = CountedFailures::default();
+    let mut demotion = ComputeDemotion::default();
+    // The first failure, then the rebuild that follows it.
+    let since = recovery.record_failure(start);
+    assert!(!count_rebuild_failure(
+        &recovery,
+        &mut counted,
+        &mut demotion,
+        start,
+        true,
+        true
+    ));
+    // The rebuild produced no frame and is rebuilt again with no new failure:
+    // the same event must not count as the second failure.
+    assert!(!count_rebuild_failure(
+        &recovery,
+        &mut counted,
+        &mut demotion,
+        start + Duration::from_secs(1),
+        true,
+        true
+    ));
+    assert!(!demotion.demoted());
+    // A second real failure, still in the same recovery episode, counts, so a
+    // D3D12 path that fails, rebuilds and fails again demotes stickily.
+    assert_eq!(
+        recovery.record_failure(start + Duration::from_secs(2)),
+        since
+    );
+    assert!(count_rebuild_failure(
+        &recovery,
+        &mut counted,
+        &mut demotion,
+        start + Duration::from_secs(2),
+        true,
+        true
+    ));
+    assert!(demotion.demoted() && demotion.sticky());
+}
+
+#[test]
+fn a_device_loss_never_counts_towards_compute_demotion() {
+    let start = Instant::now();
+    let mut recovery = EncoderRecovery::default();
+    let mut counted = CountedFailures::default();
+    let mut demotion = ComputeDemotion::default();
+    recovery.record_failure(start);
+    counted.device_loss(recovery.failure_epoch);
+    assert!(!count_rebuild_failure(
+        &recovery,
+        &mut counted,
+        &mut demotion,
+        start,
+        true,
+        true
+    ));
+    // The next real failure in the same episode counts on its own, and a
+    // second one in the window moves conversion to the graphics queue.
+    recovery.record_failure(start + Duration::from_secs(1));
+    assert!(!count_rebuild_failure(
+        &recovery,
+        &mut counted,
+        &mut demotion,
+        start + Duration::from_secs(1),
+        true,
+        true
+    ));
+    recovery.record_failure(start + Duration::from_secs(2));
+    assert!(count_rebuild_failure(
+        &recovery,
+        &mut counted,
+        &mut demotion,
+        start + Duration::from_secs(2),
+        true,
+        true
+    ));
+    assert!(demotion.demoted() && demotion.sticky());
 }

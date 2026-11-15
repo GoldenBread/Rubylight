@@ -188,18 +188,18 @@ fn inherited_framegen_keeps_explicit_capture_and_sync_contract() {
     )
     .unwrap();
     let p = Policy::resolve(&c, Rate(59940), true, "game-provided", false, false).unwrap();
-    assert_eq!(p.display_rate, Rate(119880));
+    assert_eq!(p.display_rate, Rate(239760));
     assert_eq!(p.sync_limiter, 1);
     assert_eq!(p.capture, "ddx");
     let p = Policy::resolve(&c, Rate(59940), true, "game-provided", false, true).unwrap();
     assert_eq!(p.sync_limiter, 2);
     c.values
-        .insert("virtual_display_refresh".into(), "enabled".into());
+        .insert("virtual_display_refresh".into(), "legacy".into());
     assert_eq!(
         Policy::resolve(&c, Rate(59940), true, "game-provided", false, false)
             .unwrap()
             .display_rate,
-        Rate(239760)
+        Rate(119880)
     );
 }
 /// Reflex came back with NVENC: an NVIDIA stream that syncs RTSS itself uses Reflex, and a
@@ -237,12 +237,15 @@ fn virtual_refresh_reads_vibepollo_spellings() {
         ("disable", VirtualRefresh::Disabled),
         ("smoother", VirtualRefresh::Enabled),
         ("1000hz", VirtualRefresh::Vrr),
-        ("sideways", VirtualRefresh::Legacy),
+        ("sideways", VirtualRefresh::Enabled),
     ] {
         let c = Config::parse(&format!("virtual_display_refresh={value}")).unwrap();
         assert_eq!(virtual_refresh(&c), mode, "{value}");
     }
-    assert_eq!(virtual_refresh(&Config::default()), VirtualRefresh::Legacy);
+    assert_eq!(virtual_refresh(&Config::default()), VirtualRefresh::Enabled);
+    let default =
+        Policy::resolve(&Config::default(), Rate(60_000), true, "none", false, false).unwrap();
+    assert_eq!(default.display_rate, Rate(240_000));
     let c = Config::parse("virtual_display_refresh=fixed-2x").unwrap();
     let p = Policy::resolve(&c, Rate(60000), true, "none", false, false).unwrap();
     assert_eq!(p.display_rate, Rate(120000));

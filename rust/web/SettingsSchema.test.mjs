@@ -150,7 +150,7 @@ test('spellings the host reads as an option show as that option', () => {
     ['nvenc_split_encode', 'forced', 'enabled'],
     ['nvenc_split_encode', true, 'enabled'],
     ['nvenc_split_encode', 'false', 'disabled'],
-    ['nvenc_split_encode', 'driver_decides', 'auto'],
+    ['nvenc_split_encode', 'driver_decides', 'driver_decides'],
     ['capture', 'dxgi', 'ddx'],
     ['capture', 'WGCC', 'wgc'],
     ['capture', 'DDX', 'ddx'],
@@ -220,7 +220,8 @@ test('a saved alias is written back only when the edit means something else', ()
   assert.deepEqual(computeChanges(settings, { amd_vbaq: 'disabled' }, { amd_vbaq: 'true' }), { amd_vbaq: 'disabled' });
   assert.deepEqual(computeChanges(settings, { amd_vbaq: null }, { amd_vbaq: 'true' }), { amd_vbaq: null });
   // An alias of the default is the default.
-  assert.equal(differsFromDefault(settings.get('virtual_display_refresh'), {}, { virtual_display_refresh: '2x' }), false);
+  assert.equal(differsFromDefault(settings.get('virtual_display_refresh'), {}, { virtual_display_refresh: 'enabled' }), false);
+  assert.equal(differsFromDefault(settings.get('virtual_display_refresh'), {}, { virtual_display_refresh: '2x' }), true);
   assert.equal(differsFromDefault(settings.get('min_log_level'), {}, { min_log_level: 2 }), false);
   assert.equal(differsFromDefault(vbaq, {}, { amd_vbaq: 'true' }), true);
   // Visibility follows what the host reads.
@@ -327,7 +328,7 @@ test('the NVENC group holds exactly the settings the NVENC encoder reads, with i
     assert.equal(settings.get(key).default, value, key);
   }
   assert.deepEqual(settings.get('nvenc_split_encode').control.options.map(option => option.value),
-    ['auto', 'enabled', 'disabled', 'two_strips', 'three_strips', 'four_strips']);
+    ['auto', 'driver_decides', 'enabled', 'disabled', 'two_strips', 'three_strips', 'four_strips']);
   for (const setting of shown) assert.doesNotMatch(`${setting.label} ${setting.description} ${setting.details ?? ''}`, /experimental|FFmpeg/i, setting.key);
 });
 

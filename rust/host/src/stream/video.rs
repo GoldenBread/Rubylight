@@ -145,23 +145,39 @@ pub(super) const COMPUTE_RETRY_QUIET: Duration = Duration::from_secs(5 * 60);
 /// holding the GPU, a driver reset) must not cost the session the slower
 /// path, 6-9 ms a frame beside a GPU-bound game. Only failures while compute
 /// was converting count, two within [`COMPUTE_FAILURE_WINDOW`] move it, and
-/// [`COMPUTE_RETRY_QUIET`] without a failure moves it back.
+/// [`COMPUTE_RETRY_QUIET`] without a failure moves it back. NVENC's D3D12 path
+/// is the unverified one: a creation fallback keeps the graphics queue for the
+/// session, and a running D3D12 failure demotes stickily on its second failure
+/// in the window rather than stalling twice every retry window.
 #[derive(Debug, Default)]
 pub(super) struct ComputeDemotion {
     /// The last failure that counted against compute and has no pair yet.
     last_failure: Option<Instant>,
     /// While on the graphics queue: the move or the last failure since.
     quiet_since: Option<Instant>,
+    /// No retry for the rest of this session.
+    sticky: bool,
 }
 
 impl ComputeDemotion {
     pub(super) fn demoted(&self) -> bool {
         self.quiet_since.is_some()
     }
+    /// Whether the demotion lasts for the rest of the session.
+    pub(super) fn sticky(&self) -> bool {
+        self.sticky
+    }
+    /// Keep the graphics queue for the rest of the session without another
+    /// failure: used when NVENC's D3D12 attempt already fell back at creation.
+    pub(super) fn demote_sticky(&mut self, at: Instant) {
+        self.last_failure = None;
+        self.quiet_since = Some(at);
+        self.sticky = true;
+    }
     /// An encoder failure at `at`, `on_compute` when the failing encoder
-    /// converted on a compute queue. True when it moves the session to the
-    /// graphics queue.
-    pub(super) fn failed(&mut self, at: Instant, on_compute: bool) -> bool {
+    /// converted on a compute queue. `sticky` keeps the graphics queue for the
+    /// session. True when it moves the session to the graphics queue.
+    pub(super) fn failed(&mut self, at: Instant, on_compute: bool, sticky: bool) -> bool {
         if let Some(quiet) = self.quiet_since.as_mut() {
             *quiet = (*quiet).max(at);
             return false;
@@ -173,6 +189,7 @@ impl ComputeDemotion {
             Some(previous) if at.saturating_duration_since(previous) <= COMPUTE_FAILURE_WINDOW => {
                 self.last_failure = None;
                 self.quiet_since = Some(at);
+                self.sticky = sticky;
                 true
             }
             _ => false,
@@ -182,6 +199,9 @@ impl ComputeDemotion {
     /// [`COMPUTE_RETRY_QUIET`] without a failure and may convert on compute
     /// again.
     pub(super) fn retry_due(&mut self, now: Instant) -> bool {
+        if self.sticky {
+            return false;
+        }
         match self.quiet_since {
             Some(since) if now.saturating_duration_since(since) >= COMPUTE_RETRY_QUIET => {
                 self.quiet_since = None;
@@ -190,6 +210,48 @@ impl ComputeDemotion {
             _ => false,
         }
     }
+}
+
+/// Encoder failure events already counted towards [`ComputeDemotion`], by
+/// [`EncoderRecovery::failure_epoch`], and the events that were GPU resets or
+/// device losses. A rebuild can run more than once for one failure; only a new
+/// event counts.
+#[derive(Debug, Default)]
+pub(super) struct CountedFailures {
+    counted: Option<u64>,
+    device_loss: Option<u64>,
+}
+
+impl CountedFailures {
+    /// `epoch` was a GPU reset or device loss, which is not the compute path's
+    /// fault and never counts.
+    pub(super) fn device_loss(&mut self, epoch: u64) {
+        self.device_loss = Some(epoch);
+    }
+
+    /// True once per failure event, unless it was a device loss.
+    pub(super) fn counts(&mut self, epoch: u64) -> bool {
+        if self.counted == Some(epoch) || self.device_loss == Some(epoch) {
+            return false;
+        }
+        self.counted = Some(epoch);
+        true
+    }
+}
+
+/// Count a rebuild's encoder failure against `demotion`: only a new failure
+/// event counts, so repeated rebuilds for one failure cannot demote early.
+pub(super) fn count_rebuild_failure(
+    recovery: &EncoderRecovery,
+    counted: &mut CountedFailures,
+    demotion: &mut ComputeDemotion,
+    at: Instant,
+    on_compute: bool,
+    sticky: bool,
+) -> bool {
+    recovery.failing.is_some()
+        && counted.counts(recovery.failure_epoch)
+        && demotion.failed(at, on_compute, sticky)
 }
 
 pub(super) fn encoder_progress(
@@ -268,6 +330,9 @@ impl EncoderOutput for Encoder {
 #[derive(Default)]
 pub(super) struct EncoderRecovery {
     pub(super) failing: Option<Instant>,
+    /// Counts failure events, not rebuilds: a sequence that fails, rebuilds
+    /// and fails again has two epochs even though `failing` never cleared.
+    pub(super) failure_epoch: u64,
     pub(super) backlog_since: Option<Instant>,
     pub(super) recreations: u32,
     pub(super) device_loss: Option<DeviceLost>,
@@ -312,6 +377,14 @@ impl QueryTrace {
 const TRACED_QUERIES: usize = 1024;
 
 impl EncoderRecovery {
+    /// Record one encoder failure at `now`, starting the recovery episode if
+    /// this is its first failure. Returns the episode's start; the epoch
+    /// increments for every failure event.
+    pub(super) fn record_failure(&mut self, now: Instant) -> Instant {
+        let since = *self.failing.get_or_insert(now);
+        self.failure_epoch = self.failure_epoch.wrapping_add(1);
+        since
+    }
     pub(super) fn pending(&self, encoder: &impl EncoderOutput) -> bool {
         if self.device_loss.is_some() {
             return false;
@@ -373,10 +446,10 @@ impl EncoderRecovery {
                     .or_else(|| DeviceLost::from_error(&error))
                 {
                     self.device_loss = Some(loss);
-                    self.failing.get_or_insert_with(&now);
+                    self.record_failure(now());
                     return Ok(vec![]);
                 }
-                let since = *self.failing.get_or_insert_with(&now);
+                let since = self.record_failure(now());
                 if now().duration_since(since) >= ENCODER_RECOVERY {
                     return Err(error.context(EncoderFailure("the encoder kept failing")));
                 }
@@ -416,10 +489,10 @@ impl EncoderRecovery {
             self.backlog_since = None;
             if let Some(loss) = encoder.as_ref().unwrap().device_removed() {
                 self.device_loss = Some(loss);
-                self.failing.get_or_insert_with(&now);
+                self.record_failure(now());
                 return Ok(None);
             }
-            let since = *self.failing.get_or_insert_with(&now);
+            let since = self.record_failure(now());
             if now().duration_since(since) >= ENCODER_RECOVERY {
                 return Err(EncoderFailure("the encoder stopped returning frames").into());
             }

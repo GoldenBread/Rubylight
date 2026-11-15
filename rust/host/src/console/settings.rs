@@ -146,7 +146,7 @@ pub const GLOBAL: &[Setting] = settings! {
         "nvenc_twopass", "Multi-pass encoding", Choice(&["disabled","quarter_res","full_res"]);
         "nvenc_spatial_aq", "Spatial adaptive quantization", Bool;
         "nvenc_temporal_aq", "Temporal adaptive quantization", Bool;
-        "nvenc_split_encode", "Split-frame encoding (HEVC and AV1)", Choice(&["auto","enabled","disabled","two_strips","three_strips","four_strips"]);
+        "nvenc_split_encode", "Split-frame encoding (HEVC and AV1)", Choice(&["auto","driver_decides","enabled","disabled","two_strips","three_strips","four_strips"]);
         "nvenc_frame_budget_guard", "Frame time guard (a faster preset when frames would be late)", Bool;
         "nvenc_realtime_hags", "Realtime GPU priority under hardware-accelerated GPU scheduling", Bool;
         "nvenc_latency_over_power", "Full GPU clocks while streaming", Bool;
@@ -362,6 +362,7 @@ pub fn render(prefix: &str, schema: &[Setting], values: &Value) -> String {
                             "true" | "enabled" => "On",
                             "false" | "disabled" => "Off",
                             "auto" => "Automatic",
+                            "driver_decides" => "Driver decides (implicit only)",
                             "none" => "None",
                             "exclusive" => "Turn off other monitors",
                             "extended" => "Extend — keep PC display primary",

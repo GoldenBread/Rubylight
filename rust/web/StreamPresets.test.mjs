@@ -98,10 +98,12 @@ test('each preset sets the NVENC counterparts of the AMF settings it sets', () =
   const stored = { stream_preset: 'reference', nvenc_vbv_increase: 50 };
   assert.equal(differsFromDefault(reference.byKey.get('nvenc_vbv_increase'), {}, stored), true);
   assert.deepEqual(computeChanges(reference.byKey, { stream_preset: 'reference' }, {}, explicit), { stream_preset: 'reference' });
-  // Every AMF setting a preset fills has an NVENC one beside it.
+  // Every AMF setting a preset fills has an NVENC one beside it. NVENC's
+  // split mode has no AMF counterpart: AMF splits on its own.
   for (const preset of table.presets) {
     const keys = Object.keys(preset.settings);
-    assert.equal(keys.filter(key => key.startsWith('nvenc_')).length, keys.filter(key => key.startsWith('amd_')).length, preset.id);
+    const nvenc = keys.filter(key => key.startsWith('nvenc_') && key !== 'nvenc_split_encode');
+    assert.equal(nvenc.length, keys.filter(key => key.startsWith('amd_')).length, preset.id);
   }
 });
 

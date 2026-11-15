@@ -9,10 +9,13 @@
 //! most specific name (app, then device, then host) is the one that fills
 //! the covered settings left unset by all three layers.
 //!
-//! Every value is one an existing setting already takes and that
-//! `rust/PERFORMANCE.md` or `rust/PERFORMANCE_WORK.md` measured; the table's
-//! `evidence` field names the section. Balanced sets nothing: it is today's
-//! defaults. No preset adds an encoder knob. Pre-analysis, quality presets,
+//! Every value is one an existing setting already takes. Most are measured
+//! in `rust/PERFORMANCE.md` or `rust/PERFORMANCE_WORK.md`, which the table's
+//! `evidence` field names. NVENC's split-frame mode is also set from NVIDIA's
+//! documented behaviour and other hosts' defaults; Rubylight has no NVIDIA
+//! hardware measurement for it. Balanced sets nothing: it is today's
+//! defaults. The only encoder knob a preset adds is that split mode; AMF
+//! decides split through `amd_split_frame`. Pre-analysis, quality presets,
 //! quality rate-control modes and the high-motion boost stay out of Reference
 //! quality because the measurements show no consistent picture gain for their
 //! encode time. Packed 4:4:4 is no Reference default either: on text and UI

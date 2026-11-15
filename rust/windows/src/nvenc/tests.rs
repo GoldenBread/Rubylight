@@ -1883,6 +1883,40 @@ fn the_frame_budget_guard_lowers_a_slow_preset_unless_turned_off() -> Result<()>
     Ok(())
 }
 #[test]
+fn auto_forces_split_for_a_wide_high_rate_mode_but_driver_decides_does_not() -> Result<()> {
+    let wide = Negotiated {
+        codec: 1,
+        width: 3440,
+        height: 1440,
+        fps: 240,
+        ..Default::default()
+    };
+    reset();
+    state(|d| d.engines = 2);
+    let encoder = session_with(&wide, ApiVersion(13, 0), "nvenc_preset = 4\n")?;
+    // One engine misses 240 Hz, so auto uses both engines and the guard
+    // keeps the slowest preset that fits: P3.
+    assert_eq!(encoder.budget.unwrap().effective, 3);
+    assert!(encoder.budget.unwrap().split);
+    assert_eq!(initialized().0.splitEncodeMode(), 1);
+    drop(encoder);
+    reset();
+    state(|d| d.engines = 2);
+    let encoder = session_with(
+        &wide,
+        ApiVersion(13, 0),
+        "nvenc_preset = 4\nnvenc_split_encode = driver_decides\n",
+    )?;
+    // The escape hatch keeps NVIDIA's implicit split only, which 1440p does
+    // not reach; the guard falls to P1.
+    assert_eq!(encoder.budget.unwrap().effective, 1);
+    assert!(!encoder.budget.unwrap().split);
+    assert_eq!(initialized().0.splitEncodeMode(), 0);
+    drop(encoder);
+    assert_clean();
+    Ok(())
+}
+#[test]
 fn split_strips_and_the_slice_mode_follow_the_settings() -> Result<()> {
     let hevc = Negotiated {
         codec: 1,

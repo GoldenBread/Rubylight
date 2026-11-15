@@ -354,7 +354,12 @@ impl Encoder {
                 created => created,
             };
             return match created {
-                Ok(encoder) => Ok(Self::Nvenc(Box::new(encoder))),
+                Ok(mut encoder) => {
+                    if compute.is_some() && !encoder.converts_on_compute() {
+                        encoder.mark_compute_fallback();
+                    }
+                    Ok(Self::Nvenc(Box::new(encoder)))
+                }
                 Err(error) => Err(nvenc_failed(error, &image.gpu.display.adapter)),
             };
         }
@@ -445,6 +450,11 @@ impl Encoder {
             Self::Nvenc(e) => e.converts_on_compute(),
             Self::Pyrowave(e) => e.converts_on_compute(),
         }
+    }
+    /// Whether NVENC fell back from its D3D12 session to the graphics queue
+    /// on this creation.
+    pub fn compute_fell_back(&self) -> bool {
+        matches!(self, Self::Nvenc(e) if e.compute_fell_back())
     }
     pub fn accepts_gpu_device(&self, image: &GpuImage) -> bool {
         match self {

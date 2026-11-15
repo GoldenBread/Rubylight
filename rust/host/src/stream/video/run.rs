@@ -95,13 +95,25 @@ impl SessionThread<'_> {
         };
         // Encoder failures in this session, each counted once, and whether
         // they moved conversion off the compute queue.
-        let (mut compute_demotion, mut counted_failure) = (ComputeDemotion::default(), None);
+        let mut compute_demotion = ComputeDemotion::default();
+        if encoder
+            .as_ref()
+            .is_some_and(|encoder| encoder.compute_fell_back())
+        {
+            compute_demotion.demote_sticky(Instant::now());
+        }
+        // The encoder failure events already counted towards
+        // [`ComputeDemotion`], so a rebuild that does not follow a new failure
+        // does not count the same one again.
+        let mut counted_failures = CountedFailures::default();
         // Whether the last encoder made converted on a compute queue: a
         // failing one is dropped before its failure is counted.
         let mut converting_on_compute = encoder.as_ref().is_some_and(|encoder| encoder.converts_on_compute());
-        // The failure (its start) that was a GPU reset or device loss: not the compute path's
-        // fault, so it does not count towards converting on the graphics queue.
-        let mut device_loss_failure: Option<Instant> = None;
+        // Whether that compute conversion was NVENC's D3D12 session, the
+        // unverified path that a failed session leaves for good.
+        let mut nvenc_on_compute = encoder
+            .as_ref()
+            .is_some_and(|encoder| encoder.converts_on_compute() && encoder.backend() == "nvenc");
         // AMF's video converter refused a long run of frames for a lasting reason: the rest of
         // the session encodes without it, converting on the compute queue.
         let mut vpe_gave_way = false;
@@ -740,6 +752,9 @@ impl SessionThread<'_> {
                 progress.mark(crate::stall_watch::Phase::Loop);
                 if let Some(sender) = video_sender.get() { sender.backlog()?; }
                 if let Some(loss) = recovery.device_loss.take() {
+                    // A GPU reset or device loss is not the compute path's
+                    // fault, so its failure event never counts against it.
+                    counted_failures.device_loss(recovery.failure_epoch);
                     latest.latest.device_lost(loss, &latest.warnings, Instant::now())?;
                     *encoder = None;
                 }
@@ -1245,14 +1260,20 @@ impl SessionThread<'_> {
                     *encoder = None;
                     // Failures while compute converted can move conversion
                     // to the graphics queue for a while ([`ComputeDemotion`]).
-                    if let Some(since) = recovery.failing
-                        && counted_failure != Some(since)
-                        && device_loss_failure != Some(since)
-                    {
-                        counted_failure = Some(since);
-                        if compute_demotion.failed(Instant::now(), converting_on_compute) {
-                            tracing::warn!(client = %s.launch.client.name, window_secs = COMPUTE_FAILURE_WINDOW.as_secs(), retry_quiet_secs = COMPUTE_RETRY_QUIET.as_secs(), "encoder conversion moves to the graphics queue: a second encoder failure within the window while the compute queue converted");
-                        }
+                    // Each failure event counts once, not each rebuild: a
+                    // failure whose first rebuild yields no frame yet, or an
+                    // enhancement change, must not count twice. An NVENC
+                    // D3D12 path that fails, rebuilds on D3D12 and fails again
+                    // counts both failures.
+                    if count_rebuild_failure(
+                        &recovery,
+                        &mut counted_failures,
+                        &mut compute_demotion,
+                        Instant::now(),
+                        converting_on_compute || nvenc_on_compute,
+                        nvenc_on_compute,
+                    ) {
+                        tracing::warn!(client = %s.launch.client.name, window_secs = COMPUTE_FAILURE_WINDOW.as_secs(), retry_quiet_secs = COMPUTE_RETRY_QUIET.as_secs(), sticky = nvenc_on_compute, "encoder conversion moves to the graphics queue: a second encoder failure within the window while the compute queue converted");
                     }
                     let mut tuning = c.clone();
                     if vpe_gave_way {
@@ -1261,7 +1282,12 @@ impl SessionThread<'_> {
                     if compute_demotion.demoted() {
                         tuning.values.insert("gpu_compute_conversion".into(), "false".into());
                         if butterpollo_windows::compute::enabled(&c) {
-                            s.launch.warnings.set("encoder_compute_recovery", "Compute conversion paused after two encoder failures within a minute; converting on the graphics queue, where a busy game can delay frames. Compute is tried again after 5 minutes without a failure; lower game GPU load or update the graphics driver if this repeats.");
+                            let retry = if compute_demotion.sticky() {
+                                "Compute is not tried again for this stream."
+                            } else {
+                                "Compute is tried again after 5 minutes without a failure."
+                            };
+                            s.launch.warnings.set("encoder_compute_recovery", format!("Compute conversion paused after an encoder failure on the compute path; converting on the graphics queue, where a busy game can delay frames. {retry} Lower game GPU load or update the graphics driver if this repeats."));
                         }
                     }
                     progress.mark(crate::stall_watch::Phase::EncoderCreate);
@@ -1272,7 +1298,12 @@ impl SessionThread<'_> {
                         &s.launch.warnings,
                     ) {
                         Ok(mut created) => {
+                            if created.compute_fell_back() {
+                                compute_demotion.demote_sticky(Instant::now());
+                                tracing::warn!(client = %s.launch.client.name, "NVENC's D3D12 session failed at creation; keeping the graphics queue for this stream");
+                            }
                             converting_on_compute = created.converts_on_compute();
+                            nvenc_on_compute = converting_on_compute && created.backend() == "nvenc";
                             *s.encoder.write().unwrap() = created.backend().into();
                             created.set_hdr_target(s.hdr_target_nits());
                             // A mode switch can turn `auto` slices on or off.
@@ -1288,7 +1319,8 @@ impl SessionThread<'_> {
                         Err(error) => {
                             if let Some(loss) = DeviceLost::d3d11(&image.gpu.device).or_else(|| DeviceLost::from_error(&error)) {
                                 recovery.device_loss = Some(loss);
-                                device_loss_failure = Some(*recovery.failing.get_or_insert_with(Instant::now));
+                                recovery.record_failure(Instant::now());
+                                counted_failures.device_loss(recovery.failure_epoch);
                                 continue;
                             }
                             // The encoder cannot make the size or rate the client
@@ -1307,7 +1339,7 @@ impl SessionThread<'_> {
                                 tracing::info!(client = %s.launch.client.name, from = %from, to = %to, error = %format!("{error:#}"), "reconfigure refused: the encoder cannot make this mode; keeping the previous one");
                                 continue;
                             }
-                            let since = *recovery.failing.get_or_insert_with(Instant::now);
+                            let since = recovery.record_failure(Instant::now());
                             if since.elapsed() >= ENCODER_RECOVERY {
                                 return Err(error.context(EncoderFailure("the encoder could not be recreated")));
                             }
@@ -1571,7 +1603,8 @@ impl SessionThread<'_> {
                             .or_else(|| DeviceLost::from_error(&error))
                         {
                             recovery.device_loss = Some(loss);
-                            device_loss_failure = Some(*recovery.failing.get_or_insert_with(Instant::now));
+                            recovery.record_failure(Instant::now());
+                            counted_failures.device_loss(recovery.failure_epoch);
                             continue;
                         }
                         // The first frame at a size the client asked for failed:
@@ -1593,7 +1626,7 @@ impl SessionThread<'_> {
                         // A stalled or reset GPU costs these frames and a
                         // keyframe; the rebuild requests it. Only failures
                         // that keep coming end the session.
-                        let since = *recovery.failing.get_or_insert_with(Instant::now);
+                        let since = recovery.record_failure(Instant::now());
                         if since.elapsed() >= ENCODER_RECOVERY {
                             return Err(error.context(EncoderFailure("the encoder kept failing")));
                         }

@@ -112,7 +112,7 @@ const video: Setting[] = [
     description:
       'One choice that fills in the AMD and NVIDIA encoder settings you have not set yourself. Balanced suits almost everyone; settings you change below always win.',
     details:
-      'Balanced is Rubylight\'s defaults. Lowest latency limits every frame, recovery keyframes (full pictures the stream restarts from after loss) included, to one frame\'s share of the bitrate. Reference quality leaves recovery keyframes unlimited, which suits a fast, steady link. No preset changes the rate control. Each value comes from our own measurements in PERFORMANCE.md. A device or an app can choose its own preset.',
+      'Balanced is Rubylight\'s defaults. Lowest latency limits every frame, recovery keyframes (full pictures the stream restarts from after loss) included, to one frame\'s share of the bitrate, and asks NVENC to split HEVC and AV1 frames across its engines where supported. Reference quality leaves recovery keyframes unlimited, which suits a fast, steady link. No preset changes the rate control. Most values come from our own measurements; the NVIDIA split mode follows NVIDIA\'s documentation and other hosts\' defaults. A device or an app can choose its own preset.',
     category: 'video',
     group: 'Preset',
     control: {
@@ -1231,7 +1231,7 @@ const amd: Setting[] = [
 
 /** nvenc.rs: Vibepollo's nvenc_force_split_encode values and the fallback console's forced. */
 const splitWords: Aliases = {
-  spellings: { true: 'enabled', forced: 'enabled', false: 'disabled', driver_decides: 'auto' },
+  spellings: { true: 'enabled', forced: 'enabled', false: 'disabled' },
 };
 
 const nvidia: Setting[] = [
@@ -1337,7 +1337,7 @@ const nvidia: Setting[] = [
     key: 'nvenc_spatial_aq',
     label: 'Spatial adaptive quantization',
     description:
-      'Gives flat areas, where blocking shows most, more bits and detailed areas fewer. Adds no latency; leave it on.',
+      'Gives flat areas, where blocking shows most, more bits and detailed areas fewer. NVIDIA recommends it for game streaming and lists no latency cost; leave it on.',
     category: 'encoders',
     group: 'NVIDIA NVENC',
     control: { kind: 'toggle' },
@@ -1361,15 +1361,16 @@ const nvidia: Setting[] = [
     key: 'nvenc_split_encode',
     label: 'Split-frame encoding',
     description:
-      'Splits each HEVC or AV1 frame across several encoder engines on GPUs that have them. Leave it on Automatic, which lets the driver decide.',
+      'Splits HEVC or AV1 frames across NVENC engines, including when one engine is late; Driver decides keeps the implicit split. Leave it on Automatic unless a seam appears.',
     details:
-      'A fixed strip count asks for that many strips; a GPU with fewer engines encodes fewer. H.264 and drivers before NVENC API 12.1 ignore it, and weighted prediction turns it off for HEVC.',
+      'Implicit split needs two or more engines, an HEVC frame 2112 rows high or an AV1 frame 2048, and P1 to P4. A forced mode or Automatic may split lower frames too; a fixed strip count asks for that many strips. H.264 and drivers before NVENC API 12.2 ignore it, and weighted prediction turns it off for HEVC. Splitting is faster and can cost some picture quality; choose Driver decides or Off if a seam shows at low bitrate.',
     category: 'encoders',
     group: 'NVIDIA NVENC',
     control: {
       kind: 'select',
       options: [
         { value: 'auto', label: 'Automatic' },
+        { value: 'driver_decides', label: 'Driver decides (implicit only)' },
         { value: 'enabled', label: 'On' },
         { value: 'disabled', label: 'Off' },
         { value: 'two_strips', label: 'Two strips' },

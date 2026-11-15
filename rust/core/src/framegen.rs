@@ -137,10 +137,10 @@ pub enum VirtualRefresh {
     Vrr,
     Disabled,
 }
-/// The setting with Vibepollo's spellings. The default is legacy rather
-/// than Vibepollo's enabled: 2x measured lower latency here.
+/// The setting with Vibepollo's spellings. The default is four times the
+/// stream rate; twice remains the lower-load option.
 pub fn virtual_refresh(config: &Config) -> VirtualRefresh {
-    let value = config.get("virtual_display_refresh", "legacy");
+    let value = config.get("virtual_display_refresh", "enabled");
     match normalize(value).as_str() {
         "" | "legacy" | "2x" | "fixed2x" => VirtualRefresh::Legacy,
         "vrr" | "1000hz" | "1000" | "fixed1000hz" => VirtualRefresh::Vrr,
@@ -150,7 +150,7 @@ pub fn virtual_refresh(config: &Config) -> VirtualRefresh {
         }
         _ => {
             crate::config::invalid("virtual_display_refresh", value);
-            VirtualRefresh::Legacy
+            VirtualRefresh::Enabled
         }
     }
 }

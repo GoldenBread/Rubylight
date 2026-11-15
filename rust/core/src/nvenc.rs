@@ -266,6 +266,46 @@ impl RateControl {
 /// `splitEncodeMode` for split-frame encoding switched off.
 pub const SPLIT_DISABLED: u32 = 15;
 
+/// Whether this codec and GPU can spread one frame over several NVENC
+/// engines at all: HEVC and AV1 from API 12.2, with more than one engine and
+/// without HEVC weighted prediction. API 12.1 is excluded because Rubylight
+/// always sets a fixed slice mode there, which keeps the driver from
+/// splitting (see [`Tuning::slice_mode`]).
+pub fn split_capable(codec: u8, api: ApiVersion, engines: u32, weighted: bool) -> bool {
+    codec != 0 && api.modern_depth() && engines > 1 && !(codec == 1 && weighted)
+}
+/// Whether NVIDIA's implicit `NV_ENC_SPLIT_AUTO_MODE` engages at `preset`:
+/// a frame at least 2112 rows high for HEVC or 2048 for AV1, at the
+/// ultra-low-latency presets P1 to P4.
+pub fn split_implicit(codec: u8, height: u32, preset: usize) -> bool {
+    preset <= 4 && height >= if codec == 1 { 2112 } else { 2048 }
+}
+/// The effective split decision for one session: whether split-frame
+/// encoding gives the multi-engine speedup at a given preset.
+#[derive(Clone, Copy, Debug)]
+pub struct SplitContext {
+    pub codec: u8,
+    pub api: ApiVersion,
+    pub engines: u32,
+    pub weighted: bool,
+    pub subframe: bool,
+    pub slices: u32,
+    pub mode: u32,
+    pub height: u32,
+}
+impl SplitContext {
+    pub fn engages(&self, preset: usize) -> bool {
+        split_capable(self.codec, self.api, self.engines, self.weighted)
+            && !self.subframe
+            && self.slices <= 1
+            && match self.mode {
+                1..=4 => true,
+                0 => split_implicit(self.codec, self.height, preset),
+                _ => false,
+            }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Tuning {
     pub preset: usize,
@@ -278,6 +318,9 @@ pub struct Tuning {
     pub cavlc: bool,
     pub filler: bool,
     pub split: u32,
+    /// `nvenc_split_encode = driver_decides`: pure implicit split, without the
+    /// budget forcing `auto` applies.
+    pub split_driver_decides: bool,
     pub rate_control: RateControl,
     /// Lower `preset` when its estimated encode time misses the frame budget
     /// ([`frame_budget`]).
@@ -302,19 +345,21 @@ impl Tuning {
                 1
             }
         };
-        let split = match config.get("nvenc_split_encode", "auto") {
-            "disabled" | "false" => SPLIT_DISABLED,
-            // Vibepollo's name for automatic split encoding.
-            "auto" | "driver_decides" => 0,
-            "forced" | "enabled" | "true" => 1,
+        let (split, split_driver_decides) = match config.get("nvenc_split_encode", "auto") {
+            "disabled" | "false" => (SPLIT_DISABLED, false),
+            "auto" => (0, false),
+            // Vibepollo's name for implicit split: the driver decides alone,
+            // without the budget-forced split `auto` may apply.
+            "driver_decides" => (0, true),
+            "forced" | "enabled" | "true" => (1, false),
             // Foundation Sunshine's fixed strip counts; the driver encodes
             // fewer strips on a GPU with fewer NVENC engines.
-            "two_strips" => 2,
-            "three_strips" => 3,
-            "four_strips" => 4,
+            "two_strips" => (2, false),
+            "three_strips" => (3, false),
+            "four_strips" => (4, false),
             other => {
                 crate::config::fallback("nvenc_split_encode", other, "auto");
-                0
+                (0, false)
             }
         };
         let rate_control = match config.get("nvenc_rate_control", "cbr") {
@@ -364,6 +409,7 @@ impl Tuning {
             cavlc: config.boolean("nvenc_h264_cavlc", false),
             filler: config.boolean("nvenc_insert_filler_data", false),
             split,
+            split_driver_decides,
             rate_control,
             frame_budget_guard: config.boolean("nvenc_frame_budget_guard", true),
             slice_blocks: crate::encoder_policy::slice_delivery(config, stream),
@@ -379,9 +425,10 @@ impl Tuning {
     /// H.264 and HEVC set a slice count only for several slices, or with
     /// split encoding off: a fixed slice mode keeps the driver from
     /// splitting a frame across NVENC engines (Foundation Sunshine). Drivers
-    /// before API 12.2 always take it.
-    pub fn slice_mode(&self, slices: u32, api: ApiVersion) -> bool {
-        slices > 1 || self.split == SPLIT_DISABLED || !api.modern_depth()
+    /// before API 12.2 always take it. `split` is the effective mode, which a
+    /// budget-forced `auto` session may have raised to 1.
+    pub fn slice_mode(&self, slices: u32, api: ApiVersion, split: u32) -> bool {
+        slices > 1 || split == SPLIT_DISABLED || !api.modern_depth()
     }
     pub fn vbv(&self, bitrate_kbps: u32, rate_millihz: u32) -> u32 {
         (u64::from(bitrate_kbps) * 1_000_000 * u64::from(100 + self.vbv_increase)
@@ -413,21 +460,27 @@ pub struct Budget {
     pub configured_ms: f64,
     /// Even P1 is estimated over the budget.
     pub over_at_floor: bool,
+    /// Whether the estimate used the multi-engine speedup.
+    pub split: bool,
+    /// The NVENC engine count the estimate used.
+    pub engines: u32,
 }
 
 /// Foundation Sunshine's frame budget guard: the slowest preset up to
 /// `preset` whose estimated encode time fits [`BUDGET_SHARE`] of the frame
-/// interval, P1 at the least. `engines` counts only when split encoding may
-/// use them. With the guard off the preset stands and the numbers still say
-/// what it costs.
+/// interval, P1 at the least. `split_at` says whether split-frame encoding is
+/// expected to spread a candidate preset over `engines`; with the guard off
+/// the preset stands and the numbers still say what it costs.
 pub fn frame_budget(
     preset: usize,
     (width, height): (u32, u32),
     fps: f64,
+    split_at: impl Fn(usize) -> bool,
     engines: u32,
     guard: bool,
 ) -> Budget {
     let configured = preset.clamp(1, 7);
+    let engines = engines.max(1);
     let mut budget = Budget {
         configured,
         effective: configured,
@@ -435,17 +488,19 @@ pub fn frame_budget(
         estimated_ms: 0.,
         configured_ms: 0.,
         over_at_floor: false,
+        split: split_at(configured) && engines > 1,
+        engines,
     };
     if fps.is_nan() || fps <= 0. || width == 0 || height == 0 {
         return budget;
     }
     budget.budget_ms = 1000. / fps * BUDGET_SHARE;
-    let speedup = if engines > 1 {
-        MULTI_ENGINE_SPEEDUP
-    } else {
-        1.
-    };
     let estimate = |preset: usize| {
+        let speedup = if split_at(preset) && engines > 1 {
+            MULTI_ENGINE_SPEEDUP
+        } else {
+            1.
+        };
         ENCODE_MS_PER_MPIX[preset] * f64::from(width) * f64::from(height) / 1e6 / speedup
     };
     budget.configured_ms = estimate(configured);
@@ -460,6 +515,7 @@ pub fn frame_budget(
     } else {
         budget.estimated_ms = budget.configured_ms;
     }
+    budget.split = split_at(budget.effective) && engines > 1;
     budget
 }
 

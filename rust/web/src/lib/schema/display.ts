@@ -242,7 +242,7 @@ export const settings: Setting[] = [
     description:
       'Streams fail to start while this is empty. In Hz, such as 59.94; a rate below the stream’s FPS cannot supply every frame, and a virtual display loses its faster automatic refresh.',
     details:
-      'In hertz, from 1 to 1000, with up to three decimals such as 59.94 or 119.88. On a virtual display it replaces the refresh that Virtual display refresh sets (twice the stream rate by default), which captures each game frame sooner. A monitor that has no such rate keeps its own.',
+      'In hertz, from 1 to 1000, with up to three decimals such as 59.94 or 119.88. On a virtual display it replaces the refresh that Virtual display refresh sets (four times the stream rate by default), which captures each game frame sooner. A monitor that has no such rate keeps its own.',
     category: 'display',
     group: 'Resolution and refresh rate',
     control: { kind: 'number', min: 1, max: 1000, step: 0.001, unit: 'Hz' },
@@ -498,7 +498,7 @@ export const settings: Setting[] = [
     key: 'virtual_display_refresh',
     label: 'Virtual display refresh',
     description:
-      'A virtual display’s refresh rate: a faster one captures each game frame sooner after it is drawn. Twice the stream rate suits almost everyone; Off also ends the automatic FPS cap.',
+      'A virtual display’s refresh rate: a faster one captures each game frame sooner after it is drawn. Four times the stream rate is the default; Off also ends the automatic FPS cap.',
     details:
       'Every choice but Off also caps games at the frame limit and uses 1000 Hz when the device asks for VRR. Off runs the display at the stream’s frame rate. On an RX 7900 XT, four times the stream rate measured within 0.15 ms of twice, and 1000 Hz was no faster at 120 fps and about 1 ms slower at 60 fps (14.28 against 13.15 ms from render to received).',
     category: 'frame-limiting',
@@ -507,7 +507,7 @@ export const settings: Setting[] = [
       kind: 'select',
       options: [
         { value: 'legacy', label: 'Twice the stream rate' },
-        { value: 'enabled', label: 'Four times the stream rate (no faster than twice)' },
+        { value: 'enabled', label: 'Four times the stream rate' },
         { value: 'vrr', label: '1000 Hz (about 1 ms slower at 60 fps)' },
         { value: 'disabled', label: 'Off' },
       ],
@@ -535,7 +535,7 @@ export const settings: Setting[] = [
         '0': 'disabled',
       },
     },
-    default: 'legacy',
+    default: 'enabled',
   },
   {
     key: 'rtss_install_path',

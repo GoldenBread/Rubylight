@@ -909,15 +909,63 @@ impl Session {
         let readback = tuning.slice_blocks > 0
             && self.stream.codec < 2
             && self.optional_cap(_NV_ENC_CAPS_NV_ENC_CAPS_SUPPORT_SUBFRAME_READBACK);
+        // The engine count and weighted-prediction capability decide whether
+        // split can engage, and whether the guard may count a speedup. Both
+        // are needed before the subframe/split decision.
+        let engines = self
+            .cap(_NV_ENC_CAPS_NV_ENC_CAPS_NUM_ENCODER_ENGINES)
+            .unwrap_or(1)
+            .max(1) as u32;
+        let weighted = tuning.weighted_prediction
+            && self.d3d12.is_none()
+            && self.optional_cap(_NV_ENC_CAPS_NV_ENC_CAPS_SUPPORT_WEIGHTED_PREDICTION);
+        let split_capable =
+            butterpollo_core::nvenc::split_capable(self.stream.codec, self.api, engines, weighted);
+        let mut split = tuning.split;
+        let mut split_reason = if split == SPLIT_DISABLED {
+            "disabled"
+        } else if split == 0 {
+            if tuning.split_driver_decides {
+                "driver_decides"
+            } else {
+                "implicit"
+            }
+        } else {
+            "forced"
+        };
+        if !split_capable && split != SPLIT_DISABLED {
+            split_reason = if self.stream.codec == 0 {
+                "h264"
+            } else if !self.api.modern_depth() {
+                "api"
+            } else if engines <= 1 {
+                "one_engine"
+            } else {
+                "weighted"
+            };
+        } else if split == 0 && !tuning.split_driver_decides && self.stream.slices <= 1 {
+            // `auto` may use both engines when one engine's estimate misses
+            // the frame budget. This is a split decision, independent of
+            // whether the guard lowers the preset.
+            let one_engine = butterpollo_core::nvenc::frame_budget(
+                tuning.preset,
+                (self.stream.width, self.stream.height),
+                f64::from(self.stream.fps_millihz()) / 1000.,
+                |_| false,
+                engines,
+                false,
+            );
+            if one_engine.configured_ms > one_engine.budget_ms {
+                split = 1;
+                split_reason = "budget";
+            }
+        } else if split == 0 && self.stream.slices > 1 {
+            split_reason = "client_slices";
+        }
         // HEVC split encoding and subframe readback exclude each other. On a
         // GPU with several NVENC engines split encoding keeps the frame budget
         // (`frame_budget`), so it is kept.
-        let splits = self.stream.codec == 1
-            && tuning.split != SPLIT_DISABLED
-            && self
-                .cap(_NV_ENC_CAPS_NV_ENC_CAPS_NUM_ENCODER_ENGINES)
-                .unwrap_or(1)
-                > 1;
+        let splits = self.stream.codec == 1 && split != SPLIT_DISABLED && engines > 1;
         self.subframe = readback && !splits && self.d3d12.is_none();
         // A D3D12 session reports no subframe readback at all, so the reason
         // is the conversion, not the driver.
@@ -949,9 +997,23 @@ impl Session {
         };
         // HEVC split encoding cannot run in subframe mode.
         let split = if self.subframe && self.stream.codec == 1 {
+            split_reason = "subframe";
             SPLIT_DISABLED
         } else {
-            tuning.split
+            split
+        };
+        // The guard tries each candidate preset with the split that preset
+        // would get: implicit split only inside its thresholds, a forced mode
+        // at every preset.
+        let split_context = butterpollo_core::nvenc::SplitContext {
+            codec: self.stream.codec,
+            api: self.api,
+            engines,
+            weighted,
+            subframe: self.subframe,
+            slices: self.stream.slices,
+            mode: split,
+            height: self.stream.height,
         };
         // A D3D12 session completes through its output fence.
         let asynchronous = !self.subframe
@@ -983,18 +1045,11 @@ impl Session {
             },
             ..Default::default()
         };
-        // Multi-engine throughput counts only when split encoding may use it.
-        let engines = if split == SPLIT_DISABLED {
-            1
-        } else {
-            self.cap(_NV_ENC_CAPS_NV_ENC_CAPS_NUM_ENCODER_ENGINES)
-                .unwrap_or(1)
-                .max(1) as u32
-        };
         let budget = butterpollo_core::nvenc::frame_budget(
             tuning.preset,
             (self.stream.width, self.stream.height),
             f64::from(self.stream.fps_millihz()) / 1000.,
+            |preset| split_context.engages(preset),
             engines,
             tuning.frame_budget_guard,
         );
@@ -1004,7 +1059,9 @@ impl Session {
                 effective = budget.effective,
                 budget_ms = budget.budget_ms,
                 configured_ms = budget.configured_ms,
-                engines,
+                engines = budget.engines,
+                split = budget.split,
+                split_reason,
                 over_at_floor = budget.over_at_floor,
                 "NVENC frame budget guard lowered the preset so encoding keeps up with the frame rate. Turn off nvenc_frame_budget_guard to keep the configured preset"
             );
@@ -1135,7 +1192,7 @@ impl Session {
         let chroma = if self.stream.yuv444 { 3 } else { 1 };
         let metadata = self.stream.hdr && self.api >= ApiVersion(13, 0);
         let cabac = !tuning.cavlc && self.optional_cap(_NV_ENC_CAPS_NV_ENC_CAPS_SUPPORT_CABAC);
-        let slice_mode = self.subframe || tuning.slice_mode(self.stream.slices, self.api);
+        let slice_mode = self.subframe || tuning.slice_mode(self.stream.slices, self.api, split);
         let slices = if self.subframe {
             self.subframe_slices
         } else {
@@ -1289,9 +1346,6 @@ impl Session {
                 "nvenc_weighted_prediction is on, but NVENC on the D3D12 conversion cannot use it; encoding without it. Set gpu_compute_conversion = false to keep it"
             );
         }
-        let weighted = tuning.weighted_prediction
-            && self.d3d12.is_none()
-            && self.optional_cap(_NV_ENC_CAPS_NV_ENC_CAPS_SUPPORT_WEIGHTED_PREDICTION);
         if self.d3d12.is_some() {
             // Read only by the D3D12 interface.
             self.initialize.bufferFormat = buffer_format(&self.stream);
@@ -1299,7 +1353,7 @@ impl Session {
         self.initialize
             .set_enableWeightedPrediction(u32::from(weighted));
         if self.stream.codec != 0
-            && self.api >= ApiVersion(12, 1)
+            && self.api.modern_depth()
             && (!(self.stream.codec == 1 && weighted) || split == SPLIT_DISABLED)
         {
             self.initialize.set_splitEncodeMode(split);
@@ -1333,7 +1387,11 @@ impl Session {
             api_minor = self.api.1,
             preset = budget.effective,
             rate_control = ?self.rate_control,
+            engines,
+            configured_split = tuning.split,
             split,
+            split_reason,
+            split_effective = budget.split,
             asynchronous,
             d3d12 = self.d3d12.is_some(),
             subframe_slices = self.subframe_slices,
@@ -2621,6 +2679,9 @@ pub struct Encoder {
     /// The stream as negotiated; the session codes [`coded`].
     config: Negotiated,
     converter: Option<crate::gpu_color::Converter>,
+    /// The D3D12 session failed and the caller converted on the graphics
+    /// queue; later rebuilds keep that choice.
+    compute_fallback: bool,
     source: Option<(u32, u32, Pixel)>,
     luminance: [f32; 2],
     /// The couch menu's panel, drawn into GPU frames by the conversion.
@@ -2746,6 +2807,7 @@ impl Encoder {
             gpu,
             config: config.clone(),
             converter: None,
+            compute_fallback: false,
             source: None,
             luminance: [100., 1.],
             overlay: None,
@@ -2973,6 +3035,15 @@ impl Encoder {
     /// Whether this encoder's frames are converted on the D3D12 compute queue.
     pub fn converts_on_compute(&self) -> bool {
         self.compute.is_some()
+    }
+    /// Record that the caller fell back to the graphics queue because the
+    /// D3D12 session failed; later rebuilds must not retry it this stream.
+    pub fn mark_compute_fallback(&mut self) {
+        self.compute_fallback = true;
+    }
+    /// Whether this encoder was built after a D3D12 fallback.
+    pub fn compute_fell_back(&self) -> bool {
+        self.compute_fallback
     }
     /// A CPU image, such as the codec probe's, goes through the same GPU
     /// conversion as a capture.

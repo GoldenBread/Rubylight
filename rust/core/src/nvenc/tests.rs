@@ -92,6 +92,7 @@ fn defaults_stay_latency_first_with_spatial_aq_and_the_budget_guard_on() {
     assert_eq!(default.preset, 1);
     assert_eq!(default.multipass, 1);
     assert_eq!(default.split, 0);
+    assert!(!default.split_driver_decides);
     assert_eq!(default.rate_control, RateControl::Cbr);
     assert!(default.spatial_aq);
     assert!(default.frame_budget_guard);
@@ -123,6 +124,8 @@ fn foundation_settings_parse_with_codec_bounds_and_fall_back_on_unknown_values()
             "{value}"
         );
     }
+    assert!(tuning("nvenc_split_encode = driver_decides\n", 1).split_driver_decides);
+    assert!(!tuning("nvenc_split_encode = auto\n", 1).split_driver_decides);
     let vbr = "nvenc_rate_control = vbr\nnvenc_target_quality = 70\n";
     let vbr_at = |target_quality, peak_percent| RateControl::Vbr {
         target_quality,
@@ -185,42 +188,112 @@ fn slice_delivery_follows_the_amf_setting_with_a_slice_per_block() {
 #[test]
 fn a_fixed_slice_mode_is_set_only_where_it_cannot_block_split_encoding() {
     let auto = tuning("", 1);
-    assert!(!auto.slice_mode(1, ApiVersion(13, 0)));
-    assert!(auto.slice_mode(4, ApiVersion(13, 0)));
+    assert!(!auto.slice_mode(1, ApiVersion(13, 0), auto.split));
+    assert!(auto.slice_mode(4, ApiVersion(13, 0), auto.split));
     // Older drivers have no split encoding to protect.
-    assert!(auto.slice_mode(1, ApiVersion(12, 1)));
+    assert!(auto.slice_mode(1, ApiVersion(12, 1), auto.split));
     let disabled = tuning("nvenc_split_encode = disabled\n", 1);
-    assert!(disabled.slice_mode(1, ApiVersion(13, 0)));
+    assert!(disabled.slice_mode(1, ApiVersion(13, 0), disabled.split));
+    // A budget-forced auto session passes its effective mode 1.
+    assert!(!auto.slice_mode(1, ApiVersion(13, 0), 1));
+}
+#[test]
+fn split_frame_engages_only_where_the_driver_can_use_it() {
+    let api = ApiVersion(13, 0);
+    // Capability: HEVC/AV1, API 12.2+, two engines, no HEVC weighted prediction.
+    assert!(split_capable(1, api, 2, false));
+    assert!(split_capable(2, api, 2, false));
+    assert!(!split_capable(0, api, 2, false));
+    assert!(!split_capable(1, ApiVersion(12, 0), 2, false));
+    assert!(!split_capable(1, ApiVersion(12, 1), 2, false));
+    assert!(split_capable(1, ApiVersion(12, 2), 2, false));
+    assert!(!split_capable(1, api, 1, false));
+    assert!(!split_capable(1, api, 2, true));
+    // Implicit mode: 2112 rows for HEVC, 2048 for AV1, P1-P4 only.
+    assert!(split_implicit(1, 2160, 4));
+    assert!(!split_implicit(1, 2160, 5));
+    assert!(!split_implicit(1, 2111, 1));
+    assert!(split_implicit(2, 2048, 1));
+    assert!(!split_implicit(2, 2047, 1));
+    // The effective decision: forced modes engage at every height and
+    // preset; implicit mode inside its thresholds; never with subframe or
+    // client slices.
+    let context = |mode: u32, height: u32, subframe: bool, slices: u32| SplitContext {
+        codec: 1,
+        api,
+        engines: 2,
+        weighted: false,
+        subframe,
+        slices,
+        mode,
+        height,
+    };
+    assert!(context(1, 1440, false, 1).engages(5));
+    assert!(context(2, 1440, false, 1).engages(7));
+    assert!(!context(0, 1440, false, 1).engages(1));
+    assert!(context(0, 2160, false, 1).engages(4));
+    assert!(!context(0, 2160, false, 1).engages(5));
+    assert!(!context(1, 2160, true, 1).engages(1));
+    assert!(!context(1, 2160, false, 2).engages(1));
+    assert!(!context(SPLIT_DISABLED, 2160, false, 1).engages(1));
 }
 #[test]
 fn the_frame_budget_guard_lowers_slow_presets_only_when_they_miss_the_budget() {
     // 4K120 on one engine: 8.3 MPix in 5.4 ms leaves only P1, and even
     // P1 (5.8 ms) misses.
-    let uhd = frame_budget(4, (3840, 2160), 120., 1, true);
+    let uhd = frame_budget(4, (3840, 2160), 120., |_| false, 1, true);
     assert_eq!((uhd.configured, uhd.effective), (4, 1));
     assert!(uhd.over_at_floor);
     assert!((uhd.budget_ms - 1000. / 120. * 0.65).abs() < 1e-9);
-    // Two engines with split encoding make P5 fit, not P7.
-    let split = frame_budget(7, (3840, 2160), 120., 2, true);
+    // A forced split engages at every preset, so two engines make P5 fit,
+    // not P7. This is the arithmetic of Foundation's calibration and the
+    // 1.75x speedup, not a product claim: NVIDIA's application note suggests
+    // P5-P7 may be slower.
+    let split = frame_budget(7, (3840, 2160), 120., |_| true, 2, true);
     assert_eq!(split.effective, 5);
     assert!(!split.over_at_floor);
+    assert!(split.split && split.engines == 2);
     assert!(split.estimated_ms <= split.budget_ms);
+    // Implicit split at 4K applies only at P1-P4, so a driver-decides P5
+    // keeps P4 with the driver's split, not falling to P1 on one engine.
+    let implicit = frame_budget(
+        5,
+        (3840, 2160),
+        120.,
+        |p| split_implicit(1, 2160, p),
+        2,
+        true,
+    );
+    assert_eq!(implicit.effective, 4);
+    assert!(implicit.split);
     // 1080p60 fits P7.
-    let easy = frame_budget(7, (1920, 1080), 60., 1, true);
+    let easy = frame_budget(7, (1920, 1080), 60., |_| false, 1, true);
     assert_eq!(easy.effective, 7);
     assert!(!easy.over_at_floor);
     // The guard off keeps the preset and still reports what it costs.
-    let kept = frame_budget(4, (3840, 2160), 120., 1, false);
+    let kept = frame_budget(4, (3840, 2160), 120., |_| false, 1, false);
     assert_eq!(kept.effective, 4);
     assert_eq!(kept.estimated_ms, kept.configured_ms);
     assert!(kept.estimated_ms > kept.budget_ms);
     // P1, the default, is never changed; unknown rates keep the preset.
-    assert_eq!(frame_budget(1, (7680, 4320), 240., 1, true).effective, 1);
-    assert_eq!(frame_budget(5, (1920, 1080), 0., 1, true).effective, 5);
-    let unknown = frame_budget(5, (1920, 1080), f64::NAN, 1, true);
+    assert_eq!(
+        frame_budget(1, (7680, 4320), 240., |_| false, 1, true).effective,
+        1
+    );
+    assert_eq!(
+        frame_budget(5, (1920, 1080), 0., |_| false, 1, true).effective,
+        5
+    );
+    let unknown = frame_budget(5, (1920, 1080), f64::NAN, |_| false, 1, true);
     assert_eq!((unknown.effective, unknown.budget_ms), (5, 0.));
-    assert_eq!(frame_budget(5, (1920, 1080), -60., 1, true).effective, 5);
-    assert_eq!(frame_budget(0, (1920, 1080), 60., 1, true).configured, 1);
+    assert_eq!(
+        frame_budget(5, (1920, 1080), -60., |_| false, 1, true).effective,
+        5
+    );
+    assert_eq!(
+        frame_budget(0, (1920, 1080), 60., |_| false, 1, true).configured,
+        1
+    );
 }
 #[test]
 fn the_d3d12_interface_and_block_statistics_follow_the_api() {
