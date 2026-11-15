@@ -52,7 +52,7 @@ fn a_pcs_requests_share_one_worker_that_goes_with_the_pc() {
     let (tx, rx) = channel();
     for _ in 0..3 {
         let tx = tx.clone();
-        hosts.run_on(id, move || {
+        hosts.run_on(id, Lane::Asked, move || {
             let _ = tx.send(std::thread::current().id());
             None
         });
@@ -63,6 +63,80 @@ fn a_pcs_requests_share_one_worker_that_goes_with_the_pc() {
     assert_eq!(hosts.pc_workers.len(), 1);
     hosts.remove(id);
     assert!(hosts.pc_workers.is_empty());
+}
+
+/// A slow background poll (an away PC is tried over the internet too) holds up neither a check
+/// the user asked for nor a native read: those run on the PC's other worker and answer while it
+/// is still out. A removed PC's two workers go with it.
+#[test]
+fn a_check_asked_for_answers_while_a_slow_background_poll_is_out() {
+    let mut hosts = Hosts::without_discovery(vec![paired_record("uid")], Arc::new(|| {}));
+    let id = hosts.list[0].id;
+    let (release, held) = channel::<()>();
+    let (tx, rx) = channel();
+    let background = tx.clone();
+    hosts.run_on(id, Lane::Background, move || {
+        let _ = held.recv_timeout(Duration::from_secs(30));
+        let _ = background.send("background");
+        None
+    });
+    hosts.run_on(id, Lane::Asked, move || {
+        let _ = tx.send("asked");
+        None
+    });
+    assert_eq!(rx.recv_timeout(Duration::from_secs(5)), Ok("asked"), "not behind the slow poll");
+    assert!(rx.try_recv().is_err(), "which is still out");
+    release.send(()).unwrap();
+    assert_eq!(rx.recv_timeout(Duration::from_secs(5)), Ok("background"));
+    assert_eq!(hosts.pc_workers.len(), 2);
+    hosts.remove(id);
+    assert!(hosts.pc_workers.is_empty());
+}
+
+/// Try again pressed while an older poll is out: that poll's answer lands first and says Offline
+/// with the old error, but the card stays at Checking… until the check the user asked for answers.
+#[test]
+fn an_older_polls_answer_leaves_a_newer_check_checking() {
+    let mut hosts = Hosts::without_discovery(vec![paired_record("uid")], Arc::new(|| {}));
+    let id = hosts.list[0].id;
+    let host = hosts.get_mut(id).unwrap();
+    (host.poll_seq, host.polling, host.checking) = (2, true, true);
+    send(&mut hosts, Event::Info { id, seq: 1, address: "192.0.2.1".into(), result: Err("timed out".into()) });
+    let host = hosts.get(id).unwrap();
+    assert!(host.checking && host.polling, "the old poll's answer is not the check's");
+    assert_eq!(hosts.polling_seq(id), Some(2));
+    info_lands(&mut hosts, id, native_info());
+    let host = hosts.get(id).unwrap();
+    assert!(!host.checking && !host.polling, "the check's own answer ends it");
+    assert_eq!(host.reach, Reach::Online);
+}
+
+/// Background polls of one PC never queue up, and a poll asked for while another asked one is
+/// out waits for it instead of queueing behind it, then starts once it answers.
+#[test]
+fn polls_of_one_pc_never_queue_up() {
+    let mut hosts = Hosts::without_discovery(vec![paired_record("uid")], Arc::new(|| {}));
+    let id = hosts.list[0].id;
+    let now = Instant::now();
+    // A background poll is out; the check the user asked for answered first.
+    hosts.get_mut(id).unwrap().background_poll = Some(1);
+    assert!(hosts.due(now, true, None).is_empty(), "no second background poll behind the first");
+    assert!(!hosts.poll_landed(id, 1) && hosts.get(id).unwrap().background_poll.is_none());
+    assert_eq!(hosts.due(now, true, None), vec![id]);
+    // An asked poll is out: two more presses reserve one poll, which starts once it answers.
+    hosts.set_identity(Arc::new(ClientIdentity::generate().expect("a key")));
+    {
+        let host = hosts.get_mut(id).unwrap();
+        (host.asked_poll, host.poll_seq) = (Some(1), 1);
+    }
+    hosts.poll_one(id);
+    hosts.check_now(id);
+    let host = hosts.get(id).unwrap();
+    assert!(host.asked_again && host.checking && host.polling);
+    assert_eq!((host.asked_poll, host.poll_seq), (Some(1), 3), "nothing more was sent");
+    assert!(hosts.pc_workers.is_empty());
+    assert!(hosts.poll_landed(id, 1), "the reserved poll goes once the one out answers");
+    assert!(!hosts.get(id).unwrap().asked_again);
 }
 
 fn native_info_of(unique_id: &str, paired: bool) -> ServerInfo {

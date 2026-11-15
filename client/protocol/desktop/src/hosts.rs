@@ -40,6 +40,17 @@ pub type Waker = Arc<dyn Fn() + Send + Sync>;
 /// A request a PC's own worker runs; what it returns is queued for the UI thread.
 type PcJob = Box<dyn FnOnce() -> Option<Event> + Send>;
 
+/// Which of a PC's two workers runs a request. The timed background polls have their own, so a
+/// slow one (an away PC is tried over the internet too, for up to about 50 s) never holds up a
+/// check the user asked for or a native read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Lane {
+    /// Checks something asked for (Try again, a quit, a wake, pairing) and native reads.
+    Asked,
+    /// The timed polls of [`Hosts::poll`].
+    Background,
+}
+
 const POLL_INTERVAL: Duration = Duration::from_secs(4);
 /// After a quit, a closed game or a stream's end the PC changes its state a moment later, so it is
 /// asked every second for this long (`Host::recheck_until`).
@@ -178,6 +189,12 @@ pub struct Host {
     /// later (two polls overlap after a quit) must not bring back a state the PC has left.
     poll_seq: u64,
     info_seq: u64,
+    /// The background poll out, if one is: a second one never queues behind it.
+    background_poll: Option<u64>,
+    /// The asked poll out, if one is; `asked_again` when another was asked for meanwhile, which
+    /// starts once it answers instead of queueing behind it.
+    asked_poll: Option<u64>,
+    asked_again: bool,
     /// Until then the PC is polled every second (see `RECHECK_WINDOW`).
     recheck_until: Option<Instant>,
     /// The remote address, when the last poll reached the PC only there (this device is away
@@ -689,9 +706,9 @@ pub struct Hosts {
     _mdns: Option<mdns_sd::ServiceDaemon>,
     /// Whether this network is being searched for PCs: the first run's orbit runs on it.
     pub(crate) discovering: bool,
-    /// Each PC's worker: one thread that lives as long as the PC is listed runs its polls and
-    /// native reads in turn, instead of a new thread for each. Dropping the sender ends it.
-    pc_workers: HashMap<u64, Sender<PcJob>>,
+    /// Each PC's workers, one per [`Lane`]: a thread that lives as long as the PC is listed runs
+    /// its lane's requests in turn, instead of a new thread for each. Dropping the sender ends it.
+    pc_workers: HashMap<(u64, Lane), Sender<PcJob>>,
     /// The demo's PCs while a first-run page shows a shorter list.
     #[cfg(feature = "demo-library")]
     pub(crate) demo_shelf: Vec<Host>,
@@ -885,6 +902,9 @@ impl Hosts {
             last_poll: None,
             poll_seq: 0,
             info_seq: 0,
+            background_poll: None,
+            asked_poll: None,
+            asked_again: false,
             recheck_until: None,
             via_remote: None,
             internet_read: None,
@@ -947,15 +967,15 @@ impl Hosts {
             });
     }
 
-    /// Runs `work` on PC `id`'s own worker, started on its first request: the PC's requests wait
-    /// for each other rather than each starting a thread.
-    fn run_on(&mut self, id: u64, work: impl FnOnce() -> Option<Event> + Send + 'static) {
+    /// Runs `work` on PC `id`'s worker for `lane`, started on its first request: the lane's
+    /// requests wait for each other rather than each starting a thread.
+    fn run_on(&mut self, id: u64, lane: Lane, work: impl FnOnce() -> Option<Event> + Send + 'static) {
         // The demo library never reaches for a network, even by accident.
         if cfg!(feature = "demo-library") {
             return;
         }
         let mut job: PcJob = Box::new(work);
-        if let Some(worker) = self.pc_workers.get(&id) {
+        if let Some(worker) = self.pc_workers.get(&(id, lane)) {
             match worker.send(job) {
                 Ok(()) => return,
                 // Its thread ended (a request panicked): a new one takes the job.
@@ -964,7 +984,11 @@ impl Hosts {
         }
         let (jobs, queue) = channel::<PcJob>();
         let (sender, waker) = (self.sender.clone(), self.waker.clone());
-        let started = std::thread::Builder::new().name("pc-worker".into()).spawn(move || {
+        let name = match lane {
+            Lane::Asked => "pc-worker",
+            Lane::Background => "pc-poller",
+        };
+        let started = std::thread::Builder::new().name(name.into()).spawn(move || {
             for job in queue {
                 if let Some(event) = job() {
                     if sender.send(event).is_err() {
@@ -975,8 +999,13 @@ impl Hosts {
             }
         });
         if started.is_ok() && jobs.send(job).is_ok() {
-            self.pc_workers.insert(id, jobs);
+            self.pc_workers.insert((id, lane), jobs);
         }
+    }
+
+    /// Ends PC `id`'s workers, once the requests they hold are done.
+    fn drop_workers(&mut self, id: u64) {
+        self.pc_workers.retain(|(pc, _), _| *pc != id);
     }
 
     /// Starts looking for PCs on the network again, when it could not start (a network not up yet,
@@ -1126,7 +1155,7 @@ impl Hosts {
     pub fn remove(&mut self, id: u64) {
         self.list.retain(|h| h.id != id);
         self.link_claims.remove(&id);
-        self.pc_workers.remove(&id);
+        self.drop_workers(id);
     }
 
     /// Checks every host that is due. While the window is away (`shown` false) only the PC being
@@ -1134,7 +1163,7 @@ impl Hosts {
     /// and a quit or a stream's end for the PC's new state. The others wait for the window.
     pub fn poll(&mut self, shown: bool, waking: Option<u64>) {
         for id in self.due(Instant::now(), shown, waking) {
-            self.poll_one(id);
+            self.start_poll(id, Lane::Background);
         }
     }
 
@@ -1143,7 +1172,8 @@ impl Hosts {
         self.list
             .iter()
             .filter(|h| shown || Some(h.id) == waking || h.recheck_until.is_some_and(|until| now < until))
-            .filter(|h| !h.polling && h.last_poll.is_none_or(|t| now.saturating_duration_since(t) >= h.poll_interval(now)))
+            .filter(|h| !h.polling && h.background_poll.is_none())
+            .filter(|h| h.last_poll.is_none_or(|t| now.saturating_duration_since(t) >= h.poll_interval(now)))
             .map(|h| h.id)
             .collect()
     }
@@ -1166,7 +1196,43 @@ impl Hosts {
         }
     }
 
+    /// Asks the PC now, beside a background poll still out rather than behind it. While another
+    /// asked poll is out, this one starts once that answers: they never queue up, and only the
+    /// answer to the newest ends the PC's Checking….
     pub fn poll_one(&mut self, id: u64) {
+        if self.identity.is_none() {
+            return;
+        }
+        let Some(host) = self.get_mut(id) else {
+            return;
+        };
+        if host.asked_poll.is_some() {
+            host.polling = true;
+            host.last_poll = Some(Instant::now());
+            host.poll_seq += 1;
+            host.asked_again = true;
+            return;
+        }
+        self.start_poll(id, Lane::Asked);
+    }
+
+    /// Poll `seq` of PC `id` answered, and its lane is free again. True when a poll was asked for
+    /// meanwhile and starts now.
+    fn poll_landed(&mut self, id: u64, seq: u64) -> bool {
+        let Some(host) = self.get_mut(id) else {
+            return false;
+        };
+        if host.background_poll == Some(seq) {
+            host.background_poll = None;
+        }
+        if host.asked_poll != Some(seq) {
+            return false;
+        }
+        host.asked_poll = None;
+        std::mem::take(&mut host.asked_again)
+    }
+
+    fn start_poll(&mut self, id: u64, lane: Lane) {
         let Some(identity) = self.identity.clone() else {
             return;
         };
@@ -1177,10 +1243,14 @@ impl Hosts {
         host.last_poll = Some(Instant::now());
         host.poll_seq += 1;
         let seq = host.poll_seq;
+        match lane {
+            Lane::Asked => host.asked_poll = Some(seq),
+            Lane::Background => host.background_poll = Some(seq),
+        }
         let record = host.record.clone();
         let likely_online = host.reach == Reach::Online;
         let away = host.reach == Reach::Offline;
-        self.run_on(id, move || {
+        self.run_on(id, lane, move || {
             let mut last_error = String::from(en("No address"));
             let mut tried = Vec::new();
             for address in poll_addresses(&record) {

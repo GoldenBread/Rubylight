@@ -16,17 +16,32 @@ impl Hosts {
                     address,
                     result,
                 } => {
+                    let again = self.poll_landed(id, seq);
                     // An older answer than one already taken in describes a PC that has moved on.
-                    match self.get_mut(id) {
-                        Some(host) if seq < host.info_seq => continue,
-                        Some(host) => host.info_seq = seq,
-                        None => {}
+                    // Only the answer to the newest poll ends Polling and Checking…: an older one
+                    // that lands later says nothing of the check the user asked for since.
+                    let newest = match self.get_mut(id) {
+                        Some(host) if seq < host.info_seq => None,
+                        Some(host) => {
+                            host.info_seq = seq;
+                            Some(seq >= host.poll_seq)
+                        }
+                        None => Some(false),
+                    };
+                    if let Some(newest) = newest {
+                        changed |= self.apply_info(id, address, result);
+                        if let Some(host) = self.get_mut(id).filter(|_| newest) {
+                            host.polling = false;
+                            host.checking = false;
+                        }
+                        self.follow_native(id);
+                        self.follow_classic(id);
+                        self.check_foundation_probe(id);
+                        self.follow_internet_play(id);
                     }
-                    changed |= self.apply_info(id, address, result);
-                    self.follow_native(id);
-                    self.follow_classic(id);
-                    self.check_foundation_probe(id);
-                    self.follow_internet_play(id);
+                    if again {
+                        self.start_poll(id, Lane::Asked);
+                    }
                 }
                 Event::InternetPlay { id, unique_id, result } => {
                     let Some(host) = self.get_mut(id) else { continue };
@@ -459,7 +474,7 @@ impl Hosts {
                     kept.remote_address = dropped.remote_address;
                 }
                 let gone = self.list.remove(drop).id;
-                self.pc_workers.remove(&gone);
+                self.drop_workers(gone);
                 changed = true;
                 let index = self.list.iter().position(|h| h.id == keep_id).unwrap_or(0);
                 return self.store_info(index, address, result) || changed;
@@ -471,8 +486,6 @@ impl Hosts {
 
     fn store_info(&mut self, index: usize, address: String, result: Result<Box<ServerInfo>, String>) -> bool {
         let host = &mut self.list[index];
-        host.polling = false;
-        host.checking = false;
         let mut changed = false;
         match result {
             Ok(info) => {
