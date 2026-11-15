@@ -1,0 +1,5 @@
+• New setting Fractional V-Sync (off by default): on a screen at 2 to 4 times the frame rate, such as 60 fps on 120 Hz, every frame stays for the same number of refreshes, at a little more delay.
+• A game's menu turns its frame generation on the PC on or off where the PC offers it, and says why a game can't have it.
+• New setting for how many frames wait for a slow decoder.
+• A reconnect keeps its bitrate; a stream the PC refuses shows why.
+• Fixes to connecting, quitting, pairing and files.
