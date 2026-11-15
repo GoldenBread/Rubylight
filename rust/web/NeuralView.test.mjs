@@ -66,6 +66,18 @@ test('the earlier neural upscaling is offered only for removal, also where frame
   }
 });
 
+test('a game that can’t have it says why before any try, and one whose program is unknown asks for it', () => {
+  const reason = 'the game has no DLSS frame generation (nvngx_dlssg.dll or sl.dlss_g.dll in its folder)';
+  assert.deepEqual(neuralView(status({ game: { why: 'no_frame_generation', reason } })), { kind: 'unavailable', reason: `${reason}.`, earlier: null });
+  const html = render(NeuralRendering, { props: { uuid: 'game', initial: status({ game: { why: 'anti_cheat', reason: 'the game uses Easy Anti-Cheat' } }) } }).body;
+  assert.match(html, /disabled/);
+  assert.match(html, /Easy Anti-Cheat/);
+  const choose = neuralView(status({ game: { why: 'choose_program', reason: 'Rubylight can’t tell which program is the game' } }));
+  assert.equal(choose.kind, 'choose');
+  // On, the game's check never holds it back.
+  assert.equal(neuralView(status({ enabled: true, game: { why: 'game', reason: 'x' } })).kind, 'on');
+});
+
 test('a GPU Rubylight does not stream with is named with when frame generation runs', () => {
   const gpu_note = 'Frame generation runs when the game renders on NVIDIA GeForce RTX 3060 Laptop GPU; Rubylight streams with AMD Radeon(TM) Graphics.';
   const off = status({ gpu: 'NVIDIA GeForce RTX 3060 Laptop GPU', gpu_note });

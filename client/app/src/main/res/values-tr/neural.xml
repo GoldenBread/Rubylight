@@ -23,4 +23,12 @@
     <string name="neural_copying">Oyunun klasörüne kopyalanıyor…</string>
     <string name="neural_removing">Oyunun klasöründen kaldırılıyor…</string>
     <string name="neural_failed">Son değişiklik başarısız oldu.</string>
+    <string name="neural_why_busy">PC bu oyunun kare oluşturması üzerinde çalışıyor.</string>
+    <string name="neural_why_streaming">Yalnızca hiçbir şey yayınlanmıyorken değiştirilebilir.</string>
+    <string name="neural_why_gpu">Bu PC’nin grafik birimi kare oluşturmayı çalıştıramaz.</string>
+    <string name="neural_why_anti_cheat">Bu oyunda modu hile sayacak bir hile önleyici var.</string>
+    <string name="neural_why_no_dlss">Bu oyun, bunun yerini alabileceği bir DLSS kare oluşturma sunmuyor.</string>
+    <string name="neural_why_choose">Önce PC’nin web arayüzünde oyunun programını seçin.</string>
+    <string name="neural_installed">Oyunun klasörüne kuruldu, sürüm %1$s.</string>
+    <string name="neural_added">Oyunun klasöründeki ölçeklendirme moduna eklendi, sürüm %1$s.</string>
 </resources>

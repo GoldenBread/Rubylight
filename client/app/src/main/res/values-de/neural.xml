@@ -7,7 +7,7 @@
     <string name="neural_turning_on">Frame Generation wird eingeschaltet…</string>
     <string name="neural_turning_off">Frame Generation wird ausgeschaltet…</string>
     <string name="neural_problem">Frame Generation wurde nicht geändert</string>
-    <string name="neural_about">Frame Generation für Spiele mit DLSS Frame Generation, durch eine Mod, die der PC in den Ordner des Spiels legt und wieder entfernt: DLSS Frame Generation im Spiel einschalten, dann tritt dies an ihre Stelle. Für Onlinespiele aus lassen: Eines könnte eine Mod als Betrug werten.</string>
+    <string name="neural_about">Frame Generation für Spiele mit DLSS Frame Generation, durch eine Mod, die der PC in den Ordner des Spiels legt und wieder entfernt: DLSS Frame Generation im Spiel einschalten, dann tritt dies an ihre Stelle. Bei Onlinespielen ausgeschaltet lassen: Ein Onlinespiel kann eine Mod als Betrug werten.</string>
     <string name="neural_not_offered">Der PC bietet für dieses Spiel keine Frame Generation an.</string>
     <string name="neural_frame_generation">Frame Generation</string>
     <string name="neural_replaces">Beim Einschalten wird zuerst das frühere neuronale Upscaling aus dem Ordner des Spiels entfernt.</string>
@@ -23,4 +23,12 @@
     <string name="neural_copying">Wird in den Ordner des Spiels kopiert…</string>
     <string name="neural_removing">Wird aus dem Ordner des Spiels entfernt…</string>
     <string name="neural_failed">Die letzte Änderung ist fehlgeschlagen.</string>
+    <string name="neural_why_busy">Der PC arbeitet gerade an der Frame Generation dieses Spiels.</string>
+    <string name="neural_why_streaming">Das lässt sich nur ändern, solange nichts gestreamt wird.</string>
+    <string name="neural_why_gpu">Die Grafik dieses PCs kann keine Frame Generation ausführen.</string>
+    <string name="neural_why_anti_cheat">Dieses Spiel hat einen Anti-Cheat, der die Mod als Betrug werten würde.</string>
+    <string name="neural_why_no_dlss">Dieses Spiel bietet keine DLSS Frame Generation, an deren Stelle dies treten könnte.</string>
+    <string name="neural_why_choose">Wähle zuerst in der Web-UI des PCs das Programm des Spiels.</string>
+    <string name="neural_installed">Im Ordner des Spiels installiert, Release %1$s.</string>
+    <string name="neural_added">Zur Upscaler-Mod im Ordner des Spiels hinzugefügt, Release %1$s.</string>
 </resources>

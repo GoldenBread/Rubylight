@@ -30,6 +30,40 @@ pub struct Neural {
     pub replaces_earlier_upscaling: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job: Option<NeuralJob>,
+    /// How it is in the game's folder once it is on (absent from an older host).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<NeuralMode>,
+    /// The release in the game's folder once it is on (absent from an older host).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NeuralMode {
+    /// The host's own package.
+    Full,
+    /// Added to an upscaler mod the user installed.
+    Addon,
+    #[serde(other)]
+    Unknown,
+}
+
+/// Why a switch can't change, as a code the app says in its own words; an older host sends
+/// none, and a code this app doesn't know reads as `Unknown`, which shows the host's `reason`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NeuralWhy {
+    Busy,
+    Streaming,
+    NoHostControl,
+    Gpu,
+    AntiCheat,
+    NoFrameGeneration,
+    ChooseProgram,
+    Game,
+    #[serde(other)]
+    Unknown,
 }
 
 impl Neural {
@@ -57,6 +91,8 @@ pub struct NeuralSwitch {
     pub on: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<NeuralWhy>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,6 +174,40 @@ mod tests {
         assert_eq!(newer.switches[0].state, ControlState::Unknown);
         assert!(newer.working());
         assert_eq!(newer.job.unwrap().action, NeuralAction::Unknown);
+    }
+
+    /// The codes, mode and release a newer host sends read, survive the Android bridge's
+    /// re-serialisation, and the old answer above (none of them) still reads as before.
+    #[test]
+    fn the_why_mode_and_release_read_and_round_trip() {
+        let old: Neural = serde_json::from_str(DOCUMENTED).unwrap();
+        assert_eq!(old.frame_generation().unwrap().why, None);
+        assert_eq!((old.mode, old.release.as_deref()), (None, None));
+        let state: Neural = serde_json::from_str(
+            r#"{"app":"a","accepted":true,"switches":[{"id":"frame_generation","state":"read_only",
+                "on":true,"why":"no_host_control","reason":"Turn on Host control."}],
+                "mode":"addon","release":"FG-V.B16"}"#,
+        )
+        .unwrap();
+        assert_eq!(state.frame_generation().unwrap().why, Some(NeuralWhy::NoHostControl));
+        assert_eq!(state.mode, Some(NeuralMode::Addon));
+        assert_eq!(state.release.as_deref(), Some("FG-V.B16"));
+        let again: serde_json::Value = serde_json::to_value(&state).unwrap();
+        assert_eq!(again["switches"][0]["why"], "no_host_control");
+        assert_eq!((again["mode"].as_str(), again["release"].as_str()), (Some("addon"), Some("FG-V.B16")));
+        for (why, read) in [
+            ("busy", NeuralWhy::Busy),
+            ("streaming", NeuralWhy::Streaming),
+            ("gpu", NeuralWhy::Gpu),
+            ("anti_cheat", NeuralWhy::AntiCheat),
+            ("no_frame_generation", NeuralWhy::NoFrameGeneration),
+            ("choose_program", NeuralWhy::ChooseProgram),
+            ("game", NeuralWhy::Game),
+            ("later", NeuralWhy::Unknown),
+        ] {
+            assert_eq!(serde_json::from_value::<NeuralWhy>(why.into()).unwrap(), read);
+        }
+        assert_eq!(serde_json::from_value::<NeuralMode>("later".into()).unwrap(), NeuralMode::Unknown);
     }
 
     #[test]

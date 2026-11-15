@@ -27,6 +27,7 @@ fn state(on: bool, phase: Option<NeuralPhase>) -> Neural {
             state: ControlState::Configurable,
             on,
             reason: None,
+            why: None,
         }],
         replaces_earlier_upscaling: !on,
         job: phase.map(|phase| NeuralJob {
@@ -36,6 +37,8 @@ fn state(on: bool, phase: Option<NeuralPhase>) -> Neural {
             total: 14_000_000,
             error: None,
         }),
+        mode: None,
+        release: None,
     }
 }
 
@@ -184,20 +187,66 @@ fn the_lines_say_the_job_and_the_switch() {
     assert_eq!(job_text(&neural), None);
     let mut switch = neural.switches[0].clone();
     assert_eq!(switch_text(&switch), "Off");
+    // An older PC sends no code: its own words follow the state.
     switch.state = ControlState::NeedsExternalSetup;
     switch.reason = Some("Choose the game's program in the Rubylight console on the PC.".into());
     assert_eq!(
         switch_text(&switch),
-        "Choose the game's program in the Rubylight console on the PC."
+        "Off · Choose the game's program in the Rubylight console on the PC."
     );
-    // A device without Host control can't press it, so it never shows the notice.
+    // A device without Host control can't press it, so it never shows the notice; the line
+    // still says whether it is on, and why in the app's words.
     switch.state = ControlState::ReadOnly;
+    switch.on = true;
+    switch.why = Some(NeuralWhy::NoHostControl);
     switch.reason = Some("Turn on Host control for this device.".into());
     assert!(!configurable(&switch));
     assert_eq!(
         switch_text(&switch),
-        "Turn on Host control for this device."
+        "On · Turn on Host control for this device in the PC’s web UI."
     );
+}
+
+/// The PC's check of the game says why before any try, in the app's words; a code this app
+/// doesn't know shows the PC's.
+#[test]
+fn a_game_that_cant_have_it_says_why_before_any_try() {
+    let mut switch = state(false, None).switches[0].clone();
+    switch.state = ControlState::Unsupported;
+    switch.why = Some(NeuralWhy::NoFrameGeneration);
+    switch.reason = Some("The game has no DLSS frame generation.".into());
+    assert_eq!(
+        switch_text(&switch),
+        "Off · This game offers no DLSS frame generation for this to take the place of."
+    );
+    switch.why = Some(NeuralWhy::AntiCheat);
+    assert_eq!(
+        switch_text(&switch),
+        "Off · This game has an anti-cheat, which would treat the mod as cheating."
+    );
+    switch.why = Some(NeuralWhy::Unknown);
+    switch.reason = Some("The PC's own words.".into());
+    assert_eq!(switch_text(&switch), "Off · The PC's own words.");
+}
+
+/// On, the page says how it is in the game's folder and which release, as the console does.
+#[test]
+fn on_it_names_the_mode_and_release() {
+    let mut neural = state(true, None);
+    assert_eq!(installed_text(&neural), None);
+    neural.release = Some("FG-V.B16".into());
+    neural.mode = Some(NeuralMode::Addon);
+    assert_eq!(
+        installed_text(&neural).as_deref(),
+        Some("Added to the upscaler mod in the game’s folder, release FG-V.B16.")
+    );
+    neural.mode = Some(NeuralMode::Full);
+    assert_eq!(
+        installed_text(&neural).as_deref(),
+        Some("Installed in the game’s folder, release FG-V.B16.")
+    );
+    neural.switches[0].on = false;
+    assert_eq!(installed_text(&neural), None);
 }
 
 /// A write refused while the PC works on the game keeps its words through the read after it,

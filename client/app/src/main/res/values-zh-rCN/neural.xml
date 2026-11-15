@@ -23,4 +23,12 @@
     <string name="neural_copying">正在复制到游戏文件夹…</string>
     <string name="neural_removing">正在从游戏文件夹移除…</string>
     <string name="neural_failed">上次更改失败。</string>
+    <string name="neural_why_busy">电脑正在处理此游戏的帧生成。</string>
+    <string name="neural_why_streaming">只能在没有串流时更改。</string>
+    <string name="neural_why_gpu">这台电脑的显卡无法运行帧生成。</string>
+    <string name="neural_why_anti_cheat">此游戏带有反作弊，会把模组视为作弊。</string>
+    <string name="neural_why_no_dlss">此游戏没有可供替代的 DLSS 帧生成。</string>
+    <string name="neural_why_choose">请先在电脑的网页界面中选择游戏的程序。</string>
+    <string name="neural_installed">已安装到游戏文件夹，版本 %1$s。</string>
+    <string name="neural_added">已添加到游戏文件夹中的超分辨率模组，版本 %1$s。</string>
 </resources>

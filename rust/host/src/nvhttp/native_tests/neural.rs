@@ -257,3 +257,111 @@ async fn the_applist_uuid_opens_the_games_switch() {
     let state = neural(&s.get(&format!("/neural?app={uuid}")).await);
     assert_eq!(state.app, uuid);
 }
+
+/// A game that can't have frame generation says so before any write, as a
+/// code the device words itself (`why`) and in the host's words: no DLSS
+/// frame generation, an anti-cheat, or a program the host can't tell. One
+/// that fits stays configurable. A switch that is on is never held back by
+/// the game's check, and names how and which release is in the folder.
+#[tokio::test]
+async fn the_game_is_checked_before_any_write_and_each_state_has_a_code() {
+    use butterpollo_core::native_api::neural::{Mode, Why};
+    let s = Setup::new();
+    host(&s, "AMD Radeon 780M Graphics", AMD, 0x1900);
+    s.host_control(true);
+    let root =
+        std::env::temp_dir().join(format!("rubylight-native-neural-{}", uuid::Uuid::new_v4()));
+    let install = |name: &str, files: &[&str]| {
+        let folder = root.join(name);
+        std::fs::create_dir_all(&folder).unwrap();
+        for file in files {
+            std::fs::write(folder.join(file), "x").unwrap();
+        }
+        folder
+    };
+    let fits = install("fits", &["Game.exe", "nvngx_dlssg.dll"]);
+    let without = install("without", &["Game.exe"]);
+    let guarded = install(
+        "guarded",
+        &["Game.exe", "nvngx_dlssg.dll", "EasyAntiCheat_x64.dll"],
+    );
+    crate::steam::update_library(s.host(), |apps, _| {
+        for (uuid, folder) in [("fits", &fits), ("without", &without), ("guarded", &guarded)] {
+            apps.push(json!({"name": uuid, "uuid": uuid, "launcher-install-dir": folder}));
+        }
+        apps.push(json!({"name": "On", "uuid": "on", "launcher-install-dir": without,
+            "neural-anr": {"exe": without.join("Game.exe"), "release": "FG-V.B16", "proxy": "dxgi.dll", "mode": "addon"}}));
+        true
+    })
+    .unwrap();
+    let switch = |state: &Neural| state.switches[0].clone();
+    let fits_state = neural(&s.get("/neural?app=fits").await);
+    assert_eq!(switch(&fits_state).state, ControlState::Configurable);
+    assert_eq!(
+        (
+            switch(&fits_state).why,
+            fits_state.mode,
+            fits_state.release.clone()
+        ),
+        (None, None, None)
+    );
+    let without_state = switch(&neural(&s.get("/neural?app=without").await));
+    assert_eq!(
+        (without_state.state, without_state.why),
+        (ControlState::Unsupported, Some(Why::NoFrameGeneration))
+    );
+    assert!(
+        without_state
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("DLSS frame generation")
+    );
+    let guarded_state = switch(&neural(&s.get("/neural?app=guarded").await));
+    assert_eq!(
+        (guarded_state.state, guarded_state.why),
+        (ControlState::Unsupported, Some(Why::AntiCheat))
+    );
+    assert!(
+        guarded_state
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("Easy Anti-Cheat")
+    );
+    // A hand-added app whose program the host doesn't know.
+    let unknown = switch(&neural(&s.get("/neural?app=game").await));
+    assert_eq!(
+        (unknown.state, unknown.why),
+        (ControlState::NeedsExternalSetup, Some(Why::ChooseProgram))
+    );
+    // On: no check holds it back, and the answer says how it is in.
+    let on = neural(&s.get("/neural?app=on").await);
+    assert_eq!(
+        (switch(&on).state, switch(&on).on),
+        (ControlState::Configurable, true)
+    );
+    assert_eq!(
+        (on.mode, on.release.as_deref()),
+        (Some(Mode::Addon), Some("FG-V.B16"))
+    );
+    // The other states' codes.
+    s.host_control(false);
+    assert_eq!(
+        switch(&neural(&s.get("/neural?app=fits").await)).why,
+        Some(Why::NoHostControl)
+    );
+    s.host_control(true);
+    let _stream = s.streaming();
+    assert_eq!(
+        switch(&neural(&s.get("/neural?app=fits").await)).why,
+        Some(Why::Streaming)
+    );
+    let s = Setup::new();
+    host(&s, "NVIDIA GeForce GTX 1080", NVIDIA, 0x1B80);
+    assert_eq!(
+        switch(&neural(&s.get("/neural?app=game").await)).why,
+        Some(Why::Gpu)
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

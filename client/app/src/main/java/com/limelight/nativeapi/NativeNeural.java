@@ -19,11 +19,18 @@ public final class NativeNeural {
         public final boolean on;
         /** Why it can't change now, in the host's words; null when it can. */
         public final String reason;
+        /**
+         * Why it can't change now as a code the app says in its own words ({@code busy}, {@code streaming},
+         * {@code no_host_control}, {@code gpu}, {@code anti_cheat}, {@code no_frame_generation}, {@code choose_program},
+         * {@code game}); null from an older host, or when it can change.
+         */
+        public final String why;
 
-        Switch(String state, boolean on, String reason) {
+        Switch(String state, boolean on, String reason, String why) {
             this.state = state;
             this.on = on;
             this.reason = reason;
+            this.why = why;
         }
 
         public boolean configurable() {
@@ -43,9 +50,13 @@ public final class NativeNeural {
     public final long total;
     /** Why the last job failed, in the host's words; null otherwise. */
     public final String error;
+    /** Once it is on: {@code full} (the PC's own package) or {@code addon} (added to the user's upscaler mod); null otherwise. */
+    public final String mode;
+    /** Once it is on: the release in the game's folder; null otherwise or from an older host. */
+    public final String release;
 
     NativeNeural(String app, boolean accepted, Switch frameGeneration, boolean replacesEarlierUpscaling,
-                 String phase, long done, long total, String error) {
+                 String phase, long done, long total, String error, String mode, String release) {
         this.app = app;
         this.accepted = accepted;
         this.frameGeneration = frameGeneration;
@@ -54,6 +65,8 @@ public final class NativeNeural {
         this.done = done;
         this.total = total;
         this.error = error;
+        this.mode = mode;
+        this.release = release;
     }
 
     /** The host is downloading, installing or removing: read again in a moment. */
@@ -71,7 +84,8 @@ public final class NativeNeural {
         for (int i = 0; switches != null && i < switches.length(); i++) {
             JSONObject s = switches.getJSONObject(i);
             if (FRAME_GENERATION.equals(s.optString("id"))) {
-                frameGeneration = new Switch(s.optString("state"), s.optBoolean("on"), text(s, "reason"));
+                frameGeneration = new Switch(s.optString("state"), s.optBoolean("on"), text(s, "reason"),
+                        text(s, "why"));
             }
         }
         JSONObject job = json.optJSONObject("job");
@@ -79,7 +93,7 @@ public final class NativeNeural {
                 json.optBoolean("replaces_earlier_upscaling"),
                 job == null ? null : job.optString("phase", null),
                 job == null ? 0 : job.optLong("done"), job == null ? 0 : job.optLong("total"),
-                job == null ? null : text(job, "error"));
+                job == null ? null : text(job, "error"), text(json, "mode"), text(json, "release"));
     }
 
     /** POST /neural/settings for the frame generation switch; accept_notice only when the user just accepted it. */

@@ -80,7 +80,10 @@ pub use session_guests::{
     guest_ended, join_refused, GuestAction, GuestRequest, SessionGuest, SessionGuests, FEATURE_SESSION_GUESTS, GUESTS_POLL_MS,
     GUEST_CONTROLLER, GUEST_KEYBOARD_MOUSE, GUEST_PERMISSIONS, GUEST_VIEW,
 };
-pub use neural::{Neural, NeuralAction, NeuralJob, NeuralPhase, NeuralSwitch, NeuralWrite, FRAME_GENERATION};
+pub use neural::{
+    Neural, NeuralAction, NeuralJob, NeuralMode, NeuralPhase, NeuralSwitch, NeuralWhy, NeuralWrite,
+    FRAME_GENERATION,
+};
 pub use pairing::{PairFailure, PairResult, PairStep};
 pub use pc_power::{
     host_words, update_arrived, HostUpdate, LateRefusal, PcPower, PcPowerOffer, PowerAvailability, FEATURE_RESTART, FEATURE_SHUTDOWN,

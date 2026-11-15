@@ -179,6 +179,10 @@ public final class NeuralSheet {
                 action.setAlpha(HostMenu.DISABLED_ALPHA);
             }
             action.setOnClickListener(v -> toggle(state));
+            String installed = installedNote(activity, state);
+            if (installed != null) {
+                sheet.addNote(sheet.addGroup(), installed, false);
+            }
             if (state.replacesEarlierUpscaling && !fg.on) {
                 sheet.addNote(sheet.addGroup(), activity.getString(R.string.neural_replaces), false);
             }
@@ -200,7 +204,8 @@ public final class NeuralSheet {
         if (!fg.configurable()) {
             new NavigationDialogBuilder(activity)
                     .setTitle(R.string.neural_frame_generation)
-                    .setMessage(fg.reason != null ? fg.reason : activity.getString(R.string.neural_unavailable))
+                    .setMessage(whyText(activity, fg) != null ? whyText(activity, fg)
+                            : activity.getString(R.string.neural_unavailable))
                     .setPositiveButton(android.R.string.ok, null)
                     .show();
             return;
@@ -210,15 +215,14 @@ public final class NeuralSheet {
         } else if (state.accepted) {
             write(true, false);
         } else {
-            // The host's one-time notice; Cancel is the default.
-            androidx.appcompat.app.AlertDialog notice = new NavigationDialogBuilder(activity)
+            // The host's one-time notice; Cancel is the default, by touch and by D-pad alike.
+            new NavigationDialogBuilder(activity)
+                    .startOnCancel()
                     .setTitle(R.string.neural_notice_title)
                     .setMessage(activity.getString(R.string.neural_notice))
                     .setNegativeButton(android.R.string.cancel, null)
                     .setPositiveButton(R.string.neural_notice_accept, (d, w) -> write(true, true))
                     .show();
-            android.widget.Button cancel = notice.getButton(android.content.DialogInterface.BUTTON_NEGATIVE);
-            if (cancel != null) cancel.requestFocus();
         }
     }
 
@@ -227,9 +231,35 @@ public final class NeuralSheet {
         sheet.addNote(sheet.addGroup(), note, false);
     }
 
+    /** The switch's line: whether it is on, and, when it can't change, why. */
     static String switchNote(Context context, NativeNeural.Switch fg) {
-        if (!fg.configurable() && fg.reason != null && !fg.reason.isEmpty()) return fg.reason;
-        return context.getString(fg.on ? R.string.neural_on : R.string.neural_off);
+        String state = context.getString(fg.on ? R.string.neural_on : R.string.neural_off);
+        String why = fg.configurable() ? null : whyText(context, fg);
+        return why == null ? state : context.getString(R.string.neural_state_reason, state, why);
+    }
+
+    /** Why the switch can't change, in the app's words for each code it knows, else the host's; null for none. */
+    static String whyText(Context context, NativeNeural.Switch fg) {
+        if (fg.why != null) {
+            switch (fg.why) {
+                case "busy": return context.getString(R.string.neural_why_busy);
+                case "streaming": return context.getString(R.string.neural_why_streaming);
+                case "no_host_control": return context.getString(R.string.native_error_host_control);
+                case "gpu": return context.getString(R.string.neural_why_gpu);
+                case "anti_cheat": return context.getString(R.string.neural_why_anti_cheat);
+                case "no_frame_generation": return context.getString(R.string.neural_why_no_dlss);
+                case "choose_program": return context.getString(R.string.neural_why_choose);
+                default: break;
+            }
+        }
+        return fg.reason != null && !fg.reason.isEmpty() ? fg.reason : null;
+    }
+
+    /** How frame generation is in the game's folder once it is on, as the PC's console says it; null when unknown. */
+    static String installedNote(Context context, NativeNeural state) {
+        if (state.frameGeneration == null || !state.frameGeneration.on || state.release == null) return null;
+        return context.getString("addon".equals(state.mode) ? R.string.neural_added : R.string.neural_installed,
+                state.release);
     }
 
     /** What the host is doing for the game, or why it last failed; null when there is nothing to say. */

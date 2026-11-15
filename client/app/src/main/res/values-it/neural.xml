@@ -23,4 +23,12 @@
     <string name="neural_copying">Copia nella cartella del gioco…</string>
     <string name="neural_removing">Rimozione dalla cartella del gioco…</string>
     <string name="neural_failed">L’ultima modifica non è riuscita.</string>
+    <string name="neural_why_busy">Il PC sta lavorando alla generazione di fotogrammi di questo gioco.</string>
+    <string name="neural_why_streaming">Si può cambiare solo mentre non è in corso alcuno streaming.</string>
+    <string name="neural_why_gpu">La grafica di questo PC non può eseguire la generazione di fotogrammi.</string>
+    <string name="neural_why_anti_cheat">Questo gioco ha un anti-cheat, che considererebbe la mod un imbroglio.</string>
+    <string name="neural_why_no_dlss">Questo gioco non offre una generazione di fotogrammi DLSS che questa possa sostituire.</string>
+    <string name="neural_why_choose">Scegli prima il programma del gioco nell’interfaccia web del PC.</string>
+    <string name="neural_installed">Installata nella cartella del gioco, versione %1$s.</string>
+    <string name="neural_added">Aggiunta alla mod di upscaling nella cartella del gioco, versione %1$s.</string>
 </resources>

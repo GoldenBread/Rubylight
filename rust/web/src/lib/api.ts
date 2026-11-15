@@ -824,6 +824,11 @@ export interface NeuralStatus {
   release: string | null;
   /** `full`: the host's own package; `addon`: added to an upscaler mod the user installed. */
   mode: 'full' | 'addon' | null;
+  /**
+   * The game's own check before any switch, while it is off: `why` is `anti_cheat`, `no_frame_generation`, `game`
+   * (refused, `reason` says why) or `choose_program` (Rubylight can't tell which program is the game).
+   */
+  game?: { why: string; reason: string } | null;
   /** Rubylight 3.0's neural upscaling, still in the game's folder until the user removes it. */
   earlier_upscaling: { exe: string | null; release: string | null } | null;
   job: NeuralJob | null;

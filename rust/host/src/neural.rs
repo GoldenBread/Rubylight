@@ -57,6 +57,8 @@ const ACCEPTED: &str = "anr_accepted_at";
 const PROBE_RETRY: Duration = Duration::from_secs(300);
 /// The record's list of removals still to do.
 const PENDING: &str = "pending_removals";
+/// How long a game's own check ([`game_check`]) holds.
+const GAME_RECHECK: Duration = Duration::from_secs(120);
 /// How often a pending removal is tried again.
 const PENDING_RETRY: Duration = Duration::from_secs(600);
 /// What the console shows for a failed download; the host's log has why.
@@ -105,6 +107,9 @@ struct State {
     /// and the settings it holds for.
     offered: Option<(GpuSetting, bool)>,
     jobs: BTreeMap<String, Job>,
+    /// Each app's own check ([`game_check`]): when, for which program and
+    /// install, and what it found (None: the check itself failed).
+    games: BTreeMap<String, GameChecked>,
     /// When the pending removals are tried next.
     removal_at: Option<Instant>,
     /// The cached release this host start checked file by file.
@@ -112,6 +117,23 @@ struct State {
     /// Cached releases an install is about to copy, and how many: another
     /// release fetched meanwhile leaves them to the next fetch to clear.
     using: BTreeMap<PathBuf, usize>,
+}
+
+type GameChecked = (Instant, Option<PathBuf>, Option<PathBuf>, Option<GameCheck>);
+
+/// What a game's own check found before any switch: what the install asks
+/// of the game itself ([`find_game`]), without the download.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GameCheck {
+    Fits,
+    /// Refused: `why` is the code a device says in its words
+    /// (`anti_cheat`, `no_frame_generation`, `game`).
+    Refused {
+        why: &'static str,
+        reason: String,
+    },
+    /// The host can't tell which program is the game's.
+    Choose(String),
 }
 
 /// A cached release kept while an install copies it ([`fetch_using`]).
@@ -310,6 +332,56 @@ fn vc_missing(h: &Shared, game: Option<&Path>) -> Vec<&'static str> {
         .into_iter()
         .filter(|file| missing.contains(file))
         .collect()
+}
+
+/// The game's own check for `app` (saved as `uuid`), as turning the switch on
+/// asks it before the download: its program, anti-cheat, DLSS frame
+/// generation and Valve Anti-Cheat, through the user's helper as the
+/// install does. Held per app for [`GAME_RECHECK`] while its program and
+/// install stay; a job drops it. None when the check itself failed: the
+/// switch stays usable and the install says why. Blocks.
+fn game_check(h: &Shared, uuid: &str, app: &App) -> Option<GameCheck> {
+    let exe = legacy_exe(app).or_else(|| game_command(app));
+    let install = install(app);
+    if let Some((at, held_exe, held_install, check)) = h.neural.lock().games.get(uuid)
+        && *held_exe == exe
+        && *held_install == install
+        && at.elapsed() < GAME_RECHECK
+    {
+        return check.clone();
+    }
+    let check = match find_game(h, app, exe.clone(), install.clone()) {
+        Ok(Response::Found { .. }) => Some(GameCheck::Fits),
+        Ok(Response::Refused { reason }) => Some(GameCheck::Refused {
+            why: game_why(&reason),
+            reason,
+        }),
+        Ok(Response::ChooseExe { reason }) => Some(GameCheck::Choose(reason)),
+        Ok(other) => {
+            tracing::debug!(app = %app.name, answer = ?other, "Neural Rendering: the game's check gave no answer");
+            None
+        }
+        Err(error) => {
+            tracing::debug!(app = %app.name, error = %format!("{error:#}"), "Neural Rendering: the game's check failed");
+            None
+        }
+    };
+    h.neural.lock().games.insert(
+        uuid.to_owned(),
+        (Instant::now(), exe, install, check.clone()),
+    );
+    check
+}
+
+/// The code of a game's refusal ([`GameCheck::Refused`]).
+fn game_why(reason: &str) -> &'static str {
+    if reason.starts_with(folder::NO_DLSS) {
+        "no_frame_generation"
+    } else if reason.contains(folder::ANTI_CHEAT) {
+        "anti_cheat"
+    } else {
+        "game"
+    }
 }
 
 /// The folder of the game's program as far as the app tells without the
@@ -1118,10 +1190,10 @@ fn steam_refusal(app: &App, paths: &[PathBuf], roots: &[PathBuf]) -> Option<Stri
     paths.iter().find_map(|exe| {
         match butterpollo_core::steam::valve_anti_cheat(appid, exe, "", roots) {
             Ok(false) => None,
-            Ok(true) => Some(
-                "Steam lists Valve Anti-Cheat for the game, and an anti-cheat treats Neural Rendering's DLL as a cheat"
-                    .into(),
-            ),
+            Ok(true) => Some(format!(
+                "Steam lists Valve Anti-Cheat for the game, and {}",
+                folder::ANTI_CHEAT
+            )),
             Err(message) => Some(format!(
                 "Rubylight can't tell whether the game uses Valve Anti-Cheat ({message})"
             )),
@@ -1356,6 +1428,7 @@ pub(crate) fn start_job(
     Ok(())
 }
 fn update_job(h: &Shared, uuid: &str, change: impl FnOnce(&mut Job)) {
+    h.neural.lock().games.remove(uuid);
     if let Some(job) = h.neural.lock().jobs.get_mut(uuid) {
         change(job);
     }
@@ -1628,8 +1701,8 @@ fn finish_install(
 /// Rubylight 3.0's upscaling. Runs on.
 pub fn disable(h: &Shared, uuid: &str) -> Result<(), Refusal> {
     let app = app(h, uuid).ok_or(Refusal::NotFound)?;
-    // The streamed game may be the one: it holds the provider's DLL loaded, so
-    // the ini would be put back and the DLL's delete fail, half removed.
+    // The streamed game may be the one: it holds the DLLs loaded, so the
+    // removal would stop at the first and ask to close the game mid-stream.
     if crate::updater::streaming(h) {
         return Err(Refusal::Streaming);
     }
@@ -1713,8 +1786,8 @@ fn remove_at(name: &str, exe: &Path) -> Result<Removed> {
 /// takes every slot before any file is removed, so one busy app refuses the
 /// delete with nothing changed. Then [`Removing::remove_mod`].
 pub fn reserve(h: &Shared, app: &App) -> Result<Removing> {
-    // As `disable`: the streamed game may hold the provider's DLL loaded, so
-    // the removal would put the ini back and stop at the DLL, half removed.
+    // As `disable`: the streamed game may hold the DLLs loaded, so the
+    // removal would stop at the first and ask to close the game mid-stream.
     // Refused before any slot is taken or file touched; the app stays.
     if has_files(app) && crate::updater::streaming(h) {
         return Err(StreamRunning(app.name.clone()).into());
@@ -2142,6 +2215,18 @@ fn launch_check(h: &Shared, app: &App, uuid: &str, exe: PathBuf, legacy: bool) -
 pub fn status(h: &Shared, uuid: &str) -> Value {
     let app = app(h, uuid);
     let capability = capability(h, app.as_ref().and_then(game_folder).as_deref());
+    // The game's own check, only where it decides something: the switch is
+    // off, nothing runs for the game and the PC can run frame generation.
+    let idle = !h
+        .neural
+        .lock()
+        .jobs
+        .get(uuid)
+        .is_some_and(|job| !matches!(job.phase, "done" | "failed"));
+    let game = app
+        .as_ref()
+        .filter(|app| idle && capability.is_ok() && !app.extra.contains_key(KEY))
+        .and_then(|app| game_check(h, uuid, app));
     let state = h.neural.lock();
     let setting = app.as_ref().and_then(|app| app.extra.get(KEY)).cloned();
     let legacy = app
@@ -2159,6 +2244,11 @@ pub fn status(h: &Shared, uuid: &str) -> Value {
         "exe": setting.as_ref().and_then(|s| s.get("exe")).cloned(),
         "release": setting.as_ref().and_then(|s| s.get("release")).cloned(),
         "mode": setting.as_ref().and_then(|s| s.get("mode")).cloned(),
+        "game": match game {
+            Some(GameCheck::Refused { why, reason }) => json!({"why": why, "reason": reason}),
+            Some(GameCheck::Choose(reason)) => json!({"why": "choose_program", "reason": reason}),
+            Some(GameCheck::Fits) | None => Value::Null,
+        },
         "earlier_upscaling": legacy.map(|legacy| json!({
             "exe": legacy.get("exe"),
             "release": legacy.get("release"),

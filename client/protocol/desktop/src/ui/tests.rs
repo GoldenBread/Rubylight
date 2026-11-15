@@ -3255,9 +3255,11 @@ fn game_page_with_neural(on: bool, state: nightjar_core::http::native_api::radeo
         app: "install-0".into(),
         accepted: true,
         gpu: Some("AMD Radeon 780M Graphics".into()),
-        switches: vec![nightjar_core::http::NeuralSwitch { id: nightjar_core::http::FRAME_GENERATION.into(), state, on, reason: reason.map(str::to_owned) }],
+        switches: vec![nightjar_core::http::NeuralSwitch { id: nightjar_core::http::FRAME_GENERATION.into(), state, on, reason: reason.map(str::to_owned), why: None }],
         replaces_earlier_upscaling: false,
         job: None,
+        mode: None,
+        release: None,
     };
     f.l.go(Screen::Game { host: pc, app: 1000 });
     f.l.neural.open(pc, 1000, "install-0".into(), std::sync::Arc::new(FixedNeural(std::sync::Mutex::new(neural))), std::sync::Arc::new(|| {}));
@@ -3302,7 +3304,7 @@ fn the_frame_generation_row_shows_its_whole_line() {
     let about = f.placed.iter().find(|(text, _, _)| text.starts_with("Frame generation for games that offer DLSS frame generation")).unwrap_or_else(|| panic!("{:?}", f.drawn));
     assert!(about.1.height() > 2.0 * super::design_tokens::TYPE_SUB_SIZE, "one line, cut: {:?}", about.1);
     let f = game_page_with_neural(false, ControlState::ReadOnly, Some("Turn on Host control for this device in the Rubylight console to change it."));
-    assert!(shows(&f, "Turn on Host control for this device in the Rubylight console to change it."), "{:?}", f.drawn);
+    assert!(shows(&f, "Off · Turn on Host control for this device in the Rubylight console to change it."), "{:?}", f.drawn);
 }
 
 /// The game page's frame generation row:

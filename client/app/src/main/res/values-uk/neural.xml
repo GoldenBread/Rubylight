@@ -23,4 +23,12 @@
     <string name="neural_copying">Копіювання в теку гри…</string>
     <string name="neural_removing">Видалення з теки гри…</string>
     <string name="neural_failed">Остання зміна не вдалася.</string>
+    <string name="neural_why_busy">ПК зараз працює над генерацією кадрів для цієї гри.</string>
+    <string name="neural_why_streaming">Змінити можна, лише поки нічого не транслюється.</string>
+    <string name="neural_why_gpu">Графіка цього ПК не може виконувати генерацію кадрів.</string>
+    <string name="neural_why_anti_cheat">У цій грі є античит, який вважав би мод шахрайством.</string>
+    <string name="neural_why_no_dlss">У цій грі немає генерації кадрів DLSS, яку це могло б замінити.</string>
+    <string name="neural_why_choose">Спершу виберіть програму гри у вебінтерфейсі ПК.</string>
+    <string name="neural_installed">Встановлено в теку гри, випуск %1$s.</string>
+    <string name="neural_added">Додано до моду масштабування в теці гри, випуск %1$s.</string>
 </resources>

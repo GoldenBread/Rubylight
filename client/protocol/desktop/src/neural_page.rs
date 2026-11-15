@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use nightjar_core::http::{
-    ClientIdentity, Error, HostClient, Neural, NeuralPhase, NeuralSwitch, NeuralWrite,
-    FRAME_GENERATION,
+    ClientIdentity, Error, HostClient, Neural, NeuralMode, NeuralPhase, NeuralSwitch, NeuralWhy,
+    NeuralWrite, FRAME_GENERATION,
 };
 
 use crate::hosts::{client_for, Host, Waker};
@@ -291,13 +291,52 @@ fn said(error: &Error) -> String {
     }
 }
 
-/// The switch's line: why it can't change now, or whether it is on.
+/// The switch's line: whether it is on, and, when it can't change now, why.
 pub fn switch_text(switch: &NeuralSwitch) -> String {
-    match switch.reason.as_deref().filter(|_| !configurable(switch)) {
-        Some(reason) => reason.to_owned(),
-        None if switch.on => tr("On").to_owned(),
-        None => tr("Off").to_owned(),
+    let state = if switch.on { tr("On") } else { tr("Off") };
+    match why_text(switch).filter(|_| !configurable(switch)) {
+        Some(why) => format!("{state} · {why}"),
+        None => state.to_owned(),
     }
+}
+
+/// Why the switch can't change, in this app's words for each code it knows, else the PC's.
+pub fn why_text(switch: &NeuralSwitch) -> Option<String> {
+    let ours = match switch.why {
+        Some(NeuralWhy::Busy) => tr("The PC is working on this game’s frame generation."),
+        Some(NeuralWhy::Streaming) => tr("It can change only while nothing is streaming."),
+        Some(NeuralWhy::NoHostControl) => {
+            tr("Turn on Host control for this device in the PC’s web UI.")
+        }
+        Some(NeuralWhy::Gpu) => tr("This PC’s graphics can’t run frame generation."),
+        Some(NeuralWhy::AntiCheat) => {
+            tr("This game has an anti-cheat, which would treat the mod as cheating.")
+        }
+        Some(NeuralWhy::NoFrameGeneration) => {
+            tr("This game offers no DLSS frame generation for this to take the place of.")
+        }
+        Some(NeuralWhy::ChooseProgram) => tr("Choose the game’s program in the PC’s web UI first."),
+        Some(NeuralWhy::Game | NeuralWhy::Unknown) | None => {
+            return switch.reason.clone().filter(|reason| !reason.is_empty())
+        }
+    };
+    Some(ours.to_owned())
+}
+
+/// How frame generation is in the game's folder once it is on, as the PC's console says it;
+/// None while it is off or from a PC that doesn't say.
+pub fn installed_text(state: &Neural) -> Option<String> {
+    if !state.frame_generation().is_some_and(|switch| switch.on) {
+        return None;
+    }
+    let release = state.release.as_deref()?;
+    Some(match state.mode {
+        Some(NeuralMode::Addon) => trf(
+            "Added to the upscaler mod in the game’s folder, release {}.",
+            &[&release],
+        ),
+        _ => trf("Installed in the game’s folder, release {}.", &[&release]),
+    })
 }
 
 pub fn configurable(switch: &NeuralSwitch) -> bool {

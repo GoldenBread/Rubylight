@@ -32,13 +32,57 @@ pub struct Neural {
     /// What the host is doing for the game now, or how it last ended.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job: Option<Job>,
+    /// How frame generation is in the game's folder, once it is on: the
+    /// host's own package, or added to an upscaler mod the user installed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<Mode>,
+    /// The release in the game's folder, once it is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Mode {
+    /// The host's own package.
+    Full,
+    /// Added to an upscaler mod the user installed.
+    Addon,
+    #[serde(other)]
+    Unknown,
+}
+
+/// Why a switch can't change now, for a client to say in its own words;
+/// `reason` says it in the host's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Why {
+    /// The host is downloading, installing or removing for the game.
+    Busy,
+    /// A stream runs.
+    Streaming,
+    /// The device lacks Host control.
+    NoHostControl,
+    /// None of this PC's GPUs can run it.
+    Gpu,
+    /// The game has an anti-cheat, which treats the mod as a cheat.
+    AntiCheat,
+    /// The game offers no DLSS frame generation for it to take the place of.
+    NoFrameGeneration,
+    /// The host can't tell which program is the game: choose it in the console.
+    ChooseProgram,
+    /// Something else about the game; `reason` says what.
+    Game,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Switch {
     /// [`FRAME_GENERATION`]; clients leave out ids they don't know.
     pub id: String,
-    /// `configurable`; `unsupported` (this PC's GPU can't run it);
+    /// `configurable`; `unsupported` (this PC's GPU can't run it, or the game
+    /// can't have it);
     /// `temporarily_unavailable` (a stream runs, or the host is busy with the
     /// game); `needs_external_setup` (choose the game's program in the
     /// console). `reason` says which in words.
@@ -46,6 +90,10 @@ pub struct Switch {
     pub on: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Why it can't change, as a code a client says in its own words; absent
+    /// when it can, and from a host before these codes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<Why>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

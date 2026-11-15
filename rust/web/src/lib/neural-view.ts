@@ -70,6 +70,9 @@ export function neuralView(status: NeuralStatus): NeuralView {
   }
   if (status.enabled) return { kind: 'on', release: status.release, exe: status.exe, addon: status.mode === 'addon' };
   if (!status.available) return { kind: 'unavailable', reason: sentence(status.reason ?? 'This PC can’t run it.'), earlier };
+  // The game's own check, before any try: its program to choose, or why it can't have it.
+  if (status.game?.why === 'choose_program') return { kind: 'choose', reason: sentence(status.game.reason), earlier };
+  if (status.game) return { kind: 'unavailable', reason: sentence(status.game.reason), earlier };
   return { kind: 'off', kept: job?.action === 'remove' ? job.kept : [], earlier };
 }
 

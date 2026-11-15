@@ -23,4 +23,12 @@
     <string name="neural_copying">ゲームのフォルダーにコピー中…</string>
     <string name="neural_removing">ゲームのフォルダーから削除中…</string>
     <string name="neural_failed">前回の変更に失敗しました。</string>
+    <string name="neural_why_busy">PC がこのゲームのフレーム生成を処理しています。</string>
+    <string name="neural_why_streaming">ストリーミングしていないときだけ変更できます。</string>
+    <string name="neural_why_gpu">この PC のグラフィックスではフレーム生成を実行できません。</string>
+    <string name="neural_why_anti_cheat">このゲームにはアンチチートがあり、Mod を不正とみなします。</string>
+    <string name="neural_why_no_dlss">このゲームには、これが置き換えられる DLSS フレーム生成がありません。</string>
+    <string name="neural_why_choose">先に PC のウェブ UI でゲームのプログラムを選んでください。</string>
+    <string name="neural_installed">ゲームのフォルダーにインストール済み、リリース %1$s。</string>
+    <string name="neural_added">ゲームのフォルダーのアップスケーラー Mod に追加済み、リリース %1$s。</string>
 </resources>

@@ -51,6 +51,10 @@ const ADMINISTRATORS: [&str; 3] = [
     "S-1-5-32-544",
     "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",
 ];
+/// How a refusal of a game without DLSS frame generation begins, and what an
+/// anti-cheat refusal says: the host tells a device which it was.
+pub const NO_DLSS: &str = "the game has no DLSS frame generation";
+pub const ANTI_CHEAT: &str = "an anti-cheat treats Neural Rendering's DLL as a cheat";
 /// A junction, symbolic link or other reparse point.
 const LINK: u32 = 0x400;
 
@@ -670,7 +674,7 @@ fn refuse_anti_cheat_in(exe: &Path, install: Option<&Path>, shared: &[PathBuf]) 
     }
     match hit {
         Some((which, path)) => Err(Failure::Refused(format!(
-            "the game uses {which} ({}), and an anti-cheat treats Neural Rendering's DLL as a cheat",
+            "the game uses {which} ({}), and {ANTI_CHEAT}",
             path.display()
         ))),
         None => Ok(()),
@@ -710,10 +714,9 @@ fn refuse_without_frame_generation(exe: &Path, install: Option<&Path>) -> Outcom
             return Ok(());
         }
     }
-    Err(Failure::Refused(
-        "the game has no DLSS frame generation (nvngx_dlssg.dll or sl.dlss_g.dll in its folder) for Neural Rendering to take the place of; turn it on only for a game that offers DLSS frame generation"
-            .into(),
-    ))
+    Err(Failure::Refused(format!(
+        "{NO_DLSS} (nvngx_dlssg.dll or sl.dlss_g.dll in its folder) for Neural Rendering to take the place of; turn it on only for a game that offers DLSS frame generation"
+    )))
 }
 
 pub(super) fn sha256_file(path: &Path) -> std::io::Result<(String, u64)> {

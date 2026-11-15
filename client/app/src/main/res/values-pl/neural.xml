@@ -23,4 +23,12 @@
     <string name="neural_copying">Kopiowanie do folderu gry…</string>
     <string name="neural_removing">Usuwanie z folderu gry…</string>
     <string name="neural_failed">Ostatnia zmiana się nie powiodła.</string>
+    <string name="neural_why_busy">PC pracuje nad generowaniem klatek dla tej gry.</string>
+    <string name="neural_why_streaming">Można to zmienić tylko wtedy, gdy nic nie jest strumieniowane.</string>
+    <string name="neural_why_gpu">Grafika tego PC nie obsługuje generowania klatek.</string>
+    <string name="neural_why_anti_cheat">Ta gra ma system anti-cheat, który uznałby moda za oszustwo.</string>
+    <string name="neural_why_no_dlss">Ta gra nie oferuje generowania klatek DLSS, które to mogłoby zastąpić.</string>
+    <string name="neural_why_choose">Najpierw wybierz program gry w interfejsie WWW PC.</string>
+    <string name="neural_installed">Zainstalowane w folderze gry, wydanie %1$s.</string>
+    <string name="neural_added">Dodane do moda skalowania w folderze gry, wydanie %1$s.</string>
 </resources>

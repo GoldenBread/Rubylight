@@ -53,8 +53,16 @@ public class NeuralSheetTest {
             + "\"frame_generation\",\"state\":\"configurable\",\"on\":true}],\"job\":{\"action\":\"install\",\"phase\":\"done\"}}}";
 
     private static final String READ_ONLY = "{\"ok\":{\"app\":\"uuid-1\",\"accepted\":false,\"switches\":[{\"id\":"
-            + "\"frame_generation\",\"state\":\"read_only\",\"on\":false,\"reason\":"
+            + "\"frame_generation\",\"state\":\"read_only\",\"on\":true,\"why\":\"no_host_control\",\"reason\":"
             + "\"Turn on Host control for this device in the Rubylight console to change it.\"}]}}";
+    private static final String NO_DLSS = "{\"ok\":{\"app\":\"uuid-1\",\"accepted\":true,\"switches\":[{\"id\":"
+            + "\"frame_generation\",\"state\":\"unsupported\",\"on\":false,\"why\":\"no_frame_generation\","
+            + "\"reason\":\"The game has no DLSS frame generation.\"}]}}";
+    private static final String UNKNOWN_WHY = "{\"ok\":{\"app\":\"uuid-1\",\"accepted\":true,\"switches\":[{\"id\":"
+            + "\"frame_generation\",\"state\":\"unsupported\",\"on\":false,\"why\":\"something_new\","
+            + "\"reason\":\"The host's own words.\"}]}}";
+    private static final String ADDED = "{\"ok\":{\"app\":\"uuid-1\",\"accepted\":true,\"switches\":[{\"id\":"
+            + "\"frame_generation\",\"state\":\"configurable\",\"on\":true}],\"mode\":\"addon\",\"release\":\"FG-V.B16\"}}";
 
     private ActivityController<ToolbarIconTintTest.Screen> controller;
     private ToolbarIconTintTest.Screen screen;
@@ -143,22 +151,67 @@ public class NeuralSheetTest {
         assertEquals(Arrays.asList("neural uuid-1"), calls);
     }
 
-    /** A device without Host control sees why and gets no notice for a write it would be refused. */
+    /** The notice opens on Cancel for touch and D-pad alike: A, A, A never installs. */
+    @Test
+    public void theNoticeStartsOnCancel() {
+        script("neural", OFF);
+        NeuralSheet sheet = sheet();
+        fg(sheet).performClick();
+        Shadows.shadowOf(Looper.getMainLooper()).idle();
+        AlertDialog notice = (AlertDialog) ShadowDialog.getLatestDialog();
+        assertTrue(notice.getButton(DialogInterface.BUTTON_NEGATIVE).isFocusedByDefault());
+        assertFalse(notice.getButton(DialogInterface.BUTTON_POSITIVE).isFocusedByDefault());
+    }
+
+    /** A game the PC refuses says why before any try, in the app's words, and choosing it sends nothing. */
+    @Test
+    public void aGameThatCantHaveItSaysWhyBeforeAnyTry() {
+        script("neural", NO_DLSS);
+        NeuralSheet sheet = sheet();
+        String text = texts(sheet);
+        String why = screen.getString(R.string.neural_why_no_dlss);
+        assertTrue(text, text.contains(screen.getString(R.string.neural_off) + " · " + why));
+        assertFalse(text, text.contains("The game has no DLSS"));
+        fg(sheet).performClick();
+        Shadows.shadowOf(Looper.getMainLooper()).idle();
+        TextView message = ShadowDialog.getLatestDialog().findViewById(android.R.id.message);
+        assertEquals(why, message.getText().toString());
+        assertEquals(Arrays.asList("neural uuid-1"), calls);
+    }
+
+    /** A code this app doesn't know shows the host's words. */
+    @Test
+    public void anUnknownCodeShowsTheHostsWords() {
+        script("neural", UNKNOWN_WHY);
+        String text = texts(sheet());
+        assertTrue(text, text.contains("The host's own words."));
+    }
+
+    /** On, the sheet says how it is in the game's folder and which release, as the console does. */
+    @Test
+    public void onItNamesTheModeAndRelease() {
+        script("neural", ADDED);
+        String text = texts(sheet());
+        assertTrue(text, text.contains(screen.getString(R.string.neural_added, "FG-V.B16")));
+    }
+
+    /** A device without Host control sees whether it is on and why, and gets no notice for a write it would be refused. */
     @Test
     public void withoutHostControlItSaysWhyAndShowsNoNotice() {
         script("neural", READ_ONLY);
         NeuralSheet sheet = sheet();
         String text = texts(sheet);
-        assertTrue(text, text.contains("Turn on Host control"));
+        String why = screen.getString(R.string.native_error_host_control);
+        assertTrue(text, text.contains(screen.getString(R.string.neural_on) + " · " + why));
         assertFalse(sheet.shown().frameGeneration.configurable());
         // Choosing it says why instead of showing the notice, and sends nothing.
         fg(sheet).performClick();
         Shadows.shadowOf(Looper.getMainLooper()).idle();
-        AlertDialog why = (AlertDialog) ShadowDialog.getLatestDialog();
-        assertTrue(why.isShowing());
-        TextView message = why.findViewById(android.R.id.message);
+        AlertDialog said = (AlertDialog) ShadowDialog.getLatestDialog();
+        assertTrue(said.isShowing());
+        TextView message = said.findViewById(android.R.id.message);
         assertNotNull(message);
-        assertTrue(message.getText().toString(), message.getText().toString().startsWith("Turn on Host control"));
+        assertEquals(why, message.getText().toString());
         assertEquals(Arrays.asList("neural uuid-1"), calls);
     }
 

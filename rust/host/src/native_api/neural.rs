@@ -21,7 +21,9 @@ use butterpollo_core::{
     native::VIEW,
     native_api::{
         error::ErrorCode,
-        neural::{self as api, Action, FRAME_GENERATION, Job, Neural, Phase, SettingsWrite},
+        neural::{
+            self as api, Action, FRAME_GENERATION, Job, Mode, Neural, Phase, SettingsWrite, Why,
+        },
         radeon::ControlState,
     },
     state::Client,
@@ -192,10 +194,20 @@ fn state(h: &Shared, app: &str, host_control: bool) -> Result<Neural, Failure> {
         .is_some_and(|job| !matches!(job.phase, Phase::Done | Phase::Failed));
     let choose = job.as_ref().is_some_and(|job| job.phase == Phase::Failed)
         && status["job"]["choose_exe"] == true;
-    let (state, reason) = if working {
+    // The game's own check, before any write: why it can't have it, or that
+    // its program is to be chosen in the console.
+    let game_why = match status["game"]["why"].as_str() {
+        Some("anti_cheat") => Some(Why::AntiCheat),
+        Some("no_frame_generation") => Some(Why::NoFrameGeneration),
+        Some("choose_program") => Some(Why::ChooseProgram),
+        Some(_) => Some(Why::Game),
+        None => None,
+    };
+    let (state, reason, why) = if working {
         (
             ControlState::TemporarilyUnavailable,
-            Some("Neural Rendering is busy with this game.".to_owned()),
+            Some("Frame generation is busy with this game.".to_owned()),
+            Some(Why::Busy),
         )
     } else if status["available"] != true && !on {
         (
@@ -203,19 +215,35 @@ fn state(h: &Shared, app: &str, host_control: bool) -> Result<Neural, Failure> {
             Some(sentence(
                 status["reason"].as_str().unwrap_or("This PC can't run it"),
             )),
+            Some(Why::Gpu),
+        )
+    } else if let Some(why) = game_why.filter(|why| *why != Why::ChooseProgram && !on) {
+        (
+            ControlState::Unsupported,
+            Some(sentence(status["game"]["reason"].as_str().unwrap_or(""))),
+            Some(why),
         )
     } else if !host_control {
         // As Radeon's: the device can see the switch but would be refused a write.
-        (ControlState::ReadOnly, Some(NO_HOST_CONTROL.into()))
+        (
+            ControlState::ReadOnly,
+            Some(NO_HOST_CONTROL.into()),
+            Some(Why::NoHostControl),
+        )
     } else if crate::updater::streaming(h) {
         (
             ControlState::TemporarilyUnavailable,
             Some(streaming(on).into()),
+            Some(Why::Streaming),
         )
-    } else if choose && !on {
-        (ControlState::NeedsExternalSetup, Some(CHOOSE.into()))
+    } else if (choose || game_why == Some(Why::ChooseProgram)) && !on {
+        (
+            ControlState::NeedsExternalSetup,
+            Some(CHOOSE.into()),
+            Some(Why::ChooseProgram),
+        )
     } else {
-        (ControlState::Configurable, None)
+        (ControlState::Configurable, None, None)
     };
     Ok(Neural {
         app: app.to_owned(),
@@ -226,8 +254,17 @@ fn state(h: &Shared, app: &str, host_control: bool) -> Result<Neural, Failure> {
             state,
             on,
             reason,
+            why,
         }],
         replaces_earlier_upscaling: !status["earlier_upscaling"].is_null(),
         job,
+        mode: on
+            .then(|| match status["mode"].as_str() {
+                Some("full") => Some(Mode::Full),
+                Some("addon") => Some(Mode::Addon),
+                _ => None,
+            })
+            .flatten(),
+        release: on.then(|| text(&status["release"])).flatten(),
     })
 }

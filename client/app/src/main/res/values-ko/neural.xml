@@ -23,4 +23,12 @@
     <string name="neural_copying">게임 폴더에 복사 중…</string>
     <string name="neural_removing">게임 폴더에서 제거 중…</string>
     <string name="neural_failed">마지막 변경에 실패했습니다.</string>
+    <string name="neural_why_busy">PC가 이 게임의 프레임 생성을 처리하는 중입니다.</string>
+    <string name="neural_why_streaming">스트리밍 중이 아닐 때만 바꿀 수 있습니다.</string>
+    <string name="neural_why_gpu">이 PC의 그래픽으로는 프레임 생성을 실행할 수 없습니다.</string>
+    <string name="neural_why_anti_cheat">이 게임에는 안티치트가 있어 모드를 부정행위로 볼 수 있습니다.</string>
+    <string name="neural_why_no_dlss">이 게임에는 이 기능이 대신할 DLSS 프레임 생성이 없습니다.</string>
+    <string name="neural_why_choose">먼저 PC의 웹 UI에서 게임 프로그램을 선택하세요.</string>
+    <string name="neural_installed">게임 폴더에 설치됨, 릴리스 %1$s.</string>
+    <string name="neural_added">게임 폴더의 업스케일러 모드에 추가됨, 릴리스 %1$s.</string>
 </resources>

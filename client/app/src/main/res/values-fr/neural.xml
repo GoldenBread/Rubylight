@@ -23,4 +23,12 @@
     <string name="neural_copying">Copie dans le dossier du jeu…</string>
     <string name="neural_removing">Retrait du dossier du jeu…</string>
     <string name="neural_failed">La dernière modification a échoué.</string>
+    <string name="neural_why_busy">Le PC travaille sur la génération d’images de ce jeu.</string>
+    <string name="neural_why_streaming">Ce réglage ne change que lorsque rien n’est diffusé.</string>
+    <string name="neural_why_gpu">La carte graphique de ce PC ne peut pas exécuter la génération d’images.</string>
+    <string name="neural_why_anti_cheat">Ce jeu a un anti-triche, qui considérerait le mod comme de la triche.</string>
+    <string name="neural_why_no_dlss">Ce jeu n’offre pas de génération d’images DLSS que ceci pourrait remplacer.</string>
+    <string name="neural_why_choose">Choisissez d’abord le programme du jeu dans l’interface web du PC.</string>
+    <string name="neural_installed">Installé dans le dossier du jeu, version %1$s.</string>
+    <string name="neural_added">Ajouté au mod de mise à l’échelle dans le dossier du jeu, version %1$s.</string>
 </resources>

@@ -23,4 +23,12 @@
     <string name="neural_copying">Đang sao chép vào thư mục của trò chơi…</string>
     <string name="neural_removing">Đang gỡ khỏi thư mục của trò chơi…</string>
     <string name="neural_failed">Thay đổi gần nhất đã thất bại.</string>
+    <string name="neural_why_busy">PC đang xử lý tính năng tạo khung hình cho trò chơi này.</string>
+    <string name="neural_why_streaming">Chỉ có thể thay đổi khi không có gì đang được truyền phát.</string>
+    <string name="neural_why_gpu">Đồ họa của PC này không chạy được tính năng tạo khung hình.</string>
+    <string name="neural_why_anti_cheat">Trò chơi này có hệ thống chống gian lận, sẽ coi bản mod là gian lận.</string>
+    <string name="neural_why_no_dlss">Trò chơi này không có tạo khung hình DLSS để tính năng này thay thế.</string>
+    <string name="neural_why_choose">Trước tiên hãy chọn chương trình của trò chơi trong giao diện web của PC.</string>
+    <string name="neural_installed">Đã cài vào thư mục của trò chơi, bản phát hành %1$s.</string>
+    <string name="neural_added">Đã thêm vào bản mod nâng độ phân giải trong thư mục của trò chơi, bản phát hành %1$s.</string>
 </resources>

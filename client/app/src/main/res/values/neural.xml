@@ -24,4 +24,13 @@
     <string name="neural_copying">Copying into the game’s folder…</string>
     <string name="neural_removing">Removing from the game’s folder…</string>
     <string name="neural_failed">The last change failed.</string>
+    <string name="neural_state_reason" translatable="false">%1$s · %2$s</string>
+    <string name="neural_why_busy">The PC is working on this game’s frame generation.</string>
+    <string name="neural_why_streaming">It can change only while nothing is streaming.</string>
+    <string name="neural_why_gpu">This PC’s graphics can’t run frame generation.</string>
+    <string name="neural_why_anti_cheat">This game has an anti-cheat, which would treat the mod as cheating.</string>
+    <string name="neural_why_no_dlss">This game offers no DLSS frame generation for this to take the place of.</string>
+    <string name="neural_why_choose">Choose the game’s program in the PC’s web UI first.</string>
+    <string name="neural_installed">Installed in the game’s folder, release %1$s.</string>
+    <string name="neural_added">Added to the upscaler mod in the game’s folder, release %1$s.</string>
 </resources>

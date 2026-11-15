@@ -23,4 +23,12 @@
     <string name="neural_copying">Copiando para a pasta do jogo…</string>
     <string name="neural_removing">Removendo da pasta do jogo…</string>
     <string name="neural_failed">A última alteração falhou.</string>
+    <string name="neural_why_busy">O PC está trabalhando na geração de quadros deste jogo.</string>
+    <string name="neural_why_streaming">Só pode ser alterado enquanto nada estiver sendo transmitido.</string>
+    <string name="neural_why_gpu">A placa de vídeo deste PC não consegue executar a geração de quadros.</string>
+    <string name="neural_why_anti_cheat">Este jogo tem um anti-cheat, que consideraria o mod como trapaça.</string>
+    <string name="neural_why_no_dlss">Este jogo não oferece geração de quadros DLSS para isto substituir.</string>
+    <string name="neural_why_choose">Primeiro escolha o programa do jogo na interface web do PC.</string>
+    <string name="neural_installed">Instalado na pasta do jogo, versão %1$s.</string>
+    <string name="neural_added">Adicionado ao mod de upscaling na pasta do jogo, versão %1$s.</string>
 </resources>

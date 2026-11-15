@@ -23,4 +23,12 @@
     <string name="neural_copying">Copiando a la carpeta del juego…</string>
     <string name="neural_removing">Quitando de la carpeta del juego…</string>
     <string name="neural_failed">El último cambio falló.</string>
+    <string name="neural_why_busy">El PC está trabajando en la generación de fotogramas de este juego.</string>
+    <string name="neural_why_streaming">Solo se puede cambiar mientras no haya ninguna transmisión.</string>
+    <string name="neural_why_gpu">La gráfica de este PC no puede ejecutar la generación de fotogramas.</string>
+    <string name="neural_why_anti_cheat">Este juego tiene un antitrampas que consideraría el mod como trampa.</string>
+    <string name="neural_why_no_dlss">Este juego no ofrece generación de fotogramas DLSS a la que esto pueda sustituir.</string>
+    <string name="neural_why_choose">Primero elige el programa del juego en la interfaz web del PC.</string>
+    <string name="neural_installed">Instalado en la carpeta del juego, versión %1$s.</string>
+    <string name="neural_added">Añadido al mod de escalado de la carpeta del juego, versión %1$s.</string>
 </resources>

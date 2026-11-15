@@ -1107,7 +1107,7 @@ public class AppView extends NightjarActivity implements AdapterFragmentCallback
         if (appUuid == null || appUuid.isEmpty() || managerBinder == null || !offersNeural()) {
             return;
         }
-        sheet.addAction(R.drawable.ic_tune, getString(R.string.neural_menu), getString(R.string.neural_menu_note))
+        sheet.addAction(R.drawable.ic_speed, getString(R.string.neural_menu), getString(R.string.neural_menu_note))
                 .setOnClickListener(v -> {
                     sheet.dismiss();
                     ComputerManagerService.ComputerManagerBinder binder = managerBinder;

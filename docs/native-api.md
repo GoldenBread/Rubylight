@@ -54,7 +54,7 @@ GET /api/native/v1/capabilities
 | `library`, `session`, `session.close_game`, `session.launcher`, `session.mic_only`, `session.continue_here` | always | [Library](#library), [Session](#session) |
 | `wake`, `audio.night_mode`, `audio.headphone_surround` | always | [Wake targets](#wake-targets-wake), [Audio processing](#audio-processing-audionight_mode-audioheadphone_surround) |
 | `power.restart`, `power.shutdown` | always | [Power and update](#power-and-update-powerrestart-powershutdown-update) |
-| `neural.frame_generation` | where the GPU the host streams with is AMD's or NVIDIA's (whether that GPU can run it is in the answer) | [Neural Rendering](#neural-rendering-neuralframe_generation) |
+| `neural.frame_generation` | where one of the PC's GPUs is AMD's or NVIDIA's (whether one can run it is in the answer) | [Neural Rendering](#neural-rendering-neuralframe_generation) |
 | `radeon.read`, `radeon.write`, `radeon.profile` | where the host started its Radeon worker | [Radeon state and writes](#radeon-state-and-writes) |
 | `files.upload`, `files.download` | while the host's `file_transfer` setting is on | [Files](#files) |
 | `session.couch_menu` | to a device with View or Launch whose `couch_menu` setting (host or device) is on | [Session](#session) |
@@ -467,6 +467,7 @@ GET /api/native/v1/neural?app=6F1D2C3B-4A59-4E2B-9C1D-2B3A4C5D6E7F
   "gpu": "AMD Radeon RX 7900 XT",
   "switches": [
     { "id": "frame_generation", "state": "needs_external_setup", "on": false,
+      "why": "choose_program",
       "reason": "Choose the game's program in the Rubylight console on the PC." }
   ],
   "replaces_earlier_upscaling": true,
@@ -476,8 +477,11 @@ GET /api/native/v1/neural?app=6F1D2C3B-4A59-4E2B-9C1D-2B3A4C5D6E7F
 ```
 
 - `app` is the id `/library` lists. 400 `invalid_request` without one, 404 `not_found` for an id the host doesn't have.
-- `switches` lists what the host offers for the game; a client draws each id it knows and leaves out the rest. `state` is `configurable`, `unsupported` (this PC's GPU can't run it; `reason` says why), `read_only` (the device lacks Host control; `reason` says to turn it on), `temporarily_unavailable` (a stream runs, or the host is busy with the game) or `needs_external_setup` (the host could not tell which program is the game: the user chooses it in the console). `on` is whether it is in the game's folder.
-- `accepted` is whether the notice was accepted on this host, in the console or on a device. `gpu` names the GPU that streams when the switch can run on it.
+- `switches` lists what the host offers for the game; a client draws each id it knows and leaves out the rest. `state` is `configurable`, `unsupported` (none of this PC's GPUs can run it, or the game can't have it; `reason` says why), `read_only` (the device lacks Host control; `reason` says to turn it on), `temporarily_unavailable` (a stream runs, or the host is busy with the game) or `needs_external_setup` (the host could not tell which program is the game: the user chooses it in the console). `on` is whether it is in the game's folder.
+- `why` says the same as `reason` as a code, so a client can say it in its own words: `busy`, `streaming`, `no_host_control`, `gpu`, `anti_cheat` (the game has an anti-cheat), `no_frame_generation` (the game has no DLSS frame generation), `choose_program` and `game` (something else about the game; only `reason` says what). It is absent while the switch can change and from hosts before it; a client shows `reason` for a code it doesn't know. A client shows whether the switch is on beside the reason.
+- While the switch is off and nothing runs for the game, the host checks the game itself before any write, as turning it on would before its download: its program, a known anti-cheat, Valve Anti-Cheat on Steam and DLSS frame generation. A game that fails shows `unsupported` with its `why` and `reason`, so a client says why before the user tries; a game whose program the host can't tell shows `needs_external_setup`. The check is held about 2 minutes per game.
+- `accepted` is whether the notice was accepted on this host, in the console or on a device. `gpu` names the PC's GPU that can run it: the streaming GPU when it can, else the first other that can.
+- `mode` and `release`, only while `on`: `full` (the host's own package) or `addon` (only the frame generation add-on, put into an upscaler mod the user installed), and the release in the game's folder. A client shows both, as the console does. Absent from hosts before them.
 - `replaces_earlier_upscaling`: Rubylight 3.0's neural upscaling is still in the game's folder. Turning the switch on removes it first, in the same job; a client says so before the write. Turning the switch off removes both.
 - `job` is what the host is doing for the game, or how it last ended: `action` (`install`, `remove`, `update` for a launch's check), `phase` (`download`, `place`, `remove`, `done`, `failed`), `done` and `total` bytes while it downloads or copies, and `error` in words. A client reads `GET /neural` about every 1.5 s while `phase` is neither `done` nor `failed`.
 
@@ -489,7 +493,7 @@ POST /api/native/v1/neural/settings
 - The write needs View streams and Host control, judged again right before it runs, and answers 202 with the state. It is refused with 409 `host_in_use` while any stream runs, both ways: turning on, the download and the copy would take the stream's network and disk; turning off, the streamed game may hold the mod loaded, so its removal would be left half done.
 - `accept_notice` records that the user accepted the notice on the device just now. Without it, a host where nobody accepted it yet answers 422 `not_writable`.
 - The body never names a file on the PC, and an unknown field (such as `exe`) is 400 `invalid_request`. When the host can't find the game's program, the job fails with the switch in `needs_external_setup`; the console's game page picks the program.
-- The host refuses games with a known anti-cheat, games without DLSS frame generation and a GPU it can't run on, as the console does; the job's `error` or the switch's `reason` says which.
+- The host refuses games with a known anti-cheat, games without DLSS frame generation and a PC none of whose GPUs it can run on, as the console does; the switch's `why` and `reason` say which before the write, and the job's `error` if the game changed since.
 
 ## Files
 
