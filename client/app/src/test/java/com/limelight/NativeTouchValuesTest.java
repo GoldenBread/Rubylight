@@ -397,6 +397,83 @@ public class NativeTouchValuesTest {
         assertEquals(expected, sent.packets);
     }
 
+    // A stylus or a hover samples faster than the display draws, and Android batches the samples in
+    // between into one event: each is sent, oldest first, before the newest, with its own values.
+    @Test
+    public void batchedPenAndHoverSamplesAreSentInOrderBeforeTheNewest() {
+        Sent sent = new Sent();
+        Game game = game(sent);
+        View background = layout(game);
+        InputCaptureProvider capturing = new InputCaptureProvider() { };
+        capturing.enableCapture();
+        ReflectionHelpers.setField(game, "inputCaptureProvider", capturing);
+        int source = InputDevice.SOURCE_STYLUS;
+        InputDevice digitizer = device(13, InputDevice.SOURCE_TOUCHSCREEN | source, source,
+                new float[] {MotionEvent.AXIS_DISTANCE, 0, 10});
+
+        // Hovering: three batched samples and the newest, each with its own place and distance.
+        Pointer pen = new Pointer(0, MotionEvent.TOOL_TYPE_STYLUS, 300, 250).axis(MotionEvent.AXIS_DISTANCE, 1);
+        MotionEvent event = event(MotionEvent.ACTION_HOVER_MOVE, 0, digitizer, source, 0, pen);
+        for (int i = 1; i <= 3; i++) {
+            pen.at(300 + 100 * i, 250).axis(MotionEvent.AXIS_DISTANCE, 1 + i);
+            event.addBatch(1010 + 4 * i, new MotionEvent.PointerCoords[] {pen.coords}, 0);
+        }
+        assertEquals(3, event.getHistorySize());
+        try {
+            assertTrue(game.onGenericMotion(background, event));
+        } finally {
+            recycle(event);
+        }
+        assertEquals(4, sent.values.size());
+        for (int i = 0; i < 4; i++) {
+            assertArrayEquals("hover " + i, new float[] {(200 + 100 * i) / 800f, .5f, (1 + i) / 10f},
+                    java.util.Arrays.copyOf(sent.values.get(i), 3), .000001f);
+            assertTrue(sent.packets.get(i), sent.packets.get(i).startsWith("pen " + MoonBridge.LI_TOUCH_EVENT_HOVER + " "));
+        }
+
+        // On the screen: a stroke's batched pressures and places, then the newest.
+        pen.at(300, 250).pressure(.2f).axis(MotionEvent.AXIS_DISTANCE, 0);
+        touch(game, background, event(MotionEvent.ACTION_DOWN, 0, digitizer, source, 0, pen));
+        event = event(MotionEvent.ACTION_MOVE, 0, digitizer, source, 0, pen);
+        for (int i = 1; i <= 3; i++) {
+            pen.at(300 + 100 * i, 250).pressure(.2f + .2f * i);
+            event.addBatch(1030 + 4 * i, new MotionEvent.PointerCoords[] {pen.coords}, 0);
+        }
+        touch(game, background, event);
+        assertEquals(9, sent.values.size());
+        for (int i = 0; i < 4; i++) {
+            assertArrayEquals("move " + i, new float[] {(200 + 100 * i) / 800f, .5f, .2f + .2f * i},
+                    java.util.Arrays.copyOf(sent.values.get(5 + i), 3), .000001f);
+            assertTrue(sent.packets.get(5 + i), sent.packets.get(5 + i).startsWith("pen " + MoonBridge.LI_TOUCH_EVENT_MOVE + " "));
+        }
+    }
+
+    // Fingers moving together: every finger of a batched sample is sent before the next sample.
+    @Test
+    public void batchedFingerSamplesAreSentSampleBySample() {
+        Sent sent = new Sent();
+        Game game = game(sent);
+        View background = layout(game);
+        Pointer thumb = new Pointer(0, MotionEvent.TOOL_TYPE_FINGER, 300, 250).pressure(.5f).touching(30, 12);
+        Pointer index = new Pointer(3, MotionEvent.TOOL_TYPE_FINGER, 300, 150).pressure(.5f).touching(30, 12);
+        touch(game, background, event(MotionEvent.ACTION_DOWN, 0, null, InputDevice.SOURCE_TOUCHSCREEN, 0, thumb));
+        touch(game, background, event(MotionEvent.ACTION_POINTER_DOWN, 1, null, InputDevice.SOURCE_TOUCHSCREEN, 0, thumb, index));
+
+        MotionEvent event = event(MotionEvent.ACTION_MOVE, 0, null, InputDevice.SOURCE_TOUCHSCREEN, 0, thumb, index);
+        thumb.at(400, 250);
+        index.at(400, 150);
+        event.addBatch(1014, new MotionEvent.PointerCoords[] {thumb.coords, index.coords}, 0);
+        touch(game, background, event);
+        assertEquals(6, sent.packets.size());
+        float[] x = {.25f, .25f, .375f, .375f};
+        int[] pointer = {0, 3, 0, 3};
+        for (int i = 0; i < 4; i++) {
+            String packet = sent.packets.get(2 + i);
+            assertTrue(packet, packet.startsWith("touch " + MoonBridge.LI_TOUCH_EVENT_MOVE + " pointer " + pointer[i] + " "));
+            assertEquals(packet, x[i], sent.values.get(2 + i)[0], .000001f);
+        }
+    }
+
     // The zoom is undone with one matrix kept for every event, so each event must be mapped from
     // where the desktop is at that event and from nowhere it was before.
     @Test

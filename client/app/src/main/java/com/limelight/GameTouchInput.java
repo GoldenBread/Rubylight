@@ -605,17 +605,23 @@ final class GameTouchInput {
         }
     }
 
+    // The sample of an event the methods below read: NEWEST_SAMPLE, or an index of its batched
+    // history (oldest first), which a stylus or a hover fills when it samples faster than the display.
+    private static final int NEWEST_SAMPLE = -1;
+
     // Where a pointer is in the stream view, as a share of its width. This and the methods below run
     // for every pointer of every touch and pen event, so each returns one value and none an array.
-    private float getStreamViewRelativeNormalizedX(View view, MotionEvent event, int pointerIndex) {
-        float normalizedX = event.getX(pointerIndex) + getStreamViewOffsetX(view);
+    private float getStreamViewRelativeNormalizedX(View view, MotionEvent event, int pointerIndex, int sample) {
+        float normalizedX = (sample < 0 ? event.getX(pointerIndex) : event.getHistoricalX(pointerIndex, sample)) +
+                getStreamViewOffsetX(view);
         normalizedX = Math.max(normalizedX, 0.0f);
         normalizedX = Math.min(normalizedX, game.streamView.getWidth());
         return normalizedX / game.streamView.getWidth();
     }
 
-    private float getStreamViewRelativeNormalizedY(View view, MotionEvent event, int pointerIndex) {
-        float normalizedY = event.getY(pointerIndex) + getStreamViewOffsetY(view);
+    private float getStreamViewRelativeNormalizedY(View view, MotionEvent event, int pointerIndex, int sample) {
+        float normalizedY = (sample < 0 ? event.getY(pointerIndex) : event.getHistoricalY(pointerIndex, sample)) +
+                getStreamViewOffsetY(view);
         normalizedY = Math.max(normalizedY, 0.0f);
         normalizedY = Math.min(normalizedY, game.streamView.getHeight());
         return normalizedY / game.streamView.getHeight();
@@ -634,7 +640,7 @@ final class GameTouchInput {
         return (value - range.getMin()) / range.getRange();
     }
 
-    private static float getPressureOrDistance(MotionEvent event, int pointerIndex) {
+    private static float getPressureOrDistance(MotionEvent event, int pointerIndex, int sample) {
         InputDevice dev = event.getDevice();
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_HOVER_ENTER:
@@ -644,22 +650,24 @@ final class GameTouchInput {
                 if (dev != null) {
                     InputDevice.MotionRange distanceRange = dev.getMotionRange(MotionEvent.AXIS_DISTANCE, event.getSource());
                     if (distanceRange != null) {
-                        return normalizeValueInRange(event.getAxisValue(MotionEvent.AXIS_DISTANCE, pointerIndex), distanceRange);
+                        return normalizeValueInRange(sample < 0 ? event.getAxisValue(MotionEvent.AXIS_DISTANCE, pointerIndex) :
+                                event.getHistoricalAxisValue(MotionEvent.AXIS_DISTANCE, pointerIndex, sample), distanceRange);
                     }
                 }
                 return 0.0f;
 
             default:
                 // Other events report pressure
-                return event.getPressure(pointerIndex);
+                return sample < 0 ? event.getPressure(pointerIndex) : event.getHistoricalPressure(pointerIndex, sample);
         }
     }
 
-    private static short getRotationDegrees(MotionEvent event, int pointerIndex) {
+    private static short getRotationDegrees(MotionEvent event, int pointerIndex, int sample) {
         InputDevice dev = event.getDevice();
         if (dev != null) {
             if (dev.getMotionRange(MotionEvent.AXIS_ORIENTATION, event.getSource()) != null) {
-                short rotationDegrees = (short) Math.toDegrees(event.getOrientation(pointerIndex));
+                short rotationDegrees = (short) Math.toDegrees(sample < 0 ? event.getOrientation(pointerIndex) :
+                        event.getHistoricalOrientation(pointerIndex, sample));
                 if (rotationDegrees < 0) {
                     rotationDegrees += 360;
                 }
@@ -669,14 +677,14 @@ final class GameTouchInput {
         return MoonBridge.LI_ROT_UNKNOWN;
     }
 
-    private static float getContactAreaOrientation(MotionEvent event, int pointerIndex) {
+    private static float getContactAreaOrientation(MotionEvent event, int pointerIndex, int sample) {
         // If the orientation is unknown, we'll just assume it's at a 45 degree angle and scale it by
         // X and Y scaling factors evenly.
         if (event.getDevice() == null || event.getDevice().getMotionRange(MotionEvent.AXIS_ORIENTATION, event.getSource()) == null) {
             return (float)(Math.PI / 4);
         }
         else {
-            return event.getOrientation(pointerIndex);
+            return sample < 0 ? event.getOrientation(pointerIndex) : event.getHistoricalOrientation(pointerIndex, sample);
         }
     }
 
@@ -703,23 +711,25 @@ final class GameTouchInput {
         return (float)Math.sqrt(Math.pow(x, 2) + Math.pow(y, 2));
     }
 
-    private float getStreamViewNormalizedContactAreaMajor(MotionEvent event, int pointerIndex, float orientation) {
+    private float getStreamViewNormalizedContactAreaMajor(MotionEvent event, int pointerIndex, int sample, float orientation) {
         // The contact area major axis is parallel to the orientation, so we simply convert
         // polar to cartesian coordinates using the orientation as theta.
-        return getStreamViewNormalizedContactAxis(
-                reportsToolSize(event) ? event.getToolMajor(pointerIndex) : event.getTouchMajor(pointerIndex),
-                orientation);
+        float major = sample < 0 ?
+                (reportsToolSize(event) ? event.getToolMajor(pointerIndex) : event.getTouchMajor(pointerIndex)) :
+                (reportsToolSize(event) ? event.getHistoricalToolMajor(pointerIndex, sample) : event.getHistoricalTouchMajor(pointerIndex, sample));
+        return getStreamViewNormalizedContactAxis(major, orientation);
     }
 
-    private float getStreamViewNormalizedContactAreaMinor(MotionEvent event, int pointerIndex, float orientation) {
+    private float getStreamViewNormalizedContactAreaMinor(MotionEvent event, int pointerIndex, int sample, float orientation) {
         // The contact area minor axis is perpendicular to the contact area major axis (and thus
         // the orientation), so rotate the orientation angle by 90 degrees.
-        return getStreamViewNormalizedContactAxis(
-                reportsToolSize(event) ? event.getToolMinor(pointerIndex) : event.getTouchMinor(pointerIndex),
-                (float)(orientation + (Math.PI / 2)));
+        float minor = sample < 0 ?
+                (reportsToolSize(event) ? event.getToolMinor(pointerIndex) : event.getTouchMinor(pointerIndex)) :
+                (reportsToolSize(event) ? event.getHistoricalToolMinor(pointerIndex, sample) : event.getHistoricalTouchMinor(pointerIndex, sample));
+        return getStreamViewNormalizedContactAxis(minor, (float)(orientation + (Math.PI / 2)));
     }
 
-    private boolean sendPenEventForPointer(View view, MotionEvent event, byte eventType, byte toolType, int pointerIndex) {
+    private boolean sendPenEventForPointer(View view, MotionEvent event, byte eventType, byte toolType, int pointerIndex, int sample) {
         byte penButtons = 0;
         if ((event.getButtonState() & MotionEvent.BUTTON_STYLUS_PRIMARY) != 0) {
             penButtons |= MoonBridge.LI_PEN_BUTTON_PRIMARY;
@@ -732,18 +742,38 @@ final class GameTouchInput {
         InputDevice dev = event.getDevice();
         if (dev != null) {
             if (dev.getMotionRange(MotionEvent.AXIS_TILT, event.getSource()) != null) {
-                tiltDegrees = (byte)Math.toDegrees(event.getAxisValue(MotionEvent.AXIS_TILT, pointerIndex));
+                tiltDegrees = (byte)Math.toDegrees(sample < 0 ? event.getAxisValue(MotionEvent.AXIS_TILT, pointerIndex) :
+                        event.getHistoricalAxisValue(MotionEvent.AXIS_TILT, pointerIndex, sample));
             }
         }
 
-        float orientation = getContactAreaOrientation(event, pointerIndex);
+        float orientation = getContactAreaOrientation(event, pointerIndex, sample);
         return game.conn.sendPenEvent(eventType, toolType, penButtons,
-                getStreamViewRelativeNormalizedX(view, event, pointerIndex),
-                getStreamViewRelativeNormalizedY(view, event, pointerIndex),
-                getPressureOrDistance(event, pointerIndex),
-                getStreamViewNormalizedContactAreaMajor(event, pointerIndex, orientation),
-                getStreamViewNormalizedContactAreaMinor(event, pointerIndex, orientation),
-                getRotationDegrees(event, pointerIndex), tiltDegrees) != MoonBridge.LI_ERR_UNSUPPORTED;
+                getStreamViewRelativeNormalizedX(view, event, pointerIndex, sample),
+                getStreamViewRelativeNormalizedY(view, event, pointerIndex, sample),
+                getPressureOrDistance(event, pointerIndex, sample),
+                getStreamViewNormalizedContactAreaMajor(event, pointerIndex, sample, orientation),
+                getStreamViewNormalizedContactAreaMinor(event, pointerIndex, sample, orientation),
+                getRotationDegrees(event, pointerIndex, sample), tiltDegrees) != MoonBridge.LI_ERR_UNSUPPORTED;
+    }
+
+    /**
+     * The samples a move or hover move carries: its batched history (a stylus or a hover sampling
+     * faster than the display draws), oldest first, and its own newest last.
+     */
+    private static int sampleCount(MotionEvent event) {
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_MOVE:
+            case MotionEvent.ACTION_HOVER_MOVE:
+                return event.getHistorySize() + 1;
+            default:
+                return 1;
+        }
+    }
+
+    /** The sample index of the i-th of sampleCount: a history index, or NEWEST_SAMPLE for the last. */
+    private static int sampleAt(MotionEvent event, int i) {
+        return i < sampleCount(event) - 1 ? i : NEWEST_SAMPLE;
     }
 
     private static byte convertToolTypeToStylusToolType(MotionEvent event, int pointerIndex) {
@@ -764,22 +794,24 @@ final class GameTouchInput {
         }
 
         if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
-            // Move events may impact all active pointers
+            // Move events may impact all active pointers, each batched sample in order
             boolean handledStylusEvent = false;
-            for (int i = 0; i < event.getPointerCount(); i++) {
-                byte toolType = convertToolTypeToStylusToolType(event, i);
-                if (toolType == MoonBridge.LI_TOOL_TYPE_UNKNOWN) {
-                    // Not a stylus pointer, so skip it
-                    continue;
-                }
-                else {
-                    // This pointer is a stylus, so we'll report that we handled this event
-                    handledStylusEvent = true;
-                }
+            for (int s = 0, samples = sampleCount(event); s < samples; s++) {
+                for (int i = 0; i < event.getPointerCount(); i++) {
+                    byte toolType = convertToolTypeToStylusToolType(event, i);
+                    if (toolType == MoonBridge.LI_TOOL_TYPE_UNKNOWN) {
+                        // Not a stylus pointer, so skip it
+                        continue;
+                    }
+                    else {
+                        // This pointer is a stylus, so we'll report that we handled this event
+                        handledStylusEvent = true;
+                    }
 
-                if (!sendPenEventForPointer(view, event, eventType, toolType, i)) {
-                    // Pen events aren't supported by the host
-                    return false;
+                    if (!sendPenEventForPointer(view, event, eventType, toolType, i, sampleAt(event, s))) {
+                        // Pen events aren't supported by the host
+                        return false;
+                    }
                 }
             }
             return handledStylusEvent;
@@ -797,19 +829,25 @@ final class GameTouchInput {
                 // Not a stylus event
                 return false;
             }
-            return sendPenEventForPointer(view, event, eventType, toolType, event.getActionIndex());
+            // A hover move's batched samples first
+            for (int s = 0, samples = sampleCount(event); s < samples; s++) {
+                if (!sendPenEventForPointer(view, event, eventType, toolType, event.getActionIndex(), sampleAt(event, s))) {
+                    return false;
+                }
+            }
+            return true;
         }
     }
 
-    private boolean sendTouchEventForPointer(View view, MotionEvent event, byte eventType, int pointerIndex) {
-        float orientation = getContactAreaOrientation(event, pointerIndex);
+    private boolean sendTouchEventForPointer(View view, MotionEvent event, byte eventType, int pointerIndex, int sample) {
+        float orientation = getContactAreaOrientation(event, pointerIndex, sample);
         return game.conn.sendTouchEvent(eventType, event.getPointerId(pointerIndex),
-                getStreamViewRelativeNormalizedX(view, event, pointerIndex),
-                getStreamViewRelativeNormalizedY(view, event, pointerIndex),
-                getPressureOrDistance(event, pointerIndex),
-                getStreamViewNormalizedContactAreaMajor(event, pointerIndex, orientation),
-                getStreamViewNormalizedContactAreaMinor(event, pointerIndex, orientation),
-                getRotationDegrees(event, pointerIndex)) != MoonBridge.LI_ERR_UNSUPPORTED;
+                getStreamViewRelativeNormalizedX(view, event, pointerIndex, sample),
+                getStreamViewRelativeNormalizedY(view, event, pointerIndex, sample),
+                getPressureOrDistance(event, pointerIndex, sample),
+                getStreamViewNormalizedContactAreaMajor(event, pointerIndex, sample, orientation),
+                getStreamViewNormalizedContactAreaMinor(event, pointerIndex, sample, orientation),
+                getRotationDegrees(event, pointerIndex, sample)) != MoonBridge.LI_ERR_UNSUPPORTED;
     }
 
     private boolean trySendTouchEvent(View view, MotionEvent event) {
@@ -819,10 +857,12 @@ final class GameTouchInput {
         }
 
         if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
-            // Move events may impact all active pointers
-            for (int i = 0; i < event.getPointerCount(); i++) {
-                if (!sendTouchEventForPointer(view, event, eventType, i)) {
-                    return false;
+            // Move events may impact all active pointers, each batched sample in order
+            for (int s = 0, samples = sampleCount(event); s < samples; s++) {
+                for (int i = 0; i < event.getPointerCount(); i++) {
+                    if (!sendTouchEventForPointer(view, event, eventType, i, sampleAt(event, s))) {
+                        return false;
+                    }
                 }
             }
             return true;
@@ -834,8 +874,13 @@ final class GameTouchInput {
                     MoonBridge.LI_ROT_UNKNOWN) != MoonBridge.LI_ERR_UNSUPPORTED;
         }
         else {
-            // Up, Down, and Hover events are specific to the action index
-            return sendTouchEventForPointer(view, event, eventType, event.getActionIndex());
+            // Up, Down, and Hover events are specific to the action index; a hover move's batched samples first
+            for (int s = 0, samples = sampleCount(event); s < samples; s++) {
+                if (!sendTouchEventForPointer(view, event, eventType, event.getActionIndex(), sampleAt(event, s))) {
+                    return false;
+                }
+            }
+            return true;
         }
     }
 
