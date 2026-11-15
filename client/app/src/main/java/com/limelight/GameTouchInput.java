@@ -606,7 +606,7 @@ final class GameTouchInput {
     }
 
     // The sample of an event the methods below read: NEWEST_SAMPLE, or an index of its batched
-    // history (oldest first), which a stylus or a hover fills when it samples faster than the display.
+    // history (oldest first), which a touchscreen fills when it samples faster than the display.
     private static final int NEWEST_SAMPLE = -1;
 
     // Where a pointer is in the stream view, as a share of its width. This and the methods below run
@@ -758,17 +758,14 @@ final class GameTouchInput {
     }
 
     /**
-     * The samples a move or hover move carries: its batched history (a stylus or a hover sampling
-     * faster than the display draws), oldest first, and its own newest last.
+     * The samples a finger move carries: its batched history (a touchscreen sampling faster than the
+     * display draws), oldest first, and its own newest last. Pen moves and hovers send only their
+     * newest: both engines merge queued pen moves and hovers into the newest anyway
+     * (moonlight-common-c's input send thread, nightjar-core's InputQueue), while touch packets
+     * each reach the host.
      */
     private static int sampleCount(MotionEvent event) {
-        switch (event.getActionMasked()) {
-            case MotionEvent.ACTION_MOVE:
-            case MotionEvent.ACTION_HOVER_MOVE:
-                return event.getHistorySize() + 1;
-            default:
-                return 1;
-        }
+        return event.getActionMasked() == MotionEvent.ACTION_MOVE ? event.getHistorySize() + 1 : 1;
     }
 
     /** The sample index of the i-th of sampleCount: a history index, or NEWEST_SAMPLE for the last. */
@@ -794,24 +791,22 @@ final class GameTouchInput {
         }
 
         if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
-            // Move events may impact all active pointers, each batched sample in order
+            // Move events may impact all active pointers; only the newest sample (see sampleCount)
             boolean handledStylusEvent = false;
-            for (int s = 0, samples = sampleCount(event); s < samples; s++) {
-                for (int i = 0; i < event.getPointerCount(); i++) {
-                    byte toolType = convertToolTypeToStylusToolType(event, i);
-                    if (toolType == MoonBridge.LI_TOOL_TYPE_UNKNOWN) {
-                        // Not a stylus pointer, so skip it
-                        continue;
-                    }
-                    else {
-                        // This pointer is a stylus, so we'll report that we handled this event
-                        handledStylusEvent = true;
-                    }
+            for (int i = 0; i < event.getPointerCount(); i++) {
+                byte toolType = convertToolTypeToStylusToolType(event, i);
+                if (toolType == MoonBridge.LI_TOOL_TYPE_UNKNOWN) {
+                    // Not a stylus pointer, so skip it
+                    continue;
+                }
+                else {
+                    // This pointer is a stylus, so we'll report that we handled this event
+                    handledStylusEvent = true;
+                }
 
-                    if (!sendPenEventForPointer(view, event, eventType, toolType, i, sampleAt(event, s))) {
-                        // Pen events aren't supported by the host
-                        return false;
-                    }
+                if (!sendPenEventForPointer(view, event, eventType, toolType, i, NEWEST_SAMPLE)) {
+                    // Pen events aren't supported by the host
+                    return false;
                 }
             }
             return handledStylusEvent;
@@ -829,13 +824,7 @@ final class GameTouchInput {
                 // Not a stylus event
                 return false;
             }
-            // A hover move's batched samples first
-            for (int s = 0, samples = sampleCount(event); s < samples; s++) {
-                if (!sendPenEventForPointer(view, event, eventType, toolType, event.getActionIndex(), sampleAt(event, s))) {
-                    return false;
-                }
-            }
-            return true;
+            return sendPenEventForPointer(view, event, eventType, toolType, event.getActionIndex(), NEWEST_SAMPLE);
         }
     }
 
@@ -874,13 +863,8 @@ final class GameTouchInput {
                     MoonBridge.LI_ROT_UNKNOWN) != MoonBridge.LI_ERR_UNSUPPORTED;
         }
         else {
-            // Up, Down, and Hover events are specific to the action index; a hover move's batched samples first
-            for (int s = 0, samples = sampleCount(event); s < samples; s++) {
-                if (!sendTouchEventForPointer(view, event, eventType, event.getActionIndex(), sampleAt(event, s))) {
-                    return false;
-                }
-            }
-            return true;
+            // Up, Down, and Hover events are specific to the action index
+            return sendTouchEventForPointer(view, event, eventType, event.getActionIndex(), NEWEST_SAMPLE);
         }
     }
 

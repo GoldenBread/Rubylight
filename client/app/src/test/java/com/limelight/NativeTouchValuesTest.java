@@ -398,9 +398,10 @@ public class NativeTouchValuesTest {
     }
 
     // A stylus or a hover samples faster than the display draws, and Android batches the samples in
-    // between into one event: each is sent, oldest first, before the newest, with its own values.
+    // between into one event. Both engines merge queued pen moves and hovers into the newest, so only
+    // the newest is sent, with its own values.
     @Test
-    public void batchedPenAndHoverSamplesAreSentInOrderBeforeTheNewest() {
+    public void penAndHoverSendOnlyTheNewestOfTheirBatchedSamples() {
         Sent sent = new Sent();
         Game game = game(sent);
         View background = layout(game);
@@ -411,7 +412,7 @@ public class NativeTouchValuesTest {
         InputDevice digitizer = device(13, InputDevice.SOURCE_TOUCHSCREEN | source, source,
                 new float[] {MotionEvent.AXIS_DISTANCE, 0, 10});
 
-        // Hovering: three batched samples and the newest, each with its own place and distance.
+        // Hovering: three batched samples and the newest; only the newest is sent.
         Pointer pen = new Pointer(0, MotionEvent.TOOL_TYPE_STYLUS, 300, 250).axis(MotionEvent.AXIS_DISTANCE, 1);
         MotionEvent event = event(MotionEvent.ACTION_HOVER_MOVE, 0, digitizer, source, 0, pen);
         for (int i = 1; i <= 3; i++) {
@@ -424,14 +425,12 @@ public class NativeTouchValuesTest {
         } finally {
             recycle(event);
         }
-        assertEquals(4, sent.values.size());
-        for (int i = 0; i < 4; i++) {
-            assertArrayEquals("hover " + i, new float[] {(200 + 100 * i) / 800f, .5f, (1 + i) / 10f},
-                    java.util.Arrays.copyOf(sent.values.get(i), 3), .000001f);
-            assertTrue(sent.packets.get(i), sent.packets.get(i).startsWith("pen " + MoonBridge.LI_TOUCH_EVENT_HOVER + " "));
-        }
+        assertEquals(1, sent.values.size());
+        assertArrayEquals("hover", new float[] {500 / 800f, .5f, 4 / 10f},
+                java.util.Arrays.copyOf(sent.values.get(0), 3), .000001f);
+        assertTrue(sent.packets.get(0), sent.packets.get(0).startsWith("pen " + MoonBridge.LI_TOUCH_EVENT_HOVER + " "));
 
-        // On the screen: a stroke's batched pressures and places, then the newest.
+        // On the screen: only the newest of a stroke's batched pressures and places.
         pen.at(300, 250).pressure(.2f).axis(MotionEvent.AXIS_DISTANCE, 0);
         touch(game, background, event(MotionEvent.ACTION_DOWN, 0, digitizer, source, 0, pen));
         event = event(MotionEvent.ACTION_MOVE, 0, digitizer, source, 0, pen);
@@ -440,12 +439,10 @@ public class NativeTouchValuesTest {
             event.addBatch(1030 + 4 * i, new MotionEvent.PointerCoords[] {pen.coords}, 0);
         }
         touch(game, background, event);
-        assertEquals(9, sent.values.size());
-        for (int i = 0; i < 4; i++) {
-            assertArrayEquals("move " + i, new float[] {(200 + 100 * i) / 800f, .5f, .2f + .2f * i},
-                    java.util.Arrays.copyOf(sent.values.get(5 + i), 3), .000001f);
-            assertTrue(sent.packets.get(5 + i), sent.packets.get(5 + i).startsWith("pen " + MoonBridge.LI_TOUCH_EVENT_MOVE + " "));
-        }
+        assertEquals(3, sent.values.size());
+        assertArrayEquals("move", new float[] {500 / 800f, .5f, .8f},
+                java.util.Arrays.copyOf(sent.values.get(2), 3), .000001f);
+        assertTrue(sent.packets.get(2), sent.packets.get(2).startsWith("pen " + MoonBridge.LI_TOUCH_EVENT_MOVE + " "));
     }
 
     // Fingers moving together: every finger of a batched sample is sent before the next sample.
