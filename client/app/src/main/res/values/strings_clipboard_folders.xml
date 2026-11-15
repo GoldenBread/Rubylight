@@ -34,6 +34,7 @@
     <string name="folders_downloaded">%1$s saved to Downloads</string>
     <string name="folders_saved">%1$s saved</string>
     <string name="folders_uploaded">Uploaded as %1$s</string>
+    <string name="folders_waiting">Waiting: %1$d</string>
     <string name="folders_cancelled">Transfer cancelled.</string>
     <string name="folders_failed">Request failed: %1$s</string>
     <string name="folders_local_failed">This device could not read or write the file: %1$s</string>

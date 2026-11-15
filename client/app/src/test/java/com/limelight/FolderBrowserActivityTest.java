@@ -3,10 +3,12 @@ package com.limelight;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertTrue;
 
 import android.app.Application;
 import android.net.Uri;
 
+import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.SharedFolders;
 
 import org.junit.Test;
@@ -17,8 +19,14 @@ import org.robolectric.Shadows;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLooper;
 
+import java.io.IOException;
 import java.lang.reflect.Constructor;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Objects;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 29, application = Application.class)
@@ -84,6 +92,64 @@ public class FolderBrowserActivityTest {
         settle(() -> !"The PC is not paired".equals(work.error));
         assertEquals(app.getString(R.string.folders_partial_left, "The PC is not paired", document.toString()),
                 work.error);
+    }
+
+    @Test
+    public void aSecondDownloadWaitsAndStartsWhenTheFirstEnds() throws Exception {
+        FolderBrowserActivity.FolderWork work = offlineWork();
+        List<String> running = record(work, () -> work.transfer == null ? null : work.transfer.name);
+        work.download("games", "saves/a.sav", Uri.parse("content://com.example.nowhere/document/a"));
+        work.download("games", "saves/b.sav", Uri.parse("content://com.example.nowhere/document/b"));
+        assertEquals("a.sav", work.transfer.name);
+        assertEquals(1, work.waiting.size());
+        settle(() -> work.transfer == null && work.waiting.isEmpty());
+        assertEquals(Arrays.asList(null, "a.sav", "b.sav", null), running);
+    }
+
+    @Test
+    public void aDownloadRunningOrWaitingIsNotQueuedTwice() throws Exception {
+        FolderBrowserActivity.FolderWork work = offlineWork();
+        work.download("games", "saves/a.sav", null);
+        work.download("games", "saves/b.sav", null);
+        work.download("games", "saves/a.sav", null);
+        work.download("games", "saves/b.sav", null);
+        assertEquals("a.sav", work.transfer.name);
+        assertEquals(1, work.waiting.size());
+        assertTrue(work.queued("games", "saves/a.sav"));
+        assertTrue(work.queued("games", "saves/b.sav"));
+        assertFalse(work.queued("music", "saves/a.sav"));
+        settle(() -> work.transfer == null && work.waiting.isEmpty());
+        assertFalse(work.queued("games", "saves/a.sav"));
+    }
+
+    @Test
+    public void aFailedTransferStaysShownAndTheWaitingOneStillRuns() throws Exception {
+        FolderBrowserActivity.FolderWork work = offlineWork();
+        List<String> states = record(work, () -> (work.transfer == null ? "-" : work.transfer.name)
+                + (work.error == null ? "" : " after a failure"));
+        work.download("games", "saves/a.sav", Uri.parse("content://com.example.nowhere/document/a"));
+        work.download("games", "saves/b.sav", Uri.parse("content://com.example.nowhere/document/b"));
+        settle(() -> work.transfer == null && work.waiting.isEmpty());
+        assertTrue(states.toString(), states.contains("b.sav after a failure"));
+        assertEquals("- after a failure", states.get(states.size() - 1));
+    }
+
+    /** Work for a known PC that cannot be reached: every transfer fails. */
+    private static FolderBrowserActivity.FolderWork offlineWork() {
+        FolderBrowserActivity.FolderWork work = new FolderBrowserActivity.FolderWork(RuntimeEnvironment.getApplication());
+        work.computer = new ComputerDetails();
+        work.connector = () -> { throw new IOException("offline"); };
+        return work;
+    }
+
+    /** What {@code state} says at each change of the page, consecutive repeats left out. */
+    private static List<String> record(FolderBrowserActivity.FolderWork work, Supplier<String> state) {
+        List<String> seen = new ArrayList<>();
+        work.changed.observeForever(ignored -> {
+            String now = state.get();
+            if (seen.isEmpty() || !Objects.equals(seen.get(seen.size() - 1), now)) seen.add(now);
+        });
+        return seen;
     }
 
     private static SharedFolders.Folder folder(String id) throws Exception {

@@ -53,6 +53,7 @@ import com.limelight.utils.UiHelper;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
@@ -61,7 +62,7 @@ import java.util.concurrent.Executors;
 /**
  * The folders a PC shares with this device: browses them, downloads a file to Downloads (MediaStore from Android
  * 10, the system's save dialog before) and uploads one picked in the system's file picker. One transfer at a time,
- * as the host allows; every failure stays on screen until the next action.
+ * as the host allows; more wait their turn in the order asked. Every failure stays on screen until the next action.
  */
 public final class FolderBrowserActivity extends NightjarActivity {
     public static final String EXTRA_PC_UUID = "folder_browser_pc_uuid";
@@ -136,7 +137,8 @@ public final class FolderBrowserActivity extends NightjarActivity {
     private void refresh() {
         content.removeAllViews();
         String pc = getIntent().getStringExtra(EXTRA_PC_NAME);
-        boolean busy = work.loading || work.transfer != null;
+        // A transfer keeps its own folder and file, so the page stays usable while one runs or waits.
+        boolean busy = work.loading;
         transferText = null;
         transferBar = null;
         text(R.style.TextAppearance_Nightjar_Body, work.folder == null
@@ -148,6 +150,9 @@ public final class FolderBrowserActivity extends NightjarActivity {
             transferBar.setMax(1000);
             content.addView(transferBar);
             showProgress(work.transfer);
+            if (!work.waiting.isEmpty()) {
+                text(R.style.TextAppearance_Nightjar_Supporting, getString(R.string.folders_waiting, work.waiting.size()));
+            }
             button(R.attr.nightjarButtonTonalStyle, getString(android.R.string.cancel), true, 0, work::cancelTransfer);
         } else if (work.loading) {
             text(R.style.TextAppearance_Nightjar_Supporting, getString(R.string.folders_loading));
@@ -216,7 +221,8 @@ public final class FolderBrowserActivity extends NightjarActivity {
             case FILE:
                 String size = Formatter.formatShortFileSize(this, entry.size);
                 button(R.attr.nightjarButtonTextStyle, entry.name + "\n" + (modified.isEmpty() ? size : size + " · " + modified),
-                        !busy, R.drawable.ic_download, () -> download(entry));
+                        !busy && !work.queued(work.folder.id, SharedFolders.childPath(work.path, entry.name)),
+                        R.drawable.ic_download, () -> download(entry));
                 break;
             default:
                 button(R.attr.nightjarButtonTextStyle, entry.name + "\n" + getString(R.string.folders_unsupported_entry),
@@ -330,6 +336,10 @@ public final class FolderBrowserActivity extends NightjarActivity {
         final TransferCancel cancel = new TransferCancel();
         volatile long done, total;
         private long shownAt;
+        /** What it does on the transfer thread, with the folder and file it was asked for; set before it is queued. */
+        Runnable job;
+        /** The folder and file of a download into Downloads, so it is not queued twice; null otherwise. */
+        String key;
 
         Transfer(boolean upload, String name, long total) {
             this.upload = upload;
@@ -354,7 +364,8 @@ public final class FolderBrowserActivity extends NightjarActivity {
         private final ExecutorService executor = Executors.newSingleThreadExecutor();
         private final ExecutorService transfers = Executors.newSingleThreadExecutor();
         private final Handler main = new Handler(Looper.getMainLooper());
-        private ComputerDetails computer;
+        /** The PC; tests set it. */
+        ComputerDetails computer;
         private String uniqueId;
         private int generation;
         List<SharedFolders.Folder> folders;
@@ -364,6 +375,8 @@ public final class FolderBrowserActivity extends NightjarActivity {
         boolean loading, canRetry;
         String error, message;
         Transfer transfer;
+        /** Transfers asked for while one runs, in the order asked; each starts when the one before it ends. */
+        final ArrayDeque<Transfer> waiting = new ArrayDeque<>();
         Connector connector = this::connect;
         /** A save picked before the PC was known again, as after the app died with the save dialog open. */
         private String deferredFolder, deferredFile;
@@ -461,8 +474,8 @@ public final class FolderBrowserActivity extends NightjarActivity {
 
         /** One level up, or false at the folder list. */
         boolean up() {
-            if (transfer != null) return true;
-            if (folder == null) return false;
+            // Leaving the page would cancel the transfers: back stays on the folder list while any runs or waits.
+            if (folder == null) return transfer != null;
             if (path.isEmpty()) {
                 folder = null;
                 listing = null;
@@ -498,14 +511,13 @@ public final class FolderBrowserActivity extends NightjarActivity {
                 return;
             }
             if (computer == null) return;
-            if (transfer != null) {
-                if (target != null) dropPicked(target, text(R.string.folders_busy));
-                return;
-            }
+            // A picked document is a file of its own; into Downloads, the same file is asked for once.
+            if (target == null && queued(folderId, file)) return;
             String name = SharedFolders.fileName(file);
-            Transfer run = begin(new Transfer(false, name, -1));
+            Transfer run = new Transfer(false, name, -1);
+            if (target == null) run.key = key(folderId, file);
             ContentResolver resolver = getApplication().getContentResolver();
-            transfers.execute(() -> {
+            run.job = () -> {
                 Uri uri = target;
                 try {
                     if (uri == null) uri = pendingDownload(resolver, name);
@@ -521,18 +533,31 @@ public final class FolderBrowserActivity extends NightjarActivity {
                 } catch (IOException | RuntimeException e) {
                     end(run, e, null, false, uri == null ? null : discard(resolver, uri, target != null));
                 }
-            });
+            };
+            enqueue(run);
         }
+
+        /** Whether a download of {@code file} of the folder {@code folderId} into Downloads runs or waits. */
+        boolean queued(String folderId, String file) {
+            String key = key(folderId, file);
+            if (transfer != null && key.equals(transfer.key)) return true;
+            for (Transfer run : waiting) {
+                if (key.equals(run.key)) return true;
+            }
+            return false;
+        }
+
+        private static String key(String folderId, String file) { return folderId + "\n" + file; }
 
         /** Uploads the picked document into the directory being shown. */
         void upload(Uri source) {
-            if (transfer != null || folder == null || !folder.writable) return;
+            if (folder == null || !folder.writable) return;
             ContentResolver resolver = getApplication().getContentResolver();
             SharedFolders.Folder into = folder;
             String dir = path;
             String shown = source.getLastPathSegment();
-            Transfer run = begin(new Transfer(true, shown == null ? "" : shown, -1));
-            transfers.execute(() -> {
+            Transfer run = new Transfer(true, shown == null ? "" : shown, -1);
+            run.job = () -> {
                 // The provider answers on its own time: asked here, not on the main thread.
                 String name = null;
                 long size = -1;
@@ -563,7 +588,8 @@ public final class FolderBrowserActivity extends NightjarActivity {
                 } catch (IOException | RuntimeException e) {
                     end(run, e, null, false, null);
                 }
-            });
+            };
+            enqueue(run);
         }
 
         /** Opening a document fails on this device, not on the network. */
@@ -632,11 +658,24 @@ public final class FolderBrowserActivity extends NightjarActivity {
             if (transfer != null) transfer.cancel.cancel();
         }
 
-        private Transfer begin(Transfer run) {
-            transfer = run;
-            error = message = null;
+        /** Starts {@code run}, or lets it wait behind the one running. */
+        private void enqueue(Transfer run) {
+            if (transfer != null) {
+                waiting.add(run);
+            } else {
+                transfer = run;
+                error = message = null;
+                transfers.execute(run.job);
+            }
             changed();
-            return run;
+        }
+
+        /** Starts the next waiting transfer once one ended; what the last one showed stays until the next action. */
+        private void next() {
+            Transfer run = waiting.poll();
+            if (run == null) return;
+            transfer = run;
+            transfers.execute(run.job);
         }
 
         private void progress(Transfer run, long done, long total) {
@@ -656,6 +695,7 @@ public final class FolderBrowserActivity extends NightjarActivity {
                 transfer = null;
                 this.error = error;
                 canRetry = false;
+                next();
                 changed();
             });
         }
@@ -673,10 +713,13 @@ public final class FolderBrowserActivity extends NightjarActivity {
                     message = done;
                 }
                 if (reload && folder != null) {
-                    String shown = message;
+                    // An earlier transfer's failure stays shown as well.
+                    String shown = message, failure = error;
                     open(folder, path);
                     message = shown;
+                    error = failure;
                 }
+                next();
                 changed();
             });
         }
@@ -766,6 +809,7 @@ public final class FolderBrowserActivity extends NightjarActivity {
         private void changed() { changed.setValue(changed.getValue() + 1); }
 
         @Override protected void onCleared() {
+            waiting.clear();
             cancelTransfer();
             executor.shutdownNow();
             transfers.shutdownNow();
