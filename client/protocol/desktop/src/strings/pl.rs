@@ -1594,6 +1594,8 @@ sudo sysctl -w net.core.rmem_max={}", "Bufor odbioru: system przydzielił {0} Ki
     ("Not used: this computer has no on-screen keyboard", "Nie używane: ten komputer nie ma klawiatury ekranowej"),
     ("Not used outside a Wayland desktop", "Nie używane poza pulpitem Wayland"),
     ("Not used: this desktop doesn’t report when pictures are shown", "Nie używane: ten pulpit nie podaje, kiedy obrazy są wyświetlane"),
+    ("Not used at this display’s {} Hz: that isn’t 2 to 4 times the frame rate", "Nie używane przy {} Hz tego ekranu: to nie jest 2–4 razy liczba klatek na sekundę"),
+    ("Not used in Fullscreen with VRR off: the display switches to the stream’s frame rate", "Nie używane w trybie Pełny ekran bez VRR: ekran przełącza się na liczbę klatek strumienia"),
     ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields; turn off to open it yourself.", "Otwiera klawiaturę ekranową, gdy wybierzesz pole tekstowe na komputerze, a potem ją zamyka. Wymaga komputera, który zgłasza pola tekstowe; wyłącz, aby otwierać ją samodzielnie."),
     ("Fractional V-Sync", "Ułamkowy V-Sync"),
     ("On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Measured on Windows, it adds 1 to 2 ms of delay on most frames and 2.5 to 4 ms on the slowest ones; turn it on if motion judders with V-Sync.", "Na ekranie odświeżanym 2–4 razy szybciej niż liczba klatek strumienia (60 fps przy 120 Hz) pokazuje każdą klatkę przez tyle samo odświeżeń, więc ruch jest równy. Według pomiarów w Windows dodaje 1–2 ms opóźnienia w większości klatek i 2,5–4 ms w najwolniejszych; włącz, jeśli ruch z V-Sync się zacina."),

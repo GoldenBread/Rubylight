@@ -475,6 +475,8 @@ impl App {
         let display = display_of(self.window);
         log_display(self.window, display);
         self.launcher.display = display;
+        // SAFETY: a live window.
+        self.launcher.fullscreen_rates = mode_refresh_rates(unsafe { SDL_GetDisplayForWindow(self.window) });
         let (pacing, vrr) = pacing(&settings, self.launcher.tearing_supported);
         let plan = LaunchPlan {
             host_id,

@@ -519,6 +519,8 @@ pub struct Launcher {
     /// The renderer's Direct3D 11 device, which the PyroWave GPU decoder's settings probe runs on.
     pub gpu_device: Option<crate::stream::pipeline::GpuDevice>,
     pub display: Display,
+    /// The refresh rates of the display's fullscreen modes, for fractional V-Sync's note (Windows' Fullscreen takes one); empty when unknown.
+    pub fullscreen_rates: Vec<f32>,
     pub identity_ready: bool,
     /// What this PC's power allows (`power::probe`): the Close Nightjar question offers these.
     /// Empty until known.
@@ -638,6 +640,7 @@ impl Launcher {
             tearing_supported: false,
             gpu_device: None,
             display,
+            fullscreen_rates: Vec::new(),
             identity_ready: false,
             power: Vec::new(),
             system_languages: Vec::new(),

@@ -1651,6 +1651,32 @@ fn fractional_vsync_says_why_where_it_holds_nothing() {
     assert!(!shows(&f, "Fractional V-Sync"), "under V-Sync, which is off: {:?}", f.drawn);
 }
 
+/// The display's refresh has to be 2 to 4 times the frame rate, and Windows' Fullscreen without VRR
+/// switches the display to the stream's rate where it has a mode at it.
+#[test]
+fn fractional_vsync_names_the_refresh_where_it_holds_nothing() {
+    let at = |hz: f32| crate::stream::Display { width: 1920, height: 1080, refresh_hz: hz, refresh_reported: true };
+    let s = |fps: u32, window_mode: WindowMode| Settings { fps, window_mode, ..Settings::default() };
+    let borderless = WindowMode::Borderless;
+    assert_eq!(fractional_vsync_display_reason(&s(60, borderless), &at(120.0), &[], true), None, "twice");
+    assert_eq!(fractional_vsync_display_reason(&s(30, borderless), &at(119.88), &[], true), None, "four times, within the tolerance");
+    assert_eq!(fractional_vsync_display_reason(&s(60, borderless), &at(144.0), &[], true).as_deref(),
+        Some("Not used at this display’s 144 Hz: that isn’t 2 to 4 times the frame rate"));
+    assert!(fractional_vsync_display_reason(&s(60, borderless), &at(60.0), &[], true).is_some(), "the stream's own rate");
+    assert!(fractional_vsync_display_reason(&s(0, borderless), &at(120.0), &[], true).is_some(), "Display: the display's rate");
+    assert!(fractional_vsync_display_reason(&s(24, borderless), &at(120.0), &[], true).is_some(), "five times is past the hold's 4");
+    let unreported = crate::stream::Display { refresh_reported: false, ..at(144.0) };
+    assert_eq!(fractional_vsync_display_reason(&s(60, borderless), &unreported, &[], true), None, "no refresh known");
+
+    let full = WindowMode::Fullscreen;
+    assert_eq!(fractional_vsync_display_reason(&s(60, full), &at(120.0), &[120.0, 60.0], true).as_deref(),
+        Some("Not used in Fullscreen with VRR off: the display switches to the stream’s frame rate"));
+    assert_eq!(fractional_vsync_display_reason(&s(30, full), &at(120.0), &[120.0, 60.0], true), None,
+        "no 30 Hz mode: the closest is a multiple, which holds");
+    assert_eq!(fractional_vsync_display_reason(&s(60, full), &at(120.0), &[120.0, 60.0], false), None,
+        "Wayland's Fullscreen keeps the display's refresh");
+}
+
 #[test]
 fn fractional_vsync_is_offered_only_where_it_holds_pictures() {
     for driver in ["windows", "wayland", "kmsdrm", "x11", "cocoa"] {

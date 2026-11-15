@@ -453,10 +453,17 @@ impl DrawTime {
 }
 
 /// The base of a held picture's margin (`held_margin_us`): `set_us`, a measurement run's
-/// `NIGHTJAR_HELD_MARGIN_US`, else 2 ms where nothing composes (exclusive fullscreen, a KMS plane)
+/// `NIGHTJAR_HELD_MARGIN_US`, else 2 ms where nothing composes (Windows' exclusive fullscreen, a KMS plane)
 /// and the desktop's deadline elsewhere (`deadline_before_refresh`).
 pub fn held_base_margin_us(set_us: Option<u64>, uncomposed: bool, refresh_hz: f32) -> u64 {
     set_us.unwrap_or_else(|| if uncomposed { 2_000 } else { deadline_before_refresh(refresh_hz).max(0) as u64 })
+}
+
+/// Whether a window in SDL's fullscreen with a display mode (`exclusive`) is shown without a
+/// compositor: on Windows (`windows`) only. SDL emulates that fullscreen on Wayland, where the
+/// compositor still schedules each picture and its deadline holds.
+pub fn uncomposed_fullscreen(exclusive: bool, windows: bool) -> bool {
+    exclusive && windows
 }
 
 /// How far ahead of its turn a held picture goes out: `base_us` (the desktop's deadline, or 2 ms

@@ -800,7 +800,7 @@ mod tests {
     fn the_answers_are_polled_before_the_hold_and_the_present() {
         let present = function(include_str!("render.rs"), "pub fn present(");
         let poll = present.find("self.glass.poll(").expect("present polls the answers");
-        assert!(poll < present.find("self.hold_for_turn(").unwrap(), "before the hold with Frame Warp");
+        assert!(poll < present.find("self.hold_for_turn_lending(").unwrap(), "before the hold with Frame Warp");
         assert!(poll < present.find("self.kms_flip(").unwrap(), "before the present and its hold");
         assert!(present.find("self.held_clock.presented(").unwrap() > present.find("self.kms_flip(").unwrap());
     }
@@ -809,14 +809,37 @@ mod tests {
     fn with_frame_warp_the_hold_comes_before_its_shift() {
         let render = include_str!("render.rs");
         let present = function(render, "pub fn present(");
-        assert!(present.find("self.hold_for_turn(").unwrap() < present.find("warp.draw(None)").unwrap());
-        // Held once: the presents themselves hold only without Frame Warp.
-        for flip in ["fn render_flip(", "fn kms_flip(&mut self, draw_overlay"] {
+        assert!(present.find("self.hold_for_turn_lending(").unwrap() < present.find("warp.draw(None)").unwrap());
+        // Held once: the presents themselves hold only without Frame Warp (KMS's `lends` asks for none).
+        for flip in ["fn render_flip(", "fn kms_flip(&mut self, window"] {
             let body = function(render, flip);
             for (at, _) in body.match_indices("self.hold_for_turn(") {
-                assert!(body[..at].rsplit('\n').next().unwrap().contains("self.frame_warp.is_none()"), "{flip}");
+                let line = body[..at].rsplit('\n').next().unwrap();
+                assert!(line.contains("self.frame_warp.is_none()") || line.contains("if lends"), "{flip}");
             }
         }
+        assert!(function(render, "fn kms_flip(&mut self, window").contains("let lends = picture && self.frame_warp.is_none()"));
+    }
+
+    /// Keys, clicks and controllers leave from their own threads while a hold waits (`direct_motion`),
+    /// also where the present has not lent them yet: Frame Warp's hold before its draw, and KMS's.
+    #[test]
+    fn input_is_lent_while_a_hold_waits() {
+        let render = include_str!("render.rs");
+        let lending = function(render, "fn hold_for_turn_lending(");
+        let lent = lending.find("self.direct_motion.presenting(Some(").expect("lends the input");
+        let hold = lending.find("self.hold_for_turn(").unwrap();
+        assert!(lent < hold && hold < lending.find("self.direct_motion.presenting(None)").unwrap());
+        let kms = function(render, "fn kms_flip(&mut self, window");
+        let lent = kms.find("self.direct_motion.presenting(Some(").expect("KMS lends the input");
+        let hold = kms.find("self.hold_for_turn(").unwrap();
+        let commit = kms.find("Scanout::commit").unwrap();
+        let back = kms.find("self.direct_motion.presenting(None)").unwrap();
+        assert!(lent < hold && hold < commit && commit < back, "lent from the hold until the commit returns");
+        assert!(back < kms.find("if committed.is_err()").unwrap(), "given back on the failed commit's path too");
+        // Without Frame Warp the renderer's present lends it before its own hold.
+        let flip = function(render, "fn render_flip(");
+        assert!(flip.find("self.direct_motion.presenting(Some(").unwrap() < flip.find("self.hold_for_turn(").unwrap());
     }
 
     #[test]

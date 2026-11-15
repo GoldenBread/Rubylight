@@ -1594,6 +1594,8 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("Not used: this computer has no on-screen keyboard", "Không dùng: máy tính này không có bàn phím ảo"),
     ("Not used outside a Wayland desktop", "Không dùng ngoài màn hình nền Wayland"),
     ("Not used: this desktop doesn’t report when pictures are shown", "Không dùng: màn hình nền này không báo khi nào hình được hiển thị"),
+    ("Not used at this display’s {} Hz: that isn’t 2 to 4 times the frame rate", "Không dùng ở {} Hz của màn hình này: không gấp 2 đến 4 lần tốc độ khung hình"),
+    ("Not used in Fullscreen with VRR off: the display switches to the stream’s frame rate", "Không dùng ở Toàn màn hình khi tắt VRR: màn hình chuyển sang tốc độ khung hình của luồng"),
     ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields; turn off to open it yourself.", "Mở bàn phím ảo khi bạn chọn một trường văn bản trên PC và đóng lại sau đó. Cần PC có báo trường văn bản; tắt để tự mở bàn phím."),
     ("Fractional V-Sync", "V-Sync phân số"),
     ("On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Measured on Windows, it adds 1 to 2 ms of delay on most frames and 2.5 to 4 ms on the slowest ones; turn it on if motion judders with V-Sync.", "Trên màn hình có tần số gấp 2 đến 4 lần tốc độ khung hình của luồng (60 fps trên 120 Hz), mỗi khung hình được hiển thị trong cùng số lần làm mới để chuyển động luôn đều. Theo đo trên Windows, thêm 1 đến 2 ms độ trễ ở hầu hết khung hình và 2,5 đến 4 ms ở những khung hình chậm nhất; hãy bật nếu chuyển động bị giật khi dùng V-Sync."),

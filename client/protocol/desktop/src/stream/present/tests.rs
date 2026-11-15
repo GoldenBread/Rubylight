@@ -1247,6 +1247,11 @@ fn a_held_margin_is_the_deadline_unless_a_measurement_sets_it() {
     assert_eq!(held_base_margin_us(Some(6_500), false, 120.0), 6_500, "NIGHTJAR_HELD_MARGIN_US");
     assert_eq!(held_base_margin_us(Some(6_500), true, 120.0), 6_500, "set even where nothing composes");
     assert_eq!(held_base_margin_us(None, false, 0.0), 0, "no refresh rate known");
+    // Wayland's Fullscreen with a mode is SDL's emulation: the compositor still schedules it.
+    assert!(uncomposed_fullscreen(true, true), "exclusive fullscreen on Windows");
+    assert!(!uncomposed_fullscreen(true, false), "Wayland's emulated fullscreen keeps the desktop's deadline");
+    assert!(!uncomposed_fullscreen(false, true), "a composed window on Windows");
+    assert_eq!(held_base_margin_us(None, uncomposed_fullscreen(true, false), 120.0), 5_000, "Wayland Fullscreen at 120 Hz");
 }
 
 #[test]

@@ -925,6 +925,8 @@ impl Launcher {
                 unused_with(&mut rows, frame_pacing_choice_name(FramePacingChoice::HostTimes));
             } else if !fractional_vsync_applies(&video_driver()) {
                 rows.note(tr("Not used: this desktop doesn’t report when pictures are shown").to_owned(), *TERTIARY);
+            } else if let Some(reason) = fractional_vsync_display_reason(s, &display, &self.fullscreen_rates, cfg!(windows)) {
+                rows.note(reason, *TERTIARY);
             }
             setting_row(ui, s, &mut rows, &["fractional_vsync"], "Fractional V-Sync", "On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Measured on Windows, it adds 1 to 2 ms of delay on most frames and 2.5 to 4 ms on the slowest ones; turn it on if motion judders with V-Sync.", |ui, s| toggle(ui, &mut s.fractional_vsync));
             rows.always();
@@ -2035,6 +2037,28 @@ pub(super) const fn vrr_tear_free_applies() -> bool {
 /// tells no time a picture was shown; macOS presents without telling either.
 pub(super) fn fractional_vsync_applies(video_driver: &str) -> bool {
     cfg!(windows) || (cfg!(target_os = "linux") && video_driver != "x11")
+}
+
+/// Why fractional V-Sync holds nothing at the display the settings screen is on, or None; VRR is off
+/// here (the row says so before). Fullscreen on Windows takes the display mode closest to the
+/// stream's rate (`fullscreen_refresh_hz`): one of `fullscreen_rates` at that rate holds nothing.
+/// Elsewhere the display keeps its refresh, which has to be 2 to 4 times the frame rate
+/// (`rate_multiple`); the display can change, so the note names the refresh it is about. Wayland's
+/// Fullscreen is the compositor's and keeps the refresh too. Nothing without a reported refresh.
+pub(super) fn fractional_vsync_display_reason(s: &Settings, display: &Display, fullscreen_rates: &[f32], windows: bool) -> Option<String> {
+    use nightjar_policy::vsync::rate_multiple;
+    if !display.refresh_reported || display.refresh_hz <= 0.0 {
+        return None;
+    }
+    let (_, _, fps, _) = crate::stream::stream_mode(s, *display);
+    let fps = f64::from(fps);
+    if windows && s.window_mode == WindowMode::Fullscreen && fullscreen_rates.iter().any(|&hz| rate_multiple(f64::from(hz), fps) == Some(1)) {
+        return Some(tr("Not used in Fullscreen with VRR off: the display switches to the stream’s frame rate").to_owned());
+    }
+    match rate_multiple(f64::from(display.refresh_hz), fps) {
+        Some(2..) => None,
+        _ => Some(trf("Not used at this display’s {} Hz: that isn’t 2 to 4 times the frame rate", &[&(display.refresh_hz.round() as u32)])),
+    }
 }
 
 /// SDL's video driver, which only Linux asks for.

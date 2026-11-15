@@ -288,19 +288,15 @@ impl Streaming {
     }
 
     /// How far ahead of its turn a picture fractional V-Sync holds goes out: the desktop's deadline,
-    /// or 2 ms in exclusive fullscreen, which nothing composes (`NIGHTJAR_HELD_MARGIN_US` sets this
+    /// or 2 ms in Windows' exclusive fullscreen, which nothing composes (`NIGHTJAR_HELD_MARGIN_US` sets this
     /// base for a measurement). With Frame Warp the hold comes before the draw, so the draw's recent
     /// time is added (`present::held_margin_us`).
     fn held_margin_us(&self, renderer: *mut SDL_Renderer) -> u64 {
         #[cfg(target_os = "linux")]
         if self.kms_engaged() { return present::held_base_margin_us(self.held_margin_us, true, self.plan.display.refresh_hz); }
-        // SAFETY: a live renderer and its window.
-        let exclusive = unsafe {
-            let window = SDL_GetRenderWindow(renderer);
-            SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN != 0 && !SDL_GetWindowFullscreenMode(window).is_null()
-        };
+        let uncomposed = present::uncomposed_fullscreen(exclusive_fullscreen(renderer), cfg!(windows));
         let refresh_hz = self.plan.display.refresh_hz;
-        let base_us = present::held_base_margin_us(self.held_margin_us, exclusive, refresh_hz);
+        let base_us = present::held_base_margin_us(self.held_margin_us, uncomposed, refresh_hz);
         let draw_us = if self.frame_warp.is_some() { self.held_draw.p90_us() } else { None };
         present::held_margin_us(base_us, draw_us, (1e6 / f64::from(refresh_hz.max(1.0))) as u64)
     }
@@ -326,6 +322,18 @@ impl Streaming {
             // SAFETY: a plain wait.
             unsafe { SDL_DelayPrecise(wait_us * 1000) };
         }
+    }
+
+    /// `hold_for_turn` before the present lends the input, as Frame Warp's hold before its draw
+    /// does: keys, clicks and controllers leave from their own threads while it waits
+    /// (`direct_motion`), so Frame Warp's shift takes them in. Lent only for the wait: the draws
+    /// after it, the overlay's with the lent controllers among them, run with the main loop's input
+    /// as without the hold, and the present lends it again for its own wait (`render_flip`).
+    fn hold_for_turn_lending(&mut self, renderer: *mut SDL_Renderer, window: *mut SDL_Window) {
+        if self.vrr.held(self.pacer.mode) <= 1 { return; }
+        self.direct_motion.presenting(Some(self.direct_rules(window)));
+        self.hold_for_turn(renderer);
+        self.direct_motion.presenting(None);
     }
 
     /// Turns a VRR stream to the pacing it would have without VRR once the display check finds the
@@ -1064,14 +1072,16 @@ impl Streaming {
         // without the hold. Without Frame Warp it holds after the draw (`render_flip`, `kms_flip`),
         // whose time then stays out of the hold's margin.
         let held_before_draw = has_picture && self.frame_warp.is_some() && self.vrr.held(self.pacer.mode) > 1;
-        if held_before_draw { self.hold_for_turn(renderer); }
+        // SAFETY: a live renderer.
+        let window = unsafe { SDL_GetRenderWindow(renderer) };
+        if held_before_draw { self.hold_for_turn_lending(renderer, window); }
         let draw_begin_us = session::now_us();
         // Frame Warp's shift for the picture, as late before its draw as it can be.
         if let Some(warp) = self.frame_warp.as_mut() {
             if let Some(p) = &picture { warp.picture(p.decoded.number, p.decoded.race_seq, p.decoded.ready_us); }
             self.texture.warp = warp.draw(None);
         }
-        let (flipped, by_kms) = match self.kms_flip(&mut draw_overlay, has_picture) {
+        let (flipped, by_kms) = match self.kms_flip(window, &mut draw_overlay, has_picture) {
             Some(flipped) => (flipped, true),
             None => (self.render_flip(renderer, &mut draw_overlay, has_picture), false),
         };
@@ -1222,7 +1232,7 @@ impl Streaming {
     /// it, in one commit; None while the planes do not show the stream, or when they just gave up
     /// (then the renderer draws this frame).
     #[cfg(target_os = "linux")]
-    fn kms_flip(&mut self, draw_overlay: &mut impl FnMut(&mut Self, *mut SDL_Renderer), picture: bool) -> Option<Flipped> {
+    fn kms_flip(&mut self, window: *mut SDL_Window, draw_overlay: &mut impl FnMut(&mut Self, *mut SDL_Renderer), picture: bool) -> Option<Flipped> {
         if !self.kms_engaged() {
             return None;
         }
@@ -1237,11 +1247,17 @@ impl Streaming {
                 if let Some(kms) = self.kms.as_mut() { kms.overlay_hidden(); }
             }
         }
+        // Keys, clicks and controllers leave from their own threads while fractional V-Sync holds the
+        // picture and the commit waits for its refresh, as in the renderer's present (`render_flip`);
+        // the overlay is drawn before.
+        let lends = picture && self.frame_warp.is_none() && self.vrr.held(self.pacer.mode) > 1;
+        if lends { self.direct_motion.presenting(Some(self.direct_rules(window))); }
         // KMS has no margin to call for a renderer: `held_margin_us` answers before it would.
-        if picture && self.frame_warp.is_none() { self.hold_for_turn(std::ptr::null_mut()); }
+        if lends { self.hold_for_turn(std::ptr::null_mut()); }
         let issued_us = session::now_us();
         let committed = self.kms.as_mut().map_or(Ok(()), kms_scanout::Scanout::commit);
         let returned_us = session::now_us();
+        if lends { self.direct_motion.presenting(None); }
         if committed.is_err() {
             self.add_toast(tr("Video planes are unavailable; the stream is drawn by the renderer. The log says why."));
             self.needs_redraw = true;
@@ -1251,7 +1267,7 @@ impl Streaming {
     }
 
     #[cfg(not(target_os = "linux"))]
-    fn kms_flip(&mut self, _draw_overlay: &mut impl FnMut(&mut Self, *mut SDL_Renderer), _picture: bool) -> Option<Flipped> {
+    fn kms_flip(&mut self, _window: *mut SDL_Window, _draw_overlay: &mut impl FnMut(&mut Self, *mut SDL_Renderer), _picture: bool) -> Option<Flipped> {
         None
     }
 
