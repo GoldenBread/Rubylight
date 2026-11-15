@@ -81,6 +81,9 @@ impl StreamSizes {
     }
 }
 
+/// The end of a stream whose packed 4:4:4 ("Sharper colored text") pictures cannot be shown.
+const PACKED_UNSHOWN: &str = en("This device cannot show Sharper colored text for this stream. Turn off Sharper colored text in Settings, then start the stream again.");
+
 /// What the toast says when the PC did not confirm a requested size or frame rate in time:
 /// automatic quality stops only where it was on for the stream.
 fn unconfirmed_mode_toast(quality_on: bool) -> &'static str {
@@ -595,8 +598,7 @@ impl Streaming {
         for run in race::runs(batch.iter().map(|(band, pin)| (*band, pin.set()))) {
             let Some(rows) = race::scissor(run.first_row, run.end_row, setup.height as u32) else { continue };
             if !self.texture.upload_slice(renderer, setup, &batch[run.last].1, run.fence_value, rows) {
-                let reason = self.texture.failure.take().unwrap_or_else(|| "PyroWave GPU reconstruction failed.".into());
-                self.exit = Some(Exit::Ended(Some(reason)));
+                self.end_pyrowave_unshown();
                 return true;
             }
         }
@@ -845,6 +847,12 @@ impl Streaming {
         if let Some(line) = self.texture.video_only().presented(dropped, session::now_us()) { eprintln!("{line}"); }
     }
 
+    /// Ends a stream whose PyroWave pictures cannot be shown; the reason goes to the log.
+    fn end_pyrowave_unshown(&mut self) {
+        eprintln!("nightjar: PyroWave pictures cannot be shown: {}", self.texture.failure.take().as_deref().unwrap_or("GPU reconstruction failed"));
+        self.exit = Some(Exit::Ended(Some(tr("PyroWave pictures cannot be shown on this device. Choose another Video codec in Settings, then start the stream again.").to_owned())));
+    }
+
     /// Draws the texture and the overlay and presents. `probe` reads the beam around the present.
     fn render_flip(&mut self, renderer: *mut SDL_Renderer, draw_overlay: &mut impl FnMut(&mut Self, *mut SDL_Renderer), probe: bool) -> Flipped {
         // SAFETY: drawing on a live renderer.
@@ -896,7 +904,8 @@ impl Streaming {
                     frame_warp::render_texture(renderer, texture, source.as_ref(), &dst, &self.texture.warp, &mut self.texture.warp_mesh);
                 }
             } else if !self.texture.draw(renderer, &dst) {
-                self.exit = Some(Exit::Ended(Some("Packed full-chroma presentation failed.".into())));
+                eprintln!("nightjar: packed full-chroma presentation failed");
+                self.exit = Some(Exit::Ended(Some(tr(PACKED_UNSHOWN).to_owned())));
             }
         }
         draw_overlay(self, renderer);
@@ -1071,10 +1080,10 @@ impl Streaming {
                 self.unshown.shown();
                 self.first_frame = true;
             } else if p.decoded.setup.format & VIDEO_FORMAT_MASK_PYROWAVE != 0 {
-                let reason = self.texture.failure.take().unwrap_or_else(|| "PyroWave GPU reconstruction failed.".into());
-                self.exit = Some(Exit::Ended(Some(reason)));
+                self.end_pyrowave_unshown();
             } else if p.decoded.setup.chroma_packing != 0 {
-                self.exit = Some(Exit::Ended(Some("Packed full-chroma reconstruction failed: the decoded planes, GPU, or HDR output are unsupported.".into())));
+                eprintln!("nightjar: packed full-chroma reconstruction failed: the decoded planes, GPU, or HDR output are unsupported");
+                self.exit = Some(Exit::Ended(Some(tr(PACKED_UNSHOWN).to_owned())));
             } else {
                 // A picture format this presenter cannot show: after a few in a row the decoder
                 // gives way as a refused one does (the next backend, then software, from a key

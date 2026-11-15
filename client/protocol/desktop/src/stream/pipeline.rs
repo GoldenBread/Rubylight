@@ -747,7 +747,7 @@ impl Decoder {
                 self.decoder = None;
                 if self.setup(&setup).is_err() || self.decoder.is_none() {
                     self.failing.given_up = true;
-                    self.shared.notify(Notice::DecoderFailed("The video decoder stopped working and could not be opened again.".into()));
+                    self.shared.notify(Notice::DecoderFailed(crate::strings::tr("The video decoder stopped working and could not be opened again.").to_owned()));
                 }
             }
             Escalation::GiveUp if self.never_pictured_hardware().is_some() => {
@@ -762,7 +762,7 @@ impl Decoder {
             }
             Escalation::GiveUp => {
                 eprintln!("nightjar: the video decoder failed {frames} frames in a row over {for_ms} ms with no picture; ending the stream");
-                self.shared.notify(Notice::DecoderFailed(format!("The video decoder stopped working: no picture for {} s.", for_ms.div_ceil(1000))));
+                self.shared.notify(Notice::DecoderFailed(trf("The video decoder stopped working: no picture for {} s.", &[&for_ms.div_ceil(1000)])));
             }
         }
     }
@@ -889,6 +889,15 @@ fn packed_map_dropped(setup: &VideoSetup, was_mapped: bool, still_mapped: bool) 
 /// its Vulkan images could not be set up or failed; the reason, in English, is in the log.
 const CUDA_FALLBACK_TOAST: &str = crate::strings::en("NVDEC pictures can’t be copied into the renderer’s images on the graphics card, so each one goes through memory, which takes longer. The log says why.");
 
+/// The end of a stream whose packed 4:4:4 ("Sharper colored text") has no hardware decoder.
+const PACKED_NEEDS_HARDWARE: &str = crate::strings::en("Sharper colored text needs a hardware decoder. Choose one under Decoder in Settings, or turn off Sharper colored text, then start the stream again.");
+
+/// The end of a stream no decoder opens for: the setup's failure, which the failed start shows.
+fn no_decoder(shared: &Shared, error: &dyn std::fmt::Display) {
+    eprintln!("nightjar: no video decoder opens for the stream: {error}");
+    shared.notify(Notice::DecoderFailed(crate::strings::tr("No video decoder on this device can play this stream. Choose another Video codec in Settings, then start the stream again.").to_owned()));
+}
+
 /// The end of a stream whose pictures the presenter could not show from any decoder, software last.
 const PICTURES_UNSHOWN: &str = crate::strings::en("This stream's picture cannot be shown with any decoder on this device. Choose another Video codec or Decoder in Settings, then start the stream again.");
 
@@ -990,9 +999,8 @@ impl VideoDecoder for Decoder {
             };
         }
         if setup.chroma_packing != 0 && self.hardware == Hardware::None {
-            self.shared.notify(Notice::DecoderFallback(
-                "Packed 4:4:4 requires hardware decoding".into(),
-            ));
+            eprintln!("nightjar: packed 4:4:4 needs a hardware decoder, and the stream has none");
+            self.shared.notify(Notice::DecoderFailed(crate::strings::tr(PACKED_NEEDS_HARDWARE).to_owned()));
             return Err(-1);
         }
         let codec = codec_of(setup);
@@ -1009,16 +1017,15 @@ impl VideoDecoder for Decoder {
                     // Every hardware decoder gave way to software this stream, which was said then.
                     return match media::VideoDecoder::open(codec, Hardware::None, self.software_threads, false) {
                         Ok(decoder) => { self.install(decoder, setup); Ok(()) }
-                        Err(e) => { self.shared.notify(Notice::DecoderFallback(format!("No decoder: {e}"))); Err(-1) }
+                        Err(e) => { no_decoder(&self.shared, &e); Err(-1) }
                     };
                 }
                 media::VideoDecoder::open_any(codec, self.pictures(setup), order, setup.chroma_packing != 0, log_unavailable).or_else(|e| {
                     if setup.chroma_packing != 0 {
                         return Err(e);
                     }
-                    self.shared.notify(Notice::DecoderFallback(format!(
-                        "Hardware decoding unavailable: {e}"
-                    )));
+                    eprintln!("nightjar: hardware decoding unavailable: {e}; decoding in software");
+                    self.shared.notify(Notice::DecoderFallback(crate::strings::tr("Hardware decoding is unavailable for this stream. Now decoding in software.").to_owned()));
                     media::VideoDecoder::open(codec, Hardware::None, self.software_threads, false)
                 })
             }
@@ -1029,8 +1036,7 @@ impl VideoDecoder for Decoder {
                 Ok(())
             }
             Err(e) => {
-                self.shared
-                    .notify(Notice::DecoderFallback(format!("No decoder: {e}")));
+                no_decoder(&self.shared, &e);
                 Err(-1)
             }
         }

@@ -184,12 +184,19 @@ impl Connecting {
         if expired { self.cancel(); }
         let notices = std::mem::take(&mut *lock(&self.shared.notices));
         let mut keep = Vec::new();
+        // A decoder that could not be set up says why; a launch that fails on it shows that.
+        let mut decoder_failed = None;
         for notice in notices {
             match notice {
                 Notice::Stage(stage) => self.stage = stage_text(stage).into(),
                 Notice::Reconnecting(attempt) => {
                     keep.clear();
+                    decoder_failed = None;
                     self.stage = trf("Reconnecting · attempt {} of 5", &[&attempt]);
+                }
+                Notice::DecoderFailed(text) => {
+                    decoder_failed.get_or_insert_with(|| text.clone());
+                    keep.push(Notice::DecoderFailed(text));
                 }
                 // The rest is for the stream.
                 other => keep.push(other),
@@ -220,7 +227,7 @@ impl Connecting {
             } else if e.packed_refused {
                 ConnectFailed::PackedRefused(Box::new(self.plan.clone()))
             } else {
-                ConnectFailed::Message(e.message)
+                ConnectFailed::Message(decoder_failed.unwrap_or(e.message))
             }),
             Err(std::sync::mpsc::TryRecvError::Empty) => Ok(None),
             Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(ConnectFailed::Message("The connection attempt ended.".into())),

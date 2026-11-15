@@ -402,3 +402,22 @@ fn a_full_chroma_refusal_after_the_launch_hands_back_the_plan_to_start_again() {
         }
     }
 }
+
+/// A launch that fails because no decoder could be set up shows the decoder's reason on the
+/// failed start, not the session's generic failure, which the toast leaving with it used to hide.
+#[test]
+fn a_launch_that_failed_on_its_decoder_says_why() {
+    let (sender, result) = channel();
+    let mut failed = connecting(result, None);
+    failed.shared.notify(Notice::DecoderFailed("No video decoder on this device can play this stream.".into()));
+    sender.send(Err(ConnectError { message: "Could not start the stream".into(), retryable: false, asks_replace: false, moved_to: None, packed_refused: false })).unwrap();
+    match failed.poll() {
+        Err(ConnectFailed::Message(message)) => assert_eq!(message, "No video decoder on this device can play this stream."),
+        _ => panic!("the launch failed"),
+    }
+    // Without a decoder's reason the session's own stays.
+    let (sender, result) = channel();
+    let mut plain = connecting(result, None);
+    sender.send(Err(ConnectError { message: "Could not start the stream".into(), retryable: false, asks_replace: false, moved_to: None, packed_refused: false })).unwrap();
+    assert!(matches!(plain.poll(), Err(ConnectFailed::Message(message)) if message == "Could not start the stream"));
+}
