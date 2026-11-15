@@ -501,6 +501,7 @@
     <string name="summary_arr_fixed_timing">Behandelt auf einem Bildschirm mit adaptiver Bildwiederholrate die Bildwiederholung als fest, solange VRR aus ist, sodass Bilder auf deinen Bildschirm getaktet werden und die Verzögerung der Anzeige-Warteschlange zurückgeholt wird. Ein Bild, das seine Bildwiederholung verpasst, kann dann eine ganze Bildwiederholung warten statt auf den nächsten Schritt des Bildschirms; lass es aus, außer das Bild ruckelt auf diesem Bildschirm bei ausgeschaltetem VRR.</string>
     <string name="tag_unused_adaptive_screen">Nicht verwendet: Dieser Bildschirm legt seine Bildwiederholung selbst fest</string>
     <string name="tag_unused_refresh">Nicht verwendet bei %1$d Hz dieses Bildschirms: Das ist nicht das 2- bis 4-Fache der Bildrate</string>
+    <string name="tag_unused_refresh_switched">Nicht verwendet bei den %1$d Hz, auf die Streams diesen Bildschirm umschalten: Das ist nicht das 2- bis 4-Fache der Bildrate</string>
     <string name="tag_unused_with">Nicht mit %1$s verwendbar</string>
     <string name="tag_every_frame_with">„Jedes Bild behalten“ wird nicht mit %1$s verwendet</string>
 </resources>

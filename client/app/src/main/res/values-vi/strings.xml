@@ -501,6 +501,7 @@
     <string name="summary_arr_fixed_timing">Trên màn hình có tần số quét thích ứng, coi việc làm mới là cố định khi VRR tắt, để khung hình được căn theo màn hình của bạn và độ trễ hàng đợi màn hình được lấy lại. Một khung hình lỡ nhịp làm mới có thể phải chờ cả một lần làm mới thay vì bước tiếp theo của màn hình; hãy để tắt trừ khi chuyển động bị giật trên màn hình này khi VRR tắt.</string>
     <string name="tag_unused_adaptive_screen">Không dùng: màn hình này tự đặt tần số quét</string>
     <string name="tag_unused_refresh">Không dùng ở %1$d Hz của màn hình này: không gấp 2 đến 4 lần tốc độ khung hình</string>
+    <string name="tag_unused_refresh_switched">Không dùng ở %1$d Hz mà luồng phát chuyển màn hình này sang: không gấp 2 đến 4 lần tốc độ khung hình</string>
     <string name="tag_unused_with">Không dùng với %1$s</string>
     <string name="tag_every_frame_with">Giữ mọi khung hình không dùng với %1$s</string>
 </resources>

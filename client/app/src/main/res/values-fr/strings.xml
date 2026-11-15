@@ -501,6 +501,7 @@
     <string name="summary_arr_fixed_timing">Sur un écran à rafraîchissement adaptatif, traite le rafraîchissement comme fixe tant que le VRR est désactivé, pour que les images soient calées sur ton écran et que le retard de la file d\'affichage soit récupéré. Une image qui rate son rafraîchissement peut alors attendre un rafraîchissement entier au lieu du prochain pas de l\'écran ; laisse-le désactivé sauf si le mouvement saccade sur cet écran avec le VRR désactivé.</string>
     <string name="tag_unused_adaptive_screen">Non utilisé : cet écran fixe son propre rafraîchissement</string>
     <string name="tag_unused_refresh">Non utilisé à %1$d Hz sur cet écran : ce n’est pas 2 à 4 fois la fréquence d’images</string>
+    <string name="tag_unused_refresh_switched">Non utilisé aux %1$d Hz que les streams donnent à cet écran : ce n’est pas 2 à 4 fois la fréquence d’images</string>
     <string name="tag_unused_with">Non utilisé avec %1$s</string>
     <string name="tag_every_frame_with">Garder chaque image n\'est pas utilisé avec %1$s</string>
 </resources>

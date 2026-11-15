@@ -82,10 +82,32 @@ public class UnusedSettingTagsTest {
         assertTrue(reason("checkbox_audio_passthrough").startsWith("Not used with "));
     }
 
-    /** The default screen's refresh now, which fractional V-Sync's row is worded for. */
-    private static void screenAt(float hz) {
+    /**
+     * The default screen's mode now at {@code hz}, and its other modes at {@code others}, all of its size:
+     * fractional V-Sync's row names the refresh of the mode the stream switches to (DisplayModeChoice).
+     */
+    private static void screenAt(float hz, float... others) {
         android.view.Display display = PreferenceConfiguration.defaultDisplay(RuntimeEnvironment.getApplication());
         org.robolectric.Shadows.shadowOf(display).setRefreshRate(hz);
+        android.view.Display.Mode now = display.getMode();
+        android.view.Display.Mode[] modes = new android.view.Display.Mode[others.length + 1];
+        modes[0] = mode(now.getModeId(), now.getPhysicalWidth(), now.getPhysicalHeight(), hz);
+        for (int i = 0; i < others.length; i++) {
+            modes[i + 1] = mode(now.getModeId() + 100 + i, now.getPhysicalWidth(), now.getPhysicalHeight(), others[i]);
+        }
+        org.robolectric.shadows.ShadowDisplayManager.setSupportedModes(android.view.Display.DEFAULT_DISPLAY, modes);
+    }
+
+    /** Display.Mode's constructor is hidden from apps. */
+    private static android.view.Display.Mode mode(int id, int width, int height, float hz) {
+        try {
+            java.lang.reflect.Constructor<android.view.Display.Mode> make = android.view.Display.Mode.class
+                    .getDeclaredConstructor(int.class, int.class, int.class, float.class);
+            make.setAccessible(true);
+            return make.newInstance(id, width, height, hz);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
     }
 
     @Test
@@ -127,6 +149,29 @@ public class UnusedSettingTagsTest {
         assertNull("four times", reason(key));
         prefs.edit().putString(PreferenceConfiguration.FPS_PREF_STRING, "24").commit();
         assertNotNull("five times is past the hold's 4", reason(key));
+    }
+
+    /** The stream takes its own mode: the highest refresh that is a whole multiple of the frame rate. */
+    @Test
+    public void fractionalVsyncNamesTheRefreshTheStreamSwitchesTo() {
+        String key = SettingRules.FRACTIONAL_VSYNC;
+        prefs.edit().putString(PreferenceConfiguration.FPS_PREF_STRING, "60").commit();
+        screenAt(144f, 120f, 60f);
+        assertNull("144 Hz now, but the stream holds at 120 Hz", reason(key));
+        screenAt(90f, 60f);
+        assertEquals("60 Hz, the only multiple, even below the 90 Hz now",
+                "Not used at the 60 Hz streams switch this screen to: that isn’t 2 to 4 times the frame rate", reason(key));
+        screenAt(144f, 100f);
+        assertEquals("no multiple: the stream keeps the highest", "Not used at this screen’s 144 Hz: that isn’t 2 to 4 times the frame rate", reason(key));
+        screenAt(60f, 120f);
+        assertNull("60 Hz now, but the stream raises it to 120 Hz", reason(key));
+        // With "Reduce refresh rate" the stream asks Android for the frame rate, and Android picks the refresh.
+        prefs.edit().putBoolean(PreferenceConfiguration.REDUCE_REFRESH_RATE_PREF_STRING, true).commit();
+        assertNull(reason(key));
+        prefs.edit().putBoolean(PreferenceConfiguration.REDUCE_REFRESH_RATE_PREF_STRING, false)
+                .putString(PreferenceConfiguration.FPS_PREF_STRING, "120").commit();
+        screenAt(60f);
+        assertNull("no mode reaches 120 fps: the stream asks Android for it", reason(key));
     }
 
     @Test

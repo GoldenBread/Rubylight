@@ -501,6 +501,7 @@
     <string name="summary_arr_fixed_timing">Su uno schermo con aggiornamento adattivo, tratta l\'aggiornamento come fisso mentre il VRR è disattivato, così i fotogrammi possono essere sincronizzati con il tuo schermo e viene recuperato il ritardo della coda di visualizzazione. Un fotogramma che perde il suo aggiornamento può quindi attendere un aggiornamento intero invece del passo successivo dello schermo; lascialo disattivato a meno che il movimento non scatti su questo schermo con il VRR disattivato.</string>
     <string name="tag_unused_adaptive_screen">Non usato: questo schermo imposta il proprio aggiornamento</string>
     <string name="tag_unused_refresh">Non usato a %1$d Hz di questo schermo: non è da 2 a 4 volte la frequenza dei fotogrammi</string>
+    <string name="tag_unused_refresh_switched">Non usato ai %1$d Hz a cui gli stream portano questo schermo: non è da 2 a 4 volte la frequenza dei fotogrammi</string>
     <string name="tag_unused_with">Non usato con %1$s</string>
     <string name="tag_every_frame_with">Mantenere ogni fotogramma non è usato con %1$s</string>
 </resources>

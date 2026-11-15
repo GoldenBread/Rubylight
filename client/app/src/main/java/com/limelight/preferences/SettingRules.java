@@ -7,6 +7,7 @@ import android.content.pm.PackageManager;
 import com.limelight.R;
 import com.limelight.binding.audio.MicProcessing;
 import com.limelight.binding.video.DisplayFrameRatePolicy;
+import com.limelight.binding.video.DisplayModeChoice;
 import com.limelight.binding.video.FramePacingPolicy;
 import com.limelight.binding.video.VideoRendererChoice;
 
@@ -165,23 +166,45 @@ final class SettingRules {
     }
 
     /**
-     * Why fractional V-Sync holds nothing at the screen's refresh now, or null: it has to be 2 to 4
-     * times the frame rate (FramePacingPolicy.refreshesPerFrame). A stream may switch the screen to
-     * another mode, so the tag names the refresh it is about.
+     * Why fractional V-Sync holds nothing at the refresh the stream will run at, or null: it has to be
+     * 2 to 4 times the frame rate (FramePacingPolicy.refreshesPerFrame). The stream switches the screen
+     * to the mode DisplayModeChoice picks (GameVideoOutput.prepareDisplayForRendering), so the tag names
+     * that mode's refresh. Null where the settings can't know it: before Android 6, with "Reduce refresh
+     * rate" (the stream asks Android for the frame rate, or the game's content rate, and Android picks
+     * the refresh: GameVideoOutput.baseSurfaceFrameRate), and where no mode reaches the frame rate (the
+     * same). VRR, adaptive refresh and the pacings that take over return before this.
      */
     static String fractionalVsyncRefreshReason(Context context, SharedPreferences prefs) {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.M) return null;
+        if (prefs.getBoolean(PreferenceConfiguration.REDUCE_REFRESH_RATE_PREF_STRING, false)) return null;
         android.view.Display display = PreferenceConfiguration.defaultDisplay(context);
         if (display == null) return null;
-        float refreshHz = display.getRefreshRate();
-        double fps;
+        int fps, width, height;
         try {
-            fps = Double.parseDouble(prefs.getString(PreferenceConfiguration.FPS_PREF_STRING, PreferenceConfiguration.DEFAULT_FPS));
-        } catch (NumberFormatException | ClassCastException e) {
+            fps = Integer.parseInt(prefs.getString(PreferenceConfiguration.FPS_PREF_STRING, PreferenceConfiguration.DEFAULT_FPS));
+            String resolution = PreferenceConfiguration.streamResolution(context, prefs);
+            width = PreferenceConfiguration.getWidthFromResolutionString(resolution);
+            height = PreferenceConfiguration.getHeightFromResolutionString(resolution);
+        } catch (RuntimeException e) {
             return null;
         }
-        if (!(refreshHz > 0) || !(fps > 0)) return null;
+        if (fps <= 0) return null;
+        android.view.Display.Mode current = display.getMode();
+        android.view.Display.Mode[] supported = display.getSupportedModes();
+        DisplayModeChoice.Mode[] candidates = new DisplayModeChoice.Mode[supported.length];
+        for (int i = 0; i < supported.length; i++) {
+            candidates[i] = new DisplayModeChoice.Mode(supported[i].getPhysicalWidth(), supported[i].getPhysicalHeight(),
+                    supported[i].getRefreshRate());
+        }
+        int chosen = DisplayModeChoice.choose(new DisplayModeChoice.Mode(current.getPhysicalWidth(), current.getPhysicalHeight(),
+                        current.getRefreshRate()), candidates, width, height, fps, false,
+                PreferenceConfiguration.isNativeResolution(width, height), false);
+        float refreshHz = chosen < 0 ? current.getRefreshRate() : supported[chosen].getRefreshRate();
+        if (!(refreshHz >= fps)) return null;
         if (FramePacingPolicy.refreshesPerFrame(refreshHz, fps, false, true) > 1) return null;
-        return context.getString(R.string.tag_unused_refresh, Math.round(refreshHz));
+        boolean switched = Math.abs(refreshHz - current.getRefreshRate()) > 0.01f;
+        return context.getString(switched ? R.string.tag_unused_refresh_switched : R.string.tag_unused_refresh,
+                Math.round(refreshHz));
     }
 
     /**

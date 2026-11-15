@@ -361,6 +361,7 @@
     <string name="summary_arr_fixed_timing">On a screen with adaptive refresh, treats the refresh as fixed while VRR is off, so frames can be timed to your screen and the display queue take-back runs. A frame that misses its refresh can then wait a whole refresh instead of the screen’s next step; leave it off unless motion judders on this screen with VRR off.</string>
     <string name="tag_unused_adaptive_screen">Not used: this screen sets its own refresh</string>
     <string name="tag_unused_refresh">Not used at this screen’s %1$d Hz: that isn’t 2 to 4 times the frame rate</string>
+    <string name="tag_unused_refresh_switched">Not used at the %1$d Hz streams switch this screen to: that isn’t 2 to 4 times the frame rate</string>
     <string name="tag_unused_with">Not used with %1$s</string>
     <string name="tag_every_frame_with">Keeping every frame isn’t used with %1$s</string>
     <string name="summary_vrr_unavailable">Needs Android 6 or newer.</string>

@@ -501,6 +501,7 @@
     <string name="summary_arr_fixed_timing">En una pantalla con frecuencia adaptativa, trata la actualización como fija mientras VRR está desactivado, para que los fotogramas se sincronicen con tu pantalla y se recupere el retraso de la cola de pantalla. Un fotograma que pierde su actualización puede entonces esperar una actualización entera en vez del siguiente paso de la pantalla; déjalo desactivado salvo que el movimiento se entrecorte en esta pantalla con VRR desactivado.</string>
     <string name="tag_unused_adaptive_screen">No se usa: esta pantalla fija su propia actualización</string>
     <string name="tag_unused_refresh">No se usa con los %1$d Hz de esta pantalla: no son de 2 a 4 veces la tasa de fotogramas</string>
+    <string name="tag_unused_refresh_switched">No se usa con los %1$d Hz a los que las transmisiones cambian esta pantalla: no son de 2 a 4 veces la tasa de fotogramas</string>
     <string name="tag_unused_with">No se usa con %1$s</string>
     <string name="tag_every_frame_with">Conservar cada fotograma no se usa con %1$s</string>
 </resources>

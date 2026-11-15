@@ -178,7 +178,7 @@ public class PreferenceConfiguration {
     static final String SECOND_SCREEN_RESOLUTION_PREF_STRING = "list_resolution_screen2";
     /** The second screen's resolution value for "its own full size". */
     public static final String SECOND_SCREEN_NATIVE = "native";
-    private static final String REDUCE_REFRESH_RATE_PREF_STRING = "checkbox_reduce_refresh_rate";
+    static final String REDUCE_REFRESH_RATE_PREF_STRING = "checkbox_reduce_refresh_rate";
     private static final String FULL_RANGE_PREF_STRING = "checkbox_full_range";
     private static final String GAMEPAD_TOUCHPAD_AS_MOUSE_PREF_STRING = "checkbox_gamepad_touchpad_as_mouse";
     private static final String GAMEPAD_MOTION_SENSORS_PREF_STRING = "checkbox_gamepad_motion_sensors";
@@ -588,7 +588,7 @@ public class PreferenceConfiguration {
         return isSquarishScreen(width, height);
     }
 
-    private static String convertFromLegacyResolutionString(String resString) {
+    static String convertFromLegacyResolutionString(String resString) {
         if (resString.equalsIgnoreCase("360p")) {
             return RES_360P;
         }
@@ -1254,6 +1254,18 @@ public class PreferenceConfiguration {
                 .putInt(PREFS_VERSION_PREF_STRING, FOLLOW_SCREEN_VERSION);
         editor.apply();
         return true;
+    }
+
+    /**
+     * The resolution the main settings stream at, as readPreferences reads it but without writing a
+     * converted legacy value back (for the Settings screen's rows).
+     */
+    static String streamResolution(Context context, SharedPreferences prefs) {
+        String saved = prefs.getString(RESOLUTION_PREF_STRING, DEFAULT_RESOLUTION);
+        if (!saved.contains("x")) {
+            saved = convertFromLegacyResolutionString(saved);
+        }
+        return effectiveResolution(prefs, saved, nativeResolution(context));
     }
 
     // The resolution to stream at: this screen's native size while the resolution follows the

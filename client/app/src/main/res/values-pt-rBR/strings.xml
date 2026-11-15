@@ -501,6 +501,7 @@
     <string name="summary_arr_fixed_timing">Em uma tela com atualização adaptável, trata a atualização como fixa enquanto o VRR está desativado, para que os quadros sejam sincronizados com sua tela e a recuperação do atraso da fila de exibição funcione. Um quadro que perde sua atualização pode então esperar uma atualização inteira em vez do próximo passo da tela; deixe desativado a menos que o movimento engasgue nesta tela com o VRR desativado.</string>
     <string name="tag_unused_adaptive_screen">Não usado: esta tela define a própria atualização</string>
     <string name="tag_unused_refresh">Não usado com os %1$d Hz desta tela: não são de 2 a 4 vezes a taxa de quadros</string>
+    <string name="tag_unused_refresh_switched">Não usado com os %1$d Hz para os quais as transmissões mudam esta tela: não são de 2 a 4 vezes a taxa de quadros</string>
     <string name="tag_unused_with">Não usado com %1$s</string>
     <string name="tag_every_frame_with">Manter cada quadro não é usado com %1$s</string>
 </resources>

@@ -501,6 +501,7 @@
     <string name="summary_arr_fixed_timing">在支援自適應更新率的螢幕上，VRR 關閉時將更新視為固定，讓影格能依你的螢幕定時，並收回顯示佇列延遲。錯過更新的影格可能會等待一整個更新週期，而不是螢幕的下一步；除非此螢幕在 VRR 關閉時畫面抖動，否則請保持關閉。</string>
     <string name="tag_unused_adaptive_screen">未使用：此螢幕自行設定更新率</string>
     <string name="tag_unused_refresh">未使用：此螢幕的 %1$d Hz 不是畫面更新率的 2 到 4 倍</string>
+    <string name="tag_unused_refresh_switched">未使用：串流將此螢幕切換到的 %1$d Hz 不是畫面更新率的 2 到 4 倍</string>
     <string name="tag_unused_with">無法與 %1$s 同時使用</string>
     <string name="tag_every_frame_with">保留每個影格無法與 %1$s 同時使用</string>
 </resources>

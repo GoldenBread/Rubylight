@@ -499,16 +499,6 @@ final class GameVideoOutput {
         }
     }
 
-    private boolean isRefreshRateEqualMatch(float refreshRate) {
-        return refreshRate >= game.prefConfig.fps &&
-                refreshRate <= game.prefConfig.fps + 3;
-    }
-
-    private boolean isRefreshRateGoodMatch(float refreshRate) {
-        return refreshRate >= game.prefConfig.fps &&
-                Math.round(refreshRate) % game.prefConfig.fps <= 3;
-    }
-
     private boolean shouldIgnoreInsetsForResolution(int width, int height) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             Display display = game.getWindowManager().getDefaultDisplay();
@@ -609,100 +599,28 @@ final class GameVideoOutput {
         else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             Display.Mode bestMode = display.getMode();
             boolean isNativeResolutionStream = PreferenceConfiguration.isNativeResolution(game.prefConfig.width, game.prefConfig.height);
-            boolean refreshRateIsGood = isRefreshRateGoodMatch(bestMode.getRefreshRate());
-            boolean refreshRateIsEqual = isRefreshRateEqualMatch(bestMode.getRefreshRate());
 
             LimeLog.info("Current display mode: "+bestMode.getPhysicalWidth()+"x"+
                     bestMode.getPhysicalHeight()+"x"+bestMode.getRefreshRate());
 
-            for (Display.Mode candidate : display.getSupportedModes()) {
-                boolean refreshRateReduced = candidate.getRefreshRate() < bestMode.getRefreshRate();
-                boolean resolutionReduced = candidate.getPhysicalWidth() < bestMode.getPhysicalWidth() ||
-                        candidate.getPhysicalHeight() < bestMode.getPhysicalHeight();
-                boolean resolutionFitsStream = candidate.getPhysicalWidth() >= game.prefConfig.width &&
-                        candidate.getPhysicalHeight() >= game.prefConfig.height;
-
-                LimeLog.info("Examining display mode: "+candidate.getPhysicalWidth()+"x"+
-                        candidate.getPhysicalHeight()+"x"+candidate.getRefreshRate());
-
-                if (game.prefConfig.vrr) {
-                    // The top rate among modes that keep the whole stream: the rate the stream
-                    // was asked at (maxRefreshRate), never a smaller mode for a higher rate.
-                    if (candidate.getRefreshRate() > bestMode.getRefreshRate() &&
-                            com.limelight.binding.video.DisplayFrameRatePolicy.modeFitsStream(
-                                    candidate.getPhysicalWidth(), candidate.getPhysicalHeight(),
-                                    display.getMode().getPhysicalWidth(), display.getMode().getPhysicalHeight(),
-                                    game.prefConfig.width, game.prefConfig.height)) {
-                        bestMode = candidate;
-                    }
-                    continue;
-                }
-
-                if (candidate.getPhysicalWidth() > 4096 && game.prefConfig.width <= 4096) {
-                    // Avoid resolutions options above 4K to be safe
-                    continue;
-                }
-
-                // On non-4K streams, we force the resolution to never change unless it's above
-                // 60 FPS, which may require a resolution reduction due to HDMI bandwidth limitations,
-                // or it's a native resolution stream.
-                if (game.prefConfig.width < 3840 && game.prefConfig.fps <= 60 && !isNativeResolutionStream) {
-                    if (display.getMode().getPhysicalWidth() != candidate.getPhysicalWidth() ||
-                            display.getMode().getPhysicalHeight() != candidate.getPhysicalHeight()) {
-                        continue;
-                    }
-                }
-
-                // Make sure the resolution doesn't regress unless if it's over 60 FPS
-                // where we may need to reduce resolution to achieve the desired refresh rate.
-                if (resolutionReduced && !(game.prefConfig.fps > 60 && resolutionFitsStream)) {
-                    continue;
-                }
-
-                if (mayReduceRefreshRate() && refreshRateIsEqual && !isRefreshRateEqualMatch(candidate.getRefreshRate())) {
-                    // If we had an equal refresh rate and this one is not, skip it. In min latency
-                    // mode, we want to always prefer the highest frame rate even though it may cause
-                    // microstuttering.
-                    continue;
-                }
-                else if (refreshRateIsGood) {
-                    // We've already got a good match, so if this one isn't also good, it's not
-                    // worth considering at all.
-                    if (!isRefreshRateGoodMatch(candidate.getRefreshRate())) {
-                        continue;
-                    }
-
-                    if (mayReduceRefreshRate()) {
-                        // User asked for the lowest possible refresh rate, so don't raise it if we
-                        // have a good match already
-                        if (candidate.getRefreshRate() > bestMode.getRefreshRate()) {
-                            continue;
-                        }
-                    }
-                    else {
-                        // User asked for the highest possible refresh rate, so don't reduce it if we
-                        // have a good match already
-                        if (refreshRateReduced) {
-                            continue;
-                        }
-                    }
-                }
-                else if (!isRefreshRateGoodMatch(candidate.getRefreshRate())) {
-                    // We didn't have a good match and this match isn't good either, so just don't
-                    // reduce the refresh rate.
-                    if (refreshRateReduced) {
-                        continue;
-                    }
-                } else {
-                    // We didn't have a good match and this match is good. Prefer this refresh rate
-                    // even if it reduces the refresh rate. Lowering the refresh rate can be beneficial
-                    // when streaming a 60 FPS stream on a 90 Hz device. We want to select 60 Hz to
-                    // match the frame rate even if the active display mode is 90 Hz.
-                }
-
-                bestMode = candidate;
-                refreshRateIsGood = isRefreshRateGoodMatch(candidate.getRefreshRate());
-                refreshRateIsEqual = isRefreshRateEqualMatch(candidate.getRefreshRate());
+            // The choice itself is DisplayModeChoice's, which the Settings screen's fractional V-Sync
+            // row shares.
+            Display.Mode[] supported = display.getSupportedModes();
+            com.limelight.binding.video.DisplayModeChoice.Mode[] candidates =
+                    new com.limelight.binding.video.DisplayModeChoice.Mode[supported.length];
+            for (int i = 0; i < supported.length; i++) {
+                LimeLog.info("Examining display mode: "+supported[i].getPhysicalWidth()+"x"+
+                        supported[i].getPhysicalHeight()+"x"+supported[i].getRefreshRate());
+                candidates[i] = new com.limelight.binding.video.DisplayModeChoice.Mode(
+                        supported[i].getPhysicalWidth(), supported[i].getPhysicalHeight(), supported[i].getRefreshRate());
+            }
+            int chosen = com.limelight.binding.video.DisplayModeChoice.choose(
+                    new com.limelight.binding.video.DisplayModeChoice.Mode(bestMode.getPhysicalWidth(),
+                            bestMode.getPhysicalHeight(), bestMode.getRefreshRate()),
+                    candidates, game.prefConfig.width, game.prefConfig.height, game.prefConfig.fps,
+                    game.prefConfig.vrr, isNativeResolutionStream, mayReduceRefreshRate());
+            if (chosen >= 0) {
+                bestMode = supported[chosen];
             }
 
             LimeLog.info("Best display mode: "+bestMode.getPhysicalWidth()+"x"+
