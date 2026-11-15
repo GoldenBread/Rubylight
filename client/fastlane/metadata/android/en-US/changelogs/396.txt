@@ -1,0 +1,4 @@
+• Frame pacing is on the main Display page, with the PC's frame times as a choice and one Lower refresh rate row.
+• With Frame Warp on, a Dolby Vision screen streams HDR10, which ends the HDR flicker.
+• With Render through Vulkan, a frame that misses its refresh no longer shows a refresh late.
+• Problem reports say which frame pacing each stream used and why frames were dropped.
