@@ -15,7 +15,7 @@ for name in bughunt-stream.patch bughunt-input.patch controller-haptics.patch ho
     disconnect-intercept.patch control-payload.patch control-teardown.patch host-timing.patch network-grace.patch \
     cursor-shape.patch network-grace-input.patch pyrowave-link-hints.patch video-recv-buffer.patch clock-sync.patch \
     prefix-sei.patch fec-report.patch wire-bytes.patch surround-714.patch socket-dscp.patch host-gone.patch decoder-drops.patch \
-    decode-queue-bound.patch; do
+    decode-queue-bound.patch resolve-probe.patch; do
     patches+=("$(pwd)/$core/patches/$name")
 done
 if [ ! -f "$common/src/Limelight.h" ]; then

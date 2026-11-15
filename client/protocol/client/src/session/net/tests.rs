@@ -789,3 +789,79 @@ fn coalescing_on_loopback_splits_back_into_the_sent_datagrams() {
         }
     );
 }
+
+fn addr(text: &str) -> SocketAddr {
+    text.parse().unwrap()
+}
+
+/// A dead first address costs the wait for a preferred answer, not its whole timeout: the
+/// probes run at once.
+#[test]
+fn a_dead_address_does_not_hold_up_one_that_answers() {
+    let addresses = [addr("192.0.2.1:0"), addr("127.0.0.1:0")];
+    let started = Instant::now();
+    let found = probe(&addresses, &[47984, 47989], Duration::from_secs(30), Duration::from_millis(50), |candidate, timeout| {
+        if candidate.ip() == addr("192.0.2.1:0").ip() {
+            std::thread::sleep(timeout);
+            false
+        } else {
+            true
+        }
+    });
+    assert_eq!(found, Some(addresses[1]));
+    assert!(started.elapsed() < Duration::from_secs(20), "{:?}", started.elapsed());
+}
+
+/// When several answer, the resolver's order decides: an earlier address still trying is
+/// waited for, however fast a later one answered.
+#[test]
+fn the_earliest_address_that_answers_wins() {
+    let addresses = [addr("10.0.0.2:0"), addr("10.0.0.3:0"), addr("10.0.0.4:0")];
+    let found = probe(&addresses, &[47984], Duration::from_secs(30), Duration::from_secs(30), move |candidate, _| {
+        match candidate.ip() {
+            ip if ip == addresses[0].ip() => false,
+            ip if ip == addresses[1].ip() => {
+                std::thread::sleep(Duration::from_millis(50));
+                true
+            }
+            _ => true,
+        }
+    });
+    assert_eq!(found, Some(addresses[1]));
+    // One port of several answering is enough, and the port is not part of the result.
+    let found = probe(&addresses[..1], &[47984, 47989, 48010], Duration::from_secs(30), Duration::ZERO, |candidate, _| {
+        candidate.port() == 48010
+    });
+    assert_eq!(found, Some(addresses[0]));
+}
+
+#[test]
+fn no_answer_is_none_and_only_the_first_addresses_are_tried() {
+    let addresses: Vec<SocketAddr> = (1..=20).map(|i| addr(&format!("10.0.1.{i}:0"))).collect();
+    let tried = Arc::new(Mutex::new(Vec::new()));
+    let seen = tried.clone();
+    let found = probe(&addresses, &[47984], Duration::from_secs(30), Duration::ZERO, move |candidate, _| {
+        seen.lock().unwrap().push(candidate.ip());
+        false
+    });
+    assert_eq!(found, None);
+    let mut tried = tried.lock().unwrap().clone();
+    tried.sort();
+    let mut first: Vec<IpAddr> = addresses[..PROBED_ADDRESSES].iter().map(SocketAddr::ip).collect();
+    first.sort();
+    assert_eq!(tried, first);
+}
+
+/// Over real sockets: the address with a listener is found though another never answers.
+#[test]
+fn resolution_finds_the_address_with_a_listener() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let addresses = [addr("192.0.2.1:0"), addr("127.0.0.1:0")];
+    let started = Instant::now();
+    let found = probe(&addresses, &[port], TEST_PORT_TIMEOUT, PREFERENCE_WAIT, |candidate, timeout| {
+        TcpStream::connect_timeout(&candidate, timeout).is_ok()
+    });
+    assert_eq!(found, Some(addresses[1]));
+    assert!(started.elapsed() < TEST_PORT_TIMEOUT + Duration::from_secs(1), "{:?}", started.elapsed());
+}

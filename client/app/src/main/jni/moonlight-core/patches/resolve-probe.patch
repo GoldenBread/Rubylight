@@ -1,0 +1,168 @@
+Test a host name's addresses at once. resolveHostName() connected to one address after another
+with a 3 second timeout each, so a stale or unreachable address (an AAAA record without an IPv6
+path) cost 3 seconds per address and port before a working one was tried. probeAddresses() now
+starts a non-blocking connect to the first 8 addresses together and takes the earliest in
+getaddrinfo's order that accepts it: once one answers, an earlier address still trying gets 250 ms
+more. The losing sockets are closed. A single address without TCP_PORT_FLAG_ALWAYS_TEST is still
+taken untested, and the IPv4 fallback for a synthesized IPv6 address is unchanged. The Rust engine
+probes the same way (net::probe). Applies after decode-queue-bound.patch.
+
+diff --git a/src/PlatformSockets.c b/src/PlatformSockets.c
+index 3cad05f..3a91ca0 100644
+--- a/src/PlatformSockets.c
++++ b/src/PlatformSockets.c
+@@ -700,6 +700,114 @@ static bool isPrivateNetworkAddressV4(struct sockaddr_in* address, bool matchCGN
+     }
+ }
+ 
++#define TEST_PORT_PROBES_MAX 8
++#define TEST_PORT_PREFERENCE_MS 250
++
++// Tests the first TEST_PORT_PROBES_MAX addresses on the port at once, so a dead address costs no
++// more than one TEST_PORT_TIMEOUT_SEC in all, and returns the index of the most preferred one that
++// accepts the connection (earliest in getaddrinfo's order), or -1. Once an address answers, an
++// earlier one still trying gets TEST_PORT_PREFERENCE_MS more. The losing attempts are closed.
++static int probeAddresses(struct addrinfo* res, unsigned short port)
++{
++    SOCKET sockets[TEST_PORT_PROBES_MAX];
++    int state[TEST_PORT_PROBES_MAX]; // 0 trying, 1 answered, -1 failed
++    struct pollfd pfds[TEST_PORT_PROBES_MAX];
++    int polled[TEST_PORT_PROBES_MAX];
++    struct addrinfo* currentAddr;
++    LC_SOCKADDR probeAddr;
++    uint64_t deadline, answerDeadline = 0;
++    int count = 0;
++    int best = -1;
++    int i;
++
++    for (currentAddr = res; currentAddr != NULL && count < TEST_PORT_PROBES_MAX; currentAddr = currentAddr->ai_next) {
++        SOCKET s = createSocket(currentAddr->ai_family, SOCK_STREAM, IPPROTO_TCP, true);
++        sockets[count] = s;
++        state[count] = -1;
++        if (s != INVALID_SOCKET) {
++            memcpy(&probeAddr, currentAddr->ai_addr, currentAddr->ai_addrlen);
++            SET_PORT(&probeAddr, port);
++            if (connect(s, (struct sockaddr*)&probeAddr, (SOCKADDR_LEN)currentAddr->ai_addrlen) == 0) {
++                state[count] = 1;
++            }
++            else {
++                int err = (int)LastSocketError();
++                if (err == EWOULDBLOCK || err == EAGAIN || err == EINPROGRESS) {
++                    state[count] = 0;
++                }
++            }
++        }
++        count++;
++    }
++
++    deadline = PltGetMillis() + TEST_PORT_TIMEOUT_SEC * 1000;
++    for (;;) {
++        bool earlierTrying = false;
++        bool anyTrying = false;
++        uint64_t now, until;
++        int pollCount = 0;
++        int err;
++
++        best = -1;
++        for (i = 0; i < count; i++) {
++            if (state[i] == 1 && best < 0) {
++                best = i;
++            }
++            else if (state[i] == 0) {
++                anyTrying = true;
++                if (best < 0) {
++                    earlierTrying = true;
++                }
++            }
++        }
++        if ((best >= 0 && !earlierTrying) || !anyTrying) {
++            break;
++        }
++
++        now = PltGetMillis();
++        if (best >= 0 && answerDeadline == 0) {
++            answerDeadline = now + TEST_PORT_PREFERENCE_MS;
++        }
++        until = (best >= 0 && answerDeadline < deadline) ? answerDeadline : deadline;
++        if (now >= until) {
++            break;
++        }
++
++        for (i = 0; i < count; i++) {
++            if (state[i] == 0) {
++                pfds[pollCount].fd = sockets[i];
++                pfds[pollCount].events = POLLOUT;
++                pfds[pollCount].revents = 0;
++                polled[pollCount] = i;
++                pollCount++;
++            }
++        }
++        err = pollSockets(pfds, pollCount, (int)(until - now));
++        if (err < 0) {
++            Limelog("pollSockets() failed: %d\n", (int)LastSocketError());
++            break;
++        }
++        for (i = 0; i < pollCount; i++) {
++            if (pfds[i].revents != 0) {
++                int soError = 0;
++                SOCKADDR_LEN len = sizeof(soError);
++                getsockopt(sockets[polled[i]], SOL_SOCKET, SO_ERROR, (char*)&soError, &len);
++                state[polled[i]] = (soError == 0 && !(pfds[i].revents & POLLERR)) ? 1 : -1;
++            }
++        }
++    }
++
++    for (i = 0; i < count; i++) {
++        if (sockets[i] != INVALID_SOCKET) {
++            closeSocket(sockets[i]);
++        }
++    }
++    if (best < 0) {
++        Limelog("No address answered on TCP port %u within %d seconds\n", port, TEST_PORT_TIMEOUT_SEC);
++    }
++    return best;
++}
++
+ int resolveHostName(const char* host, int family, int tcpTestPort, struct sockaddr_storage* addr, SOCKADDR_LEN* addrLen)
+ {
+     struct addrinfo hints, *res, *currentAddr;
+@@ -741,25 +849,23 @@ int resolveHostName(const char* host, int family, int tcpTestPort, struct sockad
+     }
+ #endif
+ 
+-    for (currentAddr = res; currentAddr != NULL; currentAddr = currentAddr->ai_next) {
+-        // Use the test port to ensure this address is working if:
+-        // a) We have multiple addresses
+-        // b) The caller asked us to test even with a single address
+-        // c) We got an IPv6 address synthesized from an IPv4 address
+-        if (tcpTestPort != 0 && (res->ai_next != NULL || (tcpTestPort & TCP_PORT_FLAG_ALWAYS_TEST) || needsFallbackV4)) {
+-            SOCKET testSocket = connectTcpSocket((struct sockaddr_storage*)currentAddr->ai_addr,
+-                                                 (SOCKADDR_LEN)currentAddr->ai_addrlen,
+-                                                 tcpTestPort & TCP_PORT_MASK,
+-                                                 TEST_PORT_TIMEOUT_SEC);
+-            if (testSocket == INVALID_SOCKET) {
+-                // Try the next address
+-                continue;
+-            }
+-            else {
+-                closeSocket(testSocket);
++    currentAddr = res;
++    // Use the test port to ensure the address is working if:
++    // a) We have multiple addresses
++    // b) The caller asked us to test even with a single address
++    // c) We got an IPv6 address synthesized from an IPv4 address
++    if (tcpTestPort != 0 && (res->ai_next != NULL || (tcpTestPort & TCP_PORT_FLAG_ALWAYS_TEST) || needsFallbackV4)) {
++        int working = probeAddresses(res, tcpTestPort & TCP_PORT_MASK);
++        currentAddr = NULL;
++        if (working >= 0) {
++            currentAddr = res;
++            while (working-- > 0) {
++                currentAddr = currentAddr->ai_next;
+             }
+         }
++    }
+ 
++    if (currentAddr != NULL) {
+         memcpy(addr, currentAddr->ai_addr, currentAddr->ai_addrlen);
+         *addrLen = (SOCKADDR_LEN)currentAddr->ai_addrlen;
+ 

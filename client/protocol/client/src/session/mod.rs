@@ -1099,8 +1099,14 @@ fn start(
     } else {
         &[47984, 47989, 48010]
     };
+    // The addresses are probed at once (`net::probe`). Only an alternate RTSP port is tried a
+    // second time, a second later, as the C core does: the host may not listen on it yet,
+    // while the standard ports always listen.
     let remote = net::resolve(&host.address, test_ports)
-        .or_else(|_| {
+        .or_else(|e| {
+            if rtsp_port == rtsp::DEFAULT_RTSP_PORT {
+                return Err(e);
+            }
             std::thread::sleep(Duration::from_secs(1));
             net::resolve(&host.address, test_ports)
         })

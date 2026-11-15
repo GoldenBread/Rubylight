@@ -23,14 +23,19 @@ pub const UDP_RECV_POLL_TIMEOUT: Duration = Duration::from_millis(100);
 /// session: the rebind follows the route poll, which runs every second.
 pub const REBIND_WAIT: Duration = Duration::from_secs(1);
 const TEST_PORT_TIMEOUT: Duration = Duration::from_secs(3);
+/// Addresses of a name tested at most, the first in the resolver's order (`probeAddresses` in
+/// the C core's resolve-probe patch).
+const PROBED_ADDRESSES: usize = 8;
+/// Once an address answers, how much longer an address the resolver put before it may take.
+const PREFERENCE_WAIT: Duration = Duration::from_millis(250);
 const RCV_BUFFER_SIZE_MIN: usize = 32767;
 const RCV_BUFFER_SIZE_STEP: usize = 16384;
 const PING_INTERVAL: Duration = Duration::from_millis(500);
 const LEGACY_PING: [u8; 4] = *b"PING";
 
 /// Resolves `host` (a name or literal, IPv6 with or without brackets). With several
-/// addresses, the first that accepts a TCP connection on one of `test_ports` wins, as the C
-/// core does; otherwise the first address.
+/// addresses, the most preferred one that accepts a TCP connection on one of `test_ports`
+/// wins ([`probe`]), as the C core does; a single address is taken untested.
 pub fn resolve(host: &str, test_ports: &[u16]) -> io::Result<SocketAddr> {
     let host = host.trim_start_matches('[').trim_end_matches(']');
     let addresses: Vec<SocketAddr> = (host, 0).to_socket_addrs()?.collect();
@@ -40,19 +45,75 @@ pub fn resolve(host: &str, test_ports: &[u16]) -> io::Result<SocketAddr> {
     if addresses.len() == 1 {
         return Ok(first);
     }
-    for address in &addresses {
-        for &port in test_ports {
-            let mut candidate = *address;
-            candidate.set_port(port);
-            if TcpStream::connect_timeout(&candidate, TEST_PORT_TIMEOUT).is_ok() {
-                return Ok(*address);
+    probe(
+        &addresses,
+        test_ports,
+        TEST_PORT_TIMEOUT,
+        PREFERENCE_WAIT,
+        |candidate, timeout| TcpStream::connect_timeout(&candidate, timeout).is_ok(),
+    )
+    .ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::ConnectionRefused,
+            "no working address for host",
+        )
+    })
+}
+
+/// Tests every port of the first [`PROBED_ADDRESSES`] addresses at once, each pair with
+/// `connect` on a thread of its own, so dead addresses cost one `timeout` in all rather than
+/// one each. Returns the most preferred address that answered on one of its ports, the
+/// earliest in `addresses` (the resolver's order): once one answers, an earlier address still
+/// trying gets `preference` more. `None` when none answers within `timeout`. Attempts still
+/// running then end at their own timeout, and their answers go nowhere.
+fn probe(
+    addresses: &[SocketAddr],
+    ports: &[u16],
+    timeout: Duration,
+    preference: Duration,
+    connect: impl Fn(SocketAddr, Duration) -> bool + Clone + Send + 'static,
+) -> Option<SocketAddr> {
+    let addresses = &addresses[..addresses.len().min(PROBED_ADDRESSES)];
+    let (tx, rx) = std::sync::mpsc::channel();
+    // Attempts still running for each address.
+    let mut trying = vec![0usize; addresses.len()];
+    for (index, address) in addresses.iter().enumerate() {
+        for &port in ports {
+            let (tx, connect, candidate) = (tx.clone(), connect.clone(), with_port(*address, port));
+            let spawned = std::thread::Builder::new()
+                .name("ResolveProbe".into())
+                .spawn(move || {
+                    let _ = tx.send((index, connect(candidate, timeout)));
+                });
+            if spawned.is_ok() {
+                trying[index] += 1;
             }
         }
     }
-    Err(io::Error::new(
-        io::ErrorKind::ConnectionRefused,
-        "no working address for host",
-    ))
+    drop(tx);
+    let mut answered = vec![false; addresses.len()];
+    let mut until = Instant::now() + timeout;
+    let mut waiting_for_earlier = false;
+    loop {
+        let best = answered.iter().position(|&a| a);
+        if !trying[..best.unwrap_or(addresses.len())].iter().any(|&t| t > 0) {
+            return best.map(|i| addresses[i]);
+        }
+        if best.is_some() && !waiting_for_earlier {
+            waiting_for_earlier = true;
+            until = until.min(Instant::now() + preference);
+        }
+        let Some(left) = until.checked_duration_since(Instant::now()) else {
+            return best.map(|i| addresses[i]);
+        };
+        match rx.recv_timeout(left) {
+            Ok((index, ok)) => {
+                trying[index] -= 1;
+                answered[index] |= ok;
+            }
+            Err(_) => return best.map(|i| addresses[i]),
+        }
+    }
 }
 
 /// The local address the OS routes toward `remote`, found with a connected UDP socket. The
