@@ -21,7 +21,7 @@ Studying the code, learning from the architecture, and writing your own independ
 Rubylight is the Windows Rust host; Nightjar is the host-neutral client in `client/` (see [client/AGENTS.md](client/AGENTS.md)).
 
 - Use the [code map](docs/code-map.md) (Nightjar: [client/docs/code-map.md](client/docs/code-map.md)) instead of searching the tree, and read only your part of it: the "Where to start" row for the area, the checklist for the kind of change (a setting, a control message, a capability, an API route) and "The narrowest test". `python tools/code_map.py index <folder>` lists a folder's files and what each owns, `with <file>` what changes with a file, `hot <folder>` where bugs were fixed; `check` verifies the maps, so correct them in the change that moves code.
-- Search these, never read them whole: `rust/PERFORMANCE.md` (840 KB; its `## <date>: <subject>` headings are the index), `rust/RELEASE_NOTES.md` (480 KB), `docs/configuration.md` (250 KB; search the setting's key) and [the 3.0 plan](docs/rubylight-3.0-plan.md) (120 KB; keep its status table current when changing that work).
+- Search these, never read them whole: `rust/PERFORMANCE.md` (840 KB; its `## <date>: <subject>` headings are the index), `rust/RELEASE_NOTES.md` (480 KB), `docs/configuration.md` (250 KB; search the setting's key) and [the status table](docs/status.md) (90 KB; search the slice id or feature, and keep its row current in the change that alters it).
 - Guides, when the task needs one: [builds](docs/building.md), [Rust workspace](rust/README.md), [architecture](docs/architecture.md), [release and hardware testing](rust/release/README.md).
 
 ### Layout and compatibility
@@ -34,7 +34,7 @@ Rubylight is the Windows Rust host; Nightjar is the host-neutral client in `clie
 - Preserve attribution, fork history and license notices.
 - Fail visibly rather than silently switching encoders. Avoid added latency; prefer client-reported network hints. Performance claims need our own measurements on release builds; check `rust/PERFORMANCE.md` before repeating work. Do not install or benchmark competing hosts.
 - A setting's visible text says, in this order, what the user gets, what it costs (delay, picture quality, network, load, or what stops working) and when to change it ("Leave it on unless ..."); a value that can break streaming says so first. Facts from the code, the docs or our measurements only. Well-known terms (VRR, HDR, bitrate, HEVC) stay as they are, a lesser-known one gets a few words of explanation, and source-level internals belong in the console's details. `docs/configuration.md` repeats the console's descriptions; change both.
-- No "Experimental" labels in any UI or release notes; paths our devices can't test are marked Experimental only in the plan and hardware matrix.
+- No "Experimental" labels in any UI or release notes; paths our devices can't test are marked Experimental only in the status table and the hardware matrix.
 
 ### Build and verification
 

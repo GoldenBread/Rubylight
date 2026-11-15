@@ -534,7 +534,7 @@ This brief may exceed 500 lines. If it does, run it as two sequential halves on 
   - `docs/native-api.md` (endpoint, feature, errors)
   - `docs/timing-record.md` (column)
   - `docs/architecture.md` (one paragraph in the frame path)
-  - `docs/rubylight-3.0-plan.md` (status table row)
+  - `docs/status.md` (status table row)
   - `rust/RELEASE_NOTES.md` (`## Unreleased`)
 
 **Steps.** Implement sections 3.3 (wiring), 4.2, 4.3, 5, 6.6 and 7.1. Every action calls the extracted shared functions; nothing is reimplemented.

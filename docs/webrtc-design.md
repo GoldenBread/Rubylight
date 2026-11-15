@@ -2,7 +2,7 @@
 
 Plan of record for issue #50: an optional WebRTC transport beside GameStream for the Moonlight WebRTC TV
 protocol (Samsung Tizen TV app and the browser client). Target: Rubylight 3.0.0. Status lives in the
-3.0 plan's status table.
+[status table](status.md).
 
 ## Pinned references
 

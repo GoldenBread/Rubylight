@@ -97,7 +97,7 @@ Rubylight is a Moonlight-compatible game-streaming host for Windows 10 and 11 PC
 
 Working documents from the project's development: plans, designs, investigations and audits. Each records the state on the date it was written and is not maintained as user documentation; where a note and a guide above disagree, the guide is current.
 
-- Plan: [Rubylight 3.0 plan](rubylight-3.0-plan.md) and its status table.
+- Status: [the status table](status.md), the living record of each feature. History: [Rubylight 3.0 plan](rubylight-3.0-plan.md).
 - Designs: [couch menu](couch-menu-design.md), [encoder focus](encoder-focus-design.md), [Wake-on-LAN, sleep and couch audio](wake-and-audio-design.md), [WebRTC server](webrtc-design.md), [slice delivery](b2-slice-delivery.md).
 - Audits: [streaming stability, October 18](stability-audit-2026-10-18.md), [PyroWave and D3D12, October 18](pyrowave-d3d12-audit-2026-10-18.md), [bug hunt, October 28](bug-hunt-2026-10-28.md).
 - Work log: [Windows performance work, October 2](../rust/PERFORMANCE_WORK.md).

@@ -36,6 +36,7 @@ SITE_URL = "https://ramazankara.github.io/Rubylight/"
 # Links to them from published pages go to GitHub.
 INTERNAL = {
     "docs/rubylight-3.0-plan.md",
+    "docs/status.md",
     "docs/couch-menu-design.md",
     "docs/encoder-focus-design.md",
     "docs/bug-hunt-2026-10-28.md",

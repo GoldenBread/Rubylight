@@ -695,7 +695,7 @@ General rules for every brief:
 - `rust/web/src/components/library/AudioSettings.svelte` (new), `AppEditor.svelte` and `draft.svelte.ts`.
 - Wherever the stream status JSON that `StreamCard` reads is built: find it from `api.ts` and add an `audio` object.
 - `docs/configuration.md`, `docs/api.md`, `docs/privacy.md`, `docs/troubleshooting.md` (a Wake-on-LAN section) and `docs/features.md`.
-- The `docs/rubylight-3.0-plan.md` status table.
+- The `docs/status.md` status table.
 - `rust/RELEASE_NOTES.md`, under `## Unreleased`.
 - `rust/host/src/couch_menu/items.rs`: only if it's already on main. Add the three B.6 entries. Otherwise leave them to the couch menu brief.
 
