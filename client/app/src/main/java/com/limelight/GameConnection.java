@@ -810,10 +810,24 @@ final class GameConnection {
             public void run() {
                 if (game.spinner != null) {
                     // The word follows the protocol's stage; the failure message names a stage that fails.
-                    game.spinner.setStage(game.getResources().getString(R.string.conn_starting));
+                    game.spinner.setStage(game.getResources().getString(stageText(stage)));
                 }
             }
         });
+    }
+
+    /** The launch's word for a stage by its LiGetStageName (both engines name stages alike), as desktop's stage_text. */
+    static int stageText(String stage) {
+        if (stage == null) return R.string.conn_starting;
+        switch (stage.toLowerCase(java.util.Locale.ROOT)) {
+            case "platform initialization": case "name resolution": return R.string.conn_stage_finding;
+            case "audio stream initialization": case "rtsp handshake": return R.string.conn_stage_setup;
+            case "control stream initialization": case "control stream establishment": return R.string.conn_stage_stream;
+            case "video stream initialization": case "video stream establishment": return R.string.conn_stage_video;
+            case "audio stream establishment": return R.string.conn_stage_audio;
+            case "input stream initialization": case "input stream establishment": return R.string.conn_stage_input;
+            default: return R.string.conn_starting;
+        }
     }
 
     private HostLossWatch hostLossWatch;

@@ -97,6 +97,12 @@
     <string name="conn_client_latency_hw">Hardware decode time:</string>
     <string name="conn_hardware_latency">Average hardware decode time:</string>
     <string name="conn_starting">Starting</string>
+    <string name="conn_stage_finding">Finding the PC</string>
+    <string name="conn_stage_setup">Setting up the stream</string>
+    <string name="conn_stage_stream">Starting the stream</string>
+    <string name="conn_stage_video">Starting video</string>
+    <string name="conn_stage_audio">Starting audio</string>
+    <string name="conn_stage_input">Connecting input</string>
     <string name="conn_error_title">Connection Error</string>
     <string name="conn_error_msg">Failed to start</string>
     <string name="conn_terminated_title">Connection Terminated</string>

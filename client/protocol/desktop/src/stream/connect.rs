@@ -6,8 +6,8 @@ use super::*;
 fn stage_text(stage: Stage) -> &'static str {
     match stage {
         Stage::PlatformInit | Stage::NameResolution => en("Finding the PC"),
-        Stage::AudioStreamInit | Stage::RtspHandshake => en("Negotiating the stream"),
-        Stage::ControlStreamInit | Stage::ControlStreamStart => en("Opening the control channel"),
+        Stage::AudioStreamInit | Stage::RtspHandshake => en("Setting up the stream"),
+        Stage::ControlStreamInit | Stage::ControlStreamStart => en("Starting the stream"),
         Stage::VideoStreamInit | Stage::VideoStreamStart => en("Starting video"),
         Stage::AudioStreamStart => en("Starting audio"),
         Stage::InputStreamInit | Stage::InputStreamStart => en("Connecting input"),
@@ -1231,6 +1231,17 @@ mod capability_tests {
         for unknown in [None, Some("")] {
             assert_eq!(recovery_gave_up(unknown), format!("{RECOVERY_UNREACHABLE}\n\n{RECOVERY_STOPPED}"));
         }
+    }
+
+    /// The launch's stage words are plain ones, the same as Android's `conn_stage_*`.
+    #[test]
+    fn launch_stages_are_named_in_plain_words() {
+        assert_eq!(stage_text(Stage::NameResolution), "Finding the PC");
+        assert_eq!(stage_text(Stage::RtspHandshake), "Setting up the stream");
+        assert_eq!(stage_text(Stage::ControlStreamStart), "Starting the stream");
+        assert_eq!(stage_text(Stage::VideoStreamStart), "Starting video");
+        assert_eq!(stage_text(Stage::AudioStreamStart), "Starting audio");
+        assert_eq!(stage_text(Stage::InputStreamStart), "Connecting input");
     }
 
     fn decoded_by(backends: &[(u32, Hardware)]) -> color_probe::Base {
