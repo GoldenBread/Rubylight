@@ -233,8 +233,12 @@ impl App {
         let timeout = self.nav_repeat.next(Instant::now()).map_or(timeout, |next| timeout.min(next.as_millis().min(250) as i32 + 1));
         // So does egui while it animates or settles a layout, at most once per refresh: without
         // this, a scroll, a hover fade or an opening list moved only when the next input came.
+        // Not while nobody can see it: minimized, hidden, covered or in the background, the loop
+        // keeps its own wake for workers and input.
         let frame = Duration::from_secs_f32(1.0 / display_of(self.window).refresh_hz.max(30.0));
-        let timeout = self.gui.repaint_in(frame).map_or(timeout, |wait| timeout.min(wait.as_millis() as i32));
+        // SAFETY: a live window, read on the main thread.
+        let seen = animations_seen(unsafe { SDL_GetWindowFlags(self.window) });
+        let timeout = if seen { self.gui.repaint_in(frame).map_or(timeout, |wait| timeout.min(wait.as_millis() as i32)) } else { timeout };
         // SAFETY: event polling on the main thread.
         unsafe {
             let mut event: SDL_Event = std::mem::zeroed();
@@ -828,4 +832,10 @@ pub(crate) fn finish_folder_pick(
             tr("The shared folders were closed while the file dialog was open. Open them again to transfer the file.").to_owned(),
         )
     })
+}
+
+/// Whether anyone can see the launcher animate: its window shown, not minimized or covered, and in
+/// front. Otherwise no animation asks for frames.
+pub(crate) fn animations_seen(flags: SDL_WindowFlags) -> bool {
+    flags & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_HIDDEN | SDL_WINDOW_OCCLUDED) == 0 && flags & SDL_WINDOW_INPUT_FOCUS != 0
 }

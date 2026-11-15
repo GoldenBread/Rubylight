@@ -481,13 +481,30 @@ fn cover_slot(ui: &mut Ui, name: &str, art: Option<&Art>, badge: Badge, width: f
         let at = Pos2::new(rect.left() + 2.0, rect.top() + height + space::S);
         let room = width - 4.0;
         let full = ui.painter().layout_no_wrap(name.to_owned(), regular(text::LABEL), *color);
-        match caption_offset(full.size().x, room, response.has_focus(), ui.style().animation_time > 0.0, ui.input(|i| i.time)) {
+        // How long the cover has had the focus: the title runs from then, for two passes.
+        let since_id = response.id.with("caption-since");
+        let now = ui.input(|i| i.time);
+        let focused = response.has_focus();
+        let since = if focused {
+            now - ui.ctx().data_mut(|d| *d.get_temp_mut_or_insert_with(since_id, || now))
+        } else {
+            ui.ctx().data_mut(|d| d.remove::<f64>(since_id));
+            0.0
+        };
+        // Nothing runs where nobody watches: a window in the background.
+        let motion = ui.style().animation_time > 0.0 && ui.input(|i| i.focused);
+        match caption_offset(full.size().x, room, focused, motion, since) {
             // A focused cover's title that does not fit runs sideways on its line, the art kept.
             Some((offset, span)) => {
                 let painter = ui.painter_at(Rect::from_min_size(at, vec2(room, full.size().y)));
                 painter.galley(at - vec2(offset, 0.0), full.clone(), *color);
                 painter.galley(at + vec2(span - offset, 0.0), full, *color);
-                ui.ctx().request_repaint();
+                // Waiting at the start, a few frames a second do; while it runs, every one.
+                if offset == 0.0 {
+                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+                } else {
+                    ui.ctx().request_repaint();
+                }
             }
             None => {
                 let mut job = egui::text::LayoutJob::simple_singleline(name.to_owned(), regular(text::LABEL), *color);
@@ -500,19 +517,23 @@ fn cover_slot(ui: &mut Ui, name: &str, art: Option<&Art>, badge: Badge, width: f
     response
 }
 
-/// How far a cover's title has run sideways `time` seconds in, and the distance from one copy of
-/// it to the next: only while the cover has focus, motion is on and the title is wider than its
-/// `room`. Each pass waits a moment at the start so the beginning can be read. None draws the
-/// title cut short as usual.
+/// How far a cover's title has run sideways `time` seconds after the cover took the focus, and the
+/// distance from one copy of it to the next: only while the cover has focus, motion is on and the
+/// title is wider than its `room`. Each pass waits a moment at the start so the beginning can be
+/// read; after two passes it stops. None draws the title cut short as usual.
 pub(super) fn caption_offset(text_w: f32, room: f32, focused: bool, motion: bool, time: f64) -> Option<(f32, f32)> {
     const SPEED: f32 = 36.0;
     const PAUSE: f32 = 1.2;
     const GAP: f32 = 32.0;
+    const PASSES: f32 = 2.0;
     if !focused || !motion || text_w <= room {
         return None;
     }
     let span = text_w + GAP;
     let pass = PAUSE + span / SPEED;
+    if time as f32 >= PASSES * pass {
+        return None;
+    }
     let phase = (time as f32).rem_euclid(pass);
     Some((((phase - PAUSE).max(0.0) * SPEED).min(span), span))
 }

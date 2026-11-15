@@ -6479,6 +6479,23 @@ fn a_focused_cover_title_too_long_runs_sideways_after_a_pause() {
     assert!(span > 200.0, "the next copy follows after a gap");
     let (later, _) = caption_offset(200.0, 150.0, true, true, 3.0).unwrap();
     assert!(later > 0.0 && later <= span);
+    // Two passes after the focus came, the title rests cut short: nothing runs on.
+    let pass = 1.2 + span / 36.0;
+    assert!(caption_offset(200.0, 150.0, true, true, f64::from(pass) + 0.5).is_some(), "the second pass");
+    assert_eq!(caption_offset(200.0, 150.0, true, true, f64::from(2.0 * pass) + 0.01), None, "done");
+    assert_eq!(caption_offset(200.0, 150.0, true, true, 1000.0), None);
+}
+
+/// The launcher's animations ask for frames only while someone can see them: its window shown,
+/// not minimized or covered, and in front.
+#[test]
+fn animations_wait_while_the_window_is_away() {
+    use sdl3_sys::everything::*;
+    assert!(crate::animations_seen(SDL_WINDOW_INPUT_FOCUS));
+    for away in [SDL_WINDOW_MINIMIZED, SDL_WINDOW_HIDDEN, SDL_WINDOW_OCCLUDED] {
+        assert!(!crate::animations_seen(SDL_WINDOW_INPUT_FOCUS | away));
+    }
+    assert!(!crate::animations_seen(0 as SDL_WindowFlags), "in the background");
 }
 
 /// While a PC's library is on its way, All games says so as Home does instead of calling the
