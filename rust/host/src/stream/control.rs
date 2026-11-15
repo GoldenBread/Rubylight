@@ -470,10 +470,22 @@ impl Media {
                                     false,
                                 )
                             {
-                                crate::remote_display::disconnect(
-                                    &h,
-                                    Some(&session.launch.client.uuid),
-                                );
+                                // Laying the displays out again takes long enough to hold up
+                                // every other client's input, so it runs beside this loop.
+                                let host = h.clone();
+                                let client = session.launch.client.uuid.clone();
+                                let started = thread::Builder::new()
+                                    .name("remote monitor end".into())
+                                    .spawn(move || {
+                                        crate::remote_display::disconnect(&host, Some(&client))
+                                    });
+                                if let Err(error) = started {
+                                    tracing::warn!(%error, "remote monitor end thread did not start; ended inline");
+                                    crate::remote_display::disconnect(
+                                        &h,
+                                        Some(&session.launch.client.uuid),
+                                    );
+                                }
                             }
                             disconnected.push(p);
                         }
