@@ -540,7 +540,7 @@ fn the_decoder_hands_frames_back_without_waiting_for_the_receivers_lock() {
         None,
         &mut signals,
         0,
-        |_| &[][..],
+        |_| -> &'static [u8] { &[] },
         &mut None,
         &mut staged,
         |_| {},
