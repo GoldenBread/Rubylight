@@ -1,5 +1,6 @@
 # More fixes from a code review
 - **Play over the internet connects more reliably.** A device keeps trying until the PC has had time to find it, where the attempt could end first. The PC looks for each paired device on a thread of its own, asks less often for devices that are not connecting, and an idle connection no longer keeps a thread awake.
+- **Port forwarding keeps its PCP mappings across a restart.** A PCP router refused to renew or remove a mapping after a host restart or a missed renewal until its two-hour lease ran out; the host now asks under the same identity each time.
 - **A save asks for a restart only when a setting needs one.** The rows marked "Applies after a restart" are exactly the settings Rubylight reads when it starts; saving any other shows "Settings saved." alone.
 - **The console says when it has lost the PC.** "Cannot connect to Rubylight" covers the page until Rubylight answers again, and unsaved settings are still there afterwards.
 - **Troubleshooting names the right graphics card and the right tab.** An NVIDIA encoder failure is no longer explained with AMD's driver, fixes name the tabs the console has, and a fix that is a setting links to its row.

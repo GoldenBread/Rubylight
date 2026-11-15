@@ -2,7 +2,7 @@
 - Home looks for an app update and runs the first-start decoder check however the app was opened, not only through the PC list.
 - Back while Add PC is connecting stops the attempt and keeps the address you typed.
 - The D-pad's selection stays on its PC when the PC list re-sorts.
-- Reset all settings also resets Frame pacing, Variable refresh rate and Lower refresh rate completely.
+- Reset all settings also resets Frame pacing, Variable refresh rate, Lower refresh rate, Touch mode and Video size completely.
 
 ## desktop
 - Add PC stays open and says why when an address or pairing link cannot be read.

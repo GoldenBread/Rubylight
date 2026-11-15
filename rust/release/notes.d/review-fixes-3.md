@@ -6,5 +6,5 @@
 - **Resuming at another frame rate keeps the game on its display.** The virtual display is retimed, not replaced, the resume takes the frame limiter and HDR profile set since the launch, and a display layout Windows refuses after the PC sat idle is tried again as on a fresh launch.
 - **Keyboard and mouse keep working while the controllers reconnect.**
 - **Adding a remote monitor no longer holds up the app list and other devices** while its display is made.
-- **Stopping the Rubylight service puts Radeon settings and game files back before it closes the game**, so they are restored within the time Windows gives a service to stop.
+- **Stopping the Rubylight service puts Radeon settings and game files back before it closes the game**, so they are restored within the time Windows gives a service to stop. A launch still preparing, or one that starts while the host stops, is stopped too.
 - After Continue here, a game's per-device settings file follows the device now playing. Compute conversion steps aside only after two encoder failures within a minute and is tried again after 5 quiet minutes, where one bad moment used to cost the rest of the session.

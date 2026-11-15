@@ -1,6 +1,7 @@
 ## en
 - New setting "Frames waiting for the decoder": how far a slow decoder may fall behind before the waiting frames are dropped.
 - A reconnect keeps the bitrate the stream had settled on, and one that gives up says why.
+- A stream the PC refuses as it starts, for a codec it can't encode or encryption it requires, shows the PC's reason.
 - The connection test ends with a verdict and one next step.
 - Leaving the Files page keeps its transfers going, and a second shared-folder transfer waits its turn.
 - A failed quit, a failed pairing and a stale shortcut say what happened and what to try.
@@ -8,6 +9,8 @@
 - A join request stays answerable from the Guests menu.
 - Waking a PC shows the wait until it ends.
 - Touch controls on the PC cards and the settings chips are easier to hit.
+- The stream menu offers PC commands only when the PC names one.
+- A USB device forwarded to the PC is detached there before the stream ends.
 
 ## desktop
 - An HDR stream plays on in SDR when the display stops showing HDR, and a picture the window cannot show moves the stream to the next decoder instead of ending it.
@@ -18,3 +21,5 @@
 - A PC that is off reads as Offline at once, and an offline PC says why it did not answer.
 - Layout fixes: long PC names and cover titles, menus in a short window, Help's section chips, settings sections and presets.
 - A failure of PyroWave GPU decoding is named in the app's language, followed by the graphics driver's own words.
+- The connection test weighs the measured speed against that PC's bitrate, and an empty library offers a way to games.
+- With Upscaling set to AI enhancement, a stream it can't enhance costs no more than bilinear scaling.
