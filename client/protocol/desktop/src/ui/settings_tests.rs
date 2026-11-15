@@ -1412,6 +1412,27 @@ fn presets_ask_first_set_their_values_and_read_custom_once_changed() {
     assert!(!shows(&f, "Presets"), "a PC's settings have none");
 }
 
+/// The presets sit only on the sections whose rows they change, and their chips are one size
+/// whichever is chosen.
+#[test]
+fn presets_show_only_on_the_sections_they_change_with_chips_of_one_size() {
+    let changed: Vec<&str> = SETTINGS_SECTIONS.iter().copied().filter(|s| preset_section(s)).collect();
+    assert_eq!(changed, ["Video", "Display & image", "Debug"]);
+    let mut f = settings_with(Settings::default());
+    let height = |f: &Frames, label: &str| {
+        f.placed.iter().find(|(t, ..)| t == label).map(|p| p.1.height()).unwrap_or_else(|| panic!("{label}: {:?}", f.drawn))
+    };
+    assert_eq!(height(&f, "Native (recommended)"), height(&f, "Battery saver"), "the chosen chip's type is the other's");
+    for section in ["Controls", "Audio", "Streaming", "App", "Advanced"] {
+        f.l.settings_view.section = SETTINGS_SECTIONS.iter().copied().find(|s| *s == section).unwrap();
+        f.settle();
+        assert!(!shows(&f, "Presets") && !shows(&f, "Battery saver"), "{section}: {:?}", f.drawn);
+    }
+    f.l.settings_view.section = SETTINGS_SECTIONS[1];
+    f.settle();
+    assert!(shows(&f, "Presets"), "{:?}", f.drawn);
+}
+
 /// Native puts back what the presets set, the desktop's defaults among them, and turns on every
 /// latency switch the desktop has; Battery saver leaves those. VRR the screen can't use never
 /// makes a preset Custom, as on Android.

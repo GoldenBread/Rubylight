@@ -264,9 +264,9 @@ impl Launcher {
         }
         let mut column = ui.new_child(UiBuilder::new().id_salt("settings-rows").max_rect(rows_rect).layout(Layout::top_down(Align::Min)));
         let screen = self.screen;
-        // Android's Presets, above the sections' rows; a PC's, game's or profile's settings and a
-        // search have none.
-        if !layered && !self.settings_view.searching() {
+        // Android's Presets, above the rows of a section they change; a PC's, game's or profile's
+        // settings and a search have none.
+        if !layered && !self.settings_view.searching() && preset_section(self.settings_view.section) {
             self.presets_row(&mut column);
         }
         self.settings_rows(&mut column, view, commands);
@@ -1774,6 +1774,15 @@ pub(super) fn preset_current(s: &Settings, vrr_offered: bool) -> presets::Curren
         latency_switches_on: s.drop_late_frames && s.unbatched_input && s.network_priority,
         power: None,
     }
+}
+
+/// The keys [`apply_preset`] sets.
+const PRESET_KEYS: [&str; 11] =
+    ["width", "height", "fps", "bitrate_kbps", "vrr", "upscaling", "frame_pacing", "host_frame_times", "drop_late_frames", "unbatched_input", "network_priority"];
+
+/// Whether `section` holds a row a preset changes: only those show the presets.
+pub(super) fn preset_section(section: &str) -> bool {
+    SETTINGS_SECTIONS.iter().position(|&name| name == section).is_some_and(|at| SECTION_KEYS[at].iter().any(|row| row.iter().any(|key| PRESET_KEYS.contains(key))))
 }
 
 /// What a preset sets, Android's `StreamPreset.apply` on the desktop's settings. The codec, HDR
