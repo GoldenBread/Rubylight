@@ -536,8 +536,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         if (!enabled) {
             releaseInput();
             // Every sample would be thrown away: unregister the motion sensors until focus returns.
+            // releaseInput() has just told the PC the pads are at rest; it is not told twice.
             if (sensorsEnabled && !stopped) {
-                stopSensors();
+                stopSensors(false);
                 sensorsOffForFocus = true;
             }
         }
@@ -679,17 +680,18 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     /** Picture-in-picture: the sensors stay off until enableSensors(), whatever the focus does meanwhile. */
     public void disableSensors() {
         sensorsOffForFocus = false;
-        stopSensors();
+        stopSensors(true);
     }
 
-    private void stopSensors() {
+    /** atRest: also tell the PC each gyro is still, unless the caller's release has just done so. */
+    private void stopSensors(boolean atRest) {
         sensorsEnabled = false;
         for (InputDeviceContext deviceContext : inputDeviceContexts.values()) {
-            deviceContext.disableSensors();
+            deviceContext.disableSensors(atRest);
         }
         for (UsbDeviceContext context : usbDeviceContexts.values()) {
             context.unregisterDeviceMotion();
-            if (context.assignedControllerNumber && (context.capabilities() & MoonBridge.LI_CCAP_GYRO) != 0) {
+            if (atRest && context.assignedControllerNumber && (context.capabilities() & MoonBridge.LI_CCAP_GYRO) != 0) {
                 sendGyroAtRest(context.controllerNumber);
             }
         }
@@ -5352,6 +5354,10 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         }
 
         public void disableSensors() {
+            disableSensors(true);
+        }
+
+        void disableSensors(boolean atRest) {
             // Stop any pending enablement
             mainThreadHandler.removeCallbacks(enableSensorRunnable);
 
@@ -5361,7 +5367,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 gyroListener = null;
 
                 // Send a gyro event to ensure the virtual controller is stationary
-                sendGyroAtRest(controllerNumber);
+                if (atRest) {
+                    sendGyroAtRest(controllerNumber);
+                }
             }
             if (accelListener != null) {
                 closeMotionListener(sensorManager, accelListener);

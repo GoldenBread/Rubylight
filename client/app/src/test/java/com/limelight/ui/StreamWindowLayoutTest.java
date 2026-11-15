@@ -79,7 +79,9 @@ public class StreamWindowLayoutTest {
                         axis == 0 ? "getStreamViewRelativeNormalizedX" : "getStreamViewRelativeNormalizedY",
                         ReflectionHelpers.ClassParameter.from(View.class, view),
                         ReflectionHelpers.ClassParameter.from(android.view.MotionEvent.class, event),
-                        ReflectionHelpers.ClassParameter.from(int.class, 0));
+                        ReflectionHelpers.ClassParameter.from(int.class, 0),
+                        // The newest sample, not one of the event's batched earlier ones.
+                        ReflectionHelpers.ClassParameter.from(int.class, -1));
             }
             return place;
         } finally {
