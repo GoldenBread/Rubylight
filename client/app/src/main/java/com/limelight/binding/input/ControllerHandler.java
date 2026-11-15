@@ -152,6 +152,10 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     // lock for the active controllers. So a rumble only picks its USB pads under that lock and writes under this
     // one, which stop() takes too: no write follows the stop the pads get there.
     private final Object usbRumbleLock = new Object();
+    // Under rumbleLock: while the stream has no focus the motors stay off, and the host's latest
+    // levels per controller number ({low, high, left trigger, right trigger}) come back with focus.
+    private boolean rumblePaused;
+    private final Map<Short, short[]> rumbleLevels = new HashMap<>();
     private final VibratorManager deviceVibratorManager;
     private final SensorManager deviceSensorManager;
     private final SceManager sceManager;
@@ -541,6 +545,54 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             sensorsOffForFocus = false;
             enableSensors();
         }
+        // Vibrator and USB writes can stall, so not on the main thread.
+        backgroundThreadHandler.post(() -> pauseRumble(!enabled));
+    }
+
+    /**
+     * Without focus the pads and the phone stop vibrating instead of running on until the game sends
+     * a zero; with focus back the host's latest levels play again.
+     */
+    private void pauseRumble(boolean paused) {
+        synchronized (rumbleLock) {
+            if (rumblePaused == paused || stopped) {
+                return;
+            }
+            rumblePaused = paused;
+            if (paused) {
+                for (InputDeviceContext deviceContext : inputDeviceContexts.values()) {
+                    deviceContext.cancelMotors();
+                }
+                for (short controllerNumber : rumbleLevels.keySet()) {
+                    List<AbstractController> usbPads = usbPadsOf(controllerNumber);
+                    if (usbPads == null || usbPads.isEmpty()) continue;
+                    synchronized (usbRumbleLock) {
+                        if (stopped) return;
+                        for (AbstractController pad : usbPads) {
+                            pad.rumble((short) 0, (short) 0);
+                            pad.rumbleTriggers((short) 0, (short) 0);
+                        }
+                    }
+                }
+                deviceVibrator.cancel();
+            }
+            else {
+                for (Map.Entry<Short, short[]> levels : new ArrayList<>(rumbleLevels.entrySet())) {
+                    short[] l = levels.getValue();
+                    if (l[0] != 0 || l[1] != 0) rumble(levels.getKey(), l[0], l[1]);
+                    if (l[2] != 0 || l[3] != 0) rumbleTriggers(levels.getKey(), l[2], l[3]);
+                }
+            }
+        }
+    }
+
+    private short[] levelsOf(short controllerNumber) {
+        short[] levels = rumbleLevels.get(controllerNumber);
+        if (levels == null) {
+            levels = new short[4];
+            rumbleLevels.put(controllerNumber, levels);
+        }
+        return levels;
     }
 
     public void releaseInput() {
@@ -3042,6 +3094,12 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         if (stopped || !rumbleAllowed) {
             return;
         }
+        short[] levels = levelsOf(controllerNumber);
+        levels[0] = lowFreqMotor;
+        levels[1] = highFreqMotor;
+        if (rumblePaused) {
+            return;
+        }
 
         for (InputDeviceContext deviceContext : inputDeviceContexts.values()) {
 
@@ -3124,6 +3182,12 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
     private void rumbleTriggers(short controllerNumber, short leftTrigger, short rightTrigger) {
         if (stopped || !rumbleAllowed) {
+            return;
+        }
+        short[] levels = levelsOf(controllerNumber);
+        levels[2] = leftTrigger;
+        levels[3] = rightTrigger;
+        if (rumblePaused) {
             return;
         }
 

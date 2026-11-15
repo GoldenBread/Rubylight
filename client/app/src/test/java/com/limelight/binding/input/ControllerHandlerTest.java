@@ -422,6 +422,43 @@ public class ControllerHandlerTest {
         }
     }
 
+    // Rumble a game left running stops while the stream has no focus, and the host's latest level plays
+    // again when focus returns; a level sent meanwhile is kept, not played.
+    @Test
+    public void rumbleStopsWhileTheStreamHasNoFocus() {
+        ControllerInputReleaseTest.MenuGame activity = Robolectric.buildActivity(ControllerInputReleaseTest.MenuGame.class).get();
+        android.os.Vibrator vibrator = (android.os.Vibrator) activity.getSystemService(Context.VIBRATOR_SERVICE);
+        PreferenceConfiguration prefs = new PreferenceConfiguration();
+        // The on-screen controls' rumble plays on the phone's own vibrator.
+        prefs.onscreenController = true;
+        prefs.vibrateOsc = true;
+        ControllerHandler handler = new ControllerHandler(activity, new RecordingConnection(), null, prefs);
+        android.os.Handler background = ReflectionHelpers.getField(handler, "backgroundThreadHandler");
+        try {
+            handler.handleRumble((short) 0, (short) 0x8000, (short) 0x8000);
+            assertTrue(org.robolectric.Shadows.shadowOf(vibrator).isVibrating());
+
+            handler.setInputEnabled(false);
+            org.robolectric.Shadows.shadowOf(background.getLooper()).idle();
+            assertFalse(org.robolectric.Shadows.shadowOf(vibrator).isVibrating());
+            handler.handleRumble((short) 0, (short) 0x4000, (short) 0x4000);
+            assertFalse(org.robolectric.Shadows.shadowOf(vibrator).isVibrating());
+
+            handler.setInputEnabled(true);
+            org.robolectric.Shadows.shadowOf(background.getLooper()).idle();
+            assertTrue(org.robolectric.Shadows.shadowOf(vibrator).isVibrating());
+            // A stop sent while unfocused leaves it still when focus returns.
+            handler.setInputEnabled(false);
+            org.robolectric.Shadows.shadowOf(background.getLooper()).idle();
+            handler.handleRumble((short) 0, (short) 0, (short) 0);
+            handler.setInputEnabled(true);
+            org.robolectric.Shadows.shadowOf(background.getLooper()).idle();
+            assertFalse(org.robolectric.Shadows.shadowOf(vibrator).isVibrating());
+        } finally {
+            handler.destroy();
+        }
+    }
+
     private static android.hardware.SensorEvent gyroEvent(long timestampNs, float x) {
         android.hardware.SensorEvent event = ReflectionHelpers.callConstructor(android.hardware.SensorEvent.class,
                 ReflectionHelpers.ClassParameter.from(int.class, 3));
