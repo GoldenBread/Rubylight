@@ -2,7 +2,7 @@
 - New setting "Frames waiting for the decoder": how far a slow decoder may fall behind before the waiting frames are dropped.
 - A reconnect keeps the bitrate the stream had settled on, and one that gives up says why.
 - The connection test ends with a verdict and one next step.
-- Leaving the Files page keeps its transfers going.
+- Leaving the Files page keeps its transfers going, and a second shared-folder transfer waits its turn.
 - A failed quit, a failed pairing and a stale shortcut say what happened and what to try.
 - Quit questions say Quit game and start on Cancel; a launch names its stages in plain words.
 - A join request stays answerable from the Guests menu.
