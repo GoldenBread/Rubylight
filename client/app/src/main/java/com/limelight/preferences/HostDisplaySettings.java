@@ -13,13 +13,20 @@ public final class HostDisplaySettings {
     private HostDisplaySettings() {
     }
 
-    /** The PC page's Display arrangement; created separately so it can restore an unconfirmed selection after rotation. */
-    static AlertDialog create(Activity activity, String hostUuid, String hostName, boolean virtualDisplay,
-                              java.util.function.Consumer<Boolean> setVirtualDisplay, Runnable onChanged) {
+    /**
+     * The PC page's Display arrangement; created separately so it can restore an unconfirmed selection after rotation.
+     * Its first entry, {@code sameAs}, follows the main settings again, as the page's other rows offer; {@code own}
+     * says whether this PC has a display choice of its own.
+     */
+    static AlertDialog create(Activity activity, String hostUuid, String hostName, CharSequence sameAs, boolean own,
+                              boolean virtualDisplay, java.util.function.Consumer<Boolean> setVirtualDisplay, Runnable onChanged) {
         // Display arrangement with Virtual display folded in (DisplayArrangementChoice): Save stores the
-        // arrangement here and hands the switch to the page, which saves it as this PC's own value.
-        CharSequence[] labels = DisplayArrangementChoice.names(activity, true);
-        int checked = DisplayArrangementChoice.choice(HostDisplayChoice.load(activity, hostUuid), virtualDisplay, true);
+        // arrangement here and hands the switch to the page, which saves it as this PC's own value (null: none).
+        CharSequence[] names = DisplayArrangementChoice.names(activity, true);
+        CharSequence[] labels = new CharSequence[names.length + 1];
+        labels[0] = sameAs;
+        System.arraycopy(names, 0, labels, 1, names.length);
+        int checked = own ? 1 + DisplayArrangementChoice.choice(HostDisplayChoice.load(activity, hostUuid), virtualDisplay, true) : 0;
         return new NavigationDialogBuilder(activity)
                 .setTitle(activity.getString(R.string.host_display_title, hostName))
                 .setSingleChoiceItems(labels, checked, null)
@@ -27,8 +34,14 @@ public final class HostDisplaySettings {
                     // Read the view state because the pending selection may have been restored.
                     int selected = ((AlertDialog) dialog).getListView().getCheckedItemPosition();
                     if (selected < 0 || selected >= labels.length) return;
-                    HostDisplayChoice.save(activity, hostUuid, DisplayArrangementChoice.ARRANGEMENTS[selected]);
-                    setVirtualDisplay.accept(DisplayArrangementChoice.virtualDisplay(selected));
+                    if (selected == 0) {
+                        HostDisplayChoice.forget(activity, hostUuid);
+                        setVirtualDisplay.accept(null);
+                    } else {
+                        HostDisplayChoice.save(activity, hostUuid, DisplayArrangementChoice.ARRANGEMENTS[selected - 1]);
+                        Boolean switchValue = DisplayArrangementChoice.switchFor(selected - 1);
+                        if (switchValue != null) setVirtualDisplay.accept(switchValue);
+                    }
                     Toast.makeText(activity, R.string.host_display_saved, Toast.LENGTH_SHORT).show();
                     if (onChanged != null) onChanged.run();
                 })

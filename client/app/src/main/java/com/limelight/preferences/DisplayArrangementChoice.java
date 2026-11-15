@@ -8,8 +8,10 @@ import com.limelight.R;
 /**
  * Display arrangement with the Virtual display switch folded in, as on desktop Nightjar (settings.rs DISPLAY_CHOICES):
  * the PC's own setting, a virtual display in the PC's own arrangement, then the arrangements. Each choice is saved in
- * the arrangement ({@link HostDisplayChoice}) and the switch ({@code checkbox_virtual_display}) as before, so presets,
- * per-PC values and older versions keep working.
+ * the arrangement ({@link HostDisplayChoice}); the PC's own setting and Virtual display also set the switch
+ * ({@code checkbox_virtual_display}), which the arrangements leave as it is. So presets, per-PC values and older
+ * versions keep working, and Remote Monitor, which keeps the PC's arrangement and follows the switch alone, asks for
+ * what it asked for before.
  */
 final class DisplayArrangementChoice {
     static final String VIRTUAL_DISPLAY_PREF = "checkbox_virtual_display";
@@ -38,9 +40,14 @@ final class DisplayArrangementChoice {
         return virtualDisplay ? VIRTUAL_DISPLAY : PC_OWN;
     }
 
-    /** What the choice saves in the switch: on for a virtual display, off for the PC's own setting and Physical. */
+    /** Whether a stream with this choice has a virtual display on a PC with display modes. */
     static boolean virtualDisplay(int choice) {
         return choice != PC_OWN && ARRANGEMENTS[choice] != HostDisplayChoice.PHYSICAL;
+    }
+
+    /** What the choice saves in the switch: the PC's own setting turns it off, Virtual display on; an arrangement leaves it. */
+    static Boolean switchFor(int choice) {
+        return choice == PC_OWN ? Boolean.FALSE : choice == VIRTUAL_DISPLAY ? Boolean.TRUE : null;
     }
 
     /** The choices' names; without display modes, only the PC's own setting and Virtual display. */
@@ -62,6 +69,7 @@ final class DisplayArrangementChoice {
         HostDisplayChoice arrangement = ARRANGEMENTS[choice];
         if (arrangement == HostDisplayChoice.HOST_DEFAULT) editor.remove(HostDisplayChoice.MAIN_PREF);
         else editor.putString(HostDisplayChoice.MAIN_PREF, arrangement.name());
-        editor.putBoolean(VIRTUAL_DISPLAY_PREF, virtualDisplay(choice));
+        Boolean virtualDisplay = switchFor(choice);
+        if (virtualDisplay != null) editor.putBoolean(VIRTUAL_DISPLAY_PREF, virtualDisplay);
     }
 }

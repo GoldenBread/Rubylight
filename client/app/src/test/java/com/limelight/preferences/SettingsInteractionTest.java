@@ -348,7 +348,8 @@ public class SettingsInteractionTest {
 
     /** The PC page's Display arrangement picker, with the virtual display switch off. */
     private static void showPicker(android.app.Activity activity, String hostUuid, Runnable onChanged) {
-        AlertDialog picker = HostDisplaySettings.create(activity, hostUuid, "PC", false, value -> { }, onChanged);
+        AlertDialog picker = HostDisplaySettings.create(activity, hostUuid, "PC", "Same as all PCs",
+                HostDisplayChoice.hasOwn(activity, hostUuid), false, value -> { }, onChanged);
         com.limelight.utils.UiHelper.showDialog(activity, picker);
         HostDisplaySettings.bindHelp(activity, picker);
     }

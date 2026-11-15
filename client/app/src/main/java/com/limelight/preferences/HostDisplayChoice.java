@@ -98,24 +98,20 @@ public enum HostDisplayChoice {
         editor.apply();
     }
 
-    /**
-     * This PC's own choice. The PC's own setting is stored too while the main settings ask for another
-     * arrangement, so it stays this PC's choice instead of falling back to theirs.
-     */
+    /** This PC's own choice, the PC's own setting included; {@link #forget} follows the main settings again. */
     public static void save(Context context, String hostUuid, HostDisplayChoice choice) {
         if (hostUuid == null) {
             return;
         }
-        SharedPreferences.Editor editor = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit();
-        if (choice == HOST_DEFAULT && loadMain(context) == HOST_DEFAULT) {
-            editor.remove(hostUuid);
-        } else {
-            editor.putString(hostUuid, choice.name());
-        }
-        editor.apply();
+        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit().putString(hostUuid, choice.name()).apply();
     }
 
-    /** A removed PC's choice. */
+    /** Whether this PC has a choice of its own. */
+    public static boolean hasOwn(Context context, String hostUuid) {
+        return hostUuid != null && context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).contains(hostUuid);
+    }
+
+    /** Back to the main settings' choice, as for a removed PC. */
     public static void forget(Context context, String hostUuid) {
         if (hostUuid == null) {
             return;

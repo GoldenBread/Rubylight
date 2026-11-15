@@ -1680,11 +1680,14 @@ fn display_arrangement_shows_every_saved_pair_as_the_choice_that_streams_the_sam
             assert_eq!(display_choice(&s, false), (HostDisplay::HostDefault, virtual_display));
         }
     }
-    // Each choice writes both keys and reads back as itself.
-    for choice in DISPLAY_CHOICES {
-        let mut s = Settings::default();
-        (s.host_display, s.virtual_display) = choice;
-        assert_eq!(display_choice(&s, true), choice);
+    // Each choice reads back as itself; only the PC's own setting and Virtual display set the switch.
+    for before in [false, true] {
+        for choice in DISPLAY_CHOICES {
+            let mut s = Settings { virtual_display: before, ..Settings::default() };
+            pick_display_choice(&mut s, choice);
+            assert_eq!(display_choice(&s, true), choice);
+            assert_eq!(s.virtual_display, if choice.0 == HostDisplay::HostDefault { choice.1 } else { before });
+        }
     }
     assert_eq!(display_choice_name((HostDisplay::HostDefault, true)), "Virtual display");
     assert_eq!(display_choice_name((HostDisplay::HostDefault, false)), "The PC’s own setting");
@@ -1773,4 +1776,30 @@ fn a_layer_holding_one_key_of_a_row_keeps_it_alone_until_a_value_is_chosen() {
     f.settle();
     assert!(f.l.edit_overrides.has(&["host_display"]) && f.l.edit_overrides.has(&["virtual_display"]));
     assert_eq!((f.l.edit_settings.host_display, f.l.edit_settings.virtual_display), (HostDisplay::HostDefault, true));
+}
+
+#[test]
+fn an_arrangement_pick_leaves_what_remote_monitor_asks_for() {
+    use crate::config::HostDisplay;
+    use nightjar_core::http::{AppRole, LaunchRequest};
+    let xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?><root status_code=\"200\"><hostname>PC</hostname><uniqueid>uid</uniqueid><HttpsPort>47984</HttpsPort><ExternalPort>47989</ExternalPort><PairStatus>1</PairStatus><currentgame>0</currentgame><state>SUNSHINE_SERVER_FREE</state><Permission>1</Permission><RustHostVersion>3.0.0</RustHostVersion><VirtualDisplayCapable>true</VirtualDisplayCapable><VirtualDisplayDriverReady>true</VirtualDisplayDriverReady></root>";
+    let caps = nightjar_core::http::ServerInfo::parse(xml, 47989).expect("the answer parses").capabilities;
+    assert!(caps.has(nightjar_core::http::Feature::HostDisplayModes));
+    let asks = |s: &Settings, role: AppRole| {
+        LaunchRequest { role, virtual_display: s.virtual_display, host_display: s.host_display.into(), ..LaunchRequest::default() }
+            .wants_virtual_display(&caps)
+    };
+    for mode in [HostDisplay::HostDefault, HostDisplay::Exclusive, HostDisplay::ExtendedPrimary, HostDisplay::Extended,
+        HostDisplay::ExtendedIsolated, HostDisplay::ExtendedPrimaryIsolated, HostDisplay::Physical] {
+        for virtual_display in [false, true] {
+            for choice in DISPLAY_CHOICES.into_iter().filter(|c| c.0 != HostDisplay::HostDefault) {
+                let mut s = Settings { host_display: mode, virtual_display, ..Settings::default() };
+                let before = asks(&s, AppRole::RemoteMonitor);
+                assert_eq!(before, virtual_display, "Remote Monitor follows the switch alone");
+                pick_display_choice(&mut s, choice);
+                assert_eq!(asks(&s, AppRole::RemoteMonitor), before, "{mode:?}/{virtual_display} -> {choice:?}");
+                assert_eq!(asks(&s, AppRole::Stream), choice.1, "a stream gets the arrangement's display");
+            }
+        }
+    }
 }

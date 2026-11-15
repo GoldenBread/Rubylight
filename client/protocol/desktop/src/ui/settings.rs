@@ -979,7 +979,7 @@ impl Launcher {
                     .show_ui(ui, |ui| {
                         for choice in DISPLAY_CHOICES.into_iter().filter(|c| modes || c.0 == HostDisplay::HostDefault) {
                             if ui.selectable_label(choice == current, tr(display_choice_name(choice))).clicked() {
-                                (s.host_display, s.virtual_display) = choice;
+                                pick_display_choice(s, choice);
                             }
                         }
                     }).response
@@ -1821,8 +1821,8 @@ pub(super) fn display_scale_name(percent: u32) -> String {
 }
 
 /// Display arrangement with the Virtual display switch folded in (Android's DisplayArrangementChoice):
-/// the PC's own setting, a virtual display in the PC's own arrangement, then the arrangements, each
-/// saved in host_display and virtual_display as before.
+/// the PC's own setting, a virtual display in the PC's own arrangement, then the arrangements. Each
+/// tuple says whether the choice streams with a virtual display where the PC has display modes.
 pub(super) const DISPLAY_CHOICES: [(HostDisplay, bool); 8] = [
     (HostDisplay::HostDefault, false), (HostDisplay::HostDefault, true), (HostDisplay::Exclusive, true),
     (HostDisplay::ExtendedPrimary, true), (HostDisplay::Extended, true), (HostDisplay::ExtendedIsolated, true),
@@ -1837,6 +1837,16 @@ pub(super) fn display_choice(s: &Settings, modes: bool) -> (HostDisplay, bool) {
         (s.host_display, s.host_display != HostDisplay::Physical)
     } else {
         (HostDisplay::HostDefault, s.virtual_display)
+    }
+}
+
+/// A pick saves its arrangement in host_display. The PC's own setting and Virtual display also set
+/// virtual_display, which the arrangements leave as it is: Remote Monitor keeps the PC's arrangement
+/// and follows virtual_display alone, so it asks for what it asked for before.
+pub(super) fn pick_display_choice(s: &mut Settings, (mode, virtual_display): (HostDisplay, bool)) {
+    s.host_display = mode;
+    if mode == HostDisplay::HostDefault {
+        s.virtual_display = virtual_display;
     }
 }
 

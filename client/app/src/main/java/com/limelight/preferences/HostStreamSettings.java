@@ -324,7 +324,7 @@ public class HostStreamSettings extends NightjarActivity {
      * Display arrangement's Virtual display value, saved with the arrangement when its dialog is confirmed:
      * the page's other edits stay unsaved.
      */
-    private void saveVirtualDisplay(boolean value) {
+    private void saveVirtualDisplay(Boolean value) {
         overrides.virtualDisplay = value;
         HostStreamProfile saved = HostStreamProfile.deserialize(savedProfile);
         saved.virtualDisplay = value;
@@ -1217,8 +1217,9 @@ public class HostStreamSettings extends NightjarActivity {
                 applyGate(dpi, HostCapabilities.Feature.DISPLAY_SCALE);
             }
             if (display != null) {
-                int choice = DisplayArrangementChoice.choice(displayChoice, switchValue(config, "virtual"), true);
-                display.setSummary(DisplayArrangementChoice.names(activity, true)[choice] + "\n" +
+                String name = DisplayArrangementChoice.names(activity, true)[
+                        DisplayArrangementChoice.choice(displayChoice, switchValue(config, "virtual"), true)].toString();
+                display.setSummary((ownDisplay() ? name : sameAs(name)) + "\n" +
                         getString(R.string.settings_profile_display_immediate));
                 applyGate(display, HostCapabilities.Feature.HOST_DISPLAY_MODES);
             }
@@ -1417,10 +1418,18 @@ public class HostStreamSettings extends NightjarActivity {
             return scroll;
         }
 
+        /** Whether this PC has a display choice of its own: its arrangement or its virtual display switch. */
+        private boolean ownDisplay() {
+            return HostDisplayChoice.hasOwn(activity, activity.hostUuid) || switchOverride("virtual") != null;
+        }
+
         private void showDisplay() {
             PreferenceConfiguration config = activity.effective();
+            CharSequence allPcs = DisplayArrangementChoice.names(activity, true)[DisplayArrangementChoice.choice(
+                    HostDisplayChoice.loadMain(activity), switchValue(activity.global, "virtual"), true)];
             AlertDialog picker = HostDisplaySettings.create(activity, activity.hostUuid, activity.computer.displayName(),
-                    switchValue(config, "virtual"), activity::saveVirtualDisplay, this::updateSummaries);
+                    sameAs(allPcs.toString()), ownDisplay(), switchValue(config, "virtual"), activity::saveVirtualDisplay,
+                    this::updateSummaries);
             showEditor("display", picker);
             HostDisplaySettings.bindHelp(activity, picker);
         }

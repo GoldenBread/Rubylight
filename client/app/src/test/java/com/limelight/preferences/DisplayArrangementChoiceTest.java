@@ -62,24 +62,56 @@ public class DisplayArrangementChoiceTest {
     }
 
     @Test
-    public void eachChoiceSavesBothValuesAndReadsBackAsItself() {
+    public void eachChoiceSavesItsArrangementAndOnlyThePcsOwnAndVirtualDisplaySetTheSwitch() {
         CharSequence[] names = DisplayArrangementChoice.names(app, true);
         assertEquals(8, names.length);
         assertEquals("The PC’s own setting", names[DisplayArrangementChoice.PC_OWN].toString());
         assertEquals("Virtual display", names[DisplayArrangementChoice.VIRTUAL_DISPLAY].toString());
         assertEquals(2, DisplayArrangementChoice.names(app, false).length);
-        for (int i = 0; i < names.length; i++) {
-            SharedPreferences.Editor editor = prefs().edit().clear();
-            DisplayArrangementChoice.saveMain(editor, i);
-            editor.commit();
-            HostDisplayChoice arrangement = DisplayArrangementChoice.ARRANGEMENTS[i];
-            assertEquals(names[i].toString(), i, DisplayArrangementChoice.readMain(prefs()));
-            assertEquals(arrangement, HostDisplayChoice.loadMain(app));
-            assertEquals(arrangement != HostDisplayChoice.HOST_DEFAULT, prefs().contains(HostDisplayChoice.MAIN_PREF));
-            boolean virtualDisplay = PreferenceConfiguration.readPreferences(app).virtualDisplay;
-            assertEquals(names[i].toString(), i != DisplayArrangementChoice.PC_OWN && arrangement != HostDisplayChoice.PHYSICAL, virtualDisplay);
-            // A PC without display modes gets the switch alone: a virtual display for every choice that asks for one.
-            assertEquals(arrangement.requestsVirtualDisplay(virtualDisplay), HostDisplayChoice.HOST_DEFAULT.requestsVirtualDisplay(virtualDisplay));
+        for (boolean before : new boolean[] {false, true}) {
+            for (int i = 0; i < names.length; i++) {
+                String pick = names[i] + " over " + before;
+                SharedPreferences.Editor editor = prefs().edit().clear().putBoolean(DisplayArrangementChoice.VIRTUAL_DISPLAY_PREF, before);
+                DisplayArrangementChoice.saveMain(editor, i);
+                editor.commit();
+                HostDisplayChoice arrangement = DisplayArrangementChoice.ARRANGEMENTS[i];
+                assertEquals(pick, i, DisplayArrangementChoice.readMain(prefs()));
+                assertEquals(arrangement, HostDisplayChoice.loadMain(app));
+                assertEquals(arrangement != HostDisplayChoice.HOST_DEFAULT, prefs().contains(HostDisplayChoice.MAIN_PREF));
+                Boolean set = DisplayArrangementChoice.switchFor(i);
+                assertEquals(pick, set != null ? set : before, PreferenceConfiguration.readPreferences(app).virtualDisplay);
+            }
+        }
+    }
+
+    /** What a Remote Monitor launch from the main settings asks for: it keeps the PC's arrangement, so the switch alone. */
+    private boolean remoteMonitorAsksForAVirtualDisplay() {
+        com.limelight.nvstream.ConnectionContext context = new com.limelight.nvstream.ConnectionContext();
+        context.hostCaps = com.limelight.nvstream.http.TestHosts.rubylight();
+        context.streamConfig = new com.limelight.nvstream.StreamConfiguration.Builder()
+                .setVirtualDisplay(PreferenceConfiguration.readPreferences(app).virtualDisplay, 100).build();
+        context.hostDisplay = HostDisplayChoice.loadMain(app);
+        return com.limelight.nvstream.http.NvHTTP.wantsVirtualDisplay(context, com.limelight.nvstream.http.NvApp.Role.REMOTE_MONITOR);
+    }
+
+    @Test
+    public void anArrangementPickLeavesWhatRemoteMonitorAsksFor() {
+        assertTrue(com.limelight.nvstream.http.TestHosts.rubylight().has(com.limelight.nvstream.http.HostCapabilities.Feature.HOST_DISPLAY_MODES));
+        for (HostDisplayChoice stored : HostDisplayChoice.values()) {
+            for (boolean virtualDisplay : new boolean[] {false, true}) {
+                for (int i = DisplayArrangementChoice.VIRTUAL_DISPLAY + 1; i < DisplayArrangementChoice.ARRANGEMENTS.length; i++) {
+                    String pick = stored + "/" + virtualDisplay + " -> " + DisplayArrangementChoice.ARRANGEMENTS[i];
+                    SharedPreferences.Editor editor = prefs().edit().clear().putBoolean(DisplayArrangementChoice.VIRTUAL_DISPLAY_PREF, virtualDisplay);
+                    if (stored != HostDisplayChoice.HOST_DEFAULT) editor.putString(HostDisplayChoice.MAIN_PREF, stored.name());
+                    editor.commit();
+                    boolean before = remoteMonitorAsksForAVirtualDisplay();
+                    assertEquals(pick, virtualDisplay, before);
+                    editor = prefs().edit();
+                    DisplayArrangementChoice.saveMain(editor, i);
+                    editor.commit();
+                    assertEquals(pick, before, remoteMonitorAsksForAVirtualDisplay());
+                }
+            }
         }
     }
 
@@ -117,10 +149,18 @@ public class DisplayArrangementChoiceTest {
             HostStreamSettings.SettingsFragment fragment = (HostStreamSettings.SettingsFragment)
                     controller.get().getFragmentManager().findFragmentById(com.limelight.R.id.host_profile_settings);
             Preference row = fragment.findPreference("host_display");
-            assertTrue(row.getSummary().toString().startsWith(app.getString(com.limelight.R.string.host_display_exclusive)));
+            // Without a choice of its own, the PC follows Settings, as its other rows say.
+            String followsSettings = app.getString(com.limelight.R.string.host_profile_same_as_all_value,
+                    app.getString(com.limelight.R.string.host_display_exclusive));
+            assertEquals(followsSettings, row.getSummary().toString().split("\\n")[0]);
             row.getOnPreferenceClickListener().onPreferenceClick(row);
             AlertDialog picker = (AlertDialog) ShadowDialog.getLatestDialog();
-            picker.getListView().performItemClick(null, DisplayArrangementChoice.PC_OWN, DisplayArrangementChoice.PC_OWN);
+            // Same as all PCs first, then the choices.
+            assertEquals(followsSettings, picker.getListView().getAdapter().getItem(0).toString());
+            assertEquals(9, picker.getListView().getCount());
+            assertEquals(0, picker.getListView().getCheckedItemPosition());
+            int pcOwn = 1 + DisplayArrangementChoice.PC_OWN;
+            picker.getListView().performItemClick(null, pcOwn, pcOwn);
             picker.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
             ShadowLooper.idleMainLooper();
             // The PC's own setting stays its own although Settings ask for Exclusive.
@@ -133,9 +173,24 @@ public class DisplayArrangementChoiceTest {
             // Settings themselves are untouched.
             assertEquals(HostDisplayChoice.EXCLUSIVE, HostDisplayChoice.loadMain(app));
             assertTrue(prefs().getBoolean(DisplayArrangementChoice.VIRTUAL_DISPLAY_PREF, false));
-            // A removed PC follows Settings again if it comes back.
-            HostDisplayChoice.forget(app, "fold-pc");
+            // Same as all PCs undoes it: the PC follows Settings again, a later change included.
+            row.getOnPreferenceClickListener().onPreferenceClick(row);
+            picker = (AlertDialog) ShadowDialog.getLatestDialog();
+            assertEquals(pcOwn, picker.getListView().getCheckedItemPosition());
+            picker.getListView().performItemClick(null, 0, 0);
+            picker.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
+            ShadowLooper.idleMainLooper();
+            assertFalse(HostDisplayChoice.hasOwn(app, "fold-pc"));
+            // Nothing of its own is left: no stored values at all.
+            assertNull(HostStreamProfile.load(app, "fold-pc"));
             assertEquals(HostDisplayChoice.EXCLUSIVE, HostDisplayChoice.load(app, "fold-pc"));
+            assertEquals(app.getString(com.limelight.R.string.host_profile_same_as_all_value,
+                    app.getString(com.limelight.R.string.host_display_exclusive)), row.getSummary().toString().split("\n")[0]);
+            SharedPreferences.Editor editor = prefs().edit();
+            DisplayArrangementChoice.saveMain(editor, 3);
+            editor.commit();
+            assertEquals(HostDisplayChoice.EXTENDED, DisplayArrangementChoice.ARRANGEMENTS[3]);
+            assertEquals(HostDisplayChoice.EXTENDED, HostDisplayChoice.load(app, "fold-pc"));
         } finally {
             controller.pause().stop().destroy();
         }
