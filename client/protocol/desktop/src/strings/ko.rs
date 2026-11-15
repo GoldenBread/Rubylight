@@ -1592,5 +1592,8 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("Any network", "모든 네트워크"),
     ("The stream moves to the new address when this device switches networks, instead of waiting for the old one; Any network also moves it onto mobile data or another metered network, which uses a lot of data. Leave it on Except mobile data; needs PC support.", "이 기기가 네트워크를 바꾸면 이전 주소를 기다리지 않고 스트림을 새 주소로 옮깁니다. '모든 네트워크'는 모바일 데이터나 다른 데이터 통신 네트워크로도 옮기며 데이터를 많이 씁니다. '모바일 데이터 제외'로 두세요. PC 지원이 필요합니다."),
     ("Keyboard follows text fields", "텍스트 필드에 맞춰 키보드 표시"),
-    ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields and does nothing on a computer without an on-screen keyboard; turn off to open it yourself.", "PC에서 텍스트 필드를 선택하면 화면 키보드가 열리고, 입력이 끝나면 닫힙니다. 텍스트 필드를 알려 주는 PC가 필요하며, 화면 키보드가 없는 컴퓨터에서는 아무 동작도 하지 않습니다. 직접 열려면 끄세요."),
+    ("Not used with {}", "{}에서는 사용할 수 없음"),
+    ("Not used: this computer has no on-screen keyboard", "사용되지 않음: 이 컴퓨터에는 화면 키보드가 없습니다"),
+    ("Not used outside a Wayland desktop", "Wayland 데스크톱이 아니면 사용되지 않음"),
+    ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields; turn off to open it yourself.", "PC에서 텍스트 필드를 선택하면 화면 키보드가 열리고, 입력이 끝나면 닫힙니다. 텍스트 필드를 알려 주는 PC가 필요합니다. 직접 열려면 끄세요."),
 ];

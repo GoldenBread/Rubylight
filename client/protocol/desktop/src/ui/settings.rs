@@ -541,6 +541,7 @@ impl Launcher {
     /// The open section's rows, or every row the search finds.
     fn settings_rows(&mut self, ui: &mut Ui, view: &View<'_>, commands: &mut Vec<Command>) {
         let display = self.display;
+        let (screen_keyboard, wayland) = (self.screen_keyboard, self.wayland);
         let layered = self.screen != Screen::Settings;
         let searching = self.settings_view.searching();
         let open = self.settings_view.section;
@@ -828,6 +829,9 @@ impl Launcher {
             // Only a Wayland desktop's HDR description has the choice; Windows maps HDR itself.
             if cfg!(target_os = "linux") {
                 rows.when(s.hdr);
+                if !wayland {
+                    rows.note(tr("Not used outside a Wayland desktop").to_owned(), *TERTIARY);
+                }
                 setting_row(ui, s, &mut rows, &["hdr_desktop_brightness"], "HDR brightness follows the desktop", "HDR streams get brighter or dimmer with the desktop’s brightness setting. Leave it off to show them at the brightness the PC sends.", |ui, s| {
                     toggle(ui, &mut s.hdr_desktop_brightness)
                 });
@@ -1011,7 +1015,10 @@ impl Launcher {
                     button
                 });
             }
-            setting_row(ui, s, &mut rows, &["keyboard_follows_text_fields"], "Keyboard follows text fields", "Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields and does nothing on a computer without an on-screen keyboard; turn off to open it yourself.", |ui, s| {
+            if !screen_keyboard {
+                rows.note(tr("Not used: this computer has no on-screen keyboard").to_owned(), *TERTIARY);
+            }
+            setting_row(ui, s, &mut rows, &["keyboard_follows_text_fields"], "Keyboard follows text fields", "Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields; turn off to open it yourself.", |ui, s| {
                 toggle(ui, &mut s.keyboard_follows_text_fields)
             });
             setting_row(ui, s, &mut rows, &["clipboard_sync"], "Clipboard sync", "Copy text on this device and paste it on the PC, or the other way round, while streaming. Everything you copy as text is sent; the PC must offer clipboard sync.", |ui, s| {
@@ -1093,6 +1100,9 @@ impl Launcher {
                 });
             }
             rows.group(en("Touch & mouse"));
+            if s.mouse_mode != MouseMode::Capture {
+                unused_with(&mut rows, mouse_name(s.mouse_mode));
+            }
             setting_row(ui, s, &mut rows, &["mouse_speed"], "Mouse speed", "How fast the mouse moves the PC’s pointer in the Captured mouse mode.", |ui, s| slider(ui, &mut s.mouse_speed, 25..=400, 5.0, percent, |rail| rail, |field| field.suffix("%")));
             setting_row(ui, s, &mut rows, &["mouse_nav_buttons"], "Mouse back/forward buttons", "Sends the mouse’s Back and Forward buttons to the PC.", |ui, s| toggle(ui, &mut s.mouse_nav_buttons));
             setting_row(ui, s, &mut rows, &["native_touchpad"], "Touchpad gestures on the PC", "A physical touchpad’s fingers go to the PC, so its own gestures work there: two-finger scroll, three- and four-finger swipes. A PC that can’t take them gets the pointer as before.", |ui, s| toggle(ui, &mut s.native_touchpad));
@@ -1475,6 +1485,10 @@ impl Launcher {
                         })
                         .response
                 });
+                // Only a stream drawn straight to the display has planes (kms::renderer_for).
+                if s.display_output == crate::config::DisplayOutput::Desktop {
+                    unused_with(&mut rows, tr(s.display_output.label()));
+                }
                 setting_row(ui, s, &mut rows, &["video_planes"], "Video planes", "Draws the stream straight to the display, on a display plane of its own, with HDR and without a copy. Leave it on; off, the renderer draws the stream instead.", |ui, s| {
                     toggle(ui, &mut s.video_planes)
                 });
@@ -1550,14 +1564,23 @@ impl Launcher {
             rows.always();
             // Vulkan video is Linux's.
             if cfg!(target_os = "linux") {
+                if s.decoder == DecoderPreference::Software {
+                    unused_with(&mut rows, decoder_name(s.decoder));
+                }
                 setting_row(ui, s, &mut rows, &["vulkan_video_first"], "Vulkan video first", "Tries Vulkan video decoding before VAAPI. Leave it off: VAAPI avoids a copy too and recovers from a lost frame without a keyframe (a full new picture).", |ui, s| {
                     toggle(ui, &mut s.vulkan_video_first)
                 });
+                if s.decoder == DecoderPreference::Software {
+                    unused_with(&mut rows, decoder_name(s.decoder));
+                }
                 setting_row(ui, s, &mut rows, &["vulkan_rfi"], "Vulkan video recovery", "For comparing. With Vulkan video decoding, repairs a lost frame without waiting for a keyframe (a full new picture). Leave it off.", |ui, s| {
                     toggle(ui, &mut s.vulkan_rfi)
                 });
             }
             rows.group("");
+            if s.mouse_mode != MouseMode::Absolute {
+                unused_with(&mut rows, mouse_name(s.mouse_mode));
+            }
             setting_row(ui, s, &mut rows, &["cursor_shapes"], "Local cursor", "Draws the PC’s cursor here in Desktop pointer mode, without video delay.", |ui, s| {
                 toggle(ui, &mut s.cursor_shapes)
             });
@@ -1832,6 +1855,12 @@ fn window_name(mode: WindowMode) -> &'static str {
         WindowMode::Borderless => tr("Borderless"),
         WindowMode::Windowed => tr("Windowed"),
     }
+}
+
+/// A row that does nothing with another setting's value says so under its label, naming the value
+/// (client/AGENTS.md), as Android's "Not used with" tags do.
+fn unused_with(rows: &mut Rows, value: &str) {
+    rows.note(trf("Not used with {}", &[&value]), *TERTIARY);
 }
 
 fn mouse_name(mode: MouseMode) -> &'static str {

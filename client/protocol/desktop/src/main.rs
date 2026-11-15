@@ -707,6 +707,12 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     let mut launcher = Launcher::new(settings.clone(), profiles, store.shortcuts(), display);
     // The System theme's light or dark; SDL tells of a change (SDL_EVENT_SYSTEM_THEME_CHANGED).
     launcher.system_light = sdl::system_light();
+    // SAFETY: a query without arguments, on the main thread after SDL_Init.
+    launcher.screen_keyboard = unsafe { SDL_HasScreenKeyboardSupport() };
+    #[cfg(target_os = "linux")]
+    {
+        launcher.wayland = sdl::video_driver() == "wayland";
+    }
     launcher.recents = store.recents();
     launcher.pin = Some(if second_screen::this_process() {
         let hand_over = second_screen::follow_first(|| {

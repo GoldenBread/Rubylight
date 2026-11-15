@@ -1592,5 +1592,8 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("Any network", "Her ağ"),
     ("The stream moves to the new address when this device switches networks, instead of waiting for the old one; Any network also moves it onto mobile data or another metered network, which uses a lot of data. Leave it on Except mobile data; needs PC support.", "Bu cihaz ağ değiştirdiğinde yayın eskisini beklemek yerine yeni adrese geçer; “Her ağ” onu mobil veriye veya başka bir ölçülü ağa da geçirir, bu çok veri kullanır. “Mobil veri hariç” olarak bırakın; PC desteği gerekir."),
     ("Keyboard follows text fields", "Klavye metin alanlarını takip eder"),
-    ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields and does nothing on a computer without an on-screen keyboard; turn off to open it yourself.", "Bilgisayarda bir metin alanı seçtiğinizde ekran klavyesini açar, sonra kapatır. Metin alanlarını bildiren bir bilgisayar gerekir ve ekran klavyesi olmayan bir bilgisayarda hiçbir şey yapmaz; klavyeyi kendiniz açmak için kapatın."),
+    ("Not used with {}", "{} ile kullanılmıyor"),
+    ("Not used: this computer has no on-screen keyboard", "Kullanılmıyor: bu bilgisayarda ekran klavyesi yok"),
+    ("Not used outside a Wayland desktop", "Wayland masaüstü dışında kullanılmıyor"),
+    ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields; turn off to open it yourself.", "Bilgisayarda bir metin alanı seçtiğinizde ekran klavyesini açar, sonra kapatır. Metin alanlarını bildiren bir bilgisayar gerekir; klavyeyi kendiniz açmak için kapatın."),
 ];

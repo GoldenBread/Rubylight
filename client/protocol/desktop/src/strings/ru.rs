@@ -1592,5 +1592,8 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приёма: система �
     ("Any network", "Любая сеть"),
     ("The stream moves to the new address when this device switches networks, instead of waiting for the old one; Any network also moves it onto mobile data or another metered network, which uses a lot of data. Leave it on Except mobile data; needs PC support.", "Когда это устройство меняет сеть, трансляция переходит на новый адрес, а не ждёт прежнего; «Любая сеть» переводит её и на мобильные данные или другую лимитную сеть, что расходует много данных. Оставьте «Кроме мобильных данных»; нужна поддержка ПК."),
     ("Keyboard follows text fields", "Клавиатура следует за текстовыми полями"),
-    ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields and does nothing on a computer without an on-screen keyboard; turn off to open it yourself.", "Открывает экранную клавиатуру, когда вы выбираете текстовое поле на ПК, и закрывает её после. Нужен ПК, который сообщает о текстовых полях; на компьютере без экранной клавиатуры ничего не делает. Отключите, чтобы открывать её самостоятельно."),
+    ("Not used with {}", "Не используется с {}"),
+    ("Not used: this computer has no on-screen keyboard", "Не используется: у этого компьютера нет экранной клавиатуры"),
+    ("Not used outside a Wayland desktop", "Не используется вне рабочего стола Wayland"),
+    ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields; turn off to open it yourself.", "Открывает экранную клавиатуру, когда вы выбираете текстовое поле на ПК, и закрывает её после. Нужен ПК, который сообщает о текстовых полях; отключите, чтобы открывать её самостоятельно."),
 ];

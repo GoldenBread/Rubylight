@@ -1592,5 +1592,8 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer di ricezione: il sistema ha conces
     ("Any network", "Qualsiasi rete"),
     ("The stream moves to the new address when this device switches networks, instead of waiting for the old one; Any network also moves it onto mobile data or another metered network, which uses a lot of data. Leave it on Except mobile data; needs PC support.", "Lo stream passa al nuovo indirizzo quando questo dispositivo cambia rete, invece di aspettare il vecchio; «Qualsiasi rete» lo sposta anche sui dati mobili o su un’altra rete a consumo, che usa molti dati. Lascialo su «Tranne i dati mobili»; richiede un PC compatibile."),
     ("Keyboard follows text fields", "La tastiera segue i campi di testo"),
-    ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields and does nothing on a computer without an on-screen keyboard; turn off to open it yourself.", "Apre la tastiera su schermo quando selezioni un campo di testo sul PC e poi la chiude. Richiede un PC che segnali i campi di testo e non fa nulla su un computer senza tastiera su schermo; disattivalo per aprirla da te."),
+    ("Not used with {}", "Non usato con {}"),
+    ("Not used: this computer has no on-screen keyboard", "Non usato: questo computer non ha una tastiera su schermo"),
+    ("Not used outside a Wayland desktop", "Non usato fuori da un desktop Wayland"),
+    ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields; turn off to open it yourself.", "Apre la tastiera su schermo quando selezioni un campo di testo sul PC e poi la chiude. Richiede un PC che segnali i campi di testo; disattivalo per aprirla da te."),
 ];

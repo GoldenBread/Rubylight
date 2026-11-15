@@ -1592,5 +1592,8 @@ sudo sysctl -w net.core.rmem_max={}", "Bufor odbioru: system przydzielił {0} Ki
     ("Any network", "Dowolna sieć"),
     ("The stream moves to the new address when this device switches networks, instead of waiting for the old one; Any network also moves it onto mobile data or another metered network, which uses a lot of data. Leave it on Except mobile data; needs PC support.", "Gdy to urządzenie zmienia sieć, strumień przenosi się na nowy adres, zamiast czekać na stary; „Dowolna sieć” przenosi go też na dane komórkowe lub inną sieć z limitem, co zużywa dużo danych. Zostaw „Oprócz danych komórkowych”; wymaga obsługi przez komputer."),
     ("Keyboard follows text fields", "Klawiatura podąża za polami tekstowymi"),
-    ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields and does nothing on a computer without an on-screen keyboard; turn off to open it yourself.", "Otwiera klawiaturę ekranową, gdy wybierzesz pole tekstowe na komputerze PC, a potem ją zamyka. Wymaga komputera PC, który zgłasza pola tekstowe, i nic nie robi na komputerze bez klawiatury ekranowej; wyłącz, aby otwierać ją samodzielnie."),
+    ("Not used with {}", "Nie używane z {}"),
+    ("Not used: this computer has no on-screen keyboard", "Nie używane: ten komputer nie ma klawiatury ekranowej"),
+    ("Not used outside a Wayland desktop", "Nie używane poza pulpitem Wayland"),
+    ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields; turn off to open it yourself.", "Otwiera klawiaturę ekranową, gdy wybierzesz pole tekstowe na komputerze, a potem ją zamyka. Wymaga komputera, który zgłasza pola tekstowe; wyłącz, aby otwierać ją samodzielnie."),
 ];

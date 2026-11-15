@@ -1229,6 +1229,33 @@ fn keyboard_follows_text_fields_is_a_controls_setting_on_by_default() {
     assert!(ANDROID_KEYS.contains(&("keyboard_follows_text_fields", "checkbox_keyboard_follows_text_fields")));
 }
 
+/// A row that does nothing with another setting's value, or on this computer, says why under its
+/// label, as Android's tags do; it says nothing where it works.
+#[test]
+fn rows_that_do_nothing_here_say_why() {
+    use crate::config::MouseMode;
+    let mut f = settings_with(Settings { mouse_mode: MouseMode::Absolute, ..Settings::default() });
+    open_folds(&mut f);
+    in_section(&mut f, "Controls");
+    assert!(shows(&f, "Not used with Desktop pointer"), "Mouse speed: {:?}", f.drawn);
+    assert!(shows(&f, "Not used: this computer has no on-screen keyboard"), "{:?}", f.drawn);
+    f.l.screen_keyboard = true;
+    f.l.settings.mouse_mode = MouseMode::Capture;
+    f.settle();
+    assert!(!shows(&f, "Not used: this computer has no on-screen keyboard") && !shows(&f, "Not used with"), "{:?}", f.drawn);
+    // Local cursor draws in Desktop pointer mode only.
+    in_section(&mut f, "Debug");
+    assert!(shows(&f, "Not used with Captured"), "Local cursor: {:?}", f.drawn);
+    f.l.settings.mouse_mode = MouseMode::Absolute;
+    f.settle();
+    assert!(!shows(&f, "Not used with Captured"), "{:?}", f.drawn);
+    if cfg!(target_os = "linux") {
+        f.l.settings.decoder = DecoderPreference::Software;
+        f.settle();
+        assert!(shows(&f, "Not used with Software"), "Vulkan video rows: {:?}", f.drawn);
+    }
+}
+
 /// The rows that were two switches each are one choice, and a value saved by an earlier version
 /// reads as the stream used it: "Back opens the stream menu" won over "Back button as Guide",
 /// full screen only and mobile data counted only with their first switch on, and frame loss took

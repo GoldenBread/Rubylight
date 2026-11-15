@@ -530,6 +530,11 @@ pub struct Launcher {
     /// Whether the system asks for light apps (`sdl::system_light`), for the System theme: the main
     /// loop keeps it current.
     pub system_light: bool,
+    /// SDL can show an on-screen keyboard here (`SDL_HasScreenKeyboardSupport`), for Keyboard follows
+    /// text fields' note; the main loop sets it.
+    pub screen_keyboard: bool,
+    /// SDL runs on a Wayland desktop, for HDR brightness follows the desktop's note.
+    pub wayland: bool,
     /// The details page's remote access check.
     pub remote: crate::host_page::RemoteAccess,
     /// The details page's shared folder browser.
@@ -638,6 +643,8 @@ impl Launcher {
             system_languages: Vec::new(),
             look: None,
             system_light: false,
+            screen_keyboard: false,
+            wayland: false,
             remote: Default::default(),
             folders: Default::default(),
             coop: Default::default(),
