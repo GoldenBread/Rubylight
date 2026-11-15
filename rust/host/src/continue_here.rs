@@ -543,8 +543,10 @@ impl Host {
     /// from now on ([`crate::game_settings::hand_over`]), the files read and written after the
     /// app's lock.
     fn settings_follow(&self, device: &str, name: &str) {
+        // Only the game that moved: one started since by another launch has a swap of its own.
         let handle = locked(&self.current_app)
             .as_ref()
+            .filter(|app| app.owner == device)
             .and_then(crate::process::RunningApp::settings_handle);
         if let Some(handle) = handle {
             crate::game_settings::hand_over(&handle, device, name);
