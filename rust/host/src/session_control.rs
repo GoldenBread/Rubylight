@@ -486,6 +486,15 @@ impl Host {
         self.launch_cancellation()
             .is_some_and(|cancel| cancel.requested())
     }
+    /// The host stops: the launch in progress, whoever's, is told to stop as `stop_launch` does,
+    /// without waiting for it, so it never starts its game after the host closed the running app.
+    pub(crate) fn stop_launch_for_shutdown(&self) {
+        if let Some(cancel) = self.launch_cancellation()
+            && let Err(error) = cancel.cancel()
+        {
+            tracing::warn!(%error, "the launch in progress could not be stopped at shutdown");
+        }
+    }
     /// Stops the launch in progress when `device_may(its device)` allows it: its running
     /// preparation command is ended at once, the undo commands of those that finished still
     /// run, and the launch fails before it starts the game. Then waits, holding no lock, until

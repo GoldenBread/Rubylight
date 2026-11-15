@@ -626,6 +626,9 @@ async fn run(args: Args, assets: PathBuf) -> Result<()> {
         _=runtime::maintain(h.clone(), stop_signal, actions, ports.web)=>Ok(())
     };
     h.stop.store(true, Ordering::Release);
+    // A launch still running its preparation commands stops too, at once: the undo commands of
+    // those that finished run while the host shuts down, and it starts no game.
+    h.stop_launch_for_shutdown();
     // The service ends the host 20 s after it asked it to stop (`shutdown_host`). Every wait
     // below takes at most what is left of SHUTDOWN_WAITS, so the host finishes on its own.
     let shutdown_deadline = Instant::now() + SHUTDOWN_WAITS;

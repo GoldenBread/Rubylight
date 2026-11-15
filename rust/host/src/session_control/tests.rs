@@ -296,6 +296,23 @@ fn end_session_and_close_game_are_busy_while_the_launch_lock_is_held() {
 }
 
 #[test]
+fn a_host_stop_stops_any_launch_in_progress_without_waiting() {
+    let setup = Setup::new("");
+    let host = setup.host();
+    // No launch: nothing to stop.
+    host.stop_launch_for_shutdown();
+    let transition = host.launch_transition.lock().unwrap();
+    let started = host.launch_started("device");
+    assert!(!host.launch_stopped());
+    // Under the lock the launch holds: the stop does not wait for it.
+    host.stop_launch_for_shutdown();
+    assert!(host.launch_stopped());
+    drop(started);
+    drop(transition);
+    assert!(!host.launch_stopped());
+}
+
+#[test]
 fn a_quit_stops_only_its_own_device_s_launch_and_waits_just_for_it_to_let_go() {
     let setup = Setup::new("");
     let host = setup.host();
