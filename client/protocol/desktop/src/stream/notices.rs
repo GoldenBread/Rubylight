@@ -181,7 +181,11 @@ impl Streaming {
         *lock(&self.shared.controller_audio) = pads.pads.iter().filter_map(|p| p.audio.as_ref().map(|audio| Arc::downgrade(&audio.playback))).collect();
         self.controller_mouse_active = false;
         if self.settings.controllers && self.facts.role != AppRole::RemoteMonitor && !self.menu_visible && (self.focused || self.settings.background_controllers) {
-            self.session.input(|q| self.controller_mouse_active = pads.update_mouse(q));
+            // Only while a controller drives the mouse: a pad's mouse sends nothing otherwise, and
+            // each input lock wakes the control thread.
+            if pads.mouse_active() {
+                self.session.input(|q| self.controller_mouse_active = pads.update_mouse(q));
+            }
             // Only while a Guide press is pending: otherwise no input lock or control-thread wake per loop.
             if pads.guide_waiting() {
                 let now = Instant::now();
