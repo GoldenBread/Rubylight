@@ -550,6 +550,46 @@ fn an_unresolved_rollback_cannot_be_overwritten_by_another_update() -> Result<()
     Ok(())
 }
 #[test]
+fn the_failed_update_warning_goes_once_that_release_is_installed() -> Result<()> {
+    let f = Fixture::new();
+    let path = f.directory.join("update-result.json");
+    let shown = |warnings: &butterpollo_core::session::Warnings| {
+        warnings
+            .snapshot()
+            .into_iter()
+            .any(|warning| warning.code == UPDATE_FAILED)
+    };
+    // A release newer than this host failed: the warning stays, also across a restart.
+    raise_failed_install(&f.host, "v999.0.0", "boom");
+    butterpollo_core::state::write_json(
+        &path,
+        &json!({"version":"999.0.0","phase":"rolled_back","error":"boom"}),
+    )?;
+    withdraw_installed_warning(&f.host);
+    assert!(shown(&f.host.warnings));
+    let restarted = butterpollo_core::session::Warnings::default();
+    crate::host_warnings::restore(&f.directory, &restarted);
+    assert!(shown(&restarted));
+    // Installed from Updates afterwards: gone now and at the next start.
+    butterpollo_core::state::write_json(
+        &path,
+        &json!({"version":"999.0.0","phase":"installed","error":null}),
+    )?;
+    withdraw_installed_warning(&f.host);
+    assert!(!shown(&f.host.warnings));
+    let restarted = butterpollo_core::session::Warnings::default();
+    crate::host_warnings::restore(&f.directory, &restarted);
+    assert!(!shown(&restarted));
+    assert!(f.host.aliases.lock().unwrap()["root"][FAILED_VERSION].is_null());
+    // This host already runs a release at least as new: gone without any record.
+    std::fs::remove_file(&path)?;
+    raise_failed_install(&f.host, "v0.0.1", "boom");
+    assert!(shown(&f.host.warnings));
+    withdraw_installed_warning(&f.host);
+    assert!(!shown(&f.host.warnings));
+    Ok(())
+}
+#[test]
 fn a_failed_automatic_install_warns_once_also_after_setup_restarted_the_host() -> Result<()> {
     let f = Fixture::new();
     let path = f.directory.join("update-result.json");

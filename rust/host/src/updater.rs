@@ -288,18 +288,26 @@ const AUTOMATIC_ATTEMPT: &str = "automatic_update_attempt";
 /// The host warning for an automatic update that could not be installed.
 pub const UPDATE_FAILED: &str = "update_failed";
 
+/// The state file's entry naming the release [`UPDATE_FAILED`] reports, until that release or
+/// a later one is installed.
+const FAILED_VERSION: &str = "failed_update_version";
+
 /// Names the release an automatic install starts, or forgets it (`None`).
 fn remember_attempt(h: &Shared, version: Option<&str>) {
+    remember(h, AUTOMATIC_ATTEMPT, version);
+}
+/// Sets the state file's entry `key` to `version`, or removes it (`None`).
+fn remember(h: &Shared, key: &str, version: Option<&str>) {
     let mut aliases = h.aliases.lock().unwrap();
     let mut next = aliases.clone();
     if !next["root"].is_object() {
         next["root"] = json!({});
     }
     match version {
-        Some(version) => next["root"][AUTOMATIC_ATTEMPT] = json!(version),
+        Some(version) => next["root"][key] = json!(version),
         None => {
             if let Some(root) = next["root"].as_object_mut() {
-                root.remove(AUTOMATIC_ATTEMPT);
+                root.remove(key);
             }
         }
     }
@@ -349,12 +357,39 @@ fn report_failed_install(h: &Shared, error: Option<String>) {
     };
     remember_attempt(h, None);
     if let Some(reason) = reason {
-        crate::host_warnings::notice(
-            &h.directory,
-            &h.warnings,
-            UPDATE_FAILED,
-            &failed_install_warning(&version, &reason),
-        );
+        raise_failed_install(h, &version, &reason);
+    }
+}
+/// Raises [`UPDATE_FAILED`] for `version`, saved until it is dismissed or that release (or a
+/// later one) is installed ([`withdraw_installed_warning`]).
+fn raise_failed_install(h: &Shared, version: &str, reason: &str) {
+    remember(h, FAILED_VERSION, Some(version));
+    crate::host_warnings::notice(
+        &h.directory,
+        &h.warnings,
+        UPDATE_FAILED,
+        &failed_install_warning(version, reason),
+    );
+}
+/// Takes [`UPDATE_FAILED`] back once the release it names is installed after all: this host
+/// runs it or a later one, or setup's record says a release at least as new was installed.
+fn withdraw_installed_warning(h: &Shared) {
+    let Some(failed) = h.aliases.lock().unwrap()["root"][FAILED_VERSION]
+        .as_str()
+        .map(str::to_owned)
+    else {
+        return;
+    };
+    let record =
+        butterpollo_core::state::load_json(&h.directory.join("update-result.json"), Value::Null)
+            .unwrap_or(Value::Null);
+    let installed = record["phase"] == "installed"
+        && record["version"]
+            .as_str()
+            .is_some_and(|version| !newer(&failed, version));
+    if installed || !newer(&failed, env!("CARGO_PKG_VERSION")) {
+        crate::host_warnings::withdraw(&h.directory, &h.warnings, UPDATE_FAILED);
+        remember(h, FAILED_VERSION, None);
     }
 }
 /// What the console says of an automatic update that failed, and what to do.
@@ -517,6 +552,7 @@ pub fn poll(h: &Shared) {
     let now = now();
     if NEXT_REPORT.load(Ordering::Relaxed) <= now {
         NEXT_REPORT.store(now + 30, Ordering::Relaxed);
+        withdraw_installed_warning(h);
         report_failed_install(h, None);
     }
     poll_with(h, None, &hash_installer)
@@ -638,10 +674,12 @@ fn poll_with(h: &Shared, hashed: Option<Hashed>, hash: &dyn Fn(&std::path::Path)
                 && state["automatic"] == true
                 && let Some(version) = state["attempted_version"].as_str()
             {
-                let warning =
-                    failed_install_warning(version, state["error"].as_str().unwrap_or_default());
+                let (version, reason) = (
+                    version.to_owned(),
+                    state["error"].as_str().unwrap_or_default().to_owned(),
+                );
                 drop(state);
-                crate::host_warnings::notice(&h.directory, &h.warnings, UPDATE_FAILED, &warning);
+                raise_failed_install(&h, &version, &reason);
             }
         });
     } else {

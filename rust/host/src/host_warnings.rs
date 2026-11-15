@@ -97,6 +97,23 @@ pub fn dismiss(directory: &Path, warnings: &Warnings, code: &str) -> Result<()> 
     butterpollo_core::state::write_json(&directory.join(FILE), &saved)
 }
 
+/// Takes back the notice `code` once what it reported is over: it is cleared, and neither
+/// comes back at the next start nor stays remembered as dismissed.
+pub fn withdraw(directory: &Path, warnings: &Warnings, code: &str) {
+    warnings.clear(code);
+    let _file = FILE_LOCK.lock().unwrap();
+    let saved = load(directory).and_then(|mut saved| {
+        let notice = saved.notices.remove(code).is_some();
+        if !notice && saved.dismissed.remove(code).is_none() {
+            return Ok(());
+        }
+        butterpollo_core::state::write_json(&directory.join(FILE), &saved)
+    });
+    if let Err(error) = saved {
+        tracing::warn!(code, error = %format!("{error:#}"), "the host warning could not be taken back; it may show again at the next start");
+    }
+}
+
 /// The warning for the Windows Firewall problems the host found, if any.
 pub fn firewall(problems: &[String]) -> Option<String> {
     // Rules that share a name read the same: say each once.
