@@ -20,6 +20,20 @@ fn open_folds(f: &mut Frames) {
     f.settle();
 }
 
+/// An open section's rows stay in the card under its main rows, and the fold row is its last line:
+/// "Fewer … settings" sits under every row it opened.
+#[test]
+fn an_open_sections_fold_row_is_its_last_line() {
+    let mut f = settings_with(Settings::default());
+    open_folds(&mut f);
+    let words = fold_words(&f).expect("Video has a fold");
+    assert!(words.starts_with("Fewer "), "{words}");
+    let fold = f.placed.iter().find(|(t, ..)| *t == words).map(|p| p.1).unwrap();
+    let below: Vec<&String> = f.placed.iter().filter(|(t, r, _)| *t != words && (r.left() - fold.left()).abs() < 30.0 && r.top() > fold.bottom()).map(|p| &p.0).collect();
+    assert!(below.is_empty(), "nothing of the section under its fold row: {below:?}");
+    assert!(f.l.settings_view.drawn.iter().any(|(_, folded)| *folded), "the opened rows are drawn");
+}
+
 /// The open section's fold row as the last frame wrote it, if it has one.
 fn fold_words(f: &Frames) -> Option<String> {
     f.drawn.iter().find(|t| (t.starts_with("More ") || t.starts_with("Fewer ")) && t.contains(" settings")).cloned()

@@ -576,6 +576,7 @@ impl Launcher {
             past_fold: false,
             folded: 0,
             fold: None,
+            fold_at: None,
             toggled: None,
             focus_first,
             reset_drawn: Vec::new(),
@@ -633,7 +634,7 @@ impl Launcher {
             };
             let gpu_decoder_error = if s.codec.is_pyrowave() { gpu_probe(ui) } else { None };
 
-            rows.section(en("Video"));
+            rows.section(ui, en("Video"));
             let native = trf("Native ({}x{})", &[&display.width, &display.height]);
             let custom_size = s.width != 0 && (*custom_size_on == Some(screen) || !RESOLUTIONS.contains(&(s.width, s.height)));
             let current = if s.width == 0 {
@@ -853,7 +854,7 @@ impl Launcher {
             });
             rows.always();
 
-            rows.section(en("Display & image"));
+            rows.section(ui, en("Display & image"));
             setting_row(ui, s, &mut rows, &["window_mode"], "Window", "Fullscreen switches the display to the stream’s resolution and refresh rate where it can; Borderless covers the display without changing it; Windowed is an ordinary window.", |ui, s| {
                 Combo::from_id_salt("window")
                     .selected_text(window_name(s.window_mode))
@@ -1004,7 +1005,7 @@ impl Launcher {
             });
             rows.always();
 
-            rows.section(en("Controls"));
+            rows.section(ui, en("Controls"));
             setting_row(ui, s, &mut rows, &["mouse_mode"], "Mouse mode", "Captured keeps the pointer in the stream and sends relative movement, which games with mouse look need. Desktop pointer moves like an ordinary mouse, for desktop work.", |ui, s| {
                 Combo::from_id_salt("mouse")
                     .selected_text(mouse_name(s.mouse_mode))
@@ -1169,7 +1170,7 @@ impl Launcher {
                 toggle(ui, &mut s.usb_forwarding)
             });
 
-            rows.section(en("Audio"));
+            rows.section(ui, en("Audio"));
             setting_row(ui, s, &mut rows, &["audio"], "Channels", "Stereo, or 5.1, 7.1 or 7.1.4 surround. Use Stereo for headphones or two speakers; pick surround only if your speakers and the PC are set up for it.", |ui, s| {
                 Combo::from_id_salt("audio")
                     .selected_text(audio_name(s.audio))
@@ -1213,7 +1214,7 @@ impl Launcher {
                 toggle(ui, &mut s.audio_passthrough)
             });
 
-            rows.section(en("Streaming"));
+            rows.section(ui, en("Streaming"));
             setting_row(ui, s, &mut rows, &["overlay", "overlay_mode"], "Performance overlay", "Shows how the stream is doing. Compact is one line with FPS, network round trip and frame loss; Statistics and Debug add detail for troubleshooting.", |ui, s| {
                 let shown = if s.overlay { tr(s.overlay_mode.label()) } else { tr("Off") };
                 Combo::from_id_salt("overlay-mode").selected_text(shown).show_ui(ui, |ui| {
@@ -1319,7 +1320,7 @@ impl Launcher {
             }
 
             if !layered {
-                rows.section(en("App"));
+                rows.section(ui, en("App"));
                 setting_row(ui, s, &mut rows, &["theme"], "Theme", "System follows the system’s light or dark setting; OLED black uses pure black surfaces.", |ui, s| {
                     Combo::from_id_salt("theme").selected_text(tr(s.theme.label())).show_ui(ui, |ui| {
                         for theme in crate::config::Theme::ALL {
@@ -1468,7 +1469,7 @@ impl Launcher {
                 });
             }
 
-            rows.section(en("Advanced"));
+            rows.section(ui, en("Advanced"));
             // Windows PCs with two GPUs, for the whole app, not a PC or a profile.
             #[cfg(windows)]
             if let Some(gpus) = crate::gpu_adapters::gpus().filter(|_| !layered) {
@@ -1537,7 +1538,7 @@ impl Launcher {
                     }
                 }).response
             });
-            rows.section(en("Debug"));
+            rows.section(ui, en("Debug"));
             // Android's main rows first, in its order.
             setting_row(ui, s, &mut rows, &["error_correction"], "Error correction", "FEC: extra data the PC adds to repair lost packets, taken from the picture’s bitrate. Leave it on PC’s setting; try Automatic if the picture breaks up often.", |ui, s| {
                 Combo::from_id_salt("error-correction")
@@ -1672,7 +1673,7 @@ impl Launcher {
                     button
                 });
             }
-            rows.finish();
+            rows.finish(ui);
 
             if searching && rows.found.iter().sum::<usize>() == 0 {
                 clear_search = no_results(ui, self.settings_view.query.trim());
@@ -2567,6 +2568,9 @@ pub(super) struct Rows<'a> {
     past_fold: bool,
     /// The open section's fold row, waiting for its count at the section's end.
     fold: Option<FoldRow>,
+    /// The open section has rows behind its fold: the fold row comes at the section's end, the
+    /// last line of its card, under the rows it opens.
+    fold_at: Option<usize>,
     /// The section whose fold row was clicked.
     toggled: Option<usize>,
     /// The first row drawn takes focus (a new page).
@@ -2602,8 +2606,8 @@ impl Rows<'_> {
     }
 
     /// Starts `title`'s rows.
-    fn section(&mut self, title: &'static str) {
-        self.finish();
+    fn section(&mut self, ui: &mut Ui, title: &'static str) {
+        self.finish(ui);
         (self.section, self.group) = (title, "");
         self.heading = self.searching().then_some((true, title));
         (self.mains, self.folded, self.past_fold) = (0, 0, false);
@@ -2662,11 +2666,8 @@ impl Rows<'_> {
         if folded { self.folded += 1 } else { self.mains += 1 }
         let browsing = !self.searching() && self.section == self.open;
         if behind && !self.past_fold && browsing {
-            self.fold_row(ui, at);
-            // The rows it opens start a group of their own, apart from the fold.
-            if self.heading.is_none() {
-                self.heading = Some((false, ""));
-            }
+            // The rows it opens follow the main rows in the same card; the fold row ends it.
+            self.fold_at = Some(at);
         }
         self.past_fold |= folded;
         let visible = if self.searching() {
@@ -2695,8 +2696,8 @@ impl Rows<'_> {
         true
     }
 
-    /// The fold over the section's other rows, last in its first group: "More … settings (n)",
-    /// or "Fewer … settings" while open. Its words wait for the count (`finish`).
+    /// The fold over the section's other rows, the last line of the section: "More … settings
+    /// (n)", or "Fewer … settings" under the rows while open. Its words wait for the count (`finish`).
     fn fold_row(&mut self, ui: &mut Ui, at: usize) {
         let open = self.more[at];
         let rect = group_row(ui, |ui| {
@@ -2721,8 +2722,11 @@ impl Rows<'_> {
         self.fold = Some(FoldRow { painter, words, rect, response, open });
     }
 
-    /// Ends the section: its fold row says how many rows it holds.
-    fn finish(&mut self) {
+    /// Ends the section: its fold row, last, says how many rows it holds.
+    fn finish(&mut self, ui: &mut Ui) {
+        if let Some(at) = self.fold_at.take() {
+            self.fold_row(ui, at);
+        }
         let Some(fold) = self.fold.take() else { return };
         let name = tr(self.section);
         let words = if fold.open { trf("Fewer {} settings", &[&name]) } else { trf("More {} settings ({})", &[&name, &self.folded]) };
