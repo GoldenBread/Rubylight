@@ -24,15 +24,25 @@ public final class PyroWaveBandwidthTest {
     private final Activity activity;
     private final ComputerDetails computer;
     private final String uniqueId;
+    private final int bitrateKbps;
     private volatile boolean cancelled;
     private volatile NvHTTP http;
     private AlertDialog dialog;
     private Thread worker;
 
-    public PyroWaveBandwidthTest(Activity activity, ComputerDetails computer, String uniqueId) {
+    /** Loss above this many percent shows as stutter. */
+    static final double LOSS_STUTTERS = 1.0;
+    /** Jitter above this many milliseconds shows as uneven frames. */
+    static final double JITTER_STUTTERS = 10.0;
+    /** The measured speed should carry the stream's bitrate this many times over. */
+    static final double SPEED_HEADROOM = 1.5;
+
+    /** {@code bitrateKbps} is the stream's bitrate, which the verdict weighs a measured speed by. */
+    public PyroWaveBandwidthTest(Activity activity, ComputerDetails computer, String uniqueId, int bitrateKbps) {
         this.activity = activity;
         this.computer = new ComputerDetails(computer);
         this.uniqueId = uniqueId;
+        this.bitrateKbps = bitrateKbps;
     }
 
     public void show() {
@@ -64,6 +74,7 @@ public final class PyroWaveBandwidthTest {
             // The second line of the result: the speed, or why it was not measured. Hosts that can
             // never measure speed get no second line.
             String speed = null;
+            double measuredMbps = Double.NaN;
             try {
                 http = new NvHTTP(ServerHelper.getCurrentAddressFromComputer(computer), computer.httpsPort,
                         uniqueId, computer.serverCert, PlatformBinding.getCryptoProvider(activity.getApplicationContext()));
@@ -98,6 +109,7 @@ public final class PyroWaveBandwidthTest {
                             }
                         }));
                         speed = speedText(activity, mbps, current.pyroWaveHostLinkMbps);
+                        measuredMbps = mbps;
                     } else if (current.caps.family() == HostCapabilities.Family.SUNSHINE) {
                         // Foundation Sunshine's own test, as Moonlight V+ runs it. Other Sunshine PCs
                         // (stock, Apollo, Vibepollo) have none: they get the delay test alone.
@@ -110,6 +122,7 @@ public final class PyroWaveBandwidthTest {
                                     }
                                 }));
                                 speed = speedText(activity, mbps, 0);
+                                measuredMbps = mbps;
                             } catch (java.io.FileNotFoundException e) {
                                 speed = activity.getString(R.string.connection_test_speed_unsupported);
                             }
@@ -125,7 +138,10 @@ public final class PyroWaveBandwidthTest {
                 speed = measuresSpeed() ? activity.getString(R.string.connection_test_failed) : null;
             }
             com.limelight.LimeLog.info("Connection test finished");
-            final String message = result(activity, stats, speed);
+            final String numbers = result(activity, stats, speed);
+            final int[] verdict = verdict(stats, measuredMbps, bitrateKbps);
+            final String message = verdict[1] == 0 ? activity.getString(verdict[0])
+                    : activity.getString(verdict[0]) + "\n" + activity.getString(verdict[1]);
             activity.runOnUiThread(() -> {
                 if (cancelled || activity.isFinishing() || activity.isDestroyed()) {
                     return;
@@ -134,6 +150,7 @@ public final class PyroWaveBandwidthTest {
                 dialog = new NavigationDialogBuilder(activity)
                         .setTitle(R.string.connection_test_title)
                         .setMessage(message)
+                        .setView(details(numbers))
                         .setPositiveButton(android.R.string.ok, null)
                         .setNeutralButton(R.string.pair_try_again, (d, which) -> start()).create();
                 dialog.show();
@@ -156,6 +173,49 @@ public final class PyroWaveBandwidthTest {
         boolean found = http.supportsFoundationBandwidthTest();
         if (uuid != null) FOUNDATION_TEST.put(uuid, found);
         return found;
+    }
+
+    /** Details, which shows or hides the measured numbers under the verdict. */
+    private android.view.View details(String numbers) {
+        int padding = Math.round(24 * activity.getResources().getDisplayMetrics().density);
+        android.widget.LinearLayout column = new android.widget.LinearLayout(activity);
+        column.setOrientation(android.widget.LinearLayout.VERTICAL);
+        column.setPadding(padding, 0, padding, 0);
+        android.widget.Button toggle = new android.widget.Button(activity, null, android.R.attr.borderlessButtonStyle);
+        toggle.setText(R.string.title_details);
+        android.widget.TextView text = new android.widget.TextView(activity);
+        androidx.core.widget.TextViewCompat.setTextAppearance(text, R.style.TextAppearance_Nightjar_Caption);
+        text.setText(numbers);
+        text.setVisibility(android.view.View.GONE);
+        toggle.setOnClickListener(v -> text.setVisibility(text.getVisibility() == android.view.View.VISIBLE
+                ? android.view.View.GONE : android.view.View.VISIBLE));
+        column.addView(toggle, new android.widget.LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT));
+        column.addView(text);
+        return column;
+    }
+
+    /**
+     * What the test means for streaming, as desktop's {@code Connection::verdict}: the verdict's string and its next
+     * step (0 for none). Can't connect, then stutter from loss, jitter or a speed short of {@code bitrateKbps}
+     * ({@code speedMbps} NaN when the speed was not measured), else good.
+     */
+    static int[] verdict(ConnectionTestStats stats, double speedMbps, int bitrateKbps) {
+        double loss = stats.lossPercent();
+        if (!Double.isFinite(stats.latencyMs()) || (Double.isFinite(loss) && loss >= 100.0)) {
+            return new int[] {R.string.connection_test_cant_connect, R.string.connection_test_cant_connect_step};
+        }
+        if (Double.isFinite(loss) && loss > LOSS_STUTTERS) {
+            return new int[] {R.string.connection_test_stutters, R.string.connection_test_step_loss};
+        }
+        double jitter = stats.jitterMs();
+        if (Double.isFinite(jitter) && jitter > JITTER_STUTTERS) {
+            return new int[] {R.string.connection_test_stutters, R.string.connection_test_step_jitter};
+        }
+        if (Double.isFinite(speedMbps) && speedMbps * 1000.0 < bitrateKbps * SPEED_HEADROOM) {
+            return new int[] {R.string.connection_test_stutters, R.string.connection_test_step_speed};
+        }
+        return new int[] {R.string.connection_test_good, 0};
     }
 
     /** "Ping 63 ms · Jitter 41 ms · Loss 0.0%", then the speed line when there is one. */

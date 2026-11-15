@@ -42,6 +42,25 @@ public class ConnectionTestResultTest {
                 PyroWaveBandwidthTest.result(app, samples(Double.NaN), null));
     }
 
+    @Test public void verdictSaysWhatTheNumbersMeanWithOneNextStep() {
+        int bitrate = 20_000;
+        assertArrayEquals(new int[] {R.string.connection_test_cant_connect, R.string.connection_test_cant_connect_step},
+                PyroWaveBandwidthTest.verdict(samples(Double.NaN, Double.NaN), Double.NaN, bitrate));
+        // 1 lost in 10 is 10 % loss.
+        assertArrayEquals(new int[] {R.string.connection_test_stutters, R.string.connection_test_step_loss},
+                PyroWaveBandwidthTest.verdict(samples(5, 5, 5, 5, 5, 5, 5, 5, 5, Double.NaN), Double.NaN, bitrate));
+        assertArrayEquals(new int[] {R.string.connection_test_stutters, R.string.connection_test_step_jitter},
+                PyroWaveBandwidthTest.verdict(samples(5, 40, 5, 40), Double.NaN, bitrate));
+        // 25 Mbps is short of 1.5 times a 20 Mbps stream; 31 Mbps carries it.
+        assertArrayEquals(new int[] {R.string.connection_test_stutters, R.string.connection_test_step_speed},
+                PyroWaveBandwidthTest.verdict(samples(5, 6, 5), 25, bitrate));
+        assertArrayEquals(new int[] {R.string.connection_test_good, 0},
+                PyroWaveBandwidthTest.verdict(samples(5, 6, 5), 31, bitrate));
+        // A PC without a speed test is judged by its delay alone.
+        assertArrayEquals(new int[] {R.string.connection_test_good, 0},
+                PyroWaveBandwidthTest.verdict(samples(5, 6, 5), Double.NaN, bitrate));
+    }
+
     @Test public void speedFollowsOnItsOwnLineOrSaysWhyItIsMissing() {
         Locale.setDefault(Locale.US);
         Application app = RuntimeEnvironment.getApplication();

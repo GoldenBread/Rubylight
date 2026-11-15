@@ -476,7 +476,7 @@ public class HostStreamSettings extends NightjarActivity {
         if (connectionTest != null) {
             connectionTest.cancel();
         }
-        connectionTest = new PyroWaveBandwidthTest(this, computer, new IdentityManager(this).getUniqueId());
+        connectionTest = new PyroWaveBandwidthTest(this, computer, new IdentityManager(this).getUniqueId(), effective().bitrate);
         connectionTest.show();
     }
 
