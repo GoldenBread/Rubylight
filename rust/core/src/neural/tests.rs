@@ -800,6 +800,20 @@ fn shown_text_names_no_mod() {
         );
     }
     assert_eq!(shown("the game uses BattlEye"), "the game uses BattlEye");
+    // A folder taken over with its name in another case, and text around
+    // it that is not ASCII: the name is hidden all the same.
+    let lower = PROVIDER.to_ascii_lowercase();
+    let upper = PROVIDER.to_ascii_uppercase();
+    assert_eq!(
+        shown(&format!(
+            "OptiScaler/custom/{lower}/dlssg/notes.txt, OptiScaler/custom/{upper}/dlssg ändern"
+        )),
+        "frame generation's notes.txt, frame generation's dlssg ändern"
+    );
+    assert_eq!(
+        shown(&format!("Spiel\u{a0}custom/{lower} läuft")),
+        "Spiel\u{a0}frame generation's folder läuft"
+    );
 }
 
 #[test]

@@ -664,11 +664,15 @@ pub fn logs(name: &str) -> bool {
 
 /// `text` as a console or a client may show it: a path through the
 /// provider's folder, whose name is the mod's, becomes its file's name with
-/// "frame generation's" before it (the log keeps the whole path).
+/// "frame generation's" before it (the log keeps the whole path). The name
+/// is found whatever its case, as Windows names folders: a leftover folder
+/// taken over keeps the case it has on disk.
 pub fn shown(text: &str) -> String {
     let mut out = String::new();
     let mut rest = text;
-    while let Some(at) = rest.find(PROVIDER) {
+    let provider = PROVIDER.to_ascii_lowercase();
+    // ASCII lower case keeps every byte where it was, so `at` holds in `rest`.
+    while let Some(at) = rest.to_ascii_lowercase().find(&provider) {
         let stop = |c: char| c.is_whitespace() || "\"'(),;".contains(c);
         // After the stop character, however many bytes it takes (U+3000, U+00A0).
         let start = rest[..at]
