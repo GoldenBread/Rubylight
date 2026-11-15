@@ -59,4 +59,5 @@
     <string name="files_partial_left">Nie udało się usunąć niedokończonego pobierania: %1$s nadal jest tam, gdzie go zapisano, i nie jest kompletnym plikiem. Usuń go stamtąd.</string>
     <string name="files_running">Trwające transfery plików: %1$d</string>
     <string name="files_busy_other_pc">Pliki są nadal przesyłane z innym komputerem. Poczekaj na nie albo anuluj je na stronie Pliki tamtego komputera, a potem spróbuj ponownie.</string>
+    <string name="files_failed">Nieudane transfery plików: %1$d</string>
 </resources>

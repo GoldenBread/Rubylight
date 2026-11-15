@@ -1624,4 +1624,5 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("The video decoder stopped working: no picture for {} s.", "비디오 디코더가 작동을 멈췄습니다: {}초 동안 화면이 없습니다."),
     ("Sharper colored text needs a hardware decoder. Choose one under Decoder in Settings, or turn off Sharper colored text, then start the stream again.", "‘더 선명한 컬러 텍스트’에는 하드웨어 디코더가 필요합니다. ‘설정’의 ‘디코더’에서 선택하거나 ‘더 선명한 컬러 텍스트’를 끈 다음 스트림을 다시 시작하세요."),
     ("This stream’s picture cannot be shown with any decoder on this device. Choose another Video codec or Decoder in Settings, then start the stream again.", "이 기기의 어떤 디코더로도 이 스트림의 화면을 표시할 수 없습니다. ‘설정’에서 다른 ‘비디오 코덱’이나 ‘디코더’를 선택한 다음 스트림을 다시 시작하세요."),
+    ("File transfers failed: {}", "실패한 파일 전송: {}"),
 ];

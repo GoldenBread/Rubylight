@@ -1624,4 +1624,5 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("The video decoder stopped working: no picture for {} s.", "映像デコーダーが停止しました：{} 秒間映像がありません。"),
     ("Sharper colored text needs a hardware decoder. Choose one under Decoder in Settings, or turn off Sharper colored text, then start the stream again.", "「色付きテキストをより鮮明に」にはハードウェアデコーダーが必要です。「設定」の「デコーダー」で選ぶか、「色付きテキストをより鮮明に」をオフにして、ストリームを開始し直してください。"),
     ("This stream’s picture cannot be shown with any decoder on this device. Choose another Video codec or Decoder in Settings, then start the stream again.", "このデバイスのどのデコーダーでも、このストリームの映像を表示できません。「設定」で別の「映像コーデック」または「デコーダー」を選び、ストリームを開始し直してください。"),
+    ("File transfers failed: {}", "失敗したファイル転送：{}"),
 ];

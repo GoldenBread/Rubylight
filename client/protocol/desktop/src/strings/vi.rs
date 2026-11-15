@@ -1624,4 +1624,5 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("The video decoder stopped working: no picture for {} s.", "Bộ giải mã video đã ngừng hoạt động: không có hình trong {} giây."),
     ("Sharper colored text needs a hardware decoder. Choose one under Decoder in Settings, or turn off Sharper colored text, then start the stream again.", "“Chữ màu sắc nét hơn” cần bộ giải mã phần cứng. Hãy chọn một bộ trong mục “Bộ giải mã” của Cài đặt, hoặc tắt “Chữ màu sắc nét hơn”, rồi bắt đầu lại stream."),
     ("This stream’s picture cannot be shown with any decoder on this device. Choose another Video codec or Decoder in Settings, then start the stream again.", "Không bộ giải mã nào trên thiết bị này hiển thị được hình ảnh của stream này. Hãy chọn “Codec video” hoặc “Bộ giải mã” khác trong Cài đặt, rồi bắt đầu lại stream."),
+    ("File transfers failed: {}", "Truyền tệp thất bại: {}"),
 ];

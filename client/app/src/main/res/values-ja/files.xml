@@ -56,4 +56,5 @@
     <string name="files_partial_left">未完了のダウンロードを削除できませんでした: %1$s は保存した場所に残っており、完全なファイルではありません。そこで削除してください。</string>
     <string name="files_running">実行中のファイル転送：%1$d</string>
     <string name="files_busy_other_pc">別の PC とのファイル転送がまだ続いています。完了を待つか、その PC の「ファイル」ページでキャンセルしてから、もう一度お試しください。</string>
+    <string name="files_failed">失敗したファイル転送：%1$d</string>
 </resources>

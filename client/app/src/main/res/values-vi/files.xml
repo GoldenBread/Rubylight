@@ -56,4 +56,5 @@
     <string name="files_partial_left">Không thể xóa một bản tải xuống chưa xong: %1$s vẫn nằm ở nơi bạn đã lưu và không phải là tệp hoàn chỉnh. Hãy xóa nó ở đó.</string>
     <string name="files_running">Đang truyền tệp: %1$d</string>
     <string name="files_busy_other_pc">Tệp vẫn đang được truyền với một PC khác. Hãy chờ xong, hoặc hủy chúng trong trang Tệp của PC đó, rồi thử lại.</string>
+    <string name="files_failed">Truyền tệp thất bại: %1$d</string>
 </resources>

@@ -56,4 +56,5 @@
     <string name="files_partial_left">無法刪除未完成的下載：%1$s 仍在你儲存的位置，且不是完整的檔案。請在那裡刪除它。</string>
     <string name="files_running">進行中的檔案傳輸：%1$d</string>
     <string name="files_busy_other_pc">仍在與另一台電腦傳輸檔案。請等待傳輸完成，或在那台電腦的「檔案」頁面中取消，然後重試。</string>
+    <string name="files_failed">失敗的檔案傳輸：%1$d</string>
 </resources>

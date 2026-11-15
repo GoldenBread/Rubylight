@@ -1624,4 +1624,5 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приёма: система �
     ("The video decoder stopped working: no picture for {} s.", "Видеодекодер перестал работать: нет изображения {} с."),
     ("Sharper colored text needs a hardware decoder. Choose one under Decoder in Settings, or turn off Sharper colored text, then start the stream again.", "Функции «Более чёткий цветной текст» нужен аппаратный декодер. Выберите его в пункте «Декодер» в «Настройках» или выключите «Более чёткий цветной текст», затем снова запустите трансляцию."),
     ("This stream’s picture cannot be shown with any decoder on this device. Choose another Video codec or Decoder in Settings, then start the stream again.", "Изображение этой трансляции не может показать ни один декодер на этом устройстве. Выберите другой «Видеокодек» или «Декодер» в «Настройках», затем снова запустите трансляцию."),
+    ("File transfers failed: {}", "Не удалось передать файлов: {}"),
 ];

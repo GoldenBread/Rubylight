@@ -57,4 +57,5 @@
     <string name="files_partial_left">Bitmemiş bir indirme silinemedi: %1$s hâlâ kaydettiğiniz yerde ve tam dosya değil. Onu orada silin.</string>
     <string name="files_running">Süren dosya aktarımları: %1$d</string>
     <string name="files_busy_other_pc">Dosyalar hâlâ başka bir bilgisayarla aktarılıyor. Bitmelerini bekleyin veya o bilgisayarın Dosyalar sayfasından iptal edin, ardından tekrar deneyin.</string>
+    <string name="files_failed">Başarısız dosya aktarımları: %1$d</string>
 </resources>

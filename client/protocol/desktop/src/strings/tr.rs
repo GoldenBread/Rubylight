@@ -1624,4 +1624,5 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("The video decoder stopped working: no picture for {} s.", "Video kod çözücü çalışmayı durdurdu: {} sn boyunca görüntü yok."),
     ("Sharper colored text needs a hardware decoder. Choose one under Decoder in Settings, or turn off Sharper colored text, then start the stream again.", "“Daha keskin renkli metin” için donanım kod çözücüsü gerekir. Ayarlar’daki “Kod çözücü” bölümünden birini seçin veya “Daha keskin renkli metin” seçeneğini kapatın, ardından yayını yeniden başlatın."),
     ("This stream’s picture cannot be shown with any decoder on this device. Choose another Video codec or Decoder in Settings, then start the stream again.", "Bu yayının görüntüsü bu cihazdaki hiçbir kod çözücüyle gösterilemiyor. Ayarlar’dan başka bir “Video kodeği” veya “Kod çözücü” seçin, ardından yayını yeniden başlatın."),
+    ("File transfers failed: {}", "Başarısız dosya aktarımları: {}"),
 ];

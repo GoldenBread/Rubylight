@@ -1624,4 +1624,5 @@ sudo sysctl -w net.core.rmem_max={}", "接收缓冲区：系统只分配了所�
     ("The video decoder stopped working: no picture for {} s.", "视频解码器停止工作：已 {} 秒没有画面。"),
     ("Sharper colored text needs a hardware decoder. Choose one under Decoder in Settings, or turn off Sharper colored text, then start the stream again.", "“更清晰的彩色文字”需要硬件解码器。请在“设置”的“解码器”中选择一个，或关闭“更清晰的彩色文字”，然后重新开始串流。"),
     ("This stream’s picture cannot be shown with any decoder on this device. Choose another Video codec or Decoder in Settings, then start the stream again.", "此设备上的任何解码器都无法显示此串流的画面。请在“设置”中选择其他“视频编解码器”或“解码器”，然后重新开始串流。"),
+    ("File transfers failed: {}", "失败的文件传输：{}"),
 ];

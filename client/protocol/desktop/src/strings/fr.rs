@@ -1624,4 +1624,5 @@ sudo sysctl -w net.core.rmem_max={}", "Tampon de réception : le système a acco
     ("The video decoder stopped working: no picture for {} s.", "Le décodeur vidéo a cessé de fonctionner : aucune image depuis {} s."),
     ("Sharper colored text needs a hardware decoder. Choose one under Decoder in Settings, or turn off Sharper colored text, then start the stream again.", "« Texte coloré plus net » nécessite un décodeur matériel. Choisissez-en un sous Décodeur dans Paramètres, ou désactivez « Texte coloré plus net », puis relancez le stream."),
     ("This stream’s picture cannot be shown with any decoder on this device. Choose another Video codec or Decoder in Settings, then start the stream again.", "Aucun décodeur de cet appareil ne peut afficher l’image de ce stream. Choisissez un autre Codec vidéo ou Décodeur dans Paramètres, puis relancez le stream."),
+    ("File transfers failed: {}", "Transferts de fichiers échoués : {}"),
 ];

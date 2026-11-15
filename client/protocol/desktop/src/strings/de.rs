@@ -1624,4 +1624,5 @@ sudo sysctl -w net.core.rmem_max={2}"),
     ("The video decoder stopped working: no picture for {} s.", "Der Videodecoder funktioniert nicht mehr: seit {} s kein Bild."),
     ("Sharper colored text needs a hardware decoder. Choose one under Decoder in Settings, or turn off Sharper colored text, then start the stream again.", "„Schärferer farbiger Text“ braucht einen Hardware-Decoder. Wähle in den Einstellungen unter Decoder einen aus oder schalte „Schärferer farbiger Text“ aus und starte den Stream dann neu."),
     ("This stream’s picture cannot be shown with any decoder on this device. Choose another Video codec or Decoder in Settings, then start the stream again.", "Das Bild dieses Streams kann mit keinem Decoder auf diesem Gerät angezeigt werden. Wähle in den Einstellungen einen anderen Videocodec oder Decoder und starte den Stream dann neu."),
+    ("File transfers failed: {}", "Fehlgeschlagene Dateiübertragungen: {}"),
 ];

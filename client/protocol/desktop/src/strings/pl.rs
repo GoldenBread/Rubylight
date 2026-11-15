@@ -1624,4 +1624,5 @@ sudo sysctl -w net.core.rmem_max={}", "Bufor odbioru: system przydzielił {0} Ki
     ("The video decoder stopped working: no picture for {} s.", "Dekoder wideo przestał działać: brak obrazu od {} s."),
     ("Sharper colored text needs a hardware decoder. Choose one under Decoder in Settings, or turn off Sharper colored text, then start the stream again.", "„Ostrzejszy kolorowy tekst” wymaga dekodera sprzętowego. Wybierz go w sekcji „Dekoder” w Ustawieniach albo wyłącz „Ostrzejszy kolorowy tekst”, a potem uruchom strumień ponownie."),
     ("This stream’s picture cannot be shown with any decoder on this device. Choose another Video codec or Decoder in Settings, then start the stream again.", "Obrazu tego strumienia nie można wyświetlić żadnym dekoderem na tym urządzeniu. Wybierz inny „Kodek wideo” lub „Dekoder” w Ustawieniach, a potem uruchom strumień ponownie."),
+    ("File transfers failed: {}", "Nieudane transfery plików: {}"),
 ];

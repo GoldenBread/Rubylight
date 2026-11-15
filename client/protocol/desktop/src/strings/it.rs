@@ -1624,4 +1624,5 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer di ricezione: il sistema ha conces
     ("The video decoder stopped working: no picture for {} s.", "Il decoder video ha smesso di funzionare: nessuna immagine da {} s."),
     ("Sharper colored text needs a hardware decoder. Choose one under Decoder in Settings, or turn off Sharper colored text, then start the stream again.", "«Testo colorato più nitido» richiede un decoder hardware. Scegline uno in Decoder nelle Impostazioni, oppure disattiva «Testo colorato più nitido», poi avvia di nuovo lo stream."),
     ("This stream’s picture cannot be shown with any decoder on this device. Choose another Video codec or Decoder in Settings, then start the stream again.", "L’immagine di questo stream non può essere mostrata con nessun decoder di questo dispositivo. Scegli un altro Codec video o Decoder nelle Impostazioni, poi avvia di nuovo lo stream."),
+    ("File transfers failed: {}", "Trasferimenti di file non riusciti: {}"),
 ];

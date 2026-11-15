@@ -57,4 +57,5 @@
     <string name="files_partial_left">Ein unfertiger Download ließ sich nicht löschen: %1$s liegt noch dort, wo du ihn gespeichert hast, und ist nicht die vollständige Datei. Lösche ihn dort.</string>
     <string name="files_running">Laufende Dateiübertragungen: %1$d</string>
     <string name="files_busy_other_pc">Mit einem anderen PC werden noch Dateien übertragen. Warte darauf oder brich sie auf der Seite Dateien jenes PCs ab und versuche es dann erneut.</string>
+    <string name="files_failed">Fehlgeschlagene Dateiübertragungen: %1$d</string>
 </resources>

@@ -58,4 +58,5 @@
     <string name="files_partial_left">No se pudo eliminar una descarga sin terminar: %1$s sigue donde la guardaste y no es el archivo completo. Elimínala allí.</string>
     <string name="files_running">Transferencias de archivos en curso: %1$d</string>
     <string name="files_busy_other_pc">Aún se están transfiriendo archivos con otro PC. Espera a que terminen o cancélalos en la página Archivos de ese PC y vuelve a intentarlo.</string>
+    <string name="files_failed">Transferencias de archivos fallidas: %1$d</string>
 </resources>
