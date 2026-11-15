@@ -72,7 +72,7 @@ impl HostOption {
         match self {
             Self::OpenLibrary => en("Open library"),
             Self::Resume => en("Resume"),
-            Self::QuitApp => en("Quit running app"),
+            Self::QuitApp => en("Quit game"),
             Self::Pair => en("Pair"),
             Self::PairOtp => en("Pair with one-time PIN"),
             Self::Wake => en("Wake up"),
@@ -1363,15 +1363,17 @@ impl Launcher {
                     ui.label(RichText::new(trf("{} quits on the PC. Unsaved progress is lost.", &[&name])).color(ON_SURFACE_VARIANT));
                     dialog_buttons(ui, |ui| {
                         let r = danger_button(ui, "Quit game");
-                        if focus_first {
-                            r.request_focus();
-                            focused = true;
-                        }
                         if r.clicked() {
                             commands.push(Command::CloseGame(host));
                             close = true;
                         }
-                        if quiet_button(ui, "Cancel").clicked() {
+                        // Cancel has focus: two A presses must not lose the game's unsaved progress.
+                        let cancel = quiet_button(ui, "Cancel");
+                        if focus_first {
+                            cancel.request_focus();
+                            focused = true;
+                        }
+                        if cancel.clicked() {
                             close = true;
                         }
                     });
@@ -1386,16 +1388,11 @@ impl Launcher {
                         None => trf("Quit {}?", &[&running]),
                     };
                     ui.label(RichText::new(title).font(semibold(text::SECTION)));
-                    ui.label(RichText::new(tr("Unsaved progress in the running app is lost.")).color(ON_SURFACE_VARIANT));
+                    ui.label(RichText::new(tr("Unsaved progress in the running game is lost.")).color(ON_SURFACE_VARIANT));
                     dialog_buttons(ui, |ui| {
-                        let r = danger_button(ui, if start.is_some() { en("Quit and start") } else { en("Quit app") });
-                        // Replacing a running game starts on the safe choice (Resume, else Cancel), never on
-                        // the button that closes it; "Quit app" is what the player just asked for.
-                        let replacing = start.is_some();
-                        if focus_first && !replacing {
-                            r.request_focus();
-                            focused = true;
-                        }
+                        let r = danger_button(ui, if start.is_some() { en("Quit and start") } else { en("Quit game") });
+                        // The question starts on the safe choice (Resume, else Cancel), never on the
+                        // button that closes the game.
                         if r.clicked() {
                             commands.push(match start {
                                 Some((app, _)) => Command::QuitAndLaunch { host, app, named },
@@ -1416,7 +1413,7 @@ impl Launcher {
                             }
                         }
                         let cancel = quiet_button(ui, "Cancel");
-                        if focus_first && replacing && resume.is_none() {
+                        if focus_first && !(start.is_some() && resume.is_some()) {
                             cancel.request_focus();
                             focused = true;
                         }

@@ -397,7 +397,7 @@ impl App {
                 HostEvent::Quit { id, result } => match result {
                     Err(e) if self.quitting_on_leave.as_ref().is_some_and(|(host, _)| *host == id) => {
                         let (_, name) = self.quitting_on_leave.take().expect("checked above");
-                        self.launcher.notify(tr("Could not quit the app"), crate::hosts::quit_failure(&e, &name));
+                        self.launcher.notify(tr("Could not quit the game"), crate::hosts::quit_failure(&e, &name));
                     }
                     Ok(()) => {
                         if self.quitting_on_leave.as_ref().is_some_and(|(host, _)| *host == id) { self.quitting_on_leave = None; }
@@ -410,7 +410,7 @@ impl App {
                     Err(e) => {
                         self.pending_launch = None;
                         let name = self.hosts.get(id).map_or_else(|| tr("the running app").to_owned(), crate::ui::running_name);
-                        self.launcher.notify(tr("Could not quit the app"), crate::hosts::quit_failure(&e, &name));
+                        self.launcher.notify(tr("Could not quit the game"), crate::hosts::quit_failure(&e, &name));
                     }
                 },
                 // A packet that could not be sent at all (no network, no route) ends the wait.
@@ -438,7 +438,7 @@ impl App {
                 }
                 HostEvent::Session { action, result: Err(e), .. } => {
                     let title = match action {
-                        ActionId::CloseGame => tr("Could not close the game"),
+                        ActionId::CloseGame => tr("Could not quit the game"),
                         ActionId::End => tr("Could not end the session"),
                         _ => tr("The session action failed"),
                     };

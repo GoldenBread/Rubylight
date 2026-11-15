@@ -53,7 +53,7 @@ fn a_worker_s_message_waits_for_the_pin_and_the_replace_prompt_but_not_for_a_run
     l.notify(tr("Could not wake the PC"), "no route");
     assert!(matches!(&l.dialog, Dialog::Pairing { pin, .. } if pin == "1234"));
     l.ask(Dialog::ConfirmReplace { app: "Hades".into(), running: "Celeste".into() });
-    l.notify(tr("Could not quit the app"), "busy");
+    l.notify(tr("Could not quit the game"), "busy");
     assert!(matches!(l.dialog, Dialog::ConfirmReplace { .. }), "the launch waits on this answer");
     l.dialog = Dialog::None;
     assert!(l.next_queued());
@@ -2624,6 +2624,27 @@ fn a_pc_that_confirms_replacement_starts_without_the_client_prompt() {
     }
 }
 
+/// Quitting a game loses unsaved progress, so its questions start on Cancel: A twice (the
+/// action, then A again) leaves the game running.
+#[test]
+fn quit_game_questions_open_with_focus_on_cancel() {
+    let mut f = Frames::new(record("PC", true, false), Reach::Online);
+    let host = f.hosts.list[0].id;
+    for dialog in [
+        Dialog::ConfirmClose { host, name: "Racing Game".into() },
+        Dialog::ConfirmQuit { host, start: None, running: "Racing Game".into(), resume: None, named: None },
+        Dialog::ConfirmQuit { host, start: Some((8, "Hades".into())), running: "Racing Game".into(), resume: None, named: None },
+    ] {
+        f.l.ask(dialog);
+        f.settle();
+        assert!(shows(&f, "Quit game") || shows(&f, "Quit and start"), "{:?}", f.drawn);
+        assert!(!shows(&f, "Quit app"), "one name for the action: {:?}", f.drawn);
+        let commands = f.press(Key::Enter);
+        assert!(!commands.iter().any(|c| matches!(c, Command::CloseGame(_) | Command::QuitApp(_) | Command::QuitAndLaunch { .. })), "Cancel has focus");
+        assert!(f.no_dialog(), "Enter on the focused Cancel");
+    }
+}
+
 #[test]
 fn removing_a_pc_asks_first() {
     let mut f = Frames::new(record("Paired", true, false), Reach::Online);
@@ -4202,7 +4223,7 @@ fn a_running_app_offers_resume_and_quit_game_beside_its_name() {
     let name = "App 3";
     assert_eq!(f.drawn.iter().filter(|t| **t == name).count(), 2, "its chip and its cover: {:?}", f.drawn);
     assert!(shows(&f, "Resume") && shows(&f, "Quit game"), "{:?}", f.drawn);
-    for gone in ["Refresh", "Quit running app", "PC settings"] {
+    for gone in ["Refresh", "PC settings"] {
         assert!(!shows(&f, gone), "{gone} lives in the PC's menu now: {:?}", f.drawn);
     }
     let at = |f: &Frames, word: &str| f.placed.iter().find(|(t, ..)| t == word).map(|p| p.1).unwrap();
