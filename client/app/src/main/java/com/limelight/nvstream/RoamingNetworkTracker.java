@@ -51,6 +51,9 @@ final class RoamingNetworkTracker {
          * is reported as NETWORK_CANNOT_CONTINUE.
          */
         default boolean answersForTheRoute() { return true; }
+
+        /** Calls settle() after delayMs (replacing a call still waiting); the C engine's check needs it. */
+        default void settleAfter(long delayMs) {}
     }
 
     /** Elapsed milliseconds on a monotonic clock. */
@@ -63,6 +66,14 @@ final class RoamingNetworkTracker {
      * own timeout (NetworkReturnRecovery.PEER_TIMEOUT_MS), which decides after that.
      */
     static final long RECHECK_MS = 10000;
+
+    /**
+     * How long a network the stream switched or returned to may lack a routable address of the
+     * PC's family, within {@link #RECHECK_MS}, before an engine that cannot tell is told it cannot
+     * carry on: long enough for a DHCP lease after IPv6 came up, while an IPv6-only network
+     * (464XLAT, whose CLAT IPv4 address is not among its link addresses) never gets one.
+     */
+    static final long SETTLE_MS = 2000;
 
     private final Reporter reporter;
     private final Clock clock;
@@ -79,6 +90,8 @@ final class RoamingNetworkTracker {
     private boolean recheckMetered;
     private long recheckUntil;
     private Object recheckAddresses;
+    // When the network under recheck was first seen without an address of the PC's family; -1 if not.
+    private long settleFrom = -1;
     // The newest addresses reported for each network, and those of the network the stream's
     // connection left (lost, or switched away from). A network replaced without a loss gets no
     // onLost, so its entry goes at the switch; MAX_NETWORKS bounds the rest.
@@ -133,6 +146,7 @@ final class RoamingNetworkTracker {
         currentVpn = vpn;
         lost = false;
         recheck = null;
+        settleFrom = -1;
         // Under the lock, so stop() returning means no report is still on its way.
         int change = reporter.networkChanged(!notMetered);
         // Without a loss only an engine that cannot tell is asked about here: one that tells
@@ -152,6 +166,7 @@ final class RoamingNetworkTracker {
                 recheckMetered = !notMetered;
                 recheckUntil = clock.millis() + RECHECK_MS;
                 recheckAddresses = null;
+                settleWithout(addressesOf.get(network));
             }
             // A switch that carries on for now is no news; one that cannot is reported as a return.
             if (returned || change != MoonBridge.NETWORK_CARRIES_ON) {
@@ -190,7 +205,68 @@ final class RoamingNetworkTracker {
         if (change != MoonBridge.NETWORK_CARRIES_ON) {
             recheck = null;
             reporter.streamNetworkReturned(change, recheckMetered);
+        } else {
+            settleWithout(addresses);
         }
+    }
+
+    /** Starts the settle wait for the network under recheck when these addresses lack the PC's family. */
+    private void settleWithout(Object addresses) {
+        if (settleFrom < 0 && lacksPcFamily(addresses)) {
+            settleFrom = clock.millis();
+            reporter.settleAfter(SETTLE_MS);
+        }
+    }
+
+    /**
+     * From settleAfter: the network under recheck that still has no routable address of the PC's
+     * family {@link #SETTLE_MS} after it was first seen so, within {@link #RECHECK_MS}, cannot
+     * carry an engine that cannot tell on (IPv6-only mobile data for an IPv4 PC, reached through
+     * CLAT only by a new connection), so it is reported as a return that cannot carry on.
+     */
+    synchronized void settle() {
+        if (stopped || lost || recheck == null || settleFrom < 0) {
+            return;
+        }
+        long now = clock.millis();
+        if (now > recheckUntil) {
+            recheck = null;
+            return;
+        }
+        if (now < settleFrom + SETTLE_MS) {
+            reporter.settleAfter(settleFrom + SETTLE_MS - now);
+            return;
+        }
+        if (!lacksPcFamily(addressesOf.get(recheck))) {
+            // An address of the PC's family came; its own check answered.
+            settleFrom = -1;
+            return;
+        }
+        int change = reporter.networkChanged(recheckMetered);
+        if (change == MoonBridge.NETWORK_CARRIES_ON) {
+            change = MoonBridge.NETWORK_CANNOT_CONTINUE;
+        }
+        recheck = null;
+        settleFrom = -1;
+        reporter.streamNetworkReturned(change, recheckMetered);
+    }
+
+    /**
+     * For an engine that cannot tell: the addresses have routable ones, but none of the PC's
+     * family (known from its literal), while the stream's own addresses are known.
+     */
+    private boolean lacksPcFamily(Object addresses) {
+        if (reporter.answersForTheRoute() || currentVpn || pcFamily == null || lostAddresses == null ||
+                !(addresses instanceof java.util.Collection)) {
+            return false;
+        }
+        boolean otherFamily = false;
+        for (Object address : (java.util.Collection<?>) addresses) {
+            if (!routable(address)) continue;
+            if (pcFamily.isInstance(address)) return false;
+            otherFamily = true;
+        }
+        return otherFamily;
     }
 
     /** The default network went away; the same network coming back is then a change. */

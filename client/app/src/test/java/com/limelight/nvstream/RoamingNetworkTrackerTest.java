@@ -173,7 +173,10 @@ public class RoamingNetworkTrackerTest {
 
     /** The C engine: always answers that its connection carries on. */
     private static final class CEngineEvents extends Events {
+        final List<Long> settles = new ArrayList<>();
+
         @Override public boolean answersForTheRoute() { return false; }
+        @Override public void settleAfter(long delayMs) { settles.add(delayMs); }
     }
 
     // As RoamingNetworkWatch passes them: the network's InetAddresses (literals, so no lookup).
@@ -328,6 +331,40 @@ public class RoamingNetworkTrackerTest {
         tracker.addresses(WIFI, addresses("192.168.1.20"));
         assertEquals(java.util.Arrays.asList("changed", "lost", "changed",
                 "returned " + MoonBridge.NETWORK_CARRIES_ON, "changed"), events.seen);
+    }
+
+    // IPv6-only mobile data (464XLAT: its CLAT IPv4 address is not among its link addresses) has no
+    // IPv4 address for an IPv4 PC: once settled the C engine reconnects, which works through CLAT.
+    // The same IPv4 lease back after a new temporary IPv6 address still carries on.
+    @Test public void aNetworkWithoutAnAddressOfThePcsFamilyCannotCarryOnOnceSettled() {
+        CEngineEvents events = new CEngineEvents();
+        long[] now = {1000};
+        RoamingNetworkTracker tracker = new RoamingNetworkTracker(WIFI, events, () -> now[0], java.net.Inet4Address.class);
+        tracker.addresses(WIFI, addresses("192.168.1.20"));
+        tracker.addresses(CELLULAR, addresses("fe80::5", "2001:db8::5"));
+        tracker.capabilities(CELLULAR, false);
+        assertEquals(java.util.Arrays.asList("changed metered"), events.seen);
+        assertEquals(java.util.Arrays.asList(RoamingNetworkTracker.SETTLE_MS), events.settles);
+        // A check that comes early waits out the rest.
+        now[0] += 500;
+        tracker.settle();
+        assertEquals(java.util.Arrays.asList("changed metered"), events.seen);
+        now[0] += RoamingNetworkTracker.SETTLE_MS - 500;
+        tracker.settle();
+        assertEquals(java.util.Arrays.asList("changed metered", "changed metered",
+                "returned " + MoonBridge.NETWORK_CANNOT_CONTINUE + " metered"), events.seen);
+
+        events.seen.clear();
+        tracker = new RoamingNetworkTracker(WIFI, events, () -> now[0], java.net.Inet4Address.class);
+        tracker.addresses(WIFI, addresses("fe80::1", "2001:db8::10", "192.168.1.20"));
+        tracker.lost(WIFI);
+        tracker.capabilities(OTHER_WIFI, true);
+        tracker.addresses(OTHER_WIFI, addresses("fe80::1", "2001:db8::77"));
+        tracker.addresses(OTHER_WIFI, addresses("fe80::1", "2001:db8::77", "192.168.1.20"));
+        now[0] += RoamingNetworkTracker.SETTLE_MS;
+        tracker.settle();
+        assertEquals(java.util.Arrays.asList("lost", "changed", "returned " + MoonBridge.NETWORK_CARRIES_ON,
+                "changed", "changed"), events.seen);
     }
 
     // An engine that tells is never overruled: its "carries on" stands on other addresses.

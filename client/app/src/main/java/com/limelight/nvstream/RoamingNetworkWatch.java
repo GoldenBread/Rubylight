@@ -27,6 +27,14 @@ final class RoamingNetworkWatch {
     private final ConnectivityManager connMgr;
     private final RoamingNetworkTracker tracker;
     private final ConnectivityManager.NetworkCallback callback;
+    // The tracker's settle check, on the main thread.
+    private final android.os.Handler settleHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable settleCheck = new Runnable() {
+        @Override
+        public void run() {
+            tracker.settle();
+        }
+    };
 
     private RoamingNetworkWatch(ConnectivityManager connMgr, Network streamNetwork, String pcAddress,
                                 NvConnectionListener listener) {
@@ -47,6 +55,12 @@ final class RoamingNetworkWatch {
             @Override
             public boolean answersForTheRoute() {
                 return MoonBridge.isRustStream();
+            }
+
+            @Override
+            public void settleAfter(long delayMs) {
+                settleHandler.removeCallbacks(settleCheck);
+                settleHandler.postDelayed(settleCheck, delayMs);
             }
 
             @Override
@@ -154,6 +168,7 @@ final class RoamingNetworkWatch {
     /** The stream ends: no report reaches the engine after this returns. */
     void stop() {
         tracker.stop();
+        settleHandler.removeCallbacks(settleCheck);
         try {
             connMgr.unregisterNetworkCallback(callback);
         } catch (RuntimeException e) {
