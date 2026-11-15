@@ -219,15 +219,46 @@ fn a_rows_hint_shows_on_hover_and_focus_only() {
     f.frame(vec![egui::Event::PointerMoved(rate.center())]);
     f.settle();
     assert!(shows(&f, rate_hint), "{:?}", f.drawn);
-    assert!((y(&f, "Video codec") - below).abs() < 0.5, "the rows below stay");
-    // One line: a hint longer than the room is cut, not wrapped.
+    assert!(y(&f, "Video codec") >= below - 0.5, "the rows below never move up");
+    // The hovered row's hint wraps to its full length under the label, however narrow the room;
+    // the row grows for it.
     f.size = vec2(980.0, 4000.0);
     f.settle();
     let rate = f.placed.iter().find(|(t, ..)| t == "Frame rate").expect("the row").1;
     f.frame(vec![egui::Event::PointerMoved(rate.center())]);
     f.settle();
     let hint = f.placed.iter().find(|(t, ..)| t == rate_hint).expect("the hint").1;
-    assert!(hint.height() < 24.0, "{hint:?}");
+    assert!(hint.height() > 24.0, "wrapped: {hint:?}");
+    assert!(!hint_elided(&f, rate_hint), "the whole hint is drawn");
+}
+
+/// Whether the galley of `text` the last frame drew was cut short with "…".
+fn hint_elided(f: &Frames, text: &str) -> bool {
+    fn walk(shape: &egui::Shape, text: &str, out: &mut Option<bool>) {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, text, out)),
+            egui::Shape::Text(t) if t.galley.job.text == text => *out = Some(t.galley.elided),
+            _ => {}
+        }
+    }
+    let mut out = None;
+    f.shapes.iter().for_each(|c| walk(&c.shape, text, &mut out));
+    out.unwrap_or_else(|| panic!("{text} is not drawn"))
+}
+
+/// At 1280 x 800, as the screenshots were taken, the focused Resolution row shows its whole hint,
+/// the "when to change it" clause included.
+#[test]
+fn the_focused_rows_hint_is_drawn_whole_at_1280_by_800() {
+    let mut f = settings_with(Settings::default());
+    f.size = vec2(1280.0, 800.0);
+    f.settle();
+    let size_hint = "The picture size the PC sends. Higher is sharper and needs more network and decoding power; lower it if the stream stutters.";
+    assert!(shows(&f, size_hint), "Resolution has focus on arrival: {:?}", f.drawn);
+    assert!(!hint_elided(&f, size_hint));
+    let hint = f.placed.iter().find(|(t, ..)| t == size_hint).unwrap().1;
+    let label = f.placed.iter().find(|(t, ..)| t == "Resolution").unwrap().1;
+    assert!(hint.top() >= label.bottom() - 0.5, "under the label: {hint:?} {label:?}");
 }
 
 #[test]

@@ -2914,8 +2914,9 @@ pub(super) fn setting_row(
     Some(response)
 }
 
-/// A row: its label on the left, the control with the value on the right. The one-line hint
-/// shows under the label while the pointer is over the row or focus is in it; a note shows
+/// A row: its label on the left, the control with the value on the right. The hint shows under
+/// the label while the pointer is over the row or focus is in it, wrapped to its full length (the
+/// row grows for it); another row keeps it to one line, cut. A note shows
 /// always. A row a PC, game or profile sets has an amber bar at its left edge and, under its
 /// label, where its value comes from beside the layer's box. `reset_w` keeps room left of the
 /// control for a Reset, so the text never moves when it comes and goes.
@@ -2937,9 +2938,16 @@ fn settings_row(
             let text_w = (ui.available_width() - CONTROL_W - reset_w - space::L).max(180.0);
             let painter = ui.painter().clone();
             let label_g = painter.layout(tr(label).to_owned(), semibold(text::BODY), *ON_SURFACE, text_w);
-            let mut job = egui::text::LayoutJob::simple_singleline(tr(hint).to_owned(), regular(text::CAPTION), *ON_SURFACE_VARIANT);
-            job.wrap = egui::text::TextWrapping::truncate_at_width(text_w);
-            let hint_g = painter.layout_job(job);
+            // Whether the row was hovered or focused on the last pass: its hint then wraps whole.
+            let open_id = Id::unique(("settings-hint-open", label));
+            let was_active = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
+            let hint_g = if was_active {
+                painter.layout(tr(hint).to_owned(), regular(text::CAPTION), *ON_SURFACE_VARIANT, text_w)
+            } else {
+                let mut job = egui::text::LayoutJob::simple_singleline(tr(hint).to_owned(), regular(text::CAPTION), *ON_SURFACE_VARIANT);
+                job.wrap = egui::text::TextWrapping::truncate_at_width(text_w);
+                painter.layout_job(job)
+            };
             let note_g = note.map(|(text, color)| painter.layout(text.clone(), regular(text::CAPTION), *color, text_w));
             let state_g = state.as_ref().map(|(text, color)| painter.layout_no_wrap(text.clone(), regular(text::CAPTION), *color));
             let (label_h, hint_h) = (label_g.size().y, hint_g.size().y);
@@ -2955,6 +2963,11 @@ fn settings_row(
             let row = ui.min_rect().expand2(vec2(18.0, 8.0));
             let focused = ui.memory(|m| m.focused()).and_then(|id| ui.ctx().read_response(id)).is_some_and(|r| row.contains(r.rect.center()));
             let active = focused || ui.rect_contains_pointer(row);
+            if active != was_active {
+                // One more pass lays the hint out whole, or back to one line.
+                ui.data_mut(|d| d.insert_temp(open_id, active));
+                ui.ctx().request_repaint();
+            }
             let t = spring::animate(ui.ctx(), Id::unique(("settings-hint", label)), if active { 1.0 } else { 0.0 }, spring::FOCUS).clamp(0.0, 1.0);
             let content = ui.min_rect();
             // A layered row keeps its lines in place; another one centres its label until the hint comes.
