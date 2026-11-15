@@ -82,7 +82,8 @@ final class RoamingNetworkWatch {
                     NetworkCapabilities caps = connMgr.getNetworkCapabilities(network);
                     if (caps != null) {
                         tracker.capabilities(network, caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED),
-                                caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN));
+                                caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN),
+                                caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR));
                     }
                 }
             }
@@ -90,7 +91,8 @@ final class RoamingNetworkWatch {
             @Override
             public void onCapabilitiesChanged(Network network, NetworkCapabilities caps) {
                 tracker.capabilities(network, caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED),
-                        caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN));
+                        caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN),
+                        caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR));
             }
 
             @Override
@@ -100,7 +102,9 @@ final class RoamingNetworkWatch {
                 for (LinkAddress address : properties.getLinkAddresses()) {
                     addresses.add(address.getAddress());
                 }
-                tracker.addresses(network, addresses);
+                // A NAT64 prefix (Android 11 and later): the network translates IPv4 (464XLAT).
+                boolean nat64 = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && properties.getNat64Prefix() != null;
+                tracker.addresses(network, addresses, nat64);
             }
 
             @Override

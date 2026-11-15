@@ -326,6 +326,8 @@ public class RoamingNetworkTrackerTest {
         // Up again, then lost: Wi-Fi returning is judged against Wi-Fi's own addresses.
         events.seen.clear();
         tracker.capabilities(vpn, true, true);
+        // Its own addresses known when it goes: they are not the stream's.
+        tracker.addresses(vpn, addresses("10.6.0.2"));
         tracker.lost(vpn);
         tracker.capabilities(WIFI, true, false);
         tracker.addresses(WIFI, addresses("192.168.1.20"));
@@ -341,8 +343,9 @@ public class RoamingNetworkTrackerTest {
         long[] now = {1000};
         RoamingNetworkTracker tracker = new RoamingNetworkTracker(WIFI, events, () -> now[0], java.net.Inet4Address.class);
         tracker.addresses(WIFI, addresses("192.168.1.20"));
+        // Cellular, its NAT64 prefix not known (before Android 11): after SETTLE_MS.
         tracker.addresses(CELLULAR, addresses("fe80::5", "2001:db8::5"));
-        tracker.capabilities(CELLULAR, false);
+        tracker.capabilities(CELLULAR, false, false, true);
         assertEquals(java.util.Arrays.asList("changed metered"), events.seen);
         assertEquals(java.util.Arrays.asList(RoamingNetworkTracker.SETTLE_MS), events.settles);
         // A check that comes early waits out the rest.
@@ -365,6 +368,39 @@ public class RoamingNetworkTrackerTest {
         tracker.settle();
         assertEquals(java.util.Arrays.asList("lost", "changed", "returned " + MoonBridge.NETWORK_CARRIES_ON,
                 "changed", "changed"), events.seen);
+
+        // Wi-Fi back with IPv6 first and the same IPv4 lease 3 s later: no settle wait, it carries on.
+        events.seen.clear();
+        events.settles.clear();
+        tracker = new RoamingNetworkTracker(WIFI, events, () -> now[0], java.net.Inet4Address.class);
+        tracker.addresses(WIFI, addresses("fe80::1", "192.168.1.20"));
+        tracker.lost(WIFI);
+        tracker.capabilities(OTHER_WIFI, true, false, false);
+        tracker.addresses(OTHER_WIFI, addresses("fe80::1", "2001:db8::77"));
+        now[0] += 3000;
+        tracker.settle();
+        tracker.addresses(OTHER_WIFI, addresses("fe80::1", "2001:db8::77", "192.168.1.20"));
+        assertEquals(java.util.Arrays.asList("lost", "changed", "returned " + MoonBridge.NETWORK_CARRIES_ON,
+                "changed", "changed"), events.seen);
+        assertEquals(new ArrayList<Long>(), events.settles);
+
+        // IPv6-only cellular with a NAT64 prefix: it translates IPv4, so it is reported at once.
+        events.seen.clear();
+        tracker = new RoamingNetworkTracker(WIFI, events, () -> now[0], java.net.Inet4Address.class);
+        tracker.addresses(WIFI, addresses("192.168.1.20"));
+        tracker.addresses(CELLULAR, addresses("fe80::5", "2001:db8::5"), true);
+        tracker.capabilities(CELLULAR, false, false, true);
+        assertEquals(java.util.Arrays.asList("changed metered",
+                "returned " + MoonBridge.NETWORK_CANNOT_CONTINUE + " metered"), events.seen);
+        // The prefix found after the addresses: reported then.
+        events.seen.clear();
+        tracker = new RoamingNetworkTracker(WIFI, events, () -> now[0], java.net.Inet4Address.class);
+        tracker.addresses(WIFI, addresses("192.168.1.20"));
+        tracker.capabilities(CELLULAR, false, false, true);
+        tracker.addresses(CELLULAR, addresses("fe80::5", "2001:db8::5"));
+        tracker.addresses(CELLULAR, addresses("fe80::5", "2001:db8::5"), true);
+        assertEquals(java.util.Arrays.asList("changed metered", "changed metered", "changed metered",
+                "returned " + MoonBridge.NETWORK_CANNOT_CONTINUE + " metered"), events.seen);
     }
 
     // An engine that tells is never overruled: its "carries on" stands on other addresses.

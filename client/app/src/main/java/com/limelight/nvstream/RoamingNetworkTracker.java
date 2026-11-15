@@ -68,10 +68,12 @@ final class RoamingNetworkTracker {
     static final long RECHECK_MS = 10000;
 
     /**
-     * How long a network the stream switched or returned to may lack a routable address of the
-     * PC's family, within {@link #RECHECK_MS}, before an engine that cannot tell is told it cannot
-     * carry on: long enough for a DHCP lease after IPv6 came up, while an IPv6-only network
-     * (464XLAT, whose CLAT IPv4 address is not among its link addresses) never gets one.
+     * For an engine that cannot tell, a network the stream switched or returned to that has
+     * routable addresses but none of the PC's family: one that translates IPv4 (a NAT64 prefix:
+     * 464XLAT, whose CLAT IPv4 address is not among its link addresses) cannot carry on, at once.
+     * A cellular network whose prefix is not known (before Android 11, or not discovered yet) gets
+     * this long, within {@link #RECHECK_MS}, before it is taken for one. Any other network
+     * (Wi-Fi, Ethernet) carries on: its IPv4 lease may still come, however late.
      */
     static final long SETTLE_MS = 2000;
 
@@ -83,6 +85,8 @@ final class RoamingNetworkTracker {
     private Object current;
     // Whether the current default network is a VPN (NetworkCapabilities.TRANSPORT_VPN).
     private boolean currentVpn;
+    // Whether the current default network is cellular (NetworkCapabilities.TRANSPORT_CELLULAR).
+    private boolean currentCellular;
     private boolean lost;
     private boolean stopped;
     // The network that came back with the connection carrying on, while it is asked again.
@@ -96,6 +100,8 @@ final class RoamingNetworkTracker {
     // connection left (lost, or switched away from). A network replaced without a loss gets no
     // onLost, so its entry goes at the switch; MAX_NETWORKS bounds the rest.
     private final java.util.Map<Object, Object> addressesOf = new java.util.HashMap<>();
+    // The networks among those whose link properties have a NAT64 prefix.
+    private final java.util.Set<Object> nat64Networks = new java.util.HashSet<>();
     static final int MAX_NETWORKS = 8;
     private Object lostAddresses;
 
@@ -123,6 +129,11 @@ final class RoamingNetworkTracker {
 
     /** As above; vpn: the network has NetworkCapabilities.TRANSPORT_VPN. */
     synchronized void capabilities(Object network, boolean notMetered, boolean vpn) {
+        capabilities(network, notMetered, vpn, false);
+    }
+
+    /** As above; cellular: the network has NetworkCapabilities.TRANSPORT_CELLULAR. */
+    synchronized void capabilities(Object network, boolean notMetered, boolean vpn, boolean cellular) {
         if (stopped) {
             return;
         }
@@ -130,10 +141,12 @@ final class RoamingNetworkTracker {
             // Nothing known about the stream's network: the first one seen is where it runs.
             current = network;
             currentVpn = vpn;
+            currentCellular = cellular;
             return;
         }
         if (network.equals(current) && !lost) {
             currentVpn = vpn;
+            currentCellular = cellular;
             if (network.equals(recheck)) {
                 recheckMetered = !notMetered;
             }
@@ -144,6 +157,7 @@ final class RoamingNetworkTracker {
         boolean previousVpn = currentVpn;
         current = network;
         currentVpn = vpn;
+        currentCellular = cellular;
         lost = false;
         recheck = null;
         settleFrom = -1;
@@ -153,6 +167,7 @@ final class RoamingNetworkTracker {
         // roams or answers on its own.
         boolean switched = !returned && !reporter.answersForTheRoute() && !previousVpn;
         Object previousAddresses = returned ? null : addressesOf.remove(previous);
+        if (!returned) nat64Networks.remove(previous);
         if (switched) {
             // Onto a VPN too: the network under it keeps the stream's addresses.
             lostAddresses = previousAddresses;
@@ -182,14 +197,22 @@ final class RoamingNetworkTracker {
      * after the return (DHCP) may strand the connection, and then it is reported as the return.
      */
     synchronized void addresses(Object network, Object addresses) {
+        addresses(network, addresses, false);
+    }
+
+    /** As above; nat64: the link properties have a NAT64 prefix (the network translates IPv4). */
+    synchronized void addresses(Object network, Object addresses, boolean nat64) {
         if (stopped) {
             return;
         }
         if (!addressesOf.containsKey(network) && addressesOf.size() >= MAX_NETWORKS) {
             // Networks whose loss never came: start over rather than grow.
             addressesOf.clear();
+            nat64Networks.clear();
         }
         addressesOf.put(network, addresses);
+        // A prefix found after the addresses is news for the check below too.
+        boolean nat64Changed = nat64 ? nat64Networks.add(network) : nat64Networks.remove(network);
         if (lost || recheck == null || !network.equals(recheck)) {
             return;
         }
@@ -197,7 +220,7 @@ final class RoamingNetworkTracker {
             recheck = null;
             return;
         }
-        if (addresses.equals(recheckAddresses)) {
+        if (addresses.equals(recheckAddresses) && !nat64Changed) {
             return;
         }
         recheckAddresses = addresses;
@@ -212,7 +235,7 @@ final class RoamingNetworkTracker {
 
     /** Starts the settle wait for the network under recheck when these addresses lack the PC's family. */
     private void settleWithout(Object addresses) {
-        if (settleFrom < 0 && lacksPcFamily(addresses)) {
+        if (settleFrom < 0 && currentCellular && lacksPcFamily(addresses)) {
             settleFrom = clock.millis();
             reporter.settleAfter(SETTLE_MS);
         }
@@ -237,7 +260,7 @@ final class RoamingNetworkTracker {
             reporter.settleAfter(settleFrom + SETTLE_MS - now);
             return;
         }
-        if (!lacksPcFamily(addressesOf.get(recheck))) {
+        if (!currentCellular || !lacksPcFamily(addressesOf.get(recheck))) {
             // An address of the PC's family came; its own check answered.
             settleFrom = -1;
             return;
@@ -275,6 +298,7 @@ final class RoamingNetworkTracker {
             return;
         }
         Object addresses = addressesOf.remove(network);
+        nat64Networks.remove(network);
         if (lost || !network.equals(current)) {
             return;
         }
@@ -309,7 +333,10 @@ final class RoamingNetworkTracker {
             if (((java.util.Collection<?>) lostAddresses).contains(address)) return change;
             routable = true;
         }
-        return routable ? MoonBridge.NETWORK_CANNOT_CONTINUE : change;
+        // No address of the PC's family on a network that translates IPv4: only a new connection
+        // reaches the PC, through its CLAT.
+        return routable || (nat64Networks.contains(current) && lacksPcFamily(addresses)) ?
+                MoonBridge.NETWORK_CANNOT_CONTINUE : change;
     }
 
     /** Whether an address can carry a route toward the PC: not link-local, loopback or unspecified. */
