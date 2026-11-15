@@ -319,8 +319,7 @@ mod tests {
             assert!(guests.answered(GuestsAnswer::Read(Ok(read(true, &[(4, "Phone")]))), now).is_empty(), "no error");
             assert_eq!(guests.take_pending(), None);
         }
-        let mut guests = Guests::default();
-        guests.busy = true;
+        let mut guests = Guests { busy: true, ..Default::default() };
         assert_eq!(guests.queue(GuestAction::Deny(3)), None);
         guests.answered(GuestsAnswer::Read(Ok(read(true, &[(3, "Tablet")]))), now);
         assert_eq!(guests.take_pending(), Some(GuestAction::Deny(3)), "still waiting: sent");
