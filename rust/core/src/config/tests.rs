@@ -1917,7 +1917,10 @@ host_adaptive_pacing = true
         // A console, script or client that still sends it is accepted.
         let mut config = Config::default();
         change(&mut config, "host_adaptive_bitrate", value).unwrap();
-        assert!(!config.values.contains_key("host_adaptive_bitrate"), "{value}");
+        assert!(
+            !config.values.contains_key("host_adaptive_bitrate"),
+            "{value}"
+        );
         // An app's or a device's overrides lose it and keep the rest.
         let mut layer = serde_json::json!({"host_adaptive_bitrate": value, "max_bitrate": 50000});
         assert!(migrate_overrides(layer.as_object_mut().unwrap()));
