@@ -1317,6 +1317,21 @@ fn a_24_character_pc_name_is_whole_on_its_card_at_1080_by_720() {
     assert!(online.bottom() < card.bottom(), "{online:?} {card:?}");
 }
 
+/// In a short window the PC options open below the top bar, never over it, and keep inside the
+/// window.
+#[test]
+fn a_pcs_options_in_a_short_window_stay_below_the_top_bar() {
+    let mut f = Frames::with(record("Den", true, true), Reach::Online, Some(answer(true, 7)), Vec::new());
+    f.size = vec2(1080.0, 720.0);
+    f.settle();
+    f.press(Key::F2);
+    f.settle();
+    assert!(f.options_open());
+    let menu = f.ctx.memory(|m| m.area_rect(Id::unique(("menu", "host-options")))).expect("the menu was laid out");
+    assert!(menu.top() >= chrome::BAR_TOP + chrome::BAR_H, "clear of the top bar: {menu:?}");
+    assert!(menu.bottom() <= 720.0, "{menu:?}");
+}
+
 #[test]
 fn at_150_percent_in_german_every_settings_page_fits_the_width() {
     let mut f = Frames::new(record("PC", true, false), Reach::Online);

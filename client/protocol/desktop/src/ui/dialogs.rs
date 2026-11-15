@@ -2132,7 +2132,7 @@ pub fn popover(
         ui.set_width(width);
         // egui lays a new area out in at most 600x400 points: let the menu take the window's
         // height less its margin instead, so it scrolls only when the window is too short.
-        ui.set_max_height(screen.height() - 16.0 - 10.0);
+        ui.set_max_height(menu_room(screen, anchor).height() - 16.0 - 10.0);
         ui.spacing_mut().item_spacing.y = 4.0;
         let top = ui.cursor().top();
         // The heading: what the menu is for.
@@ -2194,6 +2194,13 @@ pub fn popover(
 
 /// What every menu stands on: a clear layer that takes the pointer and, by its anchor, the raised
 /// glass that holds `add`. Says whether a press outside closed it.
+/// Where a menu by its anchor may go: below the top bar, which it never covers. A sheet in the
+/// middle takes the whole window.
+fn menu_room(screen: Rect, anchor: Anchor) -> Rect {
+    let clear = if anchor == Anchor::Center { 0.0 } else { chrome::BAR_TOP + chrome::BAR_H };
+    Rect::from_min_max(Pos2::new(screen.left(), screen.top() + clear), screen.max)
+}
+
 fn menu_shell(ctx: &egui::Context, name: &str, anchor: Anchor, add: impl FnOnce(&mut Ui, Id)) -> bool {
     let id = Id::unique(("menu", name));
     let screen = ctx.content_rect();
@@ -2217,7 +2224,7 @@ fn menu_shell(ctx: &egui::Context, name: &str, anchor: Anchor, add: impl FnOnce(
         })
         .inner;
     let frame = Frame::new().inner_margin(Margin::same(MENU_MARGIN as i8));
-    let area = egui::Area::new(id).order(egui::Order::Foreground).fixed_pos(place(anchor, size, screen)).constrain(false).show(ctx, |ui| {
+    let area = egui::Area::new(id).order(egui::Order::Foreground).fixed_pos(place(anchor, size, menu_room(screen, anchor))).constrain(false).show(ctx, |ui| {
         frame.show(ui, |ui| glass_behind(ui, glass::Material::Panel, design_tokens::RADIUS_GROUP, MENU_MARGIN, |ui| add(ui, id)));
     });
     // The menu holds the keyboard while open; a click outside closes it (on the release, so
@@ -2260,7 +2267,7 @@ pub fn pc_sheet(ctx: &egui::Context, anchor: Anchor, hosts: &[Host], current: u6
             .fold(0.0_f32, f32::max);
         let width = (PC_ROW_WORDS + widest + PC_ROW_MARK + 8.0).clamp(280.0, 420.0).min(screen.width() - 32.0);
         ui.set_width(width);
-        ui.set_max_height(screen.height() - 16.0 - 10.0);
+        ui.set_max_height(menu_room(screen, anchor).height() - 16.0 - 10.0);
         ui.spacing_mut().item_spacing.y = 4.0;
         let top = ui.cursor().top();
         ui.add_space(4.0);
