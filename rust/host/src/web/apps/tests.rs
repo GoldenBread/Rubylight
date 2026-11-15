@@ -488,6 +488,52 @@ fn a_busy_or_failed_neural_rendering_removal_keeps_its_app_and_touches_nothing_e
     assert!(stored(&f, "mirage").is_some());
 }
 
+/// A delete while a stream runs keeps an app with Neural Rendering placed and
+/// touches none of its folder: the streamed game may hold the mod loaded.
+#[test]
+fn a_delete_while_a_stream_runs_keeps_an_app_with_neural_rendering() {
+    let f = Fixture::new();
+    let folder =
+        std::env::temp_dir().join(format!("rubylight-delete-stream-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&folder).unwrap();
+    let exe = folder.join("Game.exe");
+    std::fs::write(&exe, b"game").unwrap();
+    std::fs::write(folder.join("OptiScaler.ini"), b"[user]").unwrap();
+    let files = || {
+        let mut files: Vec<_> = std::fs::read_dir(&folder)
+            .unwrap()
+            .map(|entry| {
+                let path = entry.unwrap().path();
+                (path.clone(), std::fs::read(path).unwrap())
+            })
+            .collect();
+        files.sort();
+        files
+    };
+    let before = files();
+    crate::steam::update_library(&f.host, |apps, _| {
+        apps.push(json!({"name": "Game", "uuid": "game",
+            crate::neural::KEY: {"exe": exe, "release": "Alpha0.3.5.8", "proxy": "winmm.dll"}}));
+        true
+    })
+    .unwrap();
+    f.session(f.client(u32::MAX), butterpollo_core::session::Role::Stream);
+    let error = handle(
+        &f.host,
+        "POST",
+        "/api/apps/delete",
+        &json!({"uuids": ["game"]}),
+    )
+    .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("no stream is running"),
+        "{error:#}"
+    );
+    assert!(stored(&f, "game").is_some());
+    assert_eq!(files(), before);
+    std::fs::remove_dir_all(&folder).unwrap();
+}
+
 /// Purging synced apps waits on a worker, so the web server answers
 /// meanwhile: a game it drops loses Neural Rendering through a helper
 /// process, which can take minutes.

@@ -1996,6 +1996,38 @@ fn a_removal_holds_the_switch_until_the_app_is_gone() {
     assert!(pending(h).is_empty());
 }
 
+/// A delete while a stream runs is refused before anything is touched: the
+/// streamed game may hold the provider's DLL loaded, so the removal would
+/// put the ini back and stop at the DLL. Once the stream ends it goes.
+#[test]
+fn a_delete_while_a_stream_runs_leaves_the_folder_untouched() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    let temp = tempdir();
+    let cache = release(temp.path(), "Alpha0.3.5.8", b"OptiScaler proxy");
+    let exe = game(temp.path());
+    let folder = exe.parent().unwrap();
+    let before = names(folder);
+    let placed = install(Some(&exe), None, &cache);
+    assert!(matches!(placed, Response::Placed { .. }), "{placed:?}");
+    let with_mod = snapshot(folder);
+    let app: App = serde_json::from_value(switched_on("Game", "game", &exe)).unwrap();
+    f.session(f.client(u32::MAX), butterpollo_core::session::Role::Stream);
+    let error = format!("{:#}", reserve(h, &app).err().unwrap());
+    assert!(
+        error.contains("remove it when no stream is running"),
+        "{error}"
+    );
+    assert_eq!(snapshot(folder), with_mod);
+    assert!(!h.neural.lock().jobs.contains_key("game"));
+    // An app without files is no risk: its delete goes on.
+    let plain: App = serde_json::from_value(json!({"name": "Plain", "uuid": "plain"})).unwrap();
+    drop(reserve(h, &plain).unwrap());
+    h.sessions.lock().unwrap().active.clear();
+    drop(before_delete(h, &app).unwrap());
+    assert_eq!(names(folder), before);
+}
+
 /// A launch's check and update hold the switch's slot, so a disable or a
 /// delete can't race them, and give it back however they end.
 #[test]
@@ -2082,6 +2114,28 @@ fn the_console_cannot_set_the_hosts_key() {
     let mut new = app(r"C:\x.exe");
     keep_key(None, &mut new);
     assert!(!new.extra.contains_key(KEY));
+}
+
+/// A streaming GPU that can't be found keeps the switch offered, and is
+/// looked for again next time instead of being held for the whole run.
+#[test]
+fn offered_asks_again_after_the_gpu_lookup_fails() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    *h.neural.streams.lock().unwrap() = None;
+    *h.neural.probe.lock().unwrap() = None;
+    assert!(offered(h));
+    assert!(h.neural.lock().offered.is_none());
+    *h.neural.streams.lock().unwrap() = Some(neural::Streams {
+        name: "Intel Arc A770".into(),
+        luid: 7,
+        vendor: 0x8086,
+        device: 0x56A0,
+    });
+    assert!(!offered(h));
+    // A known answer is held.
+    *h.neural.streams.lock().unwrap() = None;
+    assert!(!offered(h));
 }
 
 #[tokio::test]

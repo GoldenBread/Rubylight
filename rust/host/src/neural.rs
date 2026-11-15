@@ -236,11 +236,15 @@ pub fn offered(h: &Shared) -> bool {
     {
         return *offered;
     }
-    let offered = streams_with(h, &setting).map_or(true, |streams| {
-        matches!(streams.vendor, neural::AMD | neural::NVIDIA)
-    });
-    h.neural.lock().offered = Some((setting, offered));
-    offered
+    match streams_with(h, &setting) {
+        Ok(streams) => {
+            let offered = matches!(streams.vendor, neural::AMD | neural::NVIDIA);
+            h.neural.lock().offered = Some((setting, offered));
+            offered
+        }
+        // Offered while the GPU is not known, and asked again next time.
+        Err(_) => true,
+    }
 }
 
 /// The settings that pick the GPU a stream uses: the display, and the
@@ -1213,6 +1217,21 @@ impl std::fmt::Display for Busy {
 }
 impl std::error::Error for Busy {}
 
+/// An app delete refused while a stream runs: the app's game may be the
+/// streamed one, with the provider's DLL loaded.
+#[derive(Debug)]
+pub struct StreamRunning(pub String);
+impl std::fmt::Display for StreamRunning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} may be running with Neural Rendering loaded: remove it when no stream is running",
+            self.0
+        )
+    }
+}
+impl std::error::Error for StreamRunning {}
+
 /// A download given up as a stream started: it would take the stream's
 /// bandwidth.
 #[derive(Debug)]
@@ -1569,6 +1588,12 @@ fn remove_at(name: &str, exe: &Path) -> Result<Removed> {
 /// takes every slot before any file is removed, so one busy app refuses the
 /// delete with nothing changed. Then [`Removing::remove_mod`].
 pub fn reserve(h: &Shared, app: &App) -> Result<Removing> {
+    // As `disable`: the streamed game may hold the provider's DLL loaded, so
+    // the removal would put the ini back and stop at the DLL, half removed.
+    // Refused before any slot is taken or file touched; the app stays.
+    if has_files(app) && crate::updater::streaming(h) {
+        return Err(StreamRunning(app.name.clone()).into());
+    }
     let uuid = app.extra.get("uuid").and_then(Value::as_str);
     // An install not finished has no key to remove by yet, and a launch's
     // update would race the removal.
