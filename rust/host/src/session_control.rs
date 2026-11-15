@@ -477,11 +477,14 @@ impl Host {
     pub(crate) fn launch_cancellation(
         &self,
     ) -> Option<std::sync::Arc<butterpollo_windows::process::CommandCancellation>> {
-        locked(&self.launch_cancel).as_ref().map(|(_, cancel)| cancel.clone())
+        locked(&self.launch_cancel)
+            .as_ref()
+            .map(|(_, cancel)| cancel.clone())
     }
     /// Whether the running launch was stopped: it must not go on to start or keep the game.
     pub(crate) fn launch_stopped(&self) -> bool {
-        self.launch_cancellation().is_some_and(|cancel| cancel.requested())
+        self.launch_cancellation()
+            .is_some_and(|cancel| cancel.requested())
     }
     /// Stops the launch in progress when `device_may(its device)` allows it: its running
     /// preparation command is ended at once, the undo commands of those that finished still
@@ -492,7 +495,10 @@ impl Host {
         let started = std::time::Instant::now();
         let mut stopped = false;
         loop {
-            if !matches!(self.launch_transition.try_lock(), Err(TryLockError::WouldBlock)) {
+            if !matches!(
+                self.launch_transition.try_lock(),
+                Err(TryLockError::WouldBlock)
+            ) {
                 return stopped;
             }
             if !stopped

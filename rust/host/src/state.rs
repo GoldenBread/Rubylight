@@ -406,8 +406,12 @@ pub struct Host {
     pub launch_transition: Mutex<()>,
     /// The launch holding `launch_transition`: its device and what stops its preparation
     /// commands (`Host::stop_launch`). Taken only to read or signal, never across a wait.
-    pub(crate) launch_cancel:
-        Mutex<Option<(String, Arc<butterpollo_windows::process::CommandCancellation>)>>,
+    pub(crate) launch_cancel: Mutex<
+        Option<(
+            String,
+            Arc<butterpollo_windows::process::CommandCancellation>,
+        )>,
+    >,
     /// Sleep PC tokens and the suspend backend.
     pub power: crate::power_action::PowerActions,
     /// Each paired client's `GET /bandwidth-probe` cooldown and budget.
