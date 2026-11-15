@@ -1485,7 +1485,10 @@ pub(crate) async fn api(
     .unwrap_or_else(|e| Err(e.into()));
     match result {
         Ok(v) => Json(v).into_response(),
-        Err(e) if e.is::<crate::neural::Busy>() => error(StatusCode::CONFLICT, &e.to_string()),
+        // A delete refused while the game is busy or a stream runs, as every streaming refusal.
+        Err(e) if e.is::<crate::neural::Busy>() || e.is::<crate::neural::StreamRunning>() => {
+            error(StatusCode::CONFLICT, &e.to_string())
+        }
         Err(e) => match e.downcast_ref::<crate::nucleus::Refusal>() {
             // A settings save's Nucleus Co-op folder, refused as the panels refuse it.
             Some(refusal) => error(

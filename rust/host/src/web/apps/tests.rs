@@ -489,9 +489,12 @@ fn a_busy_or_failed_neural_rendering_removal_keeps_its_app_and_touches_nothing_e
 }
 
 /// A delete while a stream runs keeps an app with Neural Rendering placed and
-/// touches none of its folder: the streamed game may hold the mod loaded.
-#[test]
-fn a_delete_while_a_stream_runs_keeps_an_app_with_neural_rendering() {
+/// touches none of its folder: the streamed game may hold the mod loaded. Both
+/// delete routes answer 409, as every refusal while a stream runs.
+#[tokio::test(flavor = "current_thread")]
+async fn a_delete_while_a_stream_runs_keeps_an_app_with_neural_rendering() {
+    use super::super::parity_tests::{request, value};
+    use axum::http::StatusCode;
     let f = Fixture::new();
     let folder =
         std::env::temp_dir().join(format!("rubylight-delete-stream-{}", uuid::Uuid::new_v4()));
@@ -518,17 +521,19 @@ fn a_delete_while_a_stream_runs_keeps_an_app_with_neural_rendering() {
     })
     .unwrap();
     f.session(f.client(u32::MAX), butterpollo_core::session::Role::Stream);
-    let error = handle(
-        &f.host,
-        "POST",
-        "/api/apps/delete",
-        &json!({"uuids": ["game"]}),
-    )
-    .unwrap_err();
-    assert!(
-        format!("{error:#}").contains("no stream is running"),
-        "{error:#}"
-    );
+    for (method, path, data) in [
+        ("POST", "/api/apps/delete", json!({"uuids": ["game"]})),
+        ("DELETE", "/api/apps/game", serde_json::Value::Null),
+    ] {
+        let refused = value(request(&f, method, path, data).await, StatusCode::CONFLICT).await;
+        assert!(
+            refused["error"]
+                .as_str()
+                .unwrap()
+                .contains("no stream is running"),
+            "{refused}"
+        );
+    }
     assert!(stored(&f, "game").is_some());
     assert_eq!(files(), before);
     std::fs::remove_dir_all(&folder).unwrap();
