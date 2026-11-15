@@ -519,14 +519,20 @@ impl Launcher {
             }
             ui.add_space(CARD_GAP - ui.spacing().item_spacing.y);
         }
-        // A short list may not be all of them: say the search goes on and where help is.
+        // A short list may not be all of them: say whether the search goes on (or offer it again
+        // when it could not start) and where help is.
         if view.hosts.list.len() <= columns {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = space::S;
-                ui.label(
-                    RichText::new(tr("Looking for other PCs on this network"))
-                        .color(ON_SURFACE_VARIANT),
-                );
+                let words = if view.hosts.discovering { tr("Looking for other PCs on this network") } else { tr("Can’t search this network for PCs") };
+                ui.label(RichText::new(words).color(ON_SURFACE_VARIANT));
+                if !view.hosts.discovering {
+                    let again = link_button(ui, "Search again");
+                    self.focus_item(&again, "pcs-search-again", false);
+                    if again.clicked() {
+                        commands.push(Command::SearchAgain);
+                    }
+                }
                 let help = how_to_connect(ui, commands);
                 self.focus_item(&help, "how-to-connect", false);
             });

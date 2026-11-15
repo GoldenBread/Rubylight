@@ -424,6 +424,7 @@ Redacted logs, oldest line first; addresses, PC names, PINs and credentials are 
             Command::SearchAgain => {
                 if !self.hosts.search_again() {
                     eprintln!("nightjar: looking for PCs on the network could not start again");
+                    self.launcher.toast(tr("Can’t search this network for PCs"));
                 }
             }
             Command::CancelConnect => {

@@ -3439,9 +3439,11 @@ fn the_brand_is_gone_before_back_reaches_it() {
 #[test]
 fn a_short_pc_list_says_the_search_goes_on_and_links_how_to_connect() {
     let mut f = Frames::new(record("Desk", true, true), Reach::Online);
+    f.hosts.discovering = true;
     f.l.go(Screen::Hosts);
     f.settle();
     assert!(shows(&f, "Looking for other PCs on this network"), "{:?}", f.drawn);
+    assert!(!shows(&f, "Search again"), "{:?}", f.drawn);
     let link = f.placed.iter().find(|(t, ..)| t == "How to connect").map(|p| p.1).expect("the link");
     f.click_at(link.center(), egui::PointerButton::Primary);
     let commands = f.settle();
@@ -3576,6 +3578,20 @@ fn a_first_run_that_cannot_search_says_so() {
     f.hosts.discovering = true;
     f.settle();
     assert!(!shows(&f, "Search again"), "{:?}", f.drawn);
+}
+
+/// A short PC list with no search running says so and offers it again, as the first run does.
+#[test]
+fn a_short_pc_list_with_no_search_offers_search_again() {
+    let mut f = Frames::new(record("Desk", true, true), Reach::Online);
+    f.hosts.discovering = false;
+    f.l.go(Screen::Hosts);
+    f.settle();
+    assert!(!shows(&f, "Looking for other PCs on this network"), "{:?}", f.drawn);
+    assert!(shows(&f, "Can’t search this network for PCs"), "{:?}", f.drawn);
+    let again = f.placed.iter().find(|(t, ..)| t == "Search again").map(|p| p.1).expect("Search again");
+    let commands = f.click_at(again.center(), egui::PointerButton::Primary);
+    assert!(commands.iter().any(|c| matches!(c, Command::SearchAgain)));
 }
 
 /// The colours a galley of `text` is drawn in.
