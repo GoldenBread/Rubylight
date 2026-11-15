@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A section chip drawn 40dp high in its 48dp touch area: the chip's look, with the rest of the area clear. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android" android:drawable="@drawable/settings_chip"
+    android:insetTop="4dp" android:insetBottom="4dp" />

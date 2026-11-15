@@ -18,7 +18,7 @@
                     android:fontFamily="?attr/nightjarFaceStrong" android:letterSpacing="-0.02" android:textColor="?attr/colorOnSurface" />
                 <HorizontalScrollView android:id="@+id/settings_chips_scroll" android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:scrollbars="none" android:overScrollMode="never" android:clipToPadding="false" android:visibility="gone"
-                    android:paddingStart="@dimen/screen_gutter" android:paddingEnd="@dimen/screen_gutter" android:paddingBottom="@dimen/space_s">
+                    android:paddingStart="@dimen/screen_gutter" android:paddingEnd="@dimen/screen_gutter" android:paddingBottom="@dimen/space_xs">
                     <LinearLayout android:id="@+id/settings_chips" android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:orientation="horizontal" />
                 </HorizontalScrollView>

@@ -34,6 +34,7 @@ import com.limelight.ui.GlassForm;
 import com.limelight.ui.NightSkyView;
 import com.limelight.ui.PcRow;
 import com.limelight.ui.PcScreen;
+import com.limelight.ui.TouchTargets;
 import com.limelight.update.HostUpdateChecker;
 
 import java.util.Collections;
@@ -365,6 +366,9 @@ public class PcGridAdapter extends GenericGridAdapter<PcView.ComputerObject> {
         RowState state = obj.rowState();
         View resume = parent.findViewById(R.id.grid_resume);
         GlassButton action = parent.findViewById(R.id.grid_action);
+        View more = parent.findViewById(R.id.grid_more);
+        // Touch is the only way into these controls; under 48dp they get a 48dp touch area, and keep their look and place.
+        TouchTargets.apply(parent instanceof PcRow ? (ViewGroup) parent : (ViewGroup) more.getParent(), resume, action, more);
         int word = television ? 0 : actionWord(context, obj);
         boolean running = state == RowState.RUNNING;
         resume.setVisibility(running && word != 0 ? View.VISIBLE : View.GONE);
