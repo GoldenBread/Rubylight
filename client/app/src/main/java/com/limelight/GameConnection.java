@@ -1731,6 +1731,12 @@ final class GameConnection {
             });
             launchConfirmationDialog.setCanceledOnTouchOutside(false);
             launchConfirmationDialog.show();
+            // Confirming quits the running game: a pad's first press lands on Cancel.
+            android.widget.Button cancel = launchConfirmationDialog.getButton(android.content.DialogInterface.BUTTON_NEGATIVE);
+            if (cancel != null) {
+                if (android.os.Build.VERSION.SDK_INT >= 26) cancel.setFocusedByDefault(true);
+                cancel.requestFocus();
+            }
         });
     }
 

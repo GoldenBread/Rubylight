@@ -122,7 +122,6 @@
     <string name="applist_refresh_error_msg">Uygulama listesi alınamadı</string>
     <string name="applist_quit_app">Çıkılıyor</string>
     <string name="applist_quit_success">Başarıyla çıkıldı</string>
-    <string name="applist_quit_fail">Çıkılamadı</string>
     <string name="applist_quit_confirmation">Çalışan uygulamadan çıkılsın mı?\nKaydedilmemiş ilerleme kaybolur.</string>
     <string name="applist_details_id">Uygulama kimliği:</string>
     <string name="title_add_pc">Bilgisayar ekle</string>

@@ -122,7 +122,6 @@
     <string name="applist_refresh_error_msg">Nie udało się pobrać listy aplikacji</string>
     <string name="applist_quit_app">Zamykanie</string>
     <string name="applist_quit_success">Zamknięto</string>
-    <string name="applist_quit_fail">Nie udało się zamknąć</string>
     <string name="applist_quit_confirmation">Zamknąć uruchomioną aplikację?\nNiezapisany postęp zostanie utracony.</string>
     <string name="applist_details_id">ID aplikacji:</string>
     <string name="title_add_pc">Dodaj komputer</string>

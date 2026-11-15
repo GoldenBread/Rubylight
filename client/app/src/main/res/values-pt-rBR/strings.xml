@@ -122,7 +122,6 @@
     <string name="applist_refresh_error_msg">Falha ao obter a lista de apps</string>
     <string name="applist_quit_app">Encerrando</string>
     <string name="applist_quit_success">Encerrado com sucesso</string>
-    <string name="applist_quit_fail">Falha ao encerrar</string>
     <string name="applist_quit_confirmation">Encerrar o app em execução?\nO progresso não salvo será perdido.</string>
     <string name="applist_details_id">ID do app:</string>
     <string name="title_add_pc">Adicionar PC</string>

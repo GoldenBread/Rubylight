@@ -147,10 +147,9 @@
     <string name="applist_refresh_error_msg">Failed to get app list</string>
     <string name="applist_quit_app">Quitting</string>
     <string name="applist_quit_success">Successfully quit</string>
-    <string name="applist_quit_fail">Failed to quit</string>
     <string name="applist_quit_fail_check">Couldn’t quit %1$s. Check that the PC is on and on this network, then try again.</string>
     <string name="applist_quit_other_device">Another device started this game, so it can only be quit from that device or on the PC.</string>
-    <string name="applist_quit_confirmation">Quit the running app?\nUnsaved progress will be lost.</string>
+    <string name="applist_quit_confirmation">Quit the game on the PC?\nUnsaved progress in the running game is lost.</string>
     <string name="applist_details_id">App ID:</string>
 
     <!-- Add computer manually activity -->
@@ -496,9 +495,9 @@
     <string name="stream_end_monitor">End monitor session</string>
     <string name="stream_end_input">End input session</string>
     <string name="launch_confirm_title">Confirm on this device</string>
-    <string name="launch_confirm_replace">Quit the running app and start this one?\nConfirm within 60 seconds.</string>
+    <string name="launch_confirm_replace">Quit the running game and start this one?\nConfirm within 60 seconds.</string>
     <string name="launch_confirm_replace_named">Quit %1$s and start %2$s?\nConfirm within 60 seconds.</string>
-    <string name="launch_confirm_terminate">Quit the app?\nMonitor/input clients stay connected.\nConfirm within 60 seconds.</string>
+    <string name="launch_confirm_terminate">Quit the game?\nMonitor/input clients stay connected.\nConfirm within 60 seconds.</string>
     <string name="launch_confirm">Confirm</string>
     <string name="summary_about">Version %1$s · Based on Moonlight (GPL-3.0)</string>
     <string name="settings_search_hint">Search settings</string>

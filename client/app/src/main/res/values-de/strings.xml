@@ -122,7 +122,6 @@
     <string name="applist_refresh_error_msg">App-Liste konnte nicht geladen werden</string>
     <string name="applist_quit_app">Wird beendet</string>
     <string name="applist_quit_success">App beendet</string>
-    <string name="applist_quit_fail">Beenden fehlgeschlagen</string>
     <string name="applist_quit_confirmation">App beenden?\nUngespeicherter Fortschritt geht verloren.</string>
     <string name="applist_details_id">App-ID:</string>
     <string name="title_add_pc">PC hinzufügen</string>

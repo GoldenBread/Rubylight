@@ -122,7 +122,6 @@
     <string name="applist_refresh_error_msg">No se ha podido obtener la lista de aplicaciones</string>
     <string name="applist_quit_app">Cerrando</string>
     <string name="applist_quit_success">Cerrado correctamente</string>
-    <string name="applist_quit_fail">No se ha podido cerrar</string>
     <string name="applist_quit_confirmation">¿Cerrar la aplicación en ejecución?\nSe perderá el progreso no guardado.</string>
     <string name="applist_details_id">ID de la aplicación:</string>
     <string name="title_add_pc">Añadir PC</string>

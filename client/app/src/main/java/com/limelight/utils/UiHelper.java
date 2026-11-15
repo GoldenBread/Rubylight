@@ -223,10 +223,11 @@ public class UiHelper {
             }
         };
 
-        AlertDialog.Builder builder = new NavigationDialogBuilder(parent);
+        // Cancel has the first focus: two A presses must not lose the game's unsaved progress.
+        AlertDialog.Builder builder = new NavigationDialogBuilder(parent).startOnCancel();
         AlertDialog dialog = builder.setMessage(parent.getResources().getString(R.string.applist_quit_confirmation))
-                .setPositiveButton(parent.getResources().getString(R.string.yes), dialogClickListener)
-                .setNegativeButton(parent.getResources().getString(R.string.no), dialogClickListener)
+                .setPositiveButton(parent.getResources().getString(R.string.applist_menu_quit), dialogClickListener)
+                .setNegativeButton(parent.getResources().getString(android.R.string.cancel), dialogClickListener)
                 .setOnCancelListener(ignored -> { if (onNo != null) onNo.run(); })
                 .show();
         markDestructive(dialog);

@@ -122,7 +122,6 @@
     <string name="applist_refresh_error_msg">无法获取应用列表</string>
     <string name="applist_quit_app">正在退出</string>
     <string name="applist_quit_success">已成功退出</string>
-    <string name="applist_quit_fail">退出失败</string>
     <string name="applist_quit_confirmation">要退出正在运行的应用吗？\n未保存的进度将会丢失。</string>
     <string name="applist_details_id">应用 ID：</string>
     <string name="title_add_pc">添加电脑</string>

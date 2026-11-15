@@ -122,7 +122,6 @@
     <string name="applist_refresh_error_msg">Impossibile ottenere l’elenco delle app</string>
     <string name="applist_quit_app">Chiusura</string>
     <string name="applist_quit_success">Chiusura completata</string>
-    <string name="applist_quit_fail">Chiusura non riuscita</string>
     <string name="applist_quit_confirmation">Chiudere l’app in esecuzione?\nI progressi non salvati andranno persi.</string>
     <string name="applist_details_id">ID app:</string>
     <string name="title_add_pc">Aggiungi PC</string>

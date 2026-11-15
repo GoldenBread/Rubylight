@@ -122,7 +122,6 @@
     <string name="applist_refresh_error_msg">Не удалось получить список приложений</string>
     <string name="applist_quit_app">Закрытие</string>
     <string name="applist_quit_success">Успешно закрыто:</string>
-    <string name="applist_quit_fail">Не удалось закрыть</string>
     <string name="applist_quit_confirmation">Закрыть запущенное приложение?\nНесохранённый прогресс будет потерян.</string>
     <string name="applist_details_id">ID приложения:</string>
     <string name="title_add_pc">Добавить ПК</string>

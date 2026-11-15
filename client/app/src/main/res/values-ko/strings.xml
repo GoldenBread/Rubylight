@@ -122,7 +122,6 @@
     <string name="applist_refresh_error_msg">앱 목록을 가져오지 못했습니다</string>
     <string name="applist_quit_app">종료 중</string>
     <string name="applist_quit_success">종료했습니다</string>
-    <string name="applist_quit_fail">종료하지 못했습니다</string>
     <string name="applist_quit_confirmation">실행 중인 앱을 종료할까요?\n저장하지 않은 진행 상황은 사라집니다.</string>
     <string name="applist_details_id">앱 ID:</string>
     <string name="title_add_pc">PC 추가</string>

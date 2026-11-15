@@ -122,7 +122,6 @@
     <string name="applist_refresh_error_msg">アプリ一覧を取得できませんでした</string>
     <string name="applist_quit_app">終了しています</string>
     <string name="applist_quit_success">終了しました</string>
-    <string name="applist_quit_fail">終了できませんでした</string>
     <string name="applist_quit_confirmation">実行中のアプリを終了しますか？\n保存していない進行状況は失われます。</string>
     <string name="applist_details_id">アプリ ID:</string>
     <string name="title_add_pc">PC を追加</string>

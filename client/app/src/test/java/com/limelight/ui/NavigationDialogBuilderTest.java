@@ -42,6 +42,21 @@ public class NavigationDialogBuilderTest {
         } finally { activity.destroy(); }
     }
 
+    @Test public void quittingTheGameStartsOnCancelAndSaysQuitGame() {
+        ActivityController<UiNavigationTest.Screen> activity = Robolectric.buildActivity(UiNavigationTest.Screen.class).setup();
+        try {
+            com.limelight.utils.UiHelper.displayQuitConfirmationDialog(activity.get(), null, null);
+            AlertDialog quit = (AlertDialog) org.robolectric.shadows.ShadowDialog.getLatestDialog();
+            Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            android.widget.Button confirm = quit.getButton(android.content.DialogInterface.BUTTON_POSITIVE);
+            assertEquals("Quit game", confirm.getText().toString());
+            assertEquals(activity.get().getString(android.R.string.cancel),
+                    quit.getButton(android.content.DialogInterface.BUTTON_NEGATIVE).getText().toString());
+            assertFalse("a pad starts on Cancel", confirm.isFocusedByDefault());
+            assertTrue(quit.getButton(android.content.DialogInterface.BUTTON_NEGATIVE).isFocusedByDefault());
+        } finally { activity.destroy(); }
+    }
+
     private static void press(AlertDialog dialog, int key) {
         dialog.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, key));
         dialog.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, key));

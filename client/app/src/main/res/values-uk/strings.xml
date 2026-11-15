@@ -122,7 +122,6 @@
     <string name="applist_refresh_error_msg">Не вдалося отримати список застосунків</string>
     <string name="applist_quit_app">Закриття</string>
     <string name="applist_quit_success">Успішно закрито</string>
-    <string name="applist_quit_fail">Не вдалося закрити</string>
     <string name="applist_quit_confirmation">Закрити запущений застосунок?\nНезбережений прогрес буде втрачено.</string>
     <string name="applist_details_id">ID застосунку:</string>
     <string name="title_add_pc">Додати ПК</string>
