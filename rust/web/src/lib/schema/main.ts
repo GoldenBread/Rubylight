@@ -81,6 +81,12 @@ export const EXPERT_GROUPS: ReadonlySet<string> = new Set([
   DEBUG_GROUP,
 ]);
 
+/**
+ * Picture groups All settings also starts folded, in their usual place: the ones after the
+ * screens, codecs and bitrate that most people leave alone. A customized one starts open.
+ */
+export const FOLDED_GROUPS: ReadonlySet<string> = new Set(['HDR', 'Frame pacing', 'Frame limiter', 'After a stream']);
+
 /** An always-on setting as All settings shows it: in Debug switches, for troubleshooting. */
 export function asDebugSwitch(setting: Setting): Setting {
   return {

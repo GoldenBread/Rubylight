@@ -52,7 +52,7 @@
     type SettingsTab,
     type TabId,
   } from '../lib/settings-schema';
-  import { EXPERT_GROUPS } from '../lib/schema/main';
+  import { EXPERT_GROUPS, FOLDED_GROUPS } from '../lib/schema/main';
   import SaveBar from '../components/settings/SaveBar.svelte';
   import { SETTING as PRESET, covered, presetById, presetId, presetNotice, withPreset } from '../lib/stream-presets';
   import type { Setting } from '../lib/settings-types';
@@ -188,7 +188,7 @@
     settings: Setting[];
   }
 
-  // Every setting shows; only the expert groups start collapsed (EXPERT_GROUPS).
+  // Every setting shows; the expert groups (EXPERT_GROUPS) and a few Picture groups (FOLDED_GROUPS) start collapsed.
   let foldOpen = $state<Record<string, boolean>>({});
 
   /** Settings under their group headings, in the tab's order (groupRank), expert groups last. */
@@ -290,7 +290,7 @@
 
   /** Show a section: open it if it folds, then bring it under the sticky bars. */
   async function reveal(name: string, smooth = true) {
-    if (EXPERT_GROUPS.has(name)) foldOpen[name] = true;
+    if (EXPERT_GROUPS.has(name) || FOLDED_GROUPS.has(name)) foldOpen[name] = true;
     if (name === INTEGRATIONS) integrationsOpen = true;
     if (name === CUSTOM_KEYS) customOpen = true;
     await tick();
@@ -657,7 +657,7 @@
     <PowerPanel id={anchor} title={name}>
       {#snippet settings()}{@render rows(item)}{/snippet}
     </PowerPanel>
-  {:else if EXPERT_GROUPS.has(item.name)}
+  {:else if EXPERT_GROUPS.has(item.name) || FOLDED_GROUPS.has(item.name)}
     {@const fold = foldStatus(item.settings, edits, config, pending)}
     <!-- Opened by the user. A customized value opens it until the user closes it; an unsaved one keeps it open. -->
     <Disclosure

@@ -52,6 +52,25 @@ test('every setting lands in one tab, under a group that tab orders or folds', (
   assert.ok(groupRank('advanced', 'Console') < groupRank('advanced', DEBUG_GROUP));
 });
 
+test('Picture folds HDR, frame pacing, the frame limiter and after a stream in place, open when customized', async () => {
+  const { FOLDED_GROUPS } = await server.ssrLoadModule('/src/lib/schema/main.ts');
+  assert.deepEqual([...FOLDED_GROUPS].sort(), ['After a stream', 'Frame limiter', 'Frame pacing', 'HDR']);
+  for (const group of FOLDED_GROUPS) {
+    const members = schema.settings.filter((setting) => setting.group === group);
+    assert.ok(members.length > 0, group);
+    for (const setting of members) assert.equal(settingsGroup(setting.category), 'picture', setting.key);
+    // They keep their place in the tab's order instead of moving down with the expert groups.
+    assert.equal(EXPERT_GROUPS.has(group), false, group);
+    assert.ok(groupRank('picture', group) < 1000, group);
+  }
+  const page = await source('pages/Settings.svelte');
+  assert.match(page, /\{:else if EXPERT_GROUPS\.has\(item\.name\) \|\| FOLDED_GROUPS\.has\(item\.name\)\}/);
+  // A customized group starts open; the contents bar and a link to one of its settings open it.
+  assert.match(page, /open=\{\(foldOpen\[item\.name\] \?\? fold\.customized > 0\) \|\| fold\.mustOpen\}/);
+  assert.match(page, /if \(EXPERT_GROUPS\.has\(name\) \|\| FOLDED_GROUPS\.has\(name\)\) foldOpen\[name\] = true;/);
+  assert.match(page, /const group = byKey\.get\(key\)\?\.group;\s*if \(group\) foldOpen\[group\] = true;/);
+});
+
 test('settings that moved sit where people look for them', () => {
   const at = (key) => [settingsGroup(settings.get(key).category), settings.get(key).group];
   assert.deepEqual(at('enable_pairing'), ['network', 'Pairing']);
