@@ -13,7 +13,8 @@ import java.util.List;
 
 /**
  * The Files page's transfers after the page closed with some unfinished, as on desktop: they go on while the app
- * runs, one PC at a time, and end when they finish or are cancelled on that PC's Files page opened again. No
+ * runs, one PC at a time, and end when they finish or are cancelled on that PC's Files page opened again. One that
+ * fails meanwhile keeps them until that page is opened again and shows it, with Try again. No
  * foreground service keeps them: in the background they may end with the process, as before. The screens that lead
  * to Files show how many run ({@link #showOn}). Main thread only.
  */
@@ -57,6 +58,12 @@ public final class RunningTransfers {
         return count;
     }
 
+    /** Transfers that failed after the Files page closed and that it has not shown yet; 0 for none. */
+    public static int failed() {
+        FileTransferActivity.TransferWork work = held;
+        return work == null ? 0 : work.unseenFailures();
+    }
+
     /** The PC they run with, or null. */
     public static String pcUuid() {
         return held == null ? null : held.uuid;
@@ -68,7 +75,8 @@ public final class RunningTransfers {
 
     /**
      * Shows "File transfers running: n" over the activity's page while there are any, as desktop's button over the
-     * launcher; a press opens that PC's Files page, where each one can be cancelled. Call from onResume; the
+     * launcher, or "File transfers failed: n" while failures wait to be shown, which wins since they need the user;
+     * a press opens that PC's Files page, where each one can be cancelled or tried again. Call from onResume; the
      * returned Runnable, from onPause, takes the button away again.
      */
     public static Runnable showOn(Activity activity) {
@@ -87,10 +95,12 @@ public final class RunningTransfers {
         });
         content.addView(button, params);
         Runnable update = () -> {
+            int failed = failed();
             int count = count();
-            button.setVisibility(count > 0 ? View.VISIBLE : View.GONE);
-            if (count > 0) {
-                String text = activity.getString(R.string.files_running, count);
+            button.setVisibility(failed > 0 || count > 0 ? View.VISIBLE : View.GONE);
+            if (failed > 0 || count > 0) {
+                String text = failed > 0 ? activity.getString(R.string.files_failed, failed)
+                        : activity.getString(R.string.files_running, count);
                 if (!text.contentEquals(button.getText())) button.setText(text);
             }
         };

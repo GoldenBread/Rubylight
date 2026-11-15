@@ -58,9 +58,11 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -72,7 +74,8 @@ import java.util.concurrent.Executors;
  *
  * <p>Transfers run while the screen exists, also in the background, and through a configuration change (dark
  * theme, font or display size, language: {@link TransferWork}). Leaving it keeps unfinished ones going while the
- * app runs ({@link RunningTransfers}), one PC at a time; with nothing unfinished the work ends with the screen.
+ * app runs ({@link RunningTransfers}), one PC at a time, and so does one that fails until the page shows it; with
+ * nothing unfinished or failed unseen the work ends with the screen.
  */
 public class FileTransferActivity extends NightjarActivity implements FileTransferController.Ui {
     public static final String EXTRA_PC_UUID = "files_pc_uuid";
@@ -649,6 +652,7 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
      * or goes to the same row's other button or a neighbouring row's (see {@link #restoreFocus}).
      */
     private void showTransfers(List<FileRow> rows) {
+        work.seen(rows);
         List<String> keys = new ArrayList<>();
         boolean finished = false;
         for (FileRow row : rows) {
@@ -917,6 +921,8 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
         final List<Uri> waiting = new ArrayList<>();
         /** Unfinished downloads whose documents could not be deleted, by name, until Clear finished. */
         final List<String> leftovers = new ArrayList<>();
+        /** The failed transfers the page last showed ({@link #seen}). */
+        final Set<Long> seenFailed = new HashSet<>();
         /** The intent was read: its share is in {@link #waiting} or sent. */
         boolean opened;
         String uuid;
@@ -937,8 +943,8 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
                 screen.onTransfersChanged(rows);
             } else if (RunningTransfers.held() == this) {
                 RunningTransfers.changed();
-                // The last one finished with no page open: nothing is left to keep.
-                if (!running()) handler.post(() -> { if (screen == null && !running()) end(); });
+                // The last one finished with no page open and no failure to show: nothing is left to keep.
+                if (!kept()) handler.post(() -> { if (screen == null && !kept()) end(); });
             }
         }
 
@@ -947,10 +953,39 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
             return controller != null && controller.isActive();
         }
 
-        /** The screen went for good: unfinished transfers go on in {@link RunningTransfers}; otherwise all ends. */
+        /** The page shows {@code rows}: the failed ones among them count as seen. */
+        void seen(List<FileRow> rows) {
+            seenFailed.clear();
+            for (FileRow row : rows) {
+                if (row.state == FileRow.State.FAILED) seenFailed.add(row.id);
+            }
+        }
+
+        /** Transfers that failed since the page last showed them. */
+        int unseenFailures() {
+            if (controller == null) return 0;
+            int count = 0;
+            for (FileRow row : controller.rows()) {
+                if (row.state == FileRow.State.FAILED && !seenFailed.contains(row.id)) count++;
+            }
+            return count;
+        }
+
+        /**
+         * Whether the work outlives its page: a transfer runs, or one failed that the page has not shown, which
+         * stays until that PC's page is opened again.
+         */
+        boolean kept() {
+            return running() || unseenFailures() > 0;
+        }
+
+        /**
+         * The screen went for good: unfinished transfers, and failed ones not shown yet, stay in
+         * {@link RunningTransfers}; otherwise all ends.
+         */
         void screenGone() {
             screen = null;
-            if (running()) RunningTransfers.hold(this);
+            if (kept()) RunningTransfers.hold(this);
             else end();
         }
 

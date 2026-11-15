@@ -57,7 +57,8 @@ public class RunningTransfersTest {
         @Override public void clearFinished(long handle) {}
         @Override public String snapshot(long handle) {
             return "[{\"id\":1,\"direction\":\"upload\",\"name\":\"save.bin\",\"local_name\":\"save.bin\",\"size\":10,"
-                    + "\"state\":\"" + state + "\"}]";
+                    + "\"state\":\"" + state + "\""
+                    + ("failed".equals(state) ? ",\"problem\":\"network\",\"can_retry\":true" : "") + "}]";
         }
         @Override public String startNext(long handle) { return "[]"; }
         @Override public String list(HostEndpoint host) { return "{}"; }
@@ -122,6 +123,53 @@ public class RunningTransfersTest {
         assertNull(RunningTransfers.held());
         assertEquals(1, engine.cancelAlls);
         assertTrue(engine.destroyed);
+        assertTrue(work.workers.isShutdown());
+    }
+
+    @Test
+    public void aTransferThatFailsAfterThePageClosedStaysUntilThePageShowsIt() {
+        ActivityController<FileTransferActivity> screen = page("tower");
+        FileTransferActivity.TransferWork work = screen.get().work;
+        Engine engine = new Engine();
+        work.engine = engine;
+        work.controller = new FileTransferController(engine, HOST, work.workers, work.handler::post, work);
+        work.controller.send("save.bin", 10, () -> -1);
+        screen.get().finish();
+        screen.pause().stop().destroy();
+        assertSame(work, RunningTransfers.held());
+
+        // A network blip fails it with no page open: nothing runs any more, but the failure is kept.
+        engine.state = "failed";
+        work.controller.cancel(1); // any change of the list reports it, as a worker's end does
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+        assertSame("the failure is not dropped unseen", work, RunningTransfers.held());
+        assertEquals(0, engine.cancelAlls);
+        assertEquals(0, RunningTransfers.count());
+        assertEquals(1, RunningTransfers.failed());
+
+        // The button says so, and opens the PC's page.
+        ActivityController<UiNavigationTest.Screen> home = Robolectric.buildActivity(UiNavigationTest.Screen.class).setup();
+        Runnable hide = RunningTransfers.showOn(home.get());
+        ViewGroup content = home.get().findViewById(android.R.id.content);
+        Button button = (Button) content.getChildAt(content.getChildCount() - 1);
+        assertEquals(View.VISIBLE, button.getVisibility());
+        assertEquals("File transfers failed: 1", button.getText().toString());
+        button.performClick();
+        assertEquals("tower", Shadows.shadowOf(home.get()).getNextStartedActivity()
+                .getStringExtra(FileTransferActivity.EXTRA_PC_UUID));
+        hide.run();
+        home.destroy();
+
+        // The page shows the failed row with Try again; that counts as seen, so leaving it drops the row.
+        ActivityController<FileTransferActivity> again = page("tower");
+        assertSame(work, again.get().work);
+        View page = again.get().findViewById(android.R.id.content);
+        assertTrue(page.findViewWithTag("retry:1") != null);
+        assertEquals(0, work.unseenFailures());
+        again.get().finish();
+        again.pause().stop().destroy();
+        assertNull(RunningTransfers.held());
+        assertEquals(1, engine.cancelAlls);
         assertTrue(work.workers.isShutdown());
     }
 }

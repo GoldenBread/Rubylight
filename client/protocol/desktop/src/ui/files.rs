@@ -9,10 +9,11 @@
 //! list, and the workers wake the UI loop. Leaving the page (it is neither shown nor on the way
 //! back to) keeps the transfers that have not finished: they go on, a button over the launcher
 //! says how many and opens the page again, where each can be cancelled, and the page is forgotten
-//! once they are done. A cancelled download leaves no partial file behind, an upload no file on
+//! once they are done. One that fails meanwhile keeps the page, and the button says how many
+//! failed, until the page is opened again and shows them with Try again. A cancelled download leaves no partial file behind, an upload no file on
 //! the PC. Downloads land in the user's Downloads folder under a name no file there has yet.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -95,6 +96,9 @@ pub struct Page {
     listing: Option<u64>,
     asks: u64,
     pub transfers: Transfers,
+    /// The failed transfers the page showed when it was last drawn: one that failed since, while
+    /// the page was left, keeps it until it is shown.
+    seen_failed: HashSet<u64>,
     /// Each upload's file on this device, for as long as it is listed.
     sources: HashMap<u64, PathBuf>,
     /// Where downloads land, or why there is no such folder.
@@ -127,6 +131,7 @@ impl Page {
             listing: None,
             asks: 0,
             transfers: Transfers::new(),
+            seen_failed: HashSet::new(),
             sources: HashMap::new(),
             folder,
             notices: Vec::new(),
@@ -155,6 +160,20 @@ impl Page {
     /// Whether something runs that the UI should animate.
     pub fn busy(&self) -> bool {
         self.access == Access::Checking || self.listing.is_some() || self.choosing || self.transfers.is_active()
+    }
+
+    /// The page is drawn: the failed transfers it shows count as seen.
+    fn seen(&mut self) {
+        self.seen_failed = self.transfers.items().iter().filter(|t| matches!(t.state, State::Failed { .. })).map(|t| t.id).collect();
+    }
+
+    /// Failed transfers the page has not shown since they failed.
+    pub fn unseen_failures(&self) -> usize {
+        self.transfers
+            .items()
+            .iter()
+            .filter(|t| matches!(t.state, State::Failed { .. }) && !self.seen_failed.contains(&t.id))
+            .count()
     }
 
     pub fn may(&self, feature: Feature) -> bool {
@@ -351,6 +370,15 @@ impl Page {
     }
 }
 
+/// What the button over the launcher says about a Files page that is not shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Away {
+    /// This many transfers are queued or running.
+    Running(usize),
+    /// This many failed since the page was last shown.
+    Failed(usize),
+}
+
 /// The Files page of the PC it is open for, if any.
 #[derive(Default)]
 pub struct Files {
@@ -359,9 +387,10 @@ pub struct Files {
 
 impl Files {
     /// Takes in what the workers reported. `open` is the PC whose page is shown or on the way
-    /// back to: a page left is forgotten once no transfer of it is queued or running.
+    /// back to: a page left is forgotten once no transfer of it is queued or running and none
+    /// failed that it has not shown.
     pub fn poll(&mut self, open: Option<u64>) {
-        if self.page.as_ref().is_some_and(|p| open != Some(p.host) && !p.transfers.is_active()) {
+        if self.page.as_ref().is_some_and(|p| open != Some(p.host) && !p.transfers.is_active() && p.unseen_failures() == 0) {
             self.page = None;
         }
         if let Some(page) = &mut self.page {
@@ -378,11 +407,16 @@ impl Files {
         self.page.as_ref().is_some_and(|p| p.transfers.is_active())
     }
 
-    /// The PC whose transfers go on while its page is not shown (`shown`), and how many are
-    /// queued or running.
-    pub fn running_away(&self, shown: Option<u64>) -> Option<(u64, usize)> {
-        let page = self.page.as_ref().filter(|p| shown != Some(p.host) && p.transfers.is_active())?;
-        Some((page.host, page.transfers.items().iter().filter(|t| !t.state.is_finished()).count()))
+    /// The PC whose transfers go on, or failed, while its page is not shown (`shown`), and what
+    /// the button says: failures the page has not shown come first, since they need the user.
+    pub fn running_away(&self, shown: Option<u64>) -> Option<(u64, Away)> {
+        let page = self.page.as_ref().filter(|p| shown != Some(p.host))?;
+        let failed = page.unseen_failures();
+        if failed > 0 {
+            return Some((page.host, Away::Failed(failed)));
+        }
+        let running = page.transfers.items().iter().filter(|t| !t.state.is_finished()).count();
+        (running > 0).then_some((page.host, Away::Running(running)))
     }
 
     /// Command::ChooseFiles: `pick` shows the system's file dialog and calls back with the files
@@ -565,13 +599,18 @@ fn item(ui: &mut Ui, name: &str, line: &str, color: egui::Color32, control: impl
     out
 }
 
-/// The button over the launcher while a Files page that is not shown still transfers: how many,
-/// and a click opens that page again, where each transfer can be cancelled. True when clicked.
-pub(super) fn running_button(ctx: &egui::Context, count: usize) -> bool {
+/// The button over the launcher while a Files page that is not shown still transfers, or had
+/// transfers fail: how many, and a click opens that page again, where each transfer can be
+/// cancelled or tried again. True when clicked.
+pub(super) fn running_button(ctx: &egui::Context, away: Away) -> bool {
+    let label = match away {
+        Away::Running(count) => trf("File transfers running: {}", &[&count]),
+        Away::Failed(count) => trf("File transfers failed: {}", &[&count]),
+    };
     egui::Area::new(egui::Id::unique("files-running"))
         .order(egui::Order::Foreground)
         .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(24.0, -24.0))
-        .show(ctx, |ui| quiet_button(ui, &trf("File transfers running: {}", &[&count])).clicked())
+        .show(ctx, |ui| quiet_button(ui, &label).clicked())
         .inner
 }
 
@@ -590,6 +629,7 @@ impl Launcher {
     }
 
     fn draw_files(&mut self, ui: &mut Ui, page: &mut Page, commands: &mut Vec<Command>) {
+        page.seen();
         let folder = page.folder.as_ref().ok().cloned();
         let may_send = page.may(Feature::FileUpload);
         let may_download = page.may(Feature::FileDownload) && folder.is_some();

@@ -1120,7 +1120,8 @@ impl Launcher {
             Screen::Game { host, app } => Some((host, app)),
             _ => None,
         });
-        // Likewise a Files page that was left goes, once its transfers are done.
+        // Likewise a Files page that was left goes, once its transfers are done and a failure among
+        // them has been shown.
         let files = std::iter::once(&self.screen).chain(self.trail.iter().map(|(screen, _)| screen)).find_map(|screen| match screen {
             Screen::Files(id) => Some(*id),
             _ => None,
@@ -1274,10 +1275,11 @@ impl Launcher {
             waking(&ctx, host, &mut commands);
         }
         self.button_hints(&ctx, &view);
-        // A Files page left while it transfers: its transfers go on, and this opens it again.
+        // A Files page left while it transfers: its transfers go on, and this opens it again. One
+        // that failed meanwhile keeps it until the page shows the failure.
         let files_shown = match self.screen { Screen::Files(id) => Some(id), _ => None };
-        if let Some((host, count)) = self.files.running_away(files_shown) {
-            if files::running_button(&ctx, count) {
+        if let Some((host, away)) = self.files.running_away(files_shown) {
+            if files::running_button(&ctx, away) {
                 commands.push(Command::OpenFiles(host));
             }
         }

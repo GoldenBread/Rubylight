@@ -6819,7 +6819,7 @@ fn leaving_a_files_page_keeps_its_transfers_and_a_button_says_so() {
     assert_eq!(f.l.screen, Screen::Hosts);
     f.settle();
     assert!(f.l.files.transferring(), "the upload goes on");
-    assert_eq!(f.l.files.running_away(None), Some((id, 1)));
+    assert_eq!(f.l.files.running_away(None), Some((id, files::Away::Running(1))));
     assert!(shows(&f, "File transfers running: 1"), "{:?}", f.drawn);
 }
 

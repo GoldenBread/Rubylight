@@ -410,7 +410,7 @@ fn leaving_the_page_keeps_what_runs_until_it_is_done() {
     // Left: the upload goes on, and the launcher says so.
     files.poll(None);
     assert!(files.page.is_some() && files.transferring(), "leaving cancels nothing");
-    assert_eq!(files.running_away(None), Some((7, 1)));
+    assert_eq!(files.running_away(None), Some((7, Away::Running(1))));
     // Cancelled on the page, it ends; the page left is forgotten then.
     let p = files.page.as_mut().unwrap();
     let id = p.transfers.items()[0].id;
@@ -425,6 +425,72 @@ fn leaving_the_page_keeps_what_runs_until_it_is_done() {
     }
     assert_eq!(Arc::strong_count(&api), 1, "the workers ended");
     assert!(api.received.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_transfer_that_fails_after_the_page_was_left_keeps_it_until_it_is_shown() {
+    let downloads = Folder::new("fail-away");
+    let here = Folder::new("fail-away-here");
+    let api = fake(true, true);
+    let mut files = Files { page: Some(page(api.clone(), &downloads)) };
+    let p = files.page.as_mut().unwrap();
+    until(p, "the list", |p| p.list.is_some());
+    *api.hold.lock().unwrap() = true;
+    p.send(vec![here.file("a.txt", b"a"), here.file("b.txt", b"b")]);
+    p.seen();
+    // Left with both queued: the first fails on the way while the second still waits.
+    files.poll(None);
+    assert_eq!(files.running_away(None), Some((7, Away::Running(2))));
+    *api.refuse.lock().unwrap() = Some(nightjar_core::http::FileRefusal::InsufficientStorage);
+    *api.hold.lock().unwrap() = false;
+    let p = files.page.as_mut().unwrap();
+    let ids: Vec<u64> = p.transfers.items().iter().map(|t| t.id).collect();
+    until(p, "both ended", |p| ids.iter().all(|id| state(p, *id).is_finished()));
+    assert!(matches!(state(p, ids[0]), State::Failed { .. }) && matches!(state(p, ids[1]), State::Done { .. }));
+    // Nothing runs any more, but the failure has not been shown: the page stays, and the button
+    // says that transfers failed. The failed count wins over the running one.
+    files.poll(None);
+    assert!(files.page.is_some(), "the failure is not dropped unseen");
+    assert_eq!(files.running_away(None), Some((7, Away::Failed(1))));
+    assert_eq!(files.running_away(Some(7)), None, "the page shows it itself");
+    // Opened again, the page shows the failed row with Try again; leaving without trying it
+    // again drops it as before.
+    files.poll(Some(7));
+    let p = files.page.as_mut().unwrap();
+    assert!(p.transfers.get(ids[0]).unwrap().can_retry());
+    p.seen();
+    assert_eq!(p.unseen_failures(), 0);
+    files.poll(None);
+    assert!(files.page.is_none(), "seen: forgotten once left");
+}
+
+#[test]
+fn a_failure_wins_the_button_over_transfers_still_running() {
+    let downloads = Folder::new("fail-wins");
+    let here = Folder::new("fail-wins-here");
+    let api = fake(true, true);
+    let mut files = Files { page: Some(page(api.clone(), &downloads)) };
+    let p = files.page.as_mut().unwrap();
+    until(p, "the list", |p| p.list.is_some());
+    // An upload refused at once, then a download held running.
+    *api.refuse.lock().unwrap() = Some(nightjar_core::http::FileRefusal::InsufficientStorage);
+    p.send(vec![here.file("a.txt", b"a")]);
+    let upload = p.transfers.items()[0].id;
+    until(p, "refused", |p| state(p, upload).is_finished());
+    *api.hold.lock().unwrap() = true;
+    let file = p.list.as_ref().unwrap().as_ref().unwrap().files[0].clone();
+    p.download(&file);
+    files.poll(None);
+    assert_eq!(files.running_away(None), Some((7, Away::Failed(1))));
+    let p = files.page.as_mut().unwrap();
+    p.seen();
+    assert_eq!(files.running_away(None), Some((7, Away::Running(1))), "seen: the download that runs");
+    // The page goes and cancels the download; its worker ends before the folders are removed.
+    drop(files);
+    let until = Instant::now() + Duration::from_secs(10);
+    while Arc::strong_count(&api) > 1 && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 #[test]
