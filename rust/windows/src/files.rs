@@ -37,22 +37,69 @@ pub fn local_volume(path: &std::path::Path) -> bool {
 }
 
 /// Deletes every file in `paths`, or none of them: each is opened for
-/// delete, without following a link, and marked for deletion, and they go
-/// together once all are marked. One a program holds (a DLL a game has
+/// delete, without following a link, then all are marked for deletion in
+/// one pass that nothing can block, and they go together once all are
+/// marked, when their handles close. One a program holds (a DLL a game has
 /// loaded, a file open without delete sharing) clears the marks already
 /// set, so every file stays; the error names that file.
+///
+/// A mark is a POSIX delete that ignores the read-only attribute: the name
+/// goes as the handle closes even while another program (an antivirus
+/// scan, the indexer) holds the file open with delete sharing, and a
+/// read-only file goes too. A file system or Windows without it (FAT,
+/// Windows 10 before 1709) gets the plain mark, which waits for every
+/// handle and refuses a read-only file.
 pub fn delete_all(
     paths: &[std::path::PathBuf],
 ) -> Result<(), (std::path::PathBuf, std::io::Error)> {
     use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
     use windows::Win32::{
-        Foundation::HANDLE,
+        Foundation::{
+            ERROR_INVALID_FUNCTION, ERROR_INVALID_PARAMETER, ERROR_NOT_SUPPORTED, HANDLE,
+        },
         Storage::FileSystem::{
-            DELETE, FILE_DISPOSITION_INFO, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
-            FILE_SHARE_READ, FILE_SHARE_WRITE, FileDispositionInfo, SetFileInformationByHandle,
+            DELETE, FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_DO_NOT_DELETE,
+            FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
+            FILE_DISPOSITION_INFO, FILE_DISPOSITION_INFO_EX, FILE_DISPOSITION_INFO_EX_FLAGS,
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+            FileDispositionInfo, FileDispositionInfoEx, SetFileInformationByHandle,
         },
     };
-    let mark = |file: &std::fs::File, delete: bool| {
+    fn io_error(error: windows::core::Error) -> std::io::Error {
+        let code = error.code().0 as u32;
+        if code & 0xFFFF_0000 == 0x8007_0000 {
+            std::io::Error::from_raw_os_error((code & 0xFFFF) as i32)
+        } else {
+            std::io::Error::other(error)
+        }
+    }
+    // SetFileInformationByHandle with FILE_DISPOSITION_INFO_EX (Windows 10
+    // 1709 and later): DELETE marks, DO_NOT_DELETE (no flag) clears.
+    let mark_ex = |file: &std::fs::File, delete: bool| {
+        let info = FILE_DISPOSITION_INFO_EX {
+            Flags: if delete {
+                FILE_DISPOSITION_INFO_EX_FLAGS(
+                    FILE_DISPOSITION_FLAG_DELETE.0
+                        | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS.0
+                        | FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE.0,
+                )
+            } else {
+                FILE_DISPOSITION_FLAG_DO_NOT_DELETE
+            },
+        };
+        // SAFETY: the handle is open for the call, and info is a live
+        // FILE_DISPOSITION_INFO_EX of the size passed.
+        unsafe {
+            SetFileInformationByHandle(
+                HANDLE(file.as_raw_handle()),
+                FileDispositionInfoEx,
+                (&raw const info).cast(),
+                size_of::<FILE_DISPOSITION_INFO_EX>() as u32,
+            )
+        }
+        .map_err(io_error)
+    };
+    let mark_plain = |file: &std::fs::File, delete: bool| {
         let info = FILE_DISPOSITION_INFO { DeleteFile: delete };
         // SAFETY: the handle is open for the call, and info is a live
         // FILE_DISPOSITION_INFO of the size passed.
@@ -64,28 +111,46 @@ pub fn delete_all(
                 size_of::<FILE_DISPOSITION_INFO>() as u32,
             )
         }
-        .map_err(|error| {
-            let code = error.code().0 as u32;
-            if code & 0xFFFF_0000 == 0x8007_0000 {
-                std::io::Error::from_raw_os_error((code & 0xFFFF) as i32)
-            } else {
-                std::io::Error::other(error)
-            }
-        })
+        .map_err(io_error)
     };
-    let mut marked = Vec::with_capacity(paths.len());
+    let unsupported = |error: &std::io::Error| {
+        [
+            ERROR_INVALID_PARAMETER.0,
+            ERROR_NOT_SUPPORTED.0,
+            ERROR_INVALID_FUNCTION.0,
+        ]
+        .map(|code| Some(code as i32))
+        .contains(&error.raw_os_error())
+    };
+    // Every file opened first: an open may wait on a share that stalls, and
+    // a helper killed then must leave no file marked, which its closing
+    // handles would delete.
+    let mut files = Vec::with_capacity(paths.len());
     for path in paths {
         let file = std::fs::OpenOptions::new()
             .access_mode(DELETE.0)
             .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0 | FILE_SHARE_DELETE.0)
             .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT.0)
             .open(path)
-            .and_then(|file| mark(&file, true).map(|()| file));
-        match file {
-            Ok(file) => marked.push(file),
+            .map_err(|error| (path.clone(), error))?;
+        files.push(file);
+    }
+    // Then the marks, each kept with how it was set (true: the plain one).
+    let mut marked: Vec<(&std::fs::File, bool)> = Vec::with_capacity(files.len());
+    for (file, path) in files.iter().zip(paths) {
+        let result = match mark_ex(file, true) {
+            Err(error) if unsupported(&error) => mark_plain(file, true).map(|()| true),
+            other => other.map(|()| false),
+        };
+        match result {
+            Ok(plain) => marked.push((file, plain)),
             Err(error) => {
-                for file in &marked {
-                    let _ = mark(file, false);
+                for (file, plain) in marked {
+                    let _ = if plain {
+                        mark_plain(file, false)
+                    } else {
+                        mark_ex(file, false)
+                    };
                 }
                 return Err((path.clone(), error));
             }
@@ -93,6 +158,7 @@ pub fn delete_all(
     }
     // Closing the handles deletes the files.
     drop(marked);
+    drop(files);
     Ok(())
 }
 
@@ -137,6 +203,40 @@ mod tests {
         drop(open);
         super::delete_all(&[first.clone(), loaded.clone()]).unwrap();
         assert!(!first.exists() && !loaded.exists());
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    /// A read-only file goes like any other, and one another program holds
+    /// open with delete sharing (an antivirus scan) leaves its folder at
+    /// once rather than staying there pending delete.
+    #[test]
+    fn read_only_and_shared_files_are_deleted_at_once() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let folder =
+            std::env::temp_dir().join(format!("rl-delete-readonly-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let read_only = folder.join("a.dll");
+        let shared = folder.join("b.dll");
+        std::fs::write(&read_only, b"read only").unwrap();
+        std::fs::write(&shared, b"shared").unwrap();
+        let mut permissions = std::fs::metadata(&read_only).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&read_only, permissions).unwrap();
+        // FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE.
+        let scan = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(7)
+            .open(&shared)
+            .unwrap();
+        super::delete_all(std::slice::from_ref(&read_only)).unwrap();
+        super::delete_all(std::slice::from_ref(&shared)).unwrap();
+        let left: Vec<_> = std::fs::read_dir(&folder)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(left.is_empty(), "{left:?}");
+        drop(scan);
         std::fs::remove_dir_all(&folder).unwrap();
     }
 
