@@ -52,7 +52,8 @@
     <string name="pair_pairing_title">Pair with PC</string>
     <string name="pair_pairing_help">Enter this PIN in the PC’s web UI, usually on its PIN or pairing page.</string>
     <string name="pair_incorrect_pin">PIN rejected. Try pairing again and enter the new PIN shown on this device in the PC’s web UI.</string>
-    <string name="pair_fail">Cancel the old request in the PC’s web UI, then retry.</string>
+    <string name="pair_fail">The PC ended the pairing, for example because the PIN was not entered in time. Start pairing again and enter the new PIN on the PC.</string>
+    <string name="pair_unverified">The PC failed its identity check, so nothing was paired. Another device on this network may be posing as your PC: pair only on a network you trust.</string>
     <string name="pair_already_in_progress">Finish or cancel the pending request on the PC.</string>
 
     <!-- WOL messages -->

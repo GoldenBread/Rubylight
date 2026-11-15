@@ -32,7 +32,9 @@ public class PairingManager {
         FAILED,
         ALREADY_IN_PROGRESS,
         /** The host's certificate is not the one a pairing link names: nothing was trusted. */
-        CERT_MISMATCH
+        CERT_MISMATCH,
+        /** The host's pairing secret was not signed by its certificate's key (a man in the middle): nothing was trusted. */
+        SERVER_UNVERIFIED
     }
     
     public PairingManager(NvHTTP http, LimelightCryptoProvider cryptoProvider) {
@@ -299,7 +301,7 @@ public class PairingManager {
             // Ensure the authenticity of the data
             if (!verifySignature(serverSecret, serverSignature, serverCert)) {
                 // Looks like a MITM
-                return PairState.FAILED;
+                return PairState.SERVER_UNVERIFIED;
             }
 
             // Ensure the server challenge matched what we expected (aka the PIN was correct)

@@ -1372,7 +1372,12 @@ fn pairing_texts_follow_the_android_wording() {
     assert_eq!(one_time, PAIR_OTP_PIN_WRONG);
     assert_eq!(plain, PAIR_PIN_WRONG);
     assert_eq!(pair_outcome(PairResult::AlreadyInProgress, false).unwrap_err(), PAIR_IN_PROGRESS);
-    let io = nightjar_core::http::Error::Io(std::io::ErrorKind::TimedOut.into());
+    // A PC that ended the pairing is told apart from one that failed its identity check.
+    use nightjar_core::http::{PairFailure, PairStep};
+    assert_eq!(pair_outcome(PairResult::Failed(PairFailure::Declined(PairStep::ServerCertificate)), false).unwrap_err(), PAIR_DECLINED);
+    assert_eq!(pair_outcome(PairResult::Failed(PairFailure::ServerSignature), false).unwrap_err(), PAIR_UNVERIFIED);
+    assert!(!PAIR_DECLINED.contains("old request") && !PAIR_UNVERIFIED.contains("old request"));
+    let io =nightjar_core::http::Error::Io(std::io::ErrorKind::TimedOut.into());
     assert_eq!(pair_error(&io), PAIR_NETWORK);
     assert_eq!(unpair_error(&nightjar_core::http::Error::NotPaired), UNPAIR_NOT_PAIRED);
     assert_eq!(unpair_error(&io), UNPAIR_FAILED);

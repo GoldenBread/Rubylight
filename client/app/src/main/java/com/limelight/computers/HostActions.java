@@ -331,11 +331,8 @@ public final class HostActions {
                     } else if (state == PairState.CERT_MISMATCH) {
                         message = activity.getString(R.string.pair_qr_cert_mismatch);
                     } else {
-                        message = activity.getString(state == PairState.PIN_WRONG ?
-                                (link != null ? R.string.pair_qr_incorrect_pin :
-                                        oneTimePin == null ? R.string.pair_incorrect_pin : R.string.pair_otp_incorrect_pin) :
-                                state == PairState.ALREADY_IN_PROGRESS ? R.string.pair_already_in_progress :
-                                        computer.runningGameId != 0 ? R.string.pair_pc_ingame : R.string.pair_fail);
+                        message = activity.getString(failureMessage(state, link != null, oneTimePin != null,
+                                computer.runningGameId != 0));
                     }
                 }
             } catch (HostHttpResponseException e) {
@@ -369,6 +366,21 @@ public final class HostActions {
     @VisibleForTesting
     static int refusalMessage(boolean fromLink, boolean oneTimePin) {
         return fromLink ? R.string.pair_qr_incorrect_pin : oneTimePin ? R.string.pair_otp_incorrect_pin : R.string.pair_fail;
+    }
+
+    /**
+     * What to show for a pairing that the host answered without pairing: a wrong PIN, another request, a PC that
+     * failed its identity check (never worded as a nuisance), or a PC that ended the pairing.
+     */
+    @VisibleForTesting
+    static int failureMessage(PairState state, boolean fromLink, boolean oneTimePin, boolean inGame) {
+        if (state == PairState.PIN_WRONG) {
+            return fromLink ? R.string.pair_qr_incorrect_pin : oneTimePin ? R.string.pair_otp_incorrect_pin
+                    : R.string.pair_incorrect_pin;
+        }
+        if (state == PairState.ALREADY_IN_PROGRESS) return R.string.pair_already_in_progress;
+        if (state == PairState.SERVER_UNVERIFIED) return R.string.pair_unverified;
+        return inGame ? R.string.pair_pc_ingame : R.string.pair_fail;
     }
 
     @VisibleForTesting

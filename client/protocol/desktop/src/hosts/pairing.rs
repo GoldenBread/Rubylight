@@ -30,7 +30,9 @@ pub(super) fn pair_outcome(result: PairResult, one_time: bool) -> Result<String,
         PairResult::PinWrong if one_time => Err(PAIR_OTP_PIN_WRONG.into()),
         PairResult::PinWrong => Err(PAIR_PIN_WRONG.into()),
         PairResult::AlreadyInProgress => Err(PAIR_IN_PROGRESS.into()),
-        PairResult::Failed(_) => Err(PAIR_DECLINED.into()),
+        // A PC whose signature does not verify may be another device posing as it: never a nuisance.
+        PairResult::Failed(nightjar_core::http::PairFailure::ServerSignature) => Err(PAIR_UNVERIFIED.into()),
+        PairResult::Failed(nightjar_core::http::PairFailure::Declined(_)) => Err(PAIR_DECLINED.into()),
     }
 }
 

@@ -57,4 +57,16 @@ public class HostActionsLinkTest {
         assertFalse(HostActions.refused(503));
         assertFalse(HostActions.refused(599));
     }
+
+    @Test
+    public void eachPairingFailureSaysWhatFailedAndAPcThatFailsItsCheckReadsAsASecurityFailure() {
+        assertEquals(R.string.pair_incorrect_pin, HostActions.failureMessage(PairState.PIN_WRONG, false, false, false));
+        assertEquals(R.string.pair_otp_incorrect_pin, HostActions.failureMessage(PairState.PIN_WRONG, false, true, false));
+        assertEquals(R.string.pair_qr_incorrect_pin, HostActions.failureMessage(PairState.PIN_WRONG, true, false, false));
+        assertEquals(R.string.pair_already_in_progress, HostActions.failureMessage(PairState.ALREADY_IN_PROGRESS, false, false, true));
+        // Never the PC's game or an ended request: a PC that cannot prove who it is may be another device.
+        assertEquals(R.string.pair_unverified, HostActions.failureMessage(PairState.SERVER_UNVERIFIED, false, false, true));
+        assertEquals(R.string.pair_fail, HostActions.failureMessage(PairState.FAILED, false, false, false));
+        assertEquals(R.string.pair_pc_ingame, HostActions.failureMessage(PairState.FAILED, false, false, true));
+    }
 }

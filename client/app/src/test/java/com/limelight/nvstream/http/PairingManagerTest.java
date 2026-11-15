@@ -145,7 +145,7 @@ public class PairingManagerTest {
     public void invalidSignatureFailsPairingWithoutCrashing() throws Exception {
         PairingHttp http = new PairingHttp(reply("plaincert", HexFormat.of().formatHex(certificate.getEncoded())),
                 reply("challengeresponse", "00".repeat(48)), reply("pairingsecret", "00".repeat(17)));
-        assertEquals(PairingManager.PairState.FAILED, http.getPairingManager().pair(SERVER_INFO, "1234"));
+        assertEquals(PairingManager.PairState.SERVER_UNVERIFIED, http.getPairingManager().pair(SERVER_INFO, "1234"));
         assertEquals(1, http.cancellations);
     }
 

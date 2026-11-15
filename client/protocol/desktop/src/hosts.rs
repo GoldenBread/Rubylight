@@ -458,7 +458,9 @@ pub const PAIR_PIN_WRONG: &str =
 pub const PAIR_OTP_PIN_WRONG: &str =
     en("PIN rejected. Generate a new one-time PIN in the PC’s web UI and check the passphrase.");
 pub const PAIR_IN_PROGRESS: &str = en("Finish or cancel the pending request on the PC.");
-pub const PAIR_DECLINED: &str = en("Cancel the old request in the PC’s settings or web UI, then retry.");
+pub const PAIR_DECLINED: &str =
+    en("The PC ended the pairing, for example because the PIN was not entered in time. Start pairing again and enter the new PIN on the PC.");
+pub const PAIR_UNVERIFIED: &str = en("The PC failed its identity check, so nothing was paired. Another device on this network may be posing as your PC: pair only on a network you trust.");
 pub const PAIR_NETWORK: &str = en("Use the same network and start the PC’s streaming app. Check its firewall, then retry.");
 pub const PAIR_LINK_MISMATCH: &str =
     en("This PC’s certificate does not match the pairing link, so Nightjar did not pair. Pair only with a link or QR code from your own PC.");
