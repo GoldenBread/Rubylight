@@ -167,6 +167,7 @@ pub fn activate(
         &options,
         Some(Box::new(move || {
             if let Some(h) = host.upgrade() {
+                let _layout = layout_turn();
                 let desired = layout(&h)?.compose(&nodes(&h)?)?;
                 display::apply_layout(&desired)?;
             }
@@ -181,7 +182,11 @@ pub fn activate(
             display_arrangement::undo_recall_for_remote_monitor(before, &lease.current_output()),
         );
     }
-    let result = (|| -> Result<()> { display::apply_layout(&layout(h)?.compose(&nodes(h)?)?) })();
+    let result = {
+        // Released before the disconnect below, which takes its own turn.
+        let _layout = layout_turn();
+        (|| -> Result<()> { display::apply_layout(&layout(h)?.compose(&nodes(h)?)?) })()
+    };
     if let Err(error) = result {
         disconnect(h, Some(client));
         return Err(error);
@@ -192,6 +197,15 @@ pub fn activate(
         tracing::warn!(error = %format!("{error:#}"), "remote monitor is not part of the stream's display layout");
     }
     Ok(lease)
+}
+/// One display layout at a time, each from the monitors there at that moment: a monitor ending,
+/// one arriving and a feeder's recovery each run on a thread of their own, and would otherwise
+/// lay the displays out from each other's half-done state. Never taken under the monitors lock.
+static LAYOUT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+fn layout_turn() -> std::sync::MutexGuard<'static, ()> {
+    LAYOUT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 pub fn disconnect(h: &Shared, client: Option<&str>) {
     let canceled = h
@@ -218,10 +232,8 @@ pub fn disconnect(h: &Shared, client: Option<&str>) {
     // Dropping the last lease joins its feeder, whose recovery callback takes
     // the monitors lock to lay out the displays: never drop one under it.
     drop(removed);
-    // One layout at a time, from what is left now: two monitors ending together, each on a
-    // thread of its own, would otherwise lay the displays out from each other's half-done state.
-    static LAYOUT: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _layout = LAYOUT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _layout = layout_turn();
+    // From what is left now, not from what this call left behind.
     let empty = h.monitors.lock().unwrap().is_empty();
     let result = if empty {
         display::restore_positions()
