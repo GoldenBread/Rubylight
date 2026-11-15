@@ -118,7 +118,7 @@ fn downloads_the_real_setup() {
 
 #[test]
 fn off_is_off_and_no_request_is_made() {
-    let updates = Updates::start(false, Arc::new(|| {}));
+    let updates = Updates::start(false, Arc::new(|| {}), folder("start").join("update-skipped.txt"));
     assert!(updates.pending.is_none() && updates.found.is_none());
 }
 
@@ -808,4 +808,44 @@ fn every_failure_has_words() {
     for failure in [Failure::NoInstaller, Failure::NoDigest, Failure::Digest, Failure::Size, Failure::Address("x".into()), Failure::Network("x".into()), Failure::Apply("x".into()), Failure::Restart("x".into()), Failure::NotInstalled, Failure::StreamElsewhere] {
         assert!(!failure_text(&failure, "4.1.0").is_empty(), "{failure:?}");
     }
+}
+
+#[test]
+fn a_skipped_version_is_not_offered_again_and_a_newer_one_is() {
+    let file = folder("skip").join("update-skipped.txt");
+    let (mut updates, _) = checked(CopyKind::Portable, |_| None);
+    updates.skip_file = Some(file.clone());
+    updates.skip();
+    assert!(updates.found.is_none(), "the notice goes");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "4.1.0");
+    // The next launch finds the same release and keeps quiet about it.
+    let count = Arc::new(Counting::default());
+    *count.answer.lock().unwrap() = answer("v4.1.0", false, false, &setup_asset(&github_url(), &format!(r#","digest":"{DIGEST}""#)));
+    let net: Arc<dyn Transport> = count.clone();
+    let mut again = Updates::begin(true, CopyKind::Portable, net, None, "4.0.0", || true, Arc::new(|| {})).with_skip_file(file.clone());
+    wait_until("no answer", || { again.step(); again.pending.is_none() });
+    assert!(again.found.is_none(), "a skipped version is not offered");
+    // A newer one is.
+    let count = Arc::new(Counting::default());
+    *count.answer.lock().unwrap() = answer("v4.2.0", false, false, &setup_asset(&github_url(), &format!(r#","digest":"{DIGEST}""#)));
+    let net: Arc<dyn Transport> = count.clone();
+    let mut newer = Updates::begin(true, CopyKind::Portable, net, None, "4.0.0", || true, Arc::new(|| {})).with_skip_file(file);
+    wait_until("no answer", || { newer.step(); newer.found.is_some() });
+    assert_eq!(newer.found.as_ref().unwrap().version, "4.2.0");
+}
+
+static ONLINE: AtomicBool = AtomicBool::new(false);
+
+#[test]
+fn a_launch_before_the_network_is_up_checks_once_it_is() {
+    let count = Arc::new(Counting::default());
+    *count.answer.lock().unwrap() = answer("v4.1.0", false, false, &setup_asset(&github_url(), &format!(r#","digest":"{DIGEST}""#)));
+    let net: Arc<dyn Transport> = count.clone();
+    let mut updates = Updates::begin(true, CopyKind::Portable, net, None, "4.0.0", || ONLINE.load(Ordering::SeqCst), Arc::new(|| {}));
+    std::thread::sleep(OFFLINE_RETRY * 5);
+    assert!(updates.step().is_none() && updates.found.is_none());
+    assert_eq!(count.gets.load(Ordering::Relaxed), 0, "nothing asked while offline");
+    ONLINE.store(true, Ordering::SeqCst);
+    wait_until("no check once online", || { updates.step(); updates.found.is_some() });
+    assert_eq!(count.gets.load(Ordering::Relaxed), 1);
 }

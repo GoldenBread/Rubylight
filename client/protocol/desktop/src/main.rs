@@ -853,6 +853,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     let updates = update_check::Updates::start(
         settings.check_updates && !cfg!(feature = "demo-library") && cli.is_none() && std::env::var_os("NIGHTJAR_AUTOSTREAM").is_none(),
         waker.clone(),
+        store.dir().join("update-skipped.txt"),
     );
     let open_play = open_play::at_launch(
         &store,

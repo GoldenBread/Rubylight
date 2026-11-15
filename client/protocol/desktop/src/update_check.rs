@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::self_update::{self, Asset, Attempt, CopyKind, Failure, Progress, Steps};
 use crate::strings::{tr, trf};
@@ -130,18 +131,44 @@ pub struct Updates {
     held: bool,
     /// Held while `held`: tells another Nightjar's update, and the setup, about this stream.
     stream_mark: Option<self_update::Mark>,
+    /// The version the user skipped: the launch's check does not offer it again, Check for
+    /// updates now still does. Kept in `skip_file`.
+    skipped: Option<String>,
+    skip_file: Option<PathBuf>,
 }
+
+/// How often a launch before the network was up asks the system again whether it is.
+const OFFLINE_RETRY: Duration = if cfg!(test) { Duration::from_millis(20) } else { Duration::from_secs(30) };
 
 impl Updates {
     /// Starts the check on its own thread; `wake` redraws the launcher when it has an answer. With
     /// the setting off the thread only clears what an earlier update left.
-    pub fn start(enabled: bool, wake: crate::hosts::Waker) -> Self {
+    /// `skip_file` keeps the version the user skipped.
+    pub fn start(enabled: bool, wake: crate::hosts::Waker, skip_file: PathBuf) -> Self {
         let copy = self_update::current();
         if !copy.checks() { return Self::default(); }
         let agent = format!("Nightjar/{} ({})", crate::VERSION, if cfg!(windows) { "Windows" } else { "Linux" });
         let net: Arc<dyn Transport> = Arc::new(Native::new(agent));
         let steps = Steps::for_copy(copy, net.clone());
-        Self::begin(enabled, copy.clone(), net, steps, crate::VERSION, online, wake)
+        Self::begin(enabled, copy.clone(), net, steps, crate::VERSION, online, wake).with_skip_file(skip_file)
+    }
+
+    /// Reads the version skipped earlier from `file`, where Skip this version keeps it.
+    fn with_skip_file(mut self, file: PathBuf) -> Self {
+        self.skipped = std::fs::read_to_string(&file).ok().map(|text| text.trim().to_owned()).filter(|v| !v.is_empty());
+        self.skip_file = Some(file);
+        self
+    }
+
+    /// Skip this version: the notice goes, and the launch's check does not offer it again.
+    fn skip(&mut self) {
+        let Some(release) = self.found.take() else { return };
+        self.failure = None;
+        if let Some(file) = &self.skip_file {
+            if let Err(e) = std::fs::write(file, &release.version) { eprintln!("nightjar: update: {}: {e}", file.display()); }
+        }
+        eprintln!("nightjar: update: Nightjar {} skipped", release.version);
+        self.skipped = Some(release.version);
     }
 
     fn begin(enabled: bool, copy: CopyKind, net: Arc<dyn Transport>, steps: Option<Steps>, current: &'static str, online: fn() -> bool, wake: crate::hosts::Waker) -> Self {
@@ -158,6 +185,9 @@ impl Updates {
         let spawned = std::thread::Builder::new().name("update-check".into()).spawn(move || {
             if let Some((dir, own_dir)) = leftovers { self_update::remove_stale(&dir, own_dir); }
             if !enabled { return; }
+            // A launch before the network was up (a laptop opened before its Wi-Fi) checks once it is.
+            if !online() { eprintln!("nightjar: update check: offline, asking again when online"); }
+            while !online() { std::thread::sleep(OFFLINE_RETRY); }
             match check(&*net, &copy, current, online) {
                 Ok(Some(release)) => {
                     eprintln!("nightjar: update check: Nightjar {} is available", release.version);
@@ -276,7 +306,11 @@ impl Updates {
     pub fn step(&mut self) -> Option<PathBuf> {
         if let Some(release) = self.pending.as_ref().and_then(|r| r.try_recv().ok()) {
             self.pending = None;
-            self.found = Some(release);
+            if self.skipped.as_deref() == Some(release.version.as_str()) {
+                eprintln!("nightjar: update check: Nightjar {} was skipped", release.version);
+            } else {
+                self.found = Some(release);
+            }
         }
         if let Some(answer) = self.asked.as_ref().and_then(|r| match r.try_recv() {
             Ok(answer) => Some(answer),
@@ -367,13 +401,13 @@ impl Updates {
     /// The notice over the launcher until it is opened or dismissed.
     pub fn show(&mut self, ctx: &egui::Context) {
         let Some(release) = &self.found else { return };
-        let (mut update, mut stop, mut close) = (false, false, false);
+        let (mut update, mut stop, mut close, mut skip) = (false, false, false, false);
         egui::Area::new(egui::Id::unique("update-notice"))
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-24.0, -24.0))
             .show(ctx, |ui| {
                 egui::Frame::new()
-                    .fill(egui::Color32::from_rgba_unmultiplied(0x28, 0x2A, 0x36, 245))
+                    .fill(*crate::theme::SURFACE_HIGHEST)
                     .corner_radius(egui::CornerRadius::same(14))
                     .inner_margin(egui::Margin::symmetric(16, 12))
                     .show(ui, |ui| {
@@ -382,7 +416,7 @@ impl Updates {
                             ui.label(trf("Downloading Nightjar {}", &[&release.version]));
                             let received = job.progress.received.load(Ordering::Relaxed);
                             ui.add(egui::ProgressBar::new(received as f32 / job.size.max(1) as f32).desired_width(280.0).show_percentage());
-                            stop = ui.button(tr("Cancel")).clicked();
+                            stop = crate::ui::quiet_button(ui, "Cancel").clicked();
                             return;
                         }
                         ui.label(trf("Nightjar {} is available.", &[&release.version]));
@@ -392,18 +426,22 @@ impl Updates {
                         ui.horizontal(|ui| {
                             let refused = self.failure.as_ref().is_some_and(Failure::is_final);
                             if self.steps.is_some() && !refused {
-                                update = ui.add_enabled(!self.held, egui::Button::new(tr("Update now"))).clicked();
+                                update = ui.add_enabled_ui(!self.held, |ui| crate::ui::primary_button(ui, "Update now")).inner.clicked();
                             }
-                            if ui.button(tr("Open download page")).clicked() {
+                            if crate::ui::quiet_button(ui, "Open download page").clicked() {
                                 if let Err(e) = crate::sdl::open_url(&release.url) { eprintln!("nightjar: update page: {e}"); }
                                 close = true;
                             }
-                            close |= ui.button(tr("Not now")).clicked();
+                            close |= crate::ui::quiet_button(ui, "Not now").clicked();
+                        });
+                        ui.horizontal(|ui| {
+                            skip = crate::ui::quiet_button(ui, "Skip this version").clicked();
                         });
                     });
             });
         if update { self.update_now(); }
         if stop { self.cancel(); }
+        if skip { self.skip(); }
         if close {
             self.found = None;
             self.failure = None;
