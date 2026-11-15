@@ -18,6 +18,7 @@
 #include <pthread.h>
 #include <android/log.h>
 #include "evdev_ipc.h"
+#include "evdev_rejected.h"
 
 #define EVDEV_MAX_EVENT_SIZE 24
 
@@ -37,6 +38,8 @@ struct DeviceEntry {
 static struct DeviceEntry *DeviceListHead;
 static atomic_int grabbing = 1;
 static pthread_mutex_t DeviceListLock = PTHREAD_MUTEX_INITIALIZER;
+// Under DeviceListLock: nodes found unusable, which the enumeration every second skips.
+static struct RejectedNodes RejectedList;
 static pthread_mutex_t SocketSendLock = PTHREAD_MUTEX_INITIALIZER;
 static int sock;
 
@@ -215,6 +218,8 @@ static int precheckDeviceForPolling(int fd) {
 static void startPollForDevice(char* deviceName) {
     struct DeviceEntry *currentEntry;
     char fullPath[256];
+    struct stat node;
+    bool known;
     int fd;
 
     // Lock the device list
@@ -238,9 +243,15 @@ static void startPollForDevice(char* deviceName) {
 
     // Open the device
     snprintf(fullPath, sizeof(fullPath), "/dev/input/%s", deviceName);
+    // A node already found unusable, as it still is: not opened and logged again.
+    known = stat(fullPath, &node) == 0;
+    if (known && rejectedNodesSkip(&RejectedList, deviceName, &node)) {
+        goto unlock;
+    }
     fd = open(fullPath, O_RDWR);
     if (fd < 0) {
         __android_log_print(ANDROID_LOG_ERROR, "EvdevReader", "Couldn't open %s: %d", fullPath, errno);
+        if (known) rejectedNodesAdd(&RejectedList, deviceName, &node);
         goto unlock;
     }
 
@@ -258,6 +269,7 @@ static void startPollForDevice(char* deviceName) {
     // Check if we support polling this device
     if (!precheckDeviceForPolling(fd)) {
         // Nope, get out
+        if (known) rejectedNodesAdd(&RejectedList, deviceName, &node);
         free(currentEntry);
         close(fd);
         goto unlock;
@@ -290,6 +302,10 @@ static int enumerateDevices(void) {
         return -1;
     }
 
+    pthread_mutex_lock(&DeviceListLock);
+    rejectedNodesBeginPass(&RejectedList);
+    pthread_mutex_unlock(&DeviceListLock);
+
     // Start polling each device in /dev/input
     while ((dirEnt = readdir(inputDir)) != NULL) {
         if (strcmp(dirEnt->d_name, ".") == 0 || strcmp(dirEnt->d_name, "..") == 0) {
@@ -304,6 +320,11 @@ static int enumerateDevices(void) {
 
         startPollForDevice(dirEnt->d_name);
     }
+
+    // Nodes found unusable that this pass did not see are gone
+    pthread_mutex_lock(&DeviceListLock);
+    rejectedNodesEndPass(&RejectedList);
+    pthread_mutex_unlock(&DeviceListLock);
 
     closedir(inputDir);
     return 0;
