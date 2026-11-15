@@ -6529,9 +6529,9 @@ fn animations_wait_while_the_window_is_away() {
     for away in [SDL_WINDOW_MINIMIZED, SDL_WINDOW_HIDDEN, SDL_WINDOW_OCCLUDED] {
         assert!(!crate::animations_seen(SDL_WINDOW_INPUT_FOCUS | away));
     }
-    assert!(!crate::animations_seen(0 as SDL_WindowFlags), "in the background");
+    assert!(!crate::animations_seen(SDL_WindowFlags(0)), "in the background");
     // PCs are polled while the window is on screen, in front or not.
-    assert!(crate::window_shown(0 as SDL_WindowFlags) && crate::window_shown(SDL_WINDOW_OCCLUDED));
+    assert!(crate::window_shown(SDL_WindowFlags(0)) && crate::window_shown(SDL_WINDOW_OCCLUDED));
     assert!(!crate::window_shown(SDL_WINDOW_MINIMIZED) && !crate::window_shown(SDL_WINDOW_HIDDEN));
 }
 
