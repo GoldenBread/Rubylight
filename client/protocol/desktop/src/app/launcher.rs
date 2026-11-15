@@ -397,7 +397,7 @@ impl App {
                 HostEvent::Quit { id, result } => match result {
                     Err(e) if self.quitting_on_leave.as_ref().is_some_and(|(host, _)| *host == id) => {
                         let (_, name) = self.quitting_on_leave.take().expect("checked above");
-                        self.launcher.notify(tr("Could not quit the app"), trf("Couldn’t quit {} on the PC, so it is still running. {}", &[&name, &e]));
+                        self.launcher.notify(tr("Could not quit the app"), crate::hosts::quit_failure(&e, &name));
                     }
                     Ok(()) => {
                         if self.quitting_on_leave.as_ref().is_some_and(|(host, _)| *host == id) { self.quitting_on_leave = None; }
@@ -409,7 +409,8 @@ impl App {
                     }
                     Err(e) => {
                         self.pending_launch = None;
-                        self.launcher.notify(tr("Could not quit the app"), e);
+                        let name = self.hosts.get(id).map_or_else(|| tr("the running app").to_owned(), crate::ui::running_name);
+                        self.launcher.notify(tr("Could not quit the app"), crate::hosts::quit_failure(&e, &name));
                     }
                 },
                 // A packet that could not be sent at all (no network, no route) ends the wait.

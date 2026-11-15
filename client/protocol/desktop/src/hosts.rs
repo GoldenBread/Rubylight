@@ -20,7 +20,7 @@ use nightjar_core::http::{
 
 use rubylight_protocol::pairing_uri::PairingUri;
 
-use crate::strings::{en, trf};
+use crate::strings::{en, tr, trf};
 use crate::config::{HostRecord, Store};
 
 mod covers;
@@ -467,6 +467,17 @@ pub const ADDRESS_INVALID: &str = en("That address is not valid");
 pub const CLIPBOARD_NO_LINK: &str = en("Copy the link under the QR code on the PC’s Devices page, then paste it here.");
 pub const UNPAIR_FAILED: &str = en("Failed to unpair. The PC may still list this device.");
 pub const UNPAIR_NOT_PAIRED: &str = en("Device was not paired.");
+// A quit the PC refused because another device started the game, worded like Nightjar Android's.
+pub const QUIT_OTHER_DEVICE: &str = en("Another device started this game, so it can only be quit from that device or on the PC.");
+
+/// What a failed quit of `name` says: who may quit it, or what to check. The PC's own words go to the log.
+pub fn quit_failure(error: &str, name: &str) -> String {
+    if error == QUIT_OTHER_DEVICE {
+        return tr(QUIT_OTHER_DEVICE).to_owned();
+    }
+    eprintln!("nightjar: quitting {name} failed: {error}");
+    trf("Couldn’t quit {}. Check that the PC is on and on this network, then try again.", &[&name])
+}
 // Why the PC handed out no sleep token. A refusal shows the host's own words instead.
 pub const SLEEP_NOT_ALLOWED: &str = en("The PC does not let this device put it to sleep. Allow it in the PC’s device settings.");
 pub const SLEEP_UNSUPPORTED: &str = en("The PC cannot sleep.");
@@ -1208,9 +1219,7 @@ impl Hosts {
             let result = client_for(&identity, &record, &record.address).and_then(|c| match c.cancel() {
                 Ok(true) => Ok(()),
                 Ok(false) => Err(en("The PC declined to quit the app.").into()),
-                Err(nightjar_core::http::Error::Status { code: 599, .. }) => {
-                    Err(en("The running app belongs to another device.").into())
-                }
+                Err(nightjar_core::http::Error::Status { code: 599, .. }) => Err(QUIT_OTHER_DEVICE.into()),
                 Err(e) => Err(describe(&e)),
             });
             Some(Event::Quit { id, result })

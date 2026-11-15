@@ -1358,6 +1358,14 @@ fn names_a_pc_reports_or_is_given_later_are_kept_out_of_the_log() {
 }
 
 #[test]
+fn a_failed_quit_names_the_game_and_the_next_step_not_the_pcs_words() {
+    let failed = quit_failure("HTTP 500: internal error", "Portal");
+    assert_eq!(failed, "Couldn’t quit Portal. Check that the PC is on and on this network, then try again.");
+    assert!(!failed.contains("HTTP 500"), "the PC's words go to the log");
+    assert_eq!(quit_failure(QUIT_OTHER_DEVICE, "Portal"), QUIT_OTHER_DEVICE);
+}
+
+#[test]
 fn pairing_texts_follow_the_android_wording() {
     let one_time = pair_outcome(PairResult::PinWrong, true).unwrap_err();
     let plain = pair_outcome(PairResult::PinWrong, false).unwrap_err();
