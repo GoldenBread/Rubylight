@@ -15,8 +15,6 @@
     <string name="frame_warp_reason_full_chroma">フルクロマがオンです</string>
     <string name="frame_warp_reason_renderer">GPU による描画を開始できませんでした</string>
     <string name="frame_warp_replaces_upscaling">Frame Warp はアップスケーリングなしで画像を描画します。</string>
-    <string name="title_experimental_chipset_tuning">チップセット調整</string>
-    <string name="summary_experimental_chipset_tuning">MediaTek Dimensity と Samsung Exynos のデコーダー向けの追加の低遅延設定です。これらのデバイスで遅延を減らしたい場合に試してください。映像が止まったりカクついたりする場合はオフにしてください。</string>
     <string name="scut_deleted_pc">PC は削除されています</string>
     <string name="scut_not_paired">PC はペアリングされていません</string>
     <string name="scut_pc_not_found">PC が見つかりません</string>

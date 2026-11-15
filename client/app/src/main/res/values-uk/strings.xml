@@ -15,8 +15,6 @@
     <string name="frame_warp_reason_full_chroma">увімкнено повну кольоровість</string>
     <string name="frame_warp_reason_renderer">не вдалося запустити виведення через GPU</string>
     <string name="frame_warp_replaces_upscaling">Frame Warp виводить зображення без масштабування.</string>
-    <string name="title_experimental_chipset_tuning">Налаштування чипсета</string>
-    <string name="summary_experimental_chipset_tuning">Додаткові налаштування низької затримки для декодерів MediaTek Dimensity і Samsung Exynos. Спробуйте на такому пристрої, щоб зменшити затримку; вимкніть, якщо відео зупиняється або смикається.</string>
     <string name="scut_deleted_pc">ПК видалено</string>
     <string name="scut_not_paired">ПК не сполучено</string>
     <string name="scut_pc_not_found">ПК не знайдено</string>

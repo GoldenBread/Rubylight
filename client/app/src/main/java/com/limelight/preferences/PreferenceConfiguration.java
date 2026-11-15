@@ -168,7 +168,8 @@ public class PreferenceConfiguration {
     static final String RUST_ENGINE_PREF_STRING = "checkbox_rust_engine";
     static final String PACKED_444_PREF_STRING = "experimental_packed_444";
     static final String FRAME_WARP_PREF_STRING = "checkbox_frame_warp";
-    private static final String CHIPSET_TUNING_PREF_STRING = "checkbox_experimental_chipset_tuning";
+    // "Chipset tuning", removed: its value never reached the decoder.
+    static final String RETIRED_CHIPSET_TUNING_PREF_STRING = "checkbox_experimental_chipset_tuning";
     static final String FRAME_PACING_PREF_STRING = "frame_pacing";
     private static final String ABSOLUTE_MOUSE_MODE_PREF_STRING = "checkbox_absolute_mouse_mode";
     private static final String ENABLE_AUDIO_FX_PREF_STRING = "checkbox_enable_audiofx";
@@ -398,8 +399,6 @@ public class PreferenceConfiguration {
     public boolean experimentalPacked444;
     /** Shifts each picture by the camera turn the host has not drawn yet (docs/frame-warp.md). */
     public boolean frameWarp;
-    // Opt-in decoder keys still being measured (docs/devices.md, Candidate per-chip changes)
-    public boolean experimentalChipsetTuning;
     public boolean bindAllUsb;
     public boolean mouseEmulation;
     public boolean mouseEmulationFixedStep;
@@ -1439,6 +1438,33 @@ public class PreferenceConfiguration {
         return switchOn;
     }
 
+    // Settings stored under a name that is gone: {old, new}. Retired names never come back (SettingsKeysTest).
+    static final String[][] RENAMED_PREFS = {};
+    // Settings that are gone; their stored values are cleared.
+    static final String[] RETIRED_PREFS = {RETIRED_CHIPSET_TUNING_PREF_STRING};
+
+    /**
+     * Moves a setting stored under an old name to its new one, the old name's value winning (Settings may have
+     * written the new name's default before this ran), and clears the values of removed settings. Every read runs
+     * it; it changes nothing a second time.
+     */
+    static void migrateKeyNames(SharedPreferences prefs) {
+        SharedPreferences.Editor editor = null;
+        for (String[] rename : RENAMED_PREFS) {
+            if (!prefs.contains(rename[0])) continue;
+            Object value = prefs.getAll().get(rename[0]);
+            editor = editor != null ? editor : prefs.edit();
+            if (value instanceof Boolean) editor.putBoolean(rename[1], (Boolean) value);
+            else if (value instanceof String) editor.putString(rename[1], (String) value);
+            else if (value instanceof Integer) editor.putInt(rename[1], (Integer) value);
+            editor.remove(rename[0]);
+        }
+        for (String key : RETIRED_PREFS) {
+            if (prefs.contains(key)) editor = (editor != null ? editor : prefs.edit()).remove(key);
+        }
+        if (editor != null) editor.apply();
+    }
+
     /** Automatic bitrate's minimum and maximum are gone; their saved values must not linger. */
     static void dropAutoBitrateLimits(SharedPreferences prefs) {
         SharedPreferences.Editor editor = null;
@@ -1458,6 +1484,7 @@ public class PreferenceConfiguration {
         String savedResolution = null;
 
         // Migrate legacy preferences to the new locations
+        migrateKeyNames(prefs);
         migrateOverlayMode(prefs);
         if (migrateRetiredGlRender(prefs, Build.VERSION.SDK_INT)) {
             com.limelight.LimeLog.info("\"Render through OpenGL\" was on; it is now \"Render through Vulkan\"");
@@ -1728,7 +1755,6 @@ public class PreferenceConfiguration {
         // Sharper colored text: one choice stored in the two older switches (sharpColor).
         config.experimentalPacked444 = sharpColor(prefs);
         config.frameWarp = prefs.getBoolean(FRAME_WARP_PREF_STRING, false);
-        config.experimentalChipsetTuning = prefs.getBoolean(CHIPSET_TUNING_PREF_STRING, false);
         config.absoluteMouseMode = prefs.getBoolean(ABSOLUTE_MOUSE_MODE_PREF_STRING, DEFAULT_ABSOLUTE_MOUSE_MODE);
         config.enableAudioFx = prefs.getBoolean(ENABLE_AUDIO_FX_PREF_STRING, DEFAULT_ENABLE_AUDIO_FX);
         config.audioPassthrough = prefs.getBoolean(AUDIO_PASSTHROUGH_PREF_STRING, false);

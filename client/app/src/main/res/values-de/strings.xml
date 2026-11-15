@@ -15,8 +15,6 @@
     <string name="frame_warp_reason_full_chroma">Volle Farbauflösung ist an</string>
     <string name="frame_warp_reason_renderer">der GPU-Pfad ist nicht gestartet</string>
     <string name="frame_warp_replaces_upscaling">Frame Warp zeichnet das Bild ohne Hochskalierung.</string>
-    <string name="title_experimental_chipset_tuning">Chipsatz-Optimierung</string>
-    <string name="summary_experimental_chipset_tuning">Zusätzliche Low-Latency-Einstellungen für MediaTek-Dimensity- und Samsung-Exynos-Decoder. Probiere es auf einem solchen Gerät für weniger Verzögerung; schalte es aus, wenn das Video stehen bleibt oder ruckelt.</string>
     <string name="scut_deleted_pc">PC gelöscht</string>
     <string name="scut_not_paired">PC nicht gekoppelt</string>
     <string name="scut_pc_not_found">PC nicht gefunden</string>

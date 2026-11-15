@@ -15,8 +15,6 @@
     <string name="frame_warp_reason_full_chroma">已开启全色度</string>
     <string name="frame_warp_reason_renderer">GPU 渲染路径未能启动</string>
     <string name="frame_warp_replaces_upscaling">Frame Warp 绘制画面时不进行放大。</string>
-    <string name="title_experimental_chipset_tuning">芯片组调优</string>
-    <string name="summary_experimental_chipset_tuning">为 MediaTek Dimensity 和 Samsung Exynos 解码器提供额外的低延迟设置。在这类设备上可以试试，以减少延迟；如果视频停止或卡顿，请关闭。</string>
     <string name="scut_deleted_pc">电脑已删除</string>
     <string name="scut_not_paired">电脑未配对</string>
     <string name="scut_pc_not_found">未找到电脑</string>

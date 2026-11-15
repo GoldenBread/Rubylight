@@ -15,8 +15,6 @@
     <string name="frame_warp_reason_full_chroma">le chroma complet est activé</string>
     <string name="frame_warp_reason_renderer">le rendu GPU n’a pas démarré</string>
     <string name="frame_warp_replaces_upscaling">Frame Warp dessine l’image sans mise à l’échelle.</string>
-    <string name="title_experimental_chipset_tuning">Réglage du chipset</string>
-    <string name="summary_experimental_chipset_tuning">Des réglages supplémentaires de faible latence pour les décodeurs MediaTek Dimensity et Samsung Exynos. Essayez-le sur un tel appareil pour moins de délai ; désactivez-le si la vidéo s’arrête ou saccade.</string>
     <string name="scut_deleted_pc">PC supprimé</string>
     <string name="scut_not_paired">PC non associé</string>
     <string name="scut_pc_not_found">PC introuvable</string>

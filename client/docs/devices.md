@@ -113,12 +113,12 @@ Two third-party reports describe the same problem. The [Moonlight HEVC fix](http
 
 Nightjar sets Android's standard low-latency flag and every vendor low-latency key a decoder declares (Qualcomm, Exynos and Tensor, Kirin, Amlogic, MediaTek Codec2 and NVIDIA keys), plus the MediaTek and Amazon `vdec-lowlatency` option on their older OMX decoders, subject to the [HEVC setting](#hevc-low-latency-compatibility) and the other decoder settings. With **Decoder performance hints** on (the default), Snapdragon decoders (except on Adreno 620 devices), NVIDIA Tegra and MediaTek decoders get the maximum operating rate, and other decoders the realtime priority hint. The decoder benchmark applies the same settings.
 
-**Settings → Advanced → Compatibility → Chipset tuning**, off by default, adds two options on the first configure attempt only: `vdec-lowlatency` on MediaTek `c2.mtk` decoders, and on Exynos decoders the operating rate the decoder declares for the stream size, together with the realtime priority hint. The ideas below need measurements before any further tuning ships:
+Two more options are candidates without a setting: `vdec-lowlatency` on MediaTek `c2.mtk` decoders, and on Exynos decoders the operating rate the decoder declares for the stream size, together with the realtime priority hint. They and the ideas below need measurements before any further tuning ships:
 
 | Chip family | What to measure | How to tell |
 | --- | --- | --- |
-| MediaTek Dimensity (Codec2 decoders) | Decode time with and without **Chipset tuning**; whether the CPU boost key changes decode time on a cool and on a warm device. | `medianDecodeMs` with and without, several runs each. |
-| Samsung Exynos and Google Tensor | Whether **Chipset tuning**'s declared operating rate behaves better than the realtime priority hint alone. A maximum operating rate has crashed decoders on other chips, so it stays opt-in. | `medianDecodeMs`, plus the Debug overlay decode timing during a 120 FPS stream. |
+| MediaTek Dimensity (Codec2 decoders) | Decode time with and without `vdec-lowlatency`; whether the CPU boost key changes decode time on a cool and on a warm device. | `medianDecodeMs` with and without, several runs each. |
+| Samsung Exynos and Google Tensor | Whether a declared operating rate behaves better than the realtime priority hint alone. A maximum operating rate has crashed decoders on other chips, so it stays opt-in. | `medianDecodeMs`, plus the Debug overlay decode timing during a 120 FPS stream. |
 | Amlogic TV boxes | Whether the HEVC reference-frame and low-latency workarounds that apply to Fire TV also suit Google TV and Xiaomi boxes. | `medianDecodeMs` for HEVC and AV1; whether the stream shows frames at all. |
 | MediaTek Pentonic TVs | Whether a different frame pacing mode stops the compositor from dropping frames. This is a display problem, not a decoder one. | `frameIntervalMs` in the latency test and estimated display drops in the Debug overlay. |
 | Android TV audio | Audio delay on Android TV 14, which these tools do not measure. | A camera or an audio-video sync test against the host. |

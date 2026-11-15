@@ -15,8 +15,6 @@
     <string name="frame_warp_reason_full_chroma">tam kroma açık</string>
     <string name="frame_warp_reason_renderer">GPU yolu başlamadı</string>
     <string name="frame_warp_replaces_upscaling">Frame Warp görüntüyü ölçeklendirme olmadan çizer.</string>
-    <string name="title_experimental_chipset_tuning">Yonga seti ayarı</string>
-    <string name="summary_experimental_chipset_tuning">MediaTek Dimensity ve Samsung Exynos kod çözücüleri için ek düşük gecikme ayarları. Böyle bir cihazda daha az gecikme için deneyin; video durur veya takılırsa kapatın.</string>
     <string name="scut_deleted_pc">Bilgisayar silindi</string>
     <string name="scut_not_paired">Bilgisayar eşleştirilmedi</string>
     <string name="scut_pc_not_found">Bilgisayar bulunamadı</string>

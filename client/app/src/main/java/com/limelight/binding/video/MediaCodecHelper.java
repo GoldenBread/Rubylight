@@ -618,21 +618,8 @@ public class MediaCodecHelper {
                                                       boolean lowLatency, boolean vendorLowLatency, boolean performanceHints,
                                                       boolean disableHevcLowLatency) {
         return setDecoderLowLatencyOptions(videoFormat, decoderInfo, tryNumber, lowLatency, vendorLowLatency,
-                performanceHints, disableHevcLowLatency, false);
-    }
-
-    /**
-     * Experimental chipset tuning (opt-in, off by default): Codec2 MediaTek decoders also get
-     * "vdec-lowlatency", which MediaTek's ACodec only reads for OMX today, and Exynos decoders get
-     * the attainable operating rate next to real-time priority, like Tensor. Both leave after the
-     * first try so a decoder that rejects them falls back to the default ladder.
-     */
-    public static boolean setDecoderLowLatencyOptions(MediaFormat videoFormat, MediaCodecInfo decoderInfo, int tryNumber,
-                                                      boolean lowLatency, boolean vendorLowLatency, boolean performanceHints,
-                                                      boolean disableHevcLowLatency, boolean chipsetTuning) {
-        return setDecoderLowLatencyOptions(videoFormat, decoderInfo, tryNumber, lowLatency, vendorLowLatency,
                 performanceHints, disableHevcLowLatency ? PreferenceConfiguration.HEVC_LOW_LATENCY_OFF :
-                        PreferenceConfiguration.HEVC_LOW_LATENCY_AUTO, chipsetTuning);
+                        PreferenceConfiguration.HEVC_LOW_LATENCY_AUTO);
     }
 
     /**
@@ -704,7 +691,7 @@ public class MediaCodecHelper {
 
     public static boolean setDecoderLowLatencyOptions(MediaFormat videoFormat, MediaCodecInfo decoderInfo, int tryNumber,
                                                       boolean lowLatency, boolean vendorLowLatency, boolean performanceHints,
-                                                      int hevcLowLatencyMode, boolean chipsetTuning) {
+                                                      int hevcLowLatencyMode) {
         // Options here should be tried in the order of most to least risky. The decoder will use
         // the first MediaFormat that doesn't fail in configure().
 
@@ -757,12 +744,6 @@ public class MediaCodecHelper {
             // count as another optional tuning attempt, so configure failures still terminate.
             setNewOption |= !requiredVdec || tryNumber == 0;
         }
-        else if (chipsetTuning && useVendorOptions && tryNumber < 1 &&
-                decoderInfo.getName().toLowerCase(Locale.ROOT).startsWith("c2.mtk")) {
-            // Experimental: we have no Dimensity device to run this on.
-            videoFormat.setInteger("vdec-lowlatency", 1);
-            setNewOption = true;
-        }
 
         // Without low-latency flags, fall back to an untuned format after the first rejected hint.
         if (performanceHints && tryNumber < (disableLowLatency ? 1 : 3)) {
@@ -776,14 +757,6 @@ public class MediaCodecHelper {
                             isDecoderInList(mediaTekDecoderPrefixes, decoderInfo.getName()));
             if (rateOnly || MediaCodecHelper.decoderSupportsMaxOperatingRate(decoderInfo.getName())) {
                 videoFormat.setInteger(MediaFormat.KEY_OPERATING_RATE, Short.MAX_VALUE);
-                setNewOption = true;
-            }
-            else if (chipsetTuning && useVendorOptions && tryNumber < 1 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-                    isDecoderInList(exynosDecoderPrefixes, decoderInfo.getName())) {
-                // Experimental: a rate the decoder declares it can meet, so real-time priority
-                // does not come with an unattainable rate. We have no Exynos device to run this on.
-                videoFormat.setInteger(MediaFormat.KEY_OPERATING_RATE, googleOperatingRate(videoFormat, decoderInfo));
-                videoFormat.setInteger(MediaFormat.KEY_PRIORITY, 0);
                 setNewOption = true;
             }
             else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {

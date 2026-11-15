@@ -151,20 +151,20 @@ public class MediaCodecHevcLowLatencyTest {
         for (String name : new String[] {AML_HEVC, "C2.Amlogic.hevc.decoder.secure"}) {
             MediaFormat format = MediaFormat.createVideoFormat(HEVC, 1920, 1080);
             assertTrue(MediaCodecHelper.setDecoderLowLatencyOptions(format, decoder(name, HEVC), 0,
-                    true, true, true, PreferenceConfiguration.HEVC_LOW_LATENCY_ON, false));
+                    true, true, true, PreferenceConfiguration.HEVC_LOW_LATENCY_ON));
             assertEquals(name, 1, format.getInteger(AML_LOW_LATENCY));
             assertEquals(name, 1, format.getInteger(MediaFormat.KEY_LOW_LATENCY));
             // Auto, the same decoder: none of them.
             format = MediaFormat.createVideoFormat(HEVC, 1920, 1080);
             MediaCodecHelper.setDecoderLowLatencyOptions(format, decoder(name, HEVC), 0,
-                    true, true, true, PreferenceConfiguration.HEVC_LOW_LATENCY_AUTO, false);
+                    true, true, true, PreferenceConfiguration.HEVC_LOW_LATENCY_AUTO);
             assertFalse(name, format.containsKey(AML_LOW_LATENCY));
             assertFalse(name, format.containsKey(MediaFormat.KEY_LOW_LATENCY));
         }
         // On still leaves the flags to the Android and vendor switches.
         MediaFormat format = MediaFormat.createVideoFormat(HEVC, 1920, 1080);
         MediaCodecHelper.setDecoderLowLatencyOptions(format, decoder(AML_HEVC, HEVC), 0,
-                false, false, true, PreferenceConfiguration.HEVC_LOW_LATENCY_ON, false);
+                false, false, true, PreferenceConfiguration.HEVC_LOW_LATENCY_ON);
         assertFalse(format.containsKey(AML_LOW_LATENCY));
         assertFalse(format.containsKey(MediaFormat.KEY_LOW_LATENCY));
     }
@@ -180,7 +180,7 @@ public class MediaCodecHevcLowLatencyTest {
         for (String name : new String[] {"OMX.amlogic.hevc.decoder.awesome2", AML_HEVC}) {
             MediaFormat format = MediaFormat.createVideoFormat(HEVC, 1920, 1080);
             assertTrue(name, MediaCodecHelper.setDecoderLowLatencyOptions(format, decoder(name, HEVC), 0,
-                    true, true, false, PreferenceConfiguration.HEVC_LOW_LATENCY_AUTO, false));
+                    true, true, false, PreferenceConfiguration.HEVC_LOW_LATENCY_AUTO));
             assertEquals(name, 1, format.getInteger(MediaFormat.KEY_LOW_LATENCY));
             assertEquals(name, 1, format.getInteger(AML_LOW_LATENCY));
             assertTrue(name, MediaCodecHelper.omitsHevcLowLatencyFlags(HEVC, name, PreferenceConfiguration.HEVC_LOW_LATENCY_OFF));
@@ -190,7 +190,7 @@ public class MediaCodecHevcLowLatencyTest {
         ShadowBuild.setManufacturer("Xiaomi");
         MediaFormat format = MediaFormat.createVideoFormat(HEVC, 1920, 1080);
         MediaCodecHelper.setDecoderLowLatencyOptions(format, decoder("OMX.amlogic.hevc.decoder.awesome2", HEVC), 0,
-                true, true, false, PreferenceConfiguration.HEVC_LOW_LATENCY_AUTO, false);
+                true, true, false, PreferenceConfiguration.HEVC_LOW_LATENCY_AUTO);
         assertEquals(1, format.getInteger(MediaFormat.KEY_LOW_LATENCY));
         assertEquals(1, format.getInteger(AML_LOW_LATENCY));
     }

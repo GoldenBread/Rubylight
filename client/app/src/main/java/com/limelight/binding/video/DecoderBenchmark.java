@@ -218,7 +218,7 @@ public final class DecoderBenchmark {
             }
             if (frames.isEmpty()) return 0;
 
-            MediaCodecHelper.setDecoderLowLatencyOptions(format, decoder, 0, true, true, true, hevcLowLatencyMode, false);
+            MediaCodecHelper.setDecoderLowLatencyOptions(format, decoder, 0, true, true, true, hevcLowLatencyMode);
             texture = new SurfaceTexture(false);
             texture.setDefaultBufferSize(format.getInteger(MediaFormat.KEY_WIDTH), format.getInteger(MediaFormat.KEY_HEIGHT));
             surface = new Surface(texture);

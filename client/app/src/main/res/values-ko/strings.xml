@@ -15,8 +15,6 @@
     <string name="frame_warp_reason_full_chroma">전체 크로마가 켜져 있습니다</string>
     <string name="frame_warp_reason_renderer">GPU 경로를 시작하지 못했습니다</string>
     <string name="frame_warp_replaces_upscaling">Frame Warp는 업스케일링 없이 화면을 그립니다.</string>
-    <string name="title_experimental_chipset_tuning">칩셋 튜닝</string>
-    <string name="summary_experimental_chipset_tuning">MediaTek Dimensity 및 Samsung Exynos 디코더용 추가 저지연 설정입니다. 해당 기기에서 지연을 줄이려면 사용해 보세요. 영상이 멈추거나 끊기면 끄세요.</string>
     <string name="scut_deleted_pc">PC 삭제됨</string>
     <string name="scut_not_paired">PC와 페어링되지 않음</string>
     <string name="scut_pc_not_found">PC를 찾을 수 없음</string>
