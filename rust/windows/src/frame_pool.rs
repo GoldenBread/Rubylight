@@ -82,6 +82,23 @@ pub fn clear() {
     drop(freed);
 }
 
+/// [`clear`] once no stream is left to reuse the buffers. A session calls it
+/// after its [`StreamingScope`] has ended and its encoder and senders have
+/// given their buffers back, so the last stream to end empties the pool and
+/// one ending beside another leaves the other its buffers.
+///
+/// [`StreamingScope`]: crate::timing::StreamingScope
+pub fn clear_after_stream() {
+    clear_unless_streaming(&POOL, crate::timing::StreamingScope::active());
+}
+
+fn clear_unless_streaming(pool: &Mutex<Pool>, streams: usize) {
+    if streams == 0 {
+        let freed = std::mem::take(&mut pool.lock().unwrap_or_else(PoisonError::into_inner).0);
+        drop(freed);
+    }
+}
+
 struct Pool(Vec<Vec<u8>>);
 
 impl Pool {
@@ -182,6 +199,17 @@ mod tests {
                 .iter()
                 .all(|kept| kept.capacity() < size)
         );
+    }
+
+    #[test]
+    fn a_stream_ending_beside_another_leaves_the_pool_until_the_last_one_ends() {
+        let pool = Mutex::new(Pool(Vec::new()));
+        assert!(pool.lock().unwrap().give(Vec::with_capacity(POOLED * 2)).is_none());
+        clear_unless_streaming(&pool, 1);
+        let kept = pool.lock().unwrap().take(POOLED * 2).unwrap();
+        assert!(pool.lock().unwrap().give(kept).is_none());
+        clear_unless_streaming(&pool, 0);
+        assert!(pool.lock().unwrap().take(POOLED).is_none());
     }
 
     #[test]

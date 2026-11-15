@@ -533,6 +533,10 @@ impl StreamingScope {
         streams.count += 1;
         Self(())
     }
+    /// How many streams hold a scope now.
+    pub fn active() -> usize {
+        STREAMS.lock().unwrap().count
+    }
 }
 impl Drop for StreamingScope {
     fn drop(&mut self) {
