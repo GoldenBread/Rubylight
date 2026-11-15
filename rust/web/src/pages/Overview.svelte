@@ -226,6 +226,14 @@
     }
   }
 
+  // Back from "Cannot connect": the details load again instead of keeping the outage's error until the next poll.
+  let wasReconnecting = false;
+  $effect(() => {
+    const reconnecting = session.reconnecting;
+    if (wasReconnecting && !reconnecting) void loadMetadata();
+    wasReconnecting = reconnecting;
+  });
+
   $effect(() => {
     if (!paired || powerAsked) return;
     powerAsked = true;

@@ -14,7 +14,7 @@
   import { poll } from './lib/format';
   import { advanced, isCurrent, primary, type NavItem } from './lib/navigation';
   import { link, match, mayLeave, route } from './lib/router.svelte';
-  import { checkSession, refreshPending, session, signedOut } from './lib/session.svelte';
+  import { checkSession, heartbeat, session, signedOut } from './lib/session.svelte';
   import { applyTheme, storedTheme, type Theme } from './lib/theme';
   import Overview from './pages/Overview.svelte';
   import Library from './pages/Library.svelte';
@@ -118,7 +118,7 @@
     applyTheme(theme);
     setSignedOutHandler(signedOut);
     void checkSession();
-    return poll(() => session.state === 'unavailable' ? checkSession() : refreshPending(), 3000);
+    return poll(heartbeat, 3000);
   });
   $effect(() => {
     const path = route.path;
@@ -138,23 +138,29 @@
 <svelte:window
   onkeydown={(event) => {
     closeMenu(event);
-    if (!bare && session.state === 'signed-in') shortcut(event);
+    if (!bare && session.state === 'signed-in' && !session.reconnecting) shortcut(event);
   }}
 />
 
-{#if session.state === 'checking'}
-  <div class="loading" aria-busy="true"></div>
-{:else if session.state === 'unavailable'}
+{#snippet cannotConnect()}
   <AuthLayout>
     <h1>Cannot connect to Rubylight</h1>
     <p>The console retries automatically. Check that Rubylight is running on the host.</p>
     <p class="notice danger" role="alert">{session.error}</p>
     <Button variant="primary" onclick={checkSession}>Retry now</Button>
   </AuthLayout>
+{/snippet}
+
+{#if session.state === 'checking'}
+  <div class="loading" aria-busy="true"></div>
+{:else if session.state === 'unavailable'}
+  {@render cannotConnect()}
 {:else if bare}
   <Page />
 {:else}
-  <div class="shell">
+  <!-- The host stopped answering: the notice covers the page, which keeps its unsaved edits until the host is back. -->
+  {#if session.reconnecting}<div class="reconnecting">{@render cannotConnect()}</div>{/if}
+  <div class="shell" inert={session.reconnecting} aria-hidden={session.reconnecting || undefined}>
     <a class="skip-link" href="#main-content" onclick={(event) => { event.preventDefault(); content?.focus(); }}>Skip to content</a>
     <aside class:open={menuOpen}>
       <div class="side">
@@ -259,6 +265,13 @@
   }
   .loading {
     min-height: 100vh;
+  }
+  .reconnecting {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-overlay);
+    overflow-y: auto;
+    background: var(--bg);
   }
   .shell {
     display: grid;

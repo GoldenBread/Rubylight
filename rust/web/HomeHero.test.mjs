@@ -163,3 +163,50 @@ test('the wake fix applies the listed changes, waits for the host’s result and
     }
   }
 });
+
+test('a console that loses the host shows Cannot connect over the page and comes back by itself', async () => {
+  const { heartbeat, unreachable } = await server.ssrLoadModule('/src/lib/session.svelte.ts');
+  const { ApiError, TimeoutError } = await server.ssrLoadModule('/src/lib/api.ts');
+  // No answer at all is the host gone; a refusal is an answer.
+  assert.equal(unreachable(new TypeError('Failed to fetch')), true);
+  assert.equal(unreachable(new TimeoutError(20_000)), true);
+  assert.equal(unreachable(new ApiError(500, 'boom')), false);
+  assert.equal(unreachable(new ApiError(401, 'signed out')), false);
+  const before = { state: session.state, metadata: session.metadata, pending: session.pending };
+  session.state = 'signed-in';
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError('Failed to fetch'); };
+  try {
+    // The pairing poll and the sign-in check both go unanswered: the page stays, under the notice.
+    await heartbeat();
+    assert.equal(session.state, 'signed-in');
+    assert.equal(session.reconnecting, true);
+    assert.equal(session.error, 'Failed to fetch');
+    await heartbeat();
+    assert.equal(session.reconnecting, true);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  // The host is back: the next poll finds the sign-in and the notice goes.
+  const { sent, restore } = serve([
+    ['/api/auth/status', { credentials_configured: true, authenticated: true }],
+    ['/api/metadata', metadata],
+    ['/api/clients/pending', { status: true, requests: [] }],
+  ]);
+  try {
+    await heartbeat();
+    for (let wait = 0; wait < 50 && sent.length < 3; wait++) await new Promise((resolve) => setTimeout(resolve, 1));
+  } finally {
+    restore();
+  }
+  assert.equal(session.reconnecting, false);
+  assert.equal(session.state, 'signed-in');
+  assert.equal(session.error, '');
+  assert.deepEqual(sent.map(([, url]) => url), ['/api/auth/status', '/api/metadata', '/api/clients/pending']);
+  // The shell covers the page instead of replacing it, so unsaved edits survive the outage.
+  const app = source('App.svelte');
+  assert.match(app, /return poll\(heartbeat, 3000\);/);
+  assert.match(app, /\{#if session\.reconnecting\}<div class="reconnecting">\{@render cannotConnect\(\)\}<\/div>\{\/if\}/);
+  assert.match(app, /<div class="shell" inert=\{session\.reconnecting\}/);
+  Object.assign(session, before);
+});
