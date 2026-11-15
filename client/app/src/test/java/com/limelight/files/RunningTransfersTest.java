@@ -14,6 +14,7 @@ import android.widget.Button;
 import com.limelight.PcViewLifecycleTest;
 import com.limelight.R;
 import com.limelight.nativeapi.HostEndpoint;
+import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.jni.FileTransferBridge;
 import com.limelight.ui.UiNavigationTest;
 
@@ -124,6 +125,55 @@ public class RunningTransfersTest {
         assertEquals(1, engine.cancelAlls);
         assertTrue(engine.destroyed);
         assertTrue(work.workers.isShutdown());
+    }
+
+    private ActivityController<FileTransferActivity> share() {
+        Intent intent = new Intent(app, FileTransferActivity.class).setAction(Intent.ACTION_SEND)
+                .putExtra(Intent.EXTRA_STREAM, android.net.Uri.parse("content://other.app.files/1"));
+        return Robolectric.buildActivity(FileTransferActivity.class, intent).setup();
+    }
+
+    @Test
+    public void aShareWhileTransfersRunIsDecidedByThePcPicked() {
+        ActivityController<FileTransferActivity> screen = page("tower");
+        FileTransferActivity.TransferWork work = screen.get().work;
+        Engine engine = new Engine();
+        work.engine = engine;
+        work.controller = new FileTransferController(engine, HOST, work.workers, work.handler::post, work);
+        work.controller.send("save.bin", 10, () -> -1);
+        screen.get().finish();
+        screen.pause().stop().destroy();
+        assertSame(work, RunningTransfers.held());
+
+        // A share names no PC: the picker opens as for any share, and the transfers go on.
+        ActivityController<FileTransferActivity> other = share();
+        assertTrue(!other.get().isFinishing());
+        assertTrue(other.get().work != work);
+        assertSame(work, RunningTransfers.held());
+        // Picked for another PC: refused with the sentence that is now true, and the share is dropped.
+        other.get().pick("laptop", new ComputerDetails());
+        assertTrue(other.get().isFinishing());
+        assertEquals(app.getString(R.string.files_busy_other_pc), ShadowToast.getTextOfLatestToast());
+        other.pause().stop().destroy();
+        assertSame(work, RunningTransfers.held());
+        assertEquals(0, engine.cancelAlls);
+
+        // Picked for their PC: the page takes them back, and the shared file waits to be sent with them.
+        ActivityController<FileTransferActivity> same = share();
+        FileTransferActivity.TransferWork picker = same.get().work;
+        android.net.Uri shared = android.net.Uri.parse("content://other.app.files/2");
+        picker.waiting.add(shared); // as an accepted share (no provider serves it under Robolectric)
+        same.get().pick("tower", new ComputerDetails());
+        assertTrue(!same.get().isFinishing());
+        assertSame(work, same.get().work);
+        assertNull(RunningTransfers.held());
+        assertTrue(work.waiting.contains(shared));
+        assertTrue(picker.workers.isShutdown());
+        assertEquals("the running upload goes on", 0, engine.cancelAlls);
+        assertEquals(1, work.controller.rows().size());
+        same.get().finish();
+        same.pause().stop().destroy();
+        assertSame("still running: held again", work, RunningTransfers.held());
     }
 
     @Test

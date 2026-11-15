@@ -163,9 +163,12 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
                 // Back to the PC whose transfers went on: the page shows them again.
                 keeper.work = RunningTransfers.take();
             } else if (held != null && held.running()) {
-                Toast.makeText(this, R.string.files_busy_other_pc, Toast.LENGTH_LONG).show();
-                finish();
-                return;
+                if (pc != null) {
+                    Toast.makeText(this, R.string.files_busy_other_pc, Toast.LENGTH_LONG).show();
+                    finish();
+                    return;
+                }
+                // A share names no PC: the held transfers go on, and the PC picked decides (joinHeld).
             } else if (held != null) {
                 held.end();
             }
@@ -629,21 +632,56 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
             // By name: the label used to be the string resource 0, which crashed every share.
             Button pick = button(pcs, details.displayName());
             pick.setTag("pc:" + details.uuid);
-            String uuid = details.uuid;
-            pick.setOnClickListener(v -> {
-                ComputerDetails latest = work.computers.get(uuid);
-                work.uuid = uuid;
-                work.computer = null;
-                focusAfterPick = true;
-                onComputer(latest != null ? latest : details);
-                render();
-            });
+            pick.setOnClickListener(v -> pick(details.uuid, details));
         }
         // A PC that went away hands the focus to its neighbour. When the list first shows, the first PC takes
         // the focus: it was on the Up button, and a remote's first OK closed the screen.
         restoreFocus(pcs, focused, null);
         if (focused == null && appeared && pcs.getChildCount() > 0) takesFocus(pcs.getChildAt(0));
         return !keys.isEmpty();
+    }
+
+    /** A share's PC was picked; package-private for tests. */
+    void pick(String uuid, ComputerDetails details) {
+        if (joinHeld(uuid)) return;
+        ComputerDetails latest = work.computers.get(uuid);
+        work.uuid = uuid;
+        work.computer = null;
+        focusAfterPick = true;
+        onComputer(latest != null ? latest : details);
+        render();
+    }
+
+    /**
+     * A share picked for a PC while a closed page's transfers are held: for their PC, the page takes them back and
+     * the shared files wait to be sent with them, as a share to that PC's page; for another PC, the share is refused
+     * while they run. Held work with nothing running ends, as opening another page ends it. True when handled here.
+     */
+    private boolean joinHeld(String uuid) {
+        TransferWork held = RunningTransfers.held();
+        if (held == null || held == work) return false;
+        if (!uuid.equalsIgnoreCase(held.uuid)) {
+            if (!held.running()) {
+                held.end();
+                return false;
+            }
+            Toast.makeText(this, R.string.files_busy_other_pc, Toast.LENGTH_LONG).show();
+            finish();
+            return true;
+        }
+        TransferWork share = work;
+        RunningTransfers.take();
+        held.waiting.addAll(share.waiting);
+        share.waiting.clear();
+        share.screen = null;
+        share.end();
+        new ViewModelProvider(this).get(Keeper.class).work = held;
+        work = held;
+        held.screen = this;
+        focusAfterPick = true;
+        // Asks the PC again, then sends what waits (sendWaiting).
+        loadAccess();
+        return true;
     }
 
     /**
