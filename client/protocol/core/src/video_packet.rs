@@ -27,8 +27,8 @@ pub const ANNOUNCE_ATTRIBUTE: &str = "x-nv-video[0].packetSize";
 /// more than stock clients already send (below 1472 bytes). A 1500-byte path, Wi-Fi among them,
 /// offers 1424: 24 bytes above stock, safe but with little of jumbo's benefit. The size covers the
 /// client's 32-byte encryption header; the datagram adds [`DATAGRAM_OVERHEAD`] bytes on top, and the
-/// client's UDP probe must use this size (the packet size less the 32-byte header when encrypted),
-/// not the config value, because the probe adds its own framing. Rounded down to a multiple of 16,
+/// client's UDP probe must use the packet size less 32 bytes (whether or not the stream encrypts,
+/// because the probe adds its own framing), not the config value. Rounded down to a multiple of 16,
 /// as Moonlight rounds its packet size.
 pub fn for_mtu(mtu: u32) -> u16 {
     let room = mtu
