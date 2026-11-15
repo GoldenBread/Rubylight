@@ -48,6 +48,33 @@ public class FileTransferScreenTest {
         assertTrue(FileTransferActivity.sharedUris(FileTransferActivity.forPc(context, "pc")).isEmpty());
     }
 
+    /** A provider that lists one file's name and size, as a gallery or cloud app does. */
+    public static final class Listed extends android.content.ContentProvider {
+        @Override public boolean onCreate() { return true; }
+        @Override public android.database.Cursor query(Uri uri, String[] projection, String selection, String[] args, String order) {
+            android.database.MatrixCursor cursor = new android.database.MatrixCursor(
+                    new String[] {android.provider.OpenableColumns.DISPLAY_NAME, android.provider.OpenableColumns.SIZE});
+            cursor.addRow(new Object[] {"clip.mp4", 42L});
+            return cursor;
+        }
+        @Override public String getType(Uri uri) { return null; }
+        @Override public Uri insert(Uri uri, android.content.ContentValues values) { return null; }
+        @Override public int delete(Uri uri, String selection, String[] args) { return 0; }
+        @Override public int update(Uri uri, android.content.ContentValues values, String selection, String[] args) { return 0; }
+    }
+
+    @Test
+    public void aSharedFilesNameAndSizeComeFromItsProviderAndAnUnknownSizeIsSaidSo() {
+        // Read on a worker before the upload is queued; a provider that may fetch the file first never holds the screen.
+        org.robolectric.Robolectric.setupContentProvider(Listed.class, "listed");
+        FileTransferActivity.SharedFile listed = FileTransferActivity.describe(context.getContentResolver(), Uri.parse("content://listed/7"));
+        assertEquals("clip.mp4", listed.name);
+        assertEquals(42L, listed.size);
+        FileTransferActivity.SharedFile gone = FileTransferActivity.describe(context.getContentResolver(), Uri.parse("content://gone/report.txt"));
+        assertEquals("report.txt", gone.name);
+        assertEquals(-1L, gone.size);
+    }
+
     @Test
     public void theMenusOpenTheScreenForTheirPc() {
         Intent intent = FileTransferActivity.forPc(context, "tower");

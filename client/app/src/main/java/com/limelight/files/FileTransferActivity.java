@@ -412,7 +412,7 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
         if (uploadAccess != FileProblems.Access.READY || work.controller == null) return;
         List<Uri> now = new ArrayList<>(work.waiting);
         work.waiting.clear();
-        for (Uri uri : now) queueUpload(uri);
+        if (!now.isEmpty()) queueUploads(now);
         render();
     }
 
@@ -422,9 +422,50 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
         sendWaiting();
     }
 
-    private void queueUpload(Uri uri) {
-        // The upload's opener outlives this screen in the ViewModel: never hold the Activity.
+    /**
+     * Reads each file's name and size on a worker, since a cloud provider may fetch the file first, then queues the
+     * uploads in their order on the main thread. The uploads' openers outlive this screen in the ViewModel: nothing
+     * here holds the Activity.
+     */
+    private void queueUploads(List<Uri> uris) {
+        TransferWork owner = work;
+        FileTransferController controller = owner.controller;
         ContentResolver resolver = getApplicationContext().getContentResolver();
+        owner.workers.execute(() -> {
+            List<SharedFile> files = new ArrayList<>();
+            for (Uri uri : uris) files.add(describe(resolver, uri));
+            owner.handler.post(() -> {
+                for (SharedFile file : files) {
+                    if (owner.controller != controller) {
+                        // Another PC's transfers meanwhile: the file waits for one that may receive it.
+                        owner.waiting.add(file.uri);
+                    } else if (file.size < 0) {
+                        // The host needs the length before the first byte.
+                        FileTransferActivity screen = owner.screen;
+                        if (screen != null) screen.status.setText(screen.getString(R.string.files_size_unknown, file.name));
+                    } else {
+                        controller.send(file.name, file.size, () -> detach(resolver.openFileDescriptor(file.uri, "r")));
+                    }
+                }
+            });
+        });
+    }
+
+    /** A shared file's name and size, as its provider gives them; size is -1 when it gives none. */
+    static final class SharedFile {
+        final Uri uri;
+        final String name;
+        final long size;
+
+        SharedFile(Uri uri, String name, long size) {
+            this.uri = uri;
+            this.name = name;
+            this.size = size;
+        }
+    }
+
+    /** Asks the provider for a file's name and size, opening the file when the size is not listed. Off the main thread. */
+    static SharedFile describe(ContentResolver resolver, Uri uri) {
         String name = null;
         long size = -1;
         try (Cursor cursor = resolver.query(uri, new String[] {OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE},
@@ -444,12 +485,7 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
                 LimeLog.warning("File transfer: could not open a shared file: " + e.getMessage());
             }
         }
-        if (size < 0) {
-            // The host needs the length before the first byte.
-            status.setText(getString(R.string.files_size_unknown, name));
-            return;
-        }
-        work.controller.send(name, size, () -> detach(resolver.openFileDescriptor(uri, "r")));
+        return new SharedFile(uri, name, size);
     }
 
     private static int detach(ParcelFileDescriptor fd) throws IOException {
