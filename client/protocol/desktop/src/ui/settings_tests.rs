@@ -244,6 +244,17 @@ fn a_rows_hint_shows_on_hover_and_focus_only() {
     let hint = f.placed.iter().find(|(t, ..)| t == rate_hint).expect("the hint").1;
     assert!(hint.height() > 24.0, "wrapped: {hint:?}");
     assert!(!hint_elided(&f, rate_hint), "the whole hint is drawn");
+    // On to the row below: the opened row keeps its size, so the row under the pointer stays there.
+    let codec = f.placed.iter().find(|(t, ..)| t == "Video codec").expect("the row").1;
+    f.frame(vec![egui::Event::PointerMoved(codec.center())]);
+    f.settle();
+    assert!((y(&f, "Video codec") - codec.top()).abs() < 0.5, "the row under the pointer did not move");
+    assert!(shows(&f, rate_hint), "the row above stays open while the pointer is below it");
+    // Back above it: it closes, and nothing under the pointer moves for that.
+    let size = f.placed.iter().find(|(t, ..)| t == "Resolution").expect("the row").1;
+    f.frame(vec![egui::Event::PointerMoved(size.center())]);
+    f.settle();
+    assert!(!shows(&f, rate_hint), "{:?}", f.drawn);
 }
 
 /// Whether the galley of `text` the last frame drew was cut short with "…".

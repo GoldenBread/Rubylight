@@ -2974,7 +2974,13 @@ fn settings_row(
             // The hint while the pointer is over the row or focus is in it.
             let row = ui.min_rect().expand2(vec2(18.0, 8.0));
             let focused = ui.memory(|m| m.focused()).and_then(|id| ui.ctx().read_response(id)).is_some_and(|r| row.contains(r.rect.center()));
-            let active = focused || ui.rect_contains_pointer(row);
+            // A row the pointer opened keeps its size while the pointer is further down the list:
+            // closing it would pull the row under the pointer up and away from it. It closes once
+            // the pointer is above it or off the list, where nothing under the pointer moves.
+            let below = ui.input(|i| i.pointer.hover_pos()).is_some_and(|at| {
+                at.y > row.bottom() && at.y <= ui.clip_rect().bottom() && (row.left()..=row.right()).contains(&at.x)
+            });
+            let active = focused || ui.rect_contains_pointer(row) || (was_active && below);
             if active != was_active {
                 // One more pass lays the hint out whole, or back to one line.
                 ui.data_mut(|d| d.insert_temp(open_id, active));
