@@ -28,7 +28,7 @@ final class RoamingNetworkWatch {
     private final RoamingNetworkTracker tracker;
     private final ConnectivityManager.NetworkCallback callback;
 
-    private RoamingNetworkWatch(ConnectivityManager connMgr, Network streamNetwork,
+    private RoamingNetworkWatch(ConnectivityManager connMgr, Network streamNetwork, String pcAddress,
                                 NvConnectionListener listener) {
         this.connMgr = connMgr;
         tracker = new RoamingNetworkTracker(streamNetwork, new RoamingNetworkTracker.Reporter() {
@@ -59,7 +59,7 @@ final class RoamingNetworkWatch {
             public void streamNetworkReturned(int change, boolean metered) {
                 listener.streamNetworkReturned(change, metered);
             }
-        });
+        }, () -> System.nanoTime() / 1000000, addressFamily(pcAddress));
         callback = new ConnectivityManager.NetworkCallback() {
             @Override
             public void onAvailable(Network network) {
@@ -94,6 +94,20 @@ final class RoamingNetworkWatch {
         };
     }
 
+    /**
+     * The family of an address literal (Inet4Address or Inet6Address), or null for a host name or
+     * none: names are not looked up here.
+     */
+    static Class<?> addressFamily(String address) {
+        if (address == null || address.isEmpty()) return null;
+        if (address.indexOf(':') >= 0) return java.net.Inet6Address.class;
+        for (int i = 0; i < address.length(); i++) {
+            char c = address.charAt(i);
+            if (c != '.' && (c < '0' || c > '9')) return null;
+        }
+        return java.net.Inet4Address.class;
+    }
+
     /** The default network now, to pass to start() as the one the stream starts on; may be null. */
     static Network defaultNetwork(Context context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
@@ -107,7 +121,7 @@ final class RoamingNetworkWatch {
      * Starts reporting network changes, or returns null (with a warning) where it cannot: then
      * the stream does not roam onto another network.
      */
-    static RoamingNetworkWatch start(Context context, Network streamNetwork, NvConnectionListener listener) {
+    static RoamingNetworkWatch start(Context context, Network streamNetwork, String pcAddress, NvConnectionListener listener) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
             LimeLog.warning("Roaming: needs Android 7 to follow network changes; not roaming");
             return null;
@@ -117,7 +131,7 @@ final class RoamingNetworkWatch {
             LimeLog.warning("Roaming: no ConnectivityManager; not roaming");
             return null;
         }
-        RoamingNetworkWatch watch = new RoamingNetworkWatch(connMgr, streamNetwork, listener);
+        RoamingNetworkWatch watch = new RoamingNetworkWatch(connMgr, streamNetwork, pcAddress, listener);
         try {
             connMgr.registerDefaultNetworkCallback(watch.callback);
         } catch (RuntimeException e) {

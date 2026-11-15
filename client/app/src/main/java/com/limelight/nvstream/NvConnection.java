@@ -1590,7 +1590,8 @@ public class NvConnection {
                         // Every stream follows its network (a lost one that returns where the
                         // connection cannot carry on reconnects at once); the engine roams only
                         // with client roaming on both sides.
-                        roamingWatch = RoamingNetworkWatch.start(appContext, streamNetwork, context.connListener);
+                        roamingWatch = RoamingNetworkWatch.start(appContext, streamNetwork,
+                                context.serverAddress.address, context.connListener);
                         startInputPolling(prefs.unbatchedInput);
                         startMicrophone();
                         started = true;

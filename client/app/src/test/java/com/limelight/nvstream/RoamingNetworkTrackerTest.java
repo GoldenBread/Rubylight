@@ -1,6 +1,7 @@
 package com.limelight.nvstream;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -252,6 +253,36 @@ public class RoamingNetworkTrackerTest {
         tracker.addresses(OTHER_WIFI, addresses("192.168.1.20", "192.168.2.7"));
         tracker.capabilities(OTHER_WIFI, true);
         assertEquals(java.util.Arrays.asList("changed"), events.seen);
+    }
+
+    // Wi-Fi back with the same IPv4 lease, a new temporary IPv6 address arriving first: an IPv4
+    // stream carries on, and only an IPv4 address it no longer has would strand it.
+    @Test public void theCEngineJudgesOnlyThePcsAddressFamily() {
+        CEngineEvents events = new CEngineEvents();
+        RoamingNetworkTracker tracker = new RoamingNetworkTracker(WIFI, events, () -> 0, java.net.Inet4Address.class);
+        tracker.addresses(WIFI, addresses("fe80::1", "2001:db8::10", "192.168.1.20"));
+        tracker.lost(WIFI);
+        tracker.capabilities(OTHER_WIFI, true);
+        tracker.addresses(OTHER_WIFI, addresses("fe80::1", "2001:db8::77"));
+        tracker.addresses(OTHER_WIFI, addresses("fe80::1", "2001:db8::77", "192.168.1.20"));
+        assertEquals(java.util.Arrays.asList("lost", "changed", "returned " + MoonBridge.NETWORK_CARRIES_ON,
+                "changed", "changed"), events.seen);
+
+        // Another IPv4 address strands it.
+        events.seen.clear();
+        tracker.lost(OTHER_WIFI);
+        tracker.addresses(CELLULAR, addresses("2001:db8::77", "10.0.0.5"));
+        tracker.capabilities(CELLULAR, false);
+        assertEquals(java.util.Arrays.asList("lost", "changed metered",
+                "returned " + MoonBridge.NETWORK_CANNOT_CONTINUE + " metered"), events.seen);
+    }
+
+    @Test public void thePcsAddressFamilyComesFromItsLiteral() {
+        assertEquals(java.net.Inet4Address.class, RoamingNetworkWatch.addressFamily("192.168.1.10"));
+        assertEquals(java.net.Inet6Address.class, RoamingNetworkWatch.addressFamily("fd00::10"));
+        assertEquals(java.net.Inet6Address.class, RoamingNetworkWatch.addressFamily("[fd00::10]"));
+        assertNull(RoamingNetworkWatch.addressFamily("gaming-pc.local"));
+        assertNull(RoamingNetworkWatch.addressFamily(null));
     }
 
     // An engine that tells is never overruled: its "carries on" stands on other addresses.

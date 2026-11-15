@@ -64,6 +64,9 @@ final class RoamingNetworkTracker {
 
     private final Reporter reporter;
     private final Clock clock;
+    // Inet4Address or Inet6Address: the family of the PC's address, so only addresses of the family
+    // the stream reaches the PC with decide whether it carries on; null when unknown (a host name).
+    private final Class<?> pcFamily;
     private Object current;
     private boolean lost;
     private boolean stopped;
@@ -83,8 +86,14 @@ final class RoamingNetworkTracker {
     }
 
     RoamingNetworkTracker(Object streamNetwork, Reporter reporter, Clock clock) {
+        this(streamNetwork, reporter, clock, null);
+    }
+
+    /** pcFamily: Inet4Address.class or Inet6Address.class for the PC's address, or null if unknown. */
+    RoamingNetworkTracker(Object streamNetwork, Reporter reporter, Clock clock, Class<?> pcFamily) {
         this.reporter = reporter;
         this.clock = clock;
+        this.pcFamily = pcFamily;
         current = streamNetwork;
     }
 
@@ -181,7 +190,9 @@ final class RoamingNetworkTracker {
      * The engine's answer for a returned network with these addresses. An engine that cannot
      * tell carries on while the network has no routable address yet (link-local only), while
      * an address of the lost network is back, or when the lost network's addresses are unknown;
-     * routable addresses without any of the lost ones strand its connection.
+     * routable addresses without any of the lost ones strand its connection. Only addresses of
+     * the PC's family count when it is known: a new temporary IPv6 address arriving before the
+     * same IPv4 lease says nothing about an IPv4 stream.
      */
     private int routeAnswer(int change, Object addresses) {
         if (change != MoonBridge.NETWORK_CARRIES_ON || reporter.answersForTheRoute() ||
@@ -193,7 +204,7 @@ final class RoamingNetworkTracker {
         }
         boolean routable = false;
         for (Object address : (java.util.Collection<?>) addresses) {
-            if (!routable(address)) continue;
+            if (!routable(address) || (pcFamily != null && !pcFamily.isInstance(address))) continue;
             if (((java.util.Collection<?>) lostAddresses).contains(address)) return change;
             routable = true;
         }
