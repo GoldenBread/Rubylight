@@ -1240,6 +1240,16 @@ fn fractional_vsync_stands_aside_for_a_chosen_vrr_even_once_the_display_falls_ba
 }
 
 #[test]
+fn a_held_margin_is_the_deadline_unless_a_measurement_sets_it() {
+    assert_eq!(held_base_margin_us(None, false, 120.0), 5_000, "composed at 120 Hz: the desktop's deadline");
+    assert_eq!(held_base_margin_us(None, false, 60.0), 7_166, "composed at 60 Hz");
+    assert_eq!(held_base_margin_us(None, true, 120.0), 2_000, "nothing composes");
+    assert_eq!(held_base_margin_us(Some(6_500), false, 120.0), 6_500, "NIGHTJAR_HELD_MARGIN_US");
+    assert_eq!(held_base_margin_us(Some(6_500), true, 120.0), 6_500, "set even where nothing composes");
+    assert_eq!(held_base_margin_us(None, false, 0.0), 0, "no refresh rate known");
+}
+
+#[test]
 fn a_hold_before_the_draw_adds_the_draw_time_to_its_margin() {
     let mut draws = DrawTime::default();
     assert_eq!(draws.p90_us(), None);

@@ -942,7 +942,9 @@ impl Streaming {
             vrr: present::VrrPacing::new(vrr_check, vrr_fallback, vrr_sync, connecting.pacing).with_present_check(present_check).with_lfc(vrr_lfc),
             skip_over_waiting: env_flag("NIGHTJAR_PRESENT_SKIP").unwrap_or(true),
             present_deadline_us: std::env::var("NIGHTJAR_PRESENT_DEADLINE_US").ok().and_then(|us| us.parse().ok()),
-            held_margin_us: std::env::var("NIGHTJAR_HELD_MARGIN_US").ok().and_then(|us| us.parse().ok()),
+            held_margin_us: std::env::var("NIGHTJAR_HELD_MARGIN_US").ok().and_then(|us| us.parse().ok()).inspect(|us| {
+                eprintln!("nightjar: NIGHTJAR_HELD_MARGIN_US: fractional V-Sync's held pictures go out {us} us before their turn");
+            }),
             held_report_refresh: std::env::var_os("NIGHTJAR_HELD_REPORT").is_some_and(|v| v == "0"),
             held_anchor: phase::HeldAnchor::default(),
             held_wait_us: None,

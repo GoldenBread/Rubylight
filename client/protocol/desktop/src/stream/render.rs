@@ -293,14 +293,14 @@ impl Streaming {
     /// time is added (`present::held_margin_us`).
     fn held_margin_us(&self, renderer: *mut SDL_Renderer) -> u64 {
         #[cfg(target_os = "linux")]
-        if self.kms_engaged() { return self.held_margin_us.unwrap_or(2_000); }
+        if self.kms_engaged() { return present::held_base_margin_us(self.held_margin_us, true, self.plan.display.refresh_hz); }
         // SAFETY: a live renderer and its window.
         let exclusive = unsafe {
             let window = SDL_GetRenderWindow(renderer);
             SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN != 0 && !SDL_GetWindowFullscreenMode(window).is_null()
         };
         let refresh_hz = self.plan.display.refresh_hz;
-        let base_us = self.held_margin_us.unwrap_or(if exclusive { 2_000 } else { present::deadline_before_refresh(refresh_hz) as u64 });
+        let base_us = present::held_base_margin_us(self.held_margin_us, exclusive, refresh_hz);
         let draw_us = if self.frame_warp.is_some() { self.held_draw.p90_us() } else { None };
         present::held_margin_us(base_us, draw_us, (1e6 / f64::from(refresh_hz.max(1.0))) as u64)
     }

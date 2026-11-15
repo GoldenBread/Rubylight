@@ -452,6 +452,13 @@ impl DrawTime {
     }
 }
 
+/// The base of a held picture's margin (`held_margin_us`): `set_us`, a measurement run's
+/// `NIGHTJAR_HELD_MARGIN_US`, else 2 ms where nothing composes (exclusive fullscreen, a KMS plane)
+/// and the desktop's deadline elsewhere (`deadline_before_refresh`).
+pub fn held_base_margin_us(set_us: Option<u64>, uncomposed: bool, refresh_hz: f32) -> u64 {
+    set_us.unwrap_or_else(|| if uncomposed { 2_000 } else { deadline_before_refresh(refresh_hz).max(0) as u64 })
+}
+
 /// How far ahead of its turn a held picture goes out: `base_us` (the desktop's deadline, or 2 ms
 /// where nothing composes), plus the draws after the hold (`draw_us`, with Frame Warp). The sum
 /// stays under 4/5 of a refresh, and never under `base_us`: a slow AI enhancement draw would
