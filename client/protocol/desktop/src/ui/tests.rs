@@ -1471,6 +1471,16 @@ fn the_options_list_follows_the_pc_state() {
 }
 
 #[test]
+fn the_pairing_help_steps_read_in_the_chosen_language() {
+    let mut f = Frames::new(record("Den", false, false), Reach::Online);
+    f.l.settings.language = Language::German;
+    f.l.ask(Dialog::PairingHelp);
+    f.settle();
+    assert!(shows(&f, "2. Wähle hier den PC im selben Netzwerk und tippe auf Koppeln."), "{:?}", f.drawn);
+    assert!(!shows(&f, PAIRING_STEPS[1]), "{:?}", f.drawn);
+}
+
+#[test]
 fn a_toast_shows_over_the_launcher_and_goes_away() {
     let mut f = Frames::new(record("Den", true, true), Reach::Online);
     f.l.toast(trf("Quitting {} on the PC…", &[&"Hades"]));

@@ -871,7 +871,7 @@ impl Launcher {
                     ui.set_width(440.0);
                     ui.label(RichText::new(tr("Connect to your PC")).font(semibold(text::SECTION)));
                     for step in PAIRING_STEPS {
-                        ui.label(RichText::new(step).color(ON_SURFACE_VARIANT));
+                        ui.label(RichText::new(tr(step)).color(ON_SURFACE_VARIANT));
                     }
                     dialog_buttons(ui, |ui| {
                         let done = primary_button(ui, "Got it");
