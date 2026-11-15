@@ -241,6 +241,23 @@ pub(super) fn fallback_rate(offered_hz: &[u32], refused_mhz: u32) -> Option<u32>
         .or_else(|| offered_hz.iter().copied().min())
         .map(|hz| hz.saturating_mul(1000))
 }
+/// The refresh (millihertz) to ask for again after Windows refused `requested`: the
+/// fallback rate when Windows changed the resolution, or when it kept the resolution at a
+/// slower refresh than that fallback (the 1000 Hz default refused, the display left at
+/// 60 Hz). None when the mode applied, could not be read, or the display already runs at
+/// the fallback or faster.
+pub(super) fn refresh_retry(
+    requested: Timing,
+    outcome: &ModeOutcome,
+    offered_hz: &[u32],
+) -> Option<u32> {
+    let ModeOutcome::Kept(actual) = outcome else {
+        return None;
+    };
+    let fallback = fallback_rate(offered_hz, requested.2)?;
+    let same_size = (actual.0, actual.1) == (requested.0, requested.1);
+    (!same_size || fallback > actual.2.saturating_add(500)).then_some(fallback)
+}
 /// Every mode a display reports as (width, height, refresh Hz).
 pub(super) fn supported_modes(output: &str) -> Vec<(u32, u32, u32)> {
     let name: Vec<_> = output.encode_utf16().chain(Some(0)).collect();
@@ -393,5 +410,58 @@ mod tests {
         assert_eq!(fallback_rate(&[60, 120, 240], 120_000), Some(60_000));
         assert_eq!(fallback_rate(&[144, 240], 120_000), Some(144_000));
         assert_eq!(fallback_rate(&[], 1_000_000), None);
+    }
+    #[test]
+    fn a_refused_refresh_is_retried_when_it_left_the_display_slower_or_smaller() {
+        let requested = (3840, 2160, 1_000_000);
+        let offered = [60, 120, 240, 1000];
+        // Issue #40: Windows fell back to 1440p.
+        assert_eq!(
+            refresh_retry(
+                requested,
+                &ModeOutcome::Kept((2560, 1440, 60_000)),
+                &offered
+            ),
+            Some(240_000)
+        );
+        // The 1000 Hz default refused at 4K, the display kept at 60 Hz.
+        assert_eq!(
+            refresh_retry(
+                requested,
+                &ModeOutcome::Kept((3840, 2160, 60_000)),
+                &offered
+            ),
+            Some(240_000)
+        );
+        // Already at the fallback, or faster: nothing to gain.
+        assert_eq!(
+            refresh_retry(
+                requested,
+                &ModeOutcome::Kept((3840, 2160, 240_000)),
+                &offered
+            ),
+            None
+        );
+        assert_eq!(
+            refresh_retry(
+                requested,
+                &ModeOutcome::Kept((3840, 2160, 239_760)),
+                &offered
+            ),
+            None
+        );
+        assert_eq!(
+            refresh_retry(requested, &ModeOutcome::Applied, &offered),
+            None
+        );
+        assert_eq!(
+            refresh_retry(requested, &ModeOutcome::Unknown, &offered),
+            None
+        );
+        // A resolution the display does not offer has no rate to retry.
+        assert_eq!(
+            refresh_retry(requested, &ModeOutcome::Kept((3840, 2160, 60_000)), &[]),
+            None
+        );
     }
 }

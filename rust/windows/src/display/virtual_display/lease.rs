@@ -192,7 +192,7 @@ fn raise(display: &mut impl SharedDisplay, rate: u32) -> Option<u32> {
 }
 /// Give the display another size at its refresh in place, for a stream that
 /// turned between portrait and landscape: whether Windows shows that size,
-/// at that refresh or a slower one it lists ([`fallback_rate`]). Windows can
+/// at that refresh or a slower one it lists ([`fallback_rate`](super::super::modes::fallback_rate)). Windows can
 /// list the size already (the driver's standard sizes, or an earlier turn) at
 /// other refreshes, so the turn waits for its refresh or for the list Windows
 /// shows at that size to change: the driver lists a size's refreshes at once.

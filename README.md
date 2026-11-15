@@ -208,6 +208,7 @@ All figures come from our own runs on an RX 7900 XT under Windows 11 25H2. Each 
 
 | Result | Conditions |
 | :-- | :-- |
+| **0.04 %** of frames off a capped game's 60 fps rhythm | A game capped at 60 fps on a 1000 Hz virtual display (the default), 5 minutes, HEVC 1080p60 to a laptop: 0.04 % of frame intervals more than 4 ms off 16.7 ms, against 2.22 % at four times the stream rate ([run](rust/PERFORMANCE.md#november-16-virtual-display-refresh-and-a-capped-games-frame-spacing)) |
 | **2.35 ms** median, capture to client present | PyroWave 1080p60 at 20 Mbps over loopback, paced as for a wired client that reports its link (as Nightjar does); 7.05 ms at 400 Mbps ([run](rust/PERFORMANCE.md#november-1-pyrowave-send-spread-with-and-without-a-link-hint)) |
 | **5.89 ms** median, capture to client present | AV1 1080p60 over loopback, per-frame timing record; H.264 6.92 ms, HEVC 8.37 ms ([run](rust/PERFORMANCE.md#october-26-300-rc2-against-the-published-numbers)) |
 | **0.25 ms** median picture age at the encoder | VRR, a 120 Hz game in a 60 fps stream; 4.68 ms without VRR-aware capture ([run](rust/PERFORMANCE.md#october-26-300-rc2-against-the-published-numbers), [method](rust/PERFORMANCE.md#october-24-predictive-claim-waits-under-vrr)) |

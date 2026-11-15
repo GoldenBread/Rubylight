@@ -12,6 +12,7 @@ Every row links to the method and the raw numbers in the [full record](../rust/P
 
 | What | Result | Record |
 | --- | --- | --- |
+| Virtual display refresh with a capped game (1000 Hz by default) | A game capped at 60 fps on the virtual display, HEVC 1080p60 to a laptop, 5 minutes per setting: frame intervals more than 4 ms off 16.7 ms were 0.04 % at 1000 Hz, 0.23 % at twice and 2.22 % at four times the stream rate, with the same time from capture to send (median 2.7 to 2.9 ms). | [November 16](../rust/PERFORMANCE.md#november-16-virtual-display-refresh-and-a-capped-games-frame-spacing) |
 | Frame timing record, 1080p60, loopback | Median capture to client present, measured on 3.0.0-rc.2: AV1 5.89 ms, H.264 6.92 ms, HEVC 8.37 ms, PyroWave 11.14 ms (with the probe fix). Decode medians 3.17, 3.72, 5.12 and 1.22 ms. | [rc.2 record](../rust/PERFORMANCE.md#october-26-300-rc2-against-the-published-numbers), [baselines](../rust/PERFORMANCE.md#october-23-per-frame-timing-record-baselines) |
 | PyroWave with a link hint | PyroWave 1080p60 at 20 Mbps over loopback, paced as for a wired client that reports its link (as Nightjar does): median capture to client present 2.35 ms; 7.05 ms at 400 Mbps. | [November 1](../rust/PERFORMANCE.md#november-1-pyrowave-send-spread-with-and-without-a-link-hint) |
 | Scene cuts encoded again | HEVC 1440p60 at 250 Mbps with 0.3 % random loss, 45 s, two runs per arm: freezes after scene cuts fell from 15 to 0. | [October 28](../rust/PERFORMANCE.md#october-28-oversize-scene-cuts-encoded-again-as-keyframes) |

@@ -2,8 +2,8 @@
 //! heartbeats.
 
 use super::modes::{
-    ModeOutcome, Timing, current_timing, fallback_rate, format_timing, lists_rate, mode_outcome,
-    offered_rates, supported_modes,
+    ModeOutcome, Timing, current_timing, format_timing, lists_rate, mode_outcome, offered_rates,
+    refresh_retry, supported_modes,
 };
 use super::rubylight_vdd::{self, Control};
 use super::topology::{Route, activate_target, is_rubylight_monitor, is_virtual_monitor};
@@ -395,12 +395,13 @@ impl VirtualDisplay {
                     "virtual display mode not applied; streaming at the mode Windows chose"
                 );
                 // A refused refresh must not cost the resolution too (issue #40: 4K at
-                // 1000 Hz for VRR refused, and Windows fell back to 1440p). A display at
-                // the requested size keeps its refresh, as a refused raise does.
+                // 1000 Hz for VRR refused, and Windows fell back to 1440p), nor leave the
+                // display slower than a refresh it offers (the 1000 Hz default refused at
+                // 4K, with Windows keeping 60 Hz).
                 let wrong_size =
                     !matches!(outcome, ModeOutcome::Kept((w, h, _)) if (w, h) == (width, height));
                 size_applied = !wrong_size;
-                if wrong_size && let Some(fallback) = fallback_rate(&offered, rate) {
+                if let Some(fallback) = refresh_retry(self.mode, &outcome, &offered) {
                     let retried = Topology::set_mode_rate(
                         &self.name,
                         width,

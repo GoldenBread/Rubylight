@@ -78,6 +78,63 @@ This is the dated measurement record. For a guided comparison, start with the [p
 | Reproduction and scope | [Probes](#reproduce-on-another-machine) · [Hardware covered](#hardware-covered) |
 | PyroWave encode overlap, send buffer, Nightjar receive path | [November 10, PyroWave at 1.4 Gbps](#november-10-pyrowave-at-14-gbps-to-a-780m-laptop) |
 
+## November 16: virtual display refresh and a capped game's frame spacing
+
+A Shield TV report showed a game capped at 60 fps by RTSS arriving in uneven
+pairs: at the 2x virtual display (120 Hz) its present intervals came as 8 and
+25 ms, at 4x (240 Hz) as 12.5 and 21 ms, in waves minutes long. A game's
+frame becomes visible only at the display's next refresh, and the cap's timer
+drifts against the display's, so while the cap's phase sits on a refresh edge
+the frames land alternately one slot early and one late. At 1000 Hz a frame
+waits at most 1 ms. This run measured that on our own hardware.
+
+**Setup.** Host: Rubylight 4.6.0 release package, an isolated host run as
+SYSTEM (own profile and port, `virtual_display_layout = extended`, physical
+displays untouched), RX 7900 XT, AMF HEVC 1080p60 at 30 Mbps requested,
+direct driver push capture (`capture=auto` -> `idd-push`), the automatic
+60 fps RTSS cap on (`limiter_rate=60`). Client: Nightjar 5.6.0 on the 780M
+laptop over Wi-Fi, fixed refresh (no VRR), V-Sync on. Picture: `motion_probe`
+at 60 Hz on the virtual display, paced by a high-resolution waitable timer and
+presenting with `Present(1, ...)`, as a capped game with V-Sync does
+(`rust/windows/examples/motion_probe.rs`). One 300 s leg per setting, in the
+order 2x, 4x, 1000 Hz, the first 30 s left out. Host present times are
+`host_present_us` in the client's timing CSV (the driver's push time).
+
+| Virtual display refresh | Display mode | Intervals more than 4 ms off 16.67 ms | Intervals over 20 ms | 10 s buckets with one | Present to sent, median / p99 | Encode, median / p99 | Frames dropped at the client |
+|---|---|---:|---:|---:|---|---|---:|
+| 2x (`legacy`) | 1920x1080@120 | 0.23 % | 18 | 6 of 27 | 2.79 / 7.79 ms | 2.35 / 3.13 ms | 3 |
+| 4x (`enabled`) | 1920x1080@240 | 2.22 % | 215 | 19 of 27 | 2.88 / 12.37 ms | 2.45 / 3.08 ms | 4 |
+| 1000 Hz (`vrr`) | 1920x1080@1000 | 0.04 % | 4 | 3 of 27 | 2.74 / 4.67 ms | 2.28 / 2.92 ms | 3 |
+
+- At 4x the 12/13 and 20/21 ms bins (95, 120, 35 and 139 intervals) are the
+  report's pattern, and its gaps over 20 ms came and went across the whole
+  run (per 10 s: 0, 0, 19, 5, 11, 0, 0, 0, 9, 24, 0, 11, 3, 4, 11, 22, 20, 14,
+  16, 23, 9, 7, 3, 1, 0, 3, 0).
+- At 2x the 8/25 ms pairs were present but rare (16 at 8-9 ms, 14 at
+  24-25 ms), mostly in the first minute; far fewer than in the report (about
+  1,200 in a 292 s run). The probe's exact 60.000 fps timer, its vsynced
+  present and the report's 4.4.0 host are possible reasons; no 59.94 fps cap
+  or unvsynced game was run.
+- At 1000 Hz the presents fall in 15/16/17 ms bins (220 / 5,325 / 10,473;
+  mean 16.65 ms), the 1 ms quantization of a 60 Hz source; no waves.
+- The host's claim wait was the same at every rate (0.03 ms mean at 2x and
+  1000 Hz, 0.04 ms at 4x), where the
+  [October 15 round](#october-15-display-driver-and-frame-push-refactor)
+  found 0.65 against 0.08 ms. That round also found 1000 Hz about 1 ms slower
+  from render to received at 60 fps; this run did not measure render to
+  received (that round's harness, `cases-refresh.ps1`, is gone), so the wait
+  from the game's render to the driver's push at 1000 Hz stays unmeasured.
+- Windows applied 1000 Hz at 3840x2160 and 2560x1440 (30 s legs, the host
+  log's `virtual display mode applied ... actual=...@1000.000`), and 240 and
+  120 Hz at 3840x2160.
+
+Not measured: GPU and CPU load, real games, a game without V-Sync, NVIDIA,
+ABBA order or a second rep. 1000 Hz became the default with this run, and a
+display that refuses the refresh it asks for and keeps a slower one at the
+right size now asks for the fastest one it offers below it (`refresh_retry`).
+Artifacts: `D:\CodexArtifacts\vdrefresh-ab-results\` (`report.md`, per-leg
+CSVs and host logs, `followup\` for the 4K check).
+
 ## November 15: AMF slice output through the frame pool
 
 With slice delivery on, each slice AMF returned was copied into a new heap buffer, and a frame joined from its slices (a keyframe) grew a new one by doubling. Both now come from the frame pool the whole-frame path already uses, and a joined frame starts in a buffer of the last one's size. Fixture: RX 7900 XT and Ryzen 7 5800X3D, isolated test host on loopback, the independent receiver with D3D11VA, HEVC 3840x2160 at 60 fps and 80 Mbps, slices delivered (4 blocks), `e2e.py --record` with 20 keyframe requests in 30 s (keyframes of 410 to 420 kB), two runs per arm. A = main at `d3f3831cb`, B = A with the change. Times in ms.

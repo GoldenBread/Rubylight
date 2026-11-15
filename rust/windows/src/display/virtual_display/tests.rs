@@ -103,7 +103,7 @@ impl SharedDisplay for Fake {
         }
         // A rate Windows does not list is a bad mode: apply_mode keeps
         // the size at a slower listed rate, else Windows keeps its mode.
-        if let Some(fallback) = super::fallback_rate(&self.rates(), rate) {
+        if let Some(fallback) = super::super::modes::fallback_rate(&self.rates(), rate) {
             self.shown.set((width, height, fallback));
         }
         false
