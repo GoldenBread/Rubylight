@@ -38,6 +38,22 @@ test('log analysis lists each finding with its count, fix and guide link', () =>
   assert.match(html, /elapsed_ms=34787/);
 });
 
+test('a fix that names a setting links to its row in All settings', async () => {
+  const html = findings([{ ...finding, id: 'capture_stall', setting: 'capture' }]);
+  assert.match(html, /href="\/settings\/picture\?setting=capture"[^>]*>Open (?:<!---->)?Capture method/);
+  // A key the console doesn't describe gets no link; the guide link stays.
+  assert.doesNotMatch(findings([{ ...finding, setting: 'no_such_setting' }]), /Open /);
+  assert.doesNotMatch(findings([finding]), /href="\/settings/);
+  // Every setting the host's rules link to is one the console shows.
+  const { readFile } = await import('node:fs/promises');
+  const rules = await readFile(new URL('../core/src/log_analysis.rs', import.meta.url), 'utf8');
+  const linked = [...rules.matchAll(/setting: Some\("([a-z0-9_]+)"\)/g)].map(match => match[1]);
+  assert(linked.length >= 4, `only ${linked.length} links found: the pattern no longer matches the code`);
+  const { schema } = await server.ssrLoadModule('/src/lib/settings-schema.ts');
+  const keys = new Set(schema.settings.map(setting => setting.key));
+  assert.deepEqual(linked.filter(key => !keys.has(key)), []);
+});
+
 test('log analysis says so when the log has no known problems', () => {
   assert.match(findings([]), /No known problems in the log since /);
   assert.match(findings([], null), /No known problems in the log\./);

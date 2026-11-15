@@ -1068,6 +1068,8 @@ export interface LogFinding {
   fix: string;
   /** The troubleshooting guide's section for it. */
   link: string;
+  /** The setting the fix names, by its key; the finding links to it. */
+  setting?: string | null;
   count: number;
   first_seen: string;
   last_seen: string;
