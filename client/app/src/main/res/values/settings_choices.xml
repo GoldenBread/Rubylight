@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_lower_bitrate">Lower bitrate</string>
+    <string name="lower_bitrate_busy">When the network is busy</string>
+    <string name="lower_bitrate_lost">When frames are lost</string>
+    <string name="summary_lower_bitrate">Turns the bitrate down while the connection struggles and back up once it recovers: softer picture, less stutter. Choose one for a busy network; When frames are lost reacts sooner, and both need PC support.</string>
+    <string name="title_back_button">Back button</string>
+    <string name="back_button_back">Back</string>
+    <string name="back_button_menu">Stream menu</string>
+    <string name="back_button_guide">Guide</string>
+    <string name="summary_back_button">What the controller’s or handheld’s Back button does: Back reaches the PC as Back, Stream menu opens the stream menu, Guide sends Guide (Home or PS) to the PC. Leave it on Back if your games use that button.</string>
+    <string name="settings_choice_off">Off</string>
+    <string name="system_keys_always">Always</string>
+    <string name="system_keys_full_screen">In full screen</string>
+    <string name="summary_system_keys">Alt+Tab, the Windows key and similar go to the PC instead of this device, where Android allows it; In full screen keeps them here while the stream is in a window. Choose Off to keep those shortcuts on this device.</string>
+    <string name="roaming_not_metered">Except mobile data</string>
+    <string name="roaming_any_network">Any network</string>
+    <string name="summary_roaming">The stream moves to the new address when this device switches networks, instead of waiting for the old one; Any network also moves it onto mobile data or another metered network, which uses a lot of data. Leave it on Except mobile data; needs PC support.</string>
+</resources>

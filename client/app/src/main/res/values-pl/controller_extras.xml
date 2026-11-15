@@ -7,9 +7,6 @@
     <string name="summary_checkbox_mouse_emulation_fixed_step">W trybie myszy kontrolera przytrzymanie X przesuwa wskaźnik o stałe kroki w pikselach, do trafiania w małe cele. Y podwaja krok, od 1 do 128 pikseli.</string>
     <string name="stream_mouse_step">Krok myszy: %1$d px</string>
     <string name="title_checkbox_capture_system_keys">Wysyłaj klawisze systemowe</string>
-    <string name="summary_checkbox_capture_system_keys">Alt+Tab, klawisz Windows i podobne trafiają do komputera zamiast do tego urządzenia, o ile Android na to pozwala. Wyłącz, aby te skróty zostały na tym urządzeniu.</string>
-    <string name="title_checkbox_system_keys_fullscreen_only">Klawisze systemowe tylko na pełnym ekranie</string>
-    <string name="summary_checkbox_system_keys_fullscreen_only">W oknie Alt+Tab, klawisz Windows i podobne zostają na tym urządzeniu; na pełnym ekranie trafiają do komputera. Włącz, aby przełączać aplikacje obok strumienia w oknie.</string>
     <string name="title_checkbox_back_as_meta">Wstecz na klawiaturze jako klawisz Windows</string>
     <string name="summary_checkbox_back_as_meta">Klawisz Wstecz fizycznej klawiatury wysyła do komputera klawisz Windows zamiast Wstecz lub Esc. Gest Wstecz Androida i skrót menu strumienia nadal otwierają menu strumienia.</string>
     <string name="title_checkbox_right_alt_as_meta">Prawy Alt jako klawisz Windows</string>

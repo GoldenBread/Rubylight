@@ -6,9 +6,6 @@
     <string name="summary_checkbox_mouse_emulation_fixed_step">Im Controller-Mausmodus bewegt sich der Zeiger in festen Pixelschritten, solange X gehalten wird, für kleine Ziele. Y verdoppelt den Schritt, von 1 bis 128 Pixel.</string>
     <string name="stream_mouse_step">Mausschritt: %1$d px</string>
     <string name="title_checkbox_capture_system_keys">Systemtasten senden</string>
-    <string name="summary_checkbox_capture_system_keys">Alt+Tab, die Windows-Taste und Ähnliches gehen an den PC statt an dieses Gerät, soweit Android es erlaubt. Schalte es aus, damit diese Tastenkürzel bei diesem Gerät bleiben.</string>
-    <string name="title_checkbox_system_keys_fullscreen_only">Systemtasten nur im Vollbild</string>
-    <string name="summary_checkbox_system_keys_fullscreen_only">Im Fenster bleiben Alt+Tab, die Windows-Taste und Ähnliches bei diesem Gerät; im Vollbild gehen sie an den PC. Schalte es ein, um neben einem Stream im Fenster zwischen Apps zu wechseln.</string>
     <string name="title_checkbox_back_as_meta">Tastatur-Zurück sendet Windows-Taste</string>
     <string name="summary_checkbox_back_as_meta">Die Zurück-Taste einer physischen Tastatur sendet die Windows-Taste an den PC statt Zurück oder Esc. Die Zurück-Geste von Android und das Tastenkürzel fürs Stream-Menü öffnen das Stream-Menü weiterhin.</string>
     <string name="title_checkbox_right_alt_as_meta">Rechte Alt-Taste als Windows-Taste</string>

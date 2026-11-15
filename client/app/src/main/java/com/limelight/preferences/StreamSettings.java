@@ -828,14 +828,20 @@ public class StreamSettings extends NightjarActivity {
             LimeLog.warning("Unable to read preference keys: " + e);
             return;
         }
-        // Stored by the frame rate, overlay, theme, touch mode and video scaling pickers, which have
-        // no row of their own for them.
+        // Stored by the frame rate, overlay, theme, touch mode, video scaling and paired-switch pickers, which
+        // have no row of their own for them.
         editor.remove("checkbox_native_touch")
                 .remove(com.limelight.binding.input.touch.TouchMode.PREF)
                 .remove(com.limelight.ui.VideoScaling.PREF)
                 .remove(PreferenceConfiguration.UNLOCK_FPS_STRING)
                 .remove(PreferenceConfiguration.OVERLAY_MODE_PREF_STRING)
                 .remove(com.limelight.ui.AppTheme.OLED_BLACK)
+                // The second switches of the rows that are one choice now (SwitchPairChoice).
+                .remove(PreferenceConfiguration.BACK_OPENS_MENU_PREF_STRING)
+                .remove(PreferenceConfiguration.BACK_AS_GUIDE_PREF_STRING)
+                .remove(PreferenceConfiguration.SYSTEM_KEYS_FULLSCREEN_ONLY_PREF_STRING)
+                .remove(PreferenceConfiguration.ROAMING_METERED_PREF_STRING)
+                .remove(PreferenceConfiguration.RATE_CHANGE_BITRATE_PREF_STRING)
                 .remove(PreferenceConfiguration.BITRATE_USER_SET_PREF_STRING)
                 .remove(PreferenceConfiguration.BITRATE_PREF_OLD_STRING)
                 .remove(PreferenceConfiguration.PREFS_VERSION_PREF_STRING)
@@ -1201,7 +1207,8 @@ public class StreamSettings extends NightjarActivity {
         if (preference instanceof ListPreference || preference instanceof SeekBarPreference) return true;
         String key = preference.getKey();
         return "checkbox_touchscreen_trackpad".equals(key) || VideoScaling.STRETCH_PREF.equals(key)
-                || OverlayChoice.ENABLED_KEY.equals(key) || AppTheme.ALWAYS_DARK.equals(key) || "gpu_driver".equals(key);
+                || OverlayChoice.ENABLED_KEY.equals(key) || AppTheme.ALWAYS_DARK.equals(key) || "gpu_driver".equals(key)
+                || (SwitchPairChoice.forKey(key) != null && SwitchPairChoice.forKey(key) != SwitchPairChoice.LOWER_BITRATE);
     }
 
     private static void stylePreferences(PreferenceGroup group, int categoryLayout) {
@@ -1669,7 +1676,6 @@ public class StreamSettings extends NightjarActivity {
             setShown("seekbar_vibrate_fallback_strength", prefs.getBoolean("checkbox_vibrate_fallback", false));
             setShown("checkbox_usb_bind_all", prefs.getBoolean("checkbox_usb_driver", true));
             setShown("checkbox_usb_dualsense_haptics", prefs.getBoolean("checkbox_usb_dualsense", false));
-            setShown("checkbox_system_keys_fullscreen_only", prefs.getBoolean("checkbox_capture_system_keys", true));
             setShown("list_trackpad_acceleration_curve", prefs.getBoolean("checkbox_trackpad_acceleration", false));
             setShown("list_trackpad_momentum_glide", prefs.getBoolean("checkbox_trackpad_momentum", false));
             boolean onScreen = SettingRules.onScreenControlsOn(prefs);
@@ -1683,7 +1689,6 @@ public class StreamSettings extends NightjarActivity {
             setShown(SettingRules.ADAPTIVE_QUALITY_MIN_RESOLUTION, limits);
             setShown(SettingRules.ADAPTIVE_QUALITY_MIN_FPS, limits);
             setShown(PreferenceConfiguration.CLIENT_ROAMING_PREF_STRING, SettingRules.clientRoamingApplies(prefs));
-            setShown(PreferenceConfiguration.ROAMING_METERED_PREF_STRING, SettingRules.roamingMeteredApplies(prefs));
             setShown(PreferenceConfiguration.RECEIVE_COALESCING_PREF_STRING, SettingRules.receiveCoalescingApplies(prefs));
             setShown(PreferenceConfiguration.AUDIO_PASSTHROUGH_PREF_STRING,
                     SettingRules.audioPassthroughApplies(prefs, Build.VERSION.SDK_INT));
@@ -1794,6 +1799,12 @@ public class StreamSettings extends NightjarActivity {
                 } else if (SHARP_COLOR_KEY.equals(pref.getKey())) {
                     value = getResources().getStringArray(R.array.sharp_color_names)[
                             PreferenceConfiguration.sharpColor(prefs) ? 1 : 0];
+                } else if (SwitchPairChoice.forKey(pref.getKey()) != null) {
+                    SwitchPairChoice pair = SwitchPairChoice.forKey(pref.getKey());
+                    int choice = pair.read(prefs);
+                    // Lower bitrate's Off says, under its title as the switch did, that the PC adapts it then.
+                    value = pair == SwitchPairChoice.LOWER_BITRATE && choice == 0 ? getString(R.string.summary_off_auto_bitrate) :
+                            getResources().getStringArray(pair.names)[choice];
                 } else if (CONTROLLERS_KEY.equals(pref.getKey())) {
                     value = getResources().getStringArray(R.array.controllers_names)[ControllersChoice.read(prefs)];
                 } else if (MOUSE_MODE_KEY.equals(pref.getKey())) {
@@ -2448,11 +2459,23 @@ public class StreamSettings extends NightjarActivity {
                 PreferenceConfiguration.setLowLatencyDecoding(getPreferenceManager().getSharedPreferences(), (Boolean) value);
                 return true;
             });
-            findPreference(AutoBitrateChoice.SETTINGS_KEY).setOnPreferenceChangeListener((preference, value) -> {
-                // Every PC follows the switch again, including PCs that chose otherwise in the stream menu.
-                AutoBitrateChoice.clearPcChoices(getActivity());
-                return true;
-            });
+            for (SwitchPairChoice pair : SwitchPairChoice.values()) {
+                Preference row = findPreference(pair.key);
+                if (row == null) continue;
+                row.setOnPreferenceClickListener(preference -> {
+                    SharedPreferences prefs = getPreferenceManager().getSharedPreferences();
+                    CharSequence[] names = java.util.Arrays.copyOf(getResources().getTextArray(pair.names),
+                            pair.offered(getActivity(), prefs));
+                    showChoices(pair.title, names, pair.read(prefs), pair.help, which -> {
+                        SharedPreferences.Editor editor = prefs.edit();
+                        pair.save(editor, which);
+                        editor.apply();
+                        // Every PC follows the choice again, including PCs that chose otherwise in the stream menu.
+                        if (pair == SwitchPairChoice.LOWER_BITRATE) AutoBitrateChoice.clearPcChoices(getActivity());
+                    });
+                    return true;
+                });
+            }
             ListPreference codec = (ListPreference) findPreference("video_format");
             SwitchPreference hdr = (SwitchPreference) findPreference("checkbox_enable_hdr");
             SwitchPreference sdr10 = (SwitchPreference) findPreference("checkbox_enable_sdr_10bit");
@@ -2683,14 +2706,12 @@ public class StreamSettings extends NightjarActivity {
                 removeSetting(StreamOrientation.PREF);
             }
 
-            // Mobile data rows only where there is mobile data, unless a value set earlier still acts.
+            // Mobile data rows only where there is mobile data, unless a value set earlier still acts (roaming's
+            // choice of it likewise, SwitchPairChoice.offered).
             if (!SettingRules.hasMobileData(getActivity())) {
                 SharedPreferences stored = getPreferenceManager().getSharedPreferences();
                 if (!SettingRules.mobileBitrateShown(getActivity(), stored)) {
                     removeSetting(PreferenceConfiguration.MOBILE_BITRATE_PREF_STRING);
-                }
-                if (!stored.getBoolean(PreferenceConfiguration.ROAMING_METERED_PREF_STRING, false)) {
-                    removeSetting(PreferenceConfiguration.ROAMING_METERED_PREF_STRING);
                 }
             }
 

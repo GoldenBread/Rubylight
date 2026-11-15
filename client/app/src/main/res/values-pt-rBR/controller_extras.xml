@@ -7,9 +7,6 @@
     <string name="summary_checkbox_mouse_emulation_fixed_step">No modo mouse do controle, segurar X move o ponteiro em passos fixos de pixels, para alvos pequenos. Y dobra o passo, de 1 a 128 pixels.</string>
     <string name="stream_mouse_step">Passo do mouse: %1$d px</string>
     <string name="title_checkbox_capture_system_keys">Enviar teclas do sistema</string>
-    <string name="summary_checkbox_capture_system_keys">Alt+Tab, a tecla Windows e similares vão para o PC em vez de ficar neste dispositivo, onde o Android permite. Desative para manter esses atalhos neste dispositivo.</string>
-    <string name="title_checkbox_system_keys_fullscreen_only">Teclas do sistema só em tela cheia</string>
-    <string name="summary_checkbox_system_keys_fullscreen_only">Em janela, Alt+Tab, a tecla Windows e similares ficam neste dispositivo; em tela cheia, vão para o PC. Ative para alternar entre apps ao lado de uma transmissão em janela.</string>
     <string name="title_checkbox_back_as_meta">Voltar do teclado envia a tecla Windows</string>
     <string name="summary_checkbox_back_as_meta">A tecla Voltar de um teclado físico envia ao PC a tecla Windows em vez de Voltar ou Esc. O gesto Voltar do Android e o atalho do menu da transmissão continuam abrindo o menu da transmissão.</string>
     <string name="title_checkbox_right_alt_as_meta">Alt direito como tecla Windows</string>

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_lower_bitrate">Reduzir a taxa de bits</string>
+    <string name="lower_bitrate_busy">Quando a rede estiver congestionada</string>
+    <string name="lower_bitrate_lost">Ao perder quadros</string>
+    <string name="summary_lower_bitrate">Reduz a taxa de bits enquanto a conexão não dá conta e volta a aumentá-la quando ela se recupera: imagem mais suave, menos travadas. Escolha uma opção se a rede estiver congestionada; “Ao perder quadros” reage antes, e ambas precisam de um PC compatível.</string>
+    <string name="title_back_button">Botão Voltar</string>
+    <string name="back_button_back">Voltar</string>
+    <string name="back_button_menu">Menu da transmissão</string>
+    <string name="back_button_guide">Guide</string>
+    <string name="summary_back_button">O que o botão Voltar do controle ou do portátil faz: Voltar chega ao PC como Voltar, Menu da transmissão abre o menu da transmissão e Guide envia Guide (Home ou PS) ao PC. Deixe em Voltar se seus jogos usam esse botão.</string>
+    <string name="settings_choice_off">Desativado</string>
+    <string name="system_keys_always">Sempre</string>
+    <string name="system_keys_full_screen">Em tela cheia</string>
+    <string name="summary_system_keys">Alt+Tab, a tecla Windows e similares vão para o PC em vez deste dispositivo, onde o Android permite; “Em tela cheia” as mantém aqui enquanto a transmissão está em uma janela. Escolha Desativado para manter esses atalhos neste dispositivo.</string>
+    <string name="roaming_not_metered">Exceto dados móveis</string>
+    <string name="roaming_any_network">Qualquer rede</string>
+    <string name="summary_roaming">A transmissão passa para o novo endereço quando este dispositivo troca de rede, em vez de esperar o antigo; “Qualquer rede” também a passa para dados móveis ou outra rede limitada, o que usa muitos dados. Deixe em “Exceto dados móveis”; precisa de um PC compatível.</string>
+</resources>

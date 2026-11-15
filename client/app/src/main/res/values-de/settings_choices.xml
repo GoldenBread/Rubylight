@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_lower_bitrate">Bitrate senken</string>
+    <string name="lower_bitrate_busy">Bei ausgelastetem Netzwerk</string>
+    <string name="lower_bitrate_lost">Bei Bildverlust</string>
+    <string name="summary_lower_bitrate">Senkt die Bitrate, solange die Verbindung nicht mithält, und hebt sie wieder an, sobald sie sich erholt: weicheres Bild, weniger Ruckeln. Wähle eine Option bei ausgelastetem Netzwerk; „Bei Bildverlust“ reagiert früher, und beide brauchen Unterstützung durch den PC.</string>
+    <string name="title_back_button">Zurücktaste</string>
+    <string name="back_button_back">Zurück</string>
+    <string name="back_button_menu">Stream-Menü</string>
+    <string name="back_button_guide">Guide</string>
+    <string name="summary_back_button">Was die Zurücktaste des Controllers oder Handhelds tut: Zurück erreicht den PC als Zurück, Stream-Menü öffnet das Stream-Menü, Guide sendet Guide (Home oder PS) an den PC. Lass sie auf Zurück, wenn deine Spiele diese Taste nutzen.</string>
+    <string name="settings_choice_off">Aus</string>
+    <string name="system_keys_always">Immer</string>
+    <string name="system_keys_full_screen">Im Vollbild</string>
+    <string name="summary_system_keys">Alt+Tab, die Windows-Taste und Ähnliches gehen an den PC statt an dieses Gerät, wo Android es erlaubt; „Im Vollbild“ behält sie hier, solange der Stream in einem Fenster läuft. Wähle Aus, um diese Tastenkürzel auf diesem Gerät zu behalten.</string>
+    <string name="roaming_not_metered">Außer mobilen Daten</string>
+    <string name="roaming_any_network">Jedes Netzwerk</string>
+    <string name="summary_roaming">Der Stream zieht zur neuen Adresse um, wenn dieses Gerät das Netzwerk wechselt, statt auf die alte zu warten; „Jedes Netzwerk“ zieht ihn auch auf mobile Daten oder ein anderes getaktetes Netzwerk um, was viele Daten verbraucht. Lass es auf „Außer mobilen Daten“; braucht Unterstützung durch den PC.</string>
+</resources>

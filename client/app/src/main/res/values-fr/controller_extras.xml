@@ -7,9 +7,6 @@
     <string name="summary_checkbox_mouse_emulation_fixed_step">En mode souris de la manette, maintenir X déplace le pointeur par pas fixes de pixels, pour les petites cibles. Y double le pas, de 1 à 128 pixels.</string>
     <string name="stream_mouse_step">Pas de la souris : %1$d px</string>
     <string name="title_checkbox_capture_system_keys">Envoyer les touches système</string>
-    <string name="summary_checkbox_capture_system_keys">Alt+Tab, la touche Windows et les touches similaires vont au PC plutôt qu’à cet appareil, quand Android le permet. Désactivez-le pour garder ces raccourcis sur cet appareil.</string>
-    <string name="title_checkbox_system_keys_fullscreen_only">Touches système seulement en plein écran</string>
-    <string name="summary_checkbox_system_keys_fullscreen_only">En fenêtre, Alt+Tab, la touche Windows et les touches similaires restent sur cet appareil ; en plein écran, elles vont au PC. Activez-le pour changer d’appli à côté d’un stream en fenêtre.</string>
     <string name="title_checkbox_back_as_meta">Retour du clavier en touche Windows</string>
     <string name="summary_checkbox_back_as_meta">La touche Retour d’un clavier physique envoie au PC la touche Windows au lieu de Retour ou Esc. Le geste Retour d’Android et le raccourci du menu du stream ouvrent toujours le menu du stream.</string>
     <string name="title_checkbox_right_alt_as_meta">Alt droite comme touche Windows</string>

@@ -27,7 +27,7 @@ When the network disappears (Wi-Fi turned off or dropped), the stream shows "Net
 
 When a network returns, the stream continues in place where it can: after a [client roam](protocol/client-roaming.md), on the same address, or while there is no route yet, in which case the connection's own timeout decides. If the route to the PC now leaves from a different address that the connection cannot continue on, Nightjar reconnects to the same game immediately rather than waiting for the timeout; the immediate attempt still counts toward the budget. A network whose address arrives late, such as IPv6 before DHCP, is checked again each time its addresses change, up to the 10-second timeout.
 
-Immediate reconnects do not happen on mobile data without **Continue on mobile data**, or when **Wait through network dropouts** is set above the 10-second timeout, since the tolerance then decides. Every attempt first waits while the PC has no route, checking every half second, instead of failing and backing off. If the minute ends without a route, the reconnect dialog says so.
+Immediate reconnects do not happen on mobile data unless **Keep streaming when the network changes** is on **Any network**, or when **Wait through network dropouts** is set above the 10-second timeout, since the tolerance then decides. Every attempt first waits while the PC has no route, checking every half second, instead of failing and backing off. If the minute ends without a route, the reconnect dialog says so.
 
 Nightjar for Windows and Linux follows the same rules, checking the route to the PC once a second. With **Wait through network dropouts** at its default of 3 seconds, it also reconnects immediately, while its window is not minimized.
 

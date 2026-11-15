@@ -7,9 +7,6 @@
     <string name="summary_checkbox_mouse_emulation_fixed_step">在手柄鼠标模式下，按住 X 时指针以固定的像素步长移动，便于点中小目标。按 Y 可将步长加倍，范围为 1 到 128 像素。</string>
     <string name="stream_mouse_step">鼠标步长：%1$d 像素</string>
     <string name="title_checkbox_capture_system_keys">发送系统按键</string>
-    <string name="summary_checkbox_capture_system_keys">在 Android 允许的情况下，Alt+Tab、Windows 键等会发送到电脑，而不是由此设备处理。关闭后，这些快捷键留在此设备上。</string>
-    <string name="title_checkbox_system_keys_fullscreen_only">仅全屏时发送系统按键</string>
-    <string name="summary_checkbox_system_keys_fullscreen_only">窗口模式下，Alt+Tab、Windows 键等留在此设备上；全屏时则发送到电脑。想在窗口化的串流旁切换应用时请开启。</string>
     <string name="title_checkbox_back_as_meta">键盘返回键发送 Windows 键</string>
     <string name="summary_checkbox_back_as_meta">实体键盘的返回键向电脑发送 Windows 键，而不是返回或 Esc。Android 的返回手势和串流菜单快捷键仍可打开串流菜单。</string>
     <string name="title_checkbox_right_alt_as_meta">右 Alt 用作 Windows 键</string>

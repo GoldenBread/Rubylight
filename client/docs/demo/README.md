@@ -274,7 +274,7 @@ full battery, no notifications). All launches go through `DemoLauncherActivity` 
 | --- | --- | --- |
 | `tv-home` | `state home`, `ui tv` | 1280x720: Down, Right x3, OK (game page), OK (Play) |
 | `hh-flow` | `state home`, `ui handheld`, landscape | 1200x540: tap a game, Play, long-press the overlay for Statistics |
-| `hh-menu` | `state stream`, `ui handheld` | 1200x540: Back opens the stream menu, swipe up |
+| `hh-menu` | `state stream`, `ui handheld` | 1200x540: Back button on Stream menu, swipe up |
 | `hh-radeon` | as `hh-menu` | 1200x540: tap "Session and graphics" (found with `uiautomator dump`), swipe to the Radeon section |
 | `hh-keyboard` | as `hh-menu`, `--ez pckeyboard true` | 1200x540: D-pad moves and presses on the PC keyboard |
 | `pip` | `state pip`, `orientation portrait`, `home enable` + `DemoHomeActivity` as home | 540x1200: Home |

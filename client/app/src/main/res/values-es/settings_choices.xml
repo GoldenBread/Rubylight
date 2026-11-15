@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_lower_bitrate">Bajar la tasa de bits</string>
+    <string name="lower_bitrate_busy">Si la red está saturada</string>
+    <string name="lower_bitrate_lost">Al perder fotogramas</string>
+    <string name="summary_lower_bitrate">Baja la tasa de bits mientras la conexión no da abasto y la vuelve a subir cuando se recupera: imagen más suave, menos tirones. Elige una opción si la red está saturada; «Al perder fotogramas» reacciona antes, y ambas requieren un PC compatible.</string>
+    <string name="title_back_button">Botón Atrás</string>
+    <string name="back_button_back">Atrás</string>
+    <string name="back_button_menu">Menú de transmisión</string>
+    <string name="back_button_guide">Guide</string>
+    <string name="summary_back_button">Lo que hace el botón Atrás del mando o la consola portátil: Atrás llega al PC como Atrás, Menú de transmisión abre el menú de transmisión y Guide envía Guide (Home o PS) al PC. Déjalo en Atrás si tus juegos usan ese botón.</string>
+    <string name="settings_choice_off">Desactivada</string>
+    <string name="system_keys_always">Siempre</string>
+    <string name="system_keys_full_screen">En pantalla completa</string>
+    <string name="summary_system_keys">Alt+Tab, la tecla Windows y similares van al PC en lugar de a este dispositivo, donde Android lo permite; «En pantalla completa» las deja aquí mientras la transmisión está en una ventana. Elige Desactivada para mantener esos atajos en este dispositivo.</string>
+    <string name="roaming_not_metered">Excepto datos móviles</string>
+    <string name="roaming_any_network">Cualquier red</string>
+    <string name="summary_roaming">La transmisión pasa a la nueva dirección cuando este dispositivo cambia de red, en lugar de esperar a la antigua; «Cualquier red» también la pasa a datos móviles u otra red de uso medido, lo que consume muchos datos. Déjalo en «Excepto datos móviles»; requiere un PC compatible.</string>
+</resources>

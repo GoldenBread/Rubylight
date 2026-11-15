@@ -7,9 +7,6 @@
     <string name="summary_checkbox_mouse_emulation_fixed_step">In controller mouse mode, holding X moves the pointer in fixed pixel steps, for small targets. Each press of Y doubles the step, from 1 to 128 pixels.</string>
     <string name="stream_mouse_step">Mouse step: %1$d px</string>
     <string name="title_checkbox_capture_system_keys">Send system keys</string>
-    <string name="summary_checkbox_capture_system_keys">Alt+Tab, the Windows key and similar go to the PC instead of this device, where Android allows it. Turn it off to keep those shortcuts on this device.</string>
-    <string name="title_checkbox_system_keys_fullscreen_only">System keys only in full screen</string>
-    <string name="summary_checkbox_system_keys_fullscreen_only">In a window, Alt+Tab, the Windows key and similar stay with this device; in full screen they go to the PC. Turn on to switch apps beside a windowed stream.</string>
     <string name="title_checkbox_back_as_meta">Keyboard Back sends Windows key</string>
     <string name="summary_checkbox_back_as_meta">A physical keyboard’s Back key sends the Windows key to the PC instead of Back or Esc. Android’s Back gesture and the stream menu hotkey still open the stream menu.</string>
     <string name="title_checkbox_right_alt_as_meta">Right Alt as Windows key</string>

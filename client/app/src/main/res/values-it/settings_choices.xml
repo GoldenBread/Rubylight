@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_lower_bitrate">Riduci il bitrate</string>
+    <string name="lower_bitrate_busy">Se la rete è congestionata</string>
+    <string name="lower_bitrate_lost">Quando si perdono fotogrammi</string>
+    <string name="summary_lower_bitrate">Riduce il bitrate mentre la connessione fatica e lo rialza appena si riprende: immagine più morbida, meno scatti. Scegline una se la rete è congestionata; «Quando si perdono fotogrammi» reagisce prima, ed entrambe richiedono un PC compatibile.</string>
+    <string name="title_back_button">Pulsante Indietro</string>
+    <string name="back_button_back">Indietro</string>
+    <string name="back_button_menu">Menu dello stream</string>
+    <string name="back_button_guide">Guide</string>
+    <string name="summary_back_button">Cosa fa il pulsante Indietro del controller o della console portatile: Indietro arriva al PC come Indietro, Menu dello stream apre il menu dello stream, Guide invia Guide (Home o PS) al PC. Lascialo su Indietro se i tuoi giochi usano quel pulsante.</string>
+    <string name="settings_choice_off">Disattivata</string>
+    <string name="system_keys_always">Sempre</string>
+    <string name="system_keys_full_screen">A schermo intero</string>
+    <string name="summary_system_keys">Alt+Tab, il tasto Windows e simili vanno al PC invece che a questo dispositivo, dove Android lo consente; «A schermo intero» li lascia qui mentre lo stream è in una finestra. Scegli Disattivata per tenere queste scorciatoie su questo dispositivo.</string>
+    <string name="roaming_not_metered">Tranne i dati mobili</string>
+    <string name="roaming_any_network">Qualsiasi rete</string>
+    <string name="summary_roaming">Lo stream passa al nuovo indirizzo quando questo dispositivo cambia rete, invece di aspettare il vecchio; «Qualsiasi rete» lo sposta anche sui dati mobili o su un’altra rete a consumo, che usa molti dati. Lascialo su «Tranne i dati mobili»; richiede un PC compatibile.</string>
+</resources>

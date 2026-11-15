@@ -7,9 +7,6 @@
     <string name="summary_checkbox_mouse_emulation_fixed_step">В режиме мыши на контроллере удержание X перемещает указатель фиксированными шагами в пикселях — для мелких целей. Y удваивает шаг, от 1 до 128 пикселей.</string>
     <string name="stream_mouse_step">Шаг мыши: %1$d пкс</string>
     <string name="title_checkbox_capture_system_keys">Отправлять системные клавиши</string>
-    <string name="summary_checkbox_capture_system_keys">Alt+Tab, клавиша Windows и подобные уходят на ПК, а не на это устройство, если Android это разрешает. Отключите, чтобы эти сочетания оставались на этом устройстве.</string>
-    <string name="title_checkbox_system_keys_fullscreen_only">Системные клавиши только на полном экране</string>
-    <string name="summary_checkbox_system_keys_fullscreen_only">В окне Alt+Tab, клавиша Windows и подобные остаются на этом устройстве; на полном экране они уходят на ПК. Включите, чтобы переключать приложения рядом с трансляцией в окне.</string>
     <string name="title_checkbox_back_as_meta">«Назад» на клавиатуре как клавиша Windows</string>
     <string name="summary_checkbox_back_as_meta">Клавиша «Назад» на физической клавиатуре отправляет на ПК клавишу Windows вместо «Назад» или Esc. Жест «Назад» в Android и горячая клавиша меню трансляции по-прежнему открывают меню трансляции.</string>
     <string name="title_checkbox_right_alt_as_meta">Правый Alt как клавиша Windows</string>

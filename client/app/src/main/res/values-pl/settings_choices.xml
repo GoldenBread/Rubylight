@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_lower_bitrate">Obniżaj szybkość transmisji</string>
+    <string name="lower_bitrate_busy">Przy obciążonej sieci</string>
+    <string name="lower_bitrate_lost">Przy utracie klatek</string>
+    <string name="summary_lower_bitrate">Obniża szybkość transmisji, gdy połączenie nie nadąża, i podnosi ją, gdy wróci do normy: łagodniejszy obraz, mniej przycięć. Wybierz jedną z opcji przy obciążonej sieci; „Przy utracie klatek” reaguje szybciej, a obie wymagają obsługi przez komputer.</string>
+    <string name="title_back_button">Przycisk Wstecz</string>
+    <string name="back_button_back">Wstecz</string>
+    <string name="back_button_menu">Menu strumienia</string>
+    <string name="back_button_guide">Guide</string>
+    <string name="summary_back_button">Co robi przycisk Wstecz kontrolera lub konsoli przenośnej: Wstecz trafia do komputera jako Wstecz, Menu strumienia otwiera menu strumienia, Guide wysyła do komputera Guide (Home lub PS). Zostaw Wstecz, jeśli twoje gry używają tego przycisku.</string>
+    <string name="settings_choice_off">Wyłączone</string>
+    <string name="system_keys_always">Zawsze</string>
+    <string name="system_keys_full_screen">Na pełnym ekranie</string>
+    <string name="summary_system_keys">Alt+Tab, klawisz Windows i podobne trafiają do komputera zamiast do tego urządzenia, tam gdzie Android na to pozwala; „Na pełnym ekranie” zostawia je tutaj, gdy strumień jest w oknie. Wybierz Wyłączone, aby te skróty działały na tym urządzeniu.</string>
+    <string name="roaming_not_metered">Oprócz danych komórkowych</string>
+    <string name="roaming_any_network">Dowolna sieć</string>
+    <string name="summary_roaming">Gdy to urządzenie zmienia sieć, strumień przenosi się na nowy adres, zamiast czekać na stary; „Dowolna sieć” przenosi go też na dane komórkowe lub inną sieć z limitem, co zużywa dużo danych. Zostaw „Oprócz danych komórkowych”; wymaga obsługi przez komputer.</string>
+</resources>

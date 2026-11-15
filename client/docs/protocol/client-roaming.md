@@ -99,7 +99,7 @@ Only when the DESCRIBE answer carried `a=x-rl-roaming:1` and the client's roamin
 - **Confirming:** once it sent a CONFIRM, the client stops probing and resends the CONFIRM for the newest challenge every 250 ms until MIGRATED arrives. After 3 seconds without one it probes again. Older hosts answer every PROBE with a new challenge, so probing on would keep replacing the challenge being confirmed whenever the round trip is longer than the probe interval.
 - **Giving up:** after the smaller of the drop tolerance and 10 seconds, the stream ends with a clear message as today, or bounded recovery reconnects if it is on. While a longer drop tolerance keeps the stream alive, a silence may start another attempt, at least 10 seconds after the failed one; a network change starts one at once.
 - **Seqs:** a reconnect under the same launch key (the same `rikey`) continues the client's seq where the earlier connection left it, since the host keeps the last seq per launch key; a new launch starts at 1.
-- **Metered networks:** moving onto a metered network carries the stream on only with "Continue on mobile data" on (default off). Without it the client reports that roaming is held, sends no roaming datagrams and starts no 10-second wait, until the platform reports an unmetered network; the network grace period decides meanwhile.
+- **Metered networks:** moving onto a metered network carries the stream on only with "Keep streaming when the network changes" on "Any network" (default "Except mobile data"). Without it the client reports that roaming is held, sends no roaming datagrams and starts no 10-second wait, until the platform reports an unmetered network; the network grace period decides meanwhile.
 
 ## Security
 

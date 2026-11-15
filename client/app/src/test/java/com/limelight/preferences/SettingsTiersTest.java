@@ -334,51 +334,40 @@ public class SettingsTiersTest {
     }
 
     @Test
-    public void automaticBitrateSaysThePcAdaptsWhileItIsOff() {
+    public void lowerBitrateSaysThePcAdaptsWhileItIsOff() {
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             StreamSettings screen = controller.get();
             String line = "Off: the PC adapts the bitrate (recommended)";
             StreamSettings.SettingsFragment video = openFolded(screen, "video");
-            android.preference.SwitchPreference auto =
-                    (android.preference.SwitchPreference) video.findPreference("checkbox_auto_bitrate");
-            assertFalse(auto.isChecked());
-            // The framework shows android:summaryOff only in the bound row; getSummary(), which search results copy,
-            // stayed null.
-            assertEquals(line, String.valueOf(auto.getSummary()));
-            assertEquals(line, rowSummary(video, "checkbox_auto_bitrate"));
-            auto.setChecked(true);
-            assertNull("on, the switch has no short line", auto.getSummary());
-            assertNull(rowSummary(video, "checkbox_auto_bitrate"));
-            auto.setChecked(false);
+            Preference lower = video.findPreference(AutoBitrateChoice.SETTINGS_KEY);
+            assertEquals(line, String.valueOf(lower.getSummary()));
+            assertEquals(line, rowSummary(video, AutoBitrateChoice.SETTINGS_KEY));
+            PreferenceManager.getDefaultSharedPreferences(context()).edit().putBoolean(AutoBitrateChoice.SETTINGS_KEY, true).commit();
+            org.robolectric.shadows.ShadowLooper.idleMainLooper();
+            assertEquals("When the network is busy", String.valueOf(lower.getSummary()));
+            PreferenceManager.getDefaultSharedPreferences(context()).edit().putBoolean(AutoBitrateChoice.SETTINGS_KEY, false).commit();
+            org.robolectric.shadows.ShadowLooper.idleMainLooper();
 
-            Preference result = search(screen, "Lower bitrate when the network is busy").getPreferenceScreen()
-                    .findPreference("search_result_checkbox_auto_bitrate");
+            Preference result = search(screen, "Lower bitrate").getPreferenceScreen()
+                    .findPreference("search_result_" + AutoBitrateChoice.SETTINGS_KEY);
             assertNotNull(result);
             assertEquals(line, String.valueOf(result.getSummary()));
         }
     }
 
     @Test
-    public void theTwoBitrateControllersHaveDistinctNamesAndSearchFindsBoth() {
+    public void lowerBitrateIsOneRowForBothControllersAndSearchFindsIt() {
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             StreamSettings screen = controller.get();
-            StreamSettings.SettingsFragment video = SettingsStructureTest.open(screen, "video");
-            assertEquals("the loss-based switch left Video", -1, StreamSettings.RootFragment.positionOf(
-                    video.getView().findViewById(android.R.id.list), "checkbox_rate_change_bitrate"));
-            Preference loss = SettingsStructureTest.open(screen, "debug").findPreference("checkbox_rate_change_bitrate");
-            assertNotNull(loss);
-            assertEquals("category_debug", loss.getParent().getKey());
-            assertEquals("Lower bitrate when frames are lost", String.valueOf(loss.getTitle()));
-            assertEquals("Off: Lower bitrate when the network is busy applies. On: this device adjusts from frame loss and network delay.",
-                    String.valueOf(loss.getSummary()));
-
+            assertNull("the loss-based switch left Debug",
+                    SettingsStructureTest.open(screen, "debug").findPreference("checkbox_rate_change_bitrate"));
+            assertArrayEquals(new String[] {"Off", "When the network is busy", "When frames are lost"},
+                    screen.getResources().getStringArray(R.array.lower_bitrate_names));
             PreferenceScreen results = search(screen, "bitrate").getPreferenceScreen();
-            Preference device = results.findPreference("search_result_checkbox_auto_bitrate");
-            Preference lossResult = results.findPreference("search_result_checkbox_rate_change_bitrate");
-            assertNotNull(device);
-            assertNotNull("search finds the Debug row", lossResult);
-            assertEquals("Lower bitrate when the network is busy", String.valueOf(device.getTitle()));
-            assertEquals("Lower bitrate when frames are lost", String.valueOf(lossResult.getTitle()));
+            Preference lower = results.findPreference("search_result_" + AutoBitrateChoice.SETTINGS_KEY);
+            assertNotNull(lower);
+            assertEquals("Lower bitrate", String.valueOf(lower.getTitle()));
+            assertNull(results.findPreference("search_result_checkbox_rate_change_bitrate"));
         }
     }
 

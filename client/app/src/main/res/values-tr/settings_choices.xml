@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_lower_bitrate">Bit hızını düşür</string>
+    <string name="lower_bitrate_busy">Ağ yoğunken</string>
+    <string name="lower_bitrate_lost">Kare kaybında</string>
+    <string name="summary_lower_bitrate">Bağlantı zorlandıkça bit hızını düşürür, toparlanınca yeniden yükseltir: daha yumuşak görüntü, daha az takılma. Yoğun bir ağ için birini seçin; “Kare kaybında” daha erken tepki verir ve ikisi de PC desteği gerektirir.</string>
+    <string name="title_back_button">Geri düğmesi</string>
+    <string name="back_button_back">Geri</string>
+    <string name="back_button_menu">Yayın menüsü</string>
+    <string name="back_button_guide">Guide</string>
+    <string name="summary_back_button">Kumandanın veya el konsolunun Geri düğmesinin ne yaptığı: Geri, PC\'ye Geri olarak ulaşır; Yayın menüsü yayın menüsünü açar; Guide, PC\'ye Guide (Home veya PS) gönderir. Oyunlarınız bu düğmeyi kullanıyorsa Geri\'de bırakın.</string>
+    <string name="settings_choice_off">Kapalı</string>
+    <string name="system_keys_always">Her zaman</string>
+    <string name="system_keys_full_screen">Tam ekranda</string>
+    <string name="summary_system_keys">Android\'in izin verdiği yerlerde Alt+Tab, Windows tuşu ve benzerleri bu cihaz yerine PC\'ye gider; “Tam ekranda”, yayın bir penceredeyken onları burada tutar. Bu kısayolları bu cihazda tutmak için Kapalı\'yı seçin.</string>
+    <string name="roaming_not_metered">Mobil veri hariç</string>
+    <string name="roaming_any_network">Her ağ</string>
+    <string name="summary_roaming">Bu cihaz ağ değiştirdiğinde yayın eskisini beklemek yerine yeni adrese geçer; “Her ağ” onu mobil veriye veya başka bir ölçülü ağa da geçirir, bu çok veri kullanır. “Mobil veri hariç” olarak bırakın; PC desteği gerekir.</string>
+</resources>

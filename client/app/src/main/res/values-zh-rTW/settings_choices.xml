@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_lower_bitrate">降低位元速率</string>
+    <string name="lower_bitrate_busy">網路忙碌時</string>
+    <string name="lower_bitrate_lost">遺失影格時</string>
+    <string name="summary_lower_bitrate">連線跟不上時降低位元速率，恢復後再調回：畫面較柔和，卡頓較少。網路忙碌時選擇其中一項；「遺失影格時」反應更快，兩者都需要電腦支援。</string>
+    <string name="title_back_button">返回鍵</string>
+    <string name="back_button_back">返回</string>
+    <string name="back_button_menu">串流選單</string>
+    <string name="back_button_guide">Guide</string>
+    <string name="summary_back_button">控制器或掌機返回鍵的作用：「返回」作為返回鍵傳送到電腦，「串流選單」開啟串流選單，「Guide」向電腦傳送 Guide（Home 或 PS）。如果遊戲會用到這個按鍵，請保持「返回」。</string>
+    <string name="settings_choice_off">關閉</string>
+    <string name="system_keys_always">一律</string>
+    <string name="system_keys_full_screen">全屏時</string>
+    <string name="summary_system_keys">在 Android 允許的情況下，Alt+Tab、Windows 鍵等會傳送到電腦而不是這台裝置；「全屏時」會在串流處於視窗中時把它們留在這裡。選擇「關閉」可讓這些快速鍵留在這台裝置上。</string>
+    <string name="roaming_not_metered">行動數據除外</string>
+    <string name="roaming_any_network">任何網路</string>
+    <string name="summary_roaming">這台裝置切換網路時，串流會轉到新位址，而不是等待原本的位址；「任何網路」也會轉到行動數據或其他計量付費網路，這會消耗大量數據。請保持「行動數據除外」；需要電腦支援。</string>
+</resources>

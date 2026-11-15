@@ -8,7 +8,6 @@
     <string name="stream_bitrate_busy">PC đang bận. Hãy thử lại sau giây lát.</string>
     <string name="stream_host_abr_failed">PC không bật tốc độ bit tự động: %1$s</string>
     <string name="title_auto_bitrate">Giảm tốc độ bit khi mạng bận</string>
-    <string name="dialog_auto_bitrate">Giảm tốc độ bit khi kết nối không theo kịp và tăng lại khi kết nối hồi phục: hình bớt nét, ít giật hơn. Bật khi mạng bận; cần PC hỗ trợ.</string>
     <string name="title_thermal_protection">Bảo vệ nhiệt</string>
     <string name="dialog_thermal_protection">Giảm tốc độ bit và độ phân giải khi thiết bị nóng, nếu “Giảm tốc độ bit khi mạng bận” hoặc “Chất lượng tự động” đang bật. Chỉ bật nếu thiết bị tự giảm hiệu năng do nhiệt hoặc quá nóng.</string>
     <string name="title_automatic_bitrate">Tốc độ bit tự động</string>

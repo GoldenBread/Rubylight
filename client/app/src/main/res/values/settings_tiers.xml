@@ -12,7 +12,7 @@
         <item>list_fps</item>
         <item>automatic_bitrate</item>
         <item>seekbar_bitrate_kbps</item>
-        <item>checkbox_auto_bitrate</item>
+        <item>adaptive_bitrate</item>
         <item>list_mobile_bitrate_kbps</item>
         <item>video_format</item>
         <item>checkbox_enable_hdr</item>
@@ -66,7 +66,6 @@
     </string-array>
     <string-array name="settings_tier_debug" translatable="false">
         <item>list_fec_choice</item>
-        <item>checkbox_rate_change_bitrate</item>
         <item>checkbox_tell_host_wireless</item>
         <item>checkbox_tell_host_link_speed</item>
         <item>checkbox_network_priority</item>

@@ -210,7 +210,7 @@ public class SettingsStructureTest {
                     "category_onscreen_controls", "category_usb_controllers"), Arrays.asList(StreamSettings.SECTIONS.get("input")));
             // How the menu opens and what it holds, in one place.
             PreferenceGroup menu = (PreferenceGroup) open(screen, "input").findPreference("category_stream_menu");
-            assertEquals(Arrays.asList("list_guide_menu_hold", "checkbox_back_opens_menu", "checkbox_back_as_guide",
+            assertEquals(Arrays.asList("list_guide_menu_hold", "back_button",
                     "checkbox_floating_menu_button", "list_stream_menu_button_y", "list_stream_menu_button_x",
                     "list_stream_menu_button_lb", "list_stream_menu_button_rb", "keyboard_shortcuts_editor"), keys(menu));
             PreferenceGroup usb = (PreferenceGroup) open(screen, "input").findPreference("category_usb_controllers");
@@ -281,7 +281,7 @@ public class SettingsStructureTest {
 
     @Test
     public void mobileDataRowsShowOnlyWithMobileDataOrAValueThatStillActs() {
-        // A TV or a Wi-Fi tablet: no mobile data rows, in their sections or in search.
+        // A TV or a Wi-Fi tablet: no mobile data rows, in their sections or in search, and roaming offers no Any network.
         mobileData(false);
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             StreamSettings screen = controller.get();
@@ -291,14 +291,14 @@ public class SettingsStructureTest {
             assertNull(open(screen, "video").getPreferenceScreen().findPreference("list_mobile_bitrate_kbps"));
             PreferenceScreen streaming = open(screen, "streaming").getPreferenceScreen();
             assertNotNull(streaming.findPreference("checkbox_client_roaming"));
-            assertNull(streaming.findPreference("checkbox_roaming_metered"));
+            assertEquals(2, SwitchPairChoice.ROAMING.offered(screen, prefs()));
         }
-        // A value set earlier still acts on a metered Wi-Fi, so its row stays to undo it.
+        // A value set earlier still acts on a metered Wi-Fi, so it stays to undo it.
         prefs().edit().putString("list_mobile_bitrate_kbps", "10000").putBoolean("checkbox_roaming_metered", true).commit();
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             StreamSettings screen = controller.get();
             assertNotNull(open(screen, "video").getPreferenceScreen().findPreference("list_mobile_bitrate_kbps"));
-            assertNotNull(open(screen, "streaming").getPreferenceScreen().findPreference("checkbox_roaming_metered"));
+            assertEquals(3, SwitchPairChoice.ROAMING.offered(screen, prefs()));
         }
         prefs().edit().clear().commit();
         mobileData(true);
@@ -308,30 +308,24 @@ public class SettingsStructureTest {
             ((SearchView) screen.findViewById(R.id.settings_search)).setQuery("", false);
             settle(screen);
             assertNotNull(open(screen, "video").getPreferenceScreen().findPreference("list_mobile_bitrate_kbps"));
-            assertNotNull(open(screen, "streaming").getPreferenceScreen().findPreference("checkbox_roaming_metered"));
+            assertEquals(3, SwitchPairChoice.ROAMING.offered(screen, prefs()));
         }
     }
 
     @Test
-    public void mobileDataShowsOnlyWhileClientRoamingIsOn() {
+    public void roamingIsOneChoiceAndOnlyTheNewEngineShowsIt() {
         mobileData(true);
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             PreferenceScreen streaming = open(controller.get(), "streaming").getPreferenceScreen();
-            SwitchPreference roaming = (SwitchPreference) streaming.findPreference("checkbox_client_roaming");
-            assertTrue(roaming.isChecked());
-            SwitchPreference metered = (SwitchPreference) streaming.findPreference("checkbox_roaming_metered");
-            assertFalse(metered.isChecked());
-            roaming.setChecked(false);
-            assertNull(streaming.findPreference("checkbox_roaming_metered"));
-            roaming.setChecked(true);
-            assertNotNull(streaming.findPreference("checkbox_roaming_metered"));
+            Preference roaming = streaming.findPreference("checkbox_client_roaming");
+            assertEquals(controller.get().getString(R.string.roaming_not_metered), String.valueOf(roaming.getSummary()));
+            assertNull("one row", streaming.findPreference("checkbox_roaming_metered"));
         }
-        // The C engine does not roam: both rows are hidden.
+        // The C engine does not roam: the row is hidden.
         prefs().edit().putBoolean("checkbox_rust_engine", false).commit();
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             PreferenceScreen streaming = open(controller.get(), "streaming").getPreferenceScreen();
             assertNull(streaming.findPreference("checkbox_client_roaming"));
-            assertNull(streaming.findPreference("checkbox_roaming_metered"));
         }
     }
 

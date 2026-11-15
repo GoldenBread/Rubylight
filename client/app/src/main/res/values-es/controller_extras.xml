@@ -7,9 +7,6 @@
     <string name="summary_checkbox_mouse_emulation_fixed_step">En el modo ratón del mando, mantener pulsado X mueve el puntero en pasos fijos de píxeles, para objetivos pequeños. Y duplica el paso, de 1 a 128 píxeles.</string>
     <string name="stream_mouse_step">Paso del ratón: %1$d px</string>
     <string name="title_checkbox_capture_system_keys">Enviar teclas del sistema</string>
-    <string name="summary_checkbox_capture_system_keys">Alt+Tab, la tecla Windows y similares van al PC en lugar de a este dispositivo, cuando Android lo permite. Desactívalo para conservar esos atajos en este dispositivo.</string>
-    <string name="title_checkbox_system_keys_fullscreen_only">Teclas del sistema solo en pantalla completa</string>
-    <string name="summary_checkbox_system_keys_fullscreen_only">En ventana, Alt+Tab, la tecla Windows y similares se quedan en este dispositivo; en pantalla completa van al PC. Actívalo para cambiar de aplicación junto a una transmisión en ventana.</string>
     <string name="title_checkbox_back_as_meta">Atrás del teclado envía la tecla Windows</string>
     <string name="summary_checkbox_back_as_meta">La tecla Atrás de un teclado físico envía al PC la tecla Windows en lugar de Atrás o Esc. El gesto Atrás de Android y el atajo del menú de transmisión siguen abriendo el menú de transmisión.</string>
     <string name="title_checkbox_right_alt_as_meta">Alt derecha como tecla Windows</string>

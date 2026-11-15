@@ -70,16 +70,16 @@ public class AutoBitrateSettingTest {
     }
 
     @Test
-    public void theSwitchSitsDirectlyUnderTheBitrateSliderAndIsOffByDefault() {
+    public void lowerBitrateSitsDirectlyUnderTheBitrateSliderAndIsOffByDefault() {
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             // The slider shows while Automatic bitrate is off (SettingRules.bitrateShown); after the first start's
             // move to this screen's defaults, which turns it on.
             prefs().edit().putBoolean(PreferenceConfiguration.BITRATE_USER_SET_PREF_STRING, true).commit();
             StreamSettings.SettingsFragment video = open(controller.get(), "video");
-            SwitchPreference auto = (SwitchPreference) video.findPreference(AutoBitrateChoice.SETTINGS_KEY);
-            assertNotNull(auto);
-            assertFalse(auto.isChecked());
-            assertEquals(app().getString(R.string.title_auto_bitrate), auto.getTitle().toString());
+            Preference lower = video.findPreference(AutoBitrateChoice.SETTINGS_KEY);
+            assertNotNull(lower);
+            assertEquals(app().getString(R.string.title_lower_bitrate), lower.getTitle().toString());
+            assertEquals(app().getString(R.string.summary_off_auto_bitrate), String.valueOf(lower.getSummary()));
             Preference slider = video.findPreference("seekbar_bitrate_kbps");
             PreferenceGroup group = (PreferenceGroup) video.getPreferenceScreen().getPreference(0);
             int at = -1;
@@ -87,9 +87,10 @@ public class AutoBitrateSettingTest {
                 if (group.getPreference(i) == slider) at = i;
             }
             assertTrue(at >= 0);
-            // The loss-based switch (0x553C) lives in Debug (SettingsTiersTest), so nothing sits between.
-            assertSame(auto, group.getPreference(at + 1));
-            assertFalse(PreferenceConfiguration.readPreferences(app()).autoBitrate);
+            assertSame(lower, group.getPreference(at + 1));
+            PreferenceConfiguration config = PreferenceConfiguration.readPreferences(app());
+            assertFalse(config.autoBitrate);
+            assertFalse(config.rateChangeBitrate);
         }
     }
 
@@ -147,29 +148,43 @@ public class AutoBitrateSettingTest {
     }
 
     @Test
-    public void changingTheSettingsSwitchMakesEveryPcFollowItAgain() {
+    public void choosingInSettingsMakesEveryPcFollowItAgain() {
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             StreamSettings.SettingsFragment video = open(controller.get(), "video");
-            SwitchPreference auto = (SwitchPreference) video.findPreference(AutoBitrateChoice.SETTINGS_KEY);
+            Preference lower = video.findPreference(AutoBitrateChoice.SETTINGS_KEY);
             AutoBitrateChoice.setForPc(app(), AutoBitrateChoice.CODEC_STORE, "a", true);
             AutoBitrateChoice.setForPc(app(), AutoBitrateChoice.PYROWAVE_STORE, "b", true);
             assertTrue(on(AutoBitrateChoice.CODEC_STORE, "a"));
 
             // Off in Settings: the PCs the stream menu had switched on follow it.
-            assertTrue(auto.getOnPreferenceChangeListener().onPreferenceChange(auto, false));
-            auto.setChecked(false);
+            pick(lower, 0);
             assertFalse(on(AutoBitrateChoice.CODEC_STORE, "a"));
             assertFalse(on(AutoBitrateChoice.PYROWAVE_STORE, "b"));
 
-            // On in Settings, then off again for one PC from the stream menu.
-            assertTrue(auto.getOnPreferenceChangeListener().onPreferenceChange(auto, true));
-            auto.setChecked(true);
+            // When the network is busy in Settings, then off again for one PC from the stream menu.
+            pick(lower, 1);
+            assertTrue(prefs().getBoolean(AutoBitrateChoice.SETTINGS_KEY, false));
+            assertFalse(prefs().getBoolean(PreferenceConfiguration.RATE_CHANGE_BITRATE_PREF_STRING, true));
             assertTrue(on(AutoBitrateChoice.CODEC_STORE, "a"));
             assertTrue(on(AutoBitrateChoice.PYROWAVE_STORE, "b"));
             AutoBitrateChoice.setForPc(app(), AutoBitrateChoice.CODEC_STORE, "a", false);
             assertFalse(on(AutoBitrateChoice.CODEC_STORE, "a"));
             assertTrue(on(AutoBitrateChoice.CODEC_STORE, "b"));
+
+            // When frames are lost keeps the busy network's controller for a PC without rate changes.
+            pick(lower, 2);
+            assertTrue(prefs().getBoolean(AutoBitrateChoice.SETTINGS_KEY, false));
+            assertTrue(prefs().getBoolean(PreferenceConfiguration.RATE_CHANGE_BITRATE_PREF_STRING, false));
+            assertEquals(app().getString(R.string.lower_bitrate_lost), String.valueOf(lower.getSummary()));
         }
+    }
+
+    /** Opens the row's picker and picks the choice at index. */
+    private static void pick(Preference row, int index) {
+        assertTrue(row.getOnPreferenceClickListener().onPreferenceClick(row));
+        androidx.appcompat.app.AlertDialog dialog = (androidx.appcompat.app.AlertDialog) org.robolectric.shadows.ShadowDialog.getLatestDialog();
+        dialog.getListView().performItemClick(null, index, 0);
+        ShadowLooper.idleMainLooper();
     }
 
     @Test

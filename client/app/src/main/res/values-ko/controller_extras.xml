@@ -7,9 +7,6 @@
     <string name="summary_checkbox_mouse_emulation_fixed_step">컨트롤러 마우스 모드에서 X를 누르고 있는 동안, 작은 대상을 가리키기 쉽게 포인터를 정해진 픽셀 단위로 움직입니다. Y를 누르면 이동 단위가 두 배가 됩니다(1~128픽셀).</string>
     <string name="stream_mouse_step">마우스 단계: %1$d px</string>
     <string name="title_checkbox_capture_system_keys">시스템 키 보내기</string>
-    <string name="summary_checkbox_capture_system_keys">Alt+Tab, Windows 키 등을 Android가 허용하는 범위에서 이 기기 대신 PC로 보냅니다. 이 단축키를 이 기기에서 쓰려면 끄세요.</string>
-    <string name="title_checkbox_system_keys_fullscreen_only">전체 화면에서만 시스템 키 보내기</string>
-    <string name="summary_checkbox_system_keys_fullscreen_only">창 모드에서는 Alt+Tab, Windows 키 등이 이 기기에 남고, 전체 화면에서는 PC로 전달됩니다. 창 모드 스트림 옆에서 앱을 전환하려면 켜세요.</string>
     <string name="title_checkbox_back_as_meta">키보드 뒤로 키로 Windows 키 보내기</string>
     <string name="summary_checkbox_back_as_meta">실제 키보드의 뒤로 키가 ‘뒤로’나 Esc 대신 Windows 키를 PC로 보냅니다. Android의 뒤로 동작과 스트림 메뉴 단축키로는 여전히 스트림 메뉴를 열 수 있습니다.</string>
     <string name="title_checkbox_right_alt_as_meta">오른쪽 Alt를 Windows 키로 사용</string>

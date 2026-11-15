@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_lower_bitrate">ビットレートを下げる</string>
+    <string name="lower_bitrate_busy">ネットワーク混雑時</string>
+    <string name="lower_bitrate_lost">フレーム欠落時</string>
+    <string name="summary_lower_bitrate">接続が追いつかない間はビットレートを下げ、回復したら元に戻します。画質は柔らかくなりますが、カクつきが減ります。ネットワークが混雑しているときに選んでください。「フレーム欠落時」はより早く反応し、どちらも PC の対応が必要です。</string>
+    <string name="title_back_button">戻るボタン</string>
+    <string name="back_button_back">戻る</string>
+    <string name="back_button_menu">ストリームメニュー</string>
+    <string name="back_button_guide">Guide</string>
+    <string name="summary_back_button">コントローラーや携帯機の戻るボタンの動作です。「戻る」は PC に戻るとして届き、「ストリームメニュー」はストリームメニューを開き、「Guide」は PC に Guide（Home または PS）を送ります。ゲームでこのボタンを使う場合は「戻る」のままにしてください。</string>
+    <string name="settings_choice_off">オフ</string>
+    <string name="system_keys_always">常に</string>
+    <string name="system_keys_full_screen">全画面のとき</string>
+    <string name="summary_system_keys">Android が許可する場合、Alt+Tab や Windows キーなどをこのデバイスではなく PC に送ります。「全画面のとき」はストリームがウィンドウ表示の間はこのデバイスに残します。これらのショートカットをこのデバイスで使うには「オフ」を選んでください。</string>
+    <string name="roaming_not_metered">モバイルデータ以外</string>
+    <string name="roaming_any_network">すべてのネットワーク</string>
+    <string name="summary_roaming">このデバイスがネットワークを切り替えると、ストリームは元のアドレスを待たずに新しいアドレスへ移ります。「すべてのネットワーク」ではモバイルデータなどの従量制ネットワークにも移り、大量のデータを使います。「モバイルデータ以外」のままにしてください。PC の対応が必要です。</string>
+</resources>

@@ -7,9 +7,6 @@
     <string name="summary_checkbox_mouse_emulation_fixed_step">Kumandayla fare modunda X basılı tutulurken imleç sabit piksel adımlarıyla hareket eder; küçük hedefler içindir. Y, adımı 1 pikselden 128 piksele kadar ikiye katlar.</string>
     <string name="stream_mouse_step">Fare adımı: %1$d px</string>
     <string name="title_checkbox_capture_system_keys">Sistem tuşlarını gönder</string>
-    <string name="summary_checkbox_capture_system_keys">Alt+Tab, Windows tuşu ve benzerleri, Android’in izin verdiği durumlarda bu cihaz yerine bilgisayara gider. Bu kısayolların bu cihazda kalması için kapatın.</string>
-    <string name="title_checkbox_system_keys_fullscreen_only">Sistem tuşları yalnızca tam ekranda</string>
-    <string name="summary_checkbox_system_keys_fullscreen_only">Pencere modunda Alt+Tab, Windows tuşu ve benzerleri bu cihazda kalır; tam ekranda bilgisayara gider. Penceredeki yayının yanında uygulamalar arasında geçiş yapmak için açın.</string>
     <string name="title_checkbox_back_as_meta">Klavyedeki Geri tuşu Windows tuşu gönderir</string>
     <string name="summary_checkbox_back_as_meta">Fiziksel klavyenin Geri tuşu bilgisayara Geri veya Esc yerine Windows tuşunu gönderir. Android’in Geri hareketi ve yayın menüsü kısayolu yayın menüsünü yine açar.</string>
     <string name="title_checkbox_right_alt_as_meta">Sağ Alt Windows tuşu olarak</string>

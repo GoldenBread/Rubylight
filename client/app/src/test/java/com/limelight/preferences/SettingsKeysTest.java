@@ -75,6 +75,8 @@ public class SettingsKeysTest {
             StreamSettings.LOW_LATENCY_DECODING_KEY, StreamSettings.LOW_LATENCY_CUSTOMIZE_KEY,
             // Automatic bitrate shows and sets bitrate_user_set and the bitrate; it stores nothing itself.
             StreamSettings.AUTOMATIC_BITRATE_KEY,
+            // Back button writes the two Back switches and stores nothing itself (SwitchPairChoice).
+            "back_button",
             // Each section's More row shows and hides its other rows.
             "more_video", "more_display", "more_input", "more_audio", "more_streaming", "more_app", "more_advanced",
             "more_debug"));
@@ -88,6 +90,9 @@ public class SettingsKeysTest {
             "checkbox_real_vrr", // Variable refresh rate's On or Fastest (VrrChoice)
             "checkbox_host_frame_times", "checkbox_drop_late_frames", // Frame pacing's choices (FramePacingChoice)
             "checkbox_content_rate_frame_rate", // Lower refresh rate's "On, matched to the game" (LowerRefreshChoice)
+            // The second switch of each row that was two (SwitchPairChoice).
+            "checkbox_rate_change_bitrate", "checkbox_back_opens_menu", "checkbox_back_as_guide",
+            "checkbox_system_keys_fullscreen_only", "checkbox_roaming_metered",
             com.limelight.console.HomeSettings.PREF_KEY)); // When Nightjar opens
     // Stored settings that are read outside PreferenceConfiguration.
     private static final Set<String> READ_ELSEWHERE = new HashSet<>(Arrays.asList(
@@ -169,7 +174,8 @@ public class SettingsKeysTest {
     // Keys of settings that were removed. They must not come back as a setting of another meaning.
     private static final Set<String> RETIRED = new HashSet<>(Arrays.asList(
             "checkbox_gl_render", // "Render through OpenGL", replaced by Render through Vulkan
-            "checkbox_experimental_chipset_tuning")); // "Chipset tuning": its value never reached the decoder
+            "checkbox_experimental_chipset_tuning", // "Chipset tuning": its value never reached the decoder
+            "checkbox_auto_bitrate")); // renamed adaptive_bitrate (PreferenceConfiguration.RENAMED_PREFS)
 
     @Test
     public void everyKeyInPreferencesXmlIsUniqueAndNoRetiredKeyIsBack() throws Exception {
@@ -193,6 +199,23 @@ public class SettingsKeysTest {
         prefs().edit().putBoolean("checkbox_experimental_chipset_tuning", true).commit();
         PreferenceConfiguration.readPreferences(RuntimeEnvironment.getApplication());
         assertFalse(prefs().contains("checkbox_experimental_chipset_tuning"));
+    }
+
+    @Test
+    public void renamedSettingsKeepTheirStoredValueUnderTheNewName() {
+        // The old name's value wins over a default Settings may have written under the new one.
+        for (String[] rename : PreferenceConfiguration.RENAMED_PREFS) {
+            assertTrue(rename[0], RETIRED.contains(rename[0]));
+        }
+        prefs().edit().putBoolean("checkbox_auto_bitrate", true).putBoolean(AutoBitrateChoice.SETTINGS_KEY, false).commit();
+        assertTrue(PreferenceConfiguration.readPreferences(RuntimeEnvironment.getApplication()).autoBitrate);
+        assertFalse(prefs().contains("checkbox_auto_bitrate"));
+        assertTrue(prefs().getBoolean(AutoBitrateChoice.SETTINGS_KEY, false));
+        // A second read changes nothing; an off value moves too.
+        assertTrue(PreferenceConfiguration.readPreferences(RuntimeEnvironment.getApplication()).autoBitrate);
+        prefs().edit().putBoolean("checkbox_auto_bitrate", false).commit();
+        assertFalse(PreferenceConfiguration.readPreferences(RuntimeEnvironment.getApplication()).autoBitrate);
+        assertFalse(prefs().contains("checkbox_auto_bitrate"));
     }
 
     @Test
@@ -290,7 +313,7 @@ public class SettingsKeysTest {
         reads.put("adaptive_quality_min_resolution", new Read("720", "360", c -> c.qualityMinShortEdge));
         reads.put("adaptive_quality_min_fps", new Read("30", "60", c -> c.qualityMinFps));
         reads.put("checkbox_thermal_protection", new Read(false, true, c -> c.thermalProtection));
-        reads.put("checkbox_auto_bitrate", new Read(false, true, c -> c.autoBitrate));
+        reads.put(AutoBitrateChoice.SETTINGS_KEY, new Read(false, true, c -> c.autoBitrate));
         reads.put("checkbox_rate_change_bitrate", new Read(false, true, c -> c.rateChangeBitrate));
         reads.put("checkbox_enable_hdr", new Read(false, true, c -> c.enableHdr));
         reads.put("checkbox_enable_sdr_10bit", new Read(false, true, c -> c.enableSdr10Bit));

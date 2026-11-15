@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_lower_bitrate">Знижувати бітрейт</string>
+    <string name="lower_bitrate_busy">Коли мережа завантажена</string>
+    <string name="lower_bitrate_lost">У разі втрати кадрів</string>
+    <string name="summary_lower_bitrate">Знижує бітрейт, поки з’єднання не встигає, і підвищує його, коли воно відновиться: м’якше зображення, менше ривків. Виберіть варіант для завантаженої мережі; «У разі втрати кадрів» реагує раніше, і обидва потребують підтримки ПК.</string>
+    <string name="title_back_button">Кнопка «Назад»</string>
+    <string name="back_button_back">Назад</string>
+    <string name="back_button_menu">Меню трансляції</string>
+    <string name="back_button_guide">Guide</string>
+    <string name="summary_back_button">Що робить кнопка «Назад» контролера чи портативної консолі: «Назад» надходить на ПК як «Назад», «Меню трансляції» відкриває меню трансляції, Guide надсилає на ПК Guide (Home або PS). Залиште «Назад», якщо ваші ігри використовують цю кнопку.</string>
+    <string name="settings_choice_off">Вимкнено</string>
+    <string name="system_keys_always">Завжди</string>
+    <string name="system_keys_full_screen">На повному екрані</string>
+    <string name="summary_system_keys">Alt+Tab, клавіша Windows та подібні надходять на ПК, а не на цей пристрій, де Android це дозволяє; «На повному екрані» залишає їх тут, поки трансляція у вікні. Виберіть «Вимкнено», щоб ці сполучення працювали на цьому пристрої.</string>
+    <string name="roaming_not_metered">Крім мобільних даних</string>
+    <string name="roaming_any_network">Будь-яка мережа</string>
+    <string name="summary_roaming">Коли цей пристрій змінює мережу, трансляція переходить на нову адресу, а не чекає на стару; «Будь-яка мережа» переводить її й на мобільні дані чи іншу лімітну мережу, що витрачає багато даних. Залиште «Крім мобільних даних»; потрібна підтримка ПК.</string>
+</resources>

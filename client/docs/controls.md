@@ -12,7 +12,7 @@ On Android, open it with **Back** (swipe back from the screen edge with gesture 
 
 The menu is a panel over the stream, the same on Android, Windows and Linux: the game as its title with the stream's mode under it (such as 1440p · 144 FPS · HEVC HDR, or the PC's name until the mode is known), a grid of compact tiles, five or more to a row on a handheld, with the same short labels on both clients (Keyboard, Mouse, Overlay, Diagnostics), then a slim **Return to stream** bar with its (B) and one slim row of the ways out. Only the grid scrolls, so Return to stream and the ways out are always in view. On Android the panel sits at the right edge in landscape and in the middle when the device is upright, at most as wide as the desktop menu, with the stream visible beside it; a tap beside the panel closes it. Opened from a controller, the first tile shows focus at once, so the first D-pad press moves it. A shortcut named after its keys (Caps Lock) shows them once.
 
-On Android, **Settings → Controls → Stream menu** holds how the menu opens (**Hold Guide to open the stream menu**, **Back opens the stream menu**, **Back button as Guide**), the **Floating menu button** and your keyboard shortcuts. The floating button is off by default: once on, a round button over the stream opens the menu with a tap, and dragging it moves it; it keeps its place across sessions and rotations. **Show menu button** under More turns it on or off during a stream. The desktop client's **Settings → Controls → Stream menu** has the same rows without the floating button, since a window has a pointer and keys to open the menu.
+On Android, **Settings → Controls → Stream menu** holds how the menu opens (**Hold Guide to open the stream menu**, and **Back button**: Back, Stream menu or Guide), the **Floating menu button** and your keyboard shortcuts. The floating button is off by default: once on, a round button over the stream opens the menu with a tap, and dragging it moves it; it keeps its place across sessions and rotations. **Show menu button** under More turns it on or off during a stream. The desktop client's **Settings → Controls → Stream menu** has the same rows without the floating button, since a window has a pointer and keys to open the menu.
 
 | Part | What it holds |
 | --- | --- |
@@ -102,7 +102,7 @@ With **Controller mouse mode** enabled, hold **Start** to toggle it. By default 
 
 ## Physical Back on a handheld
 
-If a handheld's dedicated **Back** button works in the app but does not open the stream menu, enable **Settings → Controls → Back opens the stream menu**, then start a new stream. This covers devices such as AYN Thor that can report the physical button through their gamepad input device.
+If a handheld's dedicated **Back** button works in the app but does not open the stream menu, set **Settings → Controls → Back button** to **Stream menu**, then start a new stream. This covers devices such as AYN Thor that can report the physical button through their gamepad input device.
 
 The option is off by default to preserve existing controller mappings. When enabled, a physical `KEYCODE_BACK` opens Nightjar's stream menu instead of being forwarded to the PC. **Select** and **Start** retain their mappings and the **Start+Back+LB+RB** menu shortcut still works. Mouse right-click, Android's Back gesture and **Keyboard Back sends Windows key** on an alphabetic keyboard retain their behavior. A button configured by Android or the handheld's software to emit another key code needs to be mapped to Android Back first.
 
@@ -208,7 +208,7 @@ With **Nintendo button layout** on, A/B and X/Y swap here as they do in games, a
 These are in **Settings → Controls → Keyboard**. Send system keys is on by default, the others off.
 
 - **Send system keys**: Esc, Alt+Tab, the Windows key and similar go to the PC while input is captured. Many keyboards made for Android send Back from their Esc key; an external keyboard's Back sends Esc too on Android 10 and newer (**Keyboard Back sends Windows key** and **Back opens the stream menu** take priority when on). A built-in keyboard's Back, as on keyboard phones, stays Android's Back. Android hands Alt+Tab and the Windows key to an app only on Android 16 QPR2 and newer and on many Samsung devices; elsewhere Android keeps them, and Home, power and volume always stay with Android. Open the stream menu with **Ctrl+Alt+Shift+Tab**, Android's Back gesture or navigation button, or **Start+Back+LB+RB** on a controller. Turn it off to leave system shortcuts and keyboard Back to Android. Desktop Nightjar has the same option.
-- **System keys only in full screen**: with Send system keys on, the system keys and a keyboard's Back as Esc stay with Android while the stream is in split screen, a freeform window or picture-in-picture, and go to the PC again in full screen. Desktop Nightjar has the same option for a windowed stream.
+- **In full screen**, Send system keys' third choice: the system keys and a keyboard's Back as Esc stay with Android while the stream is in split screen, a freeform window or picture-in-picture, and go to the PC again in full screen. Desktop Nightjar has the same option for a windowed stream.
 - **Keyboard Back sends Windows key**: the Back key of a physical keyboard sends the Windows key (Command on a Mac host). Only keyboard Back changes: a controller's Back, a TV remote, Android's navigation button or Back gesture and a mouse's right-click Back keep their usual roles. With this on, open the stream menu with **Ctrl+Alt+Shift+Tab**, Android's Back gesture or navigation button, or **Start+Back+LB+RB** on a controller. While input is released (Ctrl+Alt+Shift+Z), keyboard Back opens the menu as before.
 - **Right Alt as Windows key**: Right Alt sends the Windows key, which macOS hosts use as Command, so Right Alt+C and Right Alt+V copy and paste. Left Alt stays Alt. Leave it off if you type characters with AltGr, since Right Alt then no longer works as AltGr.
 
@@ -407,7 +407,7 @@ On Android, the earlier Ctrl+Alt+Shift+M (stream menu) and Ctrl+Alt+Shift+C (cur
 | Start+Back+LB+RB on a controller, USB-driver pads included | Open the stream menu once all four are released. The stream keeps running. |
 | Start+LB when the controller has no Select/Back button | Send Select/Back. |
 | Start+Select when the controller has no Guide button | Send Guide; without Select, use Start+RB. |
-| Back on any controller, with **Back button as Guide** on | Send Guide, also for a handheld's system button that acts as Back and for a controller whose Select is Back. A pad that uses Back as Start keeps it. Android only: desktop controllers report a real Guide button. |
+| Back on any controller, with **Back button** on **Guide** | Send Guide, also for a handheld's system button that acts as Back and for a controller whose Select is Back. A pad that uses Back as Start keeps it. Android only: desktop controllers report a real Guide button. |
 | Select+LB when device-motion fallback emulates a touchpad-capable controller | Send a touchpad click. |
 | Three-finger tap in Trackpad, Direct mouse or Local cursor mode | Toggle the system keyboard (or the PC keyboard when set so), or middle-click when **Three-finger tap** is set to Middle click. |
 | Stream menu → **Overlay** (RB) | Show or hide the overlay. The **Diagnostics** tile chooses Compact, Statistics or Debug. |
@@ -421,9 +421,9 @@ The desktop client takes a keyboard, a mouse, a touchpad and controllers. It has
 | Input | What it does |
 | --- | --- |
 | The [stream hotkeys](#stream-hotkeys) | Stream menu, disconnect, input, overlay, shortcuts, mouse mode, clipboard, fullscreen and minimize. **Shortcuts & help** in the stream menu lists them with your changes, and Esc or B from there goes back to the stream menu; the chord on the **Session and graphics** page shows the list over the stream menu. |
-| Start+Back on a controller | Open or close the stream menu. With **Back opens the stream menu** on, the controller's Back button opens it alone. |
+| Start+Back on a controller | Open or close the stream menu. With **Back button** on **Stream menu**, the controller's Back button opens it alone. |
 | Hold Guide for a second | Open the stream menu (**Hold Guide to open the stream menu** sets the time or turns it off); a short press still goes to the PC as Guide. |
-| The controller quit combo | Leave the stream. The combo is Start+Select+LB+RB by default, and **Buttons to leave the stream** offers five others. With **Back opens the stream menu** on, a combo with Select works as long as Select isn't the first of its buttons pressed. |
+| The controller quit combo | Leave the stream. The combo is Start+Select+LB+RB by default, and **Buttons to leave the stream** offers five others. With **Back button** on **Stream menu**, a combo with Select works as long as Select isn't the first of its buttons pressed. |
 | F12 | Save a screenshot of the window to the `screenshots` folder in the configuration folder. |
 | Hold Start for 750 ms on a controller | Toggle controller mouse mode: the stick moves the pointer, A and B click and the D-pad scrolls. |
 

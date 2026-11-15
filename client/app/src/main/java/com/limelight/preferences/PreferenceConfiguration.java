@@ -125,12 +125,12 @@ public class PreferenceConfiguration {
     private static final String MOUSE_EMULATION_FIXED_STEP_STRING = "checkbox_mouse_emulation_fixed_step";
     private static final String DISABLE_RUMBLE_PREF_STRING = "checkbox_disable_rumble";
     private static final String BACK_AS_META_PREF_STRING = "checkbox_back_as_meta";
-    private static final String BACK_OPENS_MENU_PREF_STRING = "checkbox_back_opens_menu";
+    static final String BACK_OPENS_MENU_PREF_STRING = "checkbox_back_opens_menu";
     private static final String GAMEPAD_QUIT_COMBO_PREF_STRING = "list_gamepad_quit_combo";
-    private static final String BACK_AS_GUIDE_PREF_STRING = "checkbox_back_as_guide";
+    static final String BACK_AS_GUIDE_PREF_STRING = "checkbox_back_as_guide";
     private static final String GUIDE_MENU_HOLD_PREF_STRING = "list_guide_menu_hold";
     public static final int DEFAULT_GUIDE_MENU_HOLD_MS = 1000;
-    private static final String CAPTURE_SYSTEM_KEYS_PREF_STRING = "checkbox_capture_system_keys";
+    static final String CAPTURE_SYSTEM_KEYS_PREF_STRING = "checkbox_capture_system_keys";
     static final String SYSTEM_KEYS_FULLSCREEN_ONLY_PREF_STRING = "checkbox_system_keys_fullscreen_only";
     private static final String RIGHT_ALT_AS_META_PREF_STRING = "checkbox_right_alt_as_meta";
     private static final String KEYBOARD_FOLLOWS_TEXT_FIELDS_PREF_STRING = "checkbox_keyboard_follows_text_fields";
@@ -1439,7 +1439,10 @@ public class PreferenceConfiguration {
     }
 
     // Settings stored under a name that is gone: {old, new}. Retired names never come back (SettingsKeysTest).
-    static final String[][] RENAMED_PREFS = {};
+    static final String[][] RENAMED_PREFS = {
+            // Lower bitrate when the network is busy, named as on desktop; it read as Automatic bitrate.
+            {"checkbox_auto_bitrate", AutoBitrateChoice.SETTINGS_KEY},
+    };
     // Settings that are gone; their stored values are cleared.
     static final String[] RETIRED_PREFS = {RETIRED_CHIPSET_TUNING_PREF_STRING};
 

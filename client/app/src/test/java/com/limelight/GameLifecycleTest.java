@@ -310,7 +310,7 @@ public class GameLifecycleTest {
             ReflectionHelpers.setField(activity, "connected", true);
             String store = pyroWave ? "PyroWaveBitrate" : "AdaptiveBitrate";
             android.preference.PreferenceManager.getDefaultSharedPreferences(activity).edit()
-                    .putBoolean("checkbox_auto_bitrate", true).commit();
+                    .putBoolean(com.limelight.preferences.AutoBitrateChoice.SETTINGS_KEY, true).commit();
             // The Settings switch is the default; the menu's toggle then chooses for this PC alone.
             assertTrue(AutoBitrateChoice.isOn(activity, store, "pc"));
             try {
@@ -363,7 +363,7 @@ public class GameLifecycleTest {
                     android.preference.PreferenceManager.getDefaultSharedPreferences(activity);
             try {
                 assertFalse("off by default", activity.adaptation.autoBitrateAtStart());
-                settings.edit().putBoolean("checkbox_auto_bitrate", true).commit();
+                settings.edit().putBoolean(com.limelight.preferences.AutoBitrateChoice.SETTINGS_KEY, true).commit();
                 assertTrue("the switch is the default", activity.adaptation.autoBitrateAtStart());
                 // This PC chose off in the stream menu.
                 activity.getSharedPreferences(store, Context.MODE_PRIVATE).edit().putBoolean("pc", false).commit();
@@ -407,7 +407,7 @@ public class GameLifecycleTest {
                 new com.limelight.nvstream.AdaptiveBitrateController(20000, 20000, 60, 0));
         android.content.SharedPreferences settings =
                 android.preference.PreferenceManager.getDefaultSharedPreferences(activity);
-        settings.edit().putBoolean("checkbox_auto_bitrate", true).commit();
+        settings.edit().putBoolean(com.limelight.preferences.AutoBitrateChoice.SETTINGS_KEY, true).commit();
         ReflectionHelpers.callInstanceMethod(activity.adaptation, "showBitrateDialog");
         androidx.appcompat.app.AlertDialog dialog = ReflectionHelpers.getField(activity, "streamMenu");
         try {

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_lower_bitrate">Снижать битрейт</string>
+    <string name="lower_bitrate_busy">При загруженной сети</string>
+    <string name="lower_bitrate_lost">При потере кадров</string>
+    <string name="summary_lower_bitrate">Снижает битрейт, пока соединение не справляется, и поднимает его, когда оно восстановится: картинка мягче, меньше рывков. Выберите вариант для загруженной сети; «При потере кадров» реагирует раньше, и обоим нужна поддержка ПК.</string>
+    <string name="title_back_button">Кнопка «Назад»</string>
+    <string name="back_button_back">Назад</string>
+    <string name="back_button_menu">Меню трансляции</string>
+    <string name="back_button_guide">Guide</string>
+    <string name="summary_back_button">Что делает кнопка «Назад» контроллера или портативной консоли: «Назад» приходит на ПК как «Назад», «Меню трансляции» открывает меню трансляции, Guide отправляет на ПК Guide (Home или PS). Оставьте «Назад», если ваши игры используют эту кнопку.</string>
+    <string name="settings_choice_off">Выкл.</string>
+    <string name="system_keys_always">Всегда</string>
+    <string name="system_keys_full_screen">На полном экране</string>
+    <string name="summary_system_keys">Alt+Tab, клавиша Windows и подобные отправляются на ПК, а не на это устройство, где Android это позволяет; «На полном экране» оставляет их здесь, пока трансляция в окне. Выберите «Выкл.», чтобы эти сочетания работали на этом устройстве.</string>
+    <string name="roaming_not_metered">Кроме мобильных данных</string>
+    <string name="roaming_any_network">Любая сеть</string>
+    <string name="summary_roaming">Когда это устройство меняет сеть, трансляция переходит на новый адрес, а не ждёт прежнего; «Любая сеть» переводит её и на мобильные данные или другую лимитную сеть, что расходует много данных. Оставьте «Кроме мобильных данных»; нужна поддержка ПК.</string>
+</resources>

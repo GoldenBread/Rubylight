@@ -52,13 +52,11 @@
             seekbar:presets="@array/bitrate_presets_kbps"
             android:text="@string/suffix_seekbar_bitrate_mbps"
             android:title="@string/title_seekbar_bitrate" />
-        <!-- The default for every PC; the stream menu's toggle saves a choice for one PC (AutoBitrateChoice). -->
-        <com.limelight.preferences.MaterialSwitchPreference
-            android:key="checkbox_auto_bitrate"
-            android:title="@string/title_auto_bitrate"
-            android:dialogMessage="@string/dialog_auto_bitrate"
-            android:summaryOff="@string/summary_off_auto_bitrate"
-            android:defaultValue="false" />
+        <!-- Off, When the network is busy or When frames are lost: writes adaptive_bitrate and
+             checkbox_rate_change_bitrate (SwitchPairChoice). Busy is the default for every PC; the stream menu's
+             toggle saves a choice for one PC (AutoBitrateChoice). -->
+        <Preference android:key="adaptive_bitrate" android:title="@string/title_lower_bitrate"
+            android:dialogMessage="@string/summary_lower_bitrate" android:persistent="false" />
         <com.limelight.preferences.MaterialListPreference
             android:key="list_mobile_bitrate_kbps"
             android:title="@string/title_mobile_bitrate"
@@ -366,16 +364,9 @@
             android:entries="@array/guide_menu_hold_names"
             android:entryValues="@array/guide_menu_hold_values"
             android:defaultValue="1000" />
-        <com.limelight.preferences.MaterialSwitchPreference
-            android:key="checkbox_back_opens_menu"
-            android:title="@string/title_checkbox_back_opens_menu"
-            android:dialogMessage="@string/summary_checkbox_back_opens_menu"
-            android:defaultValue="false" />
-        <com.limelight.preferences.MaterialSwitchPreference
-            android:key="checkbox_back_as_guide"
-            android:title="@string/title_checkbox_back_as_guide"
-            android:dialogMessage="@string/summary_checkbox_back_as_guide"
-            android:defaultValue="false" />
+        <!-- Back, Stream menu or Guide: writes checkbox_back_opens_menu and checkbox_back_as_guide (SwitchPairChoice). -->
+        <Preference android:key="back_button" android:title="@string/title_back_button"
+            android:dialogMessage="@string/summary_back_button" android:persistent="false" />
         <com.limelight.preferences.MaterialSwitchPreference
             android:key="checkbox_floating_menu_button"
             android:title="@string/title_floating_menu_button"
@@ -535,16 +526,10 @@
         <Preference android:key="stream_hotkeys"
             android:title="@string/stream_hotkeys_title"
             android:summary="@string/stream_hotkeys_summary" />
-        <com.limelight.preferences.MaterialSwitchPreference
-            android:key="checkbox_capture_system_keys"
-            android:title="@string/title_checkbox_capture_system_keys"
-            android:dialogMessage="@string/summary_checkbox_capture_system_keys"
-            android:defaultValue="true" />
-        <com.limelight.preferences.MaterialSwitchPreference
-            android:key="checkbox_system_keys_fullscreen_only"
-            android:title="@string/title_checkbox_system_keys_fullscreen_only"
-            android:dialogMessage="@string/summary_checkbox_system_keys_fullscreen_only"
-            android:defaultValue="false" />
+        <!-- Off, Always or In full screen: writes checkbox_capture_system_keys and
+             checkbox_system_keys_fullscreen_only (SwitchPairChoice). -->
+        <Preference android:key="checkbox_capture_system_keys" android:title="@string/title_checkbox_capture_system_keys"
+            android:dialogMessage="@string/summary_system_keys" android:persistent="false" />
         <com.limelight.preferences.MaterialSwitchPreference
             android:key="checkbox_back_as_meta"
             android:title="@string/title_checkbox_back_as_meta"
@@ -787,17 +772,10 @@
         <Preference android:key="more_streaming" android:title="@string/settings_more" android:persistent="false" />
     </PreferenceCategory>
     <PreferenceCategory android:key="category_streaming_connection" android:title="@string/settings_category_connection">
-        <!-- Rust engine only (SettingRules.clientRoamingApplies); mobile data only while roaming is on. -->
-        <com.limelight.preferences.MaterialSwitchPreference
-            android:key="checkbox_client_roaming"
-            android:title="@string/title_client_roaming"
-            android:dialogMessage="@string/summary_client_roaming"
-            android:defaultValue="true" />
-        <com.limelight.preferences.MaterialSwitchPreference
-            android:key="checkbox_roaming_metered"
-            android:title="@string/title_roaming_metered"
-            android:dialogMessage="@string/summary_roaming_metered"
-            android:defaultValue="false" />
+        <!-- Rust engine only (SettingRules.clientRoamingApplies). Off, Except mobile data or Any network: writes
+             checkbox_client_roaming and checkbox_roaming_metered (SwitchPairChoice). -->
+        <Preference android:key="checkbox_client_roaming" android:title="@string/title_client_roaming"
+            android:dialogMessage="@string/summary_roaming" android:persistent="false" />
         <com.limelight.preferences.MaterialListPreference
             android:key="list_network_grace"
             android:title="@string/title_network_grace"
@@ -1048,13 +1026,6 @@
             android:entries="@array/fec_choice_names"
             android:entryValues="@array/fec_choice_values"
             android:defaultValue="host" />
-        <!-- Client-hint bitrate over 0x553C (StreamRateChanges); a stream without it keeps Device controls bitrate (Video). -->
-        <com.limelight.preferences.MaterialSwitchPreference
-            android:key="checkbox_rate_change_bitrate"
-            android:title="@string/title_rate_change_bitrate"
-            android:summary="@string/summary_short_rate_change_bitrate"
-            android:dialogMessage="@string/summary_rate_change_bitrate"
-            android:defaultValue="false" />
         <com.limelight.preferences.MaterialSwitchPreference
             android:key="checkbox_tell_host_wireless"
             android:title="@string/title_tell_host_wireless"

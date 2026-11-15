@@ -109,10 +109,9 @@ Android needs no scan-line check: SurfaceFlinger never flips mid-scan.
 | Feature | Android | Windows | Linux | Notes |
 | --- | --- | --- | --- | --- |
 | Automatic bitrate (follows resolution, frame rate and codec) | Yes | Yes | Yes | On until the bitrate is set by hand. |
-| Lower bitrate when the network is busy | Yes | Yes | Yes | The same controllers, PyroWave's included: Rust `nightjar-policy` on the desktop, the Java originals it is kept equal to on Android. |
+| Lower bitrate: Off, When the network is busy, When frames are lost | Yes | Yes | Yes | Off by default. The same controllers, PyroWave's included: Rust `nightjar-policy` on the desktop, the Java originals it is kept equal to on Android. |
 | Automatic resolution and frame rate | Yes | Yes | Yes | |
 | Change bitrate / frame rate during a stream | Yes | Yes | Yes | |
-| Lower bitrate when frames are lost | Yes | Yes | Yes | Off by default. |
 | Error correction choice and the loss report | Yes | Yes | Yes | Under **Settings → Debug** on both; the PC's setting by default. |
 | Test the link before starting | Yes | Yes | Yes | Off by default. |
 | Recover interrupted streams | Yes | Yes | Yes | On by default. |
@@ -143,7 +142,7 @@ Android needs no scan-line check: SurfaceFlinger never flips mid-scan.
 | Feature | Android | Windows | Linux | Notes |
 | --- | --- | --- | --- | --- |
 | Controllers and per-model mapping | Yes | Yes | Yes | The desktop drives rumble, motion, touchpads, LEDs, battery and DualSense features through SDL's gamepad API. |
-| Controller test, stick and trigger dead zones, Back button as Guide | Yes | Yes | Yes | The desktop's **Controller buttons** page can also set dead zones per controller. |
+| Controller test, stick and trigger dead zones, Back button: Back, Stream menu, Guide | Yes | Yes | Yes | The desktop's **Controller buttons** page can also set dead zones per controller. |
 | Steam Deck Game Mode (gamescope) | N/A | N/A | Yes | Under gamescope the Flatpak opens fullscreen without a border; the pointer hides while the controller is used, and Start+Back opens the stream menu since Steam keeps the Guide button. [Steam Deck](steam-deck.md) |
 | Extra buttons: touchpad click, Share / Capture, paddles | Yes | Yes | Yes | The desktop maps every SDL button. |
 | DualSense, Xbox and Switch Pro USB drivers | Yes | N/A | N/A | SDL handles these controllers on the desktop. |
@@ -153,7 +152,7 @@ Android needs no scan-line check: SurfaceFlinger never flips mid-scan.
 | Host cursor shapes | Yes | Yes | Yes | |
 | Frame Warp | Yes | Yes | Yes | Android: New streaming engine; Vulkan, or OpenGL ES without upscaling, and PyroWave's own renderer with its upscaling and HDR; not with Full chroma. Desktop: every presenter, macOS through Metal; with beam racing one shift per frame. |
 | Keyboard, mouse and pen | Yes | Yes | Yes | The desktop also sends pen rotation. |
-| System keys only in full screen | Yes | Yes | Yes | With **Send system keys** on, Alt+Tab, the Windows key and similar stay with this device while the stream is in a window (Android: split screen or a window). |
+| Send system keys: In full screen | Yes | Yes | Yes | With **Send system keys** on **In full screen**, Alt+Tab, the Windows key and similar stay with this device while the stream is in a window (Android: split screen or a window). |
 | On-screen PC keyboard | Yes | N/A | N/A | |
 | Keyboard follows text fields | Yes | Yes | Yes | The desktop opens a keyboard only where the system provides an on-screen one. |
 | Keyboard layout reported to the PC | Yes | Yes | Yes | |

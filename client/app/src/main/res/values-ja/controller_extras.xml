@@ -7,9 +7,6 @@
     <string name="summary_checkbox_mouse_emulation_fixed_step">コントローラのマウスモードで X を押している間、小さな対象を狙いやすいよう、ポインタを一定のピクセル数ずつ動かします。Y を押すと移動量が 2 倍になります（1 から 128 ピクセル）。</string>
     <string name="stream_mouse_step">マウスのステップ: %1$d px</string>
     <string name="title_checkbox_capture_system_keys">システムキーを送信</string>
-    <string name="summary_checkbox_capture_system_keys">Alt+Tab や Windows キーなどを、Android が許可する範囲で、このデバイスではなく PC に送ります。これらのショートカットをこのデバイスで使いたい場合はオフにしてください。</string>
-    <string name="title_checkbox_system_keys_fullscreen_only">システムキーは全画面のときのみ</string>
-    <string name="summary_checkbox_system_keys_fullscreen_only">ウィンドウ表示では Alt+Tab や Windows キーなどをこのデバイスで処理し、全画面では PC に送ります。ウィンドウ表示のストリームの横でアプリを切り替えたい場合はオンにしてください。</string>
     <string name="title_checkbox_back_as_meta">キーボードの戻るキーで Windows キーを送信</string>
     <string name="summary_checkbox_back_as_meta">物理キーボードの戻るキーで、「戻る」や Esc の代わりに Windows キーを PC に送ります。Android の「戻る」ジェスチャーとストリームメニューのホットキーでは、引き続きストリームメニューを開けます。</string>
     <string name="title_checkbox_right_alt_as_meta">右 Alt を Windows キーとして使用</string>

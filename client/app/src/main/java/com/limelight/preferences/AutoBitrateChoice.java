@@ -5,14 +5,15 @@ import android.content.SharedPreferences;
 import android.preference.PreferenceManager;
 
 /**
- * Whether Automatic bitrate is on for a PC. The Settings switch is the default for every PC; the
- * stream menu's toggle saves a choice for one PC (separately for conventional codecs and PyroWave,
- * which have their own controllers), and that choice wins over the default. Turning the Settings
- * switch on or off drops the PCs' own choices, so it takes effect everywhere at once.
+ * Whether Lower bitrate when the network is busy is on for a PC. The Settings value (Lower bitrate's
+ * busy switch, SwitchPairChoice) is the default for every PC; the stream menu's toggle saves a choice
+ * for one PC (separately for conventional codecs and PyroWave, which have their own controllers), and
+ * that choice wins over the default. Changing the Settings value drops the PCs' own choices, so it
+ * takes effect everywhere at once.
  */
 public final class AutoBitrateChoice {
-    /** The Settings switch, stored with the main settings. */
-    public static final String SETTINGS_KEY = "checkbox_auto_bitrate";
+    /** The Settings switch, stored with the main settings; checkbox_auto_bitrate before (RENAMED_PREFS). */
+    public static final String SETTINGS_KEY = "adaptive_bitrate";
     public static final String CODEC_STORE = "AdaptiveBitrate";
     public static final String PYROWAVE_STORE = "PyroWaveBitrate";
     private static final String[] STORES = {CODEC_STORE, PYROWAVE_STORE};

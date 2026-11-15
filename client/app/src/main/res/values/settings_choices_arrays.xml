@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The choices of the rows that were two switches each (SwitchPairChoice), in desktop Nightjar's order. -->
+<resources>
+    <string-array name="lower_bitrate_names" translatable="false">
+        <item>@string/settings_choice_off</item>
+        <item>@string/lower_bitrate_busy</item>
+        <item>@string/lower_bitrate_lost</item>
+    </string-array>
+    <string-array name="back_button_names" translatable="false">
+        <item>@string/back_button_back</item>
+        <item>@string/back_button_menu</item>
+        <item>@string/back_button_guide</item>
+    </string-array>
+    <string-array name="system_keys_names" translatable="false">
+        <item>@string/settings_choice_off</item>
+        <item>@string/system_keys_always</item>
+        <item>@string/system_keys_full_screen</item>
+    </string-array>
+    <string-array name="roaming_names" translatable="false">
+        <item>@string/settings_choice_off</item>
+        <item>@string/roaming_not_metered</item>
+        <item>@string/roaming_any_network</item>
+    </string-array>
+</resources>
