@@ -31,7 +31,7 @@ pub(super) fn run(
             if ready.frame.is_none() {
                 ready = shared
                     .ready_changed
-                    .wait_timeout(ready, Duration::from_millis(20))
+                    .wait_timeout(ready, IDLE_WAIT)
                     .unwrap()
                     .0;
             }

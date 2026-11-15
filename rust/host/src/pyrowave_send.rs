@@ -20,6 +20,11 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+/// How long the packetizer and sender sleep with no frame before they look at
+/// the session's and the host's stop, which wake neither. A frame, the
+/// sender's drop and either thread's exit notify them, so this bounds only
+/// how long an idle thread outlives a stop no drop follows.
+const IDLE_WAIT: Duration = Duration::from_millis(250);
 fn micros(duration: Duration) -> u64 {
     duration.as_micros().min(u128::from(u64::MAX)) as u64
 }
@@ -285,7 +290,7 @@ impl Sender {
                 let frame = {
                     let mut pending = shared.pending.lock().unwrap();
                     if pending.is_none() {
-                        pending = shared.changed.wait_timeout(pending, Duration::from_millis(20)).unwrap().0;
+                        pending = shared.changed.wait_timeout(pending, IDLE_WAIT).unwrap().0;
                     }
                     pending.take()
                 };
