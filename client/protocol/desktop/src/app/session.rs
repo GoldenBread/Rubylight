@@ -115,6 +115,8 @@ impl App {
             if full_chroma::started(&mut host.record, packed, describe_modes) { self.save_hosts(); }
         }
         let mut streaming = Streaming::new(connecting, session, facts, display);
+        // Before automatic bitrate is turned on below.
+        streaming.follow_abr_stop(self.abr_stop.take());
         streaming.watch_microphone_busy(self.waker.clone());
         self.pads.prepare_audio(settings.controllers && settings.controller_audio && streaming.facts.role != nightjar_core::http::AppRole::RemoteMonitor);
         streaming.display_changed(self.renderer);
@@ -363,7 +365,8 @@ impl App {
         }
         // Show decode time after streaming, Android's post-stream toast; a reconnect isn't an end.
         let decode_time = streaming.decode_time_line().filter(|_| self.launcher.settings.post_stream_decode_time && reconnect.is_none());
-        streaming.finish(self.window, &mut self.pads);
+        // Kept for the next stream, which turns the PC's automatic bitrate on only after it is off.
+        self.abr_stop = streaming.finish(self.window, &mut self.pads).or(self.abr_stop.take());
         // The stream's cursor shows the pointer again on leaving.
         self.pointer.shown();
         // SAFETY: window and renderer calls on the main thread.

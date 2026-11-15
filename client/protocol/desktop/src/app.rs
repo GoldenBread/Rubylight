@@ -70,7 +70,7 @@ impl App {
         }
         // The PC's automatic bitrate goes off after the window has gone, not with the process.
         self.gui_back_from_overlay();
-        let abr_stop = self.streaming.take().and_then(|(streaming, _)| streaming.finish(self.window, &mut self.pads));
+        let abr_stop = self.streaming.take().and_then(|(streaming, _)| streaming.finish(self.window, &mut self.pads)).or(self.abr_stop.take());
         if let Some(c) = &self.connecting {
             c.cancel();
         }

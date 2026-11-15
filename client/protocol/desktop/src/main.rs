@@ -145,6 +145,9 @@ struct App {
     /// The PC being woken and the clock of its resends ("Waking <PC>…").
     waking: wol::Wakes,
     streaming: Option<(Streaming, TimerResolution)>,
+    /// The request that turns the PC's automatic bitrate off after the last stream, while it may
+    /// still be in flight: the next stream (a reconnect too) turns it on only after it.
+    abr_stop: Option<stream::host_abr::AbrStop>,
     pending_launch: Option<(u64, i32)>,
     /// The launch the PC refused until the user confirms closing the app it runs, while the
     /// launcher asks (`Dialog::ConfirmReplace`).
@@ -863,6 +866,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         cancelled: false,
         waking: wol::Wakes::default(),
         streaming: None,
+        abr_stop: None,
         pending_launch: None,
         pending_replace: None,
         quitting_on_leave: None,

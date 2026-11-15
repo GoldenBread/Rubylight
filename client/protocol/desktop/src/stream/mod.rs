@@ -1784,6 +1784,12 @@ impl Streaming {
         });
     }
 
+    /// The request of the stream before that turns the PC's controller off, while it may still
+    /// be in flight: a start here waits for it, and `finish` hands it on when none started.
+    pub fn follow_abr_stop(&mut self, stop: Option<host_abr::AbrStop>) {
+        if self.host_abr_stop.is_none() { self.host_abr_stop = stop; }
+    }
+
     /// Turns a Foundation PC's controller off again (V+ PC's `stopSunshineAbr`), on its own
     /// thread and client: `finish` cancels the stream's requests right after, and a dead network
     /// would hold the window for the request's timeouts.
