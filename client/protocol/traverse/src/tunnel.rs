@@ -41,7 +41,12 @@ pub const TARGET_RTSP: u8 = 2;
 const KEEPALIVE: Millis = 10_000;
 /// A path that hears nothing for this long is gone.
 const IDLE: Millis = 45_000;
-const TICK: Duration = Duration::from_millis(20);
+/// The device closes a path that carried no connection and no media for this long: the host
+/// list's polls and streams keep it up, and a later connect punches again.
+const UNUSED: Millis = 120_000;
+/// The path thread sleeps until its next deadline (a punch, a retransmission, a keepalive, a
+/// timeout), or until something earlier is due, but never longer than this.
+const LONGEST_SLEEP: Millis = KEEPALIVE;
 
 fn tcp_port(ports: &Ports, target: u8) -> Option<u16> {
     match target {
@@ -121,7 +126,17 @@ struct Shared {
     connected: Mutex<Option<SocketAddr>>,
     /// When an authenticated datagram last came in.
     last_heard: AtomicU64,
+    /// When the path last carried media or a stream segment, or a connection opened.
+    last_used: AtomicU64,
     capacity: Condvar,
+    /// Wakes the path thread ([`Tunnel::wake_by`]); `woken` says it was woken.
+    wake: Condvar,
+    woken: Mutex<bool>,
+    /// What the path thread sleeps until, u64::MAX while it is awake.
+    sleeping_until: AtomicU64,
+    /// How often the path thread went round.
+    #[cfg(test)]
+    rounds: AtomicU64,
     stopped: AtomicBool,
     /// The device's media sockets, and where its client last sent from on each.
     media: Vec<Option<MediaEnd>>,
@@ -200,8 +215,14 @@ impl Tunnel {
             }),
             connected: Mutex::new(None),
             last_heard: AtomicU64::new(now),
+            last_used: AtomicU64::new(now),
             node,
             capacity: Condvar::new(),
+            wake: Condvar::new(),
+            woken: Mutex::new(false),
+            sleeping_until: AtomicU64::new(u64::MAX),
+            #[cfg(test)]
+            rounds: AtomicU64::new(0),
             stopped: AtomicBool::new(false),
             media,
             listeners: Mutex::new(Vec::new()),
@@ -263,6 +284,26 @@ impl Tunnel {
         let mut inner = self.shared.inner.lock().unwrap();
         inner.puncher.add(more);
         self.publish(&inner);
+        drop(inner);
+        self.wake_by(0);
+    }
+
+    /// Blocks until the path is closed.
+    pub fn wait_closed(&self) {
+        let mut inner = self.shared.inner.lock().unwrap();
+        while inner.closed.is_none() {
+            inner = self.shared.capacity.wait(inner).unwrap();
+        }
+    }
+
+    /// Wakes the path thread when `at` (the node's clock) comes before what it sleeps until.
+    /// Called after the change that makes `at` due, so a thread about to sleep sees either the
+    /// change or the wake.
+    fn wake_by(&self, at: Millis) {
+        if at < self.shared.sleeping_until.load(Ordering::SeqCst) {
+            *self.shared.woken.lock().unwrap() = true;
+            self.shared.wake.notify_one();
+        }
     }
 
     /// Punches on at least until `deadline` (the node's clock): the peer finds this side's
@@ -305,6 +346,7 @@ impl Tunnel {
                 let _ = TcpStream::connect_timeout(address, Duration::from_millis(200));
             }
             self.shared.capacity.notify_all();
+            self.wake_by(0);
         }
     }
 
@@ -322,6 +364,9 @@ impl Tunnel {
             return;
         };
         self.shared.last_heard.fetch_max(now, Ordering::Relaxed);
+        if matches!(opened.kind, Kind::Media | Kind::Stream) {
+            self.shared.last_used.fetch_max(now, Ordering::Relaxed);
+        }
         // Media from the connected peer's address changes nothing in `inner`: it skips the
         // reliable layer's lock entirely.
         if opened.kind == Kind::Media && *self.shared.connected.lock().unwrap() == Some(from) {
@@ -395,6 +440,17 @@ impl Tunnel {
         }
         if sent {
             inner.last_sent = now;
+        }
+        // A retransmission due earlier than the path thread planned, or a dead stream layer,
+        // is the path thread's.
+        let due = if inner.reliable.is_dead() {
+            Some(0)
+        } else {
+            inner.reliable.next_timeout()
+        };
+        drop(inner);
+        if let Some(due) = due {
+            self.wake_by(due);
         }
     }
 
@@ -500,6 +556,9 @@ impl Tunnel {
                 return;
             }
             let Ok(tcp) = incoming else { continue };
+            self.shared
+                .last_used
+                .fetch_max(self.shared.node.now(), Ordering::Relaxed);
             if !matches!(self.state(), State::Connected(_)) {
                 // Not through yet: the client sees a refused connection, as from a host that
                 // is not there, and tries again.
@@ -644,6 +703,9 @@ impl Tunnel {
             if let Bridge::Device { .. } = self.shared.bridge {
                 // Replies go back to wherever the client last sent from.
                 *end.client.lock().unwrap() = Some(from);
+                self.shared
+                    .last_used
+                    .fetch_max(self.shared.node.now(), Ordering::Relaxed);
             }
             let peer = *self.shared.connected.lock().unwrap();
             if let Some(peer) = peer {
@@ -674,10 +736,12 @@ impl Tunnel {
         }
     }
 
-    /// Punches, keepalives, retransmissions and the idle timeout.
+    /// Punches, keepalives, retransmissions and the timeouts. Sleeps until the next of them is
+    /// due, so an idle path costs a wake every few seconds, not 50 a second.
     fn run(&self) {
         while !self.is_closed() {
-            thread::sleep(TICK);
+            #[cfg(test)]
+            self.shared.rounds.fetch_add(1, Ordering::Relaxed);
             let now = self.shared.node.now();
             let mut inner = self.shared.inner.lock().unwrap();
             let punches = inner.puncher.poll(now);
@@ -686,6 +750,9 @@ impl Tunnel {
             let connected = matches!(inner.puncher.state(), punch::State::Connected(_));
             let idle = now.saturating_sub(self.shared.last_heard.load(Ordering::Relaxed)) > IDLE;
             let keepalive = connected && now.saturating_sub(inner.last_sent) > KEEPALIVE;
+            let unused = self
+                .unused_since(&inner, connected)
+                .is_some_and(|since| now.saturating_sub(since) > UNUSED);
             let peer = inner.peer;
             drop(inner);
             for to in punches {
@@ -699,12 +766,61 @@ impl Tunnel {
                 self.close("the other side stopped answering");
                 return;
             }
+            if unused {
+                self.close("the device no longer used the connection");
+                return;
+            }
             if let (true, Some(peer)) = (keepalive, peer) {
                 self.send_to(peer, Kind::Keepalive, 0, &[]);
             }
             self.dispatch();
             self.flush();
+            self.sleep();
         }
+    }
+
+    /// Since when a device's connected path has carried nothing, while no connection is open
+    /// on it: the device closes it [`UNUSED`] later. None on the host, whose device closes it.
+    fn unused_since(&self, inner: &Inner, connected: bool) -> Option<Millis> {
+        let device = matches!(self.shared.bridge, Bridge::Device { .. });
+        (device && connected && inner.connections.is_empty())
+            .then(|| self.shared.last_used.load(Ordering::Relaxed))
+    }
+
+    /// Sleeps until the next deadline, or until [`Tunnel::wake_by`] wakes it.
+    fn sleep(&self) {
+        let now = self.shared.node.now();
+        let next = {
+            let inner = self.shared.inner.lock().unwrap();
+            let connected = matches!(inner.puncher.state(), punch::State::Connected(_));
+            let mut next = now + LONGEST_SLEEP;
+            if let Some(at) = inner.puncher.next_wakeup() {
+                next = next.min(at);
+            }
+            if let Some(at) = inner.reliable.next_timeout() {
+                next = next.min(at);
+            }
+            if connected {
+                next = next.min(inner.last_sent + KEEPALIVE + 1);
+                next = next.min(self.shared.last_heard.load(Ordering::Relaxed) + IDLE + 1);
+            }
+            if let Some(since) = self.unused_since(&inner, connected) {
+                next = next.min(since + UNUSED + 1);
+            }
+            next
+        };
+        let mut woken = self.shared.woken.lock().unwrap();
+        if !*woken && next > now && !self.is_closed() {
+            self.shared.sleeping_until.store(next, Ordering::SeqCst);
+            woken = self
+                .shared
+                .wake
+                .wait_timeout(woken, Duration::from_millis(next - now))
+                .unwrap()
+                .0;
+        }
+        self.shared.sleeping_until.store(u64::MAX, Ordering::SeqCst);
+        *woken = false;
     }
 
     pub fn role(&self) -> Role {
@@ -864,6 +980,71 @@ mod tests {
         let (length, _) = client.recv_from(&mut buffer).unwrap();
         assert_eq!(&buffer[..length], b"frame");
 
+        device.close("test over");
+        for _ in 0..50 {
+            if host.is_closed() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(host.is_closed());
+        host_node.stop();
+        device_node.stop();
+    }
+
+    /// A connected path with nothing to send sleeps until its keepalive, instead of going
+    /// round 50 times a second.
+    #[test]
+    fn an_idle_path_sleeps_until_its_next_deadline() {
+        let keys = Keys::new([6; 32]).path(&[1; 16], &[2; 16]);
+        let host_node = Node::bind("127.0.0.1:0".parse().unwrap(), Vec::new()).unwrap();
+        let device_node = Node::bind("127.0.0.1:0".parse().unwrap(), Vec::new()).unwrap();
+        let start = |node: &Node, role, peer: &Node, bridge| {
+            let peer = vec![peer.local_addr().unwrap()];
+            Tunnel::start(node.clone(), role, keys, [2; 16], peer, bridge).unwrap()
+        };
+        let host = start(
+            &host_node,
+            Role::Host,
+            &device_node,
+            Bridge::Host {
+                service: "127.0.0.1".parse().unwrap(),
+                source: "127.0.0.1".parse().unwrap(),
+                ports: Ports::default(),
+                device: "idle test".into(),
+            },
+        );
+        // No ports: the device side binds nothing.
+        let device = start(
+            &device_node,
+            Role::Client,
+            &host_node,
+            Bridge::Device {
+                local: "127.0.0.1".parse().unwrap(),
+                ports: Ports::default(),
+            },
+        );
+        let (h, d) = (host.clone(), device.clone());
+        host_node.set_handler(Box::new(move |datagram, from| h.receive(datagram, from)));
+        device_node.set_handler(Box::new(move |datagram, from| d.receive(datagram, from)));
+        for _ in 0..100 {
+            if matches!(device.state(), State::Connected(_))
+                && matches!(host.state(), State::Connected(_))
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(matches!(device.state(), State::Connected(_)));
+        // Let the last punches and answers settle, then count a second of rounds.
+        thread::sleep(Duration::from_millis(300));
+        let before = device.shared.rounds.load(Ordering::Relaxed);
+        thread::sleep(Duration::from_secs(1));
+        let rounds = device.shared.rounds.load(Ordering::Relaxed) - before;
+        assert!(rounds <= 3, "{rounds} rounds in a second");
+        assert!(!device.is_closed());
+
+        // A close wakes it at once.
         device.close("test over");
         for _ in 0..50 {
             if host.is_closed() {

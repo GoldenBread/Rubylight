@@ -193,6 +193,10 @@ impl ClientTunnel {
                 if let Err(reason) = outcome {
                     working.set(Status::Failed(reason));
                 }
+                // The path is gone or never came: nothing listens on the node any more.
+                if let Some(node) = working.shared.node.lock().unwrap().take() {
+                    node.stop();
+                }
             });
         if let Err(error) = spawned {
             tunnel.set(Status::Failed(format!("could not start: {error}")));
@@ -314,6 +318,8 @@ impl ClientTunnel {
                         address: local,
                         peer,
                     });
+                    // Until the path closes ([`ClientTunnel::stop`], the PC, or no more use).
+                    path.tunnel.wait_closed();
                     return Ok(());
                 }
                 State::Closed(_) => break,
