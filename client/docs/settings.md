@@ -73,10 +73,9 @@ Tier: Main rows show when a section opens; More rows fold behind the section's l
 
 | Setting / preference key | Tier | Default | Choices and units | When to change or use |
 | --- | --- | --- | --- | --- |
-| Virtual display<br>`checkbox_virtual_display` | More | Off | On; Off | Enable to request a host display matching the stream. Requires host support and a ready display driver. |
-| PC render resolution<br>`seekbar_virtual_display_scale` | More | 100% | 50%–200%; step 5% | Change the PC's render resolution relative to the stream. Desktop text size stays as set on the host. Shown while Virtual display is On. |
+| Display arrangement<br>`host_display_location` | More | No stored default | Action | Where the PC streams from, for every PC; a PC's own choice wins. The PC's own setting keeps the PC's display settings; Virtual display asks for a virtual display matching the stream in the PC's own arrangement; the Extend choices place it beside the PC's monitors, Exclusive switches them off for the stream, and Physical display streams a monitor. The arrangements need a PC with display modes (Rubylight); other PCs follow only whether a virtual display is asked for. Stored as `host_display_location` and the switch `checkbox_virtual_display`, as before; a pair saved by an older version shows its arrangement and streams as before until a choice is made. A PC's own page offers only The PC's own setting and Virtual display when the PC has no display modes. |
+| PC render resolution<br>`seekbar_virtual_display_scale` | More | 100% | 50%–200%; step 5% | Change the PC's render resolution relative to the stream. Desktop text size stays as set on the host. Shown while Display arrangement asks for a virtual display. |
 | PC display scaling<br>`list_virtual_display_dpi` | More | PC’s own | PC’s own; 100%; 125%; 150%; 175%; 200%; 225%; 250%; 300%; 350%; 400%; 450%; 500% | Raise for larger text and interface on the virtual display, for example on a small screen; the resolution does not change. PC's own keeps the scale set on the PC. Rubylight PCs read it; other hosts ignore it. |
-| Display arrangement<br>`host_display_location` | More | No stored default | Action | How the PC places the streamed display beside its own screens, for every PC; a PC's own choice in its menu wins. Keep PC display primary preserves the monitor's primary role; make virtual display primary moves it to the stream. Needs host support. Stored as `host_display_location`, and per PC as before. |
 
 ### Controls
 
@@ -365,7 +364,7 @@ Implementation: [HostStreamSettings.java](../app/src/main/java/com/limelight/pre
 | RTX HDR / RTX Video | PC’s setting, On, Off | Turn RTX HDR (an SDR game's picture turned into HDR, for HDR streams) or RTX Video (the picture cleaned up and sharpened before it is encoded) on or off for this device's streams from this PC or of one game, over the PC's setting for the game. PC’s setting, the default, sends nothing. Shown only for PCs whose host reports them (`NvidiaEnhancements` in serverinfo); sent at launch as `rlRtxHdr` and `rlRtxVideo`. The desktop app has the same two rows in a PC's and a game's own Video settings. |
 | Same as all PCs for everything | Action | Clears every stream value of this PC after a confirmation; **Save** applies it. |
 | Display arrangement (under **Display on the PC**) | See [Display on the PC](#display-on-the-pc) | Shown for PCs whose host supports display modes. Saved on its own, when you confirm it. |
-| Virtual display | Same as all PCs, On, Off | On asks the PC for a display matching this stream. Off leaves it to the PC's display settings. Shown for PCs whose host has a virtual display. |
+| Virtual display | Same as all PCs, On, Off | On asks the PC for a display matching this stream. Off leaves it to the PC's display settings. Shown for PCs whose host has a virtual display but no display modes; with display modes it is Display arrangement's **Virtual display** choice. |
 | PC render resolution | Same as all PCs, or 50–200% | Change the PC's render resolution relative to the stream. Used with the virtual-display request. |
 | PC display scaling | Same as all PCs, PC’s own, or 100–500% in Windows' steps | Larger text and interface on this PC's virtual display; the resolution does not change. Shown only for PCs whose host reads it; on an older host version it is disabled with the reason. |
 | Full color range (under **Debug**, last, after the Connection and PC groups) | Same as all PCs, On, Off | Request full-range color for this PC. |
@@ -435,19 +434,20 @@ Presets never change Radeon settings such as Anti-Lag and Chill; set those for a
 
 Long-press a PC, choose **PC settings…**, then **Display arrangement** under **Display on the PC**. The dialog is titled **Display on** and the PC's name. Select a mode and confirm **Save display mode** to apply it from the next stream. **Cancel** leaves the saved mode unchanged, and **Help** explains the modes. The display choice is saved separately from the stream profile, so it stays when you discard the PC's other changes.
 
-**Settings → Display & image → PC display → Display arrangement** offers the same modes for every PC. A PC without a choice of its own uses it; choosing **The PC’s own setting** in a PC's dialog clears that PC's choice, so it follows the main settings again. Implementation: [HostDisplaySettings.java](../app/src/main/java/com/limelight/preferences/HostDisplaySettings.java), stored by [HostDisplayChoice.java](../app/src/main/java/com/limelight/preferences/HostDisplayChoice.java).
+**Settings → Display & image → PC display → Display arrangement** offers the same modes for every PC. A PC without a choice of its own uses it. Choosing **The PC’s own setting** in a PC's dialog clears that PC's choice while the main settings have it too; while they ask for another arrangement, it stays that PC's own choice. Each choice also sets the PC's **Virtual display** value: on for **Virtual display** and the virtual arrangements, off for **The PC’s own setting** and **Physical display**. Implementation: [HostDisplaySettings.java](../app/src/main/java/com/limelight/preferences/HostDisplaySettings.java), stored by [HostDisplayChoice.java](../app/src/main/java/com/limelight/preferences/HostDisplayChoice.java).
 
 | Choice | Sent to the PC | What the PC does |
 | --- | --- | --- |
-| The PC’s own setting (initial) | Nothing, or `virtualDisplay=1` when **Virtual display** is on | Follows **Virtual display** and the PC's display settings. |
+| The PC’s own setting (initial) | Nothing | Keeps the PC's display settings. |
+| Virtual display | `virtualDisplay=1` | Adds a virtual display matching the stream, placed as the PC's display settings say. |
 | Exclusive — virtual display only (PC monitors off) | `hostDisplay=exclusive`, `virtualDisplay=1` | Adds a virtual display and switches the PC's monitors off during the stream. |
 | Extend — make virtual display primary | `hostDisplay=extended_primary`, `virtualDisplay=1` | Adds a virtual display beside the monitors and makes it primary, where games and new windows usually open. |
 | Extend — keep PC display primary | `hostDisplay=extended`, `virtualDisplay=1` | Adds a virtual display beside the monitors; the PC keeps its primary display. |
 | Extended and separated — PC stays primary | `hostDisplay=extended_isolated`, `virtualDisplay=1` | Keeps the PC primary and places the virtual display away from the other displays. |
 | Extended and separated — virtual display primary | `hostDisplay=extended_primary_isolated`, `virtualDisplay=1` | Makes the virtual display primary and places the PC's other displays away from it. |
-| Physical display (no virtual display) | `hostDisplay=physical` | Streams the PC's monitor, even when the PC or **Virtual display** would add a virtual display. |
+| Physical display (no virtual display) | `hostDisplay=physical` | Streams the PC's monitor, even when the PC would add a virtual display. |
 
-The PC puts its displays back when the stream ends. Separated displays still share the same Windows session; they are not separate user sessions. Only PCs whose host supports display modes (Rubylight 2.2.1 or later) offer the choice, and only those hosts are sent `hostDisplay`. Other PCs follow **Virtual display**, which their stream settings show as a switch when the host has a virtual display. Remote Monitor and Remote Input keep the PC's settings.
+The PC puts its displays back when the stream ends. Separated displays still share the same Windows session; they are not separate user sessions. Only PCs whose host supports display modes (Rubylight 2.2.1 or later) offer the arrangements, and only those hosts are sent `hostDisplay`. Other PCs follow only whether a virtual display is asked for, which their stream settings show as a **Virtual display** switch when the host has a virtual display. Remote Monitor and Remote Input keep the PC's settings.
 
 ## Settings available during a stream
 
@@ -520,10 +520,9 @@ Defaults are those of a fresh installation. **Main** rows show when a section op
 | *Image:* Upscaling | More | Bilinear | Bilinear, FSR 1, SGSR 1, AI enhancement | For smaller SDR streams; HDR uses bilinear. AI enhancement is Windows only and listed when the GPU has video super resolution: it uses the GPU's video upscaling for SDR and HDR, and on NVIDIA with an HDR display also turns SDR streams into HDR. |
 | Upscaling sharpness | More | 50 % | 0–100 % | Shown for FSR 1 and SGSR 1. |
 | Video position | More | Center | Center, Top | Shown for Fit and 1:1 pixels: where the picture sits in the window. The stream menu's Video size keeps it; it has no row there. |
-| *PC display:* Virtual display | More | Off | On, Off | Asks hosts that support it for a separate display matching the stream. |
-| PC render resolution | More | 100 % | 50–200 % in 5 % steps | Shown with Virtual display on. The PC renders at this size; the transmitted video keeps its size. |
+| *PC display:* Display arrangement | More | The PC’s own setting | The PC’s own setting, Virtual display, Virtual display only, Extend as primary, Extend, Extend, isolated, Extend as primary, isolated, Physical display | The modes of [Display on the PC](#display-on-the-pc), in the same order, with **Virtual display** (a virtual display in the PC's own arrangement) second. Each choice is stored in `host_display` and `virtual_display`, as before; a pair saved by an older version shows its arrangement and streams as before until a choice is made. The arrangements apply to normal streams on hosts that support display modes; a PC's own choice wins, and a PC without display modes offers only The PC’s own setting and Virtual display. |
+| PC render resolution | More | 100 % | 50–200 % in 5 % steps | Shown while Display arrangement asks for a virtual display. The PC renders at this size; the transmitted video keeps its size. |
 | PC display scaling | More | PC’s own | PC’s own, 100–500 % in Windows' steps | Text and interface size on the PC's virtual display. In a PC's own settings it is hidden when that PC's host can't apply it. |
-| Display arrangement | More | The PC’s own setting | The PC’s own setting, Virtual display only, Extend as primary, Extend, Extend, isolated, Extend as primary, isolated, Physical display | The modes of [Display on the PC](#display-on-the-pc), in the same order. Applied to normal streams on hosts that support display modes; a PC's own choice wins. |
 
 ### Controls
 

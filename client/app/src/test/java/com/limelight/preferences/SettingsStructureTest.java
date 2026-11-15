@@ -594,7 +594,7 @@ public class SettingsStructureTest {
             explanation.dismiss();
 
             // A host-dependent switch says so briefly.
-            TextView hostLine = display.findPreference("checkbox_virtual_display").getView(null, parent)
+            TextView hostLine = open(screen, "audio").findPreference("checkbox_enable_mic").getView(null, parent)
                     .findViewById(android.R.id.summary);
             assertEquals(View.VISIBLE, hostLine.getVisibility());
             assertEquals(screen.getString(R.string.settings_needs_host_support), hostLine.getText().toString());

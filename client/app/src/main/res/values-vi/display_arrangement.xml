@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="summary_display_arrangement">PC phát từ một màn hình ảo khớp với luồng, hoặc từ màn hình của chính nó. “Cài đặt riêng của PC” giữ cài đặt hiển thị của PC, “Màn hình ảo” để PC tự sắp xếp, còn các lựa chọn khác đặt nó cạnh màn hình của PC hoặc tắt chúng trong lúc phát. Cần PC hỗ trợ.</string>
+</resources>

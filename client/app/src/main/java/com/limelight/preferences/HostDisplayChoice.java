@@ -98,16 +98,28 @@ public enum HostDisplayChoice {
         editor.apply();
     }
 
+    /**
+     * This PC's own choice. The PC's own setting is stored too while the main settings ask for another
+     * arrangement, so it stays this PC's choice instead of falling back to theirs.
+     */
     public static void save(Context context, String hostUuid, HostDisplayChoice choice) {
         if (hostUuid == null) {
             return;
         }
         SharedPreferences.Editor editor = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit();
-        if (choice == HOST_DEFAULT) {
+        if (choice == HOST_DEFAULT && loadMain(context) == HOST_DEFAULT) {
             editor.remove(hostUuid);
         } else {
             editor.putString(hostUuid, choice.name());
         }
         editor.apply();
+    }
+
+    /** A removed PC's choice. */
+    public static void forget(Context context, String hostUuid) {
+        if (hostUuid == null) {
+            return;
+        }
+        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit().remove(hostUuid).apply();
     }
 }

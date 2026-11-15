@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="summary_display_arrangement">电脑从与串流匹配的虚拟显示器或其自身的显示器进行串流。“电脑自身的设置”保留电脑的显示设置，“虚拟显示器”将排列交给电脑决定，其他选项则将其放在电脑显示器旁边，或在串流期间关闭这些显示器。需要电脑支持。</string>
+</resources>

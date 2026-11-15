@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="summary_display_arrangement">Der PC streamt von einem virtuellen Display, das zum Stream passt, oder von seinem eigenen Monitor. „Einstellung des PCs“ behält die Anzeigeeinstellungen des PCs, „Virtuelles Display“ überlässt die Anordnung dem PC, und die übrigen Optionen stellen es neben die Monitore des PCs oder schalten diese während des Streams aus. Braucht Unterstützung durch den PC.</string>
+</resources>

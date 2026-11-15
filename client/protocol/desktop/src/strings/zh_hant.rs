@@ -1364,9 +1364,7 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("How much sharpening FSR or SGSR adds. Raise it for soft edges; lower it if edges show halos.", "FSR 或 SGSR 加入的銳化程度。邊緣偏軟時調高；邊緣出現光暈時調低。"),
     ("Video position", "視訊位置"),
     ("Where a Fit or 1:1 picture sits: center or top. Top leaves the space below the picture free.", "「適應」或「1:1 像素」畫面的位置：置中或頂部。「頂部」會把畫面下方的空間空出來。"),
-    ("The PC streams from a virtual display of its own that matches the stream’s resolution and frame rate, whatever monitor the PC has. Off leaves it to the PC’s display settings.", "電腦從自己的一個虛擬顯示器進行串流，它與串流的解析度和畫面更新率一致，不受電腦所接螢幕的影響。關閉則交由電腦的顯示設定決定。"),
     ("The size the PC renders at, as a percent of the stream resolution; the video sent keeps its size. Above 100 the PC draws more pixels than it sends, below fewer.", "電腦繪製的大小，以串流解析度的百分比表示；傳送的視訊大小不變。高於 100 時，電腦繪製的像素比傳送的多；低於 100 時則較少。"),
-    ("How the PC places the stream’s virtual display beside its monitors. Virtual display only switches the PC’s monitors off during the stream; they come back when it ends. Needs PC support.", "電腦如何將串流的虛擬顯示器排列在自己的螢幕旁。「僅虛擬顯示器」會在串流期間關閉電腦的螢幕，串流結束後恢復。需要電腦支援。"),
     ("Mouse mode", "滑鼠模式"),
     ("Captured keeps the pointer in the stream and sends relative movement, which games with mouse look need. Desktop pointer moves like an ordinary mouse, for desktop work.", "「已擷取」讓指標留在串流中並傳送相對移動，用滑鼠轉動視角的遊戲需要這種方式。「桌面指標」像一般滑鼠一樣移動，適合桌面操作。"),
     ("A player each makes every controller its own player and suits almost everyone. One player makes every controller player 1; Off sends no controller to the PC.", "「各為一位玩家」讓每個控制器各自成為一位玩家，適合絕大多數人。「一位玩家」讓所有控制器都作為玩家 1；「關閉」則不向電腦傳送任何控制器。"),
@@ -1599,4 +1597,5 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields; turn off to open it yourself.", "在電腦上選取文字欄位時開啟螢幕鍵盤，之後自動關閉。需要電腦能回報文字欄位；關閉後由你自行開啟鍵盤。"),
     ("Fractional V-Sync", "分數 V-Sync"),
     ("On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Measured on Windows, it adds 1 to 2 ms of delay on most frames and 2.5 to 4 ms on the slowest ones; turn it on if motion judders with V-Sync.", "螢幕更新率是串流影格率的 2 到 4 倍時(120 Hz 上的 60 fps),每個影格顯示相同次數的更新,讓動作保持平順。在 Windows 上實測,大多數影格會增加 1 到 2 ms 延遲,最慢的影格增加 2.5 到 4 ms;如果開啟 V-Sync 後動作卡頓,請開啟。"),
+    ("The PC streams from a virtual display that matches the stream, or from its own monitor. The PC’s own setting keeps the PC’s display settings, Virtual display leaves the arrangement to the PC, and the other choices place it beside the PC’s monitors or switch them off during the stream. Needs PC support.", "電腦會從符合串流的虛擬顯示器或其本身的螢幕進行串流。「電腦本身的設定」保留電腦的顯示設定，「虛擬顯示器」將排列交由電腦決定，其他選項則將其放在電腦螢幕旁，或在串流期間關閉這些螢幕。需要電腦支援。"),
 ];

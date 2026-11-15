@@ -25,7 +25,6 @@
         <item>繼續上次的遊戲</item>
         <item>選定的遊戲</item>
     </string-array>
-    <string name="summary_host_display_location">電腦如何將串流的虛擬顯示器排列在自己的螢幕旁。「獨佔」選項會在串流期間關閉電腦的螢幕，串流結束後恢復。需要電腦支援。</string>
     <string name="summary_pace_calibration_row">找出並儲存電腦的 PyroWave 影格能完整送達的最快節奏，適用於會遺失影格尾端的連線，例如 USB 乙太網路擴充基座。需要一到三分鐘。</string>
     <string name="summary_network_tests">測量 Ping、抖動和遺失率，電腦支援時也會測量下載速度。</string>
     <string name="settings_category_touch_mouse">觸控與滑鼠</string>

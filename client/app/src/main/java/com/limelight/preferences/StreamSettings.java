@@ -838,6 +838,8 @@ public class StreamSettings extends NightjarActivity {
                 .remove(PreferenceConfiguration.UNLOCK_FPS_STRING)
                 .remove(PreferenceConfiguration.OVERLAY_MODE_PREF_STRING)
                 .remove(com.limelight.ui.AppTheme.RETIRED_OLED_BLACK)
+                // Display arrangement's switch (DisplayArrangementChoice).
+                .remove(DisplayArrangementChoice.VIRTUAL_DISPLAY_PREF)
                 .remove(com.limelight.ui.AppTheme.RETIRED_ALWAYS_DARK)
                 // The second switches of the rows that are one choice now (SwitchPairChoice).
                 .remove(PreferenceConfiguration.BACK_OPENS_MENU_PREF_STRING)
@@ -1816,7 +1818,7 @@ public class StreamSettings extends NightjarActivity {
                 } else if (com.limelight.console.OpenPlay.SETTING.equals(pref.getKey())) {
                     value = startScreenName(StartScreenChoice.read(prefs));
                 } else if (HOST_DISPLAY_KEY.equals(pref.getKey())) {
-                    value = getString(HostDisplayChoice.loadMain(getActivity()).label);
+                    value = DisplayArrangementChoice.names(getActivity(), true)[DisplayArrangementChoice.readMain(prefs)];
                 } else if (PACE_CALIBRATION_KEY.equals(pref.getKey())) {
                     continue;
                 } else if (VideoScaling.PREF.equals(pref.getKey())) {
@@ -2588,11 +2590,13 @@ public class StreamSettings extends NightjarActivity {
                 removeSetting("check_updates_now");
             }
             findPreference(HOST_DISPLAY_KEY).setOnPreferenceClickListener(preference -> {
-                HostDisplayChoice[] choices = HostDisplayChoice.values();
-                CharSequence[] names = new CharSequence[choices.length];
-                for (int i = 0; i < choices.length; i++) names[i] = getString(choices[i].label);
-                showChoices(R.string.host_display_menu, names, HostDisplayChoice.loadMain(getActivity()).ordinal(),
-                        R.string.summary_host_display_location, which -> HostDisplayChoice.saveMain(getActivity(), choices[which]));
+                SharedPreferences prefs = getPreferenceManager().getSharedPreferences();
+                showChoices(R.string.host_display_menu, DisplayArrangementChoice.names(getActivity(), true),
+                        DisplayArrangementChoice.readMain(prefs), R.string.summary_display_arrangement, which -> {
+                            SharedPreferences.Editor editor = prefs.edit();
+                            DisplayArrangementChoice.saveMain(editor, which);
+                            editor.apply();
+                        });
                 return true;
             });
             findPreference("latency_benchmark").setOnPreferenceClickListener(preference -> {

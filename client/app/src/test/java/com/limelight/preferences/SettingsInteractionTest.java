@@ -55,7 +55,7 @@ public class SettingsInteractionTest {
     }
 
     @Test
-    public void explicitDisplayModeLeadsTheDisplayGroupAndControlsVirtualDisplay() {
+    public void explicitDisplayModeLeadsTheDisplayGroupAndHoldsVirtualDisplay() {
         Application app = RuntimeEnvironment.getApplication();
         HostDisplayChoice.save(app, "exclusive-host", HostDisplayChoice.EXCLUSIVE);
         Intent intent = new Intent(app, HostStreamSettings.class)
@@ -71,12 +71,12 @@ public class SettingsInteractionTest {
             assertEquals("host_display", display.getPreference(0).getKey());
             assertTrue(fragment.findPreference("host_display").getSummary().toString()
                     .startsWith(app.getString(R.string.host_display_exclusive)));
-            assertFalse(fragment.findPreference("virtual").isEnabled());
-            assertTrue(fragment.findPreference("virtual").getSummary().toString()
-                    .contains(app.getString(R.string.host_display_exclusive)));
+            // Virtual display is one of its choices rather than a row of its own.
+            assertNull(fragment.findPreference("virtual"));
             HostDisplayChoice.save(app, "exclusive-host", HostDisplayChoice.HOST_DEFAULT);
             ReflectionHelpers.callInstanceMethod(fragment, "updateSummaries");
-            assertTrue(fragment.findPreference("virtual").isEnabled());
+            assertTrue(fragment.findPreference("host_display").getSummary().toString()
+                    .startsWith(app.getString(R.string.host_display_default)));
         } finally {
             controller.pause().stop().destroy();
         }
@@ -134,7 +134,7 @@ public class SettingsInteractionTest {
     public void displayHelpKeepsTheOriginalPickerOpenAndDoesNotSave() {
         ActivityController<UiNavigationTest.Screen> controller = Robolectric.buildActivity(UiNavigationTest.Screen.class).setup();
         try {
-            HostDisplaySettings.show(controller.get(), "display-host", "PC");
+            showPicker(controller.get(), "display-host", null);
             AlertDialog picker = (AlertDialog) ShadowDialog.getLatestDialog();
             picker.getButton(AlertDialog.BUTTON_NEUTRAL).performClick();
             org.robolectric.shadows.ShadowLooper.idleMainLooper();
@@ -310,7 +310,7 @@ public class SettingsInteractionTest {
                     HostDisplayChoice.EXTENDED_PRIMARY, HostDisplayChoice.EXTENDED,
                     HostDisplayChoice.EXTENDED_ISOLATED, HostDisplayChoice.EXTENDED_PRIMARY_ISOLATED}) {
                 HostDisplayChoice.save(controller.get(), "picker-semantics", HostDisplayChoice.HOST_DEFAULT);
-                HostDisplaySettings.show(controller.get(), "picker-semantics", "PC");
+                showPicker(controller.get(), "picker-semantics", null);
                 AlertDialog picker = (AlertDialog) ShadowDialog.getLatestDialog();
                 int index = displayChoiceIndex(picker, controller.get().getString(choice.label));
                 assertTrue(displayChoiceIndex(picker, controller.get().getString(HostDisplayChoice.EXTENDED.label)) <
@@ -333,7 +333,7 @@ public class SettingsInteractionTest {
         try {
             HostDisplayChoice.save(controller.get(), "cancel-display", HostDisplayChoice.EXTENDED);
             java.util.concurrent.atomic.AtomicInteger changes = new java.util.concurrent.atomic.AtomicInteger();
-            HostDisplaySettings.show(controller.get(), "cancel-display", "PC", changes::incrementAndGet);
+            showPicker(controller.get(), "cancel-display", changes::incrementAndGet);
             AlertDialog picker = (AlertDialog) ShadowDialog.getLatestDialog();
             int index = displayChoiceIndex(picker, controller.get().getString(HostDisplayChoice.EXTENDED_PRIMARY.label));
             picker.getListView().performItemClick(null, index, index);
@@ -344,6 +344,13 @@ public class SettingsInteractionTest {
         } finally {
             controller.pause().stop().destroy();
         }
+    }
+
+    /** The PC page's Display arrangement picker, with the virtual display switch off. */
+    private static void showPicker(android.app.Activity activity, String hostUuid, Runnable onChanged) {
+        AlertDialog picker = HostDisplaySettings.create(activity, hostUuid, "PC", false, value -> { }, onChanged);
+        com.limelight.utils.UiHelper.showDialog(activity, picker);
+        HostDisplaySettings.bindHelp(activity, picker);
     }
 
     private static int displayChoiceIndex(AlertDialog picker, String label) {

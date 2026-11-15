@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="summary_display_arrangement">PC はストリームに合った仮想ディスプレイ、または自身のモニターから配信します。「PC 自体の設定」は PC のディスプレイ設定のままにし、「仮想ディスプレイ」は配置を PC に任せ、ほかの選択肢は PC のモニターの横に置くか、ストリーム中はモニターをオフにします。PC の対応が必要です。</string>
+</resources>

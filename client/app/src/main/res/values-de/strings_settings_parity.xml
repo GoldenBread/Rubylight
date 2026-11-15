@@ -25,7 +25,6 @@
         <item>Mein letztes Spiel fortsetzen</item>
         <item>Ein gewähltes Spiel</item>
     </string-array>
-    <string name="summary_host_display_location">Wie der PC das virtuelle Display des Streams neben seinen Monitoren anordnet. Die Auswahl „Exklusiv“ schaltet die Monitore des PCs während des Streams aus; danach gehen sie wieder an. Braucht Unterstützung durch den PC.</string>
     <string name="summary_pace_calibration_row">Ermittelt und speichert das schnellste Tempo, bei dem die PyroWave-Frames eines PCs vollständig ankommen, für Verbindungen, die Frame-Enden verlieren, etwa ein USB-Ethernet-Dock. Dauert eine bis drei Minuten.</string>
     <string name="summary_network_tests">Misst Ping, Jitter und Paketverlust, dazu die Download-Geschwindigkeit, sofern der PC das unterstützt.</string>
     <string name="settings_category_touch_mouse">Touch und Maus</string>

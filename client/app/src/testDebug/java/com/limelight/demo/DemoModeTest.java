@@ -138,9 +138,11 @@ public class DemoModeTest {
             assertEquals(List.of(demo.getString(R.string.settings_section_video), demo.getString(R.string.pc_settings_display),
                     demo.getString(R.string.pc_settings_connection), demo.getString(R.string.pc_settings_host),
                     demo.getString(R.string.settings_section_debug)), groups);
-            for (String key : new String[] {"host_display", "virtual", "scale", "web_ui"}) {
+            for (String key : new String[] {"host_display", "scale", "web_ui"}) {
                 assertNotNull(key, fragment.findPreference(key));
             }
+            // Display arrangement holds the virtual display switch on a host with display modes.
+            assertNull(fragment.findPreference("virtual"));
         } finally { page.pause().stop().destroy(); }
     }
 

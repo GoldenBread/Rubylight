@@ -25,7 +25,6 @@
         <item>Son oyunuma devam et</item>
         <item>Seçilen bir oyun</item>
     </string-array>
-    <string name="summary_host_display_location">Bilgisayarın, yayının sanal ekranını kendi monitörlerinin yanına nasıl yerleştirdiği. “Özel” seçeneği yayın boyunca bilgisayarın monitörlerini kapatır; yayın bitince geri gelirler. Bilgisayar desteği gerekir.</string>
     <string name="summary_pace_calibration_row">Bir bilgisayarın PyroWave karelerinin eksiksiz ulaştığı en yüksek tempoyu bulup kaydeder; USB Ethernet dock’u gibi kare sonlarını kaybeden bağlantılar içindir. Bir ila üç dakika sürer.</string>
     <string name="summary_network_tests">Ping, jitter ve kaybı, bilgisayar destekliyorsa indirme hızını da ölçer.</string>
     <string name="settings_category_touch_mouse">Dokunma ve fare</string>

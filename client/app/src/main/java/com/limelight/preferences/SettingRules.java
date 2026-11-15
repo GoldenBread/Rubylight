@@ -298,9 +298,9 @@ final class SettingRules {
         return mode == com.limelight.ui.VideoScaling.FIT || mode == com.limelight.ui.VideoScaling.NATIVE;
     }
 
-    /** The PC renders at a scale of the stream only on its virtual display. */
+    /** The PC renders at a scale of the stream only on its virtual display: a Display arrangement that asks for one. */
     static boolean virtualDisplayScaleApplies(SharedPreferences prefs) {
-        return prefs.getBoolean("checkbox_virtual_display", false);
+        return DisplayArrangementChoice.virtualDisplay(DisplayArrangementChoice.readMain(prefs));
     }
 
     /** Controllers is not Off: the controller rows apply. */

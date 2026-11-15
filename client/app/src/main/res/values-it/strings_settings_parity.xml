@@ -25,7 +25,6 @@
         <item>Riprendi l’ultimo gioco</item>
         <item>Un gioco scelto</item>
     </string-array>
-    <string name="summary_host_display_location">Come il PC colloca il display virtuale dello stream accanto ai propri monitor. La scelta Esclusiva spegne i monitor del PC durante lo stream; si riaccendono quando termina. Richiede il supporto del PC.</string>
     <string name="summary_pace_calibration_row">Trova e salva il ritmo più veloce a cui i fotogrammi PyroWave di un PC arrivano interi, per i collegamenti che perdono la fine dei fotogrammi, come un dock Ethernet USB. Richiede da uno a tre minuti.</string>
     <string name="summary_network_tests">Misura ping, jitter e perdita di pacchetti, e la velocità di download se il PC la supporta.</string>
     <string name="settings_category_touch_mouse">Touch e mouse</string>

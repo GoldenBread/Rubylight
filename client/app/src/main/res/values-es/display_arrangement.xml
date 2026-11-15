@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="summary_display_arrangement">El PC transmite desde una pantalla virtual que se ajusta a la transmisión, o desde su propio monitor. «El ajuste propio del PC» mantiene los ajustes de pantalla del PC, «Pantalla virtual» deja la disposición al PC, y las demás opciones la colocan junto a los monitores del PC o los apagan durante la transmisión. Requiere un PC compatible.</string>
+</resources>

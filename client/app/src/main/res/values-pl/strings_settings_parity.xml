@@ -25,7 +25,6 @@
         <item>Kontynuuj ostatnią grę</item>
         <item>Wybrana gra</item>
     </string-array>
-    <string name="summary_host_display_location">Jak komputer umieszcza ekran wirtualny strumienia obok swoich monitorów. Opcja „Wyłączny” wyłącza monitory komputera na czas strumienia; po jego zakończeniu włączają się z powrotem. Wymaga obsługi przez komputer.</string>
     <string name="summary_pace_calibration_row">Ustala i zapisuje najszybsze tempo, w jakim klatki PyroWave z komputera docierają w całości, dla łączy gubiących końcówki klatek, np. stacji dokującej USB z Ethernetem. Trwa od jednej do trzech minut.</string>
     <string name="summary_network_tests">Mierzy ping, jitter i straty pakietów oraz prędkość pobierania, jeśli komputer to obsługuje.</string>
     <string name="settings_category_touch_mouse">Dotyk i mysz</string>

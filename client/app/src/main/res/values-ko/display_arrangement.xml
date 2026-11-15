@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="summary_display_arrangement">PC는 스트림에 맞는 가상 디스플레이 또는 자체 모니터에서 스트리밍합니다. \'PC 자체 설정\'은 PC의 디스플레이 설정을 유지하고, \'가상 디스플레이\'는 배치를 PC에 맡기며, 나머지 선택지는 PC 모니터 옆에 두거나 스트리밍 중 모니터를 끕니다. PC 지원이 필요합니다.</string>
+</resources>

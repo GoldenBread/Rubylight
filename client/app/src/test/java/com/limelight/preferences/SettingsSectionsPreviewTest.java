@@ -65,6 +65,40 @@ public class SettingsSectionsPreviewTest {
         }
     }
 
+    /** Display arrangement's list in Settings, and a PC's own page, where it holds the virtual display switch. */
+    @Test
+    public void displayArrangementPickerAndPcPage() throws IOException {
+        String output = System.getenv("NIGHTJAR_PREVIEW_OUTPUT");
+        Assume.assumeTrue("previews are an explicitly requested local capture", output != null && !output.isBlank());
+        File directory = new File(output);
+        assertTrue(directory.isDirectory() || directory.mkdirs());
+        try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup().visible()) {
+            android.preference.Preference row = SettingsStructureTest.open(controller.get(), "display").findPreference("host_display_location");
+            row.getOnPreferenceClickListener().onPreferenceClick(row);
+            ShadowLooper.idleMainLooper(400, TimeUnit.MILLISECONDS);
+            View root = org.robolectric.shadows.ShadowDialog.getLatestDialog().getWindow().getDecorView();
+            root.measure(View.MeasureSpec.makeMeasureSpec(W, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(H, View.MeasureSpec.AT_MOST));
+            root.layout(0, 0, W, root.getMeasuredHeight());
+            write(root, root.getMeasuredHeight(), new File(directory, "android-display-arrangement-picker.png"));
+        }
+        android.content.Intent intent = new android.content.Intent(org.robolectric.RuntimeEnvironment.getApplication(), HostStreamSettings.class)
+                .putExtra("host_uuid", "preview-pc").putExtra("host_name", "PC");
+        ActivityController<HostStreamSettings> controller = Robolectric.buildActivity(HostStreamSettings.class, intent).setup().visible();
+        try {
+            View root = controller.get().getWindow().getDecorView();
+            for (int pass = 0; pass < 2; pass++) {
+                root.measure(View.MeasureSpec.makeMeasureSpec(W, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(H, View.MeasureSpec.EXACTLY));
+                root.layout(0, 0, W, H);
+                ShadowLooper.idleMainLooper(400, TimeUnit.MILLISECONDS);
+            }
+            write(root, contentBottom(root), new File(directory, "android-pc-settings.png"));
+        } finally {
+            controller.pause().stop().destroy();
+        }
+    }
+
     /** The bottom of the settings list's last row on the page, plus a margin; the whole page when it can't tell. */
     private static int contentBottom(View root) {
         ListView list = root.findViewById(android.R.id.list);

@@ -238,11 +238,12 @@ The importer also accepts this format without `version`, common Windows names su
 
 ## Display arrangement and administration
 
-Open your PC's menu → **PC settings… → Display on the PC → Display arrangement**. The choice is saved per PC and applies from the next stream; **Settings → Display & image → PC display → Display arrangement** sets it for every PC without a choice of its own. The entry appears for PCs whose host supports display modes (Rubylight 2.2.1 or later). Other PCs with a virtual display get a **Virtual display** switch in their settings instead.
+Open your PC's menu → **PC settings… → Display on the PC → Display arrangement**. The choice is saved per PC and applies from the next stream; **Settings → Display & image → PC display → Display arrangement** sets it for every PC without a choice of its own. The arrangements apply to PCs whose host supports display modes (Rubylight 2.2.1 or later). Other PCs with a virtual display only use one or not: their own settings offer **The PC's own setting** and **Virtual display** (a **Virtual display** switch on Android).
 
 | Choice | What happens on the PC |
 | --- | --- |
-| The PC's own setting | Follow **Virtual display** and the host's display settings. |
+| The PC's own setting | Keep the host's display settings. |
+| Virtual display | Use a virtual display matching the stream, placed as the host's display settings say. |
 | Exclusive | Use a virtual display and switch the PC's other monitors off during the stream. |
 | Extended | Keep the other monitors on; choose whether the PC display or virtual display is primary. |
 | Extended and separated | Keep the other monitors on, but place the streamed display far away in the desktop layout. Choose which display is primary. Both displays share the same Windows session. |

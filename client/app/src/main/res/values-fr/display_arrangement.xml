@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="summary_display_arrangement">Le PC diffuse depuis un écran virtuel adapté au stream, ou depuis son propre moniteur. « Réglage propre au PC » garde les réglages d’affichage du PC, « Écran virtuel » laisse la disposition au PC, et les autres choix le placent à côté des moniteurs du PC ou les éteignent pendant le stream. Nécessite un PC compatible.</string>
+</resources>

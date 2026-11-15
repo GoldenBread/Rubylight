@@ -1364,9 +1364,7 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("How much sharpening FSR or SGSR adds. Raise it for soft edges; lower it if edges show halos.", "FSRまたはSGSRが加えるシャープ化の強さです。輪郭がぼやける場合は上げ、輪郭に縁取り（ハロー）が出る場合は下げてください。"),
     ("Video position", "映像の位置"),
     ("Where a Fit or 1:1 picture sits: center or top. Top leaves the space below the picture free.", "「フィット」や「1:1ピクセル」の映像を置く位置（中央または上）です。「上」にすると、映像の下のスペースが空きます。"),
-    ("The PC streams from a virtual display of its own that matches the stream’s resolution and frame rate, whatever monitor the PC has. Off leaves it to the PC’s display settings.", "PCのモニターに関係なく、ストリームの解像度とフレームレートに合わせた専用の仮想ディスプレイからPCがストリーミングします。オフではPCのディスプレイ設定に任せます。"),
     ("The size the PC renders at, as a percent of the stream resolution; the video sent keeps its size. Above 100 the PC draws more pixels than it sends, below fewer.", "PCがレンダリングするサイズを、ストリーム解像度に対する割合（パーセント）で表します。送られる映像のサイズは変わりません。100を超えるとPCは送る映像より多くのピクセルを描画し、100未満では少なくなります。"),
-    ("How the PC places the stream’s virtual display beside its monitors. Virtual display only switches the PC’s monitors off during the stream; they come back when it ends. Needs PC support.", "PCがストリーム用の仮想ディスプレイを自身のモニターに対してどう配置するかです。「仮想ディスプレイのみ」を選ぶと、ストリーム中はPCのモニターがオフになり、終了すると元に戻ります。PCの対応が必要です。"),
     ("Mouse mode", "マウスモード"),
     ("Captured keeps the pointer in the stream and sends relative movement, which games with mouse look need. Desktop pointer moves like an ordinary mouse, for desktop work.", "「キャプチャ」はポインターをストリーム内に留めて相対的な動きを送ります。マウスで視点を動かすゲームに必要です。「デスクトップポインター」は通常のマウスのように動き、デスクトップでの作業に向いています。"),
     ("A player each makes every controller its own player and suits almost everyone. One player makes every controller player 1; Off sends no controller to the PC.", "「コントローラーごとに1人」は各コントローラーを別々のプレイヤーにし、ほとんどの場合に適しています。「1人のプレイヤー」はすべてのコントローラーをプレイヤー1にし、「オフ」はコントローラーをPCに送りません。"),
@@ -1599,4 +1597,5 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields; turn off to open it yourself.", "PC のテキスト欄を選ぶとスクリーンキーボードが開き、入力が終わると閉じます。テキスト欄を通知する PC が必要です。自分で開きたい場合はオフにしてください。"),
     ("Fractional V-Sync", "分数V-Sync"),
     ("On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Measured on Windows, it adds 1 to 2 ms of delay on most frames and 2.5 to 4 ms on the slowest ones; turn it on if motion judders with V-Sync.", "画面のリフレッシュレートがストリームのフレームレートの2〜4倍のとき(120 Hzで60 fps)、各フレームを同じ回数のリフレッシュだけ表示し、動きを均一に保ちます。Windowsでの測定では、遅延がほとんどのフレームで1〜2 ms、最も遅いフレームで2.5〜4 ms増えます。V-Syncで動きがカクつく場合にオンにしてください。"),
+    ("The PC streams from a virtual display that matches the stream, or from its own monitor. The PC’s own setting keeps the PC’s display settings, Virtual display leaves the arrangement to the PC, and the other choices place it beside the PC’s monitors or switch them off during the stream. Needs PC support.", "PC はストリームに合った仮想ディスプレイ、または自身のモニターから配信します。「PC 自体の設定」は PC のディスプレイ設定のままにし、「仮想ディスプレイ」は配置を PC に任せ、ほかの選択肢は PC のモニターの横に置くか、ストリーム中はモニターをオフにします。PC の対応が必要です。"),
 ];

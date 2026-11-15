@@ -770,7 +770,7 @@ public class ComputerManagerService extends Service {
                 // Before its stored targets go, so an ask still in flight can't store them again.
                 wakeTargets.forget(computer.uuid);
                 HostStreamProfile.reset(this, computer.uuid);
-                HostDisplayChoice.save(this, computer.uuid, HostDisplayChoice.HOST_DEFAULT);
+                HostDisplayChoice.forget(this, computer.uuid);
                 HostCapabilityCache.forget(this, computer.uuid);
                 InternetPlay.forget(this, computer.uuid);
                 com.limelight.nativeapi.ConsoleRepository.forgetHost(this, computer.uuid);

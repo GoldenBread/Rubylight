@@ -25,7 +25,6 @@
         <item>Tiếp tục trò chơi gần nhất</item>
         <item>Một trò chơi đã chọn</item>
     </string-array>
-    <string name="summary_host_display_location">Cách PC đặt màn hình ảo của stream bên cạnh các màn hình của nó. Lựa chọn “Độc quyền” tắt các màn hình của PC trong lúc stream; chúng bật lại khi stream kết thúc. Cần PC hỗ trợ.</string>
     <string name="summary_pace_calibration_row">Tìm và lưu nhịp nhanh nhất mà khung hình PyroWave của PC vẫn đến trọn vẹn, dành cho các kết nối làm mất phần cuối khung hình, như dock USB Ethernet. Mất từ một đến ba phút.</string>
     <string name="summary_network_tests">Đo ping, độ dao động và mất gói, cùng tốc độ tải xuống nếu PC hỗ trợ.</string>
     <string name="settings_category_touch_mouse">Cảm ứng &amp; chuột</string>

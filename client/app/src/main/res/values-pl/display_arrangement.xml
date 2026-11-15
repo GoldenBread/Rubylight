@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="summary_display_arrangement">Komputer przesyła obraz z ekranu wirtualnego dopasowanego do strumienia albo z własnego monitora. „Ustawienie komputera” zachowuje ustawienia ekranu komputera, „Ekran wirtualny” zostawia układ komputerowi, a pozostałe opcje umieszczają go obok monitorów komputera lub wyłączają je na czas strumienia. Wymaga obsługi przez komputer.</string>
+</resources>

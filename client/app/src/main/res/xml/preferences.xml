@@ -212,12 +212,10 @@
             android:defaultValue="center" />
     </PreferenceCategory>
     <PreferenceCategory android:key="category_host_display" android:title="@string/settings_category_pc_display">
-        <com.limelight.preferences.MaterialSwitchPreference
-            android:key="checkbox_virtual_display"
-            android:title="@string/title_virtual_display"
-            android:summary="@string/settings_needs_host_support"
-            android:dialogMessage="@string/summary_virtual_display"
-            android:defaultValue="false" />
+        <!-- The main Display arrangement with Virtual display folded in: writes host_display_location and
+             checkbox_virtual_display (DisplayArrangementChoice); a PC's own choice wins (HostDisplayChoice). -->
+        <Preference android:key="host_display_location" android:title="@string/host_display_menu"
+            android:dialogMessage="@string/summary_display_arrangement" android:persistent="false" />
         <com.limelight.preferences.SeekBarPreference
             android:key="seekbar_virtual_display_scale"
             android:title="@string/title_virtual_display_scale"
@@ -234,9 +232,6 @@
             android:entries="@array/virtual_display_dpi_names"
             android:entryValues="@array/virtual_display_dpi_values"
             android:defaultValue="0" />
-        <!-- The main Display arrangement; a PC's own choice wins (HostDisplayChoice). -->
-        <Preference android:key="host_display_location" android:title="@string/host_display_menu"
-            android:dialogMessage="@string/summary_host_display_location" android:persistent="false" />
     </PreferenceCategory>
 
     <!-- Controls -->

@@ -87,12 +87,14 @@ public class HostStreamSettingsGatingTest {
     }
 
     @Test
-    public void rubylightGetsThePickerAndTheSwitchWithoutNotes() {
+    public void rubylightGetsThePickerWithVirtualDisplayAsAChoiceWithoutNotes() {
         withSettings("rubylight-pc", TestHosts.rubylight(), fragment -> {
             Preference display = fragment.findPreference("host_display");
             assertTrue(display.isEnabled());
             assertFalse(summary(display).contains(app.getString(R.string.host_feature_unknown)));
-            assertTrue(fragment.findPreference("virtual").isEnabled());
+            assertNull(fragment.findPreference("virtual"));
+            assertTrue(fragment.findPreference("scale").isEnabled());
+            assertTrue(summary(fragment.findPreference("scale")).contains(app.getString(R.string.summary_virtual_display_scale)));
             assertEquals(6, offeredCodecs(fragment));
         });
     }
@@ -172,7 +174,7 @@ public class HostStreamSettingsGatingTest {
     }
 
     @Test
-    public void olderRubylightExplainsWhyThePickerIsUnavailable() {
+    public void olderRubylightExplainsWhyThePickerIsUnavailableAndKeepsTheSwitch() {
         withSettings("old-rubylight-pc", TestHosts.fixture("butterpollo-serverinfo.xml"), fragment -> {
             Preference display = fragment.findPreference("host_display");
             assertFalse(display.isEnabled());
@@ -200,7 +202,9 @@ public class HostStreamSettingsGatingTest {
     public void aPcNeverReachedKeepsEveryRowWithANote() {
         withSettings("new-pc", null, fragment -> {
             String note = app.getString(R.string.host_feature_unknown);
-            for (String key : new String[] {"host_display", "virtual", "scale", "dpi"}) {
+            // Display arrangement may be taken, so it holds the virtual display switch.
+            assertNull(fragment.findPreference("virtual"));
+            for (String key : new String[] {"host_display", "scale", "dpi"}) {
                 Preference row = fragment.findPreference(key);
                 assertTrue(key, row.isEnabled());
                 assertTrue(key, summary(row).endsWith(note));

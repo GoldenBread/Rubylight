@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="summary_display_arrangement">Il PC trasmette da un display virtuale adatto allo stream, o dal proprio monitor. «Impostazione del PC» mantiene le impostazioni dello schermo del PC, «Display virtuale» lascia la disposizione al PC, e le altre scelte lo affiancano ai monitor del PC o li spengono durante lo stream. Richiede un PC compatibile.</string>
+</resources>

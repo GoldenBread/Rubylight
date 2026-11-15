@@ -1662,3 +1662,85 @@ fn fractional_vsync_is_offered_only_where_it_holds_pictures() {
         assert!(fractional_vsync_applies("wayland"));
     }
 }
+
+#[test]
+fn display_arrangement_shows_every_saved_pair_as_the_choice_that_streams_the_same() {
+    use crate::config::HostDisplay;
+    let sent = |(mode, virtual_display): (HostDisplay, bool)| nightjar_core::http::HostDisplay::from(mode).requests_virtual_display(virtual_display);
+    for mode in [HostDisplay::HostDefault, HostDisplay::Exclusive, HostDisplay::ExtendedPrimary, HostDisplay::Extended,
+        HostDisplay::ExtendedIsolated, HostDisplay::ExtendedPrimaryIsolated, HostDisplay::Physical] {
+        for virtual_display in [false, true] {
+            let s = Settings { host_display: mode, virtual_display, ..Settings::default() };
+            // With display modes the arrangement is sent, and the switch only counts with the PC's own setting.
+            let shown = display_choice(&s, true);
+            assert!(DISPLAY_CHOICES.contains(&shown), "{mode:?}/{virtual_display}");
+            assert_eq!(shown.0, mode, "{mode:?}/{virtual_display}");
+            assert_eq!(sent(shown), sent((mode, virtual_display)), "{mode:?}/{virtual_display}");
+            // Without display modes only the switch is sent.
+            assert_eq!(display_choice(&s, false), (HostDisplay::HostDefault, virtual_display));
+        }
+    }
+    // Each choice writes both keys and reads back as itself.
+    for choice in DISPLAY_CHOICES {
+        let mut s = Settings::default();
+        (s.host_display, s.virtual_display) = choice;
+        assert_eq!(display_choice(&s, true), choice);
+    }
+    assert_eq!(display_choice_name((HostDisplay::HostDefault, true)), "Virtual display");
+    assert_eq!(display_choice_name((HostDisplay::HostDefault, false)), "The PC’s own setting");
+}
+
+#[test]
+fn display_arrangement_holds_virtual_display_and_a_pick_writes_both_keys() {
+    use crate::config::HostDisplay;
+    let row = "Display arrangement";
+    // A pair the old rows could leave: shown as it streams, and left as it is until a pick.
+    let saved = Settings { host_display: HostDisplay::Physical, virtual_display: true, ..Settings::default() };
+    let mut f = settings_with(saved.clone());
+    f.l.settings_view.section = "Display & image";
+    f.l.settings_view.more = [true; 8];
+    f.settle();
+    assert_eq!(row_words(&f, row), ["Physical display", "Reset"], "Reset puts both keys back");
+    assert!(!shows(&f, "PC render resolution"), "Physical display has no virtual display: {:?}", f.drawn);
+    assert_eq!(f.l.settings, saved, "drawing it changes nothing");
+    click_value(&mut f, row, "Physical display");
+    for choice in DISPLAY_CHOICES {
+        assert!(shows(&f, display_choice_name(choice)), "{choice:?} is offered: {:?}", f.drawn);
+    }
+    click_last(&mut f, "Virtual display");
+    f.settle();
+    assert_eq!((f.l.settings.host_display, f.l.settings.virtual_display), (HostDisplay::HostDefault, true));
+    assert!(shows(&f, "PC render resolution"));
+    click_value(&mut f, row, "Virtual display");
+    click_last(&mut f, "Virtual display only");
+    f.settle();
+    assert_eq!((f.l.settings.host_display, f.l.settings.virtual_display), (HostDisplay::Exclusive, true));
+    click_value(&mut f, row, "Virtual display only");
+    click_last(&mut f, "The PC’s own setting");
+    f.settle();
+    assert_eq!((f.l.settings.host_display, f.l.settings.virtual_display), (HostDisplay::HostDefault, false));
+    assert!(!shows(&f, "Virtual display"), "no row of its own: {:?}", f.drawn);
+}
+
+#[test]
+fn a_pc_without_display_modes_offers_only_the_virtual_display_switch() {
+    use crate::config::HostDisplay;
+    let xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?><root status_code=\"200\"><hostname>PC</hostname><uniqueid>uid</uniqueid><HttpsPort>47984</HttpsPort><ExternalPort>47989</ExternalPort><PairStatus>1</PairStatus><currentgame>0</currentgame><state>SUNSHINE_SERVER_FREE</state><Permission>1</Permission></root>";
+    let info = nightjar_core::http::ServerInfo::parse(xml, 47989).expect("the answer parses");
+    // Settings ask for Exclusive, which this PC never receives: its page shows what it streams.
+    let mut f = Frames::with(record("PC", true, false), Reach::Online, Some(info), Vec::new());
+    f.size = vec2(1280.0, 12000.0);
+    f.l.settings = Settings { host_display: HostDisplay::Exclusive, virtual_display: false, ..Settings::default() };
+    f.l.settings_view.section = "Display & image";
+    f.l.settings_view.more = [true; 8];
+    let id = f.hosts.list[0].id;
+    f.l.go(Screen::HostSettings(id));
+    f.settle();
+    let row = "Display arrangement";
+    assert_eq!(row_words(&f, row), ["The PC’s own setting"]);
+    click_value(&mut f, row, "The PC’s own setting");
+    assert!(shows(&f, "Virtual display") && !shows(&f, "Virtual display only"), "two choices: {:?}", f.drawn);
+    click_last(&mut f, "Virtual display");
+    f.settle();
+    assert_eq!(row_words(&f, row), ["Virtual display"]);
+}

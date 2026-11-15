@@ -25,7 +25,6 @@
         <item>Continuar meu último jogo</item>
         <item>Um jogo escolhido</item>
     </string-array>
-    <string name="summary_host_display_location">Como o PC posiciona a tela virtual da transmissão ao lado dos monitores dele. A opção Exclusivo desliga os monitores do PC durante a transmissão; eles voltam quando ela termina. Requer suporte do PC.</string>
     <string name="summary_pace_calibration_row">Encontra e salva o ritmo mais rápido em que os quadros PyroWave de um PC chegam inteiros, para conexões que perdem o final dos quadros, como um dock USB com Ethernet. Leva de um a três minutos.</string>
     <string name="summary_network_tests">Mede ping, jitter e perda, e a velocidade de download quando o PC oferece suporte.</string>
     <string name="settings_category_touch_mouse">Toque e mouse</string>

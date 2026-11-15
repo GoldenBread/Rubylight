@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="summary_display_arrangement">Bilgisayar, yayına uyan bir sanal ekrandan veya kendi monitöründen yayın yapar. “Bilgisayarın kendi ayarı” bilgisayarın ekran ayarlarını korur, “Sanal ekran” yerleşimi bilgisayara bırakır, diğer seçenekler ise onu bilgisayarın monitörlerinin yanına koyar veya yayın boyunca monitörleri kapatır. Bilgisayar desteği gerekir.</string>
+</resources>

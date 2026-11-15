@@ -25,7 +25,6 @@
         <item>Continuar mi último juego</item>
         <item>Un juego elegido</item>
     </string-array>
-    <string name="summary_host_display_location">Cómo coloca el PC la pantalla virtual de la transmisión junto a sus monitores. La opción Exclusivo apaga los monitores del PC durante la transmisión; vuelven al terminar. Requiere un PC compatible.</string>
     <string name="summary_pace_calibration_row">Busca y guarda el ritmo más rápido al que los fotogramas PyroWave de un PC llegan completos, para conexiones que pierden el final de los fotogramas, como una base USB con Ethernet. Tarda de uno a tres minutos.</string>
     <string name="summary_network_tests">Mide ping, jitter y pérdida, y la velocidad de descarga si el PC lo admite.</string>
     <string name="settings_category_touch_mouse">Táctil y ratón</string>

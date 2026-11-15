@@ -320,6 +320,18 @@ public class HostStreamSettings extends NightjarActivity {
         }
     }
 
+    /**
+     * Display arrangement's Virtual display value, saved with the arrangement when its dialog is confirmed:
+     * the page's other edits stay unsaved.
+     */
+    private void saveVirtualDisplay(boolean value) {
+        overrides.virtualDisplay = value;
+        HostStreamProfile saved = HostStreamProfile.deserialize(savedProfile);
+        saved.virtualDisplay = value;
+        saved.save(this, hostUuid);
+        savedProfile = saved.serialize();
+    }
+
     private void saveOwn() {
         switch (mode) {
             case PROFILE: StreamProfiles.saveValues(this, profileId, overrides); break;
@@ -873,7 +885,10 @@ public class HostStreamSettings extends NightjarActivity {
                     row(display, "host_display", R.string.host_display_menu, this::showDisplay);
                 }
                 if (virtualDisplay) {
-                    row(display, "virtual", R.string.title_virtual_display, () -> showSwitch("virtual", R.string.title_virtual_display));
+                    // A usable Display arrangement holds the switch as its Virtual display choice.
+                    if (!(displayModes && gate(HostCapabilities.Feature.HOST_DISPLAY_MODES).isEnabled())) {
+                        row(display, "virtual", R.string.title_virtual_display, () -> showSwitch("virtual", R.string.title_virtual_display));
+                    }
                     row(display, "scale", R.string.title_virtual_display_scale, () -> showNumber("scale", R.string.host_profile_scale));
                 }
                 if (displayScale) {
@@ -1151,6 +1166,8 @@ public class HostStreamSettings extends NightjarActivity {
             Preference dpi = findPreference("dpi");
             if (virtual != null) {
                 virtual.setSummary(summary(HostStreamProfile.Field.VIRTUAL_DISPLAY, switchOverride("virtual") != null, onOff(switchValue(config, "virtual"))));
+            }
+            if (scale != null) {
                 scale.setSummary(summary(HostStreamProfile.Field.RENDER_SCALE, own.renderScale != null, config.virtualDisplayScale + "%") +
                         "\n" + getString(R.string.summary_virtual_display_scale));
             }
@@ -1192,13 +1209,17 @@ public class HostStreamSettings extends NightjarActivity {
                     virtual.setSummary(getString(R.string.host_display_controls_virtual, getString(displayChoice.label)));
                 }
                 applyGate(virtual, HostCapabilities.Feature.VIRTUAL_DISPLAY);
+            }
+            if (scale != null) {
                 applyGate(scale, HostCapabilities.Feature.VIRTUAL_DISPLAY);
             }
             if (dpi != null) {
                 applyGate(dpi, HostCapabilities.Feature.DISPLAY_SCALE);
             }
             if (display != null) {
-                display.setSummary(getString(displayChoice.label) + "\n" + getString(R.string.settings_profile_display_immediate));
+                int choice = DisplayArrangementChoice.choice(displayChoice, switchValue(config, "virtual"), true);
+                display.setSummary(DisplayArrangementChoice.names(activity, true)[choice] + "\n" +
+                        getString(R.string.settings_profile_display_immediate));
                 applyGate(display, HostCapabilities.Feature.HOST_DISPLAY_MODES);
             }
             activity.updateSaveState();
@@ -1397,8 +1418,9 @@ public class HostStreamSettings extends NightjarActivity {
         }
 
         private void showDisplay() {
-            AlertDialog picker = HostDisplaySettings.create(activity, activity.hostUuid,
-                    activity.computer.displayName(), this::updateSummaries);
+            PreferenceConfiguration config = activity.effective();
+            AlertDialog picker = HostDisplaySettings.create(activity, activity.hostUuid, activity.computer.displayName(),
+                    switchValue(config, "virtual"), activity::saveVirtualDisplay, this::updateSummaries);
             showEditor("display", picker);
             HostDisplaySettings.bindHelp(activity, picker);
         }

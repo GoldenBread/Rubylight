@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="summary_display_arrangement">電腦會從符合串流的虛擬顯示器或其本身的螢幕進行串流。「電腦本身的設定」保留電腦的顯示設定，「虛擬顯示器」將排列交由電腦決定，其他選項則將其放在電腦螢幕旁，或在串流期間關閉這些螢幕。需要電腦支援。</string>
+</resources>

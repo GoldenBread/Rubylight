@@ -25,7 +25,6 @@
         <item>前回のゲームを続ける</item>
         <item>選んだゲーム</item>
     </string-array>
-    <string name="summary_host_display_location">PC がストリーム用の仮想ディスプレイを自身のモニターに対してどう配置するかです。「専用」を選ぶと、ストリーム中は PC のモニターがオフになり、終了すると元に戻ります。PC の対応が必要です。</string>
     <string name="summary_pace_calibration_row">PC の PyroWave フレームが欠けずに届く最速のペースを測定して保存します。USB イーサネットドックなど、フレームの末尾が失われる接続向けです。1 分から 3 分かかります。</string>
     <string name="summary_network_tests">Ping、ジッター、損失を測定し、PC が対応していればダウンロード速度も測定します。</string>
     <string name="settings_category_touch_mouse">タッチとマウス</string>

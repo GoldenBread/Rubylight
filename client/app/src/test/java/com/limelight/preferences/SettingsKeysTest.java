@@ -90,6 +90,7 @@ public class SettingsKeysTest {
             "checkbox_multi_controller", "checkbox_send_controllers", // Controllers
             "checkbox_real_vrr", // Variable refresh rate's On or Fastest (VrrChoice)
             "checkbox_host_frame_times", "checkbox_drop_late_frames", // Frame pacing's choices (FramePacingChoice)
+            "checkbox_virtual_display", // Display arrangement's Virtual display choice (DisplayArrangementChoice)
             "checkbox_content_rate_frame_rate", // Lower refresh rate's "On, matched to the game" (LowerRefreshChoice)
             // The second switch of each row that was two (SwitchPairChoice).
             "checkbox_rate_change_bitrate", "checkbox_back_opens_menu", "checkbox_back_as_guide",

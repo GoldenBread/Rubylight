@@ -29,7 +29,7 @@ pub(super) const SECTION_KEYS: [&[&[&str]]; 8] = [
     &[&["window_mode"], &["video_scaling"], &["vrr", "present_at_host_times", "vrr_tear_free"],
         &["frame_pacing", "drop_late_frames", "host_frame_times"], &["vsync"], &["fractional_vsync"],
         &["upscaling"], &["upscale_sharpness"], &["align_video_top"],
-        &["virtual_display"], &["virtual_display_scale"], &["virtual_display_dpi"], &["host_display"]],
+        &["host_display", "virtual_display"], &["virtual_display_scale"], &["virtual_display_dpi"]],
     &[&["mouse_mode"], &["controllers", "multi_controller"], &["keyboard_follows_text_fields"], &["clipboard_sync"],
         &["swap_face_buttons"], &["gamepad_quit_combo"], &["deadzone"], &["trigger_deadzone"], &["controller_motion"], &["disable_rumble"],
         &["controller_mouse"], &["analog_scrolling"], &["mouse_fixed_step"], &["gamepad_touchpad_as_mouse"], &["background_controllers"],
@@ -958,16 +958,33 @@ impl Launcher {
             });
             rows.always();
             rows.group(en("PC display"));
-            setting_row(ui, s, &mut rows, &["virtual_display"], "Virtual display", "The PC streams from a virtual display of its own that matches the stream’s resolution and frame rate, whatever monitor the PC has. Off leaves it to the PC’s display settings.", |ui, s| toggle(ui, &mut s.virtual_display));
-            rows.when(s.virtual_display);
+            // A PC's own settings offer the arrangements only if its host takes them (HostDisplayModes);
+            // the virtual display switch alone decides elsewhere.
+            let test_host = if let Screen::HostSettings(id) = screen { view.hosts.get(id) } else { None };
+            let availability = |feature| test_host.and_then(|h| h.info.as_ref())
+                .map_or(nightjar_core::http::Availability::Unknown, |i| i.capabilities.availability(feature));
+            let modes = display_scale_gate(availability(nightjar_core::http::Feature::HostDisplayModes));
+            setting_row(ui, s, &mut rows, &["host_display", "virtual_display"], "Display arrangement", "The PC streams from a virtual display that matches the stream, or from its own monitor. The PC’s own setting keeps the PC’s display settings, Virtual display leaves the arrangement to the PC, and the other choices place it beside the PC’s monitors or switch them off during the stream. Needs PC support.", |ui, s| {
+                let current = display_choice(s, modes);
+                // Taller than egui's default menu, so all eight choices show.
+                Combo::from_id_salt("host-display")
+                    .selected_text(tr(display_choice_name(current)))
+                    .height(640.0)
+                    .show_ui(ui, |ui| {
+                        for choice in DISPLAY_CHOICES.into_iter().filter(|c| modes || c.0 == HostDisplay::HostDefault) {
+                            if ui.selectable_label(choice == current, tr(display_choice_name(choice))).clicked() {
+                                (s.host_display, s.virtual_display) = choice;
+                            }
+                        }
+                    }).response
+            });
+            rows.when(display_choice(s, modes).1);
             setting_row(ui, s, &mut rows, &["virtual_display_scale"], "PC render resolution", "The size the PC renders at, as a percent of the stream resolution; the video sent keeps its size. Above 100 the PC draws more pixels than it sends, below fewer.", |ui, s| {
                 slider(ui, &mut s.virtual_display_scale, crate::config::RENDER_SCALE, 5.0, percent, |rail| rail.step_by(5.0), |field| field.suffix("%"))
             });
             rows.always();
             // A PC's own settings offer it only if its host reads rlDisplayScale (DisplayScale).
-            let test_host = if let Screen::HostSettings(id) = screen { view.hosts.get(id) } else { None };
-            rows.when(display_scale_gate(test_host.and_then(|h| h.info.as_ref())
-                .map_or(nightjar_core::http::Availability::Unknown, |i| i.capabilities.availability(nightjar_core::http::Feature::DisplayScale))));
+            rows.when(display_scale_gate(availability(nightjar_core::http::Feature::DisplayScale)));
             setting_row(ui, s, &mut rows, &["virtual_display_dpi"], "PC display scaling", "Text and interface size on the PC’s virtual display; the resolution stays. Raise it if text is too small on this screen. PC’s own keeps the PC’s setting.", |ui, s| {
                 Combo::from_id_salt("virtual-display-dpi")
                     .selected_text(display_scale_name(s.virtual_display_dpi))
@@ -978,16 +995,6 @@ impl Launcher {
                     }).response
             });
             rows.always();
-            setting_row(ui, s, &mut rows, &["host_display"], "Display arrangement", "How the PC places the stream’s virtual display beside its monitors. Virtual display only switches the PC’s monitors off during the stream; they come back when it ends. Needs PC support.", |ui, s| {
-                Combo::from_id_salt("host-display")
-                    .selected_text(tr(host_display_name(s.host_display)))
-                    .show_ui(ui, |ui| {
-                        for mode in [HostDisplay::HostDefault, HostDisplay::Exclusive, HostDisplay::ExtendedPrimary,
-                            HostDisplay::Extended, HostDisplay::ExtendedIsolated, HostDisplay::ExtendedPrimaryIsolated, HostDisplay::Physical] {
-                            ui.selectable_value(&mut s.host_display, mode, tr(host_display_name(mode)));
-                        }
-                    }).response
-            });
 
             rows.section(en("Controls"));
             setting_row(ui, s, &mut rows, &["mouse_mode"], "Mouse mode", "Captured keeps the pointer in the stream and sends relative movement, which games with mouse look need. Desktop pointer moves like an ordinary mouse, for desktop work.", |ui, s| {
@@ -1807,6 +1814,33 @@ pub(super) fn display_scale_name(percent: u32) -> String {
     if percent == 0 { tr("PC’s own").into() } else { format!("{percent}%") }
 }
 
+/// Display arrangement with the Virtual display switch folded in (Android's DisplayArrangementChoice):
+/// the PC's own setting, a virtual display in the PC's own arrangement, then the arrangements, each
+/// saved in host_display and virtual_display as before.
+pub(super) const DISPLAY_CHOICES: [(HostDisplay, bool); 8] = [
+    (HostDisplay::HostDefault, false), (HostDisplay::HostDefault, true), (HostDisplay::Exclusive, true),
+    (HostDisplay::ExtendedPrimary, true), (HostDisplay::Extended, true), (HostDisplay::ExtendedIsolated, true),
+    (HostDisplay::ExtendedPrimaryIsolated, true), (HostDisplay::Physical, false)];
+
+/// The choice the two stored values make. An arrangement wins, as at launch, where it asks for a
+/// virtual display by itself (`requests_virtual_display`); the PC's own setting shows the switch. A
+/// PC without display modes reads the switch alone, as its launch does. A saved pair stays as it is
+/// until a choice is made, so no stream changes by itself.
+pub(super) fn display_choice(s: &Settings, modes: bool) -> (HostDisplay, bool) {
+    if modes && s.host_display != HostDisplay::HostDefault {
+        (s.host_display, s.host_display != HostDisplay::Physical)
+    } else {
+        (HostDisplay::HostDefault, s.virtual_display)
+    }
+}
+
+pub(super) fn display_choice_name(choice: (HostDisplay, bool)) -> &'static str {
+    match choice {
+        (HostDisplay::HostDefault, true) => en("Virtual display"),
+        (mode, _) => host_display_name(mode),
+    }
+}
+
 pub(super) fn host_display_name(mode: HostDisplay) -> &'static str {
     match mode {
         HostDisplay::HostDefault => en("The PC’s own setting"),
@@ -2213,7 +2247,7 @@ pub(super) fn value_text(key: &str, s: &Settings, display: &Display, style: crat
         "pyrowave_decoder" => tr(s.pyrowave_decoder.label()).to_owned(),
         "window_mode" => window_name(s.window_mode).to_owned(),
         "video_scaling" => tr(s.video_scaling.label()).to_owned(),
-        "host_display" => tr(host_display_name(s.host_display)).to_owned(),
+        "host_display" => tr(display_choice_name(display_choice(s, true))).to_owned(),
         "virtual_display_scale" => format!("{}%", s.virtual_display_scale),
         "virtual_display_dpi" => display_scale_name(s.virtual_display_dpi),
         "frame_pacing" | "drop_late_frames" | "host_frame_times" => frame_pacing_choice_name(frame_pacing_choice(s)).to_owned(),
@@ -2281,7 +2315,7 @@ pub(super) const ANDROID_KEYS: &[(&str, &str)] = &[
     ("video_scaling", "video_scaling"), ("vrr", "checkbox_vrr"), ("present_at_host_times", "checkbox_real_vrr"),
     ("frame_pacing", "frame_pacing"), ("fractional_vsync", "checkbox_fractional_vsync"), ("upscaling", "upscaling_mode"),
     ("upscale_sharpness", "upscaling_sharpness"),
-    ("align_video_top", "video_alignment"), ("virtual_display", "checkbox_virtual_display"),
+    ("align_video_top", "video_alignment"),
     ("virtual_display_scale", "seekbar_virtual_display_scale"), ("virtual_display_dpi", "list_virtual_display_dpi"),
     ("host_display", "host_display_location"),
     // Controls
