@@ -83,6 +83,38 @@ public class UnusedSettingTagsTest {
     }
 
     @Test
+    public void fractionalVsyncNamesWhatShowsFramesWithoutIt() {
+        String key = SettingRules.FRACTIONAL_VSYNC;
+        assertNull("Lowest latency, the default", reason(key));
+        prefs.edit().putString("frame_pacing", "balanced").putBoolean("checkbox_drop_late_frames", false).commit();
+        assertNull("Balanced, keep every frame", reason(key));
+        prefs.edit().putString("frame_pacing", "smoothness").commit();
+        assertEquals("Not used with Smoothest video", reason(key));
+        prefs.edit().putString("frame_pacing", "cap-fps").commit();
+        assertEquals("Not used with Balanced with FPS limit", reason(key));
+        prefs.edit().putString("frame_pacing", "latency").putBoolean("checkbox_host_frame_times", true).commit();
+        assertEquals("Not used with PC’s frame times", reason(key));
+        prefs.edit().clear().putBoolean(PreferenceConfiguration.VRR_PREF_STRING, true).commit();
+        if (SettingRules.vrrOn(RuntimeEnvironment.getApplication(), prefs)) {
+            assertEquals("Not used with Variable refresh rate", reason(key));
+        } else {
+            assertNull("VRR not offered here: the pacing decides", reason(key));
+        }
+    }
+
+    @Test
+    public void fractionalVsyncRowStaysAndSaysWhy() {
+        // The PC's frame times: a first start's defaults rewrite the pacing itself (NATIVE_DEFAULTS_VERSION).
+        prefs.edit().putBoolean("checkbox_host_frame_times", true).commit();
+        try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
+            StreamSettings screen = controller.get();
+            Preference row = SettingsStructureTest.open(screen, "display").findPreference(SettingRules.FRACTIONAL_VSYNC);
+            assertNotNull("shown, not hidden (a hidden row is detached)", row);
+            assertEquals("Not used with PC’s frame times", String.valueOf(row.getSummary()));
+        }
+    }
+
+    @Test
     public void theRowShowsItsReason() {
         prefs.edit().putBoolean("checkbox_enable_hdr", true).commit();
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {

@@ -914,11 +914,18 @@ impl Launcher {
             rows.when(!vrr && !s.frame_pacing.forces_vsync() && !s.host_frame_times);
             setting_row(ui, s, &mut rows, &["vsync"], "V-Sync", "Waits for the screen’s refresh, so the picture never tears; the wait adds latency. Turn it off for the lowest latency if tearing doesn’t bother you.", |ui, s| toggle(ui, &mut s.vsync));
             rows.always();
-            // Only where pictures wait for the refresh and the display says when the last picture
-            // was shown (`Streaming::held_times`), and not with the PC's frame times, which place
-            // each picture themselves (`present::fractional_vsync_stands_aside`).
-            rows.when(fractional_vsync_applies(&video_driver()) && !vrr && !s.host_frame_times);
-            rows.when(s.vsync || s.frame_pacing.forces_vsync());
+            // Under V-Sync, which it needs; it holds nothing with VRR, with the PC's frame times,
+            // which place each picture themselves (`present::fractional_vsync_stands_aside`), or
+            // where the display says not when the last picture was shown (`Streaming::held_times`),
+            // and says so there (client/AGENTS.md).
+            rows.when(s.vsync || s.frame_pacing.forces_vsync() || vrr || s.host_frame_times);
+            if vrr {
+                unused_with(&mut rows, tr("Variable refresh rate"));
+            } else if s.host_frame_times {
+                unused_with(&mut rows, frame_pacing_choice_name(FramePacingChoice::HostTimes));
+            } else if !fractional_vsync_applies(&video_driver()) {
+                rows.note(tr("Not used: this desktop doesn’t report when pictures are shown").to_owned(), *TERTIARY);
+            }
             setting_row(ui, s, &mut rows, &["fractional_vsync"], "Fractional V-Sync", "On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Measured on Windows, it adds 1 to 2 ms of delay on most frames and 2.5 to 4 ms on the slowest ones; turn it on if motion judders with V-Sync.", |ui, s| toggle(ui, &mut s.fractional_vsync));
             rows.always();
             rows.group(en("Image"));
@@ -1974,7 +1981,7 @@ pub(super) fn fractional_vsync_applies(video_driver: &str) -> bool {
 }
 
 /// SDL's video driver, which only Linux asks for.
-fn video_driver() -> String {
+pub(super) fn video_driver() -> String {
     #[cfg(target_os = "linux")]
     return crate::sdl::video_driver();
     #[cfg(not(target_os = "linux"))]

@@ -67,7 +67,7 @@ final class SettingRules {
     /** The switches whose summary says why they do nothing ({@link #unusedReason}); they have no other summary. */
     static final java.util.Set<String> TAGGED_SWITCHES = new java.util.HashSet<>(java.util.Arrays.asList(
             "checkbox_texture_view", PreferenceConfiguration.THERMAL_PROTECTION_PREF_STRING,
-            "checkbox_onscreen_own_player", "checkbox_audio_passthrough"));
+            "checkbox_onscreen_own_player", "checkbox_audio_passthrough", FRACTIONAL_VSYNC));
 
     /**
      * Why a row does nothing with the other settings as they are, or null. A setting that works only in some setups
@@ -103,6 +103,18 @@ final class SettingRules {
             case "checkbox_audio_passthrough":
                 // NvConnection.audioPassthroughCodecs: muted audio asks for nothing to pass through.
                 return prefs.getBoolean("checkbox_mute_audio", false) ? unusedWith(context, R.string.title_checkbox_mute_audio) : null;
+            case FRACTIONAL_VSYNC:
+                // Adaptive refresh, the PC's frame times and the pacings that place frames themselves hold
+                // nothing (fractionalVsyncApplies), nor does a screen that refreshes when a frame comes
+                // (MediaCodecDecoderRenderer.heldRefreshes); the row names what takes over.
+                if (vrrOn(context, prefs)) return unusedWith(context, R.string.title_vrr);
+                if (DisplayFrameRatePolicy.adaptiveInUse(DisplayFrameRatePolicy.arrScreen(context), false,
+                        prefs.getBoolean(PreferenceConfiguration.ARR_FIXED_TIMING_PREF_STRING, false))) {
+                    return context.getString(R.string.tag_unused_adaptive_screen);
+                }
+                if (fractionalVsyncApplies(context, prefs)) return null;
+                return context.getString(R.string.tag_unused_with, StreamSettings.entryFor(context,
+                        R.array.frame_pacing_choice_names, R.array.frame_pacing_choice_values, FramePacingChoice.read(prefs)));
             default:
                 return null;
         }

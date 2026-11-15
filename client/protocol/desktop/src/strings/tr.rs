@@ -1595,6 +1595,7 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("Not used with {}", "{} ile kullanılmıyor"),
     ("Not used: this computer has no on-screen keyboard", "Kullanılmıyor: bu bilgisayarda ekran klavyesi yok"),
     ("Not used outside a Wayland desktop", "Wayland masaüstü dışında kullanılmıyor"),
+    ("Not used: this desktop doesn’t report when pictures are shown", "Kullanılmıyor: bu masaüstü görüntülerin ne zaman gösterildiğini bildirmiyor"),
     ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields; turn off to open it yourself.", "Bilgisayarda bir metin alanı seçtiğinizde ekran klavyesini açar, sonra kapatır. Metin alanlarını bildiren bir bilgisayar gerekir; klavyeyi kendiniz açmak için kapatın."),
     ("Fractional V-Sync", "Kesirli V-Sync"),
     ("On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Measured on Windows, it adds 1 to 2 ms of delay on most frames and 2.5 to 4 ms on the slowest ones; turn it on if motion judders with V-Sync.", "Akışın kare hızının 2-4 katında çalışan bir ekranda (120 Hz’de 60 fps) her kareyi aynı sayıda yenileme boyunca gösterir, böylece hareket düzgün kalır. Windows’ta ölçüldüğünde karelerin çoğunda 1-2 ms, en yavaşlarında 2,5-4 ms gecikme ekler; V-Sync ile hareket takılıyorsa açın."),

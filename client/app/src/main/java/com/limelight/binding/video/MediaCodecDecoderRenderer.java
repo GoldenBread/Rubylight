@@ -4147,8 +4147,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     /**
      * Whether fractional V-Sync stands aside for VRR: the user's VRR choice (VRR Fastest too, which
-     * forces Lowest latency on a phone without ARR) or a screen timed as adaptive. The settings screen hides
-     * the row with VRR chosen (SettingRules.fractionalVsyncApplies), so a saved choice never holds.
+     * forces Lowest latency on a phone without ARR) or a screen timed as adaptive. The settings row says it is
+     * not used there (SettingRules.unusedReason), and a saved choice never holds.
      */
     private boolean vrrForHolds(boolean arr) {
         return prefs.vrr || arr;

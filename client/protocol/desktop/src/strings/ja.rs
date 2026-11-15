@@ -1595,6 +1595,7 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("Not used with {}", "{} とは併用できません"),
     ("Not used: this computer has no on-screen keyboard", "使用されません: このコンピューターにはスクリーンキーボードがありません"),
     ("Not used outside a Wayland desktop", "Wayland デスクトップ以外では使用されません"),
+    ("Not used: this desktop doesn’t report when pictures are shown", "使用されません: このデスクトップは画像が表示された時刻を報告しません"),
     ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields; turn off to open it yourself.", "PC のテキスト欄を選ぶとスクリーンキーボードが開き、入力が終わると閉じます。テキスト欄を通知する PC が必要です。自分で開きたい場合はオフにしてください。"),
     ("Fractional V-Sync", "分数V-Sync"),
     ("On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Measured on Windows, it adds 1 to 2 ms of delay on most frames and 2.5 to 4 ms on the slowest ones; turn it on if motion judders with V-Sync.", "画面のリフレッシュレートがストリームのフレームレートの2〜4倍のとき(120 Hzで60 fps)、各フレームを同じ回数のリフレッシュだけ表示し、動きを均一に保ちます。Windowsでの測定では、遅延がほとんどのフレームで1〜2 ms、最も遅いフレームで2.5〜4 ms増えます。V-Syncで動きがカクつく場合にオンにしてください。"),

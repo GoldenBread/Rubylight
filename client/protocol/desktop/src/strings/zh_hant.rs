@@ -1595,6 +1595,7 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("Not used with {}", "無法與 {} 同時使用"),
     ("Not used: this computer has no on-screen keyboard", "未使用：此電腦沒有螢幕鍵盤"),
     ("Not used outside a Wayland desktop", "在 Wayland 桌面之外不使用"),
+    ("Not used: this desktop doesn’t report when pictures are shown", "未使用：此桌面不回報畫面何時顯示"),
     ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields; turn off to open it yourself.", "在電腦上選取文字欄位時開啟螢幕鍵盤，之後自動關閉。需要電腦能回報文字欄位；關閉後由你自行開啟鍵盤。"),
     ("Fractional V-Sync", "分數 V-Sync"),
     ("On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Measured on Windows, it adds 1 to 2 ms of delay on most frames and 2.5 to 4 ms on the slowest ones; turn it on if motion judders with V-Sync.", "螢幕更新率是串流影格率的 2 到 4 倍時(120 Hz 上的 60 fps),每個影格顯示相同次數的更新,讓動作保持平順。在 Windows 上實測,大多數影格會增加 1 到 2 ms 延遲,最慢的影格增加 2.5 到 4 ms;如果開啟 V-Sync 後動作卡頓,請開啟。"),

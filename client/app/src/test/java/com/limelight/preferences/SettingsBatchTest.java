@@ -76,7 +76,7 @@ public class SettingsBatchTest {
     }
 
     @Test
-    public void fractionalVsyncIsShownOnlyWherePacingUsesIt() {
+    public void fractionalVsyncAppliesOnlyWherePacingUsesIt() {
         android.app.Application app = RuntimeEnvironment.getApplication();
         SharedPreferences p = prefs();
         p.edit().clear().commit();
