@@ -100,11 +100,36 @@ fn read(state: &PairedState, now: u64) -> Vec<Route> {
     routes.truncate(MAX_ROUTES);
     routes
 }
-/// Puts `routes` in the state, for the paths a stream runs through: the snapshot returned is
-/// written once the paired lock is released, so other requests do not wait for the disk.
-fn update(state: &mut PairedState, routes: &[Route]) -> Result<PairedSnapshot> {
-    state.document["root"][FIELD] = serde_json::to_value(routes)?;
-    Ok(state.snapshot())
+/// Puts `routes` in the state, for the paths a stream runs through: what is returned is written
+/// once the paired lock is released (`Pending::save`), so other requests do not wait for the disk.
+fn update(state: &mut PairedState, routes: &[Route]) -> Result<Pending> {
+    let after = serde_json::to_value(routes)?;
+    let before = std::mem::replace(&mut state.document["root"][FIELD], after.clone());
+    Ok(Pending {
+        snapshot: state.snapshot(),
+        before,
+        after,
+    })
+}
+/// Routes put in the state by `update`, still to be written.
+struct Pending {
+    snapshot: PairedSnapshot,
+    before: Value,
+    after: Value,
+}
+impl Pending {
+    /// Writes the routes. A write that fails takes them back out of memory too, unless
+    /// something changed them since, so memory never holds what the file does not.
+    fn save(self, h: &Host) -> Result<()> {
+        let result = self.snapshot.save(&h.paired_path);
+        if result.is_err() {
+            let mut state = h.paired.write().unwrap();
+            if state.document["root"][FIELD] == self.after {
+                state.document["root"][FIELD] = self.before;
+            }
+        }
+        result
+    }
 }
 fn save(h: &Host, state: &mut PairedState, routes: &[Route]) -> Result<()> {
     let mut next = state.clone();
@@ -229,9 +254,9 @@ impl Host {
             } else {
                 remembered = true;
             }
-            let snapshot = update(&mut state, &routes);
+            let pending = update(&mut state, &routes);
             drop(state);
-            if let Err(error) = snapshot.and_then(|snapshot| snapshot.save(&self.paired_path)) {
+            if let Err(error) = pending.and_then(|pending| pending.save(self)) {
                 tracing::warn!(%error, "could not save the video pacing probe count");
                 // An unwritable profile must not turn every reconnect into a
                 // fast probe because the old counter remains at four.
@@ -306,10 +331,10 @@ impl Host {
         } else {
             return Ok(());
         }
-        let snapshot = update(&mut state, &routes)?;
+        let pending = update(&mut state, &routes)?;
         drop(state);
         // Still under the epoch lock: a reset waits for this write.
-        snapshot.save(&self.paired_path)
+        pending.save(self)
     }
 
     pub(crate) fn reset_keyframe_loss(&self, client_id: &str) -> Result<()> {

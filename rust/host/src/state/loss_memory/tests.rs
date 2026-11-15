@@ -340,6 +340,27 @@ fn a_stream_start_with_repeated_client_requests_is_not_remembered_for_a_day() {
 }
 
 #[test]
+fn a_probe_count_the_profile_cannot_take_is_not_kept_in_memory_either() {
+    let f = Fixture::new();
+    let c = f.client(0x071f1f00);
+    seed(&f, &c);
+    let count = || read(&f.host.paired.read().unwrap(), now())[0].remembered_sessions;
+    assert_eq!(count(), 0);
+    // An unwritable profile: the paired-devices file is a folder now.
+    std::fs::remove_file(&f.host.paired_path).unwrap();
+    std::fs::create_dir(&f.host.paired_path).unwrap();
+    let s = session(&f, &c, "192.0.2.1", 0);
+    let guard = f.host.configure_keyframe_loss(&s, true);
+    // The stream still keeps the remembered rate.
+    assert!(s.keyframe_loss_active());
+    drop(guard);
+    // The count that could not be written is not in memory, where the next save of anything
+    // else would have written it.
+    assert_eq!(count(), 0);
+    std::fs::remove_dir(&f.host.paired_path).unwrap();
+}
+
+#[test]
 fn the_session_after_one_remembered_one_probes_and_a_successful_probe_forgets_its_route() {
     let f = Fixture::new();
     let c = f.client(0x071f1f00);
