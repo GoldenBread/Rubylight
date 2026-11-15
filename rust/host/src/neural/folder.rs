@@ -1058,9 +1058,10 @@ struct Layout {
 
 /// The folder `root` in the game's folder as an earlier install left it
 /// once its manifest went: `Ok` with its folders, parents first, when it
-/// holds nothing but folders and what the provider writes in its own
-/// folder ([`neural::provider_files`]); otherwise `Err` with what in it is
-/// not Rubylight's. A link in it is never Rubylight's.
+/// holds nothing but folders, what the provider writes in its own folder
+/// ([`neural::provider_files`]) and the provider's settings, which the
+/// install keeps as they are ([`place`]); otherwise `Err` with what else is
+/// in it. A link in it is never Rubylight's.
 fn leftover(
     folder: &Path,
     root: &str,
@@ -1097,8 +1098,9 @@ fn leftover(
                 Ok(kind)
                     if kind.is_file()
                         && !link
-                        && neural::provider_dlssg(&relative)
-                        && neural::provider_files(&name) => {}
+                        && ((neural::provider_dlssg(&relative)
+                            && neural::provider_files(&name))
+                            || neural::settings(&path)) => {}
                 _ => foreign.push(path),
             }
         }
@@ -1111,23 +1113,38 @@ fn leftover(
     })
 }
 
-/// Why paths in the game's folder that are not Rubylight's stop an install.
-fn not_ours(paths: &[String]) -> String {
-    match paths {
-        [one] => format!("{one} is in the game's folder and is not Rubylight's: remove it first"),
-        _ => {
-            let named = paths.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
-            let more = paths.len().saturating_sub(3);
-            let more = if more > 0 {
-                format!(" and {more} more")
-            } else {
-                String::new()
-            };
-            format!(
-                "{named}{more} are in the game's folder and are not Rubylight's: remove them first"
-            )
+/// Why paths in the game's folder stop an install. What is in the
+/// provider's folder is still there from an earlier install (one of its
+/// files changed since, or something put in its folder), anything else is
+/// not Rubylight's. Either is the user's to move out: the host deletes
+/// neither.
+fn in_the_way(paths: &[String]) -> String {
+    let (earlier, others): (Vec<String>, Vec<String>) = paths.iter().cloned().partition(|path| {
+        path.split('/')
+            .any(|part| part.eq_ignore_ascii_case(neural::PROVIDER))
+    });
+    let named = |paths: &[String]| {
+        let mut text = paths.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+        if paths.len() > 3 {
+            text.push_str(&format!(" and {} more", paths.len() - 3));
         }
+        (text, if paths.len() == 1 { "is" } else { "are" })
+    };
+    let mut clauses = Vec::new();
+    if !others.is_empty() {
+        let (text, be) = named(&others);
+        clauses.push(format!(
+            "{text} {be} in the game's folder and {be} not Rubylight's"
+        ));
     }
+    if !earlier.is_empty() {
+        let (text, be) = named(&earlier);
+        clauses.push(format!(
+            "{text} {be} still in the game's folder from an earlier install"
+        ));
+    }
+    let it = if paths.len() == 1 { "it" } else { "them" };
+    format!("{}: move {it} out first", clauses.join("; "))
 }
 
 /// The layout for the game's folder, or why it is refused: Rubylight 3.0's
@@ -1215,7 +1232,7 @@ fn layout(folder: &Path, exe: &Path, old: Option<&Manifest>, writer: Writer) -> 
                 )));
             }
             adopt = leftover(folder, &provider, writer)?
-                .map_err(|foreign| Failure::Refused(not_ours(&foreign)))?;
+                .map_err(|foreign| Failure::Refused(in_the_way(&foreign)))?;
         }
         return Ok(Layout {
             mode: Mode::Addon,
@@ -1274,7 +1291,7 @@ fn layout(folder: &Path, exe: &Path, old: Option<&Manifest>, writer: Writer) -> 
                     "OptiScaler is installed in the game's folder ({name}): remove it first"
                 )));
             }
-            Err(foreign) => return Err(Failure::Refused(not_ours(&foreign))),
+            Err(foreign) => return Err(Failure::Refused(in_the_way(&foreign))),
         },
         None => Vec::new(),
     };
@@ -1345,6 +1362,23 @@ fn place(
             .flat_map(|m| [m.files.get(&target), m.previous.get(&target)])
             .flatten()
             .collect();
+        // The provider's settings an earlier install left in a folder taken
+        // over stay as the user left them, as an update keeps them; the
+        // manifest names them, so a removal takes them as it takes settings.
+        let taken_over = target.rsplit_once('/').is_some_and(|(parent, _)| {
+            layout
+                .adopt
+                .iter()
+                .any(|relative| relative.eq_ignore_ascii_case(parent))
+        });
+        if forms.is_empty()
+            && taken_over
+            && neural::settings(&target)
+            && std::fs::symlink_metadata(folder.join(&target)).is_ok_and(|meta| meta.is_file())
+        {
+            wanted.push((target, placed.clone()));
+            continue;
+        }
         if forms.is_empty() && std::fs::symlink_metadata(folder.join(&target)).is_ok() {
             return Err(Failure::Refused(format!(
                 "{target} is already in the game's folder and is not Rubylight's"

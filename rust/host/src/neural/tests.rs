@@ -3090,7 +3090,7 @@ fn the_users_own_optiscaler_gets_the_provider_and_its_settings_back_exactly() {
     let Response::Refused { reason } = install(Some(&exe), None, &cache) else {
         panic!()
     };
-    assert!(reason.contains("not Rubylight's"), "{reason}");
+    assert!(reason.contains("from an earlier install"), "{reason}");
     assert_eq!(std::fs::read(folder.join("OptiScaler.ini")).unwrap(), ini);
     assert_eq!(
         std::fs::read(folder.join(format!("{provider}/nvngx_dlssg.dll"))).unwrap(),
@@ -3475,7 +3475,7 @@ async fn no_text_the_console_shows_names_the_mod() {
     let shown = serde_json::to_string(&status(h, "game")).unwrap();
     assert!(!shown.contains("Apex") && !shown.contains("ANR"), "{shown}");
     assert!(
-        shown.contains("frame generation's nr_fg.ini, frame generation's nvngx_dlssg.dll are in the game's folder"),
+        shown.contains("frame generation's nvngx_dlssg.dll is still in the game's folder from an earlier install: move it out first"),
         "{shown}"
     );
     // A file where the provider's folder goes.
@@ -3657,7 +3657,7 @@ fn turning_on_over_what_a_removal_left_takes_it_over_or_names_what_is_in_the_way
         install(Some(&exe), None, &cache),
         Response::Refused {
             reason: format!(
-                "{DLSSG}/notes.txt is in the game's folder and is not Rubylight's: remove it first"
+                "{DLSSG}/notes.txt is still in the game's folder from an earlier install: move it out first"
             )
         }
     );
@@ -3667,11 +3667,11 @@ fn turning_on_over_what_a_removal_left_takes_it_over_or_names_what_is_in_the_way
     let Response::Refused { reason } = install(Some(&exe), None, &cache) else {
         panic!()
     };
-    assert!(
-        reason.starts_with(&format!(
-            "OptiScaler/anr-vkloader.dll, {DLSSG}/notes.txt are in the game's folder"
-        )),
-        "{reason}"
+    assert_eq!(
+        reason,
+        format!(
+            "OptiScaler/anr-vkloader.dll is in the game's folder and is not Rubylight's; {DLSSG}/notes.txt is still in the game's folder from an earlier install: move them out first"
+        )
     );
     assert!(!folder.join(MANIFEST).exists());
     // Once they are out, the empty folders are taken over.
@@ -3694,7 +3694,7 @@ fn turning_on_over_what_a_removal_left_takes_it_over_or_names_what_is_in_the_way
     };
     assert_eq!(
         reason,
-        format!("{DLSSG} is in the game's folder and is not Rubylight's: remove it first")
+        format!("{DLSSG} is still in the game's folder from an earlier install: move it out first")
     );
     assert_eq!(names(&elsewhere), Vec::<String>::new());
     assert!(!folder.join(MANIFEST).exists());
@@ -3803,6 +3803,70 @@ fn a_folder_of_the_hosts_that_cannot_go_is_named_and_taken_over_later() {
         install(Some(&exe), None, &cache),
         Response::Placed { .. }
     ));
+    assert_eq!(remove(&exe), Response::Removed { kept: vec![] });
+    assert_eq!(snapshot(folder), game_files);
+}
+
+#[test]
+fn what_an_earlier_install_left_is_named_as_such_and_its_settings_are_kept() {
+    let temp = tempdir();
+    let cache = release(temp.path(), "FG-V.B16", b"OptiScaler proxy");
+    let exe = game(temp.path());
+    let folder = exe.parent().unwrap();
+    let game_files = snapshot(folder);
+    // A removal keeps a placed file changed since (the provider's model)
+    // and takes the provider's settings however they changed.
+    assert!(matches!(
+        install(Some(&exe), None, &cache),
+        Response::Placed { .. }
+    ));
+    std::fs::write(folder.join(PAK), b"retrained").unwrap();
+    std::fs::write(folder.join(PINI), b"path = gpu\n").unwrap();
+    assert_eq!(
+        remove(&exe),
+        Response::Removed {
+            kept: vec![PAK.into()]
+        }
+    );
+    assert!(!folder.join(PINI).exists());
+    // Turning on again says the model is still there from that install,
+    // not that it is someone else's, and the console names no mod.
+    let Response::Refused { reason } = install(Some(&exe), None, &cache) else {
+        panic!()
+    };
+    assert_eq!(
+        reason,
+        format!("{PAK} is still in the game's folder from an earlier install: move it out first")
+    );
+    assert_eq!(
+        neural::shown(&reason),
+        "frame generation's pack.nrx is still in the game's folder from an earlier install: move it out first"
+    );
+    assert_eq!(
+        std::fs::read(folder.join(PAK)).unwrap(),
+        b"retrained",
+        "nothing is deleted"
+    );
+    std::fs::remove_file(folder.join(PAK)).unwrap();
+
+    // The provider's settings an earlier install left (one made by hand),
+    // with what the provider wrote: taken over, the settings as the user
+    // left them, as an update keeps them.
+    std::fs::write(folder.join(PINI), b"path = gpu\n").unwrap();
+    provider_ran(folder, DLSSG);
+    let placed = install(Some(&exe), None, &cache);
+    assert!(matches!(placed, Response::Placed { .. }), "{placed:?}");
+    assert_eq!(std::fs::read(folder.join(PINI)).unwrap(), b"path = gpu\n");
+    assert!(manifest_of(folder).files.contains_key(PINI));
+    assert_eq!(std::fs::read(folder.join(PAK)).unwrap(), b"model");
+    // A launch's check leaves them so.
+    assert!(matches!(
+        prepare(&exe, Some(&cache)),
+        Response::Placed { .. }
+    ));
+    assert_eq!(std::fs::read(folder.join(PINI)).unwrap(), b"path = gpu\n");
+    // A removal takes them as it takes settings, and leaves the folder as
+    // it was.
     assert_eq!(remove(&exe), Response::Removed { kept: vec![] });
     assert_eq!(snapshot(folder), game_files);
 }
