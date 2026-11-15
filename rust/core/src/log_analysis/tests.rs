@@ -40,8 +40,16 @@ const LINES: &[(&str, &str)] = &[
         "2026-10-22T13:37:42.162737Z  WARN butterpollo_core::session: No video encoder available: no desktop display or hardware GPU. Retrying. code=\"video_encoder\"",
     ),
     (
-        "encoder_start_failed",
+        "amf_start_failed",
         "2026-10-06T17:50:12.416050Z  WARN butterpollo_core::session: No video encoder available: AMF error 1. Retrying. code=\"video_encoder\"",
+    ),
+    (
+        "amf_start_failed",
+        "2026-10-06T17:50:13.000000Z ERROR butterpollo::stream: session failed error=AMF could not start on AMD Radeon RX 7900 XT. If Windows is at the sign-in screen or an RDP session was disconnected, sign in to and unlock the console session, then retry. Otherwise update the AMD graphics driver or select another codec on the device client=tablet",
+    ),
+    (
+        "encoder_start_failed",
+        "2026-10-06T17:50:14.000000Z  WARN butterpollo_core::session: No video encoder available: NVENC could not start on NVIDIA GeForce RTX 4070. If Windows is at the sign-in screen or an RDP session was disconnected, sign in to and unlock the console session, then retry. Otherwise update the NVIDIA graphics driver or select another codec on the device. Retrying. code=\"video_encoder\"",
     ),
     (
         "encoder_stream_failure",
@@ -148,6 +156,29 @@ fn every_rule_explains_a_real_looking_line() {
             "{} has no test line",
             rule.id
         );
+    }
+}
+
+/// The vendor-neutral warnings an NVIDIA PC writes too are explained without
+/// AMD's encoder or the Radeon.
+#[test]
+fn an_nvidia_encoder_failure_is_not_explained_as_amd() {
+    let line = format!(
+        "{T}  WARN butterpollo_core::session: No video encoder available: NVENC could not start on NVIDIA GeForce RTX 4070. Retrying. code=\"video_encoder\""
+    );
+    let reset = format!(
+        "{T}  WARN butterpollo_core::session: GPU device lost: DXGI_ERROR_DEVICE_REMOVED (0x887A0005). Rebuilding capture and encoder."
+    );
+    for (line, id) in [(line, "encoder_start_failed"), (reset, "gpu_reset")] {
+        let analysis = analyze(&line);
+        let finding = &analysis.findings[0];
+        assert_eq!(finding.id, id);
+        for text in [finding.title, finding.explanation, finding.fix] {
+            assert!(
+                !text.contains("AMD") && !text.contains("Radeon") && !text.contains("AMF"),
+                "{id}: {text}"
+            );
+        }
     }
 }
 

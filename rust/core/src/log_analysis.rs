@@ -105,7 +105,7 @@ pub const RULES: &[Rule] = &[
         at_least: None,
         title: "The GPU was reset",
         explanation: "Windows reset or removed the graphics adapter during a stream, usually after the driver's video encoder hung. Capture and encoding restart, and the picture freezes meanwhile.",
-        fix: "Restart Windows if Device Manager shows the Radeon with Code 31. Try AMD's current Recommended driver if it happens again.",
+        fix: "Restart Windows if Device Manager shows the graphics card with Code 31. Try the graphics card maker's current recommended driver if it happens again.",
         anchor: GPU_RESET,
     },
     Rule {
@@ -156,14 +156,26 @@ pub const RULES: &[Rule] = &[
         anchor: BLACK,
     },
     Rule {
-        id: "encoder_start_failed",
+        id: "amf_start_failed",
         category: Category::Encoder,
         all: &[],
-        any: &["No video encoder available", "AMF could not start"],
+        // The host's "No video encoder available" warning carries the encoder's own error.
+        any: &["AMF could not start", "No video encoder available: AMF"],
         at_least: None,
         title: "The AMD encoder did not start",
         explanation: "AMF, the encoder in AMD's driver, could not start. Common causes are Windows at the sign-in screen or a disconnected Remote Desktop session, a GPU reset, or a missing or broken driver.",
         fix: "Sign in at the PC and unlock it, then reconnect. If it keeps failing, update the AMD Radeon driver.",
+        anchor: NO_AMD,
+    },
+    Rule {
+        id: "encoder_start_failed",
+        category: Category::Encoder,
+        all: &[],
+        any: &["No video encoder available"],
+        at_least: None,
+        title: "The video encoder did not start",
+        explanation: "The graphics card's video encoder could not start. Common causes are Windows at the sign-in screen or a disconnected Remote Desktop session, a GPU reset, or a missing or broken driver.",
+        fix: "Sign in at the PC and unlock it, then reconnect. If it keeps failing, update the graphics driver.",
         anchor: NO_AMD,
     },
     Rule {
