@@ -192,7 +192,7 @@ impl Connecting {
                 Notice::Reconnecting(attempt) => {
                     keep.clear();
                     decoder_failed = None;
-                    self.stage = trf("Reconnecting · attempt {} of 5", &[&attempt]);
+                    self.stage = trf("Reconnecting · attempt {} of {}", &[&attempt, &nightjar_policy::recovery::MAX_ATTEMPTS]);
                 }
                 Notice::DecoderFailed(text) => {
                     decoder_failed.get_or_insert_with(|| text.clone());
@@ -212,7 +212,7 @@ impl Connecting {
                 if expired {
                     lock(&self.shared.roam_watch).take();
                     session.stop();
-                    Err(ConnectFailed::Message("Automatic recovery stopped after one minute.".into()))
+                    Err(ConnectFailed::Message(recovery_gave_up(lock(&self.shared.last_failure).as_deref())))
                 } else {
                     self.plan = plan;
                     Ok(Some((session, facts)))
@@ -221,7 +221,7 @@ impl Connecting {
             Ok(Err(e)) => Err(if let Some(device) = e.moved_to {
                 ConnectFailed::Moved { host: self.host_id, app: self.plan.app.id, device }
             } else if expired {
-                ConnectFailed::Message("Automatic recovery stopped after one minute.".into())
+                ConnectFailed::Message(recovery_gave_up(lock(&self.shared.last_failure).as_deref()))
             } else if e.asks_replace {
                 ConnectFailed::ConfirmReplace(Box::new(self.plan.clone()))
             } else if e.packed_refused {
@@ -304,10 +304,26 @@ impl From<&str> for ConnectError {
     fn from(message: &str) -> Self { message.to_owned().into() }
 }
 
+/// How an automatic recovery that gives up ends, after why its last attempt failed (Android's
+/// `stream_recovery_stopped`).
+const RECOVERY_STOPPED: &str = en("Automatic reconnecting stopped. Your game was not quit; check the connection and try again.");
+/// Why a recovery gave up when no attempt got as far as failing: the PC never answered within its
+/// minute (Android's `stream_recovery_unreachable`).
+const RECOVERY_UNREACHABLE: &str = en("The PC could not be reached.");
+
+/// What an automatic recovery that gives up says, the same on both apps: why its last attempt
+/// failed, or that the PC could not be reached, then that it stopped and the game was not quit.
+fn recovery_gave_up(last_failure: Option<&str>) -> String {
+    let cause = last_failure.filter(|m| !m.is_empty()).unwrap_or(tr(RECOVERY_UNREACHABLE));
+    format!("{cause}\n\n{}", tr(RECOVERY_STOPPED))
+}
+
 fn connect_with_recovery(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &Interrupt) -> Result<(Session, Facts), ConnectError> {
     loop {
         if let Some(recovery) = &mut plan.recovery {
-            let delay = recovery.next_delay(recovery::now_ms()).ok_or("Automatic recovery exhausted its retry budget.")?;
+            let delay = recovery
+                .next_delay(recovery::now_ms())
+                .ok_or_else(|| ConnectError::from(recovery_gave_up(lock(&shared.last_failure).as_deref())))?;
             shared.notify(Notice::Reconnecting(recovery.attempts() as usize));
             let until = Instant::now() + Duration::from_millis(delay);
             while Instant::now() < until {
@@ -319,6 +335,7 @@ fn connect_with_recovery(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: 
         }
         match connect(plan, shared.clone(), interrupt) {
             Err(error) if error.retryable && plan.recovery.is_some() && !interrupt.is_interrupted() => {
+                *lock(&shared.last_failure) = Some(error.message);
                 lock(&shared.frames).clear();
                 shared.next_attempt();
             }
@@ -1190,6 +1207,18 @@ fn recent_game(plan: &LaunchPlan) -> Option<config::Recent> {
 #[cfg(test)]
 mod capability_tests {
     use super::*;
+
+    /// A recovery that gives up says why its last attempt failed, then that it stopped; with no
+    /// failed attempt, that the PC could not be reached.
+    #[test]
+    fn a_recovery_that_gives_up_says_why_the_last_attempt_failed() {
+        let text = recovery_gave_up(Some("Could not start the stream: connection refused"));
+        assert!(text.starts_with("Could not start the stream: connection refused\n\n"), "{text}");
+        assert!(text.ends_with(RECOVERY_STOPPED), "{text}");
+        for unknown in [None, Some("")] {
+            assert_eq!(recovery_gave_up(unknown), format!("{RECOVERY_UNREACHABLE}\n\n{RECOVERY_STOPPED}"));
+        }
+    }
 
     fn decoded_by(backends: &[(u32, Hardware)]) -> color_probe::Base {
         color_probe::Base { decodable: backends.iter().fold(0, |all, &(format, _)| all | format), reason: String::new(), backends: backends.to_vec() }

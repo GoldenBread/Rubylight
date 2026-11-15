@@ -997,7 +997,10 @@ final class GameConnection {
                 } else if (packedRefused && game.streamRecovery.reconnectWithoutPackedChroma("Full chroma refused at stream start (" +
                         Game.terminationDescription(errorCode) + (game.connectionErrorMessage != null ?
                         "): " + game.connectionErrorMessage : ")"), game.getString(PackedFallback.refusedToast(stage)))) return;
+                game.recoveryBudgetExhausted = false;
                 if (transientRecoveryFailure && game.streamRecovery.tryAutomaticRecovery()) return;
+                // The recovery's last attempt failed here: the dialog says why, then that it stopped.
+                final boolean recoveryExhausted = transientRecoveryFailure && game.recoveryBudgetExhausted;
                 if (game.spinner != null) {
                     game.spinner.dismiss();
                     game.spinner = null;
@@ -1035,6 +1038,9 @@ final class GameConnection {
 
                     if (game.app.isSmallStreamInputOnly()) {
                         dialogText += "\n\n" + game.getString(R.string.input_only_small_stream_refused);
+                    }
+                    if (recoveryExhausted) {
+                        dialogText = game.streamRecovery.gaveUpText(dialogText);
                     }
 
                     stopConnection();
@@ -1239,6 +1245,10 @@ final class GameConnection {
                 if (portFlags != 0) {
                     message += "\n\n" + game.getResources().getString(R.string.check_ports_msg) + "\n" +
                             MoonBridge.stringifyPortFlags(portFlags, "\n");
+                }
+
+                if (recoveryExhausted) {
+                    message = game.streamRecovery.gaveUpText(message);
                 }
 
                 boolean portTestBlocked = portTestResult != MoonBridge.ML_TEST_RESULT_INCONCLUSIVE &&

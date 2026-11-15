@@ -161,6 +161,9 @@ pub struct Shared {
     /// The pacer's queue (`Pacer::with_backlog`), reachable from the decoder thread for `evict_oldest`.
     pub pacer_backlog: Arc<Mutex<VecDeque<super::present::Pending>>>,
     pub notices: Mutex<Vec<Notice>>,
+    /// Why the last failed attempt of an automatic recovery failed, for the message when the
+    /// recovery gives up (`connect::recovery_gave_up`).
+    pub last_failure: Mutex<Option<String>>,
     /// The connect attempt whose listener may still end the stream; changed only with
     /// `notices` locked, so a late termination of an earlier attempt is dropped, not queued.
     attempt: AtomicU32,
@@ -205,6 +208,7 @@ impl Shared {
             slices: Mutex::new(VecDeque::new()),
             pacer_backlog: Default::default(),
             notices: Mutex::new(Vec::new()),
+            last_failure: Mutex::new(None),
             attempt: AtomicU32::new(0),
             decoder_name: Mutex::new(String::new()),
             packed_from_memory: Mutex::new(None),

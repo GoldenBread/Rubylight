@@ -19,6 +19,7 @@ import com.limelight.preferences.PreferenceConfiguration;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
+import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.Implementation;
 import org.robolectric.annotation.Implements;
@@ -35,6 +36,15 @@ public class GameRecoveryTest {
     /** Game's workers that wait for the stream's stop, then post the hand-off to the UI thread. */
     private static final java.util.Set<String> HANDOFF_WORKERS =
             java.util.Set.of("Stream reconnect", "Automatic stream recovery");
+
+    /** A recovery that gives up says why its last attempt failed, then that it stopped (desktop's recovery_gave_up). */
+    @Test public void aRecoveryThatGivesUpSaysWhyTheLastAttemptFailed() {
+        String stopped = RuntimeEnvironment.getApplication().getString(R.string.stream_recovery_stopped);
+        assertEquals("Starting the stream failed.\n\n" + stopped, GameRecovery.gaveUpText("Starting the stream failed.", stopped));
+        assertEquals(stopped, GameRecovery.gaveUpText(null, stopped));
+        assertEquals(stopped, GameRecovery.gaveUpText("", stopped));
+        assertFalse(RuntimeEnvironment.getApplication().getString(R.string.stream_recovery_attempt, 2, 5).contains("Back"));
+    }
 
     @Test public void mergedManifestAllowsReturningToAStoppedStream() throws Exception {
         Game game = Robolectric.buildActivity(Game.class).get();

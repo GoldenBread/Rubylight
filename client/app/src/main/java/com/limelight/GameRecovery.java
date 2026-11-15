@@ -518,7 +518,8 @@ final class GameRecovery {
                             SystemClock.elapsedRealtime() - deadlineFrom >= StreamRecoveryPolicy.WINDOW_MS) {
                         game.recoveryHandoffInProgress = false;
                         if (game.spinner != null) { game.spinner.dismiss(); game.spinner = null; }
-                        showReconnectDialog(R.string.conn_terminated_title, game.getString(R.string.stream_recovery_exhausted));
+                        showReconnectDialog(R.string.conn_terminated_title,
+                                gaveUpText(game.getString(R.string.stream_recovery_unreachable)));
                         return;
                     }
                     game.recoveryHandoffInProgress = false;
@@ -578,6 +579,18 @@ final class GameRecovery {
         } catch (java.io.IOException e) {
             return Game.routeMissing(e) ? e.toString() : null;
         }
+    }
+
+    /**
+     * What an automatic recovery that gives up says, as desktop's recovery_gave_up: why its last attempt failed,
+     * then that it stopped and the game was not quit.
+     */
+    String gaveUpText(String cause) {
+        return gaveUpText(cause, game.getString(R.string.stream_recovery_stopped));
+    }
+
+    static String gaveUpText(String cause, String stopped) {
+        return cause == null || cause.isEmpty() ? stopped : cause + "\n\n" + stopped;
     }
 
     void showReconnectDialog(int title, String message) {
