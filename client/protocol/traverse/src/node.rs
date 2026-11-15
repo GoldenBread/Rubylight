@@ -319,15 +319,19 @@ fn receive(shared: Arc<Shared>) {
     let mut buffer = vec![0u8; 4096];
     let mut handler: Option<Arc<Handler>> = None;
     let mut version = 0;
-    while !shared.stop.load(Ordering::Acquire) {
-        // Checked every round, timeouts included, so a replaced handler (and the path it holds)
-        // goes within a read timeout.
+    // Checked after every receive, timeouts included: a replaced handler (and the path it
+    // holds) goes within a read timeout, and one set during a wait takes what ended it.
+    let mut refresh = |handler: &mut Option<Arc<Handler>>| {
         let current = shared.handler_version.load(Ordering::Acquire);
         if current != version {
-            handler = shared.state.lock().unwrap().handler.clone();
+            *handler = shared.state.lock().unwrap().handler.clone();
             version = current;
         }
-        let (length, from) = match shared.socket.recv_from(&mut buffer) {
+    };
+    while !shared.stop.load(Ordering::Acquire) {
+        let received = shared.socket.recv_from(&mut buffer);
+        refresh(&mut handler);
+        let (length, from) = match received {
             Ok(received) => received,
             // Timeouts, and on Windows the ICMP port-unreachable a punch can draw.
             Err(_) => continue,
@@ -384,12 +388,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sockets_ask_for_a_larger_receive_buffer_than_the_default() {
+    fn sockets_get_a_larger_receive_buffer_than_the_default() {
         let plain = UdpSocket::bind("127.0.0.1:0").unwrap();
         let sized = bind_udp("127.0.0.1:0".parse().unwrap()).unwrap();
         let size = |socket: &UdpSocket| socket2::SockRef::from(socket).recv_buffer_size().unwrap();
         assert!(
-            size(&sized) >= size(&plain),
+            size(&sized) > size(&plain),
             "{} < {}",
             size(&sized),
             size(&plain)
