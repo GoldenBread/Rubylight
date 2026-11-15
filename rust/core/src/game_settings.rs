@@ -601,6 +601,47 @@ impl Store {
         self.finish_in(&mut journal, id, Mode::Cancel)
     }
 
+    /// The game of swap `id` moved to `device` (its name for messages) while it runs: the
+    /// files as they are now become the previous device's copies, and from here the swap is
+    /// the new device's, so what it changes in the game is saved for it. The files in the
+    /// game's folder stay as they are, under the running game. A file that is gone keeps the
+    /// previous copy; one that cannot be read or saved leaves the swap with the previous
+    /// device, whose copy then takes everything at the end rather than lose its part.
+    pub fn hand_over(&self, id: &str, device: &str, device_name: &str) -> Result<Report> {
+        let _lock = lock();
+        let mut journal = self.journal()?;
+        let index = journal
+            .swaps
+            .iter()
+            .position(|swap| swap.id == id)
+            .with_context(|| format!("no game settings swap {id}"))?;
+        let swap = journal.swaps[index].clone();
+        let mut report = Report::default();
+        if swap.device == device {
+            return Ok(report);
+        }
+        let who = swap.who();
+        for file in swap.files.iter().filter(|file| file.step == Step::Playing) {
+            match self.read_game(&file.written, &file.path) {
+                Ok(bytes) => {
+                    self.keep_copy(&swap.app, &swap.device, &file.key, &bytes)
+                        .with_context(|| format!("saving {} for {who}", file.written))?;
+                    report.saved.push(file.written.clone());
+                }
+                Err(error) if is_missing(&error) => report.warnings.push(format!(
+                    "{} ({}) was gone when the game moved on from {who}, so its saved copy stays as it was",
+                    file.written,
+                    file.path.display()
+                )),
+                Err(error) => return Err(error),
+            }
+        }
+        journal.swaps[index].device = device.to_owned();
+        journal.swaps[index].device_name = device_name.to_owned();
+        self.save(&journal)?;
+        Ok(report)
+    }
+
     /// Record `processes` as swap `id`'s game: its files stay while one runs.
     pub fn watch(&self, id: &str, processes: &[Watched]) -> Result<()> {
         let _lock = lock();

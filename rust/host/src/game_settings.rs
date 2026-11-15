@@ -10,7 +10,9 @@
 //!
 //! Only one app runs at a time. A second device joining the running game plays with the
 //! launching device's settings; a device starting another app ends the first app, and with it
-//! its swap, before its own begins.
+//! its swap, before its own begins. A game moved with Continue here keeps its files as they
+//! are, which become the previous device's copies once the new device's stream runs; what the
+//! game holds when the app stops is saved for the device that played it last ([`hand_over`]).
 //!
 //! While the game runs, its programs are recorded in the journal (the app's processes, the
 //! Steam game, a store game the host noticed; not launchers or shells). When the app stops but
@@ -187,6 +189,42 @@ impl Swap {
     /// The launch failed after the files went in, before the game ran.
     pub fn cancel(mut self) {
         self.cancelled = true;
+    }
+    /// What [`hand_over`] needs, taken under the app's lock and used after it.
+    pub fn handle(&self) -> Handle {
+        Handle {
+            id: self.id.clone(),
+            app: self.app.clone(),
+            directory: self.directory.clone(),
+        }
+    }
+}
+
+/// A running app's swap, for [`hand_over`].
+pub struct Handle {
+    id: String,
+    app: String,
+    directory: PathBuf,
+}
+
+/// The running game moved to `device` (`name` for messages) with Continue here and its
+/// stream runs: the files as they are now are saved for the device that played before, and
+/// what the game holds when the app stops is saved for this one
+/// ([`game_settings::Store::hand_over`]). When that fails the swap stays the previous
+/// device's, which then keeps everything rather than lose its part.
+pub fn hand_over(handle: &Handle, device: &str, name: &str) {
+    match store(&handle.directory).hand_over(&handle.id, device, name) {
+        Ok(report) => {
+            for warning in &report.warnings {
+                tracing::warn!(app = %handle.app, "{warning}");
+            }
+            if !report.saved.is_empty() {
+                tracing::info!(app = %handle.app, device = %name, saved = ?report.saved, "the game moved to another device: its settings files are saved for the device that played before, and for this one when the game ends");
+            }
+        }
+        Err(error) => {
+            tracing::warn!(app = %handle.app, device = %name, error = format!("{error:#}"), "the game moved to another device, but its settings files stay with the device that played before");
+        }
     }
 }
 
@@ -702,6 +740,41 @@ mod tests {
         }]);
         drop(swap);
         assert!(!warned(&f.host), "cleared once the game was seen");
+    }
+
+    #[test]
+    fn a_game_moved_to_another_device_saves_its_settings_for_the_device_now_playing() {
+        let f = Fixture::new();
+        let (app, file, environment) = game(&f);
+        let swap = launching(&f.host, &app, &args("tv"), &environment)
+            .unwrap()
+            .unwrap();
+        std::fs::write(&file, "tv changes").unwrap();
+        // Continue here on the phone: its stream runs.
+        hand_over(&swap.handle(), "phone", "phone name");
+        assert_eq!(read(&file), "tv changes", "the running game's file stays");
+        let key = game_settings::app_key(&app);
+        let copy = |device: &str| {
+            read(&store(&f.host.directory).device_copy(
+                &key,
+                device,
+                &game_settings::file_key("%GameDir%\\Settings.ini"),
+            ))
+        };
+        assert_eq!(copy("tv"), "tv changes", "the TV keeps what it changed");
+        assert_eq!(
+            status(&f.host, "game-1").unwrap()["pending"][0]["deviceName"],
+            "phone name"
+        );
+        std::fs::write(&file, "phone changes").unwrap();
+        drop(swap);
+        assert_eq!(read(&file), "pc");
+        assert_eq!(copy("phone"), "phone changes");
+        assert_eq!(
+            copy("tv"),
+            "tv changes",
+            "never overwritten with the phone's"
+        );
     }
 
     #[test]

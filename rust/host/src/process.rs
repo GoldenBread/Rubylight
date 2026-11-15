@@ -368,6 +368,12 @@ impl RunningApp {
             &owned, &processes,
         ))
     }
+    /// Its game settings files' swap, for [`crate::game_settings::hand_over`].
+    pub fn settings_handle(&self) -> Option<crate::game_settings::Handle> {
+        self.settings_swap
+            .as_ref()
+            .map(crate::game_settings::Swap::handle)
+    }
     /// Whether the app is the desktop: it starts nothing, so every stream of it
     /// shows its own display.
     pub fn is_desktop(&self) -> bool {

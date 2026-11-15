@@ -500,6 +500,7 @@ impl Host {
         if arrived {
             self.release_displaced(&claim.displaced);
             locked(&self.moves.0).claim = None;
+            self.settings_follow(&claim.to, &claim.name);
             return;
         }
         if launching || Instant::now() < claim.until {
@@ -537,6 +538,17 @@ impl Host {
             .filter(|device| retained.contains_key(*device))
             .cloned();
         inner.release.extend(kept);
+    }
+    /// The stream of the device the game moved to runs: its settings files are saved for it
+    /// from now on ([`crate::game_settings::hand_over`]), the files read and written after the
+    /// app's lock.
+    fn settings_follow(&self, device: &str, name: &str) {
+        let handle = locked(&self.current_app)
+            .as_ref()
+            .and_then(crate::process::RunningApp::settings_handle);
+        if let Some(handle) = handle {
+            crate::game_settings::hand_over(&handle, device, name);
+        }
     }
     /// A press is over without its stream: the game is its previous owner's again, nothing says
     /// it moved, and that device has [`BACK_KEPT`] to come back. The stream may still arrive, a
@@ -613,7 +625,7 @@ impl Host {
             .as_mut()
             .filter(|app| app.owner == late.previous_owner)
         {
-            app.owner = late.to;
+            app.owner = late.to.clone();
             app.display = crate::display_session::display_of_new_owner(
                 app.display.as_deref(),
                 stream.as_deref(),
@@ -621,6 +633,7 @@ impl Host {
         } else {
             return;
         }
+        self.settings_follow(&late.to, &late.name);
         locked(&self.moves.0).notes.insert(
             late.previous_owner,
             Note {
