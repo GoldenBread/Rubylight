@@ -169,6 +169,10 @@ pub(crate) fn stop_streams(h: &Shared, terminate_app: Option<&str>) -> StopStrea
     if terminate_app.is_some_and(|client| terminate_refused(h, client)) {
         return StopStreams::Refused;
     }
+    if terminate_app.is_some() {
+        // While the stream a move waited for still runs: see `Host::stop_app`.
+        h.settle_move();
+    }
     let (canceled, ids) = {
         let mut sessions = h.sessions.lock().unwrap();
         // The streams `stop_role` ends, and the teardowns already under way.
@@ -220,6 +224,8 @@ fn cancel_app(h: Shared, connection: Connection) -> Response {
             Some("Only the game owner may cancel while remote sessions are active".into()),
         );
     }
+    // While the stream a move waited for still runs: see `Host::stop_app`.
+    h.settle_move();
     let canceled = h.sessions.lock().unwrap().stop_role(Role::Stream, None);
     drop(canceled);
     h.stop_app(AppStop::Cancel(&client.uuid));

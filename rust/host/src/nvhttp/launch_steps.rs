@@ -62,6 +62,8 @@ pub(super) fn validate_launch_request(
             }
             confirmations.clear(&client.uuid, remote::Confirmation::Terminate);
             drop(confirmations);
+            // While the stream a move waited for still runs: see `Host::stop_app`.
+            h.settle_move();
             let canceled = h.sessions.lock().unwrap().stop_role(Role::Stream, None);
             drop(canceled);
             h.stop_app(AppStop::Terminate(&client.uuid));
@@ -361,6 +363,11 @@ pub(super) fn replace_launch_app(
             .lock()
             .unwrap()
             .clear(&launch.client.uuid, remote::Confirmation::Replace);
+        // While the stream a move waited for still runs: see `Host::stop_app`. It reads the
+        // running app, so not under its lock.
+        drop(current);
+        h.settle_move();
+        current = h.current_app.lock().unwrap();
         let (canceled, stopped) = {
             let mut sessions = h.sessions.lock().unwrap();
             let canceled = sessions.stop_role(Role::Stream, None);

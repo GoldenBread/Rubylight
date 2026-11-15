@@ -614,6 +614,11 @@ impl Host {
         }
     }
     pub fn stop_app(&self, why: AppStop<'_>) {
+        // A game moved by Continue here whose new device's stream has arrived saves its settings
+        // files for that device, also when it closes before the next housekeeping tick settles
+        // the move. Callers that end the streams first settle before they do: a stopped stream
+        // no longer counts as arrived.
+        self.settle_move();
         let teardown = self.session_teardown(crate::session_control::Scope::Game);
         // Stopping the app waits for it to exit, up to its exit timeout and
         // undo commands: never under the lock every serverinfo request takes.

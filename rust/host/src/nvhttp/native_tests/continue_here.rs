@@ -105,6 +105,52 @@ async fn the_stream_moves_and_the_game_and_its_display_stay() {
     drop(tv_stream);
 }
 
+/// The game closes after the TV's stream arrived but before a housekeeping tick settled the
+/// move: closing it settles the move first, so the game counts as the TV's (its settings files
+/// are saved for the TV) and the phone's kept display goes.
+#[tokio::test]
+async fn a_game_closed_before_the_next_tick_settles_the_move_its_stream_completed() {
+    let s = Setup::new();
+    let phone = s.streaming();
+    let (tv, tv_connection) = device(&s, "tv", "Living room TV", ALL);
+    press(&s, &tv_connection).await.session();
+    let tv_stream = s.stream_as(tv.clone());
+    s.host()
+        .sessions
+        .lock()
+        .unwrap()
+        .active
+        .remove(&phone.launch.id);
+    drop(phone);
+    assert!(s.host().claim_live(), "no tick has settled the move yet");
+    // The TV's stream worker leaves `active` once it sees the stop.
+    let worker = std::thread::spawn({
+        let (stream, host) = (tv_stream.clone(), s.host().clone());
+        move || {
+            while !stream.stopping() {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            let id = stream.launch.id.clone();
+            host.sessions.lock().unwrap().active.remove(&id);
+        }
+    });
+    // The TV quits the game (WebRTC's stop-host-session, as Moonlight's /cancel).
+    assert_eq!(
+        crate::nvhttp::stop_streams(s.host(), Some(tv.uuid.as_str())),
+        crate::nvhttp::StopStreams::Stopped
+    );
+    worker.join().unwrap();
+    assert!(!s.game_running());
+    assert!(
+        s.host()
+            .moves
+            .displays_to_release()
+            .contains(&s.client.uuid),
+        "the move was settled while the TV's stream still ran"
+    );
+    drop(tv_stream);
+}
+
 #[tokio::test]
 async fn the_note_lasts_about_two_minutes_and_its_own_press_clears_it() {
     let s = Setup::new();

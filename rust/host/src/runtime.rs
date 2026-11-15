@@ -181,6 +181,8 @@ fn user_action(h: &Shared, action: Action, web_port: u16) {
             // Stopping the app waits for it to exit.
             tokio::task::spawn_blocking(move || {
                 let _transition = h.launch_transition.lock().unwrap();
+                // While the stream a move waited for still runs: see `Host::stop_app`.
+                h.settle_move();
                 let canceled = h.sessions.lock().unwrap().stop_role(Role::Stream, None);
                 drop(canceled);
                 h.stop_app(AppStop::Tray);

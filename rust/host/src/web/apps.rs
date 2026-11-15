@@ -119,6 +119,8 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
         }
         ("POST", "/api/apps/close") => {
             let _transition = h.launch_transition.lock().unwrap();
+            // While the stream a move waited for still runs: see `Host::stop_app`.
+            h.settle_move();
             let canceled = h
                 .sessions
                 .lock()
