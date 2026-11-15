@@ -420,15 +420,16 @@ fn a_resume_at_another_rate_keeps_the_display_the_game_is_on() {
     };
     assert!(!kept.matches(&faster));
     // The launch's own filter: the same display comes back, for the stream to retime.
-    let resumed = take_retained_display(
+    let Ok(resumed) = take_retained_display(
         host,
         &launch,
         &config,
         None,
         |lease| lease.resumes(&faster),
         |_| false,
-    )
-    .unwrap();
+    ) else {
+        panic!("the kept display was not handed back");
+    };
     assert!(
         Arc::ptr_eq(&resumed, &kept),
         "the kept display, not a new one"
