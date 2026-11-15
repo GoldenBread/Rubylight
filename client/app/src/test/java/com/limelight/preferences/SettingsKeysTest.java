@@ -827,10 +827,14 @@ public class SettingsKeysTest {
 
     /**
      * Every key a picker writes beside its row's key goes with Reset all settings: each picker saves each of its
-     * choices, and whatever key that leaves that has no row in preferences.xml must be gone after the reset.
+     * choices, and whatever key that leaves that has no row in preferences.xml must afterwards be gone or hold what
+     * a reset of untouched settings gives it (a picker's row writes its default's keys back).
      */
     @Test
     public void resetAllClearsEveryKeyThePickersWrite() throws Exception {
+        prefs().edit().clear().commit();
+        StreamSettings.resetAllSettings(RuntimeEnvironment.getApplication());
+        java.util.Map<String, ?> untouched = new java.util.HashMap<>(prefs().getAll());
         prefs().edit().clear().commit();
         SharedPreferences.Editor editor = prefs().edit();
         for (int i = 0; i < 3; i++) {
@@ -855,7 +859,9 @@ public class SettingsKeysTest {
 
         StreamSettings.resetAllSettings(RuntimeEnvironment.getApplication());
 
-        for (String key : pickerOnly) assertFalse("Reset all settings keeps " + key, prefs().contains(key));
+        for (String key : pickerOnly) {
+            assertEquals("Reset all settings keeps " + key, untouched.get(key), prefs().getAll().get(key));
+        }
         assertEquals(FramePacingChoice.of(PreferenceConfiguration.DEFAULT_FRAME_PACING, true, false),
                 FramePacingChoice.read(prefs()));
     }
