@@ -503,7 +503,7 @@ impl Host {
             }
             if !stopped
                 && let Some((device, cancel)) = locked(&self.launch_cancel).as_ref()
-                && device_may(device)
+                && device_may(device.as_str())
             {
                 if let Err(error) = cancel.cancel() {
                     tracing::warn!(%error, "the launch's preparation could not be stopped");
