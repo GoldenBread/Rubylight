@@ -11,12 +11,13 @@ import { megabytes, sentence } from './coop-view';
  * program could not be found: the user picks it) and `failed` (the install, the removal or a
  * launch's check failed or was refused; the switch shows where it is and `title` says which of them
  * it was). `earlier` is the release of Rubylight 3.0's neural upscaling still in the game's folder,
- * which the panel offers only to remove, also after a failure that tells the user to remove it.
+ * which the panel offers only to remove, also after a failure that tells the user to remove it, and
+ * beside frame generation when an install left it beside another program (Remove then takes only it out).
  */
 export type NeuralView =
   | { kind: 'unavailable'; reason: string; earlier: string | null }
   | { kind: 'off'; kept: string[]; earlier: string | null }
-  | { kind: 'on'; release: string | null; exe: string | null; addon: boolean }
+  | { kind: 'on'; release: string | null; exe: string | null; addon: boolean; kept: string[]; earlier: string | null }
   | { kind: 'working'; label: string; percent: number | null }
   | { kind: 'choose'; reason: string; earlier: string | null }
   | { kind: 'failed'; title: string; error: string; on: boolean; earlier: string | null };
@@ -68,12 +69,13 @@ export function neuralView(status: NeuralStatus): NeuralView {
           : 'Frame generation couldn’t be installed';
     return { kind: 'failed', title, error: sentence(job.error ?? 'It failed.'), on: status.enabled, earlier };
   }
-  if (status.enabled) return { kind: 'on', release: status.release, exe: status.exe, addon: status.mode === 'addon' };
+  const kept = job?.action === 'remove' ? job.kept : [];
+  if (status.enabled) return { kind: 'on', release: status.release, exe: status.exe, addon: status.mode === 'addon', kept, earlier };
   if (!status.available) return { kind: 'unavailable', reason: sentence(status.reason ?? 'This PC can’t run it.'), earlier };
   // The game's own check, before any try: its program to choose, or why it can't have it.
   if (status.game?.why === 'choose_program') return { kind: 'choose', reason: sentence(status.game.reason), earlier };
   if (status.game) return { kind: 'unavailable', reason: sentence(status.game.reason), earlier };
-  return { kind: 'off', kept: job?.action === 'remove' ? job.kept : [], earlier };
+  return { kind: 'off', kept, earlier };
 }
 
 /**

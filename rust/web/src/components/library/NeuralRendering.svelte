@@ -73,10 +73,10 @@
     await load();
   }
 
-  async function turnOff() {
+  async function turnOff(earlier = false) {
     busy = true;
     try {
-      await api.neural.disable(uuid);
+      await api.neural.disable(uuid, earlier);
       pending = true;
     } catch (error) {
       failed('Removing Neural Rendering failed', error);
@@ -135,7 +135,7 @@
           disabled={busy}
           onchange={change}
         />
-        {#if view.kind === 'off' && view.kept.length > 0}
+        {#if (view.kind === 'off' || view.kind === 'on') && view.kept.length > 0}
           <p class="muted note">
             Left in the game’s folder because they changed since they were installed, are not Rubylight’s or a program still held them open: {view.kept.join(', ')}.
           </p>
@@ -167,7 +167,7 @@
             The earlier neural upscaling{view.earlier ? ` (release ${view.earlier})` : ''} is still in the game’s folder. Rubylight
             no longer offers it; remove it here.
           </p>
-          <Button busy={busy} onclick={turnOff}>Remove</Button>
+          <Button busy={busy} onclick={() => turnOff(view.kind === 'on')}>Remove</Button>
         </div>
       {/if}
       {#if loadError}<p class="muted note" role="alert">Could not refresh Neural Rendering: {loadError}</p>{/if}

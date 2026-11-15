@@ -173,6 +173,8 @@ fn remove(exe: &Path) -> Response {
     handle(
         Request::Remove {
             exe: exe.to_path_buf(),
+            beside: None,
+            earlier: false,
         },
         Writer::User,
         &|_, _| {},
@@ -3730,8 +3732,10 @@ async fn a_legacy_file_changed_in_size_leaves_the_earlier_upscaling_as_it_was() 
 
 /// Rubylight 3.0's AMDNR beside the launcher while the game's own program
 /// is chosen in `Binaries/Win64`: the check before its removal judges the
-/// launcher's folder, where a file that changed since only stays and is
-/// named, and frame generation goes in beside the chosen program.
+/// launcher's folder, frame generation goes in beside the chosen program,
+/// and what stays of AMDNR keeps its record, so the console still offers
+/// its removal. That removal takes only AMDNR out, finishing once someone
+/// else's file is gone from its folder, and names what stays.
 #[tokio::test(flavor = "multi_thread")]
 async fn amdnr_beside_the_launcher_is_judged_in_its_own_folder() {
     let f = crate::state::test_support::Fixture::new();
@@ -3747,19 +3751,64 @@ async fn amdnr_beside_the_launcher_is_judged_in_its_own_folder() {
     let chosen = win64.join("Game.exe");
     amdnr_host(&f, &[("game", &launcher, "winmm.dll")]);
     std::fs::write(folder.join("LmxxfNrRuntime.pak"), "the user's model").unwrap();
+    std::fs::write(folder.join("OptiScaler/notes.txt"), "the user's").unwrap();
     enable(h, "game", Some(chosen.clone())).unwrap();
     let job = ended(h, "game").await;
     assert_eq!(job.phase, "done", "{job:?}");
-    assert_eq!(job.kept, ["LmxxfNrRuntime.pak"]);
-    assert!(!folder.join(LEGACY_MANIFEST).exists());
-    assert_eq!(
-        std::fs::read(folder.join("LmxxfNrRuntime.pak")).unwrap(),
-        b"the user's model"
-    );
+    let left: Manifest =
+        serde_json::from_slice(&std::fs::read(folder.join(LEGACY_MANIFEST)).unwrap()).unwrap();
+    assert_eq!(Vec::from_iter(left.files.keys()), ["LmxxfNrRuntime.pak"]);
+    assert_eq!(left.folders, ["OptiScaler"]);
     assert!(win64.join(MANIFEST).exists());
-    let app = app(h, "game").unwrap();
-    assert_eq!(placed_exe(&app), Some(chosen));
-    assert_eq!(legacy_exe(&app), None);
+    let record = app(h, "game").unwrap();
+    assert_eq!(placed_exe(&record), Some(chosen.clone()));
+    assert_eq!(legacy_exe(&record), Some(launcher.clone()));
+    let shown = status(h, "game");
+    assert_eq!(shown["enabled"], true, "{shown}");
+    assert!(!shown["earlier_upscaling"].is_null(), "{shown}");
+
+    std::fs::remove_file(folder.join("OptiScaler/notes.txt")).unwrap();
+    let placed = snapshot(&win64);
+    remove_earlier(h, "game").unwrap();
+    let job = ended(h, "game").await;
+    assert_eq!(job.phase, "done", "{job:?}");
+    assert_eq!(job.kept, ["LmxxfNrRuntime.pak"]);
+    assert!(!folder.join(LEGACY_MANIFEST).exists() && !folder.join("OptiScaler").exists());
+    assert_eq!(snapshot(&win64), placed);
+    let record = app(h, "game").unwrap();
+    assert_eq!(
+        (placed_exe(&record), legacy_exe(&record)),
+        (Some(chosen), None)
+    );
+}
+
+/// Only the helper judges whether AMDNR is beside another program, on the
+/// paths followed: a program reached through a junction to AMDNR's own
+/// folder is that folder, so the removal ends with no record left.
+#[test]
+fn only_the_helper_judges_whether_amdnr_is_elsewhere() {
+    let temp = tempdir();
+    let exe = game(temp.path());
+    let folder = exe.parent().unwrap();
+    let linked = temp.path().join("Linked");
+    junction(&linked, folder);
+    let other = temp.path().join("Other/Game.exe");
+    let removal = |beside: &Path| {
+        amdnr(folder, "winmm.dll");
+        std::fs::write(folder.join("LmxxfNrRuntime.pak"), "the user's model").unwrap();
+        let request = Request::Remove {
+            exe: exe.clone(),
+            beside: Some(beside.to_path_buf()),
+            earlier: false,
+        };
+        handle(request, Writer::User, &|_, _| {})
+    };
+    let kept = vec!["LmxxfNrRuntime.pak".to_string()];
+    let same = removal(&linked.join("Game.exe"));
+    assert_eq!(same, Response::Removed { kept: kept.clone() });
+    assert!(!folder.join(LEGACY_MANIFEST).exists());
+    assert_eq!(removal(&other), Response::Left { kept });
+    assert!(folder.join(LEGACY_MANIFEST).exists());
 }
 
 /// The console's Remove for a game that has only Rubylight 3.0's
@@ -4592,8 +4641,9 @@ fn expire(h: &Shared, uuid: &str) {
 
 /// A game folder on a share that stalls holds no status read: the game's
 /// program and the Visual C++ runtime beside it are looked for in the
-/// check's thread, the read answers from System32 within its wait, and the
-/// thread's answer serves the next read.
+/// check's thread, the read answers within its wait without calling the
+/// runtime missing before the folder is looked into, and the thread's
+/// answer serves the next read.
 #[test]
 fn a_stalled_game_folder_never_holds_a_status_read() {
     let f = crate::state::test_support::Fixture::new();
@@ -4627,7 +4677,8 @@ fn a_stalled_game_folder_never_holds_a_status_read() {
     let waited = started.elapsed();
     let _ = done.send(());
     assert!(waited < Duration::from_secs(4), "{waited:?}");
-    assert_eq!(shown["unavailable"], "runtime", "{shown}");
+    // Not known while the folder is looked into: no runtime refusal then.
+    assert_eq!(shown["available"], true, "{shown}");
     assert!(shown["game"].is_null(), "{shown}");
     let shown = status(h, "stalled");
     assert_eq!(shown["available"], true, "{shown}");

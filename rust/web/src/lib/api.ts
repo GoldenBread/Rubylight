@@ -1409,7 +1409,7 @@ export const api = {
     /** Downloads unless cached and installs; progress and a refusal show in `status`. */
     enable: (uuid: string, exe?: string) => post<Ok>('/api/neural/enable', exe ? { uuid, exe } : { uuid }),
     /** Removes exactly what was installed. */
-    disable: (uuid: string) => post<Ok>('/api/neural/disable', { uuid }),
+    disable: (uuid: string, earlier = false) => post<Ok>('/api/neural/disable', earlier ? { uuid, earlier } : { uuid }),
   },
   gameSettings: {
     status: (uuid: string) => get<GameSettingsStatus>(`/api/game-settings?uuid=${encodeURIComponent(uuid)}`),

@@ -1823,18 +1823,12 @@ pub fn enable(h: &Shared, uuid: &str, exe: Option<PathBuf>) -> Result<(), Refusa
                         other => return Ok(other),
                     }
                     update_job(&worker, &task_uuid, |job| job.phase = "remove");
-                    let elsewhere = !folder::same_folder(
-                        legacy.parent().unwrap_or(&legacy),
-                        exe.parent().unwrap_or(&exe),
-                    );
-                    match remove_at(&app.name, &legacy)? {
-                        Removed::Done(kept) if !kept.is_empty() && elsewhere => {
-                            set_key(&worker, &task_uuid, LEGACY_KEY, None)?;
-                            update_job(&worker, &task_uuid, |job| {
-                                job.kept = kept.iter().map(|path| neural::shown(path)).collect();
-                            });
-                        }
-                        Removed::Done(kept) if !kept.is_empty() => {
+                    match remove_beside(&app.name, &legacy, Some(&exe), false)? {
+                        // Left in another folder: its record stays, so the
+                        // console still offers its removal, which names what
+                        // stays then.
+                        (Removed::Done(_), true) => {}
+                        (Removed::Done(kept), false) if !kept.is_empty() => {
                             set_key(&worker, &task_uuid, LEGACY_KEY, None)?;
                             update_job(&worker, &task_uuid, |job| {
                                 job.kept = kept.iter().map(|path| neural::shown(path)).collect();
@@ -1843,8 +1837,8 @@ pub fn enable(h: &Shared, uuid: &str, exe: Option<PathBuf>) -> Result<(), Refusa
                                 message: folder::kept_text(&kept, true),
                             });
                         }
-                        Removed::Done(_) => set_key(&worker, &task_uuid, LEGACY_KEY, None)?,
-                        Removed::Unreachable(folder) => {
+                        (Removed::Done(_), false) => set_key(&worker, &task_uuid, LEGACY_KEY, None)?,
+                        (Removed::Unreachable(folder), _) => {
                             return Ok(Response::Error {
                                 message: format!(
                                     "{folder} can't be reached, so the earlier upscaling could not be removed; connect its drive and try again"
@@ -1957,6 +1951,7 @@ fn finish_install(
         }
         Ok(
             Response::Removed { .. }
+            | Response::Left { .. }
             | Response::Unreachable { .. }
             | Response::NotWritable { .. }
             | Response::Found { .. },
@@ -1971,6 +1966,16 @@ fn finish_install(
 /// Turn the switch off: remove what was placed, frame generation or
 /// Rubylight 3.0's upscaling. Runs on.
 pub fn disable(h: &Shared, uuid: &str) -> Result<(), Refusal> {
+    removal(h, uuid, false)
+}
+
+/// Remove only Rubylight 3.0's upscaling, which frame generation installed
+/// beside another program left a record of: frame generation stays. Runs on.
+pub fn remove_earlier(h: &Shared, uuid: &str) -> Result<(), Refusal> {
+    removal(h, uuid, true)
+}
+
+fn removal(h: &Shared, uuid: &str, earlier: bool) -> Result<(), Refusal> {
     let app = app(h, uuid).ok_or(Refusal::NotFound)?;
     // The streamed game may be the one: it holds the DLLs loaded, so the
     // removal would stop at the first and ask to close the game mid-stream.
@@ -1979,10 +1984,19 @@ pub fn disable(h: &Shared, uuid: &str) -> Result<(), Refusal> {
     }
     start_job(h, uuid, "remove", "remove")?;
     let (h, uuid) = (h.clone(), uuid.to_owned());
-    tokio::task::spawn_blocking(move || match remove(&app) {
+    let removed = move |app: &App| match legacy_exe(app).filter(|_| earlier) {
+        Some(legacy) => remove_beside(&app.name, &legacy, None, true).map(|(removed, _)| removed),
+        None if earlier => Ok(Removed::Done(Vec::new())),
+        None => remove(app),
+    };
+    tokio::task::spawn_blocking(move || match removed(&app) {
         Ok(Removed::Done(kept)) => {
-            match set_key(&h, &uuid, KEY, None).and_then(|()| set_key(&h, &uuid, LEGACY_KEY, None))
-            {
+            let off = if earlier {
+                Ok(())
+            } else {
+                set_key(&h, &uuid, KEY, None)
+            };
+            match off.and_then(|()| set_key(&h, &uuid, LEGACY_KEY, None)) {
                 Ok(()) => update_job(&h, &uuid, |job| {
                     job.phase = "done";
                     job.kept = kept.iter().map(|path| neural::shown(path)).collect();
@@ -2029,17 +2043,27 @@ fn remove(app: &App) -> Result<Removed> {
 /// Remove whatever the host placed beside `exe`: frame generation, and
 /// Rubylight 3.0's AMDNR, each by its manifest. Blocks.
 fn remove_at(name: &str, exe: &Path) -> Result<Removed> {
-    match run_folder(Request::Remove { exe: exe.into() }, &|_, _| {})? {
-        Response::Removed { kept } => {
-            let folder = exe.parent().unwrap_or(exe).display().to_string();
-            if kept.is_empty() {
-                tracing::info!(app = %name, %folder, "Neural Rendering removed");
-            } else {
-                tracing::warn!(app = %name, %folder, kept = ?kept, "Neural Rendering removed; files that changed since, are not Rubylight's or were held open were left");
-            }
-            Ok(Removed::Done(kept))
-        }
-        Response::Unreachable { folder } => Ok(Removed::Unreachable(folder)),
+    remove_beside(name, exe, None, false).map(|(removed, _)| removed)
+}
+
+/// [`remove_at`], and whether AMDNR's record stays for what it left beside
+/// another program than `beside`, the one an install goes beside
+/// ([`Response::Left`]); with `earlier`, only AMDNR. Blocks.
+fn remove_beside(
+    name: &str,
+    exe: &Path,
+    beside: Option<&Path>,
+    earlier: bool,
+) -> Result<(Removed, bool)> {
+    let request = Request::Remove {
+        exe: exe.into(),
+        beside: beside.map(Path::to_path_buf),
+        earlier,
+    };
+    let (kept, record) = match run_folder(request, &|_, _| {})? {
+        Response::Removed { kept } => (kept, false),
+        Response::Left { kept } => (kept, true),
+        Response::Unreachable { folder } => return Ok((Removed::Unreachable(folder), false)),
         Response::Error { message }
         | Response::Refused { reason: message }
         | Response::ChooseExe { reason: message } => {
@@ -2049,7 +2073,14 @@ fn remove_at(name: &str, exe: &Path) -> Result<Removed> {
         Response::Placed { .. } | Response::NotWritable { .. } | Response::Found { .. } => {
             bail!("unexpected helper answer")
         }
+    };
+    let folder = exe.parent().unwrap_or(exe).display().to_string();
+    if kept.is_empty() {
+        tracing::info!(app = %name, %folder, "Neural Rendering removed");
+    } else {
+        tracing::warn!(app = %name, %folder, kept = ?kept, "Neural Rendering removed; files that changed since, are not Rubylight's or were held open were left");
     }
+    Ok((Removed::Done(kept), record))
 }
 
 /// Before an app is deleted: the switch's slot for it, held until the caller
@@ -2471,6 +2502,7 @@ fn launch_check(h: &Shared, app: &App, uuid: &str, exe: PathBuf, legacy: bool) -
             bail!("{message}")
         }
         Response::Removed { .. }
+        | Response::Left { .. }
         | Response::Unreachable { .. }
         | Response::NotWritable { .. }
         | Response::Found { .. } => {
@@ -2518,7 +2550,12 @@ pub fn status_waiting(h: &Shared, uuid: &str, wait: Duration) -> Value {
         let ask = idle && !streaming && gpu.is_ok() && !app.extra.contains_key(KEY);
         game_check(h, uuid, app, &system, wait, ask, streaming)
     });
-    let missing = without(system, looked.beside.as_deref().unwrap_or_default());
+    // Until the game's folder is looked into, the runtime is not known to
+    // be missing: a game may carry it beside its program.
+    let missing = looked
+        .beside
+        .as_deref()
+        .map_or_else(Vec::new, |beside| without(system, beside));
     let capability = gpu.map_err(|reason| ("gpu", reason)).and_then(|capable| {
         neural::runtime(&missing)
             .map(|()| capable)

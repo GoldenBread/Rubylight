@@ -147,6 +147,14 @@ pub enum Request {
     },
     Remove {
         exe: PathBuf,
+        /// The program an install goes beside: Rubylight 3.0's AMDNR in
+        /// another folder keeps its record of what its removal leaves
+        /// ([`Response::Left`]).
+        #[serde(default)]
+        beside: Option<PathBuf>,
+        /// Only Rubylight 3.0's AMDNR: frame generation's files stay.
+        #[serde(default)]
+        earlier: bool,
     },
 }
 
@@ -168,6 +176,12 @@ pub enum Response {
     Removed {
         /// What stayed: placed files that changed since, and what someone
         /// else put in the folders the host created.
+        kept: Vec<String>,
+    },
+    /// As [`Response::Removed`], for Rubylight 3.0's AMDNR in a folder other
+    /// than the one the install goes to (the paths followed): its manifest
+    /// stays, naming only what is left, so a later removal finishes it.
+    Left {
         kept: Vec<String>,
     },
     /// The folder's drive or share is not there now; the mod may still be in it.
@@ -246,7 +260,17 @@ pub fn handle(request: Request, writer: Writer, progress: &dyn Fn(u64, u64)) -> 
             writer,
             progress,
         ),
-        Request::Remove { exe } => remove(folder_of(&followed(exe, writer)), writer),
+        Request::Remove {
+            exe,
+            beside,
+            earlier,
+        } => {
+            let exe = followed(exe, writer);
+            let elsewhere = beside.is_some_and(|beside| {
+                !same_folder(folder_of(&exe), folder_of(&followed(beside, writer)))
+            });
+            remove(folder_of(&exe), writer, elsewhere, earlier)
+        }
     };
     result.unwrap_or_else(|failure| match failure {
         Failure::ChooseExe(reason) => Response::ChooseExe { reason },
@@ -984,10 +1008,13 @@ fn manifest(folder: &Path, name: &str) -> Result<Option<Manifest>, String> {
 }
 
 fn write_manifest(folder: &Path, manifest: &Manifest, writer: Writer) -> Outcome<()> {
-    let path = folder.join(MANIFEST);
+    write_named(folder, MANIFEST, manifest, writer)
+}
+fn write_named(folder: &Path, name: &str, manifest: &Manifest, writer: Writer) -> Outcome<()> {
+    let path = folder.join(name);
     let partial = partial(&path);
-    guard(folder, MANIFEST, writer)?;
-    guard(folder, &format!("{MANIFEST}{PARTIAL}"), writer)?;
+    guard(folder, name, writer)?;
+    guard(folder, &format!("{name}{PARTIAL}"), writer)?;
     let text = serde_json::to_string_pretty(manifest).map_err(|e| Failure::Error(e.to_string()))?;
     std::fs::write(&partial, text)
         .and_then(|()| std::fs::rename(&partial, &path))
@@ -1795,7 +1822,7 @@ fn place_or_check(
         // nothing left behind. An update cut short leaves each file it
         // replaces in one of its two forms: the next launch finishes it, and
         // turning the switch off removes either.
-        if first && let Err(left) = remove(folder, writer) {
+        if first && let Err(left) = remove(folder, writer, false, false) {
             return Err(Failure::Error(format!(
                 "{}, and what was placed could not be removed again: {}",
                 failure.message(),
@@ -1884,8 +1911,10 @@ fn prepare(
 }
 
 /// Delete what the host placed in the folder, by each of its manifests:
-/// this release's and Rubylight 3.0's AMDNR.
-fn remove(folder: &Path, writer: Writer) -> Outcome<Response> {
+/// this release's and Rubylight 3.0's AMDNR, whose record stays for what
+/// it leaves when the install goes `elsewhere` ([`Response::Left`]); with
+/// `earlier`, only AMDNR.
+fn remove(folder: &Path, writer: Writer, elsewhere: bool, earlier: bool) -> Outcome<Response> {
     // A folder that is gone with its game holds nothing; one on a drive that
     // is not connected may, and is not called removed. So may a game folder
     // moved and linked back whose link leads nowhere now ([`followed`]).
@@ -1898,11 +1927,19 @@ fn remove(folder: &Path, writer: Writer) -> Outcome<Response> {
             folder: folder.display().to_string(),
         });
     }
-    let mut kept = Vec::new();
-    for name in [MANIFEST, LEGACY_MANIFEST] {
-        kept.extend(remove_by(folder, name, writer)?);
-    }
-    Ok(Response::Removed { kept })
+    let mut kept = if earlier {
+        Vec::new()
+    } else {
+        remove_by(folder, MANIFEST, writer, false)?
+    };
+    let left = remove_by(folder, LEGACY_MANIFEST, writer, elsewhere)?;
+    let record = elsewhere && !left.is_empty();
+    kept.extend(left);
+    Ok(if record {
+        Response::Left { kept }
+    } else {
+        Response::Removed { kept }
+    })
 }
 
 /// Delete what the manifest `name` names and is still as placed, the DLLs
@@ -1912,8 +1949,9 @@ fn remove(folder: &Path, writer: Writer) -> Outcome<Response> {
 /// provider wrote in its folder ([`neural::provider_files`]) and the folders
 /// it created once empty. A file someone changed stays, as do the settings
 /// it took over and anything else in those folders ([`left_in`]); all are
-/// returned.
-fn remove_by(folder: &Path, name: &str, writer: Writer) -> Outcome<Vec<String>> {
+/// returned. With `keep_record`, a manifest whose removal leaves something
+/// stays, naming only what is left.
+fn remove_by(folder: &Path, name: &str, writer: Writer, keep_record: bool) -> Outcome<Vec<String>> {
     guard(folder, name, writer)?;
     let Some(manifest) = manifest(folder, name).map_err(Failure::Error)? else {
         return Ok(Vec::new());
@@ -2045,6 +2083,17 @@ fn remove_by(folder: &Path, name: &str, writer: Writer) -> Outcome<Vec<String>> 
     kept.extend(left_in(folder, &manifest.folders));
     kept.sort();
     kept.dedup();
+    if keep_record && !kept.is_empty() {
+        // What a later removal needs: the files and folders left, with
+        // nothing more to put back.
+        let mut left = manifest;
+        left.files.retain(|path, _| kept.contains(path));
+        left.folders
+            .retain(|relative| folder.join(relative).is_dir());
+        left.previous.clear();
+        left.ini = None;
+        return write_named(folder, name, &left, writer).map(|()| kept);
+    }
     guard(folder, name, writer)?;
     let path = folder.join(name);
     std::fs::remove_file(&path)

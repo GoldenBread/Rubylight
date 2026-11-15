@@ -111,8 +111,19 @@ test('the switch shows where it is, what stayed and why it failed', () => {
     exe: 'C:\\Games\\Game.exe',
     release: 'FG-V.B16',
     addon: false,
+    kept: [],
+    earlier: null,
   });
-  const added = { enabled: true, exe: 'C:\\Games\\Game.exe', release: 'FG-V.B16', mode: 'addon' };
+  // An install beside another program left the earlier upscaling there: both show, and its Remove takes only it out.
+  const earlier_upscaling = { exe: 'C:\\Games\\Launcher.exe', release: 'Alpha0.3.5.8R2' };
+  const both = { enabled: true, exe: 'C:\\Games\\Win64\\Game.exe', release: 'FG-V.B16', mode: 'full', earlier_upscaling };
+  assert.equal(neuralView(status(both)).earlier, 'Alpha0.3.5.8R2');
+  const page = render(NeuralRendering, { props: { uuid: 'game', initial: status(both) } }).body;
+  assert.match(page, /Installed beside C:\\Games\\Win64\\Game\.exe[\s\S]*earlier neural upscaling \(release Alpha0\.3\.5\.8R2\)[\s\S]*Remove/);
+  assert.doesNotMatch(page, /removes the earlier neural upscaling/);
+  const left = neuralView(status({ ...both, job: job({ action: 'remove', phase: 'done', kept: ['LmxxfNrRuntime.pak'] }) }));
+  assert.deepEqual(left.kept, ['LmxxfNrRuntime.pak']);
+  const added ={ enabled: true, exe: 'C:\\Games\\Game.exe', release: 'FG-V.B16', mode: 'addon' };
   assert.equal(neuralView(status(added)).addon, true);
   assert.match(render(NeuralRendering, { props: { uuid: 'game', initial: status(added) } }).body, /Added to the upscaler mod beside/);
   // Still on even if this PC can no longer run it, so it can be turned off.

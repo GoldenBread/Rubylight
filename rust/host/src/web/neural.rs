@@ -4,7 +4,8 @@
 //! 3.0's upscaling still in its folder. `POST /api/neural/accept` records the
 //! acceptance, `POST /api/neural/enable` (`uuid`, optional `exe`) downloads
 //! and installs frame generation (taking the earlier upscaling out first),
-//! `POST /api/neural/disable` removes both. Console-only: API tokens cannot
+//! `POST /api/neural/disable` removes both, or with `earlier` only the
+//! earlier upscaling. Console-only: API tokens cannot
 //! reach them.
 
 use super::error;
@@ -65,7 +66,12 @@ pub(super) async fn handle(
             tokio::task::spawn_blocking(move || neural::enable(&h, &uuid, exe)).await
         }
         ("POST", "/api/neural/disable") => {
-            tokio::task::spawn_blocking(move || neural::disable(&h, &uuid)).await
+            let earlier = data["earlier"].as_bool() == Some(true);
+            tokio::task::spawn_blocking(move || match earlier {
+                true => neural::remove_earlier(&h, &uuid),
+                false => neural::disable(&h, &uuid),
+            })
+            .await
         }
         _ => return error(StatusCode::NOT_FOUND, "not found"),
     };

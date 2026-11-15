@@ -38,10 +38,12 @@ pub fn local_volume(path: &std::path::Path) -> bool {
 
 /// Deletes every file in `paths`, or none of them: each is opened for
 /// delete, without following a link, then all are marked for deletion in
-/// one pass that nothing can block, and they go together once all are
-/// marked, when their handles close. One a program holds (a DLL a game has
-/// loaded, a file open without delete sharing) clears the marks already
-/// set, so every file stays; the error names that file.
+/// one pass, and they go together once all are marked, when their handles
+/// close. One a program holds (a DLL a game has loaded, a file open without
+/// delete sharing) clears the marks already set, so every file stays; the
+/// error names that file. "All or none" holds once every mark is made: a
+/// mark on a network folder can stall too, and a process killed during
+/// that pass deletes the files it marked and leaves the rest.
 ///
 /// A mark is a POSIX delete that ignores the read-only attribute: the name
 /// goes as the handle closes even while another program (an antivirus
