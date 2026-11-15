@@ -682,6 +682,19 @@ fn truncated_or_changed_installer_is_rejected() {
     assert!(verify(32, &"00".repeat(32), &candidate).is_err());
 }
 #[test]
+fn a_download_that_ends_early_is_retried_not_refused() {
+    let candidate = installer(&release()).unwrap();
+    assert!(arrived(32, &candidate).is_ok());
+    // More than advertised is the transfer's own refusal, not this check's.
+    assert!(arrived(33, &candidate).is_ok());
+    let short = arrived(31, &candidate).unwrap_err();
+    assert!(!short.is::<InstallerRejected>());
+    let mut state = json!({"phase":"downloading","attempted_version":candidate.version});
+    finish_download(&mut state, Err(short));
+    assert_eq!(state["phase"], "failed");
+    assert!(state["attempted_version"].is_null());
+}
+#[test]
 fn a_broken_off_download_is_retried_but_a_rejected_installer_is_not() {
     let candidate = installer(&release()).unwrap();
     let downloading = || json!({"phase":"downloading","attempted_version":candidate.version});
