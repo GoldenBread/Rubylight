@@ -998,13 +998,16 @@ pub fn monitors() -> Result<Vec<Monitor>> {
     Ok(Topology::query()?.monitors())
 }
 impl Topology {
-    /// The device ids `monitors` gives, from the source and target names alone.
+    /// The device ids `monitors` gives, from the source and target names alone, and whether
+    /// every name could be read: `monitors` leaves out a path whose name it cannot read.
     pub(super) fn device_ids(
         &self,
         mut device_info: impl FnMut(&mut DISPLAYCONFIG_DEVICE_INFO_HEADER) -> i32,
-    ) -> Vec<String> {
+    ) -> (Vec<String>, bool) {
         let mut targets = std::collections::BTreeSet::new();
-        self.paths
+        let mut complete = true;
+        let ids = self
+            .paths
             .iter()
             .filter(|p| {
                 targets.insert((
@@ -1032,10 +1035,13 @@ impl Topology {
                     ),
                     ..Default::default()
                 };
-                (device_info(&mut source.header) == 0 && device_info(&mut target.header) == 0)
-                    .then(|| monitor_id(&wide(&target.monitorDevicePath)))
+                let read =
+                    device_info(&mut source.header) == 0 && device_info(&mut target.header) == 0;
+                complete &= read;
+                read.then(|| monitor_id(&wide(&target.monitorDevicePath)))
             })
-            .collect()
+            .collect();
+        (ids, complete)
     }
 }
 /// A lookup kept while what it was made from stays the same.
@@ -1045,13 +1051,14 @@ pub(super) struct Kept<K, V> {
     value: V,
 }
 /// The value for `key`: the one `kept` while its key is the same and it is younger than
-/// `max_age`, else what `lookup` gives, kept in its place. A failed lookup keeps nothing.
+/// `max_age`, else what `lookup` gives, kept in its place when it says it is whole. A failed
+/// or partial lookup keeps nothing: the next call looks again.
 pub(super) fn kept_or<K: PartialEq, V: Clone>(
     kept: &mut Option<Kept<K, V>>,
     key: K,
     now: Instant,
     max_age: Duration,
-    lookup: impl FnOnce() -> Result<V>,
+    lookup: impl FnOnce() -> Result<(V, bool)>,
 ) -> Result<V> {
     if let Some(kept) = kept
         .as_ref()
@@ -1059,8 +1066,8 @@ pub(super) fn kept_or<K: PartialEq, V: Clone>(
     {
         return Ok(kept.value.clone());
     }
-    let value = lookup()?;
-    *kept = Some(Kept {
+    let (value, whole) = lookup()?;
+    *kept = whole.then(|| Kept {
         key,
         at: now,
         value: value.clone(),

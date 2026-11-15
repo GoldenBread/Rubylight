@@ -108,14 +108,31 @@ fn the_heartbeats_device_ids_are_read_again_only_when_the_paths_change_or_age() 
             Duration::from_secs(5),
             || {
                 reads += 1;
-                Ok(vec![format!("id{key}")])
+                Ok((vec![format!("id{key}")], true))
             },
         )
         .unwrap();
         assert_eq!(ids, [format!("id{key}")]);
         assert_eq!(reads > before, read, "paths {key} at {ms} ms");
     }
-    // A failed read keeps nothing of its own: the next one reads again.
+    // A name that could not be read leaves its display out: that is not kept either.
+    for _ in 0..2 {
+        let before = reads;
+        let partial = kept_or(
+            &mut kept,
+            4,
+            start + Duration::from_millis(10_250),
+            Duration::from_secs(5),
+            || {
+                reads += 1;
+                Ok((Vec::new(), false))
+            },
+        );
+        assert!(partial.unwrap().is_empty());
+        assert_eq!(reads, before + 1, "read again on the next tick");
+    }
+    assert!(kept.is_none());
+    // Nor is a read that failed.
     let failed = kept_or(
         &mut kept,
         3,
@@ -124,7 +141,7 @@ fn the_heartbeats_device_ids_are_read_again_only_when_the_paths_change_or_age() 
         || anyhow::bail!("busy"),
     );
     assert!(failed.is_err());
-    assert!(kept.as_ref().is_some_and(|kept| kept.key == 2));
+    assert!(kept.is_none());
 }
 #[test]
 #[ignore = "requires an interactive Windows desktop with connected displays"]
