@@ -1852,6 +1852,7 @@ fn a_frame_cut_off_after_its_first_block_leaves_no_stats_or_timing_behind() {
 fn a_streamed_frame_lost_in_its_first_block_stops_and_is_not_stamped() {
     let fixture = crate::state::test_support::Fixture::new();
     let session = fixture.session(fixture.client(0), butterpollo_core::session::Role::Stream);
+    session.link_sent.set_live(true);
     let socket = Arc::new(ReplySocket::bind("127.0.0.1:0").unwrap());
     let receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
     receiver
@@ -1920,6 +1921,28 @@ fn a_streamed_frame_lost_in_its_first_block_stops_and_is_not_stamped() {
     assert_eq!(stats.send_loss_recoveries.load(Ordering::Relaxed), 1);
     assert!(rows.try_recv().is_err());
     assert_eq!(session.info()["performance"]["stages"]["frames"], 0);
+    // The link-rate controller is told nothing left: neither the refused
+    // block 0 nor the block 1 that was never offered.
+    let mut recorded = Vec::new();
+    session.link_sent.drain(&mut 0, |frame, packets, bytes, _| {
+        recorded.push((frame, packets, bytes))
+    });
+    assert_eq!(recorded, [(1, 0, 0)]);
+}
+
+#[test]
+fn only_what_reached_the_socket_is_counted_for_the_link_rate_controller() {
+    use butterpollo_core::network_pacing::overhead;
+    // Ten offered, three refused: seven datagrams and the bytes the socket took.
+    assert_eq!(
+        reached_socket(10, 3, 7000, false),
+        (7, (7000 + 7 * overhead(false)) as u64)
+    );
+    assert_eq!(
+        reached_socket(10, 0, 10_000, true),
+        (10, (10_000 + 10 * overhead(true)) as u64)
+    );
+    assert_eq!(reached_socket(4, 4, 0, false), (0, 0));
 }
 
 /// The paced sender with a test Wi-Fi stall given directly: it takes each

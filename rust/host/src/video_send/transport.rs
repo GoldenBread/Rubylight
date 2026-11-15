@@ -136,7 +136,10 @@ struct Sending {
     /// The socket refused more than FEC repairs: the rest is not sent.
     given_up: bool,
     abandoned: usize,
+    /// Packets offered to the socket, refused ones included.
     sent_packets: usize,
+    /// Bytes the socket took.
+    sent_bytes: usize,
 }
 
 /// Add a part to the bytes the keyframe recovery estimate waits for, and
@@ -259,6 +262,7 @@ impl Transport<'_> {
             given_up: false,
             abandoned: 0,
             sent_packets: 0,
+            sent_bytes: 0,
         }
     }
 
@@ -437,6 +441,7 @@ impl Transport<'_> {
                 cur.batches += 1;
                 remaining = &remaining[count..];
                 cur.sent_packets += count;
+                cur.sent_bytes += bytes;
                 self.pacer.sent(
                     finished,
                     bytes,
@@ -508,9 +513,14 @@ impl Transport<'_> {
             first_sent,
             lost,
             abandoned,
+            sent_packets,
+            sent_bytes,
             ..
         } = cur;
-        s.record_link_sent(frame.wire_frame, packet_count, wire_bytes as u64);
+        let ipv6 = frame.peer.ip().to_canonical().is_ipv6();
+        let (link_packets, link_bytes) =
+            super::reached_socket(sent_packets, self.batch.dropped - dropped, sent_bytes, ipv6);
+        s.record_link_sent(frame.wire_frame, link_packets, link_bytes);
         if lost.unrecoverable() {
             s.keyframe_abandoned(frame.wire_frame);
             tracing::debug!(

@@ -29,6 +29,21 @@ fn micros(duration: Duration) -> u64 {
     duration.as_micros().min(u128::from(u64::MAX)) as u64
 }
 
+/// What of a frame reached the socket, for the link-rate controller: the
+/// `offered` packets less the `refused` ones (the batch's drops while the
+/// frame was sent), and the `bytes` the socket took with each datagram's
+/// framing. A frame abandoned part way counts only what left.
+pub(crate) fn reached_socket(
+    offered: usize,
+    refused: u64,
+    bytes: usize,
+    ipv6: bool,
+) -> (usize, u64) {
+    let packets = offered.saturating_sub(refused as usize);
+    let wire = bytes + packets * butterpollo_core::network_pacing::overhead(ipv6);
+    (packets, wire as u64)
+}
+
 struct Frame {
     encoded: Encoded,
     peer: SocketAddr,

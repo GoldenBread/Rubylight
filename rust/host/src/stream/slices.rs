@@ -277,7 +277,10 @@ impl Streaming {
 pub struct Sent {
     pub lost: SendLoss,
     pub first_sent: Option<Instant>,
+    /// Packets offered to the socket, refused ones included.
     pub packets: usize,
+    /// Bytes the socket took.
+    pub bytes: usize,
     /// The socket refused more than FEC repairs: no more of the frame is sent.
     pub abandoned: bool,
     /// The batch's refused-datagram count when the frame began.
@@ -291,6 +294,7 @@ impl Sent {
             lost: SendLoss::streamed(),
             first_sent: None,
             packets: 0,
+            bytes: 0,
             abandoned: false,
         }
     }

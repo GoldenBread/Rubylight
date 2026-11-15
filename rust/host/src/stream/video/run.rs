@@ -417,6 +417,7 @@ impl SessionThread<'_> {
                                 sent.first_sent.get_or_insert(Instant::now());
                                 remaining = &remaining[count..];
                                 sent.packets += count;
+                                sent.bytes += bytes;
                                 network_pacer.sent(Instant::now(), bytes, if bytes > 0 { count } else { 0 }, peer.ip().to_canonical().is_ipv6(), bps);
                                 s.stats.packets.fetch_add(count as u64, Ordering::Relaxed);
                                 s.stats.bytes.fetch_add(bytes as u64, Ordering::Relaxed);
@@ -460,7 +461,8 @@ impl SessionThread<'_> {
                     // The last unit is out: account for the frame as for a whole one.
                     let slices::Streaming { frame: streamed, wire_frame, timestamp, claim, claimed, age, started, packetize_started, first_polled, last_polled, payload_bytes, processing, bps, sent, .. } = st;
                     let unrecoverable = sent.lost.unrecoverable();
-                    s.record_link_sent(wire_frame, sent.packets, ((sent.packets * (packetizer.packet_size + 16 + if packetizer.key.is_some() { 32 } else { 0 })) + sent.packets * butterpollo_core::network_pacing::overhead(peer.ip().to_canonical().is_ipv6())) as u64);
+                    let (link_packets, link_bytes) = crate::video_send::reached_socket(sent.packets, batch.dropped - sent.dropped_at_start, sent.bytes, peer.ip().to_canonical().is_ipv6());
+                    s.record_link_sent(wire_frame, link_packets, link_bytes);
                     if unrecoverable {
                         s.keyframe_abandoned(wire_frame);
                         tracing::debug!(frame = wire_frame, finished = streamed.is_done(), "video frame lost on send; the rest of it was not sent");
@@ -596,6 +598,7 @@ impl SessionThread<'_> {
                 let mut lost = butterpollo_core::stream_policy::SendLoss::new(block_layout);
                 let mut abandoned = 0;
                 let mut sent_packets = 0;
+                let mut sent_bytes = 0;
                 'blocks: loop {
                     let block_started = Instant::now();
                     let block_count = match next_block(&mut packets) {
@@ -657,6 +660,7 @@ impl SessionThread<'_> {
                         }
                         remaining = &remaining[count..];
                         sent_packets += count;
+                        sent_bytes += bytes;
                         network_pacer.sent(Instant::now(), bytes, if bytes > 0 { count } else { 0 }, peer.ip().to_canonical().is_ipv6(), bps);
                         s.stats.packets.fetch_add(count as u64, Ordering::Relaxed);
                         s.stats.bytes.fetch_add(bytes as u64, Ordering::Relaxed);
@@ -674,7 +678,8 @@ impl SessionThread<'_> {
                     }
                 }
                 drop(next_block);
-                s.record_link_sent(wire_frame, packet_count, frame_bytes.saturating_add((packet_count * butterpollo_core::network_pacing::overhead(peer.ip().to_canonical().is_ipv6())) as u64));
+                let (link_packets, link_bytes) = crate::video_send::reached_socket(sent_packets, batch.dropped - dropped, sent_bytes, peer.ip().to_canonical().is_ipv6());
+                s.record_link_sent(wire_frame, link_packets, link_bytes);
                 if lost.unrecoverable() {
                     s.keyframe_abandoned(wire_frame);
                     tracing::debug!(frame = packetizer.frame.wrapping_sub(1), idr = frame.idr, abandoned, "video frame lost on send; the rest of it was not sent");
