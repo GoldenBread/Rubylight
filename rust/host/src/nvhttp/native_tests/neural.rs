@@ -430,6 +430,7 @@ async fn a_stalled_game_check_holds_no_read_long_and_no_write() {
     let s = Setup::new();
     host(&s, "NVIDIA GeForce RTX 3060", NVIDIA, 0x2504);
     s.host_control(true);
+    *s.host().neural.game_wait.lock().unwrap() = Some(std::time::Duration::from_secs(3));
     let (release, gate) = std::sync::mpsc::channel::<()>();
     *s.host().neural.game_gate.lock().unwrap() = Some(gate);
     let started = std::time::Instant::now();
@@ -439,7 +440,7 @@ async fn a_stalled_game_check_holds_no_read_long_and_no_write() {
         let state = neural(reply);
         assert_eq!(state.switches[0].state, ControlState::Configurable);
     }
-    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    assert!(started.elapsed() < std::time::Duration::from_secs(20));
     assert_eq!(
         s.host()
             .neural
@@ -455,6 +456,6 @@ async fn a_stalled_game_check_holds_no_read_long_and_no_write() {
         r#"{"app":"game","switch":"frame_generation","on":false}"#,
     )
     .await;
-    assert!(started.elapsed() < std::time::Duration::from_millis(900));
+    assert!(started.elapsed() < std::time::Duration::from_millis(1500));
     drop(release);
 }

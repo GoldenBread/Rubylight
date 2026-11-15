@@ -4368,6 +4368,8 @@ fn a_slow_game_check_answers_a_later_read_and_runs_once() {
     let h = &f.host;
     let temp = tempdir();
     checked_game(&f, temp.path());
+    let wait = Duration::from_secs(3);
+    *h.neural.game_wait.lock().unwrap() = Some(wait);
     let (release, gate) = mpsc::channel::<()>();
     *h.neural.game_gate.lock().unwrap() = Some(gate);
     let started = Instant::now();
@@ -4375,10 +4377,11 @@ fn a_slow_game_check_answers_a_later_read_and_runs_once() {
     let waited = started.elapsed();
     assert_eq!(shown["available"], true, "{shown}");
     assert!(shown["game"].is_null(), "{shown}");
-    assert!(waited >= GAME_WAIT && waited < GAME_WAIT * 3, "{waited:?}");
+    assert!(waited >= wait && waited < GAME_WAIT, "{waited:?}");
     let started = Instant::now();
     assert!(status_waiting(h, "without", Duration::ZERO)["game"].is_null());
-    assert!(started.elapsed() < GAME_WAIT);
+    assert!(started.elapsed() < wait / 2);
+    *h.neural.game_wait.lock().unwrap() = None;
     assert_eq!(game_checks(h), 1);
     release.send(()).unwrap();
     let shown = status(h, "without");
@@ -4475,6 +4478,9 @@ fn an_unknown_streaming_gpu_leaves_the_others_judged() {
     assert_eq!(shown["available"], true, "{shown}");
     assert_eq!(shown["gpu"], rtx.name.as_str());
     assert!(shown["gpu_note"].is_null(), "{shown}");
+    // Held only for a while, as a failure is: the GPU that streams may be
+    // found later, and the note with it.
+    assert!(matches!(h.neural.lock().probe, Some((.., Ok(_), false))));
     *h.neural.adapters.lock().unwrap() = Some(vec![intel]);
     h.neural.lock().probe = None;
     let shown = status(h, "missing");

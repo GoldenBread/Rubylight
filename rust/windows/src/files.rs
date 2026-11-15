@@ -1,4 +1,5 @@
-//! Drives on this PC, for the console's file picker.
+//! Drives on this PC, for the console's file picker, and deleting a set of
+//! files all or none.
 
 /// The drive roots Windows reports, e.g. `C:\`.
 pub fn drives() -> Vec<String> {

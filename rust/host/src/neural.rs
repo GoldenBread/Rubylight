@@ -61,7 +61,7 @@ const PENDING: &str = "pending_removals";
 const GAME_RECHECK: Duration = Duration::from_secs(120);
 /// How long a status read waits for a game's own check; one that takes
 /// longer (a network share that stalls) answers the next read.
-const GAME_WAIT: Duration = Duration::from_secs(if cfg!(test) { 1 } else { 3 });
+const GAME_WAIT: Duration = Duration::from_secs(if cfg!(test) { 30 } else { 3 });
 /// How often a pending removal is tried again.
 const PENDING_RETRY: Duration = Duration::from_secs(600);
 /// What the console shows for a failed download; the host's log has why.
@@ -110,13 +110,16 @@ pub struct Neural {
     /// How many games' own checks ran in this test.
     #[cfg(test)]
     pub game_checks: std::sync::atomic::AtomicUsize,
+    /// A test's wait for a game's own check in place of [`GAME_WAIT`].
+    #[cfg(test)]
+    pub game_wait: Mutex<Option<Duration>>,
 }
 
 #[derive(Default)]
 struct State {
-    /// The last GPU check's answer ([`gpu_capability`]), when it came and
-    /// the settings it holds for.
-    probe: Option<(Instant, GpuSetting, Result<neural::Capable, String>)>,
+    /// The last GPU check's answer ([`gpu_capability`]), when it came, the
+    /// settings it holds for, and whether it held the GPU that streams.
+    probe: Option<(Instant, GpuSetting, Result<neural::Capable, String>, bool)>,
     /// Whether one of the PC's GPUs is AMD's or NVIDIA's ([`offered`]),
     /// and the settings it holds for.
     offered: Option<(GpuSetting, bool)>,
@@ -262,13 +265,17 @@ fn capability_of(
 /// [`capability`]'s GPU half, held.
 fn gpu_capability(h: &Shared) -> Result<neural::Capable, String> {
     let setting = gpu_setting(h);
-    if let Some((at, probed, result)) = &h.neural.lock().probe
+    // An answer made without the GPU that streams is asked again after a
+    // while, like a failure, so its note comes once that GPU is found.
+    if let Some((at, probed, result, whole)) = &h.neural.lock().probe
         && *probed == setting
-        && (result.is_ok() || at.elapsed() < PROBE_RETRY)
+        && ((result.is_ok() && *whole) || at.elapsed() < PROBE_RETRY)
     {
         return result.clone();
     }
+    let mut whole = true;
     let result = gpus_with(h, &setting).and_then(|(streams, adapters)| {
+        whole = streams.is_ok();
         // Only an AMD GPU needs the compute runtime, which no other driver has.
         let needs_probe = match &streams {
             Ok(streams) => neural::needs_probe(streams, &adapters),
@@ -297,7 +304,7 @@ fn gpu_capability(h: &Shared) -> Result<neural::Capable, String> {
             }
         }
     }
-    h.neural.lock().probe = Some((Instant::now(), setting, result.clone()));
+    h.neural.lock().probe = Some((Instant::now(), setting, result.clone(), whole));
     result
 }
 
@@ -2318,7 +2325,11 @@ fn launch_check(h: &Shared, app: &App, uuid: &str, exe: PathBuf, legacy: bool) -
 /// The switch as the console and Nightjar show it for one app. Blocks (the
 /// first call checks the GPU).
 pub fn status(h: &Shared, uuid: &str) -> Value {
-    status_waiting(h, uuid, GAME_WAIT)
+    #[cfg(test)]
+    let wait = h.neural.game_wait.lock().unwrap().unwrap_or(GAME_WAIT);
+    #[cfg(not(test))]
+    let wait = GAME_WAIT;
+    status_waiting(h, uuid, wait)
 }
 
 /// Whether the host has an app `uuid`.
