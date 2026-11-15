@@ -919,6 +919,48 @@ fn any_gpu_of_the_pc_that_runs_it_admits_it() {
     assert!(!needs_probe(&rtx5060ti, &both) && !needs_probe(&intel, &intel_nvidia));
 }
 
+/// A streaming GPU that can't be found leaves the PC's other GPUs judged,
+/// with no note, as the host can't tell which one it streams with.
+#[test]
+fn an_unknown_streaming_gpu_still_judges_the_others() {
+    let m780 = adapter("AMD Radeon 780M Graphics", 1, AMD, 0x1900);
+    let rtx3060 = adapter("NVIDIA GeForce RTX 3060 Laptop GPU", 4, NVIDIA, 0x2560);
+    let pascal = adapter("NVIDIA GeForce GTX 1060", 5, NVIDIA, 0x1c03);
+    let intel = adapter("Intel(R) UHD Graphics", 6, 0x8086, 0x9a49);
+    let hip = |arch: &str, luid: u64| Gpu {
+        name: "AMD Radeon".into(),
+        arch: arch.into(),
+        compute_units: 12,
+        luid: Some(luid),
+    };
+    let unknown = "the GPU Rubylight streams with can't be found";
+    let found = capable_any(&[intel.clone(), rtx3060.clone()], Err("no HIP"), unknown).unwrap();
+    assert_eq!(found.gpu, rtx3060.name);
+    assert_eq!(found.note(), None);
+    assert_eq!(
+        capable_any(
+            std::slice::from_ref(&m780),
+            Ok(&[hip("gfx1103", 1)]),
+            unknown
+        )
+        .unwrap()
+        .gpu,
+        m780.name
+    );
+    let refused =
+        capable_any(&[intel.clone(), pascal.clone()], Err("no HIP"), unknown).unwrap_err();
+    assert!(
+        refused.contains(unknown)
+            && refused.contains("it has NVIDIA GeForce GTX 1060, which is older"),
+        "{refused}"
+    );
+    assert!(
+        capable_any(&[], Err("no HIP"), unknown)
+            .unwrap_err()
+            .contains(unknown)
+    );
+}
+
 /// What reaches a console or a client never names the mod: a path through
 /// its folder shows as its file's name.
 #[test]

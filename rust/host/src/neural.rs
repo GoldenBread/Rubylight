@@ -31,10 +31,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     io::{BufRead, Read, Write},
     path::{Path, PathBuf},
-    sync::{Mutex, PoisonError, RwLock, mpsc},
+    sync::{Condvar, Mutex, PoisonError, RwLock, mpsc},
     time::{Duration, Instant},
 };
 
@@ -59,6 +59,9 @@ const PROBE_RETRY: Duration = Duration::from_secs(300);
 const PENDING: &str = "pending_removals";
 /// How long a game's own check ([`game_check`]) holds.
 const GAME_RECHECK: Duration = Duration::from_secs(120);
+/// How long a status read waits for a game's own check; one that takes
+/// longer (a network share that stalls) answers the next read.
+const GAME_WAIT: Duration = Duration::from_secs(if cfg!(test) { 1 } else { 3 });
 /// How often a pending removal is tried again.
 const PENDING_RETRY: Duration = Duration::from_secs(600);
 /// What the console shows for a failed download; the host's log has why.
@@ -67,6 +70,8 @@ const DOWNLOAD_FAILED: &str = "the download or its check failed; Rubylight's log
 #[derive(Default)]
 pub struct Neural {
     state: Mutex<State>,
+    /// Told when a game's own check ends ([`game_check`]).
+    checked: Condvar,
     /// One download into the cache at a time.
     fetching: tokio::sync::Mutex<()>,
     /// One writer of the record at a time.
@@ -96,6 +101,15 @@ pub struct Neural {
     /// A test's Steam folders in place of this PC's.
     #[cfg(test)]
     pub steam_roots: Mutex<Option<Vec<PathBuf>>>,
+    /// The GPU a test streams with can't be found.
+    #[cfg(test)]
+    pub streams_unknown: Mutex<bool>,
+    /// A game's own check waits for this test to send or hang up.
+    #[cfg(test)]
+    pub game_gate: Mutex<Option<mpsc::Receiver<()>>>,
+    /// How many games' own checks ran in this test.
+    #[cfg(test)]
+    pub game_checks: std::sync::atomic::AtomicUsize,
 }
 
 #[derive(Default)]
@@ -110,6 +124,11 @@ struct State {
     /// Each app's own check ([`game_check`]): when, for which program and
     /// install, and what it found (None: the check itself failed).
     games: BTreeMap<String, GameChecked>,
+    /// The apps whose own check runs now.
+    checking: BTreeSet<String>,
+    /// Each app's count of job changes: a check that began before one is
+    /// not kept.
+    generation: BTreeMap<String, u64>,
     /// When the pending removals are tried next.
     removal_at: Option<Instant>,
     /// The cached release this host start checked file by file.
@@ -227,8 +246,16 @@ pub fn probe_main() -> i32 {
 /// a while after a failure, and again once the GPU or display a stream uses
 /// is set otherwise. Blocks.
 pub fn capability(h: &Shared, game: Option<&Path>) -> Result<neural::Capable, String> {
-    let capable = gpu_capability(h)?;
-    neural::runtime(&vc_missing(h, game))?;
+    capability_of(h, game).map_err(|(_, reason)| reason)
+}
+
+/// [`capability`], with which half failed: `gpu` or `runtime`.
+fn capability_of(
+    h: &Shared,
+    game: Option<&Path>,
+) -> Result<neural::Capable, (&'static str, String)> {
+    let capable = gpu_capability(h).map_err(|reason| ("gpu", reason))?;
+    neural::runtime(&vc_missing(h, game)).map_err(|reason| ("runtime", reason))?;
     Ok(capable)
 }
 
@@ -243,7 +270,11 @@ fn gpu_capability(h: &Shared) -> Result<neural::Capable, String> {
     }
     let result = gpus_with(h, &setting).and_then(|(streams, adapters)| {
         // Only an AMD GPU needs the compute runtime, which no other driver has.
-        let probe = if neural::needs_probe(&streams, &adapters) {
+        let needs_probe = match &streams {
+            Ok(streams) => neural::needs_probe(streams, &adapters),
+            Err(_) => adapters.iter().any(|adapter| adapter.vendor == neural::AMD),
+        };
+        let probe = if needs_probe {
             run_probe(h).and_then(|probe| match probe.error {
                 Some(error) if probe.gpus.is_empty() => Err(error),
                 _ => Ok(probe.gpus),
@@ -251,11 +282,12 @@ fn gpu_capability(h: &Shared) -> Result<neural::Capable, String> {
         } else {
             Err("not asked: no AMD GPU".into())
         };
-        neural::capable(
-            &streams,
-            &adapters,
-            probe.as_deref().map_err(String::as_str),
-        )
+        let gpus = probe.as_deref().map_err(String::as_str);
+        match &streams {
+            Ok(streams) => neural::capable(streams, &adapters, gpus),
+            // The PC's other GPUs still count, with no note on the one that streams.
+            Err(unknown) => neural::capable_any(&adapters, gpus, unknown),
+        }
     });
     match &result {
         Err(reason) => tracing::info!(%reason, "Neural Rendering is not available on this PC"),
@@ -340,17 +372,85 @@ fn vc_missing(h: &Shared, game: Option<&Path>) -> Vec<&'static str> {
 /// install does. Held per app for [`GAME_RECHECK`] while its program and
 /// install stay; a job drops it. None when the check itself failed: the
 /// switch stays usable and the install says why. Blocks.
-fn game_check(h: &Shared, uuid: &str, app: &App) -> Option<GameCheck> {
+///
+/// One check per app runs at a time, in its own thread: a reader waits for
+/// it up to `wait` and then answers without it (None), and the check's
+/// answer is kept for the next read unless a job began meanwhile.
+fn game_check(h: &Shared, uuid: &str, app: &App, wait: Duration) -> Option<GameCheck> {
     let exe = legacy_exe(app).or_else(|| game_command(app));
     let install = install(app);
-    if let Some((at, held_exe, held_install, check)) = h.neural.lock().games.get(uuid)
-        && *held_exe == exe
-        && *held_install == install
-        && at.elapsed() < GAME_RECHECK
-    {
-        return check.clone();
+    let held = |state: &State| {
+        state
+            .games
+            .get(uuid)
+            .filter(|(at, held_exe, held_install, _)| {
+                *held_exe == exe && *held_install == install && at.elapsed() < GAME_RECHECK
+            })
+            .map(|(.., check)| check.clone())
+    };
+    let mut state = h.neural.lock();
+    if let Some(check) = held(&state) {
+        return check;
     }
-    let check = match find_game(h, app, exe.clone(), install.clone()) {
+    if state.checking.insert(uuid.to_owned()) {
+        let generation = state.generation.get(uuid).copied().unwrap_or(0);
+        let (h, uuid, app) = (h.clone(), uuid.to_owned(), app.clone());
+        let (exe, install) = (exe.clone(), install.clone());
+        std::thread::spawn(move || {
+            /// Ends the check however it ends, a panic too.
+            struct Ending<'a>(&'a Shared, &'a str);
+            impl Drop for Ending<'_> {
+                fn drop(&mut self) {
+                    self.0.neural.lock().checking.remove(self.1);
+                    self.0.neural.checked.notify_all();
+                }
+            }
+            let _ending = Ending(&h, &uuid);
+            let check = run_game_check(&h, &app, exe.clone(), install.clone());
+            let mut state = h.neural.lock();
+            if state.generation.get(&uuid).copied().unwrap_or(0) == generation {
+                state
+                    .games
+                    .insert(uuid.clone(), (Instant::now(), exe, install, check));
+            }
+        });
+    }
+    let deadline = Instant::now() + wait;
+    loop {
+        if let Some(check) = held(&state) {
+            return check;
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        if !state.checking.contains(uuid) || left.is_zero() {
+            return None;
+        }
+        state = h
+            .neural
+            .checked
+            .wait_timeout(state, left)
+            .unwrap_or_else(PoisonError::into_inner)
+            .0;
+    }
+}
+
+/// [`game_check`]'s check itself. Blocks.
+fn run_game_check(
+    h: &Shared,
+    app: &App,
+    exe: Option<PathBuf>,
+    install: Option<PathBuf>,
+) -> Option<GameCheck> {
+    #[cfg(test)]
+    {
+        h.neural
+            .game_checks
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let gate = h.neural.game_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            let _ = gate.recv();
+        }
+    }
+    match find_game(h, app, exe, install) {
         Ok(Response::Found { .. }) => Some(GameCheck::Fits),
         Ok(Response::Refused { reason }) => Some(GameCheck::Refused {
             why: game_why(&reason),
@@ -365,12 +465,7 @@ fn game_check(h: &Shared, uuid: &str, app: &App) -> Option<GameCheck> {
             tracing::debug!(app = %app.name, error = %format!("{error:#}"), "Neural Rendering: the game's check failed");
             None
         }
-    };
-    h.neural.lock().games.insert(
-        uuid.to_owned(),
-        (Instant::now(), exe, install, check.clone()),
-    );
-    check
+    }
 }
 
 /// The code of a game's refusal ([`GameCheck::Refused`]).
@@ -395,30 +490,35 @@ fn game_folder(app: &App) -> Option<PathBuf> {
 }
 
 /// The GPU this host captures and encodes with (the Graphics card
-/// setting's, or the one that drives the display it streams), and every
-/// hardware GPU of the PC, that one among them.
+/// setting's, or the one that drives the display it streams), or why it
+/// can't be found, and every hardware GPU of the PC, that one among them.
 #[cfg(not(test))]
-fn gpus_with(
-    _: &Shared,
-    setting: &GpuSetting,
-) -> Result<(neural::Adapter, Vec<neural::Adapter>), String> {
+fn gpus_with(_: &Shared, setting: &GpuSetting) -> Result<StreamsAmong, String> {
     let [display, adapter_name, pnp_id] = setting;
-    let (name, (low, high)) =
-        butterpollo_windows::capture::stream_gpu(display, adapter_name, pnp_id)
-            .map_err(|e| format!("the GPU Rubylight streams with can't be found: {e:#}"))?;
-    let gpus = butterpollo_windows::capture::gpus()
-        .map_err(|e| format!("the GPUs can't be listed: {e:#}"))?;
+    let stream_gpu = butterpollo_windows::capture::stream_gpu(display, adapter_name, pnp_id)
+        .map_err(|e| format!("the GPU Rubylight streams with can't be found: {e:#}"));
+    let gpus = butterpollo_windows::capture::gpus().map_err(|e| {
+        let listed = format!("the GPUs can't be listed: {e:#}");
+        match &stream_gpu {
+            Err(unknown) => format!("{unknown}; {listed}"),
+            Ok(_) => listed,
+        }
+    })?;
     let luid = |(low, high): (u32, i32)| (u64::from(high as u32) << 32) | u64::from(low);
-    let gpu = gpus
-        .iter()
-        .find(|gpu| gpu.luid == (low, high))
-        .ok_or_else(|| format!("the GPU Rubylight streams with ({name}) can't be identified"))?;
-    let streams = neural::Adapter {
-        name,
-        luid: luid((low, high)),
-        vendor: gpu.vendor,
-        device: gpu.device,
-    };
+    let streams = stream_gpu.and_then(|(name, (low, high))| {
+        let gpu = gpus
+            .iter()
+            .find(|gpu| gpu.luid == (low, high))
+            .ok_or_else(|| {
+                format!("the GPU Rubylight streams with ({name}) can't be identified")
+            })?;
+        Ok(neural::Adapter {
+            name,
+            luid: luid((low, high)),
+            vendor: gpu.vendor,
+            device: gpu.device,
+        })
+    });
     let adapters = gpus
         .iter()
         .map(|gpu| neural::Adapter {
@@ -430,13 +530,26 @@ fn gpus_with(
         .collect();
     Ok((streams, adapters))
 }
+/// The GPU this host streams with, or why it can't be found, and every
+/// hardware GPU of the PC ([`gpus_with`]).
+type StreamsAmong = (Result<neural::Adapter, String>, Vec<neural::Adapter>);
 /// Tests stream with their own GPU, else the probe's first one, among their
-/// own GPUs, else alone.
+/// own GPUs, else alone; or with one that can't be found, among their own.
 #[cfg(test)]
-fn gpus_with(
-    h: &Shared,
-    _: &GpuSetting,
-) -> Result<(neural::Adapter, Vec<neural::Adapter>), String> {
+fn gpus_with(h: &Shared, _: &GpuSetting) -> Result<StreamsAmong, String> {
+    if *h.neural.streams_unknown.lock().unwrap() {
+        let adapters = h
+            .neural
+            .adapters
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_default();
+        return Ok((
+            Err("the GPU Rubylight streams with can't be found: in this test".into()),
+            adapters,
+        ));
+    }
     let streams = match h.neural.streams.lock().unwrap().clone() {
         Some(streams) => streams,
         None => {
@@ -457,7 +570,7 @@ fn gpus_with(
         .unwrap()
         .clone()
         .unwrap_or_else(|| vec![streams.clone()]);
-    Ok((streams, adapters))
+    Ok((Ok(streams), adapters))
 }
 
 #[cfg(test)]
@@ -1413,6 +1526,7 @@ pub(crate) fn start_job(
     if running(&state, uuid) {
         return Err(Refusal::Busy);
     }
+    forget_game_check(&mut state, uuid);
     state.jobs.insert(
         uuid.into(),
         Job {
@@ -1428,10 +1542,17 @@ pub(crate) fn start_job(
     Ok(())
 }
 fn update_job(h: &Shared, uuid: &str, change: impl FnOnce(&mut Job)) {
-    h.neural.lock().games.remove(uuid);
-    if let Some(job) = h.neural.lock().jobs.get_mut(uuid) {
+    let mut state = h.neural.lock();
+    forget_game_check(&mut state, uuid);
+    if let Some(job) = state.jobs.get_mut(uuid) {
         change(job);
     }
+}
+/// A job changes the game's folder: its own check is asked again, and one
+/// that runs now is not kept ([`game_check`]).
+fn forget_game_check(state: &mut State, uuid: &str) {
+    state.games.remove(uuid);
+    *state.generation.entry(uuid.to_owned()).or_default() += 1;
 }
 fn fail_job(h: &Shared, uuid: &str, error: String, choose_exe: bool) {
     update_job(h, uuid, |job| {
@@ -1453,7 +1574,13 @@ pub fn enable(h: &Shared, uuid: &str, exe: Option<PathBuf>) -> Result<(), Refusa
         return Err(Refusal::NotAccepted);
     }
     let app = app(h, uuid);
-    capability(h, app.as_ref().and_then(game_folder).as_deref()).map_err(Refusal::Unavailable)?;
+    // The runtime beside the program the user picked, else the one the app names.
+    let folder = exe
+        .as_deref()
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .or_else(|| app.as_ref().and_then(game_folder));
+    capability(h, folder.as_deref()).map_err(Refusal::Unavailable)?;
     let app = app.ok_or(Refusal::NotFound)?;
     // A console that still shows the switch off may name another program: the files
     // beside the first would stay in the game's folder with no record left of them.
@@ -1547,7 +1674,7 @@ pub fn enable(h: &Shared, uuid: &str, exe: Option<PathBuf>) -> Result<(), Refusa
                                 job.kept = kept.iter().map(|path| neural::shown(path)).collect();
                             });
                             return Ok(Response::Error {
-                                message: kept_earlier(&kept),
+                                message: folder::kept_text(&kept, true),
                             });
                         }
                         Removed::Done(_) => set_key(&worker, &task_uuid, LEGACY_KEY, None)?,
@@ -1587,28 +1714,6 @@ pub fn enable(h: &Shared, uuid: &str, exe: Option<PathBuf>) -> Result<(), Refusa
         }
     });
     Ok(())
-}
-
-/// Why an install stopped after the earlier upscaling's removal left `kept`.
-fn kept_earlier(kept: &[String]) -> String {
-    let mut named: Vec<String> = kept
-        .iter()
-        .take(3)
-        .map(|path| neural::shown(path))
-        .collect();
-    if kept.len() > 3 {
-        named.push(format!("{} more", kept.len() - 3));
-    }
-    let (be, it) = if kept.len() == 1 {
-        ("is", "it")
-    } else {
-        ("are", "them")
-    };
-    format!(
-        "the earlier upscaling was removed, but {} {be} still in the game's folder: {} changed since or {be} not Rubylight's, so frame generation was not installed; move {it} out and turn it on again",
-        named.join(", "),
-        if kept.len() == 1 { "it" } else { "they" },
-    )
 }
 
 /// What the app's key says once the files are in.
@@ -2213,8 +2318,19 @@ fn launch_check(h: &Shared, app: &App, uuid: &str, exe: PathBuf, legacy: bool) -
 /// The switch as the console and Nightjar show it for one app. Blocks (the
 /// first call checks the GPU).
 pub fn status(h: &Shared, uuid: &str) -> Value {
+    status_waiting(h, uuid, GAME_WAIT)
+}
+
+/// Whether the host has an app `uuid`.
+pub fn found(h: &Shared, uuid: &str) -> bool {
+    app(h, uuid).is_some()
+}
+
+/// [`status`], waiting for the game's own check up to `wait`: a write's
+/// answer waits for none.
+pub fn status_waiting(h: &Shared, uuid: &str, wait: Duration) -> Value {
     let app = app(h, uuid);
-    let capability = capability(h, app.as_ref().and_then(game_folder).as_deref());
+    let capability = capability_of(h, app.as_ref().and_then(game_folder).as_deref());
     // The game's own check, only where it decides something: the switch is
     // off, nothing runs for the game and the PC can run frame generation.
     let idle = !h
@@ -2226,7 +2342,7 @@ pub fn status(h: &Shared, uuid: &str) -> Value {
     let game = app
         .as_ref()
         .filter(|app| idle && capability.is_ok() && !app.extra.contains_key(KEY))
-        .and_then(|app| game_check(h, uuid, app));
+        .and_then(|app| game_check(h, uuid, app, wait));
     let state = h.neural.lock();
     let setting = app.as_ref().and_then(|app| app.extra.get(KEY)).cloned();
     let legacy = app
@@ -2238,7 +2354,9 @@ pub fn status(h: &Shared, uuid: &str) -> Value {
         "available": capability.is_ok(),
         "gpu": capability.as_ref().ok().map(|capable| &capable.gpu),
         "gpu_note": capability.as_ref().ok().and_then(neural::Capable::note),
-        "reason": capability.as_ref().err(),
+        "reason": capability.as_ref().err().map(|(_, reason)| reason),
+        // Which half failed: `gpu` or `runtime` (the Visual C++ runtime).
+        "unavailable": capability.as_ref().err().map(|(why, _)| why),
         "found": app.is_some(),
         "enabled": setting.is_some(),
         "exe": setting.as_ref().and_then(|s| s.get("exe")).cloned(),

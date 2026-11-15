@@ -24,6 +24,10 @@ pub struct Neural {
     /// on it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gpu: Option<String>,
+    /// When `gpu` is not the GPU the host streams with: that frame
+    /// generation runs only when the game renders on it, in the host's words.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_note: Option<String>,
     pub switches: Vec<Switch>,
     /// Rubylight 3.0's neural upscaling is still in the game's folder:
     /// turning a switch on removes it first.
@@ -65,6 +69,9 @@ pub enum Why {
     NoHostControl,
     /// None of this PC's GPUs can run it.
     Gpu,
+    /// The PC lacks the Microsoft Visual C++ 2015-2022 Redistributable (x64)
+    /// it needs; a client older than this code shows `reason`.
+    Runtime,
     /// The game has an anti-cheat, which treats the mod as a cheat.
     AntiCheat,
     /// The game offers no DLSS frame generation for it to take the place of.

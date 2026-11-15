@@ -71,7 +71,7 @@ pub async fn read(
         .ok_or_else(|| Failure::new(ErrorCode::InvalidRequest, "Name the game: ?app=<id>."))?;
     let host_control = butterpollo_core::native::host_control(&client);
     tokio::task::spawn_blocking(move || {
-        state(&h, &app, host_control).map(|state| json(StatusCode::OK, &state))
+        state(&h, &app, host_control, true).map(|state| json(StatusCode::OK, &state))
     })
     .await
     .map_err(|error| Failure::internal("read Neural Rendering", error))?
@@ -108,7 +108,7 @@ fn apply(h: &Shared, connection: &Connection, body: &[u8]) -> Reply {
         )
         .for_setting(&request.switch));
     }
-    if neural::status(h, &request.app)["found"] != true {
+    if !neural::found(h, &request.app) {
         return Err(not_found());
     }
     if request.on && request.accept_notice && !neural::accepted(h) {
@@ -120,7 +120,11 @@ fn apply(h: &Shared, connection: &Connection, body: &[u8]) -> Reply {
         neural::disable(h, &request.app)
     };
     done.map_err(|refusal| refused(refusal, !request.on).for_setting(FRAME_GENERATION))?;
-    Ok(json(StatusCode::ACCEPTED, &state(h, &request.app, true)?))
+    // The answer never waits for the game's own check.
+    Ok(json(
+        StatusCode::ACCEPTED,
+        &state(h, &request.app, true, false)?,
+    ))
 }
 
 fn not_found() -> Failure {
@@ -160,9 +164,14 @@ fn sentence(text: &str) -> String {
 
 /// The game's switches as the console's game page has them. Blocks: the
 /// first answer of a host start asks which GPU streams. host_control:
-/// the caller may write it.
-fn state(h: &Shared, app: &str, host_control: bool) -> Result<Neural, Failure> {
-    let status = neural::status(h, app);
+/// the caller may write it; wait: for the game's own check, a few seconds
+/// at most.
+fn state(h: &Shared, app: &str, host_control: bool, wait: bool) -> Result<Neural, Failure> {
+    let status = if wait {
+        neural::status(h, app)
+    } else {
+        neural::status_waiting(h, app, std::time::Duration::ZERO)
+    };
     if status["found"] != true {
         return Err(not_found());
     }
@@ -215,7 +224,10 @@ fn state(h: &Shared, app: &str, host_control: bool) -> Result<Neural, Failure> {
             Some(sentence(
                 status["reason"].as_str().unwrap_or("This PC can't run it"),
             )),
-            Some(Why::Gpu),
+            Some(match status["unavailable"].as_str() {
+                Some("runtime") => Why::Runtime,
+                _ => Why::Gpu,
+            }),
         )
     } else if let Some(why) = game_why.filter(|why| *why != Why::ChooseProgram && !on) {
         (
@@ -249,6 +261,7 @@ fn state(h: &Shared, app: &str, host_control: bool) -> Result<Neural, Failure> {
         app: app.to_owned(),
         accepted: status["accepted"] == true,
         gpu: text(&status["gpu"]),
+        gpu_note: text(&status["gpu_note"]),
         switches: vec![api::Switch {
             id: FRAME_GENERATION.into(),
             state,

@@ -1220,26 +1220,85 @@ impl Gone {
                 .filter(|name| neural::logs(name))
                 .map(|name| name.to_ascii_lowercase()),
         );
+        // What the removal deletes beside them ([`remove_by`]): partial copies.
+        let partials: Vec<String> = legacy
+            .files
+            .keys()
+            .map(|path| format!("{path}{PARTIAL}").to_ascii_lowercase())
+            .collect();
+        // What the removal keeps stops the install after it ([`kept_text`]):
+        // a file changed since (by size here, so a same-size change still
+        // stops it then), the settings it took over, and whatever else is in
+        // its folders. Asked now, so the game keeps the earlier upscaling.
+        let mut kept = removal.keep;
         // Deepest first: a folder goes once all that is in it goes.
         for relative in legacy.folders.iter().rev() {
             let Ok(entries) = std::fs::read_dir(folder.join(relative)) else {
                 continue;
             };
-            let empty = entries.flatten().all(|entry| {
+            let mut empty = true;
+            for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().into_owned();
-                paths.contains(&format!("{relative}/{name}").to_ascii_lowercase())
-                    || (neural::provider_dlssg(relative)
-                        && entry.file_type().is_ok_and(|kind| kind.is_file())
-                        && neural::provider_files(&name))
-            });
+                let path = format!("{relative}/{name}");
+                let lower = path.to_ascii_lowercase();
+                let kind = entry.file_type().ok();
+                if paths.contains(&lower)
+                    || (kind.is_some_and(|kind| kind.is_file())
+                        && (partials.contains(&lower)
+                            || (neural::provider_dlssg(relative) && neural::provider_files(&name))))
+                {
+                    continue;
+                }
+                empty = false;
+                // A folder of its own that stays is named by what is in it.
+                let own = kind.is_some_and(|kind| kind.is_dir() && !kind.is_symlink())
+                    && legacy.folders.iter().any(|f| f.eq_ignore_ascii_case(&path));
+                if !own {
+                    kept.push(path);
+                }
+            }
             if empty {
                 paths.push(relative.to_ascii_lowercase());
             }
+        }
+        if !kept.is_empty() {
+            kept.sort();
+            kept.dedup();
+            return Err(Failure::Refused(kept_text(&kept, false)));
         }
         Ok(Self {
             legacy: true,
             paths,
         })
+    }
+}
+
+/// Why an install stops at the earlier upscaling's files it would keep
+/// (`kept`): once its removal left them (`removed`), or before anything
+/// changed.
+pub(super) fn kept_text(kept: &[String], removed: bool) -> String {
+    let mut named: Vec<String> = kept
+        .iter()
+        .take(3)
+        .map(|path| neural::shown(path))
+        .collect();
+    if kept.len() > 3 {
+        named.push(format!("{} more", kept.len() - 3));
+    }
+    let (be, it, they) = if kept.len() == 1 {
+        ("is", "it", "it")
+    } else {
+        ("are", "them", "they")
+    };
+    let named = named.join(", ");
+    if removed {
+        format!(
+            "the earlier upscaling was removed, but {named} {be} still in the game's folder: {they} changed since or {be} not Rubylight's, so frame generation was not installed; move {it} out and turn it on again"
+        )
+    } else {
+        format!(
+            "the earlier upscaling can't be removed whole: {named} changed since or {be} not Rubylight's and would stay in the game's folder, so nothing was changed; move {it} out and turn it on again"
+        )
     }
 }
 
@@ -1886,9 +1945,24 @@ fn remove_by(folder: &Path, name: &str, writer: Writer) -> Outcome<Vec<String>> 
             })
         })
     };
-    for path in dlls {
-        delete(path)?;
+    // The DLLs all go or none does: a game that holds one (in add-on mode the
+    // provider's, with no proxy of ours to stop at first) leaves the folder
+    // and the user's ini as they were.
+    for path in &dlls {
+        guard(folder, path, writer)?;
     }
+    let dlls: Vec<PathBuf> = dlls.iter().map(|path| folder.join(path)).collect();
+    butterpollo_windows::files::delete_all(&dlls).map_err(|(file, e)| {
+        let held = matches!(e.raw_os_error(), Some(5 | 32));
+        Failure::Error(if held {
+            format!(
+                "cannot remove {}: a program holds it, most likely the game: close the game and try again",
+                file.display()
+            )
+        } else {
+            format!("cannot remove {}: {e}", file.display())
+        })
+    })?;
     // Then the ini: OptiScaler, gone or no longer loaded, looks for the
     // provider no more.
     if let Some((path, restored)) = &ini {

@@ -365,3 +365,96 @@ async fn the_game_is_checked_before_any_write_and_each_state_has_a_code() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// A PC that lacks the Visual C++ runtime says so with its own code, which
+/// a device says in its words (to install it), not that its graphics can't;
+/// a GPU frame generation runs on but the host doesn't stream with comes
+/// with the console's note.
+#[tokio::test]
+async fn a_missing_runtime_has_its_own_code_and_another_gpu_its_note() {
+    use butterpollo_core::native_api::neural::Why;
+    let s = Setup::new();
+    host(&s, "NVIDIA GeForce RTX 3060", NVIDIA, 0x2504);
+    s.host()
+        .neural
+        .vc_missing
+        .lock()
+        .unwrap()
+        .push("VCRUNTIME140_1.dll");
+    let state = neural(&s.get("/neural?app=game").await);
+    let switch = &state.switches[0];
+    assert_eq!(
+        (switch.state, switch.why),
+        (ControlState::Unsupported, Some(Why::Runtime))
+    );
+    assert!(
+        switch.reason.as_deref().unwrap().contains("Visual C++"),
+        "{switch:?}"
+    );
+    assert_eq!(state.gpu_note, None);
+    s.host().neural.vc_missing.lock().unwrap().clear();
+
+    let s = Setup::new();
+    let vega = Adapter {
+        name: "AMD Radeon(TM) Graphics".into(),
+        luid: 1,
+        vendor: AMD,
+        device: 0x1638,
+    };
+    host(&s, &vega.name, AMD, 0x1638);
+    *s.host().neural.adapters.lock().unwrap() = Some(vec![
+        vega,
+        Adapter {
+            name: "NVIDIA GeForce RTX 3060 Laptop GPU".into(),
+            luid: 4,
+            vendor: NVIDIA,
+            device: 0x2560,
+        },
+    ]);
+    let state = neural(&s.get("/neural?app=game").await);
+    assert_eq!(
+        state.gpu.as_deref(),
+        Some("NVIDIA GeForce RTX 3060 Laptop GPU")
+    );
+    let note = state.gpu_note.as_deref().unwrap();
+    assert!(
+        note.contains("runs when the game renders on NVIDIA GeForce RTX 3060 Laptop GPU"),
+        "{note}"
+    );
+}
+
+/// A game's own check that stalls (a network share) never holds a read
+/// past a few seconds, nor a write at all, and starts only once per game.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stalled_game_check_holds_no_read_long_and_no_write() {
+    let s = Setup::new();
+    host(&s, "NVIDIA GeForce RTX 3060", NVIDIA, 0x2504);
+    s.host_control(true);
+    let (release, gate) = std::sync::mpsc::channel::<()>();
+    *s.host().neural.game_gate.lock().unwrap() = Some(gate);
+    let started = std::time::Instant::now();
+    let (first, second) = tokio::join!(s.get("/neural?app=game"), s.get("/neural?app=game"));
+    // Both answered without the check: the switch stays usable.
+    for reply in [&first, &second] {
+        let state = neural(reply);
+        assert_eq!(state.switches[0].state, ControlState::Configurable);
+    }
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    assert_eq!(
+        s.host()
+            .neural
+            .game_checks
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    // A write while it still stalls is refused or accepted at once.
+    let started = std::time::Instant::now();
+    let _ = write(
+        &s,
+        &s.connection,
+        r#"{"app":"game","switch":"frame_generation","on":false}"#,
+    )
+    .await;
+    assert!(started.elapsed() < std::time::Duration::from_millis(900));
+    drop(release);
+}

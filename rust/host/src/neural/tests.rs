@@ -796,6 +796,89 @@ fn a_removal_while_the_game_runs_changes_nothing_and_says_to_close_it() {
     assert_eq!(snapshot(folder), before);
 }
 
+/// A DLL the game holds anywhere in the removal stops it before any DLL
+/// goes: in the full package one after OptiScaler's proxy, and in add-on
+/// mode, with no proxy of ours to go first, one provider DLL of several,
+/// so the user's OptiScaler.ini never points at a half-removed provider.
+#[test]
+fn a_held_dll_stops_the_removal_before_any_dll_goes() {
+    let temp = tempdir();
+    let (pdll, pini, pak) = (
+        format!("full/game/{PDLL}"),
+        format!("full/game/{PINI}"),
+        format!("full/game/{PAK}"),
+    );
+    let cache = package(
+        temp.path(),
+        "FG-V.B16",
+        &[
+            ("full/game/dxgi.dll", b"OptiScaler proxy"),
+            ("full/game/OptiScaler.ini", b"[FrameGen]\nFGInput=nvngxfg\n"),
+            ("full/game/OptiScaler/libxess.dll", b"xess"),
+            (&pdll, b"provider"),
+            (&pini, b"path = auto\n"),
+            (&pak, b"model"),
+            ("full/LICENSES/OptiScaler-GPL-3.0.txt", b"GPL"),
+            (
+                "addon/Apex Neural Rendering FG/dlssg/aaa_helper.dll",
+                b"addon helper",
+            ),
+            (
+                "addon/Apex Neural Rendering FG/dlssg/nvngx_dlssg.dll",
+                b"addon provider",
+            ),
+            (
+                "addon/Apex Neural Rendering FG/dlssg/nr_fg.ini",
+                b"path = auto\n",
+            ),
+        ],
+    );
+    let exe = game(temp.path());
+    let folder = exe.parent().unwrap();
+    let Response::Placed { .. } = install(Some(&exe), None, &cache) else {
+        panic!()
+    };
+    let placed = snapshot(folder);
+    let held = hold(&folder.join(PDLL));
+    let Response::Error { message } = remove(&exe) else {
+        panic!()
+    };
+    assert!(message.contains("close the game"), "{message}");
+    assert_eq!(snapshot(folder), placed);
+    drop(held);
+    assert!(matches!(remove(&exe), Response::Removed { .. }));
+
+    std::fs::write(
+        folder.join("dxgi.dll"),
+        b"MZ OptiScaler ... Custom DLSSG ...",
+    )
+    .unwrap();
+    std::fs::write(
+        folder.join("OptiScaler.ini"),
+        b"[FrameGen]\r\nFGInput=auto\r\n",
+    )
+    .unwrap();
+    let before = snapshot(folder);
+    let Response::Placed {
+        mode: Mode::Addon, ..
+    } = install(Some(&exe), None, &cache)
+    else {
+        panic!()
+    };
+    let dlssg = folder.join("custom/Apex Neural Rendering FG/dlssg");
+    assert!(dlssg.join("aaa_helper.dll").is_file());
+    let placed = snapshot(folder);
+    let held = hold(&dlssg.join("nvngx_dlssg.dll"));
+    let Response::Error { message } = remove(&exe) else {
+        panic!()
+    };
+    assert!(message.contains("close the game"), "{message}");
+    assert_eq!(snapshot(folder), placed);
+    drop(held);
+    assert_eq!(remove(&exe), Response::Removed { kept: vec![] });
+    assert_eq!(snapshot(folder), before);
+}
+
 /// An update cut short (a file the game holds open) leaves each file it
 /// replaces in one of its two forms, both the host's: the game does not
 /// launch on half an update, the next launch with the release cached
@@ -3551,7 +3634,7 @@ async fn a_refused_install_leaves_the_earlier_upscaling_as_it_was() {
             "left-in-its-folder",
             "winmm.dll",
             |folder, _| std::fs::write(folder.join("OptiScaler/notes.txt"), "mine").unwrap(),
-            "OptiScaler/notes.txt is in the game's folder",
+            "OptiScaler/notes.txt changed since or is not Rubylight's and would stay",
         ),
         (
             "changed-in-its-folder",
@@ -3612,11 +3695,12 @@ async fn a_refused_install_leaves_the_earlier_upscaling_as_it_was() {
     }
 }
 
-/// A file of Rubylight 3.0's AMDNR that changed since stays when AMDNR is
-/// taken out, and stops frame generation's install: the job names it, and
-/// the app no longer names AMDNR, whose manifest went with the rest.
+/// A file of Rubylight 3.0's AMDNR that changed since would stay when
+/// AMDNR is taken out, and the game would have neither: the install is
+/// refused before anything changes, naming the file, and the earlier
+/// upscaling stays byte for byte with its record.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_file_the_earlier_upscalings_removal_kept_stops_the_install() {
+async fn a_legacy_file_changed_in_size_leaves_the_earlier_upscaling_as_it_was() {
     let f = crate::state::test_support::Fixture::new();
     let h = &f.host;
     let temp = tempdir();
@@ -3624,22 +3708,24 @@ async fn a_file_the_earlier_upscalings_removal_kept_stops_the_install() {
     let folder = exe.parent().unwrap();
     amdnr_host(&f, &[("game", &exe, "winmm.dll")]);
     std::fs::write(folder.join("LmxxfNrRuntime.pak"), "the user's model").unwrap();
+    let before = snapshot(folder);
     enable(h, "game", None).unwrap();
     let job = ended(h, "game").await;
     assert_eq!(job.phase, "failed", "{job:?}");
     let error = job.error.as_deref().unwrap();
     assert!(
-        error.contains("LmxxfNrRuntime.pak is still in the game's folder"),
+        error.contains("can't be removed whole: LmxxfNrRuntime.pak changed since")
+            && error.contains("nothing was changed"),
         "{error}"
     );
-    assert_eq!(job.kept, ["LmxxfNrRuntime.pak"]);
-    assert!(folder.join("LmxxfNrRuntime.pak").exists());
-    assert!(!folder.join(LEGACY_MANIFEST).exists());
-    assert!(!folder.join("winmm.dll").exists());
-    assert!(!folder.join(MANIFEST).exists());
+    assert_eq!(snapshot(folder), before);
     let app = app(h, "game").unwrap();
-    assert_eq!(legacy_exe(&app), None);
+    assert_eq!(legacy_exe(&app).as_ref(), Some(&exe));
     assert_eq!(placed_exe(&app), None);
+    assert_eq!(
+        folder::kept_text(&["LmxxfNrRuntime.pak".into()], true),
+        "the earlier upscaling was removed, but LmxxfNrRuntime.pak is still in the game's folder: it changed since or is not Rubylight's, so frame generation was not installed; move it out and turn it on again"
+    );
 }
 
 /// The console's Remove for a game that has only Rubylight 3.0's
@@ -4245,4 +4331,157 @@ fn a_first_install_cut_short_leaves_the_settings_it_took_over() {
     assert_eq!(std::fs::read(&settings).unwrap(), b"path = gpu\n");
     std::fs::remove_dir_all(folder.join("OptiScaler")).unwrap();
     assert_eq!(snapshot(folder), game_files);
+}
+
+/// A game whose own check finds no DLSS frame generation, on a PC that can
+/// run it: an install folder holding only its program.
+fn checked_game(f: &crate::state::test_support::Fixture, root: &Path) {
+    let h = &f.host;
+    *h.neural.streams.lock().unwrap() = Some(neural::Adapter {
+        name: "NVIDIA GeForce RTX 2060".into(),
+        luid: 7,
+        vendor: neural::NVIDIA,
+        device: 0x1F08,
+    });
+    let folder = root.join("without");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("Game.exe"), "MZ game").unwrap();
+    crate::steam::update_library(h, |apps, _| {
+        apps.push(json!({"name": "Without", "uuid": "without", "launcher-install-dir": folder}));
+        true
+    })
+    .unwrap();
+}
+
+fn game_checks(h: &Shared) -> usize {
+    h.neural
+        .game_checks
+        .load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// A game's own check that stalls holds a status read only a few seconds:
+/// the read answers without it, a second read starts no second check, and
+/// the check's answer serves the next read once it ends.
+#[test]
+fn a_slow_game_check_answers_a_later_read_and_runs_once() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    let temp = tempdir();
+    checked_game(&f, temp.path());
+    let (release, gate) = mpsc::channel::<()>();
+    *h.neural.game_gate.lock().unwrap() = Some(gate);
+    let started = Instant::now();
+    let shown = status(h, "without");
+    let waited = started.elapsed();
+    assert_eq!(shown["available"], true, "{shown}");
+    assert!(shown["game"].is_null(), "{shown}");
+    assert!(waited >= GAME_WAIT && waited < GAME_WAIT * 3, "{waited:?}");
+    let started = Instant::now();
+    assert!(status_waiting(h, "without", Duration::ZERO)["game"].is_null());
+    assert!(started.elapsed() < GAME_WAIT);
+    assert_eq!(game_checks(h), 1);
+    release.send(()).unwrap();
+    let shown = status(h, "without");
+    assert_eq!(shown["game"]["why"], "no_frame_generation", "{shown}");
+    assert_eq!(game_checks(h), 1);
+}
+
+/// A check that began before a job and ends after it is not kept: the
+/// job changed the game's folder.
+#[test]
+fn a_game_check_that_began_before_a_job_is_not_kept() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    let temp = tempdir();
+    checked_game(&f, temp.path());
+    let (release, gate) = mpsc::channel::<()>();
+    *h.neural.game_gate.lock().unwrap() = Some(gate);
+    assert!(status_waiting(h, "without", Duration::ZERO)["game"].is_null());
+    start_job(h, "without", "remove", "remove").unwrap();
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while h.neural.lock().checking.contains("without") && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(!h.neural.lock().checking.contains("without"));
+    assert!(!h.neural.lock().games.contains_key("without"));
+    // Without a job meanwhile the answer is kept.
+    update_job(h, "without", |job| job.phase = "done");
+    let shown = status(h, "without");
+    assert_eq!(shown["game"]["why"], "no_frame_generation", "{shown}");
+    assert!(h.neural.lock().games.contains_key("without"));
+}
+
+/// The Visual C++ runtime beside a program the user chose in the console
+/// counts, as beside the one the app names.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_runtime_beside_a_chosen_program_counts() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    *h.neural.streams.lock().unwrap() = Some(neural::Adapter {
+        name: "NVIDIA GeForce RTX 2060".into(),
+        luid: 7,
+        vendor: neural::NVIDIA,
+        device: 0x1F08,
+    });
+    accept(h).unwrap();
+    let cache = release(&cache_root(h), "FG-V.B16", b"OptiScaler proxy");
+    pin_to(h, &cache);
+    crate::steam::update_library(h, |apps, _| {
+        apps.push(json!({"name": "Game", "uuid": "game"}));
+        true
+    })
+    .unwrap();
+    h.neural
+        .vc_missing
+        .lock()
+        .unwrap()
+        .push("VCRUNTIME140_1.dll");
+    let temp = tempdir();
+    let exe = game(temp.path());
+    std::fs::write(exe.with_file_name("VCRUNTIME140_1.dll"), "runtime").unwrap();
+    assert!(matches!(
+        enable(h, "game", None),
+        Err(Refusal::Unavailable(reason)) if reason.contains("Visual C++")
+    ));
+    assert_eq!(status(h, "game")["unavailable"], "runtime");
+    enable(h, "game", Some(exe.clone())).unwrap();
+    let job = ended(h, "game").await;
+    assert_eq!(job.phase, "done", "{job:?}");
+}
+
+/// A streaming GPU that can't be found still leaves the PC's other GPUs
+/// judged, with no note on which one streams.
+#[test]
+fn an_unknown_streaming_gpu_leaves_the_others_judged() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    let adapter = |name: &str, luid: u64, vendor: u32, device: u32| neural::Adapter {
+        name: name.into(),
+        luid,
+        vendor,
+        device,
+    };
+    let intel = adapter("Intel(R) UHD Graphics", 6, 0x8086, 0x9a49);
+    let rtx = adapter(
+        "NVIDIA GeForce RTX 3060 Laptop GPU",
+        4,
+        neural::NVIDIA,
+        0x2560,
+    );
+    *h.neural.streams_unknown.lock().unwrap() = true;
+    *h.neural.adapters.lock().unwrap() = Some(vec![intel.clone(), rtx.clone()]);
+    let shown = status(h, "missing");
+    assert_eq!(shown["available"], true, "{shown}");
+    assert_eq!(shown["gpu"], rtx.name.as_str());
+    assert!(shown["gpu_note"].is_null(), "{shown}");
+    *h.neural.adapters.lock().unwrap() = Some(vec![intel]);
+    h.neural.lock().probe = None;
+    let shown = status(h, "missing");
+    assert_eq!(shown["available"], false, "{shown}");
+    assert_eq!(shown["unavailable"], "gpu");
+    assert!(
+        shown["reason"].as_str().unwrap().contains("can't be found"),
+        "{shown}"
+    );
 }

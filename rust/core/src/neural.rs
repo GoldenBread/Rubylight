@@ -1182,7 +1182,7 @@ pub fn capable(
     adapters: &[Adapter],
     gpus: Result<&[Gpu], &str>,
 ) -> Result<Capable, String> {
-    let supported = "frame generation runs on AMD Radeon RX 5000 and newer graphics (RDNA) and NVIDIA GeForce GTX 16, RTX 20 and newer";
+    let supported = SUPPORTED;
     let first = verdict(streams, gpus);
     if first == Verdict::Runs {
         return Ok(Capable {
@@ -1213,19 +1213,53 @@ pub fn capable(
         ),
         Verdict::Other | Verdict::Runs => format!("{supported}; this PC streams with {name}"),
     };
-    for (adapter, verdict) in others {
-        let name = &adapter.name;
-        reason.push_str(&match verdict {
-            Verdict::Older(None) => format!("; it also has {name}, which is older"),
-            Verdict::Older(Some(arch)) => format!("; it also has {name} ({arch}), which is older"),
-            Verdict::Unknown(why) => format!(
-                "; it also has {name} (device {:#06x}), which Rubylight can't identify: {why}",
-                adapter.device
-            ),
-            Verdict::Other | Verdict::Runs => String::new(),
+    reason.push_str(&judged(&others, "also has"));
+    Err(reason)
+}
+
+/// The GPUs frame generation runs on, as a refusal says them.
+const SUPPORTED: &str = "frame generation runs on AMD Radeon RX 5000 and newer graphics (RDNA) and NVIDIA GeForce GTX 16, RTX 20 and newer";
+
+/// [`capable`] when the GPU the host streams with can't be found (`unknown`
+/// says why): any of the PC's AMD or NVIDIA GPUs that runs it, with no note,
+/// since the host can't tell whether it streams with that one.
+pub fn capable_any(
+    adapters: &[Adapter],
+    gpus: Result<&[Gpu], &str>,
+    unknown: &str,
+) -> Result<Capable, String> {
+    let all: Vec<(&Adapter, Verdict)> = adapters
+        .iter()
+        .filter(|adapter| matches!(adapter.vendor, AMD | NVIDIA))
+        .map(|adapter| (adapter, verdict(adapter, gpus)))
+        .collect();
+    if let Some((adapter, _)) = all.iter().find(|(_, verdict)| *verdict == Verdict::Runs) {
+        return Ok(Capable {
+            gpu: adapter.name.clone(),
+            streams: None,
         });
     }
-    Err(reason)
+    Err(format!("{SUPPORTED}; {unknown}{}", judged(&all, "has")))
+}
+
+/// What a refusal says of each GPU in `judged` that doesn't run it: "; it
+/// `has` <name>, which is older".
+fn judged(judged: &[(&Adapter, Verdict)], has: &str) -> String {
+    judged
+        .iter()
+        .map(|(adapter, verdict)| {
+            let name = &adapter.name;
+            match verdict {
+                Verdict::Older(None) => format!("; it {has} {name}, which is older"),
+                Verdict::Older(Some(arch)) => format!("; it {has} {name} ({arch}), which is older"),
+                Verdict::Unknown(why) => format!(
+                    "; it {has} {name} (device {:#06x}), which Rubylight can't identify: {why}",
+                    adapter.device
+                ),
+                Verdict::Other | Verdict::Runs => String::new(),
+            }
+        })
+        .collect()
 }
 
 /// The Visual C++ runtime OptiScaler needs, of which this PC lacks
