@@ -90,8 +90,8 @@ pub const RULES: &[Rule] = &[
         // Half-second stalls are a busy GPU; an encoder hang lasts seconds.
         at_least: Some(("stalled_ms", 2000)),
         title: "Encoding stopped making progress",
-        explanation: "The stream's encoder thread waited on the AMD driver for seconds. This is how an encoder hang starts.",
-        fix: "If the picture froze and the GPU reset, restart Windows when the Radeon shows Code 31, and report the driver version and the time to AMD.",
+        explanation: "The stream's encoder thread waited on the graphics driver for seconds. This is how an encoder hang starts.",
+        fix: "If the picture froze and the GPU reset, restart Windows when Device Manager shows the graphics card with Code 31, and report the driver version and the time to the graphics card's maker.",
         anchor: GPU_RESET,
         setting: None,
     },
