@@ -778,6 +778,70 @@ fn a_broken_off_download_is_retried_but_a_rejected_installer_is_not() {
     assert_eq!(state["phase"], "waiting");
     assert_eq!(state["attempted_version"], candidate.version);
 }
+#[test]
+fn a_paused_download_resumes_only_the_same_installer_and_only_from_a_matching_range() -> Result<()>
+{
+    let f = Fixture::new();
+    let candidate = installer(&release()).unwrap();
+    let path = f.directory.join("download-kept").join("setup.exe");
+    std::fs::create_dir_all(path.parent().unwrap())?;
+    std::fs::write(&path, [7u8; 12])?;
+    let kept =
+        json!({"path":path,"url":candidate.url,"size":candidate.size,"digest":candidate.digest});
+    assert_eq!(resumable(&kept, &candidate), Some(path.clone()));
+    // Another release, address or digest starts over, and so does nothing kept.
+    for (key, value) in [
+        (
+            "url",
+            json!("https://github.com/RamazanKara/Rubylight/releases/download/x/other.exe"),
+        ),
+        ("size", json!(candidate.size + 1)),
+        ("digest", json!("00".repeat(32))),
+    ] {
+        let mut other = kept.clone();
+        other[key] = value;
+        assert_eq!(resumable(&other, &candidate), None, "{key}");
+    }
+    assert_eq!(resumable(&Value::Null, &candidate), None);
+    // A file already as long as the installer has nothing left to ask for.
+    std::fs::write(&path, vec![7u8; candidate.size as usize])?;
+    assert_eq!(resumable(&kept, &candidate), None);
+    // Only a 206 with the rest of this installer resumes; a server ignoring the range (200) or
+    // answering another range starts over.
+    let size = candidate.size;
+    let rest = format!("bytes 12-{}/{size}", size - 1);
+    assert!(resumes(206, Some(&rest), 12, size));
+    assert!(!resumes(200, Some(&rest), 12, size));
+    assert!(!resumes(206, None, 12, size));
+    assert!(!resumes(
+        206,
+        Some(&format!("bytes 0-{}/{size}", size - 1)),
+        12,
+        size
+    ));
+    assert!(!resumes(
+        206,
+        Some(&format!("bytes 12-{}/*", size - 1)),
+        12,
+        size
+    ));
+    // The kept part hashed, then the rest: the whole file's digest, checked at the end as before.
+    let whole: Vec<u8> = (0..64u8).collect();
+    std::fs::write(&path, &whole[..20])?;
+    let mut hash = hash_prefix(&path, 20)?;
+    hash.update(&whole[20..]);
+    assert_eq!(
+        hex::encode(hash.finalize()),
+        hex::encode(Sha256::digest(&whole))
+    );
+    assert!(hash_prefix(&path, 21).is_err());
+    // A paused download keeps its place for the console too.
+    let mut state = json!({"phase":"downloading","downloaded_bytes":20});
+    finish_download(&mut state, Err(DownloadPaused.into()));
+    assert_eq!(state["phase"], "waiting");
+    assert_eq!(state["downloaded_bytes"], 20);
+    Ok(())
+}
 /// A temporary folder, removed with what is in it.
 struct Temporary(PathBuf);
 impl Temporary {

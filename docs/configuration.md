@@ -1102,7 +1102,7 @@ For multiseat use, launch each process in its intended Windows session through y
 
 Automatic **checking** is on; automatic **installation** is not. **Settings → Updates** shows the release status, checks on request (**Check now**) and installs an offered update. **Include pre-releases** (**All settings → This PC → Updates**) also offers release candidates.
 
-If you opt into **Install updates automatically**, the installed Windows service waits for one minute without active streams, pending connections, remote-monitor sessions or running host apps. The updater validates the selected installer against the release's size and SHA-256. Portable installations use the release download page instead.
+If you opt into **Install updates automatically**, the installed Windows service waits for one minute without active streams, pending connections, remote-monitor sessions or running host apps. The updater validates the selected installer against the release's size and SHA-256. A download that a stream pauses, or that breaks off, goes on from where it stopped the next time (an HTTP range request, for the same installer only; a server that does not resume it gets a fresh download), and it counts as broken off only after 60 seconds without data, so a slow link finishes in time. Portable installations use the release download page instead.
 
 **Check for updates** (`update_check_interval`, default `86400` seconds, at least `3600`) sets how often the host checks. Set it to `0` to disable scheduled checks and automatic installation; manual checks remain available.
 

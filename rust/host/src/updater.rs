@@ -103,10 +103,18 @@ pub fn installer(release: &Value) -> Result<Installer> {
 }
 
 pub fn client(timeout: Duration) -> Result<reqwest::Client> {
-    Ok(reqwest::Client::builder()
+    client_with(Some(timeout))
+}
+/// The release client, with a deadline for each whole request or none (`None`, for the
+/// installer download, which [`idle`] limits instead).
+fn client_with(timeout: Option<Duration>) -> Result<reqwest::Client> {
+    let mut builder = reqwest::Client::builder()
         .https_only(true)
-        .connect_timeout(Duration::from_secs(15))
-        .timeout(timeout)
+        .connect_timeout(Duration::from_secs(15));
+    if let Some(timeout) = timeout {
+        builder = builder.timeout(timeout);
+    }
+    Ok(builder
         .user_agent("Rubylight")
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
             let url = attempt.url();
@@ -497,6 +505,8 @@ pub fn cancel(h: &Shared) -> Result<()> {
     state["download_id"] = Value::Null;
     state["queued_version"] = Value::Null;
     state["attempted_version"] = state["latest_version"].clone();
+    // A cancelled download is not resumed: its folder goes at the next tidy.
+    state["partial"] = Value::Null;
     Ok(())
 }
 
@@ -759,10 +769,10 @@ fn finish_download(state: &mut Value, result: Result<PathBuf>) {
             state["installer_path"] = json!(path);
             state["phase"] = json!("ready");
         }
+        // What arrived is kept (`partial`): the download goes on from there.
         Err(error) if error.is::<DownloadPaused>() => {
             state["phase"] = json!("waiting");
             state["idle_since"] = json!(0);
-            state["downloaded_bytes"] = json!(0);
         }
         Err(error) => {
             // A transfer that broke off (network, disk) is tried again at the
@@ -804,13 +814,46 @@ async fn download(h: &Shared, id: &str, candidate: &Installer) -> Result<PathBuf
     check_recovery(&h.directory)?;
     // No record names a backup still to be restored.
     remove_legacy_downloads(&h.directory.join("updates"));
-    let directory = prepare_download(&install_folder()?, id)?;
-    let path = directory.join("setup.exe");
+    // A transfer of the same installer that paused or broke off goes on where it stopped.
+    let kept = h.updates.lock().unwrap()["partial"].take();
+    let path = match resumable(&kept, candidate) {
+        Some(path) => path,
+        None => prepare_download(&install_folder()?, id)?.join("setup.exe"),
+    };
+    let directory = path
+        .parent()
+        .context("download folder missing")?
+        .to_path_buf();
     let result = transfer(h, id, candidate, &path).await;
-    if result.is_err() {
-        remove_download(&directory);
+    if let Err(error) = &result {
+        let mut state = h.updates.lock().unwrap();
+        // Not a cancelled download, nor an installer refused for its release.
+        if state["download_id"] == id && !error.is::<InstallerRejected>() {
+            state["partial"] = json!({
+                "path": path,
+                "url": candidate.url,
+                "size": candidate.size,
+                "digest": candidate.digest,
+            });
+        } else {
+            drop(state);
+            remove_download(&directory);
+        }
     }
     result
+}
+/// The file an earlier transfer left (`partial`) when it was for this same installer (address,
+/// size and digest) and holds part of it.
+fn resumable(kept: &Value, candidate: &Installer) -> Option<PathBuf> {
+    if kept["url"] != candidate.url
+        || kept["size"] != candidate.size
+        || kept["digest"] != candidate.digest
+    {
+        return None;
+    }
+    let path = PathBuf::from(kept["path"].as_str()?);
+    let metadata = std::fs::symlink_metadata(&path).ok()?;
+    (metadata.is_file() && metadata.len() > 0 && metadata.len() < candidate.size).then_some(path)
 }
 
 /// The folder this host runs from, which setup installed and secured.
@@ -932,8 +975,15 @@ fn tidy_downloads(h: &Shared) {
         return;
     }
     NEXT_TIDY.store(now + 60, Ordering::Relaxed);
-    let phase = h.updates.lock().unwrap()["phase"].clone();
-    if matches!(phase.as_str(), Some("downloading" | "ready" | "installing")) || !supported(h) {
+    let (phase, partial) = {
+        let state = h.updates.lock().unwrap();
+        (state["phase"].clone(), !state["partial"].is_null())
+    };
+    // A paused or broken-off download's folder stays for its next try.
+    if matches!(phase.as_str(), Some("downloading" | "ready" | "installing"))
+        || partial
+        || !supported(h)
+    {
         return;
     }
     let Ok(install) = install_folder() else {
@@ -995,19 +1045,56 @@ async fn transfer(
     if paused() {
         return Err(DownloadPaused.into());
     }
-    let mut response = client(Duration::from_secs(600))?
-        .get(&candidate.url)
-        .send()
-        .await?
-        .error_for_status()?;
-    let mut file = tokio::fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&path)
-        .await?;
-    let mut size = 0;
-    let mut hash = Sha256::new();
-    while let Some(chunk) = response.chunk().await? {
+    // What a paused or broken-off transfer of this installer left (`download` checked it is
+    // the same installer): asked for from there on.
+    let kept = match tokio::fs::metadata(path).await {
+        Ok(metadata) if metadata.len() < candidate.size => metadata.len(),
+        _ => 0,
+    };
+    let client = client_with(None)?;
+    let mut request = client.get(&candidate.url);
+    if kept > 0 {
+        request = request.header(reqwest::header::RANGE, format!("bytes={kept}-"));
+    }
+    let mut response = idle(request.send()).await??;
+    let resumed = kept > 0
+        && resumes(
+            response.status().as_u16(),
+            response
+                .headers()
+                .get(reqwest::header::CONTENT_RANGE)
+                .and_then(|value| value.to_str().ok()),
+            kept,
+            candidate.size,
+        );
+    // A server that ignores the range sends the whole installer; any other answer is asked
+    // again without one.
+    if kept > 0 && !resumed {
+        tracing::info!(kept, status = %response.status(), "the update download starts again: the server did not resume it");
+        if response.status() != reqwest::StatusCode::OK {
+            response = idle(client.get(&candidate.url).send()).await??;
+        }
+    }
+    let mut response = response.error_for_status()?;
+    let mut options = tokio::fs::OpenOptions::new();
+    options.write(true);
+    if kept == 0 {
+        options.create_new(true);
+    } else if resumed {
+        options.append(true);
+    } else {
+        options.truncate(true);
+    }
+    let mut file = options.open(&path).await?;
+    let (mut size, mut hash) = if resumed {
+        let prefix = path.to_path_buf();
+        let hash = tokio::task::spawn_blocking(move || hash_prefix(&prefix, kept)).await??;
+        (kept, hash)
+    } else {
+        (0, Sha256::new())
+    };
+    h.updates.lock().unwrap()["downloaded_bytes"] = json!(size);
+    while let Some(chunk) = idle(response.chunk()).await?? {
         if paused() {
             return Err(DownloadPaused.into());
         }
@@ -1023,12 +1110,49 @@ async fn transfer(
         h.updates.lock().unwrap()["downloaded_bytes"] = json!(size);
     }
     file.sync_all().await?;
+    drop(file);
     arrived(size, candidate)?;
-    verify(size, &hex::encode(hash.finalize()), candidate)?;
+    let digest = hex::encode(hash.finalize());
+    if resumed && verify(size, &digest, candidate).is_err() {
+        // The part kept from before did not belong with the rest: the next try starts over.
+        let _ = tokio::fs::remove_file(path).await;
+        bail!("The resumed download did not match its release; it starts again");
+    }
+    verify(size, &digest, candidate)?;
     if h.updates.lock().unwrap()["download_id"] != id {
         bail!("Download cancelled");
     }
     Ok(path.to_path_buf())
+}
+
+/// How long the installer download may receive nothing before it counts as broken off. A slow
+/// link takes as long as it needs.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+/// `step` of the download, failed when nothing arrives for [`IDLE_TIMEOUT`].
+async fn idle<T>(step: impl std::future::Future<Output = T>) -> Result<T> {
+    tokio::time::timeout(IDLE_TIMEOUT, step).await.map_err(|_| {
+        anyhow::anyhow!(
+            "The download received nothing for {} seconds",
+            IDLE_TIMEOUT.as_secs()
+        )
+    })
+}
+/// Whether the answer to `Range: bytes={from}-` carries the rest of a `size`-byte installer.
+fn resumes(status: u16, content_range: Option<&str>, from: u64, size: u64) -> bool {
+    status == 206
+        && from < size
+        && content_range == Some(format!("bytes {from}-{}/{size}", size - 1).as_str())
+}
+/// The hash of the first `length` bytes of `path`, which must hold exactly that many.
+fn hash_prefix(path: &Path, length: u64) -> Result<Sha256> {
+    let file = std::fs::File::open(path)?;
+    let mut hash = Sha256::new();
+    let read = std::io::copy(&mut std::io::Read::take(file, length), &mut hash)?;
+    anyhow::ensure!(
+        read == length,
+        "the kept part of the download is shorter than recorded"
+    );
+    Ok(hash)
 }
 
 #[derive(Debug)]
