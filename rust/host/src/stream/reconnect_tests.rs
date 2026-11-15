@@ -2739,7 +2739,7 @@ async fn rtsp_reconnect_reports_busy_when_previous_teardown_times_out() -> Resul
         assert!(started.elapsed() >= Duration::from_secs(5));
         assert!(response.contains("status_code=\"503\""), "{response}");
         assert!(
-            response.contains("status_message=\"Another stream operation is still running\""),
+            response.contains(&format!("status_message=\"{}\"", crate::nvhttp::STILL_CLOSING)),
             "{response}"
         );
         assert_eq!(

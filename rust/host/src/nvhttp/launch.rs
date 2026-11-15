@@ -299,7 +299,7 @@ fn launch_back_half(
     if !stopping.is_empty() {
         tracing::info!(client = %launch.client.name, "waiting for previous streams to release their resources");
         if !wait_for_teardown(&h.sessions, &stopping, Duration::from_secs(5)) {
-            return Err(LaunchFailure(503, "Another stream operation is still running").into());
+            return Err(LaunchFailure(503, STILL_CLOSING).into());
         }
     }
     if h.launch_stopped() {

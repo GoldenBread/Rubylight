@@ -371,7 +371,10 @@ fn preparation_undo_and_failed_preparation_keep_global_order_and_rollback() {
     let error = launch_with_environment(&f.host, &app, &HashMap::new(), Ok(BTreeMap::new()))
         .err()
         .unwrap();
-    assert_eq!(error.to_string(), "preparation command 3 exited with 7");
+    assert_eq!(
+        error.to_string(),
+        "Commands: preparation command 3 ended with exit code 7. Check the app's and the global preparation commands in the host console."
+    );
     assert_eq!(
         std::fs::read_to_string(&trace)
             .unwrap()

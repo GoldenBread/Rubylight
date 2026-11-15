@@ -532,23 +532,27 @@ impl RunningApp {
                     prep.elevated,
                     &running.environment,
                 )
-                .with_context(|| format!("preparation command {} could not start", index + 1))?;
+                .map_err(|error| {
+                    prep_failure(&app.name, index, &format!("could not start ({error:#})"))
+                })?;
                 let waited = match cancel {
                     Some(cancel) => child.wait_cancellable(Duration::from_secs(120), cancel),
                     None => child.wait(Duration::from_secs(120)).map(Some),
                 };
-                let code = waited.with_context(|| {
-                    format!(
-                        "preparation command {} did not finish within 120 seconds",
-                        index + 1
-                    )
+                let code = waited.map_err(|error| {
+                    tracing::warn!(%error, app = %app.name, "preparation command wait failed");
+                    prep_failure(&app.name, index, "did not finish within 120 seconds")
                 })?;
                 // Ended by a stop: this command's own undo does not run, the earlier ones' do.
                 let Some(code) = code else {
                     bail!(LAUNCH_STOPPED);
                 };
                 if code != 0 {
-                    bail!("preparation command {} exited with {code}", index + 1);
+                    return Err(prep_failure(
+                        &app.name,
+                        index,
+                        &format!("ended with exit code {code}"),
+                    ));
                 }
             }
             running.undo.push(prep.clone());
@@ -1335,6 +1339,15 @@ fn runs_commands(h: &crate::state::Shared, app: &App) -> bool {
 /// The launch argument the host sets for a background stream's app; see
 /// [`butterpollo_core::background`].
 pub const BACKGROUND_ARG: &str = "rubylightBackgroundStream";
+/// A failed preparation command as the device shows it: the app, which command (counted
+/// across the global ones and the app's own, in the order they run), what went wrong and
+/// where to look.
+fn prep_failure(app: &str, index: usize, what: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "{app}: preparation command {} {what}. Check the app's and the global preparation commands in the host console.",
+        index + 1
+    )
+}
 /// Why a launch that Quit, End session or the device's next launch stopped failed.
 pub const LAUNCH_STOPPED: &str = "The launch was stopped before the game started.";
 pub fn launch(

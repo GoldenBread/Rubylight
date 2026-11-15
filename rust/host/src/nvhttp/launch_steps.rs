@@ -111,6 +111,10 @@ pub(super) fn validate_launch_request(
 pub(crate) const WEBRTC_HELD_BY_OTHER: &str = "Another device is streaming over WebRTC";
 pub(crate) const RESUME_GAME_CHANGED: &str = "The game running on this PC changed";
 pub(crate) const NOTHING_TO_RESUME: &str = "no application or remote monitor to resume";
+/// A launch refused because the streams it replaces have not finished closing; a retry
+/// a few seconds later usually works.
+pub(crate) const STILL_CLOSING: &str =
+    "The previous stream is still closing. Try again in a few seconds.";
 /// Whether `device` started or took over the running game, also a background one.
 pub(super) fn plays_game(h: &Shared, device: &str) -> bool {
     h.current_app
@@ -379,7 +383,7 @@ pub(super) fn replace_launch_app(
         let displays = std::mem::take(&mut *h.app_display.lock().unwrap());
         drop((audio, displays));
         if !wait_for_teardown(&h.sessions, &stopped, Duration::from_secs(10)) {
-            return Err(LaunchFailure(503, "Another stream operation is still running").into());
+            return Err(LaunchFailure(503, STILL_CLOSING).into());
         }
         current = h.current_app.lock().unwrap();
     }
