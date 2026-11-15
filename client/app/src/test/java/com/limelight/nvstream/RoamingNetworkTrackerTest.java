@@ -224,6 +224,36 @@ public class RoamingNetworkTrackerTest {
                 "changed", "changed"), events.seen);
     }
 
+    // Mobile data already up when Wi-Fi goes: Android makes it the default network without a loss.
+    // The C engine compares it with Wi-Fi's addresses and reconnects once it cannot carry on.
+    @Test public void theCEngineCannotCarryOnAfterASwitchWithoutALoss() {
+        CEngineEvents events = new CEngineEvents();
+        RoamingNetworkTracker tracker = new RoamingNetworkTracker(WIFI, events, () -> 0);
+        tracker.addresses(WIFI, addresses("fe80::1", "192.168.1.20"));
+        tracker.addresses(CELLULAR, addresses("10.0.0.5"));
+        tracker.capabilities(CELLULAR, false);
+        assertEquals(java.util.Arrays.asList("changed metered",
+                "returned " + MoonBridge.NETWORK_CANNOT_CONTINUE + " metered"), events.seen);
+
+        // Its addresses after the switch: asked again as they arrive, reported once they cannot carry on.
+        events.seen.clear();
+        tracker = new RoamingNetworkTracker(WIFI, events, () -> 0);
+        tracker.addresses(WIFI, addresses("192.168.1.20"));
+        tracker.capabilities(CELLULAR, false);
+        tracker.addresses(CELLULAR, addresses("fe80::5"));
+        tracker.addresses(CELLULAR, addresses("fe80::5", "10.0.0.5"));
+        assertEquals(java.util.Arrays.asList("changed metered", "changed metered", "changed metered",
+                "returned " + MoonBridge.NETWORK_CANNOT_CONTINUE + " metered"), events.seen);
+
+        // A switch to a network that still has the stream's address carries on, unreported.
+        events.seen.clear();
+        tracker = new RoamingNetworkTracker(WIFI, events, () -> 0);
+        tracker.addresses(WIFI, addresses("192.168.1.20"));
+        tracker.addresses(OTHER_WIFI, addresses("192.168.1.20", "192.168.2.7"));
+        tracker.capabilities(OTHER_WIFI, true);
+        assertEquals(java.util.Arrays.asList("changed"), events.seen);
+    }
+
     // An engine that tells is never overruled: its "carries on" stands on other addresses.
     @Test public void anEngineThatTellsKeepsItsOwnAnswer() {
         Events events = new Events();

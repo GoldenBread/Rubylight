@@ -21,7 +21,10 @@ import com.limelight.nvstream.jni.MoonBridge;
  * <p>An engine that cannot tell whether its connection carries on (the C engine, whose sockets
  * stay on the address they started from) gets the answer from here: a return whose addresses
  * share none with the lost network's cannot carry on, so the stream reconnects at once instead
- * of freezing until its connection times out.
+ * of freezing until its connection times out. So does a switch to another default network while
+ * the old one is still up (mobile data already connected when Wi-Fi goes), which Android reports
+ * without a loss: it is compared with the old network's addresses, and reported as a return
+ * once it cannot carry on.
  */
 final class RoamingNetworkTracker {
     interface Reporter {
@@ -69,9 +72,9 @@ final class RoamingNetworkTracker {
     private boolean recheckMetered;
     private long recheckUntil;
     private Object recheckAddresses;
-    // The newest addresses reported and whose they are; those of the stream's network when it was lost.
-    private Object addressesNetwork;
-    private Object latestAddresses;
+    // The newest addresses reported for each network, and those of the network the stream's
+    // connection left (lost, or switched away from).
+    private final java.util.Map<Object, Object> addressesOf = new java.util.HashMap<>();
     private Object lostAddresses;
 
     /** streamNetwork: the default network when the stream started, or null if unknown. */
@@ -102,15 +105,20 @@ final class RoamingNetworkTracker {
             return;
         }
         boolean returned = lost;
+        Object previous = current;
         current = network;
         lost = false;
         recheck = null;
         // Under the lock, so stop() returning means no report is still on its way.
         int change = reporter.networkChanged(!notMetered);
-        if (returned) {
-            if (network.equals(addressesNetwork)) {
-                change = routeAnswer(change, latestAddresses);
-            }
+        // Without a loss only an engine that cannot tell is asked about here: one that tells
+        // roams or answers on its own.
+        boolean switched = !returned && !reporter.answersForTheRoute();
+        if (switched) {
+            lostAddresses = addressesOf.get(previous);
+        }
+        if (returned || switched) {
+            change = routeAnswer(change, addressesOf.get(network));
             if (change == MoonBridge.NETWORK_CARRIES_ON) {
                 // The same address back, or no route yet: ask again when its addresses change.
                 recheck = network;
@@ -118,7 +126,10 @@ final class RoamingNetworkTracker {
                 recheckUntil = clock.millis() + RECHECK_MS;
                 recheckAddresses = null;
             }
-            reporter.streamNetworkReturned(change, !notMetered);
+            // A switch that carries on for now is no news; one that cannot is reported as a return.
+            if (returned || change != MoonBridge.NETWORK_CARRIES_ON) {
+                reporter.streamNetworkReturned(change, !notMetered);
+            }
         }
     }
 
@@ -132,8 +143,7 @@ final class RoamingNetworkTracker {
         if (stopped) {
             return;
         }
-        addressesNetwork = network;
-        latestAddresses = addresses;
+        addressesOf.put(network, addresses);
         if (lost || recheck == null || !network.equals(recheck)) {
             return;
         }
@@ -154,12 +164,16 @@ final class RoamingNetworkTracker {
 
     /** The default network went away; the same network coming back is then a change. */
     synchronized void lost(Object network) {
-        if (stopped || lost || !network.equals(current)) {
+        if (stopped) {
+            return;
+        }
+        Object addresses = addressesOf.remove(network);
+        if (lost || !network.equals(current)) {
             return;
         }
         lost = true;
         recheck = null;
-        lostAddresses = network.equals(addressesNetwork) ? latestAddresses : null;
+        lostAddresses = addresses;
         reporter.streamNetworkLost();
     }
 
