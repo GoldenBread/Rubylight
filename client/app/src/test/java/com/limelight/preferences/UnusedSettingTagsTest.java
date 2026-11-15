@@ -82,12 +82,23 @@ public class UnusedSettingTagsTest {
         assertTrue(reason("checkbox_audio_passthrough").startsWith("Not used with "));
     }
 
+    /** The default screen's refresh now, which fractional V-Sync's row is worded for. */
+    private static void screenAt(float hz) {
+        android.view.Display display = PreferenceConfiguration.defaultDisplay(RuntimeEnvironment.getApplication());
+        org.robolectric.Shadows.shadowOf(display).setRefreshRate(hz);
+    }
+
     @Test
     public void fractionalVsyncNamesWhatShowsFramesWithoutIt() {
         String key = SettingRules.FRACTIONAL_VSYNC;
+        screenAt(120f);
         assertNull("Lowest latency, the default", reason(key));
-        prefs.edit().putString("frame_pacing", "balanced").putBoolean("checkbox_drop_late_frames", false).commit();
-        assertNull("Balanced, keep every frame", reason(key));
+        // Balanced shows a stream at a half to a quarter of the refresh from the vsync callback, at that
+        // cadence already, and sends no phase report there.
+        prefs.edit().putString("frame_pacing", "balanced").commit();
+        assertTrue(reason(key).startsWith("Not used with Balanced"));
+        prefs.edit().putBoolean("checkbox_drop_late_frames", false).commit();
+        assertTrue("Balanced, keep every frame", reason(key).startsWith("Not used with Balanced"));
         prefs.edit().putString("frame_pacing", "smoothness").commit();
         assertEquals("Not used with Smoothest video", reason(key));
         prefs.edit().putString("frame_pacing", "cap-fps").commit();
@@ -100,6 +111,39 @@ public class UnusedSettingTagsTest {
         } else {
             assertNull("VRR not offered here: the pacing decides", reason(key));
         }
+    }
+
+    @Test
+    public void fractionalVsyncNamesTheScreensRefreshWhenItIsNoMultiple() {
+        String key = SettingRules.FRACTIONAL_VSYNC;
+        prefs.edit().putString(PreferenceConfiguration.FPS_PREF_STRING, "60").commit();
+        screenAt(60f);
+        assertEquals("the stream's own rate", "Not used at this screen’s 60 Hz: that isn’t 2 to 4 times the frame rate", reason(key));
+        screenAt(144f);
+        assertEquals("Not used at this screen’s 144 Hz: that isn’t 2 to 4 times the frame rate", reason(key));
+        screenAt(119.88f);
+        assertNull("within the rate tolerance of twice 60", reason(key));
+        prefs.edit().putString(PreferenceConfiguration.FPS_PREF_STRING, "30").commit();
+        assertNull("four times", reason(key));
+        prefs.edit().putString(PreferenceConfiguration.FPS_PREF_STRING, "24").commit();
+        assertNotNull("five times is past the hold's 4", reason(key));
+    }
+
+    @Test
+    @Config(sdk = 29)
+    public void fractionalVsyncNamesTheRendererThatKeepsNoTurn() {
+        String key = SettingRules.FRACTIONAL_VSYNC;
+        screenAt(120f);
+        assertNull(reason(key));
+        prefs.edit().putBoolean(PreferenceConfiguration.FRAME_WARP_PREF_STRING, true).commit();
+        assertEquals("Not used with Frame Warp", reason(key));
+        prefs.edit().putBoolean(PreferenceConfiguration.VULKAN_RENDER_PREF_STRING, true).commit();
+        assertTrue(reason(key).startsWith("Not used with "));
+        assertNotEquals("Not used with Frame Warp", reason(key));
+        // Frame Warp needs the new streaming engine; on the C engine nothing warps the held frame.
+        prefs.edit().putBoolean(PreferenceConfiguration.VULKAN_RENDER_PREF_STRING, false)
+                .putBoolean(PreferenceConfiguration.RUST_ENGINE_PREF_STRING, false).commit();
+        assertNull(reason(key));
     }
 
     @Test

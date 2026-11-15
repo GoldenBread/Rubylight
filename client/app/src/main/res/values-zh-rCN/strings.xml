@@ -500,6 +500,7 @@
     <string name="title_arr_fixed_timing">自适应屏幕上的固定时序</string>
     <string name="summary_arr_fixed_timing">在支持自适应刷新率的屏幕上，VRR 关闭时将刷新视为固定，使帧能按你的屏幕定时，并收回显示队列延迟。错过刷新的帧可能会等待一整个刷新周期，而不是屏幕的下一步；除非此屏幕在 VRR 关闭时画面抖动，否则请保持关闭。</string>
     <string name="tag_unused_adaptive_screen">未使用：此屏幕自行设置刷新率</string>
+    <string name="tag_unused_refresh">未使用：此屏幕的 %1$d Hz 不是帧率的 2 到 4 倍</string>
     <string name="tag_unused_with">不能与 %1$s 同时使用</string>
     <string name="tag_every_frame_with">保留每一帧不能与 %1$s 同时使用</string>
 </resources>

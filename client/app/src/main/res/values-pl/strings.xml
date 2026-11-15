@@ -500,6 +500,7 @@
     <string name="title_arr_fixed_timing">Stałe taktowanie na ekranach adaptacyjnych</string>
     <string name="summary_arr_fixed_timing">Na ekranie z adaptacyjnym odświeżaniem traktuje odświeżanie jako stałe, gdy VRR jest wyłączone, dzięki czemu klatki można taktować pod twój ekran i działa odzyskiwanie opóźnienia kolejki ekranu. Klatka, która spóźni się na odświeżenie, może wtedy czekać całe odświeżenie zamiast na następny krok ekranu; zostaw wyłączone, chyba że obraz drga na tym ekranie przy wyłączonym VRR.</string>
     <string name="tag_unused_adaptive_screen">Nie używane: ten ekran sam ustawia odświeżanie</string>
+    <string name="tag_unused_refresh">Nie używane przy %1$d Hz tego ekranu: to nie jest 2–4 razy liczba klatek na sekundę</string>
     <string name="tag_unused_with">Nie używane z %1$s</string>
     <string name="tag_every_frame_with">Zachowywanie każdej klatki nie jest używane z %1$s</string>
 </resources>

@@ -768,7 +768,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private int pacingFrameRateMilliHz;
     // Fractional V-Sync: the refresh the last frame held for several was stamped for (decoder
     // thread), and the refresh grid the phase report aims at with the refreshes a frame is held
-    // for (0 and 1 without a hold), from whichever thread released the frame.
+    // for (0 and 1 without a hold), set where a frame is released as it comes out (heldDisplayNs).
     private long heldTargetNs;
     /** Since when frames came a refresh early for their turn (FramePacingPolicy.earlyForTurn), 0 when not. */
     private long heldEarlySinceNs;
@@ -3599,9 +3599,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         // Don't render unless a new frame is due. This prevents microstutter when streaming
         // at a frame rate that doesn't match the display (such as 60 FPS on 120 Hz): on a whole
         // multiple each frame gets the same number of refreshes, as fractional V-Sync holds them,
-        // with the setting or without; the setting has the phase report aim at that cadence.
-        int heldRefreshes = FramePacingPolicy.refreshesPerFrame(1e9 / Math.max(1, vsyncIntervalNs),
-                fpsMilliHz / 1000.0, vrrForHolds(adaptiveInUse()), prefs.fractionalVsync);
+        // so the setting does nothing here (SettingRules.fractionalVsyncApplies). Frames from this
+        // queue send no phase report (reportPhaseSlack runs for frames released as they come out).
         if (FramePacingPolicy.isFrameDue(nextFrameTimeNanos, frameTimeNanos, vsyncIntervalNs)) {
             // Render up to one frame when in frame pacing mode.
             //
@@ -3622,11 +3621,6 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                         releaseOutputFrame(nextOutputBuffer, System.nanoTime());
                         activeWindowVideoStats.totalFramesRendered++;
                     }
-                    // The phase report aims at the refresh the cadence shows this frame at.
-                    boolean held = heldRefreshes > 1;
-                    if (held) heldAnchorNs = frameTimeNanos + vsyncIntervalNs;
-                    heldAnchorRefreshes = held ? heldRefreshes : 1;
-
                     nextFrameTimeNanos = FramePacingPolicy.nextFrameTimeNsMilliHz(
                             nextFrameTimeNanos, frameTimeNanos, fpsMilliHz);
                 } catch (IllegalStateException ignored) {

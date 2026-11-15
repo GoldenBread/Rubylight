@@ -500,6 +500,7 @@
     <string name="title_arr_fixed_timing">適応画面での固定タイミング</string>
     <string name="summary_arr_fixed_timing">可変リフレッシュレート対応の画面で、VRR がオフの間はリフレッシュを固定として扱い、フレームを画面に合わせて送信し、表示キューの遅延の取り戻しが実行されます。リフレッシュに間に合わなかったフレームは、画面の次のステップではなく、リフレッシュ全体を待つことがあります。この画面で VRR オフ時に動きがかくつく場合以外はオフのままにしてください。</string>
     <string name="tag_unused_adaptive_screen">使用されません：この画面は独自にリフレッシュを設定します</string>
+    <string name="tag_unused_refresh">使用されません：この画面の %1$d Hz はフレームレートの 2～4 倍ではありません</string>
     <string name="tag_unused_with">%1$s とは併用できません</string>
     <string name="tag_every_frame_with">全フレームの保持は %1$s とは併用できません</string>
 </resources>

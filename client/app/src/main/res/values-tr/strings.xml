@@ -500,6 +500,7 @@
     <string name="title_arr_fixed_timing">Uyarlanabilir ekranlarda sabit zamanlama</string>
     <string name="summary_arr_fixed_timing">Uyarlanabilir yenileme hızlı bir ekranda, VRR kapalıyken yenilemeyi sabit sayar; böylece kareler ekranınıza göre zamanlanır ve ekran kuyruğu gecikmesi geri alınır. Yenilemesini kaçıran bir kare, ekranın sonraki adımı yerine tam bir yenileme bekleyebilir; bu ekranda VRR kapalıyken hareket titriyorsa açın, aksi halde kapalı bırakın.</string>
     <string name="tag_unused_adaptive_screen">Kullanılmıyor: bu ekran yenilemesini kendi ayarlar</string>
+    <string name="tag_unused_refresh">Kullanılmıyor: bu ekranın %1$d Hz’i kare hızının 2 ila 4 katı değil</string>
     <string name="tag_unused_with">%1$s ile kullanılmıyor</string>
     <string name="tag_every_frame_with">Her kareyi tutma %1$s ile kullanılmıyor</string>
 </resources>

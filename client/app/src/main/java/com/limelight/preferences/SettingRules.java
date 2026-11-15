@@ -7,6 +7,7 @@ import android.content.pm.PackageManager;
 import com.limelight.R;
 import com.limelight.binding.audio.MicProcessing;
 import com.limelight.binding.video.DisplayFrameRatePolicy;
+import com.limelight.binding.video.FramePacingPolicy;
 import com.limelight.binding.video.VideoRendererChoice;
 
 /**
@@ -112,9 +113,16 @@ final class SettingRules {
                         prefs.getBoolean(PreferenceConfiguration.ARR_FIXED_TIMING_PREF_STRING, false))) {
                     return context.getString(R.string.tag_unused_adaptive_screen);
                 }
-                if (fractionalVsyncApplies(context, prefs)) return null;
-                return context.getString(R.string.tag_unused_with, StreamSettings.entryFor(context,
-                        R.array.frame_pacing_choice_names, R.array.frame_pacing_choice_values, FramePacingChoice.read(prefs)));
+                // The Vulkan renderer presents each frame as it comes (MediaCodecDecoderRenderer.handOutputToVulkan),
+                // and Frame Warp shows a held frame at the next refresh once the PC's model is locked
+                // (GlesUpscaler.drawFrame): neither keeps the turn.
+                int vulkan = vulkanPathTitle(prefs);
+                if (vulkan != 0) return unusedWith(context, vulkan);
+                if (!fractionalVsyncApplies(context, prefs)) {
+                    return context.getString(R.string.tag_unused_with, StreamSettings.entryFor(context,
+                            R.array.frame_pacing_choice_names, R.array.frame_pacing_choice_values, FramePacingChoice.read(prefs)));
+                }
+                return fractionalVsyncRefreshReason(context, prefs);
             default:
                 return null;
         }
@@ -147,15 +155,33 @@ final class SettingRules {
     }
 
     /**
-     * Fractional V-Sync holds Lowest latency frames for their turn and has Balanced's phase report
-     * aim at its cadence; Smoothest and FPS-capped pacing, the PC's frame times and adaptive refresh
-     * show frames without it.
+     * Fractional V-Sync holds Lowest latency frames for their turn. Balanced shows a stream at a half
+     * to a quarter of the refresh from the vsync callback, at that cadence already, where no phase
+     * report is sent (FramePacingPolicy.balancedPacesOnVsync); Smoothest and FPS-capped pacing, the
+     * PC's frame times and adaptive refresh show frames without it.
      */
     static boolean fractionalVsyncApplies(Context context, SharedPreferences prefs) {
-        if (!framePacingApplies(context, prefs)) return false;
-        String choice = FramePacingChoice.read(prefs);
-        return FramePacingChoice.LATENCY.equals(choice) || FramePacingChoice.BALANCED.equals(choice) ||
-                FramePacingChoice.BALANCED_EVERY_FRAME.equals(choice);
+        return framePacingApplies(context, prefs) && FramePacingChoice.LATENCY.equals(FramePacingChoice.read(prefs));
+    }
+
+    /**
+     * Why fractional V-Sync holds nothing at the screen's refresh now, or null: it has to be 2 to 4
+     * times the frame rate (FramePacingPolicy.refreshesPerFrame). A stream may switch the screen to
+     * another mode, so the tag names the refresh it is about.
+     */
+    static String fractionalVsyncRefreshReason(Context context, SharedPreferences prefs) {
+        android.view.Display display = PreferenceConfiguration.defaultDisplay(context);
+        if (display == null) return null;
+        float refreshHz = display.getRefreshRate();
+        double fps;
+        try {
+            fps = Double.parseDouble(prefs.getString(PreferenceConfiguration.FPS_PREF_STRING, PreferenceConfiguration.DEFAULT_FPS));
+        } catch (NumberFormatException | ClassCastException e) {
+            return null;
+        }
+        if (!(refreshHz > 0) || !(fps > 0)) return null;
+        if (FramePacingPolicy.refreshesPerFrame(refreshHz, fps, false, true) > 1) return null;
+        return context.getString(R.string.tag_unused_refresh, Math.round(refreshHz));
     }
 
     /**

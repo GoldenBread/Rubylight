@@ -2,7 +2,7 @@ package com.limelight.binding.video;
 
 import com.limelight.preferences.PreferenceConfiguration;
 
-final class FramePacingPolicy {
+public final class FramePacingPolicy {
     // Keep a renderer turn finite even if decoder output keeps arriving while we catch up.
     static final int MAX_OUTPUT_DRAIN = 64;
 
@@ -123,7 +123,7 @@ final class FramePacingPolicy {
      * multiple of the stream's rate (2 for 60 fps on 120 Hz), else 1. VRR and the setting off take
      * 1 too. Java port of nightjar_policy::vsync::refreshes_per_frame (client/protocol/policy).
      */
-    static int refreshesPerFrame(double refreshHz, double fps, boolean vrr, boolean fractional) {
+    public static int refreshesPerFrame(double refreshHz, double fps, boolean vrr, boolean fractional) {
         if (!fractional || vrr || !(refreshHz > 0) || !(fps > 0)) return 1;
         for (int k = 1; k <= MAX_HELD_REFRESHES; k++) {
             if (Math.abs(refreshHz - fps * k) <= RATE_TOLERANCE_HZ * k) return k;
