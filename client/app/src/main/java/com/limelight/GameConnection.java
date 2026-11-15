@@ -967,6 +967,11 @@ final class GameConnection {
         final int portTestResult = portFlags == 0 || transientRecoveryFailure || packedRefused ?
                 MoonBridge.ML_TEST_RESULT_INCONCLUSIVE :
                 MoonBridge.testClientConnectivity(ServerHelper.CONNECTION_TEST_SERVER, 443, portFlags);
+        // A PC that refused the stream in its handshake (no codec it can encode, encryption not agreed) keeps why for
+        // this device; a recovery's attempt that is retried does not ask. Other hosts give none.
+        final String hostRefusal = !packedRefused && !transientRecoveryFailure && StreamExitPolicy.refusedInHandshake(stage)
+                && game.conn != null ? game.conn.hostFailureReason() : null;
+        if (hostRefusal != null) LimeLog.severe("The PC reported: " + hostRefusal);
 
         game.runOnUiThread(new Runnable() {
             @Override
@@ -1027,6 +1032,9 @@ final class GameConnection {
                     DecoderSetupFailure decoderFailure = game.decoderRenderer == null ? null : game.decoderRenderer.getSetupFailure();
                     boolean decoderFailed = Game.isDecoderStageFailure(decoderFailure, stage);
                     String dialogText = Game.startupFailureText(game, decoderFailure, stage, game.connectionErrorMessage, errorCode);
+                    if (hostRefusal != null && !decoderFailed) {
+                        dialogText += "\n\n" + game.getResources().getString(R.string.host_failure_reason, hostRefusal);
+                    }
 
                     if (portFlags != 0 && !decoderFailed) {
                         dialogText += "\n\n" + game.getResources().getString(R.string.check_ports_msg) + "\n" +

@@ -1030,6 +1030,22 @@ fn terminations_read_well() {
 }
 
 #[test]
+fn a_start_the_pc_refused_in_the_handshake_shows_its_reason() {
+    let refused = connect::start_failure_text("Could not start the stream: RTSP handshake failed".into(), Stage::RtspHandshake, || {
+        Some("No encoder on this PC can stream HEVC".into())
+    });
+    assert!(refused.starts_with("Could not start the stream: RTSP handshake failed"));
+    assert!(refused.ends_with("The PC reported: No encoder on this PC can stream HEVC"), "{refused}");
+    // A PC that keeps no reason, as other hosts never do, leaves today's text.
+    let plain = connect::start_failure_text("Could not start the stream: x".into(), Stage::RtspHandshake, || None);
+    assert_eq!(plain, "Could not start the stream: x");
+    assert_eq!(connect::start_failure_text("e".into(), Stage::RtspHandshake, || Some(" ".into())), "e");
+    // Another stage does not ask the PC at all.
+    let other = connect::start_failure_text("e".into(), Stage::VideoStreamStart, || panic!("asked the PC"));
+    assert_eq!(other, "e");
+}
+
+#[test]
 fn only_terminations_the_pc_sent_ask_it_for_the_reason() {
     use nightjar_core::session::error;
     for code in [

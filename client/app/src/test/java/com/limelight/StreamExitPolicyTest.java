@@ -137,4 +137,11 @@ public class StreamExitPolicyTest {
         assertTrue(StreamExitPolicy.terminationNeedsAction(110, false, false, true));
         assertFalse(StreamExitPolicy.terminationNeedsAction(MoonBridge.ML_ERROR_GRACEFUL_TERMINATION, false, false, true));
     }
+
+    @Test public void onlyAStartRefusedInTheHandshakeAsksThePcWhy() {
+        // The name both engines give the stage (nightjar-core's Stage::RtspHandshake, moonlight-common-c's LiGetStageName).
+        assertTrue(StreamExitPolicy.refusedInHandshake("RTSP handshake"));
+        assertFalse(StreamExitPolicy.refusedInHandshake("video stream establishment"));
+        assertFalse(StreamExitPolicy.refusedInHandshake(null));
+    }
 }

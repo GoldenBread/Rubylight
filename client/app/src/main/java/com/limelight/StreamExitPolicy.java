@@ -66,6 +66,14 @@ final class StreamExitPolicy {
     }
 
     /**
+     * Whether a start failed in the RTSP handshake, where a PC that refuses the stream (no codec it can encode,
+     * encryption not agreed) keeps why for the device ({@code RustHostLastFailure}). Both engines name the stage so.
+     */
+    static boolean refusedInHandshake(String stage) {
+        return "RTSP handshake".equals(stage);
+    }
+
+    /**
      * The text of the dialog for a decoder that was given up: with "Render through Vulkan" on, it
      * names that setting, as the Vulkan path is what a decoder short of memory may not manage.
      */

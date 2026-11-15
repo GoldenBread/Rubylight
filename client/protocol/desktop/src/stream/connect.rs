@@ -42,6 +42,14 @@ pub fn host_ended_stream(code: i32) -> bool {
     matches!(code, error::UNEXPECTED_EARLY | error::PROTECTED_CONTENT | error::FRAME_CONVERSION) || code < -0xFFFF
 }
 
+/// A start that failed: `error`, today's words, and for a failure in the handshake the PC's own
+/// reason where it keeps one for this device (`RustHostLastFailure`: no codec it can encode,
+/// encryption not agreed). `reason` asks the PC; other stages never do. Other hosts give none.
+pub(super) fn start_failure_text(error: String, stage: Stage, reason: impl FnOnce() -> Option<String>) -> String {
+    let reason = if matches!(stage, Stage::RtspHandshake) { reason().filter(|r| !r.trim().is_empty()) } else { None };
+    doctor::with_host_reason(error, reason.as_deref())
+}
+
 /// Why a launch ended without a stream.
 pub enum ConnectFailed {
     /// What to tell the user.
@@ -1090,7 +1098,12 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
         interrupt,
     )
     .map_err(|e| ConnectError {
-        retryable: recovery::transient_start(e.stage, e.code), message: format!("Could not start the stream: {e}"), asks_replace: false, moved_to: None,
+        retryable: recovery::transient_start(e.stage, e.code),
+        // A recovery's attempt is retried, so only a start that ends here asks the PC why.
+        message: start_failure_text(format!("Could not start the stream: {e}"), e.stage, || {
+            plan.recovery.is_none().then(|| client.server_info(false).ok().and_then(|info| info.last_failure)).flatten()
+        }),
+        asks_replace: false, moved_to: None,
         // The PC refused full chroma in the handshake, after the launch: the start is made again without it.
         packed_refused: nightjar_core::full_chroma::restarts_without(settings.experimental_packed_444, e.code),
     })?;
