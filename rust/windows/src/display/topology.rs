@@ -997,6 +997,113 @@ impl Topology {
 pub fn monitors() -> Result<Vec<Monitor>> {
     Ok(Topology::query()?.monitors())
 }
+impl Topology {
+    /// The device ids `monitors` gives, from the source and target names alone.
+    pub(super) fn device_ids(
+        &self,
+        mut device_info: impl FnMut(&mut DISPLAYCONFIG_DEVICE_INFO_HEADER) -> i32,
+    ) -> Vec<String> {
+        let mut targets = std::collections::BTreeSet::new();
+        self.paths
+            .iter()
+            .filter(|p| {
+                targets.insert((
+                    p.targetInfo.adapterId.LowPart,
+                    p.targetInfo.adapterId.HighPart,
+                    p.targetInfo.id,
+                ))
+            })
+            .filter_map(|p| {
+                let mut source = DISPLAYCONFIG_SOURCE_DEVICE_NAME {
+                    header: header(
+                        DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
+                        size_of::<DISPLAYCONFIG_SOURCE_DEVICE_NAME>(),
+                        p.sourceInfo.adapterId,
+                        p.sourceInfo.id,
+                    ),
+                    ..Default::default()
+                };
+                let mut target = DISPLAYCONFIG_TARGET_DEVICE_NAME {
+                    header: header(
+                        DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME,
+                        size_of::<DISPLAYCONFIG_TARGET_DEVICE_NAME>(),
+                        p.targetInfo.adapterId,
+                        p.targetInfo.id,
+                    ),
+                    ..Default::default()
+                };
+                (device_info(&mut source.header) == 0 && device_info(&mut target.header) == 0)
+                    .then(|| monitor_id(&wide(&target.monitorDevicePath)))
+            })
+            .collect()
+    }
+}
+/// A lookup kept while what it was made from stays the same.
+pub(super) struct Kept<K, V> {
+    key: K,
+    at: Instant,
+    value: V,
+}
+/// The value for `key`: the one `kept` while its key is the same and it is younger than
+/// `max_age`, else what `lookup` gives, kept in its place. A failed lookup keeps nothing.
+pub(super) fn kept_or<K: PartialEq, V: Clone>(
+    kept: &mut Option<Kept<K, V>>,
+    key: K,
+    now: Instant,
+    max_age: Duration,
+    lookup: impl FnOnce() -> Result<V>,
+) -> Result<V> {
+    if let Some(kept) = kept
+        .as_ref()
+        .filter(|kept| kept.key == key && now.saturating_duration_since(kept.at) < max_age)
+    {
+        return Ok(kept.value.clone());
+    }
+    let value = lookup()?;
+    *kept = Some(Kept {
+        key,
+        at: now,
+        value: value.clone(),
+    });
+    Ok(value)
+}
+/// How long [`active_device_ids`] goes on with the names it read while the active paths stay
+/// the same.
+const ACTIVE_IDS_KEPT: Duration = Duration::from_secs(5);
+/// The device ids of the monitors Windows shows now, as [`monitors`] gives them, for the
+/// display heartbeat, which asks four times a second for each stream. Only the active paths
+/// are read each time; their names are read again when the paths change, and at least every
+/// [`ACTIVE_IDS_KEPT`]. No DXGI or colour query, which take nearly all of `monitors`' half
+/// millisecond.
+pub fn active_device_ids() -> Result<Vec<String>> {
+    type Routes = Vec<(u32, i32, u32, u32)>;
+    static KEPT: std::sync::Mutex<Option<Kept<Routes, Vec<String>>>> = std::sync::Mutex::new(None);
+    let topology = Topology::query()?;
+    let routes: Routes = topology
+        .paths
+        .iter()
+        .map(|p| {
+            (
+                p.targetInfo.adapterId.LowPart,
+                p.targetInfo.adapterId.HighPart,
+                p.targetInfo.id,
+                p.sourceInfo.id,
+            )
+        })
+        .collect();
+    kept_or(
+        &mut KEPT
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+        routes,
+        Instant::now(),
+        ACTIVE_IDS_KEPT,
+        || {
+            // SAFETY: Topology::device_ids supplies a live source- or target-name structure with a matching header type and size.
+            Ok(topology.device_ids(|header| unsafe { DisplayConfigGetDeviceInfo(header) }))
+        },
+    )
+}
 pub fn edid_refresh(hint: &str, targets: &[u32]) -> Result<serde_json::Value> {
     let monitors = Topology::query_all()?.monitors();
     let monitor = monitors

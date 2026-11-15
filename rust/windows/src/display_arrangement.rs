@@ -2122,10 +2122,8 @@ impl Lease {
     /// back on, such as when an exclusive-fullscreen game loses focus and
     /// Windows recalls its saved layout for the connected displays.
     pub fn switched_back_on(&self) -> Result<Vec<String>> {
-        let active: Vec<_> = crate::display::monitors()?
-            .into_iter()
-            .map(|m| m.device_id)
-            .collect();
+        // Four times a second for each stream: the lean read, not `monitors`.
+        let active = crate::display::active_device_ids()?;
         let state = state().lock().unwrap();
         let Some(before) = &state.before else {
             return Ok(Vec::new());

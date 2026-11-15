@@ -85,6 +85,58 @@ fn an_inactive_display_can_have_no_modes_but_needs_a_real_buffer() {
     assert!(topology.modes.is_empty());
 }
 #[test]
+fn the_heartbeats_device_ids_are_read_again_only_when_the_paths_change_or_age() {
+    use std::time::{Duration, Instant};
+    let start = Instant::now();
+    let mut kept = None;
+    let mut reads = 0;
+    for (key, ms, read) in [
+        (1, 0, true),
+        (1, 250, false),
+        (1, 4_999, false),
+        // A display switched on or off changes the active paths: read at once.
+        (2, 5_000, true),
+        (2, 5_250, false),
+        // The same paths are read again now and then, in case a name changed under them.
+        (2, 10_000, true),
+    ] {
+        let before = reads;
+        let ids = kept_or(
+            &mut kept,
+            key,
+            start + Duration::from_millis(ms),
+            Duration::from_secs(5),
+            || {
+                reads += 1;
+                Ok(vec![format!("id{key}")])
+            },
+        )
+        .unwrap();
+        assert_eq!(ids, [format!("id{key}")]);
+        assert_eq!(reads > before, read, "paths {key} at {ms} ms");
+    }
+    // A failed read keeps nothing of its own: the next one reads again.
+    let failed = kept_or(
+        &mut kept,
+        3,
+        start + Duration::from_secs(11),
+        Duration::from_secs(5),
+        || anyhow::bail!("busy"),
+    );
+    assert!(failed.is_err());
+    assert!(kept.as_ref().is_some_and(|kept| kept.key == 2));
+}
+#[test]
+#[ignore = "requires an interactive Windows desktop with connected displays"]
+fn heartbeat_device_ids_are_the_ones_monitors_lists() -> Result<()> {
+    let mut listed: Vec<_> = monitors()?.into_iter().map(|m| m.device_id).collect();
+    let mut lean = active_device_ids()?;
+    listed.sort();
+    lean.sort();
+    assert_eq!(lean, listed);
+    Ok(())
+}
+#[test]
 #[ignore = "requires an interactive Windows desktop with connected displays"]
 fn heartbeat_check_finds_the_monitors_that_monitors_lists() -> Result<()> {
     let topology = Topology::query()?;
