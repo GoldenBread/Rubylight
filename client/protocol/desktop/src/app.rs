@@ -70,7 +70,8 @@ impl App {
         }
         // The PC's automatic bitrate goes off after the window has gone, not with the process.
         self.gui_back_from_overlay();
-        let abr_stop = self.streaming.take().and_then(|(streaming, _)| streaming.finish(self.window, &mut self.pads)).or(self.abr_stop.take().map(|(_, stop)| stop));
+        let mut abr_stops: Vec<_> = self.abr_stops.drain(..).map(|(_, stop)| stop).collect();
+        abr_stops.extend(self.streaming.take().and_then(|(streaming, _)| streaming.finish(self.window, &mut self.pads)));
         if let Some(c) = &self.connecting {
             c.cancel();
         }
@@ -91,7 +92,7 @@ impl App {
             SDL_DestroyWindow(window);
             SDL_Quit();
         });
-        if let Some(stop) = abr_stop { stop.wait(); }
+        for stop in abr_stops { stop.wait(); }
     }
 
     /// Drops the saved library of a PC that is unpaired or removed.

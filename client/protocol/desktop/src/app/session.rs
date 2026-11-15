@@ -117,8 +117,8 @@ impl App {
         let mut streaming = Streaming::new(connecting, session, facts, display);
         // Before automatic bitrate is turned on below. Another PC's off is not this stream's to wait
         // for: it stays for the app's end.
-        if self.abr_stop.as_ref().is_some_and(|(host, _)| *host == streaming.host_id) {
-            streaming.follow_abr_stop(self.abr_stop.take().map(|(_, stop)| stop));
+        if let Some(at) = self.abr_stops.iter().position(|(host, _)| *host == streaming.host_id) {
+            streaming.follow_abr_stop(Some(self.abr_stops.swap_remove(at).1));
         }
         streaming.watch_microphone_busy(self.waker.clone());
         self.pads.prepare_audio(settings.controllers && settings.controller_audio && streaming.facts.role != nightjar_core::http::AppRole::RemoteMonitor);
@@ -370,7 +370,10 @@ impl App {
         let decode_time = streaming.decode_time_line().filter(|_| self.launcher.settings.post_stream_decode_time && reconnect.is_none());
         // Kept for the next stream, which turns the PC's automatic bitrate on only after it is off.
         let stopped_host = streaming.host_id;
-        self.abr_stop = streaming.finish(self.window, &mut self.pads).map(|stop| (stopped_host, stop)).or(self.abr_stop.take());
+        let stop = streaming.finish(self.window, &mut self.pads);
+        // The ones that reached their PC are done with; another PC's stays beside this one.
+        self.abr_stops.retain(|(_, stop)| !stop.finished());
+        self.abr_stops.extend(stop.map(|stop| (stopped_host, stop)));
         // The stream's cursor shows the pointer again on leaving.
         self.pointer.shown();
         // SAFETY: window and renderer calls on the main thread.

@@ -49,6 +49,11 @@ impl AbrStop {
         Self(std::thread::spawn(off))
     }
 
+    /// Whether the request has reached its PC or given up: nothing is left to wait for.
+    pub fn finished(&self) -> bool {
+        self.0.is_finished()
+    }
+
     pub fn wait(self) {
         if self.0.join().is_err() {
             eprintln!("nightjar: the request that stops the PC's automatic bitrate panicked");

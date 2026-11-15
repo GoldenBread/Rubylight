@@ -146,9 +146,9 @@ struct App {
     waking: wol::Wakes,
     streaming: Option<(Streaming, TimerResolution)>,
     /// The request that turns the PC's automatic bitrate off after the last stream, while it may
-    /// still be in flight, and the PC it went to: the next stream to that PC (a reconnect too)
-    /// turns it on only after it.
-    abr_stop: Option<(u64, stream::host_abr::AbrStop)>,
+    /// still be in flight, each with the PC it went to: the next stream to that PC (a reconnect
+    /// too) turns it on only after it, and the app's end waits for them all.
+    abr_stops: Vec<(u64, stream::host_abr::AbrStop)>,
     pending_launch: Option<(u64, i32)>,
     /// The launch the PC refused until the user confirms closing the app it runs, while the
     /// launcher asks (`Dialog::ConfirmReplace`).
@@ -867,7 +867,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         cancelled: false,
         waking: wol::Wakes::default(),
         streaming: None,
-        abr_stop: None,
+        abr_stops: Vec::new(),
         pending_launch: None,
         pending_replace: None,
         quitting_on_leave: None,
