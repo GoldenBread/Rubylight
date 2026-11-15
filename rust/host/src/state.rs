@@ -427,6 +427,8 @@ pub struct Host {
     /// Each client's game display, kept between its streams while the app runs.
     pub app_display: Mutex<BTreeMap<String, RetainedDisplay>>,
     pub monitors: Mutex<BTreeMap<String, Arc<butterpollo_windows::display::Retained>>>,
+    /// The remote monitors still being made, outside the `monitors` lock.
+    pub monitors_creating: crate::remote_display::Creating,
     pub updates: Mutex<Value>,
     pub metadata: Mutex<Option<(Instant, Value)>>,
     pub serverinfo_cache: Mutex<crate::nvhttp::ServerInfoCache>,
@@ -912,6 +914,7 @@ impl Host {
             app_audio: Mutex::new(None),
             app_display: Mutex::new(BTreeMap::new()),
             monitors: Mutex::new(BTreeMap::new()),
+            monitors_creating: Default::default(),
             updates: Mutex::new(
                 json!({"status":true,"checking":false,"check_failed":false,"checked_at":0,"releases":[]}),
             ),

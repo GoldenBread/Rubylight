@@ -75,13 +75,7 @@ impl Drop for GoldenLease {
             .unwrap()
             .release(|(snapshot, mut excluded)| {
                 if let Some(host) = self.host.upgrade() {
-                    let outputs: Vec<_> = host
-                        .monitors
-                        .lock()
-                        .unwrap()
-                        .values()
-                        .map(|m| m.current_output())
-                        .collect();
+                    let outputs = crate::remote_display::outputs(&host);
                     if let Ok(monitors) = butterpollo_windows::display::monitors() {
                         excluded.extend(
                             monitors

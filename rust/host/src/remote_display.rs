@@ -10,7 +10,8 @@ use butterpollo_windows::{
     display_arrangement,
 };
 use serde_json::{Value, json};
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
 pub fn layout(h: &Shared) -> Result<Layout> {
     let state = h.paired.read().unwrap();
@@ -104,29 +105,135 @@ fn report_repair(warnings: &Warnings, result: Result<()>) {
         warnings.set("display_monitor_repair", format!("Windows recalled a saved display layout when the remote monitor arrived and it could not be put back ({error}), so a monitor can stay off or at another refresh rate. Check Windows display settings and reconnect."));
     }
 }
+/// The remote monitors being made, by client, and whether a disconnect cancelled one: the
+/// virtual display is made outside the monitors lock, which `/applist`, `/serverinfo` and the
+/// maintenance loop read. Taken under the monitors lock, never the other way round.
+#[derive(Default)]
+pub struct Creating {
+    clients: Mutex<BTreeMap<String, bool>>,
+    done: Condvar,
+}
+impl Creating {
+    fn locked(&self) -> MutexGuard<'_, BTreeMap<String, bool>> {
+        self.clients.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+    /// A disconnect of `client` (None: every client) while its monitor is being made: it is
+    /// removed as soon as it is there. Called under the monitors lock.
+    pub fn cancel(&self, client: Option<&str>) {
+        for (id, cancelled) in self.locked().iter_mut() {
+            if client.is_none_or(|client| client == id.as_str()) {
+                *cancelled = true;
+            }
+        }
+    }
+}
+/// A remote monitor's place, held while it is made.
+struct Slot<'a> {
+    h: &'a Shared,
+    client: String,
+}
+impl Drop for Slot<'_> {
+    fn drop(&mut self) {
+        self.h.monitors_creating.locked().remove(&self.client);
+        self.h.monitors_creating.done.notify_all();
+    }
+}
+/// What [`reserve`] found for a client.
+enum Reserved<'a> {
+    /// Its monitor is there already.
+    Existing(Arc<Retained>),
+    /// None: the caller makes it and [`publish`]es it.
+    Slot(Slot<'a>),
+}
+/// The monitor of `client` in `mode`, or the place to make it in. A second request while it
+/// is made waits for it, then takes it as made.
+fn reserve<'a>(h: &'a Shared, client: &str, mode: (u32, u32, u32, bool)) -> Result<Reserved<'a>> {
+    loop {
+        let monitors = h.monitors.lock().unwrap();
+        if let Some(existing) = monitors.get(client) {
+            if existing.mode != mode {
+                bail!("retained monitor uses a different mode; disconnect it before changing mode");
+            }
+            return Ok(Reserved::Existing(existing.clone()));
+        }
+        let mut creating = h.monitors_creating.locked();
+        if creating.contains_key(client) {
+            drop(monitors);
+            drop(
+                h.monitors_creating
+                    .done
+                    .wait_while(creating, |creating| creating.contains_key(client))
+                    .unwrap_or_else(PoisonError::into_inner),
+            );
+            continue;
+        }
+        if monitors.len() + creating.len() >= 4 {
+            bail!("remote monitor capacity reached");
+        }
+        creating.insert(client.to_owned(), false);
+        return Ok(Reserved::Slot(Slot {
+            h,
+            client: client.to_owned(),
+        }));
+    }
+}
+/// The monitor made in `slot` goes in, unless a disconnect cancelled it meanwhile: then it is
+/// dropped, outside the lock, which removes it from Windows.
+fn publish(slot: Slot, lease: Arc<Retained>) -> Result<Arc<Retained>> {
+    let h = slot.h;
+    let mut monitors = h.monitors.lock().unwrap();
+    let cancelled = h
+        .monitors_creating
+        .locked()
+        .get(&slot.client)
+        .copied()
+        .unwrap_or(true);
+    if cancelled {
+        drop(slot);
+        drop(monitors);
+        drop(lease);
+        bail!("the remote monitor's device disconnected while its display was being made");
+    }
+    monitors.insert(slot.client.clone(), lease.clone());
+    // Waiters find it in the map once the slot goes.
+    drop(slot);
+    drop(monitors);
+    Ok(lease)
+}
+/// The remote monitors' displays, once none is still being made: a stream laying out its
+/// displays keeps them on.
+pub(crate) fn outputs(h: &Shared) -> Vec<String> {
+    loop {
+        drop(
+            h.monitors_creating
+                .done
+                .wait_while(h.monitors_creating.locked(), |creating| {
+                    !creating.is_empty()
+                })
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+        let monitors = h.monitors.lock().unwrap();
+        if h.monitors_creating.locked().is_empty() {
+            return monitors.values().map(|m| m.current_output()).collect();
+        }
+    }
+}
 pub fn activate(
     h: &Shared,
     client: &str,
     config: &Negotiated,
     warnings: &Warnings,
 ) -> Result<Arc<Retained>> {
-    let mut monitors = h.monitors.lock().unwrap();
-    if let Some(existing) = monitors.get(client) {
-        if existing.mode
-            != (
-                config.width,
-                config.height,
-                config.fps_millihz(),
-                config.hdr,
-            )
-        {
-            bail!("retained monitor uses a different mode; disconnect it before changing mode");
-        }
-        return Ok(existing.clone());
-    }
-    if monitors.len() >= 4 {
-        bail!("remote monitor capacity reached");
-    }
+    let mode = (
+        config.width,
+        config.height,
+        config.fps_millihz(),
+        config.hdr,
+    );
+    let slot = match reserve(h, client, mode)? {
+        Reserved::Existing(existing) => return Ok(existing),
+        Reserved::Slot(slot) => slot,
+    };
     let identity = h
         .paired
         .read()
@@ -174,8 +281,7 @@ pub fn activate(
             Ok(())
         })),
     )?);
-    monitors.insert(client.into(), lease.clone());
-    drop(monitors);
+    let lease = publish(slot, lease)?;
     if let Some(before) = &before {
         report_repair(
             warnings,
@@ -215,6 +321,7 @@ pub fn disconnect(h: &Shared, client: Option<&str>) {
         .stop_role(Role::RemoteMonitor, client);
     drop(canceled);
     let mut monitors = h.monitors.lock().unwrap();
+    h.monitors_creating.cancel(client);
     let (kept, removed): (
         std::collections::BTreeMap<_, _>,
         std::collections::BTreeMap<_, _>,

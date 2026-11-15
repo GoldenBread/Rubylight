@@ -1622,16 +1622,10 @@ impl Prepared {
         )
     }
     fn remote_monitors(&self) -> Vec<String> {
+        // One still being made waits: laid out without it, it would be switched off.
         self.host
             .upgrade()
-            .map(|h| {
-                h.monitors
-                    .lock()
-                    .unwrap()
-                    .values()
-                    .map(|m| m.current_output())
-                    .collect()
-            })
+            .map(|h| crate::remote_display::outputs(&h))
             .unwrap_or_default()
     }
     /// Put the stream's layout back when Windows switches on a display it
