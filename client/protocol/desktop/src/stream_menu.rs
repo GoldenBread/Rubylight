@@ -250,6 +250,12 @@ pub fn hotkey(button: SDL_GamepadButton) -> Option<Hotkey> {
     }
 }
 
+/// The grid's button for `button`, when the grid gives it a tile or a way out (`offered`, the
+/// layout's buttons): a button whose tile is not offered is not taken.
+pub fn offered_hotkey(button: SDL_GamepadButton, offered: &[Hotkey]) -> Option<Hotkey> {
+    hotkey(button).filter(|key| offered.contains(key))
+}
+
 /// What was chosen on the grid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Chosen {

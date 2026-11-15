@@ -28,6 +28,18 @@ fn a_button_runs_a_way_out_or_a_tile_the_user_gave_it() {
 }
 
 #[test]
+fn a_button_whose_tile_is_not_offered_is_not_taken_by_the_menu() {
+    let buttons = model::Buttons::from([(Hotkey::Lb, "microphone".to_owned()), (Hotkey::Rb, model::NO_TILE.to_owned())]);
+    let without_mic = Available { microphone: None, ..everything() };
+    let offered: Vec<Hotkey> = super::layout(&without_mic, 0, &buttons).buttons.keys().copied().collect();
+    assert_eq!(offered_hotkey(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, &offered), None, "no microphone tile to run");
+    assert_eq!(offered_hotkey(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, &offered), None, "set to nothing");
+    let offered: Vec<Hotkey> = super::layout(&everything(), 0, &buttons).buttons.keys().copied().collect();
+    assert_eq!(offered_hotkey(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, &offered), Some(Hotkey::Lb));
+    assert_eq!(offered_hotkey(SDL_GAMEPAD_BUTTON_SOUTH, &offered), None);
+}
+
+#[test]
 fn every_choice_for_a_button_is_one_the_desktop_can_draw_and_run() {
     let a = everything();
     for (id, name) in ASSIGNABLE {

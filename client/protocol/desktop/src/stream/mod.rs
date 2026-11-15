@@ -690,6 +690,9 @@ pub struct Streaming {
     pub menu_page: crate::stream_menu::Page,
     /// A controller button pressed for a grid tile, run when the menu draws next.
     pub menu_hotkey: Option<nightjar_policy::stream_menu::Hotkey>,
+    /// The controller buttons the grid gave a tile or a way out when it last drew; another
+    /// button press is not taken by the menu.
+    pub menu_hotkeys: Vec<nightjar_policy::stream_menu::Hotkey>,
     keys_down: HashSet<u16>,
     /// A shortcut's chord held on the PC, and when it goes up.
     shortcut_held: Option<(crate::shortcuts::Held, Instant)>,
@@ -1098,6 +1101,7 @@ impl Streaming {
             shortcut_sheet: None,
             menu_page: crate::stream_menu::Page::Grid,
             menu_hotkey: None,
+            menu_hotkeys: Vec::new(),
             keys_down: HashSet::new(),
             shortcut_held: None,
             mouse_down: HashSet::new(),

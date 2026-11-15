@@ -142,7 +142,8 @@ pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mu
                     || s.facts.role != nightjar_core::http::AppRole::InputOnly,
                 clipboard: s.facts.clipboard,
                 image_clipboard: s.facts.image_clipboard,
-                commands: !s.facts.server_commands.is_empty(),
+                // Only commands with a name are listed: none leaves the page with Back alone.
+                commands: s.facts.server_commands.iter().any(|name| !name.is_empty()),
                 session: s.session_page_available(),
                 host_audio: !s.host_audio.switches().is_empty() || s.host_audio.problem().is_some(),
                 controller_audio: s.controller_audio_available(),
@@ -151,6 +152,7 @@ pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mu
                 exits: s.game_exits(),
             };
             let layout = stream_menu::layout(&available, shortcuts.data.len(), pads.menu_buttons());
+            s.menu_hotkeys = layout.buttons.keys().copied().collect();
             let mut page = std::mem::take(&mut s.menu_page);
             let mut next = None;
             let grid_page = page == stream_menu::Page::Grid;
@@ -229,23 +231,30 @@ pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mu
                             }
                             stream_menu::Edited::Cancel => next = Some(stream_menu::Page::Shortcuts),
                         },
-                        stream_menu::Page::Commands => {
-                            for (index, name) in s.facts.server_commands.iter().enumerate() {
-                                if !name.is_empty() && menu_style::action(ui, Icon::Terminal, name, None).clicked() {
-                                    s.pending_command = Some(index);
-                                }
-                            }
-                            if let Some(index) = s.pending_command {
+                        // The question takes the list's place with Cancel focused, as the other confirmations do.
+                        stream_menu::Page::Commands => match s.pending_command {
+                            Some(index) => {
                                 menu_style::text_block(ui, &trf("Run ‘{}’ on the PC?", &[&s.facts.server_commands[index]]));
                                 ui.horizontal(|ui| {
-                                    if menu_style::button(ui, tr("Run command")).clicked() {
+                                    let run = menu_style::button(ui, tr("Run command"));
+                                    let cancel = menu_style::button(ui, tr("Cancel"));
+                                    if focus_first { cancel.request_focus(); }
+                                    if run.clicked() {
                                         s.pending_command = None;
                                         s.server_command(index);
                                     }
-                                    if menu_style::button(ui, tr("Cancel")).clicked() { s.pending_command = None; }
+                                    if cancel.clicked() { s.pending_command = None; }
                                 });
                             }
-                        }
+                            None => {
+                                for (index, name) in s.facts.server_commands.iter().enumerate() {
+                                    if !name.is_empty() && menu_style::action(ui, Icon::Terminal, name, None).clicked() {
+                                        s.pending_command = Some(index);
+                                        ctx.memory_mut(|m| m.surrender_focus(m.focused().unwrap_or(egui::Id::NULL)));
+                                    }
+                                }
+                            }
+                        },
                         stream_menu::Page::Guests => s.show_guests(ui),
                         stream_menu::Page::Quality => menu_style::group(ui, |ui| {
                             let controls = s.menu_controls();

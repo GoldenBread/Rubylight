@@ -676,11 +676,12 @@ impl App {
                 }
                 MenuStep::CloseMenu => return streaming.toggle_menu(self.window, &mut self.pads),
             }
-            // Y, X and the shoulders run their tiles while the grid shows (nightjar_policy::stream_menu).
+            // Y, X and the shoulders run their tiles while the grid shows (nightjar_policy::stream_menu);
+            // one whose tile is not offered goes on to the menu's navigation as any other button.
             if kind == SDL_EVENT_GAMEPAD_BUTTON_DOWN && !page && streaming.session_page.is_none() && streaming.shortcut_sheet.is_none() {
                 // SAFETY: union member read by event type.
                 let button = SDL_GamepadButton(i32::from(unsafe { event.gbutton.button }));
-                if let Some(key) = stream_menu::hotkey(button) {
+                if let Some(key) = stream_menu::offered_hotkey(button, &streaming.menu_hotkeys) {
                     streaming.menu_hotkey = Some(key);
                     streaming.needs_redraw = true;
                     return;
