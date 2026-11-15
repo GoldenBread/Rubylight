@@ -1559,6 +1559,7 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("This game has an anti-cheat, which would treat the mod as cheating.", "Bu oyunda modu hile sayacak bir hile önleyici var."),
     ("This game offers no DLSS frame generation for this to take the place of.", "Bu oyun, bunun yerini alabileceği bir DLSS kare oluşturma sunmuyor."),
     ("Choose the game’s program in the PC’s web UI first.", "Önce PC’nin web arayüzünde oyunun programını seçin."),
+    ("Install the Microsoft Visual C++ 2015-2022 Redistributable (x64) on the PC first.", "Önce PC’ye Microsoft Visual C++ 2015-2022 Redistributable (x64) paketini yükleyin."),
     ("Installed in the game’s folder, release {}.", "Oyunun klasörüne kuruldu, sürüm {}."),
     ("Added to the upscaler mod in the game’s folder, release {}.", "Oyunun klasöründeki ölçeklendirme moduna eklendi, sürüm {}."),
     ("Lower bitrate", "Bit hızını düşür"),

@@ -29,6 +29,7 @@
     <string name="neural_why_anti_cheat">Ce jeu a un anti-triche, qui considérerait le mod comme de la triche.</string>
     <string name="neural_why_no_dlss">Ce jeu n’offre pas de génération d’images DLSS que ceci pourrait remplacer.</string>
     <string name="neural_why_choose">Choisissez d’abord le programme du jeu dans l’interface web du PC.</string>
+    <string name="neural_why_runtime">Installez d’abord Microsoft Visual C++ 2015-2022 Redistributable (x64) sur le PC.</string>
     <string name="neural_installed">Installé dans le dossier du jeu, version %1$s.</string>
     <string name="neural_added">Ajouté au mod de mise à l’échelle dans le dossier du jeu, version %1$s.</string>
 </resources>

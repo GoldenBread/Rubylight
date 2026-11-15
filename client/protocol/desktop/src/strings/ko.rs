@@ -1559,6 +1559,7 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("This game has an anti-cheat, which would treat the mod as cheating.", "이 게임에는 안티치트가 있어 모드를 부정행위로 볼 수 있습니다."),
     ("This game offers no DLSS frame generation for this to take the place of.", "이 게임에는 이 기능이 대신할 DLSS 프레임 생성이 없습니다."),
     ("Choose the game’s program in the PC’s web UI first.", "먼저 PC의 웹 UI에서 게임 프로그램을 선택하세요."),
+    ("Install the Microsoft Visual C++ 2015-2022 Redistributable (x64) on the PC first.", "먼저 PC에 Microsoft Visual C++ 2015-2022 Redistributable (x64)를 설치하세요."),
     ("Installed in the game’s folder, release {}.", "게임 폴더에 설치됨, 릴리스 {}."),
     ("Added to the upscaler mod in the game’s folder, release {}.", "게임 폴더의 업스케일러 모드에 추가됨, 릴리스 {}."),
     ("Lower bitrate", "비트레이트 낮추기"),

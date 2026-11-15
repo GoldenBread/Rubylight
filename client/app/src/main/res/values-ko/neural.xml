@@ -29,6 +29,7 @@
     <string name="neural_why_anti_cheat">이 게임에는 안티치트가 있어 모드를 부정행위로 볼 수 있습니다.</string>
     <string name="neural_why_no_dlss">이 게임에는 이 기능이 대신할 DLSS 프레임 생성이 없습니다.</string>
     <string name="neural_why_choose">먼저 PC의 웹 UI에서 게임 프로그램을 선택하세요.</string>
+    <string name="neural_why_runtime">먼저 PC에 Microsoft Visual C++ 2015-2022 Redistributable (x64)를 설치하세요.</string>
     <string name="neural_installed">게임 폴더에 설치됨, 릴리스 %1$s.</string>
     <string name="neural_added">게임 폴더의 업스케일러 모드에 추가됨, 릴리스 %1$s.</string>
 </resources>

@@ -1559,6 +1559,7 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приймання: систе
     ("This game has an anti-cheat, which would treat the mod as cheating.", "У цій грі є античит, який вважав би мод шахрайством."),
     ("This game offers no DLSS frame generation for this to take the place of.", "У цій грі немає генерації кадрів DLSS, яку це могло б замінити."),
     ("Choose the game’s program in the PC’s web UI first.", "Спершу виберіть програму гри у вебінтерфейсі ПК."),
+    ("Install the Microsoft Visual C++ 2015-2022 Redistributable (x64) on the PC first.", "Спершу встановіть Microsoft Visual C++ 2015-2022 Redistributable (x64) на ПК."),
     ("Installed in the game’s folder, release {}.", "Встановлено в теку гри, випуск {}."),
     ("Added to the upscaler mod in the game’s folder, release {}.", "Додано до моду масштабування в теці гри, випуск {}."),
     ("Lower bitrate", "Знижувати бітрейт"),

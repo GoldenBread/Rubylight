@@ -1559,6 +1559,7 @@ sudo sysctl -w net.core.rmem_max={}", "Tampon de réception : le système a acco
     ("This game has an anti-cheat, which would treat the mod as cheating.", "Ce jeu a un anti-triche, qui considérerait le mod comme de la triche."),
     ("This game offers no DLSS frame generation for this to take the place of.", "Ce jeu n’offre pas de génération d’images DLSS que ceci pourrait remplacer."),
     ("Choose the game’s program in the PC’s web UI first.", "Choisissez d’abord le programme du jeu dans l’interface web du PC."),
+    ("Install the Microsoft Visual C++ 2015-2022 Redistributable (x64) on the PC first.", "Installez d’abord Microsoft Visual C++ 2015-2022 Redistributable (x64) sur le PC."),
     ("Installed in the game’s folder, release {}.", "Installé dans le dossier du jeu, version {}."),
     ("Added to the upscaler mod in the game’s folder, release {}.", "Ajouté au mod de mise à l’échelle dans le dossier du jeu, version {}."),
     ("Lower bitrate", "Baisser le débit"),

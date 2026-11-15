@@ -55,6 +55,13 @@ public class NeuralSheetTest {
     private static final String READ_ONLY = "{\"ok\":{\"app\":\"uuid-1\",\"accepted\":false,\"switches\":[{\"id\":"
             + "\"frame_generation\",\"state\":\"read_only\",\"on\":true,\"why\":\"no_host_control\",\"reason\":"
             + "\"Turn on Host control for this device in the Rubylight console to change it.\"}]}}";
+    private static final String NO_RUNTIME = "{\"ok\":{\"app\":\"uuid-1\",\"accepted\":true,\"switches\":[{\"id\":"
+            + "\"frame_generation\",\"state\":\"unsupported\",\"on\":false,\"why\":\"runtime\","
+            + "\"reason\":\"Frame generation needs the Microsoft Visual C++ 2015-2022 Redistributable (x64).\"}]}}";
+    private static final String GPU_NOTE = "{\"ok\":{\"app\":\"uuid-1\",\"accepted\":true,\"gpu\":"
+            + "\"NVIDIA GeForce RTX 3060 Laptop GPU\",\"gpu_note\":\"Frame generation runs when the game renders on "
+            + "NVIDIA GeForce RTX 3060 Laptop GPU; Rubylight streams with AMD Radeon(TM) Graphics.\",\"switches\":[{\"id\":"
+            + "\"frame_generation\",\"state\":\"configurable\",\"on\":false}]}}";
     private static final String NO_DLSS = "{\"ok\":{\"app\":\"uuid-1\",\"accepted\":true,\"switches\":[{\"id\":"
             + "\"frame_generation\",\"state\":\"unsupported\",\"on\":false,\"why\":\"no_frame_generation\","
             + "\"reason\":\"The game has no DLSS frame generation.\"}]}}";
@@ -183,6 +190,23 @@ public class NeuralSheetTest {
         TextView message = ShadowDialog.getLatestDialog().findViewById(android.R.id.message);
         assertEquals(why, message.getText().toString());
         assertEquals(Arrays.asList("neural uuid-1"), calls);
+    }
+
+    /** A PC without the Visual C++ runtime says to install it, not that its graphics can't. */
+    @Test
+    public void aPcWithoutTheRuntimeSaysToInstallIt() {
+        script("neural", NO_RUNTIME);
+        String text = texts(sheet());
+        assertTrue(text, text.contains(screen.getString(R.string.neural_why_runtime)));
+        assertFalse(text, text.contains(screen.getString(R.string.neural_why_gpu)));
+    }
+
+    /** The PC's note on the GPU it runs on shows beside the switch, as the console shows it. */
+    @Test
+    public void theGpuNoteShowsBesideTheSwitch() {
+        script("neural", GPU_NOTE);
+        String text = texts(sheet());
+        assertTrue(text, text.contains("Frame generation runs when the game renders on NVIDIA GeForce RTX 3060"));
     }
 
     /** A code this app doesn't know shows the host's words. */

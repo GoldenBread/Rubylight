@@ -29,6 +29,7 @@
     <string name="neural_why_anti_cheat">此遊戲帶有反作弊，會把模組視為作弊。</string>
     <string name="neural_why_no_dlss">此遊戲沒有可供取代的 DLSS 幀生成。</string>
     <string name="neural_why_choose">請先在電腦的網頁介面中選擇遊戲的程式。</string>
+    <string name="neural_why_runtime">請先在電腦上安裝 Microsoft Visual C++ 2015-2022 Redistributable (x64)。</string>
     <string name="neural_installed">已安裝到遊戲資料夾，版本 %1$s。</string>
     <string name="neural_added">已新增到遊戲資料夾中的超解析度模組，版本 %1$s。</string>
 </resources>

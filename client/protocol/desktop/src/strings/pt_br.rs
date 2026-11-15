@@ -1559,6 +1559,7 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer de recepção: o sistema concedeu 
     ("This game has an anti-cheat, which would treat the mod as cheating.", "Este jogo tem um anti-cheat, que consideraria o mod como trapaça."),
     ("This game offers no DLSS frame generation for this to take the place of.", "Este jogo não oferece geração de quadros DLSS para isto substituir."),
     ("Choose the game’s program in the PC’s web UI first.", "Primeiro escolha o programa do jogo na interface web do PC."),
+    ("Install the Microsoft Visual C++ 2015-2022 Redistributable (x64) on the PC first.", "Primeiro instale o Microsoft Visual C++ 2015-2022 Redistributable (x64) no PC."),
     ("Installed in the game’s folder, release {}.", "Instalado na pasta do jogo, versão {}."),
     ("Added to the upscaler mod in the game’s folder, release {}.", "Adicionado ao mod de upscaling na pasta do jogo, versão {}."),
     ("Lower bitrate", "Reduzir a taxa de bits"),

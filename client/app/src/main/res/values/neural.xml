@@ -31,6 +31,7 @@
     <string name="neural_why_anti_cheat">This game has an anti-cheat, which would treat the mod as cheating.</string>
     <string name="neural_why_no_dlss">This game offers no DLSS frame generation for this to take the place of.</string>
     <string name="neural_why_choose">Choose the game’s program in the PC’s web UI first.</string>
+    <string name="neural_why_runtime">Install the Microsoft Visual C++ 2015-2022 Redistributable (x64) on the PC first.</string>
     <string name="neural_installed">Installed in the game’s folder, release %1$s.</string>
     <string name="neural_added">Added to the upscaler mod in the game’s folder, release %1$s.</string>
 </resources>

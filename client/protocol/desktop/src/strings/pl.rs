@@ -1559,6 +1559,7 @@ sudo sysctl -w net.core.rmem_max={}", "Bufor odbioru: system przydzielił {0} Ki
     ("This game has an anti-cheat, which would treat the mod as cheating.", "Ta gra ma system anti-cheat, który uznałby moda za oszustwo."),
     ("This game offers no DLSS frame generation for this to take the place of.", "Ta gra nie oferuje generowania klatek DLSS, które to mogłoby zastąpić."),
     ("Choose the game’s program in the PC’s web UI first.", "Najpierw wybierz program gry w interfejsie WWW PC."),
+    ("Install the Microsoft Visual C++ 2015-2022 Redistributable (x64) on the PC first.", "Najpierw zainstaluj Microsoft Visual C++ 2015-2022 Redistributable (x64) na PC."),
     ("Installed in the game’s folder, release {}.", "Zainstalowane w folderze gry, wydanie {}."),
     ("Added to the upscaler mod in the game’s folder, release {}.", "Dodane do moda skalowania w folderze gry, wydanie {}."),
     ("Lower bitrate", "Obniżaj szybkość transmisji"),

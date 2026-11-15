@@ -29,6 +29,7 @@
     <string name="neural_why_anti_cheat">Este juego tiene un antitrampas que consideraría el mod como trampa.</string>
     <string name="neural_why_no_dlss">Este juego no ofrece generación de fotogramas DLSS a la que esto pueda sustituir.</string>
     <string name="neural_why_choose">Primero elige el programa del juego en la interfaz web del PC.</string>
+    <string name="neural_why_runtime">Primero instala Microsoft Visual C++ 2015-2022 Redistributable (x64) en el PC.</string>
     <string name="neural_installed">Instalado en la carpeta del juego, versión %1$s.</string>
     <string name="neural_added">Añadido al mod de escalado de la carpeta del juego, versión %1$s.</string>
 </resources>

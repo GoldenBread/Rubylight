@@ -144,7 +144,9 @@ impl Launcher {
     /// The frame generation row: its switch, and the line that says why it can't change, what
     /// the PC is doing, what turning it on replaces, or what it is for.
     fn neural_row(&self, host: &Host, game: u32) -> ArtRow {
-        use crate::neural_page::{configurable, installed_text, job_text, switch_text};
+        use crate::neural_page::{
+            configurable, installed_text, job_text, switch_text, with_gpu_note,
+        };
         let open = self.neural.state_for(host.id, game);
         let state = open.and_then(|open| open.state.as_ref());
         let switch = state.and_then(|state| state.frame_generation());
@@ -162,12 +164,15 @@ impl Launcher {
         } else if let Some(switch) = switch.filter(|s| !configurable(s)) {
             (switch_text(switch), *ON_SURFACE_VARIANT)
         } else if let Some(installed) = state.and_then(installed_text) {
-            (installed, *ON_SURFACE_VARIANT)
+            (with_gpu_note(state, installed), *ON_SURFACE_VARIANT)
         } else if state.is_some_and(|s| s.replaces_earlier_upscaling)
             && !switch.is_some_and(|s| s.on)
         {
             (
-                tr("Turning it on removes the earlier neural upscaling from the game’s folder first.").to_owned(),
+                with_gpu_note(
+                    state,
+                    tr("Turning it on removes the earlier neural upscaling from the game’s folder first.").to_owned(),
+                ),
                 *ON_SURFACE_VARIANT,
             )
         } else if state.is_none() {
@@ -179,7 +184,10 @@ impl Launcher {
             )
         } else {
             (
-                tr("Frame generation for games that offer DLSS frame generation, through a mod the PC puts in the game’s folder and takes out again: turn on DLSS frame generation in the game, and this takes its place. Leave it off for online games: one may treat a mod as cheating.").to_owned(),
+                with_gpu_note(
+                    state,
+                    tr("Frame generation for games that offer DLSS frame generation, through a mod the PC puts in the game’s folder and takes out again: turn on DLSS frame generation in the game, and this takes its place. Leave it off for online games: one may treat a mod as cheating.").to_owned(),
+                ),
                 *ON_SURFACE_VARIANT,
             )
         };

@@ -29,6 +29,7 @@
     <string name="neural_why_anti_cheat">Bu oyunda modu hile sayacak bir hile önleyici var.</string>
     <string name="neural_why_no_dlss">Bu oyun, bunun yerini alabileceği bir DLSS kare oluşturma sunmuyor.</string>
     <string name="neural_why_choose">Önce PC’nin web arayüzünde oyunun programını seçin.</string>
+    <string name="neural_why_runtime">Önce PC’ye Microsoft Visual C++ 2015-2022 Redistributable (x64) paketini yükleyin.</string>
     <string name="neural_installed">Oyunun klasörüne kuruldu, sürüm %1$s.</string>
     <string name="neural_added">Oyunun klasöründeki ölçeklendirme moduna eklendi, sürüm %1$s.</string>
 </resources>

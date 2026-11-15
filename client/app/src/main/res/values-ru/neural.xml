@@ -29,6 +29,7 @@
     <string name="neural_why_anti_cheat">В этой игре есть античит, который счёл бы мод читом.</string>
     <string name="neural_why_no_dlss">В этой игре нет генерации кадров DLSS, которую это могло бы заменить.</string>
     <string name="neural_why_choose">Сначала выберите программу игры в веб-интерфейсе ПК.</string>
+    <string name="neural_why_runtime">Сначала установите Microsoft Visual C++ 2015-2022 Redistributable (x64) на ПК.</string>
     <string name="neural_installed">Установлено в папку игры, выпуск %1$s.</string>
     <string name="neural_added">Добавлено к моду масштабирования в папке игры, выпуск %1$s.</string>
 </resources>

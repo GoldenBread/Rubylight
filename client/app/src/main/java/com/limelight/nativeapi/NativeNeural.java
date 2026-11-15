@@ -21,8 +21,8 @@ public final class NativeNeural {
         public final String reason;
         /**
          * Why it can't change now as a code the app says in its own words ({@code busy}, {@code streaming},
-         * {@code no_host_control}, {@code gpu}, {@code anti_cheat}, {@code no_frame_generation}, {@code choose_program},
-         * {@code game}); null from an older host, or when it can change.
+         * {@code no_host_control}, {@code gpu}, {@code runtime}, {@code anti_cheat}, {@code no_frame_generation},
+         * {@code choose_program}, {@code game}); null from an older host, or when it can change.
          */
         public final String why;
 
@@ -54,9 +54,14 @@ public final class NativeNeural {
     public final String mode;
     /** Once it is on: the release in the game's folder; null otherwise or from an older host. */
     public final String release;
+    /**
+     * When the GPU it runs on is not the one the PC streams with: that it runs only when the game renders on
+     * that GPU, in the host's words; null otherwise or from an older host.
+     */
+    public final String gpuNote;
 
     NativeNeural(String app, boolean accepted, Switch frameGeneration, boolean replacesEarlierUpscaling,
-                 String phase, long done, long total, String error, String mode, String release) {
+                 String phase, long done, long total, String error, String mode, String release, String gpuNote) {
         this.app = app;
         this.accepted = accepted;
         this.frameGeneration = frameGeneration;
@@ -67,6 +72,7 @@ public final class NativeNeural {
         this.error = error;
         this.mode = mode;
         this.release = release;
+        this.gpuNote = gpuNote;
     }
 
     /** The host is downloading, installing or removing: read again in a moment. */
@@ -93,7 +99,8 @@ public final class NativeNeural {
                 json.optBoolean("replaces_earlier_upscaling"),
                 job == null ? null : job.optString("phase", null),
                 job == null ? 0 : job.optLong("done"), job == null ? 0 : job.optLong("total"),
-                job == null ? null : text(job, "error"), text(json, "mode"), text(json, "release"));
+                job == null ? null : text(job, "error"), text(json, "mode"), text(json, "release"),
+                text(json, "gpu_note"));
     }
 
     /** POST /neural/settings for the frame generation switch; accept_notice only when the user just accepted it. */

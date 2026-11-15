@@ -22,6 +22,7 @@ fn state(on: bool, phase: Option<NeuralPhase>) -> Neural {
         app: "uuid-1".into(),
         accepted: false,
         gpu: Some("AMD Radeon 780M".into()),
+        gpu_note: None,
         switches: vec![NeuralSwitch {
             id: FRAME_GENERATION.into(),
             state: ControlState::Configurable,
@@ -227,6 +228,32 @@ fn a_game_that_cant_have_it_says_why_before_any_try() {
     switch.why = Some(NeuralWhy::Unknown);
     switch.reason = Some("The PC's own words.".into());
     assert_eq!(switch_text(&switch), "Off · The PC's own words.");
+}
+
+/// A PC that lacks the Visual C++ runtime says to install it, not that its graphics can't.
+#[test]
+fn a_pc_without_the_runtime_says_to_install_it() {
+    let mut switch = state(false, None).switches[0].clone();
+    switch.state = ControlState::Unsupported;
+    switch.why = Some(NeuralWhy::Runtime);
+    switch.reason = Some("Frame generation needs the Microsoft Visual C++ 2015-2022 Redistributable (x64), which this PC lacks (VCRUNTIME140_1.dll).".into());
+    assert_eq!(
+        switch_text(&switch),
+        "Off · Install the Microsoft Visual C++ 2015-2022 Redistributable (x64) on the PC first."
+    );
+}
+
+/// The PC's note on the GPU frame generation runs on follows the line, as the console shows it.
+#[test]
+fn the_gpu_note_follows_the_line() {
+    let mut neural = state(true, None);
+    assert_eq!(with_gpu_note(Some(&neural), "Line.".into()), "Line.");
+    neural.gpu_note = Some("Frame generation runs when the game renders on NVIDIA GeForce RTX 3060 Laptop GPU; Rubylight streams with AMD Radeon(TM) Graphics.".into());
+    assert_eq!(
+        with_gpu_note(Some(&neural), "Line.".into()),
+        "Line. Frame generation runs when the game renders on NVIDIA GeForce RTX 3060 Laptop GPU; Rubylight streams with AMD Radeon(TM) Graphics."
+    );
+    assert_eq!(with_gpu_note(None, "Line.".into()), "Line.");
 }
 
 /// On, the page says how it is in the game's folder and which release, as the console does.

@@ -309,6 +309,9 @@ pub fn why_text(switch: &NeuralSwitch) -> Option<String> {
             tr("Turn on Host control for this device in the PC’s web UI.")
         }
         Some(NeuralWhy::Gpu) => tr("This PC’s graphics can’t run frame generation."),
+        Some(NeuralWhy::Runtime) => {
+            tr("Install the Microsoft Visual C++ 2015-2022 Redistributable (x64) on the PC first.")
+        }
         Some(NeuralWhy::AntiCheat) => {
             tr("This game has an anti-cheat, which would treat the mod as cheating.")
         }
@@ -337,6 +340,15 @@ pub fn installed_text(state: &Neural) -> Option<String> {
         ),
         _ => trf("Installed in the game’s folder, release {}.", &[&release]),
     })
+}
+
+/// `line`, followed by the PC's note when the GPU frame generation runs on is not the one it
+/// streams with, as the PC's console shows it beside the switch.
+pub fn with_gpu_note(state: Option<&Neural>, line: String) -> String {
+    match state.and_then(|s| s.gpu_note.as_deref()).filter(|note| !note.is_empty()) {
+        Some(note) => format!("{line} {note}"),
+        None => line,
+    }
 }
 
 pub fn configurable(switch: &NeuralSwitch) -> bool {

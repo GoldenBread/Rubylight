@@ -1559,6 +1559,7 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("This game has an anti-cheat, which would treat the mod as cheating.", "Trò chơi này có hệ thống chống gian lận, sẽ coi bản mod là gian lận."),
     ("This game offers no DLSS frame generation for this to take the place of.", "Trò chơi này không có tạo khung hình DLSS để tính năng này thay thế."),
     ("Choose the game’s program in the PC’s web UI first.", "Trước tiên hãy chọn chương trình của trò chơi trong giao diện web của PC."),
+    ("Install the Microsoft Visual C++ 2015-2022 Redistributable (x64) on the PC first.", "Trước tiên hãy cài đặt Microsoft Visual C++ 2015-2022 Redistributable (x64) trên PC."),
     ("Installed in the game’s folder, release {}.", "Đã cài vào thư mục của trò chơi, bản phát hành {}."),
     ("Added to the upscaler mod in the game’s folder, release {}.", "Đã thêm vào bản mod nâng độ phân giải trong thư mục của trò chơi, bản phát hành {}."),
     ("Lower bitrate", "Giảm tốc độ bit"),

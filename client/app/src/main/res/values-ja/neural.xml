@@ -29,6 +29,7 @@
     <string name="neural_why_anti_cheat">このゲームにはアンチチートがあり、Mod を不正とみなします。</string>
     <string name="neural_why_no_dlss">このゲームには、これが置き換えられる DLSS フレーム生成がありません。</string>
     <string name="neural_why_choose">先に PC のウェブ UI でゲームのプログラムを選んでください。</string>
+    <string name="neural_why_runtime">先に PC に Microsoft Visual C++ 2015-2022 Redistributable (x64) をインストールしてください。</string>
     <string name="neural_installed">ゲームのフォルダーにインストール済み、リリース %1$s。</string>
     <string name="neural_added">ゲームのフォルダーのアップスケーラー Mod に追加済み、リリース %1$s。</string>
 </resources>

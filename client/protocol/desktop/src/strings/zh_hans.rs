@@ -1559,6 +1559,7 @@ sudo sysctl -w net.core.rmem_max={}", "接收缓冲区：系统只分配了所�
     ("This game has an anti-cheat, which would treat the mod as cheating.", "此游戏带有反作弊，会把模组视为作弊。"),
     ("This game offers no DLSS frame generation for this to take the place of.", "此游戏没有可供替代的 DLSS 帧生成。"),
     ("Choose the game’s program in the PC’s web UI first.", "请先在电脑的网页界面中选择游戏的程序。"),
+    ("Install the Microsoft Visual C++ 2015-2022 Redistributable (x64) on the PC first.", "请先在电脑上安装 Microsoft Visual C++ 2015-2022 Redistributable (x64)。"),
     ("Installed in the game’s folder, release {}.", "已安装到游戏文件夹，版本 {}。"),
     ("Added to the upscaler mod in the game’s folder, release {}.", "已添加到游戏文件夹中的超分辨率模组，版本 {}。"),
     ("Lower bitrate", "降低码率"),

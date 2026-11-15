@@ -29,6 +29,7 @@
     <string name="neural_why_anti_cheat">Ta gra ma system anti-cheat, który uznałby moda za oszustwo.</string>
     <string name="neural_why_no_dlss">Ta gra nie oferuje generowania klatek DLSS, które to mogłoby zastąpić.</string>
     <string name="neural_why_choose">Najpierw wybierz program gry w interfejsie WWW PC.</string>
+    <string name="neural_why_runtime">Najpierw zainstaluj Microsoft Visual C++ 2015-2022 Redistributable (x64) na PC.</string>
     <string name="neural_installed">Zainstalowane w folderze gry, wydanie %1$s.</string>
     <string name="neural_added">Dodane do moda skalowania w folderze gry, wydanie %1$s.</string>
 </resources>

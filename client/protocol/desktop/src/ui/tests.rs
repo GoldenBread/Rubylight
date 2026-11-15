@@ -3255,6 +3255,7 @@ fn game_page_with_neural(on: bool, state: nightjar_core::http::native_api::radeo
         app: "install-0".into(),
         accepted: true,
         gpu: Some("AMD Radeon 780M Graphics".into()),
+        gpu_note: None,
         switches: vec![nightjar_core::http::NeuralSwitch { id: nightjar_core::http::FRAME_GENERATION.into(), state, on, reason: reason.map(str::to_owned), why: None }],
         replaces_earlier_upscaling: false,
         job: None,

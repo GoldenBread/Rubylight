@@ -23,6 +23,10 @@ pub struct Neural {
     pub accepted: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gpu: Option<String>,
+    /// When `gpu` is not the GPU the host streams with: that frame generation runs only when the
+    /// game renders on it, in the host's words (absent from an older host).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_note: Option<String>,
     #[serde(default)]
     pub switches: Vec<NeuralSwitch>,
     /// Rubylight 3.0's neural upscaling is in the game's folder: turning a switch on replaces it.
@@ -58,6 +62,8 @@ pub enum NeuralWhy {
     Streaming,
     NoHostControl,
     Gpu,
+    /// The PC lacks the Visual C++ runtime frame generation needs.
+    Runtime,
     AntiCheat,
     NoFrameGeneration,
     ChooseProgram,
@@ -205,6 +211,7 @@ mod tests {
             ("busy", NeuralWhy::Busy),
             ("streaming", NeuralWhy::Streaming),
             ("gpu", NeuralWhy::Gpu),
+            ("runtime", NeuralWhy::Runtime),
             ("anti_cheat", NeuralWhy::AntiCheat),
             ("no_frame_generation", NeuralWhy::NoFrameGeneration),
             ("choose_program", NeuralWhy::ChooseProgram),

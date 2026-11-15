@@ -186,6 +186,10 @@ public final class NeuralSheet {
             if (state.replacesEarlierUpscaling && !fg.on) {
                 sheet.addNote(sheet.addGroup(), activity.getString(R.string.neural_replaces), false);
             }
+            // As the console: where it runs, beside a switch that is on or can be turned on.
+            if (state.gpuNote != null && !state.gpuNote.isEmpty() && (fg.on || fg.configurable())) {
+                sheet.addNote(sheet.addGroup(), state.gpuNote, false);
+            }
         }
         String job = jobNote(activity, state);
         if (job != null) {
@@ -246,6 +250,7 @@ public final class NeuralSheet {
                 case "streaming": return context.getString(R.string.neural_why_streaming);
                 case "no_host_control": return context.getString(R.string.native_error_host_control);
                 case "gpu": return context.getString(R.string.neural_why_gpu);
+                case "runtime": return context.getString(R.string.neural_why_runtime);
                 case "anti_cheat": return context.getString(R.string.neural_why_anti_cheat);
                 case "no_frame_generation": return context.getString(R.string.neural_why_no_dlss);
                 case "choose_program": return context.getString(R.string.neural_why_choose);

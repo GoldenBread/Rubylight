@@ -29,6 +29,7 @@
     <string name="neural_why_anti_cheat">Questo gioco ha un anti-cheat, che considererebbe la mod un imbroglio.</string>
     <string name="neural_why_no_dlss">Questo gioco non offre una generazione di fotogrammi DLSS che questa possa sostituire.</string>
     <string name="neural_why_choose">Scegli prima il programma del gioco nell’interfaccia web del PC.</string>
+    <string name="neural_why_runtime">Installa prima Microsoft Visual C++ 2015-2022 Redistributable (x64) sul PC.</string>
     <string name="neural_installed">Installata nella cartella del gioco, versione %1$s.</string>
     <string name="neural_added">Aggiunta alla mod di upscaling nella cartella del gioco, versione %1$s.</string>
 </resources>

@@ -1559,6 +1559,7 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("This game has an anti-cheat, which would treat the mod as cheating.", "このゲームにはアンチチートがあり、Mod を不正とみなします。"),
     ("This game offers no DLSS frame generation for this to take the place of.", "このゲームには、これが置き換えられる DLSS フレーム生成がありません。"),
     ("Choose the game’s program in the PC’s web UI first.", "先に PC のウェブ UI でゲームのプログラムを選んでください。"),
+    ("Install the Microsoft Visual C++ 2015-2022 Redistributable (x64) on the PC first.", "先に PC に Microsoft Visual C++ 2015-2022 Redistributable (x64) をインストールしてください。"),
     ("Installed in the game’s folder, release {}.", "ゲームのフォルダーにインストール済み、リリース {}。"),
     ("Added to the upscaler mod in the game’s folder, release {}.", "ゲームのフォルダーのアップスケーラー Mod に追加済み、リリース {}。"),
     ("Lower bitrate", "ビットレートを下げる"),
