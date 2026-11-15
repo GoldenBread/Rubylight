@@ -2255,11 +2255,18 @@ impl Prepared {
             limiter_enabled = framegen.enabled,
             "stream display selection"
         );
-        // A virtual display is created for the stream at exactly this mode.
+        // A virtual display is created for the stream at exactly this mode. Its
+        // automatic refresh (Virtual display refresh) is not held to that rate: a
+        // display that refuses 1000 Hz runs at the fastest refresh it offers below
+        // it, and only one slower than the stream warns.
         let requested = if joined_mode.is_some() {
             joined_report(own_rate, request.hdr)
         } else if virtual_mode {
-            (Some((width, height)), Some(rate.0), request.hdr)
+            (
+                Some((width, height)),
+                request.refresh.map(|_| rate.0),
+                request.hdr,
+            )
         } else {
             (turn.after, request.refresh, request.hdr)
         };

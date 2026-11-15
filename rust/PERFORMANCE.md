@@ -93,7 +93,7 @@ SYSTEM (own profile and port, `virtual_display_layout = extended`, physical
 displays untouched), RX 7900 XT, AMF HEVC 1080p60 at 30 Mbps requested,
 direct driver push capture (`capture=auto` -> `idd-push`), the automatic
 60 fps RTSS cap on (`limiter_rate=60`). Client: Nightjar 5.6.0 on the 780M
-laptop over Wi-Fi, fixed refresh (no VRR), V-Sync on. Picture: `motion_probe`
+laptop, fixed refresh (no VRR), V-Sync on. Picture: `motion_probe`
 at 60 Hz on the virtual display, paced by a high-resolution waitable timer and
 presenting with `Present(1, ...)`, as a capped game with V-Sync does
 (`rust/windows/examples/motion_probe.rs`). One 300 s leg per setting, in the
@@ -117,8 +117,8 @@ order 2x, 4x, 1000 Hz, the first 30 s left out. Host present times are
   or unvsynced game was run.
 - At 1000 Hz the presents fall in 15/16/17 ms bins (220 / 5,325 / 10,473;
   mean 16.65 ms), the 1 ms quantization of a 60 Hz source; no waves.
-- The host's claim wait was the same at every rate (0.03 ms mean at 2x and
-  1000 Hz, 0.04 ms at 4x), where the
+- The host's claim wait was the same at every rate (median of the 5 s means
+  0.03 ms at 2x and 1000 Hz, 0.04 ms at 4x), where the
   [October 15 round](#october-15-display-driver-and-frame-push-refactor)
   found 0.65 against 0.08 ms. That round also found 1000 Hz about 1 ms slower
   from render to received at 60 fps; this run did not measure render to

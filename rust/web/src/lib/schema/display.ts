@@ -498,7 +498,7 @@ export const settings: Setting[] = [
     key: 'virtual_display_refresh',
     label: 'Virtual display refresh',
     description:
-      'A virtual display’s refresh rate. 1000 Hz, the default, keeps a capped game’s frames evenly spaced; 2× or 4× the stream rate can bunch them. Off also ends the automatic FPS cap.',
+      '1000 Hz, the default, keeps a capped game’s frames even, measured about 1 ms slower at 60 fps; 2× or 4× the stream rate can bunch them. Off also ends the automatic FPS cap.',
     details:
       'Every choice but Off also caps games at the frame limit and uses 1000 Hz when the device asks for VRR; a display that refuses 1000 Hz uses the fastest refresh it offers below it. Off runs the display at the stream’s frame rate. On an RX 7900 XT, with a game capped at 60 fps for 5 minutes each, 0.04 % of frame intervals were more than 4 ms off at 1000 Hz, 0.23 % at twice and 2.22 % at four times the stream rate, with the same time from capture to send. An October run found 1000 Hz about 1 ms slower from render to received at 60 fps (14.28 against 13.15 ms).',
     category: 'frame-limiting',

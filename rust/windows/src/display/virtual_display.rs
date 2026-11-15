@@ -3,7 +3,7 @@
 
 use super::modes::{
     ModeOutcome, Timing, current_timing, format_timing, lists_rate, mode_outcome, offered_rates,
-    refresh_retry, supported_modes,
+    refresh_retry, supported_modes, timing_matches,
 };
 use super::rubylight_vdd::{self, Control};
 use super::topology::{Route, activate_target, is_rubylight_monitor, is_virtual_monitor};
@@ -385,22 +385,16 @@ impl VirtualDisplay {
                     _ => "unknown".into(),
                 };
                 let offered = offered_rates(&supported_modes(&self.name), width, height);
-                tracing::warn!(
-                    output = %self.name,
-                    stage,
-                    requested = %requested,
-                    actual = %actual_text,
-                    offered_hz = ?offered,
-                    error = ?result.err().or(actual.err()).map(|e| format!("{e:#}")),
-                    "virtual display mode not applied; streaming at the mode Windows chose"
-                );
+                let error = result.err().or(actual.err()).map(|e| format!("{e:#}"));
                 // A refused refresh must not cost the resolution too (issue #40: 4K at
                 // 1000 Hz for VRR refused, and Windows fell back to 1440p), nor leave the
-                // display slower than a refresh it offers (the 1000 Hz default refused at
-                // 4K, with Windows keeping 60 Hz).
+                // display slower than a refresh it offers (the 1000 Hz default refused,
+                // Windows keeping 60 Hz). A refresh that falls back that way is the
+                // setting working, not a refused mode: logged as information.
                 let wrong_size =
                     !matches!(outcome, ModeOutcome::Kept((w, h, _)) if (w, h) == (width, height));
                 size_applied = !wrong_size;
+                let mut fell_back = false;
                 if let Some(fallback) = refresh_retry(self.mode, &outcome, &offered) {
                     let retried = Topology::set_mode_rate(
                         &self.name,
@@ -410,13 +404,17 @@ impl VirtualDisplay {
                     );
                     let now = current_timing(&self.name).ok();
                     size_applied = now.is_some_and(|(w, h, _)| (w, h) == (width, height));
-                    if size_applied {
+                    fell_back =
+                        now.is_some_and(|now| timing_matches((width, height, fallback), now));
+                    if fell_back {
                         tracing::info!(
                             output = %self.name,
                             stage,
                             requested = %requested,
+                            refused_at = %actual_text,
+                            offered_hz = ?offered,
                             actual = %now.map_or_else(String::new, format_timing),
-                            "virtual display kept the requested resolution at a refresh Windows accepts"
+                            "virtual display refused its refresh; running at the fastest one it offers below it"
                         );
                     } else {
                         tracing::warn!(
@@ -427,6 +425,17 @@ impl VirtualDisplay {
                             "virtual display refused the fallback refresh too"
                         );
                     }
+                }
+                if !fell_back {
+                    tracing::warn!(
+                        output = %self.name,
+                        stage,
+                        requested = %requested,
+                        actual = %actual_text,
+                        offered_hz = ?offered,
+                        error = ?error,
+                        "virtual display mode not applied; streaming at the mode Windows chose"
+                    );
                 }
                 false
             }
