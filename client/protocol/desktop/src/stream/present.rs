@@ -521,6 +521,7 @@ impl VideoTexture {
 
     /// The picture can only be shown on an HDR output. An HLG picture can be shown on an SDR one
     /// too: the draw pass and the plane shader draw it for HLG's reference display, tone mapped.
+    #[cfg(test)]
     pub fn needs_hdr_output(&self) -> bool {
         self.is_hdr() && !self.hlg_frame
     }

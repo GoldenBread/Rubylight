@@ -516,6 +516,7 @@ pub struct VideoShared {
 }
 
 impl VideoShared {
+    #[cfg(test)]
     pub fn new(receiver: VideoReceiver) -> Self {
         Self::with_queue_bound(receiver, DECODE_UNIT_QUEUE_BOUND)
     }

@@ -312,6 +312,8 @@ fn quit_game_in_the_footer_is_quiet_with_red_words() {
     let input = || egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 800.0))), ..Default::default() };
     let mut output = ctx.run_ui(input(), |ui| { menu_style::show(ui.ctx(), "Stream menu", "footer-test", |ui| { footer(ui, &layout); }); });
     for _ in 0..3 {
+        // No renderer takes the textures here, and egui refuses to drop them unasked.
+        output.textures_delta.clear();
         output = ctx.run_ui(input(), |ui| { menu_style::show(ui.ctx(), "Stream menu", "footer-test", |ui| { footer(ui, &layout); }); });
     }
     output.textures_delta.clear();

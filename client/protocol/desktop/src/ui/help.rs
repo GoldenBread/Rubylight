@@ -87,22 +87,22 @@ impl Launcher {
             section_below(ui, title, jump, below);
         };
 
-        head(ui, "Getting started", &mut jump);
+        head(ui, en("Getting started"), &mut jump);
         self.help_start(ui, width, view, commands);
 
-        head(ui, "Keyboard shortcuts", &mut jump);
+        head(ui, en("Keyboard shortcuts"), &mut jump);
         self.help_keyboard(ui, width);
 
-        head(ui, "Controllers", &mut jump);
+        head(ui, en("Controllers"), &mut jump);
         self.help_controller(ui, width, view);
 
-        head(ui, "Sharing", &mut jump);
+        head(ui, en("Sharing"), &mut jump);
         self.help_sharing(ui, width);
 
-        head(ui, "Troubleshooting", &mut jump);
+        head(ui, en("Troubleshooting"), &mut jump);
         self.help_problems(ui, width, commands);
 
-        head(ui, "More help", &mut jump);
+        head(ui, en("More help"), &mut jump);
         self.help_links(ui, commands);
         ui.add_space(space::XL);
 

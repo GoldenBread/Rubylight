@@ -74,7 +74,8 @@ public class GameRecoveryTest {
         assertEquals(8000, manual.getIntExtra(GameRecovery.EXTRA_RECOVERY_MANUAL_BITRATE, 0));
         assertFalse(manual.hasExtra(GameRecovery.EXTRA_RECOVERY_AUTO_BITRATE));
         Game restored = Robolectric.buildActivity(Game.class, manual).get();
-        restored.prefConfig = PreferenceConfiguration.readPreferences(restored);
+        // Not read from the preferences: that loads the native library, which a unit test has not.
+        restored.prefConfig = new PreferenceConfiguration();
         restored.prefConfig.automaticBitrate = true;
         restored.streamRecovery.restoreSessionBitrate();
         assertEquals(8000, restored.prefConfig.bitrate);

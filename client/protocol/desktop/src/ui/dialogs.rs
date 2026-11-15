@@ -955,7 +955,7 @@ impl Launcher {
                     if let Some(step) = verdict.step {
                         ui.label(RichText::new(tr(step)).color(ON_SURFACE_VARIANT));
                     }
-                    let open_id = Id::new("connection-test-details");
+                    let open_id = Id::unique("connection-test-details");
                     let open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
                     if link_button(ui, "Details").clicked() {
                         ui.data_mut(|d| d.insert_temp(open_id, !open));

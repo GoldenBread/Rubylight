@@ -568,7 +568,7 @@ fn item(ui: &mut Ui, name: &str, line: &str, color: egui::Color32, control: impl
 /// The button over the launcher while a Files page that is not shown still transfers: how many,
 /// and a click opens that page again, where each transfer can be cancelled. True when clicked.
 pub(super) fn running_button(ctx: &egui::Context, count: usize) -> bool {
-    egui::Area::new(egui::Id::new("files-running"))
+    egui::Area::new(egui::Id::unique("files-running"))
         .order(egui::Order::Foreground)
         .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(24.0, -24.0))
         .show(ctx, |ui| quiet_button(ui, &trf("File transfers running: {}", &[&count])).clicked())
