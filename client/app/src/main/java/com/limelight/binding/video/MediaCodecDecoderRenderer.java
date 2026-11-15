@@ -2711,6 +2711,16 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         return configured;
     }
 
+    /**
+     * One configure try's low-latency options from the settings, Chipset tuning included: ca8e9b3ac wired its
+     * MediaTek and Exynos options, and the 2026-10-27 batch revert (aa5a3b974) left a fixed false here.
+     */
+    static boolean lowLatencyOptions(MediaFormat format, MediaCodecInfo decoder, int tryNumber,
+                                     PreferenceConfiguration prefs, boolean vendorLowLatency) {
+        return MediaCodecHelper.setDecoderLowLatencyOptions(format, decoder, tryNumber, prefs.codecLowLatency,
+                vendorLowLatency, prefs.codecPerformance, prefs.hevcLowLatency(), prefs.experimentalChipsetTuning);
+    }
+
     // Judged by the flag this decoder got: a retry after a rejected configure has none, whatever the setting.
     private void startLowLatencyRepairs(MediaFormat format, String decoderName) {
         if (!MediaCodecHelper.asksForAndroidLowLatency(format) || !MediaCodecHelper.corruptsInLowLatency(decoderName)) {
@@ -2864,8 +2874,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             MediaFormat mediaFormat = createBaseMediaFormat(mimeType);
 
             // This will try low latency options until we find one that works (or we give up).
-            boolean newFormat = MediaCodecHelper.setDecoderLowLatencyOptions(mediaFormat, selectedDecoderInfo, tryNumber,
-                    prefs.codecLowLatency, vendorLowLatency, prefs.codecPerformance, prefs.hevcLowLatency());
+            boolean newFormat = lowLatencyOptions(mediaFormat, selectedDecoderInfo, tryNumber, prefs, vendorLowLatency);
 
             // Each rejected configure drops keys on the next try; keep a record of which ones went.
             List<String> vendorParams = MediaCodecHelper.getIntegerVendorParameters(selectedDecoderInfo.getName());

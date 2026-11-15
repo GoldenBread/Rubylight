@@ -15,7 +15,7 @@ import static org.junit.Assert.assertTrue;
 
 /**
  * No string the app shows says Experimental, in any locale (ux/labels.md): features ship plainly and
- * their keys stay. Keys such as experimental_packed_444 are identifiers, not text.
+ * their keys stay. Resource names such as title_experimental_chipset_tuning are identifiers, not text.
  */
 public class ExperimentalLabelsTest {
     private static final Pattern WORD = Pattern.compile("experimental|experimentell|expérimental|sperimental|"

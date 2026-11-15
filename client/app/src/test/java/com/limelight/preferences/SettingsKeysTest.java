@@ -175,7 +175,6 @@ public class SettingsKeysTest {
     // Keys of settings that were removed. They must not come back as a setting of another meaning.
     private static final Set<String> RETIRED = new HashSet<>(Arrays.asList(
             "checkbox_gl_render", // "Render through OpenGL", replaced by Render through Vulkan
-            "checkbox_experimental_chipset_tuning", // "Chipset tuning": its value never reached the decoder
             "checkbox_auto_bitrate", // renamed adaptive_bitrate (PreferenceConfiguration.RENAMED_PREFS)
             "checkbox_always_dark", "checkbox_oled_black")); // the theme's switches, one value now (AppTheme.THEME)
 
@@ -193,14 +192,6 @@ public class SettingsKeysTest {
         Set<String> seen = new HashSet<>();
         for (String key : all) assertTrue("Duplicate preference key: " + key, seen.add(key));
         for (String key : RETIRED) assertFalse("Retired key is back: " + key, seen.contains(key));
-    }
-
-    @Test
-    public void chipsetTuningsStoredValueIsCleared() {
-        // "Chipset tuning" never reached the decoder; its stored value goes on the first read.
-        prefs().edit().putBoolean("checkbox_experimental_chipset_tuning", true).commit();
-        PreferenceConfiguration.readPreferences(RuntimeEnvironment.getApplication());
-        assertFalse(prefs().contains("checkbox_experimental_chipset_tuning"));
     }
 
     @Test
@@ -482,6 +473,7 @@ public class SettingsKeysTest {
         reads.put("checkbox_rust_engine", new Read(false, true, c -> c.rustEngine));
         reads.put("experimental_packed_444", new Read(false, true, c -> c.experimentalPacked444));
         reads.put("checkbox_frame_warp", new Read(false, true, c -> c.frameWarp));
+        reads.put("checkbox_experimental_chipset_tuning", new Read(false, true, c -> c.experimentalChipsetTuning));
         return reads;
     }
 

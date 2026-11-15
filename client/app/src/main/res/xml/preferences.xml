@@ -990,6 +990,11 @@
             android:summary="@string/summary_sops_short"
             android:dialogMessage="@string/summary_checkbox_enable_sops"
             android:defaultValue="true" />
+        <com.limelight.preferences.MaterialSwitchPreference
+            android:key="checkbox_experimental_chipset_tuning"
+            android:title="@string/title_experimental_chipset_tuning"
+            android:dialogMessage="@string/summary_experimental_chipset_tuning"
+            android:defaultValue="false" />
     </PreferenceCategory>
 
     <!-- Debug: settings whose default is right for nearly everyone, kept for troubleshooting. -->

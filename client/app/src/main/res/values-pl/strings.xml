@@ -15,6 +15,8 @@
     <string name="frame_warp_reason_full_chroma">pełna chrominancja jest włączona</string>
     <string name="frame_warp_reason_renderer">ścieżka GPU nie uruchomiła się</string>
     <string name="frame_warp_replaces_upscaling">Frame Warp rysuje obraz bez skalowania.</string>
+    <string name="title_experimental_chipset_tuning">Dostrajanie chipsetu</string>
+    <string name="summary_experimental_chipset_tuning">Na niektórych urządzeniach może uniemożliwić dekodowanie. Daje dekoderom MediaTek Dimensity i Samsung Exynos dodatkowe ustawienia niskich opóźnień, które mają skrócić opóźnienie dekodowania; inne chipsety nie są objęte. Zostaw wyłączone, chyba że dekoder nie nadąża.</string>
     <string name="scut_deleted_pc">Komputer usunięty</string>
     <string name="scut_not_paired">Komputer niesparowany</string>
     <string name="scut_pc_not_found">Nie znaleziono komputera</string>

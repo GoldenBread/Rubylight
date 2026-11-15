@@ -15,6 +15,8 @@
     <string name="frame_warp_reason_full_chroma">включена полная цветность</string>
     <string name="frame_warp_reason_renderer">не удалось запустить вывод через GPU</string>
     <string name="frame_warp_replaces_upscaling">Frame Warp выводит изображение без масштабирования.</string>
+    <string name="title_experimental_chipset_tuning">Настройка чипсета</string>
+    <string name="summary_experimental_chipset_tuning">На некоторых устройствах может нарушить декодирование. Даёт декодерам MediaTek Dimensity и Samsung Exynos дополнительные настройки низкой задержки, которые должны уменьшить задержку декодирования; другие чипсеты не затрагиваются. Оставьте выключенным, если декодер не отстаёт.</string>
     <string name="scut_deleted_pc">ПК удалён</string>
     <string name="scut_not_paired">ПК не сопряжён</string>
     <string name="scut_pc_not_found">ПК не найден</string>

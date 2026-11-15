@@ -862,7 +862,6 @@ public class StreamSettings extends NightjarActivity {
         PreferenceConfiguration.migrateToNativeDefaults(context);
         // The XML default just came back: where Android's low-latency mode can corrupt the picture it starts off again.
         PreferenceConfiguration.migrateCodecLowLatencyCorruption(prefs);
-        PreferenceConfiguration.migrateKeyNames(prefs);
     }
 
     /** Its chrome follows the form: a rotation into another form lays it out again. */

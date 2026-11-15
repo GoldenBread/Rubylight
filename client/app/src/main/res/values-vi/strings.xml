@@ -15,6 +15,8 @@
     <string name="frame_warp_reason_full_chroma">sắc độ đầy đủ đang bật</string>
     <string name="frame_warp_reason_renderer">đường xử lý GPU không khởi động được</string>
     <string name="frame_warp_replaces_upscaling">Frame Warp vẽ hình ảnh mà không nâng tỷ lệ.</string>
+    <string name="title_experimental_chipset_tuning">Tinh chỉnh chipset</string>
+    <string name="summary_experimental_chipset_tuning">Có thể làm hỏng việc giải mã trên một số thiết bị. Cung cấp cho bộ giải mã MediaTek Dimensity và Samsung Exynos các cài đặt độ trễ thấp bổ sung nhằm giảm độ trễ giải mã; các chipset khác không bị ảnh hưởng. Hãy để tắt trừ khi bộ giải mã bị chậm.</string>
     <string name="scut_deleted_pc">Đã xóa PC</string>
     <string name="scut_not_paired">Chưa ghép đôi PC</string>
     <string name="scut_pc_not_found">Không tìm thấy PC</string>

@@ -15,6 +15,8 @@
     <string name="frame_warp_reason_full_chroma">la crominanza completa è attiva</string>
     <string name="frame_warp_reason_renderer">il percorso GPU non è partito</string>
     <string name="frame_warp_replaces_upscaling">Frame Warp disegna l’immagine senza upscaling.</string>
+    <string name="title_experimental_chipset_tuning">Ottimizzazione del chipset</string>
+    <string name="summary_experimental_chipset_tuning">Può impedire la decodifica su alcuni dispositivi. Dà ai decoder MediaTek Dimensity e Samsung Exynos impostazioni di bassa latenza aggiuntive pensate per ridurre il ritardo di decodifica; gli altri chipset non sono interessati. Lascialo disattivato a meno che il decoder non resti indietro.</string>
     <string name="scut_deleted_pc">PC eliminato</string>
     <string name="scut_not_paired">PC non accoppiato</string>
     <string name="scut_pc_not_found">PC non trovato</string>
