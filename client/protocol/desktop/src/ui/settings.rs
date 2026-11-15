@@ -263,6 +263,9 @@ impl Launcher {
             return;
         }
         let mut column = ui.new_child(UiBuilder::new().id_salt("settings-rows").max_rect(rows_rect).layout(Layout::top_down(Align::Min)));
+        // A row grows for its help only where no pointer aims at the rows (`settings_row`).
+        let keys = !matches!(self.input_source, crate::input_source::InputSource::None);
+        column.data_mut(|d| d.insert_temp(Id::unique(KEYS_IN_HAND), keys));
         let screen = self.screen;
         // Android's Presets, above the rows of a section they change; a PC's, game's or profile's
         // settings and a search have none.
@@ -2919,11 +2922,15 @@ pub(super) fn setting_row(
 }
 
 /// A row: its label on the left, the control with the value on the right. The hint shows under
-/// the label while the pointer is over the row or focus is in it, wrapped to its full length (the
-/// row grows for it); another row keeps it to one line, cut. A note shows
+/// the label while the pointer is over the row or focus is in it: one line, cut, with the whole
+/// text as a tooltip, or wrapped whole (the row grows for it) for a row keys or a controller
+/// focused. A note shows
 /// always. A row a PC, game or profile sets has an amber bar at its left edge and, under its
 /// label, where its value comes from beside the layer's box. `reset_w` keeps room left of the
 /// control for a Reset, so the text never moves when it comes and goes.
+/// Where the settings page says whether keys or a controller are in the hand, for [`settings_row`].
+const KEYS_IN_HAND: &str = "settings-keys-in-hand";
+
 #[allow(clippy::too_many_arguments)]
 fn settings_row(
     ui: &mut Ui,
@@ -2942,10 +2949,12 @@ fn settings_row(
             let text_w = (ui.available_width() - CONTROL_W - reset_w - space::L).max(180.0);
             let painter = ui.painter().clone();
             let label_g = painter.layout(tr(label).to_owned(), semibold(text::BODY), *ON_SURFACE, text_w);
-            // Whether the row was hovered or focused on the last pass: its hint then wraps whole.
+            // With keys or a controller in the hand the focused row's hint wraps whole and the row
+            // grows for it. Under a pointer no row changes size, or the rows below would move away
+            // from under it: the hint keeps one line and its whole text comes as a tooltip.
             let open_id = Id::unique(("settings-hint-open", label));
-            let was_active = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
-            let hint_g = if was_active {
+            let was_open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
+            let hint_g = if was_open {
                 painter.layout(tr(hint).to_owned(), regular(text::CAPTION), *ON_SURFACE_VARIANT, text_w)
             } else {
                 let mut job = egui::text::LayoutJob::simple_singleline(tr(hint).to_owned(), regular(text::CAPTION), *ON_SURFACE_VARIANT);
@@ -2960,7 +2969,7 @@ fn settings_row(
             // Where a list choice's box lands under it: where the value comes from sits beside it.
             let to_state = (COMBO_HEIGHT + 18.0).max(full + GAP);
             let height = state_g.as_ref().map_or(full, |g| to_state + g.size().y);
-            let (text_rect, _) = ui.allocate_exact_size(vec2(text_w, height), Sense::hover());
+            let (text_rect, text) = ui.allocate_exact_size(vec2(text_w, height), Sense::hover());
             if state.is_some() {
                 ui.with_layout(Layout::right_to_left(Align::Min), |ui| out = Some(control(ui)));
             } else {
@@ -2974,17 +2983,15 @@ fn settings_row(
             // The hint while the pointer is over the row or focus is in it.
             let row = ui.min_rect().expand2(vec2(18.0, 8.0));
             let focused = ui.memory(|m| m.focused()).and_then(|id| ui.ctx().read_response(id)).is_some_and(|r| row.contains(r.rect.center()));
-            // A row the pointer opened keeps its size while the pointer is further down the list:
-            // closing it would pull the row under the pointer up and away from it. It closes once
-            // the pointer is above it or off the list, where nothing under the pointer moves.
-            let below = ui.input(|i| i.pointer.hover_pos()).is_some_and(|at| {
-                at.y > row.bottom() && at.y <= ui.clip_rect().bottom() && (row.left()..=row.right()).contains(&at.x)
-            });
-            let active = focused || ui.rect_contains_pointer(row) || (was_active && below);
-            if active != was_active {
+            let active = focused || ui.rect_contains_pointer(row);
+            let open = focused && ui.data(|d| d.get_temp::<bool>(Id::unique(KEYS_IN_HAND))).unwrap_or(false);
+            if open != was_open {
                 // One more pass lays the hint out whole, or back to one line.
-                ui.data_mut(|d| d.insert_temp(open_id, active));
+                ui.data_mut(|d| d.insert_temp(open_id, open));
                 ui.ctx().request_repaint();
+            }
+            if hint_g.elided {
+                text.on_hover_text(tr(hint).to_owned());
             }
             let t = spring::animate(ui.ctx(), Id::unique(("settings-hint", label)), if active { 1.0 } else { 0.0 }, spring::FOCUS).clamp(0.0, 1.0);
             let content = ui.min_rect();

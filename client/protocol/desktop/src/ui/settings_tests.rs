@@ -234,27 +234,18 @@ fn a_rows_hint_shows_on_hover_and_focus_only() {
     f.settle();
     assert!(shows(&f, rate_hint), "{:?}", f.drawn);
     assert!(y(&f, "Video codec") >= below - 0.5, "the rows below never move up");
-    // The hovered row's hint wraps to its full length under the label, however narrow the room;
-    // the row grows for it.
+    // Under the pointer no row changes size, however narrow the room: the hint keeps one line,
+    // cut (its whole text is the tooltip), and the rows below stay where they are.
     f.size = vec2(980.0, 4000.0);
     f.settle();
+    let below = y(&f, "Video codec");
     let rate = f.placed.iter().find(|(t, ..)| t == "Frame rate").expect("the row").1;
     f.frame(vec![egui::Event::PointerMoved(rate.center())]);
     f.settle();
     let hint = f.placed.iter().find(|(t, ..)| t == rate_hint).expect("the hint").1;
-    assert!(hint.height() > 24.0, "wrapped: {hint:?}");
-    assert!(!hint_elided(&f, rate_hint), "the whole hint is drawn");
-    // On to the row below: the opened row keeps its size, so the row under the pointer stays there.
-    let codec = f.placed.iter().find(|(t, ..)| t == "Video codec").expect("the row").1;
-    f.frame(vec![egui::Event::PointerMoved(codec.center())]);
-    f.settle();
-    assert!((y(&f, "Video codec") - codec.top()).abs() < 0.5, "the row under the pointer did not move");
-    assert!(shows(&f, rate_hint), "the row above stays open while the pointer is below it");
-    // Back above it: it closes, and nothing under the pointer moves for that.
-    let size = f.placed.iter().find(|(t, ..)| t == "Resolution").expect("the row").1;
-    f.frame(vec![egui::Event::PointerMoved(size.center())]);
-    f.settle();
-    assert!(!shows(&f, rate_hint), "{:?}", f.drawn);
+    assert!(hint.height() < 24.0, "one line: {hint:?}");
+    assert!(hint_elided(&f, rate_hint), "cut under a pointer");
+    assert!((y(&f, "Video codec") - below).abs() < 0.5, "no row moves under the pointer");
 }
 
 /// Whether the galley of `text` the last frame drew was cut short with "…".
@@ -276,6 +267,8 @@ fn hint_elided(f: &Frames, text: &str) -> bool {
 #[test]
 fn the_focused_rows_hint_is_drawn_whole_at_1280_by_800() {
     let mut f = settings_with(Settings::default());
+    // Keys in the hand: under a pointer the row keeps its size and the hint one line.
+    f.l.input_source = crate::input_source::InputSource::Keyboard;
     f.size = vec2(1280.0, 800.0);
     f.settle();
     let size_hint = "The picture size the PC sends. Higher is sharper and needs more network and decoding power; lower it if the stream stutters.";
