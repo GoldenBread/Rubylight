@@ -204,7 +204,12 @@ mod tests {
     #[test]
     fn a_stream_ending_beside_another_leaves_the_pool_until_the_last_one_ends() {
         let pool = Mutex::new(Pool(Vec::new()));
-        assert!(pool.lock().unwrap().give(Vec::with_capacity(POOLED * 2)).is_none());
+        assert!(
+            pool.lock()
+                .unwrap()
+                .give(Vec::with_capacity(POOLED * 2))
+                .is_none()
+        );
         clear_unless_streaming(&pool, 1);
         let kept = pool.lock().unwrap().take(POOLED * 2).unwrap();
         assert!(pool.lock().unwrap().give(kept).is_none());
