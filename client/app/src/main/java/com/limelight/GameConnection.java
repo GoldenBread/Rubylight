@@ -1270,6 +1270,8 @@ final class GameConnection {
                             MoonBridge.stringifyPortFlags(portFlags, "\n");
                 }
 
+                // A stream kept for resuming in the background names this cause if its resume finds no attempts left.
+                game.streamRecovery.lastFailureCause = message;
                 if (recoveryExhausted) {
                     message = game.streamRecovery.gaveUpText(message);
                 }

@@ -310,9 +310,18 @@ final class GameRecovery {
         if (!queueAutomaticRecovery(retry, false, retry.hasExtra(EXTRA_TRIP_BUDGET))) {
             game.displayedFailureDialog = true;
             if (game.spinner != null) { game.spinner.dismiss(); game.spinner = null; }
-            showReconnectDialog(R.string.conn_terminated_title, game.getString(R.string.stream_recovery_exhausted));
+            showReconnectDialog(R.string.conn_terminated_title, gaveUpText(gaveUpCause(lastFailureCause,
+                    game.getString(R.string.stream_recovery_unreachable))));
         }
         return true;
+    }
+
+    /** Why the stream this activity keeps for resuming ended, in the words its failure dialog would have used. */
+    String lastFailureCause;
+
+    /** The cause a recovery that gives up names: the last failure's, else that the PC could not be reached. */
+    static String gaveUpCause(String lastFailure, String unreachable) {
+        return lastFailure == null || lastFailure.isEmpty() ? unreachable : lastFailure;
     }
 
     boolean tryAutomaticRecovery() {

@@ -336,7 +336,7 @@ fn a_replace_prompt_hands_back_the_plan_to_launch_again() {
     for asks_replace in [true, false] {
         let (sender, result) = channel();
         let mut connecting = connecting(result, None);
-        sender.send(Err(ConnectError { message: "refused".into(), retryable: false, asks_replace, moved_to: None, packed_refused: false })).unwrap();
+        sender.send(Err(ConnectError { message: "refused".into(), retryable: false, asks_replace, moved_to: None, packed_refused: false, cause: None })).unwrap();
         match connecting.poll() {
             Err(ConnectFailed::ConfirmReplace(plan)) => {
                 assert!(asks_replace);
@@ -370,7 +370,7 @@ fn a_stream_that_moved_stops_its_recovery_and_says_where_it_went() {
     assert_eq!(device(resume_moved_to(false, false, true, || panic!("not asked"))), None);
 
     // The refusal is final: not retried, and it wins over the end of the recovery window.
-    let refusal = ConnectError { message: String::new(), retryable: false, asks_replace: false, moved_to: Some("TV".into()), packed_refused: false };
+    let refusal = ConnectError { message: String::new(), retryable: false, asks_replace: false, moved_to: Some("TV".into()), packed_refused: false, cause: None };
     assert!(!refusal.retryable);
     let (sender, result) = channel();
     let mut connecting = connecting(result, None);
@@ -391,7 +391,7 @@ fn a_full_chroma_refusal_after_the_launch_hands_back_the_plan_to_start_again() {
         let (sender, result) = channel();
         let mut connecting = connecting(result, None);
         let packed_refused = restarts_without(asked, code);
-        sender.send(Err(ConnectError { message: "Could not start the stream".into(), retryable: false, asks_replace: false, moved_to: None, packed_refused })).unwrap();
+        sender.send(Err(ConnectError { message: "Could not start the stream".into(), retryable: false, asks_replace: false, moved_to: None, packed_refused, cause: None })).unwrap();
         match connecting.poll() {
             Err(ConnectFailed::PackedRefused(plan)) => {
                 assert!(asked && code == PACKED_444_REFUSED);
@@ -412,7 +412,7 @@ fn a_launch_that_failed_on_its_decoder_says_why() {
     let (sender, result) = channel();
     let mut failed = connecting(result, None);
     failed.shared.notify(Notice::DecoderFailed("No video decoder on this device can play this stream.".into()));
-    sender.send(Err(ConnectError { message: "Could not start the stream".into(), retryable: false, asks_replace: false, moved_to: None, packed_refused: false })).unwrap();
+    sender.send(Err(ConnectError { message: "Could not start the stream".into(), retryable: false, asks_replace: false, moved_to: None, packed_refused: false, cause: None })).unwrap();
     match failed.poll() {
         Err(ConnectFailed::Message(message)) => assert_eq!(message, "No video decoder on this device can play this stream."),
         _ => panic!("the launch failed"),
@@ -420,6 +420,6 @@ fn a_launch_that_failed_on_its_decoder_says_why() {
     // Without a decoder's reason the session's own stays.
     let (sender, result) = channel();
     let mut plain = connecting(result, None);
-    sender.send(Err(ConnectError { message: "Could not start the stream".into(), retryable: false, asks_replace: false, moved_to: None, packed_refused: false })).unwrap();
+    sender.send(Err(ConnectError { message: "Could not start the stream".into(), retryable: false, asks_replace: false, moved_to: None, packed_refused: false, cause: None })).unwrap();
     assert!(matches!(plain.poll(), Err(ConnectFailed::Message(message)) if message == "Could not start the stream"));
 }

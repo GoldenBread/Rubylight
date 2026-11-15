@@ -43,6 +43,11 @@ public class GameRecoveryTest {
         assertEquals("Starting the stream failed.\n\n" + stopped, GameRecovery.gaveUpText("Starting the stream failed.", stopped));
         assertEquals(stopped, GameRecovery.gaveUpText(null, stopped));
         assertEquals(stopped, GameRecovery.gaveUpText("", stopped));
+        // A resume from the background that finds no attempts left names the failure too, else the unreachable PC.
+        String unreachable = RuntimeEnvironment.getApplication().getString(R.string.stream_recovery_unreachable);
+        assertEquals("The connection was lost.", GameRecovery.gaveUpCause("The connection was lost.", unreachable));
+        assertEquals(unreachable, GameRecovery.gaveUpCause(null, unreachable));
+        assertEquals(unreachable, GameRecovery.gaveUpCause("", unreachable));
         assertFalse(RuntimeEnvironment.getApplication().getString(R.string.stream_recovery_attempt, 2, 5).contains("Back"));
     }
 

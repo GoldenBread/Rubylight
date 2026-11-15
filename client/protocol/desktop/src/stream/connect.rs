@@ -259,6 +259,32 @@ pub(super) struct ConnectError {
     pub(super) moved_to: Option<String>,
     /// The PC refused full chroma in the handshake (`full_chroma::restarts_without`).
     pub(super) packed_refused: bool,
+    /// Why a retryable attempt failed, as an English key for `tr()`: what a recovery that gives up
+    /// shows. `None` has no plainer words; the give-up then says the PC could not be reached.
+    pub(super) cause: Option<&'static str>,
+}
+
+/// A failed request's cause in plain words, for the failure kinds a recovery retries.
+fn http_cause(error: &nightjar_core::http::Error) -> Option<&'static str> {
+    use std::io::ErrorKind;
+    let nightjar_core::http::Error::Io(error) = error else { return None };
+    Some(match error.kind() {
+        ErrorKind::TimedOut => en("The PC did not answer in time."),
+        ErrorKind::ConnectionRefused => en("The PC refused the connection."),
+        ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted | ErrorKind::NotConnected | ErrorKind::BrokenPipe | ErrorKind::UnexpectedEof => {
+            en("The connection to the PC was lost.")
+        }
+        _ => return None,
+    })
+}
+
+/// A failed start's cause in plain words, by the stage that failed. Finding the PC has none: the
+/// give-up's "could not be reached" says it.
+fn start_cause(stage: Stage) -> Option<&'static str> {
+    match stage {
+        Stage::PlatformInit | Stage::NameResolution => None,
+        _ => Some(en("The PC did not finish starting the stream.")),
+    }
 }
 
 /// The device a recovery's stream moved to, read before it launches: two devices must not fight
@@ -273,7 +299,7 @@ fn resume_moved_to(paired: bool, running: bool, offered: bool, read: impl FnOnce
         Ok(read) => Ok(read.moved_to.map(|moved| moved.device)),
         Err(error) => {
             eprintln!("nightjar: recovery: could not ask the PC whether the stream moved: {error}");
-            Err(ConnectError { message: format!("Checking the running app failed: {error}"), retryable: true, asks_replace: false, moved_to: None, packed_refused: false })
+            Err(ConnectError { cause: http_cause(&error), message: format!("Checking the running app failed: {error}"), retryable: true, asks_replace: false, moved_to: None, packed_refused: false })
         }
     }
 }
@@ -283,7 +309,7 @@ fn resume_moved_to(paired: bool, running: bool, offered: bool, read: impl FnOnce
 fn check_resume(join: bool, paired: bool, running: bool, offered: bool, read: impl FnOnce() -> Result<nightjar_core::http::StreamMove, nightjar_core::http::Error>) -> Result<(), ConnectError> {
     if !join {
         if let Some(device) = resume_moved_to(paired, running, offered, read)? {
-            return Err(ConnectError { message: String::new(), retryable: false, asks_replace: false, moved_to: Some(device), packed_refused: false });
+            return Err(ConnectError { message: String::new(), retryable: false, asks_replace: false, moved_to: Some(device), packed_refused: false, cause: None });
         }
     }
     if !paired || !(running || join) {
@@ -305,7 +331,7 @@ fn resume_refused(join: bool, code: i32, message: &str) -> Option<String> {
 }
 
 impl From<String> for ConnectError {
-    fn from(message: String) -> Self { Self { message, retryable: false, asks_replace: false, moved_to: None, packed_refused: false } }
+    fn from(message: String) -> Self { Self { message, retryable: false, asks_replace: false, moved_to: None, packed_refused: false, cause: None } }
 }
 
 impl From<&str> for ConnectError {
@@ -343,7 +369,9 @@ fn connect_with_recovery(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: 
         }
         match connect(plan, shared.clone(), interrupt) {
             Err(error) if error.retryable && plan.recovery.is_some() && !interrupt.is_interrupted() => {
-                *lock(&shared.last_failure) = Some(error.message);
+                eprintln!("nightjar: recovery: attempt failed: {}", error.message);
+                // The give-up shows the cause in this device's language, not the engine's English.
+                *lock(&shared.last_failure) = error.cause.map(|cause| tr(cause).to_owned());
                 lock(&shared.frames).clear();
                 shared.next_attempt();
             }
@@ -916,7 +944,7 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
     }
     if plan.resume {
         plan.info = client.server_info_https().map_err(|e| ConnectError {
-            retryable: recovery::transient_http(&e), message: format!("Checking the running app failed: {e}"), asks_replace: false, moved_to: None, packed_refused: false,
+            retryable: recovery::transient_http(&e), cause: http_cause(&e), message: format!("Checking the running app failed: {e}"), asks_replace: false, moved_to: None, packed_refused: false,
         })?;
         crate::hosts::merge_native(&mut plan.info, plan.native.as_ref());
         let running = plan.app.matches_running_app(plan.info.current_game, plan.info.current_game_uuid.as_deref());
@@ -991,7 +1019,7 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
     let launched = match launched {
         // The answer goes out with a new launch that says it confirms.
         Err(e) if asks_replace(plan, role, &e) => {
-            return Err(ConnectError { message: e.to_string(), retryable: false, asks_replace: true, moved_to: None, packed_refused: false })
+            return Err(ConnectError { message: e.to_string(), retryable: false, asks_replace: true, moved_to: None, packed_refused: false, cause: None })
         }
         Ok(Some(launched)) => launched,
         Ok(None) => return Err(refused("The PC declined to start the app.".into())),
@@ -1001,7 +1029,7 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
             }
             return Err(refused(format!("The PC could not start the app ({code}: {message}).")))
         }
-        Err(e) => return Err(ConnectError { retryable: recovery::transient_http(&e), message: format!("Starting the app failed: {e}"), asks_replace: false, moved_to: None, packed_refused: false }),
+        Err(e) => return Err(ConnectError { retryable: recovery::transient_http(&e), cause: http_cause(&e), message: format!("Starting the app failed: {e}"), asks_replace: false, moved_to: None, packed_refused: false }),
     };
     if interrupt.is_interrupted() {
         return Err("Cancelled.".into());
@@ -1099,6 +1127,7 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
     )
     .map_err(|e| ConnectError {
         retryable: recovery::transient_start(e.stage, e.code),
+        cause: start_cause(e.stage),
         // A recovery's attempt is retried, so only a start that ends here asks the PC why.
         message: start_failure_text(format!("Could not start the stream: {e}"), e.stage, || {
             plan.recovery.is_none().then(|| client.server_info(false).ok().and_then(|info| info.last_failure)).flatten()
@@ -1231,6 +1260,22 @@ mod capability_tests {
         for unknown in [None, Some("")] {
             assert_eq!(recovery_gave_up(unknown), format!("{RECOVERY_UNREACHABLE}\n\n{RECOVERY_STOPPED}"));
         }
+    }
+
+    /// The cause a give-up shows is a sentence of the app's (translated), never the engine's
+    /// English error; a kind without one says the PC could not be reached.
+    #[test]
+    fn a_recovery_cause_is_the_apps_own_sentence() {
+        use std::io::{Error, ErrorKind};
+        let http = |kind| http_cause(&nightjar_core::http::Error::Io(Error::from(kind)));
+        assert_eq!(http(ErrorKind::TimedOut), Some("The PC did not answer in time."));
+        assert_eq!(http(ErrorKind::ConnectionRefused), Some("The PC refused the connection."));
+        assert_eq!(http(ErrorKind::ConnectionReset), Some("The connection to the PC was lost."));
+        assert_eq!(http(ErrorKind::HostUnreachable), None);
+        assert_eq!(http_cause(&nightjar_core::http::Error::Tls("handshake".into())), None);
+        assert_eq!(start_cause(Stage::RtspHandshake), Some("The PC did not finish starting the stream."));
+        assert_eq!(start_cause(Stage::NameResolution), None);
+        assert_eq!(recovery_gave_up(None), format!("{RECOVERY_UNREACHABLE}\n\n{RECOVERY_STOPPED}"));
     }
 
     /// The launch's stage words are plain ones, the same as Android's `conn_stage_*`.
