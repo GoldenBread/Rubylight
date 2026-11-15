@@ -29,13 +29,12 @@
     isSet,
     effective,
     has,
-    nativeEncoders,
     normalise,
     NOT_SETTINGS,
-    nvidiaEnhancements,
     sameValue,
     settingsOnly,
     toText,
+    withHostGates,
     type Edits,
   } from '../components/settings/values';
   import { api, type Config, type ConfigValue, type WebSession } from '../lib/api';
@@ -56,15 +55,7 @@
   import { EXPERT_GROUPS } from '../lib/schema/main';
   import SaveBar from '../components/settings/SaveBar.svelte';
   import { SETTING as PRESET, covered, presetById, presetId, presetNotice, withPreset } from '../lib/stream-presets';
-  import {
-    NATIVE_ENCODERS,
-    NVIDIA_COMPONENT,
-    NVIDIA_ENHANCEMENTS,
-    NVIDIA_REASONS,
-    VIRTUAL_DISPLAY_OS,
-    componentGate,
-    type Setting,
-  } from '../lib/settings-types';
+  import type { Setting } from '../lib/settings-types';
 
   const tabs = settingGroups;
   const byKey: ReadonlyMap<string, Setting> = new Map(schema.settings.map((setting) => [setting.key, setting]));
@@ -143,23 +134,8 @@
   const preset = $derived(presetById(presetId(has(edits, PRESET) ? edits[PRESET] : config[PRESET])));
   const described = $derived(withPreset(schema.settings, preset.id));
   const defaults: ReadonlyMap<string, Setting> = $derived(new Map(described.map((setting) => [setting.key, setting])));
-  const values = $derived.by(() => {
-    const current = currentValues(described, edits, config);
-    // Automatic encoder settings follow this PC's GPUs.
-    current[NATIVE_ENCODERS] = nativeEncoders(
-      session.metadata?.gpus,
-      String(current.adapter_name ?? ''),
-      String(current.adapter_pnp_id ?? ''),
-    );
-    // RTX HDR and RTX Video settings show where the host offers them.
-    current[NVIDIA_ENHANCEMENTS] = nvidiaEnhancements(session.metadata?.features);
-    current[NVIDIA_COMPONENT] = componentGate(session.metadata?.nvidia_enhancements?.component);
-    current[NVIDIA_REASONS] = session.metadata?.nvidia_enhancements?.errors ?? {};
-    // Virtual display settings show where this Windows can run the driver.
-    const os = session.metadata?.features?.virtual_display_os;
-    if (typeof os === 'boolean') current[VIRTUAL_DISPLAY_OS] = os;
-    return current;
-  });
+  // Encoder, NVIDIA and virtual display settings follow what this PC can run.
+  const values = $derived(withHostGates(currentValues(described, edits, config), session.metadata));
   const changes = $derived(stored ? computeChanges(defaults, edits, stored, new Set(covered)) : {});
   const presetProblem = $derived(presetNotice(has(edits, PRESET) ? edits[PRESET] : config[PRESET]));
   /** Settings the preset covers that have a value of their own, even one equal to the preset's. */

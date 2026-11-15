@@ -23,11 +23,11 @@
     effective,
     handSetCautions,
     has,
-    nativeEncoders,
     normalise,
-    nvidiaEnhancements,
     sameValue,
     settingsOnly,
+    virtualDisplayUsed,
+    withHostGates,
     type Edits,
   } from '../components/settings/values';
   import { api, type Config, type ConfigValue } from '../lib/api';
@@ -36,7 +36,7 @@
   import { MAIN_SECTIONS, UPDATE_KEYS, onHome } from '../lib/schema/main';
   import { categoriesOf, groupAnchor, schema, settingGroups, settingsGroup } from '../lib/settings-schema';
   import { session as host } from '../lib/session.svelte';
-  import { NATIVE_ENCODERS, NVIDIA_ENHANCEMENTS, type Setting } from '../lib/settings-types';
+  import type { Setting } from '../lib/settings-types';
   import { SETTING as PRESET, covered, presetById, presetId, presetNotice, withPreset } from '../lib/stream-presets';
 
   const RESULTS = 8;
@@ -56,7 +56,8 @@
   const presetProblem = $derived(presetNotice(has(edits, PRESET) ? edits[PRESET] : config[PRESET]));
   const described = $derived(withPreset(schema.settings, preset.id));
   const defaults: ReadonlyMap<string, Setting> = $derived(new Map(described.map((setting) => [setting.key, setting])));
-  const values = $derived(currentValues(described, edits, config));
+  // What this PC can run decides which encoder, NVIDIA and virtual display settings apply, as in All settings.
+  const values = $derived(withHostGates(currentValues(described, edits, config), host.metadata));
   const changes = $derived(stored ? computeChanges(defaults, edits, stored, new Set(covered)) : {});
   const pending = $derived(new Set([...Object.keys(changes), ...Object.keys(invalid)]));
   const invalidCount = $derived(Object.keys(invalid).length);
@@ -66,21 +67,7 @@
   const cautions = $derived(
     stored === null
       ? []
-      : handSetCautions(
-          described,
-          {
-            ...values,
-            // AMF settings apply only where Automatic would use AMF.
-            [NATIVE_ENCODERS]: nativeEncoders(
-              host.metadata?.gpus,
-              String(values.adapter_name ?? ''),
-              String(values.adapter_pnp_id ?? ''),
-            ),
-            [NVIDIA_ENHANCEMENTS]: nvidiaEnhancements(host.metadata?.features),
-          },
-          edits,
-          config,
-        ),
+      : handSetCautions(described, values, edits, config),
   );
   // Dismissing remembers the costly values shown; only a new one shows the banner again.
   const CAUTIONS_DISMISSED = 'rubylight.settings.cautions-dismissed';
@@ -104,8 +91,8 @@
     }
   }
 
-  // Monitors only turn off around a virtual display.
-  const applies = (key: string) => key !== 'virtual_display_layout' || values.virtual_display_mode !== 'disabled' || pending.has(key);
+  // Monitors only turn off around a virtual display, which this Windows may not run.
+  const applies = (key: string) => key !== 'virtual_display_layout' || virtualDisplayUsed(values) || pending.has(key);
 
   const sections = $derived(
     MAIN_SECTIONS.map((section) => ({

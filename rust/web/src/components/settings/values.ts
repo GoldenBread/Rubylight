@@ -4,8 +4,17 @@
 // JSON when it can, so a toggle may arrive as true, "true", "enabled" or 1
 // and a number as 20 or "20". Values are normalised for their control before
 // they are shown or compared.
-import type { Config, ConfigValue, Gpu, PrepCommand } from '../../lib/api';
-import type { Aliases, Setting } from '../../lib/settings-types';
+import type { Config, ConfigValue, Gpu, Metadata, PrepCommand } from '../../lib/api';
+import {
+  NATIVE_ENCODERS,
+  NVIDIA_COMPONENT,
+  NVIDIA_ENHANCEMENTS,
+  NVIDIA_REASONS,
+  VIRTUAL_DISPLAY_OS,
+  componentGate,
+  type Aliases,
+  type Setting,
+} from '../../lib/settings-types';
 import { readFolders, storedFolders } from '../../lib/shared-folders';
 
 /** Keys GET /api/config adds that are not settings. They are never sent back. */
@@ -277,6 +286,28 @@ export function nvidiaEnhancements(features: Record<string, boolean> | null | un
   return ['rtx_hdr', 'rtx_video'].filter((name) => features?.[name] === true);
 }
 
+/**
+ * alues with what this PC can run, from the host's metadata, for visibleWhen and the cautions:
+ * the encoders Automatic would use, the NVIDIA enhancements and components, and whether this
+ * Windows can run the virtual display driver. The Settings home and All settings both use it.
+ */
+export function withHostGates(values: Record<string, ConfigValue>, metadata: Metadata | null | undefined): Record<string, ConfigValue> {
+  values[NATIVE_ENCODERS] = nativeEncoders(metadata?.gpus, String(values.adapter_name ?? ''), String(values.adapter_pnp_id ?? ''));
+  values[NVIDIA_ENHANCEMENTS] = nvidiaEnhancements(metadata?.features);
+  values[NVIDIA_COMPONENT] = componentGate(metadata?.nvidia_enhancements?.component);
+  values[NVIDIA_REASONS] = metadata?.nvidia_enhancements?.errors ?? {};
+  const os = metadata?.features?.virtual_display_os;
+  if (typeof os === 'boolean') values[VIRTUAL_DISPLAY_OS] = os;
+  return values;
+}
+
+/** Whether streams can use a virtual display: not turned off, and on a Windows that runs the driver unless a mode is chosen. */
+export function virtualDisplayUsed(values: Record<string, ConfigValue>): boolean {
+  const mode = String(values.virtual_display_mode ?? '');
+  if (mode === 'disabled') return false;
+  // Default is a monitor where the driver can't run; a chosen mode is the user's.
+  return mode !== '' || values[VIRTUAL_DISPLAY_OS] !== false;
+}
 const count = (n: number) => (n === 0 ? 'None' : n === 1 ? '1 command' : `${n} commands`);
 const clip = (text: string, max = 60) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 

@@ -149,6 +149,32 @@ test('full chroma applies when saved: no restart tag, text or notice', async () 
   }
 });
 
+test('the home offers the monitors choice only where streams can use a virtual display, gated as All settings is', async () => {
+  const { withHostGates, virtualDisplayUsed } = await server.ssrLoadModule('/src/components/settings/values.ts');
+  const { VIRTUAL_DISPLAY_OS, NATIVE_ENCODERS, NVIDIA_ENHANCEMENTS } = await server.ssrLoadModule('/src/lib/settings-types.ts');
+  const metadata = (os) => ({
+    gpus: [{ name: 'NVIDIA GeForce RTX 4070', vendor: 0x10de }],
+    features: { pyrowave: false, virtual_display: os, virtual_display_os: os, rtx_hdr: true },
+  });
+  const old = withHostGates({ virtual_display_mode: '' }, metadata(false));
+  assert.equal(old[VIRTUAL_DISPLAY_OS], false);
+  assert.deepEqual(old[NATIVE_ENCODERS], ['nvenc']);
+  assert.deepEqual(old[NVIDIA_ENHANCEMENTS], ['rtx_hdr']);
+  // Windows 10 or 11 before 23H2: Default and Off stream a monitor.
+  assert.equal(virtualDisplayUsed(old), false);
+  assert.equal(virtualDisplayUsed({ ...old, virtual_display_mode: 'disabled' }), false);
+  assert.equal(virtualDisplayUsed({ ...old, virtual_display_mode: 'per_client' }), true);
+  assert.equal(virtualDisplayUsed(withHostGates({ virtual_display_mode: '' }, metadata(true))), true);
+  // A host that doesn't say counts as able.
+  assert.equal(virtualDisplayUsed(withHostGates({ virtual_display_mode: '' }, null)), true);
+  assert.equal(virtualDisplayUsed(withHostGates({ virtual_display_mode: 'disabled' }, null)), false);
+  // Both pages take the host's gates from the one helper; the home hides the row with it.
+  for (const name of ['pages/Settings.svelte', 'pages/SettingsHome.svelte']) {
+    assert.match(await source(name), /\$derived\(withHostGates\(currentValues\(described, edits, config\), (session|host)\.metadata\)\)/, name);
+  }
+  assert.match(await source('pages/SettingsHome.svelte'), /key !== 'virtual_display_layout' \|\| virtualDisplayUsed\(values\)/);
+});
+
 test('pages call the library by its navigation name, Games', async () => {
   for (const name of ['pages/Stream.svelte', 'pages/Overview.svelte', 'pages/Library.svelte', 'App.svelte']) {
     assert.doesNotMatch(await source(name), /Games &(amp;)? apps/, name);
