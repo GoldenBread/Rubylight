@@ -1679,11 +1679,7 @@ impl Launcher {
                     self.focus_dialog = true;
                 }
             }
-            Ok(SleepStep::Accepted) => self.sleep_message(
-                host,
-                trf("{} is going to sleep", &[&name]),
-                tr("The PC took the request. It shows as offline once it sleeps.").to_owned(),
-            ),
+            Ok(SleepStep::Accepted) => self.sleep_toast(host, trf("{} is going to sleep", &[&name])),
             Err(e) => self.sleep_message(host, trf("Could not put {} to sleep", &[&name]), e),
         }
     }
@@ -1701,12 +1697,8 @@ impl Launcher {
                     self.focus_dialog = true;
                 }
             }
-            (Ok(PcPowerStep::Accepted), PcPower::Restart) => {
-                self.sleep_message(host, trf("{} is restarting", &[&name]), tr("The PC took the request. It shows as online again once it is back.").to_owned())
-            }
-            (Ok(PcPowerStep::Accepted), PcPower::ShutDown) => {
-                self.sleep_message(host, trf("{} is shutting down", &[&name]), tr("The PC took the request. It shows as offline once it is off.").to_owned())
-            }
+            (Ok(PcPowerStep::Accepted), PcPower::Restart) => self.sleep_toast(host, trf("{} is restarting", &[&name])),
+            (Ok(PcPowerStep::Accepted), PcPower::ShutDown) => self.sleep_toast(host, trf("{} is shutting down", &[&name])),
             // The PC may still go down: no failure's title.
             (Ok(PcPowerStep::Unconfirmed(said)), PcPower::Restart) => self.sleep_message(host, trf("{} may still restart", &[&name]), said),
             (Ok(PcPowerStep::Unconfirmed(said)), PcPower::ShutDown) => self.sleep_message(host, trf("{} may still shut down", &[&name]), said),
@@ -1732,15 +1724,20 @@ impl Launcher {
     }
 
     pub fn update_answered(&mut self, host: u64, name: &str, result: Result<UpdateStep, String>) {
-        let (title, body) = match result {
-            Ok(UpdateStep::Started(version)) => {
-                (trf("Updating {}", &[&name]), trf("The streaming app installs version {} and comes back on its own.", &[&version]))
-            }
-            Ok(UpdateStep::Waiting(reason)) => (trf("Updating {}", &[&name]), trf("{} The update starts once that stream ends.", &[&reason])),
-            Ok(UpdateStep::Back(version)) => (trf("{} is back", &[&name]), trf("The streaming app now runs version {}.", &[&version])),
-            Err(e) => (trf("Could not update {}", &[&name]), e),
-        };
-        self.sleep_message(host, title, body);
+        match result {
+            Ok(UpdateStep::Started(_)) => self.sleep_toast(host, trf("Updating {}", &[&name])),
+            Ok(UpdateStep::Waiting(reason)) => self.sleep_toast(host, trf("{} The update starts once that stream ends.", &[&reason])),
+            Ok(UpdateStep::Back(version)) => self.sleep_toast(host, trf("{} now runs version {}", &[&name, &version])),
+            Err(e) => self.sleep_message(host, trf("Could not update {}", &[&name]), e),
+        }
+    }
+
+    /// A request the PC took: a notice that asks for nothing, closing only the question it answers.
+    pub(super) fn sleep_toast(&mut self, host: u64, text: String) {
+        if matches!(&self.dialog, Dialog::ConfirmSleep { host: asked, .. } | Dialog::ConfirmPcPower { host: asked, .. } if *asked == host) {
+            self.close_dialog();
+        }
+        self.toast(text);
     }
 
     /// Shows a Sleep PC answer now when it replaces nothing but its own dialog, else after the

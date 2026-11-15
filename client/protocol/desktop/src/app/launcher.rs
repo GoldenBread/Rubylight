@@ -269,6 +269,11 @@ impl App {
                     match result {
                         // Its result replaces the running test's dialog, as Android's does.
                         Ok(network_test::Outcome::Connection(result)) => self.launcher.ask(Dialog::ConnectionTest { host, result }),
+                        // A pace confirmed twice is a notice; one past some loss limits says why in a dialog.
+                        Ok(network_test::Outcome::Pace(calibration, _)) if calibration.qualified => {
+                            self.launcher.toast(trf("Saved {} Mbps frame pace", &[&calibration.pace_mbps]));
+                            if let Some(host) = self.hosts.get_mut(host) { host.record.pace = Some(calibration); self.save_hosts(); }
+                        }
                         Ok(network_test::Outcome::Pace(calibration, measurement)) => {
                             let text = trf("Saved {} Mbps frame pace ({}). Packet loss {}%, worst 100 ms loss {}%, missing frame tails {}%. The calibration applies while the network and endpoint link speeds match.",
                                 &[&calibration.pace_mbps, &if calibration.qualified { tr("confirmed twice") } else { tr("best measured result; some loss limits exceeded") },
@@ -300,7 +305,7 @@ impl App {
                 match result {
                     Ok(Some(path)) if export => {
                         match std::fs::write(&path, self.launcher.shortcuts.encode()) {
-                            Ok(()) => self.launcher.message(tr("Shortcuts exported"), path.display().to_string()),
+                            Ok(()) => self.launcher.toast(tr("Shortcuts exported")),
                             Err(e) => self.launcher.message(tr("Could not export shortcuts"), e.to_string()),
                         }
                     }

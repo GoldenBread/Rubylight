@@ -2433,8 +2433,10 @@ fn update_the_pcs_host_is_offered_with_host_control_and_confirmed_with_cancel_fo
     let update = f.placed.iter().find(|(t, ..)| t == "Update").map(|p| p.1).expect("Update");
     let commands = f.click_at(update.center(), egui::PointerButton::Primary);
     assert!(commands.iter().any(|c| matches!(c, Command::InstallUpdate { host } if *host == id)));
+    // Done is a notice, not a dialog to dismiss.
     f.l.update_answered(id, "PC", Ok(UpdateStep::Back("3.4.0".into())));
-    assert!(matches!(&f.l.dialog, Dialog::Message { body, .. } if body.contains("3.4.0")));
+    assert!(f.no_dialog());
+    assert!(f.l.toast.as_ref().is_some_and(|(text, _)| text.contains("3.4.0")));
 }
 
 #[test]
@@ -2475,9 +2477,10 @@ fn sleep_pc_waits_for_the_offer_and_spends_it_only_when_confirmed() {
     assert!(f.no_dialog());
 
     // The answers to the confirmed request are shown, the host's refusal word for word.
+    // A request the PC took is a notice; nothing waits for OK.
     f.l.sleep_answered(id, 1, "Gaming PC", true, Ok(SleepStep::Accepted));
-    assert!(matches!(&f.l.dialog, Dialog::Message { title, .. } if title == "Gaming PC is going to sleep"));
-    f.l.dialog = Dialog::None;
+    assert!(f.no_dialog());
+    assert!(matches!(&f.l.toast, Some((text, _)) if text == "Gaming PC is going to sleep"));
     let refusal = "End all applications and sessions before requesting sleep";
     f.l.sleep_answered(id, 1, "Gaming PC", true, Err(refusal.into()));
     assert!(matches!(&f.l.dialog, Dialog::Message { title, body } if title == "Could not put Gaming PC to sleep" && body == refusal));
@@ -2498,12 +2501,10 @@ fn a_sleep_pc_answer_waits_for_the_dialog_the_user_is_in() {
     f.l.sleep_answered(id, 2, "Gaming PC", true, Err("The PC did not answer.".into()));
     f.settle();
     assert!(matches!(&f.l.dialog, Dialog::Rename { text, .. } if text == "Living r"), "the rename keeps its text");
+    assert!(matches!(&f.l.toast, Some((text, _)) if text == "Gaming PC is going to sleep"), "a taken request is a notice over it");
     f.l.dialog = Dialog::None;
     f.settle();
-    assert!(matches!(&f.l.dialog, Dialog::Message { title, .. } if title == "Gaming PC is going to sleep"), "then it is shown");
-    f.l.dialog = Dialog::None;
-    f.settle();
-    assert!(matches!(&f.l.dialog, Dialog::Message { title, .. } if title == "Could not put Gaming PC to sleep"), "in order");
+    assert!(matches!(&f.l.dialog, Dialog::Message { title, .. } if title == "Could not put Gaming PC to sleep"), "the failure waits for it");
     f.l.dialog = Dialog::None;
     f.settle();
     assert!(f.no_dialog(), "each once");
