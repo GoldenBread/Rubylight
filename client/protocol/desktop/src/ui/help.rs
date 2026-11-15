@@ -74,36 +74,62 @@ impl Launcher {
         let jump_id = Id::unique("help-jump");
         let mut jump: Option<&'static str> = ctx.data(|d| d.get_temp(jump_id));
         let width = ui.available_width();
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = vec2(space::S, space::S);
-            for (n, (name, section)) in SECTIONS.iter().enumerate() {
-                let chip = chip(ui, name);
-                self.focus_item(&chip, &format!("help-jump-{n}"), n == 0);
-                if chip.clicked() {
-                    jump = Some(section);
-                }
-            }
-        });
+        // The chips keep their room at the page's top and are drawn last, over the page: once it
+        // scrolls past them they stay under the chrome, and a jump lands its heading below them.
+        let chips_id = Id::unique("help-chips-height");
+        let chips_h = ctx.data(|d| d.get_temp::<f32>(chips_id)).unwrap_or(Size::CHIP.height);
+        let (slot, _) = ui.allocate_exact_size(vec2(width, chips_h), Sense::hover());
         ui.add_space(space::S);
+        let below = chrome::PAGE_TOP + chips_h + space::S;
+        let mut heads: Vec<(&'static str, f32)> = Vec::new();
+        let mut head = |ui: &mut Ui, title: &'static str, jump: &mut Option<&'static str>| {
+            heads.push((title, ui.cursor().top() + space::L));
+            section_below(ui, title, jump, below);
+        };
 
-        section_at(ui, "Getting started", &mut jump);
+        head(ui, "Getting started", &mut jump);
         self.help_start(ui, width, view, commands);
 
-        section_at(ui, "Keyboard shortcuts", &mut jump);
+        head(ui, "Keyboard shortcuts", &mut jump);
         self.help_keyboard(ui, width);
 
-        section_at(ui, "Controllers", &mut jump);
+        head(ui, "Controllers", &mut jump);
         self.help_controller(ui, width, view);
 
-        section_at(ui, "Sharing", &mut jump);
+        head(ui, "Sharing", &mut jump);
         self.help_sharing(ui, width);
 
-        section_at(ui, "Troubleshooting", &mut jump);
+        head(ui, "Troubleshooting", &mut jump);
         self.help_problems(ui, width, commands);
 
-        section_at(ui, "More help", &mut jump);
+        head(ui, "More help", &mut jump);
         self.help_links(ui, commands);
         ui.add_space(space::XL);
+
+        // The section in view: the last whose heading has reached the chips' foot.
+        let view_top = ui.clip_rect().top();
+        let current = heads.iter().rev().find(|(_, y)| *y <= view_top + below + space::L).map_or(SECTIONS[0].1, |(title, _)| *title);
+        let top = slot.top().max(view_top + chrome::PAGE_TOP);
+        let bar = Rect::from_min_size(Pos2::new(slot.left(), top), vec2(width, chips_h));
+        if top > slot.top() {
+            // Held: the page goes by under a backing of its own, not through the chips.
+            ui.painter().rect_filled(bar.expand2(vec2(space::S, space::XS)), CornerRadius::same(radius::CONTROL), rows_fill());
+        }
+        let mut chips = ui.new_child(UiBuilder::new().id_salt("help-chips").max_rect(bar).layout(Layout::left_to_right(Align::Center).with_main_wrap(true)));
+        chips.spacing_mut().item_spacing = vec2(space::S, space::S);
+        for (n, (name, section)) in SECTIONS.iter().enumerate() {
+            let tone = if *section == current { Tone::Selected } else { Tone::Chip };
+            let chip = button(&mut chips, None, tr(name), tone, Size::CHIP);
+            self.focus_item(&chip, &format!("help-jump-{n}"), n == 0);
+            if chip.clicked() {
+                jump = Some(section);
+            }
+        }
+        let drawn = chips.min_rect().height();
+        if (drawn - chips_h).abs() > 0.5 {
+            ctx.data_mut(|d| d.insert_temp(chips_id, drawn));
+            ctx.request_repaint();
+        }
         ctx.data_mut(|d| match jump {
             Some(section) => {
                 d.insert_temp(jump_id, section);

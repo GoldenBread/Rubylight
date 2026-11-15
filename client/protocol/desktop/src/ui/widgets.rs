@@ -528,10 +528,16 @@ pub(crate) fn section(ui: &mut Ui, title: &str) {
 
 /// A section heading, white as every label (amber is the action's); scrolls itself to the top when `jump` names it (a section chip was used).
 pub(super) fn section_at(ui: &mut Ui, title: &str, jump: &mut Option<&'static str>) {
+    section_below(ui, title, jump, chrome::PAGE_TOP);
+}
+
+/// [`section_at`] for a page that keeps `below` of the window's top over its rows (the chrome, and
+/// what the page pins under it): a jump lands the heading there.
+pub(super) fn section_below(ui: &mut Ui, title: &str, jump: &mut Option<&'static str>, below: f32) {
     ui.add_space(space::L);
     if jump.is_some_and(|j| j == title) {
         // It lands below the chrome, not beneath it.
-        let at = ui.cursor().top() - chrome::PAGE_TOP;
+        let at = ui.cursor().top() - below;
         ui.scroll_to_rect(Rect::from_min_size(Pos2::new(ui.cursor().left(), at), Vec2::splat(1.0)), Some(Align::TOP));
         *jump = None;
     }

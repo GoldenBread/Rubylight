@@ -5835,7 +5835,10 @@ fn a_help_section_jump_lands_below_the_chrome() {
     let tops: Vec<f32> = f.placed.iter().filter(|(t, ..)| t == "Sharing").map(|p| p.1.top()).collect();
     assert!(f.l.page_scrolled > 50.0, "the page moved to it");
     let heading = tops.iter().copied().fold(f32::MIN, f32::max);
-    assert!((chrome::PAGE_TOP - 1.0..chrome::PAGE_TOP + 24.0).contains(&heading), "the heading rests just below the chrome: {tops:?}");
+    // The chips stay under the chrome, and the heading rests just below them, clear of the fade.
+    let chip = f.placed.iter().filter(|(t, r, _)| t == "Controllers" && r.top() > 0.0).map(|p| p.1).fold(None, |a: Option<Rect>, r| Some(a.map_or(r, |a| if r.top() < a.top() { r } else { a }))).expect("the chips");
+    assert!((chrome::PAGE_TOP - 1.0..chrome::PAGE_TOP + 24.0).contains(&chip.top()), "the chips are held: {chip:?}");
+    assert!((chip.bottom()..chip.bottom() + 40.0).contains(&heading), "the heading rests just below the chips: {tops:?} {chip:?}");
 }
 
 /// Home at rest draws nothing more: springs and fades ask for frames only while they move.
