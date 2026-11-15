@@ -1805,6 +1805,15 @@ fn relay_check() -> Result<nightjar_core::http::RemoteCheck, nightjar_core::http
     Ok(RemoteCheck { outcome: RemoteOutcome::Verified { server_info, path: Ok(NetworkPath::Relay) }, stats })
 }
 
+/// The details page says what the remote test tells the user, not how it works, and has no
+/// jargon about ports.
+#[test]
+fn the_details_page_says_what_the_remote_test_gives() {
+    let f = details(Reach::Online, "SUNSHINE_SERVER_FREE", RUBYLIGHT);
+    assert!(shows(&f, "Checks whether this PC answers from the network you are on now, for example away from home. It does not start a stream."), "{:?}", f.drawn);
+    assert!(!f.drawn.iter().any(|t| t.contains("HTTPS requests") || t.contains("web UI port")), "{:?}", f.drawn);
+}
+
 #[test]
 fn the_details_page_shows_what_the_pc_offers_not_its_brand() {
     let f = details(Reach::Online, "SUNSHINE_SERVER_FREE", RUBYLIGHT);

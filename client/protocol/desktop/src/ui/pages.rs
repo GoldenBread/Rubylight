@@ -245,7 +245,7 @@ impl Launcher {
                 Some(Ok(url)) => {
                     // The address goes inside the card it belongs to, not loose under it.
                     let about = format!("{}
-{url}", tr("Manage the PC’s apps, paired devices and streaming settings in its web UI. Sign in with the web UI’s own account; pairing does not sign you in. Remote access requires a reachable web UI port."));
+{url}", tr("Manage the PC’s apps, paired devices and streaming settings in its web UI. Sign in with the web UI’s own account; pairing does not sign you in."));
                     let button = row(ui, "The PC’s web UI", &about, |ui| quiet_button(ui, "Open in browser"));
                     self.focus_item(&button, "web-ui", true);
                     if button.clicked() {
@@ -259,11 +259,12 @@ impl Launcher {
                 }
             }
             section(ui, "Play away from home");
-            let button = row(ui, "Remote access", "Checks the paired PC’s identity with five small HTTPS requests. It does not start a stream or download a speed-test file.", |ui| {
+            // A quiet button: the web UI's above is the page's other action, and neither is the main one.
+            let button = row(ui, "Remote access", "Checks whether this PC answers from the network you are on now, for example away from home. It does not start a stream.", |ui| {
                 if running {
                     quiet_button(ui, "Cancel")
                 } else {
-                    primary_button(ui, "Test this PC")
+                    quiet_button(ui, "Test this PC")
                 }
             });
             self.focus_item(&button, "remote-check", !matches!(web_ui, Some(Ok(_))));
