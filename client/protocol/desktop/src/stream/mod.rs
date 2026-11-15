@@ -1003,7 +1003,8 @@ impl Streaming {
             phase: phase::Phase::default(),
             race_probe: None,
             // The sync interval as `App::begin_stream` set it.
-            vrr: present::VrrPacing::new(vrr_check, vrr_fallback, vrr_sync, connecting.pacing).with_present_check(present_check).with_lfc(vrr_lfc),
+            vrr: present::VrrPacing::new(vrr_check, vrr_fallback, vrr_sync, connecting.pacing).with_present_check(present_check).with_lfc(vrr_lfc)
+                .with_sync_forced(sync_env.as_deref().is_some_and(|sync| !sync.trim().is_empty())),
             skip_over_waiting: env_flag("NIGHTJAR_PRESENT_SKIP").unwrap_or(true),
             present_deadline_us: std::env::var("NIGHTJAR_PRESENT_DEADLINE_US").ok().and_then(|us| us.parse().ok()),
             held_margin_us: std::env::var("NIGHTJAR_HELD_MARGIN_US").ok().and_then(|us| us.parse().ok()).inspect(|us| {
@@ -2330,7 +2331,7 @@ impl Streaming {
             eprintln!("nightjar: beam race: frames not raced: {} with under 1 ms to gain, {} not in slices, {} with the first slice missed",
                 skipped[0], skipped[1], skipped[2]);
         }
-        if self.vrr.sync == present::VrrSync::Scan || self.keeper.is_some() {
+        if self.vrr.sync == present::VrrSync::Scan || self.vrr.distrusted || self.keeper.is_some() {
             let (waits, ns) = self.scan_waits;
             eprintln!("nightjar: VRR: {waits} presents waited for a scan under way, {:.2} ms each",
                 if waits > 0 { ns as f64 / f64::from(waits) / 1e6 } else { 0.0 });

@@ -71,7 +71,14 @@ with tearing. How the wait is done depends on the system:
 
 - **Windows:** before each frame Nightjar reads where the screen is in its drawing, and holds a
   frame until the drawing has finished. A frame that follows another closely is also held until
-  that one has reached the screen.
+  that one has reached the screen. Some screens do not always start drawing when a frame reaches
+  them, so where the screen is says too little there. When Nightjar sees that at the start of a
+  stream, it hands the wait to Windows instead (V-Sync under VRR): a frame that meets the screen
+  idle goes out at once, one that arrives while it draws waits for that refresh to end. That
+  holds for the rest of the stream and for later streams to the same screen until Nightjar
+  closes, and the overlay's Pacing line says "tear-free with V-Sync". It costs delay now and then:
+  measured on a 240 Hz VRR monitor at 60 fps against showing every frame at once, the 95th
+  percentile from present to screen went from 1.2 to 8.3 ms.
 - **Linux, drawing straight to the display** (KMS, without a desktop): Nightjar hands each picture
   to the display in step with it. A picture handed over during a refresh is taken when that
   refresh ends, and starts the next one. Up to Nightjar 5.3.0 every VRR stream there was shown at

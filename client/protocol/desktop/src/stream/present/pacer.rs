@@ -128,6 +128,11 @@ pub struct VrrPacing {
     /// `nightjar_policy::vsync::refreshes_per_frame`), given as its sync interval. 1 shows each
     /// picture at the next refresh.
     pub refreshes: u32,
+    /// `NIGHTJAR_VRR_SYNC` chose `sync`, which then stays as chosen (`distrust_scan`).
+    pub sync_forced: bool,
+    /// Tear-free VRR's wait turned to sync interval 1 on a display whose scan line does not say
+    /// when it shows a picture (`distrust_scan`).
+    pub distrusted: bool,
 }
 
 /// The first recheck after a "no VRR" fall back, and the longest between two: each one doubles
@@ -141,7 +146,7 @@ impl VrrPacing {
         Self {
             check, fallback, fell_back: false, sync, interval: sync_interval(mode, VrrSync::Off),
             restore: None, recheck_us: None, recheck_every_us: RECHECK_FIRST_US, rechecks: true, recovered: false,
-            present_check: false, fixed_display: false, lfc: false, refreshes: 1,
+            present_check: false, fixed_display: false, lfc: false, refreshes: 1, sync_forced: false, distrusted: false,
         }
     }
 
@@ -167,6 +172,24 @@ impl VrrPacing {
     /// Has the stream repeat pictures for the panel (`stream::lfc`).
     pub fn with_lfc(self, lfc: bool) -> Self {
         Self { lfc, ..self }
+    }
+
+    /// Keeps `sync` as `NIGHTJAR_VRR_SYNC` chose it (`distrust_scan`).
+    pub fn with_sync_forced(self, sync_forced: bool) -> Self {
+        Self { sync_forced, ..self }
+    }
+
+    /// Turns Tear-free VRR's wait for the beam (`VrrSync::Scan`) to sync interval 1 for the rest of
+    /// the stream, on a display that does not always refresh when a picture reaches it
+    /// (`scan_sync::UNTRUSTED_MISSES`): there a picture the wait sends into the blanking can still
+    /// tear, and only the swap chain's own wait for the refresh shows it whole. A sync
+    /// `NIGHTJAR_VRR_SYNC` chose stays. Returns whether it turned; the next `step` gives the
+    /// renderer the interval.
+    pub fn distrust_scan(&mut self) -> bool {
+        if self.sync != VrrSync::Scan || self.sync_forced { return false; }
+        self.sync = VrrSync::Present1;
+        self.distrusted = true;
+        true
     }
 
     /// Runs the display check for the present mode where it changes no pacing.
@@ -222,8 +245,10 @@ impl VrrPacing {
     }
 
     /// Whether the display check takes the presents as tearing ones: the pacing tears, or the
-    /// check itself turned it to V-Sync and a recheck has to see what the stream had before.
-    pub fn probe_tears(&self, mode: PacingMode) -> bool { mode != PacingMode::Vsync || self.fell_back }
+    /// check itself turned it to V-Sync and a recheck has to see what the stream had before. Not
+    /// once Tear-free VRR turned to sync interval 1 (`distrust_scan`): its presents tear no more,
+    /// and a late start of their scans is no sign of a fixed refresh.
+    pub fn probe_tears(&self, mode: PacingMode) -> bool { (mode != PacingMode::Vsync && !self.distrusted) || self.fell_back }
 
     /// Whether the display check is to measure the display again now (`RaceProbe::recheck`): a
     /// stream on its fall back whose recheck time has come. The next one waits twice as long.

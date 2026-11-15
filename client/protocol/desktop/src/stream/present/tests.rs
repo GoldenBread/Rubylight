@@ -1649,3 +1649,31 @@ fn fractional_v_sync_holds_v_sync_pictures_only_and_follows_the_rates() {
     let mut vrr = VrrPacing::new(false, PacingMode::Vsync, VrrSync::Off, PacingMode::Vsync).with_refreshes(2);
     assert_eq!(vrr.step(&mut mode, None, 0), None);
 }
+
+#[test]
+fn a_display_whose_presents_start_no_scan_turns_tear_free_vrr_to_sync_interval_1() {
+    // Tear-free VRR (`VrrSync::Scan`) presents with tearing after its own wait for the beam.
+    for mode in [PacingMode::Immediate, PacingMode::HostTimes] {
+        let mut vrr = VrrPacing::new(true, PacingMode::Vsync, VrrSync::Scan, mode);
+        let mut first = mode;
+        assert_eq!(vrr.step(&mut first, None, 0), None, "it starts at sync interval 0");
+        assert!(vrr.distrust_scan());
+        assert_eq!((vrr.sync, vrr.distrusted), (VrrSync::Present1, true));
+        let mut now = mode;
+        // macOS presents Real VRR with sync interval 1 already.
+        let want = (sync_interval(mode, VrrSync::Scan) != 1).then_some(1);
+        assert_eq!(vrr.step(&mut now, None, 0), want, "the next step gives the renderer sync interval 1");
+        assert!(!vrr.probe_tears(mode), "the display check takes its presents as synchronised");
+        assert_eq!(now, mode, "the pacing stays VRR's");
+        assert!(!vrr.distrust_scan(), "once");
+    }
+    // A sync the switch chose stays, and so do Fastest (off) and the other measurement syncs.
+    let mut forced = VrrPacing::new(true, PacingMode::Vsync, VrrSync::Scan, PacingMode::Immediate).with_sync_forced(true);
+    assert!(!forced.distrust_scan());
+    assert_eq!(forced.sync, VrrSync::Scan);
+    for sync in [VrrSync::Off, VrrSync::Blank, VrrSync::Present1] {
+        let mut vrr = VrrPacing::new(true, PacingMode::Vsync, sync, PacingMode::Immediate);
+        assert!(!vrr.distrust_scan(), "{sync:?}");
+        assert_eq!((vrr.sync, vrr.distrusted), (sync, false));
+    }
+}

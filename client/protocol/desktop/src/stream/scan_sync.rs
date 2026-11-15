@@ -25,6 +25,51 @@
 /// started none.
 pub const LANDING_LIMIT_NS: u64 = super::scanline::RESTART_WINDOW_NS;
 
+/// Tested presents of the restart check (`scanline::RestartCheck`) that met an idle display and
+/// started no scan within `scanline::RESTART_WINDOW_NS`, from which a `VrrSync::Scan` stream
+/// presents with sync interval 1 for the rest of the stream (`present::VrrPacing::distrust_scan`).
+/// Such a display does not always refresh when a picture reaches it, so the beam does not say when
+/// it shows one, and a picture the wait sent into its blanking can still tear. The handheld of
+/// Nightjar issue 111 missed 6-9 of about 30 in its sessions that tore with the wait and 0-1 in
+/// the one that mostly did not; the 240 Hz VRR monitor and the laptop of our rigs missed none in 58
+/// checks and one in 2 others. The check itself turns the stream to its pacing without VRR at
+/// `scanline::CHECK_MISSES`.
+pub const UNTRUSTED_MISSES: u32 = 3;
+
+/// The displays (by device name) whose presents a stream of this run of the app found not starting
+/// their scans (`UNTRUSTED_MISSES`). A later stream on one presents with sync interval 1 from its
+/// start: a stream at the display's top rate rarely lets it idle, and a check that sees no idle
+/// display tests no present (`scanline::RestartCheck::starved`).
+static UNTRUSTED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Whether a Tear-free VRR stream turns to sync interval 1, and whether `display` is to be
+/// remembered as untrusted for later streams: `missed` of the restart check's tested presents
+/// started no scan (`UNTRUSTED_MISSES`), or an earlier stream marked the display (`marked`).
+/// Only a stream on the beam's wait (`scan`) that `NIGHTJAR_VRR_SYNC` did not set (`forced`)
+/// turns.
+pub fn distrusts(missed: u32, marked: bool, scan: bool, forced: bool) -> Distrust {
+    let seen = missed >= UNTRUSTED_MISSES;
+    Distrust { turn: scan && !forced && (seen || marked), remember: seen }
+}
+
+/// `distrusts`'s answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Distrust {
+    pub turn: bool,
+    pub remember: bool,
+}
+
+/// Remembers that `display`'s presents did not start their scans (`UNTRUSTED`).
+pub fn remember_untrusted(display: &str) {
+    let mut untrusted = UNTRUSTED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !untrusted.iter().any(|name| name == display) { untrusted.push(display.to_owned()); }
+}
+
+/// Whether a stream of this run found `display`'s presents not starting their scans.
+pub fn untrusted(display: &str) -> bool {
+    UNTRUSTED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().any(|name| name == display)
+}
+
 /// How long the drawing of a picture is waited for (ns) before its present goes out regardless:
 /// two pictures of a 60 fps stream.
 pub const DRAWING_LIMIT_NS: u64 = 33_000_000;

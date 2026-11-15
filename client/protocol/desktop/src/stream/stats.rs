@@ -282,6 +282,7 @@ impl Streaming {
         if self.vrr.sync != present::VrrSync::Off && self.pacer.mode != PacingMode::Vsync {
             match self.vrr.sync {
                 present::VrrSync::Scan => pacing.push_str(", tear-free"),
+                present::VrrSync::Present1 if self.vrr.distrusted => pacing.push_str(", tear-free with V-Sync"),
                 sync => pacing.push_str(&format!(", VRR sync {}", sync.label())),
             }
             if self.scan_waits.0 > 0 {

@@ -229,6 +229,17 @@ impl RaceProbe {
     /// What the display check says so far.
     pub fn verdict(&self) -> &Verdict { &self.verdict }
 
+    /// The restart check so far: the presents it tested and those that started no scan.
+    pub fn restart_check(&self) -> RestartCheck { self.check }
+
+    /// The device name of the monitor whose scan line the probe reads (`\.\DISPLAY1`).
+    pub fn display_name(&self) -> Option<String> {
+        #[cfg(windows)]
+        { self.scan.as_ref().map(super::scanline::Scanline::device_name) }
+        #[cfg(not(windows))]
+        { None }
+    }
+
     /// The display scans at its own rate whatever is presented ("no VRR"), so a tearing present
     /// tears: the stream is better off with V-Sync.
     pub fn fixed_refresh(&self) -> bool { self.verdict.fixed_refresh() }

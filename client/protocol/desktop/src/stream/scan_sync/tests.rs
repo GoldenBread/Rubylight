@@ -170,3 +170,28 @@ fn a_reading_that_never_moves_or_fails_goes_out_counted() {
     let (waited, _) = simulate(300_000, 0, |at| (at == 300_000).then_some(41));
     assert!(waited.cut_short, "no reading after the first: {waited:?}");
 }
+
+#[test]
+fn presents_that_start_no_scan_mark_the_display_for_the_rest_of_the_run() {
+    use super::super::scanline::{RestartCheck, CHECK_MISSES};
+    // Our rigs' displays missed at most one; the handheld that tore missed 6-9 of about 30.
+    let rig = RestartCheck { frames: 120, tested: 30, missed: 1 };
+    let handheld = RestartCheck { frames: 95, tested: 30, missed: 7 };
+    assert!(rig.missed < UNTRUSTED_MISSES && rig.passed());
+    assert!(handheld.missed >= UNTRUSTED_MISSES && handheld.passed(), "a check that passes still marks it");
+    const { assert!(UNTRUSTED_MISSES < CHECK_MISSES) };
+    // The decision: the stream on the beam's wait turns at 3 misses, or on a display an earlier
+    // stream marked; a sync the switch set stays; 2 misses do neither.
+    assert_eq!(distrusts(7, false, true, false), Distrust { turn: true, remember: true });
+    assert_eq!(distrusts(0, true, true, false), Distrust { turn: true, remember: false });
+    assert_eq!(distrusts(2, false, true, false), Distrust { turn: false, remember: false });
+    assert_eq!(distrusts(7, false, true, true), Distrust { turn: false, remember: true });
+    assert_eq!(distrusts(7, true, false, false), Distrust { turn: false, remember: true }, "Fastest or another sync");
+    // Remembered by device name for later streams of this run.
+    let display = r"\.\DISPLAY-TEST-111";
+    assert!(!untrusted(display));
+    remember_untrusted(display);
+    remember_untrusted(display);
+    assert!(untrusted(display));
+    assert!(!untrusted(r"\.\DISPLAY-TEST-112"));
+}

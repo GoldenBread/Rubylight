@@ -396,6 +396,7 @@ impl Streaming {
             && std::mem::replace(&mut self.held_logged, self.vrr.refreshes) != self.vrr.refreshes {
             eprintln!("nightjar: pacing: fractional V-Sync, each picture shown for {} refreshes", self.vrr.refreshes);
         }
+        if let Some(probe) = probe { Self::distrust_scan_line(&mut self.vrr, probe); }
         let interval = self.vrr.step(&mut self.pacer.mode, probe.map(race_probe::RaceProbe::verdict), now);
         // MAILBOX for VRR on Wayland only while the display refreshes on present; a fixed refresh
         // one tears like any stream without V-Sync (`prefers_immediate`). SDL picks the mode
@@ -430,6 +431,26 @@ impl Streaming {
                 eprintln!("nightjar: pacing: sync interval {interval}, present mode {}", crate::sdl::present_mode_name(crate::sdl::present_mode(renderer)));
             }
         }
+    }
+
+    /// Turns Tear-free VRR to sync interval 1 once the display check finds presents to an idle
+    /// display that start no scan (`scan_sync::UNTRUSTED_MISSES`), or a stream of this run found
+    /// that on the same display, and says so once (`present::VrrPacing::distrust_scan`).
+    fn distrust_scan_line(vrr: &mut present::VrrPacing, probe: &race_probe::RaceProbe) {
+        let scan = vrr.sync == present::VrrSync::Scan;
+        if !scan || vrr.sync_forced { return; }
+        let check = probe.restart_check();
+        let display = probe.display_name();
+        let marked = display.as_deref().is_some_and(scan_sync::untrusted);
+        let distrust = scan_sync::distrusts(check.missed, marked, scan, vrr.sync_forced);
+        if let (true, Some(display)) = (distrust.remember, &display) { scan_sync::remember_untrusted(display); }
+        if !distrust.turn || !vrr.distrust_scan() { return; }
+        let why = if distrust.remember {
+            format!("{} of {} presents to an idle display started no scan within {} ms", check.missed, check.tested, scanline::RESTART_WINDOW_NS / 1_000_000)
+        } else {
+            "an earlier stream found presents to this display starting no scan".to_owned()
+        };
+        eprintln!("nightjar: VRR: tear-free presents wait for the refresh (sync interval 1) from here on: {why}, so the scan line does not tell when the display shows a picture");
     }
 
     /// Before a picture's present: what the display is doing goes to the keeper, and while the
@@ -942,9 +963,10 @@ impl Streaming {
         }
         // Keys, clicks and controllers leave from their own threads while V-Sync holds the present,
         // and while a VRR present waits for the picture's drawing and the scan under way: nearly
-        // every present of a stream at the display's top rate does, for most of a scan.
+        // every present of a stream at the display's top rate does, for most of a scan. So does a
+        // VRR present with sync interval 1 once Tear-free VRR turned to it, in the swap chain.
         let mode_tears = self.pacer.mode != PacingMode::Vsync;
-        let holds = !mode_tears || (probe && self.vrr.sync == present::VrrSync::Scan && self.scan_settles);
+        let holds = !mode_tears || (probe && self.vrr.sync == present::VrrSync::Scan && self.scan_settles) || self.vrr.distrusted;
         if holds {
             // SAFETY: a live renderer.
             self.direct_motion.presenting(Some(self.direct_rules(unsafe { SDL_GetRenderWindow(renderer) })));
