@@ -251,9 +251,10 @@ static void startPollForDevice(char* deviceName) {
     fd = open(fullPath, O_RDWR);
     if (fd < 0) {
         __android_log_print(ANDROID_LOG_ERROR, "EvdevReader", "Couldn't open %s: %d", fullPath, errno);
-        if (known) rejectedNodesAdd(&RejectedList, deviceName, &node);
+        if (known) rejectedNodesOpenFailed(&RejectedList, deviceName, &node);
         goto unlock;
     }
+    rejectedNodesOpened(&RejectedList, deviceName);
 
     // Allocate a context
     currentEntry = malloc(sizeof(*currentEntry));

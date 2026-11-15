@@ -49,6 +49,34 @@ int main(void) {
     assert(!rejectedNodesSkip(&rejected, "event0", &replaced));
     rejectedNodesEndPass(&rejected);
 
+    // A node that cannot be opened is tried again until that failed EVDEV_OPEN_FAILURES passes in a
+    // row: a hot-plugged node may refuse an open until ueventd sets its mode and label.
+    struct stat plugged = node(0xd42, 102);
+    for (int pass = 0; pass < EVDEV_OPEN_FAILURES - 1; pass++) {
+        rejectedNodesBeginPass(&rejected);
+        assert(!rejectedNodesSkip(&rejected, "event2", &plugged));
+        rejectedNodesOpenFailed(&rejected, "event2", &plugged);
+        rejectedNodesEndPass(&rejected);
+    }
+    // It opened (the mode was set): the failures start over.
+    rejectedNodesBeginPass(&rejected);
+    assert(!rejectedNodesSkip(&rejected, "event2", &plugged));
+    rejectedNodesOpened(&rejected, "event2");
+    rejectedNodesEndPass(&rejected);
+    for (int pass = 0; pass < EVDEV_OPEN_FAILURES; pass++) {
+        rejectedNodesBeginPass(&rejected);
+        assert(!rejectedNodesSkip(&rejected, "event2", &plugged));
+        rejectedNodesOpenFailed(&rejected, "event2", &plugged);
+        rejectedNodesEndPass(&rejected);
+    }
+    // Failing that many passes in a row, it is skipped.
+    rejectedNodesBeginPass(&rejected);
+    assert(rejectedNodesSkip(&rejected, "event2", &plugged));
+    rejectedNodesEndPass(&rejected);
+    rejectedNodesBeginPass(&rejected);
+    rejectedNodesEndPass(&rejected);
+    assert(rejected.count == 0);
+
     // A full list remembers no more; those nodes are tried each pass as before.
     rejectedNodesBeginPass(&rejected);
     char name[16];
