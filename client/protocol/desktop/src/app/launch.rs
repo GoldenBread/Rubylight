@@ -152,8 +152,8 @@ impl App {
 
     pub(crate) fn launch(&mut self, host_id: u64, app_id: i32, resume: bool, kind: LaunchKind, from: LaunchFrom) {
         let busy = self.connecting.is_some() || self.network_launch.is_some();
-        // A new start asks for full chroma as its settings say.
-        if !busy { self.full_chroma_off = None; }
+        // A new start asks for full chroma as its settings say, and waits for the HDR report anew.
+        if !busy { self.full_chroma_off = None; self.hdr_wait = None; }
         eprintln!("nightjar: {}{}", launch_line(from, app_id, resume, busy), kind.log_suffix());
         if busy {
             // A grant left for this start is not used by it.
@@ -358,8 +358,15 @@ impl App {
         let packed_without_gpu = false;
         self.hdr_note = false;
         let hdr_output = sdl::hdr_available(self.renderer)
-            || (settings.hdr && kms_planned(&settings, self.renderer) && kms_display_hdr(self.window))
-            || (settings.hdr && !handheld::gamescope() && sdl::await_window_hdr(self.renderer));
+            || (settings.hdr && kms_planned(&settings, self.renderer) && kms_display_hdr(self.window));
+        // The window's HDR report can come a moment after it is shown. The start waits for it
+        // over the next frames and comes back here (`network_launch`), so the launcher keeps
+        // drawing and Cancel works; at the wait's end it goes on with what the window reports.
+        if !hdr_output && settings.hdr && !handheld::gamescope() && hdr_wait_goes_on(&mut self.hdr_wait, Instant::now(), sdl::window_hdr_may_come(self.renderer)) {
+            self.network_launch = Some((host_id, app_id, resume, kind));
+            return;
+        }
+        self.hdr_wait = None;
         match handheld::hdr_stream(settings.hdr, hdr_output, handheld::gamescope()) {
             handheld::HdrStream::Refuse => {
                 let why = sdl::output_decision().and_then(Result::err).map_or("the compositor reports no HDR for this window", handheld::SdrReason::says);
@@ -556,6 +563,13 @@ pub(crate) type ProbeKey = (Hardware, u32, bool);
 
 pub(crate) fn probe_key(hardware: Hardware, wanted: u32, settings: &config::Settings) -> ProbeKey {
     (hardware, wanted, settings.vulkan_video_first)
+}
+
+/// Whether a start goes on waiting for the window's HDR report: while it can still come, until
+/// the deadline its first call sets in `wait`.
+pub(crate) fn hdr_wait_goes_on(wait: &mut Option<Instant>, now: Instant, may_come: bool) -> bool {
+    let deadline = *wait.get_or_insert(now + sdl::WINDOW_HDR_REPORT_WAIT);
+    may_come && now < deadline
 }
 
 /// `probe`'s answer for `hardware`, from `cache` when it was the last decoder checked.

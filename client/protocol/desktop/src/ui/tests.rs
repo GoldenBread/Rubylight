@@ -7636,6 +7636,19 @@ fn resuming_a_running_game_with_no_list_entry_reaches_the_stream_start() {
     }
 }
 
+/// A start waits for the window's HDR report over frames, not in one blocking call: while it can
+/// come, up to the deadline its first check set, and not at all when it cannot.
+#[test]
+fn a_start_waits_for_the_hdr_report_up_to_its_deadline() {
+    let now = std::time::Instant::now();
+    let mut wait = None;
+    assert!(crate::hdr_wait_goes_on(&mut wait, now, true));
+    assert!(crate::hdr_wait_goes_on(&mut wait, now + std::time::Duration::from_millis(400), true), "the deadline is the first check's");
+    assert!(!crate::hdr_wait_goes_on(&mut wait, now + std::time::Duration::from_millis(600), true), "past it the start goes on");
+    let mut wait = None;
+    assert!(!crate::hdr_wait_goes_on(&mut wait, now, false), "a report that cannot come is not waited for");
+}
+
 /// A launch whose list nobody has read reads it and holds; with no key to read it with it says so,
 /// where it used to end without a word.
 #[test]

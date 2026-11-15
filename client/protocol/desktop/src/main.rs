@@ -174,6 +174,8 @@ struct App {
     network_test: Option<network_test::Test>,
     /// Host, app, resume, and Input-only through a small stream.
     network_launch: Option<(u64, i32, bool, LaunchKind)>,
+    /// Until when the start in `network_launch` waits for the window's HDR report.
+    hdr_wait: Option<Instant>,
     /// The start a failed start's card offers to make again (`Command::RetryLaunch`).
     failed_launch: Option<(u64, i32, bool, LaunchKind)>,
     /// A pairing link from the system, until the launcher can ask about it.
@@ -894,6 +896,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         power_request: None,
         network_test: None,
         network_launch: None,
+        hdr_wait: None,
         failed_launch: None,
         links,
         #[cfg(feature = "demo-library")]

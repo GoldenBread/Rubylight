@@ -822,24 +822,12 @@ pub fn set_hdr_asked(asked: bool) {
 }
 
 /// How long a stream's start waits for the compositor's HDR report on a window.
-const WINDOW_HDR_REPORT_WAIT: std::time::Duration = std::time::Duration::from_millis(500);
+pub(crate) const WINDOW_HDR_REPORT_WAIT: std::time::Duration = std::time::Duration::from_millis(500);
 
-/// Waits briefly for the window's HDR report when it can still come (`handheld::hdr_report_can_come`).
-/// Whether HDR output is available now. Events stay queued for the event loop.
-pub fn await_window_hdr(renderer: *mut SDL_Renderer) -> bool {
-    if !crate::handheld::hdr_report_can_come(swapchain_takes_hdr(renderer), any_display_hdr()) {
-        return false;
-    }
-    let deadline = std::time::Instant::now() + WINDOW_HDR_REPORT_WAIT;
-    while std::time::Instant::now() < deadline {
-        // SAFETY: SDL's video is initialized on this thread.
-        unsafe { SDL_PumpEvents() };
-        if hdr_available(renderer) {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    false
+/// Whether the window's HDR report can still come (`handheld::hdr_report_can_come`): a start then
+/// waits for it over the next frames, up to [`WINDOW_HDR_REPORT_WAIT`], while the event loop runs.
+pub fn window_hdr_may_come(renderer: *mut SDL_Renderer) -> bool {
+    crate::handheld::hdr_report_can_come(swapchain_takes_hdr(renderer), any_display_hdr())
 }
 
 /// What an HDR stream refused here can do about it.

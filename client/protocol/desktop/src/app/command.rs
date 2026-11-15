@@ -430,6 +430,7 @@ Redacted logs, oldest line first; addresses, PC names, PINs and credentials are 
             Command::CancelConnect => {
                 if let Some(cli) = self.cli.as_mut() { cli.cancel(); }
                 self.network_launch = None;
+                self.hdr_wait = None;
                 if let Some(c) = &self.connecting {
                     c.cancel();
                     self.cancelled = true;
