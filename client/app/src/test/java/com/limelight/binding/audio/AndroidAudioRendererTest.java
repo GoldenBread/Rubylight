@@ -817,27 +817,54 @@ public class AndroidAudioRendererTest {
 
     @Test public void aShortAAudioStallDropsTheBufferWithoutReopening() {
         // The callback held back for 150 ms (a Bluetooth handover) while the stream still runs:
-        // repeated stalls drop their buffers and never reopen or fall back.
+        // stalls with buffers played between them drop theirs and never reopen or fall back.
         ScriptedRenderer renderer = disconnectedAAudio();
         renderer.nativeWriteSucceeds = true;
         renderer.reopenSucceeds = true;
         for (int i = 0; i <= AudioBufferPolicy.MAX_QUICK_REOPENS; i++) {
-            renderer.stallNextNativeWrites = 1;
+            for (int stall = 1; stall < AndroidAudioRenderer.MAX_NATIVE_STALLS; stall++) {
+                renderer.stallNextNativeWrites = 1;
+                renderer.play();
+            }
             renderer.play();
             renderer.now += 200;
         }
+        long dropped = (AudioBufferPolicy.MAX_QUICK_REOPENS + 1) * (AndroidAudioRenderer.MAX_NATIVE_STALLS - 1);
         assertEquals(0, renderer.reopens);
         assertEquals(0, renderer.closes);
         assertNull(renderer.fallbackReason);
         assertEquals(0, renderer.nextResult);
-        assertEquals(Long.valueOf(AudioBufferPolicy.MAX_QUICK_REOPENS + 1),
-                ReflectionHelpers.<Long>getField(renderer, "droppedWrites"));
+        assertEquals(Long.valueOf(dropped), ReflectionHelpers.<Long>getField(renderer, "droppedWrites"));
         // The next buffer plays on the same stream.
         renderer.play();
         assertEquals(Long.valueOf(1), ReflectionHelpers.<Long>getField(renderer, "nativeAudio"));
-        assertEquals(Long.valueOf(AudioBufferPolicy.MAX_QUICK_REOPENS + 1),
-                ReflectionHelpers.<Long>getField(renderer, "droppedWrites"));
+        assertEquals(Long.valueOf(dropped), ReflectionHelpers.<Long>getField(renderer, "droppedWrites"));
         ReflectionHelpers.setField(renderer, "nativeAudio", 0L);
+    }
+
+    @Test public void aLastingAAudioStallReopensAndKeepsFallingBackIfItRepeats() {
+        // The callback stopped for good without an error callback: after MAX_NATIVE_STALLS writes in a
+        // row the stream is reopened, and the buffer that found it stopped plays on the new one.
+        ScriptedRenderer renderer = disconnectedAAudio();
+        renderer.nativeWriteSucceeds = true;
+        renderer.reopenSucceeds = true;
+        renderer.stallNextNativeWrites = AndroidAudioRenderer.MAX_NATIVE_STALLS;
+        for (int i = 0; i < AndroidAudioRenderer.MAX_NATIVE_STALLS; i++) renderer.play();
+        assertEquals(1, renderer.reopens);
+        assertEquals(1, renderer.closes);
+        assertNull(renderer.fallbackReason);
+        assertEquals(Long.valueOf(2), ReflectionHelpers.<Long>getField(renderer, "nativeAudio"));
+        assertEquals(Long.valueOf(AndroidAudioRenderer.MAX_NATIVE_STALLS - 1),
+                ReflectionHelpers.<Long>getField(renderer, "droppedWrites"));
+
+        // Stopping again right after each reopen ends on AudioTrack, as a disconnect does.
+        for (int round = 0; round < AudioBufferPolicy.MAX_QUICK_REOPENS && renderer.fallbackReason == null; round++) {
+            renderer.now += 200;
+            renderer.stallNextNativeWrites = AndroidAudioRenderer.MAX_NATIVE_STALLS;
+            for (int i = 0; i < AndroidAudioRenderer.MAX_NATIVE_STALLS; i++) renderer.play();
+        }
+        assertNotNull(renderer.fallbackReason);
+        assertTrue(renderer.fallbackReason, renderer.fallbackReason.startsWith("AAudio stopped taking audio"));
     }
 
     @Test public void anAAudioThatDoesNotReopenFallsBackToAudioTrack() {

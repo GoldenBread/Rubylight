@@ -85,6 +85,11 @@ public class AndroidAudioRenderer implements AudioRenderer {
     // AAudio reopens after a disconnect: when the last one was, and how many came right after the one before.
     private long lastReopenAt = Long.MIN_VALUE / 2;
     private int quickReopens;
+    // Native writes in a row that stalled. A callback that stops for good without an error callback
+    // (AAudio still reporting the stream started) stalls every write: after MAX_NATIVE_STALLS
+    // (about 300 ms of buffers dropped) the stream is taken for stopped and reopened.
+    private int nativeStalls;
+    static final int MAX_NATIVE_STALLS = 3;
 
     private static native long nativeOpenAudio(int sampleRate, long concealer);
     /**
@@ -461,17 +466,20 @@ public class AndroidAudioRenderer implements AudioRenderer {
             if (nativeAudio != 0) {
                 int written = writeNativeAudio(audioData, length);
                 if (written == NATIVE_WRITE_DONE) {
+                    nativeStalls = 0;
                     echoReference(audioData, length, queuedFrames);
                     tuneBuffer();
                     return;
                 }
-                if (written == NATIVE_WRITE_STALLED) {
-                    // The output still runs: reopening would only lose its reserve and count
+                if (written == NATIVE_WRITE_STALLED && ++nativeStalls < MAX_NATIVE_STALLS) {
+                    // A short stall: reopening would only lose the tuned reserve and count
                     // toward the AudioTrack fallback.
                     droppedWrites++;
                     return;
                 }
-                if (!reopenAudio("AAudio disconnected")) {
+                boolean stalled = written == NATIVE_WRITE_STALLED;
+                nativeStalls = 0;
+                if (!reopenAudio(stalled ? "AAudio stopped taking audio" : "AAudio disconnected")) {
                     // Later buffers retry the AudioTrack like any other dead output.
                     droppedWrites++;
                     return;
