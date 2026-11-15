@@ -580,7 +580,8 @@ impl App {
             ConnectingView {
                 app: pc.and_then(|h| app_name_of(h, app)).unwrap_or_else(|| tr("Starting stream").into()),
                 host: pc.map_or(String::new(), |h| h.display_name().to_owned()),
-                stage: tr("Checking network profile").into(),
+                // What the player waits for; the network read behind it is the log's business.
+                stage: strings::en("Connecting").into(),
                 host_id: host,
                 app_id: app,
             }
