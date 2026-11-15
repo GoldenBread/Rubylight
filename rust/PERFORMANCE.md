@@ -6,6 +6,7 @@ This is the dated measurement record. For a guided comparison, start with the [p
 
 | Find a result | Recorded evidence |
 | --- | --- |
+| AMF slice output taking its frame buffers from the frame pool instead of the heap: encode, encoded to first packet, send spread and page faults at 4K60 HEVC with 20 recovery keyframes (no change measured, kept as the smaller allocation) | [November 15, AMF slice output through the frame pool](#november-15-amf-slice-output-through-the-frame-pool) |
 | Frame Warp: how much of a turn's input-to-picture gap it removes on a test game with known response, the learned gain and lag, lock time, a real game (Black Flag Resynced), GPU pass cost at 1080p to 4K, host processing on and off | [November 12, Frame Warp](#november-12-frame-warp) |
 | Frame Warp's lens: what a turn leaves at the picture's centre, over the whole picture and at its edge at 70, 90 and 110 degrees against 4.0.0, the learned field of view and how soon it settles, Nightjar 5.0 with the new host, what the pitch roll leaves, the host's measurement cost | [November 12, Frame Warp lens](#november-12-frame-warp-lens) |
 | Optimizations left after a full review: H.264 keyframe header scan, pooled rewrite buffers, a per-block send pool, FEC 16/8-byte tails (kernel restructure slower, dropped), a short first FEC block (no gain, dropped), Nightjar desktop drawing Windows planes straight to the back buffer and sampling Linux VA-API pictures in place, D3D11 bind on AMD (no gain), Linux V-Sync queueing (none), and what was dropped unbuilt | [November 11, what a full optimization review left](#november-11-what-a-full-optimization-review-left) |
@@ -76,6 +77,23 @@ This is the dated measurement record. For a guided comparison, start with the [p
 | CPU error correction | [C++ FEC comparison](#controlled-comparison-with-the-original-c-fec) |
 | Reproduction and scope | [Probes](#reproduce-on-another-machine) · [Hardware covered](#hardware-covered) |
 | PyroWave encode overlap, send buffer, Nightjar receive path | [November 10, PyroWave at 1.4 Gbps](#november-10-pyrowave-at-14-gbps-to-a-780m-laptop) |
+
+## November 15: AMF slice output through the frame pool
+
+With slice delivery on, each slice AMF returned was copied into a new heap buffer, and a frame joined from its slices (a keyframe) grew a new one by doubling. Both now come from the frame pool the whole-frame path already uses, and a joined frame starts in a buffer of the last one's size. Fixture: RX 7900 XT and Ryzen 7 5800X3D, isolated test host on loopback, the independent receiver with D3D11VA, HEVC 3840x2160 at 60 fps and 80 Mbps, slices delivered (4 blocks), `e2e.py --record` with 20 keyframe requests in 30 s (keyframes of 410 to 420 kB), two runs per arm. A = main at `d3f3831cb`, B = A with the change. Times in ms.
+
+| | A | A | B | B |
+| --- | --- | --- | --- | --- |
+| Encode, median / p95 / p99 | 6.13 / 6.29 / 6.41 | 6.12 / 6.28 / 6.40 | 5.92 / 6.27 / 6.40 | 6.14 / 6.28 / 6.46 |
+| Host total, median | 6.58 | 6.56 | 6.46 | 6.61 |
+| End to end, median | 10.91 | 10.88 | 10.82 | 10.98 |
+| Keyframes: encode, median | 6.61 | 6.61 | 6.42 | 6.67 |
+| Keyframes: encoded to first packet, median | 0.36 to 0.43 | 0.38 to 0.39 | 0.40 to 0.44 | 0.39 to 0.40 |
+| Keyframes: first to last packet, median | 4.5 to 4.8 | 4.6 to 4.7 | 4.4 to 4.8 | 4.6 |
+| Keyframe requests answered and decoded | 20 / 20 | 20 / 20 | 20 / 20 | 20 / 20 |
+| Host page faults per second after the last keyframe, median | 2,138 | 2,132 | 2,137 | 2,131 |
+
+No stage differs beyond run-to-run spread, and the page-fault rate is the same with and without keyframes in the second on both arms: at this size the heap already reused the freed blocks. The change is kept because it removes an allocation per slice and the doubling of a joined keyframe, not for a measured gain. A keyframe's present-to-sent total has two modes here (about 12 ms, and 17 to 26 ms) on both arms: the higher one is a picture that waited 8 to 12 ms for its claim when the request arrived mid-period, so the share of each mode in a run of 20 says nothing about this change.
 
 ## November 12: Nightjar on Linux, HDR output under gamescope and VA-API pictures that go through memory
 

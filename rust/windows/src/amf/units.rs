@@ -293,6 +293,7 @@ mod tests {
 
     #[test]
     fn a_large_joined_keyframe_is_gathered_in_one_pooled_buffer_once_its_size_is_known() {
+        let _alone = frame_pool::alone();
         let slice = vec![5; POOLED / 2 + 1];
         let mut sequencer = Sequencer::default();
         given();
@@ -331,6 +332,7 @@ mod tests {
 
     #[test]
     fn an_unfinished_joined_frame_gives_its_buffer_back_however_it_ends() {
+        let _alone = frame_pool::alone();
         let slice = vec![9; POOLED];
         let joined = |sequencer: &Sequencer| sequencer.open.as_ref().unwrap().joined.capacity();
         given();
@@ -338,7 +340,10 @@ mod tests {
         let mut sequencer = Sequencer::default();
         sequencer.push(1, Some(1), &slice, || JOINED);
         let capacity = joined(&sequencer);
-        assert_eq!(sequencer.push(2, Some(1), b"x", || STREAMED).abandoned, Some(1));
+        assert_eq!(
+            sequencer.push(2, Some(1), b"x", || STREAMED).abandoned,
+            Some(1)
+        );
         assert_eq!(given(), [capacity]);
         // Forgotten after an output error.
         sequencer.forget(2);

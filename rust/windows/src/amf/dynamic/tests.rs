@@ -154,6 +154,7 @@ fn a_sample_is_spliced_into_every_frame_until_the_next() {
 
 #[test]
 fn a_large_frame_is_spliced_into_a_pooled_buffer_unchanged() {
+    let _alone = crate::frame_pool::alone();
     let mut dynamic = Dynamic::new(Codec::Hevc);
     dynamic.take(Ok(Some(readout(7, 200, 600))), Instant::now());
     let mut frame = keyframe();

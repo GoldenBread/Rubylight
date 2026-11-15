@@ -134,12 +134,21 @@ impl Pool {
     }
 }
 
+/// Held by a test while it takes from or gives to the shared pool: tests run side by side, and one
+/// that counts on what the pool holds must not have another take it.
+#[cfg(test)]
+pub(crate) fn alone() -> std::sync::MutexGuard<'static, ()> {
+    static ALONE: Mutex<()> = Mutex::new(());
+    ALONE.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn a_large_buffer_is_reused_by_the_next_frame_that_fits() {
+        let _alone = alone();
         let mut pool = Pool(Vec::new());
         let frame = copy(&vec![1; POOLED + 10]);
         assert_eq!(frame, vec![1; POOLED + 10]);
@@ -172,6 +181,7 @@ mod tests {
 
     #[test]
     fn a_dropped_frame_returns_its_buffer_until_the_pool_is_cleared() {
+        let _alone = alone();
         // Larger than any other test's frame, so only this one fits it.
         let size = LARGEST - 4096;
         let frame = crate::encoder::Encoded {
