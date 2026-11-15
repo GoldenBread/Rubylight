@@ -237,6 +237,14 @@ impl World {
                 continue;
             }
             let peer = &mut self.peers[target];
+            // A tunnel closes once its puncher gives up, and takes nothing more.
+            if peer
+                .puncher
+                .as_ref()
+                .is_some_and(|puncher| puncher.state() == punch::State::Failed)
+            {
+                continue;
+            }
             let Some(opened) = peer.opener.open(&datagram) else {
                 continue;
             };
@@ -287,12 +295,15 @@ impl World {
         self.now += STEP;
     }
 
-    /// The device starts punching from the host's record; the host starts when its DHT poll
-    /// finds the device's record, `host_delay` later. True when both ends connect.
+    /// The device starts punching from the host's record and publishes its own, holding its
+    /// puncher as `ClientTunnel` does; the host starts when its DHT poll finds the device's
+    /// record, `host_delay` later. True when both ends connect.
     fn punch(&mut self, host_delay: Millis) -> bool {
         let host_candidates = punch::candidates(&self.peers[1].endpoints, self.peers[1].kind);
         let device_candidates = punch::candidates(&self.peers[0].endpoints, self.peers[0].kind);
-        self.peers[1].puncher = Some(Puncher::new(device_candidates, self.now));
+        let mut device = Puncher::new(device_candidates, self.now);
+        device.hold_until(punch::device_deadline(self.now));
+        self.peers[1].puncher = Some(device);
         while self.now < punch::TIMEOUT + host_delay + 1_000 {
             if self.now == host_delay {
                 // The record adds its addresses to a path a punch already opened.
@@ -383,6 +394,21 @@ fn punching_works_wherever_one_side_lets_the_other_in() {
             world.exchange(),
             "no exchange: host {host:?}, device {device:?}"
         );
+    }
+}
+
+#[test]
+fn a_host_that_finds_the_devices_record_late_still_gets_through() {
+    // 25 s after the device starts, and the latest the host can find the record: its longest
+    // publication, then the host's next poll and its lookup. Punches from a host behind a NAT
+    // that filters by port reach nobody before that.
+    for host_delay in [
+        25_000,
+        punch::PUBLISH + punch::HOST_POLL + crate::node::LOOKUP_DEADLINE,
+    ] {
+        let mut world = World::new(PortRestricted, PortRestricted);
+        assert!(world.punch(host_delay), "host after {host_delay} ms");
+        assert!(world.exchange(), "no exchange: host after {host_delay} ms");
     }
 }
 

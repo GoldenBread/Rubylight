@@ -208,11 +208,16 @@ impl Tunnel {
         });
         let tunnel = Self { shared };
         if let Bridge::Device { local, ports } = &bridge {
+            // Every port is bound before an accept thread starts, so a port in use leaves no
+            // thread behind holding the others.
+            let mut listeners = Vec::new();
             for target in [TARGET_HTTP, TARGET_HTTPS, TARGET_RTSP] {
                 let Some(port) = tcp_port(ports, target).filter(|port| *port != 0) else {
                     continue;
                 };
-                let listener = TcpListener::bind((*local, port))?;
+                listeners.push((TcpListener::bind((*local, port))?, target));
+            }
+            for (listener, target) in listeners {
                 tunnel
                     .shared
                     .listeners
@@ -258,6 +263,12 @@ impl Tunnel {
         let mut inner = self.shared.inner.lock().unwrap();
         inner.puncher.add(more);
         self.publish(&inner);
+    }
+
+    /// Punches on at least until `deadline` (the node's clock): the peer finds this side's
+    /// record later.
+    pub fn hold_punching_until(&self, deadline: Millis) {
+        self.shared.inner.lock().unwrap().puncher.hold_until(deadline);
     }
 
     /// Mirrors `inner`'s connected peer into `connected`; called with `inner` held after any

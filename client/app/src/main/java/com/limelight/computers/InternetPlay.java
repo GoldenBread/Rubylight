@@ -154,8 +154,9 @@ public final class InternetPlay {
     }
 
     /**
-     * The punched path: blocks up to 50 seconds for the tunnel, then gives its loopback end, the address the PC is
-     * reached at from now on. Call it off the main thread.
+     * The punched path: blocks for the tunnel (up to nightjar-core's internet.rs PUNCH_WAIT, about two minutes when
+     * the DHT answers slowly), then gives its loopback end, the address the PC is reached at from now on. Call it off
+     * the main thread.
      */
     public static ComputerDetails.AddressTuple connect(String hostUuid, String reply, Tried tried) throws Unreachable {
         try {

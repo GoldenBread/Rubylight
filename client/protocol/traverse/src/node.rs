@@ -26,8 +26,11 @@ use std::{
 pub type Handler = Box<dyn Fn(&[u8], SocketAddr) + Send + Sync>;
 
 /// How long a lookup may take in all.
-const LOOKUP_DEADLINE: Millis = 20_000;
-const STUN_WAIT: Duration = Duration::from_secs(3);
+pub const LOOKUP_DEADLINE: Millis = 20_000;
+/// How long STUN servers get to answer.
+pub const STUN_WAIT: Millis = 3_000;
+/// How long a put waits for the nodes' confirmations after its lookup.
+pub const PUT_WAIT: Millis = 3_000;
 /// The responsive DHT nodes kept to start later lookups from.
 const KEPT_NODES: usize = 64;
 
@@ -136,7 +139,7 @@ impl Node {
             asked.push((transaction, addresses));
         }
         drop(sender);
-        let deadline = Instant::now() + STUN_WAIT;
+        let deadline = Instant::now() + Duration::from_millis(STUN_WAIT);
         let mut found: HashMap<[u8; 12], SocketAddr> = HashMap::new();
         let mut next_send = Instant::now();
         while Instant::now() < deadline && found.len() < asked.len() && !self.is_stopped() {
@@ -263,7 +266,7 @@ impl Node {
         for ((address, token), tid) in writable.iter().zip(&registered) {
             self.send(*address, &dht::put(*tid, &self.shared.id, token, item));
         }
-        let deadline = Instant::now() + Duration::from_secs(3);
+        let deadline = Instant::now() + Duration::from_millis(PUT_WAIT);
         let mut confirmed = 0;
         while confirmed < registered.len() && Instant::now() < deadline {
             match answers.recv_timeout(Duration::from_millis(100)) {

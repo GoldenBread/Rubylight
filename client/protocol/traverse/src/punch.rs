@@ -7,11 +7,32 @@
 //! For a peer behind a symmetric NAT, [`candidates`] adds the next few ports after the one it
 //! reported: many such NATs hand out ports in sequence.
 
-use crate::{record::Nat, Millis};
+use crate::{
+    node::{LOOKUP_DEADLINE, PUT_WAIT},
+    record::Nat,
+    Millis,
+};
 use std::net::SocketAddr;
 
-/// How long punching goes on before it gives up.
+/// How long punching goes on before it gives up, unless held longer ([`Puncher::hold_until`]).
 pub const TIMEOUT: Millis = 30_000;
+
+// The time budget of a punched path, in one place: the device's wait, the host's polling and the
+// engine's wait all derive from these.
+
+/// The longest a record takes to be stored in the DHT: a lookup, then the nodes' confirmations.
+pub const PUBLISH: Millis = LOOKUP_DEADLINE + PUT_WAIT;
+/// How often the host looks for a device's record ([`crate::host`]).
+pub const HOST_POLL: Millis = 10_000;
+/// How long a device keeps punching after its record is stored: the host's next look for it,
+/// that lookup, and a margin for the punches to meet. A host behind a NAT that filters by port
+/// learns the device's endpoints only this way.
+pub const AFTER_PUBLISH: Millis = HOST_POLL + LOOKUP_DEADLINE + 15_000;
+
+/// Until when a device keeps punching that starts publishing its record at `now`.
+pub fn device_deadline(now: Millis) -> Millis {
+    now + PUBLISH + AFTER_PUBLISH
+}
 /// Punches go out this often at first,
 const FAST: Millis = 100;
 /// for this long,
@@ -32,6 +53,8 @@ pub enum State {
 pub struct Puncher {
     candidates: Vec<SocketAddr>,
     started: Millis,
+    /// When punching gives up.
+    deadline: Millis,
     next: Millis,
     state: State,
 }
@@ -65,9 +88,15 @@ impl Puncher {
         Self {
             candidates,
             started: now,
+            deadline: now + TIMEOUT,
             next: now,
             state: State::Punching,
         }
+    }
+
+    /// Punches on at least until `deadline`: the peer finds this side's record later.
+    pub fn hold_until(&mut self, deadline: Millis) {
+        self.deadline = self.deadline.max(deadline);
     }
 
     /// More addresses learned while punching (the peer's record arrived later).
@@ -88,7 +117,7 @@ impl Puncher {
         if self.state != State::Punching {
             return Vec::new();
         }
-        if now.saturating_sub(self.started) >= TIMEOUT {
+        if now >= self.deadline {
             self.state = State::Failed;
             return Vec::new();
         }
@@ -105,7 +134,7 @@ impl Puncher {
     }
 
     pub fn next_wakeup(&self) -> Option<Millis> {
-        (self.state == State::Punching).then_some(self.next.min(self.started + TIMEOUT))
+        (self.state == State::Punching).then_some(self.next.min(self.deadline))
     }
 
     /// An authenticated punch arrived from `from`: answer it there, and the path is that address.
@@ -147,6 +176,22 @@ mod tests {
         assert_eq!(puncher.poll(1_000 + TIMEOUT), Vec::<SocketAddr>::new());
         assert_eq!(puncher.state(), State::Failed);
         assert_eq!(puncher.next_wakeup(), None);
+    }
+
+    #[test]
+    fn a_held_puncher_punches_on_past_the_timeout() {
+        let peer: SocketAddr = "203.0.113.5:40000".parse().unwrap();
+        let mut puncher = Puncher::new(vec![peer], 0);
+        puncher.hold_until(device_deadline(0));
+        // A shorter hold never cuts it.
+        puncher.hold_until(1_000);
+        assert_eq!(puncher.poll(TIMEOUT + 100), vec![peer]);
+        assert_eq!(puncher.state(), State::Punching);
+        assert_eq!(puncher.poll(device_deadline(0) - 1), vec![peer]);
+        assert!(puncher.poll(device_deadline(0)).is_empty());
+        assert_eq!(puncher.state(), State::Failed);
+        // The budget covers the host's poll and lookup after the longest publication.
+        assert!(device_deadline(0) >= PUBLISH + HOST_POLL + LOOKUP_DEADLINE);
     }
 
     #[test]

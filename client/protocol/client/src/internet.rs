@@ -9,7 +9,7 @@
 
 use crate::http::InternetPlay;
 use rubylight_traverse::{
-    client::{ClientConfig, ClientTunnel, Status},
+    client::{ClientConfig, ClientTunnel, Status, CONNECT_WAIT},
     path::{self, Path},
 };
 use std::{
@@ -24,9 +24,10 @@ use std::{
 
 pub use rubylight_traverse::path::{failure_message, Outcome, Path as InternetPath};
 
-/// How long the punched path may take to come up: the DHT lookups, the host's next look for
-/// this device's record (every ten seconds) and the punching itself.
-pub const PUNCH_WAIT: Duration = Duration::from_secs(50);
+/// How long the punched path may take to come up: as long as the tunnel itself may take (the
+/// DHT lookups, the host's next look for this device's record and the punching), and a little
+/// more, so the tunnel's own words for a failure come through rather than a timeout.
+pub const PUNCH_WAIT: Duration = Duration::from_secs(CONNECT_WAIT.as_secs() + 5);
 
 /// How long after a punched path failed it is not tried again: a PC that is off would
 /// otherwise have the DHT asked on every poll.
