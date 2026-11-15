@@ -25,7 +25,10 @@
 use super::media::ControlSender;
 use crate::{
     state::{Session, Shared},
-    stream::{RUMBLE_DATA, RUMBLE_TRIGGER_DATA, effective_config, feedback_packets},
+    stream::{
+        PadsWait, RUMBLE_DATA, RUMBLE_TRIGGER_DATA, attach_pads, controllers_back,
+        controllers_wait, effective_config, feedback_packets,
+    },
 };
 use anyhow::{Context, Result};
 use butterpollo_core::{
@@ -510,10 +513,20 @@ pub trait Sink {
     /// New rumble, lights and trigger effects the controllers reported: (slot, kind, data).
     fn feedback(&mut self) -> Vec<(u16, u16, Vec<u8>)>;
     fn feedback_allowed(&self, kind: u16) -> bool;
+    /// Controllers the sink was made without, tried for again when it is time: the input
+    /// they missed, injected once they are there, and why some failed.
+    fn follow_controllers(&mut self, _session: &Session, _now: Instant) -> Vec<anyhow::Error> {
+        Vec::new()
+    }
 }
 
-/// The Windows injector, made the way the GameStream control loop makes its own.
-struct NativeSink(Injector);
+/// The Windows injector, made the way the GameStream control loop makes its own: without the
+/// controllers while they cannot be had, which it then tries for again ([`PadsWait`]).
+struct NativeSink {
+    injector: Injector,
+    h: Shared,
+    pads: PadsWait,
+}
 
 impl NativeSink {
     fn create(h: &Shared, s: &Session) -> Result<Box<dyn Sink>> {
@@ -522,15 +535,12 @@ impl NativeSink {
             tracing::warn!(error = %format!("{error:#}"), "input configuration unavailable");
         })?;
         let output = s.output.read().unwrap().clone();
+        // Keys, clicks and moves need no controller.
         let pads = h
             .controller_sessions
             .acquire(&s.launch, &c)
-            .inspect_err(|error| {
-                warnings.set(
-                    "input_initialization",
-                    format!("Controller recovery is still in progress ({error:#}); retrying."),
-                );
-            })?;
+            .inspect_err(|error| controllers_wait(s, error))
+            .ok();
         let mut injector = Injector::new_options_reported(
             if output.is_empty() {
                 c.get("output_name", "")
@@ -547,33 +557,64 @@ impl NativeSink {
                 format!("Input initialization failed ({error:#}); controls are unavailable. Check Input settings and the selected display, then reconnect."),
             );
         })?;
-        injector.use_gamepads(pads);
-        warnings.clear("input_initialization");
+        let mut pads_wait = PadsWait::default();
+        match pads {
+            Some(pads) => {
+                injector.use_gamepads(pads);
+                warnings.clear("input_initialization");
+            }
+            None => pads_wait.failed(Instant::now()),
+        }
         let mode = s.stream_mode();
         injector.set_stream_size(mode.width, mode.height);
-        Ok(Box::new(Self(injector)))
+        Ok(Box::new(Self {
+            injector,
+            h: h.clone(),
+            pads: pads_wait,
+        }))
     }
 }
 
 impl Sink for NativeSink {
     fn apply(&mut self, events: &[Input]) -> Vec<anyhow::Error> {
-        self.0.apply_all(events)
+        if self.pads.retry_at().is_none() {
+            return self.injector.apply_all(events);
+        }
+        let mut events = events.to_vec();
+        self.pads.hold(&mut events);
+        self.injector.apply_all(&events)
     }
     fn next_due(&self) -> Option<Instant> {
-        self.0.next_due()
+        [self.injector.next_due(), self.pads.retry_at()]
+            .into_iter()
+            .flatten()
+            .min()
     }
     fn due(&mut self) -> Result<()> {
-        self.0.due()
+        self.injector.due()
+    }
+    fn follow_controllers(&mut self, session: &Session, now: Instant) -> Vec<anyhow::Error> {
+        let Self { injector, h, pads } = self;
+        let Some(held) = pads.retry(now, || {
+            let acquired = effective_config(h, &session.launch)
+                .and_then(|c| h.controller_sessions.acquire(&session.launch, &c))?;
+            attach_pads(injector, acquired, &[0; 16]);
+            Ok(())
+        }) else {
+            return Vec::new();
+        };
+        controllers_back(session);
+        injector.apply_all(&held)
     }
     fn refresh(&mut self) -> Result<()> {
-        self.0.refresh()
+        self.injector.refresh()
     }
     fn geometry(&mut self, output: &str, width: u32, height: u32) {
-        self.0.set_output(output);
-        self.0.set_stream_size(width, height);
+        self.injector.set_output(output);
+        self.injector.set_stream_size(width, height);
     }
     fn feedback(&mut self) -> Vec<(u16, u16, Vec<u8>)> {
-        self.0
+        self.injector
             .gamepad_reports()
             .filter_map(|report| match report {
                 PadReport::Feedback { id, kind, data } => Some((id, kind, data)),
@@ -582,14 +623,14 @@ impl Sink for NativeSink {
             .collect()
     }
     fn feedback_allowed(&self, kind: u16) -> bool {
-        self.0.feedback_allowed(kind)
+        self.injector.feedback_allowed(kind)
     }
 }
 
 impl Drop for NativeSink {
     fn drop(&mut self) {
         // Unplugs the virtual pads asynchronously; the injector's own drop releases pointers.
-        self.0.detach_gamepads();
+        self.injector.detach_gamepads();
     }
 }
 
@@ -1065,6 +1106,11 @@ impl Core {
         }
         let actions = self.pads.tick(now);
         self.actions(actions, now);
+        if let Some(sink) = &mut self.sink {
+            for error in sink.follow_controllers(&self.session, now) {
+                self.session.launch.warnings.event("input_injection", format!("Input injection failed ({error:#}); keyboard, mouse or controller actions may be missing. Unlock the desktop and check Windows input permissions."), EVENT_PERIOD);
+            }
+        }
         if let Some(sink) = &mut self.sink
             && sink.next_due().is_some_and(|due| now >= due)
             && let Err(error) = sink.due()

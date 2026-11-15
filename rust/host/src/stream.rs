@@ -39,7 +39,10 @@ use control::{
     first_steam_attributes_refusal, haptics_negotiated, hold_pad_input, motion_requests,
     pad_reports, queue_input, server_command,
 };
-pub(crate) use control::{RUMBLE_DATA, RUMBLE_TRIGGER_DATA, feedback_packets};
+pub(crate) use control::{
+    PadsWait, RUMBLE_DATA, RUMBLE_TRIGGER_DATA, attach_pads, controllers_back, controllers_wait,
+    feedback_packets,
+};
 pub(crate) use instance_audio::{InstanceRoutes, instance_routes, plays_on_pc, put_back};
 use qos::Tagged;
 #[cfg(test)]

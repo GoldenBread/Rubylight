@@ -385,8 +385,7 @@ impl Media {
                                     id: l.id.clone(),
                                     injector: None,
                                     injector_tried: false,
-                                    pads_retry: None,
-                                    held_pads: Vec::new(),
+                                    pads_wait: PadsWait::default(),
                                     coop: None,
                                     coop_tried: false,
                                     sequence: 0,
@@ -1584,7 +1583,7 @@ impl Media {
                                         attach_pads(&mut i, pads, &p.controller_audio);
                                         s.launch.warnings.clear("input_initialization");
                                     }
-                                    None => p.pads_retry = Some(Instant::now() + PADS_RETRY),
+                                    None => p.pads_wait.failed(Instant::now()),
                                 }
                                 i.set_stream_size(s.config.width, s.config.height);
                                 p.injector = Some(i);
@@ -1594,23 +1593,17 @@ impl Media {
                         }
                     }
                     // The controllers' retry, on its own interval rather than every pass.
-                    if let (Some(i), Some(at)) = (&mut p.injector, p.pads_retry)
-                        && Instant::now() >= at
+                    if let Some(i) = &mut p.injector
+                        && let Some(held) = p.pads_wait.retry(Instant::now(), || {
+                            let pads = effective_config(&h, &s.launch)
+                                .and_then(|c| h.controller_sessions.acquire(&s.launch, &c))?;
+                            attach_pads(i, pads, &p.controller_audio);
+                            Ok(())
+                        })
                     {
-                        match effective_config(&h, &s.launch)
-                            .and_then(|c| h.controller_sessions.acquire(&s.launch, &c))
-                        {
-                            Ok(pads) => {
-                                attach_pads(i, pads, &p.controller_audio);
-                                s.launch.warnings.clear("input_initialization");
-                                tracing::info!(client = %s.launch.client.name, "the controllers are back");
-                                p.pads_retry = None;
-                                // What they missed that the client sends once, before what came since.
-                                let held = std::mem::take(&mut p.held_pads);
-                                p.inputs.splice(0..0, held);
-                            }
-                            Err(_) => p.pads_retry = Some(Instant::now() + PADS_RETRY),
-                        }
+                        controllers_back(&s);
+                        // What they missed that the client sends once, before what came since.
+                        p.inputs.splice(0..0, held);
                     }
                     follow_session(&h, p, &s);
                     // A guest that lost the keyboard and mouse lets go of what it holds.
@@ -1833,9 +1826,7 @@ fn apply_input(
     menus: &mut crate::couch_menu::Workers,
     received: Option<Instant>,
 ) {
-    if p.pads_retry.is_some() {
-        hold_pad_input(&mut p.inputs, &mut p.held_pads);
-    }
+    p.pads_wait.hold(&mut p.inputs);
     let measured = !p.inputs.is_empty() && (p.injector.is_some() || p.coop.is_some());
     // Nor the couch menu, which the PC's display would show.
     if s.launch.nucleus.is_some() {
@@ -1926,11 +1917,8 @@ pub(super) struct ControlPeer {
     injector: Option<Injector>,
     /// Whether making the injector was tried.
     injector_tried: bool,
-    /// When the injector, made without the controllers because they could not be had, tries
-    /// for them again.
-    pads_retry: Option<Instant>,
-    /// Their input meanwhile ([`hold_pad_input`]).
-    held_pads: Vec<input::Input>,
+    /// Controllers the injector was made without, and their input meanwhile.
+    pads_wait: PadsWait,
     /// A co-op player's slot, which takes its input instead of an injector.
     coop: Option<crate::nucleus::Player>,
     /// Whether finding the co-op player was tried.
@@ -2227,7 +2215,7 @@ const PADS_RETRY: Duration = Duration::from_millis(100);
 
 /// The controllers could not be had (the previous stream's are still closing): the stream's
 /// card says keyboard and mouse work meanwhile.
-fn controllers_wait(s: &Session, error: &anyhow::Error) {
+pub(crate) fn controllers_wait(s: &Session, error: &anyhow::Error) {
     tracing::warn!(client = %s.launch.client.name, error = %format!("{error:#}"), "the controllers are not ready yet; keyboard and mouse work meanwhile, and they are tried again");
     s.launch.warnings.set(
         "input_initialization",
@@ -2235,9 +2223,63 @@ fn controllers_wait(s: &Session, error: &anyhow::Error) {
     );
 }
 
+/// An injector made without the controllers, because they could not be had yet: when it
+/// tries for them again, and their input meanwhile. GameStream's control loop and the WebRTC
+/// input worker alike.
+#[derive(Default)]
+pub(crate) struct PadsWait {
+    retry: Option<Instant>,
+    held: Vec<input::Input>,
+}
+
+impl PadsWait {
+    /// When it next tries for them, while it waits.
+    pub(crate) fn retry_at(&self) -> Option<Instant> {
+        self.retry
+    }
+    /// They could not be had at `now`: tried again [`PADS_RETRY`] later.
+    pub(crate) fn failed(&mut self, now: Instant) {
+        self.retry = Some(now + PADS_RETRY);
+    }
+    /// Takes their input out of `inputs` while it waits ([`hold_pad_input`]); nothing once
+    /// they are there.
+    pub(crate) fn hold(&mut self, inputs: &mut Vec<input::Input>) {
+        if self.retry.is_some() {
+            hold_pad_input(inputs, &mut self.held);
+        }
+    }
+    /// Tries for them when it is time at `now`: `attach` gets and gives them to the
+    /// injector. Once they are there, what was held, to go in before anything newer.
+    pub(crate) fn retry(
+        &mut self,
+        now: Instant,
+        attach: impl FnOnce() -> Result<()>,
+    ) -> Option<Vec<input::Input>> {
+        if self.retry.is_none_or(|at| now < at) {
+            return None;
+        }
+        match attach() {
+            Ok(()) => {
+                self.retry = None;
+                Some(std::mem::take(&mut self.held))
+            }
+            Err(_) => {
+                self.failed(now);
+                None
+            }
+        }
+    }
+}
+
+/// The controllers came after [`controllers_wait`].
+pub(crate) fn controllers_back(s: &Session) {
+    s.launch.warnings.clear("input_initialization");
+    tracing::info!(client = %s.launch.client.name, "the controllers are back");
+}
+
 /// Gives the injector the controller session's pads, and the USB audio the client announced
 /// for them before they came.
-fn attach_pads(
+pub(crate) fn attach_pads(
     i: &mut Injector,
     pads: Arc<butterpollo_windows::input::GamepadThread>,
     announced: &[u8; 16],

@@ -1682,6 +1682,45 @@ fn keyboard_and_mouse_go_on_while_the_controllers_wait_and_theirs_is_held() {
     assert_eq!(held.len(), 2);
 }
 #[test]
+fn an_injector_without_controllers_retries_on_its_interval_and_replays_what_waited() {
+    use std::time::{Duration, Instant};
+    let start = Instant::now();
+    let after = |ms| start + Duration::from_millis(ms);
+    let mut wait = PadsWait::default();
+    let moved = input::Input::Relative { x: 1, y: 1 };
+    let mut inputs = vec![input::Input::Haptics(false), moved.clone()];
+    wait.hold(&mut inputs);
+    assert_eq!(
+        inputs.len(),
+        2,
+        "nothing waits while the controllers are there"
+    );
+    // GameStream's control loop and the WebRTC worker alike.
+    wait.failed(start);
+    wait.hold(&mut inputs);
+    assert_eq!(inputs, [moved]);
+    let mut tries = 0;
+    let none = wait.retry(after(50), || {
+        tries += 1;
+        Ok(())
+    });
+    assert!(none.is_none());
+    assert_eq!(tries, 0, "not before the interval");
+    let refused = wait.retry(after(100), || {
+        tries += 1;
+        anyhow::bail!("the previous stream's controllers are closing")
+    });
+    assert!(refused.is_none());
+    assert_eq!(wait.retry_at(), Some(after(200)));
+    let held = wait.retry(after(200), || {
+        tries += 1;
+        Ok(())
+    });
+    assert_eq!(held, Some(vec![input::Input::Haptics(false)]));
+    assert_eq!(tries, 2);
+    assert_eq!(wait.retry_at(), None);
+}
+#[test]
 fn an_arrived_pad_is_asked_for_the_sensors_it_has() {
     assert_eq!(
         motion_requests(3, 0x30),
