@@ -2,6 +2,7 @@ package com.limelight.nvstream;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -281,8 +282,27 @@ public class RoamingNetworkTrackerTest {
         assertEquals(java.net.Inet4Address.class, RoamingNetworkWatch.addressFamily("192.168.1.10"));
         assertEquals(java.net.Inet6Address.class, RoamingNetworkWatch.addressFamily("fd00::10"));
         assertEquals(java.net.Inet6Address.class, RoamingNetworkWatch.addressFamily("[fd00::10]"));
+        assertEquals(java.net.Inet4Address.class, RoamingNetworkWatch.addressFamily("::ffff:192.168.1.10"));
+        assertEquals(java.net.Inet4Address.class, RoamingNetworkWatch.addressFamily("[::FFFF:192.168.1.10]"));
+        assertEquals(java.net.Inet4Address.class, RoamingNetworkWatch.addressFamily("::ffff:c0a8:10a"));
+        assertEquals(java.net.Inet6Address.class, RoamingNetworkWatch.addressFamily("::ffff:1"));
         assertNull(RoamingNetworkWatch.addressFamily("gaming-pc.local"));
         assertNull(RoamingNetworkWatch.addressFamily(null));
+    }
+
+    // A network replaced without a loss gets no onLost: its addresses go at the switch, and the
+    // kept networks stay bounded however many come and go.
+    @Test public void networksReplacedWithoutALossAreNotKept() {
+        CEngineEvents events = new CEngineEvents();
+        RoamingNetworkTracker tracker = new RoamingNetworkTracker(WIFI, events, () -> 0);
+        tracker.addresses(WIFI, addresses("192.168.1.20"));
+        tracker.addresses(CELLULAR, addresses("192.168.1.20"));
+        tracker.capabilities(CELLULAR, false);
+        assertEquals(1, tracker.keptNetworks());
+        for (int i = 0; i < 3 * RoamingNetworkTracker.MAX_NETWORKS; i++) {
+            tracker.addresses("pending " + i, addresses("192.168.1.20"));
+        }
+        assertTrue(tracker.keptNetworks() <= RoamingNetworkTracker.MAX_NETWORKS);
     }
 
     // An engine that tells is never overruled: its "carries on" stands on other addresses.

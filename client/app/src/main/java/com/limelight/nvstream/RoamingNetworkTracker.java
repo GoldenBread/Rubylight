@@ -76,8 +76,10 @@ final class RoamingNetworkTracker {
     private long recheckUntil;
     private Object recheckAddresses;
     // The newest addresses reported for each network, and those of the network the stream's
-    // connection left (lost, or switched away from).
+    // connection left (lost, or switched away from). A network replaced without a loss gets no
+    // onLost, so its entry goes at the switch; MAX_NETWORKS bounds the rest.
     private final java.util.Map<Object, Object> addressesOf = new java.util.HashMap<>();
+    static final int MAX_NETWORKS = 8;
     private Object lostAddresses;
 
     /** streamNetwork: the default network when the stream started, or null if unknown. */
@@ -123,8 +125,9 @@ final class RoamingNetworkTracker {
         // Without a loss only an engine that cannot tell is asked about here: one that tells
         // roams or answers on its own.
         boolean switched = !returned && !reporter.answersForTheRoute();
+        Object previousAddresses = returned ? null : addressesOf.remove(previous);
         if (switched) {
-            lostAddresses = addressesOf.get(previous);
+            lostAddresses = previousAddresses;
         }
         if (returned || switched) {
             change = routeAnswer(change, addressesOf.get(network));
@@ -151,6 +154,10 @@ final class RoamingNetworkTracker {
     synchronized void addresses(Object network, Object addresses) {
         if (stopped) {
             return;
+        }
+        if (!addressesOf.containsKey(network) && addressesOf.size() >= MAX_NETWORKS) {
+            // Networks whose loss never came: start over rather than grow.
+            addressesOf.clear();
         }
         addressesOf.put(network, addresses);
         if (lost || recheck == null || !network.equals(recheck)) {
@@ -216,6 +223,11 @@ final class RoamingNetworkTracker {
         if (!(address instanceof java.net.InetAddress)) return true;
         java.net.InetAddress inet = (java.net.InetAddress) address;
         return !inet.isLinkLocalAddress() && !inet.isLoopbackAddress() && !inet.isAnyLocalAddress();
+    }
+
+    /** The networks whose addresses are kept (for tests). */
+    synchronized int keptNetworks() {
+        return addressesOf.size();
     }
 
     /** The stream ends: nothing is reported after this returns. */

@@ -100,6 +100,14 @@ final class RoamingNetworkWatch {
      */
     static Class<?> addressFamily(String address) {
         if (address == null || address.isEmpty()) return null;
+        if (address.startsWith("[") && address.endsWith("]")) address = address.substring(1, address.length() - 1);
+        // An IPv4-mapped literal (::ffff:192.168.1.10, or ::ffff:c0a8:10a) is an Inet4Address to Java.
+        if (address.regionMatches(true, 0, "::ffff:", 0, 7)) {
+            String rest = address.substring(7);
+            if (rest.indexOf('.') > 0 || (rest.indexOf(':') > 0 && rest.indexOf(':') == rest.lastIndexOf(':'))) {
+                return java.net.Inet4Address.class;
+            }
+        }
         if (address.indexOf(':') >= 0) return java.net.Inet6Address.class;
         for (int i = 0; i < address.length(); i++) {
             char c = address.charAt(i);
