@@ -385,6 +385,15 @@ fn preparation_undo_and_failed_preparation_keep_global_order_and_rollback() {
 }
 
 #[test]
+fn a_stopped_launch_whose_command_would_not_end_says_stopped_not_timed_out() {
+    assert_eq!(wait_failure("Game", 0, true).to_string(), LAUNCH_STOPPED);
+    assert_eq!(
+        wait_failure("Game", 0, false).to_string(),
+        "Game: preparation command 1 did not finish within 120 seconds. Check the app's and the global preparation commands in the host console."
+    );
+}
+
+#[test]
 fn a_stopped_launch_ends_its_running_preparation_command_and_undoes_the_finished_ones() {
     let elevated = butterpollo_windows::process::user_environment().is_err();
     let f = Fixture::new();

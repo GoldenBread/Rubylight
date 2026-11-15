@@ -547,7 +547,7 @@ impl RunningApp {
                 };
                 let code = waited.map_err(|error| {
                     tracing::warn!(%error, app = %app.name, "preparation command wait failed");
-                    prep_failure(&app.name, index, "did not finish within 120 seconds")
+                    wait_failure(&app.name, index, stopped())
                 })?;
                 // Ended by a stop: this command's own undo does not run, the earlier ones' do.
                 let Some(code) = code else {
@@ -1353,6 +1353,16 @@ fn prep_failure(app: &str, index: usize, what: &str) -> anyhow::Error {
         "{app}: preparation command {} {what}. Check the app's and the global preparation commands in the host console.",
         index + 1
     )
+}
+/// Why waiting for preparation command `index` failed. When the launch was `stopped`, the stop
+/// is the reason, also when ending the command failed (an elevated command Windows would not
+/// end, or one slow to go): not a timeout.
+fn wait_failure(app: &str, index: usize, stopped: bool) -> anyhow::Error {
+    if stopped {
+        anyhow::anyhow!(LAUNCH_STOPPED)
+    } else {
+        prep_failure(app, index, "did not finish within 120 seconds")
+    }
 }
 /// Why a launch that Quit, End session or the device's next launch stopped failed.
 pub const LAUNCH_STOPPED: &str = "The launch was stopped before the game started.";
