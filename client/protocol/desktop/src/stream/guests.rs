@@ -70,6 +70,15 @@ impl Guests {
                 if let Some(name) = announcements(&read, &mut self.announced).into_iter().next() {
                     self.prompt.get_or_insert(name);
                 }
+                // A Let in or Deny kept while this read was out answers nothing once the request
+                // is gone (the device gave up): it is dropped, not sent to fail.
+                let request = match &self.pending {
+                    Some(GuestAction::Approve { id, .. } | GuestAction::Deny(id)) => Some(*id),
+                    _ => None,
+                };
+                if request.is_some_and(|id| !read.waiting.iter().any(|r| r.id == id)) {
+                    self.pending = None;
+                }
                 self.read = Some(read);
                 Vec::new()
             }
@@ -295,6 +304,30 @@ mod tests {
         // With nothing out, an action goes at once.
         assert_eq!(guests.queue(GuestAction::Deny(3)), Some(GuestAction::Deny(3)));
         assert!(guests.busy);
+    }
+
+    /// The device gave up while a read was out: the Let in or Deny kept meanwhile is dropped
+    /// without an error. Other kept actions, and an answer to a request still waiting, go.
+    #[test]
+    fn an_answer_kept_for_a_request_that_is_gone_is_dropped() {
+        let now = Instant::now();
+        for kept in [GuestAction::Approve { id: 3, permission: None }, GuestAction::Deny(3)] {
+            let mut guests = Guests::default();
+            guests.answered(GuestsAnswer::Read(Ok(read(true, &[(3, "Tablet")]))), now);
+            guests.busy = true;
+            assert_eq!(guests.queue(kept), None);
+            assert!(guests.answered(GuestsAnswer::Read(Ok(read(true, &[(4, "Phone")]))), now).is_empty(), "no error");
+            assert_eq!(guests.take_pending(), None);
+        }
+        let mut guests = Guests::default();
+        guests.busy = true;
+        assert_eq!(guests.queue(GuestAction::Deny(3)), None);
+        guests.answered(GuestsAnswer::Read(Ok(read(true, &[(3, "Tablet")]))), now);
+        assert_eq!(guests.take_pending(), Some(GuestAction::Deny(3)), "still waiting: sent");
+        guests.busy = true;
+        assert_eq!(guests.queue(GuestAction::Kick(5)), None);
+        guests.answered(GuestsAnswer::Read(Ok(read(true, &[]))), now);
+        assert_eq!(guests.take_pending(), Some(GuestAction::Kick(5)), "not an answer to a request");
     }
 
     #[test]
