@@ -3849,31 +3849,59 @@ fn what_an_earlier_install_left_is_named_as_such_and_its_settings_are_kept() {
     );
     std::fs::remove_file(folder.join(PAK)).unwrap();
 
-    // The provider's settings an earlier install left (one made by hand),
-    // with what the provider wrote: taken over, the settings as the user
-    // left them, as an update keeps them.
+    // The provider's settings in such a folder can only be the user's (made
+    // by hand, or left from their own install): taken over and used as they
+    // are, named apart from the files Rubylight placed.
     std::fs::write(folder.join(PINI), b"path = gpu\n").unwrap();
     provider_ran(folder, DLSSG);
     let placed = install(Some(&exe), None, &cache);
     assert!(matches!(placed, Response::Placed { .. }), "{placed:?}");
     assert_eq!(std::fs::read(folder.join(PINI)).unwrap(), b"path = gpu\n");
-    assert!(manifest_of(folder).files.contains_key(PINI));
+    let manifest = manifest_of(folder);
+    assert_eq!(manifest.taken_over, vec![PINI.to_string()]);
+    assert!(!manifest.files.contains_key(PINI));
     assert_eq!(std::fs::read(folder.join(PAK)).unwrap(), b"model");
-    // A launch's check leaves them so.
+    // A launch's check and an update leave them so.
     assert!(matches!(
         prepare(&exe, Some(&cache)),
         Response::Placed { .. }
     ));
+    let newer = release(temp.path(), "FG-V.B17", b"OptiScaler newer");
+    let updated = install(Some(&exe), None, &newer);
+    assert!(
+        matches!(updated, Response::Placed { updated: true, .. }),
+        "{updated:?}"
+    );
     assert_eq!(std::fs::read(folder.join(PINI)).unwrap(), b"path = gpu\n");
-    // A removal takes them as it takes settings, and leaves the folder as
-    // it was.
+    assert_eq!(manifest_of(folder).taken_over, vec![PINI.to_string()]);
+    // A removal takes what Rubylight put there and leaves the user's
+    // settings, named, with the folders around them.
+    assert_eq!(
+        remove(&exe),
+        Response::Removed {
+            kept: vec![PINI.into()]
+        }
+    );
+    assert_eq!(std::fs::read(folder.join(PINI)).unwrap(), b"path = gpu\n");
+    assert_eq!(names(&folder.join(DLSSG)), ["nr_fg.ini"]);
+    // Turned on again, they are taken over again. Once they are gone a
+    // launch says so, and a removal leaves the folder as it was.
+    assert!(matches!(
+        install(Some(&exe), None, &cache),
+        Response::Placed { .. }
+    ));
+    assert_eq!(manifest_of(folder).taken_over, vec![PINI.to_string()]);
+    std::fs::remove_file(folder.join(PINI)).unwrap();
+    let Response::Error { message } = prepare(&exe, Some(&cache)) else {
+        panic!()
+    };
+    assert!(message.contains("nr_fg.ini is missing"), "{message}");
     assert_eq!(remove(&exe), Response::Removed { kept: vec![] });
     assert_eq!(snapshot(folder), game_files);
 }
 
-/// Settings an earlier install left, taken over by a first install that is
-/// cut short, stay as they were: the manifest names them only once the
-/// install is whole.
+/// Settings the user left in such a folder, taken over by a first install
+/// that is cut short, stay as they were.
 #[test]
 fn a_first_install_cut_short_leaves_the_settings_it_took_over() {
     let temp = tempdir();
@@ -3906,13 +3934,20 @@ fn a_first_install_cut_short_leaves_the_settings_it_took_over() {
     std::fs::remove_dir(&blocker).unwrap();
     assert_eq!(std::fs::read(&settings).unwrap(), b"path = gpu\n");
     assert!(!folder.join(MANIFEST).exists());
-    // Turned on again, they are taken over as they are, and go with the
-    // removal.
+    // Turned on again, they are taken over as they are, and stay through
+    // the removal.
     assert!(matches!(
         install(Some(&exe), None, &cache),
         Response::Placed { .. }
     ));
     assert_eq!(std::fs::read(&settings).unwrap(), b"path = gpu\n");
-    assert_eq!(remove(&exe), Response::Removed { kept: vec![] });
+    assert_eq!(
+        remove(&exe),
+        Response::Removed {
+            kept: vec![PINI.into()]
+        }
+    );
+    assert_eq!(std::fs::read(&settings).unwrap(), b"path = gpu\n");
+    std::fs::remove_dir_all(folder.join("OptiScaler")).unwrap();
     assert_eq!(snapshot(folder), game_files);
 }

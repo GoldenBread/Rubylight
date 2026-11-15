@@ -1350,7 +1350,7 @@ fn place(
     // release has it stays; one to copy keeps the form the release before
     // left, if any.
     let mut wanted = Vec::new();
-    let mut adopted = Vec::new();
+    let mut taken_over = Vec::new();
     let mut plan = Vec::new();
     for (path, placed) in &package.files {
         let Some(target) = neural::target(layout.mode, path, &layout.proxy, &layout.opti_dir)
@@ -1363,23 +1363,23 @@ fn place(
             .flat_map(|m| [m.files.get(&target), m.previous.get(&target)])
             .flatten()
             .collect();
-        // The provider's settings an earlier install left in a folder taken
-        // over stay as the user left them, as an update keeps them. The
-        // manifest names them once the install is whole, so a removal takes
-        // them as it takes settings and a first install cut short leaves
-        // them where they were.
-        let taken_over = target.rsplit_once('/').is_some_and(|(parent, _)| {
+        // Settings found in a folder an earlier install left are the user's
+        // (Rubylight's own removal takes the ones it placed): the install
+        // uses them as they are, and the manifest names them apart from the
+        // files it placed, so a removal leaves them, as does a first install
+        // cut short. An update keeps them so.
+        let in_taken_over = target.rsplit_once('/').is_some_and(|(parent, _)| {
             layout
                 .adopt
                 .iter()
                 .any(|relative| relative.eq_ignore_ascii_case(parent))
         });
         if forms.is_empty()
-            && taken_over
+            && (in_taken_over || old.as_ref().is_some_and(|m| m.taken_over.contains(&target)))
             && neural::settings(&target)
             && std::fs::symlink_metadata(folder.join(&target)).is_ok_and(|meta| meta.is_file())
         {
-            adopted.push((target, placed.clone()));
+            taken_over.push(target);
             continue;
         }
         if forms.is_empty() && std::fs::symlink_metadata(folder.join(&target)).is_ok() {
@@ -1463,6 +1463,7 @@ fn place(
         files,
         previous,
         folders,
+        taken_over,
         ini: ini.as_ref().map(|(_, _, record)| record.clone()),
     };
     write_manifest(folder, &manifest, writer)?;
@@ -1545,9 +1546,6 @@ fn place(
                     manifest.files.remove(&path);
                 }
             }
-        }
-        for (target, placed) in &adopted {
-            manifest.files.insert(target.clone(), placed.clone());
         }
         manifest.release = package.tag.clone();
         manifest.previous.clear();
@@ -1632,6 +1630,16 @@ fn prepare(
             )));
         }
     }
+    // The user's settings it found are used as they are, but are needed:
+    // turning it off and on again places the release's.
+    for path in &manifest.taken_over {
+        if std::fs::symlink_metadata(folder.join(path)).is_err() {
+            return Err(Failure::Error(format!(
+                "Neural Rendering's {path} is missing in {}: turn it off and on again",
+                folder.display()
+            )));
+        }
+    }
     Ok(Response::Placed {
         exe: exe.to_path_buf(),
         release: manifest.release,
@@ -1666,8 +1674,9 @@ fn remove(folder: &Path, writer: Writer) -> Outcome<Response> {
 /// Delete what the manifest `name` names and is still as placed, put the
 /// user's OptiScaler.ini lines back, delete OptiScaler's logs, what the
 /// provider wrote in its folder ([`neural::provider_files`]) and the folders
-/// it created once empty. A file someone changed stays, as does anything
-/// else in those folders ([`left_in`]); both are returned.
+/// it created once empty. A file someone changed stays, as do the settings
+/// it took over and anything else in those folders ([`left_in`]); all are
+/// returned.
 fn remove_by(folder: &Path, name: &str, writer: Writer) -> Outcome<Vec<String>> {
     guard(folder, name, writer)?;
     let Some(manifest) = manifest(folder, name).map_err(Failure::Error)? else {
@@ -1679,6 +1688,7 @@ fn remove_by(folder: &Path, name: &str, writer: Writer) -> Outcome<Vec<String>> 
         .files
         .keys()
         .chain(&manifest.folders)
+        .chain(&manifest.taken_over)
         .chain(manifest.ini.iter().map(|ini| &ini.path))
     {
         guard(folder, path, writer)?;

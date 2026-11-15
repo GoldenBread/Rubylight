@@ -381,6 +381,8 @@ fn placed(text: &str) -> Placed {
     }
 }
 
+const SETTINGS_FG: &str = "OptiScaler/custom/Apex Neural Rendering FG/dlssg/nr_fg.ini";
+
 fn manifest() -> Manifest {
     Manifest {
         by: PLACED_BY.into(),
@@ -405,6 +407,7 @@ fn manifest() -> Manifest {
         .collect(),
         previous: BTreeMap::new(),
         folders: vec!["OptiScaler".into()],
+        taken_over: Vec::new(),
         ini: None,
     }
 }
@@ -433,6 +436,22 @@ fn a_manifest_is_trusted_only_as_the_host_wrote_it() {
         break_added: false,
     });
     assert!(Manifest::parse(&serde_json::to_string(&ini).unwrap()).is_err());
+    // Settings taken over: inside the folder, and never also placed.
+    let mut found = good.clone();
+    found.files.remove(SETTINGS_FG);
+    found.taken_over.push(SETTINGS_FG.into());
+    let text = serde_json::to_string(&found).unwrap();
+    assert!(text.contains("\"taken_over\""), "{text}");
+    assert_eq!(Manifest::parse(&text), Ok(found.clone()));
+    let mut both = good.clone();
+    both.taken_over.push(SETTINGS_FG.into());
+    assert!(Manifest::parse(&serde_json::to_string(&both).unwrap()).is_err());
+    let mut outside = found.clone();
+    outside.taken_over.push("../nr_fg.ini".into());
+    assert!(Manifest::parse(&serde_json::to_string(&outside).unwrap()).is_err());
+    // Without any, the manifest is written as a release before this list
+    // reads it.
+    assert!(!serde_json::to_string(&good).unwrap().contains("taken_over"));
     // An update's earlier forms only of files it names.
     let mut updating = good.clone();
     updating
@@ -475,7 +494,7 @@ fn a_rubylight_3_0_amdnr_manifest_still_reads() {
     let legacy = Manifest::parse(&text).unwrap();
     assert_eq!(legacy.proxy, "winhttp.dll");
     assert_eq!(legacy.mode, Mode::Full);
-    assert!(legacy.switches.is_empty() && legacy.ini.is_none());
+    assert!(legacy.switches.is_empty() && legacy.ini.is_none() && legacy.taken_over.is_empty());
     let removal = removal(&legacy, |path| match path {
         "OptiScaler.ini" => Now::Changed,
         "winhttp.dll" => Now::Changed,
@@ -505,6 +524,18 @@ fn removal_deletes_what_is_still_as_placed_and_keeps_what_changed() {
         ]
     );
     assert_eq!(removal.keep, ["dxgi.dll"]);
+    // Settings the host found and took over are the user's: never deleted,
+    // named unless gone.
+    let mut found = manifest();
+    found.files.remove(SETTINGS_FG);
+    found.taken_over = vec![SETTINGS_FG.into(), "OptiScaler/gone.ini".into()];
+    let left = super::removal(&found, |path| match path {
+        SETTINGS_FG => Now::Changed,
+        "OptiScaler/gone.ini" => Now::Missing,
+        _ => Now::Same,
+    });
+    assert!(!left.delete.iter().any(|path| path == SETTINGS_FG));
+    assert_eq!(left.keep, [SETTINGS_FG]);
     assert!(
         logs("OptiScaler.log")
             && logs("lmxxf_backend.log")

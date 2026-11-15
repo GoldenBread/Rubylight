@@ -585,6 +585,12 @@ pub struct Manifest {
     /// Folders the host created, parents first.
     #[serde(default)]
     pub folders: Vec<String>,
+    /// Settings files ([`settings`]) that were in a folder an earlier install
+    /// left when the host took it over: the user's, used as they are. A
+    /// removal leaves them and names them. They are not in `files`, so a
+    /// release that does not know this list leaves them too.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub taken_over: Vec<String>,
     /// The user's OptiScaler.ini lines the add-on changed ([`Mode::Addon`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ini: Option<IniRecord>,
@@ -606,9 +612,17 @@ impl Manifest {
                 .keys()
                 .all(|path| manifest.files.contains_key(path))
             || !manifest.folders.iter().all(inside)
+            || !manifest.taken_over.iter().all(inside)
             || manifest.ini.as_ref().is_some_and(|ini| !inside(&ini.path))
         {
             return Err("the manifest names a file outside the game folder".into());
+        }
+        if manifest
+            .taken_over
+            .iter()
+            .any(|path| manifest.files.contains_key(path))
+        {
+            return Err("the manifest names a file as both placed and taken over".into());
         }
         Ok(manifest)
     }
@@ -628,13 +642,15 @@ pub enum Now {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Removal {
     pub delete: Vec<String>,
-    /// Placed files that changed since; they may be someone else's now.
+    /// Placed files that changed since (they may be someone else's now),
+    /// and the settings the host took over, which are the user's.
     pub keep: Vec<String>,
 }
 
 /// Removal of a manifest's files: those still as placed, and the settings
-/// files ([`settings`]) however they changed. Logs and folders follow in
-/// [`logs`] and the manifest's `folders`.
+/// files ([`settings`]) it placed however they changed; the settings it
+/// took over (`taken_over`) stay. Logs and folders follow in [`logs`] and
+/// the manifest's `folders`.
 pub fn removal(manifest: &Manifest, now: impl Fn(&str) -> Now) -> Removal {
     let mut removal = Removal::default();
     for path in manifest.files.keys() {
@@ -643,6 +659,11 @@ pub fn removal(manifest: &Manifest, now: impl Fn(&str) -> Now) -> Removal {
             Now::Same => removal.delete.push(path.clone()),
             Now::Changed if settings(path) => removal.delete.push(path.clone()),
             Now::Changed => removal.keep.push(path.clone()),
+        }
+    }
+    for path in &manifest.taken_over {
+        if now(path) != Now::Missing {
+            removal.keep.push(path.clone());
         }
     }
     removal
