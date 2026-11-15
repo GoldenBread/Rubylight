@@ -47,7 +47,7 @@ fn launch_plan() -> LaunchPlan {
         video_shown: false,
         confirm_replace: false,
         display_luminance: None,
-        manual_bitrate: false,
+        bitrate_before_manual: None,
         resume_bitrate_kbps: None,
     }
 }

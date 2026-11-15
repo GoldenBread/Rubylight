@@ -115,7 +115,7 @@ impl App {
             if full_chroma::started(&mut host.record, packed, describe_modes) { self.save_hosts(); }
         }
         // A bitrate the player set before a reconnect keeps automatic bitrate off, as it was.
-        let manual_bitrate = connecting.plan().manual_bitrate;
+        let manual_bitrate = connecting.plan().bitrate_before_manual.is_some();
         let mut streaming = Streaming::new(connecting, session, facts, display);
         // Before automatic bitrate is turned on below. Another PC's off is not this stream's to wait
         // for: it stays for the app's end.

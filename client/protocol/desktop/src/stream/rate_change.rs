@@ -64,6 +64,8 @@ pub struct Answer {
     pub bitrate_kbps: Option<u32>,
     /// The stream's rate after the result, when it changed.
     pub fps_millihz: Option<u32>,
+    /// The bitrate is one the player set in the menu, which a reconnect keeps.
+    pub by_hand: bool,
 }
 
 pub struct RateChange {
@@ -211,6 +213,7 @@ impl RateChange {
                 if changed && answer.bitrate_kbps.is_some() {
                     // A bitrate set by hand: the controller's range follows it.
                     if let Some(hint) = &mut self.hint { hint.overridden(self.bitrate_kbps, now_ms); }
+                    answer.by_hand = true;
                 }
                 answer.toast = Some(menu_text(result));
             }

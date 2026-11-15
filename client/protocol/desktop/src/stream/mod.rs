@@ -220,8 +220,9 @@ pub struct LaunchPlan {
     pub display_luminance: Option<nightjar_core::http::DisplayLuminance>,
     /// The player set the bitrate in the stream menu: `settings` start at it with automatic
     /// bitrate off, and automatic quality does not turn automatic bitrate on for itself
-    /// ([`Streaming::keep_manual_bitrate`]).
-    pub manual_bitrate: bool,
+    /// ([`Streaming::keep_manual_bitrate`]). Holds the settings' bitrate from before, which
+    /// turning automatic bitrate on again restores.
+    pub bitrate_before_manual: Option<u32>,
     /// An automatic reconnect's starting point for automatic bitrate: the rate it had cut to
     /// ([`reconnect_bitrate_start`]), below the stream's start bitrate it may climb back to.
     pub resume_bitrate_kbps: Option<u32>,
@@ -1274,17 +1275,27 @@ impl Streaming {
             plan
         };
         plan.microphone_muted = self.microphone_muted;
-        plan.resume_bitrate_kbps = reconnect_bitrate_start(automatic, self.bitrate_policy.is_some(), self.plan.manual_bitrate, self.bitrate_kbps);
+        plan.resume_bitrate_kbps =
+            reconnect_bitrate_start(automatic, self.bitrate_policy.is_some(), self.plan.bitrate_before_manual.is_some(), self.bitrate_kbps);
         Some(plan)
     }
 
     /// A bitrate the player set in the stream menu: every reconnect of this stream starts at it,
     /// with automatic bitrate off as it is now (Android's `GameRecovery.putSessionBitrate`).
     pub(super) fn keep_manual_bitrate(&mut self, kbps: u32) {
+        self.plan.bitrate_before_manual.get_or_insert(self.settings.bitrate_kbps);
         self.settings.bitrate_kbps = kbps;
         self.settings.adaptive_bitrate = false;
         self.plan.settings = self.settings.clone();
-        self.plan.manual_bitrate = true;
+    }
+
+    /// Automatic bitrate is on again: a reconnect starts from the settings' own bitrate with it.
+    fn forget_manual_bitrate(&mut self) {
+        if let Some(kbps) = self.plan.bitrate_before_manual.take() {
+            self.settings.bitrate_kbps = kbps;
+            self.settings.adaptive_bitrate = true;
+            self.plan.settings = self.settings.clone();
+        }
     }
 
     pub fn display_changed(&mut self, renderer: *mut SDL_Renderer) {
@@ -1737,6 +1748,8 @@ impl Streaming {
             self.bitrate_kbps = kbps;
             let now = self.started.elapsed().as_millis() as u64;
             if let Some(policy) = &mut self.bitrate_policy { policy.applied(kbps, kbps, now); }
+            // The player's own rate from the menu, which a reconnect keeps.
+            if answer.by_hand { self.keep_manual_bitrate(kbps); }
         }
         if let Some(fps_millihz) = answer.fps_millihz {
             self.facts.fps = fps_millihz.div_ceil(1000) as i32;
@@ -1778,6 +1791,7 @@ impl Streaming {
         }
         self.bitrate_policy = None;
         self.stop_host_abr();
+        if enabled { self.forget_manual_bitrate(); }
         self.adaptive_bitrate = enabled && self.facts.runtime_bitrate && self.facts.role == AppRole::Stream;
         if !self.adaptive_bitrate {
             // A PC without Rubylight's runtime bitrate may run its own controller (Foundation).

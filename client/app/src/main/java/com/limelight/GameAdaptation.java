@@ -548,6 +548,7 @@ final class GameAdaptation {
             game.rateChanges.stopAutomatic();
             return;
         }
+        game.sessionManualBitrate = 0;
         if (isAdaptiveBitrateEnabled()) setAdaptiveBitrateEnabled(false, false);
         game.qualityAutoBitrate = false;
         game.healthOriginalBitrate = game.healthTrialBitrate = 0;
@@ -702,6 +703,8 @@ final class GameAdaptation {
     }
 
     private void setAdaptiveBitrateEnabled(boolean enabled, boolean remember) {
+        // Automatic bitrate on again: a reconnect starts from the saved bitrate with it.
+        if (enabled) game.sessionManualBitrate = 0;
         if (remember) {
             AutoBitrateChoice.setForPc(game, adaptiveBitratePreferences(),
                     game.getIntent().getStringExtra(Game.EXTRA_PC_UUID), enabled);

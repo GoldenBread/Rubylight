@@ -515,7 +515,7 @@ impl App {
             video_shown: false,
             confirm_replace: false,
             display_luminance: sdl::launch_luminance(self.renderer),
-            manual_bitrate: false,
+            bitrate_before_manual: None,
             resume_bitrate_kbps: None,
         };
         self.cancelled = false;
