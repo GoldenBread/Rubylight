@@ -166,10 +166,12 @@ fn for_capture<'a>(
     // Automatic when WGC fails and it falls back to Desktop Duplication,
     // which shows as a capture on another GPU than the one Graphics card names.
     let chosen = config.get("adapter_name", "");
-    let display_bound = matches!(
-        config.get("capture", "auto").to_ascii_lowercase().as_str(),
-        "ddx" | "dxgi" | "amd"
-    ) || (!chosen.is_empty() && chosen != adapter);
+    // Compared in place: this runs for every picture.
+    let capture = config.get("capture", "auto");
+    let display_bound = ["ddx", "dxgi", "amd"]
+        .iter()
+        .any(|kind| capture.eq_ignore_ascii_case(kind))
+        || (!chosen.is_empty() && chosen != adapter);
     (0, Some(nvidia_enhance::Elsewhere { gpu, display_bound }))
 }
 
