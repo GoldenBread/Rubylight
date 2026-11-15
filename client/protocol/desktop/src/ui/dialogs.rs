@@ -1260,8 +1260,18 @@ impl Launcher {
                     let submitted = edit.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
                     dialog_buttons(ui, |ui| {
                         if (primary_button(ui, "Add").clicked() || submitted) && !text.trim().is_empty() {
-                            commands.push(Command::AddHost(text.trim().to_owned()));
-                            close = true;
+                            // An entry that does not read stays here with its reason, so a typo is
+                            // corrected rather than typed again.
+                            match crate::hosts::parse_entry(text) {
+                                Ok(_) => {
+                                    commands.push(Command::AddHost(text.trim().to_owned()));
+                                    close = true;
+                                }
+                                Err(why) => {
+                                    *error = Some(tr(why).into());
+                                    edit.request_focus();
+                                }
+                            }
                         }
                         if quiet_button(ui, "Paste link").clicked() {
                             commands.push(Command::AddFromClipboard);

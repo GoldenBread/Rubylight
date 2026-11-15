@@ -3728,6 +3728,22 @@ fn add_pc_takes_a_pasted_pairing_link_or_one_from_the_clipboard() {
     assert!(f.no_dialog());
 }
 
+#[test]
+fn add_pc_keeps_an_address_that_does_not_read_with_its_reason() {
+    let mut f = Frames::new(record("PC", false, false), Reach::Online);
+    for (typed, why) in [("den:notaport", crate::hosts::ADDRESS_INVALID), ("rubylight://pair?v=1", crate::hosts::LINK_INVALID)] {
+        f.l.dialog = Dialog::AddHost { text: typed.into(), error: None };
+        f.l.focus_dialog = true;
+        f.settle();
+        let add = f.placed.iter().rev().find(|(t, ..)| t == tr("Add")).map(|(_, rect, _)| rect.center()).expect("Add is drawn");
+        let commands = f.click_at(add, egui::PointerButton::Primary);
+        assert!(!commands.iter().any(|c| matches!(c, Command::AddHost(_))), "{typed}: nothing is added");
+        f.settle();
+        assert!(matches!(&f.l.dialog, Dialog::AddHost { text, error: Some(e) } if text == typed && e == tr(why)), "{typed}: the dialog stays with the words and the reason");
+        assert!(shows(&f, tr(why)), "{typed}: the reason is drawn: {:?}", f.drawn);
+    }
+}
+
 /// Screenshots of the main pages in both palettes, painted on the CPU from made-up PCs (no
 /// network): `NIGHTJAR_SHOTS=<dir> cargo test -p nightjar-desktop page_screenshots -- --ignored`.
 #[test]
