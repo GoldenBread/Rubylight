@@ -550,6 +550,63 @@ fn an_unresolved_rollback_cannot_be_overwritten_by_another_update() -> Result<()
     Ok(())
 }
 #[test]
+fn a_failed_automatic_install_warns_once_also_after_setup_restarted_the_host() -> Result<()> {
+    let f = Fixture::new();
+    let path = f.directory.join("update-result.json");
+    let shown = || {
+        f.host
+            .warnings
+            .snapshot()
+            .into_iter()
+            .filter(|warning| warning.code == UPDATE_FAILED)
+            .map(|warning| warning.message)
+            .collect::<Vec<_>>()
+    };
+    // No automatic install was started: a failed record is the console's to show.
+    butterpollo_core::state::write_json(
+        &path,
+        &json!({"version":"9.9.9","phase":"failed","error":"boom"}),
+    )?;
+    report_failed_install(&f.host, None);
+    assert!(shown().is_empty());
+    remember_attempt(&f.host, Some("v9.9.9"));
+    // What this host writes before it starts setup: setup still runs.
+    butterpollo_core::state::write_json(
+        &path,
+        &json!({"version":"v9.9.9","phase":"installing","started_at":1}),
+    )?;
+    report_failed_install(&f.host, None);
+    assert!(shown().is_empty());
+    // Setup rolled back and started this host again, which reads the outcome.
+    butterpollo_core::state::write_json(
+        &path,
+        &json!({"version":"9.9.9","phase":"rolled_back",
+            "error":"Update failed; the previous version was restored. The service did not start."}),
+    )?;
+    report_failed_install(&f.host, None);
+    assert_eq!(
+        shown(),
+        [
+            "The automatic update to Rubylight 9.9.9 could not be installed: Update failed; the previous version was restored. The service did not start. This PC keeps the version it has; install the update from Updates in the console's settings when the PC is free."
+        ]
+    );
+    assert!(f.host.aliases.lock().unwrap()["root"][AUTOMATIC_ATTEMPT].is_null());
+    // Once: a later look changes nothing, and the warning stays until it is dismissed.
+    crate::host_warnings::dismiss(&f.directory, &f.host.warnings, UPDATE_FAILED)?;
+    report_failed_install(&f.host, None);
+    assert!(shown().is_empty());
+    // An install that succeeded is forgotten quietly.
+    remember_attempt(&f.host, Some("v9.9.10"));
+    butterpollo_core::state::write_json(
+        &path,
+        &json!({"version":"9.9.10","phase":"installed","error":null}),
+    )?;
+    report_failed_install(&f.host, None);
+    assert!(shown().is_empty());
+    assert!(f.host.aliases.lock().unwrap()["root"][AUTOMATIC_ATTEMPT].is_null());
+    Ok(())
+}
+#[test]
 fn a_setup_that_stops_early_reports_its_recorded_reason() -> Result<()> {
     use std::os::windows::process::ExitStatusExt;
     let f = Fixture::new();

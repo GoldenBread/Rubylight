@@ -274,6 +274,90 @@ pub fn remember_check(h: &Shared) {
     }
 }
 
+/// The state file's entry naming the release an automatic install started, until its outcome
+/// is known: a host setup restarted after a rollback still reports the failure.
+const AUTOMATIC_ATTEMPT: &str = "automatic_update_attempt";
+/// The host warning for an automatic update that could not be installed.
+pub const UPDATE_FAILED: &str = "update_failed";
+
+/// Names the release an automatic install starts, or forgets it (`None`).
+fn remember_attempt(h: &Shared, version: Option<&str>) {
+    let mut aliases = h.aliases.lock().unwrap();
+    let mut next = aliases.clone();
+    if !next["root"].is_object() {
+        next["root"] = json!({});
+    }
+    match version {
+        Some(version) => next["root"][AUTOMATIC_ATTEMPT] = json!(version),
+        None => {
+            if let Some(root) = next["root"].as_object_mut() {
+                root.remove(AUTOMATIC_ATTEMPT);
+            }
+        }
+    }
+    match butterpollo_core::state::write_json(&h.aliases_path, &next) {
+        Ok(()) => *aliases = next,
+        Err(error) => {
+            tracing::warn!(error = %format!("{error:#}"), "the automatic update attempt could not be saved");
+        }
+    }
+}
+
+/// When `poll` next has `report_failed_install` read setup's record.
+static NEXT_REPORT: AtomicU64 = AtomicU64::new(0);
+/// Raises [`UPDATE_FAILED`] once for the automatic install `remember_attempt` named, when it
+/// failed: with `error` when this host saw setup fail, else from setup's record, which the
+/// host setup started again after a rollback reads. Nothing while setup has not written its
+/// outcome; a release installed or replaced by another install is forgotten quietly.
+fn report_failed_install(h: &Shared, error: Option<String>) {
+    let Some(version) = h.aliases.lock().unwrap()["root"][AUTOMATIC_ATTEMPT]
+        .as_str()
+        .map(str::to_owned)
+    else {
+        return;
+    };
+    let reason = match error {
+        Some(error) => Some(error),
+        None => {
+            let record = butterpollo_core::state::load_json(
+                &h.directory.join("update-result.json"),
+                Value::Null,
+            )
+            .unwrap_or(Value::Null);
+            let same = record["version"]
+                .as_str()
+                .is_some_and(|v| v.trim_start_matches('v') == version.trim_start_matches('v'));
+            match record["phase"].as_str() {
+                Some("installing") if same => return,
+                Some("failed" | "rolled_back" | "recovery_failed") if same => Some(
+                    record["error"]
+                        .as_str()
+                        .unwrap_or("setup did not finish")
+                        .to_owned(),
+                ),
+                _ => None,
+            }
+        }
+    };
+    remember_attempt(h, None);
+    if let Some(reason) = reason {
+        crate::host_warnings::notice(
+            &h.directory,
+            &h.warnings,
+            UPDATE_FAILED,
+            &failed_install_warning(&version, &reason),
+        );
+    }
+}
+/// What the console says of an automatic update that failed, and what to do.
+fn failed_install_warning(version: &str, reason: &str) -> String {
+    format!(
+        "The automatic update to Rubylight {} could not be installed: {}. This PC keeps the version it has; install the update from Updates in the console's settings when the PC is free.",
+        version.trim_start_matches('v'),
+        reason.trim_end().trim_end_matches('.')
+    )
+}
+
 /// A client is streaming or about to; a game left running does not count.
 pub fn streaming(h: &Shared) -> bool {
     let sessions = h.sessions.lock().unwrap();
@@ -420,6 +504,11 @@ pub fn cancel(h: &Shared) -> Result<()> {
 /// Moonlight launch lock, so a connection cannot slip between the check and setup.
 pub fn poll(h: &Shared) {
     tidy_downloads(h);
+    let now = now();
+    if NEXT_REPORT.load(Ordering::Relaxed) <= now {
+        NEXT_REPORT.store(now + 30, Ordering::Relaxed);
+        report_failed_install(h, None);
+    }
     poll_with(h, None, &hash_installer)
 }
 
@@ -533,6 +622,17 @@ fn poll_with(h: &Shared, hashed: Option<Hashed>, hash: &dyn Fn(&std::path::Path)
                 return;
             }
             finish_download(&mut state, result);
+            // A failure that keeps its version attempted (an installer that does not match its
+            // release) is not downloaded again automatically: the console says so.
+            if state["phase"] == "failed"
+                && state["automatic"] == true
+                && let Some(version) = state["attempted_version"].as_str()
+            {
+                let warning =
+                    failed_install_warning(version, state["error"].as_str().unwrap_or_default());
+                drop(state);
+                crate::host_warnings::notice(&h.directory, &h.warnings, UPDATE_FAILED, &warning);
+            }
         });
     } else {
         // Hashing up to MAX_INSTALLER bytes holds neither lock, so status
@@ -561,6 +661,11 @@ fn poll_with(h: &Shared, hashed: Option<Hashed>, hash: &dyn Fn(&std::path::Path)
             }
             (None, None) => None,
         };
+        if state["automatic"] == true
+            && let Some(version) = state["queued_version"].as_str()
+        {
+            remember_attempt(h, Some(version));
+        }
         let result = (|| -> Result<()> {
             if !supported(h) {
                 bail!("Updates require the installed Windows service");
@@ -606,13 +711,20 @@ fn poll_with(h: &Shared, hashed: Option<Hashed>, hash: &dyn Fn(&std::path::Path)
                     remove_download(download);
                 }
                 let error = setup_failure(&h.directory, result);
+                let reason = format!("{error:#}");
                 failed(&mut h.updates.lock().unwrap(), error);
+                report_failed_install(&h, Some(reason));
             });
             Ok(())
         })();
         match result {
             Ok(()) => state["phase"] = json!("installing"),
-            Err(error) => failed(&mut state, error),
+            Err(error) => {
+                let reason = format!("{error:#}");
+                failed(&mut state, error);
+                drop(state);
+                report_failed_install(h, Some(reason));
+            }
         }
     }
 }
