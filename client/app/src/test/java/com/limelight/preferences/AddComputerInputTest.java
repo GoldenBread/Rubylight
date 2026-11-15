@@ -148,6 +148,62 @@ public class AddComputerInputTest {
         }
     }
 
+    /**
+     * Back on "Connecting to the PC" stops the attempt and keeps the screen with its address. A late answer from the
+     * attempt, even one that swallowed the interrupt, neither closes the screen nor reports the PC added.
+     */
+    @Test public void backWhileConnectingKeepsTheAddressAndALateAnswerIsDropped() throws Exception {
+        LinkGate.reset();
+        java.util.concurrent.CountDownLatch asked = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch answer = new java.util.concurrent.CountDownLatch(1);
+        com.limelight.computers.ComputerManagerService manager = new com.limelight.computers.ComputerManagerService();
+        try (var controller = Robolectric.buildActivity(Screen.class).setup()) {
+            Screen activity = controller.get();
+            ReflectionHelpers.setField(activity, "managerBinder", manager.new ComputerManagerBinder() {
+                @Override public boolean addComputerBlocking(com.limelight.nvstream.http.ComputerDetails details) {
+                    asked.countDown();
+                    // An answer that comes anyway: the interrupt is swallowed.
+                    while (true) {
+                        try {
+                            answer.await();
+                            break;
+                        } catch (InterruptedException ignored) {
+                        }
+                    }
+                    details.state = com.limelight.nvstream.http.ComputerDetails.State.ONLINE;
+                    return true;
+                }
+            });
+            ReflectionHelpers.callInstanceMethod(activity, "startAddThread");
+            Thread attempt = ReflectionHelpers.getField(activity, "addThread");
+            TextView field = activity.findViewById(R.id.hostTextView);
+            field.setText("pc.local");
+            activity.findViewById(R.id.addPcButton).performClick();
+            assertTrue(asked.await(5, java.util.concurrent.TimeUnit.SECONDS));
+            org.robolectric.shadows.ShadowLooper.idleMainLooper();
+
+            android.app.Dialog spinner = org.robolectric.shadows.ShadowDialog.getLatestDialog();
+            assertTrue(spinner.isShowing());
+            spinner.onBackPressed();
+            org.robolectric.shadows.ShadowLooper.idleMainLooper();
+            assertFalse(spinner.isShowing());
+            assertFalse("Add PC stays open", activity.isFinishing());
+            assertEquals("pc.local", field.getText().toString());
+            assertTrue(field.isEnabled());
+            assertTrue(activity.findViewById(R.id.addPcButton).isEnabled());
+            assertNotSame("a new thread takes the next address", attempt, ReflectionHelpers.getField(activity, "addThread"));
+
+            answer.countDown();
+            attempt.join(5000);
+            assertFalse(attempt.isAlive());
+            org.robolectric.shadows.ShadowLooper.idleMainLooper();
+            assertFalse("the late answer does not close the screen", activity.isFinishing());
+            assertNull("nor says the PC was added", org.robolectric.shadows.ShadowToast.getLatestToast());
+            assertTrue(field.isEnabled());
+        }
+        LinkGate.reset();
+    }
+
     @Test public void aFailedRequestLetsTheLinkThrough() {
         LinkGate.reset();
         try (var controller = Robolectric.buildActivity(Screen.class).setup()) {

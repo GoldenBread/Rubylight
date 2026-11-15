@@ -57,7 +57,8 @@ public class AddComputerManually extends NightjarActivity {
     private boolean submitting;
     private ComputerManagerService.ComputerManagerBinder managerBinder;
     private final LinkedBlockingQueue<String> computersToAdd = new LinkedBlockingQueue<>();
-    private Thread addThread;
+    // Written on the UI thread; the add thread reads it to learn that Back replaced it.
+    private volatile Thread addThread;
     private boolean managerServiceBound;
     private boolean foreground;
     // Opened to pair a link the user confirmed in PairLinkActivity: the link stays in memory, and this mark in the
@@ -193,8 +194,10 @@ public class AddComputerManually extends NightjarActivity {
         boolean success;
         int portTestResult;
 
+        // Back on the spinner stops this attempt and keeps the screen with the address, to be corrected.
+        final Thread attempt = Thread.currentThread();
         SpinnerDialog dialog = SpinnerDialog.displayDialog(this, getResources().getString(R.string.title_add_pc),
-            getResources().getString(R.string.msg_add_pc), true);
+            getResources().getString(R.string.msg_add_pc), () -> cancelAdd(attempt));
 
         try {
             // Check if we parsed a host address successfully
@@ -260,16 +263,16 @@ public class AddComputerManually extends NightjarActivity {
         }
 
         if (invalidLink) {
-            Dialog.displayDialog(this, getResources().getString(R.string.conn_error_title), getResources().getString(R.string.addpc_qr_invalid), false);
+            forAttempt(attempt, () -> Dialog.displayDialog(this, getResources().getString(R.string.conn_error_title), getResources().getString(R.string.addpc_qr_invalid), false));
         }
         else if (pinnedElsewhere) {
-            Dialog.displayDialog(this, getResources().getString(R.string.pair_pairing_title), getResources().getString(R.string.pair_qr_cert_mismatch), false);
+            forAttempt(attempt, () -> Dialog.displayDialog(this, getResources().getString(R.string.pair_pairing_title), getResources().getString(R.string.pair_qr_cert_mismatch), false));
         }
         else if (invalidInput) {
-            Dialog.displayDialog(this, getResources().getString(R.string.conn_error_title), getResources().getString(R.string.addpc_unknown_host), false);
+            forAttempt(attempt, () -> Dialog.displayDialog(this, getResources().getString(R.string.conn_error_title), getResources().getString(R.string.addpc_unknown_host), false));
         }
         else if (wrongSiteLocal) {
-            Dialog.displayDialog(this, getResources().getString(R.string.conn_error_title), getResources().getString(R.string.addpc_wrong_sitelocal), false);
+            forAttempt(attempt, () -> Dialog.displayDialog(this, getResources().getString(R.string.conn_error_title), getResources().getString(R.string.addpc_wrong_sitelocal), false));
         }
         else if (!success) {
             String dialogText;
@@ -279,19 +282,17 @@ public class AddComputerManually extends NightjarActivity {
             else {
                 dialogText = getResources().getString(R.string.addpc_fail);
             }
-            Dialog.displayDialog(this, getResources().getString(R.string.conn_error_title), dialogText, false);
+            forAttempt(attempt, () -> Dialog.displayDialog(this, getResources().getString(R.string.conn_error_title), dialogText, false));
         }
         else if (link != null) {
             // Added: pair now with the link's one-time PIN, refused if the PC's certificate is not the link's.
             final PairingLink pairingLink = link;
             ComputerDetails stored = binder.getComputer(details.uuid);
             final ComputerDetails computer = stored != null ? stored : details;
-            runOnUiThread(() -> {
-                if (!isFinishing() && !isDestroyed()) hostActions.pairWithLink(computer, pairingLink);
-            });
+            forAttempt(attempt, () -> hostActions.pairWithLink(computer, pairingLink));
         }
         else {
-            AddComputerManually.this.runOnUiThread(new Runnable() {
+            forAttempt(attempt, new Runnable() {
                 @Override
                 public void run() {
                 Toast.makeText(AddComputerManually.this, getResources().getString(R.string.addpc_success), Toast.LENGTH_LONG).show();
@@ -311,14 +312,19 @@ public class AddComputerManually extends NightjarActivity {
         addThread = new Thread() {
             @Override
             public void run() {
-                while (!isInterrupted()) {
+                final Thread self = this;
+                // A thread Back replaced takes no further address, even if its interrupt was swallowed on the way.
+                while (!isInterrupted() && addThread == self) {
                     try {
                         String computer = computersToAdd.take();
                         try {
                             doAddPc(computer, binder);
                         } finally {
                             runOnUiThread(() -> {
-                                if (!isFinishing() && !isDestroyed()) setSubmitting(false);
+                                // After Back the form is the replacing thread's, which may be adding again already.
+                                if (!isFinishing() && !isDestroyed() && (addThread == self || addThread == null)) {
+                                    setSubmitting(false);
+                                }
                             });
                         }
                     } catch (InterruptedException e) {
@@ -329,6 +335,21 @@ public class AddComputerManually extends NightjarActivity {
         };
         addThread.setName("UI - AddComputerManually");
         addThread.start();
+    }
+
+    /** Back on the spinner: the attempt stops, a new thread takes the next address, and the form keeps its text. */
+    private void cancelAdd(Thread attempt) {
+        if (addThread != attempt) return;
+        attempt.interrupt();
+        startAddThread();
+        setSubmitting(false);
+    }
+
+    /** Runs {@code action} on the UI thread unless Back stopped {@code attempt} meanwhile or the screen is closing. */
+    private void forAttempt(Thread attempt, Runnable action) {
+        runOnUiThread(() -> {
+            if (addThread == attempt && !isFinishing() && !isDestroyed()) action.run();
+        });
     }
 
     private void joinAddThread() {

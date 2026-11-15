@@ -17,26 +17,39 @@ public class SpinnerDialog implements Runnable,OnCancelListener {
     private final Activity activity;
     private AlertDialog progress;
     private final boolean finish;
+    /** Run on the UI thread when Back cancels the spinner, in place of finishing the activity; null for none. */
+    private final Runnable canceled;
     private volatile boolean dismissed;
 
     private static final ArrayList<SpinnerDialog> rundownDialogs = new ArrayList<>();
 
-    private SpinnerDialog(Activity activity, String title, String message, boolean finish)
+    private SpinnerDialog(Activity activity, String title, String message, boolean finish, Runnable canceled)
     {
         this.activity = activity;
         this.title = title;
         this.message = message;
         this.progress = null;
         this.finish = finish;
+        this.canceled = canceled;
     }
 
     public static SpinnerDialog displayDialog(Activity activity, String title, String message, boolean finish)
     {
-        SpinnerDialog spinner = new SpinnerDialog(activity, title, message, finish);
+        return show(new SpinnerDialog(activity, title, message, finish, null));
+    }
+
+    /** A spinner Back cancels, which runs {@code canceled} and leaves the activity open. */
+    public static SpinnerDialog displayDialog(Activity activity, String title, String message, Runnable canceled)
+    {
+        return show(new SpinnerDialog(activity, title, message, false, canceled));
+    }
+
+    private static SpinnerDialog show(SpinnerDialog spinner)
+    {
         synchronized (rundownDialogs) {
             rundownDialogs.add(spinner);
         }
-        activity.runOnUiThread(spinner);
+        spinner.activity.runOnUiThread(spinner);
         return spinner;
     }
 
@@ -107,8 +120,8 @@ public class SpinnerDialog implements Runnable,OnCancelListener {
                     .setTitle(title).setMessage(message).setView(content).create();
             progress.setOnCancelListener(this);
 
-            // If we want to finish the activity when this is killed, make it cancellable
-            if (finish)
+            // If we want to finish the activity or stop the work when this is killed, make it cancellable
+            if (finish || canceled != null)
             {
                 progress.setCancelable(true);
                 progress.setCanceledOnTouchOutside(false);
@@ -139,7 +152,11 @@ public class SpinnerDialog implements Runnable,OnCancelListener {
             rundownDialogs.remove(this);
         }
 
-        // This will only be called if finish was true, so we don't need to check again
-        activity.finish();
+        // This will only be called if finish was true or a cancel action was given
+        if (canceled != null) {
+            canceled.run();
+        } else {
+            activity.finish();
+        }
     }
 }

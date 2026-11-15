@@ -658,6 +658,10 @@ public class ComputerManagerService extends Service {
     }
 
     private boolean finishAdding(ComputerDetails fakeDetails, boolean polled) throws InterruptedException {
+        // A caller that gave up during the poll (Back on Add PC interrupts it) neither saves the PC nor starts polling it.
+        if (Thread.currentThread().isInterrupted()) {
+            throw new InterruptedException();
+        }
         if (polled) {
             // See if we have record of this PC to pull its pinned cert
             synchronized (pollingTuples) {
