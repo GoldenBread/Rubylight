@@ -379,7 +379,7 @@ Redacted logs, oldest line first; addresses, PC names, PINs and credentials are 
                 remove_host(&mut self.hosts, &self.store, &mut self.launcher.recents, &mut self.launcher.favourites, &mut self.launcher.open_game, host);
             }
             Command::Refresh(host) => {
-                self.hosts.poll_one(host);
+                self.hosts.check_now(host);
                 match self.launcher.screen {
                     Screen::Apps(id) if id == host => self.hosts.load_apps(host),
                     // Play needs the classic app list; a failed one is read again.

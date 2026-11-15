@@ -4040,6 +4040,25 @@ fn a_pc_offers_the_one_action_its_state_calls_for() {
     assert!(click_action(&mut f).iter().any(|c| matches!(c, Command::Pair(_))));
 }
 
+/// An offline PC says why it did not answer in its options, and Try again shows Checking… on the
+/// card until the PC answers.
+#[test]
+fn an_offline_pc_says_why_and_try_again_shows_checking() {
+    let refused = "The PC refused the connection. Is its streaming app running?";
+    let mut f = Frames::new(HostRecord { mac: None, ..record("Den", true, true) }, Reach::Offline);
+    f.hosts.list[0].error = Some(refused.into());
+    f.settle();
+    assert!(shows(&f, "Offline"), "{:?}", f.drawn);
+    f.press(Key::F2);
+    assert!(f.options_open());
+    assert!(shows(&f, refused), "the options name the reason: {:?}", f.drawn);
+    f.press(Key::Escape);
+    f.hosts.list[0].checking = true;
+    f.settle();
+    assert!(shows(&f, "Checking…") && !shows(&f, "Offline"), "{:?}", f.drawn);
+    assert!(crate::ui::pcs::offline_reason(&f.hosts.list[0]).is_none(), "no old reason while it checks");
+}
+
 /// The rest of the card still does what selecting a PC always did.
 #[test]
 fn selecting_a_pcs_card_opens_it_and_a_right_click_offers_its_menu() {

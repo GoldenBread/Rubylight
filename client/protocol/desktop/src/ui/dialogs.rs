@@ -280,8 +280,9 @@ impl Launcher {
                             },
                         })
                         .collect();
-                    // Says what the PCs page says of it: the running game's name, or Online.
-                    let status = pcs::pc_line_of(host).words().to_owned();
+                    // Says what the PCs page says of it: the running game's name, or Online; offline,
+                    // why it did not answer.
+                    let status = pcs::offline_reason(host).map(str::to_owned).unwrap_or_else(|| pcs::pc_line_of(host).words().to_owned());
                     // Wake needs the PC's address, learnt while pairing with it on.
                     let note = (host.reach == Reach::Offline && !host.record.can_wake()).then_some(en("Pair once while the PC is on to enable Wake up."));
                     let (outcome, took) = popover(ctx, "host-options", self.menu_anchor, host.display_name(), Some((status, *ON_SURFACE_VARIANT)), &rows, note, focus_first);

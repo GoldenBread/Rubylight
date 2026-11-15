@@ -471,6 +471,7 @@ impl Hosts {
     fn store_info(&mut self, index: usize, address: String, result: Result<Box<ServerInfo>, String>) -> bool {
         let host = &mut self.list[index];
         host.polling = false;
+        host.checking = false;
         let mut changed = false;
         match result {
             Ok(info) => {

@@ -96,6 +96,7 @@ pub(super) enum PcLine {
 
 pub(super) fn pc_line_of(host: &Host) -> PcLine {
     match (host.reach, host.paired()) {
+        (Reach::Offline, _) if host.checking => PcLine::Checking,
         (Reach::Offline, _) => PcLine::Offline,
         (Reach::Unknown, _) => PcLine::Checking,
         (Reach::Online, false) => PcLine::NotPaired,
@@ -109,6 +110,12 @@ pub(super) fn pc_line_of(host: &Host) -> PcLine {
             },
         },
     }
+}
+
+/// Why an offline PC did not answer (the last check's error, with its next step), while it is not
+/// being checked again.
+pub(super) fn offline_reason(host: &Host) -> Option<&str> {
+    (host.reach == Reach::Offline && !host.checking).then_some(host.error.as_deref()).flatten()
 }
 
 /// The words for a path to a PC (`nightjar_core::internet`), to translate where shown.
@@ -631,8 +638,10 @@ impl Launcher {
             );
             ui.painter().extend(out);
         }
-        if name_cut || line_cut {
-            let _ = card.clone().on_hover_text(said.clone());
+        // Why an offline PC did not answer, with its next step, where the card has no room for it.
+        let why = offline_reason(host);
+        if name_cut || line_cut || why.is_some() {
+            let _ = card.clone().on_hover_text(match why { Some(why) => format!("{said}\n{why}"), None => said.clone() });
         }
         // A running PC's art comes as any cover does; its list comes first when nothing asked yet.
         if host.reach == Reach::Online && host.paired() && host.running_app().is_some() {

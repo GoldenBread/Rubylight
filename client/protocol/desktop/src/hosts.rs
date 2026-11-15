@@ -166,6 +166,9 @@ pub struct Host {
     /// The newest read whose session was taken in.
     session_seq: u64,
     pub error: Option<String>,
+    /// A check the user asked for (Try again, Check again) runs: the card says Checking… until
+    /// the PC answers or the check fails.
+    pub checking: bool,
     polling: bool,
     last_poll: Option<Instant>,
     /// Polls started, and the newest one whose answer was taken in: an older answer that lands
@@ -870,6 +873,7 @@ impl Hosts {
             action_seq: 0,
             session_seq: 0,
             error: None,
+            checking: false,
             polling: false,
             last_poll: None,
             poll_seq: 0,
@@ -1106,6 +1110,14 @@ impl Hosts {
         host.recheck_until = Some(Instant::now() + RECHECK_WINDOW);
         self.poll_one(id);
         self.refresh_native(id, true);
+    }
+
+    /// [`Self::poll_one`] for a check the user asked for, which the card shows as Checking….
+    pub fn check_now(&mut self, id: u64) {
+        self.poll_one(id);
+        if let Some(host) = self.get_mut(id) {
+            host.checking = host.polling;
+        }
     }
 
     pub fn poll_one(&mut self, id: u64) {
