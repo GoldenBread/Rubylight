@@ -104,17 +104,21 @@ public class AndroidAudioRendererTest {
             return fallbackSucceeds;
         }
 
-        @Override boolean writeNativeAudio(short[] data, int length) {
+        @Override int writeNativeAudio(short[] data, int length) {
             nativeWrites++;
+            if (stallNextNativeWrites > 0) {
+                stallNextNativeWrites--;
+                return NATIVE_WRITE_STALLED;
+            }
             if (failNextNativeWrites > 0) {
                 failNextNativeWrites--;
-                return false;
+                return NATIVE_WRITE_STOPPED;
             }
-            return nativeWriteSucceeds;
+            return nativeWriteSucceeds ? NATIVE_WRITE_DONE : NATIVE_WRITE_STOPPED;
         }
 
         private boolean reopenSucceeds;
-        private int reopens, closes, nativeWrites, failNextNativeWrites;
+        private int reopens, closes, nativeWrites, failNextNativeWrites, stallNextNativeWrites;
 
         @Override boolean openNativeAudio() {
             reopens++;
@@ -808,6 +812,31 @@ public class AndroidAudioRendererTest {
         assertEquals(2, renderer.reopens);
         assertNull(renderer.fallbackReason);
         assertEquals(Long.valueOf(0), ReflectionHelpers.<Long>getField(renderer, "droppedWrites"));
+        ReflectionHelpers.setField(renderer, "nativeAudio", 0L);
+    }
+
+    @Test public void aShortAAudioStallDropsTheBufferWithoutReopening() {
+        // The callback held back for 150 ms (a Bluetooth handover) while the stream still runs:
+        // repeated stalls drop their buffers and never reopen or fall back.
+        ScriptedRenderer renderer = disconnectedAAudio();
+        renderer.nativeWriteSucceeds = true;
+        renderer.reopenSucceeds = true;
+        for (int i = 0; i <= AudioBufferPolicy.MAX_QUICK_REOPENS; i++) {
+            renderer.stallNextNativeWrites = 1;
+            renderer.play();
+            renderer.now += 200;
+        }
+        assertEquals(0, renderer.reopens);
+        assertEquals(0, renderer.closes);
+        assertNull(renderer.fallbackReason);
+        assertEquals(0, renderer.nextResult);
+        assertEquals(Long.valueOf(AudioBufferPolicy.MAX_QUICK_REOPENS + 1),
+                ReflectionHelpers.<Long>getField(renderer, "droppedWrites"));
+        // The next buffer plays on the same stream.
+        renderer.play();
+        assertEquals(Long.valueOf(1), ReflectionHelpers.<Long>getField(renderer, "nativeAudio"));
+        assertEquals(Long.valueOf(AudioBufferPolicy.MAX_QUICK_REOPENS + 1),
+                ReflectionHelpers.<Long>getField(renderer, "droppedWrites"));
         ReflectionHelpers.setField(renderer, "nativeAudio", 0L);
     }
 

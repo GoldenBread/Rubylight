@@ -66,7 +66,7 @@ for mode in plain sanitized; do
     cc "${flags[@]}" "${extra[@]}" -I "$tests/fake_jni" -I protocol/ffi/include "$tests/control_send_test.c" \
         "$common/enet/list.c" -lpthread -o "$out/control_send-$mode"
     cc "${flags[@]}" "${extra[@]}" -I "$tests/fake_jni" -I "$tests/fake_aaudio" \
-        "$tests/aaudio_output_test.c" -ldl -o "$out/aaudio_output-$mode"
+        "$tests/aaudio_output_test.c" -ldl -lpthread -o "$out/aaudio_output-$mode"
     cc "${flags[@]}" "${extra[@]}" "$tests/microphone_packet_test.c" "$common/src/PlatformCrypto.c" \
         -lcrypto -o "$out/microphone_packet-$mode"
     cc "${flags[@]}" "${extra[@]}" "$tests/input_queue_test.c" "$common/src/LinkedBlockingQueue.c" \

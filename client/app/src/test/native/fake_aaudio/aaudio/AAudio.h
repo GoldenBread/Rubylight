@@ -10,6 +10,7 @@ typedef int32_t aaudio_sharing_mode_t;
 typedef int32_t aaudio_performance_mode_t;
 typedef int32_t aaudio_format_t;
 typedef int32_t aaudio_usage_t;
+typedef int32_t aaudio_stream_state_t;
 typedef int32_t aaudio_data_callback_result_t;
 typedef aaudio_data_callback_result_t (*AAudioStream_dataCallback)(AAudioStream*, void*, void*, int32_t);
 typedef void (*AAudioStream_errorCallback)(AAudioStream*, void*, aaudio_result_t);
@@ -24,4 +25,7 @@ enum {
     AAUDIO_USAGE_GAME = 14,
     AAUDIO_CALLBACK_RESULT_CONTINUE = 0,
     AAUDIO_CALLBACK_RESULT_STOP = 1,
+    AAUDIO_STREAM_STATE_STARTING = 3,
+    AAUDIO_STREAM_STATE_STARTED = 4,
+    AAUDIO_STREAM_STATE_DISCONNECTED = 13,
 };

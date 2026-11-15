@@ -1,5 +1,6 @@
 #include "../../main/jni/moonlight-core/aaudio_output.c"
 #include <assert.h>
+#include <pthread.h>
 #include <stdio.h>
 
 static int hardwareFrames = 384;
@@ -231,7 +232,7 @@ static void shortRegion(JNIEnv* env, jshortArray array, jsize start, jsize lengt
 }
 
 // nativeWriteAudio takes the samples in stack-sized pieces, in order, without the whole-array copy
-// GetShortArrayElements made; a full ring still waits, then fails.
+// GetShortArrayElements made; a full ring still waits, then calls the output stalled.
 static void writesComeOverInPieces(void) {
     static AudioOutput output;
     static int16_t ring[8192 * 2], input[3000 * 2];
@@ -247,7 +248,7 @@ static void writesComeOverInPieces(void) {
     jlong handle = (jlong)(intptr_t)&output;
 
     regionCalls = 0;
-    assert(Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(&env, NULL, handle, (jshortArray)&packet, 3000 * 2));
+    assert(Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(&env, NULL, handle, (jshortArray)&packet, 3000 * 2) == AUDIO_WRITE_DONE);
     assert(regionCalls == (3000 + AUDIO_WRITE_CHUNK_FRAMES - 1) / AUDIO_WRITE_CHUNK_FRAMES);
     assert(atomic_load(&output.queue.writtenFrames) == 3000);
     // The ring holds what was sent, in order, across the pieces' seams.
@@ -256,27 +257,79 @@ static void writesComeOverInPieces(void) {
     // A short packet is one piece; a length past the array or an odd one is refused.
     regionCalls = 0;
     FakeShorts small = {480 * 2, input};
-    assert(Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(&env, NULL, handle, (jshortArray)&small, 240 * 2));
+    assert(Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(&env, NULL, handle, (jshortArray)&small, 240 * 2) == AUDIO_WRITE_DONE);
     assert(regionCalls == 1);
-    assert(!Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(&env, NULL, handle, (jshortArray)&small, 481 * 2));
-    assert(!Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(&env, NULL, handle, (jshortArray)&small, 3));
+    assert(Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(&env, NULL, handle, (jshortArray)&small, 481 * 2) == AUDIO_WRITE_STOPPED);
+    assert(Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(&env, NULL, handle, (jshortArray)&small, 3) == AUDIO_WRITE_STOPPED);
     assert(regionCalls == 1);
 
-    // A ring with room for 100 frames takes them, waits out its 100 ms for the rest, and fails.
+    // A ring with room for 100 frames takes them, waits out its 100 ms for the rest, and calls the
+    // output stalled: nothing says it stopped, so it is not reopened.
     static AudioOutput full;
     static int16_t smallRing[256 * 2];
     memset(&full, 0, sizeof(full));
     audioQueueInit(&full.queue, smallRing, 256, 100);
     jlong fullHandle = (jlong)(intptr_t)&full;
-    assert(!Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(&env, NULL, fullHandle, (jshortArray)&small, 240 * 2));
+    assert(Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(&env, NULL, fullHandle, (jshortArray)&small, 240 * 2) == AUDIO_WRITE_STALLED);
     assert(atomic_load(&full.queue.writtenFrames) == 100);
     assert(memcmp(smallRing, input, 100 * 2 * sizeof(int16_t)) == 0);
 
     // A stopped output takes nothing.
     atomic_store(&full.stopped, true);
     audioQueueInit(&full.queue, smallRing, 256, 256);
-    assert(!Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(&env, NULL, fullHandle, (jshortArray)&small, 240 * 2));
+    assert(Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(&env, NULL, fullHandle, (jshortArray)&small, 240 * 2) == AUDIO_WRITE_STOPPED);
     assert(atomic_load(&full.queue.writtenFrames) == 0);
+}
+
+static aaudio_stream_state_t streamState = AAUDIO_STREAM_STATE_STARTED;
+static aaudio_stream_state_t fakeState(AAudioStream* stream) { (void)stream; return streamState; }
+
+// An AAudio callback that drains 50 frames every 40 ms, four times: slower than one write's
+// 100 ms of waiting in total, but never 100 ms without room.
+static void* slowCallback(void* context) {
+    AudioOutput* output = context;
+    int16_t pcm[50 * 2];
+    for (int i = 0; i < 4; i++) {
+        struct timespec pause = {0, 40000000};
+        nanosleep(&pause, NULL);
+        audioQueueRead(&output->queue, pcm, 50);
+    }
+    return NULL;
+}
+
+// The waits count from the callback's last progress: a reserve smaller than the packet waits on
+// every write and is no stall. A callback that takes nothing for 100 ms is a stall while AAudio
+// still reports the stream running, and a stopped stream only once it no longer does.
+static void stallsAreToldApartFromStoppedStreams(void) {
+    static AudioOutput output;
+    static int16_t ring[256 * 2], input[240 * 2];
+    FakeShorts packet = {240 * 2, input};
+    const struct JNINativeInterface functions = {
+        .GetArrayLength = arrayLength,
+        .GetShortArrayRegion = shortRegion,
+    };
+    JNIEnv env = &functions;
+    jlong handle = (jlong)(intptr_t)&output;
+    memset(&output, 0, sizeof(output));
+    output.stream = (AAudioStream*)&output;
+    output.AAudioStream_getState = fakeState;
+
+    audioQueueInit(&output.queue, ring, 256, 100);
+    pthread_t callback;
+    assert(pthread_create(&callback, NULL, slowCallback, &output) == 0);
+    assert(Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(&env, NULL, handle, (jshortArray)&packet, 240 * 2) == AUDIO_WRITE_DONE);
+    assert(pthread_join(callback, NULL) == 0);
+    assert(atomic_load(&output.queue.writtenFrames) == 240);
+
+    // The callback paused past the write's 100 ms: stalled, the rest dropped, the stream kept.
+    audioQueueInit(&output.queue, ring, 256, 100);
+    streamState = AAUDIO_STREAM_STATE_STARTED;
+    assert(Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(&env, NULL, handle, (jshortArray)&packet, 240 * 2) == AUDIO_WRITE_STALLED);
+    assert(atomic_load(&output.queue.writtenFrames) == 100);
+    // Disconnected without its error callback: stopped, to be reopened.
+    streamState = AAUDIO_STREAM_STATE_DISCONNECTED;
+    assert(Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(&env, NULL, handle, (jshortArray)&packet, 240 * 2) == AUDIO_WRITE_STOPPED);
+    streamState = AAUDIO_STREAM_STATE_STARTED;
 }
 
 int main(void) {
@@ -347,6 +400,7 @@ int main(void) {
     stallsAreConcealedAndTheirPacketsSkipped();
     gapsAreJitterOrStalls();
     writesComeOverInPieces();
+    stallsAreToldApartFromStoppedStreams();
     puts("AAudio output tests passed");
     return 0;
 }

@@ -87,7 +87,14 @@ public class AndroidAudioRenderer implements AudioRenderer {
     private int quickReopens;
 
     private static native long nativeOpenAudio(int sampleRate, long concealer);
-    private static native boolean nativeWriteAudio(long handle, short[] samples, int length);
+    /**
+     * nativeWriteAudio's answers: the buffer is in the ring; the AAudio callback took nothing for
+     * 100 ms while the stream still runs (a short stall: the rest of the buffer is dropped, the
+     * stream and its tuned reserve stay); the stream stopped or disconnected and must be reopened.
+     */
+    static final int NATIVE_WRITE_DONE = 0, NATIVE_WRITE_STALLED = 1, NATIVE_WRITE_STOPPED = 2;
+
+    private static native int nativeWriteAudio(long handle, short[] samples, int length);
     private static native int[] nativeAudioStats(long handle);
     private static native int nativeAudioBuffer(long handle, int frames);
     private static native int nativeAudioReserve(long handle, int frames);
@@ -452,9 +459,16 @@ public class AndroidAudioRenderer implements AudioRenderer {
                 return;
             }
             if (nativeAudio != 0) {
-                if (writeNativeAudio(audioData, length)) {
+                int written = writeNativeAudio(audioData, length);
+                if (written == NATIVE_WRITE_DONE) {
                     echoReference(audioData, length, queuedFrames);
                     tuneBuffer();
+                    return;
+                }
+                if (written == NATIVE_WRITE_STALLED) {
+                    // The output still runs: reopening would only lose its reserve and count
+                    // toward the AudioTrack fallback.
+                    droppedWrites++;
                     return;
                 }
                 if (!reopenAudio("AAudio disconnected")) {
@@ -463,7 +477,7 @@ public class AndroidAudioRenderer implements AudioRenderer {
                     return;
                 }
                 if (nativeAudio != 0) {
-                    if (writeNativeAudio(audioData, length)) {
+                    if (writeNativeAudio(audioData, length) == NATIVE_WRITE_DONE) {
                         echoReference(audioData, length, outputQueuedFrames());
                         tuneBuffer();
                     } else {
@@ -716,7 +730,7 @@ public class AndroidAudioRenderer implements AudioRenderer {
         return current == null ? AudioTrack.ERROR_DEAD_OBJECT : current.write(audioData, offset, length);
     }
 
-    boolean writeNativeAudio(short[] audioData, int length) {
+    int writeNativeAudio(short[] audioData, int length) {
         return nativeWriteAudio(nativeAudio, audioData, length);
     }
 
