@@ -24,6 +24,9 @@ public final class DemoConsoleHome extends ConsoleHomeActivity {
         return DemoConsole.repository(this);
     }
 
+    /** The demo is for looking at screens: no update offer over them, and nothing asked of the network. */
+    @Override protected void checkForUpdates() { }
+
     private boolean optionsOpened;
     private DemoFocusLatency focusLatency;
 
