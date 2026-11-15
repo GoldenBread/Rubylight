@@ -56,19 +56,23 @@ impl SessionThread<'_> {
             .as_secs();
         if let Err(error) = thread::Builder::new().name("client last seen".into()).spawn(move || {
             let mut paired = paired_h.paired.write().unwrap();
-            if let Some(client) = paired
+            let Some(client) = paired
                 .clients
                 .iter_mut()
                 .find(|c| c.uuid == client_uuid)
-            {
-                let last_seen = last_seen.max(client.extra.get("last_seen").and_then(serde_json::Value::as_u64).unwrap_or(0));
-                client.extra.insert(
-                    "last_seen".into(),
-                    serde_json::json!(last_seen),
-                );
-                if let Err(error) = paired.save(&paired_h.paired_path) {
-                    tracing::warn!(%error,"client last-seen persistence failed");
-                }
+            else {
+                return;
+            };
+            let last_seen = last_seen.max(client.extra.get("last_seen").and_then(serde_json::Value::as_u64).unwrap_or(0));
+            client.extra.insert(
+                "last_seen".into(),
+                serde_json::json!(last_seen),
+            );
+            // Written after the lock: every authenticated request reads the paired state.
+            let snapshot = paired.snapshot();
+            drop(paired);
+            if let Err(error) = snapshot.save(&paired_h.paired_path) {
+                tracing::warn!(%error,"client last-seen persistence failed");
             }
         }) {
             tracing::warn!(%error, "client last-seen worker failed");

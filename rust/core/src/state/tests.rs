@@ -256,6 +256,27 @@ fn paired_saves_keep_credentials_changed_or_removed_on_disk() {
     s.save(&p).unwrap();
     assert!(Credentials::load(&p).unwrap().is_none());
 }
+#[test]
+fn a_paired_snapshot_written_late_never_replaces_a_newer_save() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("state.json");
+    let mut s = PairedState::load(&p).unwrap();
+    s.document["root"]["last_seen"] = 1.into();
+    // Taken under the lock, written after it was released...
+    let older = s.snapshot();
+    // ...while a newer change was saved meanwhile, by a clone as a transaction saves.
+    let mut next = s.clone();
+    next.document["root"]["last_seen"] = 2.into();
+    next.save(&p).unwrap();
+    older.save(&p).unwrap();
+    assert_eq!(load_json(&p, Value::Null).unwrap()["root"]["last_seen"], 2);
+    // A snapshot taken after that save is written.
+    next.document["root"]["last_seen"] = 3.into();
+    let newer = next.snapshot();
+    next.document["root"]["last_seen"] = 4.into();
+    newer.save(&p).unwrap();
+    assert_eq!(load_json(&p, Value::Null).unwrap()["root"]["last_seen"], 3);
+}
 fn webrtc_client(n: u8, name: &str) -> Client {
     let id = format!("{n:02x}").repeat(16);
     let secret = format!("{n:02x}").repeat(32);

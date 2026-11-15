@@ -339,6 +339,27 @@ pub struct PairedState {
     pub clients: Vec<Client>,
     pub unique_id: String,
     skipped_clients: Vec<Value>,
+    /// Orders the writes of this state and its clones (`snapshot`).
+    saves: std::sync::Arc<SaveOrder>,
+}
+/// The revisions of a paired state handed out for saving, and the newest one written.
+#[derive(Default)]
+struct SaveOrder {
+    taken: std::sync::atomic::AtomicU64,
+    written: std::sync::Mutex<u64>,
+}
+/// A paired state as it was when taken, to write once the lock it was changed under is
+/// released (`PairedState::snapshot`).
+pub struct PairedSnapshot {
+    state: PairedState,
+    revision: u64,
+}
+impl PairedSnapshot {
+    /// Writes the state unless one taken later is already on disk, which holds this one's
+    /// changes too.
+    pub fn save(&self, path: &Path) -> Result<()> {
+        self.state.write_in_order(path, self.revision)
+    }
 }
 impl PairedState {
     pub fn load(path: &Path) -> Result<Self> {
@@ -502,6 +523,7 @@ impl PairedState {
             clients,
             unique_id,
             skipped_clients: skipped,
+            saves: Default::default(),
         })
     }
     pub fn client_by_certificate(&self, der: &[u8]) -> Option<&Client> {
@@ -520,7 +542,39 @@ impl PairedState {
         }
         found
     }
+    /// A copy of the state to save after the lock it is guarded by is released, so readers do
+    /// not wait for the disk. Take it under the lock the change was made under: snapshots and
+    /// `save`s are written in the order they were taken, and an older one never replaces a
+    /// newer one on disk.
+    pub fn snapshot(&self) -> PairedSnapshot {
+        PairedSnapshot {
+            state: self.clone(),
+            revision: self.next_revision(),
+        }
+    }
     pub fn save(&self, path: &Path) -> Result<()> {
+        self.write_in_order(path, self.next_revision())
+    }
+    fn next_revision(&self) -> u64 {
+        self.saves
+            .taken
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1
+    }
+    fn write_in_order(&self, path: &Path, revision: u64) -> Result<()> {
+        let mut written = self
+            .saves
+            .written
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if revision <= *written {
+            return Ok(());
+        }
+        self.write(path)?;
+        *written = revision;
+        Ok(())
+    }
+    fn write(&self, path: &Path) -> Result<()> {
         let mut d = self.document.clone();
         // The credentials CLI can replace these while the host is running.
         let latest = load_json(path, json!({}))?;

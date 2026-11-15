@@ -2,7 +2,7 @@
 //! boundaries, never from packet delivery or the control feedback callback.
 use super::{Host, Session, Shared};
 use anyhow::{Context, Result};
-use butterpollo_core::state::{Client, PairedState};
+use butterpollo_core::state::{Client, PairedSnapshot, PairedState};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -99,6 +99,12 @@ fn read(state: &PairedState, now: u64) -> Vec<Route> {
     });
     routes.truncate(MAX_ROUTES);
     routes
+}
+/// Puts `routes` in the state, for the paths a stream runs through: the snapshot returned is
+/// written once the paired lock is released, so other requests do not wait for the disk.
+fn update(state: &mut PairedState, routes: &[Route]) -> Result<PairedSnapshot> {
+    state.document["root"][FIELD] = serde_json::to_value(routes)?;
+    Ok(state.snapshot())
 }
 fn save(h: &Host, state: &mut PairedState, routes: &[Route]) -> Result<()> {
     let mut next = state.clone();
@@ -223,7 +229,9 @@ impl Host {
             } else {
                 remembered = true;
             }
-            if let Err(error) = save(self, &mut state, &routes) {
+            let snapshot = update(&mut state, &routes);
+            drop(state);
+            if let Err(error) = snapshot.and_then(|snapshot| snapshot.save(&self.paired_path)) {
                 tracing::warn!(%error, "could not save the video pacing probe count");
                 // An unwritable profile must not turn every reconnect into a
                 // fast probe because the old counter remains at four.
@@ -298,7 +306,10 @@ impl Host {
         } else {
             return Ok(());
         }
-        save(self, &mut state, &routes)
+        let snapshot = update(&mut state, &routes)?;
+        drop(state);
+        // Still under the epoch lock: a reset waits for this write.
+        snapshot.save(&self.paired_path)
     }
 
     pub(crate) fn reset_keyframe_loss(&self, client_id: &str) -> Result<()> {

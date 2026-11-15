@@ -72,7 +72,10 @@ impl Prepared {
                 .extra
                 .insert(LEARNED_OVER.into(), serde_json::json!(inherited));
         }
-        if let Err(error) = paired.save(&h.paired_path) {
+        // Written after the lock: every authenticated request reads the paired state.
+        let snapshot = paired.snapshot();
+        drop(paired);
+        if let Err(error) = snapshot.save(&h.paired_path) {
             tracing::warn!(%error, "the device's display layout could not be saved");
         }
     }
@@ -139,7 +142,10 @@ impl Prepared {
             screen_setting(&uuid, REMEMBERED_RESOLUTION),
             serde_json::json!(chosen),
         );
-        if let Err(error) = paired.save(&h.paired_path) {
+        // Written after the lock: every authenticated request reads the paired state.
+        let snapshot = paired.snapshot();
+        drop(paired);
+        if let Err(error) = snapshot.save(&h.paired_path) {
             tracing::warn!(%error, "the device's display resolution could not be saved");
         }
     }
@@ -216,7 +222,10 @@ impl Prepared {
             screen_setting(&uuid, REMEMBERED_SCALE),
             serde_json::json!(chosen),
         );
-        if let Err(error) = paired.save(&h.paired_path) {
+        // Written after the lock: every authenticated request reads the paired state.
+        let snapshot = paired.snapshot();
+        drop(paired);
+        if let Err(error) = snapshot.save(&h.paired_path) {
             tracing::warn!(%error, "the device's display scale could not be saved");
         }
     }
