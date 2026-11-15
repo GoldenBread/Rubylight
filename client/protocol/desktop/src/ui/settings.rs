@@ -1850,6 +1850,13 @@ pub(super) fn pick_display_choice(s: &mut Settings, (mode, virtual_display): (Ho
     }
 }
 
+/// The keys a value chosen in a row saves into a PC, game or profile layer: all of the row's, but an
+/// arrangement leaves the virtual display switch as the layer has it, as on Android, so Remote
+/// Monitor there keeps following the settings below (pick_display_choice).
+fn picked_keys<'k>(keys: &'k [&'static str], s: &Settings) -> &'k [&'static str] {
+    if keys == ["host_display", "virtual_display"] && s.host_display != HostDisplay::HostDefault { &keys[..1] } else { keys }
+}
+
 pub(super) fn display_choice_name(choice: (HostDisplay, bool)) -> &'static str {
     match choice {
         (HostDisplay::HostDefault, true) => en("Virtual display"),
@@ -2728,7 +2735,8 @@ pub(super) fn setting_row(
                     } else if ticked && (boxed.changed() || *settings != before) {
                         // Only on a change: a row over several keys leaves a layer that holds some
                         // of them, as older versions saved it, as it is until a value is chosen.
-                        overrides.capture(settings, keys);
+                        // Ticking the box takes the whole row; a chosen value, the keys it sets.
+                        overrides.capture(settings, if boxed.changed() { keys } else { picked_keys(keys, settings) });
                     }
                     value.union(boxed)
                 }).inner

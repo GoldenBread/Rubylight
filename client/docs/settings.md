@@ -448,7 +448,7 @@ Long-press a PC, choose **PC settings…**, then **Display arrangement** under *
 | Extended and separated — virtual display primary | `hostDisplay=extended_primary_isolated`, `virtualDisplay=1` | Makes the virtual display primary and places the PC's other displays away from it. |
 | Physical display (no virtual display) | `hostDisplay=physical` | Streams the PC's monitor, even when the PC would add a virtual display. |
 
-The PC puts its displays back when the stream ends. Separated displays still share the same Windows session; they are not separate user sessions. Only PCs whose host supports display modes (Rubylight 2.2.1 or later) offer the arrangements, and only those hosts are sent `hostDisplay`. Other PCs follow only whether a virtual display is asked for, which their stream settings show as a **Virtual display** switch when the host has a virtual display. Remote Monitor and Remote Input keep the PC's settings.
+The PC puts its displays back when the stream ends. Separated displays still share the same Windows session; they are not separate user sessions. Only PCs whose host supports display modes (Rubylight 2.2.1 or later) offer the arrangements, and only those hosts are sent `hostDisplay`. Other PCs follow only whether a virtual display is asked for, which their stream settings show as a **Virtual display** switch when the host has a virtual display. Remote Monitor and Remote Input keep the PC's settings: Remote Monitor asks for a virtual display when the **Virtual display** value is on, which **The PC’s own setting** turns off and **Virtual display** turns on.
 
 ## Settings available during a stream
 

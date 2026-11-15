@@ -1803,3 +1803,30 @@ fn an_arrangement_pick_leaves_what_remote_monitor_asks_for() {
         }
     }
 }
+
+#[test]
+fn an_arrangement_picked_on_a_pcs_page_leaves_its_virtual_display_switch_to_the_settings() {
+    use crate::config::HostDisplay;
+    let mut f = Frames::new(record("PC", true, false), Reach::Online);
+    f.size = vec2(1280.0, 12000.0);
+    f.l.settings_view.section = "Display & image";
+    f.l.settings_view.more = [true; 8];
+    let id = f.hosts.list[0].id;
+    f.l.open_host_settings(id, &f.hosts.list[0]);
+    f.settle();
+    let row = "Display arrangement";
+    // An arrangement: only host_display goes into the PC's settings, so Remote Monitor there keeps
+    // following the main settings' switch, as before the merge.
+    click_value(&mut f, row, "The PC’s own setting");
+    click_last(&mut f, "Extend");
+    f.settle();
+    assert_eq!(f.l.edit_settings.host_display, HostDisplay::Extended);
+    assert!(f.l.edit_overrides.has(&["host_display"]));
+    assert!(!f.l.edit_overrides.has(&["virtual_display"]), "the switch stays the main settings'");
+    // Virtual display and the PC's own setting set the switch too, as on Android.
+    click_value(&mut f, row, "Extend");
+    click_last(&mut f, "Virtual display");
+    f.settle();
+    assert!(f.l.edit_overrides.has(&["host_display"]) && f.l.edit_overrides.has(&["virtual_display"]));
+    assert_eq!((f.l.edit_settings.host_display, f.l.edit_settings.virtual_display), (HostDisplay::HostDefault, true));
+}
