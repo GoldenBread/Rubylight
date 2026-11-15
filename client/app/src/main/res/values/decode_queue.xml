@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="title_decode_queue_frames">Frames waiting for the decoder</string>
-    <string name="summary_decode_queue_frames">Fewer frames drop the waiting ones sooner when the decoder falls behind, so delay cannot build up, but the picture stutters more often. Leave it at 15 unless the picture lags further and further behind on a slow device.</string>
+    <string name="summary_decode_queue_frames">Fewer frames drop the waiting ones sooner when the decoder falls behind, so delay cannot build up, but the picture stutters more often. Leave it at 15 unless the picture lags further and further behind on a slow device. Most hardware decoders take each frame directly and have no queue, so the choice does nothing for them.</string>
     <string name="decode_queue_frames_3">3 frames</string>
     <string name="decode_queue_frames_5">5 frames</string>
     <string name="decode_queue_frames_8">8 frames</string>
