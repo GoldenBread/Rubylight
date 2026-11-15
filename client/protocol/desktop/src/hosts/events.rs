@@ -105,6 +105,15 @@ impl Hosts {
                         }
                     }
                 }
+                Event::ArtFailed { id, app, version } => {
+                    if let Some(host) = self.get_mut(id).filter(|h| h.art_versions.get(&app) == Some(&version)) {
+                        // The title for now, and the cover asked for again once the wait is over.
+                        if matches!(host.art.get(&app), Some(Art::Loading)) {
+                            host.art.insert(app, Art::Missing);
+                            host.art_retry.insert(app, Instant::now() + ART_RETRY_INTERVAL);
+                        }
+                    }
+                }
                 Event::ArtSharper { id, app, version, image, sized } => {
                     let frame = self.art_frame;
                     let Some(host) = self.list.iter_mut().find(|h| h.id == id).filter(|h| h.art_versions.get(&app) == Some(&version)) else { continue };

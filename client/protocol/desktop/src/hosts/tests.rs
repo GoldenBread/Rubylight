@@ -858,6 +858,37 @@ fn a_new_renderer_drops_the_covers_so_they_load_again() {
     end_pass(&ctx);
 }
 
+/// A cover whose download failed (the PC busy or slow) is a title for a while, then asked for
+/// again and lands; one the PC has none of stays a title.
+#[test]
+fn a_cover_whose_download_failed_is_asked_for_again_after_a_wait() {
+    let ctx = egui::Context::default();
+    let mut hosts = Hosts::without_discovery(vec![paired_record("uid")], Arc::new(|| {}));
+    let id = hosts.list[0].id;
+    for app in [7, 8] {
+        assert_eq!(hosts.list[0].begin_art(app, "v1").as_deref(), Some("v1"));
+    }
+    hosts.sender.send(Event::ArtFailed { id, app: 7, version: "v1".into() }).expect("the channel");
+    hosts.sender.send(Event::Art { id, app: 8, version: "v1".into(), image: None, ambient: None, sized: None }).expect("the channel");
+    hosts.drain(&ctx);
+    let pc = &hosts.list[0];
+    assert!(matches!(pc.art.get(&7), Some(Art::Missing)), "the title shows meanwhile");
+    assert!(!pc.art_wanted(7, "v1"), "not asked for again at once");
+    assert!(!pc.art_wanted(8, "v1"), "no cover is still no cover");
+
+    hosts.list[0].art_retry.insert(7, Instant::now() - Duration::from_millis(1));
+    assert!(hosts.list[0].art_wanted(7, "v1"), "the wait is over");
+    assert!(hosts.list[0].art_wanted(7, ""), "and pages that ask without a version ask too");
+    assert!(!hosts.list[0].art_wanted(8, "v1"));
+    assert_eq!(hosts.list[0].begin_art(7, "v1").as_deref(), Some("v1"));
+    assert!(matches!(hosts.list[0].art.get(&7), Some(Art::Loading)) && !hosts.list[0].art_retry.contains_key(&7));
+    let (image, ambient, sized) = art_and_ambient(Some(png([20, 200, 20])), 1.0);
+    hosts.sender.send(Event::Art { id, app: 7, version: "v1".into(), image, ambient, sized }).expect("the channel");
+    hosts.drain(&ctx);
+    assert!(matches!(hosts.list[0].art.get(&7), Some(Art::Ready(_))));
+    end_pass(&ctx);
+}
+
 /// Four covers of 30 by 40 pixels on one PC, landed and then shown for as many frames as
 /// `shown` lists, each frame drawing the apps it names.
 fn covers_shown_in(name: &str, shown: &[&[i32]]) -> (Hosts, egui::Context, Store, std::path::PathBuf) {

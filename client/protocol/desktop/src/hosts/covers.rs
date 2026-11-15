@@ -80,27 +80,26 @@ impl Hosts {
             if file.is_none() && away {
                 return Some(Event::ArtAway { id, app, version });
             }
-            let bytes = file.or_else(|| {
-                let bytes = match client_for(&identity, &record, &record.address).and_then(|c| {
-                    c.box_art(app).map_err(|e| e.to_string())
-                }) {
-                    Ok(bytes) => bytes,
-                    Err(e) => {
-                        // Hosts answer 404 for apps without art.
-                        if !e.starts_with("not found") {
-                            eprintln!("nightjar: box art for app {app}: {e}");
+            let bytes = match file {
+                Some(file) => Some(file),
+                None => match client_for(&identity, &record, &record.address).and_then(|c| c.box_art(app).map_err(|e| e.to_string())) {
+                    Ok(bytes) => {
+                        if let Some(dir) = cache.parent() {
+                            let _ = std::fs::create_dir_all(dir);
                         }
-                        return None;
+                        if std::fs::write(&cache, &bytes).is_ok() {
+                            files.lock().unwrap_or_else(std::sync::PoisonError::into_inner).saved(&cache, app);
+                        }
+                        Some(bytes)
                     }
-                };
-                if let Some(dir) = cache.parent() {
-                    let _ = std::fs::create_dir_all(dir);
-                }
-                if std::fs::write(&cache, &bytes).is_ok() {
-                    files.lock().unwrap_or_else(std::sync::PoisonError::into_inner).saved(&cache, app);
-                }
-                Some(bytes)
-            });
+                    // Hosts answer 404 for apps without art.
+                    Err(e) if e.starts_with("not found") => None,
+                    Err(e) => {
+                        eprintln!("nightjar: box art for app {app}: {e}");
+                        return Some(Event::ArtFailed { id, app, version });
+                    }
+                },
+            };
             let (image, ambient, sized) = art_and_ambient(bytes, scale);
             Some(Event::Art { id, app, version, image, ambient, sized })
         });

@@ -47,6 +47,9 @@ const RECHECK_WINDOW: Duration = Duration::from_secs(15);
 const RECHECK_LIBRARY_INTERVAL: Duration = Duration::from_secs(3);
 /// The native library and permissions are read this often; the session on every poll.
 const NATIVE_FULL_INTERVAL: Duration = Duration::from_secs(30);
+/// A cover whose download failed (no answer in time, the PC busy) shows the title this long, then
+/// is asked for again while it is on screen. One the PC has none of stays a title.
+const ART_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 const MDNS_SERVICE: &str = "_nvstream._tcp.local.";
 /// A sleep token older than this is asked for again before it is spent: the PC keeps it 30 s.
 const SLEEP_TOKEN_REFRESH: Duration = Duration::from_secs(25);
@@ -147,6 +150,8 @@ pub struct Host {
     /// The pixels per point each cover that was made smaller was sized for; a cover kept at its
     /// own size is not in it.
     art_sized: HashMap<i32, f32>,
+    /// When each cover whose download failed may be asked for again; its `art` is `Missing` till then.
+    art_retry: HashMap<i32, Instant>,
     pub native: Native,
     /// The last app list of a PC without the native library, as saved for Home (live or from an
     /// earlier run), and the same as a library with the running app marked ([`Host::library`]).
@@ -292,9 +297,13 @@ impl Host {
         !self.has_art(app) || self.art_versions.get(&app).is_none_or(|known| replaces(known, version))
     }
 
-    /// Whether the cover of `app` is here or on its way. One given up for room is neither.
+    /// Whether the cover of `app` is here or on its way. One given up for room is neither, nor is
+    /// one whose download failed once its wait is over.
     fn has_art(&self, app: i32) -> bool {
-        matches!(self.art.get(&app), Some(Art::Loading | Art::Ready(_) | Art::Missing))
+        match self.art.get(&app) {
+            Some(Art::Missing) => self.art_retry.get(&app).is_none_or(|&at| Instant::now() < at),
+            art => matches!(art, Some(Art::Loading | Art::Ready(_))),
+        }
     }
 
     /// Whether the cover of `app` was given up for room and loads again from its file.
@@ -315,6 +324,7 @@ impl Host {
         if self.has_art(app) {
             return None;
         }
+        self.art_retry.remove(&app);
         // Asked for without a version, a cover that was dropped (a new renderer, or for room)
         // loads as the one it was, from its file.
         let version = match known {
@@ -518,6 +528,13 @@ pub enum Event {
     /// A cover that was given up for room has no file to come back from, and its PC is away: it
     /// is asked for again when the PC is back.
     ArtAway {
+        id: u64,
+        app: i32,
+        version: String,
+    },
+    /// A cover's download failed other than with "not found": a title for now, and asked for
+    /// again after [`ART_RETRY_INTERVAL`].
+    ArtFailed {
         id: u64,
         app: i32,
         version: String,
@@ -831,6 +848,7 @@ impl Hosts {
             ambient_glow: HashMap::new(),
             art_versions: HashMap::new(),
             art_sized: HashMap::new(),
+            art_retry: HashMap::new(),
             native: Native::default(),
             classic_apps: None,
             classic: None,

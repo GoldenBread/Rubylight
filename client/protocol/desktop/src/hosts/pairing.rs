@@ -216,6 +216,7 @@ impl Hosts {
         host.ambient_glow.clear();
         host.art_versions.clear();
         host.art_sized.clear();
+        host.art_retry.clear();
         host.native = Native::default();
         host.set_classic_apps(None);
         host.native_epoch += 1;
