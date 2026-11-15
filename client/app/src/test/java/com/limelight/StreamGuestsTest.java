@@ -43,6 +43,19 @@ public class StreamGuestsTest {
     }
 
     @Test
+    public void aWaitingRequestStaysAnswerableFromTheGuestsMenuWhileNobodyHasJoined() {
+        // The prompt was closed with Back: the menu lists the request instead of "Nobody has joined".
+        NativeGuests read = guests(true, -1, NONE, Collections.singletonList(TABLET));
+        assertEquals(Collections.singletonList(TABLET), StreamGuests.answerable(read));
+        assertTrue(StreamGuests.answerable(guests(false, -1, NONE, Collections.singletonList(TABLET))).isEmpty());
+        assertTrue(StreamGuests.answerable(null).isEmpty());
+        // A failed Let in or Deny asks again; a failed kick does not.
+        assertTrue(StreamGuests.answers("approve"));
+        assertTrue(StreamGuests.answers("deny"));
+        assertFalse(StreamGuests.answers("kick"));
+    }
+
+    @Test
     public void theManagerLooksOftenAndEveryoneElseRarely() {
         assertEquals(NativeGuests.POLL_MS, StreamGuests.nextPollMs(guests(true, -1, NONE, Collections.emptyList())));
         assertEquals(StreamGuests.IDLE_POLL_MS, StreamGuests.nextPollMs(guests(false, -1, NONE, Collections.emptyList())));

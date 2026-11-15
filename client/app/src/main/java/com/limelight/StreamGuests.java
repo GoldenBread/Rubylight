@@ -144,21 +144,39 @@ final class StreamGuests {
         prompt.show();
     }
 
-    /** The stream menu's Guests: each guest with what it may do; selecting one offers the changes. */
+    /**
+     * The stream menu's Guests: first who waits to join, until the host stops waiting (a prompt closed with Back
+     * leaves it answerable here), then each guest with what it may do; selecting one offers Let in and Deny, or the
+     * changes.
+     */
     void showGuests() {
         NativeGuests read = latest;
         if (read == null || game.isFinishing()) return;
         NavigationDialogBuilder builder = new NavigationDialogBuilder(game);
         builder.setTitle(R.string.guests_title);
-        if (read.guests.isEmpty()) {
+        List<NativeGuests.Request> waiting = answerable(read);
+        if (read.guests.isEmpty() && waiting.isEmpty()) {
             builder.setMessage(R.string.guests_none).setPositiveButton(android.R.string.ok, null).show();
             return;
         }
-        String[] lines = new String[read.guests.size()];
-        for (int i = 0; i < lines.length; i++) lines[i] = line(read, read.guests.get(i));
-        builder.setItems(lines, (dialog, which) -> showGuest(read, read.guests.get(which)))
+        String[] lines = new String[waiting.size() + read.guests.size()];
+        for (int i = 0; i < waiting.size(); i++) lines[i] = game.getString(R.string.guests_wants_to_join, waiting.get(i).name);
+        for (int i = 0; i < read.guests.size(); i++) lines[waiting.size() + i] = line(read, read.guests.get(i));
+        builder.setItems(lines, (dialog, which) -> {
+                    if (which < waiting.size()) {
+                        if (prompt == null) askAbout(waiting.get(which));
+                    } else {
+                        showGuest(read, read.guests.get(which - waiting.size()));
+                    }
+                })
                 .setNegativeButton(android.R.string.cancel, null)
                 .show();
+    }
+
+    /** The join requests the Guests menu offers to answer: the manager's, oldest first. */
+    @VisibleForTesting
+    static List<NativeGuests.Request> answerable(NativeGuests read) {
+        return read != null && read.manage ? read.waiting : new ArrayList<>();
     }
 
     private String line(NativeGuests read, NativeGuests.Guest guest) {
@@ -236,10 +254,18 @@ final class StreamGuests {
             } catch (NativeApiException e) {
                 LimeLog.warning("Guest " + action + " failed: " + e.getMessage());
                 game.runOnUiThread(() -> {
+                    // An answer that did not reach the host asks again while the host still waits.
+                    if (answers(action)) asked.remove(id);
                     if (game.isFinishing()) return;
                     Toast.makeText(game, game.getString(R.string.guests_failed) + "\n" + e.getMessage(), Toast.LENGTH_LONG).show();
                 });
             }
         }, "Guest action").start();
+    }
+
+    /** Whether {@code action} answers a join request. */
+    @VisibleForTesting
+    static boolean answers(String action) {
+        return "approve".equals(action) || "deny".equals(action);
     }
 }
