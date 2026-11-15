@@ -11,7 +11,7 @@
 //! tells devices apart on the network: by address.
 
 use crate::{
-    node::Node,
+    node::{self, Node},
     peers,
     punch::{self, Puncher},
     record::{PathKeys, Ports, Role},
@@ -162,7 +162,7 @@ impl Tunnel {
                 Bridge::Device { local, ports } => {
                     match media_port(ports, channel).filter(|port| *port != 0) {
                         Some(port) => Some(MediaEnd {
-                            socket: UdpSocket::bind((*local, port))?,
+                            socket: node::bind_udp(SocketAddr::new(*local, port))?,
                             client: Mutex::new(None),
                             _mark: None,
                         }),
@@ -170,7 +170,7 @@ impl Tunnel {
                     }
                 }
                 Bridge::Host { source, device, .. } => {
-                    let socket = UdpSocket::bind((*source, 0))?;
+                    let socket = node::bind_udp(SocketAddr::new(*source, 0))?;
                     // Registered before the first datagram reaches the host's media ports.
                     let mark = peers::register(socket.local_addr()?, device);
                     Some(MediaEnd {

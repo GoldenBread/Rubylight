@@ -33,6 +33,29 @@ pub const STUN_WAIT: Millis = 3_000;
 pub const PUT_WAIT: Millis = 3_000;
 /// The responsive DHT nodes kept to start later lookups from.
 const KEPT_NODES: usize = 64;
+/// The receive buffer asked for every internet play socket: a single thread opens and forwards
+/// every channel's media, and the OS default (64 KiB on Windows) holds a few milliseconds of
+/// video. The OS may grant less; smaller sizes are tried down to [`RECEIVE_BUFFER_MIN`], as
+/// Nightjar's session sockets do.
+pub const RECEIVE_BUFFER: usize = 8 << 20;
+const RECEIVE_BUFFER_MIN: usize = 32767;
+const RECEIVE_BUFFER_STEP: usize = 16384;
+
+/// A UDP socket bound at `address`, with as much of [`RECEIVE_BUFFER`] as the OS grants.
+pub fn bind_udp(address: SocketAddr) -> io::Result<UdpSocket> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let socket = Socket::new(
+        Domain::for_address(address),
+        Type::DGRAM,
+        Some(Protocol::UDP),
+    )?;
+    let mut size = RECEIVE_BUFFER;
+    while socket.set_recv_buffer_size(size).is_err() && size > RECEIVE_BUFFER_MIN {
+        size = size.saturating_sub(RECEIVE_BUFFER_STEP).max(RECEIVE_BUFFER_MIN);
+    }
+    socket.bind(&address.into())?;
+    Ok(socket.into())
+}
 
 #[derive(Clone)]
 pub struct Node {
@@ -62,7 +85,7 @@ struct State {
 impl Node {
     /// Binds an IPv4 socket at `address` (port 0: any) and starts receiving.
     pub fn bind(address: SocketAddr, bootstrap: Vec<String>) -> io::Result<Self> {
-        let socket = UdpSocket::bind(address)?;
+        let socket = bind_udp(address)?;
         socket.set_read_timeout(Some(Duration::from_millis(250)))?;
         let shared = Arc::new(Shared {
             socket,
@@ -342,6 +365,15 @@ pub fn unix_now() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sockets_ask_for_a_larger_receive_buffer_than_the_default() {
+        let plain = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let sized = bind_udp("127.0.0.1:0".parse().unwrap()).unwrap();
+        let size = |socket: &UdpSocket| socket2::SockRef::from(socket).recv_buffer_size().unwrap();
+        assert!(size(&sized) >= size(&plain), "{} < {}", size(&sized), size(&plain));
+        assert!(size(&sized) >= RECEIVE_BUFFER_MIN);
+    }
 
     /// A STUN server on loopback answers the node's query with the address it saw.
     #[test]
