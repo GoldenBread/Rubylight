@@ -435,11 +435,22 @@ impl Tunnel {
 
     /// Sends what the reliable layer has ready.
     fn flush(&self) {
+        // A retransmission due earlier than the path thread planned, or a dead stream layer,
+        // is the path thread's.
+        if let Some(due) = self.transmit() {
+            self.wake_by(due);
+        }
+    }
+
+    /// [`Tunnel::flush`] without waking the path thread, for the path thread itself (its next
+    /// sleep reckons with the stream layer anyway): when the stream layer next needs it, 0 when
+    /// it died.
+    fn transmit(&self) -> Option<Millis> {
         let now = self.shared.node.now();
         let mut inner = self.shared.inner.lock().unwrap();
-        let Some(peer) = inner.peer else { return };
+        let peer = inner.peer?;
         if !matches!(inner.puncher.state(), punch::State::Connected(_)) {
-            return;
+            return None;
         }
         let mut sent = false;
         let mut sealed = Vec::new();
@@ -453,16 +464,10 @@ impl Tunnel {
         if sent {
             inner.last_sent = now;
         }
-        // A retransmission due earlier than the path thread planned, or a dead stream layer,
-        // is the path thread's.
-        let due = if inner.reliable.is_dead() {
+        if inner.reliable.is_dead() {
             Some(0)
         } else {
             inner.reliable.next_timeout()
-        };
-        drop(inner);
-        if let Some(due) = due {
-            self.wake_by(due);
         }
     }
 
@@ -763,6 +768,11 @@ impl Tunnel {
             let connected = matches!(inner.puncher.state(), punch::State::Connected(_));
             let idle = now.saturating_sub(self.shared.last_heard.load(Ordering::Relaxed)) > IDLE;
             let keepalive = connected && now.saturating_sub(inner.last_sent) > KEEPALIVE;
+            // An open connection is use: the unused time counts from its end (give or take the
+            // longest sleep).
+            if !inner.connections.is_empty() {
+                self.shared.last_used.fetch_max(now, Ordering::Relaxed);
+            }
             let unused = self
                 .unused_since(&inner, connected)
                 .is_some_and(|since| now.saturating_sub(since) > UNUSED);
@@ -787,7 +797,10 @@ impl Tunnel {
                 self.send_to(peer, Kind::Keepalive, 0, &[]);
             }
             self.dispatch();
-            self.flush();
+            if self.transmit() == Some(0) {
+                // The stream layer died: its event closes the path.
+                self.dispatch();
+            }
             self.sleep();
         }
     }
@@ -1056,6 +1069,27 @@ mod tests {
         let rounds = device.shared.rounds.load(Ordering::Relaxed) - before;
         assert!(rounds <= 3, "{rounds} rounds in a second");
         assert!(!device.is_closed());
+
+        // A stream segment waiting for its acknowledgement (the host hears nothing for now)
+        // makes it sleep until the retransmission is due, not spin.
+        host_node.set_handler(Box::new(|_, _| {}));
+        let before = device.shared.rounds.load(Ordering::Relaxed);
+        device
+            .shared
+            .inner
+            .lock()
+            .unwrap()
+            .reliable
+            .open(TARGET_HTTP);
+        device.flush();
+        thread::sleep(Duration::from_millis(500));
+        let rounds = device.shared.rounds.load(Ordering::Relaxed) - before;
+        assert!(
+            rounds <= 5,
+            "{rounds} rounds in half a second with a segment in flight"
+        );
+        let h = host.clone();
+        host_node.set_handler(Box::new(move |datagram, from| h.receive(datagram, from)));
 
         // A close wakes it at once.
         device.close("test over");
