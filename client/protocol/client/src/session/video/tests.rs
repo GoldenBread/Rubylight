@@ -517,6 +517,38 @@ fn a_decoder_that_predicts_from_earlier_frames_sees_every_frame() {
     assert_eq!(counters.chunks_skipped.load(Ordering::Relaxed), 0);
 }
 
+/// The receive thread holding the receiver's lock (FEC recovery, frame assembly) does not hold
+/// up the decoder: decoded frames go back through their own list, which the next lock section
+/// takes into the receiver's pool.
+#[test]
+fn the_decoder_hands_frames_back_without_waiting_for_the_receivers_lock() {
+    let shared = Arc::new(VideoShared::new(records(true)));
+    backlog(&shared, 5, FrameType::P);
+    let (tx, rx) = mpsc::channel();
+    let held = lock(&shared.receiver);
+    let running = Running::start(&shared, Recorder::new(tx), rx);
+    wait_until("the decoder waited for the receiver's lock", || {
+        lock(&shared.returns.frames).len() == 5
+    });
+    drop(held);
+    let seen = running.finish();
+    assert_eq!(decoded_numbers(&seen), [1, 2, 3, 4, 5], "{seen:?}");
+    let mut signals = Vec::new();
+    let mut staged = StagedChunks::default();
+    receive_batch(
+        &shared,
+        None,
+        &mut signals,
+        0,
+        |_| &[][..],
+        &mut None,
+        &mut staged,
+        |_| {},
+    );
+    assert!(lock(&shared.returns.frames).is_empty());
+    assert!(!shared.returns.pending.load(Ordering::Relaxed));
+}
+
 #[test]
 fn a_skipped_key_frame_is_reported_decoded_with_the_next_frame_that_is() {
     // Frame 3 is decoded, but the decoder refuses it: no key frame has been decoded.

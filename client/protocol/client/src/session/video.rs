@@ -451,6 +451,56 @@ impl VideoCounters {
     }
 }
 
+/// Frames the decoder thread returns at most before the receive thread takes them back: every
+/// frame the decode queue holds and the one being decoded, as the receiver's frame pool keeps.
+const RETURNED_FRAMES: usize = DECODE_UNIT_QUEUE_BOUND + 1;
+
+/// The frames the decoder thread is done with, on their way back to the receiver's pool. The
+/// decoder hands each over under this list's own lock, so it never waits for the receiver's
+/// lock (FEC recovery, frame assembly); the receive thread recycles them at the start of its
+/// next lock section, before any frame of that section needs storage.
+struct FrameReturns {
+    /// Allocated once, at [`RETURNED_FRAMES`]; a frame past it is freed instead.
+    frames: Mutex<Vec<Frame>>,
+    /// Set after a frame is handed over, so a lock section with nothing to take skips the lock.
+    pending: AtomicBool,
+}
+
+impl FrameReturns {
+    fn new() -> Self {
+        Self {
+            frames: Mutex::new(Vec::with_capacity(RETURNED_FRAMES)),
+            pending: AtomicBool::new(false),
+        }
+    }
+
+    /// Hands a frame back from the decoder thread.
+    fn give(&self, frame: Frame) {
+        let mut frames = lock(&self.frames);
+        // Only frames in flight come back, so the list never reaches its bound in practice; a
+        // frame past it would be freed by the full pool too.
+        let spare = if frames.len() < RETURNED_FRAMES {
+            frames.push(frame);
+            None
+        } else {
+            Some(frame)
+        };
+        drop(frames);
+        self.pending.store(true, Ordering::Release);
+        drop(spare);
+    }
+
+    /// Recycles the returned frames into the receiver, under its lock.
+    fn take_into(&self, receiver: &mut VideoReceiver) {
+        if !self.pending.load(Ordering::Acquire) || !self.pending.swap(false, Ordering::Acquire) {
+            return;
+        }
+        for frame in lock(&self.frames).drain(..) {
+            receiver.recycle(frame);
+        }
+    }
+}
+
 /// State the receive thread, the decoder thread and the control thread share.
 pub struct VideoShared {
     pub receiver: Mutex<VideoReceiver>,
@@ -461,6 +511,8 @@ pub struct VideoShared {
     pub counters: VideoCounters,
     /// `receivedFullFrame`: a key frame was reassembled.
     key_frame: AtomicBool,
+    /// Frames the decoder thread is done with ([`FrameReturns`]).
+    returns: FrameReturns,
 }
 
 impl VideoShared {
@@ -476,6 +528,7 @@ impl VideoShared {
             queue: FrameQueue::with_bound(bound),
             counters: VideoCounters::default(),
             key_frame: AtomicBool::new(false),
+            returns: FrameReturns::new(),
         }
     }
 }
@@ -921,6 +974,7 @@ fn receive_batch<'b>(
     loop {
         {
             let mut receiver = lock(&shared.receiver);
+            shared.returns.take_into(&mut receiver);
             if let Some(d) = direct.as_deref_mut() {
                 d.settle(&mut receiver, shared, signals);
             }
@@ -992,6 +1046,8 @@ fn decode_loop(
     let mut backlog = Backlog::default();
     // A key frame was skipped: the next decoded frame stands in for it.
     let mut skipped_idr = false;
+    // The receiver recovers with key frames only (`recover_with_idr_only`, which stays so).
+    let mut idr_only = false;
     while let Some((item, behind)) = shared.queue.wait_behind(&mut returned) {
         let frame = match item {
             Item::Chunk(chunk) => {
@@ -1011,38 +1067,41 @@ fn decode_loop(
             decoder.skip(&frame);
             shared.counters.frames_skipped.fetch_add(1, Ordering::Relaxed);
             skipped_idr |= frame.frame_type == FrameType::Idr;
-            lock(&shared.receiver).recycle(frame);
+            shared.returns.give(frame);
             continue;
         }
         shared.counters.submitted.fetch_add(1, Ordering::Relaxed);
         let status = decoder.submit(&frame);
-        {
+        let need_idr = status == DecodeStatus::NeedIdr;
+        let decoded_idr = status == DecodeStatus::Ok
+            && (std::mem::take(&mut skipped_idr) || frame.frame_type == FrameType::Idr);
+        // Asked after each frame: a decoder replaced mid-stream may not recover with RFI.
+        let lost_rfi = !idr_only && !decoder.recovers_with_rfi();
+        // Most frames tell the receiver nothing and leave its lock to the receive thread.
+        if need_idr || decoded_idr || lost_rfi {
             let mut receiver = lock(&shared.receiver);
-            match status {
-                DecodeStatus::NeedIdr => {
-                    skipped_idr = false;
-                    shared.counters.need_idr.fetch_add(1, Ordering::Relaxed);
-                    let mut sink = Sink {
-                        shared,
-                        direct: None,
-                        staged: None,
-                        signals: &mut signals,
-                    };
-                    receiver.request_decoder_refresh(&mut sink);
-                }
-                DecodeStatus::Ok => {
-                    if std::mem::take(&mut skipped_idr) || frame.frame_type == FrameType::Idr {
-                        receiver.frame_decoded(FrameType::Idr);
-                    }
-                }
+            if need_idr {
+                skipped_idr = false;
+                shared.counters.need_idr.fetch_add(1, Ordering::Relaxed);
+                let mut sink = Sink {
+                    shared,
+                    direct: None,
+                    staged: None,
+                    signals: &mut signals,
+                };
+                receiver.request_decoder_refresh(&mut sink);
             }
-            if !decoder.recovers_with_rfi() {
+            if decoded_idr {
+                receiver.frame_decoded(FrameType::Idr);
+            }
+            if lost_rfi {
                 receiver.recover_with_idr_only();
+                idr_only = true;
             }
-            // The receiver's statistics change only as datagrams arrive, which publishes them
-            // itself, so a decoded frame takes the receiver's lock alone.
-            receiver.recycle(frame);
         }
+        // The receiver's statistics change only as datagrams arrive, which publishes them
+        // itself, and the frame goes back without the receiver's lock.
+        shared.returns.give(frame);
         route_signals(&mut signals);
     }
     decoder
