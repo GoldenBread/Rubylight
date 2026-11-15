@@ -306,7 +306,13 @@ impl ClientTunnel {
                             .to_owned()
                     });
                 };
-                self.open_path(&node, &keys, client_session, local, Target::from_record(record))?
+                self.open_path(
+                    &node,
+                    &keys,
+                    client_session,
+                    local,
+                    Target::from_record(record),
+                )?
             }
         };
         let mut publication = self.publish(&node, &keys, &path, client_session, nat, &own, 0);
@@ -358,15 +364,17 @@ impl ClientTunnel {
             return Ok(());
         }
         path.tunnel.close("no path");
-        Err(if nat == Nat::Symmetric && path.target.nat == Nat::Symmetric {
-            "both networks give each destination another port (symmetric NAT), so no direct path opens; forward the ports on the PC's router, or use IPv6".to_owned()
-        } else if publication.confirmed == Some(0) {
-            "this device's record could not be stored in the DHT, so the PC could not answer"
-                .to_owned()
-        } else {
-            "the PC did not answer: it may be off or asleep, or its network blocks the path"
-                .to_owned()
-        })
+        Err(
+            if nat == Nat::Symmetric && path.target.nat == Nat::Symmetric {
+                "both networks give each destination another port (symmetric NAT), so no direct path opens; forward the ports on the PC's router, or use IPv6".to_owned()
+            } else if publication.confirmed == Some(0) {
+                "this device's record could not be stored in the DHT, so the PC could not answer"
+                    .to_owned()
+            } else {
+                "the PC did not answer: it may be off or asleep, or its network blocks the path"
+                    .to_owned()
+            },
+        )
     }
 
     /// Starts punching `target` and makes it the path the node's datagrams go to.

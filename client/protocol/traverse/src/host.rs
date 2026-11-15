@@ -452,11 +452,7 @@ impl HostService {
                 }
             });
         if spawned.is_err() {
-            self.shared
-                .starting
-                .lock()
-                .unwrap()
-                .remove(&(tag, client));
+            self.shared.starting.lock().unwrap().remove(&(tag, client));
         }
     }
 
@@ -569,7 +565,10 @@ impl HostService {
         let mut poll = Vec::new();
         for index in due.into_iter().take(free) {
             devices[index].polling = true;
-            poll.push((devices[index].device.id.clone(), devices[index].keys.clone()));
+            poll.push((
+                devices[index].device.id.clone(),
+                devices[index].keys.clone(),
+            ));
         }
         let published = devices
             .iter()
@@ -623,10 +622,10 @@ impl HostService {
                 endpoints: public.clone(),
                 ports: Some(self.shared.config.ports),
             };
-            let confirmed = self
-                .shared
-                .node
-                .put(&record.item(&keys, window, crate::crypto::random()));
+            let confirmed =
+                self.shared
+                    .node
+                    .put(&record.item(&keys, window, crate::crypto::random()));
             let mut devices = self.shared.devices.lock().unwrap();
             if let Some(state) = devices.iter_mut().find(|state| state.device.id == id) {
                 if confirmed > 0 {

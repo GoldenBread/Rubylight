@@ -309,7 +309,12 @@ impl Tunnel {
     /// Punches on at least until `deadline` (the node's clock): the peer finds this side's
     /// record later.
     pub fn hold_punching_until(&self, deadline: Millis) {
-        self.shared.inner.lock().unwrap().puncher.hold_until(deadline);
+        self.shared
+            .inner
+            .lock()
+            .unwrap()
+            .puncher
+            .hold_until(deadline);
     }
 
     /// Mirrors `inner`'s connected peer into `connected`; called with `inner` held after any

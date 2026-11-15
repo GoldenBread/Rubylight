@@ -335,7 +335,10 @@ mod tests {
         ];
         let mut seq = 1;
         for (kind, channel, payload) in cases {
-            assert_eq!(sealer.seal(kind, channel, payload), reference(seq, kind, channel, payload));
+            assert_eq!(
+                sealer.seal(kind, channel, payload),
+                reference(seq, kind, channel, payload)
+            );
             sealer.seal_into(kind, channel, payload, &mut kept);
             assert_eq!(kept, reference(seq + 1, kind, channel, payload));
             seq += 2;
