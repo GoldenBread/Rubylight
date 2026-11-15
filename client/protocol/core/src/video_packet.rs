@@ -24,10 +24,12 @@ pub const DESCRIBE_ATTRIBUTE: &str = "x-rl-max-packet-size";
 pub const ANNOUNCE_ATTRIBUTE: &str = "x-nv-video[0].packetSize";
 
 /// The largest video packet a path whose interface MTU is `mtu` bytes offers, or 0 when that is no
-/// more than stock clients already send (a 1500-byte path, Wi-Fi among them, offers 1424 and so
-/// changes nothing). The size covers the client's 32-byte encryption header; the datagram adds
-/// [`DATAGRAM_OVERHEAD`] bytes on top. Rounded down to a multiple of 16, as Moonlight rounds its
-/// packet size.
+/// more than stock clients already send (1464 bytes or less). A 1500-byte path, Wi-Fi among them,
+/// offers 1424: 24 bytes above stock, safe but with little of jumbo's benefit. The size covers the
+/// client's 32-byte encryption header; the datagram adds [`DATAGRAM_OVERHEAD`] bytes on top, and the
+/// client's UDP probe must use this size (the packet size less the 32-byte header when encrypted),
+/// not the config value, because the probe adds its own framing. Rounded down to a multiple of 16,
+/// as Moonlight rounds its packet size.
 pub fn for_mtu(mtu: u32) -> u16 {
     let room = mtu
         .saturating_sub(u32::from(DATAGRAM_OVERHEAD))

@@ -99,9 +99,7 @@ pub fn send(socket: &ReplySocket, peer: SocketAddr, request: &Request) -> Result
     // frames, rather than being fragmented and reassembled by the client.
     let jumbo =
         request.packet_size > usize::from(butterpollo_core::video_packet::STOCK_MAX_VIDEO_PACKET);
-    if jumbo {
-        butterpollo_windows::net::set_dont_fragment(socket)?;
-    }
+    butterpollo_windows::net::set_dont_fragment(socket, jumbo)?;
     let timer = butterpollo_windows::timing::Timer::new()?;
     let ipv6 = destination.ip().to_canonical().is_ipv6();
     let schedule = pyrowave_probe::schedule(request, ipv6);

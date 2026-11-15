@@ -343,6 +343,11 @@ impl Offered {
         // client that asks for jumbo packets the host did not offer.
         if n.packet_size > usize::from(video_packet::STOCK_MAX_VIDEO_PACKET) {
             let attribute = video_packet::ANNOUNCE_ATTRIBUTE;
+            // Moonlight rounds its packet size to 16 bytes, and PyroWave's
+            // record layout needs it: a size in between would lose records.
+            if !n.packet_size.is_multiple_of(16) {
+                bail!("{attribute} {} is not a multiple of 16", n.packet_size);
+            }
             if self.max_video_packet == 0 {
                 bail!(
                     "{attribute} {} was not offered (the most is {})",

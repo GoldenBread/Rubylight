@@ -332,7 +332,9 @@ fn host_dropped(current: &Session, wire_frame: u32, oversized: bool) {
     current.keyframe_abandoned(wire_frame);
     current.request_send_loss_recovery();
     if oversized {
+        // The path's MTU refused the datagrams, not a transient socket error.
         crate::video_send::oversized_warning(current);
+        return;
     }
     current.launch.warnings.event("network_send", "PyroWave video packets were dropped by the host after transient socket send failures. Lower bitrate and check the network adapter; the log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
 }

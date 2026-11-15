@@ -535,7 +535,7 @@ impl Transport<'_> {
         } else {
             self.send_loss.delivered(frame.idr);
         }
-        if self.batch.dropped != dropped {
+        if self.batch.dropped != dropped && self.batch.oversized == oversized {
             s.launch.warnings.event("network_send", "Video packets were dropped by the host after transient socket send failures. You may see stutter or recovery frames; lower bitrate and check the network adapter. The log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
         }
         super::report_oversized(s, &self.batch, oversized);

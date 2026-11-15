@@ -51,7 +51,7 @@ pub(crate) fn reached_socket(
 pub(crate) fn oversized_warning(s: &Session) {
     s.launch.warnings.event(
         "network_mtu",
-        "Video packets larger than the network path's MTU were refused and dropped. A network adapter, switch or the device's link does not carry jumbo frames; lower the device's video packet size or make every hop's MTU at least 9000.",
+        "Video packets larger than the network path's MTU were refused and dropped. A network adapter, switch or the device's link does not carry jumbo frames; lower the device's video packet size or make every hop's MTU carry the offered packet size plus 64 bytes of headers.",
         butterpollo_core::session::EVENT_PERIOD,
     );
 }

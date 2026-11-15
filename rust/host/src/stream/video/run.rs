@@ -487,7 +487,9 @@ impl SessionThread<'_> {
                     } else {
                         send_loss.delivered(false);
                     }
-                    if batch.dropped != sent.dropped_at_start {
+                    if batch.dropped != sent.dropped_at_start
+                        && batch.oversized == sent.oversized_at_start
+                    {
                         s.launch.warnings.event("network_send", "Video packets were dropped by the host after transient socket send failures. You may see stutter or recovery frames; lower bitrate and check the network adapter. The log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
                     }
                     crate::video_send::report_oversized(&s, &batch, sent.oversized_at_start);
@@ -706,7 +708,7 @@ impl SessionThread<'_> {
                 } else {
                     send_loss.delivered(frame.idr);
                 }
-                if batch.dropped != dropped {
+                if batch.dropped != dropped && batch.oversized == oversized {
                     s.launch.warnings.event("network_send", "Video packets were dropped by the host after transient socket send failures. You may see stutter or recovery frames; lower bitrate and check the network adapter. The log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
                 }
                 crate::video_send::report_oversized(&s, &batch, oversized);

@@ -201,14 +201,22 @@ fn jumbo_packets_are_offered_and_checked_against_the_offer() {
     assert!(error.contains("x-nv-video[0].packetSize"), "{error}");
     assert!(error.contains("was not offered"), "{error}");
     ALL_ON.check_announce(&packet(8192)).unwrap();
-    // Above the offer is refused.
+    // A jumbo size that Moonlight's 16-byte rounding and PyroWave's record
+    // layout cannot take is refused even when offered.
+    let error = ALL_ON
+        .check_announce(&packet(1425))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("multiple of 16"), "{error}");
+    ALL_ON.check_announce(&packet(1424)).unwrap();
+    // Above the offer is refused; 4112 is a multiple of 16.
     let offered = Offered {
         max_video_packet: 4096,
         ..Offered::NONE
     };
     offered.check_announce(&packet(4096)).unwrap();
     let error = offered
-        .check_announce(&packet(4097))
+        .check_announce(&packet(4112))
         .unwrap_err()
         .to_string();
     assert!(error.contains("exceeds the offered 4096"), "{error}");

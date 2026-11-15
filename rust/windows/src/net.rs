@@ -329,23 +329,38 @@ pub fn configure_udp(socket: &UdpSocket) -> Result<()> {
     socket2::SockRef::from(socket).set_send_buffer_size(1 << 20)?;
     Ok(())
 }
-/// Refuse to fragment this socket's later datagrams: `IP_DONTFRAGMENT` on IPv4
-/// and `IPV6_DONTFRAG` on IPv6, so an oversized jumbo packet fails with
-/// WSAEMSGSIZE at the sender instead of being fragmented and lost whole on a
-/// hop that cannot reassemble it. Harmless for stock packet sizes.
-pub fn set_dont_fragment(socket: &UdpSocket) -> Result<()> {
+/// Set whether this socket refuses to fragment its later datagrams:
+/// `IP_DONTFRAGMENT` and `IPV6_DONTFRAG`, so an oversized jumbo packet fails
+/// with WSAEMSGSIZE at the sender instead of being fragmented and lost whole
+/// on a hop that cannot reassemble it. Both options are tried because a
+/// dual-stack socket carries both families; the one the socket does not carry
+/// refuses its option harmlessly. A stock stream clears them, since the socket
+/// lives for the process and a jumbo session must not leave a later stock
+/// session refusing its own datagrams.
+pub fn set_dont_fragment(socket: &UdpSocket, enabled: bool) -> Result<()> {
     let raw = SOCKET(socket.as_raw_socket() as usize);
-    let (level, option) = if socket.local_addr()?.is_ipv6() {
-        (IPPROTO_IPV6, IPV6_DONTFRAG)
-    } else {
-        (IPPROTO_IP, IP_DONTFRAGMENT)
-    };
-    // SAFETY: the borrowed socket stays open, and the option takes this 4-byte BOOL.
-    if unsafe { setsockopt(raw, level.0, option, Some(&1u32.to_ne_bytes())) } == SOCKET_ERROR {
-        // SAFETY: WSAGetLastError only reads this thread's last Winsock error.
-        return Err(std::io::Error::from_raw_os_error(unsafe { WSAGetLastError() }.0).into());
+    let value = u32::from(enabled).to_ne_bytes();
+    let mut applied = false;
+    let mut last = None;
+    for (level, option) in [(IPPROTO_IP, IP_DONTFRAGMENT), (IPPROTO_IPV6, IPV6_DONTFRAG)] {
+        // SAFETY: the borrowed socket stays open, and the option takes this 4-byte BOOL.
+        if unsafe { setsockopt(raw, level.0, option, Some(&value)) } == SOCKET_ERROR {
+            // SAFETY: WSAGetLastError only reads this thread's last Winsock error.
+            let error = unsafe { WSAGetLastError() };
+            // A family the socket does not carry refuses only its own option.
+            if !matches!(error, WSAENOPROTOOPT | WSAEINVAL | WSAEPROTONOSUPPORT) {
+                return Err(std::io::Error::from_raw_os_error(error.0).into());
+            }
+            last = Some(error);
+        } else {
+            applied = true;
+        }
     }
-    Ok(())
+    if applied {
+        Ok(())
+    } else {
+        Err(std::io::Error::from_raw_os_error(last.unwrap_or(WSAEINVAL).0).into())
+    }
 }
 /// Send errors after which the socket still works and only these datagrams
 /// are lost: a full send buffer, no buffer space, or a route that is down for
@@ -921,7 +936,7 @@ impl Batch {
             tracing::warn!(
                 code = error.0,
                 dropped = count,
-                "video datagrams exceed the path MTU and are dropped: jumbo packets need an MTU of at least 9000 on every hop"
+                "video datagrams exceed the path MTU and are dropped: the offered packet size plus 64 bytes of RTP, UDP and IPv6 headers must fit every hop's MTU"
             );
             self.reported = Some(std::time::Instant::now());
         }

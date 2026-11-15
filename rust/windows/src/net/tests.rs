@@ -1311,7 +1311,32 @@ fn a_loopback_route_reports_an_mtu_and_a_socket_can_refuse_fragmentation() -> Re
             "{peer}: {mtu}"
         );
         let socket = UdpSocket::bind(bind)?;
-        set_dont_fragment(&socket)?;
+        // A jumbo stream enables both families' refusal; a later stock stream
+        // must be able to clear it on the same process-wide socket.
+        set_dont_fragment(&socket, true)?;
+        set_dont_fragment(&socket, false)?;
     }
+    // A dual-stack socket carries both families, so both options must apply.
+    let dual = socket2::Socket::new(
+        socket2::Domain::IPV6,
+        socket2::Type::DGRAM,
+        Some(socket2::Protocol::UDP),
+    )?;
+    dual.set_only_v6(false)?;
+    dual.bind(&"[::]:0".parse::<SocketAddr>()?.into())?;
+    let dual: UdpSocket = dual.into();
+    set_dont_fragment(&dual, true)?;
+    set_dont_fragment(&dual, false)?;
     Ok(())
+}
+
+#[test]
+fn an_oversized_datagram_is_counted_as_oversized_but_still_dropped() {
+    let mut batch = Batch {
+        dont_fragment: true,
+        ..Batch::default()
+    };
+    batch.too_large(2, WSAEMSGSIZE);
+    assert_eq!(batch.dropped, 2);
+    assert_eq!(batch.oversized, 2);
 }
