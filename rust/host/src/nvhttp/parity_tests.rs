@@ -1421,6 +1421,37 @@ async fn pairing_ids_are_scoped_to_the_peer_and_pending_requests_are_bounded() {
 }
 
 #[tokio::test]
+async fn a_device_asking_again_replaces_its_own_waiting_pin_request() {
+    let f = Fixture::new();
+    let mut args = otp_request(&f);
+    args.remove("otpauth");
+    let peer = "192.0.2.1".parse().unwrap();
+    let id = pairing_id(&args["uniqueid"], peer);
+    let (sender, mut old) = tokio::sync::oneshot::channel();
+    f.host.pins.lock().unwrap().insert(
+        id.clone(),
+        PendingPin {
+            name: "Earlier".into(),
+            certificate: f.host.identity.certificate.clone(),
+            address: peer,
+            created: Instant::now(),
+            sender,
+        },
+    );
+    let host = f.host.clone();
+    let request = args.clone();
+    let task = tokio::spawn(async move { do_pair(host, &request, peer).await });
+    tokio::task::yield_now().await;
+    assert!(!task.is_finished(), "the same device must not be refused");
+    assert_eq!(f.host.pins.lock().unwrap()[&id].name, "Client name");
+    assert!(matches!(
+        old.try_recv(),
+        Err(tokio::sync::oneshot::error::TryRecvError::Closed)
+    ));
+    task.abort();
+}
+
+#[tokio::test]
 async fn applist_permissions_placeholder_and_hdr_xml_match_moonlight() {
     let f = Fixture::new();
     f.client(1 << 25);

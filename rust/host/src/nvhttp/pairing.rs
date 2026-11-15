@@ -85,12 +85,13 @@ pub(super) async fn do_pair(
                 p.created.elapsed() < Duration::from_secs(30),
             )
         });
-        if waiting.as_ref().is_some_and(|(_, active)| *active)
-            || another_device_pairing(
-                handshaking.as_ref().map(|(c, a)| (c.as_str(), *a)),
-                &certificate,
-            )
-        {
+        if another_device_pairing(
+            waiting.as_ref().map(|(c, a)| (c.as_str(), *a)),
+            &certificate,
+        ) || another_device_pairing(
+            handshaking.as_ref().map(|(c, a)| (c.as_str(), *a)),
+            &certificate,
+        ) {
             bail!("another device is pairing with this PC; finish or cancel that first");
         }
         // A new certificate request replaces this device's unfinished
