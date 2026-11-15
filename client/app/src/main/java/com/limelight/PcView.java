@@ -254,10 +254,16 @@ public class PcView extends NightjarActivity implements AdapterFragmentCallbacks
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Home is the launch screen once a host has shown its games; the list of PCs stays one tap away.
+        // Once per phone and app version: lets Automatic skip codecs that decode slower here. Before Home takes over the
+        // start, which would otherwise leave it unmeasured until the PC list is opened.
+        DecoderBenchmark.runIfNeeded(this);
+
+        // Home is the launch screen once a host has shown its games; the list of PCs stays one tap away. It then looks for
+        // app updates, which this screen does when it stays.
         Intent openPlay = com.limelight.console.OpenPlay.atEntry(this, savedInstanceState);
         if (savedInstanceState == null && opensHome()) {
-            Intent home = new Intent(this, com.limelight.console.ConsoleHomeActivity.class);
+            Intent home = new Intent(this, com.limelight.console.ConsoleHomeActivity.class)
+                    .putExtra(com.limelight.console.ConsoleHomeActivity.EXTRA_LAUNCH_SCREEN, true);
             if (openPlay != null) {
                 // The game's page over Home: Cancel, a failed start and the stream's end all land there.
                 startActivities(new Intent[] {home, openPlay});
@@ -268,9 +274,6 @@ public class PcView extends NightjarActivity implements AdapterFragmentCallbacks
             return;
         }
         openPlayPage = openPlay;
-
-        // Once per phone and app version: lets Automatic skip codecs that decode slower here.
-        DecoderBenchmark.runIfNeeded(this);
 
         // Assume we're in the foreground when created to avoid a race
         // between binding to CMS and onResume()

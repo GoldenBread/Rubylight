@@ -53,6 +53,8 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
     /** How long Home waits for saved PCs to answer before it shows them offline: a poll that gets no answer is done by then. */
     private static final long WAIT_LIMIT_MS = 10_000;
     private static final int COVER_WIDTH_DP = 140;
+    /** Set by the PC list when it hands the app's start to Home: Home then looks for app updates in its place. */
+    public static final String EXTRA_LAUNCH_SCREEN = "com.limelight.console.LAUNCH_SCREEN";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
@@ -605,6 +607,14 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
             handler.postDelayed(stopWaiting, WAIT_LIMIT_MS);
         }
         scheduleReload();
+        if (getIntent().getBooleanExtra(EXTRA_LAUNCH_SCREEN, false)) {
+            checkForUpdates();
+        }
+    }
+
+    /** At most every 12 hours, as the PC list does when it is the launch screen; the offer shows only while Home is in front. */
+    protected void checkForUpdates() {
+        com.limelight.update.UpdateFlow.autoCheck(this, () -> shown);
     }
 
     @Override

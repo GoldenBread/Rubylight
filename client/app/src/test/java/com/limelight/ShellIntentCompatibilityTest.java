@@ -139,6 +139,48 @@ public class ShellIntentCompatibilityTest {
         }
     }
 
+    /** Home that counts its update checks instead of asking GitHub. */
+    public static class CountingHome extends com.limelight.console.HomeShellTest.Home {
+        int checks;
+
+        @Override protected void checkForUpdates() {
+            checks++;
+        }
+    }
+
+    /** Home as the launch screen looks for app updates in the PC list's place; Home opened any other way leaves that to the PC list. */
+    @Test
+    public void homeAsTheLaunchScreenLooksForAppUpdates() throws Exception {
+        cacheALibrary();
+        ActivityController<PcViewLifecycleTest.Library> controller =
+                Robolectric.buildActivity(PcViewLifecycleTest.Library.class, new Intent(Intent.ACTION_MAIN)).create();
+        Intent forwarded;
+        try {
+            forwarded = shadowOf(controller.get()).getNextStartedActivity();
+        } finally {
+            controller.destroy();
+        }
+        assertTrue(forwarded.getBooleanExtra(ConsoleHomeActivity.EXTRA_LAUNCH_SCREEN, false));
+
+        ActivityController<CountingHome> launched =
+                Robolectric.buildActivity(CountingHome.class, new Intent(forwarded).setClass(context, CountingHome.class)).setup();
+        try {
+            assertEquals(1, launched.get().checks);
+            // On each return, as the PC list does; the check itself runs at most every 12 hours.
+            launched.pause().resume();
+            assertEquals(2, launched.get().checks);
+        } finally {
+            launched.pause().stop().destroy();
+        }
+
+        ActivityController<CountingHome> other = Robolectric.buildActivity(CountingHome.class).setup();
+        try {
+            assertEquals(0, other.get().checks);
+        } finally {
+            other.pause().stop().destroy();
+        }
+    }
+
     @Test
     public void aLauncherStartStaysOnThePcsWithoutALibraryOrWithTheStayExtra() throws Exception {
         ActivityController<PcViewLifecycleTest.Library> noLibrary =
