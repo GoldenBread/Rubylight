@@ -7,6 +7,7 @@
 //! rows, each with a box that keeps its value for that layer.
 
 use super::*;
+use nightjar_policy::choices::{BackButton, LowerBitrate, Roaming, SystemKeys};
 use nightjar_policy::controllers::Controllers;
 use nightjar_policy::open_play::StartScreen;
 use nightjar_policy::presets::{self, Preset};
@@ -22,7 +23,7 @@ pub(super) const SETTINGS_SECTIONS: [&str; 8] = [en("Video"), en("Display & imag
 /// rows (a page, a test) store nothing and are not listed. A test keeps this equal to what the
 /// page draws.
 pub(super) const SECTION_KEYS: [&[&[&str]]; 8] = [
-    &[&["width", "height"], &["fps"], &["bitrate_kbps"], &["adaptive_bitrate"], &["codec"], &["hdr"],
+    &[&["width", "height"], &["fps"], &["bitrate_kbps"], &["adaptive_bitrate", "client_hint_bitrate"], &["codec"], &["hdr"],
         &["prefer_yuv444", "experimental_packed_444"], &["sdr_10bit"], &["frame_warp"], &["adaptive_quality"], &["quality_min_short_edge"], &["quality_min_fps"],
         &["hdr_desktop_brightness"], &["rtx_hdr"], &["rtx_video"]],
     &[&["window_mode"], &["video_scaling"], &["vrr", "present_at_host_times", "vrr_tear_free"],
@@ -32,19 +33,19 @@ pub(super) const SECTION_KEYS: [&[&[&str]]; 8] = [
     &[&["mouse_mode"], &["controllers", "multi_controller"], &["clipboard_sync"],
         &["swap_face_buttons"], &["gamepad_quit_combo"], &["deadzone"], &["trigger_deadzone"], &["controller_motion"], &["disable_rumble"],
         &["controller_mouse"], &["analog_scrolling"], &["mouse_fixed_step"], &["gamepad_touchpad_as_mouse"], &["background_controllers"],
-        &["guide_hold_ms"], &["back_opens_menu"], &["back_as_guide"], &["stream_menu_buttons"],
+        &["guide_hold_ms"], &["back_opens_menu", "back_as_guide"], &["stream_menu_buttons"],
         &["mouse_speed"], &["mouse_nav_buttons"], &["native_touchpad"],
-        &["capture_system_keys"], &["system_keys_fullscreen_only"], &["right_alt_as_meta"],
+        &["capture_system_keys", "system_keys_fullscreen_only"], &["right_alt_as_meta"],
         &["controller_audio"], &["usb_forwarding"]],
     &[&["audio"], &["play_audio_on_host"], &["microphone"], &["mic_echo_cancel"], &["mic_noise_suppression"], &["mic_auto_gain"], &["mic_gain"],
         &["mute_audio"], &["audio_passthrough"]],
     &[&["overlay", "overlay_mode"], &["overlay_position"], &["auto_reconnect"],
-        &["client_roaming"], &["roaming_metered"], &["network_grace_ms"], &["receive_coalescing"], &["internet_play"], &["hide_connection_warnings"],
+        &["client_roaming", "roaming_metered"], &["network_grace_ms"], &["receive_coalescing"], &["internet_play"], &["hide_connection_warnings"],
         &["dual_screen"], &["second_screen_width", "second_screen_height"], &["input_only_any_host"]],
     &[&["theme"], &["language"], &["open_on_start", "console_home"], &["quick_resume"], &["check_updates"], &["home_card_size"],
         &["ui_zoom"], &["high_contrast"], &["reduce_motion"]],
     &[&["graphics_card"], &["renderer"], &["display_output"], &["video_planes"], &["high_performance_gpu_power"], &["sops"], &["link_probe"], &["post_stream_decode_time"]],
-    &[&["error_correction"], &["client_hint_bitrate"], &["tell_host_wireless"], &["tell_host_link_speed"],
+    &[&["error_correction"], &["tell_host_wireless"], &["tell_host_link_speed"],
         &["network_priority"], &["unbatched_input"], &["full_range"],
         &["pyrowave_decoder"], &["pyrowave_async_compute"],
         &["decoder"], &["software_slices"], &["vulkan_video_first"], &["vulkan_rfi"], &["cursor_shapes"]],
@@ -738,8 +739,18 @@ impl Launcher {
                     r
                 });
             }
-            setting_row(ui, s, &mut rows, &["adaptive_bitrate"], "Lower bitrate when the network is busy", "Turns the bitrate down while the connection falls behind and back up once it recovers: softer picture, less stutter. Turn it on for a busy network; needs PC support.", |ui, s| {
-                toggle(ui, &mut s.adaptive_bitrate)
+            setting_row(ui, s, &mut rows, &["adaptive_bitrate", "client_hint_bitrate"], "Lower bitrate", "Turns the bitrate down while the connection struggles and back up once it recovers: softer picture, less stutter. Choose one for a busy network; When frames are lost reacts sooner, and both need PC support.", |ui, s| {
+                let current = LowerBitrate::from_saved(s.adaptive_bitrate, s.client_hint_bitrate);
+                let mut choice = current;
+                let response = Combo::from_id_salt("lower-bitrate").selected_text(tr(lower_bitrate_name(current))).show_ui(ui, |ui| {
+                    for each in LowerBitrate::ALL {
+                        ui.selectable_value(&mut choice, each, tr(lower_bitrate_name(each)));
+                    }
+                }).response;
+                if choice != current {
+                    (s.adaptive_bitrate, s.client_hint_bitrate) = choice.to_saved();
+                }
+                response
             });
             if mobile_shown {
                 rows.action("mobile_bitrate");
@@ -1050,8 +1061,19 @@ impl Launcher {
                     }
                 }).response
             });
-            setting_row(ui, s, &mut rows, &["back_opens_menu"], "Back opens the stream menu", "The controller’s or handheld’s Back button opens the stream menu and no longer reaches the PC. Leave it off if your games use that button.", |ui, s| toggle(ui, &mut s.back_opens_menu));
-            setting_row(ui, s, &mut rows, &["back_as_guide"], "Back button as Guide", "Back sends Guide (Home or PS) to the PC, so games no longer get Back from that button. For controllers without a Guide button; “Back opens the stream menu” takes priority.", |ui, s| toggle(ui, &mut s.back_as_guide));
+            setting_row(ui, s, &mut rows, &["back_opens_menu", "back_as_guide"], "Back button", "What the controller’s or handheld’s Back button does: Back reaches the PC as Back, Stream menu opens the stream menu, Guide sends Guide (Home or PS) to the PC. Leave it on Back if your games use that button.", |ui, s| {
+                let current = BackButton::from_saved(s.back_opens_menu, s.back_as_guide);
+                let mut choice = current;
+                let response = Combo::from_id_salt("back-button").selected_text(tr(back_button_name(current))).show_ui(ui, |ui| {
+                    for each in BackButton::ALL {
+                        ui.selectable_value(&mut choice, each, tr(back_button_name(each)));
+                    }
+                }).response;
+                if choice != current {
+                    (s.back_opens_menu, s.back_as_guide) = choice.to_saved();
+                }
+                response
+            });
             setting_row(ui, s, &mut rows, &["stream_menu_buttons"], "Y in the stream menu", "What this button runs while the stream menu is open. Default runs the tile marked with this button in its corner; an action that leaves the stream, such as Disconnect, asks first.", |ui, s| stream_menu_button(ui, s, Hotkey::Y));
             setting_row(ui, s, &mut rows, &["stream_menu_buttons"], "X in the stream menu", "What this button runs while the stream menu is open. Default runs the tile marked with this button in its corner; an action that leaves the stream, such as Disconnect, asks first.", |ui, s| stream_menu_button(ui, s, Hotkey::X));
             setting_row(ui, s, &mut rows, &["stream_menu_buttons"], "LB in the stream menu", "What this button runs while the stream menu is open. Default runs the tile marked with this button in its corner; an action that leaves the stream, such as Disconnect, asks first.", |ui, s| stream_menu_button(ui, s, Hotkey::Lb));
@@ -1080,12 +1102,19 @@ impl Launcher {
                     hotkeys
                 });
             }
-            setting_row(ui, s, &mut rows, &["capture_system_keys"], "Send system keys", "Alt+Tab, the Windows key and similar go to the PC instead of this device. Turn it off to keep those shortcuts on this device.", |ui, s| toggle(ui, &mut s.capture_system_keys));
-            rows.when(s.capture_system_keys);
-            setting_row(ui, s, &mut rows, &["system_keys_fullscreen_only"], "System keys only in full screen", "In a window, Alt+Tab, the Windows key and similar stay with this device; in full screen they go to the PC. Turn on to switch apps beside a windowed stream.", |ui, s| {
-                toggle(ui, &mut s.system_keys_fullscreen_only)
+            setting_row(ui, s, &mut rows, &["capture_system_keys", "system_keys_fullscreen_only"], "Send system keys", "Alt+Tab, the Windows key and similar go to the PC instead of this device; In full screen keeps them here while the stream is in a window. Choose Off to keep those shortcuts on this device.", |ui, s| {
+                let current = SystemKeys::from_saved(s.capture_system_keys, s.system_keys_fullscreen_only);
+                let mut choice = current;
+                let response = Combo::from_id_salt("system-keys").selected_text(tr(system_keys_name(current))).show_ui(ui, |ui| {
+                    for each in SystemKeys::ALL {
+                        ui.selectable_value(&mut choice, each, tr(system_keys_name(each)));
+                    }
+                }).response;
+                if choice != current {
+                    (s.capture_system_keys, s.system_keys_fullscreen_only) = choice.to_saved();
+                }
+                response
             });
-            rows.always();
             setting_row(ui, s, &mut rows, &["right_alt_as_meta"], "Right Alt as Windows key", "Right Alt sends the Windows key, which a Mac uses as Command. Leave it off if you type characters with AltGr: Right Alt then no longer works as AltGr.", |ui, s| toggle(ui, &mut s.right_alt_as_meta));
             rows.group(en("USB"));
             rows.when(s.controllers);
@@ -1183,14 +1212,19 @@ impl Launcher {
                 });
             }
             rows.group(en("Connection"));
-            setting_row(ui, s, &mut rows, &["client_roaming"], "Keep streaming when the network changes", "The stream moves to the new address when this device switches networks, instead of waiting for the old one. Leave it on; needs PC support.", |ui, s| {
-                toggle(ui, &mut s.client_roaming)
+            setting_row(ui, s, &mut rows, &["client_roaming", "roaming_metered"], "Keep streaming when the network changes", "The stream moves to the new address when this device switches networks, instead of waiting for the old one; Any network also moves it onto mobile data or another metered network, which uses a lot of data. Leave it on Except mobile data; needs PC support.", |ui, s| {
+                let current = Roaming::from_saved(s.client_roaming, s.roaming_metered);
+                let mut choice = current;
+                let response = Combo::from_id_salt("roaming").selected_text(tr(roaming_name(current))).show_ui(ui, |ui| {
+                    for each in Roaming::ALL {
+                        ui.selectable_value(&mut choice, each, tr(roaming_name(each)));
+                    }
+                }).response;
+                if choice != current {
+                    (s.client_roaming, s.roaming_metered) = choice.to_saved();
+                }
+                response
             });
-            rows.when(s.client_roaming);
-            setting_row(ui, s, &mut rows, &["roaming_metered"], "Continue on mobile data", "Lets a running stream move onto mobile data or another metered network. Streaming uses a lot of data; leave it off unless you want that.", |ui, s| {
-                toggle(ui, &mut s.roaming_metered)
-            });
-            rows.always();
             setting_row(ui, s, &mut rows, &["network_grace_ms"], "Wait through network dropouts", "How long a silent network is waited out before the stream ends; the picture freezes meanwhile. Raise it if short dropouts end your streams; the PC must wait as long too.", |ui, s| {
                 use nightjar_policy::recovery::{network_grace_choice_s, NETWORK_GRACE_CHOICES_S};
                 let current = network_grace_choice_s(s.network_grace_ms);
@@ -1508,9 +1542,6 @@ impl Launcher {
                         }
                     }).response
             });
-            setting_row(ui, s, &mut rows, &["client_hint_bitrate"], "Lower bitrate when frames are lost", "Turns the bitrate down as soon as frames go missing and back up after clean seconds, in place of “Lower bitrate when the network is busy”. Needs PC support.", |ui, s| {
-                toggle(ui, &mut s.client_hint_bitrate)
-            });
             setting_row(ui, s, &mut rows, &["tell_host_wireless"], "Tell the PC when on Wi-Fi", "Tells the PC when this device is on Wi-Fi, so it paces the stream for Wi-Fi from the first frame. Leave it on; turn it off only to compare.", |ui, s| {
                 toggle(ui, &mut s.tell_host_wireless)
             });
@@ -1825,6 +1856,43 @@ fn controllers_name(choice: Controllers) -> &'static str {
     }
 }
 
+/// "Lower bitrate" as the list says each choice (English; the caller translates).
+fn lower_bitrate_name(choice: LowerBitrate) -> &'static str {
+    match choice {
+        LowerBitrate::Off => en("Off"),
+        LowerBitrate::WhenBusy => en("When the network is busy"),
+        LowerBitrate::WhenFramesLost => en("When frames are lost"),
+    }
+}
+
+/// "Back button" as the list says each choice (English; the caller translates).
+fn back_button_name(choice: BackButton) -> &'static str {
+    match choice {
+        BackButton::Back => en("Back"),
+        BackButton::StreamMenu => en("Stream menu"),
+        BackButton::Guide => en("Guide"),
+    }
+}
+
+/// "Send system keys" as the list says each choice (English; the caller translates).
+fn system_keys_name(choice: SystemKeys) -> &'static str {
+    match choice {
+        SystemKeys::Off => en("Off"),
+        SystemKeys::Always => en("Always"),
+        SystemKeys::FullScreen => en("In full screen"),
+    }
+}
+
+/// "Keep streaming when the network changes" as the list says each choice (English; the caller
+/// translates).
+fn roaming_name(choice: Roaming) -> &'static str {
+    match choice {
+        Roaming::Off => en("Off"),
+        Roaming::NotMetered => en("Except mobile data"),
+        Roaming::AnyNetwork => en("Any network"),
+    }
+}
+
 /// "Sharper colored text" is On while either of its two keys is on (`nightjar_core::sharp_color`).
 pub(super) fn sharp_color(s: &Settings) -> bool {
     s.prefer_yuv444 || s.experimental_packed_444
@@ -2058,6 +2126,10 @@ pub(super) fn value_text(key: &str, s: &Settings, display: &Display, style: crat
     match key {
         "open_on_start" | "console_home" => start_screen_name(start_screen(s), None),
         "controllers" | "multi_controller" => tr(controllers_name(Controllers::from_saved(s.controllers, s.multi_controller))).to_owned(),
+        "adaptive_bitrate" | "client_hint_bitrate" => tr(lower_bitrate_name(LowerBitrate::from_saved(s.adaptive_bitrate, s.client_hint_bitrate))).to_owned(),
+        "back_opens_menu" | "back_as_guide" => tr(back_button_name(BackButton::from_saved(s.back_opens_menu, s.back_as_guide))).to_owned(),
+        "capture_system_keys" | "system_keys_fullscreen_only" => tr(system_keys_name(SystemKeys::from_saved(s.capture_system_keys, s.system_keys_fullscreen_only))).to_owned(),
+        "client_roaming" | "roaming_metered" => tr(roaming_name(Roaming::from_saved(s.client_roaming, s.roaming_metered))).to_owned(),
         "prefer_yuv444" | "experimental_packed_444" => sharp_color_name(sharp_color(s)).to_owned(),
         "vrr" | "present_at_host_times" | "vrr_tear_free" => vrr_choice_name(vrr_choice(s)).to_owned(),
         "align_video_top" => video_position_name(s.align_video_top).to_owned(),
@@ -2122,14 +2194,14 @@ pub(super) fn value_text(key: &str, s: &Settings, display: &Display, style: crat
 /// The main rows of each section, as `client/app/src/main/res/values/settings_tiers.xml` lists them
 /// by Android preference key, in `SETTINGS_SECTIONS` order. A test keeps the two equal.
 pub(super) const MAIN_KEYS: [(&str, &[&str]); 8] = [
-    ("video", &["list_resolution", "list_fps", "automatic_bitrate", "seekbar_bitrate_kbps", "checkbox_auto_bitrate", "list_mobile_bitrate_kbps", "video_format", "checkbox_enable_hdr"]),
+    ("video", &["list_resolution", "list_fps", "automatic_bitrate", "seekbar_bitrate_kbps", "adaptive_bitrate", "list_mobile_bitrate_kbps", "video_format", "checkbox_enable_hdr"]),
     ("display", &["checkbox_stretch_video", "stream_orientation", "checkbox_vrr", "frame_pacing"]),
     ("input", &["checkbox_touchscreen_trackpad", "checkbox_absolute_mouse_mode", "controllers", "controller_button_mapping", "controller_test", "checkbox_show_onscreen_controls", "checkbox_keyboard_follows_text_fields", "checkbox_clipboard_sync"]),
     ("audio", &["list_audio_config", "checkbox_host_audio", "checkbox_enable_mic", "checkbox_mic_button"]),
     ("streaming", &["checkbox_enable_perf_overlay", "performance_overlay_position", "checkbox_auto_reconnect", "network_tests"]),
     ("app", &["checkbox_always_dark", "list_languages", "list_open_on_start", "checkbox_quick_resume", "pin_lock", "help", "report_problem", "check_updates_now"]),
     ("advanced", &["checkbox_rust_engine", "low_latency_decoding", "low_latency_customize", "gpu_driver", "checkbox_gpu_max_clocks", "checkbox_texture_view", "checkbox_vulkan_render"]),
-    ("debug", &["list_fec_choice", "checkbox_rate_change_bitrate", "checkbox_tell_host_wireless", "checkbox_tell_host_link_speed", "checkbox_network_priority", "checkbox_unbatched_input", "checkbox_full_range"]),
+    ("debug", &["list_fec_choice", "checkbox_tell_host_wireless", "checkbox_tell_host_link_speed", "checkbox_network_priority", "checkbox_unbatched_input", "checkbox_full_range"]),
 ];
 
 /// Every desktop row on both platforms and the Android preference it is: a setting's first key or
@@ -2139,7 +2211,7 @@ pub(super) const MAIN_KEYS: [(&str, &[&str]); 8] = [
 pub(super) const ANDROID_KEYS: &[(&str, &str)] = &[
     // Video
     ("width", "list_resolution"), ("fps", "list_fps"), ("bitrate_kbps", "seekbar_bitrate_kbps"),
-    ("adaptive_bitrate", "checkbox_auto_bitrate"), ("mobile_bitrate", "list_mobile_bitrate_kbps"), ("codec", "video_format"),
+    ("adaptive_bitrate", "adaptive_bitrate"), ("mobile_bitrate", "list_mobile_bitrate_kbps"), ("codec", "video_format"),
     ("hdr", "checkbox_enable_hdr"), ("prefer_yuv444", "sharp_color"), ("sdr_10bit", "checkbox_enable_sdr_10bit"),
     ("frame_warp", "checkbox_frame_warp"),
     ("adaptive_quality", "adaptive_quality_mode"), ("quality_min_short_edge", "adaptive_quality_min_resolution"),
@@ -2158,10 +2230,10 @@ pub(super) const ANDROID_KEYS: &[(&str, &str)] = &[
     ("controller_motion", "checkbox_gamepad_motion_sensors"), ("disable_rumble", "checkbox_disable_rumble"),
     ("controller_mouse", "checkbox_mouse_emulation"), ("analog_scrolling", "analog_scrolling"),
     ("mouse_fixed_step", "checkbox_mouse_emulation_fixed_step"), ("gamepad_touchpad_as_mouse", "checkbox_gamepad_touchpad_as_mouse"),
-    ("guide_hold_ms", "list_guide_menu_hold"), ("back_opens_menu", "checkbox_back_opens_menu"), ("back_as_guide", "checkbox_back_as_guide"),
+    ("guide_hold_ms", "list_guide_menu_hold"), ("back_opens_menu", "back_button"),
     ("stream_menu_buttons", "list_stream_menu_button_y"), ("keyboard_shortcuts", "keyboard_shortcuts_editor"),
     ("mouse_speed", "seekbar_mouse_speed"), ("mouse_nav_buttons", "checkbox_mouse_nav_buttons"), ("stream_hotkeys", "stream_hotkeys"),
-    ("capture_system_keys", "checkbox_capture_system_keys"), ("system_keys_fullscreen_only", "checkbox_system_keys_fullscreen_only"),
+    ("capture_system_keys", "checkbox_capture_system_keys"),
     ("right_alt_as_meta", "checkbox_right_alt_as_meta"), ("controller_audio", "checkbox_usb_dualsense_haptics"),
     ("usb_forwarding", "checkbox_usb_forwarding"),
     // Audio
@@ -2172,7 +2244,7 @@ pub(super) const ANDROID_KEYS: &[(&str, &str)] = &[
     // Streaming
     ("overlay", "checkbox_enable_perf_overlay"), ("overlay_position", "performance_overlay_position"),
     ("auto_reconnect", "checkbox_auto_reconnect"), ("connection_test", "network_tests"), ("client_roaming", "checkbox_client_roaming"),
-    ("roaming_metered", "checkbox_roaming_metered"), ("network_grace_ms", "list_network_grace"),
+    ("network_grace_ms", "list_network_grace"),
     ("receive_coalescing", "checkbox_receive_coalescing"), ("internet_play", "checkbox_internet_play"),
     ("hide_connection_warnings", "checkbox_disable_warnings"), ("dual_screen", "checkbox_dual_screen"),
     ("second_screen_width", "list_resolution_screen2"), ("input_only_any_host", "checkbox_input_only_any_host"),
@@ -2187,7 +2259,7 @@ pub(super) const ANDROID_KEYS: &[(&str, &str)] = &[
     ("post_stream_decode_time", "checkbox_enable_post_stream_toast"), ("latency_benchmark", "latency_benchmark"),
     ("export_latency_csv", "export_latency_csv"),
     // Debug
-    ("error_correction", "list_fec_choice"), ("client_hint_bitrate", "checkbox_rate_change_bitrate"),
+    ("error_correction", "list_fec_choice"),
     ("tell_host_wireless", "checkbox_tell_host_wireless"), ("tell_host_link_speed", "checkbox_tell_host_link_speed"),
     ("network_priority", "checkbox_network_priority"), ("unbatched_input", "checkbox_unbatched_input"), ("full_range", "checkbox_full_range"),
 ];

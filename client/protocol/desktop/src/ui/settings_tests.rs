@@ -368,7 +368,7 @@ fn a_pcs_row_box_lines_up_with_where_the_value_comes_from() {
     let id = f.hosts.list[0].id;
     f.l.open_host_settings(id, &f.hosts.list[0]);
     f.settle();
-    for row in ["Resolution", "Automatic bitrate", "Lower bitrate when the network is busy"] {
+    for row in ["Resolution", "Automatic bitrate", "Lower bitrate"] {
         let top = f.placed.iter().find(|(t, ..)| t == row).expect("the row").1.top();
         let below = |text: &str| f.placed.iter().filter(|(t, r, _)| t == text && r.top() > top).map(|p| p.1)
             .min_by(|a, b| a.top().total_cmp(&b.top())).unwrap_or_else(|| panic!("{text} under {row}"));
@@ -469,7 +469,7 @@ fn the_section_key_table_is_what_the_page_draws() {
 #[test]
 fn the_developer_rows_are_in_debug_and_the_tools_in_advanced() {
     // Android's main rows in its order, then PyroWave's, the decoder's and the cursor.
-    const DEBUG: [&str; 13] = ["error_correction", "client_hint_bitrate", "tell_host_wireless", "tell_host_link_speed",
+    const DEBUG: [&str; 12] = ["error_correction", "tell_host_wireless", "tell_host_link_speed",
         "network_priority", "unbatched_input", "full_range", "pyrowave_decoder", "pyrowave_async_compute", "decoder",
         "vulkan_video_first", "vulkan_rfi", "cursor_shapes"];
     assert_eq!(SETTINGS_SECTIONS.last(), Some(&"Debug"));
@@ -1181,25 +1181,60 @@ fn the_tests_have_no_row_without_a_pc_that_runs_them() {
     assert!(!shows(&f, "PyroWave frame pace"), "no calibration without PyroWave: {:?}", f.drawn);
 }
 
-/// Nightjar #87: system keys can go to the PC only while the stream is full screen. Off as
-/// before, a setting of its own right after Send system keys, and no row with that off.
+/// Nightjar #87: system keys can go to the PC only while the stream is full screen. One row with
+/// Send system keys' choices, saved in its two switches as before.
 #[test]
-fn system_keys_only_in_full_screen_sits_with_send_system_keys() {
+fn system_keys_only_in_full_screen_is_a_choice_of_send_system_keys() {
     let defaults = Settings::default();
     assert!(defaults.capture_system_keys && !defaults.system_keys_fullscreen_only, "as before: in a window too");
     let old: Settings = serde_json::from_str(r#"{"capture_system_keys":false}"#).unwrap();
     assert!(!old.capture_system_keys && !old.system_keys_fullscreen_only, "a settings file from before");
     let saved = serde_json::to_value(Settings { system_keys_fullscreen_only: true, ..Settings::default() }).unwrap();
     assert_eq!((saved["capture_system_keys"].as_bool(), saved["system_keys_fullscreen_only"].as_bool()), (Some(true), Some(true)));
-    for send in [true, false] {
-        let mut f = settings_with(Settings { capture_system_keys: send, ..Settings::default() });
-        f.l.settings_view.section = "Controls";
-        open_folds(&mut f);
-        assert!(shows(&f, "Send system keys") && shows(&f, "Right Alt as Windows key"), "{:?}", f.drawn);
-        assert_eq!(shows(&f, "System keys only in full screen"), send, "Send system keys {send}: {:?}", f.drawn);
-        let rows = setting_keys(&f);
-        let at = rows.iter().position(|key| *key == "capture_system_keys").unwrap();
-        assert_eq!(rows[at + 1], if send { "system_keys_fullscreen_only" } else { "right_alt_as_meta" }, "right after Send system keys");
+    let mut f = settings_with(Settings::default());
+    f.l.settings_view.section = "Controls";
+    open_folds(&mut f);
+    assert!(shows(&f, "Send system keys") && !shows(&f, "System keys only in full screen"), "{:?}", f.drawn);
+    let rows = setting_keys(&f);
+    let at = rows.iter().position(|key| *key == "capture_system_keys").unwrap();
+    assert_eq!(rows[at + 1], "right_alt_as_meta", "one row");
+}
+
+/// The rows that were two switches each are one choice, and a value saved by an earlier version
+/// reads as the stream used it: "Back opens the stream menu" won over "Back button as Guide",
+/// full screen only and mobile data counted only with their first switch on, and frame loss took
+/// the place of the busy network wherever it ran.
+#[test]
+fn paired_switches_read_as_one_choice() {
+    let display = crate::stream::Display { width: 1920, height: 1080, refresh_hz: 60.0, refresh_reported: true };
+    let value = |json: &str, key: &str| {
+        let s: Settings = serde_json::from_str(json).unwrap();
+        value_text(key, &s, &display, crate::glyphs::Style::Xbox)
+    };
+    assert_eq!(value("{}", "back_opens_menu"), "Back");
+    assert_eq!(value(r#"{"back_as_guide":true}"#, "back_opens_menu"), "Guide");
+    assert_eq!(value(r#"{"back_opens_menu":true,"back_as_guide":true}"#, "back_as_guide"), "Stream menu");
+    assert_eq!(value("{}", "capture_system_keys"), "Always");
+    assert_eq!(value(r#"{"system_keys_fullscreen_only":true}"#, "capture_system_keys"), "In full screen");
+    assert_eq!(value(r#"{"capture_system_keys":false,"system_keys_fullscreen_only":true}"#, "capture_system_keys"), "Off");
+    assert_eq!(value("{}", "client_roaming"), "Except mobile data");
+    assert_eq!(value(r#"{"roaming_metered":true}"#, "roaming_metered"), "Any network");
+    assert_eq!(value(r#"{"client_roaming":false,"roaming_metered":true}"#, "client_roaming"), "Off");
+    assert_eq!(value("{}", "adaptive_bitrate"), "Off");
+    assert_eq!(value(r#"{"adaptive_bitrate":true}"#, "adaptive_bitrate"), "When the network is busy");
+    assert_eq!(value(r#"{"client_hint_bitrate":true}"#, "adaptive_bitrate"), "When frames are lost");
+    assert_eq!(value(r#"{"adaptive_bitrate":true,"client_hint_bitrate":true}"#, "client_hint_bitrate"), "When frames are lost");
+
+    // A PC's own value keeps both switches of its choice, so the layer reads whole.
+    let mut own = Overrides::default();
+    let chosen = Settings { back_opens_menu: false, back_as_guide: true, ..Settings::default() };
+    own.capture(&chosen, &["back_opens_menu", "back_as_guide"]);
+    let main = Settings { back_opens_menu: true, ..Settings::default() };
+    let applied = own.apply(&main);
+    assert!(!applied.back_opens_menu && applied.back_as_guide, "Guide for this PC over the main Stream menu");
+    // The old rows are gone from every section.
+    for gone in ["back_as_guide", "system_keys_fullscreen_only", "roaming_metered", "client_hint_bitrate"] {
+        assert!(SECTION_KEYS.iter().all(|rows| rows.iter().all(|keys| keys[0] != gone)), "{gone} names no row");
     }
 }
 

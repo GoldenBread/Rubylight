@@ -788,7 +788,7 @@ fn settings_show_a_sections_main_rows_then_a_counted_fold() {
     f.size = vec2(1280.0, 12000.0);
     f.l.go(Screen::Settings);
     f.settle();
-    assert!(shows(&f, "Lower bitrate when the network is busy") && !shows(&f, "Automatic quality"), "{:?}", f.drawn);
+    assert!(shows(&f, "Lower bitrate") && !shows(&f, "Automatic quality"), "{:?}", f.drawn);
     assert!(!shows(&f, "Recover interrupted streams") && !shows(&f, "Fine-tuning"), "one section at a time, no catch-all group");
     let fold = |f: &Frames| f.drawn.iter().find(|t| t.starts_with("More ") || t.starts_with("Fewer ")).cloned();
     let id = f.hosts.list[0].id;

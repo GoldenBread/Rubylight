@@ -6,6 +6,7 @@
 //! equal to it through the shared traces in `tests/traces` (see [`trace`]).
 
 pub mod bitrate;
+pub mod choices;
 pub mod client_hint;
 pub mod collections;
 pub mod connection_test;
