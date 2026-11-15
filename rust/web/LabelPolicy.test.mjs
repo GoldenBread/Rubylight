@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import { createTestServer } from './test-server.mjs';
 
 // The label policy (ux/labels.md): no setting, page or badge says Experimental; features ship plainly and keep
-// their keys. Identifiers such as experimental_packed_444, amdvce_experimental or a wake target's
+// their keys. Identifiers such as amdvce_experimental or a wake target's
 // 'experimental' state are not text, and comments are not shown.
 const server = await createTestServer({ configFile: false });
 const { schema } = await server.ssrLoadModule('/src/lib/settings-schema.ts');

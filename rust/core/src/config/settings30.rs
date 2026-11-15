@@ -10,7 +10,6 @@ use std::path::PathBuf;
 pub const SETTINGS_30: &[(&str, &str)] = &[
     ("audio_surround_714", "true"),
     ("pen_barrel_roll", "true"),
-    ("touch_keyboard_digitizer", "false"),
     ("touch_mode", "client"),
     ("touch_sensitivity", "100"),
     ("touch_gestures", "true"),
@@ -79,10 +78,6 @@ impl Config {
     /// Stylus barrel roll, 0x5500000B (on by default).
     pub fn pen_barrel_roll(&self) -> bool {
         self.boolean("pen_barrel_roll", true)
-    }
-    /// Let the Windows touch keyboard open for a device's touches (off by default).
-    pub fn touch_keyboard_digitizer(&self) -> bool {
-        self.boolean("touch_keyboard_digitizer", false)
     }
     /// `touch_mode`: `client` (the default), `mouse` or `trackpad`.
     pub fn touch_mode(&self) -> TouchMode {
@@ -191,7 +186,6 @@ mod tests {
                     c.pen_barrel_roll(),
                 ),
                 (
-                    c.touch_keyboard_digitizer(),
                     c.touch_mode(),
                     c.touch_sensitivity(),
                     c.touch_gestures(),
@@ -212,9 +206,9 @@ mod tests {
     }
 
     #[test]
-    fn there_are_13_unique_settings() {
+    fn there_are_12_unique_settings() {
         let keys: std::collections::BTreeSet<_> = SETTINGS_30.iter().map(|(k, _)| k).collect();
-        assert_eq!((SETTINGS_30.len(), keys.len()), (13, 13));
+        assert_eq!((SETTINGS_30.len(), keys.len()), (12, 12));
     }
 
     #[test]
@@ -222,7 +216,7 @@ mod tests {
         let c = Config::default();
         assert!(c.hdr_dynamic_metadata() && c.hdr_dolby_vision() && c.hdr_hlg());
         assert!(c.audio_surround_714());
-        assert!(c.pen_barrel_roll() && !c.touch_keyboard_digitizer());
+        assert!(c.pen_barrel_roll());
         assert_eq!(c.touch_mode(), TouchMode::Client);
         assert_eq!(c.touch_sensitivity(), 100);
         assert!(c.touch_gestures() && c.client_cursor() && c.clipboard_image());

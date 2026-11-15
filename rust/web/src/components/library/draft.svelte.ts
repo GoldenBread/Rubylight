@@ -24,6 +24,9 @@ export const prepRow = (command: Partial<PrepCommand> = {}): PrepRow => ({
 });
 export const textRow = (value = ''): TextRow => ({ key: nextKey++, value });
 
+/** The virtual display choice that asks for one even where a device or the host streams a monitor. */
+export const ALWAYS = 'always';
+
 /** Switches, with the value the host uses when the key is missing. */
 export const FLAGS = {
   elevated: false,
@@ -39,7 +42,6 @@ export const FLAGS = {
   'use-app-identity': false,
   'per-client-app-identity': false,
   'gen1-framegen-fix': false,
-  'frame-gen-limiter-fix': false,
   'lossless-scaling-enabled': false,
   'background-stream': false,
   /** RTX HDR for this app (NVIDIA components); off leaves it to a device or stream. */
@@ -422,6 +424,30 @@ export class AppDraft {
   text(key: TextKey): string {
     const value = this.app[key];
     return typeof value === 'string' ? value : '';
+  }
+
+  /**
+   * The app's virtual display choice, as display_session.rs reads it: its
+   * mode (`virtual-display-mode`, '' for the host setting), or `always` while
+   * it asks for a virtual display whatever a device or the host would stream
+   * (`virtual-display`, or Apollo's `virtual-screen`). A mode kept beside
+   * that still decides which display is used: `always:shared`.
+   */
+  virtualDisplay(): string {
+    const always = flagValue(this.app['virtual-display'], false) || flagValue(this.app['virtual-screen'], false);
+    const mode = this.text('virtual-display-mode');
+    if (!always) return mode;
+    return mode ? `${ALWAYS}:${mode}` : ALWAYS;
+  }
+  setVirtualDisplay(choice: string) {
+    delete this.app['virtual-screen'];
+    if (choice === ALWAYS || choice.startsWith(`${ALWAYS}:`)) {
+      this.app['virtual-display'] = true;
+      this.setText('virtual-display-mode', choice.slice(ALWAYS.length + 1));
+    } else {
+      delete this.app['virtual-display'];
+      this.setText('virtual-display-mode', choice);
+    }
   }
   setText(key: TextKey, value: string) {
     if (value.trim()) this.app[key] = value;

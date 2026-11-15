@@ -56,7 +56,6 @@ pub fn override_allowed(key: &str) -> bool {
         "dd_refresh_rate_option",
         "dd_manual_refresh_rate",
         "dd_hdr_option",
-        "dd_hdr_request_override",
         "dd_config_revert_delay",
         "dd_config_revert_on_disconnect",
         "dd_paused_virtual_display_timeout_secs",
@@ -86,7 +85,7 @@ pub fn override_allowed(key: &str) -> bool {
         "pyrowave_critical_fec_percentage",
         "hevc_mode",
         "av1_mode",
-        "experimental_packed_444",
+        "packed_444",
         "capture",
         // The app's window in place of a display (app_window.rs).
         "capture_window",
@@ -102,7 +101,7 @@ pub fn override_allowed(key: &str) -> bool {
         "frame_limiter_enable",
         "frame_limiter_provider",
         "frame_limiter_fps_limit",
-        "frame_limiter_auto_virtual_framegen",
+        "virtual_display_refresh",
         "rtss_frame_limit_type",
         // Encoder tuning
         "amd_usage",

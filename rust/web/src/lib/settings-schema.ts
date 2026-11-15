@@ -6,7 +6,7 @@ import { settings as video } from './schema/video';
 import { settings as display } from './schema/display';
 import { settings as library } from './schema/library';
 import { settings as extensions } from './schema/extensions';
-import { ALWAYS_ON, EXPERT_GROUPS, DEBUG_GROUP, asDebugSwitch } from './schema/main';
+import { ALWAYS_ON, DIAGNOSTICS, EXPERT_GROUPS, DEBUG_GROUP, asDebugSwitch, asDiagnostic } from './schema/main';
 
 // Topics for search: a setting is found by its topic's name too. What people
 // see is the settings tabs below, which gather these topics.
@@ -78,6 +78,7 @@ export const schema: Schema = {
   settings: [...basics, ...video, ...display, ...library, ...extensions]
     .filter(setting => !setting.pending || ALWAYS_ON.includes(setting.key))
     .map(setting => (ALWAYS_ON.includes(setting.key) ? asDebugSwitch(setting) : setting))
+    .map(setting => (DIAGNOSTICS.includes(setting.key) ? asDiagnostic(setting) : setting))
     .map(setting => ({ ...setting, advanced: !basicKeys.has(setting.key) })),
 };
 

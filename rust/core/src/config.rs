@@ -21,9 +21,10 @@ pub use folders::{SharedFolderConfig, valid_folder_id, valid_folder_root};
 pub use overrides::override_allowed;
 use retired::retirement;
 pub use retired::{
-    REMOVED_KEYS, REMOVED_PREFIXES, RENAMED_KEYS, RETIRED_SETTINGS, RETIRED_VALUES, Retired,
-    RetiredSetting, SPLIT_KEYS, current_name, removed, replace_retired, replace_retired_in_app,
-    replacement, retired_warning,
+    FOLDED_KEYS, HDR_OPTION, HDR_REQUEST, REMOVED_APP_KEYS, REMOVED_KEYS, REMOVED_PREFIXES,
+    RENAMED_APP_SWITCHES, RENAMED_KEYS, RETIRED_SETTINGS, RETIRED_VALUES, Retired, RetiredSetting,
+    SPLIT_KEYS, current_name, folded_hdr, folded_in_layer, migrate_app, migrate_overrides, removed,
+    replace_retired, replacement, retired_name, retired_warning,
 };
 use text::{bracket_depth, decode, strip_comment};
 pub use values::{
@@ -173,6 +174,14 @@ impl Config {
                 }
             }
         }
+        if let Some(request) = self.values.remove(HDR_REQUEST)
+            && let Some(folded) = folded_in_layer(
+                self.values.get(HDR_OPTION).map_or("auto", String::as_str),
+                &request,
+            )
+        {
+            self.values.insert(HDR_OPTION.to_owned(), folded.to_owned());
+        }
     }
     pub fn load(path: &Path) -> Result<Self> {
         Ok(Self::load_retiring(path)?.0)
@@ -208,11 +217,12 @@ impl Config {
         self.boolean("idd_push_fence_ring", true)
     }
     /// Whether Nightjar clients are offered packed full chroma
-    /// (`experimental_packed_444`, on unless turned off). It only offers the
-    /// modes: a stream uses one only when its client asks, so a client that
-    /// does not ask pays nothing for it.
+    /// (`packed_444`, on unless turned off; earlier releases called it
+    /// `experimental_packed_444`). It only offers the modes: a stream uses one
+    /// only when its client asks, so a client that does not ask pays nothing
+    /// for it.
     pub fn packed_444(&self) -> bool {
-        self.boolean("experimental_packed_444", true)
+        self.boolean("packed_444", true)
     }
     /// Whether paired clients may read hardware metrics during a stream
     /// (`hardware_metrics`, on unless turned off). Readings are taken only
@@ -668,6 +678,31 @@ impl Config {
                 }
             }
         }
+        // The retired HDR request folds into Display HDR as it is sent with
+        // it, or else over the Display HDR held: the configuration's own, or
+        // for an app's or device's overrides the layers below them. An empty
+        // or null request is Follow the device, as its reset was.
+        if let Some(request) = object.remove(HDR_REQUEST) {
+            let request = match request.as_str().map(|text| unquote(text.trim())) {
+                Some(text) if !text.is_empty() => text.to_owned(),
+                _ => "auto".to_owned(),
+            };
+            let folded = match object.get(HDR_OPTION) {
+                Some(option) => folded_in_layer(option.as_str().unwrap_or_default(), &request),
+                None => {
+                    let held = self.get(HDR_OPTION, "auto");
+                    folded_hdr(Some(held), &request).or_else(|| {
+                        // Follow the device ends an earlier Always on or off.
+                        (request == "auto"
+                            && matches!(unquote(held.trim()), "force_on" | "force_off"))
+                        .then_some("auto")
+                    })
+                }
+            };
+            if let Some(folded) = folded {
+                object.insert(HDR_OPTION.to_owned(), folded.into());
+            }
+        }
         object.retain(|key, _| !removed(key));
         let object = &object;
         let mut next = self.clone();
@@ -944,17 +979,16 @@ impl Config {
             // RTX HDR converts an SDR source for the HDR stream.
             hdr: if hdr && crate::nvidia_enhance::rtx_hdr_runs(self) {
                 Some(false)
-            } else if self.get("dd_hdr_option", "auto") == "disabled" {
-                None
             } else {
-                Some(match self.get("dd_hdr_request_override", "auto") {
-                    "force_on" => true,
-                    "force_off" => false,
+                match self.get(HDR_OPTION, "auto") {
+                    "disabled" => None,
+                    "force_on" => Some(true),
+                    "force_off" => Some(false),
                     other => {
-                        fallback("dd_hdr_request_override", other, "auto");
-                        hdr
+                        fallback(HDR_OPTION, other, "auto");
+                        Some(hdr)
                     }
-                })
+                }
             },
         })
     }

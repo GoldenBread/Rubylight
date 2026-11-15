@@ -1341,13 +1341,13 @@ fn every_encoder_the_host_no_longer_has_selects_automatically() {
     // An app's or a device's own overrides.
     let mut app = serde_json::json!({"name": "Game", "frame-generation-mode": "nvidia-smooth-motion",
             "config-overrides": {"encoder": "software", "frame_limiter_provider": "nvidia-control-panel"}});
-    assert!(replace_retired_in_app(app.as_object_mut().unwrap()));
+    assert!(migrate_app(app.as_object_mut().unwrap()));
     assert_eq!(
         app,
         serde_json::json!({"name": "Game", "frame-generation-mode": "none",
                 "config-overrides": {"encoder": "auto", "frame_limiter_provider": "auto"}})
     );
-    assert!(!replace_retired_in_app(app.as_object_mut().unwrap()));
+    assert!(!migrate_app(app.as_object_mut().unwrap()));
 }
 #[test]
 fn retired_vigem_controllers_become_their_vhf_pads() {
@@ -1379,22 +1379,22 @@ fn retired_vigem_controllers_become_their_vhf_pads() {
     assert!(!replace_retired(app.as_object_mut().unwrap()));
     let mut app = serde_json::json!({"name": "Game", "gamepad": "x360",
             "config-overrides": {"gamepad": "ds4", "fec_percentage": "30"}});
-    assert!(replace_retired_in_app(app.as_object_mut().unwrap()));
+    assert!(migrate_app(app.as_object_mut().unwrap()));
     assert_eq!(
         app,
         serde_json::json!({"name": "Game", "gamepad": "vhf_xbox_one",
                 "config-overrides": {"gamepad": "vhf_ds4", "fec_percentage": "30"}})
     );
-    assert!(!replace_retired_in_app(app.as_object_mut().unwrap()));
+    assert!(!migrate_app(app.as_object_mut().unwrap()));
     // A device's block in the app too.
     let mut app = serde_json::json!({"name": "Game",
             "device-overrides": {"tv": {"config-overrides": {"gamepad": "x360"}}}});
-    assert!(replace_retired_in_app(app.as_object_mut().unwrap()));
+    assert!(migrate_app(app.as_object_mut().unwrap()));
     assert_eq!(
         app["device-overrides"]["tv"]["config-overrides"]["gamepad"],
         "vhf_xbox_one"
     );
-    assert!(!replace_retired_in_app(app.as_object_mut().unwrap()));
+    assert!(!migrate_app(app.as_object_mut().unwrap()));
 }
 /// Every setting the NVENC encoder reads (nvenc.rs, and its GPU priority in
 /// gpu_priority.rs) stays in the configuration, and an app or a device may
@@ -1426,7 +1426,7 @@ fn nvenc_settings_are_kept_and_overridable() {
 }
 /// A Vibepollo or Rubylight 2.0 file with every setting under its
 /// earlier name, a setting this host does not know, and a comment.
-const EARLIER_NAMES: &str = "# Vibepollo\nrtss_path = D:\\Tools\\RTSS\nnvenc_force_split_encode = driver_decides\nrtx_hdr_peak_brightness = \"1400\"\nport = 48123\nfuture_setting = kept\n";
+const EARLIER_NAMES: &str = "# Vibepollo\nrtss_path = D:\\Tools\\RTSS\nnvenc_force_split_encode = driver_decides\nrtx_hdr_peak_brightness = \"1400\"\nport = 48123\nframe_limiter_auto_virtual_framegen = vrr\nexperimental_packed_444 = false\nfuture_setting = kept\n";
 #[test]
 fn settings_under_an_earlier_name_are_read_under_the_current_one() {
     let c = Config::parse(EARLIER_NAMES).unwrap();
@@ -1435,6 +1435,8 @@ fn settings_under_an_earlier_name_are_read_under_the_current_one() {
     assert_eq!(c.get("rtss_install_path", ""), "D:\\Tools\\RTSS");
     assert_eq!(c.get("nvenc_split_encode", "auto"), "driver_decides");
     assert_eq!(c.integer("hdr_peak_brightness", 0), 1400);
+    assert_eq!(c.get("virtual_display_refresh", ""), "vrr");
+    assert!(!c.packed_444());
     for (old, _) in RENAMED_KEYS {
         assert!(!c.values.contains_key(*old), "{old}");
     }
@@ -1695,4 +1697,266 @@ fn the_dsu_server_is_off_by_default_and_takes_foundations_port() {
     assert_eq!(invalid.dsu_server_port(), Some(26760));
     let off = super::Config::parse("enable_dsu_server = false\ndsu_server_port = 26761\n").unwrap();
     assert_eq!(off.dsu_server_port(), None);
+}
+/// A Vibepollo or earlier Rubylight file that holds the renamed settings: the
+/// host reads them under their current names (`virtual_display_refresh`,
+/// `packed_444`) with the same meaning, and saves them under those.
+#[test]
+fn the_virtual_display_refresh_and_full_chroma_keep_their_values_under_new_names() {
+    let c = Config::parse(
+        "# Vibepollo\nframe_limiter_auto_virtual_framegen = enabled\nexperimental_packed_444 = false\n",
+    )
+    .unwrap();
+    assert_eq!(
+        crate::framegen::virtual_refresh(&c),
+        crate::framegen::VirtualRefresh::Enabled
+    );
+    assert!(!c.packed_444());
+    assert_eq!(c.get("virtual_display_refresh", ""), "enabled");
+    assert_eq!(c.get("packed_444", ""), "false");
+    let text = c.text();
+    assert!(
+        !text.contains("frame_limiter_auto_virtual_framegen"),
+        "{text}"
+    );
+    assert!(!text.contains("experimental_packed_444"), "{text}");
+    // Sent under the earlier name by an older console or a script.
+    let mut config = Config::default();
+    change(
+        &mut config,
+        "frame_limiter_auto_virtual_framegen",
+        "disabled",
+    )
+    .unwrap();
+    change(&mut config, "experimental_packed_444", "false").unwrap();
+    assert_eq!(
+        crate::framegen::virtual_refresh(&config),
+        crate::framegen::VirtualRefresh::Disabled
+    );
+    assert!(!config.packed_444());
+    assert!(!config.values.contains_key("experimental_packed_444"));
+    // An app or a device may still set both.
+    assert!(override_allowed("virtual_display_refresh") && override_allowed("packed_444"));
+    assert_eq!(current_name("experimental_packed_444"), "packed_444");
+    assert_eq!(
+        current_name("frame_limiter_auto_virtual_framegen"),
+        "virtual_display_refresh"
+    );
+}
+/// The HDR request folds into Display HDR, one choice of four: Match the
+/// stream, Always on, Always off, Don't change HDR.
+#[test]
+fn the_hdr_request_folds_into_display_hdr() {
+    let hdr = |c: &Config, stream: bool| {
+        c.display_request_rate(1920, 1080, crate::framegen::Rate(60000), stream, false)
+            .unwrap()
+            .hdr
+    };
+    // (file, Display HDR read from it, display HDR for an HDR and an SDR stream)
+    for (text, option, for_hdr, for_sdr) in [
+        ("", None, Some(true), Some(false)),
+        (
+            "dd_hdr_option = auto\n",
+            Some("auto"),
+            Some(true),
+            Some(false),
+        ),
+        (
+            "dd_hdr_request_override = force_on\n",
+            Some("force_on"),
+            Some(true),
+            Some(true),
+        ),
+        (
+            "dd_hdr_option = auto\ndd_hdr_request_override = force_off\n",
+            Some("force_off"),
+            Some(false),
+            Some(false),
+        ),
+        // Don't change HDR still wins over the request, as it did.
+        (
+            "dd_hdr_option = disabled\ndd_hdr_request_override = force_on\n",
+            Some("disabled"),
+            None,
+            None,
+        ),
+        (
+            "dd_hdr_request_override = auto\n",
+            None,
+            Some(true),
+            Some(false),
+        ),
+        (
+            "dd_hdr_option = force_on\n",
+            Some("force_on"),
+            Some(true),
+            Some(true),
+        ),
+        // Always on or off is a later choice than the request beside it.
+        (
+            "dd_hdr_option = force_on\ndd_hdr_request_override = force_off\n",
+            Some("force_on"),
+            Some(true),
+            Some(true),
+        ),
+    ] {
+        let c = Config::parse(text).unwrap();
+        assert_eq!(
+            c.values.get(HDR_OPTION).map(String::as_str),
+            option,
+            "{text}"
+        );
+        assert!(!c.values.contains_key(HDR_REQUEST), "{text}");
+        assert_eq!(
+            (hdr(&c, true), hdr(&c, false)),
+            (for_hdr, for_sdr),
+            "{text}"
+        );
+    }
+    // Sent alone by an older console, it folds into Display HDR as held.
+    let mut c = Config::default();
+    change(&mut c, HDR_REQUEST, "force_off").unwrap();
+    assert_eq!(c.get(HDR_OPTION, ""), "force_off");
+    change(&mut c, HDR_REQUEST, "auto").unwrap();
+    assert_eq!(c.get(HDR_OPTION, ""), "auto");
+    let mut c = Config::parse("dd_hdr_option = disabled\n").unwrap();
+    change(&mut c, HDR_REQUEST, "force_on").unwrap();
+    assert_eq!(c.get(HDR_OPTION, ""), "disabled");
+    assert!(!c.values.contains_key(HDR_REQUEST));
+    // An empty or null request is Follow the device, as its reset was.
+    for reset in [serde_json::json!(""), serde_json::Value::Null] {
+        let mut c = Config::parse("dd_hdr_option = force_off\n").unwrap();
+        c.update(&serde_json::Map::from_iter([(
+            HDR_REQUEST.to_owned(),
+            reset.clone(),
+        )]))
+        .unwrap();
+        assert_eq!(c.get(HDR_OPTION, ""), "auto", "{reset}");
+    }
+    // Sent with Display HDR, both are one layer.
+    let mut c = Config::parse("dd_hdr_option = disabled\n").unwrap();
+    c.update(
+        serde_json::json!({"dd_hdr_option": "auto", "dd_hdr_request_override": "force_on"})
+            .as_object()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(c.get(HDR_OPTION, ""), "force_on");
+    // Display HDR is the override; the retired name is read only to fold it.
+    assert!(!override_allowed(HDR_REQUEST) && override_allowed(HDR_OPTION));
+    // One layer of overrides at a time: an app's, a device block's or a
+    // paired device's. A request beside the layer's own Display HDR folds
+    // into it; one alone depends on the layers below and stays as saved.
+    for (before, after) in [
+        (
+            serde_json::json!({"dd_hdr_option": "auto", "dd_hdr_request_override": "force_on"}),
+            serde_json::json!({"dd_hdr_option": "force_on"}),
+        ),
+        (
+            serde_json::json!({"dd_hdr_option": "disabled", "dd_hdr_request_override": "force_off"}),
+            serde_json::json!({"dd_hdr_option": "disabled"}),
+        ),
+        (
+            serde_json::json!({"dd_hdr_option": "auto", "dd_hdr_request_override": "auto"}),
+            serde_json::json!({"dd_hdr_option": "auto"}),
+        ),
+        (
+            serde_json::json!({"dd_hdr_option": "force_off", "dd_hdr_request_override": "force_on"}),
+            serde_json::json!({"dd_hdr_option": "force_off"}),
+        ),
+    ] {
+        let mut layer = before.as_object().unwrap().clone();
+        assert!(migrate_overrides(&mut layer));
+        assert_eq!(serde_json::Value::Object(layer.clone()), after, "{before}");
+        assert!(!migrate_overrides(&mut layer));
+    }
+    for alone in ["force_on", "force_off", "auto"] {
+        let mut layer = serde_json::json!({"dd_hdr_request_override": alone})
+            .as_object()
+            .unwrap()
+            .clone();
+        assert!(!migrate_overrides(&mut layer), "{alone}");
+        assert_eq!(layer[HDR_REQUEST], alone);
+    }
+}
+/// A setting that never had an effect is dropped wherever it is stored.
+#[test]
+fn the_touch_keyboard_setting_is_removed_with_its_stored_value() {
+    let c = Config::parse("touch_keyboard_digitizer = true\nsunshine_name = Den\n").unwrap();
+    assert!(!c.values.contains_key("touch_keyboard_digitizer"));
+    assert!(!c.text().contains("touch_keyboard_digitizer"));
+    let mut config = Config::default();
+    change(&mut config, "touch_keyboard_digitizer", "true").unwrap();
+    assert!(!config.values.contains_key("touch_keyboard_digitizer"));
+    assert!(removed("touch_keyboard_digitizer"));
+    assert!(
+        !SETTINGS_30
+            .iter()
+            .any(|(key, _)| *key == "touch_keyboard_digitizer")
+    );
+}
+/// An app record from Apollo, Vibepollo or an earlier Rubylight, as
+/// apps.json holds it: removed switches go, renamed ones and renamed or
+/// folded overrides take their current names in the app and in its devices'
+/// blocks, and a second pass changes nothing.
+#[test]
+fn an_app_record_is_brought_to_the_current_names() {
+    let mut app = serde_json::json!({
+        "name": "Game",
+        "frame-gen-limiter-fix": true,
+        "virtual-screen": "true",
+        "gen1-framegen-fix": true,
+        "config-overrides": {
+            "experimental_packed_444": false,
+            "frame_limiter_auto_virtual_framegen": "enabled",
+            "dd_hdr_request_override": "force_on",
+            "touch_keyboard_digitizer": true,
+            "max_bitrate": 50000
+        },
+        "device-overrides": {"tv": {"config-overrides": {
+            "dd_hdr_option": "disabled",
+            "dd_hdr_request_override": "force_off",
+            "experimental_packed_444": true
+        }}}
+    });
+    assert!(migrate_app(app.as_object_mut().unwrap()));
+    assert_eq!(
+        app,
+        serde_json::json!({
+            "name": "Game",
+            "virtual-display": true,
+            "gen1-framegen-fix": true,
+            "config-overrides": {
+                "packed_444": false,
+                "virtual_display_refresh": "enabled",
+                // Alone, it folds over the host's Display HDR when applied.
+                "dd_hdr_request_override": "force_on",
+                "max_bitrate": 50000
+            },
+            "device-overrides": {"tv": {"config-overrides": {
+                "dd_hdr_option": "disabled",
+                "packed_444": true
+            }}}
+        })
+    );
+    assert!(!migrate_app(app.as_object_mut().unwrap()));
+    // `virtual-screen` off asks for nothing, and never turns the current switch off.
+    for (before, after) in [
+        (
+            serde_json::json!({"name": "A", "virtual-screen": false}),
+            serde_json::json!({"name": "A"}),
+        ),
+        (
+            serde_json::json!({"name": "A", "virtual-screen": false, "virtual-display": true}),
+            serde_json::json!({"name": "A", "virtual-display": true}),
+        ),
+        (
+            serde_json::json!({"name": "A", "virtual-screen": true, "virtual-display": false}),
+            serde_json::json!({"name": "A", "virtual-display": true}),
+        ),
+    ] {
+        let mut app = before.clone();
+        assert!(migrate_app(app.as_object_mut().unwrap()));
+        assert_eq!(app, after, "{before}");
+    }
 }

@@ -3,7 +3,7 @@
   import Toggle from '../Toggle.svelte';
   import ChoiceField, { type Choice } from './ChoiceField.svelte';
   import NumberField from './NumberField.svelte';
-  import type { AppDraft, FlagKey } from './draft.svelte';
+  import { ALWAYS, type AppDraft, type FlagKey } from './draft.svelte';
 
   let { draft }: { draft: AppDraft } = $props();
 
@@ -13,7 +13,25 @@
     { value: 'disabled', label: 'Off, stream a monitor' },
     { value: 'per_client', label: 'One for each device' },
     { value: 'shared', label: 'One shared by all devices' },
+    {
+      value: ALWAYS,
+      label: 'Always, even where a monitor is set',
+      hint: 'A virtual display sized for the device, even on a device or a host set to stream a monitor. Whether devices share one follows their setting, then the host’s.',
+    },
   ];
+  const MODE_HINT =
+    'Whether this app streams a virtual display sized for each device, one shared by all devices, or a monitor. A device’s own setting wins over this, except Always.';
+  /** An app saved with Always and a mode of its own beside it, which still decides which display is used. */
+  const ALWAYS_WITH: Record<string, Choice> = {
+    [`${ALWAYS}:per_client`]: { value: `${ALWAYS}:per_client`, label: 'Always, one for each device' },
+    [`${ALWAYS}:shared`]: { value: `${ALWAYS}:shared`, label: 'Always, one shared by all devices' },
+    [`${ALWAYS}:disabled`]: { value: `${ALWAYS}:disabled`, label: 'Always, one for each device (saved with Off)' },
+  };
+  const modeChoice = $derived(draft.virtualDisplay());
+  const modeOptions = $derived(ALWAYS_WITH[modeChoice] ? [...MODES, ALWAYS_WITH[modeChoice]] : MODES);
+  const modeHint = $derived(MODES.find((option) => option.value === modeChoice)?.hint ?? MODE_HINT);
+  /** display_session.rs inherited_layout: the app's own layout comes before its primary switch. */
+  const layoutSet = $derived(!['', 'global'].includes(draft.text('virtual-display-layout').trim()));
 
   const LAYOUTS: Choice[] = [
     {
@@ -71,18 +89,20 @@
   ];
 </script>
 
-{#snippet flag(key: FlagKey, label: string, hint?: string)}
-  <Toggle {label} {hint} bind:checked={() => draft.flag(key), (value) => draft.setFlag(key, value)} />
+{#snippet flag(key: FlagKey, label: string, hint?: string, disabled = false)}
+  <Toggle {label} {hint} {disabled} bind:checked={() => draft.flag(key), (value) => draft.setFlag(key, value)} />
 {/snippet}
 
 <div class="display">
   <div class="toggles">
     {@render flag(
-      'virtual-display',
-      'Use a virtual display',
-      'Streams a virtual display sized for the device, even when the host streams a monitor.',
+      'virtual-display-primary',
+      'Make the virtual display primary',
+      layoutSet
+        ? 'Not used: Virtual display layout below is set, and its choice decides which screen is primary.'
+        : 'The virtual display becomes the main screen beside your monitors, so this app opens on the stream. A device’s or client’s display choice comes first.',
+      layoutSet,
     )}
-    {@render flag('virtual-display-primary', 'Make the virtual display primary', 'The virtual display becomes the main screen beside your monitors, so this app opens on the stream. Used only while Virtual display layout below is on Use the host setting; a device’s or client’s display choice comes first.')}
     {@render flag(
       'use-app-identity',
       'Keep one display identity for this app',
@@ -91,18 +111,30 @@
     {@render flag(
       'per-client-app-identity',
       'Keep a separate identity for each device',
-      'Windows then remembers them for each device on its own. Only with the identity above turned on.',
+      draft.flag('use-app-identity')
+        ? 'Windows then remembers them for each device on its own.'
+        : 'Not used: turn on Keep one display identity for this app first.',
+      !draft.flag('use-app-identity'),
     )}
   </div>
 
   <div class="form-grid">
-    <ChoiceField
-      {draft}
-      key="virtual-display-mode"
-      label="Virtual display mode"
-      hint="Whether this app streams a virtual display sized for each device, one shared by all devices, or a monitor. A device’s own setting wins over this."
-      options={MODES}
-    />
+    <!-- One choice for virtual-display-mode and the virtual-display switch (display_session.rs). -->
+    <Field label="Virtual display mode" id="{uid}-mode" hint={modeHint}>
+      <select
+        id="{uid}-mode"
+        class="select"
+        bind:value={() => modeChoice, (value) => draft.setVirtualDisplay(value)}
+      >
+        <option value="">Use the host setting</option>
+        {#if modeChoice && !modeOptions.some((option) => option.value === modeChoice)}
+          <option value={modeChoice}>Saved custom choice</option>
+        {/if}
+        {#each modeOptions as option (option.value)}
+          <option value={option.value}>{option.label}</option>
+        {/each}
+      </select>
+    </Field>
     <ChoiceField
       {draft}
       key="virtual-display-layout"

@@ -28,6 +28,12 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
             if app.name.trim().is_empty() {
                 anyhow::bail!("application name required");
             }
+            // An editor or a script that still writes an earlier name saves
+            // the current one, as the library has it once loaded.
+            let mut settings: serde_json::Map<String, Value> =
+                std::mem::take(&mut app.extra).into_iter().collect();
+            butterpollo_core::config::migrate_app(&mut settings);
+            app.extra = settings.into_iter().collect();
             if let Some(overrides) = app.extra.get("config-overrides") {
                 butterpollo_core::stream_preset::check_overrides(overrides)?;
             }

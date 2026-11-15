@@ -110,9 +110,9 @@ const general: Setting[] = [
     key: 'update_check_interval',
     label: 'Check for updates',
     description:
-      'How often Rubylight looks for a new release; Daily suits almost everyone. Off stops the checks and automatic installation, so you hear of updates only through Check now.',
+      'How often Rubylight looks for a new release, or daily at a set time; Daily suits almost everyone. Off stops checks and automatic installs, so only Check now finds updates.',
     details:
-      'A custom interval is in seconds, at least 3600 (one hour). Check now under Updates works at any time, even with checks off.',
+      "Daily at a set time checks at that time on this PC's clock, its time zone and daylight saving time included; if the PC is off, asleep or streaming then, the check runs as soon as it can. With Install updates automatically on, a new release installs after that check, once nothing is streaming. A custom interval is in seconds, at least 3600 (one hour). Check now under Updates works at any time, even with checks off.",
     category: 'general',
     group: 'Updates',
     control: {
@@ -126,20 +126,20 @@ const general: Setting[] = [
         { value: 604800, label: 'Weekly' },
         { value: 0, label: 'Off' },
       ],
+      daily: { key: 'update_check_time', label: 'Daily at a set time' },
     },
     default: 86400,
   },
   {
     key: 'update_check_time',
-    label: 'Update check time',
-    description:
-      "Look for a new release once a day at this time on this PC's clock, in place of the interval. Leave it empty unless checks, and automatic installs, should happen at a set time.",
-    details:
-      "With Install updates automatically on, a new release installs after that check, once nothing is streaming. If this PC is off, asleep or streaming at that time, the check runs as soon as it can afterwards. The time follows this PC's time zone and daylight saving time. Check for updates set to Off still turns off automatic checks; otherwise the interval is not used while a time is set.",
+    label: 'Daily check time',
+    description: "The time of the daily update check on this PC's clock. Choose Daily at a set time under Check for updates to set it.",
     category: 'general',
     group: 'Updates',
     control: { kind: 'text', time: true },
     default: '',
+    // Edited in the Check for updates row, so the interval never silently loses to it.
+    partOf: 'update_check_interval',
   },
   {
     key: 'auto_update',
@@ -838,8 +838,8 @@ const audio: Setting[] = [
     group: 'Audio devices',
     control: { kind: 'toggle' },
     default: true,
-    inactiveHint: "Turn on Stream audio and choose System audio under Audio to stream to use this setting.",
-    visibleWhen: systemAudio,
+    inactiveHint: "With Virtual speakers set, the stream captures those whatever the default is. Turn on Stream audio, choose System audio and leave Virtual speakers empty to use this setting.",
+    visibleWhen: (values) => systemAudio(values) && text(values, 'virtual_sink', '') === '',
   },
   {
     key: 'keep_sink_default',

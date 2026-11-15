@@ -286,7 +286,7 @@ const video: Setting[] = [
     advanced: true,
   },
   {
-    key: 'experimental_packed_444',
+    key: 'packed_444',
     label: 'Full chroma',
     description:
       'Lets Nightjar devices ask for 4:4:4 (full-resolution color, for sharper colored text) over HEVC or AV1. Leave it on: a stream uses it only when the device’s own option asks.',
@@ -652,6 +652,8 @@ const video: Setting[] = [
     group: 'Bitrate and network',
     control: { kind: 'toggle' },
     default: false,
+    inactiveHint: "Adapt bitrate on this PC is on, or a Pacing rate is set, and either one turns adaptive pacing off. Turn it off, or set the Pacing rate to 0, to use this setting.",
+    visibleWhen: (values) => !flag(values, 'host_adaptive_bitrate', false) && Number(values.pacing_max_bitrate_kbps ?? 0) <= 0,
     advanced: true,
   },
   {
@@ -665,6 +667,8 @@ const video: Setting[] = [
     group: 'Bitrate and network',
     control: { kind: 'toggle' },
     default: true,
+    inactiveHint: "Adapt bitrate on this PC is on, or a Pacing rate is set, and either one turns adaptive pacing off. Turn it off, or set the Pacing rate to 0, to use this setting.",
+    visibleWhen: (values) => !flag(values, 'host_adaptive_bitrate', false) && Number(values.pacing_max_bitrate_kbps ?? 0) <= 0,
     advanced: true,
   },
   {
@@ -678,6 +682,9 @@ const video: Setting[] = [
     group: 'Bitrate and network',
     control: { kind: 'toggle' },
     default: true,
+    inactiveHint: "Adapt bitrate on this PC or Adaptive packet pacing is on, or a Pacing rate is set, and each one keeps this off. Change them to use this setting.",
+    visibleWhen: (values) =>
+      !flag(values, 'host_adaptive_bitrate', false) && !flag(values, 'host_adaptive_pacing', false) && Number(values.pacing_max_bitrate_kbps ?? 0) <= 0,
     advanced: true,
   },
   {
@@ -691,6 +698,8 @@ const video: Setting[] = [
     group: 'Bitrate and network',
     control: { kind: 'toggle' },
     default: true,
+    inactiveHint: "Adapt bitrate on this PC is on and takes over the bitrate, so this does nothing. Turn it off to use this setting.",
+    visibleWhen: (values) => !flag(values, 'host_adaptive_bitrate', false),
     advanced: true,
   },
   {
@@ -704,6 +713,8 @@ const video: Setting[] = [
     group: 'Bitrate and network',
     control: { kind: 'toggle' },
     default: false,
+    inactiveHint: "Adapt bitrate on this PC is on and takes over the bitrate, so this does nothing. Turn it off to use this setting.",
+    visibleWhen: (values) => !flag(values, 'host_adaptive_bitrate', false),
     advanced: true,
   },
 ];

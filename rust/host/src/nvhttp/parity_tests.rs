@@ -755,10 +755,7 @@ async fn serverinfo_carries_the_packed_444_modes_only_when_packed_is_on() {
     // A client could ask for 10-bit packed, be refused at ANNOUNCE and lose
     // the session; it now sees the startup probe's result before /launch.
     f.host.packed_modes.store(0, Ordering::Release);
-    assert_eq!(
-        packed("experimental_packed_444=true").await.as_deref(),
-        Some("0")
-    );
+    assert_eq!(packed("packed_444=true").await.as_deref(), Some("0"));
     f.host
         .packed_modes
         .store(mode_bit(1, false) | mode_bit(2, true), Ordering::Release);
@@ -766,7 +763,7 @@ async fn serverinfo_carries_the_packed_444_modes_only_when_packed_is_on() {
         packed("experimental_packed_444=true").await.as_deref(),
         Some("9")
     );
-    assert_eq!(packed("experimental_packed_444=false").await, None);
+    assert_eq!(packed("packed_444=false").await, None);
     // On by default: an unset value offers the modes.
     assert_eq!(packed("").await.as_deref(), Some("9"));
 }
@@ -792,7 +789,7 @@ async fn saving_packed_444_changes_the_offered_modes_without_a_restart() {
         .write()
         .unwrap()
         .values
-        .insert("experimental_packed_444".into(), "false".into());
+        .insert("packed_444".into(), "false".into());
     // The startup probe found HEVC and AV1.
     f.host.codecs.fetch_or(0x10000 | 0x20000, Ordering::AcqRel);
     let client = f.client(0x071f1f01);
@@ -835,7 +832,7 @@ async fn saving_packed_444_changes_the_offered_modes_without_a_restart() {
         .unwrap()
         .teardown
         .insert("stream".into(), Instant::now());
-    save("experimental_packed_444", "true");
+    save("packed_444", "true");
     tokio::time::sleep(Duration::from_millis(600)).await;
     assert_eq!(offered().await.as_deref(), Some("0"));
     f.host.sessions.lock().unwrap().teardown.clear();
@@ -847,7 +844,7 @@ async fn saving_packed_444_changes_the_offered_modes_without_a_restart() {
     // Turning HEVC off withdraws its modes without waiting for a probe.
     save("hevc_mode", "1");
     assert_eq!(offered().await, Some(mode_bit(2, false).to_string()));
-    save("experimental_packed_444", "false");
+    save("packed_444", "false");
     assert_eq!(f.host.packed_modes.load(Ordering::Acquire), 0);
     assert_eq!(offered().await, None);
 }

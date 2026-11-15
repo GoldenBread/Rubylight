@@ -242,7 +242,11 @@ pub(super) fn apply_overrides(
     config: &mut Config,
     overrides: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<()> {
-    let overrides: serde_json::Map<String, serde_json::Value> = overrides
+    // Overrides saved by an earlier release, not yet migrated on load, are
+    // read under their current names and values.
+    let mut layer = overrides.clone();
+    butterpollo_core::config::migrate_overrides(&mut layer);
+    let overrides: serde_json::Map<String, serde_json::Value> = layer
         .iter()
         .filter(|(_, v)| v.as_str() != Some(""))
         // No preset of its own, like "": the layer below keeps its preset,
@@ -251,7 +255,10 @@ pub(super) fn apply_overrides(
         .filter(|(k, _)| !butterpollo_core::config::removed(k))
         .map(|(k, v)| (butterpollo_core::config::current_name(k).to_owned(), v))
         .filter(|(k, _)| {
-            let allowed = butterpollo_core::config::override_allowed(k);
+            // A retired HDR request without the layer's own Display HDR folds
+            // over the layers below in `Config::update`.
+            let allowed = k == butterpollo_core::config::HDR_REQUEST
+                || butterpollo_core::config::override_allowed(k);
             if !allowed {
                 tracing::warn!(key = %k, "ignoring an override of a host-wide setting");
             }

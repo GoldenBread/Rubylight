@@ -942,3 +942,36 @@ fn an_app_written_with_nulls_by_another_tool_loads_with_empty_fields() {
     let app: App = serde_json::from_value(json!({"name": "X", "prep-cmd": null})).unwrap();
     assert!(app.prep.is_empty());
 }
+#[test]
+fn a_device_s_overrides_take_the_current_setting_names() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("state.json");
+    let identity = crypto::Identity::generate().unwrap();
+    let mut s = PairedState::load(&p).unwrap();
+    s.add(
+        &p,
+        Client {
+            name: "Phone".into(),
+            cert: identity.certificate.clone(),
+            uuid: "a".into(),
+            perm: 0x071f_1f00,
+            enabled: true,
+            extra: BTreeMap::from([(
+                "config_overrides".into(),
+                json!({"experimental_packed_444": "false",
+                       "frame_limiter_auto_virtual_framegen": "vrr",
+                       "dd_hdr_option": "auto",
+                       "dd_hdr_request_override": "force_off",
+                       "touch_keyboard_digitizer": "true",
+                       "keyboard": "true"}),
+            )]),
+        },
+    )
+    .unwrap();
+    let loaded = PairedState::load(&p).unwrap();
+    assert_eq!(
+        loaded.clients[0].extra["config_overrides"],
+        json!({"packed_444": "false", "virtual_display_refresh": "vrr",
+               "dd_hdr_option": "force_off", "keyboard": "true"})
+    );
+}

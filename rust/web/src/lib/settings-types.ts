@@ -34,8 +34,20 @@ export interface NumberPreset {
 export type Control =
   | { kind: 'toggle' }
   | { kind: 'select'; options: Option[] }
-  /** `presets`: named values in a menu, with Custom for any other value in `unit`. */
-  | { kind: 'number'; min?: number; max?: number; step?: number; unit?: string; presets?: NumberPreset[] }
+  /**
+   * `presets`: named values in a menu, with Custom for any other value in `unit`.
+   * `daily` adds `label` to that menu: a time of day kept in the setting `key`
+   * (a `time` text setting that is `partOf` this one) replaces the number.
+   */
+  | {
+      kind: 'number';
+      min?: number;
+      max?: number;
+      step?: number;
+      unit?: string;
+      presets?: NumberPreset[];
+      daily?: { key: string; label: string };
+    }
   /**
    * `browse` adds a picker for a program, file or folder on the host. `time`
    * makes it the browser's time field, for a time of day stored as HH:MM.
@@ -120,6 +132,8 @@ export interface Setting {
   advanced?: boolean;
   /** Defined for 3.0; hidden until its workstream ships it. */
   pending?: boolean;
+  /** Edited inside the row of the setting with this key (its control's `daily`), so it has no row of its own. */
+  partOf?: string;
 }
 
 /**
@@ -127,6 +141,13 @@ export interface Setting {
  * this PC's GPUs ('amf', 'nvenc') under this name.
  */
 export const NATIVE_ENCODERS = '@native_encoders';
+
+/**
+ * Not a setting: visibleWhen also gets, under this name, whether this
+ * Windows can run Rubylight's virtual display driver (Windows 11 23H2 or
+ * later): false where it cannot, absent where the host does not say.
+ */
+export const VIRTUAL_DISPLAY_OS = '@virtual_display_os';
 
 /**
  * Not a setting: visibleWhen also gets the image enhancements this host

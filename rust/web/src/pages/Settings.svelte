@@ -35,6 +35,7 @@
     nvidiaEnhancements,
     sameValue,
     settingsOnly,
+    toText,
     type Edits,
   } from '../components/settings/values';
   import { api, type Config, type ConfigValue, type WebSession } from '../lib/api';
@@ -60,6 +61,7 @@
     NVIDIA_COMPONENT,
     NVIDIA_ENHANCEMENTS,
     NVIDIA_REASONS,
+    VIRTUAL_DISPLAY_OS,
     componentGate,
     type Setting,
   } from '../lib/settings-types';
@@ -153,6 +155,9 @@
     current[NVIDIA_ENHANCEMENTS] = nvidiaEnhancements(session.metadata?.features);
     current[NVIDIA_COMPONENT] = componentGate(session.metadata?.nvidia_enhancements?.component);
     current[NVIDIA_REASONS] = session.metadata?.nvidia_enhancements?.errors ?? {};
+    // Virtual display settings show where this Windows can run the driver.
+    const os = session.metadata?.features?.virtual_display_os;
+    if (typeof os === 'boolean') current[VIRTUAL_DISPLAY_OS] = os;
     return current;
   });
   const changes = $derived(stored ? computeChanges(defaults, edits, stored, new Set(covered)) : {});
@@ -225,7 +230,13 @@
     return groups.sort((a, b) => groupRank(tab, a.name) - groupRank(tab, b.name));
   }
 
-  const inTab = $derived(described.filter((setting) => settingsGroup(setting.category) === active.id));
+  /** A setting edited inside another one's row (Setting.partOf) is listed as that row. */
+  const listed = (setting: Setting): Setting => (setting.partOf ? (defaults.get(setting.partOf) ?? setting) : setting);
+  /** The setting a row's daily choice keeps its time in (Setting.partOf). */
+  const dailyPart = (setting: Setting): Setting | undefined =>
+    setting.control.kind === 'number' && setting.control.daily ? defaults.get(setting.control.daily.key) : undefined;
+
+  const inTab = $derived(described.filter((setting) => !setting.partOf && settingsGroup(setting.category) === active.id));
   // Keep a pending control reachable if editing its parent makes it inactive.
   const shown = $derived(inTab.filter((setting) => visible(setting) || pending.has(setting.key)));
   const shownGroups = $derived(grouped(shown, active.id));
@@ -425,11 +436,17 @@
     return tabs
       .map((tab) => ({
         tab,
-        settings: described.filter(
-          (setting) =>
-            settingsGroup(setting.category) === tab.id &&
-            inReview(setting.key) && categoriesOf(setting).some((shownUnder) => matchesSetting(setting, shownUnder, words)),
-        ),
+        settings: [
+          ...new Set(
+            described
+              .filter(
+                (setting) =>
+                  settingsGroup(setting.category) === tab.id &&
+                  inReview(setting.key) && categoriesOf(setting).some((shownUnder) => matchesSetting(setting, shownUnder, words)),
+              )
+              .map(listed),
+          ),
+        ],
         unknown: tab.id === 'advanced' ? unknownKeys.filter((key) => inReview(key) && matchesWords(key, words)) : [],
       }))
       .filter((result) => result.settings.length > 0 || result.unknown.length > 0);
@@ -582,13 +599,20 @@
 </script>
 
 {#snippet row(setting: Setting, inactive: boolean)}
+  {@const part = dailyPart(setting)}
   <SettingRow
     {setting}
     value={normalise(setting, effective(setting, edits, config))}
-    stored={has(config, setting.key)}
-    changed={has(changes, setting.key)}
+    stored={has(config, setting.key) || (!!part && has(config, part.key))}
+    changed={has(changes, setting.key) || (!!part && has(changes, part.key))}
     resetting={edits[setting.key] === null && has(config, setting.key)}
-    differs={differsFromDefault(setting, edits, config)}
+    differs={differsFromDefault(setting, edits, config) || (!!part && differsFromDefault(part, edits, config))}
+    daily={part
+      ? {
+          value: toText(normalise(part, effective(part, edits, config))),
+          onchange: (value) => (value === null ? reset(part.key) : edit(part.key, value)),
+        }
+      : undefined}
     showKey={showKeys || (searching && matchesWords(setting.key, words))}
     {inactive}
     unavailable={inactive ? setting.hostGated?.(values) : undefined}
@@ -597,8 +621,14 @@
     caution={caution(setting, values)}
     invalidText={invalid[setting.key]}
     onchange={(value) => edit(setting.key, value)}
-    onreset={() => reset(setting.key)}
-    onundo={() => undo(setting.key)}
+    onreset={() => {
+      reset(setting.key);
+      if (part) reset(part.key);
+    }}
+    onundo={() => {
+      undo(setting.key);
+      if (part) undo(part.key);
+    }}
     oninvalid={(text) => setInvalid(setting.key, text)}
   />
   {#if setting.key === PRESET}

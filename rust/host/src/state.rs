@@ -2058,7 +2058,8 @@ fn packed_mode_names(modes: u8) -> String {
         names.join(", ")
     }
 }
-/// Give each app a uuid and its retired settings their replacements; true when anything changed.
+/// Give each app a uuid and bring its settings to what the host reads now
+/// (`migrate_app`); true when anything changed.
 fn normalize_library(document: &mut Value) -> bool {
     let mut assigned = false;
     if let Some(list) = document.get_mut("apps").and_then(Value::as_array_mut) {
@@ -2071,8 +2072,9 @@ fn normalize_library(document: &mut Value) -> bool {
                 app.insert("uuid".into(), json!(uuid::Uuid::new_v4().to_string()));
                 assigned = true;
             }
-            // A ViGEmBus controller type, say, becomes its VHF pad.
-            assigned |= butterpollo_core::config::replace_retired_in_app(app);
+            // A ViGEmBus controller type, say, becomes its VHF pad, and a
+            // setting saved under an earlier name takes its current one.
+            assigned |= butterpollo_core::config::migrate_app(app);
         }
     }
     assigned

@@ -63,8 +63,7 @@ pub const GLOBAL: &[Setting] = settings! {
         "dd_manual_resolution", "Manual resolution (WIDTHxHEIGHT)", Text;
         "dd_refresh_rate_option", "Refresh policy", Choice(&["disabled","auto","manual","prefer_highest"]);
         "dd_manual_refresh_rate", "Manual refresh rate (supports 59.94, 119.88)", Number;
-        "dd_hdr_option", "HDR policy", Choice(&["disabled","auto"]);
-        "dd_hdr_request_override", "Device HDR request", Choice(&["auto","force_on","force_off"]);
+        "dd_hdr_option", "Display HDR", Choice(&["auto","force_on","force_off","disabled"]);
         "hdr_peak_brightness", "Peak brightness a virtual display reports (nits)", Number;
         "hdr_dynamic_metadata", "HDR10+ and HDR Vivid dynamic metadata", Bool;
         "hdr_dolby_vision", "Dolby Vision 8.1, 8.4 and 10.1 for devices that ask", Bool;
@@ -86,7 +85,7 @@ pub const GLOBAL: &[Setting] = settings! {
         "frame_limiter_enable", "Enable frame limiter", Bool;
         "frame_limiter_provider", "Limiter provider", Choice(&["auto","rtss","none"]);
         "frame_limiter_fps_limit", "Frame limit (0 uses the device rate)", Number;
-        "frame_limiter_auto_virtual_framegen", "Virtual display frame generation", Choice(&["legacy","enabled","fixed-1000hz","disabled"]);
+        "virtual_display_refresh", "Virtual display refresh", Choice(&["legacy","enabled","fixed-1000hz","disabled"]);
         "rtss_install_path", "RTSS installation directory", Text;
         "rtss_frame_limit_type", "RTSS limiter mode", Choice(&["async","front-edge-sync","back-edge-sync","nvidia-reflex"]);
         "rtss_allow_virtual_display_override", "Allow virtual display limiter overrides", Bool;
@@ -98,7 +97,7 @@ pub const GLOBAL: &[Setting] = settings! {
         "encoder_focus", "Encoder focus (more bits for still areas such as text and HUDs)", Choice(&["off","static","centre"]);
         "hevc_mode", "HEVC support (0 auto, 1 disabled, 2 SDR, 3 HDR)", Number;
         "av1_mode", "AV1 support (0 auto, 1 disabled, 2 SDR, 3 HDR)", Number;
-        "experimental_packed_444", "Full chroma for Nightjar", Bool;
+        "packed_444", "Full chroma for Nightjar", Bool;
         "max_bitrate", "Maximum bitrate (kbps; 0 has no configured limit)", Number;
         "limit_framerate", "Use the launch frame rate for encoding (off by default: the stream runs at the rate its request asks for)", Bool;
         "minimum_fps_target", "Still-picture resend rate (how often an unchanged desktop is sent again)", Number;
@@ -247,10 +246,10 @@ pub const GLOBAL: &[Setting] = settings! {
         "log_path", "Log file path", Text;
         "auto_update", "Install updates automatically when idle", Bool;
         "notify_pre_releases", "Include prerelease updates", Bool;
-        "update_check_interval", "Update check interval (seconds; 0 disables)", Number;
-        "update_check_time", "Update check time (HH:MM, 24-hour clock; empty to use the interval)", Text;
+        "update_check_interval", "Check for updates every (seconds; 0 turns automatic checks off, with or without a daily time)", Number;
+        "update_check_time", "Check for updates daily at (HH:MM, 24-hour clock; replaces the interval while set; empty uses the interval)", Text;
         "legacy_ordering", "Use legacy app ordering", Bool;
-        "envvar_compatibility_mode", "Set legacy SUNSHINE device environment variables", Bool;
+        "envvar_compatibility_mode", "Whole-number frame rate in SUNSHINE_CLIENT_FPS for commands", Bool;
         "global_prep_cmd", "Global preparation and cleanup commands", Json;
         "global_state_cmd", "Global pause and resume commands", Json;
         "server_cmd", "Host commands available to devices", Json;
@@ -275,9 +274,8 @@ pub const APP: &[Setting] = settings! {
     ]
     "App display and frame generation" => [
         "display-output", "Display override (sunshine:virtual_display selects a virtual display)", Text;
-        "virtual-display", "Use a virtual display", Bool;
-        "virtual-screen", "Use app virtual display preferences", Bool;
-        "virtual-display-mode", "Virtual display mode", Choice(&["disabled","per_client","shared"]);
+        "virtual-display", "Always use a virtual display, even on a device set to stream a monitor", Bool;
+        "virtual-display-mode", "Virtual display mode (with Always above: whether devices share it)", Choice(&["disabled","per_client","shared"]);
         "virtual-display-layout", "Virtual display layout", Choice(&["exclusive","extended","extended_primary","extended_isolated","extended_primary_isolated"]);
         "virtual-display-primary", "Make the virtual display primary", Bool;
         "dd-configuration-option", "Display activation override", Choice(&["disabled","verify_only","ensure_active","ensure_primary","ensure_only_display"]);
@@ -290,8 +288,7 @@ pub const APP: &[Setting] = settings! {
         "capture-window-closed", "When the window closes", Choice(&["display","end"]);
         "prefer-10bit-sdr", "Prefer 10-bit SDR", Bool;
         "frame-generation-mode", "Frame generation", Choice(&["none","game-provided"]);
-        "gen1-framegen-fix", "Legacy frame generation capture fix", Bool;
-        "frame-gen-limiter-fix", "Frame generation limiter fix", Bool;
+        "gen1-framegen-fix", "Legacy frame generation capture fix (only while Frame generation is Use default)", Bool;
     ]
 };
 pub const CLIENT: &[Setting] = settings! {
@@ -353,9 +350,11 @@ pub fn render(prefix: &str, schema: &[Setting], values: &Value) -> String {
                     (
                         choice,
                         match choice {
-                            "enabled" if setting.key == "frame_limiter_auto_virtual_framegen" => {
+                            "enabled" if setting.key == "virtual_display_refresh" => {
                                 "Four times the stream frame rate"
                             }
+                            "auto" if setting.key == "dd_hdr_option" => "Match the stream",
+                            "disabled" if setting.key == "dd_hdr_option" => "Don't change HDR",
                             "none" if setting.key == "amd_av1_latency_mode" => "Driver default",
                             "off" if setting.key == "encoder_focus" => "Off",
                             "static" if setting.key == "encoder_focus" => "Still areas",

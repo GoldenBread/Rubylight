@@ -115,12 +115,12 @@ fn choose_nucleus_folder(
 /// Settings a save applies to the running host. Every other key still answers
 /// that it needs a restart. HEVC and AV1 support do: the startup probe alone
 /// decides which of those codecs clients are offered.
-const LIVE_KEYS: &[&str] = &["experimental_packed_444"];
+const LIVE_KEYS: &[&str] = &["packed_444"];
 
 /// Whether a save of `keys` takes a restart to apply in full, for the
 /// console's "Some changes apply after the host restarts".
 fn restart_required<'a>(mut keys: impl Iterator<Item = &'a String>) -> bool {
-    keys.any(|key| !LIVE_KEYS.contains(&key.as_str()))
+    keys.any(|key| !LIVE_KEYS.contains(&butterpollo_core::config::current_name(key)))
 }
 
 /// Saves one setting that a page manages itself: `next` gets the stored text
@@ -205,7 +205,7 @@ fn metadata(
         .cloned()
         .unwrap_or_else(|| address(std::env::var("COMPUTERNAME").unwrap_or_default()));
     let enhancements = crate::nvidia_enhance::status(shared);
-    let value = json!({"status":true,"platform":"windows","version":env!("CARGO_PKG_VERSION"),"branch":"codex/butterpollo-rust","host_name":crate::network::host_name(&config),"pc_address":pc_address,"pc_addresses":addresses,"paired_devices":shared.paired.read().unwrap().clients.len(),"enable_pairing":config.boolean("enable_pairing",true),"qr_pairing":config.qr_pairing(),"warnings":crate::host_warnings::visible(&shared.directory,&shared.warnings),"encoder_status":{"state":if probing {"checking"} else if codecs == 0 {"failed"} else {"ready"},"h264":codecs&1!=0,"hevc":codecs&0x100!=0,"av1":codecs&0x10000!=0,"pyrowave":codecs&0x800000!=0,"yuv444":butterpollo_core::codec_support::native_444_labels(codecs)},"capture_status":{"configured_backend":config.get("capture","auto"),"virtual_display_configured":config.virtual_display_mode(butterpollo_windows::display::virtual_display_os())!="disabled","displays":displays.as_ref().ok(),"error":displays.as_ref().err().map(|e|e.to_string())},"virtual_display":virtual_display,"gpus":gpus.as_ref().ok(),"gpu_error":gpus.as_ref().err().map(|e|e.to_string()),"audio_sinks":audio.as_ref().ok(),"audio_error":audio.as_ref().err().map(|e|e.to_string()),"audio_enabled":config.boolean("stream_audio",true),"features":{"rust_host":true,"hdr":true,"pyrowave":codecs&0x800000!=0,"virtual_display":capable,"rtx_hdr":enhancements["rtx_hdr"]==true,"rtx_video":enhancements["rtx_video"]==true},"nvidia_enhancements":enhancements,"credentials_exists":shared.credentials.read().unwrap().is_some(),"webrtc":shared.webrtc.status_json(&config)});
+    let value = json!({"status":true,"platform":"windows","version":env!("CARGO_PKG_VERSION"),"branch":"codex/butterpollo-rust","host_name":crate::network::host_name(&config),"pc_address":pc_address,"pc_addresses":addresses,"paired_devices":shared.paired.read().unwrap().clients.len(),"enable_pairing":config.boolean("enable_pairing",true),"qr_pairing":config.qr_pairing(),"warnings":crate::host_warnings::visible(&shared.directory,&shared.warnings),"encoder_status":{"state":if probing {"checking"} else if codecs == 0 {"failed"} else {"ready"},"h264":codecs&1!=0,"hevc":codecs&0x100!=0,"av1":codecs&0x10000!=0,"pyrowave":codecs&0x800000!=0,"yuv444":butterpollo_core::codec_support::native_444_labels(codecs)},"capture_status":{"configured_backend":config.get("capture","auto"),"virtual_display_configured":config.virtual_display_mode(butterpollo_windows::display::virtual_display_os())!="disabled","displays":displays.as_ref().ok(),"error":displays.as_ref().err().map(|e|e.to_string())},"virtual_display":virtual_display,"gpus":gpus.as_ref().ok(),"gpu_error":gpus.as_ref().err().map(|e|e.to_string()),"audio_sinks":audio.as_ref().ok(),"audio_error":audio.as_ref().err().map(|e|e.to_string()),"audio_enabled":config.boolean("stream_audio",true),"features":{"rust_host":true,"hdr":true,"pyrowave":codecs&0x800000!=0,"virtual_display":capable,"virtual_display_os":butterpollo_windows::display::virtual_display_os(),"rtx_hdr":enhancements["rtx_hdr"]==true,"rtx_video":enhancements["rtx_video"]==true},"nvidia_enhancements":enhancements,"credentials_exists":shared.credentials.read().unwrap().is_some(),"webrtc":shared.webrtc.status_json(&config)});
     *cached = Some((Instant::now(), value.clone()));
     Ok(value)
 }

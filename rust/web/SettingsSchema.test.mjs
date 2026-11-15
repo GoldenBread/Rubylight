@@ -121,12 +121,12 @@ test('spellings the host reads as an option show as that option', () => {
     ['amd_split_frame', 'Yes', 'enabled'],
     ['amd_av1_screen_content', 1, 'enabled'],
     // framegen.rs reads letters and digits only.
-    ['frame_limiter_auto_virtual_framegen', 'fixed-1000hz', 'vrr'],
-    ['frame_limiter_auto_virtual_framegen', 'fixed-1000-hz', 'vrr'],
-    ['frame_limiter_auto_virtual_framegen', 1000, 'vrr'],
-    ['frame_limiter_auto_virtual_framegen', 'fixed_2x', 'legacy'],
-    ['frame_limiter_auto_virtual_framegen', 'Smooth', 'enabled'],
-    ['frame_limiter_auto_virtual_framegen', false, 'disabled'],
+    ['virtual_display_refresh', 'fixed-1000hz', 'vrr'],
+    ['virtual_display_refresh', 'fixed-1000-hz', 'vrr'],
+    ['virtual_display_refresh', 1000, 'vrr'],
+    ['virtual_display_refresh', 'fixed_2x', 'legacy'],
+    ['virtual_display_refresh', 'Smooth', 'enabled'],
+    ['virtual_display_refresh', false, 'disabled'],
     ['rtss_frame_limit_type', 'front-edge-sync', 'front edge sync'],
     ['rtss_frame_limit_type', 'back_edge_sync', 'back edge sync'],
     ['rtss_frame_limit_type', 'nvidia-reflex', 'nvidia reflex'],
@@ -174,7 +174,7 @@ test('spellings the host reads as an option show as that option', () => {
     ['gamepad', 'DS5'],
     ['amd_vbaq', 'maybe'],
     ['min_log_level', '7'],
-    ['frame_limiter_auto_virtual_framegen', '4x'],
+    ['virtual_display_refresh', '4x'],
     ['amd_usage', 'ULTRALOWLATENCY'],
   ]) {
     assert.equal(shown(key, stored), stored, `${key} = ${stored}`);
@@ -220,7 +220,7 @@ test('a saved alias is written back only when the edit means something else', ()
   assert.deepEqual(computeChanges(settings, { amd_vbaq: 'disabled' }, { amd_vbaq: 'true' }), { amd_vbaq: 'disabled' });
   assert.deepEqual(computeChanges(settings, { amd_vbaq: null }, { amd_vbaq: 'true' }), { amd_vbaq: null });
   // An alias of the default is the default.
-  assert.equal(differsFromDefault(settings.get('frame_limiter_auto_virtual_framegen'), {}, { frame_limiter_auto_virtual_framegen: '2x' }), false);
+  assert.equal(differsFromDefault(settings.get('virtual_display_refresh'), {}, { virtual_display_refresh: '2x' }), false);
   assert.equal(differsFromDefault(settings.get('min_log_level'), {}, { min_log_level: 2 }), false);
   assert.equal(differsFromDefault(vbaq, {}, { amd_vbaq: 'true' }), true);
   // Visibility follows what the host reads.
@@ -404,10 +404,12 @@ test('settings for one client or capture quirk stay out of the basic view', () =
 });
 
 test('capture quirks sit together in an advanced troubleshooting group and stay available', () => {
-  const keys = [
-    'capture_poll_interval_us', 'capture_predictive_poll', 'wgc_slot_aligned_publish',
-    'wgc_direct_encoder_input', 'gpu_compute_conversion', 'idd_push_fence_ring',
-  ];
+  // Performance paths stay here; the timing diagnostics moved to Debug switches.
+  const keys = ['wgc_direct_encoder_input', 'gpu_compute_conversion', 'idd_push_fence_ring'];
+  for (const key of ['capture_poll_interval_us', 'capture_predictive_poll', 'wgc_slot_aligned_publish']) {
+    assert.equal(settings.get(key).group, 'Debug switches', key);
+    assert.equal(settings.get(key).advanced, true, key);
+  }
   for (const key of keys) {
     assert.equal(settings.get(key).group, 'Capture troubleshooting', key);
     assert.equal(settings.get(key).advanced, true, key);
@@ -671,7 +673,7 @@ const live = [
 ];
 
 test('settings still pending stay out of the console, and shipped ones are in it', () => {
-  assert.equal(pending.length, 13);
+  assert.equal(pending.length, 12);
   for (const setting of pending) {
     const shipped = live.includes(setting.key);
     assert.equal(setting.pending === true, !shipped, setting.key);
@@ -1040,4 +1042,67 @@ test('the configuration guide names every setting the console shows', async () =
   const { readFile } = await import('node:fs/promises');
   const guide = await readFile(new URL('../../docs/configuration.md', import.meta.url), 'utf8');
   assert.deepEqual(schema.settings.map(setting => setting.key).filter(key => !new RegExp(`\\b${key}\\b`).test(guide)), []);
+});
+
+test('a row that does nothing in the current setup says why', () => {
+  const { VIRTUAL_DISPLAY_OS } = types;
+  // [key, values that make it do nothing, values where it applies]
+  for (const [key, inert, applies] of [
+    ['auto_capture_sink', { virtual_sink: 'Speakers' }, {}],
+    ['frame_limiter_enable', { frame_limiter_provider: 'none' }, {}],
+    ['frame_limiter_fps_limit', { frame_limiter_provider: 'disabled' }, {}],
+    ['host_adaptive_pacing', { host_adaptive_bitrate: true }, {}],
+    ['host_adaptive_pacing', { pacing_max_bitrate_kbps: 50000 }, {}],
+    ['wireless_adaptive_pacing', { host_adaptive_bitrate: true }, {}],
+    ['keyframe_loss_pacing', { host_adaptive_pacing: true }, {}],
+    ['link_rate_adaptation', { host_adaptive_bitrate: true }, {}],
+    ['congestion_control', { host_adaptive_bitrate: true }, {}],
+    ['playnite_sync_categories', { playnite_enabled: true, playnite_auto_sync: true, playnite_sync_all_installed: true },
+      { playnite_enabled: true, playnite_auto_sync: true, playnite_sync_all_installed: false }],
+    ['playnite_sync_plugins', { playnite_enabled: true, playnite_auto_sync: true },
+      { playnite_enabled: true, playnite_auto_sync: true, playnite_sync_all_installed: false }],
+    ['playnite_focus_exit_on_first', { playnite_enabled: true, playnite_focus_attempts: 0 }, { playnite_enabled: true }],
+    ['playnite_focus_exit_on_first', { playnite_enabled: true, playnite_focus_timeout_secs: 0 }, { playnite_enabled: true }],
+    ['dd_virtual_display_scale', { [VIRTUAL_DISPLAY_OS]: false }, { [VIRTUAL_DISPLAY_OS]: true }],
+    ['vulkan_hdr_layer', { [VIRTUAL_DISPLAY_OS]: false }, {}],
+    ['virtual_display_hdr_calibration', { [VIRTUAL_DISPLAY_OS]: false }, {}],
+  ]) {
+    const setting = settings.get(key);
+    assert.ok(setting, key);
+    assert.equal(setting.visibleWhen(inert), false, `${key} ${JSON.stringify(inert)}`);
+    assert.equal(setting.visibleWhen(applies), true, `${key} ${JSON.stringify(applies)}`);
+    const why = setting.hostGated?.() ?? setting.inactiveHint;
+    assert.ok(why && why.length > 10, `${key} says why`);
+  }
+  assert.match(settings.get('vulkan_hdr_layer').hostGated(), /Windows 11 23H2/);
+  // Read whatever the host's own value of what they seem to depend on: Check now and Install now read
+  // pre-releases with checks off, a device or app can choose the exclusive layout, and the Radeon and
+  // NVIDIA settings read the card's name beside its device ID.
+  for (const key of ['notify_pre_releases', 'dd_hold_layout_while_paused', 'adapter_name']) {
+    assert.equal(settings.get(key).visibleWhen, undefined, key);
+  }
+  // RTX HDR reads the peak brightness too, so it is not tied to the virtual display's Windows.
+  assert.equal(settings.get('hdr_peak_brightness').hostGated, undefined);
+});
+
+test('Display HDR is one choice, and the folded request is no setting of its own', () => {
+  const hdr = settings.get('dd_hdr_option');
+  assert.deepEqual(hdr.control.options.map(option => option.value), ['auto', 'force_on', 'force_off', 'disabled']);
+  assert.equal(hdr.default, 'auto');
+  assert.equal(settings.has('dd_hdr_request_override'), false);
+});
+
+test('removed and renamed settings are gone from the console under their old names', () => {
+  for (const key of ['touch_keyboard_digitizer', 'frame_limiter_auto_virtual_framegen', 'experimental_packed_444', 'dd_hdr_request_override']) {
+    assert.equal(settings.has(key), false, key);
+    assert.equal(pending.some(setting => setting.key === key), false, key);
+  }
+  assert.ok(settings.has('virtual_display_refresh'));
+  assert.ok(settings.has('packed_444'));
+  // NVIDIA Reflex warns where the host has no NVIDIA encoder: it limits with front edge sync there.
+  const type = settings.get('rtss_frame_limit_type');
+  const { NATIVE_ENCODERS } = types;
+  assert.match(type.cautionWhen({ rtss_frame_limit_type: 'nvidia reflex', [NATIVE_ENCODERS]: ['amf'] }), /front edge sync/);
+  assert.equal(type.cautionWhen({ rtss_frame_limit_type: 'nvidia reflex', [NATIVE_ENCODERS]: ['nvenc'] }), undefined);
+  assert.equal(type.cautionWhen({ rtss_frame_limit_type: 'async', [NATIVE_ENCODERS]: ['amf'] }), undefined);
 });

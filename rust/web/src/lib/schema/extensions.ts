@@ -35,16 +35,6 @@ export const settings: Setting[] = [
     default: true,
   },
   {
-    key: 'touch_keyboard_digitizer',
-    label: 'Windows touch keyboard',
-    description: "Lets the Windows touch keyboard open for a device's touches.",
-    category: 'input',
-    group: 'Keyboard',
-    control: switches,
-    default: false,
-    pending: true,
-  },
-  {
     key: 'touch_mode',
     label: 'Touch',
     description: "How this PC takes a device's touches: as sent, or as a mouse or trackpad for games that handle a mouse better than touch. Needs native pen and touch.",

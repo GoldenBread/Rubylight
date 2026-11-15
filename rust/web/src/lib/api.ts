@@ -369,7 +369,8 @@ export interface Metadata {
   audio_sinks: AudioEndpoint[] | null;
   audio_error: string | null;
   audio_enabled: boolean;
-  features: { pyrowave: boolean; virtual_display: boolean; [key: string]: boolean };
+  /** `virtual_display_os`: whether this Windows can run the virtual display driver (Windows 11 23H2 or later). */
+  features: { pyrowave: boolean; virtual_display: boolean; virtual_display_os: boolean; [key: string]: boolean };
   /** The NVIDIA image enhancements: what this PC offers and why the rest is missing. */
   nvidia_enhancements?: NvidiaEnhancements;
   credentials_exists: boolean;

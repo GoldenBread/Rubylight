@@ -444,7 +444,7 @@ impl PairedState {
                     .get_mut("config_overrides")
                     .and_then(Value::as_object_mut)
                 {
-                    crate::config::replace_retired(overrides.iter_mut());
+                    crate::config::migrate_overrides(overrides);
                 }
                 unique.push(c);
                 continue;
@@ -477,7 +477,7 @@ impl PairedState {
                 .get_mut("config_overrides")
                 .and_then(Value::as_object_mut)
             {
-                crate::config::replace_retired(overrides.iter_mut());
+                crate::config::migrate_overrides(overrides);
             }
             unique.push(c);
         }

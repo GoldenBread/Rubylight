@@ -7,6 +7,8 @@
   let { draft }: { draft: AppDraft } = $props();
 
   const uid = $props.id();
+  /** display_session.rs reads the legacy switch only while the app has no Frame generation value of its own. */
+  const generates = $derived(draft.text('frame-generation-mode').trim() !== '');
 
   const GENERATION: Choice[] = [
     { value: 'game-provided', label: 'Provided by the game', hint: 'The game adds generated frames, e.g. FSR frame generation.' },
@@ -69,13 +71,11 @@
   <div class="toggles">
     <Toggle
       label="Legacy frame generation capture fix"
-      hint="An older way to mark the app as generating frames, so the host’s frame limiter paces it on a streamed monitor. Only used when Frame generation is set to None; choose Frame generation above for new apps."
+      hint={generates
+        ? 'Not used: Frame generation above is set and takes its place.'
+        : 'An older way to mark the app as generating frames, so the host’s frame limiter paces it on a streamed monitor. Choose Frame generation above for new apps.'}
+      disabled={generates}
       bind:checked={() => draft.flag('gen1-framegen-fix'), (value) => draft.setFlag('gen1-framegen-fix', value)}
-    />
-    <Toggle
-      label="Frame generation limiter fix"
-      hint="The host does not read this switch; its saved value is only kept. Leave it off."
-      bind:checked={() => draft.flag('frame-gen-limiter-fix'), (value) => draft.setFlag('frame-gen-limiter-fix', value)}
     />
   </div>
 </div>

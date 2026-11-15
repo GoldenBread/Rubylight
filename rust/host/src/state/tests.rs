@@ -282,7 +282,7 @@ mod packed_reprobe {
             .write()
             .unwrap()
             .values
-            .insert("experimental_packed_444".into(), "false".into());
+            .insert("packed_444".into(), "false".into());
         f
     }
 
@@ -307,7 +307,7 @@ mod packed_reprobe {
         }
         let f = off();
         f.host.codecs.store(CODECS, Ordering::Release);
-        save(&f, "experimental_packed_444", "true", probe);
+        save(&f, "packed_444", "true", probe);
         until("the probe started", || PROBING.load(Ordering::Acquire));
         f.host
             .sessions
@@ -357,7 +357,7 @@ mod packed_reprobe {
             .unwrap()
             .values
             .insert("hevc_mode".into(), "1".into());
-        save(&f, "experimental_packed_444", "true", probe);
+        save(&f, "packed_444", "true", probe);
         until("the probe started", || PROBING.load(Ordering::Acquire));
         // AV1 SDR only: the running probe skips 10-bit AV1.
         save(&f, "av1_mode", "2", probe);
@@ -387,7 +387,7 @@ mod packed_reprobe {
         let f = off();
         // The startup probe found no AV1.
         f.host.codecs.store(0x1 | 0x100 | 0x200, Ordering::Release);
-        save(&f, "experimental_packed_444", "true", probe);
+        save(&f, "packed_444", "true", probe);
         until("the HEVC modes are probed", || {
             offered(&f) == mode_bit(1, false) | mode_bit(1, true)
         });
@@ -424,9 +424,7 @@ mod packed_reprobe {
         let av1 = mode_bit(2, false) | mode_bit(2, true);
         {
             let mut config = f.host.config.write().unwrap();
-            config
-                .values
-                .insert("experimental_packed_444".into(), "true".into());
+            config.values.insert("packed_444".into(), "true".into());
             config.values.insert("hevc_mode".into(), "1".into());
         }
         f.host.packed_modes.store(av1, Ordering::Release);
@@ -458,7 +456,7 @@ mod packed_reprobe {
         let f = off();
         f.host.codecs.store(0, Ordering::Release);
         let path = f.host.directory.join("no-codec.log");
-        let log = logged(&path, || save(&f, "experimental_packed_444", "true", probe));
+        let log = logged(&path, || save(&f, "packed_444", "true", probe));
         assert!(log.is_empty(), "{log}");
         assert!(!f.host.packed_reprobing.load(Ordering::Acquire));
         assert_eq!(f.host.packed_probe_pending.load(Ordering::Acquire), 0);
@@ -495,9 +493,7 @@ mod packed_reprobe {
         f.host.codecs.store(CODECS, Ordering::Release);
         {
             let mut config = f.host.config.write().unwrap();
-            config
-                .values
-                .insert("experimental_packed_444".into(), "true".into());
+            config.values.insert("packed_444".into(), "true".into());
             config.values.insert("hevc_mode".into(), "2".into());
         }
         let offered_before = mode_bit(1, false) | mode_bit(2, false) | mode_bit(2, true);
@@ -533,9 +529,9 @@ mod packed_reprobe {
         }
         let f = off();
         f.host.codecs.store(CODECS, Ordering::Release);
-        save(&f, "experimental_packed_444", "true", probe);
+        save(&f, "packed_444", "true", probe);
         until("the probe started", || PROBING.load(Ordering::Acquire));
-        save(&f, "experimental_packed_444", "false", probe);
+        save(&f, "packed_444", "false", probe);
         until("the probe finished", || {
             !f.host.packed_reprobing.load(Ordering::Acquire)
         });
@@ -547,9 +543,7 @@ mod packed_reprobe {
 
     fn packed_on(f: &Fixture) -> Config {
         let mut config = f.host.config.write().unwrap();
-        config
-            .values
-            .insert("experimental_packed_444".into(), "true".into());
+        config.values.insert("packed_444".into(), "true".into());
         config.clone()
     }
 
@@ -1027,4 +1021,64 @@ fn an_invalid_library_starts_empty_and_is_kept() {
     std::fs::write(&path, b"\r\n").unwrap();
     assert_eq!(load_library(&path, default.clone()).unwrap(), default);
     std::fs::remove_dir_all(&dir).ok();
+}
+/// A profile copied from Vibepollo or restored from an earlier backup: the
+/// host reads sunshine.conf and apps.json under the current setting names,
+/// and writes the library back migrated.
+#[test]
+fn a_profile_with_earlier_setting_names_loads_under_the_current_ones() {
+    let directory = super::test_support::Fixture::profile();
+    std::fs::write(
+        directory.join("sunshine.conf"),
+        "frame_limiter_auto_virtual_framegen = enabled\nexperimental_packed_444 = false\ndd_hdr_request_override = force_on\ntouch_keyboard_digitizer = true\n",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join("apps.json"),
+        json!({"env": {}, "apps": [{
+            "name": "Game",
+            "frame-gen-limiter-fix": true,
+            "virtual-screen": true,
+            "config-overrides": {"dd_hdr_option": "auto", "dd_hdr_request_override": "force_off",
+                                 "experimental_packed_444": true},
+            "device-overrides": {"tv": {"config-overrides": {"frame_limiter_auto_virtual_framegen": "disabled"}}}
+        }]})
+        .to_string(),
+    )
+    .unwrap();
+    let f = super::test_support::Fixture::load(directory.clone());
+    {
+        let config = f.host.config.read().unwrap();
+        assert_eq!(config.get("virtual_display_refresh", ""), "enabled");
+        assert!(!config.packed_444());
+        assert_eq!(config.get("dd_hdr_option", ""), "force_on");
+        for old in [
+            "frame_limiter_auto_virtual_framegen",
+            "experimental_packed_444",
+            "dd_hdr_request_override",
+            "touch_keyboard_digitizer",
+        ] {
+            assert!(!config.values.contains_key(old), "{old}");
+        }
+    }
+    let app = f.host.apps.read().unwrap()[0].clone();
+    assert!(!app.extra.contains_key("frame-gen-limiter-fix"));
+    assert!(!app.extra.contains_key("virtual-screen"));
+    assert_eq!(app.extra["virtual-display"], json!(true));
+    assert_eq!(
+        app.extra["config-overrides"],
+        json!({"dd_hdr_option": "force_off", "packed_444": true})
+    );
+    assert_eq!(
+        app.extra["device-overrides"]["tv"]["config-overrides"],
+        json!({"virtual_display_refresh": "disabled"})
+    );
+    // The file holds the migrated record, so the next start is quiet.
+    let saved: Value = serde_json::from_slice(&std::fs::read(&f.host.apps_path).unwrap()).unwrap();
+    assert_eq!(
+        saved["apps"][0]["config-overrides"],
+        app.extra["config-overrides"]
+    );
+    assert!(saved["apps"][0].get("frame-gen-limiter-fix").is_none());
+    std::fs::remove_dir_all(&directory).ok();
 }

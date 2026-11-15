@@ -86,7 +86,7 @@ async fn frame_warp_is_listed_only_while_its_setting_is_on() -> Result<()> {
     h.finish().await
 }
 
-/// With experimental packed 4:4:4 on and every packed mode probed, the packed lines
+/// With packed 4:4:4 on (saved under its earlier name) and every packed mode probed, the packed lines
 /// come before the microphone's, and nothing else changes.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn describe_with_packed_444_and_the_microphone_is_byte_identical() -> Result<()> {
@@ -156,13 +156,13 @@ async fn describe_offers_packed_444_saved_while_the_host_runs() -> Result<()> {
         .write()
         .unwrap()
         .values
-        .insert("experimental_packed_444".into(), "false".into());
+        .insert("packed_444".into(), "false".into());
     let before = h.h.config.read().unwrap().clone();
     h.h.config
         .write()
         .unwrap()
         .values
-        .insert("experimental_packed_444".into(), "true".into());
+        .insert("packed_444".into(), "true".into());
     h.h.packed_settings_saved_with(&before, probe);
     until("the saved packed modes are probed", WAIT, || {
         h.h.packed_modes.load(Ordering::Acquire) == butterpollo_core::packed444::ALL_MODES

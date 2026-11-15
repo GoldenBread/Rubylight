@@ -58,6 +58,13 @@ export const MAIN_BUDGET = 12;
  * readable and show only in All settings, Advanced, Debug switches.
  */
 export const ALWAYS_ON: readonly string[] = ['qr_pairing', 'link_rate_adaptation'];
+/**
+ * Settings only for troubleshooting, whose values are not choices a player
+ * makes: shown only in All settings, Advanced, Debug switches, with their own
+ * descriptions. Performance paths (idd_push_fence_ring,
+ * wgc_direct_encoder_input, gpu_compute_conversion) stay with their topic.
+ */
+export const DIAGNOSTICS: readonly string[] = ['capture_poll_interval_us', 'capture_predictive_poll', 'wgc_slot_aligned_publish'];
 export const DEBUG_GROUP = 'Debug switches';
 
 /** The only groups All settings starts collapsed. */
@@ -84,6 +91,11 @@ export function asDebugSwitch(setting: Setting): Setting {
     details: [setting.description, setting.details].filter(Boolean).join(' '),
     pending: undefined,
   };
+}
+
+/** A troubleshooting setting as All settings shows it: in Debug switches, as it is described. */
+export function asDiagnostic(setting: Setting): Setting {
+  return { ...setting, category: 'advanced', group: DEBUG_GROUP };
 }
 
 /**

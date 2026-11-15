@@ -106,7 +106,7 @@ Buffers and both pipelines are created with the converter whenever the encoder c
 | Split-frame (dual VCN, HEVC/AV1 on the RX 7900 XT) | The probe runs with the stream's own encoder properties. M0 also verifies at 1080p and 4K with split-frame on Automatic. If split-frame ignores the map, focus reports `unsupported` with the reason `split_frame`; split-frame is never turned off on its own. |
 | Pre-analysis on | A chosen mode runs, and the `encoder focus` line logs `preanalysis=true`. |
 | 10-bit HDR (P010) | Same shader path with the `ten_bit` flag. Probed separately for HEVC and AV1 10-bit. |
-| Packed 4:4:4 (`experimental_packed_444`) | Unsupported in v1, reason `packed_444`: chroma packed into the luma plane makes the block grid weight the wrong pixels. |
+| Packed 4:4:4 (`packed_444`) | Unsupported in v1, reason `packed_444`: chroma packed into the luma plane makes the block grid weight the wrong pixels. |
 | D3D11 conversion path (D3D12 conversion unavailable) | Unsupported, reason `d3d12_conversion_unavailable`. |
 | PyroWave | Excluded, reason `pyrowave`. |
 | Windows 10, WGC, Desktop Duplication, driver capture, physical displays | All work: focus depends only on the D3D12 converter and AMF. |

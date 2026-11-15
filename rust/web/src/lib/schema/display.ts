@@ -1,6 +1,6 @@
 // Settings for the categories named in settings-schema.ts.
 import type { ConfigValue } from '../api';
-import { nvidiaGate, nvidiaReason, offersEnhancement, type Setting } from '../settings-types';
+import { NATIVE_ENCODERS, VIRTUAL_DISPLAY_OS, nvidiaGate, nvidiaReason, offersEnhancement, type Setting } from '../settings-types';
 
 type Values = Record<string, ConfigValue>;
 
@@ -26,6 +26,14 @@ function on(values: Values, key: string, fallback: boolean): boolean {
   if (['false', 'no', '0', 'disable', 'disabled', 'off'].includes(word)) return false;
   return fallback;
 }
+
+/**
+ * Whether this Windows can run Rubylight's virtual display driver
+ * (os_gate.rs virtual_display: Windows 11 23H2 or later). A host that does
+ * not say counts as able.
+ */
+const virtualDisplayOs = (values: Values) => values[VIRTUAL_DISPLAY_OS] !== false;
+const VIRTUAL_DISPLAY_OS_GATE = () => 'Needs Windows 11 23H2 or later';
 
 /** Whether the limiter may use RTSS. The host reads unknown providers as automatic. */
 function rtss(values: Values): boolean {
@@ -117,6 +125,8 @@ export const settings: Setting[] = [
       ],
     },
     default: 0,
+    visibleWhen: virtualDisplayOs,
+    hostGated: VIRTUAL_DISPLAY_OS_GATE,
   },
   {
     key: 'dd_activate_virtual_display',
@@ -444,6 +454,8 @@ export const settings: Setting[] = [
     group: 'Frame limiter',
     control: { kind: 'toggle' },
     default: false,
+    inactiveHint: 'Limiter is None, so nothing caps games. Choose Automatic or RTSS under Limiter to use this setting.',
+    visibleWhen: rtss,
   },
   {
     key: 'frame_limiter_provider',
@@ -478,9 +490,11 @@ export const settings: Setting[] = [
     group: 'Frame limiter',
     control: { kind: 'number', min: 0, max: 1000, step: 0.001, unit: 'fps' },
     default: 0,
+    inactiveHint: 'Limiter is None, so nothing caps games. Choose Automatic or RTSS under Limiter to use this setting.',
+    visibleWhen: rtss,
   },
   {
-    key: 'frame_limiter_auto_virtual_framegen',
+    key: 'virtual_display_refresh',
     label: 'Virtual display refresh',
     description:
       'A virtual display’s refresh rate: a faster one captures each game frame sooner after it is drawn. Twice the stream rate suits almost everyone; Off also ends the automatic FPS cap.',
@@ -492,8 +506,8 @@ export const settings: Setting[] = [
       kind: 'select',
       options: [
         { value: 'legacy', label: 'Twice the stream rate' },
-        { value: 'enabled', label: 'Four times the stream rate' },
-        { value: 'vrr', label: '1000 Hz' },
+        { value: 'enabled', label: 'Four times the stream rate (no faster than twice)' },
+        { value: 'vrr', label: '1000 Hz (about 1 ms slower at 60 fps)' },
         { value: 'disabled', label: 'Off' },
       ],
     },
@@ -549,12 +563,20 @@ export const settings: Setting[] = [
         { value: 'async', label: 'Asynchronous' },
         { value: 'front edge sync', label: 'Front edge sync' },
         { value: 'back edge sync', label: 'Back edge sync' },
-        { value: 'nvidia reflex', label: 'NVIDIA Reflex' },
+        { value: 'nvidia reflex', label: 'NVIDIA Reflex (NVIDIA GPUs only)' },
       ],
     },
     // framegen.rs reads letters and digits only, so the fallback console's front-edge-sync is front edge sync.
     aliases: { match: 'letters' },
     default: 'async',
+    // framegen.rs: Reflex without an NVIDIA GPU warns in the host log and limits with front edge sync.
+    cautionWhen: (values) => {
+      const encoders = values[NATIVE_ENCODERS];
+      const reflex = text(values, 'rtss_frame_limit_type', 'async').toLowerCase().replace(/[^a-z0-9]/g, '') === 'nvidiareflex';
+      return reflex && Array.isArray(encoders) && encoders.length > 0 && !encoders.includes('nvenc')
+        ? 'This PC streams without an NVIDIA GPU, so NVIDIA Reflex limits with front edge sync instead.'
+        : undefined;
+    },
     inactiveHint: "Choose Automatic or RTSS under Limiter to use RTSS settings. RTSS must be installed on this PC.",
     visibleWhen: rtss,
   },
@@ -579,38 +601,21 @@ export const settings: Setting[] = [
     key: 'dd_hdr_option',
     label: 'Display HDR',
     description:
-      'Match the stream turns HDR on the streamed display on for an HDR stream, off for an SDR one, and back afterwards. Don’t change HDR can leave an HDR stream without HDR highlights.',
+      'Match the stream turns HDR on the streamed display on for an HDR stream, off for SDR, and back afterwards. Always on or off is for devices or games that report HDR wrongly.',
     details:
-      'A streamed monitor’s HDR is switched too, unless Monitor setup is on Leave the monitors alone. While RTX HDR converts the picture, the streamed display stays in SDR.',
+      'Always on and Always off set the display only: the stream itself still follows the device. Don’t change HDR leaves the display as it is, so an HDR stream can lose its highlights. A streamed monitor’s HDR is switched too, unless Monitor setup is on Leave the monitors alone. While RTX HDR converts the picture, the streamed display stays in SDR.',
     category: 'hdr',
     group: 'HDR',
     control: {
       kind: 'select',
       options: [
         { value: 'auto', label: 'Match the stream' },
+        { value: 'force_on', label: 'Always on' },
+        { value: 'force_off', label: 'Always off' },
         { value: 'disabled', label: 'Don’t change HDR' },
       ],
     },
     default: 'auto',
-  },
-  {
-    key: 'dd_hdr_request_override',
-    label: 'HDR request',
-    description:
-      'Forces HDR on the streamed display on or off, for devices or games that report it wrongly; the stream itself still follows the device. Leave it on Follow the device otherwise.',
-    category: 'hdr',
-    group: 'HDR',
-    control: {
-      kind: 'select',
-      options: [
-        { value: 'auto', label: 'Follow the device' },
-        { value: 'force_on', label: 'Always on' },
-        { value: 'force_off', label: 'Always off' },
-      ],
-    },
-    default: 'auto',
-    inactiveHint: "Choose Match the stream under Display HDR to apply the HDR request override.",
-    visibleWhen: (values) => text(values, 'dd_hdr_option', 'auto') !== 'disabled',
   },
   {
     key: 'vulkan_hdr_layer',
@@ -621,6 +626,8 @@ export const settings: Setting[] = [
     group: 'HDR',
     control: { kind: 'toggle' },
     default: true,
+    visibleWhen: virtualDisplayOs,
+    hostGated: VIRTUAL_DISPLAY_OS_GATE,
     advanced: true,
   },
   {
@@ -634,6 +641,8 @@ export const settings: Setting[] = [
     group: 'HDR',
     control: { kind: 'toggle' },
     default: false,
+    visibleWhen: virtualDisplayOs,
+    hostGated: VIRTUAL_DISPLAY_OS_GATE,
     advanced: true,
   },
   {

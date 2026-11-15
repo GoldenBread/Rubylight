@@ -87,25 +87,25 @@ const playniteSettings: Setting[] = [
     key: 'playnite_sync_categories',
     label: 'Categories to add',
     description:
-      'Also adds the installed games in these Playnite categories, as a JSON list of names: ["Couch", "Racing"]. Has an effect only while Every installed game is off.',
+      'Also adds the installed games in these Playnite categories, as a JSON list of names: ["Couch", "Racing"].',
     category: 'library',
     group: 'Playnite',
     control: { kind: 'json' },
     default: [],
-    inactiveHint: "Turn on Playnite and Add games automatically to use this setting.",
-    visibleWhen: playniteSync,
+    inactiveHint: "Every installed game already adds them all. Turn on Playnite and Add games automatically, then turn off Every installed game, to use this setting.",
+    visibleWhen: playniteRecent,
   },
   {
     key: 'playnite_sync_plugins',
     label: 'Libraries to add',
     description:
-      'Also adds the installed games that come from these Playnite library plugins, as a JSON list of plugin IDs. Has an effect only while Every installed game is off.',
+      'Also adds the installed games that come from these Playnite library plugins, as a JSON list of plugin IDs.',
     category: 'library',
     group: 'Playnite',
     control: { kind: 'json' },
     default: [],
-    inactiveHint: "Turn on Playnite and Add games automatically to use this setting.",
-    visibleWhen: playniteSync,
+    inactiveHint: "Every installed game already adds them all. Turn on Playnite and Add games automatically, then turn off Every installed game, to use this setting.",
+    visibleWhen: playniteRecent,
     advanced: true,
   },
   {
@@ -240,13 +240,15 @@ const playniteSettings: Setting[] = [
     label: 'Stop after the first focus confirmation',
     description:
       'Stops focusing the game or Playnite menu once it was confirmed in front. Turn it on if launches keep interrupting your window; a launcher or splash screen may then take focus back.',
-    details: 'Has no effect when either focus limit is 0.',
     category: 'library',
     group: 'Playnite launch focus',
     control: { kind: 'toggle' },
     default: false,
-    inactiveHint: 'Turn on Playnite to use its launch focus settings.',
-    visibleWhen: playnite,
+    inactiveHint: 'Confirm game focus or Stop focusing after is 0, so launches are not focused. Turn on Playnite and set both above 0 to use this setting.',
+    visibleWhen: (values) =>
+      playnite(values) &&
+      Number(values.playnite_focus_attempts ?? 3) > 0 &&
+      Number(values.playnite_focus_timeout_secs ?? 15) > 0,
     advanced: true,
   },
 ];

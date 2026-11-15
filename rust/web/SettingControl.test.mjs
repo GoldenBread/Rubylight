@@ -63,7 +63,7 @@ test('a temporarily unavailable saved GPU is preserved', () => {
 
 test('values the fallback console saves select the option the host reads them as', () => {
   for (const [key, saved, option] of [
-    ['frame_limiter_auto_virtual_framegen', 'fixed-1000hz', 'vrr'],
+    ['virtual_display_refresh', 'fixed-1000hz', 'vrr'],
     ['rtss_frame_limit_type', 'front-edge-sync', 'front edge sync'],
     ['amd_vbaq', 'true', 'enabled'],
     ['min_log_level', 3, 'warning'],
@@ -173,4 +173,27 @@ test('a settings row shows its caution under the control', async () => {
   const shown = render(SettingRow, { props: { ...props, caution: 'Adds delay: test.' } }).body;
   assert.match(shown, /data-caution[^>]*>Adds delay: test\.<\/p>/);
   assert.doesNotMatch(render(SettingRow, { props }).body, /data-caution/);
+});
+
+test('the update schedule is one row: a daily time is a choice of Check for updates', () => {
+  const interval = schema.settings.find((setting) => setting.key === 'update_check_interval');
+  const time = schema.settings.find((setting) => setting.key === 'update_check_time');
+  // Both keys stay: scripts set the interval to 0, and the time is HH:MM text.
+  assert.equal(time.partOf, 'update_check_interval');
+  assert.equal(interval.control.daily.key, 'update_check_time');
+  const row = (value, daily) =>
+    render(SettingControl, { props: { setting: interval, id: interval.key, value, onchange: () => {}, daily } }).body;
+  const daily = (value) => ({ value, onchange: () => {} });
+  // Without the time the interval's own choice is selected and no time field shows.
+  const plain = row(86400, daily(''));
+  assert.match(plain, /Daily at a set time/);
+  assert.doesNotMatch(plain, /type="time"/);
+  // A saved time selects the daily choice and shows it, as the host reads it then.
+  const timed = row(86400, daily('3:00'));
+  assert.match(timed, /<option value="\u0000daily"[^>]*selected/);
+  assert.match(timed, /<input[^>]*id="update_check_interval-daily"[^>]*type="time"[^>]*value="03:00"/);
+  // Off wins over a saved time: the host makes no automatic checks at 0.
+  assert.doesNotMatch(row(0, daily('03:00')), /type="time"/);
+  // Without the time part the control has no daily choice at all.
+  assert.doesNotMatch(row(86400, undefined), /Daily at a set time/);
 });

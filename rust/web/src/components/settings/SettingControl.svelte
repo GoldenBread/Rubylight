@@ -31,6 +31,7 @@
     invalidText,
     oninvalid,
     describedby,
+    daily,
   }: {
     setting: Setting;
     /** On the control the row's label points at. */
@@ -44,6 +45,11 @@
     oninvalid?: (text: string | null) => void;
     /** The id of the row's description. */
     describedby?: string;
+    /**
+     * The daily time a number control's `daily` choice keeps in another
+     * setting: its value, and a setter (null clears it).
+     */
+    daily?: { value: string; onchange: (value: string | null) => void };
   } = $props();
 
   const control = $derived(setting.control);
@@ -164,17 +170,45 @@
   // ---------- presets: named values in a menu, Custom for any other ----------
 
   const CUSTOM = '\u0000custom';
+  /** The number control's daily choice: a time of day in another setting replaces the number. */
+  const DAILY = '\u0000daily';
+  const dailyChoice = $derived(control.kind === 'number' && daily ? control.daily : undefined);
   const presets = $derived.by((): Option[] => {
-    if (control.kind === 'number') return (control.presets ?? []).map((preset) => ({ value: String(preset.value), label: preset.label }));
+    if (control.kind === 'number') {
+      const list = (control.presets ?? []).map((preset) => ({ value: String(preset.value), label: preset.label }));
+      if (!dailyChoice) return list;
+      // After the preset the daily time replaces: once a day.
+      const at = list.findIndex((preset) => preset.value === '86400');
+      list.splice(at + 1, 0, { value: DAILY, label: dailyChoice.label });
+      return list;
+    }
     if (control.kind === 'text') return control.presets ?? [];
     return [];
   });
   /** Custom was chosen in the menu, so its field stays open whatever is typed. */
   let customChosen = $state(false);
+  /** The daily choice was made in the menu, so its time field stays open while it is empty. */
+  let dailyChosen = $state(false);
+  /** Set while the time field itself empties the time, which keeps the daily choice. */
+  let clearing = false;
+  // A time emptied from outside the field (Undo, Reset) ends the choice.
+  $effect(() => {
+    const time = daily?.value.trim() ?? '';
+    untrack(() => {
+      if (time === '' && !clearing) dailyChosen = false;
+      clearing = false;
+    });
+  });
+  /** As the host reads it: a daily time applies while the number turns checks on. */
+  const dailySet = $derived(
+    !!dailyChoice && !!daily?.value.trim() && (toNumber(value) ?? toNumber(setting.default) ?? 0) > 0,
+  );
   /** The preset the current value is, or '' when it is none of them. */
   const presetValue = $derived.by(() => {
     if (!presets.length || invalidText !== undefined) return '';
     if (control.kind === 'number') {
+      // An empty time is daily only while the schedule is still once a day.
+      if (dailySet || (dailyChosen && toNumber(value) === 86400)) return DAILY;
       const number = toNumber(value);
       return number === null ? '' : (presets.find((preset) => Number(preset.value) === number)?.value ?? '');
     }
@@ -182,11 +216,26 @@
   });
   const hasValue = $derived(invalidText !== undefined || (control.kind === 'number' ? toNumber(value) !== null : current.trim() !== ''));
   /** The field for a value of one's own shows. */
-  const custom = $derived(presets.length > 0 && (customChosen || (presetValue === '' && hasValue)));
+  const custom = $derived(presets.length > 0 && !dailyChosen && (customChosen || (presetValue === '' && hasValue)));
   /** The id of the field that edits the value: the menu has the row's own id when there are presets. */
   const fieldId = $derived(presets.length ? `${id}-custom` : id);
 
   async function choosePreset(choice: string) {
+    if (choice === DAILY && daily) {
+      customChosen = false;
+      dailyChosen = true;
+      oninvalid?.(null);
+      // Once a day, should the time be cleared later; checks stay on.
+      numberText = '86400';
+      onchange(86400);
+      daily.onchange(daily.value.trim() || '03:00');
+      await tick();
+      document.getElementById(`${id}-daily`)?.focus();
+      return;
+    }
+    // Any other choice is the schedule itself, so a daily time no longer overrides it.
+    dailyChosen = false;
+    if (daily?.value.trim()) daily.onchange(null);
     if (choice === CUSTOM) {
       customChosen = true;
       await tick();
@@ -332,6 +381,20 @@
       {/each}
       <option value={CUSTOM} selected={custom}>Custom</option>
     </select>
+  {/if}
+  {#if presetValue === DAILY && daily}
+    <input
+      id="{id}-daily"
+      class="input"
+      type="time"
+      aria-label={`${label}, time of day`}
+      aria-describedby={describe()}
+      value={timeOfDay(daily.value)}
+      oninput={(event) => {
+        clearing = !event.currentTarget.value;
+        daily.onchange(event.currentTarget.value || null);
+      }}
+    />
   {/if}
   {#if !presets.length || custom}
     {@render field()}

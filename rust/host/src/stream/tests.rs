@@ -1729,3 +1729,53 @@ fn a_cursor_scale_is_looked_up_off_the_control_thread() {
     let failed = lookup.poll("D2", slow, wake(&woken));
     assert!(failed.unwrap().is_err());
 }
+
+/// An app's or device's retired HDR request without a Display HDR of its own
+/// is kept as saved and folds over the layers below when applied, as it did
+/// beside them.
+#[test]
+fn an_hdr_request_alone_in_overrides_folds_over_the_layers_below() {
+    let apply = |base: &str, layer: serde_json::Value| {
+        let mut config = Config::parse(base).unwrap();
+        super::apply_overrides(&mut config, layer.as_object().unwrap()).unwrap();
+        config.get("dd_hdr_option", "auto").to_owned()
+    };
+    let request = |value: serde_json::Value| serde_json::json!({"dd_hdr_request_override": value});
+    // Don't change HDR below still wins over it.
+    assert_eq!(
+        apply("dd_hdr_option = disabled\n", request("force_on".into())),
+        "disabled"
+    );
+    assert_eq!(apply("", request("force_on".into())), "force_on");
+    assert_eq!(
+        apply("dd_hdr_option = force_on\n", request("force_off".into())),
+        "force_off"
+    );
+    // Follow the device ends the host's Always on, as it ended its request.
+    assert_eq!(
+        apply(
+            "dd_hdr_request_override = force_on\n",
+            request("auto".into())
+        ),
+        "auto"
+    );
+    assert_eq!(
+        apply(
+            "dd_hdr_option = force_off\n",
+            request(serde_json::Value::Null)
+        ),
+        "auto"
+    );
+    assert_eq!(
+        apply("dd_hdr_option = disabled\n", request("auto".into())),
+        "disabled"
+    );
+    // Beside the layer's own Display HDR it folds in that layer.
+    assert_eq!(
+        apply(
+            "dd_hdr_option = disabled\n",
+            serde_json::json!({"dd_hdr_option": "auto", "dd_hdr_request_override": "force_off"})
+        ),
+        "force_off"
+    );
+}

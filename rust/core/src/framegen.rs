@@ -126,7 +126,7 @@ fn normalize(value: &str) -> String {
         .collect()
 }
 /// How a virtual display's refresh follows the stream
-/// (`frame_limiter_auto_virtual_framegen`).
+/// (`virtual_display_refresh`, `frame_limiter_auto_virtual_framegen` before).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VirtualRefresh {
     /// Twice the stream rate.
@@ -140,7 +140,7 @@ pub enum VirtualRefresh {
 /// The setting with Vibepollo's spellings. The default is legacy rather
 /// than Vibepollo's enabled: 2x measured lower latency here.
 pub fn virtual_refresh(config: &Config) -> VirtualRefresh {
-    let value = config.get("frame_limiter_auto_virtual_framegen", "legacy");
+    let value = config.get("virtual_display_refresh", "legacy");
     match normalize(value).as_str() {
         "" | "legacy" | "2x" | "fixed2x" => VirtualRefresh::Legacy,
         "vrr" | "1000hz" | "1000" | "fixed1000hz" => VirtualRefresh::Vrr,
@@ -149,7 +149,7 @@ pub fn virtual_refresh(config: &Config) -> VirtualRefresh {
             VirtualRefresh::Enabled
         }
         _ => {
-            crate::config::invalid("frame_limiter_auto_virtual_framegen", value);
+            crate::config::invalid("virtual_display_refresh", value);
             VirtualRefresh::Legacy
         }
     }

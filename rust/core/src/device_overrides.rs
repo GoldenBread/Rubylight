@@ -136,7 +136,7 @@ fn check_block(block: &Value) -> Result<()> {
         };
         stream_preset::check_overrides(overrides)?;
         if let Some(key) = map.keys().find(|key| {
-            !config::removed(key) && !config::override_allowed(config::current_name(key))
+            !config::retired_name(key) && !config::override_allowed(config::current_name(key))
         }) {
             bail!("{key} is a host-wide setting and cannot be set for one device");
         }

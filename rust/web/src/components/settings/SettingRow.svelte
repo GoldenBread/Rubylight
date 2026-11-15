@@ -23,6 +23,7 @@
     onreset,
     onundo,
     oninvalid,
+    daily,
   }: {
     setting: Setting;
     /** The effective value, normalised for the control. */
@@ -52,6 +53,8 @@
     onreset: () => void;
     onundo: () => void;
     oninvalid: (text: string | null) => void;
+    /** The daily time its control's `daily` choice keeps in another setting (SettingControl). */
+    daily?: { value: string; onchange: (value: string | null) => void };
   } = $props();
 
   const uid = $props.id();
@@ -112,6 +115,7 @@
           {onchange}
           {invalidText}
           {oninvalid}
+          {daily}
           describedby={setting.description ? `${uid}-description` : undefined}
         />
       {/if}

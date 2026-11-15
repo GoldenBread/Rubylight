@@ -4,11 +4,7 @@ fn advertised_limiter_flags_follow_manual_provider_virtual_policy_and_fractional
     for (text, virtual_display, expected) in [
         ("", false, (false, true, 0)),
         ("", true, (true, true, 0)),
-        (
-            "frame_limiter_auto_virtual_framegen=disabled",
-            true,
-            (false, false, 0),
-        ),
+        ("virtual_display_refresh=disabled", true, (false, false, 0)),
         (
             "frame_limiter_enable=true\nframe_limiter_provider=none",
             false,
@@ -100,13 +96,13 @@ fn vrr_virtual_display_uses_fixed_1000_hz_without_changing_stream_rate() {
     assert_eq!(p.display_rate, Rate(1_000_000));
     assert_eq!(p.rate, Rate(119880));
     assert_eq!(p.capture, "wgc");
-    let c = Config::parse("frame_limiter_auto_virtual_framegen=disabled\ncapture=ddx").unwrap();
+    let c = Config::parse("virtual_display_refresh=disabled\ncapture=ddx").unwrap();
     let p = Policy::resolve(&c, Rate(119880), true, "none", false, false)
         .unwrap()
         .with_vrr(&c, true, true);
     assert_eq!(p.display_rate, Rate(119880));
     assert_eq!(p.capture, "ddx");
-    let c = Config::parse("frame_limiter_auto_virtual_framegen=fixed-1000-hz").unwrap();
+    let c = Config::parse("virtual_display_refresh=fixed-1000-hz").unwrap();
     let p = Policy::resolve(&c, Rate(59940), false, "none", false, false)
         .unwrap()
         .with_vrr(&c, false, true);
@@ -121,10 +117,7 @@ fn a_device_display_mode_keeps_the_streams_limiter_rate() {
             ("fixed-1000hz", 1_000_000),
             ("disabled", 60_000),
         ] {
-            let c = Config::parse(&format!(
-                "{setting}\nframe_limiter_auto_virtual_framegen={mode}"
-            ))
-            .unwrap();
+            let c = Config::parse(&format!("{setting}\nvirtual_display_refresh={mode}")).unwrap();
             for virtual_display in [false, true] {
                 let mut p =
                     Policy::resolve(&c, Rate(116_000), virtual_display, "none", false, false)
@@ -200,10 +193,8 @@ fn inherited_framegen_keeps_explicit_capture_and_sync_contract() {
     assert_eq!(p.capture, "ddx");
     let p = Policy::resolve(&c, Rate(59940), true, "game-provided", false, true).unwrap();
     assert_eq!(p.sync_limiter, 2);
-    c.values.insert(
-        "frame_limiter_auto_virtual_framegen".into(),
-        "enabled".into(),
-    );
+    c.values
+        .insert("virtual_display_refresh".into(), "enabled".into());
     assert_eq!(
         Policy::resolve(&c, Rate(59940), true, "game-provided", false, false)
             .unwrap()
@@ -248,11 +239,11 @@ fn virtual_refresh_reads_vibepollo_spellings() {
         ("1000hz", VirtualRefresh::Vrr),
         ("sideways", VirtualRefresh::Legacy),
     ] {
-        let c = Config::parse(&format!("frame_limiter_auto_virtual_framegen={value}")).unwrap();
+        let c = Config::parse(&format!("virtual_display_refresh={value}")).unwrap();
         assert_eq!(virtual_refresh(&c), mode, "{value}");
     }
     assert_eq!(virtual_refresh(&Config::default()), VirtualRefresh::Legacy);
-    let c = Config::parse("frame_limiter_auto_virtual_framegen=fixed-2x").unwrap();
+    let c = Config::parse("virtual_display_refresh=fixed-2x").unwrap();
     let p = Policy::resolve(&c, Rate(60000), true, "none", false, false).unwrap();
     assert_eq!(p.display_rate, Rate(120000));
 }

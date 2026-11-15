@@ -9,7 +9,7 @@ const main = await server.ssrLoadModule('/src/lib/schema/main.ts');
 const { searchSettings } = await server.ssrLoadModule('/src/components/settings/search.ts');
 const { settings: extensions } = await server.ssrLoadModule('/src/lib/schema/extensions.ts');
 const { describeDefault } = await server.ssrLoadModule('/src/components/settings/values.ts');
-const { MAIN_SECTIONS, MAIN_KEYS, MAIN_BUDGET, ALWAYS_ON, EXPERT_GROUPS, DEBUG_GROUP, onHome } = main;
+const { MAIN_SECTIONS, MAIN_KEYS, MAIN_BUDGET, ALWAYS_ON, DIAGNOSTICS, EXPERT_GROUPS, DEBUG_GROUP, onHome } = main;
 const settings = new Map(schema.settings.map(setting => [setting.key, setting]));
 const source = name => readFile(new URL(`./src/${name}`, import.meta.url), 'utf8');
 
@@ -80,7 +80,7 @@ test('always-on keys appear only in Debug switches, described as for troubleshoo
     assert.equal(MAIN_KEYS.includes(key), false, key);
   }
   const debug = schema.settings.filter(setting => setting.group === DEBUG_GROUP).map(setting => setting.key);
-  assert.deepEqual(debug.sort(), [...ALWAYS_ON].sort());
+  assert.deepEqual(debug.sort(), [...ALWAYS_ON, ...DIAGNOSTICS].sort());
   // The key itself is untouched in the part file.
   assert.equal(extensions.find(setting => setting.key === 'qr_pairing').group, 'Pairing');
 });
@@ -140,7 +140,7 @@ test('the wake status never spins silently: a slow first check says why, and the
 });
 
 test('full chroma applies when saved: no restart tag, text or notice', async () => {
-  const packed = settings.get('experimental_packed_444');
+  const packed = settings.get('packed_444');
   assert.notEqual(packed.restart, true);
   assert.doesNotMatch(`${packed.label} ${packed.description}`, /restart/i);
   // The restart notice follows the host's answer, which is false for a save of only live settings.
@@ -152,5 +152,17 @@ test('full chroma applies when saved: no restart tag, text or notice', async () 
 test('pages call the library by its navigation name, Games', async () => {
   for (const name of ['pages/Stream.svelte', 'pages/Overview.svelte', 'pages/Library.svelte', 'App.svelte']) {
     assert.doesNotMatch(await source(name), /Games &(amp;)? apps/, name);
+  }
+});
+
+test('capture timing diagnostics sit in Debug switches with their own text, and stay off the home', () => {
+  assert.deepEqual([...DIAGNOSTICS].sort(), ['capture_poll_interval_us', 'capture_predictive_poll', 'wgc_slot_aligned_publish']);
+  for (const key of DIAGNOSTICS) {
+    const setting = settings.get(key);
+    assert.equal(setting.group, DEBUG_GROUP, key);
+    assert.equal(settingsGroup(setting.category), 'advanced', key);
+    // Not an always-on switch: the description stays the setting's own.
+    assert.doesNotMatch(setting.description, /On for everyone/, key);
+    assert.equal(MAIN_KEYS.includes(key), false, key);
   }
 });

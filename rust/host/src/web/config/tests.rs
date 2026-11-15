@@ -147,12 +147,12 @@ fn only_a_save_with_a_restart_bound_setting_asks_for_a_restart() {
             .as_bool()
             .unwrap()
     };
+    assert!(!restart(json!({"packed_444": false})));
+    // Under its earlier name too.
     assert!(!restart(json!({"experimental_packed_444": false})));
     // HEVC support changes the codecs only the startup probe advertises.
     assert!(restart(json!({"hevc_mode": "1"})));
-    assert!(restart(
-        json!({"experimental_packed_444": false, "av1_mode": "1"})
-    ));
+    assert!(restart(json!({"packed_444": false, "av1_mode": "1"})));
     assert!(restart(json!({"sunshine_name": "Renamed host"})));
 }
 
@@ -167,7 +167,7 @@ fn saving_full_chroma_off_withdraws_its_modes_at_once() {
         .write()
         .unwrap()
         .values
-        .insert("experimental_packed_444".into(), "true".into());
+        .insert("packed_444".into(), "true".into());
     host.packed_modes
         .store(butterpollo_core::packed444::ALL_MODES, Ordering::Release);
     handle(

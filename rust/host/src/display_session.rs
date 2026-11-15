@@ -1703,6 +1703,8 @@ impl Prepared {
                     .is_some_and(|v| v == true || v == "true"),
             app_requested: app.as_ref().is_some_and(|a| {
                 crate::process::app_bool(a, "virtual-display", false)
+                    // Apollo's earlier name, which loading the library also
+                    // moves (`migrate_app`).
                     || crate::process::app_bool(a, "virtual-screen", false)
             }),
             configured: mode != "disabled" || config.boolean("dd_activate_virtual_display", false),
