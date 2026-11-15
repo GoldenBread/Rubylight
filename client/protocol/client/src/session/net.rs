@@ -23,7 +23,7 @@ pub const UDP_RECV_POLL_TIMEOUT: Duration = Duration::from_millis(100);
 /// session: the rebind follows the route poll, which runs every second.
 pub const REBIND_WAIT: Duration = Duration::from_secs(1);
 const TEST_PORT_TIMEOUT: Duration = Duration::from_secs(3);
-/// Addresses of a name tested at most, the first in the resolver's order (`probeAddresses` in
+/// Addresses of a name tested at most, the first in the resolver's order (`probeAddressPorts` in
 /// the C core's resolve-probe patch).
 const PROBED_ADDRESSES: usize = 8;
 /// Once an address answers, how much longer an address the resolver put before it may take.
