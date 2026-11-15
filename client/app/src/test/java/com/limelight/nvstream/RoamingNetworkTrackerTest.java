@@ -305,6 +305,31 @@ public class RoamingNetworkTrackerTest {
         assertTrue(tracker.keptNetworks() <= RoamingNetworkTracker.MAX_NETWORKS);
     }
 
+    // A VPN coming up mid-stream (a split tunnel keeps the LAN route) and going away again, with
+    // or without a loss: the C engine is never told it cannot carry on.
+    @Test public void aVpnOnEitherSideOfAChangeIsNotJudged() {
+        Object vpn = "vpn";
+        CEngineEvents events = new CEngineEvents();
+        RoamingNetworkTracker tracker = new RoamingNetworkTracker(WIFI, events, () -> 0);
+        tracker.addresses(WIFI, addresses("192.168.1.20"));
+        tracker.addresses(vpn, addresses("10.6.0.2"));
+        tracker.capabilities(vpn, true, true);
+        tracker.addresses(vpn, addresses("10.6.0.2", "fd7a::2"));
+        // Gone again without a loss: back on the same Wi-Fi.
+        tracker.addresses(WIFI, addresses("192.168.1.20"));
+        tracker.capabilities(WIFI, true, false);
+        assertEquals(java.util.Arrays.asList("changed", "changed"), events.seen);
+
+        // Up again, then lost: Wi-Fi returning is judged against Wi-Fi's own addresses.
+        events.seen.clear();
+        tracker.capabilities(vpn, true, true);
+        tracker.lost(vpn);
+        tracker.capabilities(WIFI, true, false);
+        tracker.addresses(WIFI, addresses("192.168.1.20"));
+        assertEquals(java.util.Arrays.asList("changed", "lost", "changed",
+                "returned " + MoonBridge.NETWORK_CARRIES_ON, "changed"), events.seen);
+    }
+
     // An engine that tells is never overruled: its "carries on" stands on other addresses.
     @Test public void anEngineThatTellsKeepsItsOwnAnswer() {
         Events events = new Events();

@@ -67,14 +67,16 @@ final class RoamingNetworkWatch {
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
                     NetworkCapabilities caps = connMgr.getNetworkCapabilities(network);
                     if (caps != null) {
-                        tracker.capabilities(network, caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED));
+                        tracker.capabilities(network, caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED),
+                                caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN));
                     }
                 }
             }
 
             @Override
             public void onCapabilitiesChanged(Network network, NetworkCapabilities caps) {
-                tracker.capabilities(network, caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED));
+                tracker.capabilities(network, caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED),
+                        caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN));
             }
 
             @Override

@@ -24,7 +24,9 @@ import com.limelight.nvstream.jni.MoonBridge;
  * of freezing until its connection times out. So does a switch to another default network while
  * the old one is still up (mobile data already connected when Wi-Fi goes), which Android reports
  * without a loss: it is compared with the old network's addresses, and reported as a return
- * once it cannot carry on.
+ * once it cannot carry on. A VPN on either side of a change is never judged here: a split
+ * tunnel keeps the stream's LAN route, and an always-on VPN coming back changes nothing under
+ * it, so the stream's own addresses stay those of the network under the VPN.
  */
 final class RoamingNetworkTracker {
     interface Reporter {
@@ -68,6 +70,8 @@ final class RoamingNetworkTracker {
     // the stream reaches the PC with decide whether it carries on; null when unknown (a host name).
     private final Class<?> pcFamily;
     private Object current;
+    // Whether the current default network is a VPN (NetworkCapabilities.TRANSPORT_VPN).
+    private boolean currentVpn;
     private boolean lost;
     private boolean stopped;
     // The network that came back with the connection carrying on, while it is asked again.
@@ -101,15 +105,22 @@ final class RoamingNetworkTracker {
 
     /** The default network's capabilities, from onCapabilitiesChanged (or onAvailable). */
     synchronized void capabilities(Object network, boolean notMetered) {
+        capabilities(network, notMetered, false);
+    }
+
+    /** As above; vpn: the network has NetworkCapabilities.TRANSPORT_VPN. */
+    synchronized void capabilities(Object network, boolean notMetered, boolean vpn) {
         if (stopped) {
             return;
         }
         if (current == null) {
             // Nothing known about the stream's network: the first one seen is where it runs.
             current = network;
+            currentVpn = vpn;
             return;
         }
         if (network.equals(current) && !lost) {
+            currentVpn = vpn;
             if (network.equals(recheck)) {
                 recheckMetered = !notMetered;
             }
@@ -117,17 +128,21 @@ final class RoamingNetworkTracker {
         }
         boolean returned = lost;
         Object previous = current;
+        boolean previousVpn = currentVpn;
         current = network;
+        currentVpn = vpn;
         lost = false;
         recheck = null;
         // Under the lock, so stop() returning means no report is still on its way.
         int change = reporter.networkChanged(!notMetered);
         // Without a loss only an engine that cannot tell is asked about here: one that tells
         // roams or answers on its own.
-        boolean switched = !returned && !reporter.answersForTheRoute();
+        boolean switched = !returned && !reporter.answersForTheRoute() && !previousVpn;
         Object previousAddresses = returned ? null : addressesOf.remove(previous);
         if (switched) {
+            // Onto a VPN too: the network under it keeps the stream's addresses.
             lostAddresses = previousAddresses;
+            switched = !vpn;
         }
         if (returned || switched) {
             change = routeAnswer(change, addressesOf.get(network));
@@ -189,7 +204,10 @@ final class RoamingNetworkTracker {
         }
         lost = true;
         recheck = null;
-        lostAddresses = addresses;
+        // A VPN lost leaves the network under it: the stream's addresses stay that network's.
+        if (!currentVpn) {
+            lostAddresses = addresses;
+        }
         reporter.streamNetworkLost();
     }
 
@@ -202,7 +220,7 @@ final class RoamingNetworkTracker {
      * same IPv4 lease says nothing about an IPv4 stream.
      */
     private int routeAnswer(int change, Object addresses) {
-        if (change != MoonBridge.NETWORK_CARRIES_ON || reporter.answersForTheRoute() ||
+        if (change != MoonBridge.NETWORK_CARRIES_ON || reporter.answersForTheRoute() || currentVpn ||
                 addresses == null || lostAddresses == null) {
             return change;
         }
