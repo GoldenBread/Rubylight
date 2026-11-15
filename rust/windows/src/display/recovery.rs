@@ -620,7 +620,7 @@ fn restore_settings(
         && let Err(e) = restore_hdr(monitor, *previous, *applied, now, set_hdr)
     {
         restored = false;
-        tracing::warn!(error=%e,"HDR restoration failed");
+        tracing::warn!(output = %output, error=%e,"HDR restoration failed");
     }
     // A display that is gone is not turned or scaled: it gets those back when
     // it returns. The rotation goes first, since the mode applied was

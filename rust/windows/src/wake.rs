@@ -524,7 +524,13 @@ pub fn wake_console(reason: &str) -> Result<()> {
         INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_MOVE, MOUSEINPUT, SendInput,
     };
     let idle = idle_seconds().ok();
-    crate::input::follow_input_desktop();
+    let followed = crate::input::follow_input_desktop();
+    if !followed {
+        tracing::debug!(
+            reason,
+            "could not attach to the input desktop before the display wake"
+        );
+    }
     let input = |dx: i32, dy: i32| INPUT {
         r#type: INPUT_MOUSE,
         Anonymous: INPUT_0 {
@@ -551,7 +557,8 @@ pub fn wake_console(reason: &str) -> Result<()> {
     tracing::info!(
         reason,
         idle_seconds = ?idle,
-        "woke the console display with a net-zero mouse move"
+        input_desktop = followed,
+        "sent the console display wake with a net-zero mouse move"
     );
     Ok(())
 }

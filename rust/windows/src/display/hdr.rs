@@ -58,7 +58,7 @@ pub(super) fn restore_hdr(
                 output = %recorded.display_name,
                 previous,
                 applied,
-                "leaving HDR as it is; the display no longer has the value the stream applied"
+                "leaving HDR as it is; the display is gone or no longer has the value the stream applied"
             );
             Ok(())
         }
