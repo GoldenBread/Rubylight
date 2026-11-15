@@ -81,6 +81,12 @@ impl StreamSizes {
     }
 }
 
+/// What the toast says when the PC did not confirm a requested size or frame rate in time:
+/// automatic quality stops only where it was on for the stream.
+fn unconfirmed_mode_toast(quality_on: bool) -> &'static str {
+    if quality_on { tr("The PC did not confirm the requested size. Automatic quality stopped.") } else { tr("The PC did not apply the new size or frame rate.") }
+}
+
 /// Pictures in a row the presenter could not show before the decoder that made them gives way
 /// (`Shared::present_refused`): one that fails alone may be a passing fault, not its format.
 const UNSHOWN_BEFORE_FALLBACK: u32 = 5;
@@ -191,9 +197,10 @@ impl Streaming {
         self.taken_slices = slices;
         if self.pending_mode.is_some_and(|(_, at)| at.elapsed() >= Duration::from_secs(5)) {
             self.pending_mode = None;
+            let quality_on = self.quality_mode != QualityMode::Off;
             self.quality_policy = None;
             self.quality_mode = QualityMode::Off;
-            self.show_toast(tr("The PC did not confirm the requested size. Automatic quality stopped."));
+            self.show_toast(unconfirmed_mode_toast(quality_on));
         }
         if self.facts.clock_sync && self.last_probe.elapsed() >= Duration::from_millis(250) {
             self.last_probe = Instant::now();
@@ -1347,6 +1354,17 @@ fn exclusive_fullscreen(renderer: *mut SDL_Renderer) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A size or frame rate the PC did not confirm says automatic quality stopped only when it
+    /// was on: a change from the stream menu or a window on another monitor says the change did
+    /// not apply.
+    #[test]
+    fn an_unconfirmed_mode_says_automatic_quality_stopped_only_when_it_was_on() {
+        assert!(unconfirmed_mode_toast(true).contains("Automatic quality stopped"));
+        let manual = unconfirmed_mode_toast(false);
+        assert!(!manual.contains("Automatic quality"), "{manual}");
+        assert!(manual.contains("did not apply"), "{manual}");
+    }
 
     /// A picture format the presenter cannot show hands the decoder over after a few pictures in
     /// a row, with the time the last was ready (never 0, which means none); a shown picture
