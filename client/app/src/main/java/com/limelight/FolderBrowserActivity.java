@@ -340,6 +340,8 @@ public final class FolderBrowserActivity extends NightjarActivity {
         Runnable job;
         /** The folder and file of a download into Downloads, so it is not queued twice; null otherwise. */
         String key;
+        /** The document picked for a download (before Android 10): deleted when the transfer is dropped unstarted. */
+        Uri picked;
 
         Transfer(boolean upload, String name, long total) {
             this.upload = upload;
@@ -516,6 +518,7 @@ public final class FolderBrowserActivity extends NightjarActivity {
             String name = SharedFolders.fileName(file);
             Transfer run = new Transfer(false, name, -1);
             if (target == null) run.key = key(folderId, file);
+            run.picked = target;
             ContentResolver resolver = getApplication().getContentResolver();
             run.job = () -> {
                 Uri uri = target;
@@ -654,8 +657,25 @@ public final class FolderBrowserActivity extends NightjarActivity {
             return name;
         }
 
+        /** Cancel ends the transfer that runs and drops those that wait: one press leaves nothing going. */
         void cancelTransfer() {
+            dropWaiting();
             if (transfer != null) transfer.cancel.cancel();
+        }
+
+        /** Drops the waiting transfers; a document picked for one of them is deleted, never left empty. */
+        private void dropWaiting() {
+            java.util.List<Uri> picked = new java.util.ArrayList<>();
+            for (Transfer run : waiting) {
+                if (run.picked != null) picked.add(run.picked);
+            }
+            waiting.clear();
+            if (picked.isEmpty()) return;
+            ContentResolver resolver = getApplication().getContentResolver();
+            // Its own thread: the transfer thread is busy with the one that runs, or shut down with the page.
+            new Thread(() -> {
+                for (Uri document : picked) discard(resolver, document, true);
+            }, "Folder cleanup").start();
         }
 
         /** Starts {@code run}, or lets it wait behind the one running. */
@@ -714,10 +734,10 @@ public final class FolderBrowserActivity extends NightjarActivity {
                 }
                 if (reload && folder != null) {
                     // An earlier transfer's failure stays shown as well.
-                    String shown = message, failure = error;
+                    String shown = message, kept = error;
                     open(folder, path);
                     message = shown;
-                    error = failure;
+                    error = kept;
                 }
                 next();
                 changed();
@@ -809,7 +829,6 @@ public final class FolderBrowserActivity extends NightjarActivity {
         private void changed() { changed.setValue(changed.getValue() + 1); }
 
         @Override protected void onCleared() {
-            waiting.clear();
             cancelTransfer();
             executor.shutdownNow();
             transfers.shutdownNow();
