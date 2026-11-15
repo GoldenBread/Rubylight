@@ -58,6 +58,7 @@ export const settings: Setting[] = [
     group: 'Streamed display',
     control: { kind: 'display' },
     default: '',
+    restart: true,
   },
   {
     key: 'virtual_display_mode',

@@ -156,6 +156,22 @@ fn only_a_save_with_a_restart_bound_setting_asks_for_a_restart() {
     assert!(restart(json!({"hevc_mode": "1"})));
     assert!(restart(json!({"packed_444": false, "av1_mode": "1"})));
     assert!(restart(json!({"sunshine_name": "Renamed host"})));
+    // Read where they are used: the updater's next check, the console's language.
+    assert!(!restart(json!({"auto_update": "true"})));
+    assert!(!restart(json!({"locale": "de", "auto_update": "false"})));
+    // The listeners bind their ports once.
+    assert!(restart(json!({"port": "48100", "locale": "en"})));
+}
+
+/// The restart list names each setting once, by the name a save is compared
+/// under.
+#[test]
+fn restart_keys_are_current_names_listed_once() {
+    let mut seen = std::collections::BTreeSet::new();
+    for key in RESTART_KEYS {
+        assert_eq!(butterpollo_core::config::current_name(key), *key);
+        assert!(seen.insert(*key), "{key} twice");
+    }
 }
 
 /// The console's save reaches the offered packed modes: turning full

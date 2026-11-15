@@ -39,7 +39,7 @@ Use **Review changes** to see pending edits across all tabs, including settings 
 
 Select **Save changes** to write the configuration. Changing a control or switching tabs does not save it. Saved stream settings are read when a new stream starts; an existing stream generally keeps its current configuration.
 
-The console shows **“Saved. Some changes apply after the host restarts.”** Startup settings, including network listeners and advertised codec capabilities, need a restart. Use **Restart now** after disconnecting: restarting the host disconnects active streams.
+The console shows **“Saved. Some changes apply after the host restarts.”** only when the save includes a setting the host reads when it starts, marked **Applies after a restart**: the ports and listen address, local network discovery and the PC name it advertises, port mapping and the ports it maps, Play over the internet, the WebRTC server, the DSU motion server, the tray icon, the log file, the codec support settings and the graphics card and display the startup encoder check uses, and NVIDIA's power profile. Use **Restart now** after disconnecting: restarting the host disconnects active streams.
 
 The app library needs no restart. Rubylight reads `apps.json` again whenever it has changed, before it lists or starts an app, so an app that another program or a hand edit adds appears at once. An entry with `null` for its command, working directory, or prepare and undo commands does not make the file unreadable, and a file that cannot be read keeps the apps already loaded.
 

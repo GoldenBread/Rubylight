@@ -763,6 +763,7 @@ const encoders: Setting[] = [
     group: 'Encoder',
     control: { kind: 'adapter' },
     default: '',
+    restart: true,
   },
   {
     key: 'adapter_pnp_id',
@@ -774,6 +775,7 @@ const encoders: Setting[] = [
     control: { kind: 'text', placeholder: 'PCI\\VEN_1002&DEV_744C&...', mono: true },
     default: '',
     advanced: true,
+    restart: true,
   },
   {
     key: 'encoder_focus',

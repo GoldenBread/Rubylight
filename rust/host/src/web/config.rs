@@ -112,15 +112,57 @@ fn choose_nucleus_folder(
     Ok(())
 }
 
-/// Settings a save applies to the running host. Every other key still answers
-/// that it needs a restart. HEVC and AV1 support do: the startup probe alone
-/// decides which of those codecs clients are offered.
-const LIVE_KEYS: &[&str] = &["packed_444"];
+/// The settings the host reads only when it starts, by their current names.
+/// Every other setting is read where it is used, so a save reaches the next
+/// stream, request or check. The console marks the same settings "Applies
+/// after a restart" (`SettingsSchema.test.mjs` compares the two lists). A
+/// setting also read at startup for part of what it does stays here.
+const RESTART_KEYS: &[&str] = &[
+    // The listeners: their ports and the address they bind to.
+    "port",
+    "address_family",
+    "bind_address",
+    // Local network discovery advertises the name it started with.
+    "enable_discovery",
+    "sunshine_name",
+    // Port mapping maps the ports chosen when it started.
+    "upnp",
+    "stream_mic",
+    "origin_web_ui_allowed",
+    "internet_play",
+    "internet_play_stun_servers",
+    "webrtc_server",
+    "webrtc_port",
+    "webrtc_media_port",
+    "enable_dsu_server",
+    "dsu_server_port",
+    "system_tray",
+    "hide_tray_controls",
+    "log_path",
+    // The startup probe alone decides which codecs clients are offered, on the
+    // GPU these choose; the driver settings panel follows that GPU too.
+    "hevc_mode",
+    "av1_mode",
+    "pyrowave",
+    "encoder",
+    "adapter_name",
+    "adapter_pnp_id",
+    "output_name",
+    // NVIDIA's power profile applies before the host opens a GPU device.
+    "nvenc_latency_over_power",
+    // The profile's files, opened once.
+    "file_state",
+    "credentials_file",
+    "file_apps",
+    "vibeshine_file_state",
+    "cert",
+    "pkey",
+];
 
 /// Whether a save of `keys` takes a restart to apply in full, for the
 /// console's "Some changes apply after the host restarts".
 fn restart_required<'a>(mut keys: impl Iterator<Item = &'a String>) -> bool {
-    keys.any(|key| !LIVE_KEYS.contains(&butterpollo_core::config::current_name(key)))
+    keys.any(|key| RESTART_KEYS.contains(&butterpollo_core::config::current_name(key)))
 }
 
 /// Saves one setting that a page manages itself: `next` gets the stored text

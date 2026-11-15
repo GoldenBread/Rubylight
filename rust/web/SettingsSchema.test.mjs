@@ -1038,6 +1038,23 @@ test('the host reads every switch and number with the default the console shows'
   assert.deepEqual(wrong, []);
 });
 
+test('"Applies after a restart" marks exactly the settings the host answers a save of with a restart', async () => {
+  const { readFile } = await import('node:fs/promises');
+  // RESTART_KEYS in host/src/web/config.rs, which restart_required checks.
+  const source = await readFile(new URL('../host/src/web/config.rs', import.meta.url), 'utf8');
+  const list = source.match(/const RESTART_KEYS: &\[&str\] = &\[([\s\S]*?)\];/)?.[1] ?? '';
+  const restartKeys = [...list.replace(/\/\/.*$/gm, '').matchAll(/"([a-z0-9_]+)"/g)].map(match => match[1]);
+  assert(restartKeys.length > 20, `only ${restartKeys.length} keys found: the pattern no longer matches the code`);
+  const marked = schema.settings.filter(setting => setting.restart).map(setting => setting.key).sort();
+  assert.deepEqual(marked, restartKeys.filter(key => settings.has(key)).sort());
+  // The profile's file paths are read once and have no row of their own.
+  assert.deepEqual(restartKeys.filter(key => !settings.has(key)).sort(),
+    ['cert', 'credentials_file', 'file_apps', 'file_state', 'pkey', 'vibeshine_file_state']);
+  // Settings read where they are used save without the restart notice.
+  for (const key of ['auto_update', 'locale', 'packed_444', 'stream_audio', 'min_log_level']) assert.equal(restartKeys.includes(key), false, key);
+  assert(restartKeys.includes('port'));
+});
+
 test('the configuration guide names every setting the console shows', async () => {
   const { readFile } = await import('node:fs/promises');
   const guide = await readFile(new URL('../../docs/configuration.md', import.meta.url), 'utf8');

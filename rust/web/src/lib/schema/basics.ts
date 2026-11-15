@@ -61,6 +61,7 @@ const general: Setting[] = [
     control: { kind: 'text', placeholder: "This PC's name" },
     default: '',
     defaultText: 'Its Windows name',
+    restart: true,
   },
   {
     key: 'locale',
@@ -678,6 +679,7 @@ const network: Setting[] = [
       text(values, 'origin_web_ui_allowed', 'lan') === 'wan'
         ? 'The console and its API accept addresses on the internet.'
         : undefined,
+    restart: true,
   },
   {
     key: 'csrf_allowed_origins',
@@ -891,6 +893,7 @@ const audio: Setting[] = [
     group: 'Microphone',
     control: { kind: 'toggle' },
     default: true,
+    restart: true,
   },
 ];
 
