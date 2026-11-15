@@ -330,7 +330,10 @@ impl Ambient {
         let on_page = self.shows == Some(Shows::Sky(moon))
             && self.sky_at.is_some_and(|(page, _)| page == self.page);
         if self.sky_at != Some((self.page, screen)) {
-            self.settle_until = ctx.cumulative_pass_nr() + 2;
+            // The page may take a few passes to lay out at the new size and hold what it holds
+            // there; a moon placed again meanwhile moves, never a ghost of its old place fading
+            // behind the page's cards.
+            self.settle_until = ctx.cumulative_pass_nr() + SETTLE_PASSES;
         }
         if on_page && self.key != key && self.fade.running(ctx) {
             self.key = key;
@@ -683,6 +686,9 @@ impl Ambient {
 }
 
 /// A placed moon fading from one alpha to another, from a time on.
+/// Passes after its page or window changed in which a moon placed again moves rather than fades.
+const SETTLE_PASSES: u64 = 8;
+
 #[derive(Clone, Copy)]
 struct MoonFade {
     disc: (Pos2, f32),

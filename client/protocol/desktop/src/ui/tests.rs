@@ -3236,7 +3236,28 @@ fn game_page_with_neural(on: bool, state: nightjar_core::http::native_api::radeo
     }
     f.size = vec2(1280.0, 1000.0);
     f.settle();
+    f.settle();
     f
+}
+
+/// A window that changes size on a game page moves its moon: no ghost of the old place fades
+/// behind the settings card, at any frame.
+#[test]
+fn a_game_page_that_changes_size_paints_one_moon() {
+    let mut f = home_with_games(1);
+    let pc = f.hosts.list[0].id;
+    f.hosts.list[0].apps = Apps::Loaded(vec![nightjar_core::http::App { name: "Game 00".into(), uuid: "install-0".into(), ..game(1000) }]);
+    f.hosts.list[0].art.insert(1000, Art::Missing);
+    f.l.go(Screen::Game { host: pc, app: 1000 });
+    for _ in 0..6 {
+        f.settle();
+    }
+    f.size = vec2(1280.0, 1000.0);
+    for n in 0..24 {
+        f.frame(Vec::new());
+        let moons = backdrop::painted(&f.ctx).moons;
+        assert!(moons.len() <= 1, "frame {n}: {moons:?}");
+    }
 }
 
 /// The frame generation row's line is sentences a player reads whole: it wraps, never cut.
