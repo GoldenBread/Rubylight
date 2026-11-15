@@ -239,8 +239,7 @@ fn every_fix_link_names_a_heading_in_the_troubleshooting_guide() {
 #[test]
 fn every_fix_names_a_settings_tab_the_console_has() {
     let schema = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../web/src/lib/settings-schema.ts"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../web/src/lib/settings-schema.ts"),
     )
     .unwrap();
     let groups = schema.split("export const settingGroups").nth(1).unwrap();
@@ -249,7 +248,10 @@ fn every_fix_names_a_settings_tab_the_console_has() {
         .filter(|line| line.trim_start().starts_with("{ id: '"))
         .filter_map(|line| line.split("label: '").nth(1)?.split('\'').next())
         .collect();
-    assert!(tabs.contains(&"Picture") && tabs.contains(&"Network"), "{tabs:?}");
+    assert!(
+        tabs.contains(&"Picture") && tabs.contains(&"Network"),
+        "{tabs:?}"
+    );
     for rule in RULES {
         for (at, _) in rule.fix.match_indices("Settings, ") {
             let named = &rule.fix[at + "Settings, ".len()..];
@@ -263,7 +265,16 @@ fn every_fix_names_a_settings_tab_the_console_has() {
         assert!(!rule.fix.contains("Host readiness"), "{}", rule.id);
     }
     let linked: Vec<_> = RULES.iter().filter_map(|rule| rule.setting).collect();
-    assert_eq!(linked, ["virtual_display_mode", "capture", "output_name", "capture", "port"]);
+    assert_eq!(
+        linked,
+        [
+            "virtual_display_mode",
+            "capture",
+            "output_name",
+            "capture",
+            "port"
+        ]
+    );
 }
 
 #[test]
