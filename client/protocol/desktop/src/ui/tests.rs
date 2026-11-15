@@ -1289,6 +1289,34 @@ fn at_150_percent_in_german_a_40_character_pc_name_fits_its_card_options_and_det
     assert_fits(&f, "details page", false);
 }
 
+/// A typical PC name of 24 characters is whole on its card in a 1080 x 720 window: it takes a
+/// second line before it is cut, and the status line stays under it, above the card's action.
+#[test]
+fn a_24_character_pc_name_is_whole_on_its_card_at_1080_by_720() {
+    let name = "Gaming Rig upstairs (2)!";
+    assert_eq!(name.chars().count(), 24);
+    let mut record = record("uid", true, true);
+    record.name = name.into();
+    let mut f = Frames::with(record, Reach::Online, Some(answer(true, 0)), Vec::new());
+    f.size = vec2(1080.0, 720.0);
+    f.settle();
+    fn galley_of(shape: &egui::Shape, text: &str, out: &mut Option<(bool, Rect)>) {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| galley_of(s, text, out)),
+            egui::Shape::Text(t) if t.galley.job.text == text => *out = Some((t.galley.elided, shape.visual_bounding_rect())),
+            _ => {}
+        }
+    }
+    let mut found = None;
+    f.shapes.iter().for_each(|c| galley_of(&c.shape, name, &mut found));
+    let (elided, at) = found.unwrap_or_else(|| panic!("{:?}", f.drawn));
+    assert!(!elided, "the whole name: {at:?}");
+    let online = f.placed.iter().find(|(t, ..)| t == "Online").map(|p| p.1).expect("the status line");
+    assert!(online.top() >= at.bottom() - 1.0, "the status under the name: {online:?} {at:?}");
+    let (card, _) = f.card_and_dots();
+    assert!(online.bottom() < card.bottom(), "{online:?} {card:?}");
+}
+
 #[test]
 fn at_150_percent_in_german_every_settings_page_fits_the_width() {
     let mut f = Frames::new(record("PC", true, false), Reach::Online);

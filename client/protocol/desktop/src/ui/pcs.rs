@@ -616,23 +616,24 @@ impl Launcher {
                 card.is_pointer_button_down_on(),
             );
             monitor(ui, &mut out, host, game, face, id.with("art-in"));
-            let mut job = egui::text::LayoutJob::simple_singleline(
-                name.to_owned(),
-                semibold(t::TYPE_SECTION_SIZE),
-                *ON_SURFACE,
-            );
-            job.wrap = egui::text::TextWrapping::truncate_at_width(words_room);
+            // The name takes two lines before it is cut: the card has room above its action, and
+            // two similar names stay apart. The status line moves down by what the second adds.
+            let font = semibold(t::TYPE_SECTION_SIZE);
+            let mut job = egui::text::LayoutJob::simple(name.to_owned(), font.clone(), *ON_SURFACE, words_room);
+            job.wrap.max_rows = 2;
             let galley = ui.painter().layout_job(job);
             name_cut = galley.elided;
+            let one_row = ui.painter().layout_no_wrap("A".to_owned(), font, *ON_SURFACE).size().y;
+            let extra = (galley.size().y - one_row).max(0.0);
             out.push(Shape::galley(
-                pos2(words_left, name_center - galley.size().y / 2.0),
+                pos2(words_left, name_center - one_row / 2.0 - extra / 2.0),
                 galley,
                 *ON_SURFACE,
             ));
             line_cut = status_line(
                 ui,
                 &mut out,
-                pos2(words_left, line_center),
+                pos2(words_left, line_center + extra / 2.0),
                 words_room,
                 &line,
             );
