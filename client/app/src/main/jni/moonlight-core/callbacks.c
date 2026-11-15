@@ -1,6 +1,7 @@
 #include <jni.h>
 
 #include <pthread.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -59,6 +60,9 @@ static jmethodID BridgeClHostTimingMethod;
 static jmethodID BridgeClCursorShapeMethod;
 static jbyteArray DecodedFrameBuffer;
 static jshortArray DecodedAudioBuffer;
+// Decode thread only: Opus decodes here under DecoderLock, outside any JNI critical region,
+// and the samples are then copied into DecodedAudioBuffer (as the Rust engine does).
+static int16_t* DecodedAudioPcm;
 
 void DetachThread(void* context) {
     (*JVM)->DetachCurrentThread(JVM);
@@ -275,6 +279,7 @@ int BridgeArInit(int audioConfiguration, POPUS_MULTISTREAM_CONFIGURATION opusCon
 
         // We know ahead of time what the buffer size will be for decoded audio, so pre-allocate it
         DecodedAudioBuffer = (*env)->NewGlobalRef(env, (*env)->NewShortArray(env, opusConfig->channelCount * opusConfig->samplesPerFrame));
+        DecodedAudioPcm = calloc((size_t)opusConfig->channelCount * opusConfig->samplesPerFrame, sizeof(int16_t));
     }
 
     return err;
@@ -301,6 +306,8 @@ void BridgeArCleanup() {
     pthread_mutex_unlock(&DecoderLock);
 
     (*env)->DeleteGlobalRef(env, DecodedAudioBuffer);
+    free(DecodedAudioPcm);
+    DecodedAudioPcm = NULL;
 
     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeArCleanupMethod);
 }
@@ -308,30 +315,26 @@ void BridgeArCleanup() {
 void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
     JNIEnv* env = GetThreadEnv();
 
-    jshort* decodedData = (*env)->GetPrimitiveArrayCritical(env, DecodedAudioBuffer, NULL);
-
+    // The AAudio callback's concealment can hold DecoderLock: waiting for it inside a JNI
+    // critical region would hold off the garbage collector for every thread, so the decode
+    // goes to native memory and is copied over afterwards.
     pthread_mutex_lock(&DecoderLock);
-    int decodeLen = Decoder == NULL ? -1 : opus_multistream_decode(Decoder,
+    int decodeLen = Decoder == NULL || DecodedAudioPcm == NULL ? -1 : opus_multistream_decode(Decoder,
                                             (const unsigned char*)sampleData,
                                             sampleLength,
-                                            decodedData,
+                                            DecodedAudioPcm,
                                             OpusConfig.samplesPerFrame,
                                             0);
     pthread_mutex_unlock(&DecoderLock);
     if (decodeLen > 0) {
-        // We must release the array elements before making further JNI calls
-        (*env)->ReleasePrimitiveArrayCritical(env, DecodedAudioBuffer, decodedData, 0);
-
+        (*env)->SetShortArrayRegion(env, DecodedAudioBuffer, 0, decodeLen * OpusConfig.channelCount,
+                                    (const jshort*)DecodedAudioPcm);
         (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeArPlaySampleMethod,
                                    DecodedAudioBuffer, decodeLen * OpusConfig.channelCount);
         if ((*env)->ExceptionCheck(env)) {
             // We will crash here
             (*JVM)->DetachCurrentThread(JVM);
         }
-    }
-    else {
-        // We can abort here to avoid the copy back since no data was modified
-        (*env)->ReleasePrimitiveArrayCritical(env, DecodedAudioBuffer, decodedData, JNI_ABORT);
     }
 }
 
