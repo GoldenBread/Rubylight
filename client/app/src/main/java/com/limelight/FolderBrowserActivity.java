@@ -70,8 +70,11 @@ public final class FolderBrowserActivity extends NightjarActivity {
     private static final int SAVE = 2;
     private static final String STATE_SAVE_FOLDER = "folder_browser_save_folder";
     private static final String STATE_SAVE_FILE = "folder_browser_save_file";
+    private static final String STATE_SAVE_SIZE = "folder_browser_save_size";
     /** The file the save dialog is open for; kept in the instance state, as the app may die while it is open. */
     private String saveFolder, saveFile;
+    /** Its listed size, -1 when not known. */
+    private long saveSize = -1;
     private LinearLayout content;
     private TextView transferText;
     private LinearProgressIndicator transferBar;
@@ -92,6 +95,7 @@ public final class FolderBrowserActivity extends NightjarActivity {
         if (state != null) {
             saveFolder = state.getString(STATE_SAVE_FOLDER);
             saveFile = state.getString(STATE_SAVE_FILE);
+            saveSize = state.getLong(STATE_SAVE_SIZE, -1);
         }
         FrameLayout page = TopAppBar.setUpPage(this, R.string.folders_title, this::navigateBack);
         content = new LinearLayout(this);
@@ -224,12 +228,13 @@ public final class FolderBrowserActivity extends NightjarActivity {
     private void download(SharedFolders.Entry entry) {
         String path = SharedFolders.childPath(work.path, entry.name);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            work.download(work.folder.id, path, null);
+            work.download(work.folder.id, path, entry.size, null);
             return;
         }
         // Before Android 10 an app writes to Downloads only with storage permission: the user picks the file instead.
         saveFolder = work.folder.id;
         saveFile = path;
+        saveSize = entry.size;
         choose(new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
                 .setType(mimeType(entry.name)).putExtra(Intent.EXTRA_TITLE, entry.name), SAVE);
     }
@@ -271,16 +276,19 @@ public final class FolderBrowserActivity extends NightjarActivity {
         super.onSaveInstanceState(state);
         state.putString(STATE_SAVE_FOLDER, saveFolder);
         state.putString(STATE_SAVE_FILE, saveFile);
+        state.putLong(STATE_SAVE_SIZE, saveSize);
     }
 
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         String folderId = saveFolder, file = saveFile;
+        long size = saveSize;
         saveFolder = saveFile = null;
+        saveSize = -1;
         if (result != RESULT_OK || data == null || data.getData() == null) return;
         if (request == UPLOAD) work.upload(data.getData());
         else if (request == SAVE && (folderId == null || file == null)) work.dropPicked(data.getData(), getString(R.string.folders_save_lost));
-        else if (request == SAVE) work.download(folderId, file, data.getData());
+        else if (request == SAVE) work.download(folderId, file, size, data.getData());
     }
 
     @Override protected void onDestroy() {
@@ -359,6 +367,7 @@ public final class FolderBrowserActivity extends NightjarActivity {
         Connector connector = this::connect;
         /** A save picked before the PC was known again, as after the app died with the save dialog open. */
         private String deferredFolder, deferredFile;
+        private long deferredSize = -1;
         private Uri deferredTarget;
 
         public FolderWork(Application application) { super(application); }
@@ -371,7 +380,7 @@ public final class FolderBrowserActivity extends NightjarActivity {
             if (deferredTarget != null) {
                 Uri target = deferredTarget;
                 deferredTarget = null;
-                download(deferredFolder, deferredFile, target);
+                download(deferredFolder, deferredFile, deferredSize, target);
             }
         }
 
@@ -475,10 +484,16 @@ public final class FolderBrowserActivity extends NightjarActivity {
          * save dialog. A picked document that gets no download is deleted, never left empty without a word.
          */
         void download(String folderId, String file, Uri target) {
+            download(folderId, file, -1, target);
+        }
+
+        /** {@code listed} is the size the directory listed, -1 when not known: the download stops there. */
+        void download(String folderId, String file, long listed, Uri target) {
             if (computer == null && target != null) {
                 // The app came back from the save dialog after it died: the PC is known again in start().
                 deferredFolder = folderId;
                 deferredFile = file;
+                deferredSize = listed;
                 deferredTarget = target;
                 return;
             }
@@ -495,7 +510,7 @@ public final class FolderBrowserActivity extends NightjarActivity {
                 try {
                     if (uri == null) uri = pendingDownload(resolver, name);
                     try (OutputStream out = local(openOutput(resolver, uri), name)) {
-                        new SharedFolders(connector.http()).download(folderId, file, out,
+                        new SharedFolders(connector.http()).download(folderId, file, listed, out,
                                 (bytes, total) -> progress(run, bytes, total), run.cancel);
                     }
                     if (target == null) publish(resolver, uri);

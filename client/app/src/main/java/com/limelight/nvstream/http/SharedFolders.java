@@ -188,12 +188,20 @@ public final class SharedFolders {
         }
     }
 
-    /**
-     * Writes the file at {@code path} to {@code sink} and returns its length. Only a whole file returns: a short
-     * one, a refusal or a cancel throws, and the caller then throws away what the sink has.
-     */
+    /** {@link #download(String, String, long, OutputStream, Progress, TransferCancel)} without a listed size. */
     public long download(String id, String path, OutputStream sink, Progress progress, TransferCancel cancel)
             throws IOException {
+        return download(id, path, -1, sink, progress, cancel);
+    }
+
+    /**
+     * Writes the file at {@code path} to {@code sink} and returns its length. Only a whole file returns: a short
+     * one, a refusal or a cancel throws, and the caller then throws away what the sink has. {@code listed} is the size
+     * the directory listed, -1 when not known: a host that sends more stops there instead of filling the storage, as
+     * nightjar-core's download does.
+     */
+    public long download(String id, String path, long listed, OutputStream sink, Progress progress,
+                         TransferCancel cancel) throws IOException {
         checkPath(path);
         if (path.isEmpty()) {
             throw new InvalidPathException("A download needs a file path");
@@ -209,6 +217,9 @@ public final class SharedFolders {
             long done = 0;
             int read;
             while ((read = source.read(buffer)) != -1) {
+                if (listed >= 0 && done + read > listed) {
+                    throw new IOException("The host sent more than the " + listed + " bytes it listed");
+                }
                 try {
                     sink.write(buffer, 0, read);
                 } catch (IOException e) {

@@ -155,6 +155,21 @@ public class SharedFoldersTest {
     }
 
     @Test
+    public void aHostThatSendsMoreThanItListedIsStoppedAtTheListedSize() throws Exception {
+        ByteArrayOutputStream sink = new ByteArrayOutputStream();
+        IOException failure = assertThrows(IOException.class, () -> folders(chain -> response(chain, 200,
+                ResponseBody.create("hello, and more", MediaType.get("application/octet-stream"))))
+                .download("games", "a.sav", 5, sink, (done, total) -> { }, new TransferCancel()));
+        assertFalse(failure instanceof SharedFolders.LocalFileException);
+        assertTrue(failure.getMessage(), failure.getMessage().contains("more than the 5 bytes it listed"));
+        assertEquals("nothing past the listed size is written", 0, sink.size());
+        // Exactly the listed size is a whole file.
+        assertEquals(5, folders(chain -> response(chain, 200, ResponseBody.create("hello",
+                MediaType.get("application/octet-stream")))).download("games", "a.sav", 5, new ByteArrayOutputStream(),
+                (done, total) -> { }, new TransferCancel()));
+    }
+
+    @Test
     public void aShortDownloadFails() throws Exception {
         ResponseBody shortBody = new ResponseBody() {
             @Override public MediaType contentType() { return MediaType.get("application/octet-stream"); }
