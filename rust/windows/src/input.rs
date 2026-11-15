@@ -156,6 +156,8 @@ pub struct Injector {
     touchpad: bool,
     /// The touchpad's plugging was reported.
     touchpad_reported: bool,
+    /// The code of the warning last set for the touchpad, so each packet need not look it up.
+    touchpad_warned: Option<&'static str>,
 }
 /// Keyboard and mouse input of one pass of the control loop, sent in one
 /// SendInput call: a call cost 31-36 us whether it carried one input or
@@ -352,6 +354,7 @@ impl Injector {
             virtual_mouse_routed: std::sync::atomic::AtomicBool::new(false),
             touchpad: false,
             touchpad_reported: false,
+            touchpad_warned: None,
         };
         injector.look_up(output);
         injector.start_virtual_devices();
@@ -536,9 +539,15 @@ impl Injector {
                 ),
             },
         };
-        if self.warnings.snapshot().iter().any(|w| w.code == code) {
+        self.touchpad_unavailable(code, &why);
+    }
+    /// Says on the stream card, once per `code`, why the device's touchpad gestures do not reach
+    /// Windows.
+    fn touchpad_unavailable(&mut self, code: &'static str, why: &str) {
+        if self.touchpad_warned == Some(code) {
             return;
         }
+        self.touchpad_warned = Some(code);
         tracing::warn!(
             why,
             "touchpad gestures from the device do not reach Windows"

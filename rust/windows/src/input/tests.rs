@@ -1093,3 +1093,26 @@ fn a_streamed_window_is_followed_more_often_than_a_display_and_a_closed_one_take
     assert!(display_rect(window).is_err());
     assert!(current_rect(window).is_none());
 }
+#[test]
+fn a_touchpad_that_does_not_work_is_reported_once_per_reason() {
+    let mut injector = recording();
+    injector.touchpad_unavailable("touchpad_failed", "it failed");
+    let codes = |injector: &Injector| {
+        injector
+            .warnings
+            .snapshot()
+            .into_iter()
+            .map(|w| w.code)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(codes(&injector), ["touchpad_failed"]);
+    // Later packets neither look the warnings up nor set it again.
+    injector.warnings.clear("touchpad_failed");
+    for _ in 0..1000 {
+        injector.touchpad_unavailable("touchpad_failed", "it failed");
+    }
+    assert!(codes(&injector).is_empty());
+    // Another reason is reported.
+    injector.touchpad_unavailable("touchpad_not_precision", "not precision");
+    assert_eq!(codes(&injector), ["touchpad_not_precision"]);
+}
