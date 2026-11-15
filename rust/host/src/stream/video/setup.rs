@@ -224,7 +224,11 @@ impl SessionThread<'_> {
         let SessionThread { m, h, s } = *self;
         let (latest, capture_wake) = m.open_session_capture(&s, &c, &prepared, latest)?;
         let first = {
-            let deadline = Instant::now() + Duration::from_secs(10);
+            let waiting_since = Instant::now();
+            let deadline = waiting_since + Duration::from_secs(10);
+            let mut next_diagnostics = waiting_since;
+            let mut woken = false;
+            prepared.log_display_diagnostics("first frame wait");
             loop {
                 // No frame, encoder or filter is owned during startup.
                 latest.release_generation(&capture_wake);
@@ -232,7 +236,25 @@ impl SessionThread<'_> {
                 if s.stopping() || h.stop.load(Ordering::Acquire) {
                     return Ok(None);
                 }
-                if Instant::now() >= deadline {
+                let now = Instant::now();
+                if now >= next_diagnostics {
+                    next_diagnostics = now + Duration::from_millis(250);
+                    prepared.log_display_diagnostics("first frame wait");
+                    // An off console display leaves an IddCx path committed
+                    // inactive with no swap chain: no frame can arrive until
+                    // it is woken, as a client's first mouse move does.
+                    if !woken
+                        && now.duration_since(waiting_since) >= Duration::from_secs(1)
+                        && prepared.display_swap_chain() != Some(true)
+                    {
+                        woken = true;
+                        if let Err(error) = butterpollo_windows::wake::wake_console("first frame wait") {
+                            tracing::warn!(error = %format!("{error:#}"), "could not wake the console display while waiting for the first frame");
+                        }
+                    }
+                }
+                if now >= deadline {
+                    prepared.drain_display_log();
                     anyhow::bail!("capture produced no GPU frame on {} using {} within 10 seconds; check that the selected display is powered on, or select a virtual display for headless streaming", prepared.output(), prepared.capture());
                 }
                 if let Some(image) = latest.wait_for_frame(&timer, &capture_wake, (Instant::now() + Duration::from_millis(50)).min(deadline))? { break image; }

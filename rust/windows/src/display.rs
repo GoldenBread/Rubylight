@@ -28,8 +28,8 @@ pub use modes::{
     virtual_scale,
 };
 pub use recovery::{
-    Guard, Retained, Snapshot, apply_layout, baseline_nodes, leased_displays, restore_positions,
-    stream_display_rotation,
+    DisplayDiagnostics, DisplayStatus, Guard, Retained, Snapshot, apply_layout, baseline_nodes,
+    leased_displays, restore_positions, stream_display_rotation,
 };
 pub(crate) use recovery::{restore_was_refused, rotation, set_rotation};
 pub use topology::{Monitor, Topology, active_device_ids, edid_refresh, monitors};

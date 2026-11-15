@@ -485,6 +485,26 @@ impl VirtualDisplay {
         }
         Ok(())
     }
+    /// The driver's status for this display: whether Windows assigned a swap
+    /// chain, how many frames it composed, and its flag bits.
+    pub fn status(&self) -> Result<rubylight_vdisplay_proto::control::MonitorStatus> {
+        self.driver.query(self.id)
+    }
+    /// Whether Windows still shows the display on an active path. This is the
+    /// CCD view the heartbeat checks, not the driver's swap-chain flag.
+    pub fn active(&self) -> Result<bool> {
+        let routes = self.routes()?;
+        // SAFETY: Topology::shows supplies live source- and target-name
+        // structures with matching header types and sizes.
+        let device_info = |header: &mut DISPLAYCONFIG_DEVICE_INFO_HEADER| unsafe {
+            DisplayConfigGetDeviceInfo(header)
+        };
+        Topology::query()?.shows(&routes, self.hotplug_monitor()?, device_info)
+    }
+    /// Forward the driver's queued log lines now, for a first-frame failure.
+    pub fn drain_log(&self) {
+        self.driver.drain_log();
+    }
     /// Resume must activate a paused display before looking up its GDI name,
     /// even if its last renewal or active heartbeat was less than a second ago.
     pub(super) fn recover_now(&mut self) -> Result<()> {

@@ -505,6 +505,107 @@ impl Drop for PowerRequest {
     }
 }
 
+/// Seconds without input after which a launch wakes the console display.
+pub const WAKE_IDLE_SECONDS: u32 = 60;
+
+/// Whether a launch should wake the display: the user has been idle long
+/// enough for Windows to switch it off, or Windows already reports it off.
+/// `display_on` is None when the power setting could not be read.
+pub fn should_wake(idle_seconds: u32, display_on: Option<bool>) -> bool {
+    display_on == Some(false) || idle_seconds >= WAKE_IDLE_SECONDS
+}
+
+/// Whether Windows reports the console display on: `GUID_CONSOLE_DISPLAY_STATE`
+/// (0 off, 1 on). None when the power setting cannot be read.
+pub fn console_display_on() -> Result<bool> {
+    use windows::Win32::System::Power::PowerReadACValue;
+    /// `GUID_CONSOLE_DISPLAY_STATE`, 0 off and 1 on. Defined here because the
+    /// windows crate puts it behind a feature this crate does not enable.
+    const GUID_CONSOLE_DISPLAY_STATE: windows::core::GUID =
+        windows::core::GUID::from_u128(0x6fe69556_704a_47a0_8f24_c28d936fda47);
+    let mut value = 0u32;
+    let mut size = std::mem::size_of::<u32>() as u32;
+    let mut kind = 0u32;
+    // SAFETY: `value` and `size` are live locals with room for one u32; the
+    // GUID is the documented console display state setting.
+    let status = unsafe {
+        PowerReadACValue(
+            None,
+            None,
+            None,
+            Some(&GUID_CONSOLE_DISPLAY_STATE as *const _),
+            Some(&mut kind as *mut u32),
+            Some((&mut value as *mut u32).cast()),
+            Some(&mut size as *mut u32),
+        )
+    };
+    status.ok()?;
+    anyhow::ensure!(size >= 4, "the console display state has no value");
+    Ok(value != 0)
+}
+
+/// Wake an off console display with the net-zero mouse move the clients use:
+/// a relative +1 then -1, 10 ms apart, on the input desktop. Returns whether
+/// both moves were sent; a wrong desktop or a refused SendInput is logged.
+pub fn wake_console(reason: &str) -> Result<()> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_MOVE, MOUSEINPUT, SendInput,
+    };
+    crate::input::follow_input_desktop();
+    let input = |dx: i32, dy: i32| INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx,
+                dy,
+                mouseData: 0,
+                dwFlags: MOUSEEVENTF_MOVE,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let send = |dx: i32, dy: i32| -> Result<()> {
+        let input = input(dx, dy);
+        // SAFETY: `input` is one initialized INPUT and is copied by SendInput.
+        let sent = unsafe { SendInput(&[input], std::mem::size_of::<INPUT>() as i32) };
+        anyhow::ensure!(sent == 1, "Windows refused the display wake input");
+        Ok(())
+    };
+    send(1, 1)?;
+    std::thread::sleep(Duration::from_millis(10));
+    send(-1, -1)?;
+    tracing::info!(
+        reason,
+        idle_seconds = idle_seconds().ok(),
+        "woke the console display with a net-zero mouse move"
+    );
+    Ok(())
+}
+
+/// Wake the console display only when [`should_wake`] says so; logs why.
+/// Returns whether a wake was sent.
+pub fn wake_console_if_idle(reason: &str) -> bool {
+    let idle = idle_seconds().unwrap_or(0);
+    let display_on = console_display_on().ok();
+    if !should_wake(idle, display_on) {
+        return false;
+    }
+    tracing::info!(
+        reason,
+        idle_seconds = idle,
+        display_on = ?display_on,
+        "the console display may be off; waking it before the stream"
+    );
+    match wake_console(reason) {
+        Ok(()) => true,
+        Err(error) => {
+            tracing::warn!(reason, error = %format!("{error:#}"), "could not wake the console display");
+            false
+        }
+    }
+}
+
 mod nics;
 
 #[cfg(test)]

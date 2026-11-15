@@ -539,7 +539,11 @@ fn lease_hdr(
     set: impl FnOnce(&Monitor, bool) -> Result<()>,
 ) -> Result<()> {
     match hdr_action(chosen.hdr_supported, chosen.hdr_enabled, requested) {
-        HdrAction::Keep => {}
+        HdrAction::Keep => tracing::debug!(
+            output = %chosen.display_name,
+            hdr = chosen.hdr_enabled,
+            "HDR stays as the display has it"
+        ),
         HdrAction::Skip => tracing::warn!(
             output = %chosen.display_name,
             "Display does not support HDR; capturing SDR content even if the wire stream is HDR. Use an HDR virtual display or disable HDR in the client"
@@ -550,7 +554,23 @@ fn lease_hdr(
                 journal(chosen.hdr_enabled, enabled)?;
                 let previous = pending.unwrap_or(chosen.hdr_enabled);
                 settings.color = Some((chosen.clone(), previous, enabled));
-                return set(chosen, enabled);
+                let result = set(chosen, enabled);
+                match &result {
+                    Ok(()) => tracing::info!(
+                        output = %chosen.display_name,
+                        previous = chosen.hdr_enabled,
+                        applied = enabled,
+                        "turned HDR for the stream"
+                    ),
+                    Err(error) => tracing::warn!(
+                        output = %chosen.display_name,
+                        previous = chosen.hdr_enabled,
+                        applied = enabled,
+                        error = %format!("{error:#}"),
+                        "could not turn HDR for the stream"
+                    ),
+                }
+                return result;
             }
             tracing::warn!(
                 output = %chosen.display_name,
@@ -644,6 +664,24 @@ fn restore_mode_rate(
     }
     Ok(())
 }
+/// The driver's view of a virtual display while a stream waits for its first
+/// frame: whether Windows assigned a swap chain, whether the ring is held, and
+/// how many frames were composed and pushed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DisplayStatus {
+    pub swap_chain: bool,
+    pub ring: bool,
+    pub frames_acquired: u64,
+    pub frames_pushed: u64,
+}
+
+/// [`DisplayStatus`] beside whether the CCD path still shows the display.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DisplayDiagnostics {
+    pub status: DisplayStatus,
+    pub ccd_active: bool,
+}
+
 pub struct Guard {
     pub output: String,
     virtual_display: Option<DisplayLease>,
@@ -1039,6 +1077,45 @@ impl Guard {
             }
         }
         Ok(false)
+    }
+    /// The driver's status for the owned virtual display, with whether the
+    /// CCD path still shows it. None for a physical display.
+    pub fn diagnostics(&self, _stage: &str) -> Result<Option<DisplayDiagnostics>> {
+        let Some(display) = &self.virtual_display else {
+            return Ok(None);
+        };
+        let display = display.lock().unwrap();
+        let status = display.status()?;
+        let active = display.active().unwrap_or(false);
+        Ok(Some(DisplayDiagnostics {
+            status: DisplayStatus {
+                swap_chain: status.flags & rubylight_vdisplay_proto::control::MONITOR_SWAP_CHAIN
+                    != 0,
+                ring: status.flags & rubylight_vdisplay_proto::control::MONITOR_RING != 0,
+                frames_acquired: status.frames_acquired,
+                frames_pushed: status.frames_pushed,
+            },
+            ccd_active: active,
+        }))
+    }
+    /// Whether Windows assigned a swap chain to the owned virtual display;
+    /// None for a physical display or a status read that failed.
+    pub fn monitor_status(&self) -> Option<DisplayStatus> {
+        let display = self.virtual_display.as_ref()?;
+        let status = display.lock().unwrap().status().ok()?;
+        Some(DisplayStatus {
+            swap_chain: status.flags & rubylight_vdisplay_proto::control::MONITOR_SWAP_CHAIN != 0,
+            ring: status.flags & rubylight_vdisplay_proto::control::MONITOR_RING != 0,
+            frames_acquired: status.frames_acquired,
+            frames_pushed: status.frames_pushed,
+        })
+    }
+    /// Forward the display driver's queued log lines, for a first-frame
+    /// failure that the host could not explain from its own log.
+    pub fn drain_display_log(&self) {
+        if let Some(display) = &self.virtual_display {
+            display.lock().unwrap().drain_log();
+        }
     }
     /// A paused game retains its display for reconnect, but must not switch
     /// it on or restore mode/HDR after the user changed the local layout.

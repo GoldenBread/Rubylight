@@ -1,6 +1,16 @@
 use super::*;
 
 #[test]
+fn a_launch_wakes_only_an_idle_or_off_console_display() {
+    assert!(should_wake(0, Some(false)));
+    assert!(should_wake(WAKE_IDLE_SECONDS, Some(true)));
+    assert!(!should_wake(WAKE_IDLE_SECONDS - 1, Some(true)));
+    // An unreadable power setting still wakes after the idle threshold.
+    assert!(should_wake(WAKE_IDLE_SECONDS, None));
+    assert!(!should_wake(0, None));
+}
+
+#[test]
 fn media_follow_the_interface_type_and_ndis() {
     assert_eq!(medium(6, 14), Medium::Wired);
     assert_eq!(medium(6, 0), Medium::Wired);

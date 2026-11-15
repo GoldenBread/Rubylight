@@ -1,4 +1,13 @@
 use super::*;
+
+#[test]
+fn hdr_is_restored_only_while_the_display_has_the_applied_value() {
+    assert!(restore_hdr_needed(true, true));
+    assert!(restore_hdr_needed(false, false));
+    assert!(!restore_hdr_needed(false, true));
+    assert!(!restore_hdr_needed(true, false));
+}
+
 #[test]
 fn the_next_arrangement_adopts_the_original_layout_after_a_failed_restore() -> Result<()> {
     let directory = tempfile::tempdir()?;

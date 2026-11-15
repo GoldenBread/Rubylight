@@ -842,6 +842,44 @@ pub struct Ready {
     retained: Option<Arc<Retained>>,
     worker: Option<std::thread::JoinHandle<()>>,
 }
+impl Prepared {
+    /// Log what the display layer and Windows report, with the console state
+    /// and idle time that explain a display Windows switched off.
+    fn log_display_diagnostics(&mut self, stage: &str) {
+        let console = butterpollo_windows::wake::console_display_on().ok();
+        let idle = butterpollo_windows::wake::idle_seconds().ok();
+        match self
+            .display
+            .as_mut()
+            .map(|display| display.diagnostics(stage))
+        {
+            Some(Ok(Some(diagnostics))) => tracing::info!(
+                stage,
+                swap_chain = diagnostics.status.swap_chain,
+                ring = diagnostics.status.ring,
+                frames_acquired = diagnostics.status.frames_acquired,
+                frames_pushed = diagnostics.status.frames_pushed,
+                ccd_active = diagnostics.ccd_active,
+                console_on = ?console,
+                idle_seconds = ?idle,
+                "stream display status while waiting for the first frame"
+            ),
+            Some(Ok(None)) | None => tracing::info!(
+                stage,
+                console_on = ?console,
+                idle_seconds = ?idle,
+                "stream display status while waiting for the first frame (physical display)"
+            ),
+            Some(Err(error)) => tracing::warn!(
+                stage,
+                error = %format!("{error:#}"),
+                console_on = ?console,
+                idle_seconds = ?idle,
+                "could not read the virtual display status while waiting for the first frame"
+            ),
+        }
+    }
+}
 impl Ready {
     pub fn prepare((prepared, limiter): (Prepared, limiter::Lease)) -> Result<StreamPreparation> {
         let target = CaptureTarget::new(prepared.capture_target());
@@ -1164,6 +1202,28 @@ impl Ready {
         *self.turned.lock().unwrap() = Some(size);
         if let Some(worker) = &self.worker {
             worker.thread().unpark();
+        }
+    }
+    /// Log what the owned display and Windows report while a stream waits for
+    /// its first frame: the driver's swap-chain flag, composed frames, the CCD
+    /// path, and whether the console display is on.
+    pub fn log_display_diagnostics(&self, stage: &str) {
+        let mut prepared = self._state.lock().unwrap();
+        prepared.log_display_diagnostics(stage);
+    }
+    /// Whether Windows assigned a swap chain to the owned virtual display;
+    /// None for a physical display or a failed read.
+    pub fn display_swap_chain(&self) -> Option<bool> {
+        let mut prepared = self._state.lock().unwrap();
+        let monitor = prepared.display.as_mut()?.monitor_status()?;
+        Some(monitor.swap_chain)
+    }
+    /// Forward the driver's queued log lines now, before a first-frame
+    /// failure ends the stream.
+    pub fn drain_display_log(&self) {
+        let mut prepared = self._state.lock().unwrap();
+        if let Some(display) = prepared.display.as_mut() {
+            display.drain_display_log();
         }
     }
 }
@@ -1728,6 +1788,10 @@ impl Prepared {
         config: &Config,
         physical_only: bool,
     ) -> Result<(Self, limiter::Lease)> {
+        // An off console display makes an IddCx path commit inactive and
+        // assign no swap chain, so the first frame never comes. Wake it when
+        // the user has been idle, as a client's first mouse move does.
+        butterpollo_windows::wake::wake_console_if_idle("launch");
         let app = crate::stream::launch_app(h, launch);
         let output_override = app
             .as_ref()
