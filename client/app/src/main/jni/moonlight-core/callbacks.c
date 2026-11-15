@@ -15,6 +15,7 @@
 #include "android_microphone.h"
 #include "ControllerHaptics.h"
 #include "cursor_shape.h"
+#include "frame_capacity.h"
 
 #include <opus_multistream.h>
 #include <android/log.h>
@@ -182,8 +183,9 @@ int BridgeDrSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
             (int64_t)(nativeNowUs - decodeUnit->receiveTimeUs) * 1000;
 
     // Increase the size of our frame data buffer if our frame won't fit
-    if ((*env)->GetArrayLength(env, DecodedFrameBuffer) < decodeUnit->fullLength) {
-        jbyteArray frameBuffer = (*env)->NewByteArray(env, decodeUnit->fullLength);
+    jsize frameCapacity = (*env)->GetArrayLength(env, DecodedFrameBuffer);
+    if (frameCapacity < decodeUnit->fullLength) {
+        jbyteArray frameBuffer = (*env)->NewByteArray(env, grownFrameCapacity(decodeUnit->fullLength, frameCapacity));
         if (frameBuffer == NULL) {
             (*env)->ExceptionClear(env);
             return DR_NEED_IDR;
