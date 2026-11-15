@@ -46,6 +46,24 @@ pub fn for_mtu(mtu: u32) -> u16 {
     }
 }
 
+/// An offer as [`SERVERINFO_FIELD`] or [`DESCRIBE_ATTRIBUTE`] carries it: rounded down to a
+/// multiple of 16, capped at [`MAX_VIDEO_PACKET`], and 0 when it is no more than
+/// [`STOCK_MAX_VIDEO_PACKET`] or malformed. A client may raise its packet size only up to this,
+/// and only when it is nonzero.
+pub fn parse_offer(value: &str) -> u16 {
+    match value.trim().parse::<u32>() {
+        Ok(value) if value <= u32::from(u16::MAX) => {
+            let packet = (value.min(u32::from(MAX_VIDEO_PACKET)) & !0xF) as u16;
+            if packet > STOCK_MAX_VIDEO_PACKET {
+                packet
+            } else {
+                0
+            }
+        }
+        _ => 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -54,10 +72,23 @@ mod tests {
     fn the_largest_packet_is_8192_and_a_multiple_of_16() {
         assert_eq!(MAX_VIDEO_PACKET, 8192);
         assert_eq!(MAX_VIDEO_PACKET % 16, 0);
-        assert!(MAX_VIDEO_PACKET > STOCK_MAX_VIDEO_PACKET);
+        const { assert!(MAX_VIDEO_PACKET > STOCK_MAX_VIDEO_PACKET) };
         // Stock Moonlight's limit is not itself a multiple of 16: it rounds the
         // size it asks for down to one.
-        assert!(STOCK_MAX_VIDEO_PACKET >= 1392);
+        const { assert!(STOCK_MAX_VIDEO_PACKET >= 1392) };
+    }
+
+    #[test]
+    fn an_offer_is_rounded_down_capped_and_zero_when_not_above_stock() {
+        assert_eq!(parse_offer("8192"), MAX_VIDEO_PACKET);
+        assert_eq!(parse_offer(" 8160 "), 8160);
+        assert_eq!(parse_offer("8193"), MAX_VIDEO_PACKET);
+        assert_eq!(parse_offer("9000"), MAX_VIDEO_PACKET);
+        assert_eq!(parse_offer("1424"), 1424);
+        assert_eq!(parse_offer("1420"), 1408);
+        for none in ["", "0", "-16", "x", "1400", "1392", "999999999999"] {
+            assert_eq!(parse_offer(none), 0, "{none}");
+        }
     }
 
     #[test]

@@ -1,5 +1,6 @@
 #define LC_DEBUG
 #include "../../main/jni/moonlight-core/moonlight-common-c/src/Limelight-internal.h"
+#include "../../main/jni/moonlight-core/video_packet.h"
 #undef NDEBUG
 #include <assert.h>
 
@@ -257,6 +258,7 @@ static void testGrowthAndQueuedOwnership(void) {
 
 static void testMalformedPacketsAndLimit(void) {
     resetTest();
+    const size_t maxFrame = pyroMaxFrameBytes(StreamConfig.packetSize);
     const uint8_t payload[1401] = {0};
     // Reject truncated headers before reading their fields, including extension truncation.
     for (int size = 0; size < (int)(sizeof(RTP_PACKET) + 4 + sizeof(NV_VIDEO_PACKET)); size++) {
@@ -272,19 +274,19 @@ static void testMalformedPacketsAndLimit(void) {
     sendPacket(1, 1, 0, 0, FLAG_SOF, true, payload, 1401);
     assert(liveAllocations == 0 && nalChainHead == NULL);
     int packet = 0;
-    while ((size_t)nalChainDataLength + 1408 + (nalChainHead ? 0 : 4) <= PYRO_MAX_FRAME_BYTES) {
+    while ((size_t)nalChainDataLength + 1408 + (nalChainHead ? 0 : 4) <= maxFrame) {
         sendPacket(1, packet++, 0, 0, 0, false, payload, 1400);
     }
-    int remaining = PYRO_MAX_FRAME_BYTES - nalChainDataLength;
+    int remaining = maxFrame - nalChainDataLength;
     assert(remaining > 8 && remaining <= 1408);
     sendPacket(1, packet++, 0, 0, 0, false, payload, remaining - 8);
-    assert(nalChainDataLength == PYRO_MAX_FRAME_BYTES);
+    assert(nalChainDataLength == maxFrame);
     PLENTRY before = nalChainHead;
     unsigned int previousSpi = lastPacketInStream;
     sendPacket(1, packet, 0, 0, FLAG_EOF, false, payload, 1);
-    assert(nalChainHead == before && nalChainDataLength == PYRO_MAX_FRAME_BYTES);
+    assert(nalChainHead == before && nalChainDataLength == maxFrame);
     assert(lastPacketInStream == previousSpi);
-    assert(largestAllocation == sizeof(LENTRY_INTERNAL) + PYRO_MAX_FRAME_BYTES);
+    assert(largestAllocation == sizeof(LENTRY_INTERNAL) + maxFrame);
     cleanupFrameState();
     assert(liveAllocations == 0);
 }
@@ -379,6 +381,30 @@ static void testOrdinaryFramingRemainsUnchanged(void) {
 }
 
 int main(void) {
+    // The negotiated stream packet size the cap follows; a stock stream with an encrypted
+    // 1360-byte payload keeps its 1400-byte allowance.
+    StreamConfig.packetSize = 1400;
+    assert(pyroMaxPacketBytes(0) == 1400);
+    assert(pyroMaxPacketBytes(1360) == 1400);
+    assert(pyroMaxPacketBytes(1424) == 1424);
+    assert(pyroMaxPacketBytes(8192) == 8192);
+    assert(pyroMaxPacketBytes(9000) == PYRO_MAX_PACKET_BYTES);
+    assert(pyroMaxFrameBytes(1400) == 4092u * 1400u);
+    assert(pyroMaxFrameBytes(8192) == PYRO_MAX_FRAME_BYTES);
+    // The offer rounds down to 16, caps at the version's size, and is 0 at or below stock.
+    assert(rlVideoPacketOffer(8192) == 8192);
+    assert(rlVideoPacketOffer(8193) == 8192);
+    assert(rlVideoPacketOffer(1420) == 1408);
+    assert(rlVideoPacketOffer(1400) == 0);
+    assert(rlVideoPacketOffer(0) == 0);
+    // The ANNOUNCE asks for no more than the stream offered, rounded down to 16; a stock
+    // request is unchanged and a jumbo one without an offer falls back to stock's 1392.
+    assert(rlAnnouncedPacketSize(1392, 8192) == 1392);
+    assert(rlAnnouncedPacketSize(8192, 0) == 1392);
+    assert(rlAnnouncedPacketSize(8192, 8192) == 8192);
+    assert(rlAnnouncedPacketSize(8192, 1424) == 1424);
+    assert(rlAnnouncedPacketSize(1424, 1424) == 1424);
+    assert(rlAnnouncedPacketSize(8190, 8192) == 8176);
     testExactWireBytesAndMetadata();
     testPartialAndFecBlockContinuity();
     testVibepolloRecordBoundaries();

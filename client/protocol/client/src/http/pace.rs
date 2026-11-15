@@ -5,6 +5,18 @@ pub const DURATION_MS: u32 = 2000;
 pub const PACKET_SIZE: u32 = 1392;
 const STEP: u32 = 50_000;
 
+/// The packet size a PyroWave probe asks for at a PC that offers `offered` bytes: stock 1392
+/// without an offer, else the offered size less the 32-byte encryption header the ANNOUNCE
+/// excludes (and the probe's own framing adds back). Shared rule with the pre-flight.
+pub fn packet_size_for(offered: u16) -> u32 {
+    use rubylight_protocol::video_packet::STOCK_MAX_VIDEO_PACKET;
+    if offered > STOCK_MAX_VIDEO_PACKET {
+        u32::from(offered).saturating_sub(32)
+    } else {
+        PACKET_SIZE
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Measurement {
     pub expected: u32,
@@ -203,6 +215,10 @@ mod tests {
         assert!(!result.qualified());
         assert_eq!(expected_packets(1_000_000, 1392), 163826);
         assert_eq!(burst_group(1_000_000, 1392, false), 1_000_000 / 8 / (1440 + 8 + 20 + 38));
+        // The probe's size follows the PC's offer, less the encryption header.
+        assert_eq!(packet_size_for(0), 1392);
+        assert_eq!(packet_size_for(1424), 1392);
+        assert_eq!(packet_size_for(8192), 8160);
         assert!((1_000_000..1_300_000).contains(&probe_kbps(1_000_000, 120, 1392, 20, 2)));
         assert_eq!(probe_kbps(5_000_000, 60, 1392, 20, 2), 3_000_000);
     }

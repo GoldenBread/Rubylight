@@ -13,8 +13,10 @@ import com.limelight.R;
 import com.limelight.binding.PlatformBinding;
 import com.limelight.nvstream.PyroWavePace;
 import com.limelight.nvstream.http.ComputerDetails;
+import com.limelight.nvstream.http.HostCapabilities;
 import com.limelight.nvstream.http.HostHttpResponseException;
 import com.limelight.nvstream.http.NvHTTP;
+import com.limelight.preferences.PreferenceConfiguration;
 
 import org.xmlpull.v1.XmlPullParserException;
 
@@ -26,8 +28,19 @@ import java.io.IOException;
  * x-ss-video[0].pyrowavePaceMbps. Needs a host with frame-shaped UDP probes (Vibeshine).
  */
 public final class PyroWavePaceCalibration {
-    /** Stream packet size; probe packets are this size, as the stream's are on a local network. */
+    /** Stock stream packet size; probe packets are this size, as the stream's are on a local network. */
     static final int PACKET_SIZE = 1392;
+
+    /**
+     * The probe's packet size for a PC whose serverinfo offers {@code offered} bytes, used only
+     * when the user's jumbo setting is on: stock 1392 without an offer, else the offer less the
+     * 32-byte encryption header the ANNOUNCE excludes (the probe's own framing adds it back).
+     * Shared rule: nightjar_core::http::pace::packet_size_for.
+     */
+    static int packetSizeFor(int offered) {
+        if (offered <= HostCapabilities.STOCK_MAX_VIDEO_PACKET) return PACKET_SIZE;
+        return Math.max(256, Math.min(HostCapabilities.MAX_VIDEO_PACKET, offered) - 32);
+    }
 
     private final Activity activity;
     private final ComputerDetails computer;
@@ -150,7 +163,12 @@ public final class PyroWavePaceCalibration {
         if (linkMbps <= 0) {
             return activity.getString(R.string.pace_calibration_no_link);
         }
-        int probeKbps = PyroWavePace.probeKbps(bitrateKbps, fps, PACKET_SIZE,
+        // Calibrate at the size the stream will use: jumbo only when the user turned it on, so a
+        // stock setup keeps today's 1392-byte probes and its saved pace.
+        int packetSize = PreferenceConfiguration.readPreferences(activity).jumboFrames
+                ? packetSizeFor(current.caps != null ? current.caps.maxVideoPacket() : 0)
+                : PACKET_SIZE;
+        int probeKbps = PyroWavePace.probeKbps(bitrateKbps, fps, packetSize,
                 current.pyroWaveCriticalFecPercentage, current.pyroWaveMinParityShards);
         int floorKbps = PyroWavePace.floorKbps(probeKbps);
         if (floorKbps >= linkMbps * 1000) {
@@ -163,7 +181,7 @@ public final class PyroWavePaceCalibration {
             if (cancelled) throw new InterruptedException();
             progress.testing(paceKbps);
             int pace = Math.max(paceKbps, probeKbps);
-            PyroWavePace.Result result = http.probePyroWaveUdp(probeKbps, PACKET_SIZE, probeFps, pace);
+            PyroWavePace.Result result = http.probePyroWaveUdp(probeKbps, packetSize, probeFps, pace);
             LimeLog.info("Pace probe at " + pace + " kbps: " + result +
                     (PyroWavePace.qualified(result) ? " (pass)" : " (fail)"));
             return result;

@@ -1134,7 +1134,54 @@ public class NvConnection {
             context.negotiatedRemoteStreaming = context.streamConfig.getRemote();
             context.negotiatedPacketSize = context.streamConfig.getMaxPacketSize();
         }
-        
+
+        // Jumbo video packets: only for a stream from a PC that offers them, and only after the
+        // host's own UDP probe passes at the larger size on this network. A remote route keeps
+        // its 1024/1184-byte packets. The probe is the host's PyroWave UDP probe, but the
+        // negotiated size applies to every video codec.
+        context.jumboFallback = false;
+        PreferenceConfiguration jumboPrefs = PreferenceConfiguration.readPreferences(appContext);
+        if (jumboPrefs.jumboFrames &&
+                context.negotiatedRemoteStreaming != StreamConfiguration.STREAM_CFG_REMOTE &&
+                details.supportsPyroWavePaceCalibration() &&
+                context.hostCaps.maxVideoPacket() > HostCapabilities.STOCK_MAX_VIDEO_PACKET) {
+            int candidate = Math.min(HostCapabilities.MAX_VIDEO_PACKET, context.hostCaps.maxVideoPacket());
+            int probeSize = PyroWavePace.jumboProbeSize(candidate);
+            try {
+                PyroWavePace.Result jumbo = h.probePyroWaveUdp(PyroWavePace.JUMBO_PROBE_KBPS, probeSize,
+                        PyroWavePace.JUMBO_PROBE_FPS, PyroWavePace.JUMBO_PROBE_KBPS);
+                // At a 1424-byte offer the probe asks for stock's 1392 and has no smaller control:
+                // only a clean measurement may pass.
+                PyroWavePace.Result control = null;
+                if (probeSize != 1392) {
+                    try {
+                        control = h.probePyroWaveUdp(PyroWavePace.JUMBO_PROBE_KBPS, 1392,
+                                PyroWavePace.JUMBO_PROBE_FPS, PyroWavePace.JUMBO_PROBE_KBPS);
+                    } catch (IOException e) {
+                        LimeLog.warning("Jumbo video packets: the 1392-byte control probe failed (" + e + ")");
+                        control = null;
+                    }
+                }
+                if (PyroWavePace.jumboPasses(jumbo, control)) {
+                    context.negotiatedPacketSize = candidate;
+                    LimeLog.info("Jumbo video packets: asking for " + candidate + " bytes (" + probeSize +
+                            " probed, " + jumbo.lossPercent + "% loss)");
+                } else {
+                    context.jumboFallback = true;
+                    LimeLog.info("Jumbo video packets failed the field test (" + jumbo.lossPercent + "% at " +
+                            probeSize + ", " + (control != null ? control.lossPercent + "% at 1392" : "no smaller control") +
+                            "); streaming normal packets");
+                }
+            } catch (IOException e) {
+                context.jumboFallback = true;
+                LimeLog.warning("Jumbo video packets could not be tested (" + e + "); streaming normal packets");
+            }
+        } else if (jumboPrefs.jumboFrames && context.negotiatedRemoteStreaming != StreamConfiguration.STREAM_CFG_REMOTE) {
+            // The row is hidden where no saved PC offers jumbo, but a saved choice stays. No test
+            // ran, so log it without a notice: the stream is simply stock.
+            LimeLog.info("Jumbo video packets are on, but this PC does not offer or cannot test them; streaming normal packets");
+        }
+
         //
         // Video stream format will be decided during the RTSP handshake
         //
@@ -1588,6 +1635,10 @@ public class NvConnection {
                                     videoDecoderRenderer.packedHdrDropReason());
                         }
                         nativeConnected = true;
+                        if (context.jumboFallback) {
+                            context.connListener.displayTransientMessage(
+                                    appContext.getString(R.string.jumbo_frames_fallback));
+                        }
                         // Every stream follows its network (a lost one that returns where the
                         // connection cannot carry on reconnects at once); the engine roams only
                         // with client roaming on both sides.

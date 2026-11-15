@@ -225,6 +225,8 @@ public class PreferenceConfiguration {
     // "Group incoming video packets" (Rust engine): UDP_GRO on the video socket. On by default;
     // the desktop's receive coalescing on Windows is the same setting.
     static final String RECEIVE_COALESCING_PREF_STRING = "checkbox_receive_coalescing";
+    /** Jumbo video packets: larger packets when the PC offers them and the pre-flight passes. */
+    static final String JUMBO_FRAMES_PREF_STRING = "jumbo_frames";
     // "Frames waiting for the decoder" (both engines): the decode unit queue's bound, 15 by default as in
     // moonlight-common-c. Desktop's decode_queue_frames is the same setting.
     static final String DECODE_QUEUE_FRAMES_PREF_STRING = "list_decode_queue_frames";
@@ -495,6 +497,8 @@ public class PreferenceConfiguration {
     public boolean fractionalVsync;
     public boolean submitHint, coveringDecoderSize, pyroWavePreacquire, codecDirect, receiveDecodePriority;
     public boolean clientRoaming, roamingMetered, receiveCoalescing;
+    /** Jumbo video packets (Rubylight's MaxVideoPacket and x-rl-max-packet-size). Off by default. */
+    public boolean jumboFrames;
     // Frames that may wait for a decoder without direct submission (MoonBridge.setDecodeQueueBound).
     public int decodeQueueFrames;
     /** Play over the internet: a punched path to a PC that offers it, after every direct path (InternetPlay). */
@@ -1825,6 +1829,7 @@ public class PreferenceConfiguration {
         config.clientRoaming = prefs.getBoolean(CLIENT_ROAMING_PREF_STRING, true);
         config.roamingMetered = prefs.getBoolean(ROAMING_METERED_PREF_STRING, false);
         config.receiveCoalescing = prefs.getBoolean(RECEIVE_COALESCING_PREF_STRING, true);
+        config.jumboFrames = prefs.getBoolean(JUMBO_FRAMES_PREF_STRING, false);
         config.decodeQueueFrames = decodeQueueFrames(prefs.getString(DECODE_QUEUE_FRAMES_PREF_STRING,
                 String.valueOf(DEFAULT_DECODE_QUEUE_FRAMES)));
         config.internetPlay = prefs.getBoolean(INTERNET_PLAY_PREF_STRING, true);

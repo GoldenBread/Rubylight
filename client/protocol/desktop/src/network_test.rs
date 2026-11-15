@@ -106,9 +106,11 @@ pub struct Test {
 
 impl Test {
     /// Starts a test on `client`'s PC. `measures_speed` is whether Connection test also measures
-    /// the speed there (`Host::bandwidth_test`); calibration ignores it.
+    /// the speed there (`Host::bandwidth_test`); calibration ignores it. `jumbo_frames` is the
+    /// run's setting: only it calibrates at the PC's jumbo packet size, so a user who leaves
+    /// jumbo off keeps today's stock 1392-byte probes and their saved pace.
     #[allow(clippy::too_many_arguments)]
-    pub fn start(host: u64, client: HostClient, network: Network, address: String, mode: (u32, u32), calibrate: bool, measures_speed: bool, waker: crate::hosts::Waker) -> Self {
+    pub fn start(host: u64, client: HostClient, network: Network, address: String, mode: (u32, u32), calibrate: bool, measures_speed: bool, jumbo_frames: bool, waker: crate::hosts::Waker) -> Self {
         let client = Arc::new(client);
         let worker = client.clone();
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -129,13 +131,18 @@ impl Test {
                 let link = calibration_link(network.link_mbps, info.pyrowave_host_link_mbps);
                 if link == 0 { return Err("Neither endpoint reports a link speed. No calibration was saved.".into()); }
                 let (bitrate, fps) = mode;
-                let kbps = pace::probe_kbps(bitrate, fps, pace::PACKET_SIZE, info.pyrowave_critical_fec_percentage, info.pyrowave_min_parity_shards);
+                let packet_size = if jumbo_frames {
+                    pace::packet_size_for(info.capabilities.max_video_packet())
+                } else {
+                    pace::PACKET_SIZE
+                };
+                let kbps = pace::probe_kbps(bitrate, fps, packet_size, info.pyrowave_critical_fec_percentage, info.pyrowave_min_parity_shards);
                 let floor = kbps / 4 * 5;
                 if floor >= link * 1000 { return Err("The stream's wire bitrate is too high for this link. Lower its bitrate before calibrating.".into()); }
                 let outcome = pace::search(link * 1000, floor, |pace_kbps| {
                     let _ = tx.send(Event::Progress(format!("Testing {} Mbps frame pace", pace_kbps / 1000)));
                     waker();
-                    worker.probe_pace(kbps, pace::PACKET_SIZE, fps.clamp(10, 500), pace_kbps.max(kbps))
+                    worker.probe_pace(kbps, packet_size, fps.clamp(10, 500), pace_kbps.max(kbps))
                 }, || stop.load(Ordering::Acquire)).map_err(|e| e.to_string())?
                     .ok_or("No usable pace was measured. The PC will keep its default.")?;
                 Ok(Outcome::Pace(PaceCalibration { pace_mbps: outcome.pace_kbps / 1000, client_link_mbps: network.link_mbps,

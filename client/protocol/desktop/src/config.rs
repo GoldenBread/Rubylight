@@ -516,6 +516,15 @@ pub struct Settings {
     /// stack may hand over several video packets in one read, receive coalescing on Windows and
     /// UDP_GRO on Linux (`SessionConfig::receive_coalescing`). On by default.
     pub receive_coalescing: bool,
+    /// Jumbo video packets (Android's `jumbo_frames`): on a PC that offers more than 1400-byte
+    /// packets and a stream whose pre-flight probe passes at the larger size, video packets carry
+    /// up to the offer (8192 at most). Fewer, larger packets save CPU and interrupts at high
+    /// bitrates; every hop must carry 9000-byte frames. Off by default.
+    pub jumbo_frames: bool,
+    /// `--packet-size`: a video packet size for this run only, including the encryption header
+    /// (0 follows the stream's route and the setting). Never above the PC's per-stream offer.
+    #[serde(skip)]
+    pub packet_size: u32,
     /// "Play over the internet" (Android's `checkbox_internet_play`): after the local network,
     /// IPv6 and a forwarded port, reach a PC that offers it through a punched path
     /// (`nightjar_core::internet`). On by default: at home the local network answers first.
@@ -1174,6 +1183,8 @@ impl Default for Settings {
             client_roaming: true,
             roaming_metered: false,
             receive_coalescing: true,
+            jumbo_frames: false,
+            packet_size: 0,
             internet_play: true,
             usb_forwarding: false,
             usb_auto: Vec::new(),

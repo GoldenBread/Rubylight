@@ -33,6 +33,29 @@ fn rubylight_describe() {
     assert_eq!((info.hdr_formats, info.audio_codecs), (0, 0));
     assert_eq!((info.layout_714, info.layout_714_hq), (None, None));
     assert!(!info.pen_barrel_roll);
+    assert_eq!(info.max_video_packet, 0, "no offer, stock packets");
+}
+
+#[test]
+fn a_stream_offers_the_largest_packet_its_path_carries() {
+    let with = |line: &str| DescribeInfo::parse(&format!("{RUBYLIGHT}{line}\r\n")).max_video_packet;
+    assert_eq!(with("a=x-rl-max-packet-size:8192"), 8192);
+    assert_eq!(with("a=x-rl-max-packet-size:8160"), 8160);
+    assert_eq!(with("a=x-rl-max-packet-size:1424"), 1424);
+    // Rounded down to 16, capped, and stock or junk is no offer.
+    for (line, offered) in [
+        ("a=x-rl-max-packet-size:1420", 1408),
+        ("a=x-rl-max-packet-size:9000", 8192),
+        ("a=x-rl-max-packet-size:1400", 0),
+        ("a=x-rl-max-packet-size:0", 0),
+        ("a=x-rl-max-packet-size:", 0),
+        ("a=x-rl-max-packet-size:-16", 0),
+        ("a=x-rl-max-packet-sizex:8192", 0),
+    ] {
+        assert_eq!(with(line), offered, "{line}");
+    }
+    // The first line wins, as for every DESCRIBE attribute this client reads.
+    assert_eq!(with("a=x-rl-max-packet-size:8192\r\na=x-rl-max-packet-size:1424"), 8192);
 }
 
 #[test]

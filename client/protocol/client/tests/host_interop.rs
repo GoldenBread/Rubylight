@@ -68,6 +68,7 @@ fn sdp_for(
         audio_codec: 0,
         audio_codecs_offered: 0,
         video_fec_percentage: None,
+        max_video_packet: 0,
     })
     .text
 }

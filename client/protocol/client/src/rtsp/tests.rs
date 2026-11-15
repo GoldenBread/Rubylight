@@ -145,6 +145,33 @@ fn full_handshake_with_a_sunshine_family_host() {
 }
 
 #[test]
+fn a_jumbo_stream_announces_no_more_than_its_describe_offered() {
+    // 1400 rounds to 1392; encrypted video takes 32 more. A jumbo request without an offer
+    // streams stock packets.
+    for (offer, requested, announced) in [
+        (Some(8192), 8192, 8160),
+        (Some(8160), 8192, 8128),
+        (Some(1424), 8192, 1392),
+        (None, 8192, 1360),
+    ] {
+        let mut p = params(None);
+        p.config.packet_size = requested;
+        let mut handshake = Handshake::new(p).unwrap();
+        let body = match offer {
+            Some(n) => format!("{DESCRIBE}a=x-rl-max-packet-size:{n}\r\n"),
+            None => DESCRIBE.to_owned(),
+        };
+        let sent = run(&mut handshake, |method, target| match method {
+            "DESCRIBE" => ok(2, "", &body),
+            _ => sunshine_host(method, target),
+        });
+        let announce = sent.iter().find(|r| r.starts_with("ANNOUNCE")).unwrap();
+        assert!(announce.contains(&format!("a=x-nv-video[0].packetSize:{announced} \r\n")), "{offer:?}: {announce}");
+        assert_eq!(handshake.finish().unwrap().config.packet_size, announced, "{offer:?}");
+    }
+}
+
+#[test]
 fn the_roaming_advertisement_reaches_the_outcome() {
     let mut handshake = Handshake::new(params(None)).unwrap();
     run(&mut handshake, |method, target| {

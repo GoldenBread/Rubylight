@@ -50,6 +50,9 @@ pub struct DescribeInfo {
     /// Foundation Sunshine's client FEC control (`a=x-ss-video[0].fecControlVersion:1`): the
     /// host takes `x-ml-video.fecPercentage` and 0x5510 summaries (`fec_report::FecSummary`).
     pub fec_control: bool,
+    /// `a=x-rl-max-packet-size`: the largest video packet this stream's path carries, including
+    /// a client's 32-byte encryption header. 0 when it offers no more than stock 1400.
+    pub max_video_packet: u16,
 }
 
 /// moonlight-common-c's parseSdpAttributeToUInt: the first occurrence of `name` anywhere,
@@ -220,6 +223,9 @@ impl DescribeInfo {
                 .is_some_and(|version| version >= 1),
             fec_control: sdp_attribute_u32(sdp, fec_report::FEC_CONTROL_DESCRIBE_ATTRIBUTE)
                 == Some(fec_report::FEC_CONTROL_VERSION),
+            max_video_packet: attribute(sdp, rubylight_protocol::video_packet::DESCRIBE_ATTRIBUTE)
+                .map(rubylight_protocol::video_packet::parse_offer)
+                .unwrap_or(0),
         }
     }
 

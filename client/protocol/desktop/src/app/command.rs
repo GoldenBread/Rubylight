@@ -195,7 +195,7 @@ impl App {
                 };
                 let settings = host.record.settings(&self.launcher.profiles.settings(&self.launcher.settings, self.launcher.network.kind(&self.launcher.profiles.home_wifi)));
                 let (_, _, fps, bitrate) = stream::stream_mode(&settings, display_of(self.window));
-                self.network_test = Some(network_test::Test::start(id, client, self.launcher.network.clone(), host.connect_address().to_owned(), (bitrate, fps), calibrate, host.bandwidth_test(), self.waker.clone()));
+                self.network_test = Some(network_test::Test::start(id, client, self.launcher.network.clone(), host.connect_address().to_owned(), (bitrate, fps), calibrate, host.bandwidth_test(), settings.jumbo_frames, self.waker.clone()));
                 let stage = if calibrate { tr("Preparing frame-shaped UDP probes") } else { strings::en("Measuring ping, jitter and loss") };
                 self.launcher.dialog = Dialog::NetworkTest { stage: stage.into(), calibrate };
             }

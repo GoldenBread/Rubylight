@@ -468,6 +468,7 @@ public class SettingsKeysTest {
         reads.put("checkbox_client_roaming", new Read(true, false, c -> c.clientRoaming));
         reads.put("checkbox_roaming_metered", new Read(false, true, c -> c.roamingMetered));
         reads.put("checkbox_receive_coalescing", new Read(true, false, c -> c.receiveCoalescing));
+        reads.put("jumbo_frames", new Read(false, true, c -> c.jumboFrames));
         reads.put("list_decode_queue_frames", new Read("15", "5", c -> c.decodeQueueFrames));
         reads.put("checkbox_internet_play", new Read(true, false, c -> c.internetPlay));
         reads.put("checkbox_enable_post_stream_toast", new Read(false, true, c -> c.enableLatencyToast));

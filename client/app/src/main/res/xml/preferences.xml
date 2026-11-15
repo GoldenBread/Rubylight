@@ -790,6 +790,12 @@
             android:title="@string/title_receive_coalescing"
             android:dialogMessage="@string/summary_receive_coalescing"
             android:defaultValue="true" />
+        <!-- Only where a saved PC offers more than stock 1400-byte packets (StreamSettings hides it). -->
+        <com.limelight.preferences.MaterialSwitchPreference
+            android:key="jumbo_frames"
+            android:title="@string/title_jumbo_frames"
+            android:dialogMessage="@string/summary_jumbo_frames"
+            android:defaultValue="false" />
         <!-- Last resort after the local network, IPv6 and a forwarded port (InternetPlay, nightjar-core internet.rs). -->
         <com.limelight.preferences.MaterialSwitchPreference
             android:key="checkbox_internet_play"

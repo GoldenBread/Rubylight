@@ -274,11 +274,33 @@ pub struct SdpParams<'a> {
     /// `x-ml-video.fecSummaryVersion:1`, for a host whose FEC control the handshake turned on
     /// (`RtspOutcome::fec_summaries`); `None` sends neither.
     pub video_fec_percentage: Option<i32>,
+    /// The DESCRIBE `a=x-rl-max-packet-size` offer: the largest video packet this stream may ask
+    /// for, including the 32-byte encryption header. 0 sends stock packets, whatever
+    /// [`StreamConfig::packet_size`] says.
+    pub max_video_packet: u16,
 }
 
 /// `asked` when it is exactly one bit of `offered`.
 fn one_offered_bit(asked: u8, offered: u8) -> Option<u8> {
     (asked.count_ones() == 1 && asked & offered != 0).then_some(asked)
+}
+
+/// The video packet size the ANNOUNCE asks for, including the encryption header: `requested`
+/// unchanged at or below stock, else the smaller of `requested` and the stream's offer, rounded
+/// down to a multiple of 16. A jumbo request without an offer falls back to stock's 1392.
+fn jumbo_packet_size(requested: i32, offered: u16) -> i32 {
+    use rubylight_protocol::video_packet::{MAX_VIDEO_PACKET, STOCK_MAX_VIDEO_PACKET};
+    const STOCK_PACKET_SIZE: i32 = 1392;
+    if requested <= i32::from(STOCK_MAX_VIDEO_PACKET) {
+        return requested;
+    }
+    let offer = if offered == 0 {
+        STOCK_PACKET_SIZE
+    } else {
+        i32::from(offered.min(MAX_VIDEO_PACKET))
+    };
+    let packet = requested.min(offer);
+    packet - packet % 16
 }
 
 /// The HDR format the description asks for, if the stream can carry it: a 10-bit HEVC or AV1
@@ -384,7 +406,7 @@ pub fn generate(p: &SdpParams<'_>) -> Sdp {
     }
     a.add("x-nv-video[0].clientViewportHt", c.height);
     a.add("x-nv-video[0].maxFPS", c.fps);
-    let mut packet_size = c.packet_size;
+    let mut packet_size = jumbo_packet_size(c.packet_size, p.max_video_packet);
     if enabled & SS_ENC_VIDEO != 0 {
         packet_size -= ENC_VIDEO_HEADER_SIZE;
     }

@@ -66,6 +66,29 @@ public class HostCapabilitiesTest {
     }
 
     @Test
+    public void jumboPacketsComeFromMaxVideoPacketAndSurviveTheStoredJson() {
+        HostCapabilities none = caps("<RustHostVersion>3.0.0</RustHostVersion>");
+        assertEquals(0, none.maxVideoPacket());
+        assertEquals(8192, caps("<RustHostVersion>3.0.0</RustHostVersion><MaxVideoPacket>8192</MaxVideoPacket>").maxVideoPacket());
+        assertEquals(1424, caps("<MaxVideoPacket>1424</MaxVideoPacket>").maxVideoPacket());
+        // Rounded down to 16, capped, and stock, absent or junk is no offer.
+        assertEquals(1408, caps("<MaxVideoPacket>1420</MaxVideoPacket>").maxVideoPacket());
+        assertEquals(8192, caps("<MaxVideoPacket>9000</MaxVideoPacket>").maxVideoPacket());
+        for (String field : new String[] {"<MaxVideoPacket>1400</MaxVideoPacket>", "<MaxVideoPacket>0</MaxVideoPacket>",
+                "<MaxVideoPacket>-8</MaxVideoPacket>", "<MaxVideoPacket>x</MaxVideoPacket>"}) {
+            assertEquals(field, 0, caps(field).maxVideoPacket());
+        }
+        HostCapabilities offered = caps("<RustHostVersion>3.0.0</RustHostVersion><MaxVideoPacket>8192</MaxVideoPacket>");
+        assertEquals(8192, HostCapabilities.fromJson(offered.toJson()).maxVideoPacket());
+        // Capabilities stored before jumbo packets read as no offer.
+        assertEquals(0, HostCapabilities.fromJson(
+                "{\"v\":1,\"gameStream\":false,\"sunshineVersion\":false,\"paired\":true,\"permission\":-1," +
+                        "\"serverCommands\":0,\"pyroWaveFields\":false,\"pyroWaveProbeBytes\":0,\"pyroWaveCodecs\":0," +
+                        "\"encoderBitrate\":false,\"hardwareMetricsVersion\":-1,\"networkPathVersion\":-1," +
+                        "\"controllerPreparation\":false,\"currentGameUuid\":false}").maxVideoPacket());
+    }
+
+    @Test
     public void sunshineOffersOnlyItsWebUi() {
         HostCapabilities caps = TestHosts.fixture("sunshine-serverinfo.xml");
         assertEquals(Family.SUNSHINE, caps.family());

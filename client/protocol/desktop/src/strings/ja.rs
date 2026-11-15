@@ -1638,4 +1638,7 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("Nightjar’s wait", "Nightjarの待機"),
     ("Windows V-Sync", "WindowsのV-Sync"),
     ("How a frame that meets the screen still drawing waits, with Variable refresh rate On: Automatic uses Nightjar’s wait and switches to Windows V-Sync where that wait can tear, while Nightjar’s wait never switches. Windows V-Sync can add up to one refresh of delay; choose it only if frames still tear on Automatic.", "可変リフレッシュレートがオンのとき、画面がまだ描画中のフレームの待ち方です。自動はNightjarの待機を使い、その待機でティアリングが起きうる画面ではWindowsのV-Syncに切り替えます。Nightjarの待機は切り替わりません。WindowsのV-Syncは最大1リフレッシュ分の遅延が加わることがあります。自動でもティアリングが残る場合だけ選んでください。"),
+    ("Jumbo video packets", "ジャンボビデオパケット"),
+    ("Sends video in fewer, larger packets when the PC and every link carry 9000-byte jumbo frames. Each stream starts a few seconds later while Nightjar tests the network, and uses normal packets if the test fails. Leave it off unless your wired network is set up for jumbo frames.", "PC とすべての経路が 9000 バイトのジャンボフレームを運べるとき、より少ない大きなパケットで映像を送ります。Nightjar がネットワークをテストするため、各ストリームの開始が数秒遅くなり、テストに合格しない場合は通常のパケットを使います。有線ネットワークがジャンボフレーム用に設定されている場合以外はオフにしてください。"),
+    ("Jumbo video packets didn’t pass the test on this network, so the stream uses normal packets.", "このネットワークではジャンボビデオパケットのテストに合格しなかったため、通常のパケットでストリームします。"),
 ];

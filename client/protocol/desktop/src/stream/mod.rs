@@ -300,6 +300,9 @@ pub struct Facts {
     /// PyroWave was chosen and the stream runs another codec: what to tell the player, once per
     /// PC (`pyrowave_notice`).
     pub pyrowave_fallback: Option<String>,
+    /// Jumbo video packets were asked for but did not pass the pre-flight or the PC's offer, so
+    /// the stream uses normal packets: what to tell the player.
+    pub jumbo_fallback: Option<String>,
     /// The chosen codec isn't decoded here and the stream runs another (`codec_fallback`): what
     /// to tell the player.
     pub codec_fallback: Option<String>,

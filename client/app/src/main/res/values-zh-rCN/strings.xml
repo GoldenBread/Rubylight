@@ -517,4 +517,7 @@
     <string name="conn_stage_input">正在连接输入</string>
     <string name="applist_quit_fail_check">无法退出 %1$s。请确认电脑已开机并连接到此网络，然后重试。</string>
     <string name="applist_quit_other_device">这款游戏由另一台设备启动，因此只能在那台设备或电脑上退出。</string>
+    <string name="title_jumbo_frames">巨型视频数据包</string>
+    <string name="summary_jumbo_frames">当 PC 和每一段链路都能承载 9000 字节的巨型帧时，用更少、更大的数据包发送视频。Nightjar 测试网络时，每次串流会晚几秒开始；测试失败则使用普通数据包。除非你的有线网络已为巨型帧设置好，否则请保持关闭。</string>
+    <string name="jumbo_frames_fallback">巨型视频数据包未通过此网络的测试，因此串流使用普通数据包。</string>
 </resources>

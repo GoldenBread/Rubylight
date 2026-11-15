@@ -517,4 +517,7 @@
     <string name="conn_stage_input">入力を接続しています</string>
     <string name="applist_quit_fail_check">%1$s を終了できませんでした。PC の電源が入っていて、このネットワークにつながっていることを確認してから、もう一度お試しください。</string>
     <string name="applist_quit_other_device">このゲームは別のデバイスが起動したため、そのデバイスか PC からのみ終了できます。</string>
+    <string name="title_jumbo_frames">ジャンボビデオパケット</string>
+    <string name="summary_jumbo_frames">PC とすべての経路が 9000 バイトのジャンボフレームを運べるとき、より少ない大きなパケットで映像を送ります。Nightjar がネットワークをテストするため、各ストリームの開始が数秒遅くなり、テストに合格しない場合は通常のパケットを使います。有線ネットワークがジャンボフレーム用に設定されている場合以外はオフにしてください。</string>
+    <string name="jumbo_frames_fallback">このネットワークではジャンボビデオパケットのテストに合格しなかったため、通常のパケットでストリームします。</string>
 </resources>

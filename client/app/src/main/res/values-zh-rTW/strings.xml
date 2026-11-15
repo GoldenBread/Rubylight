@@ -517,4 +517,7 @@
     <string name="conn_stage_input">正在連接輸入</string>
     <string name="applist_quit_fail_check">無法結束 %1$s。請確認電腦已開機並連上這個網路，然後重試。</string>
     <string name="applist_quit_other_device">這款遊戲由另一台裝置啟動，因此只能在那台裝置或電腦上結束。</string>
+    <string name="title_jumbo_frames">巨型視訊封包</string>
+    <string name="summary_jumbo_frames">當 PC 和每一段鏈路都能承載 9000 位元組的巨型幀時，用更少、更大的封包傳送視訊。Nightjar 測試網路時，每次串流會晚幾秒開始；測試失敗則使用一般封包。除非你的有線網路已為巨型幀設定好，否則請保持關閉。</string>
+    <string name="jumbo_frames_fallback">巨型視訊封包未通過此網路的測試，因此串流使用一般封包。</string>
 </resources>

@@ -703,6 +703,7 @@ impl Handshake {
                 .out
                 .fec_summaries
                 .then(|| self.out.config.video_fec.summary_percentage()),
+            max_video_packet: describe.max_video_packet,
         });
         self.out.audio_codec = audio_codec;
         self.out.encryption_enabled = sdp.encryption_enabled;

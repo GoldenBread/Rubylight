@@ -5,12 +5,14 @@
 #include "android_microphone.h"
 #include "hdr_format.h"
 #include "fec_report.h"
+#include "video_packet.h"
 
 // Moonlight common-c 874ac954 (GPL-3.0), with Rubylight PyroWave negotiation.
 
 uint8_t AndroidHdrFormatRequested;
 uint8_t RlHdrFormatsOffered;
 uint8_t RlHdrFormatAnnounced;
+uint16_t RlMaxVideoPacketOffered;
 
 #define MAX_OPTION_NAME_LEN 128
 
@@ -339,7 +341,10 @@ static PSDP_OPTION getAttributesList(char*urlSafeAddr) {
     snprintf(payloadStr, sizeof(payloadStr), "%d", StreamConfig.fps);
     err |= addAttributeString(&optionHead, "x-nv-video[0].maxFPS", payloadStr);
 
-    // Adjust the video packet size to account for encryption overhead
+    // Adjust the video packet size to account for the stream's jumbo offer and encryption
+    // overhead. A jumbo request above the offer becomes the offer, rounded down to 16; the
+    // encryption header is subtracted once, here.
+    StreamConfig.packetSize = rlAnnouncedPacketSize(StreamConfig.packetSize, RlMaxVideoPacketOffered);
     if (EncryptionFeaturesEnabled & SS_ENC_VIDEO) {
         LC_ASSERT(StreamConfig.packetSize % 16 == 0);
         StreamConfig.packetSize -= sizeof(ENC_VIDEO_HEADER);

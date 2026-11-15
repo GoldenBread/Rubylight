@@ -29,7 +29,6 @@ pub const PYRO_PACKET_CONTIGUOUS: u32 = 1;
 pub const PYRO_PACKET_RECORD_START: u32 = 2;
 pub const PYRO_PACKET_FRAME_START: u32 = 4;
 pub const PYRO_PACKET_FRAME_END: u32 = 8;
-pub const PYRO_MAX_FRAME_BYTES: usize = 4092 * 1400;
 
 /// A window into a packet payload (`BUFFER_DESC`).
 #[derive(Clone, Copy)]
@@ -46,6 +45,10 @@ pub(super) struct Depacketizer {
     records: bool,
     /// Give each envelope packet to the sink as it is appended ([`VideoSink::chunk`]).
     early: bool,
+    /// The largest PyroWave payload one packet may carry, and the largest frame assembled:
+    /// 1400 and 4092 x 1400 for a stock stream, the negotiated size and 4092 times it for jumbo.
+    max_packet_bytes: usize,
+    max_frame_bytes: usize,
     colorspace: u8,
     pub(super) hdr_active: bool,
 
@@ -128,6 +131,12 @@ fn header_size_for(config: &VideoConfig) -> fn(u8) -> u32 {
 
 impl Depacketizer {
     pub(super) fn new(config: &VideoConfig) -> Self {
+        // Stock streams keep their old 1400-byte allowance even though an encrypted stream
+        // negotiates 1360; a jumbo stream gets the size it announced.
+        let max_packet_bytes = config
+            .packet_size
+            .max(1400)
+            .min(rubylight_protocol::video_packet::MAX_VIDEO_PACKET as usize);
         Self {
             codec: config.codec(),
             sunshine: config.sunshine(),
@@ -135,6 +144,8 @@ impl Depacketizer {
             header_size: header_size_for(config),
             records: config.pyrowave_records,
             early: config.pyrowave_records && config.early_chunks,
+            max_packet_bytes,
+            max_frame_bytes: 4092 * max_packet_bytes,
             colorspace: config.colorspace,
             hdr_active: false,
             data: Vec::new(),
@@ -168,6 +179,12 @@ impl Depacketizer {
 
     pub(super) fn reserve(&mut self, bytes: usize) {
         self.data.reserve(bytes);
+    }
+
+    /// The largest frame this stream may assemble: 4092 packets of its negotiated size.
+    #[cfg(test)]
+    pub(super) fn max_frame_bytes(&self) -> usize {
+        self.max_frame_bytes
     }
 
     /// Strict key-frame recovery from now on (`VideoReceiver::recover_with_idr_only`); a wait
@@ -820,7 +837,7 @@ impl Depacketizer {
     fn append_pyrowave_packet(&mut self, payload: &[u8], flags: u32) -> bool {
         let first = self.buffers.is_empty();
         let added = if first { 4 } else { 0 } + 8 + payload.len();
-        if self.data.len() > PYRO_MAX_FRAME_BYTES - added {
+        if self.data.len() > self.max_frame_bytes - added {
             return false;
         }
         if first {
@@ -871,7 +888,7 @@ impl Depacketizer {
         if video_flags & FLAG_EOF != 0 && block == last_block {
             flags |= PYRO_PACKET_FRAME_END;
         }
-        if payload.is_empty() || payload.len() > 1400 {
+        if payload.is_empty() || payload.len() > self.max_packet_bytes {
             return;
         }
         let first = self.buffers.is_empty();

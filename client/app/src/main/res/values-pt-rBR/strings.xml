@@ -517,4 +517,7 @@
     <string name="conn_stage_input">Conectando a entrada</string>
     <string name="applist_quit_fail_check">Não foi possível encerrar %1$s. Verifique se o PC está ligado e nesta rede e tente novamente.</string>
     <string name="applist_quit_other_device">Outro dispositivo iniciou este jogo, então ele só pode ser encerrado nesse dispositivo ou no PC.</string>
+    <string name="title_jumbo_frames">Pacotes de vídeo jumbo</string>
+    <string name="summary_jumbo_frames">Envia o vídeo em menos pacotes e maiores quando o PC e cada trecho transportam quadros jumbo de 9000 bytes. Cada transmissão começa alguns segundos mais tarde enquanto o Nightjar testa a rede, e usa pacotes normais se o teste falhar. Deixe desativado a menos que sua rede cabeada esteja configurada para quadros jumbo.</string>
+    <string name="jumbo_frames_fallback">Os pacotes de vídeo jumbo não passaram no teste nesta rede, então o stream usa pacotes normais.</string>
 </resources>

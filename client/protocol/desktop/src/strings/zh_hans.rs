@@ -1638,4 +1638,7 @@ sudo sysctl -w net.core.rmem_max={}", "接收缓冲区：系统只分配了所�
     ("Nightjar’s wait", "Nightjar 的等待"),
     ("Windows V-Sync", "Windows 垂直同步"),
     ("How a frame that meets the screen still drawing waits, with Variable refresh rate On: Automatic uses Nightjar’s wait and switches to Windows V-Sync where that wait can tear, while Nightjar’s wait never switches. Windows V-Sync can add up to one refresh of delay; choose it only if frames still tear on Automatic.", "可变刷新率为开启时，帧遇到屏幕仍在绘制上一帧时如何等待：自动使用 Nightjar 的等待，并在该等待可能撕裂的屏幕上改用 Windows 垂直同步；Nightjar 的等待从不切换。Windows 垂直同步最多可能增加一次刷新的延迟；仅当自动下画面仍有撕裂时才选择它。"),
+    ("Jumbo video packets", "巨型视频数据包"),
+    ("Sends video in fewer, larger packets when the PC and every link carry 9000-byte jumbo frames. Each stream starts a few seconds later while Nightjar tests the network, and uses normal packets if the test fails. Leave it off unless your wired network is set up for jumbo frames.", "当 PC 和每一段链路都能承载 9000 字节的巨型帧时，用更少、更大的数据包发送视频。Nightjar 测试网络时，每次串流会晚几秒开始；测试失败则使用普通数据包。除非你的有线网络已为巨型帧设置好，否则请保持关闭。"),
+    ("Jumbo video packets didn’t pass the test on this network, so the stream uses normal packets.", "巨型视频数据包未通过此网络的测试，因此串流使用普通数据包。"),
 ];

@@ -492,6 +492,8 @@ fn the_section_key_table_is_what_the_page_draws() {
         "hdr_desktop_brightness" => false,
         // A PC's own settings, for a host that reports them (NvidiaEnhancements).
         "rtx_hdr" | "rtx_video" => false,
+        // Only where a saved PC offers more than stock packets; the fixture PC has no serverinfo.
+        "jumbo_frames" => false,
         "frame_pacing" | "vsync" => !vrr,
         // Everywhere, saying why where it holds nothing (VRR, macOS, X11).
         "fractional_vsync" => true,
@@ -1107,7 +1109,7 @@ fn settings_screenshots() {
 /// These PCs, each paired or not and answering or not, every one with both network tests.
 fn network_test_pcs(pcs: &[(&str, bool, Reach)]) -> Hosts {
     let answer = nightjar_core::http::ServerInfo::parse("<root status_code=\"200\"><uniqueid>uid</uniqueid><state>SUNSHINE_SERVER_FREE</state>\
-        <PairStatus>1</PairStatus><RustHostVersion>3.0.0</RustHostVersion><PyroWaveBandwidthProbeBytes>33554432</PyroWaveBandwidthProbeBytes>\
+        <PairStatus>1</PairStatus><RustHostVersion>3.0.0</RustHostVersion><MaxVideoPacket>8192</MaxVideoPacket><PyroWaveBandwidthProbeBytes>33554432</PyroWaveBandwidthProbeBytes>\
         <PyroWaveUdpProbeVersion>1</PyroWaveUdpProbeVersion><PyroWaveUdpHandshakeVersion>1</PyroWaveUdpHandshakeVersion>\
         <PyroWaveUdpProbeBurstVersion>1</PyroWaveUdpProbeBurstVersion><PyroWaveWireBudgetVersion>1</PyroWaveWireBudgetVersion></root>", 47989).expect("the answer parses");
     let mut hosts = Hosts::without_discovery(pcs.iter().map(|(name, paired, _)| record(name, *paired, false)).collect(), Arc::new(|| {}));
@@ -1128,6 +1130,34 @@ fn settings_with_pcs(pcs: &[(&str, bool, Reach)]) -> Frames {
 fn in_section(f: &mut Frames, section: &'static str) {
     f.l.settings_view.section = section;
     f.settle();
+}
+
+/// Jumbo video packets appear only when a saved PC offers more than stock 1400-byte packets;
+/// the row's own switch is the `jumbo_frames` setting, off by default.
+#[test]
+fn jumbo_video_packets_are_offered_only_by_a_pc_that_offers_them() {
+    use egui::accesskit::Role;
+    let mut plain = settings_read_with(Settings::default());
+    in_section(&mut plain, "Streaming");
+    assert!(!shows(&plain, "Jumbo video packets"), "{:?}", plain.drawn);
+
+    let mut f = settings_with_pcs(&[("Desk", true, Reach::Online)]);
+    in_section(&mut f, "Streaming");
+    assert!(shows(&f, "Jumbo video packets"), "{:?}", f.drawn);
+    assert!(!f.l.settings.jumbo_frames, "off by default");
+    let bounds = f.access.as_ref().expect("AccessKit is on").nodes.iter()
+        .find(|(_, n)| n.role() == Role::Switch && n.label() == Some("Jumbo video packets"))
+        .map(|(_, n)| n.bounds().expect("laid out"))
+        .expect("the row's switch");
+    let at = Pos2::new(((bounds.x0 + bounds.x1) / 2.0) as f32, ((bounds.y0 + bounds.y1) / 2.0) as f32);
+    f.click_at(at, egui::PointerButton::Primary);
+    assert!(f.l.settings.jumbo_frames, "the row turns the setting on");
+
+    // A PC's own page edits no global network rows; the setting is in the main settings.
+    let id = f.hosts.list[0].id;
+    f.l.open_host_settings(id, &f.hosts.list[0]);
+    in_section(&mut f, "Streaming");
+    assert!(!shows(&f, "Jumbo video packets"), "{:?}", f.drawn);
 }
 
 /// A customer looked for the PyroWave calibration in Settings: Connection test is one of

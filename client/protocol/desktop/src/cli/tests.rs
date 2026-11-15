@@ -145,10 +145,11 @@ fn moonlight_qt_options_follow_its_spelling_and_the_last_one_wins() {
     assert_eq!(options_of(&["--video-decoder", "hardware", "stream", "pc", "app"]).decoder, Some(DecoderPreference::Auto));
     assert_eq!(options_of(&["--display-mode", "borderless", "stream", "pc", "app"]).window_mode, Some(WindowMode::Borderless));
     assert_eq!(options_of(&["--capture-system-keys", "fullscreen", "stream", "pc", "app"]).system_keys, Some((true, true)));
+    assert_eq!(options_of(&["--packet-size=8192", "stream", "pc", "app"]).packet_size, Some(8192));
     // The action is found anywhere among the words, in any case, as moonlight-qt finds it.
     assert_eq!(args(&["STREAM", "pc", "Desktop"]), Ok(Parsed::Launch(launch_of("pc", "Desktop"))));
     // moonlight-qt's options Nightjar has no setting for are taken, so its command lines start.
-    for unused in ["--packet-size=1392", "--keep-awake", "--no-mouse-buttons-swap", "--touchscreen-trackpad", "--mute-on-focus-loss", "--reverse-scroll-direction"] {
+    for unused in ["--keep-awake", "--no-mouse-buttons-swap", "--touchscreen-trackpad", "--mute-on-focus-loss", "--reverse-scroll-direction"] {
         assert_eq!(options_of(&[unused, "stream", "pc", "app"]), StreamOptions::default(), "{unused}");
     }
 }
@@ -239,6 +240,7 @@ fn moonlight_qt_options_change_one_streams_settings_as_moonlight_qt_does() {
     let options = StreamOptions {
         resolution: Some((2560, 1600)),
         bitrate_kbps: Some(80000),
+        packet_size: Some(8192),
         hdr: Some(true),
         vsync: Some(false),
         frame_pacing: Some(true),
@@ -250,6 +252,7 @@ fn moonlight_qt_options_change_one_streams_settings_as_moonlight_qt_does() {
     };
     options.apply(&mut settings);
     assert_eq!((settings.width, settings.height, settings.bitrate_kbps), (2560, 1600, 80000));
+    assert_eq!(settings.packet_size, 8192, "the run's jumbo packet size");
     assert!(settings.hdr && !settings.vsync && settings.overlay);
     assert_eq!(settings.frame_pacing, FramePacing::Smoothness);
     assert!(settings.experimental_packed_444 && settings.prefer_yuv444);

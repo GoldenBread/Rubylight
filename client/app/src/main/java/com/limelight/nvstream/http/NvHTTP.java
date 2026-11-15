@@ -972,7 +972,7 @@ public class NvHTTP {
      */
     public PyroWavePace.Result probePyroWaveUdp(int kbps, int packetSize, int fps, int paceKbps) throws IOException {
         if (serverCert == null || kbps < PyroWavePace.MIN_PROBE_KBPS || kbps > PyroWavePace.MAX_PROBE_KBPS ||
-                packetSize < 256 || packetSize > 1392 || fps < 10 || fps > 500 ||
+                packetSize < 256 || packetSize > HostCapabilities.MAX_VIDEO_PACKET || fps < 10 || fps > 500 ||
                 paceKbps < kbps || paceKbps > PyroWavePace.MAX_PACE_KBPS) {
             throw new IOException("Invalid or unauthenticated PyroWave UDP probe");
         }
@@ -1023,7 +1023,7 @@ public class NvHTTP {
                     } catch (RuntimeException e) {
                         // Best effort; JVM tests have no Android scheduler.
                     }
-                    ByteBuffer buffer = ByteBuffer.allocateDirect(2048);
+                    ByteBuffer buffer = ByteBuffer.allocateDirect(probeBytes);
                     byte[] head = new byte[36];
                     try {
                         for (;;) {

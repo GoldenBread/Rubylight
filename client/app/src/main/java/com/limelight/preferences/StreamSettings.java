@@ -192,6 +192,8 @@ public class StreamSettings extends NightjarActivity {
     /** What the last read of the saved PCs found: any PC, and any whose PyroWave frame pace can be measured or is saved. */
     private boolean anySavedPc;
     private boolean anyPacePc;
+    /** A saved PC offers more than stock 1400-byte video packets (MaxVideoPacket). */
+    private boolean anyJumboPc;
     private static final String MORE_STATE_PREFS = "SettingsScreenState";
     private static final String MORE_STATE_OPEN = "more_open";
     /** The two-pane screen shows a section before one is picked; this one is only that default, not the user's choice. */
@@ -1611,6 +1613,7 @@ public class StreamSettings extends NightjarActivity {
                 StreamSettings activity = (StreamSettings) getActivity();
                 activity.anySavedPc = !pcs.isEmpty();
                 activity.anyPacePc = !pace.isEmpty();
+                activity.anyJumboPc = anyJumboPc(pcs);
                 if (showKnownPcRows()) {
                     placeRows();
                     // Results already on screen were found without the rows' new state.
@@ -1627,9 +1630,21 @@ public class StreamSettings extends NightjarActivity {
             StreamSettings activity = (StreamSettings) getActivity();
             boolean testsHidden = hidden.contains(NETWORK_TESTS_KEY);
             boolean paceHidden = hidden.contains(PACE_CALIBRATION_KEY);
+            boolean jumboHidden = hidden.contains(PreferenceConfiguration.JUMBO_FRAMES_PREF_STRING);
             setShown(NETWORK_TESTS_KEY, activity.anySavedPc);
             setShown(PACE_CALIBRATION_KEY, activity.anyPacePc);
-            return testsHidden != hidden.contains(NETWORK_TESTS_KEY) || paceHidden != hidden.contains(PACE_CALIBRATION_KEY);
+            // Jumbo frames only where a saved PC offers more than stock packets.
+            setShown(PreferenceConfiguration.JUMBO_FRAMES_PREF_STRING, activity.anyJumboPc);
+            return testsHidden != hidden.contains(NETWORK_TESTS_KEY) || paceHidden != hidden.contains(PACE_CALIBRATION_KEY) ||
+                    jumboHidden != hidden.contains(PreferenceConfiguration.JUMBO_FRAMES_PREF_STRING);
+        }
+
+        /** Whether any saved PC reported a jumbo video packet offer. */
+        private static boolean anyJumboPc(List<com.limelight.nvstream.http.ComputerDetails> pcs) {
+            for (com.limelight.nvstream.http.ComputerDetails pc : pcs) {
+                if (pc.caps != null && pc.caps.maxVideoPacket() > 0) return true;
+            }
+            return false;
         }
 
         /**

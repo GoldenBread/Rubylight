@@ -57,6 +57,8 @@ public class ConnectionContext {
 
     public int negotiatedRemoteStreaming;
     public int negotiatedPacketSize;
+    // Jumbo packets were asked for but did not pass the pre-flight or the PC's offer.
+    public boolean jumboFallback;
 
     public int videoCapabilities;
 }

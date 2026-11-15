@@ -302,6 +302,11 @@ public final class HostCapabilities {
 
     /** The serverinfo field naming the image enhancements a host offers (rubylight_protocol::nvidia_enhance). */
     public static final String NVIDIA_ENHANCEMENTS_FIELD = "NvidiaEnhancements";
+    /** MaxVideoPacket: the largest video packet a host accepts (rubylight_protocol::video_packet). */
+    public static final String MAX_VIDEO_PACKET_FIELD = "MaxVideoPacket";
+    /** The largest packet this client asks for, and stock Moonlight's; keep in step with video_packet.h. */
+    public static final int MAX_VIDEO_PACKET = 8192;
+    public static final int STOCK_MAX_VIDEO_PACKET = 1400;
     /** RTX HDR, turned on or off for a stream with {@link #RTX_HDR_PARAMETER}. */
     public static final int RTX_HDR = 1;
     /** RTX Video enhancement, turned on or off for a stream with {@link #RTX_VIDEO_PARAMETER}. */
@@ -318,6 +323,30 @@ public final class HostCapabilities {
         } catch (NumberFormatException e) {
             return 0;
         }
+    }
+
+    /**
+     * MaxVideoPacket as this client reads it: rounded down to a multiple of 16, capped at {@link
+     * #MAX_VIDEO_PACKET}, and 0 when it is no more than stock or malformed. Shared rule:
+     * rubylight_protocol::video_packet::parse_offer.
+     */
+    static int parseVideoPacketOffer(String text) {
+        try {
+            long value = Long.parseLong(text.trim());
+            if (value < 0 || value > 0xFFFFFFFFL) return 0;
+            long packet = Math.min(value, MAX_VIDEO_PACKET) & ~0xFL;
+            return packet > STOCK_MAX_VIDEO_PACKET ? (int) packet : 0;
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /**
+     * The largest video packet this host accepts, including this client's 32-byte encryption header: 0 when it
+     * offers no more than stock 1400. A stream's DESCRIBE offer may be smaller still.
+     */
+    public int maxVideoPacket() {
+        return evidence == null ? 0 : evidence.maxVideoPacket;
     }
 
     /** The image enhancements the host offers per stream ({@link #RTX_HDR}, {@link #RTX_VIDEO} bits). */
@@ -692,6 +721,11 @@ public final class HostCapabilities {
         int secondScreenVersion = -1;
         /** NvidiaEnhancements: the image enhancements the host offers per stream (RTX_HDR, RTX_VIDEO bits). */
         int nvidiaEnhancements = 0;
+        /**
+         * MaxVideoPacket: the largest video packet this host accepts, including this client's 32-byte encryption
+         * header. 0 when it offers no more than stock Moonlight's 1400 bytes.
+         */
+        int maxVideoPacket;
         /** -1 without RustHostInternetPlayVersion, 0 when the host has Play over the internet off. */
         int internetPlayVersion = -1;
         /** usb, clipboard.image and folders in the native features, and this device's usb and shared_folders. */
@@ -832,6 +866,9 @@ public final class HostCapabilities {
                         break;
                     case NVIDIA_ENHANCEMENTS_FIELD:
                         evidence.nvidiaEnhancements = parseEnhancements(parser.nextText());
+                        break;
+                    case MAX_VIDEO_PACKET_FIELD:
+                        evidence.maxVideoPacket = parseVideoPacketOffer(parser.nextText());
                         break;
                     case "RustHostInternetPlayVersion":
                         evidence.internetPlayVersion = (int) unsigned(parser.nextText(), 0xFFFF);
@@ -1164,6 +1201,7 @@ public final class HostCapabilities {
                     .put("pipelineRatesVersion", pipelineRatesVersion)
                     .put("displayScaleVersion", displayScaleVersion)
                     .put("secondScreenVersion", secondScreenVersion).put("nvidiaEnhancements", nvidiaEnhancements)
+                    .put("maxVideoPacket", maxVideoPacket)
                     .put("internetPlayVersion", internetPlayVersion)
                     .put("usbOffered", usbOffered)
                     .put("usbPermission", usbPermission).put("imageClipboardOffered", imageClipboardOffered)
@@ -1225,6 +1263,8 @@ public final class HostCapabilities {
             evidence.displayScaleVersion = object.optInt("displayScaleVersion", -1);
             evidence.secondScreenVersion = object.optInt("secondScreenVersion", -1);
             evidence.nvidiaEnhancements = object.optInt("nvidiaEnhancements", 0) & ALL_ENHANCEMENTS;
+            // Absent from capabilities stored before jumbo packets existed.
+            evidence.maxVideoPacket = parseVideoPacketOffer(object.optString("maxVideoPacket", "0"));
             evidence.internetPlayVersion = object.optInt("internetPlayVersion", -1);
             evidence.usbOffered = object.optBoolean("usbOffered", false);
             evidence.usbPermission = object.optBoolean("usbPermission", false);
@@ -1281,6 +1321,7 @@ public final class HostCapabilities {
                     pipelineRatesVersion == that.pipelineRatesVersion && displayScaleVersion == that.displayScaleVersion &&
                     secondScreenVersion == that.secondScreenVersion &&
                     nvidiaEnhancements == that.nvidiaEnhancements &&
+                    maxVideoPacket == that.maxVideoPacket &&
                     internetPlayVersion == that.internetPlayVersion &&
                     usbOffered == that.usbOffered &&
                     usbPermission == that.usbPermission && imageClipboardOffered == that.imageClipboardOffered &&
@@ -1298,7 +1339,7 @@ public final class HostCapabilities {
                     nativeApiVersion, powerActionVersion, sleepSupported, sleepAllowed, nativeCapabilities, filesUpload,
                     filesDownload, fileUploadPermission, fileDownloadPermission, hdrFormats, fecControlVersion,
                     bandwidthProbeVersion, audioCodecs, audioLayouts, textInputVersion, keyboardLayoutVersion,
-                    penBarrelRollVersion, controllerIdentityVersion, pipelineRatesVersion, displayScaleVersion, secondScreenVersion, nvidiaEnhancements, internetPlayVersion, usbOffered,
+                    penBarrelRollVersion, controllerIdentityVersion, pipelineRatesVersion, displayScaleVersion, secondScreenVersion, nvidiaEnhancements, maxVideoPacket, internetPlayVersion, usbOffered,
                     usbPermission, imageClipboardOffered, foldersOffered, folderPermission, coopOffered, micOnlyOffered,
                     neuralOffered, viewPermission);
         }

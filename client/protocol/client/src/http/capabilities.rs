@@ -310,6 +310,9 @@ pub struct Evidence {
     /// `session.mic_only` in the native features, with the launch permission.
     pub mic_only_offered: bool,
     pub continue_here_offered: bool,
+    /// `MaxVideoPacket`: the largest video packet this host accepts, including a client's
+    /// 32-byte encryption header. 0 when the host offers no more than stock Moonlight's 1400.
+    pub max_video_packet: u16,
 }
 
 /// A host's capabilities. [`HostCapabilities::UNKNOWN`] is a host never reached.
@@ -334,6 +337,13 @@ fn flag(value: &str) -> Option<bool> {
     } else {
         None
     }
+}
+
+/// `MaxVideoPacket` and `a=x-rl-max-packet-size`: the largest video packet offered, rounded down
+/// to a multiple of 16 and capped at [`rubylight_protocol::video_packet::MAX_VIDEO_PACKET`], or 0
+/// when it is no more than stock Moonlight's 1400 bytes.
+pub(crate) fn video_packet_offer(value: &str) -> u16 {
+    rubylight_protocol::video_packet::parse_offer(value)
 }
 
 /// "2.2.21", "2.0.0-rc.19" or "3.0.0-beta.1" as [major, minor, patch, pre-release], a release
@@ -466,6 +476,9 @@ impl Evidence {
                 }
                 "RustHostInternetPlayVersion" => {
                     e.internet_play_version = unsigned(&text, 0xFFFF) as i32
+                }
+                rubylight_protocol::video_packet::SERVERINFO_FIELD => {
+                    e.max_video_packet = video_packet_offer(&text)
                 }
                 "NativeApiVersion" => e.native_api_version = unsigned(&text, 0xFFFF) as i32,
                 "PowerActionVersion" => e.power_action_version = unsigned(&text, 0xFFFF) as i32,
@@ -1023,6 +1036,13 @@ impl HostCapabilities {
         self.evidence.as_ref().map_or(0, |e| e.nvidia_enhancements)
     }
 
+    /// `MaxVideoPacket`: the largest video packet this host accepts, including a client's 32-byte
+    /// encryption header. 0 when it offers no more than stock Moonlight's 1400 bytes; a stream's
+    /// DESCRIBE offer may be smaller still.
+    pub fn max_video_packet(&self) -> u16 {
+        self.evidence.as_ref().map_or(0, |e| e.max_video_packet)
+    }
+
     /// Supported or not known yet: for behavior that does no harm on a host without it.
     pub fn may_have(&self, feature: Feature) -> bool {
         !matches!(self.availability(feature), Availability::Unsupported(_))
@@ -1123,6 +1143,35 @@ mod tests {
         // Without serverinfo there is nothing to add to.
         let native = serde_json::from_str(cases.lines().find(|l| l.starts_with("supported|supported|")).unwrap().split('|').nth(2).unwrap()).unwrap();
         assert_eq!(HostCapabilities::UNKNOWN.with_native(&native), HostCapabilities::UNKNOWN);
+    }
+
+    #[test]
+    fn jumbo_packets_are_offered_by_a_serverinfo_field_and_zero_means_off() {
+        let caps = |field: &str| {
+            let xml = format!(
+                "<root status_code=\"200\"><uniqueid>uid</uniqueid><state>SUNSHINE_SERVER_FREE</state>\
+                 <PairStatus>1</PairStatus><RustHostVersion>3.0.0</RustHostVersion>{field}</root>"
+            );
+            super::super::serverinfo::ServerInfo::parse(&xml, 47989)
+                .unwrap()
+                .capabilities
+        };
+        use rubylight_protocol::video_packet::{MAX_VIDEO_PACKET, STOCK_MAX_VIDEO_PACKET};
+        assert_eq!(caps("<MaxVideoPacket>8192</MaxVideoPacket>").max_video_packet(), MAX_VIDEO_PACKET);
+        assert_eq!(caps("<MaxVideoPacket>8160</MaxVideoPacket>").max_video_packet(), 8160);
+        // An offer of 1424 is above stock and changes nothing without asking; the host's
+        // on-link MTU rule normally offers nothing on a 1500-byte path.
+        assert_eq!(caps("<MaxVideoPacket>1424</MaxVideoPacket>").max_video_packet(), 1424);
+        // Rounded down to 16, capped, and junk, absent or stock reads as no offer.
+        assert_eq!(caps("<MaxVideoPacket>1420</MaxVideoPacket>").max_video_packet(), 1408);
+        assert_eq!(caps("<MaxVideoPacket>9000</MaxVideoPacket>").max_video_packet(), MAX_VIDEO_PACKET);
+        assert_eq!(caps("<MaxVideoPacket>8193</MaxVideoPacket>").max_video_packet(), MAX_VIDEO_PACKET);
+        assert_eq!(caps(&format!("<MaxVideoPacket>{STOCK_MAX_VIDEO_PACKET}</MaxVideoPacket>")).max_video_packet(), 0);
+        for field in ["<MaxVideoPacket>0</MaxVideoPacket>", "<MaxVideoPacket>-16</MaxVideoPacket>", "<MaxVideoPacket>x</MaxVideoPacket>", "<MaxVideoPacket>999999999999</MaxVideoPacket>", ""] {
+            assert_eq!(caps(field).max_video_packet(), 0, "{field}");
+        }
+        // A host never reached offers nothing.
+        assert_eq!(HostCapabilities::UNKNOWN.max_video_packet(), 0);
     }
 
     #[test]

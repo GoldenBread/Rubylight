@@ -4,6 +4,7 @@
 #include "control_negotiation.h"
 #include "hdr_format.h"
 #include "fec_report.h"
+#include "video_packet.h"
 #include "rubylight_protocol.h"
 #include "android_microphone.h"
 #include "android_rtsp_receive.h"
@@ -1105,6 +1106,17 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo) {
         RlHdrFormatsOffered = rlParseHdrFormats(response.payload);
         if (RlHdrFormatsOffered != 0) {
             Limelog("Host HDR formats: %u\n", RlHdrFormatsOffered);
+        }
+
+        // A host with jumbo packets names the largest this stream's path carries; the ANNOUNCE
+        // asks for no more, and without it stays at stock.
+        {
+            uint32_t maxPacket = 0;
+            RlMaxVideoPacketOffered = parseSdpAttributeToUInt(response.payload, "x-rl-max-packet-size", &maxPacket)
+                    ? rlVideoPacketOffer(maxPacket) : 0;
+            if (RlMaxVideoPacketOffered != 0) {
+                Limelog("Host video packet offer: %u\n", RlMaxVideoPacketOffered);
+            }
         }
 
         // Rubylight 2.2.0+ hosts list the extra control messages they accept.

@@ -675,6 +675,109 @@ pub(super) fn location_for_route(location: Location, vpn: bool) -> (Location, i3
     }
 }
 
+/// Whether this run asks for jumbo packets: the setting, or `--packet-size` above 1400.
+pub(super) fn asks_for_jumbo(packet_size: u32, jumbo_frames: bool) -> bool {
+    packet_size > u32::from(rubylight_protocol::video_packet::STOCK_MAX_VIDEO_PACKET) || (packet_size == 0 && jumbo_frames)
+}
+
+/// The configuration size to try for jumbo, including the encryption header: the run's
+/// `--packet-size` when it asks for jumbo, else the PC's serverinfo offer, never above the
+/// PC's offer or [`rubylight_protocol::video_packet::MAX_VIDEO_PACKET`]. None when the PC
+/// offers no jumbo.
+pub(super) fn jumbo_config_size(offered: u16, packet_size: u32) -> Option<u16> {
+    use rubylight_protocol::video_packet::{MAX_VIDEO_PACKET, STOCK_MAX_VIDEO_PACKET};
+    if offered <= STOCK_MAX_VIDEO_PACKET {
+        return None;
+    }
+    let wanted = if packet_size > u32::from(STOCK_MAX_VIDEO_PACKET) {
+        packet_size.min(u32::from(offered)).min(u32::from(MAX_VIDEO_PACKET)) as u16
+    } else {
+        offered
+    };
+    Some(wanted.min(MAX_VIDEO_PACKET))
+}
+
+/// What the pre-flight should do for this stream, before any probe.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum JumboPreflight {
+    /// Probe at `candidate`; the stream asks for it only when the probe passes.
+    Probe { candidate: u16 },
+    /// No probe; the stream stays at the route's or the run's stock size.
+    Skip(JumboSkip),
+}
+
+/// Why a jumbo request is not probed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum JumboSkip {
+    /// Nothing asked for jumbo packets.
+    NotAsked,
+    /// A remote, public or tunnelled route: jumbo is only for the local network.
+    Remote,
+    /// The PC's serverinfo offers no more than stock packets.
+    NotOffered,
+    /// The PC offers jumbo but has no frame-shaped UDP probe to test this path.
+    NoProbe,
+}
+
+impl JumboSkip {
+    fn reason(self) -> &'static str {
+        match self {
+            Self::NotAsked => "not asked for",
+            Self::Remote => "not tried over a remote or public route",
+            Self::NotOffered => "asked for but this PC offers no more than stock packets",
+            Self::NoProbe => "asked for but this PC cannot test the path",
+        }
+    }
+}
+
+/// Whether to probe for jumbo packets this stream: only when the run or the setting asks, the
+/// PC offers more than stock, the PC can probe, and the route is local (`Local`, or `Auto` to a
+/// private address). A public `Auto` address becomes remote only later, in the session, so it
+/// must be refused here too.
+pub(super) fn jumbo_preflight(
+    location: Location,
+    address: Option<std::net::IpAddr>,
+    offered: u16,
+    burst_probe: bool,
+    packet_size: u32,
+    jumbo_frames: bool,
+) -> JumboPreflight {
+    if !asks_for_jumbo(packet_size, jumbo_frames) {
+        return JumboPreflight::Skip(JumboSkip::NotAsked);
+    }
+    let local = match location {
+        Location::Local => true,
+        Location::Remote => false,
+        Location::Auto => address.is_some_and(nightjar_core::session::is_private),
+    };
+    if !local {
+        return JumboPreflight::Skip(JumboSkip::Remote);
+    }
+    let Some(candidate) = jumbo_config_size(offered, packet_size) else {
+        return JumboPreflight::Skip(JumboSkip::NotOffered);
+    };
+    if !burst_probe {
+        return JumboPreflight::Skip(JumboSkip::NoProbe);
+    }
+    JumboPreflight::Probe { candidate }
+}
+
+/// The packet size after a jumbo request did not pass: the run's own size when it is stock
+/// (a `--packet-size` at or below 1400), else the route's size (the larger size asked only for
+/// jumbo, and must not outlive its failed pre-flight).
+pub(super) fn reset_packet_size(route: i32, requested: u32) -> i32 {
+    if requested > 0 && requested <= u32::from(rubylight_protocol::video_packet::STOCK_MAX_VIDEO_PACKET) {
+        requested as i32
+    } else {
+        route
+    }
+}
+
+/// What the player is told when jumbo packets were asked for but the stream uses normal ones.
+pub(super) fn jumbo_fallback_text() -> String {
+    tr("Jumbo video packets didn’t pass the test on this network, so the stream uses normal packets.").to_owned()
+}
+
 /// The engine's session flags for this role and these settings. A Remote Monitor session is
 /// view-only: the engine starts no input stream and does not wiggle the host's mouse.
 /// `watching` says the network watcher runs and feeds `Session::network_changed`.
@@ -1045,7 +1148,64 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
     // A punched internet path looks like loopback here; it is the internet, and each datagram
     // carries the tunnel's header and tag: remote, with the smaller packets.
     let punched = plan.record.address.parse().is_ok_and(nightjar_core::internet::is_tunnel);
-    let (location, packet_size) = location_for_route(location_override(), route.vpn || punched);
+    let (location, route_packet_size) = location_for_route(location_override(), route.vpn || punched);
+    let mut packet_size = route_packet_size;
+    let mut jumbo_fallback = None;
+    // Set only when the pre-flight passed: a stream that then stays at stock packets had the
+    // offer withdrawn or reduced in DESCRIBE, which is worth telling the player.
+    let mut jumbo_passed = false;
+    if settings.packet_size > 0 {
+        packet_size = settings.packet_size as i32;
+        eprintln!("nightjar: --packet-size {packet_size}");
+    }
+    let preflight = jumbo_preflight(
+        location,
+        plan.record.address.parse::<std::net::IpAddr>().ok(),
+        plan.info.capabilities.max_video_packet(),
+        plan.info.pyrowave_burst_probe,
+        settings.packet_size,
+        settings.jumbo_frames,
+    );
+    match preflight {
+        JumboPreflight::Probe { candidate } => {
+            let probe_size = nightjar_core::http::jumbo_probe_size(candidate);
+            let kbps = nightjar_core::http::JUMBO_PROBE_KBPS;
+            let fps = nightjar_core::http::JUMBO_PROBE_FPS;
+            let jumbo = client.probe_pace(kbps, probe_size, fps, kbps);
+            // At a 1424-byte offer the probe asks for stock's 1392 and is its own control;
+            // with nothing smaller to compare, only a clean measurement may pass.
+            let control = if probe_size == 1392 {
+                None
+            } else {
+                client.probe_pace(kbps, 1392, fps, kbps).ok().filter(|m| m.measured())
+            };
+            match jumbo {
+                Ok(measurement) if nightjar_core::http::jumbo_probe_passes(&measurement, control.as_ref()) => {
+                    packet_size = i32::from(candidate);
+                    jumbo_passed = true;
+                    eprintln!("nightjar: jumbo video packets: asking for {candidate} bytes ({probe_size} probed, {:.2}% loss)",
+                        measurement.loss);
+                }
+                Ok(measurement) => {
+                    let control_loss = control.as_ref().map_or("no smaller control".to_owned(), |c| format!("{:.2}% at 1392", c.loss));
+                    eprintln!("nightjar: jumbo video packets failed the field test ({:.2}% loss at {probe_size}, {control_loss}); streaming normal packets",
+                        measurement.loss);
+                    packet_size = reset_packet_size(route_packet_size, settings.packet_size);
+                    if settings.jumbo_frames { jumbo_fallback = Some(jumbo_fallback_text()); }
+                }
+                Err(error) => {
+                    eprintln!("nightjar: jumbo video packets could not be tested ({error}); streaming normal packets");
+                    packet_size = reset_packet_size(route_packet_size, settings.packet_size);
+                    if settings.jumbo_frames { jumbo_fallback = Some(jumbo_fallback_text()); }
+                }
+            }
+        }
+        JumboPreflight::Skip(JumboSkip::NotAsked) => {}
+        JumboPreflight::Skip(reason) => {
+            eprintln!("nightjar: jumbo video packets {}; streaming normal packets", reason.reason());
+            packet_size = reset_packet_size(route_packet_size, settings.packet_size);
+        }
+    }
     if punched && location == Location::Remote {
         eprintln!("nightjar: streaming over a direct internet path: remote with {packet_size} byte packets");
     } else if route.vpn && location == Location::Remote {
@@ -1137,6 +1297,15 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
         packed_refused: nightjar_core::full_chroma::restarts_without(settings.experimental_packed_444, e.code),
     })?;
     let outcome = session.outcome();
+    if jumbo_fallback.is_none() && jumbo_passed
+        && outcome.config.packet_size <= i32::from(rubylight_protocol::video_packet::STOCK_MAX_VIDEO_PACKET)
+    {
+        eprintln!("nightjar: the jumbo packet offer did not reach this stream ({} bytes will be sent); streaming normal packets",
+            outcome.config.packet_size);
+        if settings.jumbo_frames {
+            jumbo_fallback = Some(jumbo_fallback_text());
+        }
+    }
     keep_roam_watch(&roam_shared, watch);
     session.watch_host(plan.info.https_port, gateway::toward);
     // The request goes only to a host that lists it among its control messages.
@@ -1199,6 +1368,7 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
             outcome.pyrowave_records_enabled)),
         color_notice: color_notice(&offer, outcome.negotiated_video_format),
         pyrowave_fallback: None,
+        jumbo_fallback,
         codec_fallback: None,
         app_name: plan.app.name.clone(),
         host_name: plan.host_name.clone(),

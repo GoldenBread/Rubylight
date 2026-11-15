@@ -60,7 +60,8 @@ impl HostClient {
     }
 
     pub fn probe_pace(&self, kbps: u32, packet_size: u32, fps: u32, pace_kbps: u32) -> Result<pace::Measurement, Error> {
-        if !(5000..=3_000_000).contains(&kbps) || !(256..=1392).contains(&packet_size) || !(10..=500).contains(&fps)
+        let max_packet = u32::from(rubylight_protocol::video_packet::MAX_VIDEO_PACKET);
+        if !(5000..=3_000_000).contains(&kbps) || !(256..=max_packet).contains(&packet_size) || !(10..=500).contains(&fps)
             || pace_kbps < kbps || pace_kbps > 9_999_999 {
             return Err(Error::InvalidArgument("Invalid PyroWave probe settings.".into()));
         }
@@ -119,6 +120,31 @@ pub const PROBE_START_SHARE: f64 = 0.8;
 /// No probe starts a stream below this.
 pub const PROBE_FLOOR_KBPS: u32 = 2000;
 
+/// The pre-flight probe for jumbo video packets: 100 Mbps for two seconds, shaped as 60 frames
+/// a second. The same rate measures the 1392-byte control, so only the packet size differs.
+pub const JUMBO_PROBE_KBPS: u32 = 100_000;
+pub const JUMBO_PROBE_FPS: u32 = 60;
+
+/// The packet size a jumbo stream's pre-flight probe asks for. The host's probe frame is
+/// `packetsize + 48` bytes and the stream datagram is the configured size + 64, so the probe asks
+/// for the configured size less 32 and its wire size matches the stream's.
+pub fn jumbo_probe_size(configured: u16) -> u32 {
+    u32::from(configured).saturating_sub(32).max(256)
+}
+
+/// Whether jumbo packets passed the pre-flight: the jumbo probe was a valid measurement and lost
+/// no more than half a percentage point more than the control. A control that was not measured
+/// (the host refused it, or sent too little) accepts only a clean jumbo probe under 0.5%.
+pub fn jumbo_probe_passes(jumbo: &pace::Measurement, control: Option<&pace::Measurement>) -> bool {
+    if !jumbo.measured() {
+        return false;
+    }
+    match control.filter(|control| control.measured()) {
+        Some(control) => jumbo.loss <= control.loss + 0.5,
+        None => jumbo.loss < 0.5,
+    }
+}
+
 /// The first bitrate of a stream whose bitrate is automatic: `configured_kbps`, lowered to
 /// [`PROBE_START_SHARE`] of a link probed at `probe_mbps`, never below [`PROBE_FLOOR_KBPS`]. A
 /// probe never raises it.
@@ -139,7 +165,9 @@ fn udp_port(text: &str) -> Option<u16> {
 
 fn receive(socket: &UdpSocket, token: &[u8], packet_size: u32, expected: u32, stop: &AtomicBool, cancel: &transport::Cancel) -> Result<Vec<bool>, Error> {
     let mut arrived = vec![false; expected as usize];
-    let mut buffer = [0; 2048];
+    // The host's probe packet is the token, the sequence number and padding to `packet_size`;
+    // a jumbo probe needs a buffer of that size, not stock 2048.
+    let mut buffer = vec![0u8; packet_size as usize + 64];
     let mut authenticated = false;
     let mut last_hello = None;
     let mut attempts = 0;
@@ -196,5 +224,45 @@ mod tests {
         assert_eq!(probe_start_kbps(1_500, 1.0), 1_500, "never above the setting, also under the floor");
         assert_eq!(probe_start_kbps(20_000, f64::NAN), PROBE_FLOOR_KBPS);
         assert_eq!(probe_start_kbps(u32::MAX, f64::INFINITY), u32::MAX);
+    }
+
+    fn measured(loss: f64) -> pace::Measurement {
+        pace::Measurement {
+            expected: 1000,
+            sent: 1000,
+            received: 1000,
+            sender_ms: 2000.0,
+            loss,
+            worst_window_loss: 0.0,
+            frames: 120,
+            worst_frame_loss: 0.0,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_jumbo_probe_is_taken_at_the_announced_size_and_needs_no_worse_loss() {
+        // The stream datagram is the configured size + 64; the probe packet is its size + 48,
+        // so the probe asks for 32 less and has the same wire size.
+        assert_eq!(jumbo_probe_size(8192), 8160);
+        assert_eq!(jumbo_probe_size(1424), 1392);
+        assert_eq!(jumbo_probe_size(1392), 1360);
+        assert_eq!(jumbo_probe_size(0), 256);
+
+        assert!(jumbo_probe_passes(&measured(0.2), Some(&measured(0.1))));
+        assert!(jumbo_probe_passes(&measured(0.6), Some(&measured(0.1))), "0.5 points more is allowed");
+        assert!(!jumbo_probe_passes(&measured(0.7), Some(&measured(0.1))));
+        // A control that was not measured accepts only a clean jumbo probe.
+        let unmeasured = pace::Measurement { sender_ms: 1000.0, ..measured(0.0) };
+        assert!(!unmeasured.measured());
+        assert!(jumbo_probe_passes(&measured(0.2), Some(&unmeasured)));
+        assert!(!jumbo_probe_passes(&measured(0.7), Some(&unmeasured)));
+        // A 1424-byte offer probes at 1392 with no smaller control; only a clean probe passes.
+        assert!(jumbo_probe_passes(&measured(0.2), None));
+        assert!(!jumbo_probe_passes(&measured(0.7), None));
+        let mut invalid = measured(0.0);
+        invalid.sent = 900;
+        assert!(!invalid.measured());
+        assert!(!jumbo_probe_passes(&invalid, Some(&measured(0.0))), "a jumbo probe the host did not send is no pass");
     }
 }

@@ -517,4 +517,7 @@
     <string name="conn_stage_input">Giriş bağlanıyor</string>
     <string name="applist_quit_fail_check">%1$s oyunundan çıkılamadı. Bilgisayarın açık ve bu ağda olduğunu kontrol edin, ardından tekrar deneyin.</string>
     <string name="applist_quit_other_device">Bu oyunu başka bir cihaz başlattı, bu yüzden oyundan yalnızca o cihazdan veya bilgisayarda çıkılabilir.</string>
+    <string name="title_jumbo_frames">Jumbo video paketleri</string>
+    <string name="summary_jumbo_frames">PC ve her bağlantı 9000 baytlık jumbo çerçeveleri taşıdığında videoyu daha az sayıda daha büyük paketlerle gönderir. Nightjar ağı test ederken her yayın birkaç saniye geç başlar ve test başarısız olursa normal paketler kullanılır. Kablolu ağınız jumbo çerçeveler için ayarlanmadıysa kapalı bırakın.</string>
+    <string name="jumbo_frames_fallback">Jumbo video paketleri bu ağdaki testi geçemedi, bu yüzden akış normal paketler kullanıyor.</string>
 </resources>

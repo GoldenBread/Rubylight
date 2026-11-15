@@ -20,9 +20,12 @@ pub const PACKET_CONTIGUOUS: u32 = 1;
 pub const PACKET_RECORD_START: u32 = 2;
 pub const PACKET_FRAME_START: u32 = 4;
 pub const PACKET_FRAME_END: u32 = 8;
-/// Largest payload of one video packet.
-pub const MAX_PACKET_BYTES: usize = 1400;
-/// Largest frame the client assembles.
+/// Largest payload of one video packet. A stream may negotiate up to
+/// [`video_packet::MAX_VIDEO_PACKET`](crate::video_packet::MAX_VIDEO_PACKET); the engine checks
+/// each stream's own size before a frame reaches this parser.
+pub const MAX_PACKET_BYTES: usize = crate::video_packet::MAX_VIDEO_PACKET as usize;
+/// Largest frame the client assembles: 4092 packets of the largest stream packet (about 33 MB),
+/// well above stock's 5.7 MB and the host's own per-frame budget.
 pub const MAX_FRAME_BYTES: usize = 4092 * MAX_PACKET_BYTES;
 
 const HEADER_BIT: u32 = 0x8000_0000;

@@ -38,10 +38,36 @@ fn params<'a>(
         audio_codec: 0,
         audio_codecs_offered: 0,
         video_fec_percentage: None,
+        max_video_packet: 0,
     }
 }
 
 const SUNSHINE: [i32; 4] = [7, 1, 431, -1];
+
+#[test]
+fn jumbo_packets_are_announced_within_the_streams_offer() {
+    let announced = |packet_size: i32, offer: u16, encrypted: bool| {
+        let config = StreamConfig {
+            packet_size,
+            encryption_flags: ENCFLG_ALL,
+            ..Default::default()
+        };
+        let mut p = params(&config, SUNSHINE, "192.168.1.20", VIDEO_FORMAT_H265);
+        p.max_video_packet = offer;
+        p.encryption_supported = if encrypted { SS_ENC_VIDEO } else { 0 };
+        generate(&p).packet_size
+    };
+    // The size includes the encryption header, so an encrypted stream asks for 32 less.
+    assert_eq!(announced(8192, 8192, false), 8192);
+    assert_eq!(announced(8192, 8192, true), 8160);
+    // Never above the stream's own offer, rounded down to a multiple of 16.
+    assert_eq!(announced(8192, 8160, false), 8160);
+    assert_eq!(announced(8192, 1424, true), 1392);
+    assert_eq!(announced(8190, 8192, false), 8176);
+    // A jumbo request without an offer streams stock packets; a stock request stays as it was.
+    assert_eq!(announced(8192, 0, true), 1360);
+    assert_eq!(announced(1392, 8192, true), 1360);
+}
 
 #[test]
 fn packed_bitrate_reserves_packet_overhead_and_fec() {

@@ -35,7 +35,7 @@ const LAUNCH_LIMIT: Duration = Duration::from_secs(180);
 
 pub const USAGE: &str = "usage: nightjar [--kms | --no-kms] [--version | --host <name|uuid> [--app <name|uuid>] [--quit-on-exit] [stream options] | [stream options] stream <host> <app> | list <host> [--verbose] | <pairing link>]
 stream options, as moonlight-qt's: --resolution <W>x<H>, --720, --1080, --1440, --4K, --fps <n>, --bitrate <Kbps>,
-  --video-codec auto|H.264|HEVC|AV1, --video-decoder auto|software|hardware, --audio-config stereo|5.1-surround|7.1-surround,
+  --packet-size <bytes>, --video-codec auto|H.264|HEVC|AV1, --video-decoder auto|software|hardware, --audio-config stereo|5.1-surround|7.1-surround,
   --display-mode fullscreen|windowed|borderless, --capture-system-keys never|fullscreen|always, and these with their --no- forms:
   --hdr, --vsync, --frame-pacing, --performance-overlay, --quit-after, --yuv444, --audio-on-host, --absolute-mouse,
   --game-optimization, --multi-controller, --swap-gamepad-buttons, --background-gamepad
@@ -76,7 +76,7 @@ pub struct Launch {
 
 /// moonlight-qt's stream options (its `app/cli/commandlineparser.cpp`), as given: None leaves the
 /// saved setting. They change the settings of one run's streams and are never saved. Options
-/// Nightjar has no setting for (`--packet-size`, `--mouse-buttons-swap`, `--touchscreen-trackpad`,
+/// Nightjar has no setting for (`--mouse-buttons-swap`, `--touchscreen-trackpad`,
 /// `--mute-on-focus-loss`, `--reverse-scroll-direction`, `--keep-awake`) are taken and change
 /// nothing, so a command line written for moonlight-qt still starts.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -84,6 +84,10 @@ pub struct StreamOptions {
     pub resolution: Option<(u32, u32)>,
     pub fps: Option<u32>,
     pub bitrate_kbps: Option<u32>,
+    /// `--packet-size`: the video packet size of this run's streams, including the encryption
+    /// header, never above the PC's per-stream offer. A value above 1400 asks for jumbo packets
+    /// and runs their pre-flight probe.
+    pub packet_size: Option<u32>,
     pub codec: Option<CodecPreference>,
     pub decoder: Option<DecoderPreference>,
     pub audio: Option<AudioChannels>,
@@ -165,6 +169,9 @@ impl StreamOptions {
             None if self.resolution.is_some() || self.fps.is_some() => settings.bitrate_kbps = 0,
             None => {}
         }
+        if let Some(size) = self.packet_size {
+            settings.packet_size = size;
+        }
         if let Some(codec) = self.codec {
             settings.codec = codec;
         }
@@ -238,7 +245,11 @@ impl StreamOptions {
             "fps" => self.fps = Some(number(value)?),
             "bitrate" => self.bitrate_kbps = Some(number(value)?),
             "packet-size" => {
-                number(value)?;
+                let size = number(value)?;
+                if !(256..=u32::from(rubylight_protocol::video_packet::MAX_VIDEO_PACKET)).contains(&size) {
+                    return Err(format!("--packet-size must be 256 to {} bytes, not {value}", rubylight_protocol::video_packet::MAX_VIDEO_PACKET));
+                }
+                self.packet_size = Some(size);
             }
             "display-mode" => {
                 self.window_mode = Some(match choice.as_str() {

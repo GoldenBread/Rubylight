@@ -517,4 +517,7 @@
     <string name="conn_stage_input">Eingabe wird verbunden</string>
     <string name="applist_quit_fail_check">%1$s konnte nicht beendet werden. Prüfe, ob der PC eingeschaltet und in diesem Netzwerk ist, und versuche es dann erneut.</string>
     <string name="applist_quit_other_device">Ein anderes Gerät hat dieses Spiel gestartet. Es lässt sich nur von dort oder am PC beenden.</string>
+    <string name="title_jumbo_frames">Jumbo-Videopakete</string>
+    <string name="summary_jumbo_frames">Sendet Video in weniger, größeren Paketen, wenn der PC und jede Verbindung 9000-Byte-Jumbo-Frames tragen. Jeder Stream startet einige Sekunden später, während Nightjar das Netzwerk testet, und nutzt normale Pakete, wenn der Test fehlschlägt. Lass es aus, außer dein kabelgebundenes Netzwerk ist für Jumbo-Frames eingerichtet.</string>
+    <string name="jumbo_frames_fallback">Jumbo-Videopakete haben den Test in diesem Netzwerk nicht bestanden, deshalb nutzt der Stream normale Pakete.</string>
 </resources>

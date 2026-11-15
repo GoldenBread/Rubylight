@@ -584,4 +584,7 @@
     <string name="continue_here_failed">Could not continue here</string>
     <string name="continue_here_came_back">The game came back to this device</string>
     <string name="continue_here_did_not_move">The game did not move to the other device</string>
+    <string name="title_jumbo_frames">Jumbo video packets</string>
+    <string name="summary_jumbo_frames">Sends video in fewer, larger packets when the PC and every link carry 9000-byte jumbo frames. Each stream starts a few seconds later while Nightjar tests the network, and uses normal packets if the test fails. Leave it off unless your wired network is set up for jumbo frames.</string>
+    <string name="jumbo_frames_fallback">Jumbo video packets didn’t pass the test on this network, so the stream uses normal packets.</string>
 </resources>

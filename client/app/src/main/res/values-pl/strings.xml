@@ -517,4 +517,7 @@
     <string name="conn_stage_input">Łączenie sterowania</string>
     <string name="applist_quit_fail_check">Nie udało się zamknąć %1$s. Sprawdź, czy komputer jest włączony i w tej sieci, a potem spróbuj ponownie.</string>
     <string name="applist_quit_other_device">Tę grę uruchomiło inne urządzenie, więc można ją zamknąć tylko z tamtego urządzenia lub na komputerze.</string>
+    <string name="title_jumbo_frames">Pakiety wideo jumbo</string>
+    <string name="summary_jumbo_frames">Wysyła obraz w mniejszej liczbie większych pakietów, gdy PC i każde łącze przenoszą ramki jumbo 9000 bajtów. Każdy strumień startuje kilka sekund później, podczas gdy Nightjar testuje sieć, i używa zwykłych pakietów, jeśli test się nie powiedzie. Pozostaw wyłączone, chyba że twoja sieć przewodowa jest skonfigurowana dla ramek jumbo.</string>
+    <string name="jumbo_frames_fallback">Pakiety wideo jumbo nie przeszły testu w tej sieci, więc strumień używa zwykłych pakietów.</string>
 </resources>

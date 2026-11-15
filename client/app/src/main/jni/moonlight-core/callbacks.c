@@ -13,6 +13,7 @@
 #include "fec_report.h"
 #include "control_negotiation.h"
 #include "hdr_format.h"
+#include "video_packet.h"
 #include "android_microphone.h"
 #include "ControllerHaptics.h"
 #include "cursor_shape.h"
@@ -673,6 +674,7 @@ Java_com_limelight_nvstream_jni_MoonBridge_cStartConnection(JNIEnv *env, jclass 
     AndroidHdrFormatRequested = (uint8_t)(hdrFormat & RL_HDR_ALL);
     RlHdrFormatsOffered = 0;
     RlHdrFormatAnnounced = 0;
+    RlMaxVideoPacketOffered = 0;
     atomic_store(&AndroidUnbatchedInput, unbatchedInput);
     atomic_store(&AndroidNetworkPriority, networkPriority);
     __android_log_print(ANDROID_LOG_INFO, "moonlight-core", "Latency options: unbatched input=%d, network priority=%d",

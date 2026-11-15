@@ -131,4 +131,38 @@ public class PyroWavePaceTest {
         // 1 ms group at 1 Gbps of 1440-byte probe payloads with UDP, IPv4 and Ethernet bytes.
         assertEquals(1000000 / 8 / (1440 + 8 + 20 + 38), PyroWavePace.burstGroupPackets(1000000, 1392, false));
     }
+
+    /** The jumbo pre-flight: announced size, and no more than 0.5 points more loss than control. */
+    @Test
+    public void jumboPacketsPassThePreFlightOnlyWithoutMoreLoss() {
+        assertEquals(8160, PyroWavePace.jumboProbeSize(8192));
+        assertEquals(1392, PyroWavePace.jumboProbeSize(1424));
+        assertEquals(256, PyroWavePace.jumboProbeSize(100));
+
+        PyroWavePace.Result control = probe(10);
+        control.lossPercent = 0.1;
+        control.worstWindowLossPercent = 0.2;
+        PyroWavePace.Result jumbo = probe(10);
+        jumbo.lossPercent = 0.6;
+        jumbo.worstWindowLossPercent = 0.8;
+        assertTrue("0.5 points more is allowed", PyroWavePace.jumboPasses(jumbo, control));
+        jumbo.lossPercent = 0.7;
+        assertFalse(PyroWavePace.jumboPasses(jumbo, control));
+
+        // A control that was not measured accepts only a clean jumbo probe under 0.5%.
+        PyroWavePace.Result unmeasured = probe(10);
+        unmeasured.senderMs = 1000;
+        unmeasured.lossPercent = 0;
+        assertFalse(PyroWavePace.measured(unmeasured));
+        jumbo.lossPercent = 0.2;
+        assertTrue(PyroWavePace.jumboPasses(jumbo, unmeasured));
+        jumbo.lossPercent = 0.7;
+        assertFalse(PyroWavePace.jumboPasses(jumbo, unmeasured));
+
+        // A 1424-byte offer probes at 1392 with no smaller control: only a clean probe passes.
+        jumbo.lossPercent = 0.2;
+        assertTrue(PyroWavePace.jumboPasses(jumbo, null));
+        jumbo.lossPercent = 0.7;
+        assertFalse(PyroWavePace.jumboPasses(jumbo, null));
+    }
 }

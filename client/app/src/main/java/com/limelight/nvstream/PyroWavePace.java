@@ -33,6 +33,12 @@ public final class PyroWavePace {
     static final int PACE_STEP_KBPS = 50000;
     static final double PACE_TAIL_FRAME_LIMIT_PERCENT = 2.0;
 
+    /** The jumbo pre-flight: 100 Mbps for two seconds, shaped as 60 frames a second. */
+    public static final int JUMBO_PROBE_KBPS = 100000;
+    public static final int JUMBO_PROBE_FPS = 60;
+    /** Half a percentage point more loss than the 1392-byte control allows. */
+    public static final double JUMBO_LOSS_MARGIN_PERCENT = 0.5;
+
     // Audio, control and their FEC alongside the video (8 high-quality channels), as the host counts it.
     static final double AUDIO_CONTROL_KBPS = 3572;
     static final int FRAME_HEADER = 8;
@@ -153,6 +159,29 @@ public final class PyroWavePace {
                 r.worstWindowLossPercent < WINDOW_LOSS_LIMIT_PERCENT &&
                 r.excessiveLossFrames == 0 && r.worstFrameLossPercent <= FRAME_LOSS_LIMIT_PERCENT &&
                 r.missingTailFramePercent() < PACE_TAIL_FRAME_LIMIT_PERCENT;
+    }
+
+    /**
+     * The pre-flight probe's packet size for a stream configured at {@code configured} bytes: the
+     * host's probe frame is the probe size + 48 bytes and the stream datagram is the configured
+     * size + 64, so the probe asks for 32 less and its wire size matches the stream's. Shared rule:
+     * nightjar_core::http::jumbo_probe_size.
+     */
+    public static int jumboProbeSize(int configured) {
+        return Math.max(256, configured - 32);
+    }
+
+    /**
+     * Whether jumbo packets passed the pre-flight: a valid jumbo probe that lost no more than
+     * half a percentage point more than the control. A control that was not measured accepts only
+     * a clean jumbo probe under 0.5%.
+     */
+    public static boolean jumboPasses(Result jumbo, Result control) {
+        if (!measured(jumbo)) return false;
+        if (control != null && measured(control)) {
+            return jumbo.lossPercent <= control.lossPercent + JUMBO_LOSS_MARGIN_PERCENT;
+        }
+        return jumbo.lossPercent < JUMBO_LOSS_MARGIN_PERCENT;
     }
 
     private static int violations(Result r) {

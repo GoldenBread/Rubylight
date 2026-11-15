@@ -10,20 +10,27 @@ pub(crate) struct Host {
     spi: u32,
     frame: u32,
     fec_percent: usize,
+    packet_size: usize,
 }
 
 impl Host {
     pub(crate) fn new() -> Self {
+        Self::with_packet_size(1024)
+    }
+
+    /// A host packetizer for a stream whose `StreamConfig.packetSize` is `packet_size`.
+    pub(crate) fn with_packet_size(packet_size: usize) -> Self {
         Self {
             seq: 100,
             spi: 0,
             frame: 1,
             fec_percent: 20,
+            packet_size,
         }
     }
 
     pub(crate) fn frame(&mut self, payload: &[u8], kind: u8) -> Vec<Vec<u8>> {
-        let slice = PACKET_SIZE - 16;
+        let slice = self.packet_size - 16;
         let mut data = vec![1, 0, 0, kind];
         let total = payload.len() + 8;
         let last = if total % slice == 0 {
@@ -38,7 +45,7 @@ impl Host {
         let parity = (count * self.fec_percent).div_ceil(100);
         let mut shards: Vec<Vec<u8>> = (0..count + parity)
             .map(|i| {
-                let mut s = vec![0u8; PACKET_SIZE + 16];
+                let mut s = vec![0u8; self.packet_size + 16];
                 if i < count {
                     s[16..20].copy_from_slice(&((self.spi + i as u32) << 8).to_le_bytes());
                     s[24] = 1 | if i == 0 { 4 } else { 0 } | if i == count - 1 { 2 } else { 0 };
@@ -53,7 +60,7 @@ impl Host {
         if parity > 0 {
             let rs = ReedSolomon::new(count, parity).unwrap();
             let mut refs: Vec<&mut [u8]> = shards.iter_mut().map(|s| &mut s[..]).collect();
-            rs.encode(&mut refs, PACKET_SIZE + 16).unwrap();
+            rs.encode(&mut refs, self.packet_size + 16).unwrap();
         }
         // Like the host: RTP and FEC fields are written after parity.
         for (i, s) in shards.iter_mut().enumerate() {
@@ -466,10 +473,39 @@ fn pyrowave_records_build_an_envelope() {
 }
 
 #[test]
+fn jumbo_pyrowave_packets_build_a_frame() {
+    let mut host = Host::with_packet_size(8192);
+    let mut cfg = config(0x01_0000);
+    cfg.packet_size = 8192;
+    cfg.pyrowave_records = true;
+    // 212 data shards plus 20 % parity stay within one FEC block. The 6 MB frame above stock's
+    // cap is covered by pyrowave::tests and by the frame cap below.
+    let max_frame = depacketizer::Depacketizer::new(&cfg).max_frame_bytes();
+    assert_eq!(max_frame, 4092 * 8192, "4092 packets of the negotiated size");
+    let mut rx = VideoReceiver::new(cfg);
+    let mut events = Vec::new();
+    let payload: Vec<u8> = (0..1_700_000u32).map(|i| (i % 251) as u8).collect();
+    let packets = host.frame(&payload, 2);
+    for packet in &packets {
+        rx.receive(packet, 9, &mut events);
+    }
+    let frames = frames(&events);
+    assert_eq!(frames.len(), 1);
+    let data = frames[0].data();
+    let first_len = u32::from_le_bytes(data[4..8].try_into().unwrap()) as usize;
+    assert_eq!(first_len, 8192 - 16);
+    assert_eq!(rx.stats().frame_drops, 0);
+}
+
+#[test]
 fn receive_buffer_size() {
     assert_eq!(recv_buffer_size(20_000, 1392), 2048 * 1408);
     assert_eq!(recv_buffer_size(2_000_000, 1392), 15_000_000);
     assert_eq!(recv_buffer_size(u32::MAX, 1392), 64 * 1024 * 1024);
+    // A jumbo 8192-byte stream asks for 8160 bytes a packet after encryption: about 16.7 MB.
+    assert_eq!(recv_buffer_size(20_000, 8160), 2048 * 8176);
+    assert_eq!(recv_buffer_size(2_000_000, 8160), 2048 * 8176);
+    assert_eq!(recv_buffer_size(u32::MAX, 8160), 64 * 1024 * 1024);
 }
 
 #[test]

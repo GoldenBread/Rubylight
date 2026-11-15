@@ -517,4 +517,7 @@
     <string name="conn_stage_input">Đang kết nối đầu vào</string>
     <string name="applist_quit_fail_check">Không thể thoát %1$s. Hãy kiểm tra PC đang bật và ở trong mạng này, rồi thử lại.</string>
     <string name="applist_quit_other_device">Một thiết bị khác đã khởi động trò chơi này nên chỉ có thể thoát từ thiết bị đó hoặc trên PC.</string>
+    <string name="title_jumbo_frames">Gói video jumbo</string>
+    <string name="summary_jumbo_frames">Gửi video trong ít gói lớn hơn khi PC và mọi chặng mang được khung jumbo 9000 byte. Mỗi luồng khởi động chậm vài giây trong khi Nightjar kiểm tra mạng, và dùng gói thường nếu bài kiểm tra thất bại. Hãy để tắt trừ khi mạng có dây của bạn được thiết lập cho khung jumbo.</string>
+    <string name="jumbo_frames_fallback">Gói video jumbo không vượt qua bài kiểm tra trên mạng này, nên luồng dùng gói thường.</string>
 </resources>

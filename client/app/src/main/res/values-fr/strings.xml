@@ -517,4 +517,7 @@
     <string name="conn_stage_input">Connexion des entrées</string>
     <string name="applist_quit_fail_check">Impossible de quitter %1$s. Vérifiez que le PC est allumé et sur ce réseau, puis réessayez.</string>
     <string name="applist_quit_other_device">Un autre appareil a lancé ce jeu : il ne peut être quitté que depuis cet appareil ou sur le PC.</string>
+    <string name="title_jumbo_frames">Paquets vidéo jumbo</string>
+    <string name="summary_jumbo_frames">Envoie la vidéo en moins de paquets plus gros lorsque le PC et chaque liaison transportent des trames jumbo de 9000 octets. Chaque stream démarre quelques secondes plus tard pendant que Nightjar teste le réseau, et utilise des paquets normaux si le test échoue. Laissez-le désactivé, sauf si votre réseau filaire est configuré pour les trames jumbo.</string>
+    <string name="jumbo_frames_fallback">Les paquets vidéo jumbo n’ont pas réussi le test sur ce réseau ; le stream utilise donc des paquets normaux.</string>
 </resources>

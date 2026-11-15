@@ -21,12 +21,13 @@ static bool appendPyroWavePacket(const uint8_t* payload, int length, uint32_t fl
     const bool first = nalChainHead == NULL;
     const size_t markerLength = first ? 4 : 0;
     const size_t addedLength = markerLength + 8 + (size_t)length;
-    if ((size_t)nalChainDataLength > PYRO_MAX_FRAME_BYTES - addedLength) return false;
+    const size_t maxFrame = pyroMaxFrameBytes(StreamConfig.packetSize);
+    if ((size_t)nalChainDataLength > maxFrame - addedLength) return false;
     const size_t required = (size_t)nalChainDataLength + addedLength;
     PLENTRY_INTERNAL envelope = (PLENTRY_INTERNAL)nalChainHead;
     size_t capacity = first ? 16384 : pyroEnvelopeCapacity;
     while (capacity < required) {
-        capacity = capacity > PYRO_MAX_FRAME_BYTES / 2 ? PYRO_MAX_FRAME_BYTES : capacity * 2;
+        capacity = capacity > maxFrame / 2 ? maxFrame : capacity * 2;
     }
     if (first || capacity != pyroEnvelopeCapacity) {
         PLENTRY_INTERNAL grown = realloc(envelope, sizeof(*envelope) + capacity);
@@ -87,7 +88,7 @@ void queueRtpPacket(PRTPV_QUEUE_ENTRY entry) {
     uint32_t flags = ((video->extraFlags | video->multiFecFlags) & 0x80) ? PYRO_PACKET_RECORD_START : 0;
     if ((video->flags & FLAG_SOF) && block == 0) flags |= PYRO_PACKET_FRAME_START;
     if ((video->flags & FLAG_EOF) && block == lastBlock) flags |= PYRO_PACKET_FRAME_END;
-    if (length <= 0 || length > 1400) {
+    if (length <= 0 || length > (int)pyroMaxPacketBytes(StreamConfig.packetSize)) {
         free(entry->packet);
         return;
     }

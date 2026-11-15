@@ -1638,4 +1638,7 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("Nightjar’s wait", "Nightjar 대기"),
     ("Windows V-Sync", "Windows의 V-Sync"),
     ("How a frame that meets the screen still drawing waits, with Variable refresh rate On: Automatic uses Nightjar’s wait and switches to Windows V-Sync where that wait can tear, while Nightjar’s wait never switches. Windows V-Sync can add up to one refresh of delay; choose it only if frames still tear on Automatic.", "가변 주사율이 사용일 때 화면이 아직 그리는 중인 프레임이 기다리는 방식입니다. 자동은 Nightjar 대기를 쓰고 그 대기로 티어링이 생길 수 있는 화면에서는 Windows V-Sync로 바꾸며, Nightjar 대기는 바꾸지 않습니다. Windows V-Sync는 최대 한 번의 화면 갱신만큼 지연을 더할 수 있으니 자동에서도 프레임이 찢어질 때만 고르세요."),
+    ("Jumbo video packets", "점보 비디오 패킷"),
+    ("Sends video in fewer, larger packets when the PC and every link carry 9000-byte jumbo frames. Each stream starts a few seconds later while Nightjar tests the network, and uses normal packets if the test fails. Leave it off unless your wired network is set up for jumbo frames.", "PC와 모든 구간이 9000바이트 점보 프레임을 전달할 때 더 적고 큰 패킷으로 비디오를 보냅니다. Nightjar가 네트워크를 테스트하는 동안 각 스트림 시작이 몇 초 늦어지며, 테스트에 실패하면 일반 패킷을 사용합니다. 유선 네트워크가 점보 프레임에 맞게 설정된 경우가 아니면 끄세요."),
+    ("Jumbo video packets didn’t pass the test on this network, so the stream uses normal packets.", "이 네트워크에서 점보 비디오 패킷 테스트를 통과하지 못해 일반 패킷으로 스트리밍합니다."),
 ];

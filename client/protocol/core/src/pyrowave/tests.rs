@@ -172,6 +172,27 @@ fn format_change_drops_the_cached_records() {
 }
 
 #[test]
+fn jumbo_packets_build_frames_above_stocks_five_point_seven_megabytes() {
+    // 250,000 records of 24 bytes each is 6 MB, above stock's 4092 x 1400 frame cap.
+    let count = 250_000u32;
+    let mut body = Vec::with_capacity(count as usize * 24);
+    for index in 0..count {
+        body.extend_from_slice(&record(1, index, 6, (index & 0xff) as u8));
+    }
+    let data = container(&packets(header(1, count), &body, 8176), &[]);
+    assert!(data.len() > 5_700_000, "{}", data.len());
+    // A packet payload may fill the largest packet, and the frame the largest frame.
+    assert!(MAX_PACKET_BYTES >= 8192 && MAX_FRAME_BYTES >= data.len());
+    let mut records = Records::with_geometry(WIDTH, HEIGHT, false);
+    let mut pushed = 0;
+    assert!(records.push_frame(&data, |packet| {
+        pushed += packet.len();
+        true
+    }));
+    assert_eq!(pushed, body.len() + 8, "the sequence header and the records");
+}
+
+#[test]
 fn malformed_frames_are_rejected() {
     let mut records = Records::with_geometry(WIDTH, HEIGHT, false);
     let ok = container(&packets(header(1, 1), &record(1, 0, 4, 9), 1400), &[]);
