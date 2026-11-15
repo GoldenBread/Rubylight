@@ -75,6 +75,15 @@
     { value: 'end', label: 'End the stream' },
   ];
 
+  const FRAME: Choice[] = [
+    { value: 'full', label: 'Full window' },
+    {
+      value: 'client',
+      label: 'Only the game’s content',
+      hint: 'Crops the title bar and borders. A game that draws its own title bar keeps it.',
+    },
+  ];
+
   /** app_window.rs wants_window. */
   const streamsWindow = $derived(
     ['window', 'app', 'true', 'on', 'yes', '1', 'enabled'].includes(draft.text('capture-window').trim().toLowerCase()),
@@ -200,6 +209,13 @@
         label="When the window closes"
         hint="Once no other window appeared within 5 seconds."
         options={CLOSED}
+      />
+      <ChoiceField
+        {draft}
+        key="capture-window-frame"
+        label="Window’s frame"
+        hint="The whole window, or only the game’s content without the title bar and borders."
+        options={FRAME}
       />
     {/if}
     <NumberField

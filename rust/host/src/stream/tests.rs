@@ -589,6 +589,29 @@ fn app_overrides_win_over_device_and_host_without_changing_saved_configuration()
     );
 }
 #[test]
+fn an_apps_window_frame_choice_reaches_the_stream() {
+    use crate::state::test_support::Fixture;
+    use serde_json::json;
+    let f = Fixture::new();
+    let launch = f.launch(f.client(u32::MAX), Role::Stream);
+    f.host.apps.write().unwrap()[0]
+        .extra
+        .insert("capture-window-frame".into(), json!("client"));
+    let config = effective_config(&f.host, &launch).unwrap();
+    assert_eq!(
+        config.get(butterpollo_core::app_window::FRAME, ""),
+        "client"
+    );
+    // A co-op player's stream is its window already and has no window settings.
+    let mut coop = f.launch(f.client(u32::MAX), Role::Stream);
+    coop.nucleus = Some(butterpollo_core::session::Seat {
+        session: 1,
+        slot: 0,
+    });
+    let config = effective_config(&f.host, &coop).unwrap();
+    assert_eq!(config.get(butterpollo_core::app_window::FRAME, ""), "");
+}
+#[test]
 fn an_apps_block_for_the_device_wins_over_the_app_the_device_and_the_host() {
     use crate::state::test_support::Fixture;
     use serde_json::json;

@@ -16,6 +16,10 @@
 //! for a replacement (a splash screen giving way to the game), the display
 //! again or the end of the stream (`capture_window_closed`).
 //!
+//! [`Frame`] chooses whether the stream shows the whole window or only its
+//! client area (`capture_window_frame = client`), without the title bar and
+//! borders Windows Graphics Capture includes.
+//!
 //! The picture keeps the window's shape: the GPU conversion scales it to the
 //! stream and letterboxes it ([`crate::display_policy::letterbox`]).
 //! Absolute mouse, touch and pen input map onto the window: a point on the
@@ -35,9 +39,12 @@ pub const EXE: &str = "capture_window_exe";
 pub const TITLE: &str = "capture_window_title";
 /// `display` (the default) or `end`: what follows the window's closing.
 pub const CLOSED: &str = "capture_window_closed";
+/// `full` (the default) or `client`: whether the whole window or only its
+/// client area is streamed.
+pub const FRAME: &str = "capture_window_frame";
 /// Every key of the feature, for a stream that never captures a window of
 /// its own (a Nucleus Co-op player's).
-pub const KEYS: [&str; 4] = [SETTING, EXE, TITLE, CLOSED];
+pub const KEYS: [&str; 5] = [SETTING, EXE, TITLE, CLOSED, FRAME];
 
 /// How long a closed window's stream waits for the app's next window before
 /// it shows the display for good or ends.
@@ -54,11 +61,21 @@ pub enum Closed {
     End,
 }
 
+/// What part of the window is streamed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Frame {
+    /// The whole window, title bar and borders included.
+    Full,
+    /// Only the window's client area, without its title bar and borders.
+    Client,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
     pub exe: Option<String>,
     pub title: Option<String>,
     pub closed: Closed,
+    pub frame: Frame,
 }
 
 /// Whether `value` asks for the window. Unknown values are the display, so a
@@ -91,6 +108,15 @@ pub fn settings(config: &Config) -> Option<Settings> {
         {
             "end" | "stop" | "quit" => Closed::End,
             _ => Closed::Display,
+        },
+        frame: match config
+            .get(FRAME, "full")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "client" | "content" | "cropped" => Frame::Client,
+            _ => Frame::Full,
         },
     })
 }

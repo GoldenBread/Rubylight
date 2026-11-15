@@ -14,15 +14,17 @@ test('an app streams its window with its own match rules, and empty choices use 
   draft.setText('capture-window-exe', 'game.exe');
   draft.setText('capture-window-title', 'Main');
   draft.setText('capture-window-closed', 'end');
+  draft.setText('capture-window-frame', 'client');
   const record = draft.record();
   assert.equal(record['capture-window'], 'window');
   assert.equal(record['capture-window-exe'], 'game.exe');
   assert.equal(record['capture-window-title'], 'Main');
   assert.equal(record['capture-window-closed'], 'end');
-  for (const key of ['capture-window', 'capture-window-exe', 'capture-window-title', 'capture-window-closed']) {
+  assert.equal(record['capture-window-frame'], 'client');
+  for (const key of ['capture-window', 'capture-window-exe', 'capture-window-title', 'capture-window-closed', 'capture-window-frame']) {
     draft.setText(key, '');
   }
-  for (const key of ['capture-window', 'capture-window-exe', 'capture-window-title', 'capture-window-closed']) {
+  for (const key of ['capture-window', 'capture-window-exe', 'capture-window-title', 'capture-window-closed', 'capture-window-frame']) {
     assert.ok(!(key in draft.record()), key);
   }
 });
@@ -42,7 +44,12 @@ test('the host setting streams the display by default and its window options fol
   assert.equal(what.group, 'Capture');
   assert.deepEqual(what.control.options.map(option => option.value), ['display', 'window']);
   assert.equal(settings.get('capture_window_closed').default, 'display');
-  for (const key of ['capture_window_closed', 'capture_window_exe', 'capture_window_title']) {
+  assert.equal(settings.get('capture_window_frame').default, 'full');
+  assert.deepEqual(
+    settings.get('capture_window_frame').control.options.map(option => option.value),
+    ['full', 'client'],
+  );
+  for (const key of ['capture_window_closed', 'capture_window_frame', 'capture_window_exe', 'capture_window_title']) {
     const setting = settings.get(key);
     assert.equal(setting.visibleWhen({}), false, key);
     assert.equal(setting.visibleWhen({ capture_window: 'window' }), true, key);

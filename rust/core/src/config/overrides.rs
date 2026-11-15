@@ -91,6 +91,7 @@ pub fn override_allowed(key: &str) -> bool {
         "capture_window_exe",
         "capture_window_title",
         "capture_window_closed",
+        "capture_window_frame",
         "encoder",
         // Playnite focus
         "playnite_focus_attempts",

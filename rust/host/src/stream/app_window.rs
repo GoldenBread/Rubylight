@@ -12,7 +12,7 @@
 //! moment later.
 use crate::display_session::Ready;
 use crate::state::{Session, Shared};
-use butterpollo_core::app_window::{self, Decision, Follow, Settings, Target};
+use butterpollo_core::app_window::{self, Decision, Follow, Frame, Settings, Target};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{
@@ -221,7 +221,11 @@ impl Watch {
         let decision = self.follow.step(picked, settings.closed, now);
         let target = match &decision.target {
             Target::Window { id, pid } => {
-                match butterpollo_windows::capture::app_window_target(*id, *pid) {
+                match butterpollo_windows::capture::app_window_target(
+                    *id,
+                    *pid,
+                    settings.frame == Frame::Client,
+                ) {
                     Ok(target) => Some(target),
                     // Closed between the scan and now: the next check sees it.
                     Err(error) => {

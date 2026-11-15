@@ -90,6 +90,7 @@ pub(crate) fn effective_config(h: &Shared, launch: &Launch) -> Result<Config> {
                 "capture-window-closed",
                 butterpollo_core::app_window::CLOSED,
             ),
+            ("capture-window-frame", butterpollo_core::app_window::FRAME),
         ] {
             if let Some(value) = app
                 .extra

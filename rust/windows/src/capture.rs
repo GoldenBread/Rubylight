@@ -141,6 +141,12 @@ pub fn check_window(target: &WindowTarget) -> Result<()> {
 pub(crate) fn window_cursor(config: &butterpollo_core::config::Config) -> bool {
     butterpollo_core::app_window::settings(config).is_some()
 }
+/// Whether a window's capture keeps only its client area
+/// (`capture_window_frame = client`), without the title bar and borders.
+pub(crate) fn window_client(config: &butterpollo_core::config::Config) -> bool {
+    butterpollo_core::app_window::settings(config)
+        .is_some_and(|settings| settings.frame == butterpollo_core::app_window::Frame::Client)
+}
 /// The primary display's name, which capture opens when the stream's display
 /// did not come back.
 pub fn primary_display() -> Option<String> {
@@ -1284,14 +1290,17 @@ impl GpuPool {
         // A missed desktop copy must invalidate the cache. Otherwise a later
         // pointer-only frame could publish pixels from before the missed update.
         *cached = None;
-        let image = self.copy(gpu, source)?;
+        let image = self.copy(gpu, source, None)?;
         *cached = image.clone();
         Ok(image)
     }
+    /// Copy `source` into a pool texture, cropped to `crop` when given: the
+    /// picture keeps only that rectangle, and the image reports its size.
     pub(crate) fn copy(
         &mut self,
         gpu: &Device,
         source: &ID3D11Texture2D,
+        crop: Option<Crop>,
     ) -> Result<Option<GpuImage>> {
         // SAFETY: `source` and the pool's textures are live on `gpu.device` with matching size and
         // format, and that device's context is multithread-protected.
@@ -1304,9 +1313,20 @@ impl GpuPool {
                 DXGI_FORMAT_R10G10B10A2_UNORM => Pixel::Rgba10Pq,
                 _ => bail!("unsupported GPU capture format {:?}", desc.Format),
             };
+            // A crop outside the source would copy only garbage: keep the
+            // whole frame instead, as WGC's own size checks do.
+            let crop = crop.filter(|crop| {
+                crop.width() > 0
+                    && crop.height() > 0
+                    && crop.right <= desc.Width
+                    && crop.bottom <= desc.Height
+            });
+            let (width, height) = crop.map_or((desc.Width, desc.Height), |crop| {
+                (crop.width(), crop.height())
+            });
             // Every pooled texture has the shape it was made with, so a new
             // size or format replaces them all, without a GetDesc each frame.
-            let shape = Some((desc.Width, desc.Height, desc.Format));
+            let shape = Some((width, height, desc.Format));
             if self.shape != shape {
                 if let Some(handoff) = &mut self.compute {
                     for texture in &self.textures {
@@ -1329,6 +1349,8 @@ impl GpuPool {
                 if self.textures.len() >= GPU_SNAPSHOT_CAPACITY {
                     return Ok(None);
                 }
+                desc.Width = width;
+                desc.Height = height;
                 desc.Usage = D3D11_USAGE_DEFAULT;
                 desc.BindFlags = D3D11_BIND_SHADER_RESOURCE.0 as u32;
                 desc.CPUAccessFlags = 0;
@@ -1348,7 +1370,7 @@ impl GpuPool {
             let ready = match self
                 .compute
                 .as_mut()
-                .map(|handoff| handoff.copy(texture.as_ref(), source))
+                .map(|handoff| handoff.copy(texture.as_ref(), source, crop))
             {
                 Some(Ok(ready)) => Some(ready),
                 Some(Err(error)) => {
@@ -1369,18 +1391,32 @@ impl GpuPool {
                     self.warnings.set("capture_compute", format!("Compute capture copy failed ({error:#}); copying on the graphics queue. A busy game can delay capture; lower GPU load or update the graphics driver."));
                     self.compute = None;
                     self.textures.clear();
-                    return self.copy(gpu, source);
+                    return self.copy(gpu, source, crop);
                 }
                 None => {
-                    gpu.context.CopyResource(texture.as_ref(), source);
+                    if let Some(crop) = crop {
+                        let box_ = crop.d3d11();
+                        gpu.context.CopySubresourceRegion(
+                            texture.as_ref(),
+                            0,
+                            0,
+                            0,
+                            0,
+                            source,
+                            0,
+                            Some(&box_),
+                        );
+                    } else {
+                        gpu.context.CopyResource(texture.as_ref(), source);
+                    }
                     None
                 }
             };
             let now = Instant::now();
             Ok(Some(GpuImage {
                 cursor: None,
-                width: desc.Width,
-                height: desc.Height,
+                width,
+                height,
                 pixel,
                 captured: now,
                 wgc_stamp: None,
@@ -1473,6 +1509,7 @@ mod idd_push;
 mod window;
 pub use window::WindowTarget;
 mod app_window;
+pub(crate) use app_window::{Crop, client_box, window_client_box};
 pub use app_window::{app_window_target, app_windows, target_rect as window_target_rect};
 
 /// Whether WGC can capture the input desktop without crossing into Winlogon.
@@ -1733,6 +1770,7 @@ impl Capture {
                 config.boolean("wgc_high_rate_capture", false),
                 window,
                 window_cursor(config),
+                window_client(config),
             )?;
             capture.drain_to_newest = config.boolean("wgc_drain_to_newest", false);
             Ok(capture)
@@ -1858,6 +1896,7 @@ impl Capture {
                 config.boolean("wgc_high_rate_capture", false),
                 window,
                 window_cursor(config),
+                window_client(config),
             )?;
             capture.owned.warnings = warnings.clone();
             capture.drain_to_newest = config.boolean("wgc_drain_to_newest", false);

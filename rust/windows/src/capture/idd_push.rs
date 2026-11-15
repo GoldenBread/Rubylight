@@ -1272,7 +1272,7 @@ impl Session {
         }
         let copied = fences
             .order_d3d11(seq)
-            .and_then(|()| self.pool.copy(&self.gpu, &slot.texture));
+            .and_then(|()| self.pool.copy(&self.gpu, &slot.texture, None));
         // The copy is queued on this device (or ordered before it by the compute handoff),
         // so freeing now cannot let the driver overwrite pixels still being read.
         let freed = fences.free(index, seq, false);
@@ -1313,7 +1313,7 @@ impl Session {
                 Err(error) => Err(error),
             }
         } else {
-            self.pool.copy(&self.gpu, &slot.texture)
+            self.pool.copy(&self.gpu, &slot.texture, None)
         };
         // A copy is queued on this device (or ordered before it by the compute handoff), so
         // releasing now cannot let the driver overwrite pixels still being read.

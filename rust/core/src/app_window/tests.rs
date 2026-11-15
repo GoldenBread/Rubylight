@@ -20,6 +20,7 @@ fn any() -> Settings {
         exe: None,
         title: None,
         closed: Closed::Display,
+        frame: Frame::Full,
     }
 }
 fn tree(pids: &[u32]) -> BTreeSet<u32> {
@@ -43,6 +44,7 @@ fn the_window_setting_is_off_unless_asked_for_and_reads_its_options() {
             exe: Some("Game.exe".into()),
             title: Some("Main".into()),
             closed: Closed::End,
+            frame: Frame::Full,
         })
     );
     assert_eq!(
@@ -53,6 +55,35 @@ fn the_window_setting_is_off_unless_asked_for_and_reads_its_options() {
         .closed,
         Closed::Display
     );
+}
+
+#[test]
+fn the_window_frame_is_full_unless_the_client_area_is_asked_for() {
+    let frame = |text: &str| settings(&Config::parse(text).unwrap()).unwrap().frame;
+    assert_eq!(frame("capture_window = window\n"), Frame::Full);
+    // A typo never crops the picture.
+    assert_eq!(
+        frame("capture_window = window\ncapture_window_frame = cliente\n"),
+        Frame::Full
+    );
+    for client in ["client", "Client", " CLIENT ", "content", "cropped"] {
+        assert_eq!(
+            frame(&format!(
+                "capture_window = window\ncapture_window_frame = {client}\n"
+            )),
+            Frame::Client,
+            "{client}"
+        );
+    }
+    for full in ["full", "Full", "window", ""] {
+        assert_eq!(
+            frame(&format!(
+                "capture_window = window\ncapture_window_frame = {full}\n"
+            )),
+            Frame::Full,
+            "{full}"
+        );
+    }
 }
 
 #[test]

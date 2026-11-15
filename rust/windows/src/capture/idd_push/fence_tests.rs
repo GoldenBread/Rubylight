@@ -216,7 +216,7 @@ fn a_fence_ring_carries_frames_both_ways_without_keyed_mutexes() -> Result<()> {
             } else {
                 // SAFETY: the fence is opened on this context's device.
                 unsafe { fences.context.Wait(&fences.written11, u64::from(seq))? };
-                let image = pool.copy(&gpu, &ring.slots[index].texture)?.unwrap();
+                let image = pool.copy(&gpu, &ring.slots[index].texture, None)?.unwrap();
                 fences.free(index, seq, false)?;
                 image
             };

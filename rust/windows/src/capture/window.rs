@@ -2,9 +2,11 @@
 //! stream shows that player's game instance. The target names the window and
 //! the display whose GPU and colour space the capture uses:
 //! `window:<hwnd>@<display>`, or `window:<hwnd>/<pid>@<display>` to name the
-//! process that owns the window too. Window targets are captured with Windows
-//! Graphics Capture only; Desktop Duplication and the display driver's frame
-//! push capture whole displays, so neither is ever used in their place.
+//! process that owns the window too. A `#client` suffix names only the
+//! window's client area, without its title bar and borders. Window targets
+//! are captured with Windows Graphics Capture only; Desktop Duplication and
+//! the display driver's frame push capture whole displays, so neither is ever
+//! used in their place.
 
 use anyhow::{Context, Result, bail, ensure};
 use windows::Win32::{
@@ -26,6 +28,9 @@ pub struct WindowTarget {
     /// The process that owns the window, when the target names it: a
     /// handle Windows gave to another window is then refused.
     pub process: Option<u32>,
+    /// Stream only the window's client area, without its title bar and
+    /// borders (`capture_window_frame = client`).
+    pub client: bool,
 }
 
 impl WindowTarget {
@@ -34,11 +39,18 @@ impl WindowTarget {
             window,
             display: display.to_string(),
             process: None,
+            client: false,
         }
     }
     pub fn owned_by(self, process: u32) -> Self {
         Self {
             process: Some(process),
+            ..self
+        }
+    }
+    pub fn only_client(self) -> Self {
+        Self {
+            client: true,
             ..self
         }
     }
@@ -50,6 +62,11 @@ impl WindowTarget {
         };
         let shape = || format!("capture target {name:?} is not window:<hwnd>@<display>");
         let (handle, display) = rest.split_once('@').with_context(shape)?;
+        let (display, client) = match display.split_once('#') {
+            Some((display, suffix)) if suffix.eq_ignore_ascii_case("client") => (display, true),
+            Some(_) => return Err(shape().into()),
+            None => (display, false),
+        };
         let (handle, process) = match handle.split_once('/') {
             Some((handle, process)) => (
                 handle,
@@ -78,6 +95,7 @@ impl WindowTarget {
         );
         Ok(Some(Self {
             process,
+            client,
             ..Self::new(window, display)
         }))
     }
@@ -92,7 +110,11 @@ impl std::fmt::Display for WindowTarget {
         if let Some(process) = self.process {
             write!(f, "/{process}")?;
         }
-        write!(f, "@{}", self.display)
+        write!(f, "@{}", self.display)?;
+        if self.client {
+            write!(f, "#client")?;
+        }
+        Ok(())
     }
 }
 

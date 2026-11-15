@@ -286,6 +286,7 @@ pub const APP: &[Setting] = settings! {
         "capture-window-exe", "Window's program (file name; empty for any of the app's)", Text;
         "capture-window-title", "Window title contains (empty for any)", Text;
         "capture-window-closed", "When the window closes", Choice(&["display","end"]);
+        "capture-window-frame", "Window's frame", Choice(&["full","client"]);
         "prefer-10bit-sdr", "Prefer 10-bit SDR", Bool;
         "frame-generation-mode", "Frame generation", Choice(&["none","game-provided"]);
         "gen1-framegen-fix", "Legacy frame generation capture fix (only while Frame generation is Use default)", Bool;

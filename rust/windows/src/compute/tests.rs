@@ -212,7 +212,7 @@ fn timed_out_handoff_keeps_its_copy_executable_after_teardown() -> Result<()> {
     let gate = Gate(unsafe { compute.device.CreateFence(0, D3D12_FENCE_FLAG_NONE)? });
     // SAFETY: The gate is on the same live device as the copy queue.
     unsafe { handoff.queue.Wait(&gate.0, 1)? };
-    destination.ready = Some(handoff.copy(&destination.texture, &source.texture)?);
+    destination.ready = Some(handoff.copy(&destination.texture, &source.texture, None)?);
     drop(source);
     drop(handoff);
     assert!(compute.is_stuck());
@@ -556,7 +556,7 @@ fn retired_queue_rejects_conversion_upload_and_capture_before_mutating_resources
     rejected(converter.convert_planes(&source, format(Pixel::Bgra8), None, None, &planes, None));
     rejected(compute.execute(&converter.slots[slot].list));
     rejected(compute.open(&image.texture));
-    rejected(handoff.copy(&destination.texture, &image.texture));
+    rejected(handoff.copy(&destination.texture, &image.texture, None));
     rejected(returns.acquired());
     rejected(Converter::new(compute.clone(), 4, 4, false));
     rejected(Handoff::new(compute.clone(), &gpu));
@@ -670,7 +670,7 @@ fn capture_ownership_ends_at_conversion_and_handoff_forgets_its_textures() -> Re
     let source = GpuImage::upload(&gpu, &pixels)?;
     let mut image = GpuImage::upload(&gpu, &pixels)?;
     let mut handoff = Handoff::new(compute.clone(), &gpu)?;
-    image.ready = Some(handoff.copy(&image.texture, &source.texture)?);
+    image.ready = Some(handoff.copy(&image.texture, &source.texture, None)?);
     let mut converter = Converter::new(compute.clone(), 4, 4, false)?;
     converter.values = crate::gpu_color::constants(
         &butterpollo_core::rtsp::Negotiated {

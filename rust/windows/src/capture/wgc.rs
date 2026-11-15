@@ -70,6 +70,9 @@ pub struct Wgc {
     high_rate: bool,
     /// Whether the capture draws the pointer.
     cursor: bool,
+    /// Whether a window's capture keeps only its client area, without the
+    /// title bar and borders (`capture_window_frame = client`).
+    crop_client: bool,
     /// A window's new size restarts the capture at it. The helper
     /// cannot: its shared textures keep the first size, so it fails and the
     /// host reopens it at the new size.
@@ -256,18 +259,20 @@ impl Wgc {
         Self::new_format(name, false)
     }
     pub fn new_format(name: &str, hdr: bool) -> Result<Self> {
-        Self::new_device(Device::new(name)?, hdr, false, None, false)
+        Self::new_device(Device::new(name)?, hdr, false, None, false, false)
     }
     /// Captures `window` (an HWND) instead of the display when given; the
     /// display still chooses the GPU and colour space. A display's capture
     /// draws the pointer; a window's only with `window_cursor` (an app's
-    /// window streamed alone, never a co-op player's).
+    /// window streamed alone, never a co-op player's). `window_client` keeps
+    /// only the window's client area, without its title bar and borders.
     pub(super) fn new_device(
         gpu: Device,
         hdr: bool,
         high_rate: bool,
         window: Option<usize>,
         window_cursor: bool,
+        window_client: bool,
     ) -> Result<Self> {
         // SAFETY: `output` and `gpu.device` are live, `d.Monitor` is that output's monitor, and
         // every call returns owned COM or WinRT objects.
@@ -361,6 +366,7 @@ impl Wgc {
                 format,
                 high_rate,
                 cursor,
+                crop_client: window.is_some() && window_client,
                 follow_resize: true,
                 closed,
                 closed_token,
@@ -402,7 +408,28 @@ impl Wgc {
         arrived.set()?;
         Ok(())
     }
+    /// The client area's box in `texture` for a window whose capture keeps
+    /// only it; None for the whole window or a display.
+    fn crop(&self, texture: &ID3D11Texture2D) -> Option<Crop> {
+        if !self.crop_client {
+            return None;
+        }
+        let Source::Window(window) = self.source else {
+            return None;
+        };
+        let mut desc = D3D11_TEXTURE2D_DESC::default();
+        // SAFETY: `texture` is live and `desc` is a live local that GetDesc fills.
+        unsafe { texture.GetDesc(&mut desc) };
+        super::app_window::window_client_box(window, (desc.Width, desc.Height))
+    }
     pub fn next_frame(&mut self) -> Result<Option<Image>> {
+        // The CPU path cannot crop a window's frame without another copy
+        // through the CPU; a stream of a window's client area is GPU-only.
+        if self.crop_client {
+            bail!(
+                "capture_window_frame = client needs GPU capture; the CPU capture path cannot crop the window's frame"
+            );
+        }
         self.check_color_space()?;
         let Some(frame) = self.next_native_frame()? else {
             return Ok(None);
@@ -468,7 +495,8 @@ impl Wgc {
             let access: IDirect3DDxgiInterfaceAccess = surface.cast()?;
             // SAFETY: `access` is the surface of `frame`, which is closed only after this closure.
             let texture: ID3D11Texture2D = unsafe { access.GetInterface()? };
-            let mut image = self.owned.copy(&self.gpu, &texture)?;
+            let crop = self.crop(&texture);
+            let mut image = self.owned.copy(&self.gpu, &texture, crop)?;
             if let Some(image) = image.as_mut() {
                 image.captured = captured;
                 image.wgc_stamp = stamp;

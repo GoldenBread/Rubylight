@@ -185,6 +185,25 @@ const video: Setting[] = [
     visibleWhen: (values) => streamsWindow(values),
   },
   {
+    key: 'capture_window_frame',
+    label: 'Window’s frame',
+    description:
+      'Streams only the game’s content, without the title bar and borders. A game that draws its own title bar keeps it. Leave it on Full window unless the game runs windowed and you want only its content.',
+    category: 'video',
+    group: 'Capture',
+    control: {
+      kind: 'select',
+      options: [
+        { value: 'full', label: 'Full window' },
+        { value: 'client', label: 'Only the game’s content' },
+      ],
+    },
+    // app_window.rs: client, content and cropped mean the client area; anything else is full.
+    aliases: { match: 'case', spellings: { content: 'client', cropped: 'client' } },
+    default: 'full',
+    visibleWhen: (values) => streamsWindow(values),
+  },
+  {
     key: 'capture_window_exe',
     label: 'Window’s program',
     description:

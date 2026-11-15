@@ -300,7 +300,7 @@ impl Session {
                     desc.ArraySize
                 );
             }
-            let image = self.owned.copy(&self.gpu, texture)?;
+            let image = self.owned.copy(&self.gpu, texture, None)?;
             Ok(image.map(|mut image| {
                 image.captured = Instant::now();
                 image

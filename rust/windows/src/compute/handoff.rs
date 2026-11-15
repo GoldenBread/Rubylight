@@ -1,6 +1,7 @@
 //! Captured textures on the compute queue: shared fences, the Desktop Duplication copy (`Handoff`), the textures lent and handed back (`Returns`) and when a copy is ready (`Ready`).
 
 use super::*;
+use crate::capture::Crop;
 
 /// A D3D12 fence the capture's D3D11 device can signal and wait for.
 fn shared_fence(compute: &Compute, device: &ID3D11Device5) -> Result<(ID3D12Fence, ID3D11Fence)> {
@@ -374,12 +375,14 @@ impl Handoff {
         })
     }
     /// Copy the frame the capture's D3D11 device holds into `destination`,
-    /// a shared texture. The copy completes when the result is ready; D3D11
-    /// work submitted after this call is ordered after it.
+    /// a shared texture, cropped to `crop` when given. The copy completes
+    /// when the result is ready; D3D11 work submitted after this call is
+    /// ordered after it.
     pub fn copy(
         &mut self,
         destination: &ID3D11Texture2D,
         source: &ID3D11Texture2D,
+        crop: Option<Crop>,
     ) -> Result<Ready> {
         self.compute.ensure_active()?;
         let readers = self
@@ -399,7 +402,37 @@ impl Handoff {
             let (allocator, commands, last, resources) = &mut self.lists[list];
             allocator.Reset()?;
             commands.Reset(&*allocator, None)?;
-            commands.CopyResource(&destination, &source);
+            if let Some(crop) = crop {
+                let destination_copy = D3D12_TEXTURE_COPY_LOCATION {
+                    pResource: std::mem::ManuallyDrop::new(Some(destination.clone())),
+                    Type: D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
+                    Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 {
+                        SubresourceIndex: 0,
+                    },
+                };
+                let source_copy = D3D12_TEXTURE_COPY_LOCATION {
+                    pResource: std::mem::ManuallyDrop::new(Some(source.clone())),
+                    Type: D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
+                    Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 {
+                        SubresourceIndex: 0,
+                    },
+                };
+                let box_ = crop.d3d12();
+                commands.CopyTextureRegion(
+                    &destination_copy,
+                    0,
+                    0,
+                    0,
+                    &source_copy,
+                    Some(std::ptr::from_ref(&box_)),
+                );
+                drop(std::mem::ManuallyDrop::into_inner(
+                    destination_copy.pResource,
+                ));
+                drop(std::mem::ManuallyDrop::into_inner(source_copy.pResource));
+            } else {
+                commands.CopyResource(&destination, &source);
+            }
             // The adapter-wide cache may release its references while the copy
             // runs; freeing memory the GPU still reads can hang its engine.
             *resources = [Some(destination.clone()), Some(source.clone())];

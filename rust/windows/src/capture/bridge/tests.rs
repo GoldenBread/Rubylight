@@ -257,7 +257,18 @@ fn helper_learns_whether_an_app_window_draws_the_pointer_but_not_its_match_rules
     let filtered = capture_config(&source);
     assert_eq!(filtered.values.len(), 1);
     assert!(crate::capture::window_cursor(&filtered));
+    assert!(!crate::capture::window_client(&filtered));
     assert!(!crate::capture::window_cursor(&capture_config(
         &Config::default()
     )));
+    // What part of the window is copied comes with it; the crop runs in the
+    // helper because the host reads its textures in place.
+    let source = Config::parse("capture_window = window\ncapture_window_frame = client\n").unwrap();
+    let filtered = capture_config(&source);
+    assert_eq!(filtered.values.len(), 2);
+    assert_eq!(
+        filtered.get(butterpollo_core::app_window::FRAME, ""),
+        "client"
+    );
+    assert!(crate::capture::window_client(&filtered));
 }

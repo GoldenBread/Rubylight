@@ -66,6 +66,25 @@ fn window_targets_parse_and_print_back() {
         WindowTarget::parse(r"window:0x4d/4242@\\.\DISPLAY9").unwrap(),
         Some(owned)
     );
+    // A client-area target keeps the choice through the target string.
+    let client = WindowTarget::new(77, r"\\.\DISPLAY9")
+        .owned_by(4242)
+        .only_client();
+    assert_eq!(client.to_string(), r"window:77/4242@\\.\DISPLAY9#client");
+    assert_eq!(
+        WindowTarget::parse(r"window:0x4d/4242@\\.\DISPLAY9#client").unwrap(),
+        Some(client.clone())
+    );
+    assert_eq!(
+        WindowTarget::parse(&client.to_string()).unwrap(),
+        Some(client)
+    );
+    assert!(
+        WindowTarget::parse(r"window:77@\\.\DISPLAY9#CLIENT")
+            .unwrap()
+            .unwrap()
+            .client
+    );
 }
 
 #[test]
@@ -96,6 +115,15 @@ fn malformed_window_targets_are_refused_not_opened_as_displays() {
         ),
         (r"window:/5@\\.\DISPLAY1", "is not window:<hwnd>@<display>"),
         (r"window:123/0@\\.\DISPLAY1", "names no process"),
+        (
+            r"window:123@\\.\DISPLAY1#",
+            "is not window:<hwnd>@<display>",
+        ),
+        (
+            r"window:123@\\.\DISPLAY1#framed",
+            "is not window:<hwnd>@<display>",
+        ),
+        (r"window:123@#client", "names no display"),
     ] {
         let error = WindowTarget::parse(name).unwrap_err().to_string();
         assert!(error.contains(says), "{name}: {error}");

@@ -96,7 +96,8 @@ export type TextKey =
   | 'capture-window'
   | 'capture-window-exe'
   | 'capture-window-title'
-  | 'capture-window-closed';
+  | 'capture-window-closed'
+  | 'capture-window-frame';
 export function blankApp(): App {
   return { name: '', cmd: '', 'working-dir': '', 'prep-cmd': [] };
 }

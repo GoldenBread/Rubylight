@@ -854,7 +854,7 @@ fn wgc_low_rate_explicitly_disables_the_windows_capture_throttle() -> Result<()>
     let _com = ComGuard::new()?;
     let gpu = Device::new("")?;
     for (high_rate, ticks) in [(false, 0), (true, 10_000), (false, 0)] {
-        let capture = Wgc::new_device(gpu.clone(), false, high_rate, None, false)?;
+        let capture = Wgc::new_device(gpu.clone(), false, high_rate, None, false, false)?;
         assert_eq!(capture.session.MinUpdateInterval()?.Duration, ticks);
     }
     Ok(())
@@ -968,7 +968,9 @@ fn unshareable_frame_falls_back_without_waiting_for_another_desktop_update() -> 
         },
     )?;
     // A normal D3D11-only snapshot cannot be opened by the compute queue.
-    let source = GpuPool::default().copy(&gpu, &uploaded.texture)?.unwrap();
+    let source = GpuPool::default()
+        .copy(&gpu, &uploaded.texture, None)?
+        .unwrap();
     assert!(!crate::compute::shareable(&source.texture));
     let mut pool = GpuPool {
         compute: Some(crate::compute::Handoff::new(
@@ -978,13 +980,61 @@ fn unshareable_frame_falls_back_without_waiting_for_another_desktop_update() -> 
         ..Default::default()
     };
     let frame = pool
-        .copy(&gpu, &source.texture)?
+        .copy(&gpu, &source.texture, None)?
         .context("fallback must return this frame, even if the desktop never updates again")?;
     assert!(pool.compute.is_none());
     assert!(!crate::compute::shareable(&frame.texture));
     assert!(frame.ready.is_none());
     drop(pool);
     assert_eq!(frame.readback(&mut None)?.bytes, expected);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires native D3D11 texture copies and readback"]
+fn a_window_crop_copies_only_the_client_area() -> Result<()> {
+    let _com = ComGuard::new()?;
+    let gpu = Device::new("")?;
+    // Each pixel records its source position: (row, column) in blue and green.
+    let mut bytes = vec![0u8; 4 * 4 * 4];
+    for y in 0..4 {
+        for x in 0..4 {
+            let at = (y * 4 + x) * 4;
+            bytes[at..at + 4].copy_from_slice(&[y as u8, x as u8, 0, 255]);
+        }
+    }
+    let source = GpuImage::upload(
+        &gpu,
+        &Image {
+            width: 4,
+            height: 4,
+            stride: 16,
+            bytes,
+            captured: Instant::now(),
+            pixel: Pixel::Bgra8,
+        },
+    )?;
+    let crop = client_box(
+        windows::Win32::Foundation::RECT {
+            left: 0,
+            top: 0,
+            right: 4,
+            bottom: 4,
+        },
+        windows::Win32::Foundation::POINT { x: 1, y: 1 },
+        (2, 2),
+        (4, 4),
+    );
+    let snapshot = GpuPool::default()
+        .copy(&gpu, &source.texture, crop)?
+        .context("copy dropped")?;
+    assert_eq!((snapshot.width, snapshot.height), (2, 2));
+    let read = snapshot.readback(&mut None)?;
+    assert_eq!((read.width, read.height), (2, 2));
+    assert_eq!(&read.bytes[0..4], &[1, 1, 0, 255]);
+    assert_eq!(&read.bytes[4..8], &[1, 2, 0, 255]);
+    assert_eq!(&read.bytes[8..12], &[2, 1, 0, 255]);
+    assert_eq!(&read.bytes[12..16], &[2, 2, 0, 255]);
     Ok(())
 }
 
@@ -1016,7 +1066,10 @@ fn wgc_compute_snapshots_match_d3d11_during_motion() -> Result<()> {
             let access: IDirect3DDxgiInterfaceAccess = surface.cast()?;
             // SAFETY: `access` is the surface of `frame`, which is closed only after this closure.
             let source: ID3D11Texture2D = unsafe { access.GetInterface()? };
-            let snapshot = wgc.owned.copy(&wgc.gpu, &source)?.context("copy dropped")?;
+            let snapshot = wgc
+                .owned
+                .copy(&wgc.gpu, &source, None)?
+                .context("copy dropped")?;
             anyhow::ensure!(snapshot.ready.is_some(), "compute fell back to graphics");
             // Read the candidate first. Reading the source before submitting
             // the copy would hide missing producer/consumer synchronization.

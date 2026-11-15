@@ -147,6 +147,8 @@ fn capture_config(config: &Config) -> Config {
         "wgc_helper_streaming_scope",
         // Whether a window's capture draws the pointer (`window_cursor`).
         butterpollo_core::app_window::SETTING,
+        // What part of a window is captured (`capture_window_frame`).
+        butterpollo_core::app_window::FRAME,
     ];
     Config {
         values: config
@@ -638,7 +640,7 @@ impl Session {
                 attempted_copy = true;
                 match &self.returns {
                     Some(returns) => self.lend(slot, returns.clone()).map(Some),
-                    None => self.owned.copy(&self.gpu, &texture.texture),
+                    None => self.owned.copy(&self.gpu, &texture.texture, None),
                 }
             } else {
                 Ok(None)
@@ -827,6 +829,10 @@ fn native_texture(frame: &NativeFrame) -> Result<ID3D11Texture2D> {
 /// Internal entry point. It runs before the host opens credentials, listeners,
 /// virtual displays or the tray, and never needs administrator privileges.
 pub fn run_worker(pipe: &str, parent: u32) -> Result<()> {
+    // The host sets this too, but the helper may be started on its own (a
+    // test, or a future caller): the window's frame and client rectangle are
+    // compared in physical pixels, so the crop does not drift at a scaled DPI.
+    enable_dpi_awareness();
     let pipe = Pipe::client(pipe, parent, PIPE_PREFIX)?;
     let result = worker(&pipe);
     if let Err(error) = &result {
@@ -896,12 +902,14 @@ fn worker(pipe: &Pipe) -> Result<()> {
         "WGC output disappeared before helper startup"
     );
     let _ = crate::gpu_priority::configure(&gpu, &config);
+    let client = super::window_client(&config);
     let mut capture = Wgc::new_device(
         gpu.clone(),
         hdr,
         config.boolean("wgc_high_rate_capture", false),
         window,
         super::window_cursor(&config),
+        client,
     )?;
     capture.drain_to_newest = config.boolean("wgc_drain_to_newest", false);
     if let Err(error) = capture.enable_notifications() {
@@ -962,6 +970,22 @@ fn worker(pipe: &Pipe) -> Result<()> {
     desc.MiscFlags =
         (D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0 | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0) as u32;
     validate_texture(&desc, desc.Width, desc.Height, desc.Format.0)?;
+    // `capture_window_frame = client`: crop the window's title bar and
+    // borders away in both copies below. The shared textures take the
+    // client's size, so a later change ends the helper like a resize and the
+    // host reopens it at the new size.
+    let crop = if client {
+        window.and_then(|window| {
+            super::app_window::window_client_box(window, (desc.Width, desc.Height))
+        })
+    } else {
+        None
+    };
+    let cropped = crop.is_some();
+    if let Some(crop) = crop {
+        desc.Width = crop.width();
+        desc.Height = crop.height();
+    }
     let compute_warnings = butterpollo_core::session::Warnings::default();
     let mut copy = handoff(&gpu, &config, &compute_warnings);
     let mut textures = Vec::with_capacity(SLOTS);
@@ -1039,8 +1063,59 @@ fn worker(pipe: &Pipe) -> Result<()> {
                 let texture = &textures[slot];
                 let result = (|| -> Result<()> {
                     let source = native_texture(&frame)?;
+                    let mut source_desc = D3D11_TEXTURE2D_DESC::default();
+                    // SAFETY: `source` is live and `source_desc` a live local.
+                    unsafe {
+                        source.GetDesc(&mut source_desc);
+                    }
+                    let frame_crop = if client {
+                        window.and_then(|window| {
+                            super::app_window::window_client_box(
+                                window,
+                                (source_desc.Width, source_desc.Height),
+                            )
+                        })
+                    } else {
+                        None
+                    };
+                    // The shared textures keep the first frame's size: a
+                    // client area that changes size needs the helper reopened,
+                    // as a window resize does.
+                    let crop = if cropped {
+                        let Some(crop) = frame_crop else {
+                            bail!(
+                                "the game window's content is unavailable; reopening its capture"
+                            );
+                        };
+                        ensure!(
+                            (crop.width(), crop.height()) == (desc.Width, desc.Height),
+                            "the game window's content changed size from {}x{} to {}x{}; reopening its capture",
+                            desc.Width,
+                            desc.Height,
+                            crop.width(),
+                            crop.height()
+                        );
+                        Some(crop)
+                    } else {
+                        if let Some(crop) = frame_crop
+                            && (crop.width(), crop.height()) != (desc.Width, desc.Height)
+                        {
+                            bail!(
+                                "the game window's content is now visible; reopening its capture"
+                            );
+                        }
+                        ensure!(
+                            (source_desc.Width, source_desc.Height) == (desc.Width, desc.Height),
+                            "the captured surface changed size from {}x{} to {}x{}; reopening its capture",
+                            desc.Width,
+                            desc.Height,
+                            source_desc.Width,
+                            source_desc.Height
+                        );
+                        frame_crop
+                    };
                     if let Some(compute) = &mut copy
-                        && let Err(error) = compute.copy(&texture.texture, &source)
+                        && let Err(error) = compute.copy(&texture.texture, &source, crop)
                     {
                         if let Some(loss) = crate::device_loss::DeviceLost::d3d11(&gpu.device)
                             .or_else(|| compute.device_removed())
@@ -1057,7 +1132,21 @@ fn worker(pipe: &Pipe) -> Result<()> {
                         // SAFETY: Both textures live on `gpu.device`, and this process holds
                         // `texture`'s keyed mutex (key 0).
                         unsafe {
-                            gpu.context.CopyResource(&*texture.texture, &source);
+                            if let Some(crop) = crop {
+                                let box_ = crop.d3d11();
+                                gpu.context.CopySubresourceRegion(
+                                    &*texture.texture,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    &source,
+                                    0,
+                                    Some(&box_),
+                                );
+                            } else {
+                                gpu.context.CopyResource(&*texture.texture, &source);
+                            }
                         }
                     }
                     Ok(())
