@@ -1878,6 +1878,12 @@ fn the_hdr_request_folds_into_display_hdr() {
         assert!(!migrate_overrides(&mut layer), "{alone}");
         assert_eq!(layer[HDR_REQUEST], alone);
     }
+    // An app saved with a device's request alone is accepted as it stands.
+    let extra = std::collections::BTreeMap::from([(
+        crate::device_overrides::SETTING.to_owned(),
+        serde_json::json!({"tv": {"config-overrides": {"dd_hdr_request_override": "force_on"}}}),
+    )]);
+    crate::device_overrides::check(&extra).unwrap();
 }
 /// A setting that never had an effect is dropped wherever it is stored.
 #[test]

@@ -1379,8 +1379,8 @@ Every setting in the console, by the console's tabs and groups, with its key and
 | Playnite: Every installed game | `playnite_sync_all_installed` | `true` | Adds every installed game in Playnite, as every launcher does. Turn it off for a shorter list: only recently played games and the categories and libraries below are added. |
 | Playnite: Recent games | `playnite_recent_games` | `10` | How many of the most recently played games to add. 0 adds none. |
 | Playnite: Played within | `playnite_recent_max_age_days` | `30` days | Recent games must have been played within this many days. 0 counts any game, played or not. |
-| Playnite: Categories to add | `playnite_sync_categories` | none | Also adds the installed games in these Playnite categories, as a JSON list of names: ["Couch", "Racing"]. Has an effect only while Every installed game is off. |
-| Playnite: Libraries to add | `playnite_sync_plugins` | none | Also adds the installed games that come from these Playnite library plugins, as a JSON list of plugin IDs. Has an effect only while Every installed game is off. |
+| Playnite: Categories to add | `playnite_sync_categories` | none | Also adds the installed games in these Playnite categories, as a JSON list of names: ["Couch", "Racing"]. |
+| Playnite: Libraries to add | `playnite_sync_plugins` | none | Also adds the installed games that come from these Playnite library plugins, as a JSON list of plugin IDs. |
 | Playnite: Games to leave out | `playnite_exclude_games` | none | A JSON list of Playnite game IDs the sync never adds. Deleting a game on the Games page keeps it out too, with no list to write. |
 | Playnite: Categories to leave out | `playnite_exclude_categories` | none | A JSON list of category names whose games the sync never adds. |
 | Playnite: Libraries to leave out | `playnite_exclude_plugins` | none | A JSON list of library plugin IDs whose games the sync never adds. |
