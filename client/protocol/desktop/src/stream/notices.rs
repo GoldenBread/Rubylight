@@ -72,6 +72,9 @@ impl Streaming {
                     for toast in self.guests.answered(answer, Instant::now()) {
                         self.show_toast(toast);
                     }
+                    if let Some(action) = self.guests.take_pending() {
+                        self.guest_action(action);
+                    }
                     self.needs_redraw = true;
                 }
                 Notice::HostAudio(answer) => {

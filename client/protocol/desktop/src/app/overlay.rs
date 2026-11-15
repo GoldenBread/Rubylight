@@ -246,6 +246,7 @@ pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mu
                                 });
                             }
                         }
+                        stream_menu::Page::Guests => s.show_guests(ui),
                         stream_menu::Page::Quality => menu_style::group(ui, |ui| {
                             let controls = s.menu_controls();
                             if s.facts.runtime_bitrate {

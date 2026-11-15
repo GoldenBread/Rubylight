@@ -25,6 +25,8 @@ pub enum Page {
     More,
     Quality,
     Commands,
+    /// Who waits to join and the guests: opened for a new join request.
+    Guests,
     Editor(Draft),
     /// Asks before a way out that ends the PC's session or game.
     Confirm(HostExit),
@@ -40,6 +42,7 @@ impl Page {
             Page::More => tr("More"),
             Page::Quality => tr("Quality"),
             Page::Commands => tr("PC commands"),
+            Page::Guests => tr("Guests"),
             Page::Editor(draft) if draft.id.is_some() => tr("Edit shortcut"),
             Page::Editor(_) => tr("New shortcut"),
             Page::Confirm(exit) => tr(exit.label()),

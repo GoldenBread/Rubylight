@@ -1,8 +1,9 @@
 //! Guests from other devices on the device playing (feature `session.guests`, docs/multiclient.md
-//! in the host repo): a device that wants to join this game is announced with a toast, and the
-//! stream menu's Guests row lets it in or turns it down, changes what each guest may do, hands
-//! over the keyboard and mouse, and kicks or blocks a guest. Read every 2 s while this device
-//! manages the guests, every 10 s otherwise, and never on a PC that doesn't offer them.
+//! in the host repo): a device that wants to join this game opens the stream menu on its Guests
+//! page, with Let in and Deny, and the stream menu's Guests row lets it in or turns it down while
+//! the host waits, changes what each guest may do, hands over the keyboard and mouse, and kicks or
+//! blocks a guest. Read every 2 s while this device manages the guests, every 10 s otherwise, and
+//! never on a PC that doesn't offer them.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -36,7 +37,11 @@ pub struct Guests {
     read: Option<SessionGuests>,
     /// The requests already announced, so each is announced once.
     announced: Vec<u32>,
+    /// The name of a new join request to put on screen, until the stream takes it.
+    prompt: Option<String>,
     busy: bool,
+    /// An action pressed while a read or another action was out: sent once that answers.
+    pending: Option<GuestAction>,
     next: Option<Instant>,
 }
 
@@ -50,7 +55,8 @@ impl Guests {
         self.read.as_ref()
     }
 
-    /// Takes the PC's answer. Returns the toasts to show: new join requests, or a failed change.
+    /// Takes the PC's answer. Returns the toasts to show: a failed change. A new join request is
+    /// put on screen through [`Self::take_prompt`].
     pub fn answered(&mut self, answer: GuestsAnswer, now: Instant) -> Vec<String> {
         self.busy = false;
         match answer {
@@ -61,9 +67,11 @@ impl Guests {
             GuestsAnswer::Read(Ok(read)) | GuestsAnswer::Changed(Ok(read)) => {
                 self.offered = Some(true);
                 self.next = Some(now + poll_after(Some(&read)));
-                let toasts = announcements(&read, &mut self.announced);
+                if let Some(name) = announcements(&read, &mut self.announced).into_iter().next() {
+                    self.prompt.get_or_insert(name);
+                }
                 self.read = Some(read);
-                toasts
+                Vec::new()
             }
             GuestsAnswer::Read(Err(error)) => {
                 eprintln!("nightjar: guests not read: {error}");
@@ -76,7 +84,29 @@ impl Guests {
 
     /// Whether a read is due at `now`.
     fn due(&self, now: Instant) -> bool {
-        self.offered != Some(false) && !self.busy && self.next.is_none_or(|next| now >= next)
+        self.offered != Some(false) && !self.busy && self.pending.is_none() && self.next.is_none_or(|next| now >= next)
+    }
+
+    /// The name of a join request that came in since the last call: the stream opens its menu on
+    /// the Guests page for it.
+    pub fn take_prompt(&mut self) -> Option<String> {
+        self.prompt.take()
+    }
+
+    /// `action` to send now, or None when a read or another action is out: then it is kept and
+    /// [`Self::take_pending`] hands it over once that answers. A later press replaces it.
+    fn queue(&mut self, action: GuestAction) -> Option<GuestAction> {
+        if self.busy {
+            self.pending = Some(action);
+            return None;
+        }
+        self.busy = true;
+        Some(action)
+    }
+
+    /// The action kept while the PC was busy, once it answered.
+    pub fn take_pending(&mut self) -> Option<GuestAction> {
+        if self.busy { None } else { self.pending.take() }
     }
 }
 
@@ -85,13 +115,13 @@ fn poll_after(read: Option<&SessionGuests>) -> Duration {
     if read.is_some_and(|r| r.manage) { Duration::from_millis(GUESTS_POLL_MS) } else { IDLE_POLL }
 }
 
-/// The toasts for join requests not announced yet; only the device that answers them sees them.
+/// The names of the join requests not announced yet; only the device that answers them sees them.
 fn announcements(read: &SessionGuests, announced: &mut Vec<u32>) -> Vec<String> {
     let new: Vec<_> = read.new_requests(announced).map(|r| (r.id, r.name.clone())).collect();
     new.into_iter()
         .map(|(id, name)| {
             announced.push(id);
-            trf("{} wants to join your game. Answer under Guests in the stream menu.", &[&name])
+            name
         })
         .collect()
 }
@@ -150,14 +180,12 @@ impl Streaming {
         });
     }
 
-    /// Sends one action; the PC's answer is the list the menu shows next.
+    /// Sends one action, or keeps it until the read or action out answers; the PC's answer is the
+    /// list the menu shows next.
     pub fn guest_action(&mut self, action: GuestAction) {
-        if self.guests.busy {
-            return;
-        }
         let Some(client) = self.guests_client() else { return };
+        let Some(action) = self.guests.queue(action) else { return };
         let shared = self.shared.clone();
-        self.guests.busy = true;
         std::thread::spawn(move || {
             let answer = client.guest_action(&action).map_err(|e| e.to_string());
             shared.notify(Notice::Guests(GuestsAnswer::Changed(answer)));
@@ -168,10 +196,16 @@ impl Streaming {
     pub fn show_guests(&mut self, ui: &mut Ui) {
         let Some(read) = self.guests.read().cloned() else { return };
         let mut chosen = None;
+        // Opened for a join request, nothing has the focus yet: Let in takes it, as on Android.
+        let mut focus_first = ui.ctx().memory(|m| m.focused().is_none());
         for request in &read.waiting {
             ui.label(trf("{} wants to join your game", &[&request.name]));
             ui.horizontal(|ui| {
-                if ui.button(tr("Let in")).clicked() {
+                let let_in = ui.button(tr("Let in"));
+                if std::mem::take(&mut focus_first) {
+                    let_in.request_focus();
+                }
+                if let_in.clicked() {
                     chosen = Some(GuestAction::Approve { id: request.id, permission: None });
                 }
                 if ui.button(tr("Deny")).clicked() {
@@ -231,17 +265,36 @@ mod tests {
     }
 
     #[test]
-    fn each_request_is_announced_once_and_only_to_the_manager() {
+    fn each_request_is_put_on_screen_once_and_only_to_the_manager() {
         let mut guests = Guests::default();
         let now = Instant::now();
-        let toasts = guests.answered(GuestsAnswer::Read(Ok(read(true, &[(3, "Tablet")]))), now);
-        assert_eq!(toasts.len(), 1);
-        assert!(toasts[0].contains("Tablet"));
-        assert!(guests.answered(GuestsAnswer::Read(Ok(read(true, &[(3, "Tablet")]))), now).is_empty());
+        assert!(guests.answered(GuestsAnswer::Read(Ok(read(true, &[(3, "Tablet")]))), now).is_empty(), "a prompt, not a toast");
+        assert_eq!(guests.take_prompt().as_deref(), Some("Tablet"));
+        guests.answered(GuestsAnswer::Read(Ok(read(true, &[(3, "Tablet")]))), now);
+        assert_eq!(guests.take_prompt(), None);
         assert!(guests.shown());
         let mut other = Guests::default();
-        assert!(other.answered(GuestsAnswer::Read(Ok(read(false, &[(3, "Tablet")]))), now).is_empty());
+        other.answered(GuestsAnswer::Read(Ok(read(false, &[(3, "Tablet")]))), now);
+        assert_eq!(other.take_prompt(), None);
         assert!(!other.shown());
+    }
+
+    #[test]
+    fn an_answer_pressed_during_a_read_is_sent_once_the_read_answers() {
+        let mut guests = Guests::default();
+        let now = Instant::now();
+        guests.answered(GuestsAnswer::Read(Ok(read(true, &[(3, "Tablet")]))), now);
+        // A read is out when Let in is pressed: kept, not dropped, and no read starts meanwhile.
+        guests.busy = true;
+        assert_eq!(guests.queue(GuestAction::Approve { id: 3, permission: None }), None);
+        assert_eq!(guests.take_pending(), None, "still waiting for the read");
+        assert!(!guests.due(now + IDLE_POLL * 10));
+        guests.answered(GuestsAnswer::Read(Ok(read(true, &[(3, "Tablet")]))), now);
+        assert_eq!(guests.take_pending(), Some(GuestAction::Approve { id: 3, permission: None }));
+        assert_eq!(guests.take_pending(), None);
+        // With nothing out, an action goes at once.
+        assert_eq!(guests.queue(GuestAction::Deny(3)), Some(GuestAction::Deny(3)));
+        assert!(guests.busy);
     }
 
     #[test]

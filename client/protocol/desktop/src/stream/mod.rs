@@ -1948,10 +1948,23 @@ impl Streaming {
         })
     }
 
-    /// Opens the stream menu when a held Guide asked for it on the last tick.
+    /// Opens the stream menu when a held Guide asked for it on the last tick, and on its Guests
+    /// page for a new join request, as Android asks on screen. A menu already on another page, or
+    /// a sheet over it, is not taken over: the request is said in a toast and waits under Guests.
     pub fn open_guide_menu(&mut self, window: *mut SDL_Window, pads: &mut Gamepads) {
         if std::mem::take(&mut self.guide_menu) && !self.menu_visible {
             self.toggle_menu(window, pads);
+        }
+        if let Some(name) = self.guests.take_prompt() {
+            if !self.menu_visible {
+                self.toggle_menu(window, pads);
+            }
+            if self.menu_visible && self.menu_page == crate::stream_menu::Page::Grid && self.session_page.is_none() && self.shortcut_sheet.is_none() {
+                self.menu_page = crate::stream_menu::Page::Guests;
+                self.needs_redraw = true;
+            } else {
+                self.show_toast(trf("{} wants to join your game", &[&name]));
+            }
         }
     }
 
