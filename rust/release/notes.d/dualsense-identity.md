@@ -1,0 +1,2 @@
+# DualSense identity
+- **A game that reads the controller's name can get Sony's DualSense without a waveform-capable client.** The controller settings now say that the VHF DualSense reports the virtual gamepad driver's name and has no USB parent, so a game that reads controller names can drift the camera or cursor with no input; for that game, choose **DualSense with waveform haptics (USB/IP)** (usbip-win2, publishes Sony's USB identity, works with any client) or **Xbox Series**. Automatic selection is unchanged.

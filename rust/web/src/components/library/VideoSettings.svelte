@@ -24,8 +24,8 @@
     { value: 'vhf_xbox_one', label: 'Xbox One' },
     { value: 'vhf_xbox', label: 'Xbox Series' },
     { value: 'vhf_ds4', label: 'DualShock 4' },
-    { value: 'vhf_ds5', label: 'DualSense' },
-    { value: 'usbip_ds5', label: 'DualSense with waveform haptics (USB/IP)', hint: 'Requires usbip-win2 on the host and a waveform-capable client. Start the game after connecting the controller.' },
+    { value: 'vhf_ds5', label: 'DualSense', hint: 'Some games read the controller’s name and treat this pad as an unknown controller, so the camera or cursor drifts with no input; for such a game choose DualSense with waveform haptics (USB/IP) or Xbox Series instead.' },
+    { value: 'usbip_ds5', label: 'DualSense with waveform haptics (USB/IP)', hint: 'Requires usbip-win2 on the host. Start the game after connecting the controller.' },
     { value: 'usbip_switch2', label: 'Switch 2 Pro (USB/IP)', hint: 'Requires usbip-win2 on the host. Start the game after connecting the controller.' },
     { value: 'vhf_switch', label: 'Switch Pro' },
     { value: 'vhf_steam', label: 'Steam Controller', hint: 'Requires the current virtual gamepad driver; run Rubylight setup again if the stream says the driver lacks it.' },
@@ -63,7 +63,7 @@
       {draft}
       key="gamepad"
       label="Controller type"
-      hint="Automatic matches each device’s controller: DualSense for PlayStation or for motion and touchpad input, Switch Pro for Nintendo, Xbox Series otherwise. A choice here uses that controller for this app."
+      hint="Automatic matches each device’s controller: DualSense for PlayStation or for motion and touchpad input, Switch Pro for Nintendo, Xbox Series otherwise. A choice here uses that controller for this app. If a game drifts the camera or cursor with no input, it may read the controller’s name: choose DualSense with waveform haptics (USB/IP) or Xbox Series for this app."
       options={GAMEPADS}
     />
   </div>
