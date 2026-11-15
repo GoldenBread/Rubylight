@@ -24,13 +24,17 @@ pub const TIMEOUT: Millis = 30_000;
 pub const PUBLISH: Millis = LOOKUP_DEADLINE + PUT_WAIT;
 /// How often the host looks for the record of a device it heard from lately ([`crate::host`]),
 pub const HOST_POLL: Millis = 10_000;
-/// and of every other paired device: the DHT is asked half as often for devices that are not
-/// trying to connect.
-pub const HOST_POLL_IDLE: Millis = 20_000;
+/// and of every other paired device, so the DHT is asked less often for devices that are not
+/// trying to connect. A device from before the punch budget stops punching 30 s after it
+/// starts; this, a lookup and the punches still fit in that.
+pub const HOST_POLL_IDLE: Millis = 15_000;
+/// How late the host's loop may start a due poll: it goes round once a second.
+pub const HOST_LOOP: Millis = 1_000;
 /// How long a device keeps punching after its record is stored: the host's next look for it at
-/// the slower rate, that lookup, and a margin for the punches to meet. A host behind a NAT that
-/// filters by port learns the device's endpoints only this way.
-pub const AFTER_PUBLISH: Millis = HOST_POLL_IDLE + LOOKUP_DEADLINE + 15_000;
+/// the slower rate (counted from the start of the look before), that lookup, and a margin for
+/// the punches to meet. A host behind a NAT that filters by port learns the device's endpoints
+/// only this way.
+pub const AFTER_PUBLISH: Millis = HOST_POLL_IDLE + HOST_LOOP + LOOKUP_DEADLINE + 15_000;
 
 /// Until when a device keeps punching that starts publishing its record at `now`.
 pub fn device_deadline(now: Millis) -> Millis {

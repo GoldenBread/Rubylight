@@ -404,7 +404,7 @@ fn a_host_that_finds_the_devices_record_late_still_gets_through() {
     // that filters by port reach nobody before that.
     for host_delay in [
         25_000,
-        punch::PUBLISH + punch::HOST_POLL_IDLE + crate::node::LOOKUP_DEADLINE,
+        punch::PUBLISH + punch::HOST_POLL_IDLE + punch::HOST_LOOP + crate::node::LOOKUP_DEADLINE,
     ] {
         let mut world = World::new(PortRestricted, PortRestricted);
         assert!(world.punch(host_delay), "host after {host_delay} ms");

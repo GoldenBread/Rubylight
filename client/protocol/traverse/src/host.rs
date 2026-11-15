@@ -35,8 +35,10 @@ const POLL_IDLE: Millis = punch::HOST_POLL_IDLE;
 /// has a path open.
 const ACTIVE_FOR: Millis = 10 * 60_000;
 // A record published just after a slow poll began is found within the device's punch budget:
-// the wait, one lookup (both windows run at once), and the punches.
-const _: () = assert!(POLL_IDLE + crate::node::LOOKUP_DEADLINE < punch::AFTER_PUBLISH);
+// the interval from that poll's start, the loop's lateness, one lookup (both windows run at
+// once), and the punches.
+const _: () =
+    assert!(POLL_IDLE + punch::HOST_LOOP + crate::node::LOOKUP_DEADLINE < punch::AFTER_PUBLISH);
 /// A device's path problem shows this long after the device last tried: one still trying
 /// renews it with every punch or record.
 const PATH_ERROR_FOR: Millis = 30_000;
@@ -569,6 +571,8 @@ impl HostService {
         let free = MAX_POLLS.saturating_sub(devices.iter().filter(|state| state.polling).count());
         let mut poll = Vec::new();
         for index in due.into_iter().take(free) {
+            // The interval counts from the poll's start, so a slow lookup does not stretch it.
+            devices[index].last_poll = Some(now);
             devices[index].polling = true;
             poll.push((
                 devices[index].device.id.clone(),
@@ -677,7 +681,6 @@ impl HostService {
         let Some(state) = devices.iter_mut().find(|state| state.device.id == id) else {
             return;
         };
-        state.last_poll = Some(now);
         state.polling = false;
         let Some(record) = found else { return };
         let fresh = unix.abs_diff(record.time) <= record::CLIENT_FRESH_SECONDS;
@@ -691,8 +694,15 @@ impl HostService {
         state.answered = Some(record.session);
         let peer = Peer::of(state);
         drop(devices);
+        // A punch may be starting this very path: one start per device session, so no two
+        // tunnels ever seal under the same keys.
+        let claim = (peer.tag, record.session);
+        if !self.shared.starting.lock().unwrap().insert(claim) {
+            return;
+        }
         let candidates = punch::candidates(&record.endpoints, record.nat);
         self.open(&peer, record.session, candidates);
+        self.shared.starting.lock().unwrap().remove(&claim);
     }
 }
 
