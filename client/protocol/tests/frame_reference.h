@@ -102,7 +102,7 @@ public:
             size_t size = pyroReadLe32(data + offset);
             const uint32_t flags = pyroReadLe32(data + offset + 4);
             offset += 8;
-            if (!size || size > 1400 || size > length - offset || (flags & ~15u)) return false;
+            if (!size || size > PYRO_MAX_PACKET_BYTES || size > length - offset || (flags & ~15u)) return false;
             const uint8_t *packet = data + offset;
             offset += size;
             if (!(flags & PYRO_PACKET_CONTIGUOUS)) {
@@ -114,7 +114,7 @@ public:
             if (flags & PYRO_PACKET_FRAME_START) {
                 if (hasHeader || offset != 12 + size || size < 16 || packet[0] != 1) return false;
                 lastLength = packet[4] | (uint32_t(packet[5]) << 8);
-                if (!lastLength || lastLength > 1400) return false;
+                if (!lastLength || lastLength > PYRO_MAX_PACKET_BYTES) return false;
                 std::copy(packet + 8, packet + 16, header.begin());
                 const uint32_t word = pyroReadLe32(header.data());
                 if (!(word & 0x80000000u) || word == UINT32_MAX ||
