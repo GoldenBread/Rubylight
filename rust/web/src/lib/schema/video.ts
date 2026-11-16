@@ -188,7 +188,9 @@ const video: Setting[] = [
     key: 'capture_window_frame',
     label: 'Window’s frame',
     description:
-      'Streams only the game’s content, without the title bar and borders. A game that draws its own title bar keeps it. Leave it on Full window unless the game runs windowed and you want only its content.',
+      'Streams only the game’s content, without the title bar and borders. A game that draws its own title bar keeps it.',
+    details:
+      'Leave it on Full window unless the game runs windowed and you want only its content.',
     category: 'video',
     group: 'Capture',
     control: {
