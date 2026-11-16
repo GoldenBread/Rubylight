@@ -243,12 +243,15 @@ impl InputQueue {
 
     /// Sends controller identities (0x55000080) and the C button: only for a host with
     /// `ControllerIdentityVersion` (`Feature::ControllerIdentity`). Otherwise identities are
-    /// dropped and the C button is cleared.
+    /// dropped, and an app that sends C keeps it from such a host (`InputQueue` never
+    /// clears the flag, which is also a Steam Controller's left grip touch).
     pub fn set_controller_identity(&mut self, offered: bool) {
         self.controller_identity = offered;
     }
 
-    /// Whether [`Self::send_controller_identity`] and the C button reach the host.
+    /// Whether [`Self::send_controller_identity`] reaches the host. An app that
+    /// sends the C button gates that too (the desktop does); the flag is also a
+    /// Steam Controller's left grip, which [`Self::send_controller`] keeps.
     pub fn controller_identity(&self) -> bool {
         self.controller_identity
     }
@@ -424,10 +427,12 @@ impl InputQueue {
         if buttons & 0x8000_0000 != 0 {
             buttons &= 0xFFFF;
         }
-        // Only a host that takes controller identities knows the C button.
-        if !self.controller_identity {
-            buttons &= !button::C;
-        }
+        // The C button's flag (0x40_0000) is also a Steam Controller's left
+        // grip touch (`rubylight_protocol::steam_controller::LEFT_GRIP_TOUCH_FLAG`),
+        // so it may not be cleared here for every pad: a host without
+        // `ControllerIdentityVersion` would never see the left grip
+        // (nightjar#125). The desktop sends its own C press only to a host
+        // that takes identities (`send_state` in `gamepad.rs`).
         let number = if self.sunshine {
             number % u16::from(MAX_CONTROLLERS)
         } else {

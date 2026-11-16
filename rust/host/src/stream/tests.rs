@@ -1194,6 +1194,32 @@ fn pad_feedback_forwards_rumble_and_each_family_extra() {
     assert!(feedback_packets(2, 3, &[255; 8]).is_empty());
 }
 #[test]
+fn trigger_rumble_alone_still_reaches_the_client() {
+    // The reporter's test (nightjar#124): impulse triggers on, ordinary
+    // vibration off, so an Xbox pad's report has zero body magnitudes and only
+    // its two trigger magnets running.
+    let packets = feedback_packets(1, 4, &[0, 0, 0, 0, 0x40, 0x00, 0x20, 0x00]);
+    assert_eq!(packets.len(), 2);
+    assert_eq!(packets[0].0, RUMBLE_DATA);
+    assert_eq!(
+        &packets[0].1[4..],
+        &[1, 0, 0, 0, 0, 0],
+        "the body motors' stop"
+    );
+    assert_eq!(
+        packets[1],
+        (RUMBLE_TRIGGER_DATA, vec![1, 0, 0x40, 0, 0x20, 0]),
+        "left trigger 0x0040, right 0x0020"
+    );
+    // Both go out while rumble is on.
+    let mut rumble = RumbleForwarded::default();
+    assert!(
+        packets
+            .iter()
+            .all(|(kind, payload)| rumble.forward(true, *kind, payload))
+    );
+}
+#[test]
 fn vhf_rumble_and_stop_keep_the_strengths_in_moonlight_packets() {
     for (kind, size) in [(4, 8), (5, 32)] {
         for strengths in [[0x00, 0x80, 0x00, 0x40], [0; 4]] {

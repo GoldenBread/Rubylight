@@ -477,6 +477,59 @@ fn release_skips_a_pad_that_holds_nothing_and_stays_loud_for_one_that_does() {
     // Drop would unplug through the missing handle and strand slot 15.
     pads.active.clear();
 }
+/// A Steam Controller's left grip touch and a Switch 2 Pro Controller's C
+/// button share a flag; only the Steam Controller's pad may see it
+/// (nightjar#125: the host masked the grip away for every pad).
+#[test]
+fn the_steam_controllers_left_grip_bit_reaches_its_own_pad() {
+    use butterpollo_core::input_policy::VHF_STEAM_CONTROLLER;
+    use butterpollo_core::switch2::BUTTON_C;
+    assert_eq!(BUTTON_C, 0x0040_0000);
+    assert_eq!(
+        profile_button_word(Some(VHF_STEAM_CONTROLLER), BUTTON_C | 0x1000),
+        BUTTON_C | 0x1000
+    );
+    // Every other pad has no grip sense, and its C press is not a button there.
+    for profile in [None, Some(4), Some(6)] {
+        assert_eq!(profile_button_word(profile, BUTTON_C | 0x1000), 0x1000);
+    }
+}
+
+/// Windows retires the virtual pads when it leaves D0; the driver answers every
+/// request with ERROR_DEVICE_REMOVED until its slot is created again, and no
+/// other driver error is a reason to create one.
+#[test]
+fn only_the_drivers_device_removed_error_creates_the_pad_again() {
+    use windows::Win32::Foundation::{E_HANDLE, ERROR_DEVICE_REMOVED};
+    let removed = anyhow::Error::new(windows::core::Error::from_hresult(
+        ERROR_DEVICE_REMOVED.to_hresult(),
+    ));
+    assert!(device_removed(&removed));
+    assert!(device_removed(
+        &removed.context("the gamepad driver could not report feedback")
+    ));
+    let missing = anyhow::Error::new(windows::core::Error::from_hresult(E_HANDLE));
+    assert!(!device_removed(&missing));
+    assert!(!device_removed(&anyhow::anyhow!("injected failure")));
+}
+
+/// A re-creation the driver refuses keeps the pad, so its next input tries
+/// again, and a pad that is not plugged has nothing to create.
+#[test]
+fn a_recreate_without_the_driver_keeps_the_pad_for_the_next_attempt() {
+    let mut pads = broken_pads();
+    assert!(pads.recreate(0).is_ok(), "no pad, nothing to create");
+    pads.active.insert(0, 15);
+    pads.profiles.insert(0, 4);
+    assert!(
+        pads.recreate(0).is_err(),
+        "the broken driver reports its error"
+    );
+    assert_eq!(pads.active.get(&0), Some(&15));
+    assert_eq!(pads.profiles.get(&0), Some(&4));
+    pads.active.clear();
+}
+
 /// Gamepads whose driver handle is missing: every plug and unplug fails.
 fn broken_pads() -> Gamepads {
     let mut pads = Gamepads::open_options(

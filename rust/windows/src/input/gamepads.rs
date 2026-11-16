@@ -73,6 +73,10 @@ pub struct Gamepads {
     feedback_failures: BTreeMap<u16, FeedbackFailure>,
     /// Feedback reports read from the driver since the thread last asked.
     feedback_drained: usize,
+    /// When feedback last found the driver's device removed: a driver that
+    /// stays gone is asked to create its pads again [`RECREATE_RETRY`] apart,
+    /// not at every poll.
+    recreated_at: Option<Instant>,
     /// `gamepad_driver_host_priority` while a VHF pad is plugged.
     driver_host: Option<Box<dyn driver_host::Held>>,
     /// How a hold on it is taken; tests count instead of raising.
@@ -227,6 +231,7 @@ impl Gamepads {
             last_feedback: BTreeMap::new(),
             feedback_failures: BTreeMap::new(),
             feedback_drained: 0,
+            recreated_at: None,
             driver_host: None,
             driver_host_acquire: driver_host::acquire,
             decks: BTreeMap::new(),
@@ -639,7 +644,26 @@ impl Gamepads {
                     self.started.elapsed(),
                     self.policy.back_button_timeout,
                 );
-                self.submit(*id, buttons, left_trigger, right_trigger, sticks)?;
+                let submitted = self.submit(*id, buttons, left_trigger, right_trigger, sticks);
+                if let Err(error) = submitted {
+                    // The pads do not survive the machine's sleep: the driver
+                    // retires its HID children and refuses input until its
+                    // slot is created again.
+                    if !device_removed(&error) {
+                        return Err(error);
+                    }
+                    // A driver that stays gone is asked once a second, not at
+                    // every controller state.
+                    if self
+                        .recreated_at
+                        .is_some_and(|at| at.elapsed() < RECREATE_RETRY)
+                    {
+                        return Err(error);
+                    }
+                    self.recreated_at = Some(Instant::now());
+                    self.recreate(*id)?;
+                    self.submit(*id, buttons, left_trigger, right_trigger, sticks)?;
+                }
             }
             Event::Arrival {
                 id,
@@ -864,6 +888,7 @@ impl Gamepads {
     /// others' feedback, and a repeated report is not sent again.
     pub fn feedback(&mut self) -> Vec<(u16, u16, Vec<u8>)> {
         let mut drained = 0;
+        let mut removed = Vec::new();
         let mut reports = poll_feedback(
             &self.active,
             &mut self.last_feedback,
@@ -873,10 +898,38 @@ impl Gamepads {
             |slot| {
                 let report = self.backend.feedback(slot);
                 drained += usize::from(matches!(report, Ok(Some(_))));
+                if report.as_ref().is_err_and(|error| device_removed(error)) {
+                    removed.push(slot);
+                }
                 report
             },
         );
         self.feedback_drained += drained;
+        // A poll that finds the pad's device gone is what the machine's sleep
+        // leaves behind; create the slot again so a game's rumble works before
+        // the player touches anything.
+        if !removed.is_empty()
+            && self
+                .recreated_at
+                .is_none_or(|at| at.elapsed() >= RECREATE_RETRY)
+        {
+            self.recreated_at = Some(Instant::now());
+            for slot in removed {
+                let id = self
+                    .active
+                    .iter()
+                    .find_map(|(&id, &global)| (u32::from(global) == slot).then_some(id));
+                if let Some(id) = id
+                    && let Err(error) = self.recreate(id)
+                {
+                    tracing::debug!(
+                        controller = id,
+                        error = format!("{error:#}"),
+                        "a virtual controller could not be re-created"
+                    );
+                }
+            }
+        }
         let arrivals = &self.arrivals;
         let steam_haptics = &mut self.steam_haptics;
         reports.retain_mut(|(id, kind, data)| {
@@ -988,11 +1041,39 @@ impl Gamepads {
             });
             return Ok(());
         }
-        // Only the Switch 2 Pro Controller has a C button.
-        let buttons = buttons & !butterpollo_core::switch2::BUTTON_C;
+        let buttons = profile_button_word(self.profiles.get(&id).copied(), buttons);
         let buttons = self.profile_buttons(id, buttons);
         self.backend
             .submit(self.slot(id)?, buttons, left, right, sticks)
+    }
+    /// Creates controller `id`'s pad again in the slot it owns. The driver
+    /// retires every HID child when Windows leaves D0 (sleep, hibernate) and
+    /// then refuses input for the slot until its owner creates it again
+    /// (`libvirtualgamepad` 0.1.0-beta.10's `protocol.h`), so a controller
+    /// that was plugged when the PC slept plays again without reconnecting.
+    fn recreate(&mut self, id: u16) -> Result<()> {
+        let Some(&global) = self.active.get(&id) else {
+            return Ok(());
+        };
+        let Some(&profile) = self.profiles.get(&id) else {
+            return Ok(());
+        };
+        self.backend.plug(u32::from(global), profile)?;
+        // Whatever the retired pad had pending belongs to a device Windows
+        // has already removed.
+        self.last_feedback.remove(&id);
+        self.feedback_failures.remove(&id);
+        if profile == VHF_STEAM_CONTROLLER {
+            // The new slot starts from the driver's captured firmware details.
+            self.send_steam_attributes(id);
+        }
+        tracing::info!(
+            controller = id,
+            slot = global,
+            profile = profile_name(profile),
+            "virtual controller re-created after the gamepad driver's device was removed"
+        );
+        Ok(())
     }
     /// The buttons as the pad's profile takes them: a Steam Controller's
     /// own, and on a ViGEmBus DualShock 4 Back also clicking the touchpad
@@ -1072,6 +1153,10 @@ impl Gamepads {
 /// out one pending report per call, so a game writing faster than the poll
 /// left a backlog, and its rumble lagged or ran on after it stopped.
 pub(super) const FEEDBACK_DRAIN: usize = 8;
+/// How often a pad the driver's device lost is created again while the driver
+/// keeps refusing, so a sleep that leaves the driver gone is not asked at
+/// every 8 ms poll.
+const RECREATE_RETRY: Duration = Duration::from_secs(1);
 /// What a feedback report sets, as bits: rumble 1, lights 2, trigger
 /// effects 4. A PlayStation report (kind 5) always carries rumble, and its
 /// lightbar and trigger effects only with flag 1 and 2 of byte 7
@@ -1190,6 +1275,28 @@ fn profile_name(profile: u16) -> &'static str {
         butterpollo_core::input_policy::USBIP_SWITCH2 => "usbip_switch2",
         _ => "vhf",
     }
+}
+/// The button word a pad's profile gets. Only the Switch 2 Pro Controller has a
+/// C button, and its flag (0x40_0000) is also a Steam Controller's left grip
+/// touch (`rubylight_protocol::steam_controller::LEFT_GRIP_TOUCH_FLAG`): the
+/// Steam Controller's pad must get the bit, or its left grip never registers
+/// (nightjar#125).
+fn profile_button_word(profile: Option<u16>, buttons: u32) -> u32 {
+    if profile == Some(VHF_STEAM_CONTROLLER) {
+        buttons
+    } else {
+        buttons & !butterpollo_core::switch2::BUTTON_C
+    }
+}
+/// Whether an error is the driver saying its device is gone: what the virtual
+/// pads answer after Windows leaves D0 (sleep, hibernate), before the slot is
+/// created again (`libvirtualgamepad`'s `protocol.h`).
+fn device_removed(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<windows::core::Error>()
+            .is_some_and(|error| error.code() == ERROR_DEVICE_REMOVED.to_hresult())
+    })
 }
 /// The session warning for a Nintendo controller (Moonlight type 3) that automatic
 /// selection made another pad because the driver has no Switch Pro profile.
