@@ -203,6 +203,50 @@ public class NavigationDialogBuilderTest {
         } finally { activity.destroy(); }
     }
 
+    /** The close-game dialog's row ran past the panel and its last capsule was cut at the edge. */
+    @Test public void aRowOfCapsulesWiderThanThePanelIsSeen() {
+        ActivityController<UiNavigationTest.Screen> activity = Robolectric.buildActivity(UiNavigationTest.Screen.class).setup();
+        try {
+            android.widget.LinearLayout bar = new android.widget.LinearLayout(activity.get());
+            bar.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+            bar.setPadding(32, 0, 32, 0);
+            for (int i = 0; i < 2; i++) {
+                android.widget.Button button = new android.widget.Button(activity.get());
+                bar.addView(button, new android.widget.LinearLayout.LayoutParams(400, 120));
+            }
+            layOut(bar, 600);
+            assertTrue("two capsules wider than the bar", NavigationDialogBuilder.rowWiderThanBar(bar));
+
+            bar.removeAllViews();
+            for (int i = 0; i < 2; i++) {
+                android.widget.Button button = new android.widget.Button(activity.get());
+                bar.addView(button, new android.widget.LinearLayout.LayoutParams(200, 120));
+            }
+            layOut(bar, 600);
+            assertFalse("they fit the bar", NavigationDialogBuilder.rowWiderThanBar(bar));
+
+            // A wrap-content button the row squeezed has no room left of its own: its width is clamped, not added.
+            bar.removeAllViews();
+            android.widget.Button first = new android.widget.Button(activity.get());
+            bar.addView(first, new android.widget.LinearLayout.LayoutParams(180, 120));
+            android.widget.Button last = new android.widget.Button(activity.get());
+            last.setMinWidth(200);
+            bar.addView(last, new android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 120));
+            layOut(bar, 300);
+            assertTrue("the row fits by its measured widths", first.getMeasuredWidth() + last.getMeasuredWidth() <= 236);
+            assertTrue("the last button had to be squeezed", NavigationDialogBuilder.rowWiderThanBar(bar));
+        } finally {
+            activity.destroy();
+        }
+    }
+
+    private static void layOut(android.view.View bar, int width) {
+        bar.measure(android.view.View.MeasureSpec.makeMeasureSpec(width, android.view.View.MeasureSpec.EXACTLY),
+                android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED));
+        bar.layout(0, 0, width, bar.getMeasuredHeight());
+    }
+
     /** A window's first traversal attaches its views; it waits for the next frame. */
     private static void frame() {
         Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(100));

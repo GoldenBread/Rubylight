@@ -74,9 +74,11 @@
                                 android:nextFocusLeft="@id/detail_favourite" />
                         </LinearLayout>
                     </HorizontalScrollView>
-                    <com.google.android.material.card.MaterialCardView style="@style/LibraryCard"
+                    <com.google.android.material.card.MaterialCardView android:id="@+id/detail_profile"
+                        style="@style/LibraryCard"
                         android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:layout_marginTop="@dimen/space_l">
+                        android:layout_marginTop="@dimen/space_l"
+                        android:clickable="true" android:focusable="true" android:foreground="?attr/selectableItemBackground">
                         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                             android:orientation="vertical" android:padding="@dimen/space_l">
                             <TextView android:layout_width="match_parent" android:layout_height="wrap_content"

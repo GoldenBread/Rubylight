@@ -94,6 +94,7 @@
                     </com.limelight.ui.WrapRow>
                     <LinearLayout android:id="@+id/detail_profile" android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:layout_marginTop="@dimen/space_xl" android:background="@drawable/tv_panel"
+                        android:clickable="true" android:focusable="true" android:foreground="@drawable/focus_ring_row"
                         android:orientation="vertical" android:padding="20dp">
                         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
                             android:text="@string/console_detail_profile"

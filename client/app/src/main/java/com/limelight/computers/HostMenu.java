@@ -24,7 +24,7 @@ import java.util.function.IntConsumer;
  * A PC's options, one list for the PCs screen and for Home. In this order: Open library, Resume and Quit, Join co-op,
  * Shared folders, Pair, one-time PIN, Wake or Sleep, Restart PC, Shut down PC, Update the PC's host, Files, PC settings,
  * Rename, Unpair or Pairing help, then Remove PC last. The screen that shows it decides what each action does; this
- * class only knows what is offered for which state.
+ * class only knows what is offered for which state. Home adds its games filter after Open library.
  */
 public final class HostMenu {
     /** How the Sleep, Restart PC or Shut down PC entry appears. */
@@ -64,10 +64,23 @@ public final class HostMenu {
      */
     public static ActionSheet build(Activity activity, ComputerDetails details, PcGridAdapter.RowState state,
                                     String runningGame, IntConsumer onAction) {
+        return build(activity, details, state, runningGame, onAction, null);
+    }
+
+    /**
+     * The same with {@code leading} adding its rows after Open library, which Home uses for its games filter;
+     * the PCs page passes null.
+     */
+    public static ActionSheet build(Activity activity, ComputerDetails details, PcGridAdapter.RowState state,
+                                    String runningGame, IntConsumer onAction,
+                                    java.util.function.Consumer<ActionSheet> leading) {
         ActionSheet sheet = new ActionSheet(activity, details.displayName());
         boolean ready = state == PcGridAdapter.RowState.RUNNING || state == PcGridAdapter.RowState.READY;
         if (ready) {
             add(sheet, onAction, LIBRARY, R.drawable.ic_library, activity.getString(R.string.library_open));
+        }
+        if (leading != null) {
+            leading.accept(sheet);
         }
         if (state == PcGridAdapter.RowState.RUNNING) {
             add(sheet, onAction, RESUME, R.drawable.ic_play, runningGame != null

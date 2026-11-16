@@ -300,6 +300,10 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
             @Override public ComputerDetails host(String uuid) { return feed.host(uuid); }
             @Override public ComputerManagerService.ComputerManagerBinder binder() { return feed.binder(); }
             @Override public HostActions actions() { return hostActions; }
+            @Override public void setHostFilter(String uuid) {
+                HomeHostFilter.set(AllGamesActivity.this, uuid);
+                scheduleReload();
+            }
         });
         setUpSearch(state != null ? state.getString(STATE_QUERY) : null);
         feed.bind();
@@ -582,13 +586,14 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
         refreshedSignature = signature;
         final int mine = ++generation;
         final Set<String> online = onlineOf(hosts);
+        final String hostFilter = HomeHostFilter.chosen(this);
         if (refresh) loading.setVisibility(View.VISIBLE);
         worker.execute(() -> {
             try {
-                show(mine, HomeModel.of(repo.cached(hosts), online, HomeModel.launchDenied(hosts)), !refresh);
+                show(mine, HomeModel.of(repo.cached(hosts), online, HomeModel.launchDenied(hosts), hostFilter), !refresh);
                 if (refresh) {
                     ConsoleSnapshot fresh = repo.refresh(hosts);
-                    show(mine, HomeModel.of(fresh, online, HomeModel.launchDenied(hosts)), true);
+                    show(mine, HomeModel.of(fresh, online, HomeModel.launchDenied(hosts), hostFilter), true);
                     redrawAtNextPoll(mine);
                 }
             } catch (InterruptedException e) {

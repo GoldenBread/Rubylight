@@ -15,4 +15,6 @@
     <string name="theme_system">システム</string>
     <string name="theme_system_tv">システム（テレビではダーク）</string>
     <string name="theme_dark">ダーク</string>
+    <string name="theme_light">ライト</string>
+    <string name="theme_light_tv">ライト（テレビではダーク）</string>
 </resources>

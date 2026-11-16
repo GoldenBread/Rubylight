@@ -16,6 +16,9 @@
     <!-- TV screens are drawn for a dark room and stay dark when the system theme is light (AppTheme.isDark). -->
     <string name="theme_system_tv">System (dark on a TV)</string>
     <string name="theme_dark">Dark</string>
+    <string name="theme_light">Light</string>
+    <!-- A TV keeps the night palette whatever the theme (AppTheme.isDark), and says so, as it does for System. -->
+    <string name="theme_light_tv">Light (dark on a TV)</string>
     <string-array name="overlay_choice_names" translatable="false"><item>@string/overlay_off</item><item>@string/overlay_compact</item><item>@string/overlay_statistics</item><item>@string/overlay_debug</item></string-array>
-    <string-array name="theme_choice_names" translatable="false"><item>@string/theme_system</item><item>@string/theme_dark</item><item>@string/title_oled_black</item></string-array>
+    <string-array name="theme_choice_names" translatable="false"><item>@string/theme_system</item><item>@string/theme_dark</item><item>@string/title_oled_black</item><item>@string/theme_light</item></string-array>
 </resources>

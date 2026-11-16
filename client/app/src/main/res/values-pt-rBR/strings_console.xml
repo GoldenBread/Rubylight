@@ -71,4 +71,6 @@
     <string name="pc_status_online">Online</string>
     <string name="pc_status_not_paired">Não pareado</string>
     <string name="pc_action_wake">Despertar</string>
+    <string name="console_filter_only_pc">Mostrar apenas os jogos deste PC</string>
+    <string name="console_filter_all_pcs">Mostrar os jogos de todos os PCs</string>
 </resources>

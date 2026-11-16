@@ -76,6 +76,47 @@ public class GpuDriverStoreTest {
     }
 
     @Test
+    public void acceptsASingleRootFolderAndStillRejectsDeeperOrMixedFolders() throws Exception {
+        Map<String, byte[]> folder = new LinkedHashMap<>();
+        folder.put("turnip-25/", new byte[0]);
+        folder.put("turnip-25/meta.json", METADATA.getBytes(StandardCharsets.UTF_8));
+        folder.put("turnip-25/libvulkan_freedreno.so", elf());
+        GpuDriverStore.Driver driver = install(folder);
+        assertEquals("Turnip test", driver.name);
+        assertEquals(1, GpuDriverStore.list(context).size());
+        assertTrue(new File(driver.directory, driver.libraryName).isFile());
+        GpuDriverStore.remove(context, driver);
+
+        Map<String, byte[]> deeper = new LinkedHashMap<>();
+        deeper.put("turnip-25/meta.json", METADATA.getBytes(StandardCharsets.UTF_8));
+        deeper.put("turnip-25/lib/driver.so", elf());
+        assertThrows(IOException.class, () -> install(deeper));
+
+        Map<String, byte[]> twoFolders = new LinkedHashMap<>();
+        twoFolders.put("a/meta.json", METADATA.getBytes(StandardCharsets.UTF_8));
+        twoFolders.put("b/libvulkan_freedreno.so", elf());
+        assertThrows(IOException.class, () -> install(twoFolders));
+
+        Map<String, byte[]> mixed = new LinkedHashMap<>();
+        mixed.put("turnip-25/meta.json", METADATA.getBytes(StandardCharsets.UTF_8));
+        mixed.put("libvulkan_freedreno.so", elf());
+        assertThrows(IOException.class, () -> install(mixed));
+
+        Map<String, byte[]> traversing = new LinkedHashMap<>();
+        traversing.put("../meta.json", METADATA.getBytes(StandardCharsets.UTF_8));
+        traversing.put("../libvulkan_freedreno.so", elf());
+        assertThrows(IOException.class, () -> install(traversing));
+
+        Map<String, byte[]> traversalInsideTheFolder = new LinkedHashMap<>();
+        traversalInsideTheFolder.put("turnip-25/meta.json", METADATA.getBytes(StandardCharsets.UTF_8));
+        traversalInsideTheFolder.put("turnip-25/../outside.so", elf());
+        assertThrows(IOException.class, () -> install(traversalInsideTheFolder));
+
+        assertEquals(0, new File(storage.getRoot(), "gpu-drivers").list().length);
+        assertFalse(new File(storage.getRoot(), "outside.so").exists());
+    }
+
+    @Test
     public void validatesMetadataAndEverySharedLibraryAbi() throws Exception {
         for (String metadata : new String[] {METADATA.replace("\"schemaVersion\":1", "\"schemaVersion\":2"),
                 METADATA.replace("\"schemaVersion\":1", "\"schemaVersion\":1.5"),

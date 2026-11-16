@@ -30,6 +30,8 @@ public class VulkanRendererBridge {
     private final RendererGate gate = new RendererGate();
     private long handle;
     private Surface decoderSurface;
+    // Set when the native stop returned: the renderer no longer uses the output window
+    private volatile boolean stopped;
 
     private VulkanRendererBridge(long handle) {
         this.handle = handle;
@@ -377,17 +379,22 @@ public class VulkanRendererBridge {
      * after the UI has let the surface go: the renderer holds its own reference to the window, so
      * the swapchain and surface it releases then belong to an abandoned window rather than a freed
      * one, and {@link #destroy()} waits for that stop. Calls made meanwhile return their defaults.
+     *
+     * @return true when the native stop finished, so the output window is free; false while a stop
+     *         that this call gave up waiting for is still running (a later call says so once it did)
      */
-    public void stop() {
+    public boolean stop() {
         if (!gate.stop(() -> {
             if (handle != 0) {
                 long startNs = System.nanoTime();
                 nativeStop(handle);
                 LimeLog.info("Vulkan renderer stopped in " + (System.nanoTime() - startNs) / 1000000 + " ms");
             }
+            stopped = true;
         })) {
             LimeLog.warning("Vulkan renderer still stopping after " + RendererGate.STOP_WAIT_MS + " ms; not waiting for it");
         }
+        return stopped;
     }
 
     /**

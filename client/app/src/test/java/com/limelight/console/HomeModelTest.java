@@ -237,6 +237,70 @@ public class HomeModelTest {
     }
 
     @Test
+    public void onePcsFilterShowsOnlyThatPcsGames() throws Exception {
+        tower();
+        laptop();
+        rig.repository.setFavourite("tower", "Tower", 11, "Portal", true);
+        rig.repository.setFavourite("laptop", "Laptop", 6, "Alan Wake", true);
+        List<ComputerDetails> hosts = Arrays.asList(nativeHost("tower", "Tower", true), nativeHost("laptop", "Laptop", true));
+        ConsoleSnapshot snapshot = rig.repository.refresh(hosts);
+
+        HomeModel model = HomeModel.of(snapshot, online("tower", "laptop"), Collections.emptySet(), "tower");
+        assertEquals("tower", model.hostFilter);
+        assertEquals(1, model.hosts.size());
+        assertEquals("tower", model.hosts.get(0).uuid);
+        // The game on both PCs is this PC's copy alone.
+        assertEquals(Collections.singletonList("Portal"), titles(model.favourites));
+        assertTrue("The other PC's running game is not Home's", model.continuePlaying.isEmpty());
+        List<String> library = new ArrayList<>();
+        for (HomeModel.GameCard card : model.library) {
+            library.add(card.title.toLowerCase(java.util.Locale.ROOT));
+        }
+        Collections.sort(library);
+        assertEquals(Arrays.asList("portal", "zelda"), library);
+        HomeModel.GameCard portal = card(model, "Portal");
+        assertEquals("Tower", portal.hostName);
+        assertEquals(1, portal.hostCount);
+        assertEquals(Collections.singletonList("tower"), portal.hostUuids);
+        for (HomeModel.GameCard card : model.allGames) {
+            assertEquals("tower", card.hostUuid);
+        }
+        for (HomeModel.Row row : model.rows) {
+            for (HomeModel.GameCard card : row.cards) {
+                assertEquals("tower", card.hostUuid);
+            }
+        }
+    }
+
+    @Test
+    public void onePcsFilterKeepsThatPcsRunningGameAndDropsTheOtherPcs() throws Exception {
+        tower();
+        laptop();
+        List<ComputerDetails> hosts = Arrays.asList(nativeHost("tower", "Tower", true), nativeHost("laptop", "Laptop", true));
+        HomeModel model = HomeModel.of(rig.repository.refresh(hosts), online("tower", "laptop"),
+                Collections.emptySet(), "laptop");
+        assertEquals("laptop", model.hostFilter);
+        assertEquals(Collections.singletonList("Alan Wake"), titles(model.continuePlaying));
+        assertEquals(HomeModel.Badge.RUNNING, model.continuePlaying.get(0).badge);
+        assertEquals(1, model.hosts.size());
+        assertEquals("laptop", model.hosts.get(0).uuid);
+    }
+
+    @Test
+    public void aFilterOfAPcThatIsGoneShowsEveryPc() throws Exception {
+        tower();
+        laptop();
+        List<ComputerDetails> hosts = Arrays.asList(nativeHost("tower", "Tower", true), nativeHost("laptop", "Laptop", true));
+        ConsoleSnapshot snapshot = rig.repository.refresh(hosts);
+        HomeModel all = HomeModel.of(snapshot, online("tower", "laptop"));
+        HomeModel gone = HomeModel.of(snapshot, online("tower", "laptop"), Collections.emptySet(), "gone");
+        assertNull(gone.hostFilter);
+        assertEquals(titles(all.library), titles(gone.library));
+        assertEquals(all.hosts.size(), gone.hosts.size());
+        assertEquals(all.allGames.size(), gone.allGames.size());
+    }
+
+    @Test
     public void aLibraryCardKnowsEveryPcThatHasTheGame() throws Exception {
         tower();
         laptop();

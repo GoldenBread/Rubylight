@@ -200,6 +200,30 @@ public final class HdrPolicy {
     }
 
     /**
+     * Whether the stream hands back from the Vulkan renderer to the standard one: only when the PC
+     * reported the stream as HDR and the Vulkan renderer can only tone map it, since the standard
+     * renderer shows that HDR on this screen. A stream the PC reports as SDR stays where it is.
+     * @param hdrReported the PC's HDR report is on (currentHdrMode is TRUE)
+     * @param toneMapped the Vulkan renderer tone maps its current swapchain (isHdrToneMapped)
+     */
+    public static boolean handsBackFromVulkan(boolean hdrReported, boolean toneMapped) {
+        return hdrReported && toneMapped;
+    }
+
+    /**
+     * Whether such a stream may move to the standard renderer at this decoder restart: only when
+     * the Vulkan renderer really let go of the output window. A stop that gave up after
+     * RendererGate.STOP_WAIT_MS is still running, and its native part may not have released the
+     * window yet, so MediaCodec must not be configured onto that same window; with no renderer to
+     * stop there is nothing holding it.
+     * @param hadRenderer the stream was drawing through the Vulkan renderer
+     * @param stopFinished VulkanRendererBridge.stop returned true: the native stop completed
+     */
+    public static boolean handOverAfterVulkanStop(boolean hadRenderer, boolean stopFinished) {
+        return !hadRenderer || stopFinished;
+    }
+
+    /**
      * @param asked this stream asked for HDR
      * @param tenBit the negotiated format is 10-bit
      * @param hostHdr the host's HDR report (setHdrMode), null before it arrives

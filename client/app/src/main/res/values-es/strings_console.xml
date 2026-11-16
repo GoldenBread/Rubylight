@@ -71,4 +71,6 @@
     <string name="pc_status_online">En línea</string>
     <string name="pc_status_not_paired">Sin vincular</string>
     <string name="pc_action_wake">Activar</string>
+    <string name="console_filter_only_pc">Mostrar solo los juegos de este PC</string>
+    <string name="console_filter_all_pcs">Mostrar los juegos de todos los PCs</string>
 </resources>

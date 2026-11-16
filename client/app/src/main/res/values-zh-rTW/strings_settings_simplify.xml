@@ -15,4 +15,6 @@
     <string name="theme_system">跟隨系統</string>
     <string name="theme_system_tv">跟隨系統（電視上為深色）</string>
     <string name="theme_dark">深色</string>
+    <string name="theme_light">淺色</string>
+    <string name="theme_light_tv">淺色（電視上為深色）</string>
 </resources>

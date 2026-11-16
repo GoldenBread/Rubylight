@@ -130,6 +130,31 @@ public class SettingsBatchTest {
     }
 
     @Test
+    public void sharperColoredTextWorksWithPyroWave() {
+        SharedPreferences p = prefs();
+        p.edit().clear().commit();
+        assertTrue(SettingRules.sharpColorApplies(p));
+        p.edit().putString("video_format", "forcepyrowave").commit();
+        assertTrue("PyroWave's own 4:4:4 is gated by this setting", SettingRules.sharpColorApplies(p));
+        // Less color banding stays HEVC's and AV1's: PyroWave is 8-bit unless the stream is HDR.
+        assertFalse(SettingRules.sdr10Applies(p));
+        p.edit().putString("video_format", "forceh265").commit();
+        assertTrue(SettingRules.sharpColorApplies(p));
+    }
+
+    @Test
+    public void sharperColoredTextIsShownWithPyroWaveChosen() {
+        prefs().edit().putString("video_format", "forcepyrowave").commit();
+        try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
+            PreferenceScreen video = section(controller, "video");
+            assertNotNull(video.findPreference(StreamSettings.SHARP_COLOR_KEY));
+            // The choice reaches the stream settings, which ask for PyroWave 4:4:4 when it is on.
+            prefs().edit().putBoolean("checkbox_yuv444", true).commit();
+            assertTrue(PreferenceConfiguration.readPreferences(RuntimeEnvironment.getApplication()).enableYuv444);
+        }
+    }
+
+    @Test
     public void framePacingOffersThePcsFrameTimesAndHidesOnlyWithVariableRefresh() {
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             PreferenceScreen display = section(controller, "display");
@@ -476,12 +501,12 @@ public class SettingsBatchTest {
         // OLED black without Dark was a value the older two switches could hold.
         p.edit().putBoolean("checkbox_always_dark", false).commit();
         assertEquals(ThemeChoice.OLED_BLACK, ThemeChoice.read(p));
-        for (int choice = 0; choice < 3; choice++) {
+        for (int choice = 0; choice < 4; choice++) {
             SharedPreferences.Editor editor = p.edit();
             ThemeChoice.save(editor, choice);
             editor.commit();
             assertEquals(choice, ThemeChoice.read(p));
-            assertEquals(new String[] {"system", "dark", "oled_black"}[choice], p.getString("theme", null));
+            assertEquals(new String[] {"system", "dark", "oled_black", "light"}[choice], p.getString("theme", null));
             assertFalse(p.contains("checkbox_always_dark"));
             assertFalse(p.contains("checkbox_oled_black"));
         }

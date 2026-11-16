@@ -15,4 +15,6 @@
     <string name="theme_system">Systemowy</string>
     <string name="theme_system_tv">Systemowy (ciemny na telewizorze)</string>
     <string name="theme_dark">Ciemny</string>
+    <string name="theme_light">Jasny</string>
+    <string name="theme_light_tv">Jasny (ciemny na telewizorze)</string>
 </resources>

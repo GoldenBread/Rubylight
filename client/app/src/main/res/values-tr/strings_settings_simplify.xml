@@ -15,4 +15,6 @@
     <string name="theme_system">Sistem</string>
     <string name="theme_system_tv">Sistem (TV\'de koyu)</string>
     <string name="theme_dark">Koyu</string>
+    <string name="theme_light">Açık</string>
+    <string name="theme_light_tv">Açık (TV\'de koyu)</string>
 </resources>

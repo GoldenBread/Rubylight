@@ -851,9 +851,9 @@ public class SettingsKeysTest {
         for (int i = 0; i < 3; i++) {
             ControllersChoice.save(editor, i);
             LowerRefreshChoice.save(editor, i);
-            ThemeChoice.save(editor, i);
             VrrChoice.save(editor, i);
         }
+        for (int i = 0; i < 4; i++) ThemeChoice.save(editor, i);
         for (int i = 0; i <= OverlayChoice.MODES.length; i++) OverlayChoice.save(editor, i);
         for (int i = 0; i < DisplayArrangementChoice.ARRANGEMENTS.length; i++) DisplayArrangementChoice.saveMain(editor, i);
         for (String screen : StartScreenChoice.SCREENS) StartScreenChoice.save(prefs(), editor, screen);

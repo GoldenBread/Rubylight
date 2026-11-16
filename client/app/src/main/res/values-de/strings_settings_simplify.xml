@@ -15,4 +15,6 @@
     <string name="theme_system">System</string>
     <string name="theme_system_tv">System (auf dem TV dunkel)</string>
     <string name="theme_dark">Dunkel</string>
+    <string name="theme_light">Hell</string>
+    <string name="theme_light_tv">Hell (auf dem TV dunkel)</string>
 </resources>

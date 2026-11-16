@@ -72,6 +72,13 @@ public class AppThemeTest {
         @Override public void recreate() { recreationRequests++; }
     }
 
+    /** AppCompat's night mode is static: leave the next test class the system default it started with. */
+    @org.junit.After
+    public void resetNightMode() {
+        androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(
+                androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM);
+    }
+
     private static void black(boolean enabled) {
         PreferenceManager.getDefaultSharedPreferences(RuntimeEnvironment.getApplication())
                 .edit().putString(AppTheme.THEME, enabled ? AppTheme.THEME_OLED_BLACK : AppTheme.THEME_SYSTEM).commit();
@@ -150,6 +157,49 @@ public class AppThemeTest {
                     screen.getResources().getStringArray(com.limelight.R.array.theme_choice_names)[0]);
         } finally {
             controller.pause().stop().destroy();
+        }
+    }
+
+    /** Light is an explicit choice: the day palette also on a phone whose system is set to dark. */
+    @Test
+    @Config(qualifiers = "night")
+    public void lightKeepsTheDayPaletteOnADarkSystem() {
+        PreferenceManager.getDefaultSharedPreferences(RuntimeEnvironment.getApplication())
+                .edit().putString(AppTheme.THEME, AppTheme.THEME_LIGHT).commit();
+        try (var controller = Robolectric.buildActivity(Screen.class).setup()) {
+            Screen screen = controller.get();
+            assertEquals(android.content.res.Configuration.UI_MODE_NIGHT_NO,
+                    screen.getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK);
+            assertFalse(AppTheme.isDark(screen));
+            assertEquals(AppTheme.Look.DAY, AppTheme.look(screen));
+            assertEquals(screen.getColor(com.limelight.R.color.day_surface),
+                    MaterialColors.getColor(screen, com.google.android.material.R.attr.colorSurface, 0));
+        }
+    }
+
+    @Test
+    @Config(qualifiers = "night")
+    public void choosingLightRecreatesTheVisibleScreenOnADarkSystem() {
+        try (var controller = Robolectric.buildActivity(Screen.class).setup()) {
+            Screen screen = controller.get();
+            PreferenceManager.getDefaultSharedPreferences(screen).edit()
+                    .putString(AppTheme.THEME, AppTheme.THEME_LIGHT).commit();
+            assertEquals(1, screen.recreationRequests);
+        }
+    }
+
+    /** A TV cannot draw the day palette on its dark canvas, so Light keeps the night one there and says so. */
+    @Test
+    @Config(qualifiers = "television")
+    public void aTvKeepsTheNightPaletteWithTheLightChoice() {
+        PreferenceManager.getDefaultSharedPreferences(RuntimeEnvironment.getApplication())
+                .edit().putString(AppTheme.THEME, AppTheme.THEME_LIGHT).commit();
+        try (var controller = Robolectric.buildActivity(Screen.class).setup()) {
+            Screen screen = controller.get();
+            assertTrue(AppTheme.isDark(screen));
+            assertEquals(AppTheme.Look.NIGHT, AppTheme.look(screen));
+            assertEquals(screen.getString(com.limelight.R.string.theme_light_tv),
+                    screen.getResources().getStringArray(com.limelight.R.array.theme_choice_names)[3]);
         }
     }
 

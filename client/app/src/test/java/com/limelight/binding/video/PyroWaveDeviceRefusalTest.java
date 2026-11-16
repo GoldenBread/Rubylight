@@ -74,6 +74,21 @@ public class PyroWaveDeviceRefusalTest {
                 true, true, 0, PC_ALL, MoonBridge.VIDEO_FORMAT_H265, 0, 0));
     }
 
+    @Test
+    public void packedFullChromaLeavesPyroWaveOutOnlyWithoutNative444() {
+        // Sharper colored text packs only when it cannot use native 4:4:4; with native 4:4:4 the
+        // PC is offered PyroWave's own 4:4:4 formats, so no full-chroma reason is reported.
+        assertTrue(MediaCodecDecoderRenderer.pyroWaveFullChromaDrop(true, false));
+        assertFalse(MediaCodecDecoderRenderer.pyroWaveFullChromaDrop(true, true));
+        assertFalse(MediaCodecDecoderRenderer.pyroWaveFullChromaDrop(false, false));
+        assertFalse(MediaCodecDecoderRenderer.pyroWaveFullChromaDrop(false, true));
+        int pyrowave444 = MoonBridge.VIDEO_FORMAT_PYROWAVE | MoonBridge.VIDEO_FORMAT_PYROWAVE_444;
+        assertEquals(0, MediaCodecDecoderRenderer.pyroWaveDropReason(true, false, 0, PC_ALL, pyrowave444,
+                pyrowave444, 0));
+        assertEquals(MediaCodecDecoderRenderer.PYROWAVE_FULL_CHROMA, MediaCodecDecoderRenderer.pyroWaveDropReason(
+                true, true, 0, PC_ALL, pyrowave444, pyrowave444, 0));
+    }
+
     // ServerCodecModeSupport: other codecs (0x300) and the PyroWave bits.
     private static final int PC_NONE = 0x300;
     private static final int PC_SDR = PC_NONE | 0x800000 | 0x1000000;

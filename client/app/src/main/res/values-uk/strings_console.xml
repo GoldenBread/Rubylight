@@ -74,4 +74,6 @@
     <string name="pc_status_online">У мережі</string>
     <string name="pc_status_not_paired">Не спарено</string>
     <string name="pc_action_wake">Розбудити</string>
+    <string name="console_filter_only_pc">Показувати лише ігри цього ПК</string>
+    <string name="console_filter_all_pcs">Показувати ігри всіх ПК</string>
 </resources>

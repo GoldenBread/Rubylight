@@ -15,4 +15,6 @@
     <string name="theme_system">Hệ thống</string>
     <string name="theme_system_tv">Hệ thống (tối trên TV)</string>
     <string name="theme_dark">Tối</string>
+    <string name="theme_light">Sáng</string>
+    <string name="theme_light_tv">Sáng (tối trên TV)</string>
 </resources>

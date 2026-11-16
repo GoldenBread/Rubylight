@@ -107,13 +107,41 @@ public final class NavigationDialogBuilder extends MaterialAlertDialogBuilder {
         Button negative = dialog.getButton(DialogInterface.BUTTON_NEGATIVE);
         boolean cancelFirst = startOnCancel && negative != null && negative.getVisibility() == View.VISIBLE;
         if (android.os.Build.VERSION.SDK_INT >= 26 && dialog.getListView() == null) (cancelFirst ? negative : positive).setFocusedByDefault(true);
-        // Labels too long to share a row stack: as full-width capsules, not a staircase along the right edge.
+        // Labels too long to share a row stack: as full-width capsules, not a staircase along the right edge. A row the
+        // dialog's button scroller cannot scroll sideways is stacked too, so its last capsule is not cut at the panel.
         bar.addOnLayoutChangeListener((view, l, t, r, b, ol, ot, or, ob) -> {
-            if (bar instanceof android.widget.LinearLayout
-                    && ((android.widget.LinearLayout) bar).getOrientation() == android.widget.LinearLayout.VERTICAL) {
+            if (!(bar instanceof android.widget.LinearLayout)) return;
+            if (((android.widget.LinearLayout) bar).getOrientation() == android.widget.LinearLayout.VERTICAL) {
+                bar.post(() -> stretchStacked(bar));
+            } else if (rowWiderThanBar(bar)) {
+                ((android.widget.LinearLayout) bar).setOrientation(android.widget.LinearLayout.VERTICAL);
                 bar.post(() -> stretchStacked(bar));
             }
         });
+    }
+
+    /**
+     * Whether the bar's visible buttons leave no room in its row, which would run the row past the panel: a dialog's
+     * button scroller scrolls vertically only, so the last capsule would be cut on the right. A capsule the row
+     * squeezed is clamped to the space left without a too-small state of its own (a TextView clamps itself that way),
+     * so a row the buttons fill exactly counts too. The spacer and the other children take no width of their own.
+     */
+    static boolean rowWiderThanBar(ViewGroup bar) {
+        int available = bar.getWidth() - bar.getPaddingLeft() - bar.getPaddingRight();
+        if (available <= 0) return false;
+        int needed = 0;
+        for (int i = 0; i < bar.getChildCount(); i++) {
+            View child = bar.getChildAt(i);
+            if (!(child instanceof Button) || child.getVisibility() != View.VISIBLE) continue;
+            if ((child.getMeasuredWidthAndState() & View.MEASURED_STATE_TOO_SMALL) != 0) return true;
+            needed += child.getMeasuredWidth();
+            ViewGroup.LayoutParams params = child.getLayoutParams();
+            if (params instanceof ViewGroup.MarginLayoutParams) {
+                ViewGroup.MarginLayoutParams margins = (ViewGroup.MarginLayoutParams) params;
+                needed += margins.getMarginStart() + margins.getMarginEnd();
+            }
+        }
+        return needed >= available;
     }
 
     private void stretchStacked(ViewGroup bar) {

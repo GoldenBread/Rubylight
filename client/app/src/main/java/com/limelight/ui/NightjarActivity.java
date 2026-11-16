@@ -13,6 +13,8 @@ import com.limelight.preferences.PairLinkActivity;
 public abstract class NightjarActivity extends AppCompatActivity {
     @Override
     protected void attachBaseContext(android.content.Context base) {
+        // Before AppCompat's delegate reads the night mode: the Light theme is day resources on any system.
+        AppTheme.applyNightMode(base);
         android.content.Context localized = com.limelight.utils.UiHelper.localeContext(base);
         android.content.Context scaled = AppTheme.scaled(localized, compactOnTelevision());
         if (scaled != localized && compactOnTelevision()) {

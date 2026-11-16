@@ -16,6 +16,7 @@ import static org.junit.Assert.assertTrue;
 import android.app.Application;
 import android.content.Context;
 import android.view.Gravity;
+import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ContextThemeWrapper;
 import android.widget.FrameLayout;
@@ -384,6 +385,16 @@ public class LibraryCardsTest {
     @Test
     public void onATvThePcCardsStartOnTheEdgeAndKeepThePostersGap() {
         assertCardsKeepTheirMarginsInsideTheirSlot();
+    }
+
+    /** TV screenshot: a PC's monitor touched the card's left border; the inset keeps it inside the thumb. */
+    @Test
+    public void aPcCardsMonitorSitsInsideItsThumb() {
+        View card = LayoutInflater.from(context).inflate(R.layout.console_card_host, null);
+        View thumb = card.findViewById(R.id.console_thumb);
+        int inset = context.getResources().getDimensionPixelSize(R.dimen.space_s);
+        assertEquals(inset, thumb.getPaddingStart());
+        assertEquals(inset, thumb.getPaddingTop());
     }
 
     private void assertCardsKeepTheirMarginsInsideTheirSlot() {

@@ -291,9 +291,12 @@ final class SettingRules {
         return "forcepyrowave".equals(prefs.getString("video_format", "auto"));
     }
 
-    /** Sharper colored text: PyroWave's 4:4:4 is its own codec choice. */
+    /**
+     * Sharper colored text works with every codec: with PyroWave it asks for PyroWave's own 4:4:4 where the PC and
+     * this device offer it, beside the native and packed 4:4:4 the other codecs use.
+     */
     static boolean sharpColorApplies(SharedPreferences prefs) {
-        return !pyroWaveChosen(prefs);
+        return true;
     }
 
     /** Less color banding is 10-bit SDR: not with PyroWave, and HDR is 10-bit already. */

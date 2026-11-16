@@ -52,20 +52,22 @@ static void android14GoesThroughTheWindowDataspace() {
     OutputChoice pq = choose(kAndroid14, true, kHdrTransferPq);
     assert(pq.format == kVkFormatA2B10G10R10Unorm && pq.colorSpace == kVkColorSpaceSrgbNonlinear);
     assert(pq.dataspaceOverride == kDataspaceBt2020Pq && !pq.toneMapToSdr);
+    assert(pq.hdrRefusal == HdrRefusal::kNoHdrColorSpace);
 
     OutputChoice hlg = choose(kAndroid14, true, kHdrTransferHlg);
     assert(hlg.format == kVkFormatA2B10G10R10Unorm && hlg.colorSpace == kVkColorSpaceSrgbNonlinear);
     assert(hlg.dataspaceOverride == kDataspaceBt2020Hlg && !hlg.toneMapToSdr);
+    assert(hlg.hdrRefusal == HdrRefusal::kNoHdrColorSpace);
 }
 
 static void android15UsesTheNativeColorSpace() {
     OutputChoice pq = choose(kAndroid15, true, kHdrTransferPq);
     assert(pq.format == kVkFormatA2B10G10R10Unorm && pq.colorSpace == kVkColorSpaceHdr10St2084);
-    assert(pq.dataspaceOverride == 0 && !pq.toneMapToSdr);
+    assert(pq.dataspaceOverride == 0 && !pq.toneMapToSdr && pq.hdrRefusal == HdrRefusal::kNone);
 
     OutputChoice hlg = choose(kAndroid15, true, kHdrTransferHlg);
     assert(hlg.format == kVkFormatA2B10G10R10Unorm && hlg.colorSpace == kVkColorSpaceHdr10Hlg);
-    assert(hlg.dataspaceOverride == 0 && !hlg.toneMapToSdr);
+    assert(hlg.dataspaceOverride == 0 && !hlg.toneMapToSdr && hlg.hdrRefusal == HdrRefusal::kNone);
 
     // A list with PQ alone still carries HLG through the dataspace, never as PQ
     const OutputSurfaceFormat pqOnly[] = {
@@ -73,6 +75,7 @@ static void android15UsesTheNativeColorSpace() {
     };
     hlg = choose(pqOnly, true, kHdrTransferHlg);
     assert(hlg.colorSpace == kVkColorSpaceSrgbNonlinear && hlg.dataspaceOverride == kDataspaceBt2020Hlg);
+    assert(hlg.hdrRefusal == HdrRefusal::kNoHdrColorSpace);
 }
 
 static void withoutTenBitHdrIsToneMapped() {
@@ -80,20 +83,23 @@ static void withoutTenBitHdrIsToneMapped() {
         OutputChoice choice = choose(kEightBit, true, transfer);
         assert(choice.format == kVkFormatR8G8B8A8Unorm && choice.colorSpace == kVkColorSpaceSrgbNonlinear);
         assert(choice.toneMapToSdr && choice.dataspaceOverride == 0);
+        assert(choice.hdrRefusal == HdrRefusal::kNoTenBitFormat);
     }
     // Only HDR spaces, no SRGB_NONLINEAR to tone map onto: the first listed format as it is
     const OutputSurfaceFormat odd[] = {{kR16G16B16A16Sfloat, kExtendedSrgbLinear}};
     OutputChoice choice = choose(odd, true, kHdrTransferPq);
     assert(choice.toneMapToSdr && choice.format == kR16G16B16A16Sfloat && choice.colorSpace == kExtendedSrgbLinear);
+    assert(choice.hdrRefusal == HdrRefusal::kNoTenBitFormat);
 }
 
 static void sdrIsUnchanged() {
     for (const OutputChoice& choice : {choose(kAndroid14, false, kHdrTransferPq), choose(kAndroid15, false, kHdrTransferHlg)}) {
         assert(choice.format == kVkFormatA2B10G10R10Unorm && choice.colorSpace == kVkColorSpaceSrgbNonlinear);
-        assert(choice.dataspaceOverride == 0 && !choice.toneMapToSdr);
+        assert(choice.dataspaceOverride == 0 && !choice.toneMapToSdr && choice.hdrRefusal == HdrRefusal::kNone);
     }
     OutputChoice eight = choose(kAndroid15, false, kHdrTransferPq, false);
     assert(eight.format == kVkFormatR8G8B8A8Unorm && eight.colorSpace == kVkColorSpaceSrgbNonlinear);
+    assert(eight.hdrRefusal == HdrRefusal::kNone);
     assert(choose(kEightBit, false, kHdrTransferPq).format == kVkFormatR8G8B8A8Unorm);
     assert(vkSelectOutput(nullptr, 0, true, kHdrTransferPq, true).format == 0);
 }

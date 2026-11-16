@@ -41,6 +41,9 @@ final class HostCapsule {
         ComputerManagerService.ComputerManagerBinder binder();
 
         HostActions actions();
+
+        /** Shows only this PC's games on the screen ({@code uuid}), or every PC's (null), and saves the choice. */
+        void setHostFilter(String uuid);
     }
 
     private final ComponentActivity activity;
@@ -100,10 +103,24 @@ final class HostCapsule {
         if (menu != null || details == null) return;
         String game = runningGameOf(screen.model(), card.uuid);
         ActionSheet options = HostMenu.build(activity, details, PcGridAdapter.rowState(details, false), game,
-                action -> onAction(details, action));
+                action -> onAction(details, action), sheet -> addHostFilter(sheet, card.uuid));
         menu = options;
         options.setOnDismissListener(dialog -> menu = null);
         options.show();
+    }
+
+    /**
+     * Home's own option, after Open library: this PC's games alone, or every PC's again. A PC that was filtered
+     * away is not offered here, so the way back to every PC is on the one PC Home still shows.
+     */
+    private void addHostFilter(ActionSheet sheet, String uuid) {
+        boolean onlyThis = uuid.equals(screen.model().hostFilter);
+        com.google.android.material.button.MaterialButton action = sheet.addAction(R.drawable.ic_glass_pcs,
+                activity.getString(onlyThis ? R.string.console_filter_all_pcs : R.string.console_filter_only_pc));
+        action.setOnClickListener(v -> {
+            sheet.dismiss();
+            screen.setHostFilter(onlyThis ? null : uuid);
+        });
     }
 
     /** The title of the game running on the PC, from what the screen shows; null when it does not say. */

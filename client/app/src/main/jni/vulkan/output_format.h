@@ -25,6 +25,17 @@ struct OutputSurfaceFormat {
     int32_t format, colorSpace;
 };
 
+// Which step kept HDR out of the swapchain's colour space, for the swapchain line and the problem
+// report: HDR still passes through when the window dataspace is then accepted
+enum class HdrRefusal : int {
+    kNone = 0,
+    // No ten-bit format in the surface's list at all
+    kNoTenBitFormat,
+    // Ten-bit formats, but none in the stream's HDR colour space: only the window dataspace can
+    // carry HDR (accepted, or refused and the picture is tone mapped)
+    kNoHdrColorSpace,
+};
+
 struct OutputChoice {
     int32_t format = 0;
     int32_t colorSpace = kVkColorSpaceSrgbNonlinear;
@@ -33,6 +44,8 @@ struct OutputChoice {
     int32_t dataspaceOverride = 0;
     // HDR the surface cannot take: the shader maps it to SDR
     bool toneMapToSdr = false;
+    // kNone when HDR was in the swapchain's colour space; else the step that failed
+    HdrRefusal hdrRefusal = HdrRefusal::kNone;
 };
 
 inline int32_t outputHdrColorSpace(int transfer) {
@@ -50,7 +63,8 @@ inline int32_t outputHdrDataspace(int transfer) {
 //   the loaders of releases 13 and 14 list no HDR colour space at all;
 // - tone mapping to SDR on the best SDR format.
 // Without HDR, a ten-bit stream gets a ten-bit SDR format where there is one. When nothing fits,
-// the first listed format is used as it is (format stays 0 for an empty list).
+// the first listed format is used as it is (format stays 0 for an empty list). A choice that did
+// not take HDR says in hdrRefusal which step failed, for the swapchain line and the problem report.
 inline OutputChoice vkSelectOutput(const OutputSurfaceFormat* formats, size_t count, bool hdr, int transfer,
                                    bool tenBit) {
     auto has = [&](int32_t format, int32_t colorSpace) {
@@ -67,11 +81,17 @@ inline OutputChoice vkSelectOutput(const OutputSurfaceFormat* formats, size_t co
             choice.colorSpace = colorSpace;
             return choice;
         }
-        if (has(kVkFormatA2B10G10R10Unorm, kVkColorSpaceSrgbNonlinear)) {
+        bool tenBitListed = false;
+        for (size_t i = 0; i < count; ++i) {
+            if (formats[i].format == kVkFormatA2B10G10R10Unorm) tenBitListed = true;
+        }
+        if (tenBitListed && has(kVkFormatA2B10G10R10Unorm, kVkColorSpaceSrgbNonlinear)) {
             choice.format = kVkFormatA2B10G10R10Unorm;
             choice.dataspaceOverride = outputHdrDataspace(transfer);
+            choice.hdrRefusal = HdrRefusal::kNoHdrColorSpace;
             return choice;
         }
+        choice.hdrRefusal = tenBitListed ? HdrRefusal::kNoHdrColorSpace : HdrRefusal::kNoTenBitFormat;
         choice.toneMapToSdr = true;
     }
     if (tenBit && has(kVkFormatA2B10G10R10Unorm, kVkColorSpaceSrgbNonlinear)) {

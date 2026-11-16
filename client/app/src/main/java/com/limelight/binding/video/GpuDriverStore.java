@@ -85,6 +85,18 @@ public final class GpuDriverStore {
         return name.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,127}") && !name.contains("..");
     }
 
+    /** The parts of a ZIP entry name, or null for an absolute, traversing or backslashed path. */
+    private static String[] entrySegments(String name) {
+        if (name == null || name.isEmpty() || name.startsWith("/") || name.contains("\\") || name.contains(":")) {
+            return null;
+        }
+        String[] segments = name.split("/", -1);
+        for (String segment : segments) {
+            if (segment.isEmpty() || segment.equals(".") || segment.equals("..")) return null;
+        }
+        return segments;
+    }
+
     private static int integerField(JSONObject metadata, String key) throws JSONException, IOException {
         Object value = metadata.get(key);
         if (!(value instanceof Number) || ((Number) value).doubleValue() != ((Number) value).intValue()) {
@@ -211,11 +223,40 @@ public final class GpuDriverStore {
             }
             Set<String> names = new HashSet<>();
             long unpacked = 0;
+            // A ZIP may keep its files in one top folder (a GitHub release unpacked into a folder, say): that
+            // folder is stripped, while paths, traversal and a second nesting level are still refused.
+            String rootFolder = null;
+            boolean layoutChosen = false;
             try (ZipInputStream zip = new ZipInputStream(new FileInputStream(archive))) {
                 ZipEntry entry;
                 while ((entry = zip.getNextEntry()) != null) {
-                    String name = entry.getName();
-                    if (entry.isDirectory() || !safeName(name) || !names.add(name) || names.size() > MAX_FILES) {
+                    boolean directory = entry.isDirectory();
+                    String path = directory ? entry.getName().substring(0, entry.getName().length() - 1) : entry.getName();
+                    String[] segments = entrySegments(path);
+                    if (segments == null) {
+                        throw new IOException("Driver ZIP must contain unique files without paths");
+                    }
+                    if (directory) continue;
+                    if (!layoutChosen) {
+                        layoutChosen = true;
+                        if (segments.length == 2) rootFolder = segments[0];
+                        else if (segments.length != 1) {
+                            throw new IOException("Driver ZIP must contain one folder of files, not nested folders");
+                        }
+                    }
+                    String name;
+                    if (rootFolder == null) {
+                        if (segments.length != 1) {
+                            throw new IOException("Driver ZIP must contain unique files without folders or paths");
+                        }
+                        name = segments[0];
+                    } else {
+                        if (segments.length != 2 || !rootFolder.equals(segments[0])) {
+                            throw new IOException("Driver ZIP must contain one folder of files, not nested folders");
+                        }
+                        name = segments[1];
+                    }
+                    if (!safeName(name) || !names.add(name) || names.size() > MAX_FILES) {
                         throw new IOException("Driver ZIP must contain unique files without folders or paths");
                     }
                     File file = new File(staging, name);

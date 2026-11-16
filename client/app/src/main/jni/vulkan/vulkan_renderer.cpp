@@ -2529,7 +2529,9 @@ bool VulkanRenderer::createSwapchain() {
                                                config_.tenBit || hdrActive_);
     VkSurfaceFormatKHR chosen {static_cast<VkFormat>(choice.format), static_cast<VkColorSpaceKHR>(choice.colorSpace)};
     if (choice.toneMapToSdr) {
-        ALOGW("%s shown as SDR: the surface lists no ten-bit format for it", hlg ? "HLG" : "HDR10");
+        ALOGW("%s shown as SDR: %s", hlg ? "HLG" : "HDR10",
+              choice.hdrRefusal == HdrRefusal::kNoTenBitFormat ? "the surface lists no ten-bit format" :
+                      "the surface lists no colour space for it");
     }
 
     uint32_t modeCount = 0;
@@ -2609,7 +2611,12 @@ bool VulkanRenderer::createSwapchain() {
     preTransform_ = transform;
     // The loader set the window dataspace from the swapchain's colour space just now, so the HDR one
     // goes on after every (re)creation, before the first present
-    outputHdr_ = hdrActive_ && !choice.toneMapToSdr && applyWindowDataspace(choice.dataspaceOverride);
+    nwds::DataspaceOutcome dataspace;
+    if (choice.dataspaceOverride != 0) {
+        dataspace = applyWindowDataspace(choice.dataspaceOverride);
+    }
+    const bool takesDataspace = choice.dataspaceOverride == 0 || dataspace.accepted();
+    outputHdr_ = hdrActive_ && !choice.toneMapToSdr && takesDataspace;
     hdr10PlusDirty_ = true;
     outputDataspace_ = outputHdr_ ? choice.dataspaceOverride : 0;
     hdrToneMapped_ = hdrActive_ && !outputHdr_;
@@ -2730,9 +2737,36 @@ bool VulkanRenderer::createSwapchain() {
                  outputHdr_ ? (hlg ? "HLG" : "HDR10") : (outputBits_ == 10 ? "10-bit SDR" : "8-bit SDR"),
                  (hdrActive_ && !outputHdr_) ? " (tone mapped)" : "");
         outputDescription_ = description;
-        char swapchain[160];
+        // Which step kept HDR from the screen, for the swapchain line and the problem report
+        std::string refused;
+        if (hdrActive_ && !outputHdr_) {
+            if (choice.hdrRefusal == HdrRefusal::kNoTenBitFormat) {
+                refused = "no 10-bit format";
+            }
+            else if (choice.hdrRefusal == HdrRefusal::kNoHdrColorSpace) {
+                refused = hlg ? "no HLG colour space" : "no HDR10 colour space";
+            }
+            if (choice.dataspaceOverride != 0 && !dataspace.accepted()) {
+                char code[128];
+                const char* missing = dataspace.publicResult == nwds::kMissing ? " missing" : "";
+                if (dataspace.performResult != nwds::kNotCalled) {
+                    snprintf(code, sizeof(code), "window dataspace 0x%x refused (set %d%s, perform %d)",
+                             static_cast<uint32_t>(choice.dataspaceOverride), dataspace.publicResult, missing,
+                             dataspace.performResult);
+                }
+                else {
+                    snprintf(code, sizeof(code), "window dataspace 0x%x refused (set %d%s)",
+                             static_cast<uint32_t>(choice.dataspaceOverride), dataspace.publicResult, missing);
+                }
+                if (!refused.empty()) refused += ", ";
+                refused += code;
+            }
+            if (refused.empty()) refused = "the surface took no HDR output";
+        }
+        const std::string state = refused.empty() ? description : description + std::string(" (") + refused + ")";
+        char swapchain[320];
         snprintf(swapchain, sizeof(swapchain), "%s%s, format %d, color space %d, %u images (min %u), %s, delay cap %d",
-                 description, outputDataspace_ != 0 ? " (window dataspace)" : "", chosen.format, chosen.colorSpace,
+                 state.c_str(), outputDataspace_ != 0 ? " (window dataspace)" : "", chosen.format, chosen.colorSpace,
                  count, caps.minImageCount,
                  shared ? "front buffer" : presentMode == VK_PRESENT_MODE_MAILBOX_KHR ? "mailbox" : "FIFO", delayCap);
         swapchainDescription_ = swapchain;
@@ -2762,14 +2796,18 @@ void VulkanRenderer::destroySwapchain() {
     }
 }
 
-bool VulkanRenderer::applyWindowDataspace(int32_t dataspace) {
+nwds::DataspaceOutcome VulkanRenderer::applyWindowDataspace(int32_t dataspace) {
+    nwds::DataspaceOutcome outcome;
     if (dataspace == 0) {
-        return true;
+        // Nothing to set (the caller asks only when there is one): the swapchain carries the picture
+        outcome.call = nwds::DataspaceCall::kPublic;
+        outcome.publicResult = 0;
+        return outcome;
     }
     // HLG goes through perform where the public call refuses it, as the window probe that let Java
     // ask for HLG did (window_dataspace.h); PQ keeps the public call, whose refusal means no HDR here.
     auto* setDataSpace = ndk_->ANativeWindow_setBuffersDataSpace;
-    const nwds::DataspaceOutcome outcome = nwds::setDataspace(
+    outcome = nwds::setDataspace(
             outputWindow_, dataspace, [setDataSpace](void* window, int32_t value) {
                 return setDataSpace ? setDataSpace(static_cast<ANativeWindow*>(window), value) : nwds::kMissing;
             }, dataspace == kDataspaceBt2020Hlg);
@@ -2778,13 +2816,13 @@ bool VulkanRenderer::applyWindowDataspace(int32_t dataspace) {
         ALOGE("Window dataspace 0x%x was refused (ANativeWindow_setBuffersDataSpace %d%s, perform %d); tone mapping "
               "HDR to SDR", static_cast<uint32_t>(dataspace), outcome.publicResult,
               setDataSpace ? "" : " missing", outcome.performResult);
-        return false;
+        return outcome;
     }
     if (outcome.call == nwds::DataspaceCall::kPerform) {
         ALOGI("Window dataspace 0x%x set through ANativeWindow::perform (the public call returned %d)",
               static_cast<uint32_t>(dataspace), outcome.publicResult);
     }
-    return true;
+    return outcome;
 }
 
 void VulkanRenderer::applyHdrMetadata() {

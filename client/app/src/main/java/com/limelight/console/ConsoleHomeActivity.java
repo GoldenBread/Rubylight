@@ -253,6 +253,10 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
             @Override public ComputerDetails host(String uuid) { return feed.host(uuid); }
             @Override public ComputerManagerService.ComputerManagerBinder binder() { return feed.binder(); }
             @Override public HostActions actions() { return hostActions; }
+            @Override public void setHostFilter(String uuid) {
+                HomeHostFilter.set(ConsoleHomeActivity.this, uuid);
+                scheduleReload();
+            }
         });
         setUpAmbience();
         setUpViewButton();
@@ -728,6 +732,7 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
         refreshedSignature = signature;
         final int mine = ++generation;
         final Set<String> online = onlineOf(hosts);
+        final String hostFilter = HomeHostFilter.chosen(this);
         if (refresh) {
             loading.setVisibility(View.VISIBLE);
         }
@@ -735,10 +740,10 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
             try {
                 Set<String> denied = HomeModel.launchDenied(hosts);
                 ConsoleSnapshot saved = repo.cached(hosts);
-                show(mine, saved, HomeModel.of(saved, online, denied), hosts.isEmpty(), !refresh);
+                show(mine, saved, HomeModel.of(saved, online, denied, hostFilter), hosts.isEmpty(), !refresh);
                 if (refresh) {
                     ConsoleSnapshot fresh = repo.refresh(hosts);
-                    show(mine, fresh, HomeModel.of(fresh, online, denied), hosts.isEmpty(), true);
+                    show(mine, fresh, HomeModel.of(fresh, online, denied, hostFilter), hosts.isEmpty(), true);
                     redrawAtNextPoll(mine);
                 }
             } catch (InterruptedException e) {
@@ -1159,10 +1164,11 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
         }
         final List<ComputerDetails> hosts = feed.hosts();
         final Set<String> online = onlineOf(hosts);
+        final String hostFilter = HomeHostFilter.chosen(this);
         starWorker.execute(() -> {
             try {
                 repo.setHidden(copies, hide);
-                HomeModel model = HomeModel.of(repo.cached(hosts), online, HomeModel.launchDenied(hosts));
+                HomeModel model = HomeModel.of(repo.cached(hosts), online, HomeModel.launchDenied(hosts), hostFilter);
                 runOnUiThread(() -> {
                     if (isFinishing() || isDestroyed()) {
                         return;
@@ -1192,10 +1198,11 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
         final List<ComputerDetails> hosts = feed.hosts();
         final Set<String> online = onlineOf(hosts);
         final String key = card.source != null ? card.source.stableId() : "";
+        final String hostFilter = HomeHostFilter.chosen(this);
         starWorker.execute(() -> {
             try {
                 repo.setFavourite(card.hostUuid, card.hostName, key, card.appId, card.title, starred);
-                HomeModel model = HomeModel.of(repo.cached(hosts), online, HomeModel.launchDenied(hosts));
+                HomeModel model = HomeModel.of(repo.cached(hosts), online, HomeModel.launchDenied(hosts), hostFilter);
                 runOnUiThread(() -> {
                     if (isFinishing() || isDestroyed()) {
                         return;

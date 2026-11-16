@@ -15,4 +15,6 @@
     <string name="theme_system">Системна</string>
     <string name="theme_system_tv">Системна (темна на телевізорі)</string>
     <string name="theme_dark">Темна</string>
+    <string name="theme_light">Світла</string>
+    <string name="theme_light_tv">Світла (темна на телевізорі)</string>
 </resources>

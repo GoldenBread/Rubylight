@@ -73,4 +73,7 @@
     <string name="pc_status_online">Online</string>
     <string name="pc_status_not_paired">Not paired</string>
     <string name="pc_action_wake">Wake up</string>
+    <!-- Home's PC capsule: its options show one PC's games or every PC's again. -->
+    <string name="console_filter_only_pc">Show only this PC’s games</string>
+    <string name="console_filter_all_pcs">Show all PCs’ games</string>
 </resources>

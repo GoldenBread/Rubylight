@@ -190,6 +190,26 @@ public class HdrPolicyTest {
     }
 
     @Test
+    public void onlyAHdrStreamThatVulkanToneMapsHandsBack() {
+        assertTrue(HdrPolicy.handsBackFromVulkan(true, true));
+        // A 10-bit stream the PC reports as SDR is not changed by the renderer's tone mapping.
+        assertFalse(HdrPolicy.handsBackFromVulkan(false, true));
+        assertFalse(HdrPolicy.handsBackFromVulkan(true, false));
+        assertFalse(HdrPolicy.handsBackFromVulkan(false, false));
+    }
+
+    @Test
+    public void aVulkanRendererWhoseStopGaveUpKeepsTheStream() {
+        // Nothing was drawing through Vulkan: no window is held, so the handover can go ahead.
+        assertTrue(HdrPolicy.handOverAfterVulkanStop(false, false));
+        // The stop finished, so the output window is free for the standard renderer.
+        assertTrue(HdrPolicy.handOverAfterVulkanStop(true, true));
+        assertTrue(HdrPolicy.handOverAfterVulkanStop(false, true));
+        // The stop gave up after RendererGate.STOP_WAIT_MS and may still use the window.
+        assertFalse(HdrPolicy.handOverAfterVulkanStop(true, false));
+    }
+
+    @Test
     public void theHlgOnlyDebugHookCountsOnlyInADebugBuild() {
         int[] tv = {DOLBY, HDR10, HLG, HDR10_PLUS};
         try {

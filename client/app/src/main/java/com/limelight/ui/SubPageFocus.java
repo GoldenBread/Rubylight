@@ -13,14 +13,16 @@ import android.widget.TextView;
 
 import androidx.appcompat.widget.SearchView;
 
+import com.google.android.material.button.MaterialButton;
 import com.limelight.R;
 
 import java.util.ArrayList;
 
 /**
  * The focus rules every Settings sub-page shares (Profiles, Controllers, Keyboard shortcuts, GPU driver, Latency
- * benchmark): the first focus lands on the content, never on the toolbar, and every focusable row or button shows
- * the same outline when it has focus. Pages call {@link #apply} once their views exist and again after each rebuild.
+ * benchmark): the first focus lands on the content, never on the toolbar, and every focusable row shows the same
+ * outline when it has focus. Buttons keep the outline their own style draws. Pages call {@link #apply} once their
+ * views exist and again after each rebuild.
  */
 public final class SubPageFocus {
     private SubPageFocus() {
@@ -64,14 +66,19 @@ public final class SubPageFocus {
         return false;
     }
 
-    /** Gives each focusable row and button the focus outline; lists and fields draw their own. */
+    /**
+     * Gives each focusable row the focus outline; lists and fields draw their own, and a Material button's background
+     * draws its focus stroke (styles.xml). Adding the row ring over that stroke drew two amber outlines on the shared
+     * folders' Retry.
+     */
     static void decorate(View view) {
         if (view instanceof ViewGroup && !(view instanceof AbsListView)) {
             ViewGroup group = (ViewGroup) view;
             for (int i = 0; i < group.getChildCount(); i++) decorate(group.getChildAt(i));
         }
         if (!view.isFocusable() || view instanceof AbsListView || view instanceof EditText
-                || view instanceof ScrollView || view instanceof SearchView || view.getTag(R.id.focus_ring) != null) {
+                || view instanceof ScrollView || view instanceof SearchView || view instanceof MaterialButton
+                || view.getTag(R.id.focus_ring) != null) {
             return;
         }
         view.setTag(R.id.focus_ring, Boolean.TRUE);

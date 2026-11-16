@@ -15,4 +15,6 @@
     <string name="theme_system">Sistema</string>
     <string name="theme_system_tv">Sistema (oscuro en una TV)</string>
     <string name="theme_dark">Oscuro</string>
+    <string name="theme_light">Claro</string>
+    <string name="theme_light_tv">Claro (oscuro en una TV)</string>
 </resources>

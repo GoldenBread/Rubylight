@@ -547,7 +547,9 @@ public class HomeShellTest {
         try {
             Home screen = controller.get();
             showHosts(screen, nativeHost("tower", "Tower", true));
-            List<String> expected = expected(screen, R.string.library_open, R.string.folders_title, R.string.files_menu,
+            // The PCs page's list, with Home's own games filter after Open library.
+            List<String> expected = expected(screen, R.string.library_open, R.string.console_filter_only_pc,
+                    R.string.folders_title, R.string.files_menu,
                     R.string.pc_menu_settings, R.string.host_menu_rename, R.string.pcview_menu_unpair_pc,
                     R.string.pcview_menu_delete_pc);
 
@@ -625,13 +627,14 @@ public class HomeShellTest {
             showHosts(screen, attic, nativeHost("loft", "Loft", false));
             hostCard(screen, "attic").findViewById(R.id.console_more).performClick();
             ActionSheet sheet = openSheet();
-            assertEquals(expected(screen, R.string.pcview_menu_send_wol, R.string.pc_menu_settings,
-                    R.string.host_menu_rename, R.string.pcview_menu_delete_pc), labels(sheet));
+            // Home offers its games filter on every PC, with no Open library row on an offline one.
+            assertEquals(expected(screen, R.string.console_filter_only_pc, R.string.pcview_menu_send_wol,
+                    R.string.pc_menu_settings, R.string.host_menu_rename, R.string.pcview_menu_delete_pc), labels(sheet));
             closeSheet(sheet);
             hostCard(screen, "loft").findViewById(R.id.console_more).performClick();
             sheet = openSheet();
-            assertEquals(expected(screen, R.string.pc_menu_settings, R.string.host_menu_rename,
-                    R.string.pcview_menu_delete_pc), labels(sheet));
+            assertEquals(expected(screen, R.string.console_filter_only_pc, R.string.pc_menu_settings,
+                    R.string.host_menu_rename, R.string.pcview_menu_delete_pc), labels(sheet));
             closeSheet(sheet);
         } finally {
             controller.pause().stop().destroy();
@@ -979,6 +982,34 @@ public class HomeShellTest {
             assertEquals("the hero follows the card focus would start on", shelves.keyAt(first), ambience.current());
             assertEquals(shelves.itemAt(first).game.title,
                     ((TextView) home.findViewById(R.id.home_hero_title)).getText().toString());
+        } finally {
+            controller.pause().stop().destroy();
+        }
+    }
+
+    /** TV previews: shelves scrolling up under the hero were cut at the list's top; a canvas scrim fades them out. */
+    @Test
+    @Config(qualifiers = "television")
+    public void onTelevisionTheShelvesFadeOutAtTheTopOfTheList() {
+        ActivityController<Home> controller = home();
+        try {
+            Home home = controller.get();
+            View fade = home.findViewById(R.id.home_top_fade);
+            assertNotNull("TV Home fades its shelves under the hero", fade);
+            assertNotNull("the scrim is the canvas' gradient", fade.getBackground());
+            assertEquals("the fade starts where the list's content is cut",
+                    ((ViewGroup.MarginLayoutParams) home.findViewById(R.id.console_list).getLayoutParams()).topMargin,
+                    ((ViewGroup.MarginLayoutParams) fade.getLayoutParams()).topMargin);
+        } finally {
+            controller.pause().stop().destroy();
+        }
+    }
+
+    @Test
+    public void aPhoneDoesNotFadeTheTopsOfItsShelves() {
+        ActivityController<Home> controller = home();
+        try {
+            assertNull("no scrim over a phone's list", controller.get().findViewById(R.id.home_top_fade));
         } finally {
             controller.pause().stop().destroy();
         }

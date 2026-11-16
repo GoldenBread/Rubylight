@@ -37,6 +37,9 @@ final class HomeChrome {
     /** The fade under the tab bar: where it lands on the canvas, on the design's stops. */
     static final float[] FOOT_STOPS = {0f, 0.42f, 0.72f, 1f};
     static final float[] FOOT_ALPHAS = {0f, 0.62f, 0.92f, 1f};
+    /** The TV list's top: the canvas over the cut, thinning downward. */
+    static final float[] TOP_STOPS = {0f, 0.45f, 1f};
+    static final float[] TOP_ALPHAS = {1f, 0.55f, 0f};
 
     private final Activity activity;
     private final GlassForm form;
@@ -70,6 +73,7 @@ final class HomeChrome {
         com.limelight.LimeLog.info("Glass tier: " + tier);
         placeTabs();
         fadeFoot();
+        fadeTop();
         host.setSafeAreaListener(this::onSafeArea);
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
             probe = GlassProbe.start(activity, tier, this::stepDown);
@@ -238,6 +242,27 @@ final class HomeChrome {
     static int[] footColors(int canvas) {
         int[] colors = new int[FOOT_ALPHAS.length];
         for (int i = 0; i < colors.length; i++) colors[i] = ColorUtils.setAlphaComponent(canvas, Math.round(255 * FOOT_ALPHAS[i]));
+        return colors;
+    }
+
+    /** The TV list's top: a scrim of the canvas so shelves scrolled under the hero fade out instead of being cut. */
+    private void fadeTop() {
+        View fade = activity.findViewById(R.id.home_top_fade);
+        if (fade == null || fade.getVisibility() != View.VISIBLE) return;
+        int canvas = MaterialColors.getColor(fade, R.attr.glassCanvas);
+        int[] colors = topColors(canvas);
+        android.graphics.drawable.ShapeDrawable gradient = new android.graphics.drawable.ShapeDrawable(new android.graphics.drawable.shapes.RectShape());
+        gradient.setShaderFactory(new android.graphics.drawable.ShapeDrawable.ShaderFactory() {
+            @Override public android.graphics.Shader resize(int width, int height) {
+                return new android.graphics.LinearGradient(0, 0, 0, height, colors, TOP_STOPS, android.graphics.Shader.TileMode.CLAMP);
+            }
+        });
+        fade.setBackground(gradient);
+    }
+
+    static int[] topColors(int canvas) {
+        int[] colors = new int[TOP_ALPHAS.length];
+        for (int i = 0; i < colors.length; i++) colors[i] = ColorUtils.setAlphaComponent(canvas, Math.round(255 * TOP_ALPHAS[i]));
         return colors;
     }
 

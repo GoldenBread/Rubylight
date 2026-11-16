@@ -295,10 +295,15 @@ public final class HomeModel {
     public final List<Filter> filters;
     /** The cards of each collection's chip and of the games in none, by the chip's key. */
     private final Map<String, List<GameCard>> grouped;
+    /**
+     * The one PC whose games this model has, or null when it has every PC's. A PC the snapshot no longer has
+     * falls back to every PC's, so a removed PC never leaves Home empty by accident.
+     */
+    public final String hostFilter;
 
     private HomeModel(List<GameCard> favourites, List<GameCard> continuePlaying, List<GameCard> library,
                       List<HostCard> hosts, List<Row> rows, List<GameCard> allGames, List<Filter> filters,
-                      Map<String, List<GameCard>> grouped) {
+                      Map<String, List<GameCard>> grouped, String hostFilter) {
         this.grouped = grouped;
         this.favourites = Collections.unmodifiableList(favourites);
         this.continuePlaying = Collections.unmodifiableList(continuePlaying);
@@ -307,11 +312,12 @@ public final class HomeModel {
         this.rows = Collections.unmodifiableList(rows);
         this.allGames = Collections.unmodifiableList(allGames);
         this.filters = Collections.unmodifiableList(filters);
+        this.hostFilter = hostFilter;
     }
 
     public static HomeModel empty() {
         return new HomeModel(new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>(),
-                new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new HashMap<>());
+                new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new HashMap<>(), null);
     }
 
     /** The UUIDs of the hosts that do not let this device start games (no Launch permission). */
@@ -437,9 +443,23 @@ public final class HomeModel {
      * may not start games ({@link #launchDenied}): a game they have not added is added on the PC, not from here.
      */
     public static HomeModel of(ConsoleSnapshot snapshot, Set<String> onlineHosts, Set<String> launchDenied) {
+        return of(snapshot, onlineHosts, launchDenied, null);
+    }
+
+    /**
+     * The same with {@code hostFilter}: the one PC whose games Home shows, or null for every PC's. A PC the
+     * snapshot does not have shows every PC's ({@link #hostFilter} is null then).
+     */
+    public static HomeModel of(ConsoleSnapshot snapshot, Set<String> onlineHosts, Set<String> launchDenied,
+                               String hostFilter) {
+        String only = hostFilter == null || hostFilter.isEmpty() || snapshot.host(hostFilter) == null
+                ? null : hostFilter;
         Set<String> starred = new HashSet<>();
         List<GameCard> favourites = new ArrayList<>();
         for (ConsoleSnapshot.Starred entry : snapshot.favourites) {
+            if (only != null && !only.equals(entry.hostUuid)) {
+                continue;
+            }
             starred.add(entry.hostUuid + ":" + entry.appId);
             // A title the host lists as not installed cannot be started from here, as in the library.
             if (entry.source != null && (Boolean.FALSE.equals(entry.source.installed) || entry.source.hidden)) {
@@ -453,6 +473,9 @@ public final class HomeModel {
         }
         List<GameCard> continuePlaying = new ArrayList<>();
         for (ConsoleSnapshot.Continue entry : snapshot.continuePlaying) {
+            if (only != null && !only.equals(entry.hostUuid)) {
+                continue;
+            }
             // A running game stays: hiding it must not lose the way back to it.
             if (entry.kind == ConsoleSnapshot.ContinueKind.RECENT && entry.source != null && entry.source.hidden) {
                 continue;
@@ -469,6 +492,9 @@ public final class HomeModel {
             int hosts = 0;
             List<String> listing = new ArrayList<>();
             for (ConsoleSnapshot.Source source : title.sources) {
+                if (only != null && !only.equals(source.hostUuid)) {
+                    continue;
+                }
                 // A library entry that is not installed, or not added, cannot be started from here.
                 if (Boolean.FALSE.equals(source.installed) || !source.added || source.hidden) {
                     continue;
@@ -484,12 +510,15 @@ public final class HomeModel {
             }
             library.add(new GameCard("game:" + title.key, title.title, best.hostUuid, best.hostName, best.appId,
                     badgeOf(snapshot, best), best, hosts, starred.contains(best.hostUuid + ":" + best.appId), false, listing,
-                    lineLastPlayed(snapshot, title)));
+                    lineLastPlayed(snapshot, title, only)));
         }
         List<GameCard> allGames = new ArrayList<>();
-        List<Row> rows = libraryRows(snapshot, starred, allGames, launchDenied);
+        List<Row> rows = libraryRows(snapshot, starred, allGames, launchDenied, only);
         List<HostCard> hosts = new ArrayList<>();
         for (ConsoleSnapshot.Host host : snapshot.hosts) {
+            if (only != null && !only.equals(host.uuid)) {
+                continue;
+            }
             boolean online = onlineHosts.contains(host.uuid);
             int count = 0;
             for (ConsoleSnapshot.Source source : host.sources) {
@@ -514,7 +543,7 @@ public final class HomeModel {
         }
         List<CollectionGroups.Group> groups = CollectionGroups.of(namesOf(shownGames(allGames)));
         return new HomeModel(favourites, continuePlaying, library, hosts, rows, allGames, filtersOf(allGames, groups),
-                groupedCards(shownGames(allGames), groups));
+                groupedCards(shownGames(allGames), groups), only);
     }
 
     private static Map<String, List<GameCard>> groupedCards(List<GameCard> shown, List<CollectionGroups.Group> groups) {
@@ -533,7 +562,7 @@ public final class HomeModel {
      * installed games first and is as long as the store's share, largest store first; the apps of no store follow.
      */
     private static List<Row> libraryRows(ConsoleSnapshot snapshot, Set<String> starred, List<GameCard> allGames,
-                                         Set<String> launchDenied) {
+                                         Set<String> launchDenied, String only) {
         Map<String, List<GameCard>> byStore = new LinkedHashMap<>();
         Map<String, String> storeNames = new HashMap<>();
         List<GameCard> other = new ArrayList<>();
@@ -550,6 +579,9 @@ public final class HomeModel {
             List<ConsoleSnapshot.Source> away = new ArrayList<>();
             List<String> awayHosts = new ArrayList<>();
             for (ConsoleSnapshot.Source source : title.sources) {
+                if (only != null && !only.equals(source.hostUuid)) {
+                    continue;
+                }
                 if (source.hidden) {
                     away.add(source);
                     awayHosts.add(source.hostUuid);
@@ -576,7 +608,7 @@ public final class HomeModel {
                 ConsoleSnapshot.Source first = away.get(0);
                 allGames.add(new GameCard(HIDDEN_KEY + title.key, title.title, first.hostUuid, first.hostName, first.appId,
                         badgeOf(snapshot, first), first, away.size(), starred.contains(first.hostUuid + ":" + first.appId),
-                        false, awayHosts, lastPlayed(title), away));
+                        false, awayHosts, lastPlayed(title, only), away));
             }
             ConsoleSnapshot.Source best = installed != null ? installed : missing;
             if (best == null) {
@@ -590,7 +622,7 @@ public final class HomeModel {
             }
             boolean star = starred.contains(best.hostUuid + ":" + best.appId);
             GameCard card = new GameCard("game:" + title.key, title.title, best.hostUuid, best.hostName, best.appId,
-                    badgeOf(snapshot, best), best, hosts, star, false, listing, lineLastPlayed(snapshot, title), copies);
+                    badgeOf(snapshot, best), best, hosts, star, false, listing, lineLastPlayed(snapshot, title, only), copies);
             allGames.add(card);
             if (best.storeSource == null) {
                 other.add(card);
@@ -605,7 +637,7 @@ public final class HomeModel {
                     storeNames.put(best.storeSource, best.storeName);
                 }
             }
-            Long last = lastPlayed(title);
+            Long last = lastPlayed(title, only);
             if (last != null && last > 0) {
                 played.add(new GameCard("recent:" + title.key, title.title, best.hostUuid, best.hostName, best.appId,
                         card.badge, best, hosts, star, false, listing, last, copies));
@@ -615,7 +647,7 @@ public final class HomeModel {
         if (!played.isEmpty()) {
             Map<String, Long> at = new HashMap<>();
             for (ConsoleSnapshot.Title title : snapshot.titles) {
-                Long last = lastPlayed(title);
+                Long last = lastPlayed(title, only);
                 if (last != null && last > 0) at.put("recent:" + title.key, last);
             }
             // Newest first; the sort is stable, so a tie keeps the order of the names.
@@ -649,8 +681,8 @@ public final class HomeModel {
      * A List line's last-played time, in seconds: what the title's hosts say, and only when none says, when this
      * device last streamed one of its added copies (its recents keep the last few only), as on desktop.
      */
-    private static Long lineLastPlayed(ConsoleSnapshot snapshot, ConsoleSnapshot.Title title) {
-        Long hosts = lastPlayed(title);
+    private static Long lineLastPlayed(ConsoleSnapshot snapshot, ConsoleSnapshot.Title title, String only) {
+        Long hosts = lastPlayed(title, only);
         if (hosts != null) {
             return hosts;
         }
@@ -660,6 +692,9 @@ public final class HomeModel {
                 continue;
             }
             for (ConsoleSnapshot.Source source : title.sources) {
+                if (only != null && !only.equals(source.hostUuid)) {
+                    continue;
+                }
                 if (source.added && source.hostUuid.equals(recent.hostUuid) && source.appId == recent.appId) {
                     long at = recent.playedAtMs / 1000;
                     if (newest == null || at > newest) newest = at;
@@ -670,9 +705,12 @@ public final class HomeModel {
     }
 
     /** The newest last-played time of a title's added copies (0 when all say never), or null when no host says. */
-    private static Long lastPlayed(ConsoleSnapshot.Title title) {
+    private static Long lastPlayed(ConsoleSnapshot.Title title, String only) {
         Long newest = null;
         for (ConsoleSnapshot.Source source : title.sources) {
+            if (only != null && !only.equals(source.hostUuid)) {
+                continue;
+            }
             if (source.added && source.lastPlayed != null && (newest == null || source.lastPlayed > newest)) {
                 newest = source.lastPlayed;
             }

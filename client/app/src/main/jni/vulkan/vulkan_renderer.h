@@ -17,6 +17,7 @@
 
 #include "../frame_warp_api.h"
 #include "../frame_warp_mask.h"
+#include "../window-dataspace/window_dataspace.h"
 #include "decoder_fence.h"
 #include "frame_pacer.h"
 #include "hdr10plus_window.h"
@@ -335,8 +336,9 @@ private:
     ImportedBuffer* importBuffer(AHardwareBuffer* buffer);
     void destroyImport(AHardwareBuffer* buffer, ImportedBuffer& imported);
     void evictImports();
-    // Sets the window dataspace HDR goes through (0: none to set). False when the window refused it.
-    bool applyWindowDataspace(int32_t dataspace);
+    // Sets the window dataspace HDR goes through (0: nothing to set, reported as accepted). The
+    // answer says whether the window took it, and the codes when it did not (window_dataspace.h).
+    nwds::DataspaceOutcome applyWindowDataspace(int32_t dataspace);
     void applyHdrMetadata();
     // Before a present: hands the frame's HDR10+ metadata to the output window if it differs from
     // what the window holds, or clears it when HDR10 does not pass through. Under renderMutex_.

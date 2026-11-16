@@ -71,4 +71,6 @@
     <string name="pc_status_online">Online</string>
     <string name="pc_status_not_paired">Non associato</string>
     <string name="pc_action_wake">Riattiva</string>
+    <string name="console_filter_only_pc">Mostra solo i giochi di questo PC</string>
+    <string name="console_filter_all_pcs">Mostra i giochi di tutti i PC</string>
 </resources>

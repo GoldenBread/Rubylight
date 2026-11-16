@@ -9,7 +9,9 @@
         android:orientation="horizontal">
         <FrameLayout android:id="@+id/console_thumb_frame" android:layout_width="72dp" android:layout_height="96dp"
             android:background="?attr/colorSurfaceContainerHigh">
+            <!-- The PC's monitor is drawn centre-inside: kept off the card's border by the inset. -->
             <ImageView android:id="@+id/console_thumb" android:layout_width="match_parent" android:layout_height="match_parent"
+                android:padding="@dimen/space_s"
                 android:scaleType="centerCrop" android:importantForAccessibility="no" />
             <com.limelight.ui.NoArtTile android:id="@+id/console_thumb_text" android:layout_width="match_parent" android:layout_height="match_parent" android:importantForAccessibility="no" />
         </FrameLayout>

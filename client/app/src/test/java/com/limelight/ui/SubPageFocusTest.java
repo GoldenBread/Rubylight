@@ -7,6 +7,7 @@ import android.view.View;
 import android.view.ViewGroup;
 
 import com.google.android.material.appbar.MaterialToolbar;
+import com.google.android.material.button.MaterialButton;
 import com.limelight.LatencyBenchmarkActivity;
 import com.limelight.R;
 import com.limelight.binding.video.GpuDriverStore;
@@ -48,9 +49,11 @@ public class SubPageFocusTest {
     }
 
     private static void collect(View view, java.util.List<View> out) {
+        // A Material button draws its own focus stroke; the page adds no ring over it.
         if (view.isFocusable() && view.getVisibility() == View.VISIBLE && !(view instanceof android.widget.AbsListView)
                 && !(view instanceof android.widget.EditText) && !within(MaterialToolbar.class, view)
-                && !(view instanceof android.widget.ScrollView) && !(view instanceof androidx.appcompat.widget.SearchView)) {
+                && !(view instanceof android.widget.ScrollView) && !(view instanceof androidx.appcompat.widget.SearchView)
+                && !(view instanceof MaterialButton)) {
             out.add(view);
         }
         if (view instanceof ViewGroup && !(view instanceof android.widget.AbsListView)) {
@@ -114,18 +117,31 @@ public class SubPageFocusTest {
 
     @Test public void theProfilesPageStartsOnItsContent() { check(StreamProfilesActivity.class); }
 
-    @Test public void decoratedButtonsAndRowsGetTheOutline() {
+    @Test public void decoratedRowsGetTheOutline() {
         ActivityController<KeyboardShortcutsActivity> controller =
                 Robolectric.buildActivity(KeyboardShortcutsActivity.class).setup().visible();
         try {
             Shadows.shadowOf(Looper.getMainLooper()).idle();
-            java.util.List<View> focusables = new java.util.ArrayList<>();
-            collect(controller.get().findViewById(R.id.page_content), focusables);
-            assertFalse("the page has focusable rows", focusables.isEmpty());
-            for (View view : focusables) {
-                assertNotNull("outline on " + view, view.getTag(R.id.focus_ring));
-                assertNotNull(view.getForeground());
-            }
+            android.widget.TextView row = new android.widget.TextView(controller.get());
+            row.setFocusable(true);
+            SubPageFocus.decorate(row);
+            assertNotNull("outline on the row", row.getTag(R.id.focus_ring));
+            assertNotNull(row.getForeground());
+        } finally {
+            controller.pause().stop().destroy();
+        }
+    }
+
+    /** The shared folders' Retry showed two amber rings: the tonal button's focus stroke and the row ring over it. */
+    @Test public void aTonalButtonKeepsItsOwnSingleRing() {
+        ActivityController<KeyboardShortcutsActivity> controller =
+                Robolectric.buildActivity(KeyboardShortcutsActivity.class).setup().visible();
+        try {
+            MaterialButton button = new MaterialButton(controller.get(), null, R.attr.nightjarButtonTonalStyle);
+            assertTrue("the tonal style draws the ring itself", button.getStrokeWidth() > 0);
+            SubPageFocus.decorate(button);
+            assertNull("no second ring on top", button.getTag(R.id.focus_ring));
+            assertNull(button.getForeground());
         } finally {
             controller.pause().stop().destroy();
         }

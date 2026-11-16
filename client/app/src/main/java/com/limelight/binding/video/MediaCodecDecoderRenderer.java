@@ -188,6 +188,12 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private long lastVulkanDiagnosticsNs;
     // The Vulkan renderer's last diagnostics line, for this stream's row in the problem report
     private volatile String vulkanDiagnostics;
+    // An HDR stream the renderer could only tone map hands back to the standard renderer once per
+    // stream: requested by the render poll, and waited for at the next configure (a decoder restart)
+    private boolean vulkanHandedBack;
+    private volatile boolean vulkanHandoverPending;
+    // The renderer such a stream was handed back from: stopped, freed with the decoder
+    private volatile VulkanRendererBridge handedBackVulkan;
     // The Vulkan notice (why it is unused, or that it replaces the upscaler) is shown once per stream
     private boolean vulkanNoticeShown;
     // Frame Warp (docs/frame-warp.md): this stream's renderer, Vulkan or the GLES presenter, draws the shift.
@@ -252,7 +258,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private volatile int pyroWaveDropReason;
     /** The PC's codecs have no PyroWave. */
     public static final int PYROWAVE_NOT_OFFERED = -1;
-    /** Full chroma (packed 4:4:4) is on, which never offers PyroWave. */
+    /** Packed full chroma is on without native 4:4:4, and that path never offers PyroWave. */
     public static final int PYROWAVE_FULL_CHROMA = -2;
     /** HDR is on, and the PC has PyroWave in SDR only: HDR in another codec wins. */
     public static final int PYROWAVE_NO_HDR_ON_PC = -3;
@@ -445,6 +451,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         String fatal = vulkan.getFatalReason();
         if (fatal != null) failVulkan(fatal);
         logVulkanDiagnostics(vulkan);
+        handBackToneMappedHdr(vulkan);
         if (!vulkanPresentReports) return;
         // How each frame ended up takes the place of MediaCodec's frame rendered callback, which
         // on this path only says a frame was handed to the renderer. Display wait counts to the
@@ -485,6 +492,63 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         lastVulkanDiagnosticsNs = nowNs;
         vulkanDiagnostics = text;
         LimeLog.info(text);
+    }
+
+    // An HDR stream the Vulkan renderer can only tone map looks washed out, while the standard
+    // renderer shows the same HDR on this screen (its own surface refused the dataspace or format).
+    // Hand the stream back once, on the next decoder restart, and log why. A stream the PC reports
+    // as SDR is never handed back.
+    private void handBackToneMappedHdr(VulkanRendererBridge vulkan) {
+        if (vulkanHandedBack || vulkanFailure != null ||
+                !HdrPolicy.handsBackFromVulkan(Boolean.TRUE.equals(currentHdrMode), vulkan.isHdrToneMapped())) {
+            return;
+        }
+        synchronized (codecRecoveryMonitor) {
+            if (stopping) return;
+            vulkanHandedBack = true;
+            vulkanHandoverPending = true;
+            // A planned restart, not a recovery from a failure.
+            codecRecoveryAttempts = 0;
+            // The renderer is let go at the handover: this line keeps the reason in the problem report.
+            String diagnostics = vulkan.getDiagnosticsText();
+            if (diagnostics != null) vulkanDiagnostics = diagnostics;
+            LimeLog.warning("Vulkan HDR can only be shown as SDR" +
+                    (diagnostics == null ? "" : " (" + diagnostics + ")") +
+                    "; handing this stream to the standard renderer");
+            requestRestart("HDR shown as SDR");
+        }
+    }
+
+    // The configure of the restart a tone-mapped HDR stream asked for: the codec has let go of the
+    // Vulkan renderer's surface (stop, reset or recreate), so the renderer stops presenting here and,
+    // once its stop finished, the decoder draws on the standard (direct/GL) path from this configure
+    // on. The stopped renderer waits for cleanup rather than being freed on a recovery thread.
+    private void handOverFromVulkan() {
+        if (!vulkanHandoverPending) return;
+        VulkanRendererBridge vulkan = vulkanRenderer;
+        boolean stopFinished = vulkan == null || vulkan.stop();
+        // A stop that gave up after RendererGate.STOP_WAIT_MS is still running, and its native part
+        // may not have let go of the output window: MediaCodec must not configure onto that same
+        // window then. Keep the (tone-mapped) Vulkan path and try again at a later configure.
+        if (!HdrPolicy.handOverAfterVulkanStop(vulkan != null, stopFinished)) {
+            LimeLog.warning("Vulkan renderer did not stop within " + RendererGate.STOP_WAIT_MS +
+                    " ms; keeping it (HDR shown as SDR) rather than drawing on its output window");
+            return;
+        }
+        vulkanHandoverPending = false;
+        wantVulkan = false;
+        vulkanForFrameWarp = false;
+        if (frameWarp) declineFrameWarp(R.string.frame_warp_reason_renderer);
+        vulkanRenderer = null;
+        if (vulkan != null) handedBackVulkan = vulkan;
+        // Frame Warp chooses Vulkan unasked; only a user who asked for it hears it is unused.
+        if (prefs.vulkanRender) {
+            notifyVulkanUnused(context.getString(R.string.stream_hdr_vulkan_shown_as_sdr,
+                    HdrFormatPolicy.baseLayerName(announcedHdrFormat)));
+        }
+        // Balanced pacing on the direct path releases frames on the Choreographer, which the Vulkan
+        // renderer paced itself and so never started.
+        if (choreographerHandlerThread == null) startChoreographerThread();
     }
 
     /** Why the Vulkan renderer gave up, or null while it has not. */
@@ -1739,6 +1803,15 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         return hdr ? R.string.yuv444_fallback_hdr : R.string.yuv444_fallback;
     }
 
+    /**
+     * Whether packed full chroma leaves PyroWave out of the stream: only when it has no native
+     * 4:4:4 (enableYuv444). With native 4:4:4 the PC is offered PyroWave's own 4:4:4 formats, so
+     * packed video is the one case in which {@link #getSupportedVideoFormats} offers no PyroWave.
+     */
+    static boolean pyroWaveFullChromaDrop(boolean packed444, boolean yuv444) {
+        return packed444 && !yuv444;
+    }
+
     // deviceReason: why this device cannot run PyroWave, or 0. hostCodecs: the PC's
     // ServerCodecModeSupport. formats: those both sides offer (prepareVideoFormats' input).
     // choice: the PyroWave format whose surface was set up, or 0 when every one failed.
@@ -1852,7 +1925,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         if (!stopping) {
             pyroWaveDropReason = pyroWaveDropReason(
                     prefs.videoFormat == PreferenceConfiguration.FormatOption.FORCE_PYROWAVE,
-                    prefs.experimentalPacked444, pyroWaveUnavailableReason, hostCodecModeSupport, commonFormats,
+                    pyroWaveFullChromaDrop(prefs.experimentalPacked444, prefs.enableYuv444),
+                    pyroWaveUnavailableReason, hostCodecModeSupport, commonFormats,
                     choice, pyroWaveHdrFailure);
         }
         if (choice != 0) {
@@ -2528,6 +2602,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     private void configureAndStartDecoder(MediaFormat format) {
         applyRequiredInputSize(format, requiredInputBufferSize);
+        // A stream handed back from Vulkan draws on the standard renderer from here
+        handOverFromVulkan();
         // Set HDR metadata if present
         if (packing != null) {
             Packed444.sampleDataFormat(format);
@@ -4667,6 +4743,11 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         if (vulkan != null) {
             vulkanRenderer = null;
             vulkan.destroy();
+        }
+        VulkanRendererBridge handedBack = handedBackVulkan;
+        if (handedBack != null) {
+            handedBackVulkan = null;
+            handedBack.destroy();
         }
         closeUpscaler();
         if (latencyHandler != null) {

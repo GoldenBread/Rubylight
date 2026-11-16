@@ -26,6 +26,8 @@ import com.limelight.nvstream.http.HostCapabilities;
 import com.limelight.nvstream.http.NvApp;
 import com.limelight.nvstream.wol.WakeOnLanSender;
 import com.limelight.pin.PinGate;
+import com.limelight.preferences.StreamProfilePicker;
+import com.limelight.ui.ActionSheet;
 import com.limelight.ui.AppTheme;
 import com.limelight.ui.BackdropView;
 import com.limelight.ui.NavigationDialogBuilder;
@@ -125,6 +127,7 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
     private MaterialButton play;
     private MaterialButton end;
     private MaterialButton favourite;
+    private View profileRow;
     private TextView profileValues;
     private TextView profileLayers;
     private View quitOnLeave;
@@ -211,8 +214,10 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
         play = findViewById(R.id.detail_play);
         end = findViewById(R.id.detail_end);
         favourite = findViewById(R.id.detail_favourite);
+        profileRow = findViewById(R.id.detail_profile);
         profileValues = findViewById(R.id.detail_profile_values);
         profileLayers = findViewById(R.id.detail_profile_layers);
+        profileRow.setOnClickListener(v -> chooseProfile());
         quitOnLeave = findViewById(R.id.detail_quit_on_leave);
         quitOnLeaveSwitch = findViewById(R.id.detail_quit_on_leave_switch);
         quitOnLeaveNote = findViewById(R.id.detail_quit_on_leave_note);
@@ -742,11 +747,23 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
                 m.source != null ? m.source.appUuid : null, m.appId);
         profileValues.setText(profile.values);
         profileLayers.setText(profile.layersOrMain(this));
+        // The profile is the player's to change here, as in the library's menu; without profiles the row only tells.
+        boolean choosable = StreamProfilePicker.inUse(this) != null;
+        profileRow.setClickable(choosable);
+        profileRow.setFocusable(choosable);
         renderQuitOnLeave(m, computer);
 
         if (focusPending && play.isEnabled() && !play.isInTouchMode()) {
             focusPending = false;
             play.requestFocus();
+        }
+    }
+
+    /** Opens the profile chooser; a choice is the active profile, and the values above follow it. */
+    private void chooseProfile() {
+        ActionSheet picker = StreamProfilePicker.chooser(this, this::rerender);
+        if (picker != null) {
+            picker.show();
         }
     }
 

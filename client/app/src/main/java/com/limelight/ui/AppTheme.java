@@ -7,6 +7,8 @@ import android.content.res.Configuration;
 import android.graphics.drawable.Drawable;
 import android.preference.PreferenceManager;
 
+import androidx.appcompat.app.AppCompatDelegate;
+
 import com.google.android.material.color.MaterialColors;
 import com.google.android.material.shape.MaterialShapeDrawable;
 import com.limelight.R;
@@ -16,6 +18,7 @@ public final class AppTheme {
     /** The app theme, one of the THEME_ values (ThemeChoice); two switches before, which migrateTheme moves here. */
     public static final String THEME = "theme";
     public static final String THEME_SYSTEM = "system";
+    public static final String THEME_LIGHT = "light";
     public static final String THEME_DARK = "dark";
     public static final String THEME_OLED_BLACK = "oled_black";
     // The two switches the theme was stored in; never a setting again (SettingsKeysTest.RETIRED).
@@ -59,7 +62,7 @@ public final class AppTheme {
             return prefs.getBoolean(RETIRED_ALWAYS_DARK, false) ? THEME_DARK : THEME_SYSTEM;
         }
         String theme = prefs.getString(THEME, THEME_SYSTEM);
-        return THEME_DARK.equals(theme) || THEME_OLED_BLACK.equals(theme) ? theme : THEME_SYSTEM;
+        return THEME_LIGHT.equals(theme) || THEME_DARK.equals(theme) || THEME_OLED_BLACK.equals(theme) ? theme : THEME_SYSTEM;
     }
 
     /** Moves the theme from its two older switches to {@link #THEME}; changes nothing a second time. */
@@ -129,7 +132,7 @@ public final class AppTheme {
      * screen's layout scales as a whole and not only its text; the system font size still applies on top. The width
      * and height in dp shrink to match, which is what picks the layout qualifiers (a phone at 150 % lays out like a
      * narrower phone). The interface type replaces the uiMode type bits (and so picks the -television resources and
-     * the TV checks) and keeps the night bits.
+     * the TV checks) and keeps the night bits; {@link #applyNightMode} gives the Light choice day resources.
      */
     public static Context scaled(Context context) {
         return scaled(context, false);
@@ -167,7 +170,8 @@ public final class AppTheme {
 
     /** Everything that changes a screen's look and needs it recreated; compared before and after a settings change. */
     static String appearance(Context context) {
-        return isOledBlack(context) + "/" + isDark(context) + "/" + isHighContrast(context) + "/" +
+        return theme(PreferenceManager.getDefaultSharedPreferences(context)) + "/" + isOledBlack(context) + "/" +
+                isDark(context) + "/" + isHighContrast(context) + "/" +
                 uiScalePercent(context) + "/" + uiMode(context) + "/" + Motion.reduced(context);
     }
 
@@ -180,11 +184,14 @@ public final class AppTheme {
     /**
      * The night palette whatever the system says; OLED black is a darker variant of it. A TV always has it: its screens
      * draw on the dark TV canvas (tv_canvas, tv_settings_canvas), where the day palette's dark text could not be read,
-     * and a TV whose system theme is light (a Shield) would otherwise get exactly that.
+     * and a TV whose system theme is light (a Shield) would otherwise get exactly that. The Light choice says the same
+     * on a TV, where the day palette is not safe to draw, as System does there.
      */
     public static boolean isDark(Context context) {
-        return isOledBlack(context) || isTelevision(context) ||
-                THEME_DARK.equals(theme(PreferenceManager.getDefaultSharedPreferences(context)));
+        if (isOledBlack(context)) return true;
+        String theme = theme(PreferenceManager.getDefaultSharedPreferences(context));
+        if (THEME_LIGHT.equals(theme)) return isTelevision(context);
+        return isTelevision(context) || THEME_DARK.equals(theme);
     }
 
     /** Whether the context lays out as a TV: a TV, or the TV interface chosen in Settings (see {@link #scaled}). */
@@ -223,6 +230,27 @@ public final class AppTheme {
         if (isHighContrast(context)) return Look.HIGH_CONTRAST;
         if (isOledBlack(context)) return Look.OLED;
         return !isDark(context) && context.getResources().getBoolean(R.bool.light_system_bars) ? Look.DAY : Look.NIGHT;
+    }
+
+    /** Whether {@link #applyNightMode} set AppCompat's night mode for the Light choice. */
+    private static boolean lightNightMode;
+
+    /**
+     * The night mode the theme asks AppCompat for: Light is the day resources even on a device whose system is dark.
+     * Every other choice follows the system; Dark and OLED draw their own look over it. A mode set by someone else,
+     * such as the demo screenshots' forced day, is left alone.
+     */
+    static void applyNightMode(Context context) {
+        boolean light = THEME_LIGHT.equals(theme(PreferenceManager.getDefaultSharedPreferences(context)));
+        if (light) {
+            lightNightMode = true;
+            if (AppCompatDelegate.getDefaultNightMode() != AppCompatDelegate.MODE_NIGHT_NO) {
+                AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO);
+            }
+        } else if (lightNightMode) {
+            lightNightMode = false;
+            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM);
+        }
     }
 
     /** The overlays {@link #apply} puts on an app screen's theme. */
