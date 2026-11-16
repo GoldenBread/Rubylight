@@ -144,6 +144,9 @@ impl SessionThread<'_> {
         // has taken, and the 5 s timing log's own window.
         let mut pipeline_follow = butterpollo_core::pipeline_rates::Follow::default();
         let mut pipeline_log = butterpollo_core::pipeline_rates::Sampler::default();
+        // Whether the game or desktop delivers the stream's rate, over the
+        // same 5 s windows.
+        let mut source_rate = butterpollo_core::pipeline_rates::SourceRate::default();
         // Identity only: a weak reference releases the previous capture's
         // texture and ring slot once it is encoded, while the live `Weak`
         // still pins the allocation so its address can't be reused by a new
@@ -799,8 +802,9 @@ impl SessionThread<'_> {
                             let input = s.stats.input_latency.lock().unwrap().take();
                             // Pipeline frame rates since the last summary; none in the first.
                             let rates = pipeline_log.sample(Instant::now(), s.pipeline_counts(), Duration::from_secs(5));
+                            let pipeline = rates.as_ref().map(butterpollo_core::pipeline_rates::PipelineRates::from);
                             let fps_of = |pick: fn(&butterpollo_core::pipeline_rates::PipelineRates) -> Option<u32>| {
-                                rates.as_ref().map(butterpollo_core::pipeline_rates::PipelineRates::from).as_ref().and_then(pick).map(|mhz| f64::from(mhz) / 1000.)
+                                pipeline.as_ref().and_then(pick).map(|mhz| f64::from(mhz) / 1000.)
                             };
                             let split = |pick: fn(&(u64, u64)) -> u64| {
                                 let mut values: Vec<u64> = claim_ages.iter().map(pick).collect();
@@ -929,6 +933,35 @@ impl SessionThread<'_> {
                                 cc_feedback_bytes=cc_u64("feedback_bytes"),
                                 "stream timings"
                             );
+                            // The source rate against the stream's. A game below
+                            // it is the limit that every per-stage number hides.
+                            // The warning logs itself when its text changes, so
+                            // one host log line per streak and re-word at most.
+                            let source_mhz = pipeline.as_ref().and_then(|rates| rates.source_mhz);
+                            if let Some(change) = source_rate.window(
+                                Instant::now(),
+                                stream.fps_millihz(),
+                                source_mhz,
+                            ) {
+                                use butterpollo_core::pipeline_rates::SourceRateWarning;
+                                match change {
+                                    SourceRateWarning::Below { source_mhz } => s.launch.warnings.set(
+                                        "source_frame_rate",
+                                        format!(
+                                            "The game or desktop is rendering about {} fps, below this stream's {} fps, so the picture cannot run smoother than that. Lower the game's resolution or graphics settings, or lower the stream's frame rate to match.",
+                                            source_mhz / 1000,
+                                            (stream.fps_millihz() + 500) / 1000,
+                                        ),
+                                    ),
+                                    SourceRateWarning::Cleared => {
+                                        s.launch.warnings.clear("source_frame_rate");
+                                        tracing::info!(
+                                            client = %s.launch.client.name,
+                                            "the game or desktop keeps up with the stream's frame rate again"
+                                        );
+                                    }
+                                }
+                            }
                         }
                         if focus.on()
                             && let Some(Ok(stats)) = encoder.as_ref().map(|encoder| encoder.focus_stats())
