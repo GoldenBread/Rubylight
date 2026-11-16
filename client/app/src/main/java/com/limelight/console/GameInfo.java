@@ -225,18 +225,27 @@ public final class GameInfo {
         }
         try {
             readers.execute(() -> {
-                File kept = cachedCover(game);
-                if (kept != null) {
-                    finishCover(id, kept);
-                    return;
-                }
+                // The waiters are always released, whatever a read or a lookup throws.
+                boolean handedOn = false;
+                File kept = null;
                 try {
-                    executor.execute(() -> {
-                        Entry entry = resolve(game, true, true);
-                        finishCover(id, entry == null ? null : entry.image);
-                    });
+                    kept = cachedCover(game);
+                    if (kept == null) {
+                        executor.execute(() -> {
+                            File image = null;
+                            try {
+                                Entry entry = resolve(game, true, true);
+                                image = entry == null ? null : entry.image;
+                            } finally {
+                                finishCover(id, image);
+                            }
+                        });
+                        handedOn = true;
+                    }
                 } catch (RejectedExecutionException e) {
-                    finishCover(id, null);
+                    // Shut down: nothing to look up.
+                } finally {
+                    if (!handedOn) finishCover(id, kept);
                 }
             });
         } catch (RejectedExecutionException e) {

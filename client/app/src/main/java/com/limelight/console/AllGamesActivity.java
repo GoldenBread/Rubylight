@@ -651,7 +651,8 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
     private void loadFacts() {
         if (!GameInfo.factsWanted(this)) return;
         List<HomeModel.GameCard> cards = cardsOf(model, HomeModel.FILTER_ALL);
-        StringBuilder signature = new StringBuilder();
+        // The keys are part of it: corrected keys ask again for the games a refused key found nothing for.
+        StringBuilder signature = new StringBuilder(GameInfo.keys(this).json(true, true).toString()).append('|');
         for (HomeModel.GameCard card : cards) signature.append(card.key).append(';');
         if (signature.toString().equals(factsLoadedFor)) return;
         factsLoadedFor = signature.toString();

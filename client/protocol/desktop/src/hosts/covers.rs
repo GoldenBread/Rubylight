@@ -106,8 +106,8 @@ impl Hosts {
             // placeholder, never a failed load), fetched on its own worker and landing as a later
             // cover of the same version.
             let real = bytes.as_deref().is_some_and(|b| !nightjar_core::http::is_placeholder_box_art(b));
-            if let Some((worker, game)) = fallback.filter(|_| !real) {
-                let _ = worker.send(super::game_info::CoverJob { id, app, version: version.clone(), game, scale });
+            if let Some(fallback) = fallback.filter(|_| !real) {
+                return fallback.fill(id, app, version, scale, bytes);
             }
             let (image, ambient, sized) = art_and_ambient(bytes, scale);
             Some(Event::Art { id, app, version, image, ambient, sized })
@@ -154,9 +154,17 @@ impl Hosts {
             }
         }
         for (id, app, version, cache) in jobs {
+            // A cover SteamGridDB filled in has no file of the PC's: its worker sizes it again.
+            let fallback = self.get(id).and_then(|host| self.cover_fallback(host, app));
             self.load_art(move || {
+                let file = std::fs::read(&cache).ok();
+                let real = file.as_deref().is_some_and(|b| !nightjar_core::http::is_placeholder_box_art(b));
+                if let Some(fallback) = fallback.filter(|_| !real) {
+                    fallback.sharpen(id, app, version, scale);
+                    return None;
+                }
                 // Only from its file: the cover that shows is good enough to keep if that is gone.
-                let image = art_image(std::fs::read(&cache).ok())?;
+                let image = art_image(file)?;
                 let (image, sized) = cover_sized(image, scale);
                 Some(Event::ArtSharper { id, app, version, image, sized })
             });

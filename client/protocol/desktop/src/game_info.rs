@@ -83,7 +83,9 @@ pub struct GameInfo {
     keys: RwLock<Keys>,
     dir: PathBuf,
     http: Box<dyn Http>,
-    /// Held for a whole lookup: one at a time, the session's pace and token carried along.
+    /// Held for a whole lookup, its waits included: lookups never interleave, so the services'
+    /// pace and the token hold across them. Only the facts and SteamGridDB-cover workers wait on
+    /// it, never a cover worker or the UI.
     session: Mutex<Option<Session>>,
     /// The records read or made this run, by key.
     records: Mutex<HashMap<String, Record>>,
@@ -209,6 +211,15 @@ impl GameInfo {
         }
         let record = self.record(game, true)?;
         self.image(record.cover.as_deref()?)
+    }
+
+    /// SteamGridDB's cover for `game` when its record and image are already on disk; asks nothing.
+    pub fn kept_cover(&self, game: &Game) -> Option<Vec<u8>> {
+        if !self.keys().art() {
+            return None;
+        }
+        let record = self.kept(&names::key(&game.name, game.steam))?;
+        std::fs::read(self.dir.join("img").join(cache::image_file(record.cover.as_deref()?))).ok()
     }
 }
 
