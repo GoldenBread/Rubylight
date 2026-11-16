@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_list_rumble_feel">Rumble feel</string>
+    <string name="summary_list_rumble_feel">Strong makes weak vibration strong enough for a small motor to show; Subtle caps strong vibration and softens weak. Either one changes the balance of weak and strong rumble the game chose, so leave it on Standard unless vibration is too faint or too harsh.</string>
+    <string name="rumble_feel_standard">Standard</string>
+    <string name="rumble_feel_strong">Strong</string>
+    <string name="rumble_feel_subtle">Subtle</string>
+    <string-array name="rumble_feel_names" translatable="false">
+        <item>@string/rumble_feel_standard</item>
+        <item>@string/rumble_feel_strong</item>
+        <item>@string/rumble_feel_subtle</item>
+    </string-array>
+    <string-array name="rumble_feel_values" translatable="false">
+        <item>standard</item>
+        <item>strong</item>
+        <item>subtle</item>
+    </string-array>
+</resources>

@@ -322,6 +322,13 @@
             android:title="@string/title_checkbox_disable_rumble"
             android:dialogMessage="@string/summary_checkbox_disable_rumble"
             android:defaultValue="false" />
+        <com.limelight.preferences.MaterialListPreference
+            android:key="list_rumble_feel"
+            android:title="@string/title_list_rumble_feel"
+            android:dialogMessage="@string/summary_list_rumble_feel"
+            android:entries="@array/rumble_feel_names"
+            android:entryValues="@array/rumble_feel_values"
+            android:defaultValue="standard" />
         <com.limelight.preferences.MaterialSwitchPreference
             android:key="checkbox_vibrate_fallback"
             android:title="@string/title_checkbox_vibrate_fallback"

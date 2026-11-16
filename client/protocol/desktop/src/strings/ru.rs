@@ -1642,4 +1642,9 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приёма: система �
     ("Jumbo video packets", "Крупные видеопакеты"),
     ("Sends video in fewer, larger packets when the PC and every link carry 9000-byte jumbo frames. Each stream starts a few seconds later while Nightjar tests the network, and uses normal packets if the test fails. Leave it off unless your wired network is set up for jumbo frames.", "Отправляет видео меньшим числом более крупных пакетов, когда ПК и каждая линия передают кадры jumbo по 9000 байт. Каждый поток запускается на несколько секунд позже, пока Nightjar проверяет сеть, и использует обычные пакеты, если проверка не пройдена. Оставьте выключенным, если ваша проводная сеть не настроена для кадров jumbo."),
     ("Jumbo video packets didn’t pass the test on this network, so the stream uses normal packets.", "Крупные видеопакеты не прошли проверку в этой сети, поэтому поток использует обычные пакеты."),
+    ("Rumble feel", "Ощущение вибрации"),
+    ("Strong makes weak vibration strong enough for a small motor to show; Subtle caps strong vibration and softens weak. Either one changes the balance of weak and strong rumble the game chose, so leave it on Standard unless vibration is too faint or too harsh.", "«Сильная» усиливает слабую вибрацию настолько, чтобы её показал маленький мотор; «Мягкая» ограничивает сильную вибрацию и смягчает слабую. Любой из режимов меняет соотношение слабой и сильной вибрации, заданное игрой, поэтому оставьте «Стандартная», если вибрация не слишком слабая и не слишком резкая."),
+    ("Standard", "Стандартная"),
+    ("Strong", "Сильная"),
+    ("Subtle", "Мягкая"),
 ];

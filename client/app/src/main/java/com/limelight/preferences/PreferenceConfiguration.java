@@ -124,6 +124,7 @@ public class PreferenceConfiguration {
     private static final String MOUSE_EMULATION_STRING = "checkbox_mouse_emulation";
     private static final String MOUSE_EMULATION_FIXED_STEP_STRING = "checkbox_mouse_emulation_fixed_step";
     private static final String DISABLE_RUMBLE_PREF_STRING = "checkbox_disable_rumble";
+    private static final String RUMBLE_FEEL_PREF_STRING = "list_rumble_feel";
     private static final String BACK_AS_META_PREF_STRING = "checkbox_back_as_meta";
     static final String BACK_OPENS_MENU_PREF_STRING = "checkbox_back_opens_menu";
     private static final String GAMEPAD_QUIT_COMBO_PREF_STRING = "list_gamepad_quit_combo";
@@ -413,6 +414,8 @@ public class PreferenceConfiguration {
     public boolean mouseEmulation;
     public boolean mouseEmulationFixedStep;
     public boolean disableRumble;
+    /** The rumble response curve ({@code list_rumble_feel}): "standard", "strong" or "subtle" ({@link com.limelight.binding.input.RumblePolicy.Feel}). */
+    public String rumbleFeel = "standard";
     public boolean backAsMeta;
     public boolean backOpensMenu;
     /** The controller quit combo ({@code list_gamepad_quit_combo}); "off" leaves it to the stream menu. */
@@ -1749,6 +1752,7 @@ public class PreferenceConfiguration {
         config.mouseEmulation = prefs.getBoolean(MOUSE_EMULATION_STRING, DEFAULT_MOUSE_EMULATION);
         config.mouseEmulationFixedStep = prefs.getBoolean(MOUSE_EMULATION_FIXED_STEP_STRING, false);
         config.disableRumble = prefs.getBoolean(DISABLE_RUMBLE_PREF_STRING, false);
+        config.rumbleFeel = prefs.getString(RUMBLE_FEEL_PREF_STRING, "standard");
         config.backAsMeta = prefs.getBoolean(BACK_AS_META_PREF_STRING, false);
         config.backOpensMenu = prefs.getBoolean(BACK_OPENS_MENU_PREF_STRING, false);
         config.gamepadQuitCombo = prefs.getString(GAMEPAD_QUIT_COMBO_PREF_STRING, "off");

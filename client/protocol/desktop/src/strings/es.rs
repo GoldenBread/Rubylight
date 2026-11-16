@@ -1642,4 +1642,9 @@ sudo sysctl -w net.core.rmem_max={}", "Búfer de recepción: el sistema concedi�
     ("Jumbo video packets", "Paquetes de vídeo jumbo"),
     ("Sends video in fewer, larger packets when the PC and every link carry 9000-byte jumbo frames. Each stream starts a few seconds later while Nightjar tests the network, and uses normal packets if the test fails. Leave it off unless your wired network is set up for jumbo frames.", "Envía el vídeo en menos paquetes y más grandes cuando el PC y cada tramo transportan tramas jumbo de 9000 bytes. Cada transmisión tarda unos segundos más en empezar mientras Nightjar prueba la red, y usa paquetes normales si la prueba falla. Déjalo desactivado salvo que tu red por cable esté configurada para tramas jumbo."),
     ("Jumbo video packets didn’t pass the test on this network, so the stream uses normal packets.", "Los paquetes de vídeo jumbo no superaron la prueba en esta red, así que el stream usa paquetes normales."),
+    ("Rumble feel", "Sensación de vibración"),
+    ("Strong makes weak vibration strong enough for a small motor to show; Subtle caps strong vibration and softens weak. Either one changes the balance of weak and strong rumble the game chose, so leave it on Standard unless vibration is too faint or too harsh.", "Fuerte hace que la vibración débil sea lo bastante intensa para que un motor pequeño la muestre; Suave limita la vibración fuerte y suaviza la débil. Cualquiera de las dos cambia el equilibrio entre vibración débil y fuerte que eligió el juego, así que déjalo en Estándar salvo que la vibración sea demasiado floja o demasiado brusca."),
+    ("Standard", "Estándar"),
+    ("Strong", "Fuerte"),
+    ("Subtle", "Suave"),
 ];

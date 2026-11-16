@@ -1642,4 +1642,9 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("Jumbo video packets", "점보 비디오 패킷"),
     ("Sends video in fewer, larger packets when the PC and every link carry 9000-byte jumbo frames. Each stream starts a few seconds later while Nightjar tests the network, and uses normal packets if the test fails. Leave it off unless your wired network is set up for jumbo frames.", "PC와 모든 구간이 9000바이트 점보 프레임을 전달할 때 더 적고 큰 패킷으로 비디오를 보냅니다. Nightjar가 네트워크를 테스트하는 동안 각 스트림 시작이 몇 초 늦어지며, 테스트에 실패하면 일반 패킷을 사용합니다. 유선 네트워크가 점보 프레임에 맞게 설정된 경우가 아니면 끄세요."),
     ("Jumbo video packets didn’t pass the test on this network, so the stream uses normal packets.", "이 네트워크에서 점보 비디오 패킷 테스트를 통과하지 못해 일반 패킷으로 스트리밍합니다."),
+    ("Rumble feel", "진동 느낌"),
+    ("Strong makes weak vibration strong enough for a small motor to show; Subtle caps strong vibration and softens weak. Either one changes the balance of weak and strong rumble the game chose, so leave it on Standard unless vibration is too faint or too harsh.", "강하게는 약한 진동을 작은 모터도 표현할 만큼 키우고, 부드럽게는 강한 진동에 상한을 두고 약한 진동을 누그러뜨립니다. 둘 다 게임이 정한 약한 진동과 강한 진동의 균형을 바꾸므로, 진동이 너무 약하거나 너무 거칠지 않다면 표준으로 두세요."),
+    ("Standard", "표준"),
+    ("Strong", "강하게"),
+    ("Subtle", "부드럽게"),
 ];

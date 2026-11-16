@@ -1642,4 +1642,9 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("Jumbo video packets", "巨型視訊封包"),
     ("Sends video in fewer, larger packets when the PC and every link carry 9000-byte jumbo frames. Each stream starts a few seconds later while Nightjar tests the network, and uses normal packets if the test fails. Leave it off unless your wired network is set up for jumbo frames.", "當 PC 和每一段鏈路都能承載 9000 位元組的巨型幀時，用更少、更大的封包傳送視訊。Nightjar 測試網路時，每次串流會晚幾秒開始；測試失敗則使用一般封包。除非你的有線網路已為巨型幀設定好，否則請保持關閉。"),
     ("Jumbo video packets didn’t pass the test on this network, so the stream uses normal packets.", "巨型視訊封包未通過此網路的測試，因此串流使用一般封包。"),
+    ("Rumble feel", "震動手感"),
+    ("Strong makes weak vibration strong enough for a small motor to show; Subtle caps strong vibration and softens weak. Either one changes the balance of weak and strong rumble the game chose, so leave it on Standard unless vibration is too faint or too harsh.", "「強」會把微弱的震動加強到小型馬達也能表現出來；「柔和」會限制強震動並減弱微弱震動。兩者都會改變遊戲設定的弱震動與強震動之間的平衡，除非震動太弱或太生硬，否則請保持「標準」。"),
+    ("Standard", "標準"),
+    ("Strong", "強"),
+    ("Subtle", "柔和"),
 ];

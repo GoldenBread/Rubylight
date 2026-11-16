@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_list_rumble_feel">Odczucie wibracji</string>
+    <string name="summary_list_rumble_feel">Mocne podbija słabe wibracje tak, by mały silnik je pokazał; Delikatne ogranicza mocne wibracje i łagodzi słabe. Oba zmieniają proporcje słabych i mocnych wibracji wybrane przez grę, więc zostaw Standardowe, chyba że wibracje są zbyt słabe lub zbyt ostre.</string>
+    <string name="rumble_feel_standard">Standardowe</string>
+    <string name="rumble_feel_strong">Mocne</string>
+    <string name="rumble_feel_subtle">Delikatne</string>
+</resources>

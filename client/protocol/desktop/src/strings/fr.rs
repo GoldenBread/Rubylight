@@ -1642,4 +1642,9 @@ sudo sysctl -w net.core.rmem_max={}", "Tampon de réception : le système a acco
     ("Jumbo video packets", "Paquets vidéo jumbo"),
     ("Sends video in fewer, larger packets when the PC and every link carry 9000-byte jumbo frames. Each stream starts a few seconds later while Nightjar tests the network, and uses normal packets if the test fails. Leave it off unless your wired network is set up for jumbo frames.", "Envoie la vidéo en moins de paquets plus gros lorsque le PC et chaque liaison transportent des trames jumbo de 9000 octets. Chaque stream démarre quelques secondes plus tard pendant que Nightjar teste le réseau, et utilise des paquets normaux si le test échoue. Laissez-le désactivé, sauf si votre réseau filaire est configuré pour les trames jumbo."),
     ("Jumbo video packets didn’t pass the test on this network, so the stream uses normal packets.", "Les paquets vidéo jumbo n’ont pas réussi le test sur ce réseau ; le stream utilise donc des paquets normaux."),
+    ("Rumble feel", "Ressenti des vibrations"),
+    ("Strong makes weak vibration strong enough for a small motor to show; Subtle caps strong vibration and softens weak. Either one changes the balance of weak and strong rumble the game chose, so leave it on Standard unless vibration is too faint or too harsh.", "Fort rend les vibrations faibles assez marquées pour qu’un petit moteur les restitue ; Doux plafonne les vibrations fortes et adoucit les faibles. L’un comme l’autre modifie l’équilibre entre vibrations faibles et fortes voulu par le jeu : laissez Standard, sauf si les vibrations sont trop faibles ou trop brusques."),
+    ("Standard", "Standard"),
+    ("Strong", "Fort"),
+    ("Subtle", "Doux"),
 ];

@@ -31,7 +31,7 @@ pub(super) const SECTION_KEYS: [&[&[&str]]; 8] = [
         &["upscaling"], &["upscale_sharpness"], &["align_video_top"],
         &["host_display", "virtual_display"], &["virtual_display_scale"], &["virtual_display_dpi"]],
     &[&["mouse_mode"], &["controllers", "multi_controller"], &["keyboard_follows_text_fields"], &["clipboard_sync"],
-        &["swap_face_buttons"], &["gamepad_quit_combo"], &["deadzone"], &["trigger_deadzone"], &["controller_motion"], &["disable_rumble"],
+        &["swap_face_buttons"], &["gamepad_quit_combo"], &["deadzone"], &["trigger_deadzone"], &["controller_motion"], &["disable_rumble"], &["rumble_feel"],
         &["controller_mouse"], &["analog_scrolling"], &["mouse_fixed_step"], &["gamepad_touchpad_as_mouse"], &["background_controllers"],
         &["guide_hold_ms"], &["back_opens_menu", "back_as_guide"], &["stream_menu_buttons"],
         &["mouse_speed"], &["mouse_nav_buttons"], &["native_touchpad"],
@@ -1101,6 +1101,13 @@ impl Launcher {
             });
             setting_row(ui, s, &mut rows, &["controller_motion"], "Motion controls", "Sends the controller’s gyro and accelerometer to games, for motion aiming. The PC may then treat it as a PlayStation controller; turn it off if games show the wrong buttons.", |ui, s| toggle(ui, &mut s.controller_motion));
             setting_row(ui, s, &mut rows, &["disable_rumble"], "Turn off vibration", "Stops every vibration a game asks for: rumble, trigger rumble and haptics. Leave it off unless you want no vibration at all.", |ui, s| toggle(ui, &mut s.disable_rumble));
+            setting_row(ui, s, &mut rows, &["rumble_feel"], "Rumble feel", "Strong makes weak vibration strong enough for a small motor to show; Subtle caps strong vibration and softens weak. Either one changes the balance of weak and strong rumble the game chose, so leave it on Standard unless vibration is too faint or too harsh.", |ui, s| {
+                Combo::from_id_salt("rumble-feel").selected_text(tr(crate::config::rumble_feel_label(s.rumble_feel))).show_ui(ui, |ui| {
+                    for feel in nightjar_policy::rumble::RumbleFeel::ALL {
+                        ui.selectable_value(&mut s.rumble_feel, feel, tr(crate::config::rumble_feel_label(feel)));
+                    }
+                }).response
+            });
             setting_row(ui, s, &mut rows, &["controller_mouse"], "Controller mouse mode", "Holding Start switches the controller between gamepad and mouse. Turn it off if that happens by accident in a game; the stream menu’s Mouse tile still switches it.", |ui, s| toggle(ui, &mut s.controller_mouse));
             rows.when(s.controller_mouse);
             setting_row(ui, s, &mut rows, &["analog_scrolling"], "Stick for scrolling", "The stick that scrolls in controller mouse mode; the other stick moves the pointer. Without a scroll stick, both move the pointer.", |ui, s| {
@@ -2452,6 +2459,7 @@ pub(super) fn value_text(key: &str, s: &Settings, display: &Display, style: crat
         "deadzone" => format!("{}%", s.deadzone),
         "trigger_deadzone" => format!("{}%", s.trigger_deadzone),
         "gamepad_quit_combo" => style.quit_combo(s.gamepad_quit_combo),
+        "rumble_feel" => tr(crate::config::rumble_feel_label(s.rumble_feel)).to_owned(),
         "stream_menu_buttons" if s.stream_menu_buttons.is_empty() => tr("Default").to_owned(),
         "stream_menu_buttons" => s.stream_menu_buttons.iter().map(|(key, id)| format!("{}: {}", key.cap(), stream_menu_button_name(Some(id)))).collect::<Vec<_>>().join(", "),
         "analog_scrolling" => scrolling_name(s.analog_scrolling).to_owned(),
@@ -2519,7 +2527,7 @@ pub(super) const ANDROID_KEYS: &[(&str, &str)] = &[
     ("mouse_mode", "checkbox_absolute_mouse_mode"), ("controllers", "controllers"), ("controller_buttons", "controller_button_mapping"),
     ("controller_test", "controller_test"), ("keyboard_follows_text_fields", "checkbox_keyboard_follows_text_fields"), ("clipboard_sync", "checkbox_clipboard_sync"), ("swap_face_buttons", "checkbox_flip_face_buttons"),
     ("gamepad_quit_combo", "list_gamepad_quit_combo"), ("deadzone", "seekbar_deadzone"), ("trigger_deadzone", "seekbar_trigger_deadzone"),
-    ("controller_motion", "checkbox_gamepad_motion_sensors"), ("disable_rumble", "checkbox_disable_rumble"),
+    ("controller_motion", "checkbox_gamepad_motion_sensors"), ("disable_rumble", "checkbox_disable_rumble"), ("rumble_feel", "list_rumble_feel"),
     ("controller_mouse", "checkbox_mouse_emulation"), ("analog_scrolling", "analog_scrolling"),
     ("mouse_fixed_step", "checkbox_mouse_emulation_fixed_step"), ("gamepad_touchpad_as_mouse", "checkbox_gamepad_touchpad_as_mouse"),
     ("guide_hold_ms", "list_guide_menu_hold"), ("back_opens_menu", "back_button"),

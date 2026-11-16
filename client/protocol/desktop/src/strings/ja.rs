@@ -1642,4 +1642,9 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("Jumbo video packets", "ジャンボビデオパケット"),
     ("Sends video in fewer, larger packets when the PC and every link carry 9000-byte jumbo frames. Each stream starts a few seconds later while Nightjar tests the network, and uses normal packets if the test fails. Leave it off unless your wired network is set up for jumbo frames.", "PC とすべての経路が 9000 バイトのジャンボフレームを運べるとき、より少ない大きなパケットで映像を送ります。Nightjar がネットワークをテストするため、各ストリームの開始が数秒遅くなり、テストに合格しない場合は通常のパケットを使います。有線ネットワークがジャンボフレーム用に設定されている場合以外はオフにしてください。"),
     ("Jumbo video packets didn’t pass the test on this network, so the stream uses normal packets.", "このネットワークではジャンボビデオパケットのテストに合格しなかったため、通常のパケットでストリームします。"),
+    ("Rumble feel", "振動の感触"),
+    ("Strong makes weak vibration strong enough for a small motor to show; Subtle caps strong vibration and softens weak. Either one changes the balance of weak and strong rumble the game chose, so leave it on Standard unless vibration is too faint or too harsh.", "「強め」は、弱い振動を小さなモーターでも感じられる強さに引き上げます。「控えめ」は、強い振動に上限を設け、弱い振動をやわらげます。どちらもゲームが決めた弱い振動と強い振動のバランスを変えるため、振動が弱すぎる、または強すぎる場合を除き「標準」のままにしてください。"),
+    ("Standard", "標準"),
+    ("Strong", "強め"),
+    ("Subtle", "控えめ"),
 ];

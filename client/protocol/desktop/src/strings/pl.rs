@@ -1642,4 +1642,9 @@ sudo sysctl -w net.core.rmem_max={}", "Bufor odbioru: system przydzielił {0} Ki
     ("Jumbo video packets", "Pakiety wideo jumbo"),
     ("Sends video in fewer, larger packets when the PC and every link carry 9000-byte jumbo frames. Each stream starts a few seconds later while Nightjar tests the network, and uses normal packets if the test fails. Leave it off unless your wired network is set up for jumbo frames.", "Wysyła obraz w mniejszej liczbie większych pakietów, gdy PC i każde łącze przenoszą ramki jumbo 9000 bajtów. Każdy strumień startuje kilka sekund później, podczas gdy Nightjar testuje sieć, i używa zwykłych pakietów, jeśli test się nie powiedzie. Pozostaw wyłączone, chyba że twoja sieć przewodowa jest skonfigurowana dla ramek jumbo."),
     ("Jumbo video packets didn’t pass the test on this network, so the stream uses normal packets.", "Pakiety wideo jumbo nie przeszły testu w tej sieci, więc strumień używa zwykłych pakietów."),
+    ("Rumble feel", "Odczucie wibracji"),
+    ("Strong makes weak vibration strong enough for a small motor to show; Subtle caps strong vibration and softens weak. Either one changes the balance of weak and strong rumble the game chose, so leave it on Standard unless vibration is too faint or too harsh.", "Mocne podbija słabe wibracje tak, by mały silnik je pokazał; Delikatne ogranicza mocne wibracje i łagodzi słabe. Oba zmieniają proporcje słabych i mocnych wibracji wybrane przez grę, więc zostaw Standardowe, chyba że wibracje są zbyt słabe lub zbyt ostre."),
+    ("Standard", "Standardowe"),
+    ("Strong", "Mocne"),
+    ("Subtle", "Delikatne"),
 ];

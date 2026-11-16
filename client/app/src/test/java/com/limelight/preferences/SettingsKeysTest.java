@@ -363,6 +363,7 @@ public class SettingsKeysTest {
         reads.put("checkbox_disable_rumble", new Read(false, true, c -> c.disableRumble));
         reads.put("checkbox_back_as_meta", new Read(false, true, c -> c.backAsMeta));
         reads.put("checkbox_back_opens_menu", new Read(false, true, c -> c.backOpensMenu));
+        reads.put("list_rumble_feel", new Read("standard", "strong", c -> c.rumbleFeel));
         reads.put("list_gamepad_quit_combo", new Read("off", "lb_rb_a_b", c -> c.gamepadQuitCombo));
         reads.put("checkbox_back_as_guide", new Read(false, true, c -> c.backAsGuide));
         reads.put("list_guide_menu_hold", new Read("0", "1500", c -> c.guideMenuHoldMs));

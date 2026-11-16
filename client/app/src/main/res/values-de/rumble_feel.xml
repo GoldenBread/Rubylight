@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_list_rumble_feel">Vibrationsgefühl</string>
+    <string name="summary_list_rumble_feel">Stark macht schwache Vibration so kräftig, dass ein kleiner Motor sie zeigt; Dezent begrenzt starke Vibration und dämpft schwache. Beides verändert das Verhältnis von schwacher und starker Vibration, das das Spiel gewählt hat; lass es auf Standard, solange die Vibration nicht zu schwach oder zu hart ist.</string>
+    <string name="rumble_feel_standard">Standard</string>
+    <string name="rumble_feel_strong">Stark</string>
+    <string name="rumble_feel_subtle">Dezent</string>
+</resources>

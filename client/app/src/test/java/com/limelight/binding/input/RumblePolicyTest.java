@@ -31,12 +31,82 @@ public class RumblePolicyTest {
     }
 
     @Test
-    public void deviceFallbackStrengthScalesUnsignedLevelsAndCapsAtFull() {
-        assertEquals((short) 0x7FFF, RumblePolicy.scaleMotor((short) 0xFFFE, 50));
-        assertEquals((short) 0xFFFE, RumblePolicy.scaleMotor((short) 0xFFFF, 200));
-        assertEquals((short) 0x2000, RumblePolicy.scaleMotor((short) 0x1000, 200));
-        assertEquals(0, RumblePolicy.scaleMotor((short) 0xFFFF, 0));
-        assertEquals(0, RumblePolicy.scaleMotor((short) 0xFFFF, -10));
+    public void deviceFallbackStrengthScalesTheAmplitudeAndCapsAtFull() {
+        RumblePolicy.Feel standard = RumblePolicy.Feel.STANDARD;
+        // 0xFF00 on the big motor mixes to 204 (80%).
+        assertEquals(204, RumblePolicy.singleMotorAmplitude((short) 0xFF00, (short) 0, standard, 100));
+        assertEquals(102, RumblePolicy.singleMotorAmplitude((short) 0xFF00, (short) 0, standard, 50));
+        assertEquals(255, RumblePolicy.singleMotorAmplitude((short) 0xFFFF, (short) 0xFFFF, standard, 200));
+        assertEquals(0, RumblePolicy.singleMotorAmplitude((short) 0xFFFF, (short) 0xFFFF, standard, 0));
+        assertEquals(0, RumblePolicy.singleMotorAmplitude((short) 0xFFFF, (short) 0xFFFF, standard, -10));
+        // A level too small to reach 1 after the mix stays silent, as before.
+        assertEquals(0, RumblePolicy.singleMotorAmplitude((short) 0, (short) 0x0100, standard, 100));
+    }
+
+    // The same table is in nightjar_policy::rumble's tests (client/protocol/policy/src/rumble.rs).
+    @Test
+    public void feelCurvesMatchTheDesktopTable() {
+        int[][] table = {
+                {0, 0, 0}, {0, 1234, 1234}, {0, 65535, 65535},
+                {1, 0, 0}, {1, 1000, 0}, {1, 6554, 26191}, {1, 32768, 46640}, {1, 65535, 65535},
+                {2, 0, 0}, {2, 6554, 1244}, {2, 32768, 13902}, {2, 65535, 39321},
+        };
+        for (int[] row : table) {
+            RumblePolicy.Feel feel = RumblePolicy.Feel.values()[row[0]];
+            assertEquals(feel + " " + row[1], row[2], RumblePolicy.shapeMotor((short) row[1], feel) & 0xffff);
+        }
+    }
+
+    @Test
+    public void feelsKeepZeroSilentAndStayMonotonic() {
+        for (RumblePolicy.Feel feel : RumblePolicy.Feel.values()) {
+            assertEquals(0, RumblePolicy.shapeMotor((short) 0, feel));
+            assertEquals(0, RumblePolicy.shapeAmplitude(0, feel));
+            int last = 0;
+            for (int level = 0; level <= 65535; level += 257) {
+                int out = RumblePolicy.shapeMotor((short) level, feel) & 0xffff;
+                assertTrue(feel + " falls at " + level, out >= last);
+                last = out;
+            }
+        }
+        // Standard changes nothing, in either width.
+        for (int amplitude = 0; amplitude <= 255; amplitude++) {
+            assertEquals(amplitude, RumblePolicy.shapeAmplitude(amplitude, RumblePolicy.Feel.STANDARD));
+        }
+    }
+
+    @Test
+    public void strongLiftsWeakAmplitudeAboveAMotorStartAndSubtleCapsIt() {
+        assertTrue(RumblePolicy.shapeAmplitude(20, RumblePolicy.Feel.STRONG) >= 64);
+        assertEquals(255, RumblePolicy.shapeAmplitude(255, RumblePolicy.Feel.STRONG));
+        assertTrue(RumblePolicy.shapeAmplitude(255, RumblePolicy.Feel.SUBTLE) <= 153);
+    }
+
+    @Test
+    public void feelKeysReadBackAndUnknownIsStandard() {
+        for (RumblePolicy.Feel feel : RumblePolicy.Feel.values()) {
+            assertSame(feel, RumblePolicy.Feel.fromKey(feel.key));
+        }
+        assertSame(RumblePolicy.Feel.STANDARD, RumblePolicy.Feel.fromKey(null));
+        assertSame(RumblePolicy.Feel.STANDARD, RumblePolicy.Feel.fromKey("loud"));
+    }
+
+    @Test
+    public void aVibratorWithoutAmplitudeControlGetsADutyCycleFromTheLevel() {
+        long[] half = RumblePolicy.pwmTimings(128, RumblePolicy.Feel.STANDARD);
+        assertEquals(10, half[0]);
+        assertEquals(10, half[1]);
+        long[] full = RumblePolicy.pwmTimings(255, RumblePolicy.Feel.STANDARD);
+        assertEquals(20, full[0]);
+        assertEquals(0, full[1]);
+        // Standard keeps today's rounding down; another feel keeps a weak level audible at 1 ms.
+        assertEquals(0, RumblePolicy.pwmTimings(5, RumblePolicy.Feel.STANDARD)[0]);
+        assertEquals(1, RumblePolicy.pwmTimings(5, RumblePolicy.Feel.STRONG)[0]);
+        assertEquals(0, RumblePolicy.pwmTimings(0, RumblePolicy.Feel.STRONG)[0]);
+        // Strong turns a weak host level into a longer pulse than Standard would.
+        int weak = RumblePolicy.singleMotorAmplitude((short) 0x1800, (short) 0, RumblePolicy.Feel.STRONG, 100);
+        int plain = RumblePolicy.singleMotorAmplitude((short) 0x1800, (short) 0, RumblePolicy.Feel.STANDARD, 100);
+        assertTrue(RumblePolicy.pwmTimings(weak, RumblePolicy.Feel.STRONG)[0] > RumblePolicy.pwmTimings(plain, RumblePolicy.Feel.STANDARD)[0]);
     }
 
     @Test

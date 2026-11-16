@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_list_rumble_feel">Sensazione della vibrazione</string>
+    <string name="summary_list_rumble_feel">Forte rende la vibrazione debole abbastanza intensa da farla sentire a un motore piccolo; Morbida limita la vibrazione forte e ammorbidisce quella debole. Entrambe cambiano l’equilibrio tra vibrazione debole e forte scelto dal gioco, quindi lascia Standard a meno che la vibrazione sia troppo debole o troppo brusca.</string>
+    <string name="rumble_feel_standard">Standard</string>
+    <string name="rumble_feel_strong">Forte</string>
+    <string name="rumble_feel_subtle">Morbida</string>
+</resources>

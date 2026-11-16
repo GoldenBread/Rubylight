@@ -209,6 +209,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      */
     private final InputDeviceContext handheldContext;
     private final boolean rumbleAllowed;
+    private final RumblePolicy.Feel rumbleFeel;
     private short currentControllers, initialControllers;
 
     public ControllerHandler(Activity activityContext, NvConnection conn, GameGestures gestures, PreferenceConfiguration prefConfig) {
@@ -222,6 +223,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         this.steamControlsSession = prefConfig.oscSteamControls;
         this.deviceFallbackSlot = (short) (onscreenOwnPlayerSession ? 1 : 0);
         this.rumbleAllowed = RumblePolicy.allows(prefConfig.disableRumble);
+        this.rumbleFeel = RumblePolicy.Feel.fromKey(prefConfig.rumbleFeel);
 		
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             this.deviceVibratorManager = (VibratorManager) activityContext.getSystemService(Context.VIBRATOR_MANAGER_SERVICE);
@@ -2933,6 +2935,8 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     // This must only be called if hasDualAmplitudeControlledRumbleVibrators() is true!
     @TargetApi(31)
     private void rumbleDualVibrators(VibratorManager vm, short lowFreqMotor, short highFreqMotor) {
+        lowFreqMotor = feel(lowFreqMotor);
+        highFreqMotor = feel(highFreqMotor);
         // Normalize motor values to 0-255 amplitudes for VibrationManager
         highFreqMotor = (short)((highFreqMotor >> 8) & 0xFF);
         lowFreqMotor = (short)((lowFreqMotor >> 8) & 0xFF);
@@ -2990,6 +2994,10 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     // This must only be called if hasQuadAmplitudeControlledRumbleVibrators() is true!
     @TargetApi(31)
     private void rumbleQuadVibrators(VibratorManager vm, short lowFreqMotor, short highFreqMotor, short leftTrigger, short rightTrigger) {
+        lowFreqMotor = feel(lowFreqMotor);
+        highFreqMotor = feel(highFreqMotor);
+        leftTrigger = feel(leftTrigger);
+        rightTrigger = feel(rightTrigger);
         // Normalize motor values to 0-255 amplitudes for VibrationManager
         highFreqMotor = (short)((highFreqMotor >> 8) & 0xFF);
         lowFreqMotor = (short)((lowFreqMotor >> 8) & 0xFF);
@@ -3026,13 +3034,20 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         vm.vibrate(combo.combine(), vibrationAttributes.build());
     }
 
+    /** A motor level after the chosen rumble feel. */
+    private short feel(short level) {
+        return RumblePolicy.shapeMotor(level, rumbleFeel);
+    }
+
     private void rumbleSingleVibrator(Vibrator vibrator, short lowFreqMotor, short highFreqMotor) {
-        // Since we can only use a single amplitude value, compute the desired amplitude
-        // by taking 80% of the big motor and 33% of the small motor, then capping to 255.
-        // NB: This value is now 0-255 as required by VibrationEffect.
-        short lowFreqMotorMSB = (short)((lowFreqMotor >> 8) & 0xFF);
-        short highFreqMotorMSB = (short)((highFreqMotor >> 8) & 0xFF);
-        int simulatedAmplitude = Math.min(255, (int)((lowFreqMotorMSB * 0.80) + (highFreqMotorMSB * 0.33)));
+        rumbleSingleVibrator(vibrator, lowFreqMotor, highFreqMotor, 100);
+    }
+
+    private void rumbleSingleVibrator(Vibrator vibrator, short lowFreqMotor, short highFreqMotor, int strengthPercent) {
+        // Since we can only use a single amplitude value, mix the two motors (80% of the big one,
+        // 33% of the small one), shape the result by the rumble feel and scale it by the strength.
+        // NB: This value is 0-255 as required by VibrationEffect.
+        int simulatedAmplitude = RumblePolicy.singleMotorAmplitude(lowFreqMotor, highFreqMotor, rumbleFeel, strengthPercent);
 
         if (simulatedAmplitude == 0) {
             // This case is easy - just cancel the current effect and get out.
@@ -3066,9 +3081,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
         // If we reach this point, we don't have amplitude controls available, so
         // we must emulate it by PWMing the vibration. Ick.
-        long pwmPeriod = 20;
-        long onTime = (long)((simulatedAmplitude / 255.0) * pwmPeriod);
-        long offTime = pwmPeriod - onTime;
+        long[] pwm = RumblePolicy.pwmTimings(simulatedAmplitude, rumbleFeel);
+        long onTime = pwm[0];
+        long offTime = pwm[1];
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             VibrationAttributes vibrationAttributes = new VibrationAttributes.Builder()
                     .setUsage(VibrationAttributes.USAGE_MEDIA)
@@ -3125,7 +3140,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                     }
                 }
                 // On Shield devices, we can use their special API to rumble Shield controllers
-                else if (sceManager.rumble(deviceContext.inputDevice, deviceContext.lowFreqMotor, deviceContext.highFreqMotor)) {
+                else if (sceManager.rumble(deviceContext.inputDevice, feel(deviceContext.lowFreqMotor), feel(deviceContext.highFreqMotor))) {
                     vibrated = true;
                 }
                 // If all else fails, we have to try the old Vibrator API
@@ -3149,7 +3164,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                     return;
                 }
                 for (AbstractController pad : usbPads) {
-                    pad.rumble(lowFreqMotor, highFreqMotor);
+                    pad.rumble(feel(lowFreqMotor), feel(highFreqMotor));
                 }
             }
         }
@@ -3166,11 +3181,8 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 // We found a device to vibrate but it didn't have rumble support. The user
                 // has requested us to vibrate the device in this case.
 
-                short lowFreqMotorAdjusted = RumblePolicy.scaleMotor(lowFreqMotor, prefConfig.vibrateFallbackToDeviceStrength);
-                short highFreqMotorAdjusted = RumblePolicy.scaleMotor(highFreqMotor, prefConfig.vibrateFallbackToDeviceStrength);
-
                 deviceVibratorForPlayerOne = true;
-                rumbleSingleVibrator(deviceVibrator, lowFreqMotorAdjusted, highFreqMotorAdjusted);
+                rumbleSingleVibrator(deviceVibrator, lowFreqMotor, highFreqMotor, prefConfig.vibrateFallbackToDeviceStrength);
             }
             if (stopped) deviceVibrator.cancel();
         }
@@ -3219,7 +3231,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 return;
             }
             for (AbstractController pad : usbPads) {
-                pad.rumbleTriggers(leftTrigger, rightTrigger);
+                pad.rumbleTriggers(feel(leftTrigger), feel(rightTrigger));
             }
         }
     }

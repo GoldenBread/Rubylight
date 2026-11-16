@@ -1642,4 +1642,9 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("Jumbo video packets", "Gói video jumbo"),
     ("Sends video in fewer, larger packets when the PC and every link carry 9000-byte jumbo frames. Each stream starts a few seconds later while Nightjar tests the network, and uses normal packets if the test fails. Leave it off unless your wired network is set up for jumbo frames.", "Gửi video trong ít gói lớn hơn khi PC và mọi chặng mang được khung jumbo 9000 byte. Mỗi luồng khởi động chậm vài giây trong khi Nightjar kiểm tra mạng, và dùng gói thường nếu bài kiểm tra thất bại. Hãy để tắt trừ khi mạng có dây của bạn được thiết lập cho khung jumbo."),
     ("Jumbo video packets didn’t pass the test on this network, so the stream uses normal packets.", "Gói video jumbo không vượt qua bài kiểm tra trên mạng này, nên luồng dùng gói thường."),
+    ("Rumble feel", "Cảm giác rung"),
+    ("Strong makes weak vibration strong enough for a small motor to show; Subtle caps strong vibration and softens weak. Either one changes the balance of weak and strong rumble the game chose, so leave it on Standard unless vibration is too faint or too harsh.", "Mạnh làm rung yếu đủ mạnh để một động cơ nhỏ thể hiện được; Nhẹ giới hạn rung mạnh và làm dịu rung yếu. Cả hai đều thay đổi cân bằng giữa rung yếu và rung mạnh mà game chọn, nên hãy để Tiêu chuẩn trừ khi rung quá yếu hoặc quá gắt."),
+    ("Standard", "Tiêu chuẩn"),
+    ("Strong", "Mạnh"),
+    ("Subtle", "Nhẹ"),
 ];

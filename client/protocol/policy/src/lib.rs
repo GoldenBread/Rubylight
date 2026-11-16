@@ -19,6 +19,7 @@ pub mod overlay;
 pub mod presets;
 pub mod pyrowave;
 pub mod quality;
+pub mod rumble;
 pub mod recovery;
 pub mod shortcuts;
 pub mod stats;

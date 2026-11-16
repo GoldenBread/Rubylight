@@ -197,6 +197,12 @@ pub enum VrrWait {
     VSync,
 }
 
+/// The name of a rumble feel in the settings.
+pub fn rumble_feel_label(feel: nightjar_policy::rumble::RumbleFeel) -> &'static str {
+    use nightjar_policy::rumble::RumbleFeel;
+    match feel { RumbleFeel::Standard => en("Standard"), RumbleFeel::Strong => en("Strong"), RumbleFeel::Subtle => en("Subtle") }
+}
+
 impl VrrWait {
     #[cfg_attr(not(windows), allow(dead_code))] // the menu is drawn only on Windows
     pub const ALL: [Self; 3] = [Self::Automatic, Self::Scan, Self::VSync];
@@ -460,6 +466,8 @@ pub struct Settings {
     /// "Trigger dead zone" in percent, likewise for `gamepad::Mapping::trigger_deadzone`.
     pub trigger_deadzone: u32,
     pub disable_rumble: bool,
+    /// "Rumble feel": the curve the host's motor levels pass through (`nightjar_policy::rumble`, Android's `list_rumble_feel`).
+    pub rumble_feel: nightjar_policy::rumble::RumbleFeel,
     /// Keep sending controller input while the window is in the background.
     pub background_controllers: bool,
     pub decoder: DecoderPreference,
@@ -1169,6 +1177,7 @@ impl Default for Settings {
             deadzone: 0,
             trigger_deadzone: 0,
             disable_rumble: false,
+            rumble_feel: nightjar_policy::rumble::RumbleFeel::Standard,
             background_controllers: false,
             decoder: DecoderPreference::Auto,
             early_decode: false,

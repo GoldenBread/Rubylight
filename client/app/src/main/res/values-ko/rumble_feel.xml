@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_list_rumble_feel">진동 느낌</string>
+    <string name="summary_list_rumble_feel">강하게는 약한 진동을 작은 모터도 표현할 만큼 키우고, 부드럽게는 강한 진동에 상한을 두고 약한 진동을 누그러뜨립니다. 둘 다 게임이 정한 약한 진동과 강한 진동의 균형을 바꾸므로, 진동이 너무 약하거나 너무 거칠지 않다면 표준으로 두세요.</string>
+    <string name="rumble_feel_standard">표준</string>
+    <string name="rumble_feel_strong">강하게</string>
+    <string name="rumble_feel_subtle">부드럽게</string>
+</resources>

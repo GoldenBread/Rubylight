@@ -470,6 +470,7 @@ pub struct Gamepads {
     mouse_fixed_step: bool,
     touchpad_as_mouse: bool,
     disable_rumble: bool,
+    rumble_feel: nightjar_policy::rumble::RumbleFeel,
     /// How long Guide is held to open the stream menu; None: Guide always goes to the PC.
     guide_hold: Option<std::time::Duration>,
     /// "Back button as Guide" (never with `back_opens_menu`, [`PadSettings`]).
@@ -513,6 +514,7 @@ impl Gamepads {
         self.mouse_fixed_step = settings.mouse_fixed_step;
         self.touchpad_as_mouse = settings.gamepad_touchpad_as_mouse;
         self.disable_rumble = settings.disable_rumble;
+        self.rumble_feel = settings.rumble_feel;
         let pad_settings = PadSettings::from(settings);
         (self.back_as_guide, self.dead_zones) = (pad_settings.back_as_guide, pad_settings.dead_zones);
         self.one_player = one_player(settings);
@@ -897,19 +899,21 @@ impl Gamepads {
 
     /// Rumble from the host for gamepad `index`, on every controller sent as it; motor speeds 0-65535.
     pub fn rumble(&self, index: u16, low: u16, high: u16) {
+        use nightjar_policy::rumble::shape;
         if self.disable_rumble { return; }
         for pad in self.sent_as(index) {
             if pad.audio.as_ref().is_some_and(|audio| audio.active()) { continue; }
             // SAFETY: an open gamepad. A long duration; the host sends 0 to stop.
-            unsafe { SDL_RumbleGamepad(pad.handle, low, high, 30_000) };
+            unsafe { SDL_RumbleGamepad(pad.handle, shape(low, self.rumble_feel), shape(high, self.rumble_feel), 30_000) };
         }
     }
 
     pub fn rumble_triggers(&self, index: u16, left: u16, right: u16) {
+        use nightjar_policy::rumble::shape;
         if self.disable_rumble { return; }
         for pad in self.sent_as(index) {
             // SAFETY: an open gamepad.
-            unsafe { SDL_RumbleGamepadTriggers(pad.handle, left, right, 30_000) };
+            unsafe { SDL_RumbleGamepadTriggers(pad.handle, shape(left, self.rumble_feel), shape(right, self.rumble_feel), 30_000) };
         }
     }
 

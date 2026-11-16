@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_list_rumble_feel">Titreşim hissi</string>
+    <string name="summary_list_rumble_feel">Güçlü, zayıf titreşimi küçük bir motorun gösterebileceği kadar güçlendirir; Yumuşak, güçlü titreşimi sınırlar ve zayıf olanı yumuşatır. İkisi de oyunun seçtiği zayıf ve güçlü titreşim dengesini değiştirir; titreşim fazla zayıf ya da fazla sert değilse Standart’ta bırakın.</string>
+    <string name="rumble_feel_standard">Standart</string>
+    <string name="rumble_feel_strong">Güçlü</string>
+    <string name="rumble_feel_subtle">Yumuşak</string>
+</resources>

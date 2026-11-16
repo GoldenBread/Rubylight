@@ -1642,4 +1642,9 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("Jumbo video packets", "Jumbo video paketleri"),
     ("Sends video in fewer, larger packets when the PC and every link carry 9000-byte jumbo frames. Each stream starts a few seconds later while Nightjar tests the network, and uses normal packets if the test fails. Leave it off unless your wired network is set up for jumbo frames.", "PC ve her bağlantı 9000 baytlık jumbo çerçeveleri taşıdığında videoyu daha az sayıda daha büyük paketlerle gönderir. Nightjar ağı test ederken her yayın birkaç saniye geç başlar ve test başarısız olursa normal paketler kullanılır. Kablolu ağınız jumbo çerçeveler için ayarlanmadıysa kapalı bırakın."),
     ("Jumbo video packets didn’t pass the test on this network, so the stream uses normal packets.", "Jumbo video paketleri bu ağdaki testi geçemedi, bu yüzden akış normal paketler kullanıyor."),
+    ("Rumble feel", "Titreşim hissi"),
+    ("Strong makes weak vibration strong enough for a small motor to show; Subtle caps strong vibration and softens weak. Either one changes the balance of weak and strong rumble the game chose, so leave it on Standard unless vibration is too faint or too harsh.", "Güçlü, zayıf titreşimi küçük bir motorun gösterebileceği kadar güçlendirir; Yumuşak, güçlü titreşimi sınırlar ve zayıf olanı yumuşatır. İkisi de oyunun seçtiği zayıf ve güçlü titreşim dengesini değiştirir; titreşim fazla zayıf ya da fazla sert değilse Standart’ta bırakın."),
+    ("Standard", "Standart"),
+    ("Strong", "Güçlü"),
+    ("Subtle", "Yumuşak"),
 ];
