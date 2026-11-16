@@ -245,7 +245,7 @@ no state of its own beyond what its INF installs, which `pnputil /delete-driver 
 removes; its optional debug log (`RLVD_DEBUG_LOG`) is
 `C:\Windows\ServiceProfiles\LocalService\AppData\Local\Temp\rlvd-driver.log`.
 
-## Shipping before SignPath signs it: signed on the user's PC
+## Unsigned packages: signed on the user's PC
 
 `install-local.ps1` installs an **unsigned** package (`build-package.ps1` without
 `-TestSign`) on the PC it runs on, elevated:
@@ -314,19 +314,19 @@ removes an earlier install so no device that cannot start stays, and records why
 `HKLM\SOFTWARE\Rubylight\VirtualDisplay` (`Problem`), with what the user can do. Setup shows
 that as its note and the console as the reason there is no virtual display; streams use a
 physical display. A fresh install that fails, or whose device does not start, is rolled back
-and recorded the same way. A SignPath-signed release installs on Smart App Control PCs.
+and recorded the same way. A release whose catalog is signed (after 4.7.1) is meant to install on Smart App Control PCs; that has not yet run on one.
 
-A signed release replaces the catalog with the one SignPath signed
-(`rust/release/sign-artifacts.ps1`). `install-local.ps1` then installs it as it is and adds
+A signed release replaces the catalog with the signed one
+(`rust/release/sign-local.ps1` through `sign-artifacts.ps1`). `install-local.ps1` then installs it as it is and adds
 only that signer to `TrustedPublisher` (removed again by `-Uninstall` if it added it), and
 deletes a locally signed install's packages and certificate.
 
 ## Release signing
 
 A release package must be signed in this order, because the catalog hashes the signed DLL:
-sign `rubylight_vdisplay.dll`, run Inf2Cat, sign `rubylight_vdisplay.cat`. The release workflow
-does this with two SignPath requests (`binaries`, then `driver`); see
+sign `rubylight_vdisplay.dll`, run Inf2Cat, sign `rubylight_vdisplay.cat`. `rust/release/sign-local.ps1`
+does this on the maintainer's PC (the SignPath path, when on, with two requests); see
 [Rubylight's display driver](../../../docs/code-signing.md#rubylights-display-driver) in the
 signing guide. A catalog signed with a publicly trusted certificate other than Microsoft's
 still prompts unless its signer is in Trusted Publishers, which is why `install-local.ps1`
-adds the SignPath signer there.
+adds the release's signer there.
