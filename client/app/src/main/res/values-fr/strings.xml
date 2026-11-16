@@ -520,14 +520,13 @@
     <string name="title_jumbo_frames">Paquets vidéo jumbo</string>
     <string name="summary_jumbo_frames">Envoie la vidéo en moins de paquets plus gros lorsque le PC et chaque liaison transportent des trames jumbo de 9000 octets. Chaque stream démarre quelques secondes plus tard pendant que Nightjar teste le réseau, et utilise des paquets normaux si le test échoue. Laissez-le désactivé, sauf si votre réseau filaire est configuré pour les trames jumbo.</string>
     <string name="jumbo_frames_fallback">Les paquets vidéo jumbo n’ont pas réussi le test sur ce réseau ; le stream utilise donc des paquets normaux.</string>
-    <string name="settings_simple_title">Recommandé</string>
     <string name="title_simple_smoothness">Fluidité du flux</string>
-    <string name="summary_simple_smoothness">Définit la régularité de l'image et sa rapidité d'affichage : Le plus fluide garde chaque image pour un rythme régulier avec un peu plus de retard, Retard minimal affiche l'image la plus récente immédiatement. Laissez sur Équilibré sauf si un jeu saccade ou semble lent.</string>
+    <string name="summary_simple_smoothness">Auto suit l\'écran et le décodeur : l\'image la plus récente à chaque rafraîchissement, avec un taux de rafraîchissement variable là où l\'écran le propose. Le plus fluide garde chaque image pour un rythme régulier avec un peu plus de retard ; Retard minimal n\'attend jamais. Laissez sur Auto sauf si un jeu saccade ou semble lent.</string>
     <string name="simple_smoothest">Le plus fluide</string>
     <string name="simple_balanced">Équilibré</string>
     <string name="simple_lowest_delay">Retard minimal</string>
-    <string name="title_simple_picture">Qualité d'image</string>
-    <string name="summary_simple_picture">Règle le débit et le codec : Meilleur dépense plus de réseau pour une image plus nette, Économiser les données en utilise moins et baisse la qualité quand la connexion faiblit. Laissez sur Auto sauf si vous avez besoin du surplus de netteté ou de moins de données.</string>
+    <string name="title_simple_picture">Qualité d\'image</string>
+    <string name="summary_simple_picture">Règle le débit : Meilleur dépense plus de réseau pour une image plus nette, Économiser les données en utilise moins et baisse la qualité quand la connexion faiblit. Laissez sur Auto sauf si vous avez besoin du surplus de netteté ou de moins de données.</string>
     <string name="simple_picture_auto">Auto (recommandé)</string>
     <string name="simple_picture_best">Meilleur</string>
     <string name="simple_picture_save_data">Économiser les données</string>
@@ -536,10 +535,11 @@
     <string name="simple_screen_value">%1$d×%2$d à %3$d Hz</string>
     <string name="simple_hdr_auto">Auto (recommandé)</string>
     <string name="title_simple_console">Mode console</string>
-    <string name="summary_simple_console">Ouvre directement les jeux de ce PC en plein écran, où une manette ou une télécommande peut en choisir un. Laissez-le activé pour un téléviseur ou une console portable ; désactivez-le pour ouvrir la liste des PC.</string>
+    <string name="summary_simple_console">Ouvre directement vos jeux en plein écran, où une manette ou une télécommande peut en choisir un. Laissez-le activé pour un téléviseur ou une console portable ; désactivez-le pour ouvrir la liste des PC.</string>
     <string name="simple_back_to_recommended">Revenir aux recommandations</string>
-    <string name="summary_simple_back_to_recommended">Remet les trois choix ci-dessus sur ce que cet appareil fait de mieux ; les réglages qu'ils représentent changent avec eux.</string>
-    <string name="simple_profile_failed">Les réglages recommandés n'ont pas pu être lus sur cet appareil</string>
+    <string name="summary_simple_back_to_recommended">Remet les trois choix ci-dessus sur ce que cet appareil fait de mieux ; les réglages qu\'ils représentent changent avec eux.</string>
+    <string name="simple_profile_failed">Les réglages recommandés n\'ont pas pu être lus sur cet appareil</string>
     <string name="settings_section_simple">Recommandé</string>
     <string name="settings_section_simple_summary">Trois choix simples ; les sections ci-dessous contiennent tous les détails.</string>
+    <string name="summary_simple_hdr">Des hautes lumières plus vives et des couleurs plus riches sur un écran HDR. Auto ne l\'active que si l\'écran, le décodeur et le PC le prennent en charge ; laissez sur Auto sauf si le HDR paraît délavé.</string>
 </resources>

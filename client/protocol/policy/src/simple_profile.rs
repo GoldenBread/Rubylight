@@ -14,10 +14,14 @@
 
 use serde::{Deserialize, Serialize};
 
-/// What the stream should favour: a smooth cadence, a balance, or the lowest delay.
+/// What the stream should favour: the measured recommendation, a smooth cadence, a balance, or the
+/// lowest delay.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Smoothness {
+    /// The recommended pace: the newest picture at each refresh, with variable refresh rate where
+    /// the screen offers it. It is what a fresh install and Back to recommended use.
+    Auto,
     /// Every picture in turn, held for up to four refreshes: the steadiest cadence, a little more
     /// delay. Variable refresh rate is off, since it replaces the pacing.
     Smoothest,
@@ -59,7 +63,7 @@ pub struct Choices {
 
 impl Default for Choices {
     fn default() -> Self {
-        Self { smoothness: Smoothness::Balanced, picture: Picture::Auto, hdr: Hdr::Auto }
+        Self { smoothness: Smoothness::Auto, picture: Picture::Auto, hdr: Hdr::Auto }
     }
 }
 
@@ -78,10 +82,11 @@ impl Choices {
 }
 
 impl Smoothness {
-    pub const ALL: [Self; 3] = [Self::Smoothest, Self::Balanced, Self::LowestDelay];
+    pub const ALL: [Self; 4] = [Self::Auto, Self::Smoothest, Self::Balanced, Self::LowestDelay];
 
     pub fn key(self) -> &'static str {
         match self {
+            Self::Auto => "auto",
             Self::Smoothest => "smoothest",
             Self::Balanced => "balanced",
             Self::LowestDelay => "lowest-delay",
@@ -90,12 +95,13 @@ impl Smoothness {
 
     /// Anything a newer version stored reads as the recommended choice.
     pub fn from_key(key: &str) -> Self {
-        Self::ALL.into_iter().find(|choice| choice.key() == key).unwrap_or(Self::Balanced)
+        Self::ALL.into_iter().find(|choice| choice.key() == key).unwrap_or(Self::Auto)
     }
 
     /// English label; the apps translate it as they show it.
     pub fn label(self) -> &'static str {
         match self {
+            Self::Auto => "Auto (recommended)",
             Self::Smoothest => "Smoothest",
             Self::Balanced => "Balanced",
             Self::LowestDelay => "Lowest delay",
@@ -226,9 +232,10 @@ pub enum Pacing {
 }
 
 /// The codec the simple layer asks for. `Auto` lets the stream negotiate.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Codec {
+    #[default]
     Auto,
     H264,
     Hevc,
@@ -260,11 +267,21 @@ pub struct Values {
     /// `None` is the screen's refresh rate; `Some(rate)` is a measured lower cap.
     pub fps: Option<u32>,
     pub pacing: Pacing,
-    /// Variable refresh rate where the screen offers it. Off for Smoothest and Lowest delay,
-    /// where the pacing decides when a picture goes out.
+    /// Variable refresh rate where the screen offers it.
     pub vrr: bool,
     /// The decoding and input switches that cut latency stay on.
     pub latency_switches: bool,
+    /// Balanced drops late pictures (the newest one at each refresh); always on for the simple layer.
+    pub drop_late_frames: bool,
+    /// The PC's frame times, a pacing the simple layer does not choose.
+    pub host_frame_times: bool,
+    /// Real VRR (`present_at_host_times`/`checkbox_real_vrr`) when VRR is on; `None` when VRR is off,
+    /// where the value does not change anything.
+    pub real_vrr: Option<bool>,
+    /// The lower refresh rate setting, off: the screen keeps its own rate.
+    pub reduce_refresh: bool,
+    /// The content-rate vote, off: the screen keeps its own rate.
+    pub content_rate: bool,
     pub bitrate: Bitrate,
     pub codec: Codec,
     pub hdr: bool,
@@ -275,7 +292,8 @@ pub struct Values {
 
 /// What a stream's current settings say, for [`matches`]: the apps read their own stored values
 /// into this, with a `None` frame rate when it follows the screen.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Current {
     pub native_resolution: bool,
     pub fps: Option<u32>,
@@ -284,6 +302,11 @@ pub struct Current {
     pub pacing: Option<Pacing>,
     pub vrr: bool,
     pub latency_switches: bool,
+    pub drop_late_frames: bool,
+    pub host_frame_times: bool,
+    pub real_vrr: bool,
+    pub reduce_refresh: bool,
+    pub content_rate: bool,
     /// The bitrate the stream would use, against the app's bitrate for the size and rate.
     pub bitrate_milli: Option<u32>,
     pub codec: Codec,
@@ -291,12 +314,18 @@ pub struct Current {
     pub adaptive_bitrate: bool,
     /// `None` is a quality mode the simple layer does not set (Prefer motion, Prefer detail).
     pub adaptive_quality: Option<AdaptiveQuality>,
+    /// The choices last stored by the player, when there are any: a choice the settings still match
+    /// is shown as itself, so Auto and an equal profile are told apart.
+    pub stored_smoothness: Option<Smoothness>,
+    pub stored_picture: Option<Picture>,
+    pub stored_hdr: Option<Hdr>,
 }
 
-/// The profile "Auto (recommended)" starts from: a steady cadence that follows the screen, the
-/// bitrate for the size and rate, and HDR wherever the whole chain supports it.
+/// The profile "Auto (recommended)" starts from: the newest picture at each refresh, with variable
+/// refresh rate where the screen offers it, the bitrate for the size and rate, and HDR wherever the
+/// whole chain supports it.
 pub fn recommended(_capabilities: &Capabilities) -> Choices {
-    Choices { smoothness: Smoothness::Balanced, picture: Picture::Auto, hdr: Hdr::Auto }
+    Choices { smoothness: Smoothness::Auto, picture: Picture::Auto, hdr: Hdr::Auto }
 }
 
 /// The concrete settings a set of choices means on this device and PC.
@@ -330,14 +359,20 @@ pub fn values(choices: Choices, capabilities: &Capabilities) -> Values {
         native_resolution: true,
         fps,
         pacing: match choices.smoothness {
-            Smoothness::Smoothest => Pacing::Smoothest,
+            Smoothness::Auto | Smoothness::LowestDelay => Pacing::Latency,
             Smoothness::Balanced => Pacing::Balanced,
-            Smoothness::LowestDelay => Pacing::Latency,
+            Smoothness::Smoothest => Pacing::Smoothest,
         },
-        // Smoothest's pacing replaces variable refresh rate; Balanced and Lowest delay both show the
-        // newest picture as it arrives, and a screen that refreshes when a frame comes shows it sooner.
-        vrr: choices.smoothness != Smoothness::Smoothest && display.vrr,
+        // Smoothest's pacing replaces variable refresh rate; Auto and Balanced use it where the
+        // screen offers it, and Lowest delay does not wait for it.
+        vrr: matches!(choices.smoothness, Smoothness::Auto | Smoothness::Balanced) && display.vrr,
         latency_switches: true,
+        drop_late_frames: true,
+        host_frame_times: false,
+        real_vrr: (matches!(choices.smoothness, Smoothness::Auto | Smoothness::Balanced) && display.vrr)
+            .then_some(true),
+        reduce_refresh: false,
+        content_rate: false,
         bitrate,
         codec,
         hdr,
@@ -355,27 +390,43 @@ pub fn matches(choices: Choices, capabilities: &Capabilities, current: &Current)
     let (Some(pacing), Some(adaptive_quality)) = (current.pacing, current.adaptive_quality) else {
         return false;
     };
-    values(choices, capabilities)
-        == Values {
-            native_resolution: current.native_resolution,
-            fps: current.fps,
-            pacing,
-            vrr: current.vrr,
-            latency_switches: current.latency_switches,
-            bitrate: match current.bitrate_milli {
-                None => Bitrate::Default,
-                Some(milli) => Bitrate::Factor(milli),
-            },
-            codec: current.codec,
-            hdr: current.hdr,
-            adaptive_bitrate: current.adaptive_bitrate,
-            adaptive_quality,
-        }
+    let wanted = values(choices, capabilities);
+    let expected = Values {
+        native_resolution: current.native_resolution,
+        fps: current.fps,
+        pacing,
+        vrr: current.vrr,
+        latency_switches: current.latency_switches,
+        drop_late_frames: current.drop_late_frames,
+        host_frame_times: current.host_frame_times,
+        // Real VRR only matters with VRR on; off, its stored value changes nothing.
+        real_vrr: wanted.vrr.then_some(current.real_vrr),
+        reduce_refresh: current.reduce_refresh,
+        content_rate: current.content_rate,
+        bitrate: match current.bitrate_milli {
+            None => Bitrate::Default,
+            Some(milli) => Bitrate::Factor(milli),
+        },
+        codec: current.codec,
+        hdr: current.hdr,
+        adaptive_bitrate: current.adaptive_bitrate,
+        adaptive_quality,
+    };
+    wanted == expected
 }
 
-/// The choices a stream's settings are, or `None` for Custom. Each choice is tried, so a match is
-/// exactly what [`values`] would write; the recommended combination wins a tie.
+/// The choices a stream's settings are, or `None` for Custom. The choices the player last stored win
+/// when the settings still match them; then the recommended combination; each other choice is tried
+/// last, so a match is exactly what [`values`] would write.
 pub fn chosen(current: &Current, capabilities: &Capabilities) -> Option<Choices> {
+    if let (Some(smoothness), Some(picture), Some(hdr)) =
+        (current.stored_smoothness, current.stored_picture, current.stored_hdr)
+    {
+        let stored = Choices { smoothness, picture, hdr };
+        if matches(stored, capabilities, current) {
+            return Some(stored);
+        }
+    }
     if matches(recommended(capabilities), capabilities, current) {
         return Some(recommended(capabilities));
     }
@@ -448,6 +499,11 @@ pub mod json {
             "pacing": values.pacing,
             "vrr": values.vrr,
             "latency_switches": values.latency_switches,
+            "drop_late_frames": values.drop_late_frames,
+            "host_frame_times": values.host_frame_times,
+            "real_vrr": values.real_vrr,
+            "reduce_refresh": values.reduce_refresh,
+            "content_rate": values.content_rate,
             "bitrate": bitrate(values.bitrate),
             "codec": values.codec,
             "hdr": values.hdr,
@@ -501,16 +557,16 @@ mod tests {
         for capabilities in [plain_device(), hdr_device()] {
             assert_eq!(
                 recommended(&capabilities),
-                Choices { smoothness: Smoothness::Balanced, picture: Picture::Auto, hdr: Hdr::Auto }
+                Choices { smoothness: Smoothness::Auto, picture: Picture::Auto, hdr: Hdr::Auto }
             );
         }
     }
 
     #[test]
     fn every_screen_keeps_its_own_size_and_rate() {
-        let values = values(Choices::default(), &hdr_device());
-        assert!(values.native_resolution);
-        assert_eq!(values.fps, None, "no benchmark: the screen's 120 Hz");
+        let auto = values(Choices::default(), &hdr_device());
+        assert!(auto.native_resolution);
+        assert_eq!(auto.fps, None, "no benchmark: the screen's 120 Hz");
         assert_eq!(hdr_device().display.frame_rate(), 120);
         let benchmarked = Capabilities {
             decoder: Decoder { max_fps_at_native: Some(60), ..hdr_device().decoder },
@@ -526,12 +582,16 @@ mod tests {
 
     #[test]
     fn smoother_choices_pace_and_use_vrr_where_the_screen_has_it() {
-        let balanced = values(Choices::default(), &hdr_device());
+        let auto = values(Choices::default(), &hdr_device());
+        assert_eq!(auto.pacing, Pacing::Latency);
+        assert!(auto.vrr, "Auto uses VRR where the screen offers it");
+        let fixed = values(Choices::default(), &plain_device());
+        assert!(!fixed.vrr, "Auto does not invent VRR on a fixed screen");
+        assert_eq!(fixed.pacing, Pacing::Latency);
+
+        let balanced = values(Choices { smoothness: Smoothness::Balanced, ..Choices::default() }, &hdr_device());
         assert_eq!(balanced.pacing, Pacing::Balanced);
         assert!(balanced.vrr);
-        let fixed = values(Choices::default(), &plain_device());
-        assert!(!fixed.vrr, "Balanced does not invent VRR on a fixed screen");
-        assert_eq!(fixed.pacing, Pacing::Balanced);
 
         let smoothest = values(Choices { smoothness: Smoothness::Smoothest, ..Choices::default() }, &hdr_device());
         assert_eq!(smoothest.pacing, Pacing::Smoothest);
@@ -539,9 +599,11 @@ mod tests {
 
         let latency = values(Choices { smoothness: Smoothness::LowestDelay, ..Choices::default() }, &hdr_device());
         assert_eq!(latency.pacing, Pacing::Latency);
-        assert!(latency.vrr, "the newest picture as it arrives is still the lowest delay on a VRR screen");
-        for values in [smoothest, latency] {
+        assert!(!latency.vrr, "Lowest delay does not wait for the screen's refresh");
+        for values in [auto, balanced, smoothest, latency] {
             assert!(values.latency_switches, "the low-latency switches stay on");
+            assert!(values.drop_late_frames && !values.host_frame_times);
+            assert!(!values.reduce_refresh && !values.content_rate);
         }
     }
 
@@ -568,6 +630,7 @@ mod tests {
     #[test]
     fn picture_quality_never_forces_a_codec_the_pc_may_not_send() {
         let hevc_only = Capabilities {
+            display: hdr_device().display,
             decoder: Decoder { av1: false, ..hdr_device().decoder },
             host: Host { av1: Some(false), ..hdr_device().host },
         };
@@ -599,7 +662,7 @@ mod tests {
         let choices = Choices { smoothness: Smoothness::LowestDelay, picture: Picture::SaveData, hdr: Hdr::Off };
         assert_eq!(Choices::from_keys("lowest-delay", "save-data", "off"), choices);
         assert_eq!(Choices::from_keys("teleport", "wat", "maybe"), Choices::default());
-        assert_eq!(Choices::default().keys(), ("balanced", "auto", "auto"));
+        assert_eq!(Choices::default().keys(), ("auto", "auto", "auto"));
     }
 
     #[test]
@@ -617,6 +680,11 @@ mod tests {
             pacing: Some(values.pacing),
             vrr: values.vrr,
             latency_switches: values.latency_switches,
+            drop_late_frames: values.drop_late_frames,
+            host_frame_times: values.host_frame_times,
+            real_vrr: values.real_vrr.unwrap_or(true),
+            reduce_refresh: values.reduce_refresh,
+            content_rate: values.content_rate,
             bitrate_milli: match values.bitrate {
                 Bitrate::Default => None,
                 Bitrate::Factor(milli) => Some(milli),
@@ -625,6 +693,9 @@ mod tests {
             hdr: values.hdr,
             adaptive_bitrate: values.adaptive_bitrate,
             adaptive_quality: Some(values.adaptive_quality),
+            stored_smoothness: Some(choices.smoothness),
+            stored_picture: Some(choices.picture),
+            stored_hdr: Some(choices.hdr),
         }
     }
 
@@ -645,29 +716,48 @@ mod tests {
     }
 
     #[test]
+    fn auto_and_lowest_delay_are_told_apart_by_the_stored_choice() {
+        // On a fixed screen Auto and Lowest delay write the same values; the stored choice decides
+        // which one the row shows, and a fresh install with no stored choice shows Auto.
+        let capabilities = plain_device();
+        let lowest = Choices { smoothness: Smoothness::LowestDelay, ..Choices::default() };
+        let mut current = current_of(lowest, &capabilities);
+        assert_eq!(chosen(&current, &capabilities), Some(lowest));
+        (current.stored_smoothness, current.stored_picture, current.stored_hdr) = (None, None, None);
+        assert_eq!(chosen(&current, &capabilities), Some(Choices::default()));
+    }
+
+    #[test]
     fn one_changed_advanced_setting_reads_as_custom() {
         let choices = Choices::default();
         let capabilities = hdr_device();
         let base = current_of(choices, &capabilities);
-        let changes: [fn(&mut Current); 9] = [
+        let changes: [fn(&mut Current); 10] = [
             |c| c.native_resolution = false,
             |c| c.fps = Some(60),
-            |c| c.pacing = Some(Pacing::Latency),
-            |c| c.vrr = false,
+            |c| c.pacing = None,
             |c| c.latency_switches = false,
-            |c| c.bitrate_milli = Some(1500),
+            |c| c.drop_late_frames = false,
+            |c| c.host_frame_times = true,
+            |c| c.reduce_refresh = true,
+            |c| c.content_rate = true,
+            |c| c.bitrate_milli = Some(1234),
             |c| c.codec = Codec::H264,
-            |c| c.hdr = false,
-            |c| c.adaptive_bitrate = true,
         ];
         for change in changes {
             let mut current = base;
             change(&mut current);
             assert_eq!(chosen(&current, &capabilities), None, "{current:?}");
         }
+        let mut real_vrr = base;
+        real_vrr.real_vrr = false;
+        assert_eq!(chosen(&real_vrr, &capabilities), None, "Real VRR off under VRR");
         let mut quality = base;
         quality.adaptive_quality = Some(AdaptiveQuality::SavePower);
         assert_eq!(chosen(&quality, &capabilities), None);
+        let mut adaptive = base;
+        adaptive.adaptive_bitrate = true;
+        assert_eq!(chosen(&adaptive, &capabilities), None);
     }
 
     #[test]
@@ -703,12 +793,15 @@ mod tests {
         assert_eq!(answer["ok"]["native_resolution"], true);
 
         let recommended = ask(&json!({"op": "recommended", "display": caps["display"], "decoder": caps["decoder"], "host": caps["host"]}).to_string());
-        assert_eq!(recommended["ok"], json!({"smoothness": "balanced", "picture": "auto", "hdr": "auto"}));
+        assert_eq!(recommended["ok"], json!({"smoothness": "auto", "picture": "auto", "hdr": "auto"}));
 
         let current = json!({
             "native_resolution": true, "fps": null, "pacing": "balanced", "vrr": true,
-            "latency_switches": true, "bitrate_milli": null, "codec": "auto", "hdr": true,
-            "adaptive_bitrate": false, "adaptive_quality": "off"
+            "latency_switches": true, "drop_late_frames": true, "host_frame_times": false,
+            "real_vrr": true, "reduce_refresh": false, "content_rate": false,
+            "bitrate_milli": null, "codec": "auto", "hdr": true,
+            "adaptive_bitrate": false, "adaptive_quality": "off",
+            "stored_smoothness": "balanced", "stored_picture": "auto", "stored_hdr": "auto"
         });
         let chosen = ask(&json!({"op": "chosen", "current": current, "display": caps["display"], "decoder": caps["decoder"], "host": caps["host"]}).to_string());
         assert_eq!(chosen["ok"]["choices"]["smoothness"], "balanced");

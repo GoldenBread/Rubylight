@@ -28,7 +28,9 @@ import org.robolectric.annotation.Config;
  * SimpleProfileModelTest and nightjar-policy's tests; this class uses a stand-in model so it runs in a JVM.
  */
 @RunWith(RobolectricTestRunner.class)
-@Config(sdk = 29)
+@Config(sdk = 29, application = android.app.Application.class,
+        shadows = com.limelight.PcViewLifecycleTest.NoNativeMoonBridge.class,
+        instrumentedPackages = "com.limelight.nvstream.jni")
 public class SimpleProfileTest {
     private Context context;
     private SharedPreferences prefs;
@@ -38,12 +40,14 @@ public class SimpleProfileTest {
         context = RuntimeEnvironment.getApplication();
         prefs = PreferenceManager.getDefaultSharedPreferences(context);
         prefs.edit().clear().commit();
+        SimpleProfile.forgetCapabilities();
         SimpleProfileModel.use(SimpleProfileTest::fake);
     }
 
     @After
     public void tearDown() {
         prefs.edit().clear().commit();
+        SimpleProfileModel.use(null);
     }
 
     /** A small stand-in for the policy: the choices' headline values, enough for the app-side wiring. */
@@ -52,27 +56,29 @@ public class SimpleProfileTest {
             JSONObject ask = new JSONObject(request);
             String op = ask.getString("op");
             if ("recommended".equals(op)) {
-                return "{\"ok\":{\"smoothness\":\"balanced\",\"picture\":\"auto\",\"hdr\":\"auto\"}}";
+                return "{\"ok\":{\"smoothness\":\"auto\",\"picture\":\"auto\",\"hdr\":\"auto\"}}";
             }
             if ("chosen".equals(op)) {
                 JSONObject current = ask.getJSONObject("current");
-                boolean balanced = "balanced".equals(current.isNull("pacing") ? null : current.getString("pacing"))
-                        && current.getBoolean("vrr")
+                boolean balanced = "latency".equals(current.isNull("pacing") ? null : current.getString("pacing"))
+                        && !current.getBoolean("vrr")
                         && current.isNull("bitrate_milli") && "auto".equals(current.getString("codec"))
                         && current.getBoolean("hdr") && !current.getBoolean("adaptive_bitrate")
                         && "off".equals(current.isNull("adaptive_quality") ? null : current.getString("adaptive_quality"));
-                return balanced ? "{\"ok\":{\"choices\":{\"smoothness\":\"balanced\",\"picture\":\"auto\",\"hdr\":\"auto\"}}}"
+                return balanced ? "{\"ok\":{\"choices\":{\"smoothness\":\"auto\",\"picture\":\"auto\",\"hdr\":\"auto\"}}}"
                         : "{\"ok\":{\"choices\":null}}";
             }
-            String smoothness = ask.optString("smoothness", "balanced");
+            String smoothness = ask.optString("smoothness", "auto");
             String picture = ask.optString("picture", "auto");
             String hdr = ask.optString("hdr", "auto");
             JSONObject values = new JSONObject().put("native_resolution", true)
                     .put("fps", JSONObject.NULL)
-                    .put("pacing", "smoothest".equals(smoothness) ? "smoothest"
-                            : "lowest-delay".equals(smoothness) ? "latency" : "balanced")
-                    .put("vrr", "balanced".equals(smoothness))
+                    .put("pacing", "smoothest".equals(smoothness) ? "smoothest" : "latency")
+                    .put("vrr", "balanced".equals(smoothness) && ask.optJSONObject("display") != null
+                            && ask.getJSONObject("display").getBoolean("vrr"))
                     .put("latency_switches", true)
+                    .put("drop_late_frames", true).put("host_frame_times", false)
+                    .put("real_vrr", JSONObject.NULL).put("reduce_refresh", false).put("content_rate", false)
                     .put("bitrate", "best".equals(picture) ? new JSONObject().put("mode", "factor").put("milli", 1500)
                             : "save-data".equals(picture) ? new JSONObject().put("mode", "factor").put("milli", 600)
                             : new JSONObject().put("mode", "default"))
@@ -107,7 +113,7 @@ public class SimpleProfileTest {
     @Test
     public void aChangedAdvancedSettingReadsAsCustomAndBackRestoresTheProfile() {
         assertTrue(SimpleProfile.applyRecommended(context));
-        assertEquals("balanced", prefs.getString(SimpleProfile.SMOOTHNESS, null));
+        assertEquals("auto", prefs.getString(SimpleProfile.SMOOTHNESS, null));
         assertEquals("auto", prefs.getString(SimpleProfile.PICTURE, null));
         assertEquals("auto", prefs.getString(SimpleProfile.HDR, null));
         assertFalse(SimpleProfile.custom(context, SimpleProfile.SMOOTHNESS));
@@ -118,7 +124,7 @@ public class SimpleProfileTest {
 
         assertTrue(SimpleProfile.applyRecommended(context));
         assertFalse(SimpleProfile.custom(context, SimpleProfile.SMOOTHNESS));
-        assertEquals("balanced", prefs.getString(PreferenceConfiguration.FRAME_PACING_PREF_STRING, null));
+        assertEquals("latency", prefs.getString(PreferenceConfiguration.FRAME_PACING_PREF_STRING, null));
     }
 
     @Test
@@ -135,12 +141,108 @@ public class SimpleProfileTest {
         SimpleProfileModel.Current current = SimpleProfile.current(context);
         assertTrue(current.nativeResolution);
         assertNull("the screen's rate is the unstored default", current.fps);
-        assertEquals("balanced", current.pacing);
-        assertTrue(current.vrr);
+        assertEquals("latency", current.pacing);
+        assertFalse(current.vrr);
         assertNull(current.bitrateMilli);
         assertEquals("auto", current.codec);
         assertFalse(current.adaptiveBitrate);
         assertEquals("off", current.adaptiveQuality);
+    }
+
+    @Test
+    @Config(sdk = 28, application = android.app.Application.class,
+            shadows = com.limelight.PcViewLifecycleTest.NoNativeMoonBridge.class,
+            instrumentedPackages = "com.limelight.nvstream.jni")
+    public void openingTheRecommendedSectionChangesNoAdvancedKey() {
+        prefs.edit()
+                .putString(SimpleProfile.SMOOTHNESS, "balanced")
+                .putString(SimpleProfile.PICTURE, "best")
+                .putString(SimpleProfile.HDR, "off")
+                .putString(PreferenceConfiguration.FRAME_PACING_PREF_STRING, "latency")
+                .putString(PreferenceConfiguration.VIDEO_FORMAT_PREF_STRING, "forceh265")
+                .putInt(PreferenceConfiguration.BITRATE_PREF_STRING, 12_345)
+                .putBoolean(PreferenceConfiguration.BITRATE_USER_SET_PREF_STRING, true)
+                .putBoolean(PreferenceConfiguration.ENABLE_HDR_PREF_STRING, true)
+                .putString(OpenPlay.SETTING, "last")
+                .putBoolean(HomeSettings.PREF_KEY, true)
+                .commit();
+        prefs.edit().putInt(PreferenceConfiguration.PREFS_VERSION_PREF_STRING,
+                PreferenceConfiguration.FOLLOW_SCREEN_VERSION).commit();
+        java.util.Map<String, ?> before = new java.util.HashMap<>(prefs.getAll());
+        org.robolectric.android.controller.ActivityController<StreamSettings> controller =
+                org.robolectric.Robolectric.buildActivity(StreamSettings.class).setup();
+        try {
+            SettingsStructureTest.open(controller.get(), "simple");
+            for (String key : new String[] {PreferenceConfiguration.FRAME_PACING_PREF_STRING,
+                    PreferenceConfiguration.VIDEO_FORMAT_PREF_STRING, PreferenceConfiguration.BITRATE_PREF_STRING,
+                    PreferenceConfiguration.ENABLE_HDR_PREF_STRING, OpenPlay.SETTING, HomeSettings.PREF_KEY}) {
+                assertEquals(key, before.get(key), prefs.getAll().get(key));
+            }
+        } finally {
+            controller.pause().stop().destroy();
+        }
+    }
+
+    @Test
+    public void bindingSimpleRowsNeverWritesAProfileOrTheStartScreen() {
+        prefs.edit()
+                .putString(SimpleProfile.SMOOTHNESS, "balanced")
+                .putString(SimpleProfile.PICTURE, "best")
+                .putString(SimpleProfile.HDR, "off")
+                .putString(PreferenceConfiguration.FRAME_PACING_PREF_STRING, "latency")
+                .putString(PreferenceConfiguration.VIDEO_FORMAT_PREF_STRING, "forceh265")
+                .putInt(PreferenceConfiguration.BITRATE_PREF_STRING, 12_345)
+                .putBoolean(PreferenceConfiguration.BITRATE_USER_SET_PREF_STRING, true)
+                .putBoolean(PreferenceConfiguration.ENABLE_HDR_PREF_STRING, true)
+                .putString(OpenPlay.SETTING, "last")
+                .putBoolean(HomeSettings.PREF_KEY, true)
+                .commit();
+        prefs.edit().putInt(PreferenceConfiguration.PREFS_VERSION_PREF_STRING,
+                PreferenceConfiguration.FOLLOW_SCREEN_VERSION).commit();
+        java.util.Map<String, ?> before = new java.util.HashMap<>(prefs.getAll());
+        for (String key : new String[] {SimpleProfile.SMOOTHNESS, SimpleProfile.PICTURE, SimpleProfile.HDR}) {
+            SimpleProfilePreference row = new SimpleProfilePreference(context, null);
+            row.setKey(key);
+            row.onSetInitialValue(true, null);
+        }
+        ConsoleModePreference console = new ConsoleModePreference(context, null);
+        console.setKey(HomeSettings.PREF_KEY);
+        console.onSetInitialValue(true, true);
+        for (String key : new String[] {PreferenceConfiguration.FRAME_PACING_PREF_STRING,
+                PreferenceConfiguration.VIDEO_FORMAT_PREF_STRING, PreferenceConfiguration.BITRATE_PREF_STRING,
+                PreferenceConfiguration.ENABLE_HDR_PREF_STRING, OpenPlay.SETTING, HomeSettings.PREF_KEY}) {
+            assertEquals(key, before.get(key), prefs.getAll().get(key));
+        }
+    }
+
+    @Test
+    public void aMeasuredCapSnapsToAnOfferedFrameRate() {
+        assertEquals(90, SimpleProfile.offeredFps(context, 109));
+        assertEquals(60, SimpleProfile.offeredFps(context, 60));
+        assertEquals(30, SimpleProfile.offeredFps(context, 24));
+        assertEquals(16667, SimpleProfile.benchmarkUsAtNative(1920, 1080, 16667));
+        assertTrue("a 1440p screen decodes slower than the 1080p clip",
+                SimpleProfile.benchmarkUsAtNative(2560, 1440, 16667) > 16667);
+    }
+
+    @Test
+    public void balancedRestoresTheVrrSmoothestTurnedOff() {
+        prefs.edit().putBoolean(PreferenceConfiguration.VRR_PREF_STRING, true).commit();
+        assertTrue(SimpleProfile.apply(context, SimpleProfile.SMOOTHNESS, "smoothest"));
+        assertFalse(prefs.getBoolean(PreferenceConfiguration.VRR_PREF_STRING, true));
+        assertTrue("the player's opt-in is kept", prefs.getBoolean(SimpleProfile.VRR_OPT_IN, false));
+        assertTrue(SimpleProfile.apply(context, SimpleProfile.SMOOTHNESS, "balanced"));
+        assertTrue("Balanced restores it", prefs.getBoolean(PreferenceConfiguration.VRR_PREF_STRING, false));
+    }
+
+    @Test
+    public void aPcOverrideReadsAsCustom() {
+        HostStreamProfile profile = new HostStreamProfile();
+        profile.hdr = true;
+        context.getSharedPreferences("HostStreamProfiles", Context.MODE_PRIVATE).edit()
+                .putString("pc", profile.serialize()).commit();
+        assertNull("a PC's own value wins over the simple layer", SimpleProfile.chosen(context));
+        context.getSharedPreferences("HostStreamProfiles", Context.MODE_PRIVATE).edit().clear().commit();
     }
 
     @Test
@@ -156,5 +258,17 @@ public class SimpleProfileTest {
         assertTrue(console.persistBoolean(false));
         assertFalse(HomeSettings.enabled(context));
         assertEquals("pcs", prefs.getString(OpenPlay.SETTING, null));
+    }
+
+    @Test
+    public void bindingConsoleModeKeepsLastAndChosen() {
+        for (String screen : new String[] {"last", "chosen"}) {
+            prefs.edit().putString(OpenPlay.SETTING, screen).putBoolean(HomeSettings.PREF_KEY, true).commit();
+            ConsoleModePreference console = new ConsoleModePreference(context, null);
+            console.setKey(HomeSettings.PREF_KEY);
+            console.onSetInitialValue(true, true);
+            assertEquals(screen, prefs.getString(OpenPlay.SETTING, null));
+            assertTrue(prefs.getBoolean(HomeSettings.PREF_KEY, false));
+        }
     }
 }

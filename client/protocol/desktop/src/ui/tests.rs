@@ -824,7 +824,7 @@ fn settings_show_a_sections_main_rows_then_a_counted_fold() {
     for screen in [Screen::Settings, Screen::HostSettings(id)] {
         f.l.go(screen);
         for section in SETTINGS_SECTIONS {
-            if screen != Screen::Settings && (section == "App" || section == "Setup") { continue; }
+            if screen != Screen::Settings && (section == "App" || section == "Recommended") { continue; }
             f.l.settings_view.section = section;
             f.l.settings_view.more = [false; 9];
             f.settle();
@@ -1345,7 +1345,7 @@ fn at_150_percent_in_german_every_settings_page_fits_the_width() {
         assert_fits(&f, &format!("{screen:?}"), false);
         if matches!(screen, Screen::Settings | Screen::HostSettings(_)) {
             for section in SETTINGS_SECTIONS {
-                if screen != Screen::Settings && (section == "App" || section == "Setup") { continue; }
+                if screen != Screen::Settings && (section == "App" || section == "Recommended") { continue; }
                 f.l.settings_view.section = section;
                 f.settle();
                 assert_fits(&f, &format!("{screen:?} {section}"), false);
@@ -8227,7 +8227,7 @@ fn the_pin_page_moon_stands_clear_of_its_rows() {
 /// first brings it back, clear; and back on the long one it steps back again.
 #[test]
 fn the_moon_comes_back_where_the_page_makes_room_again() {
-    let sections = ["Setup", "Video", "Display & image", "Controls", "Audio", "Streaming", "App", "Advanced", "Debug"];
+    let sections = ["Recommended", "Video", "Display & image", "Controls", "Audio", "Streaming", "App", "Advanced", "Debug"];
     let mut back = 0;
     for (window, zoom) in [(vec2(1280.0, 800.0), 150), (vec2(1280.0, 800.0), 100), (vec2(1100.0, 650.0), 100), (vec2(1920.0, 1080.0), 100)] {
         let open = |section: &'static str| {

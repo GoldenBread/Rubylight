@@ -25,17 +25,17 @@
     },
     "response": {
       "ok": {
-        "smoothness": "balanced",
+        "smoothness": "auto",
         "picture": "auto",
         "hdr": "auto"
       }
     }
   },
   {
-    "name": "balanced on an HDR VRR screen with every codec",
+    "name": "auto on an HDR VRR screen with every codec",
     "request": {
       "op": "values",
-      "smoothness": "balanced",
+      "smoothness": "auto",
       "picture": "auto",
       "hdr": "auto",
       "display": {
@@ -62,9 +62,14 @@
       "ok": {
         "native_resolution": true,
         "fps": null,
-        "pacing": "balanced",
+        "pacing": "latency",
         "vrr": true,
         "latency_switches": true,
+        "drop_late_frames": true,
+        "host_frame_times": false,
+        "real_vrr": true,
+        "reduce_refresh": false,
+        "content_rate": false,
         "bitrate": {
           "mode": "default"
         },
@@ -109,6 +114,11 @@
         "pacing": "smoothest",
         "vrr": false,
         "latency_switches": true,
+        "drop_late_frames": true,
+        "host_frame_times": false,
+        "real_vrr": null,
+        "reduce_refresh": false,
+        "content_rate": false,
         "bitrate": {
           "mode": "factor",
           "milli": 1500
@@ -152,8 +162,13 @@
         "native_resolution": true,
         "fps": 60,
         "pacing": "latency",
-        "vrr": true,
+        "vrr": false,
         "latency_switches": true,
+        "drop_late_frames": true,
+        "host_frame_times": false,
+        "real_vrr": null,
+        "reduce_refresh": false,
+        "content_rate": false,
         "bitrate": {
           "mode": "factor",
           "milli": 600
@@ -166,7 +181,7 @@
     }
   },
   {
-    "name": "the recommended profile reads back from its values",
+    "name": "the stored profile reads back from its values",
     "request": {
       "op": "chosen",
       "current": {
@@ -175,11 +190,19 @@
         "pacing": "balanced",
         "vrr": true,
         "latency_switches": true,
+        "drop_late_frames": true,
+        "host_frame_times": false,
+        "real_vrr": true,
+        "reduce_refresh": false,
+        "content_rate": false,
         "bitrate_milli": null,
         "codec": "auto",
         "hdr": true,
         "adaptive_bitrate": false,
-        "adaptive_quality": "off"
+        "adaptive_quality": "off",
+        "stored_smoothness": "balanced",
+        "stored_picture": "auto",
+        "stored_hdr": "auto"
       },
       "display": {
         "width": 1920,
@@ -221,11 +244,19 @@
         "pacing": "balanced",
         "vrr": true,
         "latency_switches": true,
+        "drop_late_frames": true,
+        "host_frame_times": false,
+        "real_vrr": true,
+        "reduce_refresh": false,
+        "content_rate": false,
         "bitrate_milli": null,
         "codec": "auto",
         "hdr": true,
         "adaptive_bitrate": false,
-        "adaptive_quality": "off"
+        "adaptive_quality": "off",
+        "stored_smoothness": "auto",
+        "stored_picture": "auto",
+        "stored_hdr": "auto"
       },
       "display": {
         "width": 1920,

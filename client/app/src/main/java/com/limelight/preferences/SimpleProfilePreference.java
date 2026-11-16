@@ -1,7 +1,10 @@
 package com.limelight.preferences;
 
 import android.content.Context;
+import android.content.SharedPreferences;
+import android.preference.PreferenceManager;
 import android.util.AttributeSet;
+import android.widget.Toast;
 
 import com.limelight.R;
 
@@ -9,10 +12,21 @@ import com.limelight.R;
  * A row of the simple settings layer: Stream smoothness, Picture quality or HDR. Its picker offers the
  * choices of {@link SimpleProfile}; the row shows "Custom" while the advanced settings match none of them,
  * and choosing one writes the whole profile into the existing settings (SimpleProfile.apply).
+ *
+ * <p>Binding the row never writes: ListPreference always persists the first value it reads, so only a
+ * value chosen in the picker (through {@link #callChangeListener}) may apply the profile.
  */
 public class SimpleProfilePreference extends MaterialListPreference {
+    private boolean userPicked;
+
     public SimpleProfilePreference(Context context, AttributeSet attrs) {
         super(context, attrs);
+    }
+
+    @Override
+    public boolean callChangeListener(Object newValue) {
+        userPicked = true;
+        return super.callChangeListener(newValue);
     }
 
     /** The list's own value is always read from the settings, never from XML's default. */
@@ -28,12 +42,12 @@ public class SimpleProfilePreference extends MaterialListPreference {
 
     @Override
     public String getValue() {
-        return shouldPersist() && getSharedPreferences() != null ? shownChoice() : super.getValue();
+        return noPreferences() ? super.getValue() : shownChoice();
     }
 
     @Override
     public CharSequence getEntry() {
-        if (SimpleProfile.custom(getContext(), getKey())) {
+        if (noPreferences() || SimpleProfile.custom(getContext(), getKey())) {
             return getContext().getString(R.string.settings_custom);
         }
         return super.getEntry();
@@ -41,19 +55,34 @@ public class SimpleProfilePreference extends MaterialListPreference {
 
     /** The choice the current settings are, so the row shows the profile they equal; the stored one while Custom. */
     private String shownChoice() {
+        if (noPreferences()) return readStored();
         String[] chosen = SimpleProfile.chosen(getContext());
         int index = SimpleProfile.SMOOTHNESS.equals(getKey()) ? 0 : SimpleProfile.PICTURE.equals(getKey()) ? 1 : 2;
-        return chosen != null ? chosen[index] : SimpleProfile.read(getSharedPreferences(), getKey());
+        return chosen != null ? chosen[index] : readStored();
+    }
+
+    private String readStored() {
+        SharedPreferences prefs = getSharedPreferences();
+        return SimpleProfile.read(prefs != null ? prefs : PreferenceManager.getDefaultSharedPreferences(getContext()),
+                getKey());
+    }
+
+    private boolean noPreferences() {
+        return !shouldPersist() || getSharedPreferences() == null;
     }
 
     @Override
     protected boolean persistString(String value) {
-        if (!SimpleProfile.apply(getContext(), getKey(), value)) return false;
-        // One choice writes every simple value: the other rows' summaries change with it.
-        for (String key : new String[] {SimpleProfile.SMOOTHNESS, SimpleProfile.PICTURE, SimpleProfile.HDR}) {
-            android.preference.Preference row = getPreferenceManager().findPreference(key);
-            if (row != null) row.notifyChanged();
+        // The framework persists the first value it binds; that is not a choice.
+        if (!userPicked) return true;
+        userPicked = false;
+        if (noPreferences()) return false;
+        if (!SimpleProfile.apply(getContext(), getKey(), value)) {
+            Toast.makeText(getContext(), R.string.simple_profile_failed, Toast.LENGTH_LONG).show();
+            return false;
         }
+        // One choice writes every simple value; the screen's stored-value listener refreshes the other
+        // rows' summaries with it.
         return true;
     }
 }

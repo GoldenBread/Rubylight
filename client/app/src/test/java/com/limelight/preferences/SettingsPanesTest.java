@@ -318,7 +318,7 @@ public class SettingsPanesTest {
             assertNotNull(result);
             result.getOnPreferenceClickListener().onPreferenceClick(result);
             settle(screen);
-            assertEquals("video", shownSection(screen));
+            assertEquals("simple", shownSection(screen));
             assertEquals("", view.getQuery().toString());
         } finally { controller.pause().stop().destroy(); }
     }
@@ -522,7 +522,7 @@ public class SettingsPanesTest {
             result.getOnPreferenceClickListener().onPreferenceClick(result);
             settle(screen);
             assertEquals("", view.getQuery().toString());
-            assertEquals("video", shownSection(screen));
+            assertEquals("simple", shownSection(screen));
             screen.getOnBackPressedDispatcher().onBackPressed();
             settle(screen);
             assertEquals("the query is back", "bitrate", view.getQuery().toString());

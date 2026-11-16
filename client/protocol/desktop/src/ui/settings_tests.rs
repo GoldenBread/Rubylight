@@ -2,6 +2,9 @@
 //! PC and game layers, driven through whole frames like the launcher's other tests.
 
 use super::*;
+use crate::ui::settings::{simple_apply, simple_caps, simple_state};
+use nightjar_policy::simple_profile as simple;
+use crate::config::FramePacing;
 use nightjar_policy::presets::{self, Preset};
 
 /// Main settings at their defaults but `changed`, on a tall window where a section never scrolls.
@@ -378,7 +381,7 @@ fn profiles_sit_above_the_sections_and_open_their_page() {
     f.size = vec2(800.0, 4000.0);
     f.settle();
     let chips: Vec<&str> = f.drawn.iter().map(String::as_str).filter(|t| *t == "Profiles" || SETTINGS_SECTIONS.contains(t)).collect();
-    assert_eq!(chips[..3], ["Profiles", "Setup", "Video"], "{:?}", f.drawn);
+    assert_eq!(chips[..3], ["Profiles", "Recommended", "Video"], "{:?}", f.drawn);
 }
 
 /// A PC's row box: unticked and ticked as a checkbox for readers, named for its row, and a click
@@ -2036,39 +2039,71 @@ fn the_simple_layer_writes_and_reads_the_settings_it_stands_for() {
     let recommended = simple::recommended(&caps);
     simple_apply(&mut s, &display, &caps, recommended);
     assert_eq!((s.width, s.height, s.fps), (0, 0, 0), "the screen's own size and rate");
-    assert_eq!(s.frame_pacing, FramePacing::Balanced);
+    assert_eq!(s.frame_pacing, FramePacing::Latency);
     assert!(s.vrr && s.present_at_host_times);
     assert_eq!(s.bitrate_kbps, 0, "the bitrate for the size and rate");
     assert!(!s.hdr);
-    let (choices, custom) = simple_state(&s, &display, &caps);
+    let (choices, custom) = simple_state(&s, &display, &caps, true, false);
     assert!(!custom);
     assert_eq!(choices, recommended);
     // One changed advanced setting reads as Custom.
     s.frame_pacing = FramePacing::CapFps;
-    assert!(simple_state(&s, &display, &caps).1);
+    assert!(simple_state(&s, &display, &caps, true, false).1);
     // Save data lowers the bitrate and lets it fall when the link struggles.
     simple_apply(&mut s, &display, &caps, simple::Choices { picture: simple::Picture::SaveData, ..recommended });
     assert!(s.adaptive_bitrate && s.adaptive_quality == crate::config::QualityMode::Battery);
     assert!(s.bitrate_kbps > 0 && s.bitrate_kbps < stream_mode(&Settings::default(), display).3);
-    let (choices, custom) = simple_state(&s, &display, &caps);
+    let (choices, custom) = simple_state(&s, &display, &caps, true, false);
     assert!(!custom && choices.picture == simple::Picture::SaveData);
+    // A saved PyroWave codec does not make Best store PyroWave's own bitrate.
+    let mut pyro = Settings { codec: CodecPreference::PyroWave, ..Settings::default() };
+    simple_apply(&mut pyro, &display, &caps, simple::Choices { picture: simple::Picture::Best, ..recommended });
+    assert_eq!(pyro.codec, CodecPreference::Auto);
+    assert!(pyro.bitrate_kbps < 100_000, "Best uses the conventional codec's bitrate, not PyroWave's {}", pyro.bitrate_kbps);
+    assert!(!simple_state(&pyro, &display, &caps, true, false).1);
+}
+
+#[test]
+fn a_non_vrr_first_launch_reads_auto_not_custom() {
+    let display = Display { width: 1920, height: 1080, refresh_hz: 60.0, refresh_reported: true };
+    let caps = simple_caps(&display, false, false);
+    let s = Settings::default();
+    let (choices, custom) = simple_state(&s, &display, &caps, false, false);
+    assert!(!custom, "a saved VRR the swap chain cannot tear is not Custom");
+    assert_eq!(choices.smoothness, simple::Smoothness::Auto);
+}
+
+#[test]
+fn a_pc_override_reads_as_custom_on_the_desktop() {
+    let display = Display { width: 1920, height: 1080, refresh_hz: 120.0, refresh_reported: true };
+    let caps = simple_caps(&display, false, true);
+    let s = Settings::default();
+    assert!(simple_state(&s, &display, &caps, true, true).1, "a PC's own value wins over the simple layer");
 }
 
 #[test]
 fn the_setup_section_shows_the_simple_layer_and_back_applies_it() {
     let mut f = settings_with(Settings::default());
     f.l.tearing_supported = true;
-    f.l.settings_view.section = "Setup";
+    f.l.settings_view.section = "Recommended";
     f.settle();
     for row in ["Stream smoothness", "Picture quality", "Screen", "HDR", "Console mode", "Back to recommended"] {
         assert!(shows(&f, row), "{row} is not drawn: {:?}", f.drawn);
     }
-    assert!(!row_words(&f, "Stream smoothness").iter().any(|word| *word == "Custom"), "{:?}", row_words(&f, "Stream smoothness"));
+    assert!(!row_words(&f, "Stream smoothness").contains(&"Custom"), "{:?}", row_words(&f, "Stream smoothness"));
+    f.l.settings.frame_pacing = FramePacing::CapFps;
+    assert!(simple_state(&f.l.settings, &f.l.display, &simple_caps(&f.l.display, false, true), true, false).1);
+    f.settle();
+    assert!(row_words(&f, "Stream smoothness").contains(&"Custom"), "{:?}", row_words(&f, "Stream smoothness"));
+    // Picking the stored choice while Custom applies the profile (it is what the row shows).
+    let _ = click_value(&mut f, "Stream smoothness", "Custom");
+    let _ = click_last(&mut f, "Auto (recommended)");
+    f.settle();
+    assert_eq!(FramePacing::Latency, f.l.settings.frame_pacing);
     f.l.settings.frame_pacing = FramePacing::CapFps;
     f.settle();
-    assert!(row_words(&f, "Stream smoothness").iter().any(|word| *word == "Custom"), "{:?}", row_words(&f, "Stream smoothness"));
-    let _ = click_value(&mut f, "Back to recommended", "Back to recommended");
+    let _ = click_text(&mut f, "Back to recommended");
     f.settle();
-    assert_eq!(f.l.settings.frame_pacing, FramePacing::Balanced);
-    assert!(!row_words(&f, "Stream smoothness").iter().any(|word| *word == "Custom"), "{:?}", row_words(&f, "Stream smoothness"));
+    assert_eq!(f.l.settings.frame_pacing, FramePacing::Latency);
+    assert!(!row_words(&f, "Stream smoothness").contains(&"Custom"), "{:?}", row_words(&f, "Stream smoothness"));
 }

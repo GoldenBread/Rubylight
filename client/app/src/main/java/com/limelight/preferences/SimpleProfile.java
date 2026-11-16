@@ -10,6 +10,7 @@ import android.preference.PreferenceManager;
 import com.limelight.binding.video.DecoderBenchmark;
 import com.limelight.binding.video.DisplayFrameRatePolicy;
 import com.limelight.binding.video.HdrPolicy;
+import com.limelight.R;
 
 /**
  * The simple settings layer: what the stream should favour, how much picture quality it may spend, and
@@ -25,8 +26,12 @@ public final class SimpleProfile {
     static final String PICTURE = "simple_picture";
     /** HDR: auto or off. */
     static final String HDR = "simple_hdr";
+    /** The player's variable-refresh-rate opt-in before a Smoothest choice turned VRR off, and what the
+     *  simple layer last wrote, so turning Balanced back on restores it. */
+    static final String VRR_OPT_IN = "simple_vrr_opt_in";
+    static final String VRR_LAST = "simple_vrr_last";
     /** The values a row can take, in the order of its picker. */
-    static final String[] SMOOTHNESS_VALUES = {"smoothest", "balanced", "lowest-delay"};
+    static final String[] SMOOTHNESS_VALUES = {"auto", "smoothest", "balanced", "lowest-delay"};
     static final String[] PICTURE_VALUES = {"auto", "best", "save-data"};
     static final String[] HDR_VALUES = {"auto", "off"};
 
@@ -35,7 +40,7 @@ public final class SimpleProfile {
     /** The choice stored for {@code key}, or the recommended one when nothing (valid) is stored. */
     static String read(SharedPreferences prefs, String key) {
         if (SMOOTHNESS.equals(key)) {
-            return known(prefs.getString(key, "balanced"), SMOOTHNESS_VALUES, "balanced");
+            return known(prefs.getString(key, "auto"), SMOOTHNESS_VALUES, "auto");
         }
         if (PICTURE.equals(key)) {
             return known(prefs.getString(key, "auto"), PICTURE_VALUES, "auto");
@@ -51,8 +56,17 @@ public final class SimpleProfile {
         return fallback;
     }
 
-    /** What this device and its paired PCs measured, for the mapping. */
+    private static SimpleProfileModel.Capabilities cachedCapabilities;
+    private static long cachedAt;
+
+    /** Drops the measured capabilities (JVM tests, or a display change read again). */
+    static void forgetCapabilities() { cachedCapabilities = null; }
+
+    /** What this device and its paired PCs measured, for the mapping. Cached for a moment so the
+     *  rows of one Settings visit share one decoder scan; a choice invalidates it. */
     static SimpleProfileModel.Capabilities capabilities(Context context) {
+        long now = System.nanoTime() / 1_000_000L;
+        if (cachedCapabilities != null && now - cachedAt <= 750) return cachedCapabilities;
         android.view.Display display = PreferenceConfiguration.defaultDisplay(context);
         int refresh = display == null ? 60 : DisplayFrameRatePolicy.streamFrameRate(
                 DisplayFrameRatePolicy.maxRefreshRate(display));
@@ -63,16 +77,30 @@ public final class SimpleProfile {
             height = PreferenceConfiguration.getHeightFromResolutionString(nativeResolution);
         }
         boolean hdr = display != null && HdrPolicy.hasHdr10(HdrPolicy.displayHdrTypes(display));
-        // Variable refresh rate stays this device's own opt-in choice: the simple layer changes the
-        // pacing, never a display mode the player has not turned on (VRR can flicker on some panels).
-        boolean vrr = DisplayFrameRatePolicy.vrrOffered(context) && PreferenceManager
-                .getDefaultSharedPreferences(context)
-                .getBoolean(PreferenceConfiguration.VRR_PREF_STRING, false);
+        // VRR stays the player's opt-in. Smoothest turns it off in the settings; the opt-in key keeps
+        // the value Balanced and Lowest delay restore, including after the player changed it in Display.
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
+        boolean offered = DisplayFrameRatePolicy.vrrOffered(context);
+        boolean currentVrr = prefs.getBoolean(PreferenceConfiguration.VRR_PREF_STRING, false);
+        boolean lastWritten = prefs.getBoolean(VRR_LAST, currentVrr);
+        boolean optIn = prefs.contains(VRR_OPT_IN) ? prefs.getBoolean(VRR_OPT_IN, false) : lastWritten;
+        if (currentVrr != lastWritten) optIn = currentVrr;
+        boolean vrr = offered && optIn;
         Codecs codecs = codecs(context, width, height);
         // The PCs' HDR and codec offers are settled when a stream negotiates; the settings screen does
         // not know them, and leaving them unknown never rules anything out.
-        return new SimpleProfileModel.Capabilities(width, height, refresh, hdr, vrr,
-                true, codecs.hevc, codecs.av1, codecs.hdr, codecs.maxFpsAtNative, null, null, null);
+        SimpleProfileModel.Capabilities capabilities = new SimpleProfileModel.Capabilities(width, height,
+                refresh, hdr, vrr, true, codecs.hevc, codecs.av1, codecs.hdr, codecs.maxFpsAtNative,
+                null, null, null);
+        cachedCapabilities = capabilities;
+        cachedAt = now;
+        return capabilities;
+    }
+
+    /** Whether this screen can show HDR10 at all; the simple HDR row shows only then. */
+    static boolean hdrOffered(Context context) {
+        android.view.Display display = PreferenceConfiguration.defaultDisplay(context);
+        return display != null && HdrPolicy.hasHdr10(HdrPolicy.displayHdrTypes(display));
     }
 
     private static final class Codecs {
@@ -101,10 +129,12 @@ public final class SimpleProfile {
                         codecs.av1 = true;
                         if (main10(info, type)) codecs.hdr = true;
                     }
-                    // The benchmark's clip is 1080p60: it can only cap a stream at or below that size.
-                    if ((long) width * height <= 1920L * 1080 && hardware(info)) {
-                        long us = DecoderBenchmark.result(context, info, type);
-                        if (us > 0 && (bestUs == 0 || us < bestUs)) bestUs = us;
+                    // The benchmark's clip is 1080p60. Scale its time by the screen's pixel count, so a
+                    // larger panel gets a lower cap instead of no measurement at all.
+                    long us = DecoderBenchmark.result(context, info, type);
+                    if (us > 0) {
+                        long scaled = benchmarkUsAtNative(width, height, us);
+                        if (bestUs == 0 || scaled < bestUs) bestUs = scaled;
                     }
                 }
             }
@@ -112,9 +142,29 @@ public final class SimpleProfile {
             com.limelight.LimeLog.warning("Simple settings: the decoder list could not be read: " + e);
         }
         if (bestUs > 0) {
-            codecs.maxFpsAtNative = (int) Math.min(1000, 1_000_000L / bestUs);
+            codecs.maxFpsAtNative = offeredFps(context, (int) Math.min(1000, 1_000_000L / bestUs));
         }
         return codecs;
+    }
+
+    /** The 1080p60 benchmark's decode time at this screen's pixel count, so a larger panel gets a cap. */
+    static long benchmarkUsAtNative(int width, int height, long clipUs) {
+        long pixels = (long) width * height;
+        return Math.max(1, clipUs * pixels / (1920L * 1080));
+    }
+
+    /** The nearest frame rate the Frame rate row offers at or below {@code fps}; 30 when below it. */
+    static int offeredFps(Context context, int fps) {
+        int best = 30;
+        for (String value : context.getResources().getStringArray(R.array.fps_values)) {
+            try {
+                int offered = Integer.parseInt(value);
+                if (offered > best && offered <= fps) best = offered;
+            } catch (NumberFormatException ignored) {
+                // A value the row cannot parse is no choice here either.
+            }
+        }
+        return best;
     }
 
     private static boolean hardware(MediaCodecInfo info) {
@@ -195,6 +245,13 @@ public final class SimpleProfile {
         int bitrate = PreferenceConfiguration.getDefaultBitrate(nativeResolution, fps) * values.bitrateMilli / 1000;
         // Android's stored value for the Smoothest pacing is "smoothness" (FramePacingChoice).
         String pacing = "smoothest".equals(values.pacing) ? "smoothness" : values.pacing;
+        // Remember the player's VRR before Smoothest turns it off; Balanced and the next choice
+        // restore it, also after the player changed VRR in Display since the last choice.
+        boolean currentVrr = prefs.getBoolean(PreferenceConfiguration.VRR_PREF_STRING, false);
+        boolean lastWritten = prefs.getBoolean(VRR_LAST, currentVrr);
+        boolean optIn = prefs.contains(VRR_OPT_IN) ? prefs.getBoolean(VRR_OPT_IN, false) : lastWritten;
+        if (currentVrr != lastWritten) optIn = currentVrr;
+        boolean writeVrr = values.vrr && DisplayFrameRatePolicy.vrrOffered(context);
         SharedPreferences.Editor editor = prefs.edit()
                 .putString(SMOOTHNESS, smoothness)
                 .putString(PICTURE, picture)
@@ -205,16 +262,18 @@ public final class SimpleProfile {
                 .putInt(PreferenceConfiguration.BITRATE_PREF_STRING, bitrate)
                 .putBoolean(PreferenceConfiguration.BITRATE_USER_SET_PREF_STRING, values.bitrateMilli != 1000)
                 .putString(PreferenceConfiguration.FRAME_PACING_PREF_STRING, pacing)
-                .putBoolean(SettingRules.DROP_LATE_FRAMES, true)
-                .putBoolean(PreferenceConfiguration.HOST_FRAME_TIMES_PREF_STRING, false)
-                .putBoolean(PreferenceConfiguration.VRR_PREF_STRING, values.vrr)
-                .putBoolean("checkbox_reduce_refresh_rate", false)
-                .putBoolean(PreferenceConfiguration.CONTENT_RATE_FRAME_RATE_PREF_STRING, false)
+                .putBoolean(SettingRules.DROP_LATE_FRAMES, values.dropLateFrames)
+                .putBoolean(PreferenceConfiguration.HOST_FRAME_TIMES_PREF_STRING, values.hostFrameTimes)
+                .putBoolean(PreferenceConfiguration.VRR_PREF_STRING, writeVrr)
+                .putBoolean(VRR_OPT_IN, optIn)
+                .putBoolean(VRR_LAST, writeVrr)
+                .putBoolean("checkbox_reduce_refresh_rate", values.reduceRefresh)
+                .putBoolean(PreferenceConfiguration.CONTENT_RATE_FRAME_RATE_PREF_STRING, values.contentRate)
                 .putString(PreferenceConfiguration.VIDEO_FORMAT_PREF_STRING, codec(values.codec))
                 .putBoolean(PreferenceConfiguration.ENABLE_HDR_PREF_STRING, values.hdr)
                 .putBoolean(AutoBitrateChoice.SETTINGS_KEY, values.adaptiveBitrate)
                 .putString("adaptive_quality_mode", "save-power".equals(values.adaptiveQuality) ? "battery" : "off");
-        if (values.vrr) editor.putBoolean(PreferenceConfiguration.REAL_VRR_PREF_STRING, true);
+        if (values.realVrr != null) editor.putBoolean(PreferenceConfiguration.REAL_VRR_PREF_STRING, values.realVrr);
         if (values.latencySwitches) {
             for (String switchKey : StreamPreset.LATENCY_SWITCHES) {
                 if (StreamPreset.setsLatencySwitch(switchKey)) editor.putBoolean(switchKey, true);
@@ -224,6 +283,7 @@ public final class SimpleProfile {
             com.limelight.LimeLog.warning("Simple settings: the profile could not be saved");
             return false;
         }
+        cachedCapabilities = null;
         AutoBitrateChoice.clearPcChoices(context);
         return true;
     }
@@ -275,10 +335,53 @@ public final class SimpleProfile {
                 : "forceav1".equals(storedCodec) ? "av1" : "h264";
         String qualityMode = prefs.getString("adaptive_quality_mode", "off");
         String quality = "battery".equals(qualityMode) ? "save-power" : "off".equals(qualityMode) ? "off" : null;
-        return new SimpleProfileModel.Current(nativeSize, fps, pacing,
-                prefs.getBoolean(PreferenceConfiguration.VRR_PREF_STRING, false), latencySwitches, bitrateMilli,
-                codec, prefs.getBoolean(PreferenceConfiguration.ENABLE_HDR_PREF_STRING, false),
-                prefs.getBoolean(AutoBitrateChoice.SETTINGS_KEY, false), quality);
+        // A PC, game or active profile that sets one of the values the simple layer writes means the
+        // stream will not run the simple layer's value; the rows say Custom rather than claim it.
+        boolean layered = anyLayerOverrides(context);
+        boolean vrr = DisplayFrameRatePolicy.vrrOffered(context)
+                && prefs.getBoolean(PreferenceConfiguration.VRR_PREF_STRING, false);
+        return new SimpleProfileModel.Current(nativeSize, fps, layered ? null : pacing,
+                vrr, latencySwitches,
+                prefs.getBoolean(SettingRules.DROP_LATE_FRAMES, true),
+                prefs.getBoolean(PreferenceConfiguration.HOST_FRAME_TIMES_PREF_STRING, false),
+                prefs.getBoolean(PreferenceConfiguration.REAL_VRR_PREF_STRING, true),
+                prefs.getBoolean("checkbox_reduce_refresh_rate", false),
+                prefs.getBoolean(PreferenceConfiguration.CONTENT_RATE_FRAME_RATE_PREF_STRING, false),
+                bitrateMilli, codec,
+                prefs.getBoolean(PreferenceConfiguration.ENABLE_HDR_PREF_STRING, false),
+                prefs.getBoolean(AutoBitrateChoice.SETTINGS_KEY, false), quality,
+                read(prefs, SMOOTHNESS), read(prefs, PICTURE), read(prefs, HDR));
+    }
+
+    /** Whether any saved PC, game or active named profile sets a value the simple layer writes. */
+    static boolean anyLayerOverrides(Context context) {
+        for (Object raw : context.getSharedPreferences("HostStreamProfiles", Context.MODE_PRIVATE).getAll().values()) {
+            if (raw instanceof String && overridesSimple(parseProfile((String) raw))) return true;
+        }
+        for (Object raw : context.getSharedPreferences("AppStreamSettings", Context.MODE_PRIVATE).getAll().values()) {
+            if (raw instanceof String && overridesSimple(parseProfile((String) raw))) return true;
+        }
+        StreamProfiles.Snapshot profiles = StreamProfiles.load(context);
+        if (profiles.activeId != null) {
+            String values = profiles.values.get(profiles.activeId);
+            if (values != null && overridesSimple(parseProfile(values))) return true;
+        }
+        return false;
+    }
+
+    private static HostStreamProfile parseProfile(String raw) {
+        try {
+            return HostStreamProfile.deserialize(raw);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static boolean overridesSimple(HostStreamProfile values) {
+        return values != null && (values.nativeResolution != null || values.width != null || values.height != null
+                || values.refreshRateX100 != null || values.bitrate != null || values.codec != null
+                || values.hdr != null || values.vrr != null || values.realVrr != null || values.pacing != null
+                || values.hostFrameTimes != null || values.dropLateFrames != null);
     }
 
     private static String pacing(String choice) {

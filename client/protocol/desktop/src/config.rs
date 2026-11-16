@@ -1244,7 +1244,7 @@ impl Default for Settings {
             frame_warp: false,
             open_on_start: OpenOnStart::Pcs,
             console_home: true,
-            simple_smoothness: nightjar_policy::simple_profile::Smoothness::Balanced,
+            simple_smoothness: nightjar_policy::simple_profile::Smoothness::Auto,
             simple_picture: nightjar_policy::simple_profile::Picture::Auto,
             simple_hdr: nightjar_policy::simple_profile::Hdr::Auto,
             quick_resume: false,

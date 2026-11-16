@@ -2612,13 +2612,11 @@ public class StreamSettings extends NightjarActivity {
                         Toast.makeText(getActivity(), R.string.simple_profile_failed, Toast.LENGTH_LONG).show();
                     }
                     updateSimpleScreenSummary();
-                    for (String key : new String[] {SimpleProfile.SMOOTHNESS, SimpleProfile.PICTURE, SimpleProfile.HDR}) {
-                        Preference row = findPreference(key);
-                        if (row != null) row.notifyChanged();
-                    }
                     return true;
                 });
             }
+            Preference simpleHdr = findPreference("simple_hdr");
+            if (simpleHdr != null && !SimpleProfile.hdrOffered(getActivity())) removeSetting("simple_hdr");
             findPreference(SHARP_COLOR_KEY).setOnPreferenceClickListener(preference -> {
                 SharedPreferences prefs = getPreferenceManager().getSharedPreferences();
                 showChoices(R.string.title_sharp_color, R.array.sharp_color_names, PreferenceConfiguration.sharpColor(prefs) ? 1 : 0,
@@ -2790,7 +2788,9 @@ public class StreamSettings extends NightjarActivity {
                 return true;
             });
             for (String moreSection : SECTIONS.keySet()) {
-                findPreference(MORE_PREFIX + moreSection).setOnPreferenceClickListener(preference -> {
+                Preference more = findPreference(MORE_PREFIX + moreSection);
+                if (more == null) continue;
+                more.setOnPreferenceClickListener(preference -> {
                     toggleMore(moreSection);
                     return true;
                 });

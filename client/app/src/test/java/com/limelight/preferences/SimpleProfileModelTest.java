@@ -51,7 +51,9 @@ public class SimpleProfileModelTest {
     @Test
     public void valuesAreReadFromTheModel() throws Exception {
         answer = "{\"ok\":{\"native_resolution\":true,\"fps\":null,\"pacing\":\"smoothest\",\"vrr\":false,"
-                + "\"latency_switches\":true,\"bitrate\":{\"mode\":\"factor\",\"milli\":1500},"
+                + "\"latency_switches\":true,\"drop_late_frames\":true,\"host_frame_times\":false,"
+                + "\"real_vrr\":null,\"reduce_refresh\":false,\"content_rate\":false,"
+                + "\"bitrate\":{\"mode\":\"factor\",\"milli\":1500},"
                 + "\"codec\":\"av1\",\"hdr\":true,\"adaptive_bitrate\":false,\"adaptive_quality\":\"off\"}}";
         SimpleProfileModel.Values values = SimpleProfileModel.values("smoothest", "best", "auto", hdrCapabilities());
         assertEquals("smoothest", asked.get(0).getString("smoothness"));
@@ -93,7 +95,9 @@ public class SimpleProfileModelTest {
     }
 
     private static SimpleProfileModel.Current current() {
-        return new SimpleProfileModel.Current(true, null, "balanced", true, true, null, "auto", true, false, "off");
+        return new SimpleProfileModel.Current(true, null, "balanced", true, true,
+                true, false, true, false, false, null, "auto", true, false, "off",
+                "balanced", "auto", "auto");
     }
 
     private static JSONArray contract() throws Exception {
@@ -114,8 +118,8 @@ public class SimpleProfileModelTest {
             JSONObject request = c.getJSONObject("request");
             SimpleProfileModel.use(sent -> {
                 try {
-                    assertEquals(c.getString("name"), sortedLike(request, new JSONObject(sent)).toString(),
-                            new JSONObject(sent).toString());
+                    assertEquals(c.getString("name"), request.toString(),
+                            sortedLike(request, new JSONObject(sent)).toString());
                     return c.getJSONObject("response").toString();
                 } catch (Exception e) {
                     throw new AssertionError(e);
@@ -150,9 +154,15 @@ public class SimpleProfileModelTest {
                             new SimpleProfileModel.Current(current.getBoolean("native_resolution"),
                                     current.isNull("fps") ? null : current.getInt("fps"), current.getString("pacing"),
                                     current.getBoolean("vrr"), current.getBoolean("latency_switches"),
+                                    current.getBoolean("drop_late_frames"), current.getBoolean("host_frame_times"),
+                                    current.getBoolean("real_vrr"), current.getBoolean("reduce_refresh"),
+                                    current.getBoolean("content_rate"),
                                     current.isNull("bitrate_milli") ? null : current.getInt("bitrate_milli"),
                                     current.getString("codec"), current.getBoolean("hdr"),
-                                    current.getBoolean("adaptive_bitrate"), current.getString("adaptive_quality")));
+                                    current.getBoolean("adaptive_bitrate"), current.getString("adaptive_quality"),
+                                    current.isNull("stored_smoothness") ? null : current.getString("stored_smoothness"),
+                                    current.isNull("stored_picture") ? null : current.getString("stored_picture"),
+                                    current.isNull("stored_hdr") ? null : current.getString("stored_hdr")));
                     if (ok.isNull("choices")) {
                         assertNull(c.getString("name"), choices);
                     } else {

@@ -37,7 +37,7 @@
         <com.limelight.preferences.SimpleProfilePreference
             android:key="simple_hdr"
             android:title="@string/title_enable_hdr"
-            android:dialogMessage="@string/summary_enable_hdr"
+            android:dialogMessage="@string/summary_simple_hdr"
             android:entries="@array/simple_hdr_names"
             android:entryValues="@array/simple_hdr_values" />
         <com.limelight.preferences.ConsoleModePreference

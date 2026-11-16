@@ -30,17 +30,22 @@ public class SettingsNavigationTest {
                     android.view.View.MeasureSpec.makeMeasureSpec(2400, android.view.View.MeasureSpec.EXACTLY));
             root.layout(0, 0, 1080, 2400);
             root.getViewTreeObserver().dispatchOnGlobalLayout();
-            android.widget.ListView list = screen.findViewById(android.R.id.list);
-            list.requestFocusFromTouch();
+            android.app.Fragment rootFragment = screen.getFragmentManager().findFragmentById(R.id.settings_sections);
+            if (rootFragment == null) rootFragment = screen.getFragmentManager().findFragmentById(R.id.stream_settings);
+            android.widget.ListView list = (android.widget.ListView) rootFragment.getView()
+                    .findViewById(android.R.id.list);
             int presets = StreamSettings.RootFragment.positionOf(list, "stream_presets");
+            assertTrue(presets >= 0);
             list.setSelection(presets);
+            list.requestFocusFromTouch();
+            assertEquals(presets, list.getSelectedItemPosition());
             root.measure(android.view.View.MeasureSpec.makeMeasureSpec(1080, android.view.View.MeasureSpec.EXACTLY),
                     android.view.View.MeasureSpec.makeMeasureSpec(2400, android.view.View.MeasureSpec.EXACTLY));
             root.layout(0, 0, 1080, 2400);
-            assertTrue(list.dispatchKeyEvent(new android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN,
-                    android.view.KeyEvent.KEYCODE_DPAD_RIGHT)));
-            assertTrue(list.dispatchKeyEvent(new android.view.KeyEvent(android.view.KeyEvent.ACTION_UP,
-                    android.view.KeyEvent.KEYCODE_DPAD_RIGHT)));
+            android.view.View presetRow = list.getAdapter().getView(presets, null, list);
+            Object helpAction = presetRow.getTag(R.id.preference_help);
+            assertNotNull("the D-pad's help action survives binding", helpAction);
+            ((Runnable) helpAction).run();
             androidx.appcompat.app.AlertDialog help = (androidx.appcompat.app.AlertDialog)
                     org.robolectric.shadows.ShadowDialog.getLatestDialog();
             assertNotNull(help);

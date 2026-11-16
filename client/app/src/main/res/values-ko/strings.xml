@@ -520,14 +520,13 @@
     <string name="title_jumbo_frames">점보 비디오 패킷</string>
     <string name="summary_jumbo_frames">PC와 모든 구간이 9000바이트 점보 프레임을 전달할 때 더 적고 큰 패킷으로 비디오를 보냅니다. Nightjar가 네트워크를 테스트하는 동안 각 스트림 시작이 몇 초 늦어지며, 테스트에 실패하면 일반 패킷을 사용합니다. 유선 네트워크가 점보 프레임에 맞게 설정된 경우가 아니면 끄세요.</string>
     <string name="jumbo_frames_fallback">이 네트워크에서 점보 비디오 패킷 테스트를 통과하지 못해 일반 패킷으로 스트리밍합니다.</string>
-    <string name="settings_simple_title">추천</string>
     <string name="title_simple_smoothness">스트림 부드러움</string>
-    <string name="summary_simple_smoothness">화면이 얼마나 안정적인지와 화면에 얼마나 빨리 도달하는지 정합니다. 가장 부드럽게는 각 프레임을 유지해 안정된 주기를 만들고 지연이 조금 늘어납니다. 최소 지연은 최신 프레임을 즉시 보여 줍니다. 게임이 끊기거나 느리게 느껴지지 않으면 균형을 유지하세요.</string>
+    <string name="summary_simple_smoothness">자동은 화면과 디코더를 따릅니다. 각 주사율마다 최신 프레임을 보여 주고, 화면이 지원하면 가변 주사율을 사용합니다. 가장 부드럽게는 각 프레임을 유지해 안정된 주기를 만들고 지연이 조금 늘어납니다. 최소 지연은 기다리지 않습니다. 게임이 끊기거나 느리게 느껴지지 않으면 자동을 유지하세요.</string>
     <string name="simple_smoothest">가장 부드럽게</string>
     <string name="simple_balanced">균형</string>
     <string name="simple_lowest_delay">최소 지연</string>
     <string name="title_simple_picture">화질</string>
-    <string name="summary_simple_picture">비트레이트와 코덱을 설정합니다. 최고는 더 많은 네트워크를 사용해 화면을 더 선명하게 하고, 데이터 절약은 사용량을 줄이며 연결이 힘들 때 화질을 낮춥니다. 더 선명한 화면이나 적은 데이터가 필요하지 않으면 자동을 유지하세요.</string>
+    <string name="summary_simple_picture">비트레이트를 설정합니다. 최고는 더 많은 네트워크를 사용해 화면을 더 선명하게 하고, 데이터 절약은 사용량을 줄이며 연결이 힘들 때 화질을 낮춥니다. 더 선명한 화면이나 적은 데이터가 필요하지 않으면 자동을 유지하세요.</string>
     <string name="simple_picture_auto">자동(추천)</string>
     <string name="simple_picture_best">최고</string>
     <string name="simple_picture_save_data">데이터 절약</string>
@@ -536,10 +535,11 @@
     <string name="simple_screen_value">%1$d×%2$d, %3$d Hz</string>
     <string name="simple_hdr_auto">자동(추천)</string>
     <string name="title_simple_console">콘솔 모드</string>
-    <string name="summary_simple_console">이 PC의 게임을 전체 화면으로 바로 열어 컨트롤러나 리모컨으로 선택할 수 있습니다. TV나 휴대용 기기에서는 켜 두고, PC 목록을 열려면 끄세요.</string>
+    <string name="summary_simple_console">게임을 전체 화면으로 바로 열어 컨트롤러나 리모컨으로 선택할 수 있습니다. TV나 휴대용 기기에서는 켜 두고, PC 목록을 열려면 끄세요.</string>
     <string name="simple_back_to_recommended">추천으로 돌아가기</string>
     <string name="summary_simple_back_to_recommended">위의 세 가지 선택을 이 기기에 가장 좋은 값으로 되돌립니다. 선택이 나타내는 설정도 함께 바뀝니다.</string>
     <string name="simple_profile_failed">이 기기에서 추천 설정을 읽을 수 없습니다</string>
     <string name="settings_section_simple">추천</string>
     <string name="settings_section_simple_summary">간단한 세 가지 선택. 자세한 설정은 아래 섹션에 있습니다.</string>
+    <string name="summary_simple_hdr">HDR 화면에서 더 밝은 하이라이트와 풍부한 색을 보여 줍니다. 자동은 화면, 디코더, PC가 모두 지원할 때만 켭니다. HDR이 흐릿하게 보이면 끄세요.</string>
 </resources>

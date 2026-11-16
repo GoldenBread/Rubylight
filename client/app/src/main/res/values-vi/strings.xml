@@ -520,14 +520,13 @@
     <string name="title_jumbo_frames">Gói video jumbo</string>
     <string name="summary_jumbo_frames">Gửi video trong ít gói lớn hơn khi PC và mọi chặng mang được khung jumbo 9000 byte. Mỗi luồng khởi động chậm vài giây trong khi Nightjar kiểm tra mạng, và dùng gói thường nếu bài kiểm tra thất bại. Hãy để tắt trừ khi mạng có dây của bạn được thiết lập cho khung jumbo.</string>
     <string name="jumbo_frames_fallback">Gói video jumbo không vượt qua bài kiểm tra trên mạng này, nên luồng dùng gói thường.</string>
-    <string name="settings_simple_title">Đề xuất</string>
     <string name="title_simple_smoothness">Độ mượt của luồng</string>
-    <string name="summary_simple_smoothness">Chọn mức ổn định của hình ảnh và tốc độ nó đến màn hình: Mượt nhất giữ từng khung hình để có nhịp đều, trễ hơn một chút, Độ trễ thấp nhất hiển thị khung hình mới nhất ngay lập tức. Hãy để Cân bằng trừ khi trò chơi bị giật hoặc chậm.</string>
+    <string name="summary_simple_smoothness">Tự động theo màn hình và bộ giải mã: khung hình mới nhất ở mỗi lần làm mới, với tần số quét thay đổi khi màn hình hỗ trợ. Mượt nhất giữ từng khung hình để có nhịp đều, trễ hơn một chút; Độ trễ thấp nhất không bao giờ chờ. Hãy để Tự động trừ khi trò chơi bị giật hoặc chậm.</string>
     <string name="simple_smoothest">Mượt nhất</string>
     <string name="simple_balanced">Cân bằng</string>
     <string name="simple_lowest_delay">Độ trễ thấp nhất</string>
     <string name="title_simple_picture">Chất lượng hình ảnh</string>
-    <string name="summary_simple_picture">Đặt tốc độ bit và codec: Tốt nhất dùng nhiều mạng hơn để có hình ảnh sắc nét hơn, Tiết kiệm dữ liệu dùng ít hơn và giảm chất lượng khi kết nối yếu. Hãy để Tự động trừ khi bạn cần độ sắc nét hoặc ít dữ liệu hơn.</string>
+    <string name="summary_simple_picture">Đặt tốc độ bit: Tốt nhất dùng nhiều mạng hơn để có hình ảnh sắc nét hơn, Tiết kiệm dữ liệu dùng ít hơn và giảm chất lượng khi kết nối yếu. Hãy để Tự động trừ khi bạn cần độ sắc nét hoặc ít dữ liệu hơn.</string>
     <string name="simple_picture_auto">Tự động (đề xuất)</string>
     <string name="simple_picture_best">Tốt nhất</string>
     <string name="simple_picture_save_data">Tiết kiệm dữ liệu</string>
@@ -536,10 +535,11 @@
     <string name="simple_screen_value">%1$d×%2$d ở %3$d Hz</string>
     <string name="simple_hdr_auto">Tự động (đề xuất)</string>
     <string name="title_simple_console">Chế độ console</string>
-    <string name="summary_simple_console">Mở thẳng trò chơi của PC này ở toàn màn hình, nơi tay cầm hoặc điều khiển từ xa có thể chọn. Bật cho TV hoặc máy cầm tay; tắt để mở danh sách PC.</string>
+    <string name="summary_simple_console">Mở thẳng trò chơi của bạn ở toàn màn hình, nơi tay cầm hoặc điều khiển từ xa có thể chọn. Bật cho TV hoặc máy cầm tay; tắt để mở danh sách PC.</string>
     <string name="simple_back_to_recommended">Quay lại đề xuất</string>
     <string name="summary_simple_back_to_recommended">Đưa ba lựa chọn trên về những gì thiết bị này làm tốt nhất; các cài đặt chúng đại diện cũng thay đổi theo.</string>
     <string name="simple_profile_failed">Không thể đọc cài đặt đề xuất trên thiết bị này</string>
     <string name="settings_section_simple">Đề xuất</string>
     <string name="settings_section_simple_summary">Ba lựa chọn đơn giản; mọi chi tiết nằm trong các mục bên dưới.</string>
+    <string name="summary_simple_hdr">Điểm sáng rực hơn và màu sắc phong phú hơn trên màn hình HDR. Tự động chỉ bật khi màn hình, bộ giải mã và PC hỗ trợ; hãy để Tự động trừ khi HDR trông nhạt.</string>
 </resources>

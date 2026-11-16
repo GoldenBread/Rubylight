@@ -10,31 +10,34 @@
     <string name="settings_section_simple">Recommended</string>
     <string name="settings_section_simple_summary">Three plain choices; the sections below hold every detail.</string>
     <string name="title_simple_smoothness">Stream smoothness</string>
-    <string name="summary_simple_smoothness">Picks how steady the picture is and how soon it reaches the screen: Smoothest holds every frame for a steady cadence with a little more delay, Lowest delay shows the newest frame at once. Leave it on Balanced unless a game judders or feels slow.</string>
+    <string name="summary_simple_smoothness">Auto follows the screen and decoder: the newest picture at each refresh, with variable refresh rate where the screen offers it. Smoothest holds every frame for a steady cadence with a little more delay; Lowest delay never waits. Leave it on Auto unless a game judders or feels slow.</string>
     <string name="simple_smoothest">Smoothest</string>
     <string name="simple_balanced">Balanced</string>
     <string name="simple_lowest_delay">Lowest delay</string>
     <string name="title_simple_picture">Picture quality</string>
-    <string name="summary_simple_picture">Sets the bitrate and codec: Best spends more network for a sharper picture, Save data uses less and lowers quality when the link struggles. Leave it on Auto unless you need the extra sharpness or the lower data use.</string>
+    <string name="summary_simple_picture">Sets the bitrate: Best spends more network for a sharper picture, Save data uses less and lowers quality when the link struggles. Leave it on Auto unless you need the extra sharpness or the lower data use.</string>
     <string name="simple_picture_auto">Auto (recommended)</string>
     <string name="simple_picture_best">Best</string>
     <string name="simple_picture_save_data">Save data</string>
     <string name="title_simple_screen">Screen</string>
-    <string name="summary_simple_screen">This device's own resolution and refresh rate. Lower it under Video if the stream stutters.</string>
+    <string name="summary_simple_screen">This device\'s own resolution and refresh rate. Lower it under Video if the stream stutters.</string>
     <string name="simple_screen_value">%1$d×%2$d at %3$d Hz</string>
     <string name="simple_hdr_auto">Auto (recommended)</string>
+    <string name="summary_simple_hdr">Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.</string>
     <string name="title_simple_console">Console mode</string>
-    <string name="summary_simple_console">Opens straight into this PC's games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open on the list of PCs.</string>
+    <string name="summary_simple_console">Opens straight into your games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open on the list of PCs.</string>
     <string name="simple_back_to_recommended">Back to recommended</string>
     <string name="summary_simple_back_to_recommended">Returns the three choices above to what this device does best; the settings they stand for change with them.</string>
     <string name="simple_profile_failed">The recommended settings could not be read on this device</string>
 
     <string-array name="simple_smoothness_names">
+        <item>@string/simple_picture_auto</item>
         <item>@string/simple_smoothest</item>
         <item>@string/simple_balanced</item>
         <item>@string/simple_lowest_delay</item>
     </string-array>
     <string-array name="simple_smoothness_values" translatable="false">
+        <item>auto</item>
         <item>smoothest</item>
         <item>balanced</item>
         <item>lowest-delay</item>

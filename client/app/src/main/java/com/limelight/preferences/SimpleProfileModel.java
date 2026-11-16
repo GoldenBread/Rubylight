@@ -97,25 +97,42 @@ public final class SimpleProfileModel {
         public final String pacing;
         public final boolean vrr;
         public final boolean latencySwitches;
+        public final boolean dropLateFrames;
+        public final boolean hostFrameTimes;
+        public final boolean realVrr;
+        public final boolean reduceRefresh;
+        public final boolean contentRate;
         /** The stored bitrate as thousandths of the default, or null for the automatic one. */
         public final Integer bitrateMilli;
         public final String codec;
         public final boolean hdr;
         public final boolean adaptiveBitrate;
         public final String adaptiveQuality;
+        /** The choices the player last stored, or null when there are none. */
+        public final String storedSmoothness, storedPicture, storedHdr;
 
         public Current(boolean nativeResolution, Integer fps, String pacing, boolean vrr, boolean latencySwitches,
-                       Integer bitrateMilli, String codec, boolean hdr, boolean adaptiveBitrate, String adaptiveQuality) {
+                       boolean dropLateFrames, boolean hostFrameTimes, boolean realVrr, boolean reduceRefresh,
+                       boolean contentRate, Integer bitrateMilli, String codec, boolean hdr, boolean adaptiveBitrate,
+                       String adaptiveQuality, String storedSmoothness, String storedPicture, String storedHdr) {
             this.nativeResolution = nativeResolution;
             this.fps = fps;
             this.pacing = pacing;
             this.vrr = vrr;
             this.latencySwitches = latencySwitches;
+            this.dropLateFrames = dropLateFrames;
+            this.hostFrameTimes = hostFrameTimes;
+            this.realVrr = realVrr;
+            this.reduceRefresh = reduceRefresh;
+            this.contentRate = contentRate;
             this.bitrateMilli = bitrateMilli;
             this.codec = codec;
             this.hdr = hdr;
             this.adaptiveBitrate = adaptiveBitrate;
             this.adaptiveQuality = adaptiveQuality;
+            this.storedSmoothness = storedSmoothness;
+            this.storedPicture = storedPicture;
+            this.storedHdr = storedHdr;
         }
 
         JSONObject json() throws JSONException {
@@ -123,9 +140,14 @@ public final class SimpleProfileModel {
                     .put("fps", fps == null ? JSONObject.NULL : fps)
                     .put("pacing", pacing == null ? JSONObject.NULL : pacing)
                     .put("vrr", vrr).put("latency_switches", latencySwitches)
+                    .put("drop_late_frames", dropLateFrames).put("host_frame_times", hostFrameTimes)
+                    .put("real_vrr", realVrr).put("reduce_refresh", reduceRefresh).put("content_rate", contentRate)
                     .put("bitrate_milli", bitrateMilli == null ? JSONObject.NULL : bitrateMilli)
                     .put("codec", codec).put("hdr", hdr).put("adaptive_bitrate", adaptiveBitrate)
-                    .put("adaptive_quality", adaptiveQuality == null ? JSONObject.NULL : adaptiveQuality);
+                    .put("adaptive_quality", adaptiveQuality == null ? JSONObject.NULL : adaptiveQuality)
+                    .put("stored_smoothness", storedSmoothness == null ? JSONObject.NULL : storedSmoothness)
+                    .put("stored_picture", storedPicture == null ? JSONObject.NULL : storedPicture)
+                    .put("stored_hdr", storedHdr == null ? JSONObject.NULL : storedHdr);
         }
     }
 
@@ -137,7 +159,12 @@ public final class SimpleProfileModel {
         public final String pacing;
         public final boolean vrr;
         public final boolean latencySwitches;
-        /** The default bitrate's thousandths; 1000 with {@link #automaticBitrate} is the automatic one. */
+        public final boolean dropLateFrames;
+        public final boolean hostFrameTimes;
+        public final Boolean realVrr;
+        public final boolean reduceRefresh;
+        public final boolean contentRate;
+        /** The default bitrate's thousandths; 1000 is the automatic one. */
         public final int bitrateMilli;
         /** auto, h264, hevc or av1. */
         public final String codec;
@@ -152,6 +179,11 @@ public final class SimpleProfileModel {
             pacing = ok.getString("pacing");
             vrr = ok.getBoolean("vrr");
             latencySwitches = ok.getBoolean("latency_switches");
+            dropLateFrames = ok.getBoolean("drop_late_frames");
+            hostFrameTimes = ok.getBoolean("host_frame_times");
+            realVrr = ok.isNull("real_vrr") ? null : ok.getBoolean("real_vrr");
+            reduceRefresh = ok.getBoolean("reduce_refresh");
+            contentRate = ok.getBoolean("content_rate");
             JSONObject bitrate = ok.getJSONObject("bitrate");
             bitrateMilli = "factor".equals(bitrate.getString("mode")) ? bitrate.getInt("milli") : 1000;
             codec = ok.getString("codec");

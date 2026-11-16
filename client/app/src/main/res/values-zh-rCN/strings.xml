@@ -520,14 +520,13 @@
     <string name="title_jumbo_frames">巨型视频数据包</string>
     <string name="summary_jumbo_frames">当 PC 和每一段链路都能承载 9000 字节的巨型帧时，用更少、更大的数据包发送视频。Nightjar 测试网络时，每次串流会晚几秒开始；测试失败则使用普通数据包。除非你的有线网络已为巨型帧设置好，否则请保持关闭。</string>
     <string name="jumbo_frames_fallback">巨型视频数据包未通过此网络的测试，因此串流使用普通数据包。</string>
-    <string name="settings_simple_title">推荐</string>
     <string name="title_simple_smoothness">串流流畅度</string>
-    <string name="summary_simple_smoothness">选择画面有多稳定以及多快到达屏幕：最流畅会保留每一帧以获得稳定节奏，但延迟稍高；最低延迟会立即显示最新一帧。除非游戏卡顿或感觉迟缓，否则保持平衡。</string>
+    <string name="summary_simple_smoothness">自动会跟随屏幕和解码器：每次刷新显示最新画面，屏幕支持时使用可变刷新率。最流畅会保留每一帧以获得稳定节奏，但延迟稍高；最低延迟从不等待。除非游戏卡顿或感觉迟缓，否则保持自动。</string>
     <string name="simple_smoothest">最流畅</string>
     <string name="simple_balanced">平衡</string>
     <string name="simple_lowest_delay">最低延迟</string>
     <string name="title_simple_picture">画面质量</string>
-    <string name="summary_simple_picture">设置比特率和编解码器：最佳会使用更多网络换取更清晰的画面；节省数据会减少用量，并在连接吃力时降低质量。除非需要额外清晰度或更少流量，否则保持自动。</string>
+    <string name="summary_simple_picture">设置比特率：最佳会使用更多网络换取更清晰的画面；节省数据会减少用量，并在连接吃力时降低质量。除非需要额外清晰度或更少流量，否则保持自动。</string>
     <string name="simple_picture_auto">自动（推荐）</string>
     <string name="simple_picture_best">最佳</string>
     <string name="simple_picture_save_data">节省数据</string>
@@ -536,10 +535,11 @@
     <string name="simple_screen_value">%1$d×%2$d，%3$d Hz</string>
     <string name="simple_hdr_auto">自动（推荐）</string>
     <string name="title_simple_console">主机模式</string>
-    <string name="summary_simple_console">直接以全屏打开此 PC 的游戏，可用手柄或遥控器选择。电视或掌机请保持开启；关闭则打开 PC 列表。</string>
+    <string name="summary_simple_console">直接以全屏打开你的游戏，可用手柄或遥控器选择。电视或掌机请保持开启；关闭则打开 PC 列表。</string>
     <string name="simple_back_to_recommended">恢复推荐设置</string>
     <string name="summary_simple_back_to_recommended">将上面三项恢复为此设备表现最佳的选择；它们代表的设置也会随之改变。</string>
     <string name="simple_profile_failed">无法在此设备上读取推荐设置</string>
     <string name="settings_section_simple">推荐</string>
     <string name="settings_section_simple_summary">三个简单选择；下方各节包含所有细节。</string>
+    <string name="summary_simple_hdr">在 HDR 屏幕上呈现更亮的高光和更丰富的色彩。自动仅在屏幕、解码器和 PC 都支持时开启；如果 HDR 看起来发白，请保持自动。</string>
 </resources>

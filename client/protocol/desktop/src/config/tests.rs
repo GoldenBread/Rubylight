@@ -505,9 +505,9 @@ fn home_is_on_unless_the_file_says_otherwise() {
 fn the_simple_choices_default_to_the_recommendation_and_read_back() {
     use nightjar_policy::simple_profile::{Hdr, Picture, Smoothness};
     let s = Settings::default();
-    assert_eq!((s.simple_smoothness, s.simple_picture, s.simple_hdr), (Smoothness::Balanced, Picture::Auto, Hdr::Auto));
+    assert_eq!((s.simple_smoothness, s.simple_picture, s.simple_hdr), (Smoothness::Auto, Picture::Auto, Hdr::Auto));
     let old: Settings = serde_json::from_str("{\"frame_pacing\":\"Latency\",\"bitrate_kbps\":40000}").unwrap();
-    assert_eq!((old.simple_smoothness, old.simple_picture, old.simple_hdr), (Smoothness::Balanced, Picture::Auto, Hdr::Auto));
+    assert_eq!((old.simple_smoothness, old.simple_picture, old.simple_hdr), (Smoothness::Auto, Picture::Auto, Hdr::Auto));
     assert_eq!((old.frame_pacing, old.bitrate_kbps), (crate::config::FramePacing::Latency, 40_000), "nothing above changed");
     let saved = Settings {
         simple_smoothness: Smoothness::Smoothest,

@@ -519,6 +519,8 @@ pub struct Launcher {
     /// A display of this computer shows HDR, read once when SDL starts (`sdl::any_display_hdr`).
     /// The simple layer's HDR Auto turns HDR on only when this is true; a test's launcher has none.
     pub(crate) hdr_display: bool,
+    /// Re-reads `hdr_display` when the settings page opens (SDL is live; a test leaves this None).
+    pub(crate) hdr_display_probe: Option<fn() -> bool>,
     /// The renderer's Direct3D 11 device, which the PyroWave GPU decoder's settings probe runs on.
     pub gpu_device: Option<crate::stream::pipeline::GpuDevice>,
     pub display: Display,
@@ -642,6 +644,7 @@ impl Launcher {
             back_slot: None,
             tearing_supported: false,
             hdr_display: false,
+            hdr_display_probe: None,
             gpu_device: None,
             display,
             fullscreen_modes: Vec::new(),
