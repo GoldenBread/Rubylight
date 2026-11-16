@@ -565,6 +565,18 @@ export const settings: Setting[] = [
     visibleWhen: folders,
   },
   {
+    key: 'steamgriddb_api_key',
+    label: 'SteamGridDB API key',
+    description:
+      'Fetches a SteamGridDB cover for each app without one, shown in Moonlight and every app; the key and those apps’ names go to SteamGridDB. Set it if apps show a blank cover.',
+    details:
+      'Paste the API key from your SteamGridDB account’s preferences. An app is looked up by its Steam app ID when it has one, otherwise by its name, and a name that matches no game gets no cover. Covers you chose and launcher covers are never replaced. The key is never shown again or logged, and a settings backup holds it only with secrets. Emptied, no more covers are fetched; those already fetched stay.',
+    category: 'library',
+    group: 'Covers',
+    control: { kind: 'text', placeholder: 'Not set', mono: true },
+    default: '',
+  },
+  {
     key: 'lossless_scaling_path',
     label: 'Lossless Scaling program',
     description:

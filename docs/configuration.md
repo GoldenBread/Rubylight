@@ -869,6 +869,18 @@ the PC user keeps the physical desktop.
 
 Games with anti-cheat that refuses virtual machines will not start in the VM.
 
+## Covers from SteamGridDB
+
+**Settings → Games → Covers → SteamGridDB API key** (`steamgriddb_api_key`, unset by default) fetches a 600x900 cover from [SteamGridDB](https://www.steamgriddb.com/) for each app that has none. The cover becomes the app's own, so Moonlight, Nightjar, the browser player and the console all show it through the host's usual cover path. Create the key in your SteamGridDB account's preferences and paste it here; the key is yours, and SteamGridDB's terms of use apply to your use of it and of its images.
+
+- **Which apps.** Only an app without a cover, or with Steam's placeholder logo, gets one. A cover you chose, a launcher's cover and Playnite's are never replaced; a later Steam or Playnite sync that finds its own cover for a game it added still puts that cover in place.
+- **How an app is found.** By its Steam app ID when it has one (a Steam app, or a `steam://rungameid/` command), then by its name: SteamGridDB's search must return a game of the same name, ignoring case and punctuation, or one whose name begins with the app's name as whole words or the other way round. A name that matches no game gets no cover rather than a wrong one. Only static PNG or JPEG grids of 600x900 are taken, without images tagged NSFW, humor or epilepsy, the best-voted first.
+- **What it sends.** The key, in the `Authorization` header of the API requests only, and the names or Steam app IDs of the apps it looks up. Images are downloaded from SteamGridDB's own servers without the key.
+- **When.** Off the request path, from the host's 30-second housekeeping loop: at most eight apps per pass, 1.5 seconds between requests, a pass when the library or settings change and otherwise every ten minutes while apps still miss covers. An app SteamGridDB has nothing for is asked about again after ten minutes, an hour, then once a day. When SteamGridDB answers 429 (too many requests), every lookup waits as long as its `Retry-After` asks, at least a minute, or else twice the last wait up to an hour. A refused key stops the lookups until the key changes; no answer or a server error pauses them five minutes. Failures are logged without the key and never hold up the library.
+- **The key is a secret.** The console shows a saved key as `********`, and sending that back keeps it. It is never logged, and a [settings backup](#settings-backup-and-restore) holds it only with secrets. Emptied, no more covers are fetched; covers already fetched stay in the profile's `covers` folder as `sgdb_<app id>.png`.
+
+Covers only: the host has no place for SteamGridDB's heroes, logos or icons. The images are made by SteamGridDB's community and served by SteamGridDB; its terms of use ask applications for no on-screen credit, so the console names it only in this setting.
+
 ## Guests from other devices
 
 A second paired device that joins the game another device plays (Nightjar's **Join**, or a Moonlight client starting or resuming the running app) becomes that device's guest: the same picture and sound with an encoder of its own, its own controller, and the keyboard and mouse only if granted ([Guests from other devices](multiclient.md)). Two settings under **All settings → Games → Play together** shape it:
@@ -1083,7 +1095,7 @@ To check at a time of day instead, choose **Daily at a set time** under **Check 
 
 A backup holds `sunshine.conf` (every setting, webhooks included), the app list, the covers, app aliases, each paired device's own settings (names, display modes, commands and the other per-device overrides) and the game settings files kept per device. A `backup.json` inside lists every file with its size and SHA-256.
 
-**Include pairing identity and sign-in** is off by default. Only with it on does the file hold secrets: this PC's pairing certificate and key, the paired devices with their certificates and permissions, the console sign-in, API tokens and webhook secrets. Anyone with such a file can pose as this PC to the paired devices and sign in to the console, so the console asks again before it downloads one. Without secrets, a sign-in password or token kept in `sunshine.conf` is left out and each webhook's secret is emptied.
+**Include pairing identity and sign-in** is off by default. Only with it on does the file hold secrets: this PC's pairing certificate and key, the paired devices with their certificates and permissions, the console sign-in, API tokens, webhook secrets and the SteamGridDB API key. Anyone with such a file can pose as this PC to the paired devices and sign in to the console, so the console asks again before it downloads one. Without secrets, a sign-in password, token or API key kept in `sunshine.conf` is left out and each webhook's secret is emptied.
 
 Restoring works in steps:
 
@@ -1367,6 +1379,7 @@ Every setting in the console, by the console's tabs and groups, with its key and
 | Game folders: Sync automatically | `library_local_auto_sync` | `true` | Checks the game folders every five minutes and updates their games when they are added or removed. When off, Sync now in Games still adds them. |
 | Game folders: Remove deleted games | `library_local_autosync_remove_uninstalled` | `true` | Removes a game folder’s app when its folder is deleted; off, it stays in the list. Games you added by hand always stay. |
 | Game folders: Folders to leave out | `library_local_exclude` | none | Subfolders to skip in your game folders, by name (Tools) or full path (D:\Games\Tools). They are never added, and Add games never lists them. |
+| Covers: SteamGridDB API key | `steamgriddb_api_key` | none | Fetches a SteamGridDB cover for each app without one, shown in Moonlight and every app; the key and those apps’ names go to SteamGridDB. Set it if apps show a blank cover. |
 | Play together: Nucleus Co-op folder | `nucleus_path` | empty | The folder you unpacked Nucleus Co-op 2.4.2 into, under C:\Program Files; co-op and background streaming need it. Empty uses an earlier Rubylight's install, if any. |
 | Play together: Co-op players | `nucleus_coop_players` | `4` | The most players a Nucleus co-op session gets, 1 to 4; each player runs their own instance of the game on this PC. The game's handler and the free controller slots can allow fewer. |
 | Play together: When another device joins the running game | `guest_join` | `off` (Off, stream beside the game) | Whether a paired device that resumes the game another device plays joins as a guest, and whether the player lets it in first. Off streams it beside the game, as before guests. |

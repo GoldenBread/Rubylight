@@ -1,7 +1,7 @@
 //! Host configuration and metadata API handlers.
 
 use crate::state::Shared;
-use butterpollo_core::state;
+use butterpollo_core::{state, steamgriddb as sgdb};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 
@@ -17,6 +17,10 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
             // The Webhooks page manages them, and their secrets never come back.
             if let Some(values) = v.as_object_mut() {
                 values.remove("webhooks");
+                // The SteamGridDB key never comes back either: a saved one shows as the mask.
+                if let Some(key) = values.get_mut(sgdb::KEY_SETTING) {
+                    *key = json!(sgdb::MASK);
+                }
             }
             v["status"] = json!(true);
             v["platform"] = json!("windows");
@@ -30,6 +34,15 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
                 .clone();
             for key in ["status", "platform", "version"] {
                 object.remove(key);
+            }
+            // The mask GET showed keeps the saved key.
+            if object
+                .get(sgdb::KEY_SETTING)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                == Some(sgdb::MASK)
+            {
+                object.remove(sgdb::KEY_SETTING);
             }
             if object.contains_key("webhooks") {
                 anyhow::bail!(

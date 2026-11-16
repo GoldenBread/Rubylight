@@ -45,6 +45,7 @@ mod soak_fault;
 mod stall_watch;
 mod state;
 mod steam;
+mod steamgriddb;
 mod stream;
 mod stream_focus;
 mod stream_notice;

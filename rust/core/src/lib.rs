@@ -133,6 +133,7 @@ pub mod steam;
 pub mod steam_deck;
 pub mod steam_feedback;
 pub mod steam_pad;
+pub mod steamgriddb;
 pub mod stream_policy;
 pub mod stream_preset;
 pub mod switch2;

@@ -435,6 +435,15 @@ impl Config {
         }
         time
     }
+    /// The SteamGridDB API key (`steamgriddb_api_key`, unset by default) that fetches covers for
+    /// apps without one; `None` when unset or not a key. A secret: never logged or shown.
+    pub fn steamgriddb_api_key(&self) -> Option<&str> {
+        let key = crate::steamgriddb::key(unquote(
+            self.get(crate::steamgriddb::KEY_SETTING, "").trim(),
+        ))?;
+        (key != crate::steamgriddb::MASK && crate::steamgriddb::check_key(key).is_ok())
+            .then_some(key)
+    }
     /// Send the text around the cursor to the device's keyboard
     /// (`text_input_surrounding_text`, off by default); never for password or
     /// other sensitive fields.
@@ -831,6 +840,9 @@ impl Config {
             let value = unquote(value.trim());
             if key == "bind_address" && value.parse::<std::net::IpAddr>().is_err() {
                 bail!("bind_address must be an IP address of this PC, or blank for all of them");
+            }
+            if key == crate::steamgriddb::KEY_SETTING {
+                crate::steamgriddb::check_key(value).map_err(|message| anyhow::anyhow!(message))?;
             }
             if key == "log_path"
                 && (value.ends_with(['\\', '/'])
