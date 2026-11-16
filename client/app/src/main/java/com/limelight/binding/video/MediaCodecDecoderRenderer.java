@@ -529,10 +529,11 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         boolean stopFinished = vulkan == null || vulkan.stop();
         // A stop that gave up after RendererGate.STOP_WAIT_MS is still running, and its native part
         // may not have let go of the output window: MediaCodec must not configure onto that same
-        // window then. Keep the (tone-mapped) Vulkan path and try again at a later configure.
+        // window then. The gate stays closed, so the Vulkan path cannot be kept either (it would
+        // freeze on its last frame): end the stream and say why.
         if (!HdrPolicy.handOverAfterVulkanStop(vulkan != null, stopFinished)) {
-            LimeLog.warning("Vulkan renderer did not stop within " + RendererGate.STOP_WAIT_MS +
-                    " ms; keeping it (HDR shown as SDR) rather than drawing on its output window");
+            failVulkan("the renderer did not stop within " + RendererGate.STOP_WAIT_MS +
+                    " ms while handing an HDR stream to the standard renderer");
             return;
         }
         vulkanHandoverPending = false;
@@ -543,8 +544,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         if (vulkan != null) handedBackVulkan = vulkan;
         // Frame Warp chooses Vulkan unasked; only a user who asked for it hears it is unused.
         if (prefs.vulkanRender) {
-            notifyVulkanUnused(context.getString(R.string.stream_hdr_vulkan_shown_as_sdr,
-                    HdrFormatPolicy.baseLayerName(announcedHdrFormat)));
+            // The standard renderer now shows the HDR: only say Vulkan is not used.
+            notifyVulkan(context.getString(R.string.vulkan_render_fallback, "").trim());
         }
         // Balanced pacing on the direct path releases frames on the Choreographer, which the Vulkan
         // renderer paced itself and so never started.

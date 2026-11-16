@@ -629,6 +629,16 @@ async fn run(args: Args, assets: PathBuf) -> Result<()> {
     // below takes at most what is left of SHUTDOWN_WAITS, so the host finishes on its own.
     let shutdown_deadline = Instant::now() + SHUTDOWN_WAITS;
     let left = |cap: Duration| cap.min(shutdown_deadline.saturating_duration_since(Instant::now()));
+    // A launch still running its preparation commands stops too, at once: the undo commands of
+    // those that finished run while the host shuts down, and it starts no game.
+    h.stop_launch_for_shutdown();
+    // A game moved to another device whose new stream came since the last tick stays with that
+    // device: the move is settled while the stream still counts as arrived (telling
+    // the clients below stops their sessions). A launch that holds
+    // the lock settles its own.
+    if let Ok(_transition) = h.launch_transition.try_lock() {
+        h.settle_move();
+    }
     // Clients hear the host stop before its sockets close: the control worker sends the USB
     // detaches and the 0x0109 termination through the path a normal stop uses, within what is
     // left of a second. What it could not tell then ends with the process, as before.
@@ -644,21 +654,12 @@ async fn run(args: Args, assets: PathBuf) -> Result<()> {
     // peer still held; the clients told above detach theirs already.
     h.usb.disable();
     h.stop.store(true, Ordering::Release);
-    // A launch still running its preparation commands stops too, at once: the undo commands of
-    // those that finished run while the host shuts down, and it starts no game.
-    h.stop_launch_for_shutdown();
     // UPnP mappings and IPv6 pinholes come down while the rest shuts down.
     if let Some(port_forward) = &port_forward {
         port_forward.stop();
     }
     // Nothing waits on a monitor's wake on the way out; the next start puts back what is left.
     butterpollo_windows::display_arrangement::close_wake_watch();
-    // A game moved to another device whose new stream came since the last tick stays with that
-    // device: the move is settled while the stream still counts as arrived. A launch that holds
-    // the lock settles its own.
-    if let Ok(_transition) = h.launch_transition.try_lock() {
-        h.settle_move();
-    }
     let canceled = h.sessions.lock().unwrap().request_stop(None);
     drop(canceled);
     // The Radeon settings and game file keys the sessions changed go back from now on, on
