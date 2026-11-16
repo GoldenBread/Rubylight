@@ -1103,6 +1103,10 @@ pub struct GpuImage {
     /// Whether the picture changed the foreground window, from WGC's dirty
     /// regions: `None` when the capture cannot tell (`Freshness::observe_focus`).
     pub focus: Option<bool>,
+    /// This picture repeats the previous one: constant-rate capture
+    /// (`capture = wgcc`) published it again because nothing was composed for
+    /// the stream's slot. Its stamps are the publication's, not a composition's.
+    pub repeat: bool,
 }
 /// A shown pointer Desktop Duplication supplied beside a picture.
 pub struct PointerShape<'a> {
@@ -1427,6 +1431,7 @@ impl GpuPool {
                 ready,
                 lease: None,
                 focus: None,
+                repeat: false,
             }))
         }
     }

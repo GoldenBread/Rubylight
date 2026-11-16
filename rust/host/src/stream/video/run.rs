@@ -1423,7 +1423,8 @@ impl SessionThread<'_> {
                         source_id = latest.trace_source_id(),
                         stream_id = %s.launch.id,
                         fresh,
-                        choice = if fresh { "fresh" } else if recovering { "recovery_repeat" } else { "static_repeat" },
+                        repeat = image.repeat,
+                        choice = if image.repeat { "capture_repeat" } else if fresh { "fresh" } else if recovering { "recovery_repeat" } else { "static_repeat" },
                         selected_is_latest,
                         latest_capture_id,
                         encoder_pending = encoding,
@@ -1445,7 +1446,7 @@ impl SessionThread<'_> {
                     );
                     *admission = AdmissionTrace::default();
                 }
-                if timings_logged && fresh && claim_ages.len() < 4096 {
+                if timings_logged && fresh && !image.repeat && claim_ages.len() < 4096 {
                     let micros = |d: Duration| d.as_micros().min(u128::from(u64::MAX)) as u64;
                     claim_ages.push((
                         micros(image.acquired.saturating_duration_since(image.captured)),
@@ -1661,8 +1662,10 @@ impl SessionThread<'_> {
                 let (slot, pictures, captures) = latest.frame_counts();
                 let (pictures, captures) = pipeline_follow.advance(slot, pictures, captures);
                 s.stats.pipeline.captured(pictures, captures);
-                s.stats.pipeline.submitted(!fresh);
-                if fresh {
+                // A constant-rate repeat has no new content, so the pipeline
+                // reads it as the repeat it is (`capture = wgcc`).
+                s.stats.pipeline.submitted(!fresh || image.repeat);
+                if fresh && !image.repeat {
                     claims.borrow_mut().push(butterpollo_core::performance::Claim {
                         key: presented_image.captured,
                         presented: image.captured,
@@ -1733,7 +1736,8 @@ impl SessionThread<'_> {
                 first_seen = None;
                 send_frames(output, peer, call_latency, latest, capture_tick)?;
                 // After the frame went out, off its path: Frame Warp's passes.
-                frame_warp.frame(h, s, &image, fresh, (stream.width, stream.height));
+                // A constant-rate repeat carries no new content to warp.
+                frame_warp.frame(h, s, &image, fresh && !image.repeat, (stream.width, stream.height));
             }
             Ok(())
         })()

@@ -745,6 +745,7 @@ impl Session {
                 notify: Some((self.freed.clone(), self.frame.clone())),
             })),
             focus: None,
+            repeat: false,
         })
     }
 }

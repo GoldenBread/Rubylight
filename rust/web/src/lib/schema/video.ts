@@ -126,9 +126,9 @@ const video: Setting[] = [
     key: 'capture',
     label: 'Capture method',
     description:
-      'Automatic suits almost everyone: direct driver push on Rubylight virtual displays, Windows Graphics Capture on other displays. Choose another method only to troubleshoot.',
+      'Automatic suits almost everyone: direct driver push on Rubylight virtual displays, Windows Graphics Capture on other displays. Constant rate keeps a game capped below the stream’s frame rate at one frame per stream frame, by sending the last picture again when the game has none ready, which spends bitrate on those repeats. Leave Automatic unless a game runs below the stream’s frame rate or you are troubleshooting capture.',
     details:
-      'Direct driver push receives frames from Rubylight\'s own virtual display driver, with no capture copy. If unavailable, it falls back to Windows Graphics Capture, then Desktop Duplication if needed. Choosing Windows Graphics Capture or Desktop Duplication bypasses driver push. AMD Direct Capture reads the Radeon driver\'s presented picture on a display connected to a Radeon; without it, capture falls back to Windows Graphics Capture with a warning. Automatic never selects it. No method streams frame generation\'s extra frames, such as AMD Fluid Motion Frames.',
+      'Direct driver push receives frames from Rubylight\'s own virtual display driver, with no capture copy. If unavailable, it falls back to Windows Graphics Capture, then Desktop Duplication if needed. Choosing Windows Graphics Capture or Desktop Duplication bypasses driver push. Constant rate captures with Windows Graphics Capture and publishes a picture every stream frame: a 90 fps game on a 180 fps stream keeps a full 180 frames a second instead of the encoder repeating a still picture between the game’s frames, and a new game frame is never held back for its slot. Every repeat is encoded like any frame, so the stream spends its bitrate between the game’s frames too, and the still-picture resend rate no longer decides those frames; on a mostly still picture leave it off. It also applies to the launched app’s window, which Windows Graphics Capture streams. Desktop Duplication takes over when Windows Graphics Capture is unavailable and keeps the same rate. AMD Direct Capture reads the Radeon driver\'s presented picture on a display connected to a Radeon; without it, capture falls back to Windows Graphics Capture with a warning. Automatic never selects it. No method streams frame generation\'s extra frames, such as AMD Fluid Motion Frames.',
     category: 'video',
     group: 'Capture',
     control: {
@@ -138,11 +138,12 @@ const video: Setting[] = [
         { value: 'idd-push', label: 'Direct driver push' },
         { value: 'ddx', label: 'Desktop Duplication' },
         { value: 'wgc', label: 'Windows Graphics Capture' },
+        { value: 'wgcc', label: 'Windows Graphics Capture, constant rate' },
         { value: 'amd', label: 'AMD Direct Capture' },
       ],
     },
-    // framegen.rs: any case; Vibepollo's wgcc, and dxgi, which the fallback console writes.
-    aliases: { match: 'case', spellings: { wgcc: 'wgc', dxgi: 'ddx' } },
+    // framegen.rs: any case; dxgi is a spelling the fallback console writes.
+    aliases: { match: 'case', spellings: { dxgi: 'ddx' } },
     default: 'auto',
   },
   {

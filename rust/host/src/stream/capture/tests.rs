@@ -403,3 +403,23 @@ fn reset_wakes_each_waiter_and_skips_waiting_until_resources_are_released() -> R
     ));
     Ok(())
 }
+
+#[test]
+fn a_constant_rate_repeat_is_a_capture_but_not_a_picture_of_the_source() -> Result<()> {
+    let latest = Latest::<u8>::new();
+    let start = Instant::now();
+    latest.publish_captured(Arc::new(1), start)?;
+    let (_, pictures, captures) = latest.frame_counts();
+    assert_eq!((pictures, captures), (1, 1));
+    // Nothing was composed for the slot: the same picture goes out again,
+    // stamped when it is published.
+    latest.publish_repeat(Arc::new(1), start + Duration::from_millis(6))?;
+    let (_, pictures, captures) = latest.frame_counts();
+    assert_eq!((pictures, captures), (1, 2));
+    // The next real capture is a picture of the game again.
+    latest.publish_captured(Arc::new(2), start + Duration::from_millis(12))?;
+    let (_, pictures, captures) = latest.frame_counts();
+    assert_eq!((pictures, captures), (2, 3));
+    assert_eq!(*latest.current()?.unwrap(), 2);
+    Ok(())
+}

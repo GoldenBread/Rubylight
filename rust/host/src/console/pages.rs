@@ -680,7 +680,7 @@ async fn settings(
         "<p class=\"intro\">Choose the capture, encoder, display, and sound for your stream.</p>"
             .to_owned();
     content += "<p class=\"muted\">Automatic encodes H.264, HEVC and AV1 with the graphics card's own encoder, AMD AMF or NVIDIA NVENC, and PyroWave streams with PyroWave's own encoder. If the encoder cannot start, the stream fails with its error in the log; there is no other encoder to fall back to.</p>";
-    content += "<p class=\"muted\">For screen capture, Automatic uses direct driver push on Rubylight virtual displays and Windows Graphics Capture on other displays. Select Windows Graphics Capture or Desktop Duplication to use those methods instead. If driver push is unavailable, capture falls back to Windows Graphics Capture.</p>";
+    content += "<p class=\"muted\">For screen capture, Automatic uses direct driver push on Rubylight virtual displays and Windows Graphics Capture on other displays. Select Windows Graphics Capture or Desktop Duplication to use those methods instead. If driver push is unavailable, capture falls back to Windows Graphics Capture. Windows Graphics Capture, constant rate sends the last picture again whenever a game has no new one ready for a stream frame, for a game capped below the stream's frame rate; every repeat is encoded like any frame.</p>";
     let editor = field(
         "sunshine_name",
         "Host name",
@@ -706,6 +706,7 @@ async fn settings(
             ("auto", "Automatic"),
             ("idd-push", "Direct driver push"),
             ("wgc", "Windows Graphics Capture"),
+            ("wgcc", "Windows Graphics Capture, constant rate"),
             ("dxgi", "Desktop Duplication"),
             ("amd", "AMD Direct Capture"),
         ],

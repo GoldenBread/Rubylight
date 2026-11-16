@@ -101,6 +101,61 @@ fn learned(interval: u64) -> Freshness {
     cadence
 }
 #[test]
+fn constant_rate_fills_each_slot_once_and_never_holds_a_new_composition() {
+    // 180 fps.
+    let period = Duration::from_micros(5_555);
+    let start = Instant::now();
+    let mut rate = ConstantRate::default();
+    // Nothing has been captured: no picture to publish again, no slot yet.
+    assert_eq!(rate.due(period), None);
+    assert_eq!(rate.decide(start, period, false), None);
+    // A new composition goes out at once, before its slot.
+    assert_eq!(rate.decide(start, period, true), Some(Publish::Fresh));
+    rate.published(start);
+    // Only from the slot on is the last picture published again.
+    assert_eq!(rate.due(period), Some(start + period));
+    assert_eq!(
+        rate.decide(start + period / 2, period, false),
+        Some(Publish::Wait(start + period))
+    );
+    assert_eq!(
+        rate.decide(start + period, period, false),
+        Some(Publish::Repeat)
+    );
+    // A repeat starts the next period where it happened: a publisher back
+    // from a stall publishes one picture, not the slots it missed.
+    let late = start + period * 3;
+    rate.published(late);
+    assert_eq!(
+        rate.decide(late + period / 4, period, false),
+        Some(Publish::Wait(late + period))
+    );
+    // The slot follows a new stream rate.
+    assert_eq!(
+        rate.decide(start + period * 4, period / 2, false),
+        Some(Publish::Repeat)
+    );
+}
+#[test]
+fn a_constant_rate_repeat_is_a_picture_of_its_own() {
+    let ms = 1_000_000;
+    let mut cadence = Freshness::default();
+    // A 90 fps game on a 180 fps stream: every second picture is a repeat.
+    cadence.observe_focus(0, ms, Some(true));
+    for at in 1..=4u64 {
+        cadence.observe_repeat(at * 5_555_000, ms);
+    }
+    assert_eq!(cadence.picture_interval(), Some(5_555_000));
+    assert!(!cadence.extends_picture());
+    // Even beside an animating focus window a repeat is a publication of its
+    // own, not that window extending the game's picture.
+    cadence.observe_focus(30 * ms, ms, Some(true));
+    cadence.observe_focus(35 * ms, ms, Some(true));
+    cadence.observe_repeat(40 * ms, ms);
+    assert_eq!(cadence.picture_start(), Some(40 * ms));
+    assert!(!cadence.extends_picture());
+}
+#[test]
 fn cached_statistics_match_the_original_policy_across_cadence_changes_and_resets() {
     fn reference(cadence: &Freshness, age: u64, normal: u64) -> u64 {
         if cadence.count < 8 {

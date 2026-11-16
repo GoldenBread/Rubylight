@@ -270,6 +270,22 @@ impl<T> Latest<T> {
         captured: Instant,
         focus: Option<bool>,
     ) -> Result<()> {
+        self.publish(image, captured, focus, false)
+    }
+    /// Publish the newest picture again because nothing was composed for the
+    /// stream's slot (`capture = wgcc`). Pacing sees a picture of its own at
+    /// the stream period; the source's picture count does not grow, since the
+    /// game presented nothing.
+    pub(super) fn publish_repeat(&self, image: Arc<T>, captured: Instant) -> Result<()> {
+        self.publish(image, captured, None, true)
+    }
+    fn publish(
+        &self,
+        image: Arc<T>,
+        captured: Instant,
+        focus: Option<bool>,
+        repeat: bool,
+    ) -> Result<()> {
         let now = Instant::now();
         let nanos =
             |duration: std::time::Duration| duration.as_nanos().min(u128::from(u64::MAX)) as u64;
@@ -280,13 +296,17 @@ impl<T> Latest<T> {
         }
         state.recovery.captured = true;
         let picture = state.cadence.picture_start();
-        state.cadence.observe_focus(
+        let (captured_ns, delay_ns) = (
             nanos(captured.saturating_duration_since(self.origin)),
             nanos(now.saturating_duration_since(captured)),
-            focus,
         );
+        if repeat {
+            state.cadence.observe_repeat(captured_ns, delay_ns);
+        } else {
+            state.cadence.observe_focus(captured_ns, delay_ns, focus);
+        }
         self.captures.fetch_add(1, Ordering::Relaxed);
-        if state.cadence.picture_start() != picture {
+        if !repeat && state.cadence.picture_start() != picture {
             self.pictures.fetch_add(1, Ordering::Relaxed);
         }
         if tracing::enabled!(target: "pacing", tracing::Level::TRACE) {
@@ -295,10 +315,11 @@ impl<T> Latest<T> {
                 target: "pacing",
                 capture_id,
                 generation = state.generation,
-                captured_ns = nanos(captured.saturating_duration_since(self.origin)),
+                captured_ns,
                 published_ns = nanos(now.saturating_duration_since(self.origin)),
-                age_ns = nanos(now.saturating_duration_since(captured)),
+                age_ns = delay_ns,
                 source_id = self.trace_source_id,
+                repeat,
                 "publish"
             );
         }

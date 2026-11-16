@@ -1197,6 +1197,11 @@ impl Ready {
     pub fn capture(&self) -> String {
         self.framegen.lock().unwrap().capture.clone()
     }
+    /// Whether the capture publishes its last picture again every stream
+    /// period when nothing new was composed (`capture = wgcc`).
+    pub fn constant_rate(&self) -> bool {
+        self.framegen.lock().unwrap().constant_rate
+    }
     /// The stream turned between portrait and landscape (0x5532): its display
     /// follows on the heartbeat, off the stream loop, when the device's
     /// `dd_rotation_option` is auto.

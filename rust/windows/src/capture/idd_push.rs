@@ -1413,6 +1413,7 @@ fn in_place(
         ready: Some(ready),
         lease: Some(Arc::new(lease)),
         focus: None,
+        repeat: false,
     })
 }
 

@@ -60,13 +60,16 @@ fn explicit_capture_choices_survive_virtual_display_and_framegen_policy() {
         ("DXGI", "dxgi"),
         ("wgc", "wgc"),
         ("WGC", "wgc"),
+        // Vibepollo's constant-rate variant is WGC plus a repeat each period.
         ("wgcc", "wgc"),
+        (" WGCC ", "wgc"),
         // Rubylight's own display driver pushes the frames.
         ("idd-push", "idd-push"),
         (" IDD-Push ", "idd-push"),
     ] {
         let config = Config::parse(&format!("capture={setting}")).unwrap();
         let original = config.values.clone();
+        let constant = setting.trim().eq_ignore_ascii_case("wgcc");
         for virtual_display in [false, true] {
             for generation in ["none", "game-provided"] {
                 for vrr in [false, true] {
@@ -81,11 +84,26 @@ fn explicit_capture_choices_survive_virtual_display_and_framegen_policy() {
                     .unwrap()
                     .with_vrr(&config, virtual_display, vrr);
                     assert_eq!(policy.capture, expected, "{setting}, {generation}");
+                    assert_eq!(policy.constant_rate, constant, "{setting}, {generation}");
                 }
             }
         }
         assert_eq!(config.values, original);
     }
+}
+#[test]
+fn constant_rate_is_off_unless_the_capture_method_asks_for_it() {
+    for setting in ["", "capture=auto", "capture=wgc", "capture=idd-push"] {
+        let config = Config::parse(setting).unwrap();
+        let policy = Policy::resolve(&config, Rate(180000), false, "none", false, false).unwrap();
+        assert!(!policy.constant_rate, "{setting}");
+    }
+    let config = Config::parse("capture=wgcc").unwrap();
+    let policy = Policy::resolve(&config, Rate(180000), false, "none", false, false)
+        .unwrap()
+        .with_vrr(&config, true, true);
+    assert!(policy.constant_rate);
+    assert_eq!(policy.capture, "wgc");
 }
 #[test]
 fn vrr_virtual_display_uses_fixed_1000_hz_without_changing_stream_rate() {

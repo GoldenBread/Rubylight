@@ -422,9 +422,17 @@ struct CaptureKey {
     wgc_helper_scheduling: bool,
     idd_fence_ring: bool,
     background: bool,
+    constant_rate: bool,
 }
 impl CaptureKey {
-    fn new(kind: &str, output: &str, hdr: bool, config: &Config, phase: &str) -> Self {
+    fn new(
+        kind: &str,
+        output: &str,
+        hdr: bool,
+        config: &Config,
+        phase: &str,
+        constant_rate: bool,
+    ) -> Self {
         Self {
             kind: kind.into(),
             output: output.into(),
@@ -448,6 +456,7 @@ impl CaptureKey {
                 && config.boolean("wgc_helper_streaming_scope", false),
             idd_fence_ring: config.idd_push_fence_ring(),
             background: butterpollo_core::background::enabled(config),
+            constant_rate,
         }
     }
 }
@@ -674,8 +683,9 @@ impl Media {
     ) -> Result<Arc<Source>> {
         let output = prepared.output();
         let aligned = config.boolean("wgc_slot_aligned_publish", false);
+        let constant_rate = prepared.constant_rate();
         let capture_config = capture_config(config);
-        let key = CaptureKey::new(kind, &output, hdr, &capture_config, phase);
+        let key = CaptureKey::new(kind, &output, hdr, &capture_config, phase, constant_rate);
         let mut captures = self.captures.lock().unwrap();
         captures.retain(|_, source| source.strong_count() > 0);
         if let Some(existing) = captures.get(&key).and_then(Weak::upgrade)
@@ -733,7 +743,7 @@ impl Media {
                     let mut opened_display = prepared.display_target();
                     capture.set_claim_grid(worker_grid.clone(), aligned);
                     *worker_backend.lock().unwrap() = capture.backend();
-                    tracing::info!(requested=%kind, backend=capture.backend(), output=%target.0, "capture backend opened");
+                    tracing::info!(requested=%kind, backend=capture.backend(), output=%target.0, constant_rate = constant_rate, "capture backend opened");
                     // Re-create the capture on a new device. Windows keeps handing
                     // out the stale adapter while anything holds the old device, so
                     // every duplication made then loses access at once (a display
@@ -824,6 +834,11 @@ impl Media {
                         capture_config.integer("capture_poll_interval_us", 500).clamp(100, 1000) as u64,
                     );
                     let mut last_frame = Instant::now();
+                    // Constant-rate capture (`capture = wgcc`): one picture per
+                    // stream slot, the last one again when nothing new was
+                    // composed for it.
+                    let mut constant = constant_rate
+                        .then(butterpollo_core::capture_policy::ConstantRate::default);
                     while !worker_stop.load(Ordering::Acquire) {
                         if Instant::now() >= check_target {
                             check_target = Instant::now() + Duration::from_millis(100);
@@ -887,17 +902,59 @@ impl Media {
                                 last_frame = Instant::now();
                                 capture_warnings.clear("capture_recovery");
                                 let (captured, focus) = (image.captured, image.focus);
-                                image.published = Instant::now();
+                                let published = Instant::now();
+                                image.published = published;
                                 worker.publish_focus(Arc::new(image), captured, focus)?;
+                                if let Some(rate) = &mut constant {
+                                    rate.published(published);
+                                }
                             }
                             Ok(None) => {
+                                // The slot's period follows a changed stream
+                                // rate (and a phase lock), so read it here.
+                                let constant_period = constant
+                                    .as_ref()
+                                    .map(|_| worker_grid.lock().unwrap().period);
+                                // Nothing composed for this slot: publish the last
+                                // picture again, stamped now, so the encoder keeps a
+                                // steady cadence instead of repeating a still one.
+                                if let (Some(rate), Some(period)) = (constant.as_mut(), constant_period) {
+                                    let now = Instant::now();
+                                    if matches!(
+                                        rate.decide(now, period, false),
+                                        Some(butterpollo_core::capture_policy::Publish::Repeat)
+                                    ) {
+                                        match worker.current()? {
+                                            Some(picture) => {
+                                                let mut repeat = (*picture).clone();
+                                                repeat.captured = now;
+                                                repeat.acquired = now;
+                                                repeat.published = now;
+                                                repeat.wgc_stamp = None;
+                                                repeat.focus = None;
+                                                repeat.repeat = true;
+                                                rate.published(now);
+                                                worker.publish_repeat(Arc::new(repeat), now)?;
+                                            }
+                                            // No picture to repeat (the capture is
+                                            // being recreated): wait a period for
+                                            // the next slot instead of spinning on
+                                            // this one.
+                                            None => rate.published(now),
+                                        }
+                                    }
+                                }
                                 let interval = if capture_config.boolean("capture_predictive_poll", false)
                                     && capture.backend() == "ddx" {
                                     worker.poll_interval(poll_interval)
                                 } else { poll_interval };
                                 let interval = capture.wait_interval(last_frame.elapsed(), interval);
                                 let deadline = Instant::now() + interval;
+                                // Never sleep past the next constant-rate slot.
+                                let due = constant_period
+                                    .and_then(|period| constant.as_ref().and_then(|rate| rate.due(period)));
                                 let until = capture.publication_deadline().unwrap_or(deadline).min(deadline);
+                                let until = due.map_or(until, |due| until.min(due));
                                 match capture.frame_signal() {
                                     // Frame announcements interrupt both active polling
                                     // and the longer wait used by a static source.
@@ -1035,7 +1092,7 @@ impl Media {
         let source_refresh_hz = butterpollo_windows::display::mode(&first.gpu.display.display_name)
             .ok()
             .map(|mode| mode.dmDisplayFrequency);
-        tracing::info!(width=s.config.width,height=s.config.height,fps=f64::from(s.config.fps_millihz())/1000.,requested_fps=s.config.fps,bitrate_kbps=s.bitrate.load(Ordering::Relaxed),configured_bitrate_kbps=s.config.configured_bitrate_kbps,codec=s.config.codec,hdr=s.config.hdr,ten_bit=s.config.ten_bit(),full_range=s.config.full_range(),color_matrix=s.config.color_matrix(),vrr=s.config.vrr_low_latency,packet_size=s.config.packet_size,pyrowave_records=s.config.pyrowave_records,pyrowave_row_order=s.config.pyrowave_row_order,requested_capture=%prepared.capture(),requested_encoder=c.get("encoder","auto"),encoder=encoder.as_ref().unwrap().backend(),adapter=%first.gpu.display.adapter,source_width=first.width,source_height=first.height,source_refresh_hz,source_pixel=?first.pixel,"stream configured");
+        tracing::info!(width=s.config.width,height=s.config.height,fps=f64::from(s.config.fps_millihz())/1000.,requested_fps=s.config.fps,bitrate_kbps=s.bitrate.load(Ordering::Relaxed),configured_bitrate_kbps=s.config.configured_bitrate_kbps,codec=s.config.codec,hdr=s.config.hdr,ten_bit=s.config.ten_bit(),full_range=s.config.full_range(),color_matrix=s.config.color_matrix(),vrr=s.config.vrr_low_latency,packet_size=s.config.packet_size,pyrowave_records=s.config.pyrowave_records,pyrowave_row_order=s.config.pyrowave_row_order,requested_capture=%prepared.capture(),constant_rate=prepared.constant_rate(),requested_encoder=c.get("encoder","auto"),encoder=encoder.as_ref().unwrap().backend(),adapter=%first.gpu.display.adapter,source_width=first.width,source_height=first.height,source_refresh_hz,source_pixel=?first.pixel,"stream configured");
         if s.config.chroma_packing != 0 {
             let (coded_width, coded_height) = s.config.coded_size();
             tracing::info!(
