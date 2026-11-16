@@ -7,9 +7,10 @@ globalThis.location = new URL('http://localhost/');
 globalThis.window = new EventTarget();
 const server = await createTestServer();
 const { schema, settingGroups, settingsGroup, tabOf, groupRank, groupAnchor } = await server.ssrLoadModule('/src/lib/settings-schema.ts');
-const { EXPERT_GROUPS, DEBUG_GROUP } = await server.ssrLoadModule('/src/lib/schema/main.ts');
+const { EXPERT_GROUPS, DEBUG_GROUP, onHome } = await server.ssrLoadModule('/src/lib/schema/main.ts');
 const { describeDefault, numberError, textError } = await server.ssrLoadModule('/src/components/settings/values.ts');
 const { default: SettingControl } = await server.ssrLoadModule('/src/components/settings/SettingControl.svelte');
+const { default: SettingRow } = await server.ssrLoadModule('/src/components/settings/SettingRow.svelte');
 const { render } = await server.ssrLoadModule('svelte/server');
 const settings = new Map(schema.settings.map((setting) => [setting.key, setting]));
 const source = (name) => readFile(new URL(`./src/${name}`, import.meta.url), 'utf8');
@@ -149,6 +150,21 @@ test('a preset value shows as its name; any other value as Custom with its own f
   const text = render(SettingControl, { props: { setting: resolution, id: resolution.key, value: '2560x1440', onchange: () => {} } }).body;
   assert.match(text, /<option value="2560x1440"[^>]*selected[^>]*>(?:<!--[^>]*-->)?2560 × 1440/);
   assert.doesNotMatch(text, /type="text"/);
+});
+
+test('the home’s stored fixed resolution renders as its own selected option', () => {
+  const resolution = settings.get('dd_resolution_option');
+  const home = onHome(resolution, 'manual', { dd_manual_resolution: '2560x1440' });
+  const html = render(SettingRow, {
+    props: {
+      setting: home, value: 'manual', stored: true, changed: false, resetting: false, differs: true,
+      onchange: () => {}, onreset: () => {}, onundo: () => {}, oninvalid: () => {},
+    },
+  }).body;
+  assert.match(html, /<option value="manual"[^>]*selected[^>]*>(?:<!--[^>]*-->)?Fixed: 2560 × 1440/);
+  // The schema's own row is untouched: All settings still offers the full choice.
+  assert.equal(resolution.control.options.length, 3);
+  assert.equal(home.label, 'Stream resolution');
 });
 
 test('settings written as JSON say so and fold under their own name', () => {

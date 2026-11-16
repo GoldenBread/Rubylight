@@ -100,7 +100,7 @@
       settings: section.keys
         .map((key) => defaults.get(key))
         .filter((setting): setting is Setting => !!setting && applies(setting.key))
-        .map((setting) => onHome(setting, normalise(setting, effective(setting, edits, config)), values)),
+        .map((setting) => onHome(setting, normalise(setting, effective(setting, edits, config)), values, host.metadata?.virtual_display)),
     })),
   );
 
@@ -266,7 +266,8 @@
     {#if presetProblem}
       <p class="note error" role="alert"><strong>Not a preset.</strong> {presetProblem}</p>
     {/if}
-    <p class="note">{presetOutcome(preset.id)}</p>
+    {@const outcome = presetOutcome(preset.id)}
+    {#if outcome}<p class="note">{outcome}</p>{/if}
   {/if}
   {#if setting.key === 'dd_resolution_option'}
     <p class="note">

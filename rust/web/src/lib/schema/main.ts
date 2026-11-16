@@ -173,32 +173,58 @@ export function streamPreset(setting: Setting): Setting {
   };
 }
 
-/** What a preset gets and costs, in one sentence for the home, from its id. */
-export function presetOutcome(id: string): string {
+/**
+ * What a preset gets and costs, in one sentence for the home, from its id;
+ * undefined for an id this console has no words for, so a new preset in the
+ * shared table gets a test failure rather than another preset's sentence.
+ */
+export function presetOutcome(id: string): string | undefined {
   switch (id) {
     case 'lowest_latency':
-      return 'Handles each frame as fast as it can. Some picture quality is lost in fast motion.';
+      return 'Handles each frame as fast as it can. Some picture quality is lost.';
     case 'reference':
-      return 'Spends more bandwidth on recovery frames after packet loss. It suits a fast, steady wired link.';
-    default:
+      return 'Removes the size limit on recovery frames, so a loss costs more bandwidth; no picture-quality gain from it has been measured. Use it only on a fast, steady link.';
+    case 'balanced':
       return 'Rubylight’s defaults: the safest choice for almost every game.';
   }
+  return undefined;
+}
+
+/** What the host says about its virtual display driver, as `/api/metadata` sends it. */
+export interface VirtualDisplayDriver {
+  capable: boolean;
+  ready: boolean;
 }
 
 /**
  * Virtual display while the stored value is Default: say what this PC does,
  * since one per device and a monitor are both called Default by Windows
- * version. A chosen mode keeps the setting's own words.
+ * version. A driver that is installed but not ready, or missing, is not
+ * promised as a screen. A chosen mode keeps the setting's own words.
  */
-export function streamDisplay(setting: Setting, current: ConfigValue, values: Record<string, ConfigValue>): Setting {
+export function streamDisplay(
+  setting: Setting,
+  current: ConfigValue,
+  values: Record<string, ConfigValue>,
+  driver?: VirtualDisplayDriver,
+): Setting {
   if (setting.key !== 'virtual_display_mode' || current !== '') return setting;
-  const able = values[VIRTUAL_DISPLAY_OS] !== false;
-  return {
-    ...setting,
-    description: able
-      ? 'Each stream gets an extra screen at the device’s resolution and refresh rate instead of a monitor. By default, this PC makes one for each device.'
-      : 'Streams show one of your monitors: this Windows cannot run Rubylight’s virtual display driver. Windows 11 23H2 or later can.',
-  };
+  const os = values[VIRTUAL_DISPLAY_OS] !== false;
+  let description: string;
+  if (!os) {
+    description =
+      'Streams show one of your monitors: this Windows cannot run Rubylight’s virtual display driver. Windows 11 23H2 or later can.';
+  } else if (driver && !driver.capable) {
+    description =
+      'Streams show one of your monitors: Rubylight’s virtual display driver is not available on this PC. The checks on Home say what is missing.';
+  } else if (driver && !driver.ready) {
+    description =
+      'Streams use a virtual display once the driver is ready; until then they show one of your monitors. The checks on Home say why it is not ready.';
+  } else {
+    description =
+      'Each stream gets an extra screen at the device’s resolution and refresh rate instead of a monitor. By default, this PC makes one for each device; a device’s or app’s choice wins.';
+  }
+  return { ...setting, description };
 }
 
 /** "2560x1440" as people read a resolution; any other text as stored. */
@@ -229,18 +255,23 @@ export function streamResolution(setting: Setting, current: ConfigValue, values:
     ...setting,
     label: 'Stream resolution',
     description:
-      'The resolution each stream runs at. Matching the device suits almost everyone: a streamed monitor switches to it and back afterwards.',
+      'The resolution each stream runs at. Matching the device suits almost everyone: a streamed monitor switches to it and back, while a virtual display follows the device unless a fixed resolution is set.',
     control: { kind: 'select', options },
   };
 }
 
 /** How a main key looks on the Settings home. */
-export function onHome(setting: Setting, current: ConfigValue, values: Record<string, ConfigValue> = {}): Setting {
+export function onHome(
+  setting: Setting,
+  current: ConfigValue,
+  values: Record<string, ConfigValue> = {},
+  driver?: VirtualDisplayDriver,
+): Setting {
   switch (setting.key) {
     case 'virtual_display_layout':
       return monitorsWhileStreaming(setting, current);
     case 'virtual_display_mode':
-      return streamDisplay(setting, current, values);
+      return streamDisplay(setting, current, values, driver);
     case 'dd_resolution_option':
       return streamResolution(setting, current, values);
     case SETTING:
