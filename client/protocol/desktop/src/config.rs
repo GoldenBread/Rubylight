@@ -185,10 +185,10 @@ impl GraphicsCard {
 }
 
 /// How Tear-free VRR (`vrr_tear_free`, Windows) waits for a scan under way, "Whole frames under
-/// VRR" in Debug: Automatic is the wait for the beam (`present::VrrSync::Scan`) that turns to sync
-/// interval 1 on a display whose presents start no scan (`scan_sync::UNTRUSTED_MISSES`); Scan
-/// keeps that wait, VSync presents with sync interval 1 from the start (`VrrSync::Present1`).
-/// `NIGHTJAR_VRR_SYNC` overrides it.
+/// VRR" in Display & image: Automatic is the wait for the beam (`present::VrrSync::Scan`) that turns
+/// to sync interval 1 on a display whose presents start no scan (`scan_sync::UNTRUSTED_MISSES`,
+/// kept across starts); Scan keeps that wait, VSync presents with sync interval 1 from the start
+/// (`VrrSync::Present1`). `NIGHTJAR_VRR_SYNC` overrides it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VrrWait {
     #[default]
@@ -267,23 +267,31 @@ impl MicEcho {
     }
 }
 
-/// "Theme" (Android's `ThemeChoice`): System follows the system's light or dark setting, Dark is
-/// the night look, OLED black its black-surfaced variant. High contrast wins over all three.
-/// Dark by default: the look desktop Nightjar had before the choice.
+/// "Theme" (Android's `ThemeChoice`): System follows the system's light or dark setting, Light is
+/// the day look even on a dark system, Dark is the night look, OLED black its black-surfaced
+/// variant. High contrast wins over all four. Dark by default: the look desktop Nightjar had
+/// before the choice.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Theme {
     System,
     #[default]
     Dark,
     Oled,
+    /// Last, as in Android's `ThemeChoice`, so the stored values of the older choices stay.
+    Light,
 }
 
 impl Theme {
-    pub const ALL: [Self; 3] = [Self::System, Self::Dark, Self::Oled];
+    pub const ALL: [Self; 4] = [Self::System, Self::Dark, Self::Oled, Self::Light];
 
     /// Android's `theme_choice_names`.
     pub fn label(self) -> &'static str {
-        match self { Self::System => en("System"), Self::Dark => en("Dark"), Self::Oled => en("OLED black") }
+        match self {
+            Self::System => en("System"),
+            Self::Dark => en("Dark"),
+            Self::Oled => en("OLED black"),
+            Self::Light => en("Light"),
+        }
     }
 }
 
@@ -1575,6 +1583,17 @@ impl Profiles {
     }
 }
 
+/// The displays whose presents a stream found not starting their scans (`stream::scan_sync`),
+/// by the monitor's device interface path (`\\?\DISPLAY#...#{...}`, its hardware ID and instance,
+/// rather than the output name `\.\DISPLAY1` that another monitor can take over), kept in
+/// `scan_untrusted.json`: Whole frames under VRR Automatic starts on Windows V-Sync on them from
+/// the next run.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScanUntrusted {
+    pub displays: Vec<String>,
+}
+
 pub struct Store {
     dir: PathBuf,
     /// The second screen's process (`second_screen.rs`) reads the files and leaves them as the
@@ -2051,6 +2070,24 @@ impl Store {
 
     pub fn save_open_play(&self, state: &OpenPlayState) -> std::io::Result<()> {
         self.write(&self.dir.join("open_play.json"), state)
+    }
+
+    /// The displays an earlier run found not refreshing on present (`stream::scan_sync`).
+    pub fn scan_untrusted(&self) -> ScanUntrusted {
+        self.read_or_keep_readable("scan_untrusted.json", |_| {})
+    }
+
+    pub fn save_scan_untrusted(&self, untrusted: &ScanUntrusted) -> std::io::Result<()> {
+        self.write(&self.dir.join("scan_untrusted.json"), untrusted)
+    }
+
+    /// Forgets one display of `scan_untrusted.json`, or every display with `None`: the user chose
+    /// Nightjar's wait, which never turns to Windows V-Sync (`stream::scan_sync`).
+    pub fn clear_scan_untrusted(&self, display: Option<&str>) -> std::io::Result<()> {
+        let kept = self.scan_untrusted();
+        if kept.displays.is_empty() { return Ok(()); }
+        let displays = kept.displays.into_iter().filter(|each| display.is_some_and(|one| one != each)).collect();
+        self.save_scan_untrusted(&ScanUntrusted { displays })
     }
 
     pub fn favourites(&self) -> Vec<Favourite> {

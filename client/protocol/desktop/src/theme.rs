@@ -171,7 +171,8 @@ pub enum Look {
 
 impl Look {
     /// The look for the Theme setting: System follows the system's light or dark setting
-    /// (`system_light`), as Android's `AppTheme.look`; high contrast wins over every theme.
+    /// (`system_light`), Light stays the day look whatever the system says, as Android's
+    /// `AppTheme.look`; high contrast wins over every theme.
     pub fn of(theme: crate::config::Theme, system_light: bool, high: bool) -> Self {
         use crate::config::Theme;
         match theme {
@@ -179,6 +180,7 @@ impl Look {
             Theme::System if system_light => Self::Day,
             Theme::System | Theme::Dark => Self::Night,
             Theme::Oled => Self::Oled,
+            Theme::Light => Self::Day,
         }
     }
 

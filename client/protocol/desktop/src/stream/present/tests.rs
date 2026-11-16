@@ -1701,3 +1701,29 @@ fn whole_frames_under_vrr_picks_the_wait_unless_the_switch_set_one() {
     let fastest = VrrPacing::new(true, PacingMode::Vsync, VrrSync::Off, PacingMode::Immediate).with_wait(VrrWait::VSync, false);
     assert_eq!((fastest.sync, fastest.distrusted), (VrrSync::Off, false));
 }
+
+/// A monitor a stream found not starting its scans is kept in the desktop config, so the next
+/// start's Automatic wait turns to Windows V-Sync on it, as an earlier stream of the same run does.
+#[test]
+fn an_untrusted_monitor_starts_automatic_on_windows_v_sync_after_a_restart() {
+    use crate::config::{ScanUntrusted, Store, VrrWait};
+    let dir = std::env::temp_dir().join(format!("nightjar-scan-untrusted-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let display = r"\\?\DISPLAY#TEST-MONITOR-RESTART-111#5&1&0&UID111#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}";
+    let store = Store::at(dir.clone()).unwrap();
+    store.save_scan_untrusted(&ScanUntrusted { displays: vec![display.to_owned()] }).unwrap();
+    // The next start reads it back before a stream starts.
+    let kept = Store::at(dir.clone()).unwrap().scan_untrusted().displays;
+    assert_eq!(kept, vec![display.to_owned()]);
+    crate::stream::scan_sync::restore(&kept);
+    assert!(crate::stream::scan_sync::untrusted(display), "the next start remembers it");
+    // Its first probe reading of that display turns Automatic's wait to sync interval 1
+    // (`render::distrust_scan_line`); a display not in the file keeps Nightjar's wait.
+    let marked = crate::stream::scan_sync::untrusted(display);
+    assert!(crate::stream::scan_sync::distrusts(0, marked, true, false).turn);
+    assert!(!crate::stream::scan_sync::distrusts(0, false, true, false).turn);
+    let mut vrr = VrrPacing::new(true, PacingMode::Vsync, VrrSync::Scan, PacingMode::Immediate).with_wait(VrrWait::Automatic, false);
+    assert!(vrr.distrust_scan());
+    assert_eq!((vrr.sync, vrr.distrusted), (VrrSync::Present1, true));
+    std::fs::remove_dir_all(dir).ok();
+}

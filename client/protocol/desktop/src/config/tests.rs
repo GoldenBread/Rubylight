@@ -500,6 +500,34 @@ fn home_is_on_unless_the_file_says_otherwise() {
 }
 
 #[test]
+fn the_theme_choice_keeps_the_stored_values_of_the_older_choices() {
+    // Names, not positions: the file keeps reading after Light was added last.
+    for (theme, value) in [(Theme::System, "System"), (Theme::Dark, "Dark"), (Theme::Oled, "Oled"), (Theme::Light, "Light")] {
+        assert_eq!(serde_json::to_value(theme).unwrap(), value, "{theme:?}");
+        assert_eq!(serde_json::from_value::<Theme>(serde_json::Value::String(value.into())).unwrap(), theme);
+    }
+    assert_eq!(Theme::ALL.len(), 4);
+    assert_eq!(Theme::default(), Theme::Dark);
+}
+
+#[test]
+fn choosing_nightjars_wait_forgets_the_saved_untrusted_displays() {
+    let dir = std::env::temp_dir().join(format!("nightjar-scan-untrusted-clear-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let store = Store::at(dir.clone()).unwrap();
+    let first = r"\\?\DISPLAY#MON1#5&1&0&UID1#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}";
+    let second = r"\\?\DISPLAY#MON2#5&1&0&UID2#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}";
+    store.save_scan_untrusted(&ScanUntrusted { displays: vec![first.into(), second.into()] }).unwrap();
+    // Nightjar's wait forgets the display the user chose it for, and keeps the others.
+    store.clear_scan_untrusted(Some(first)).unwrap();
+    assert_eq!(Store::at(dir.clone()).unwrap().scan_untrusted().displays, vec![second.to_owned()]);
+    // The choice in the main settings forgets them all.
+    store.clear_scan_untrusted(None).unwrap();
+    assert!(Store::at(dir.clone()).unwrap().scan_untrusted().displays.is_empty());
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
 fn a_settings_file_from_before_accessibility_loads_with_the_defaults() {
     let old: Settings = serde_json::from_str("{\"fps\": 90}").unwrap();
     assert_eq!(old.ui_zoom, 100);

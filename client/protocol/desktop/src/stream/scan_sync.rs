@@ -36,11 +36,45 @@ pub const LANDING_LIMIT_NS: u64 = super::scanline::RESTART_WINDOW_NS;
 /// `scanline::CHECK_MISSES`.
 pub const UNTRUSTED_MISSES: u32 = 3;
 
-/// The displays (by device name) whose presents a stream of this run of the app found not starting
-/// their scans (`UNTRUSTED_MISSES`). A later stream on one presents with sync interval 1 from its
-/// start: a stream at the display's top rate rarely lets it idle, and a check that sees no idle
-/// display tests no present (`scanline::RestartCheck::starved`).
+/// The displays (by monitor identity, `Scanline::display_id`) whose presents a stream of this run
+/// of the app found not starting their scans (`UNTRUSTED_MISSES`). A later stream on one presents
+/// with sync interval 1 from its start: a stream at the display's top rate rarely lets it idle,
+/// and a check that sees no idle display tests no present (`scanline::RestartCheck::starved`).
+/// `main` restores the list from the desktop config and keeps it there (`scan_untrusted.json`), so
+/// the next start does too.
 static UNTRUSTED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Where the untrusted displays are kept between starts: the desktop config directory, set by
+/// `main`; None in tests and before the app reads its config.
+static KEPT_IN: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Adds the displays an earlier run found untrusted (the desktop config's `scan_untrusted.json`),
+/// so their first stream on Automatic starts with Windows V-Sync (`distrusts` with `marked`).
+/// Entries older versions kept by GDI output name (`\.\DISPLAY1`) are dropped: an output is not a
+/// monitor, and another monitor on it must not inherit Windows V-Sync.
+pub fn restore(displays: &[String]) {
+    let kept: Vec<String> = displays.iter().filter(|display| !legacy_output_name(display)).cloned().collect();
+    let dropped = kept.len() != displays.len();
+    let mut untrusted = UNTRUSTED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    for display in kept {
+        if !untrusted.iter().any(|name| name == &display) { untrusted.push(display); }
+    }
+    if dropped { save(&untrusted); }
+}
+
+/// Whether `id` is a GDI device name of the kind Nightjar up to 5.4.0 saved (`\.\DISPLAY1`), the
+/// shape of `Scanline::device_name`: an output, not a monitor.
+fn legacy_output_name(id: &str) -> bool {
+    let name = id.trim_start_matches(['\\', '.']);
+    name.get(..7).is_some_and(|head| head.eq_ignore_ascii_case("DISPLAY"))
+        && name.len() > 7
+        && name[7..].bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// Keeps the list in `dir`, the desktop config directory, as streams mark more displays.
+pub fn keep_in(dir: &std::path::Path) {
+    let _ = KEPT_IN.set(dir.to_path_buf());
+}
 
 /// Whether a Tear-free VRR stream turns to sync interval 1, and whether `display` is to be
 /// remembered as untrusted for later streams: `missed` of the restart check's tested presents
@@ -59,10 +93,44 @@ pub struct Distrust {
     pub remember: bool,
 }
 
-/// Remembers that `display`'s presents did not start their scans (`UNTRUSTED`).
+/// Remembers that `display`'s presents did not start their scans (`UNTRUSTED`), and keeps it in
+/// the desktop config for the next start when `main` named the folder (`keep_in`).
 pub fn remember_untrusted(display: &str) {
     let mut untrusted = UNTRUSTED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if !untrusted.iter().any(|name| name == display) { untrusted.push(display.to_owned()); }
+    if untrusted.iter().any(|name| name == display) { return; }
+    untrusted.push(display.to_owned());
+    save(&untrusted);
+}
+
+/// Forgets that `display`'s presents did not start their scans, in this run and in the desktop
+/// config: Whole frames under VRR was set to Nightjar's wait, which never turns to Windows V-Sync.
+pub fn clear_untrusted(display: &str) {
+    let mut untrusted = UNTRUSTED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let before = untrusted.len();
+    untrusted.retain(|name| name != display);
+    if untrusted.len() != before { save(&untrusted); }
+}
+
+/// Forgets every display found not starting its scans, in this run and in the desktop config:
+/// Whole frames under VRR was set to Nightjar's wait, which never turns to Windows V-Sync.
+pub fn clear_all() {
+    let mut untrusted = UNTRUSTED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if untrusted.is_empty() && KEPT_IN.get().is_none() { return; }
+    untrusted.clear();
+    let Some(dir) = KEPT_IN.get() else { return };
+    if let Err(e) = crate::config::Store::at(dir.clone()).and_then(|store| store.clear_scan_untrusted(None)) {
+        eprintln!("nightjar: could not clear {}: {e}", dir.join("scan_untrusted.json").display());
+    }
+}
+
+/// Writes `untrusted` to the desktop config, when `main` named the folder (`keep_in`).
+fn save(untrusted: &[String]) {
+    let Some(dir) = KEPT_IN.get() else { return };
+    let saved = crate::config::Store::at(dir.clone())
+        .and_then(|store| store.save_scan_untrusted(&crate::config::ScanUntrusted { displays: untrusted.to_vec() }));
+    if let Err(e) = saved {
+        eprintln!("nightjar: could not keep {} in {}: {e}", untrusted.last().map_or("the untrusted displays", String::as_str), dir.join("scan_untrusted.json").display());
+    }
 }
 
 /// Whether a stream of this run found `display`'s presents not starting their scans.

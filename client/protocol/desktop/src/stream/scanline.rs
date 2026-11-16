@@ -519,8 +519,11 @@ pub use win::Scanline;
 mod win {
     use super::{Follow, Sample};
     use std::time::Instant;
+    use windows::core::PCWSTR;
     use windows::Win32::Foundation::HWND;
-    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, HMONITOR, MONITORINFOEXW, MONITOR_DEFAULTTONEAREST};
+    use windows::Win32::Graphics::Gdi::{
+        EnumDisplayDevicesW, GetMonitorInfoW, MonitorFromWindow, DISPLAY_DEVICEW, HMONITOR, MONITORINFOEXW, MONITOR_DEFAULTTONEAREST,
+    };
     use windows::Wdk::Graphics::Direct3D::{
         D3DKMTCloseAdapter, D3DKMTGetScanLine, D3DKMTOpenAdapterFromGdiDisplayName, D3DKMT_CLOSEADAPTER, D3DKMT_GETSCANLINE,
         D3DKMT_OPENADAPTERFROMGDIDISPLAYNAME,
@@ -533,6 +536,9 @@ mod win {
         monitor: HMONITOR,
         window: HWND,
         device: [u16; 32],
+        /// The monitor's own identity, read once with the output: `scan_untrusted.json` keeps
+        /// its entries by it, as the output's name can go to another monitor.
+        id: String,
         rows: u32,
         clock: Instant,
     }
@@ -543,7 +549,8 @@ mod win {
         pub fn open(window: HWND, clock: Instant) -> Option<Self> {
             let (monitor, device, rows) = monitor_of(window)?;
             let (adapter, source) = open_adapter(&device)?;
-            let scan = Self { adapter, source, monitor, window, device, rows, clock };
+            let id = monitor_id(&device);
+            let scan = Self { adapter, source, monitor, window, device, id, rows, clock };
             // A driver that opens the adapter but refuses the call is as good as none.
             scan.sample()?;
             Some(scan)
@@ -572,6 +579,7 @@ mod win {
             self.adapter = adapter;
             self.source = source;
             self.monitor = monitor;
+            self.id = monitor_id(&device);
             self.device = device;
             self.rows = rows;
             Follow::Moved
@@ -579,8 +587,15 @@ mod win {
 
         /// The GDI name of the monitor, for logs.
         pub fn device_name(&self) -> String {
-            let end = self.device.iter().position(|c| *c == 0).unwrap_or(self.device.len());
-            String::from_utf16_lossy(&self.device[..end])
+            utf16(&self.device)
+        }
+
+        /// The monitor's device interface path (`\\?\DISPLAY#...#{...}`): Windows keeps it with
+        /// the monitor, not with the output it is plugged into, so `scan_untrusted.json` keys
+        /// its entries by it rather than by the output name. The output name when Windows names
+        /// no monitor for the output.
+        pub fn display_id(&self) -> &str {
+            &self.id
         }
 
         /// The monitor's height in pixels: the rows the beam walks.
@@ -611,6 +626,27 @@ mod win {
         if !unsafe { GetMonitorInfoW(monitor, (&mut info as *mut MONITORINFOEXW).cast()) }.as_bool() { return None; }
         let rect = info.monitorInfo.rcMonitor;
         Some((monitor, info.szDevice, (rect.bottom - rect.top).max(0) as u32))
+    }
+
+    /// `wingdi.h`'s `EDD_GET_DEVICE_INTERFACE_NAME`: `DeviceID` names the monitor's device
+    /// interface path.
+    const EDD_GET_DEVICE_INTERFACE_NAME: u32 = 0x0000_0001;
+
+    /// The monitor behind `device`, as Windows names it: its device interface path, which stays
+    /// with the monitor when the outputs are renamed or another monitor takes the output, or the
+    /// output's GDI name when Windows names no monitor there.
+    fn monitor_id(device: &[u16; 32]) -> String {
+        let mut monitor = DISPLAY_DEVICEW { cb: std::mem::size_of::<DISPLAY_DEVICEW>() as u32, ..Default::default() };
+        // SAFETY: `cb` names the struct's size, as the call requires; `device` is a GDI output
+        // name of the display this process draws on.
+        let found = unsafe { EnumDisplayDevicesW(PCWSTR(device.as_ptr()), 0, &mut monitor, EDD_GET_DEVICE_INTERFACE_NAME) };
+        let path = if found.as_bool() { utf16(&monitor.DeviceID) } else { String::new() };
+        if path.is_empty() { utf16(device) } else { path }
+    }
+
+    fn utf16(field: &[u16]) -> String {
+        let end = field.iter().position(|c| *c == 0).unwrap_or(field.len());
+        String::from_utf16_lossy(&field[..end])
     }
 
     fn open_adapter(device: &[u16; 32]) -> Option<(u32, u32)> {

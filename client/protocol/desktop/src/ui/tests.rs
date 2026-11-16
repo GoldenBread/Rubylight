@@ -1425,6 +1425,11 @@ fn the_theme_setting_changes_the_look_on_the_next_frame() {
     f.settle();
     assert_eq!(look(), Look::Oled, "OLED black whatever the system says");
     assert_eq!(f.ctx.global_style().visuals.panel_fill, egui::Color32::BLACK);
+    f.l.system_light = false;
+    f.l.settings.theme = Theme::Light;
+    f.settle();
+    assert_eq!(look(), Look::Day, "Light stays the day look on a dark system");
+    assert!(!f.ctx.global_style().visuals.dark_mode, "egui's own widgets are light too");
     f.l.settings.high_contrast = true;
     f.settle();
     assert_eq!(look(), Look::HighContrast, "high contrast wins over every theme");
@@ -6900,7 +6905,7 @@ fn a_controller_press_with_nothing_focused_focuses_the_first_item() {
 }
 
 #[test]
-fn b_where_back_ends_asks_to_close_nightjar_with_focus_on_cancel() {
+fn b_where_back_ends_asks_to_close_nightjar_with_focus_on_close_nightjar() {
     // The PCs are the root here (no Home): B there asks.
     let mut f = Frames::new(record("Desk", true, false), Reach::Online);
     let focused_text = |f: &Frames| {
@@ -6912,25 +6917,24 @@ fn b_where_back_ends_asks_to_close_nightjar_with_focus_on_cancel() {
     assert!(f.no_dialog(), "Escape on the root stays harmless");
     pad_press(&mut f, Key::Escape);
     assert!(matches!(f.l.dialog, Dialog::ConfirmExit) && shows(&f, "Close Nightjar?"), "{:?}", f.drawn);
-    assert_eq!(focused_text(&f).as_deref(), Some("Cancel"));
-    // A right away keeps Nightjar open, and so does B.
-    assert!(f.press(Key::Enter).iter().all(|c| !matches!(c, Command::Quit)));
+    assert_eq!(focused_text(&f).as_deref(), Some("Close Nightjar"));
+    // A right away closes Nightjar.
+    assert!(f.press(Key::Enter).iter().any(|c| matches!(c, Command::Quit)));
     assert!(f.no_dialog());
+    // B keeps it open.
     pad_press(&mut f, Key::Escape);
     assert!(f.press(Key::Escape).iter().all(|c| !matches!(c, Command::Quit)));
     assert!(f.no_dialog(), "B closes the question");
-    // Over to Close Nightjar and A: it closes.
+    // Left to Cancel and A: it stays open.
     pad_press(&mut f, Key::Escape);
-    // Past Shut down, Restart and Sleep.
-    for _ in 0..6 {
-        if focused_text(&f).as_deref() != Some("Close Nightjar") { pad_press(&mut f, Key::ArrowRight); }
-    }
-    assert_eq!(focused_text(&f).as_deref(), Some("Close Nightjar"));
-    assert!(f.press(Key::Enter).iter().any(|c| matches!(c, Command::Quit)));
+    pad_press(&mut f, Key::ArrowLeft);
+    assert_eq!(focused_text(&f).as_deref(), Some("Cancel"));
+    assert!(f.press(Key::Enter).iter().all(|c| !matches!(c, Command::Quit)));
+    assert!(f.no_dialog());
 }
 
 #[test]
-fn b_offers_this_pcs_power_each_asked_once_more_with_focus_on_cancel() {
+fn b_offers_this_pcs_power_each_asked_once_more_with_focus_on_close_nightjar() {
     use crate::power::{windows_offers, PowerAction};
     let mut f = Frames::new(record("Desk", true, false), Reach::Online);
     f.l.power = windows_offers(true);
@@ -6938,14 +6942,17 @@ fn b_offers_this_pcs_power_each_asked_once_more_with_focus_on_cancel() {
         let rect = f.ctx.memory(|m| m.focused()).and_then(|id| f.ctx.read_response(id)).map(|r| r.rect);
         f.placed.iter().find(|(_, at, _)| rect.is_some_and(|r| r.contains(at.center()))).map(|p| p.0.clone())
     };
-    // To `label` by the pad's right, from Cancel at the left.
-    let walk_to = |f: &mut Frames, label: &str| {
+    // To `label` by the pad's left from Close Nightjar at the right, or right from Cancel at the
+    // left in the power question that follows.
+    let walk = |f: &mut Frames, label: &str, key: Key| {
         for _ in 0..6 {
             if focused_text(f).as_deref() == Some(label) { break; }
-            pad_press(f, Key::ArrowRight);
+            pad_press(f, key);
         }
         assert_eq!(focused_text(f).as_deref(), Some(label), "{:?}", f.drawn);
     };
+    let walk_to = |f: &mut Frames, label: &str| walk(f, label, Key::ArrowLeft);
+    let walk_right = |f: &mut Frames, label: &str| walk(f, label, Key::ArrowRight);
     pad_press(&mut f, Key::Escape);
     assert!(matches!(f.l.dialog, Dialog::ConfirmExit));
     for label in ["Shut down", "Restart", "Sleep", "Close Nightjar", "Cancel"] {
@@ -6953,7 +6960,7 @@ fn b_offers_this_pcs_power_each_asked_once_more_with_focus_on_cancel() {
     }
     for (label, action) in [("Shut down", PowerAction::ShutDown), ("Restart", PowerAction::Restart), ("Sleep", PowerAction::Sleep)] {
         if !matches!(f.l.dialog, Dialog::ConfirmExit) { pad_press(&mut f, Key::Escape); }
-        assert_eq!(focused_text(&f).as_deref(), Some("Cancel"));
+        assert_eq!(focused_text(&f).as_deref(), Some("Close Nightjar"));
         walk_to(&mut f, label);
         // Choosing it only asks.
         assert!(f.press(Key::Enter).iter().all(|c| !matches!(c, Command::Power(_))), "{label}");
@@ -6974,7 +6981,7 @@ fn b_offers_this_pcs_power_each_asked_once_more_with_focus_on_cancel() {
     pad_press(&mut f, Key::Escape);
     walk_to(&mut f, "Restart");
     f.press(Key::Enter);
-    walk_to(&mut f, "Restart");
+    walk_right(&mut f, "Restart");
     let commands = f.press(Key::Enter);
     assert!(commands.iter().any(|c| matches!(c, Command::Power(o) if o.action == PowerAction::Restart)));
     assert!(commands.iter().all(|c| !matches!(c, Command::Quit)), "Nightjar is left to the system to close");

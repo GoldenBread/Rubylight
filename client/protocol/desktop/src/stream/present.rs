@@ -57,6 +57,9 @@ struct DirectPlanes {
     in_texture: bool,
     /// A PyroWave picture's draw was added to the stage times.
     timed: bool,
+    /// What the stream's pictures are, for the one line that says which way they are drawn
+    /// ("PyroWave", "planar", "4:4:4").
+    what: &'static str,
 }
 
 /// The renderer's texture holding the current picture.
@@ -161,6 +164,10 @@ pub struct VideoTexture {
     /// Which way the stream's planes are drawn was logged.
     #[cfg(windows)]
     direct_planes_said: bool,
+    /// The display does not place the stream's pictures one texel to one pixel, so they go through
+    /// the video texture, which was logged.
+    #[cfg(windows)]
+    direct_planes_scaled_said: bool,
     /// The current picture came from D3D11VA, and its HDR10+ peak in nits.
     #[cfg(windows)]
     d3d11_picture: bool,
@@ -256,6 +263,8 @@ impl Default for VideoTexture {
             direct_planes_failed: false,
             #[cfg(windows)]
             direct_planes_said: false,
+            #[cfg(windows)]
+            direct_planes_scaled_said: false,
             #[cfg(windows)]
             d3d11_picture: false,
             #[cfg(windows)]
@@ -771,6 +780,8 @@ impl VideoTexture {
             direct_planes_failed: self.direct_planes_failed,
             #[cfg(windows)]
             direct_planes_said: self.direct_planes_said,
+            #[cfg(windows)]
+            direct_planes_scaled_said: self.direct_planes_scaled_said,
             ..Self::default()
         };
     }

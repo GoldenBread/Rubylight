@@ -232,10 +232,12 @@ impl RaceProbe {
     /// The restart check so far: the presents it tested and those that started no scan.
     pub fn restart_check(&self) -> RestartCheck { self.check }
 
-    /// The device name of the monitor whose scan line the probe reads (`\.\DISPLAY1`).
-    pub fn display_name(&self) -> Option<String> {
+    /// The identity of the monitor whose scan line the probe reads: its device interface path
+    /// (`\\?\DISPLAY#...#{...}`), or the GDI output name where Windows names no monitor. What
+    /// `scan_untrusted.json` keeps an untrusted display by.
+    pub fn display_id(&self) -> Option<&str> {
         #[cfg(windows)]
-        { self.scan.as_ref().map(super::scanline::Scanline::device_name) }
+        { self.scan.as_ref().map(super::scanline::Scanline::display_id) }
         #[cfg(not(windows))]
         { None }
     }

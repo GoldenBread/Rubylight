@@ -26,7 +26,7 @@ pub(super) const SECTION_KEYS: [&[&[&str]]; 8] = [
     &[&["width", "height"], &["fps"], &["bitrate_kbps"], &["adaptive_bitrate", "client_hint_bitrate"], &["codec"], &["hdr"],
         &["prefer_yuv444", "experimental_packed_444"], &["sdr_10bit"], &["frame_warp"], &["adaptive_quality"], &["quality_min_short_edge"], &["quality_min_fps"],
         &["hdr_desktop_brightness"], &["rtx_hdr"], &["rtx_video"]],
-    &[&["window_mode"], &["video_scaling"], &["vrr", "present_at_host_times", "vrr_tear_free"],
+    &[&["window_mode"], &["video_scaling"], &["vrr", "present_at_host_times", "vrr_tear_free"], &["vrr_wait"],
         &["frame_pacing", "drop_late_frames", "host_frame_times"], &["vsync"], &["fractional_vsync"],
         &["upscaling"], &["upscale_sharpness"], &["align_video_top"],
         &["host_display", "virtual_display"], &["virtual_display_scale"], &["virtual_display_dpi"]],
@@ -46,7 +46,7 @@ pub(super) const SECTION_KEYS: [&[&[&str]]; 8] = [
         &["ui_zoom"], &["high_contrast"], &["reduce_motion"]],
     &[&["graphics_card"], &["renderer"], &["display_output"], &["video_planes"], &["high_performance_gpu_power"], &["sops"], &["decode_queue_frames"]],
     &[&["error_correction"], &["tell_host_wireless"], &["tell_host_link_speed"],
-        &["network_priority"], &["unbatched_input"], &["full_range"], &["vrr_wait"],
+        &["network_priority"], &["unbatched_input"], &["full_range"],
         &["pyrowave_decoder"], &["pyrowave_async_compute"],
         &["decoder"], &["software_slices"], &["vulkan_video_first"], &["vulkan_rfi"], &["cursor_shapes"],
         &["link_probe"], &["post_stream_decode_time"]],
@@ -898,6 +898,27 @@ impl Launcher {
                 }
                 response
             });
+            // Tear-free VRR's wait for the scan line is Windows'; Variable refresh rate's On asks for it.
+            if cfg!(windows) {
+                rows.when(s.vrr && s.vrr_tear_free && vrr_offered);
+                setting_row(ui, s, &mut rows, &["vrr_wait"], "Whole frames under VRR", "Automatic shows each picture whole by waiting for the display’s scan line, and switches to Windows V-Sync on a display that does not refresh on present; Nightjar’s wait keeps the scan line’s wait, which can tear there. Windows V-Sync can add up to one refresh of delay, so leave Automatic unless frames still tear.", |ui, s| {
+                    let before = s.vrr_wait;
+                    let response = Combo::from_id_salt("vrr-wait")
+                        .selected_text(tr(s.vrr_wait.label()))
+                        .show_ui(ui, |ui| {
+                            for wait in crate::config::VrrWait::ALL {
+                                ui.selectable_value(&mut s.vrr_wait, wait, tr(wait.label()));
+                            }
+                        })
+                        .response;
+                    // Nightjar's wait never turns to Windows V-Sync, so the choice forgets every
+                    // display Automatic found not refreshing on present (`scan_untrusted.json`).
+                    if before != crate::config::VrrWait::Scan && s.vrr_wait == crate::config::VrrWait::Scan {
+                        crate::stream::scan_sync::clear_all();
+                    }
+                    response
+                });
+            }
             rows.always();
             let vrr = s.vrr && vrr_offered;
             rows.when(!vrr);
@@ -1335,7 +1356,7 @@ impl Launcher {
 
             if !layered {
                 rows.section(ui, en("App"));
-                setting_row(ui, s, &mut rows, &["theme"], "Theme", "System follows the system’s light or dark setting; OLED black uses pure black surfaces.", |ui, s| {
+                setting_row(ui, s, &mut rows, &["theme"], "Theme", "System follows the system’s light or dark setting; Light stays light even when the system is dark; OLED black uses pure black surfaces.", |ui, s| {
                     Combo::from_id_salt("theme").selected_text(tr(s.theme.label())).show_ui(ui, |ui| {
                         for theme in crate::config::Theme::ALL {
                             ui.selectable_value(&mut s.theme, theme, tr(theme.label()));
@@ -1580,21 +1601,6 @@ impl Launcher {
                 toggle(ui, &mut s.unbatched_input)
             });
             setting_row(ui, s, &mut rows, &["full_range"], "Full color range", "Asks for full-range video, for full shadow and highlight detail. Blacks crush or highlights clip unless the PC and the screen both use full range; leave it off unless you know both do.", |ui, s| toggle(ui, &mut s.full_range));
-            // Tear-free VRR's wait for the scan line is Windows'; Variable refresh rate's On asks for it.
-            if cfg!(windows) {
-                rows.when(s.vrr && s.vrr_tear_free && vrr_offered);
-                setting_row(ui, s, &mut rows, &["vrr_wait"], "Whole frames under VRR", "How a frame that meets the screen still drawing waits, with Variable refresh rate On: Automatic uses Nightjar’s wait and switches to Windows V-Sync where that wait can tear, while Nightjar’s wait never switches. Windows V-Sync can add up to one refresh of delay; choose it only if frames still tear on Automatic.", |ui, s| {
-                    Combo::from_id_salt("vrr-wait")
-                        .selected_text(tr(s.vrr_wait.label()))
-                        .show_ui(ui, |ui| {
-                            for wait in crate::config::VrrWait::ALL {
-                                ui.selectable_value(&mut s.vrr_wait, wait, tr(wait.label()));
-                            }
-                        })
-                        .response
-                });
-                rows.always();
-            }
             rows.group(en("PyroWave"));
             if let Some(reason) = &gpu_decoder_error {
                 rows.note(trf("GPU decoding isn’t available here: {}", &[reason]), *TERTIARY);

@@ -609,6 +609,13 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     // The first screen's process owns the files; the second only reads them.
     let store = if second_screen::this_process() { store.read_only() } else { store };
     let settings = store.settings();
+    // Whole frames under VRR Automatic starts on Windows V-Sync for a monitor an earlier run found
+    // not refreshing on present, and this run keeps the monitors it finds (`stream::scan_sync`).
+    // The folder comes first: the restore drops the output names older versions kept.
+    if !second_screen::this_process() {
+        stream::scan_sync::keep_in(store.dir());
+    }
+    stream::scan_sync::restore(&store.scan_untrusted().displays);
     let profiles = store.profiles();
     let mappings = store.controller_mappings();
     let hosts = store.hosts();

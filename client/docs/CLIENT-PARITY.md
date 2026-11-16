@@ -53,7 +53,7 @@ The tables below have no macOS column. The Mac client shares the desktop library
 | Text and button size, high contrast, reduced motion | Yes | Yes | Yes | On Linux, **Follow system** leaves motion on, since there is no system setting to read. |
 | Screen reader | Yes | Yes | Yes | Android: TalkBack. Desktop: the platform accessibility API (UI Automation on Windows, AT-SPI on Linux). |
 | Languages | Yes | Yes | Yes | The same 15 languages everywhere. Desktop CJK, Cyrillic, Polish, Turkish and Vietnamese text uses a system font ([Translations](TRANSLATIONS.md#desktop)). |
-| Theme (System, Dark, OLED black) | Yes | No | No | The desktop has one dark theme. |
+| Theme (System, Light, Dark, OLED black) | Yes | Yes | Yes | |
 | Update check | Yes | Yes | Partial | Android outside Google Play, automatically or with **Check for updates now**; Windows and the AppImage once per launch with **Check for updates automatically**, and no check on request. deb, rpm and Flatpak update through their package manager. |
 | One-click update | Yes | Yes | Partial | Android outside Google Play; the installed Windows copy runs the new setup with its progress window and restarts, the AppImage replaces its file and restarts. Size and SHA-256 are checked first. A portable Windows copy keeps the link to the release page; deb, rpm and Flatpak update through their package manager. |
 | Problem reports and crash records | Yes | Partial | Partial | The desktop writes redacted logs to its logs folder, and on Windows a minidump for each crash; it has no problem-report export. |
@@ -72,7 +72,7 @@ The tables below have no macOS column. The Mac client shares the desktop library
 | Sharper colored text (YUV 4:4:4) | Yes | Yes | Yes | See [Sharper colored text](#sharper-colored-text-yuv-444). |
 | PyroWave | Yes | Yes | Yes | Decoding, the bandwidth test, pace calibration and PyroWave's own automatic bitrate (`nightjar-policy`). When the decoder falls behind, the desktop skips to the newest frame. |
 | Decode PyroWave on a compute queue (setting) | N/A | Yes | Yes | Off by default. Android's renderer has no separate compute queue ([PyroWave decoding](pyrowave-decode.md)). |
-| Whole frames under VRR (setting) | N/A | Yes | N/A | Automatic by default; Nightjar's wait or Windows V-Sync for testing. Only Windows waits on the scan line; Android, macOS and Linux show whole frames through the system or synchronised flips ([Real VRR](real-vrr.md#tear-free-vrr-on-windows)). |
+| Whole frames under VRR (setting) | N/A | Yes | N/A | Automatic by default, in Display & image: Nightjar's wait for the scan line, with Windows V-Sync on a screen Nightjar found not to refresh on present (kept across starts), or Windows V-Sync from the start by choice. Only Windows waits on the scan line; Android, macOS and Linux show whole frames through the system or synchronised flips ([Real VRR](real-vrr.md#tear-free-vrr-on-windows)). |
 | Upscaling (FSR 1, SGSR 1) | Yes | Yes | Yes | Windows also offers the GPU's video upscaler (**AI enhancement**). |
 | Render through Vulkan | Yes | N/A | N/A | |
 | Renderer choice (**Settings → Advanced**) | N/A | N/A | Yes | Automatic starts on OpenGL and switches to the GPU (Vulkan) renderer when a stream needs it; OpenGL and GPU force one. |

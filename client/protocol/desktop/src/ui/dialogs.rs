@@ -633,7 +633,15 @@ impl Launcher {
                     ui.set_width(if self.power.is_empty() { 440.0 } else { 640.0 });
                     ui.label(RichText::new(tr("Close Nightjar?")).font(semibold(text::SECTION)));
                     dialog_buttons(ui, |ui| {
-                        if primary_button(ui, "Close Nightjar").clicked() {
+                        // Close Nightjar is the default, one press of A: with a controller it is the
+                        // last button the D-pad reaches, and a press of B or Escape still keeps
+                        // Nightjar open (`dialog_buttons`).
+                        let close_button = primary_button(ui, "Close Nightjar");
+                        if focus_first {
+                            close_button.request_focus();
+                            focused = true;
+                        }
+                        if close_button.clicked() {
                             commands.push(Command::Quit);
                             close = true;
                         }
@@ -645,12 +653,8 @@ impl Launcher {
                                 next = Some(Dialog::ConfirmPower(*offer));
                             }
                         }
-                        // Focus starts on Cancel: a second B or a stray A never closes the app.
+                        // B or Escape cancels: the question never closes the app by accident.
                         let cancel = quiet_button(ui, "Cancel");
-                        if focus_first {
-                            cancel.request_focus();
-                            focused = true;
-                        }
                         if cancel.clicked() {
                             close = true;
                         }

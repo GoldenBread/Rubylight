@@ -41,7 +41,7 @@ impl VideoTexture {
         if self.goes_direct(renderer, rows.is_some()) {
             if let Some(held) = lease.hand_over() {
                 self.pyrowave_stages.reset();
-                self.hold_direct(DirectPlanes { source: PlanesHold::Lease { lease: held, fence_value }, parameters, in_texture: false, timed: false }, "PyroWave");
+                self.hold_direct(DirectPlanes { source: PlanesHold::Lease { lease: held, fence_value }, parameters, in_texture: false, timed: false, what: "PyroWave" });
                 return true;
             }
         }
@@ -155,7 +155,7 @@ impl VideoTexture {
                             Err(error) => { self.fail(format!("binding a {}x{} 4:4:4 decoder picture failed: {error}", layout.width, layout.height), error); return false; }
                         }
                     } else { held };
-                    self.hold_direct(DirectPlanes { source: PlanesHold::Surface { held }, parameters, in_texture: false, timed: false }, "4:4:4");
+                    self.hold_direct(DirectPlanes { source: PlanesHold::Surface { held }, parameters, in_texture: false, timed: false, what: "4:4:4" });
                     return true;
                 }
                 Err(error) => { self.fail(format!("binding a {}x{} 4:4:4 decoder picture failed: {error}", layout.width, layout.height), error); return false; }
@@ -189,7 +189,7 @@ impl VideoTexture {
             if self.goes_direct(renderer, false) {
                 match self.planes.as_mut().unwrap().upload_frame(info) {
                     Ok(()) => {
-                        self.hold_direct(DirectPlanes { source: PlanesHold::Frame, parameters, in_texture: false, timed: false }, "planar");
+                        self.hold_direct(DirectPlanes { source: PlanesHold::Frame, parameters, in_texture: false, timed: false, what: "planar" });
                         return true;
                     }
                     Err(error) => Err(error),

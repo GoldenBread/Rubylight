@@ -245,6 +245,8 @@ fn the_theme_picks_the_look_and_high_contrast_wins() {
     }
     assert_eq!(Look::of(Theme::System, false, false), Look::Night, "System on a dark system");
     assert_eq!(Look::of(Theme::System, true, false), Look::Day, "System on a light system");
+    assert_eq!(Look::of(Theme::Light, false, false), Look::Day, "Light even on a dark system");
+    assert_eq!(Look::of(Theme::Light, true, false), Look::Day, "Light on a light system");
     assert_eq!(Look::of(Theme::default(), false, false), Look::Night, "Dark is the default");
 }
 

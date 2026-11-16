@@ -396,7 +396,7 @@ impl Streaming {
             && std::mem::replace(&mut self.held_logged, self.vrr.refreshes) != self.vrr.refreshes {
             eprintln!("nightjar: pacing: fractional V-Sync, each picture shown for {} refreshes", self.vrr.refreshes);
         }
-        if let Some(probe) = probe { Self::distrust_scan_line(&mut self.vrr, probe); }
+        if let Some(probe) = probe { Self::distrust_scan_line(&mut self.vrr, probe, self.settings.vrr_wait); }
         let interval = self.vrr.step(&mut self.pacer.mode, probe.map(race_probe::RaceProbe::verdict), now);
         // MAILBOX for VRR on Wayland only while the display refreshes on present; a fixed refresh
         // one tears like any stream without V-Sync (`prefers_immediate`). SDL picks the mode
@@ -436,14 +436,19 @@ impl Streaming {
     /// Turns Tear-free VRR to sync interval 1 once the display check finds presents to an idle
     /// display that start no scan (`scan_sync::UNTRUSTED_MISSES`), or a stream of this run found
     /// that on the same display, and says so once (`present::VrrPacing::distrust_scan`).
-    fn distrust_scan_line(vrr: &mut present::VrrPacing, probe: &race_probe::RaceProbe) {
+    fn distrust_scan_line(vrr: &mut present::VrrPacing, probe: &race_probe::RaceProbe, wait: crate::config::VrrWait) {
+        let display = probe.display_id();
+        // Nightjar's wait never turns to Windows V-Sync, so choosing it forgets a display an
+        // earlier stream found not refreshing on present: Automatic starts afresh there.
+        if wait == crate::config::VrrWait::Scan {
+            if let Some(display) = display { scan_sync::clear_untrusted(display); }
+        }
         let scan = vrr.sync == present::VrrSync::Scan;
         if !scan || vrr.sync_forced { return; }
         let check = probe.restart_check();
-        let display = probe.display_name();
-        let marked = display.as_deref().is_some_and(scan_sync::untrusted);
+        let marked = display.is_some_and(scan_sync::untrusted);
         let distrust = scan_sync::distrusts(check.missed, marked, scan, vrr.sync_forced);
-        if let (true, Some(display)) = (distrust.remember, &display) { scan_sync::remember_untrusted(display); }
+        if let (true, Some(display)) = (distrust.remember, display) { scan_sync::remember_untrusted(display); }
         if !distrust.turn || !vrr.distrust_scan() { return; }
         let why = if distrust.remember {
             format!("{} of {} presents to an idle display started no scan within {} ms", check.missed, check.tested, scanline::RESTART_WINDOW_NS / 1_000_000)

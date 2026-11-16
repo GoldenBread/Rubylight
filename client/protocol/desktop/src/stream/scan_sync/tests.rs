@@ -187,11 +187,28 @@ fn presents_that_start_no_scan_mark_the_display_for_the_rest_of_the_run() {
     assert_eq!(distrusts(2, false, true, false), Distrust { turn: false, remember: false });
     assert_eq!(distrusts(7, false, true, true), Distrust { turn: false, remember: true });
     assert_eq!(distrusts(7, true, false, false), Distrust { turn: false, remember: true }, "Fastest or another sync");
-    // Remembered by device name for later streams of this run.
-    let display = r"\.\DISPLAY-TEST-111";
+    // Remembered by monitor identity for later streams of this run.
+    let display = r"\\?\DISPLAY#TEST-MONITOR-111#5&1&0&UID111#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}";
     assert!(!untrusted(display));
     remember_untrusted(display);
     remember_untrusted(display);
     assert!(untrusted(display));
-    assert!(!untrusted(r"\.\DISPLAY-TEST-112"));
+    assert!(!untrusted(r"\\?\DISPLAY#TEST-MONITOR-112#5&1&0&UID112#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}"));
+    // Choosing Nightjar's wait forgets it.
+    clear_untrusted(display);
+    assert!(!untrusted(display));
+}
+
+/// Older versions kept a display by its GDI output name, which follows the output and not the
+/// monitor: another monitor on that output must not inherit Windows V-Sync.
+#[test]
+fn an_output_name_saved_by_an_older_version_is_not_trusted() {
+    assert!(legacy_output_name(r"\.\DISPLAY1"));
+    assert!(legacy_output_name(r"\\.\DISPLAY12"));
+    assert!(!legacy_output_name(r"\\?\DISPLAY#TEST-MONITOR-113#5&1&0&UID113#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}"));
+    assert!(!legacy_output_name(r"\.\DISPLAY-TEST-113"));
+    let monitor = r"\\?\DISPLAY#TEST-MONITOR-113#5&1&0&UID113#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}";
+    restore(&[r"\.\DISPLAY1".to_owned(), monitor.to_owned()]);
+    assert!(!untrusted(r"\.\DISPLAY1"), "the output name is dropped");
+    assert!(untrusted(monitor), "the monitor identity stays");
 }

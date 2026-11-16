@@ -43,9 +43,39 @@ pub struct Conditions {
 }
 
 /// Whether a picture goes straight into the back buffer. The texture is only drawn later when
-/// something reads it (an upscaler, AI enhancement, or SDL after a failed direct draw).
+/// something reads it (an upscaler, AI enhancement, or SDL after a failed direct draw), and only a
+/// picture at the output's own size is drawn here at all ([`draws_one_to_one`]).
 pub fn goes_direct(conditions: Conditions) -> bool {
     conditions.switch && !conditions.failed && conditions.swap_chain && !conditions.partial
+}
+
+/// Whether `picture` lands on `destination` one texel to one pixel, the only scale at which the
+/// plane pass shows what SDL's draw of the video texture shows.
+///
+/// The texture SDL draws holds the picture converted to linear light (`pyrowave.hlsl`'s
+/// `linearRgb`, `planes_direct.hlsl`'s `directFinish`), so SDL's bilinear taps when it scales are
+/// in linear light. The plane pass samples the picture's Y'CbCr codes and converts afterwards, so
+/// its taps are in the codes: filtering there and then converting darkens detail on an upscaled
+/// picture and brightens it on a downscaled one, where converting first and then filtering in
+/// linear light leaves the levels alone (issue 120: a PyroWave stream at another resolution than
+/// the display came out dark or bright). Only an unscaled picture is drawn here; anything else
+/// goes through the texture.
+pub fn draws_one_to_one(destination: &SDL_FRect, picture: (i32, i32)) -> bool {
+    destination.w == picture.0 as f32
+        && destination.h == picture.1 as f32
+        && destination.x.fract() == 0.0
+        && destination.y.fract() == 0.0
+}
+
+/// The shift of a picture drawn one texel to one pixel, rounded to whole picture pixels:
+/// `packed444.hlsl` rounds it the same way at its own size. A fractional shift samples between
+/// texels, which the plane pass filters in the codes rather than in the converted picture.
+pub fn whole_pixel_shift(shift: [f32; 2], picture: (i32, i32)) -> [f32; 2] {
+    let (width, height) = (picture.0 as f32, picture.1 as f32);
+    if !(width > 0.0 && height > 0.0 && shift[0].is_finite() && shift[1].is_finite()) {
+        return [0.0; 2];
+    }
+    [(shift[0] * width).round() / width, (shift[1] * height).round() / height]
 }
 
 /// The shader's constants (`Direct` in planes_direct.hlsl, register b1).
@@ -159,6 +189,49 @@ mod tests {
         assert!(!goes_direct(Conditions { failed: true, ..all }), "a failed draw keeps the texture for the stream");
         assert!(!goes_direct(Conditions { swap_chain: false, ..all }), "no Direct3D 11 swap chain, no direct draw");
         assert!(!goes_direct(Conditions { partial: true, ..all }), "the rows of a frame being received go through the texture");
+    }
+
+    /// Issue 120: a PyroWave stream at another size than the display came out dark or bright,
+    /// because the plane pass filtered the Y'CbCr codes where SDL filters the converted, linear
+    /// picture. The pass draws only where nothing is filtered.
+    #[test]
+    fn the_plane_pass_draws_only_one_texel_to_one_pixel() {
+        let picture = (1920, 1080);
+        let at = |x: f32, y: f32, w: f32, h: f32| SDL_FRect { x, y, w, h };
+        // The stream fills the display at its own size: SDL's draw and the pass are texel for pixel.
+        assert!(draws_one_to_one(&at(0.0, 0.0, 1920.0, 1080.0), picture));
+        assert!(draws_one_to_one(&at(0.0, 180.0, 1920.0, 1080.0), picture), "a whole-pixel offset places the picture and filters nothing");
+        assert!(draws_one_to_one(&at(-0.0, 0.0, 1920.0, 1080.0), picture), "minus zero is no offset");
+        // Scaled: Fit of a 1440p stream on a 4500x3000 display, the report's Surface Studio, and the
+        // same stream filling a 1280x720 window.
+        assert!(!draws_one_to_one(&at(0.0, 234.375, 4500.0, 2531.25), picture));
+        assert!(!draws_one_to_one(&at(0.0, 0.0, 1280.0, 720.0), picture));
+        assert!(!draws_one_to_one(&at(0.0, 0.0, 3840.0, 2160.0), picture));
+        // One axis scaled and the other not still filters.
+        assert!(!draws_one_to_one(&at(0.0, 0.0, 1920.0, 1080.5), picture));
+        // A half-pixel placement samples between the texels, as scaling does.
+        assert!(!draws_one_to_one(&at(0.5, 0.0, 1920.0, 1080.0), picture));
+        assert!(!draws_one_to_one(&at(f32::NAN, 0.0, 1920.0, 1080.0), picture));
+        // A padded picture (AMD's AV1 codes 2184x1968 as 2240x1968) fills its part of the output
+        // whole: the pass reads only that part of the planes, one texel to one pixel.
+        assert!(draws_one_to_one(&at(0.0, 0.0, 2184.0, 1968.0), (2184, 1968)));
+    }
+
+    /// Frame Warp's shift at the stream's own size goes in whole pixels, so the taps stay on texel
+    /// centres, as `packed444.hlsl` rounds it at its own size.
+    #[test]
+    fn a_whole_pixel_draw_shifts_in_whole_pixels() {
+        let picture = (1920, 1080);
+        let close = |a: [f32; 2], b: [f32; 2]| (a[0] - b[0]).abs() < 1e-6 && (a[1] - b[1]).abs() < 1e-6;
+        assert!(close(whole_pixel_shift([3.0 / 1920.0, -2.0 / 1080.0], picture), [3.0 / 1920.0, -2.0 / 1080.0]), "whole pixels stay");
+        assert!(close(whole_pixel_shift([3.4 / 1920.0, 0.0], picture), [3.0 / 1920.0, 0.0]), "a third of a pixel rounds down");
+        assert!(close(whole_pixel_shift([3.6 / 1920.0, -0.6 / 1080.0], picture), [4.0 / 1920.0, -1.0 / 1080.0]), "and three fifths up");
+        assert_eq!(whole_pixel_shift([0.4 / 1920.0, 0.0], picture), [0.0, 0.0], "under half a pixel nothing moves");
+        // Nothing to round against, or nothing finite: no shift.
+        for bad in [f32::NAN, f32::INFINITY] {
+            assert_eq!(whole_pixel_shift([bad, 1.0], picture), [0.0, 0.0]);
+            assert_eq!(whole_pixel_shift([1.0, bad], (0, 0)), [0.0, 0.0]);
+        }
     }
 
     #[test]

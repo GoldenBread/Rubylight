@@ -144,10 +144,10 @@ impl VideoTexture {
     }
 
     /// Makes `picture` the current one, waiting for the back buffer; the one it replaces goes back.
+    /// `draw_planes_direct` says which way it is drawn, once it knows the display's scale.
     #[cfg(windows)]
-    pub(super) fn hold_direct(&mut self, picture: DirectPlanes, what: &str) {
+    pub(super) fn hold_direct(&mut self, picture: DirectPlanes) {
         self.finish_direct();
-        self.say_planes_path(true, what);
         self.direct_planes = Some(picture);
     }
 
@@ -164,12 +164,13 @@ impl VideoTexture {
     }
 
     /// Draws the current picture's waiting planes into the video texture, once, for what reads
-    /// the texture (an upscaler, AI enhancement, or SDL after a failed direct draw).
+    /// the texture (an upscaler, AI enhancement, or SDL after a failed or scaled direct draw).
     #[cfg(windows)]
     pub(super) fn materialize_planes(&mut self) {
         let Some(mut picture) = self.direct_planes.take() else { return };
         if !picture.in_texture {
             let parameters = picture.parameters;
+            let step = std::time::Instant::now();
             let drawn = match (&picture.source, self.planes.as_mut()) {
                 (_, None) => Err("the plane pass is gone".to_string()),
                 (PlanesHold::Lease { lease, fence_value }, Some(pass)) => pass.draw_held(lease, *fence_value, &parameters, PLANES_DECODE_DEADLINE),
@@ -180,7 +181,15 @@ impl VideoTexture {
                 }),
             };
             match drawn {
-                Ok(()) => picture.in_texture = true,
+                Ok(()) => {
+                    picture.in_texture = true;
+                    // The conversion is the picture's "passes" stage, as when `upload_planes` draws
+                    // it there for a stream that does not go direct.
+                    if matches!(picture.source, PlanesHold::Lease { .. }) {
+                        self.pyrowave_stages.add(super::super::pyrowave_gpu::PASSES, step);
+                        self.pyrowave_stages.commit();
+                    }
+                }
                 Err(error) => self.fail(format!("drawing the picture's planes into the video texture failed: {error}"), error),
             }
         }
@@ -189,10 +198,22 @@ impl VideoTexture {
 
     /// Draws the current picture's planes into `destination` of the back buffer, converted and
     /// scaled in one pass, and returns true; false for SDL to draw `texture` (an upscaler's output,
-    /// or after a failure, which is logged once and keeps the texture for the stream).
+    /// a picture the display scales, or after a failure, which is logged once and keeps the texture
+    /// for the stream).
     #[cfg(windows)]
     fn draw_planes_direct(&mut self, renderer: *mut SDL_Renderer, destination: &SDL_FRect, texture: *mut SDL_Texture) -> bool {
         if texture.is_null() || texture != self.texture { return false; }
+        let what = self.direct_planes.as_ref().map_or("", |picture| picture.what);
+        // Only a picture that lands on the output one texel to one pixel is drawn here: the pass
+        // filters the picture's colour codes where SDL filters the converted, linear picture, so a
+        // scaled picture would come out dark or bright by the scale (issue 120). It goes through
+        // the video texture instead, which `render_flip` draws with SDL.
+        if !super::super::direct_planes::draws_one_to_one(destination, self.size()) {
+            if !std::mem::replace(&mut self.direct_planes_scaled_said, true) {
+                eprintln!("nightjar: {what} pictures are drawn through the video texture: the display does not place them one texel to one pixel, the only way the plane pass draws them exactly (scaling their colour codes instead of the converted picture shifts the levels)");
+            }
+            return false;
+        }
         let step = std::time::Instant::now();
         let swap_chain = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
         if swap_chain.is_null() { return false; }
@@ -214,8 +235,13 @@ impl VideoTexture {
         };
         let (Some(pass), Some(picture)) = (self.planes.as_mut(), self.direct_planes.as_ref()) else { return false };
         if !self.warp.is_identity() {
-            constants.warp = pass.warp_row(&self.warp);
-            constants.warp_lens = self.warp.lens_row();
+            // The picture is drawn at its own size, so its shift goes in whole pixels
+            // (`packed444.hlsl` rounds it the same way): a fractional one would filter the codes
+            // this pass converts afterwards.
+            let mut warp = self.warp.clone();
+            warp.shift = super::super::direct_planes::whole_pixel_shift(warp.shift, visible);
+            constants.warp = pass.warp_row(&warp);
+            constants.warp_lens = warp.lens_row();
         }
         let drawn = if !flushed {
             Err(format!("SDL_FlushRenderer: {}", crate::sdl::error()))
@@ -235,6 +261,7 @@ impl VideoTexture {
         };
         match drawn {
             Ok(()) => {
+                self.say_planes_path(true, what);
                 if let Some(picture) = self.direct_planes.as_mut() {
                     if matches!(picture.source, PlanesHold::Lease { .. }) && !std::mem::replace(&mut picture.timed, true) {
                         self.pyrowave_stages.add(super::super::pyrowave_gpu::PASSES, step);
