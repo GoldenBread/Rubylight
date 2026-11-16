@@ -493,6 +493,8 @@ async fn run(args: Args, assets: PathBuf) -> Result<()> {
     {
         tracing::warn!(%error, "the credentials folder permissions could not be repaired");
     }
+    // A SteamGridDB key typed into sunshine.conf, which every local user reads, moves there too.
+    steamgriddb::migrate_key(&h);
     let ports = h.config.read().unwrap().ports()?;
     if let Err(error) = butterpollo_windows::vulkan::reconcile(
         h.config.read().unwrap().boolean("vulkan_hdr_layer", true),

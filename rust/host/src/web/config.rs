@@ -68,8 +68,11 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
             };
             next.update(&object)?;
             next.check_saved(object.keys())?;
+            // A key typed into sunshine.conf by hand moves out at any save.
+            crate::steamgriddb::take_conf_key(h, &mut next)?;
             if let Some(key) = &steamgriddb_key {
                 crate::steamgriddb::store_key(h, Some(key))?;
+                crate::steamgriddb::key_changed(h);
             }
             state::atomic_write(&h.config_path, next.text().as_bytes())?;
             let warning =

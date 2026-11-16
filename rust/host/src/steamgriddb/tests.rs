@@ -585,3 +585,116 @@ fn the_key_goes_only_to_the_api_and_never_into_the_log() {
     }
     assert!(!log.contains(KEY), "{log}");
 }
+
+/// `key` typed into the host's `sunshine.conf` by hand.
+fn typed_key(f: &Fixture, key: &str) {
+    let mut config = f.host.config.write().unwrap();
+    config.values.insert(sgdb::KEY_SETTING.into(), key.into());
+    butterpollo_core::state::atomic_write(&f.host.config_path, config.text().as_bytes()).unwrap();
+}
+fn in_conf(f: &Fixture) -> bool {
+    butterpollo_core::config::Config::load(&f.host.config_path)
+        .unwrap()
+        .values
+        .contains_key(sgdb::KEY_SETTING)
+        || f.host
+            .config
+            .read()
+            .unwrap()
+            .values
+            .contains_key(sgdb::KEY_SETTING)
+}
+
+#[test]
+fn a_key_typed_into_sunshine_conf_moves_to_the_credentials_folder_on_a_system_host() {
+    let f = Fixture::new();
+    typed_key(&f, KEY);
+    let file = f.host.directory.join("credentials").join(sgdb::KEY_FILE);
+    // Not as SYSTEM: the folder protects nothing, and the key stays where it was typed.
+    AS_SYSTEM.with(|system| system.set(false));
+    migrate_key(&f.host);
+    assert!(in_conf(&f));
+    assert!(!file.exists());
+    assert_eq!(api_key(&f.host).as_deref(), Some(KEY), "it is read there");
+
+    AS_SYSTEM.with(|system| system.set(true));
+    f.host
+        .warnings
+        .set(REFUSED_WARNING, "an older key was refused");
+    let before = f.host.config_version.load(Ordering::Acquire);
+    migrate_key(&f.host);
+    AS_SYSTEM.with(|system| system.set(false));
+    assert!(
+        !in_conf(&f),
+        "gone from sunshine.conf and the settings in use"
+    );
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), KEY);
+    assert_eq!(api_key(&f.host).as_deref(), Some(KEY));
+    assert!(f.host.config_version.load(Ordering::Acquire) > before);
+    assert!(!warned(&f), "a moved key is a changed key");
+}
+
+#[test]
+fn a_changed_or_removed_key_ends_a_refusal_and_takes_its_warning_back() {
+    let f = Fixture::new();
+    with_key(&f);
+    refuse(&f.host, KEY);
+    assert!(warned(&f));
+    // Saved again, even with the same value.
+    key_changed(&f.host);
+    assert!(!refused(&f.host));
+    assert!(!warned(&f));
+
+    // Removed: the next tick takes a refusal back although no key is left to try.
+    refuse(&f.host, KEY);
+    store_key(&f.host, None).unwrap();
+    watch_with(&f.host, &steamgriddb(true));
+    assert!(!refused(&f.host));
+    assert!(!warned(&f));
+
+    // A refusal the user dismissed shows again for the next refused key.
+    store_key(&f.host, Some(KEY)).unwrap();
+    add(&f, json!({"name": "Hollow Knight", "uuid": "again"}));
+    watch_with(&f.host, &Fake::new(|_| reply(401, "")));
+    crate::host_warnings::dismiss(&f.host.directory, &f.host.warnings, REFUSED_WARNING).unwrap();
+    let visible = |f: &Fixture| {
+        crate::host_warnings::visible(&f.host.directory, &f.host.warnings)
+            .iter()
+            .any(|warning| warning.code == REFUSED_WARNING)
+    };
+    assert!(!visible(&f));
+    store_key(&f.host, Some("fedcba9876543210")).unwrap();
+    key_changed(&f.host);
+    changed(&f);
+    watch_with(&f.host, &Fake::new(|_| reply(401, "")));
+    assert!(
+        visible(&f),
+        "withdrawn, not only cleared, so it shows again"
+    );
+}
+
+#[test]
+fn a_key_changed_during_a_pass_ends_it() {
+    let f = Fixture::new();
+    with_key(&f);
+    add(&f, json!({"name": "One", "uuid": "one"}));
+    add(&f, json!({"name": "Two", "uuid": "two"}));
+    let host = f.host.clone();
+    let base = steamgriddb(true);
+    let fake = Fake::new(move |url| {
+        if url.starts_with(CDN) {
+            // The user saves another key while the first cover downloads.
+            store_key(&host, Some("fedcba9876543210")).unwrap();
+        }
+        base.get(url, None)
+    });
+    watch_with(&f.host, &fake);
+    assert!(image(&f, "one").ends_with("sgdb_one.png"));
+    assert_eq!(image(&f, "two"), "", "not asked with the old key");
+    for (url, key) in fake.asked.lock().unwrap().iter() {
+        if url.starts_with(sgdb::API) {
+            assert_eq!(key.as_deref(), Some(KEY), "{url}");
+        }
+    }
+    assert!(!fake.paths().iter().any(|path| path.contains("Two")));
+}

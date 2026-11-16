@@ -220,6 +220,86 @@ pub fn store_key(h: &Shared, key: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Whether a test's host runs as SYSTEM.
+    pub(crate) static AS_SYSTEM: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+/// Whether the host runs as SYSTEM, where the service keeps the credentials folder to
+/// administrators.
+fn as_system() -> bool {
+    #[cfg(test)]
+    return AS_SYSTEM.with(std::cell::Cell::get);
+    #[cfg(not(test))]
+    butterpollo_windows::process::is_system()
+}
+
+/// When the host runs as SYSTEM, a key typed into `sunshine.conf` by hand (`config`) moves to the
+/// credentials folder and out of `config`: true when it moved. The caller writes `config`.
+pub fn take_conf_key(h: &Shared, config: &mut butterpollo_core::config::Config) -> Result<bool> {
+    if !as_system() {
+        return Ok(false);
+    }
+    let Some(key) = config.steamgriddb_api_key().map(str::to_owned) else {
+        return Ok(false);
+    };
+    store_key(h, Some(&key))?;
+    config.values.remove(sgdb::KEY_SETTING);
+    key_changed(h);
+    Ok(true)
+}
+
+/// At start: a key typed into `sunshine.conf` by hand moves to the credentials folder.
+pub fn migrate_key(h: &Shared) {
+    let moved = (|| -> Result<bool> {
+        let _save = h.config_save.lock().unwrap();
+        let mut config = if h.port_override.is_some() {
+            butterpollo_core::config::Config::load(&h.config_path)?
+        } else {
+            h.config.read().unwrap().clone()
+        };
+        if !take_conf_key(h, &mut config)? {
+            return Ok(false);
+        }
+        butterpollo_core::state::atomic_write(&h.config_path, config.text().as_bytes())?;
+        if let Some(port) = h.port_override {
+            config.values.insert("port".into(), port.to_string());
+        }
+        *h.config.write().unwrap() = config;
+        h.config_version.fetch_add(1, Ordering::Release);
+        Ok(true)
+    })();
+    match moved {
+        Ok(true) => tracing::info!(
+            "the SteamGridDB API key moved from sunshine.conf to the credentials folder"
+        ),
+        Ok(false) => {}
+        Err(error) => {
+            tracing::warn!(error = %format!("{error:#}"), "the SteamGridDB API key could not be moved out of sunshine.conf")
+        }
+    }
+}
+
+/// The key was set, changed, saved again or emptied: a refusal of the last one is over, and its
+/// warning is taken back, so a later refusal shows again even if this one was dismissed.
+pub fn key_changed(h: &Shared) {
+    with_pace(h, |pace| pace.refused = None);
+    withdraw_refusal(h);
+}
+fn withdraw_refusal(h: &Shared) {
+    crate::host_warnings::withdraw(&h.directory, &h.warnings, REFUSED_WARNING);
+    h.metadata.lock().unwrap().take();
+}
+#[cfg(test)]
+pub(crate) fn refused(h: &Shared) -> bool {
+    with_pace(h, |pace| pace.refused.is_some())
+}
+#[cfg(test)]
+pub(crate) fn refuse(h: &Shared, key: &str) {
+    with_pace(h, |pace| pace.refused = Some(fingerprint(key)));
+    h.warnings.set(REFUSED_WARNING, "refused");
+}
+
 /// The housekeeping loop's look for covers, on a blocking thread of its own.
 pub fn watch(h: &Shared) {
     watch_with(h, &Web);
@@ -299,9 +379,14 @@ enum Lookup {
 /// every [`PASS_EVERY`] while apps miss covers.
 pub(crate) fn watch_with(h: &Shared, http: &dyn Http) {
     let Some(key) = api_key(h) else {
+        // No key: nothing is refused any more.
+        if with_pace(h, |pace| pace.refused.take()).is_some() {
+            withdraw_refusal(h);
+        }
         return;
     };
     let version = h.config_version.load(Ordering::Acquire);
+    let mut other_key = false;
     let go = with_pace(h, |pace| {
         let now = Instant::now();
         if pace.paused_until.is_some_and(|until| now < until) {
@@ -311,7 +396,7 @@ pub(crate) fn watch_with(h: &Shared, http: &dyn Http) {
             Some(refused) if refused == fingerprint(&key) => return false,
             Some(_) => {
                 pace.refused = None;
-                h.warnings.clear(REFUSED_WARNING);
+                other_key = true;
             }
             None => {}
         }
@@ -326,6 +411,9 @@ pub(crate) fn watch_with(h: &Shared, http: &dyn Http) {
         }
         due
     });
+    if other_key {
+        withdraw_refusal(h);
+    }
     if !go {
         return;
     }
@@ -345,6 +433,10 @@ pub(crate) fn watch_with(h: &Shared, http: &dyn Http) {
         if asked >= PER_PASS {
             more = true;
             continue;
+        }
+        // A key changed or removed while the pass ran ends it: the next pass uses the new one.
+        if api_key(h).as_deref() != Some(key.as_str()) {
+            break;
         }
         asked += 1;
         match lookup(h, http, &key, &app) {
@@ -432,7 +524,13 @@ fn ask(h: &Shared, http: &dyn Http, key: &str, name: &str, url: &str) -> Answer 
     match reply.status {
         200..=299 => {
             with_pace(h, |pace| pace.backoff = Duration::ZERO);
-            h.warnings.clear(REFUSED_WARNING);
+            if h.warnings
+                .snapshot()
+                .iter()
+                .any(|warning| warning.code == REFUSED_WARNING)
+            {
+                withdraw_refusal(h);
+            }
             Answer::Body(reply.body)
         }
         404 => Answer::NotFound,
