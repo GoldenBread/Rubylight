@@ -108,6 +108,28 @@ fn a_record_from_the_future_is_taken_as_new() {
 }
 
 #[test]
+fn a_new_record_keeps_the_parts_it_did_not_ask_with_their_times() {
+    let older = Record { cover: Some("https://c/a.png".into()), art: Outcome::Found, info: Outcome::Skipped, ..record(Outcome::Found, Outcome::Skipped) };
+    let facts_only = Record { key: "steam:1".into(), fetched_at: 2_000_000, info: Outcome::Found, facts: Some(Facts { genres: vec!["RPG".into()], ..Facts::default() }), ..Record::default() };
+    let merged = facts_only.merged(Some(&older));
+    assert_eq!(merged.cover.as_deref(), Some("https://c/a.png"));
+    assert_eq!((merged.art, merged.info), (Outcome::Found, Outcome::Found));
+    assert_eq!(merged.art_at, Some(1_000_000), "the art keeps its own age");
+    // So the art runs out on its own time, not the facts'.
+    assert!(!merged.fresh(1_000_000 + FOUND_FOR, BOTH));
+    assert!(merged.fresh(1_000_000 + FOUND_FOR - 1, BOTH));
+    // A failed retry keeps showing what was found before; another game's record is not taken.
+    let failed = Record { key: "steam:1".into(), fetched_at: 3_000_000, art: Outcome::Failed, info: Outcome::Failed, ..Record::default() };
+    let kept = failed.clone().merged(Some(&merged));
+    assert_eq!(kept.cover.as_deref(), Some("https://c/a.png"));
+    assert_eq!(kept.facts.unwrap().genres, ["RPG"]);
+    assert_eq!(kept.art, Outcome::Failed);
+    let other = Record { key: "steam:2".into(), ..failed.clone() };
+    assert_eq!(other.clone().merged(Some(&merged)), other);
+    assert_eq!(failed.clone().merged(None), failed);
+}
+
+#[test]
 fn file_names_are_stable_and_safe() {
     assert_eq!(record_file("steam:1"), record_file("steam:1"));
     assert_ne!(record_file("steam:1"), record_file("steam:2"));

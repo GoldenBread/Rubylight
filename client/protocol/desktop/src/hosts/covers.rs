@@ -63,6 +63,8 @@ impl Hosts {
         let Some(identity) = self.identity.clone() else {
             return;
         };
+        // SteamGridDB fills a gap the PC leaves: no cover, or its grey placeholder.
+        let fallback = self.get(id).and_then(|host| self.cover_fallback(host, app));
         let Some(host) = self.get_mut(id) else {
             return;
         };
@@ -99,6 +101,12 @@ impl Hosts {
                         return Some(Event::ArtFailed { id, app, version });
                     }
                 },
+            };
+            // The PC's own cover wins; SteamGridDB's only stands in for none.
+            let real = bytes.as_deref().is_some_and(|b| !nightjar_core::http::is_placeholder_box_art(b));
+            let bytes = match fallback {
+                Some((info, game)) if !real => info.cover(&game).or(bytes),
+                _ => bytes,
             };
             let (image, ambient, sized) = art_and_ambient(bytes, scale);
             Some(Event::Art { id, app, version, image, ambient, sized })

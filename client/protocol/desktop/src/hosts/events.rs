@@ -155,6 +155,7 @@ impl Hosts {
                     self.art_used.insert(texture.id(), frame);
                     self.art_landed = true;
                 }
+                Event::GameInfo(record) => self.game_info_landed(*record),
                 Event::Art { id, app, version, image, ambient, sized } => {
                     let frame = self.art_frame;
                     let mut landed = None;

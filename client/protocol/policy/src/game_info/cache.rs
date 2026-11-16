@@ -73,6 +73,13 @@ pub struct Record {
     pub art: Outcome,
     #[serde(default)]
     pub info: Outcome,
+    /// When the art part was asked, when it was kept from an older record ([`Record::merged`]);
+    /// None is `fetched_at`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub art_at: Option<u64>,
+    /// When the facts part was asked, likewise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub info_at: Option<u64>,
 }
 
 /// Which services have keys now.
@@ -97,9 +104,43 @@ impl Record {
     /// Whether `self` still holds at `now` (seconds since the epoch) with the keys `available`:
     /// each part within its time, and no part skipped for want of a key that is there now. A
     /// record from the future (a clock set back) is taken as made now.
+    ///
+    /// `available` is a service that has its key *and* is wanted by this lookup: a facts-only
+    /// lookup passes `art: false`, so a record without art holds for it.
     pub fn fresh(&self, now: u64, available: Available) -> bool {
-        let age = now.saturating_sub(self.fetched_at);
-        [(self.art, available.art), (self.info, available.info)].into_iter().all(|(outcome, available)| holds_for(outcome, available).is_some_and(|limit| age < limit))
+        let age = |at: Option<u64>| now.saturating_sub(at.unwrap_or(self.fetched_at));
+        [(self.art, available.art, age(self.art_at)), (self.info, available.info, age(self.info_at))]
+            .into_iter()
+            .all(|(outcome, available, age)| holds_for(outcome, available).is_some_and(|limit| age < limit))
+    }
+
+    /// `self`, a new lookup's record, with the parts it did not ask ([`Outcome::Skipped`]) taken
+    /// from `older`, the record kept before, with their own times. A facts-only lookup so keeps
+    /// the art found before, and the reverse.
+    pub fn merged(mut self, older: Option<&Record>) -> Record {
+        let Some(older) = older.filter(|o| o.key == self.key) else { return self };
+        if self.art == Outcome::Skipped && older.art != Outcome::Skipped {
+            self.art = older.art;
+            self.art_at = Some(older.art_at.unwrap_or(older.fetched_at));
+            self.cover = older.cover.clone();
+            self.hero = older.hero.clone();
+            self.logo = older.logo.clone();
+        }
+        if self.info == Outcome::Skipped && older.info != Outcome::Skipped {
+            self.info = older.info;
+            self.info_at = Some(older.info_at.unwrap_or(older.fetched_at));
+            self.facts = older.facts.clone();
+        }
+        // Facts found before a failed retry stay shown until a lookup gets them again.
+        if self.info == Outcome::Failed && self.facts.is_none() {
+            self.facts = older.facts.clone();
+        }
+        if self.art == Outcome::Failed && self.cover.is_none() && self.hero.is_none() && self.logo.is_none() {
+            self.cover = older.cover.clone();
+            self.hero = older.hero.clone();
+            self.logo = older.logo.clone();
+        }
+        self
     }
 
     /// The image for `kind` (cover, hero, logo).

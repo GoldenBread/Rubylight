@@ -44,7 +44,8 @@ pub(super) const SECTION_KEYS: [&[&[&str]]; 8] = [
         &["dual_screen"], &["second_screen_width", "second_screen_height"], &["input_only_any_host"]],
     &[&["theme"], &["language"], &["open_on_start", "console_home"], &["quick_resume"], &["check_updates"], &["home_card_size"],
         &["ui_zoom"], &["high_contrast"], &["reduce_motion"]],
-    &[&["graphics_card"], &["renderer"], &["display_output"], &["video_planes"], &["high_performance_gpu_power"], &["sops"], &["decode_queue_frames"]],
+    &[&["graphics_card"], &["renderer"], &["display_output"], &["video_planes"], &["high_performance_gpu_power"], &["sops"], &["decode_queue_frames"],
+        &["steamgriddb_key"], &["igdb_client_id"], &["igdb_client_secret"]],
     &[&["error_correction"], &["tell_host_wireless"], &["tell_host_link_speed"],
         &["network_priority"], &["unbatched_input"], &["full_range"],
         &["pyrowave_decoder"], &["pyrowave_async_compute"],
@@ -610,6 +611,7 @@ impl Launcher {
         let (custom_size_on, custom_fps_on) = (&mut self.custom_size, &mut self.custom_fps);
         let confirm_reset = &mut self.settings_view.confirm_reset;
         let test_pc = &mut self.settings_view.test_pc;
+        let game_info_keys = &mut self.game_info_keys;
         let s = if layered { &mut self.edit_settings } else { &mut self.settings };
         let before = s.clone();
         let (mut reset_all, mut clear_search) = (false, false);
@@ -1580,6 +1582,37 @@ impl Launcher {
                     }
                 }).response
             });
+            // The player's own keys for SteamGridDB and IGDB, for the whole app: kept apart from the
+            // settings (`crate::game_info`), taken in when a field is left.
+            if !layered {
+                rows.group(en("Artwork and game info"));
+                let mut left = false;
+                let mut key_field = |ui: &mut Ui, value: &mut String| {
+                    let response = ui.add(egui::TextEdit::singleline(value).desired_width(280.0).char_limit(200).font(regular(text::BODY)));
+                    left |= response.lost_focus();
+                    response
+                };
+                rows.action("steamgriddb_key");
+                setting_row(ui, s, &mut rows, &[], "SteamGridDB API key", "Covers from SteamGridDB for games your PC has none for. Your game names go to SteamGridDB; leave it empty to keep only your PC’s covers.", |ui, _| {
+                    key_field(ui, &mut game_info_keys.steamgriddb)
+                });
+                rows.action("igdb_client_id");
+                setting_row(ui, s, &mut rows, &[], "IGDB client ID", "Genres, themes and time to beat for each game, and library filters by genre and length, from IGDB. Your game names go to IGDB; leave it empty unless you have a Twitch developer app.", |ui, _| {
+                    key_field(ui, &mut game_info_keys.igdb_client_id)
+                });
+                rows.action("igdb_client_secret");
+                setting_row(ui, s, &mut rows, &[], "IGDB client secret", "The client secret of the same Twitch developer app. Game facts need both.", |ui, _| {
+                    key_field(ui, &mut game_info_keys.igdb_client_secret)
+                });
+                if left {
+                    let trimmed = nightjar_policy::game_info::job::Keys {
+                        steamgriddb: game_info_keys.steamgriddb.trim().to_owned(),
+                        igdb_client_id: game_info_keys.igdb_client_id.trim().to_owned(),
+                        igdb_client_secret: game_info_keys.igdb_client_secret.trim().to_owned(),
+                    };
+                    commands.push(Command::SetGameInfoKeys(trimmed));
+                }
+            }
             rows.section(ui, en("Debug"));
             // Android's main rows first, in its order.
             setting_row(ui, s, &mut rows, &["error_correction"], "Error correction", "FEC: extra data the PC adds to repair lost packets, taken from the picture’s bitrate. Leave it on PC’s setting; try Automatic if the picture breaks up often.", |ui, s| {

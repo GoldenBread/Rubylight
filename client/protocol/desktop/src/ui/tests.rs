@@ -8800,3 +8800,142 @@ fn a_pcs_own_wake_addresses_are_checked_before_they_are_kept() {
     assert!(f.hosts.set_own_wake_macs(id, vec!["0a:00:27:00:00:05".into()]));
     assert!(f.hosts.list[0].record.can_wake(), "a PC with only the user's own address can be woken");
 }
+
+// --- Artwork and game info (SteamGridDB, IGDB) --------------------------------------------------
+
+fn game_facts(genres: &[&str], themes: &[&str], normally_hours: u64) -> nightjar_policy::game_info::cache::Facts {
+    nightjar_policy::game_info::cache::Facts {
+        name: String::new(),
+        genres: genres.iter().map(|g| (*g).to_owned()).collect(),
+        themes: themes.iter().map(|t| (*t).to_owned()).collect(),
+        hastily: Some(normally_hours * 3600 * 3 / 4),
+        normally: Some(normally_hours * 3600),
+        completely: Some(normally_hours * 3600 * 2),
+    }
+}
+
+/// The key the first PC's game `title` keeps its facts under, as the pages look it up.
+fn facts_key(f: &Frames, title: &str) -> String {
+    let game = f.hosts.list[0].library().expect("a library").games.iter().find(|g| g.title == title).expect(title);
+    let looked_up = crate::game_info::game_of(&game.title, game.game_id.as_deref(), None);
+    nightjar_policy::game_info::names::key(&looked_up.name, looked_up.steam)
+}
+
+/// Without facts (no IGDB keys) All games has no Genre or Length chip; with some, both come, and
+/// each narrows the grid with the source chips.
+#[test]
+fn all_games_offers_genre_and_length_only_once_games_have_facts() {
+    let mut f = store_mix();
+    f.l.go(Screen::AllGames);
+    f.settle();
+    assert!(!shows(&f, "Genre") && !shows(&f, "Length"), "{:?}", f.drawn);
+    let (fortnite, diablo) = (facts_key(&f, "Fortnite"), facts_key(&f, "Diablo IV"));
+    f.hosts.put_facts(&fortnite, game_facts(&["Shooter"], &[], 10));
+    f.hosts.put_facts(&diablo, game_facts(&["Role-playing (RPG)"], &["Fantasy"], 60));
+    f.settle();
+    assert!(shows(&f, "Genre") && shows(&f, "Length"), "{:?}", f.drawn);
+    f.l.genre_filter = Some("Role-playing (RPG)".into());
+    f.settle();
+    assert!(shows(&f, "Diablo IV") && !shows(&f, "Fortnite") && !shows(&f, "Steam 00"), "{:?}", f.drawn);
+    assert!(shows(&f, "Role-playing (RPG)"), "the chip names the genre chosen");
+    f.l.genre_filter = None;
+    f.l.length_filter = Some(nightjar_policy::game_info::library::Length::Medium);
+    f.settle();
+    assert!(shows(&f, "Fortnite") && !shows(&f, "Diablo IV"), "{:?}", f.drawn);
+    assert!(shows(&f, "5 to 15 hours"));
+    // With the Epic chip too: Fortnite is Epic's, so it stays; Battle.net's chip leaves nothing.
+    f.l.library_filter = console::LibraryFilter::Store("battlenet".into());
+    f.settle();
+    assert!(shows(&f, "No games match this filter."), "{:?}", f.drawn);
+    // A genre no game has any more goes back to any.
+    f.l.library_filter = console::LibraryFilter::All;
+    f.l.length_filter = None;
+    f.l.genre_filter = Some("Racing".into());
+    f.settle();
+    assert_eq!(f.l.genre_filter, None);
+}
+
+/// The game page writes the genres, themes and time to beat IGDB has for the game, and nothing
+/// without them.
+#[test]
+fn the_game_page_shows_the_facts_of_its_game() {
+    let mut f = store_mix();
+    let pc = f.hosts.list[0].id;
+    f.l.go(Screen::Game { host: pc, app: 1012 });
+    f.settle();
+    assert!(!f.drawn.iter().any(|t| t.starts_with("Genres") || t.starts_with("Time to beat")), "{:?}", f.drawn);
+    let key = facts_key(&f, "Fortnite");
+    f.hosts.put_facts(&key, game_facts(&["Shooter", "Battle royale"], &["Action"], 12));
+    f.settle();
+    assert!(shows(&f, "Genres: Shooter · Battle royale"), "{:?}", f.drawn);
+    assert!(shows(&f, "Themes: Action"), "{:?}", f.drawn);
+    assert!(shows(&f, "Time to beat: Story 9 h · Story + extras 12 h · Everything 24 h"), "{:?}", f.drawn);
+}
+
+/// No keys: no lookups are asked for. With IGDB's keys, opening All games asks for each game's
+/// facts once.
+#[test]
+fn facts_are_asked_for_only_with_igdb_keys_and_once() {
+    struct Nothing;
+    impl crate::game_info::Http for Nothing {
+        fn send(&self, _: &nightjar_policy::game_info::job::Request) -> crate::game_info::Answer {
+            crate::game_info::Answer { status: 404, retry_after: None, body: Vec::new() }
+        }
+    }
+    let mut f = store_mix();
+    f.l.go(Screen::AllGames);
+    let commands = f.frame(Vec::new());
+    assert!(!commands.iter().any(|c| matches!(c, Command::WantFacts(_))));
+    let dir = std::env::temp_dir().join(format!("nightjar-ui-facts-{}", std::process::id()));
+    let keys = nightjar_policy::game_info::job::Keys { steamgriddb: String::new(), igdb_client_id: "id-1234".into(), igdb_client_secret: "secret-5678".into() };
+    f.hosts.set_game_info(Arc::new(crate::game_info::GameInfo::new(&dir, keys, Box::new(Nothing))));
+    let commands = f.frame(Vec::new());
+    let asked: Vec<_> = commands.iter().filter_map(|c| if let Command::WantFacts(games) = c { Some(games.len()) } else { None }).collect();
+    assert_eq!(asked, [19], "every game once");
+    for command in commands {
+        if let Command::WantFacts(games) = command {
+            f.hosts.want_facts(games);
+        }
+    }
+    let commands = f.frame(Vec::new());
+    assert!(!commands.iter().any(|c| matches!(c, Command::WantFacts(_))), "not again");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The pages that show SteamGridDB's and IGDB's part: All games with the Genre and Length chips,
+/// a game page with its facts, and Settings → Advanced with the keys' rows.
+#[test]
+#[ignore = "writes PNGs; set NIGHTJAR_SHOTS"]
+fn game_info_screenshots() {
+    let Some(dir) = std::env::var_os("NIGHTJAR_SHOTS").map(std::path::PathBuf::from) else { return };
+    std::fs::create_dir_all(&dir).expect("the folder for the screenshots");
+    let mut f = store_mix();
+    f.size = vec2(1280.0, 800.0);
+    f.native_ppp = 1.5;
+    for (title, genres, themes, hours) in [
+        ("Fortnite", &["Shooter"][..], &["Action"][..], 10),
+        ("Diablo IV", &["Role-playing (RPG)", "Hack and slash/Beat 'em up"][..], &["Fantasy"][..], 30),
+        ("Halo Infinite", &["Shooter"][..], &["Science fiction"][..], 12),
+        ("Forza Horizon 5", &["Racing", "Sport"][..], &["Open world"][..], 60),
+        ("Steam 00", &["Puzzle"][..], &[][..], 4),
+    ] {
+        let key = facts_key(&f, title);
+        f.hosts.put_facts(&key, game_facts(genres, themes, hours));
+    }
+    f.l.go(Screen::AllGames);
+    f.settle();
+    f.shoot(&dir, "all-games-facts-desktop");
+    f.l.genre_filter = Some("Shooter".into());
+    f.l.length_filter = Some(nightjar_policy::game_info::library::Length::Medium);
+    f.settle();
+    f.shoot(&dir, "all-games-filtered-desktop");
+    let pc = f.hosts.list[0].id;
+    f.l.go(Screen::Game { host: pc, app: 1014 });
+    f.settle();
+    f.shoot(&dir, "game-facts-desktop");
+    f.l.go(Screen::Settings);
+    f.l.settings_view.section = "Advanced";
+    f.l.game_info_keys.steamgriddb = "0123456789abcdef".into();
+    f.settle();
+    f.shoot(&dir, "settings-advanced-game-info-desktop");
+}

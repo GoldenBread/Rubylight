@@ -20,6 +20,11 @@
     "response": {"ok": {"fresh": false}}
   },
   {
+    "name": "a facts-only record keeps the art found before, with its own time",
+    "request": {"op": "merge", "record": {"key": "steam:1", "fetched_at": 2000, "art": "skipped", "info": "found", "facts": {"name": "A", "genres": ["RPG"], "themes": [], "hastily": null, "normally": null, "completely": null}}, "older": {"key": "steam:1", "fetched_at": 1000, "art": "found", "info": "skipped", "cover": "https://cdn2.steamgriddb.com/grid/a.png"}},
+    "response": {"ok": {"record": {"key": "steam:1", "fetched_at": 2000, "cover": "https://cdn2.steamgriddb.com/grid/a.png", "hero": null, "logo": null, "facts": {"name": "A", "genres": ["RPG"], "themes": [], "hastily": null, "normally": null, "completely": null}, "art": "found", "info": "found", "art_at": 1000}}}
+  },
+  {
     "name": "the library's genres and lengths, and the games under a genre",
     "request": {"op": "library", "games": [{"genres": ["Shooter"], "normally": 36000}, null, {"genres": ["Puzzle"], "normally": 7200}], "genre": "Shooter", "length": null},
     "response": {"ok": {"genres": [{"value": "Puzzle", "count": 1}, {"value": "Shooter", "count": 1}], "lengths": [{"value": "short", "count": 1}, {"value": "medium", "count": 1}], "shown": [0]}}

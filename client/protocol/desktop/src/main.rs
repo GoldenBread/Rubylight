@@ -33,6 +33,7 @@ mod controller_audio;
 mod controller_mouse;
 mod dmabuf;
 mod gamepad;
+mod game_info;
 mod glyphs;
 #[cfg(windows)]
 mod gpu_adapters;
@@ -825,6 +826,13 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         None => None,
     };
     hosts.load_cached_libraries(&store);
+    // SteamGridDB and IGDB with the player's keys; the demo and the second screen stay offline.
+    if !cfg!(feature = "demo-library") && !second_screen::this_process() {
+        let agent = format!("Nightjar/{} ({})", VERSION, std::env::consts::OS);
+        let keys = game_info::load_keys(store.dir());
+        hosts.set_game_info(std::sync::Arc::new(game_info::GameInfo::new(store.dir(), keys, Box::new(game_info::Https(update_net::Native::new(agent))))));
+    }
+    launcher.game_info_keys = hosts.game_info_keys();
     {
         // Open on Home when it is on and some PC has a library to show.
         let sources: Vec<console::Source> = hosts.list.iter().map(console::Source::of).collect();

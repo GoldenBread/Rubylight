@@ -20,6 +20,16 @@ impl App {
             Command::Quit => self.running = false,
             Command::OpenOnStart(game) => self.open_play_choose(game),
             Command::SetSignIn(on) => self.sign_in_set(on),
+            Command::SetGameInfoKeys(keys) => {
+                if keys != self.hosts.game_info_keys() {
+                    // Never the keys themselves in the log.
+                    if let Err(e) = crate::game_info::save_keys(self.store.dir(), &keys) {
+                        eprintln!("nightjar: artwork and game info keys not saved: {}", e.kind());
+                    }
+                    self.hosts.set_game_info_keys(keys);
+                }
+            }
+            Command::WantFacts(games) => self.hosts.want_facts(games),
             Command::Power(offer) => {
                 // One at a time: a second confirm while logind waits on its password is dropped.
                 if self.power_request.is_none() {

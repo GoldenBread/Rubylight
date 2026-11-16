@@ -8,7 +8,10 @@
 //! - `{"op": "next", "job": job, "reply": {"status", "body", "retry_after"} | null, "now_ms": t}`:
 //!   `{"job": job, "step": step}`. A step is `{"send": request}`, `{"wait": ms}` or `{"done":
 //!   {"record", "session", "log"}}`.
-//! - `{"op": "fresh", "record": r, "now_secs": t, "keys": {...}}`: `{"fresh": bool}`
+//! - `{"op": "merge", "record": new, "older": r | null}`: `{"record": r}`, the parts the new
+//!   lookup did not ask kept from the older record (see `Record::merged`). Keep this, not `new`.
+//! - `{"op": "fresh", "record": r, "now_secs": t, "keys": {...}}`: `{"fresh": bool}`; `keys` holds
+//!   only the services this lookup wants (blank `steamgriddb` for a facts-only lookup).
 //! - `{"op": "library", "games": [facts | null], "genre": g | null, "length": l | null}`:
 //!   `{"genres": [{"value", "count"}], "lengths": [{"value", "count"}], "shown": [place]}`
 //! - `{"op": "facts", "facts": f}`: `{"length": l | null, "hastily": h | null, "normally": h | null,
@@ -48,6 +51,11 @@ enum Call {
         #[serde(default)]
         reply: Option<Reply>,
         now_ms: u64,
+    },
+    Merge {
+        record: Record,
+        #[serde(default)]
+        older: Option<Record>,
     },
     Fresh {
         record: Record,
@@ -90,6 +98,7 @@ fn answer(call: Call) -> Value {
             let step = job.next(reply, now_ms);
             json!({"job": job, "step": step})
         }
+        Call::Merge { record, older } => json!({"record": record.merged(older.as_ref())}),
         Call::Fresh { record, now_secs, keys } => json!({"fresh": record.fresh(now_secs, keys.available())}),
         Call::Library { games, genre, length } => {
             let facts: Vec<Option<&Facts>> = games.iter().map(Option::as_ref).collect();
