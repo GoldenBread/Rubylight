@@ -75,6 +75,8 @@ A stream runs on one of two engines. The Rust engine is `nightjar-core` behind [
 
 Native code beside the engines, in `app/src/main/jni/`: `pyrowave-renderer/`, `vulkan/`, `evdev_reader/`, `window-dataspace/`.
 
+Offline only, built into neither app: [`tools/temporal_upscaler/`](../tools/temporal_upscaler/README.md) measures upscalers on H.264-encoded footage against native (`harness.py`), with a line-for-line NumPy port of `sgsr.frag` and the temporal upscaler that missed its gate (`upscalers.py`). A change to `app/src/main/assets/shaders/sgsr.frag` changes its port too.
+
 ## Checklists
 
 ### A setting

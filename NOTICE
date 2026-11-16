@@ -405,3 +405,14 @@ WebRTC's AEC3 through sonora 0.2.0 (https://github.com/dignifiedquire/sonora), a
 of WebRTC audio processing. Copyright (c) 2011, The WebRTC Project Authors; Copyright (c)
 2016, Arun Raghavan and contributors; Copyright (c) 2026, dignifiedquire. BSD 3-Clause; the
 full notice ships in the app as client/app/src/main/assets/NOTICE-SONORA.txt.
+
+Snapdragon Game Super Resolution 2 (evaluation harness only)
+
+The temporal upscaler in Nightjar's offline evaluation harness
+(client/tools/temporal_upscaler/upscalers.py, TemporalUpscaler._upscale) adapts the upscale
+pass of Qualcomm's Snapdragon Game Super Resolution 2
+(https://github.com/SnapdragonStudios/snapdragon-gsr, commit d926f074,
+sgsr/v2/include/glsl_2_pass_fs/sgsr2_upscale.fs): its sample weights, neighbourhood box and
+history blend. Copyright (c) 2024, Qualcomm Innovation Center, Inc. BSD-3-Clause; the full
+notice is in client/tools/temporal_upscaler/LICENSE-SGSR2.txt. Nothing from it ships in the
+apps.
