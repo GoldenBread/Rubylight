@@ -1,4 +1,5 @@
 //! Bounded per-session measurements. No sampling thread or disk writes.
+use crate::stutter_report::{Picture, Report as StutterReport, Totals as StutterTotals};
 use serde_json::{Value, json};
 use std::{
     collections::VecDeque,
@@ -330,6 +331,10 @@ pub struct Performance {
     /// 0x5539 statistical FEC reports, which `fec_reports` (0x5502) doesn't count.
     fec_loss_reports: u64,
     fec_loss_refused_reports: u64,
+    /// The stream's stutter report over the windows that ended.
+    stutter: StutterTotals,
+    /// The send time of the newest picture already counted in `stutter`.
+    stutter_at: Option<Instant>,
 }
 impl Performance {
     /// Counts one 0x5539 statistical FEC report: taken (also when only logged),
@@ -530,6 +535,50 @@ impl Performance {
         {
             self.stages.pop_front();
         }
+    }
+    /// Adds every picture recorded since the previous call to the stream's
+    /// stutter report: one five-second window. Fewer pictures than
+    /// [`crate::stutter_report::MIN_PICTURES`] wait for the next call, so a
+    /// short window is not judged against itself. Call every five seconds;
+    /// each picture counts once, and the report also reads what this has not
+    /// counted yet.
+    pub fn advance_stutter(&mut self, now: Instant, period: Duration) {
+        let pictures: Vec<Picture> = self.uncounted_stutter().collect();
+        if pictures.len() < crate::stutter_report::MIN_PICTURES {
+            return;
+        }
+        self.stutter.add(&pictures, period);
+        self.stutter_at = Some(now);
+    }
+    /// The stream's stutter report so far, including the pictures recorded
+    /// since the last [`advance_stutter`](Self::advance_stutter), which the
+    /// report for the console needs and the five-second call has not counted.
+    pub fn stutter_report(&self, period: Duration) -> StutterReport {
+        let mut totals = self.stutter.clone();
+        let pictures: Vec<Picture> = self.uncounted_stutter().collect();
+        totals.add(&pictures, period);
+        totals.report()
+    }
+    /// A new stream size or rate has its own usual path: `now` is when the
+    /// switch happened and `period` the mode before it, whose last window is
+    /// counted against its own usual first. The next window is its own
+    /// baseline, so the new mode's first slower windows are not reported as a
+    /// stutter against the old one. The totals stay.
+    pub fn forget_stutter_usual(&mut self, now: Instant, period: Duration) {
+        let pictures: Vec<Picture> = self.uncounted_stutter().collect();
+        if pictures.len() >= crate::stutter_report::MIN_PICTURES {
+            self.stutter.add(&pictures, period);
+        }
+        self.stutter.forget_usual();
+        // Pictures recorded before the switch are not the new mode's usual.
+        self.stutter_at = Some(now);
+    }
+    /// The pictures the next stutter window counts.
+    fn uncounted_stutter(&self) -> impl Iterator<Item = Picture> + '_ {
+        self.stages
+            .iter()
+            .filter(|sample| self.stutter_at.is_none_or(|at| sample.at > at))
+            .map(|sample| Picture::of(&sample.micros))
     }
     /// Copies what `snapshot` reports. The send path records into this under
     /// the same lock, so callers take the window, release the lock, and sort

@@ -145,6 +145,7 @@ The host says what it offers in three places: serverinfo fields ([`serverinfo_fi
 | A stalled stream thread | `rust/host/src/stall_watch.rs` logs where it is. |
 | Console warnings | `rust/host/src/host_warnings.rs`, kept in `host-warnings.json` until dismissed |
 | Per-frame timings | `BUTTERPOLLO_TIMING_RECORD` writes the [timing record](timing-record.md); `rust/release/timing_report.py` turns host and receiver records into a stage table. |
+| Which stage lost the stream's time | The console's **Stream details & performance**, the end-of-stream `stream stutter report` line, and `rust/core/src/stutter_report.rs` over the stage samples `rust/core/src/performance.rs` keeps. |
 | A stream run | `rust/release/e2e.py` leaves `result.json`, `frames.csv` and the host's record in the run's folder. |
 | Faults on purpose | `rust/host/src/soak_fault.rs` (debug hosts only) and the send switches `BUTTERPOLLO_TEST_SEND_LOSS`, `BUTTERPOLLO_TEST_SEND_JITTER` and `BUTTERPOLLO_TEST_SEND_OUTAGE` |
 

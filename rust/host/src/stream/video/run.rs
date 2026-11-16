@@ -785,6 +785,9 @@ impl SessionThread<'_> {
                     *s.output.write().unwrap() = prepared.output();
                     if Instant::now() >= timing_due {
                         timing_due = Instant::now() + Duration::from_secs(5);
+                        // The stage samples of these five seconds into the
+                        // stream's stutter report, whatever the log level.
+                        s.stats.performance.lock().unwrap().advance_stutter(Instant::now(), stream_period.get());
                         if timings_logged {
                             // Sorted after the lock the sender records into is released.
                             let window = s.stats.performance.lock().unwrap().window(Instant::now());
@@ -1646,6 +1649,9 @@ impl SessionThread<'_> {
                     }
                 };
                 if rebuilt && let Some((from, started)) = switching.take() {
+                    // The new size or rate has its own usual path; the old one
+                    // would report its first slower windows as a stutter.
+                    s.stats.performance.lock().unwrap().forget_stutter_usual(Instant::now(), from.period());
                     s.rate_changes.lock().unwrap().switched(butterpollo_core::reconfigure::Mode::of(&stream), None);
                     tracing::info!(
                         client = %s.launch.client.name,

@@ -108,6 +108,33 @@ test('a bitrate cut for a standing queue says so on the card', () => {
   assert.doesNotMatch(loss, /held back in a queue/);
 });
 
+const stutter = (changes = {}) => ({
+  windows: 4, pictures: 54_000, late_pictures: 12, lost_ms: 124.6, dominant: 'encode',
+  stages: [
+    { id: 'encode', lost_ms: 76.8, percent: 62 },
+    { id: 'send', lost_ms: 37.4, percent: 30 },
+    { id: 'capture', lost_ms: 10.4, percent: 8 },
+  ],
+  not_measured: ['game', 'network', 'decode', 'present'],
+  ...changes,
+});
+
+test('the card names the stage that took the time pictures lost against the stream\'s own path', () => {
+  const result = html({ stutter: stutter() });
+  assert.match(result, /<dt[^>]*>Where pictures lost time<\/dt>/);
+  assert.match(result, /62% in encoding/);
+  assert.match(result, />12<\/span> of/);
+  assert.match(result, />54000<\/span> new pictures took longer than this stream's usual path/);
+  assert.match(result, /125 ms<\/span>/);
+  assert.match(result, /62% of it in encoding\./);
+  assert.match(result, /The network and the device come after the host's last packet\./);
+  const clean = html({ stutter: stutter({ late_pictures: 0, lost_ms: 0, dominant: null, stages: [] }) });
+  assert.match(clean, /Where pictures lost time<\/dt>/);
+  assert.match(clean, /No new picture took longer than this stream's usual path\./);
+  assert.doesNotMatch(html(), /Where pictures lost time/);
+  assert.doesNotMatch(html({ stutter: stutter({ pictures: 0 }) }), /Where pictures lost time/);
+});
+
 test('pipeline frame rates show each host stage, a dash for one the host cannot count', () => {
   assert.doesNotMatch(html(), /Pipeline frame rates/);
   const result = html({ pipeline_rates: {

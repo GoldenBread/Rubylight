@@ -3016,3 +3016,58 @@ fn arrival_feedback_turns_the_ledger_on_and_a_client_bitrate_turns_it_off() {
     s.rebuild_congestion(&s.config, true, 0, false);
     assert!(!s.congestion_active());
 }
+
+#[test]
+fn the_session_info_names_the_stage_that_took_the_time_pictures_lost() {
+    use crate::performance::Stamps;
+    use std::time::Duration;
+    let session = Session::new(launch("stutter", Role::Stream), Negotiated::default());
+    let start = Instant::now();
+    let stamped = |stages: [u64; 9], at: Instant| {
+        let mut points = [at; 10];
+        for (index, us) in stages.into_iter().enumerate() {
+            points[index + 1] = points[index] + Duration::from_micros(us);
+        }
+        Stamps {
+            presented: points[0],
+            acquired: points[1],
+            published: points[2],
+            claimed: points[3],
+            submitted: points[4],
+            encoded: points[5],
+            packetized: points[6],
+            prepared: points[7],
+            first_sent: points[8],
+            last_sent: points[9],
+            streamed: None,
+        }
+    };
+    {
+        let mut performance = session.stats.performance.lock().unwrap();
+        for n in 0..60 {
+            // capture, hold, claim, convert, encode, queue, packetize, send queue, send
+            let mut stages = [1_000, 20, 5, 300, 4_000, 10, 40, 50, 500];
+            if n == 20 {
+                stages[4] = 24_000;
+            }
+            performance.record_stages(&stamped(stages, start + Duration::from_millis(n)), 0);
+        }
+    }
+    let info = session.info();
+    assert_eq!(info["stutter"]["pictures"], 60);
+    assert_eq!(info["stutter"]["late_pictures"], 1);
+    assert_eq!(info["stutter"]["dominant"], "encode");
+    assert_eq!(info["stutter"]["lost_ms"], 20.0);
+    assert_eq!(
+        info["stutter"]["stages"],
+        serde_json::json!([{ "id": "encode", "lost_ms": 20.0, "percent": 100 }])
+    );
+    assert_eq!(
+        info["stutter"]["not_measured"],
+        serde_json::json!(["game", "network", "decode", "present"])
+    );
+    // A stream that has not sent a picture yet has nothing to show.
+    let empty = Session::new(launch("cold", Role::Stream), Negotiated::default());
+    assert_eq!(empty.info()["stutter"]["pictures"], 0);
+    assert_eq!(empty.info()["stutter"]["dominant"], serde_json::Value::Null);
+}
