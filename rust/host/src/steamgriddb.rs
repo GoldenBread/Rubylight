@@ -243,6 +243,16 @@ pub fn take_conf_key(h: &Shared, config: &mut butterpollo_core::config::Config) 
     let Some(key) = config.steamgriddb_api_key().map(str::to_owned) else {
         return Ok(false);
     };
+    let saved = std::fs::read_to_string(key_file(h)).ok();
+    if saved
+        .as_deref()
+        .and_then(sgdb::key)
+        .is_some_and(|saved| saved != key)
+    {
+        tracing::info!(
+            "the SteamGridDB API key typed into sunshine.conf replaces the one saved in the console"
+        );
+    }
     store_key(h, Some(&key))?;
     config.values.remove(sgdb::KEY_SETTING);
     key_changed(h);

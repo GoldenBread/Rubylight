@@ -69,7 +69,13 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
             next.update(&object)?;
             next.check_saved(object.keys())?;
             // A key typed into sunshine.conf by hand moves out at any save.
-            crate::steamgriddb::take_conf_key(h, &mut next)?;
+            // A failed move keeps the key there and still saves the other settings.
+            if let Err(error) = crate::steamgriddb::take_conf_key(h, &mut next) {
+                tracing::warn!(
+                    error = %format!("{error:#}"),
+                    "the SteamGridDB API key could not be moved out of sunshine.conf"
+                );
+            }
             if let Some(key) = &steamgriddb_key {
                 crate::steamgriddb::store_key(h, Some(key))?;
                 crate::steamgriddb::key_changed(h);
