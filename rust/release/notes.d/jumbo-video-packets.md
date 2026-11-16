@@ -1,0 +1,3 @@
+# Jumbo video packets
+
+- **Larger video packets for clients that ask.** On a path whose interface MTU is above 1500 bytes and whose peer is on-link, the host lists `MaxVideoPacket` in serverinfo and the stream's `x-rl-max-packet-size` in DESCRIBE. Nightjar can then ask for up to 8192-byte video packets, so the stream sends far fewer packets at the same bitrate. The host refuses fragmentation on a jumbo video socket and reports a datagram the path refuses as a `network_mtu` warning without ending the stream. Stock Moonlight clients ignore the fields and keep 1400-byte packets; a 1500-byte path (Wi-Fi, a tunnel or an unknown route) offers nothing.
