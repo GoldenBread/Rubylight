@@ -397,6 +397,11 @@ pub struct Media {
     captures: Mutex<HashMap<CaptureKey, Weak<Source>>>,
     control_port: u16,
     bind: IpAddr,
+    /// The control worker's answer to [`Media::clients_told_of_shutdown`].
+    shutdown_requested: AtomicBool,
+    shutdown_told: std::sync::atomic::AtomicUsize,
+    shutdown_elapsed_ms: std::sync::atomic::AtomicU64,
+    shutdown_done: AtomicBool,
     /// Roaming seqs of the launches, kept across control worker restarts so no launch key
     /// repeats a nonce.
     roam_seqs: butterpollo_core::roaming::SeqMemory,
@@ -536,6 +541,26 @@ impl Media {
         self.bind
     }
 
+    /// Host shutdown: the control worker tells every client that its stream ends, its
+    /// forwarded USB devices detaching first, through the path a normal stop uses. Wakes
+    /// the worker and waits up to `wait` for it. Returns the clients told and how long
+    /// telling them took, in milliseconds; `None` when the worker had not finished then.
+    pub fn clients_told_of_shutdown(&self, wait: Duration) -> Option<(usize, u64)> {
+        self.shutdown_requested.store(true, Ordering::Release);
+        let _ = self.control_wake.send(&[1]);
+        let deadline = Instant::now() + wait;
+        while !self.shutdown_done.load(Ordering::Acquire) {
+            if Instant::now() >= deadline {
+                return None;
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        Some((
+            self.shutdown_told.load(Ordering::Acquire),
+            self.shutdown_elapsed_ms.load(Ordering::Acquire),
+        ))
+    }
+
     pub fn new(h: Shared, bind: IpAddr) -> Result<Arc<Self>> {
         let ports = h.config.read().unwrap().ports()?;
         let video = ReplySocket::new(crate::network::udp((bind, ports.video).into())?)?;
@@ -567,6 +592,10 @@ impl Media {
             captures: Mutex::new(HashMap::new()),
             control_port: ports.control,
             bind,
+            shutdown_requested: AtomicBool::new(false),
+            shutdown_told: std::sync::atomic::AtomicUsize::new(0),
+            shutdown_elapsed_ms: std::sync::atomic::AtomicU64::new(0),
+            shutdown_done: AtomicBool::new(false),
             roam_seqs: Default::default(),
         });
         for is_audio in [false, true] {

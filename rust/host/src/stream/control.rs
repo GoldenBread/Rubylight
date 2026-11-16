@@ -58,6 +58,10 @@ pub(super) fn expects_enet_control(session: &Session) -> bool {
 /// without peers already woke this often.
 pub(super) const UNATTENDED_SWEEP: Duration = Duration::from_millis(250);
 
+/// How long a host shutdown waits for the clients it told to acknowledge the termination
+/// before it ends their peers. A shutdown gets a second for this.
+const NOTICE_ACK_WAIT: Duration = Duration::from_millis(200);
+
 /// When the control worker looks for sessions without a control peer: when a peer
 /// came or went, and otherwise every [`UNATTENDED_SWEEP`], not on every input pass.
 pub(super) struct UnattendedSweep {
@@ -307,6 +311,20 @@ impl Media {
         let mut unattended_sweep = UnattendedSweep::new(Instant::now());
         while !h.stop.load(Ordering::Acquire) {
             while self.control_wake_receiver.recv(&mut [0]).is_ok() {}
+            // The host stops before `h.stop` is set (Ctrl+C): every client hears it, as it
+            // would if the maintenance loop had set the flag.
+            if self.shutdown_requested.load(Ordering::Acquire) {
+                self.tell_clients_of_shutdown(&h, &mut host, &mut peers);
+                // The clients told above have only `disconnect_later` queued, and a peer
+                // whose session had already stopped was told nothing: end every peer now,
+                // as the normal exit does, and send what telling them queued.
+                for (peer, p) in std::mem::take(&mut peers) {
+                    host.peer_mut(peer).disconnect_now(0);
+                    drop(p);
+                }
+                host.flush();
+                return Ok(());
+            }
             expire_controllers(&h, &mut controller_cleanup);
             let (ping_timeout, client_roaming) = {
                 let c = h.config.read().unwrap();
@@ -1204,40 +1222,7 @@ impl Media {
                             tracing::warn!(client=%s.launch.client.name,"client control stream timed out");
                             s.fail("the client's control stream timed out");
                         }
-                        host.socket_mut().roaming.set_stopping(&p.id);
-                        // Its forwarded USB devices detach, and the client hears so before the
-                        // termination.
-                        for usb in h.usb.end_session(&p.id) {
-                            let sent = usb
-                                .encode()
-                                .context("the USB message does not encode")
-                                .and_then(|payload| {
-                                    p.encrypt(
-                                        &s,
-                                        butterpollo_core::usb_forward::USB_MESSAGE_TYPE,
-                                        &payload,
-                                    )
-                                })
-                                .and_then(|message| {
-                                    host.peer_mut(*peer_id)
-                                        .send(0, &Packet::new(message, PacketKind::Reliable))
-                                        .map_err(|e| anyhow::anyhow!("{e}"))
-                                });
-                            if let Err(e) = sent {
-                                tracing::warn!(error = %format!("{e:#}"), ?usb, "USB message not sent");
-                            }
-                        }
-                        // Before the client hears it: it asks `/serverinfo` for the reason then.
-                        h.record_failure(&s);
-                        let reason = s.termination_reason();
-                        if let Ok(message) = p.encrypt(&s, 0x0109, &reason.to_be_bytes()) {
-                            let peer = host.peer_mut(*peer_id);
-                            let _ = peer.send(0, &Packet::new(message, PacketKind::Reliable));
-                            peer.disconnect_later(0);
-                        } else {
-                            host.peer_mut(*peer_id).disconnect_now(0);
-                        }
-                        s.stop();
+                        tell_client_stopping(&h, &mut host, *peer_id, p, &s);
                         remove.push(*peer_id);
                         continue;
                     }
@@ -1782,12 +1767,111 @@ impl Media {
                 input_timer.until(now + Duration::from_millis(timeout.max(1) as u64));
             }
         }
+        // The host stops: every client hears its forwarded USB devices detach and the
+        // 0x0109 termination through the path a normal stop uses, before the control
+        // socket closes. `Media::clients_told_of_shutdown` waits a second for this.
+        self.tell_clients_of_shutdown(&h, &mut host, &mut peers);
         for (peer, p) in peers {
             host.peer_mut(peer).disconnect_now(0);
             drop(p);
         }
         Ok(())
     }
+
+    /// Tells every client whose stream is live that the host stops, through the path a
+    /// normal stop uses, waits briefly for them to acknowledge it, and records the count and
+    /// time for [`Media::clients_told_of_shutdown`]. A session already stopping was told by
+    /// the normal path, and its control peer may have gone with it.
+    fn tell_clients_of_shutdown(
+        &self,
+        h: &Shared,
+        host: &mut Host<ControlSocket>,
+        peers: &mut HashMap<PeerID, ControlPeer>,
+    ) {
+        let started = Instant::now();
+        let mut told = 0;
+        for (peer_id, p) in peers.iter_mut() {
+            let s = {
+                let sessions = h.sessions.lock().unwrap();
+                sessions.active.get(&p.id).cloned()
+            }
+            .or_else(|| p.session.clone());
+            let Some(s) = s else { continue };
+            if s.stopping() {
+                continue;
+            }
+            if tell_client_stopping(h, host, *peer_id, p, &s) {
+                told += 1;
+            }
+        }
+        if told > 0 {
+            host.flush();
+            // ENet sends the disconnect `tell_client_stopping` queued only once the
+            // termination is acknowledged. Wait for that (or a short deadline), so each
+            // client dispatches the notice before the caller ends its peer: ending a peer
+            // whose notice it has not dispatched drops the notice with its queue.
+            let deadline = Instant::now() + NOTICE_ACK_WAIT;
+            while Instant::now() < deadline
+                && peers
+                    .keys()
+                    .any(|peer| host.peer(*peer).state() == PeerState::DisconnectLater)
+            {
+                let _ = host.service();
+                thread::sleep(Duration::from_millis(1));
+            }
+        }
+        self.shutdown_told.store(told, Ordering::Release);
+        self.shutdown_elapsed_ms
+            .store(started.elapsed().as_millis() as u64, Ordering::Release);
+        self.shutdown_done.store(true, Ordering::Release);
+    }
+}
+
+/// Tells `p`'s client that its stream ends: its forwarded USB devices detach first, then the
+/// 0x0109 termination, and the session stops. A normal stop and the host's shutdown both go
+/// through here. True when the termination was queued for it.
+fn tell_client_stopping(
+    h: &Shared,
+    host: &mut Host<ControlSocket>,
+    peer_id: PeerID,
+    p: &mut ControlPeer,
+    s: &Arc<Session>,
+) -> bool {
+    host.socket_mut().roaming.set_stopping(&p.id);
+    // Its forwarded USB devices detach, and the client hears so before the
+    // termination.
+    for usb in h.usb.end_session(&p.id) {
+        let sent = usb
+            .encode()
+            .context("the USB message does not encode")
+            .and_then(|payload| {
+                p.encrypt(s, butterpollo_core::usb_forward::USB_MESSAGE_TYPE, &payload)
+            })
+            .and_then(|message| {
+                host.peer_mut(peer_id)
+                    .send(0, &Packet::new(message, PacketKind::Reliable))
+                    .map_err(|e| anyhow::anyhow!("{e}"))
+            });
+        if let Err(e) = sent {
+            tracing::warn!(error = %format!("{e:#}"), ?usb, "USB message not sent");
+        }
+    }
+    // Before the client hears it: it asks `/serverinfo` for the reason then.
+    h.record_failure(s);
+    let reason = s.termination_reason();
+    let told = if let Ok(message) = p.encrypt(s, 0x0109, &reason.to_be_bytes()) {
+        let peer = host.peer_mut(peer_id);
+        let sent = peer
+            .send(0, &Packet::new(message, PacketKind::Reliable))
+            .is_ok();
+        peer.disconnect_later(0);
+        sent
+    } else {
+        host.peer_mut(peer_id).disconnect_now(0);
+        false
+    };
+    s.stop();
+    told
 }
 
 /// Before `p`'s input is applied: the keyboard layout follows saves of `keyboard_layout`

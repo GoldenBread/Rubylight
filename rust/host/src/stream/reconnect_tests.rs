@@ -1125,6 +1125,8 @@ struct Client {
     /// Rounds the worker finished: one that began before a switch was flipped ends by the next.
     rounds: Arc<AtomicUsize>,
     reason: Arc<AtomicU32>,
+    /// Kinds of every control message the host sent, in arrival order.
+    kinds: Arc<Mutex<Vec<u16>>>,
     /// Link notices (0x5538) the host sent, with their arrival times.
     notices: Notices,
     /// HDR mode messages (0x010e) the host sent.
@@ -1165,6 +1167,7 @@ impl Client {
         let frames = Arc::new(AtomicUsize::new(0));
         let rounds = Arc::new(AtomicUsize::new(0));
         let reason = Arc::new(AtomicU32::new(0));
+        let kinds = Arc::new(Mutex::new(Vec::new()));
         let notices = Arc::new(Mutex::new(Vec::new()));
         let hdr_modes = Notices::default();
         let text_notices = Notices::default();
@@ -1204,6 +1207,7 @@ impl Client {
             reason.clone(),
         );
         let (worker_notices, worker_outbox) = (notices.clone(), outbox.clone());
+        let worker_kinds = kinds.clone();
         let worker_hdr_modes = hdr_modes.clone();
         let worker_text_notices = text_notices.clone();
         let worker_rate_answers = rate_answers.clone();
@@ -1228,6 +1232,7 @@ impl Client {
                             packet.data(),
                             false,
                         )?;
+                        worker_kinds.lock().unwrap().push(kind);
                         if kind == 0x0109 {
                             worker_reason.store(
                                 u32::from_be_bytes(payload[..4].try_into()?),
@@ -1339,6 +1344,7 @@ impl Client {
             frames,
             rounds,
             reason,
+            kinds,
             notices,
             hdr_modes,
             text_notices,

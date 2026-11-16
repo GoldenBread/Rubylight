@@ -210,6 +210,76 @@ async fn a_host_stop_leaves_nothing_behind() -> Result<()> {
     h.empty().await
 }
 
+/// The shutdown notice reaches each live client in order: its forwarded USB devices detach
+/// before the 0x0109 termination, the worker counts it as told, and its control peer is
+/// disconnected rather than left with a queued disconnect.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_host_shutdown_detaches_usb_before_it_tells_the_client() -> Result<()> {
+    let h = Harness::new(10_000, 1).await?;
+    let (session, client) = streaming(&h).await?;
+    // A forwarded device still waiting for its tunnel: ending it needs no USB/IP driver.
+    let (vhci, _connections) = crate::usb_forward::tests::FakeVhci::new(true);
+    h.h.usb.set_vhci(vhci);
+    let mut paired = h.h.paired.read().unwrap().clients[0].clone();
+    paired
+        .extra
+        .insert("allow_usb".into(), serde_json::Value::Bool(true));
+    h.h.usb.on_message(
+        &session.launch.id,
+        &paired,
+        true,
+        8,
+        butterpollo_core::usb_forward::UsbMessage::AttachRequest {
+            request_id: 7,
+            vid: 0x0781,
+            pid: 0x5581,
+            class: 8,
+            speed: 3,
+            busid: "1-1".into(),
+            name: "Flash drive".into(),
+        },
+    );
+    // The answer to the attach is not part of the shutdown notice.
+    assert!(!h.h.usb.take(&session.launch.id, Instant::now()).is_empty());
+
+    let told = h
+        .media
+        .as_ref()
+        .unwrap()
+        .clients_told_of_shutdown(Duration::from_secs(5))
+        .context("the control worker did not finish telling its clients")?;
+    assert_eq!(told.0, 1, "one live stream is told");
+    until("the termination reaches the client", WAIT, || {
+        client.reason.load(Ordering::Acquire) != 0
+    })
+    .await;
+    assert_eq!(client.reason.load(Ordering::Acquire), CLOSED);
+    let kinds = client.kinds.lock().unwrap().clone();
+    let termination = kinds
+        .iter()
+        .position(|&kind| kind == 0x0109)
+        .context("the client heard no termination")?;
+    assert!(
+        termination >= 2,
+        "the termination came before the USB detaches: {kinds:?}"
+    );
+    assert_eq!(
+        &kinds[termination - 2..termination],
+        &[
+            butterpollo_core::usb_forward::USB_MESSAGE_TYPE,
+            butterpollo_core::usb_forward::USB_MESSAGE_TYPE,
+        ],
+        "{kinds:?}"
+    );
+    until("the host disconnects the control peer", WAIT, || {
+        client.disconnected.load(Ordering::Acquire)
+    })
+    .await;
+    drop(client);
+    // The shutdown ended the stream; no `finish` runs a new launch on a stopping host.
+    h.empty().await
+}
+
 /// End session from the console or another device's native API.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_kick_leaves_nothing_behind() -> Result<()> {

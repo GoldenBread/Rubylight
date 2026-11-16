@@ -587,7 +587,7 @@ async fn run(args: Args, assets: PathBuf) -> Result<()> {
         })
     };
     // None when the setting is off or the port is taken; the console says which.
-    let webrtc = webrtc::server::start(h.clone(), bind, Some(media));
+    let webrtc = webrtc::server::start(h.clone(), bind, Some(media.clone()));
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         web_port = ports.web,
@@ -625,14 +625,28 @@ async fn run(args: Args, assets: PathBuf) -> Result<()> {
         },
         _=runtime::maintain(h.clone(), stop_signal, actions, ports.web)=>Ok(())
     };
-    h.stop.store(true, Ordering::Release);
-    // A launch still running its preparation commands stops too, at once: the undo commands of
-    // those that finished run while the host shuts down, and it starts no game.
-    h.stop_launch_for_shutdown();
     // The service ends the host 20 s after it asked it to stop (`shutdown_host`). Every wait
     // below takes at most what is left of SHUTDOWN_WAITS, so the host finishes on its own.
     let shutdown_deadline = Instant::now() + SHUTDOWN_WAITS;
     let left = |cap: Duration| cap.min(shutdown_deadline.saturating_duration_since(Instant::now()));
+    // Clients hear the host stop before its sockets close: the control worker sends the USB
+    // detaches and the 0x0109 termination through the path a normal stop uses, within what is
+    // left of a second. What it could not tell then ends with the process, as before.
+    match media.clients_told_of_shutdown(left(Duration::from_secs(1))) {
+        Some((clients, elapsed_ms)) => {
+            tracing::info!(clients, elapsed_ms, "shutdown: clients told")
+        }
+        None => tracing::warn!(
+            "shutdown: the control worker had not told the clients when its wait ran out"
+        ),
+    }
+    // Forwarded USB devices end with the host too, including any a session without a control
+    // peer still held; the clients told above detach theirs already.
+    h.usb.disable();
+    h.stop.store(true, Ordering::Release);
+    // A launch still running its preparation commands stops too, at once: the undo commands of
+    // those that finished run while the host shuts down, and it starts no game.
+    h.stop_launch_for_shutdown();
     // UPnP mappings and IPv6 pinholes come down while the rest shuts down.
     if let Some(port_forward) = &port_forward {
         port_forward.stop();

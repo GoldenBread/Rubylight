@@ -370,8 +370,8 @@ fn restore_with(
     if previous.is_some_and(|name| name.eq_ignore_ascii_case(applied)) {
         return Ok(());
     }
-    if api
-        .get(monitor, system)?
+    let current = api.get(monitor, system)?;
+    if current
         .as_deref()
         .is_some_and(|current| current.eq_ignore_ascii_case(applied))
     {
@@ -380,6 +380,14 @@ fn restore_with(
         } else {
             api.remove(monitor, system, applied)?;
         }
+    } else {
+        tracing::info!(
+            output = %monitor.display_name,
+            previous = previous.unwrap_or("none"),
+            applied,
+            current = current.as_deref().unwrap_or("none"),
+            "leaving the HDR profile as it is; the display no longer has the profile the stream applied"
+        );
     }
     Ok(())
 }
