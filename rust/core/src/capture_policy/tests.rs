@@ -1,31 +1,121 @@
 use super::*;
+/// The decision as the capture worker makes it: the Capture method setting, the open
+/// backend, whether the target is the display, the time without a picture, what is in
+/// front of that display and whether Windows reports an exclusive-fullscreen app.
+fn switches(
+    capture: &str,
+    backend: &str,
+    display: bool,
+    idle: Duration,
+    in_front: InFront,
+    exclusive_fullscreen: bool,
+) -> bool {
+    duplication_for_fullscreen(
+        automatic_capture(capture),
+        backend,
+        display,
+        idle,
+        in_front,
+        exclusive_fullscreen,
+    )
+}
 #[test]
-fn a_fullscreen_app_freezes_wgc_but_not_desktop_duplication() {
+fn only_an_automatic_stream_moves_to_duplication_for_an_exclusive_fullscreen_app() {
     let stalled = FULLSCREEN_STALL;
-    // A fullscreen app over a streamed display while WGC sends nothing: its picture
-    // reaches the display, not the compositor WGC reads.
-    assert!(duplication_for_fullscreen("wgc", true, stalled, true));
-    assert!(duplication_for_fullscreen(
+    // The reported case: Automatic, WGC of the display, an exclusive-fullscreen emulator
+    // covering it and no picture for 2 s.
+    assert!(switches(
+        "auto",
+        "wgc",
+        true,
+        stalled,
+        InFront::Covering,
+        true
+    ));
+    assert!(switches(
+        "",
         "wgc",
         true,
         stalled + Duration::from_secs(30),
+        InFront::Covering,
         true
     ));
+    // An explicit method is the user's choice, including for the one-reconnect
+    // Windows Graphics Capture against Desktop Duplication comparison.
+    for explicit in ["wgc", "wgcc", "ddx", "dxgi", "idd-push", "amd"] {
+        assert!(
+            !switches(explicit, "wgc", true, stalled, InFront::Covering, true),
+            "{explicit}"
+        );
+    }
+    for automatic in ["", "auto", " AUTO ", "Auto"] {
+        assert!(automatic_capture(automatic), "{automatic}");
+    }
+    for explicit in ["wgc", "wgcc", "ddx", "dxgi", "idd-push", "amd", "other"] {
+        assert!(!automatic_capture(explicit), "{explicit}");
+    }
     // A budget for a mode change, a busy GPU or a game leaving fullscreen.
-    assert!(!duplication_for_fullscreen(
+    assert!(!switches(
+        "auto",
         "wgc",
         true,
         stalled - Duration::from_millis(1),
+        InFront::Covering,
         true
     ));
-    // The last picture is still right while the desktop itself is static, and a windowed
-    // app never presents past the compositor.
-    assert!(!duplication_for_fullscreen("wgc", true, stalled, false));
-    // A window target is captured by WGC whatever else runs, and only a display can be
-    // duplicated; the display driver's push and Desktop Duplication already read it.
-    assert!(!duplication_for_fullscreen("wgc", false, stalled, true));
+}
+#[test]
+fn a_static_desktop_a_paused_borderless_game_and_a_window_never_qualify() {
+    let stalled = FULLSCREEN_STALL;
+    // An idle desktop: Windows reports the shell window (Progman) as the foreground
+    // window, and WGC sends nothing for a desktop that does not change.
+    assert!(!switches(
+        "auto",
+        "wgc",
+        true,
+        stalled,
+        InFront::Nothing,
+        true
+    ));
+    // A paused or loading borderless game keeps its picture without presenting, and
+    // Windows reports no exclusive-fullscreen app for a borderless window.
+    assert!(!switches(
+        "auto",
+        "wgc",
+        true,
+        stalled,
+        InFront::Covering,
+        false
+    ));
+    // Another program's window beside the streamed display, while some other app is in
+    // exclusive fullscreen.
+    assert!(!switches(
+        "auto",
+        "wgc",
+        true,
+        stalled,
+        InFront::Partial,
+        true
+    ));
+    // One app's window is captured by WGC whatever runs, and only a display can be
+    // duplicated; the display driver's push and Desktop Duplication read it already.
+    assert!(!switches(
+        "auto",
+        "wgc",
+        false,
+        stalled,
+        InFront::Covering,
+        true
+    ));
     for backend in ["ddx", "idd-push", "amd", "closed"] {
-        assert!(!duplication_for_fullscreen(backend, true, stalled, true));
+        assert!(!switches(
+            "auto",
+            backend,
+            true,
+            stalled,
+            InFront::Covering,
+            true
+        ));
     }
 }
 #[test]

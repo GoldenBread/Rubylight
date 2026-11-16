@@ -126,9 +126,9 @@ const video: Setting[] = [
     key: 'capture',
     label: 'Capture method',
     description:
-      'Automatic suits almost everyone: direct driver push on Rubylight virtual displays, Windows Graphics Capture on other displays. Choose another method only to troubleshoot.',
+      'Automatic suits almost everyone: direct driver push on virtual displays, Windows Graphics Capture elsewhere, Desktop Duplication when needed. Choose another method to troubleshoot.',
     details:
-      'Direct driver push receives frames from Rubylight\'s own virtual display driver, with no capture copy. If unavailable, it falls back to Windows Graphics Capture, then Desktop Duplication if needed. Choosing Windows Graphics Capture or Desktop Duplication bypasses driver push. AMD Direct Capture reads the Radeon driver\'s presented picture on a display connected to a Radeon; without it, capture falls back to Windows Graphics Capture with a warning. Automatic never selects it. No method streams frame generation\'s extra frames, such as AMD Fluid Motion Frames.',
+      'Direct driver push receives frames from Rubylight\'s own virtual display driver, with no capture copy. If unavailable, it falls back to Windows Graphics Capture, then Desktop Duplication if needed. Choosing Windows Graphics Capture or Desktop Duplication bypasses driver push. On Automatic only, a streamed display whose Windows Graphics Capture sends no picture for 2 seconds while an exclusive-fullscreen app is in front switches to Desktop Duplication for the rest of that session: timing and HDR can differ, and a turned monitor or a display another GPU drives stays on Windows Graphics Capture. A named method is never changed, so choosing Windows Graphics Capture is how you compare the two across reconnects. AMD Direct Capture reads the Radeon driver\'s presented picture on a display connected to a Radeon; without it, capture falls back to Windows Graphics Capture with a warning. Automatic never selects it. No method streams frame generation\'s extra frames, such as AMD Fluid Motion Frames.',
     category: 'video',
     group: 'Capture',
     control: {

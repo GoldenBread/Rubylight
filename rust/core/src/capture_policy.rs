@@ -12,26 +12,63 @@ pub fn notification_wait_interval(idle: Duration, pending: bool, poll: Duration)
     }
 }
 
-/// How long a display's Windows Graphics Capture may deliver no picture while a
-/// fullscreen app is in front before Desktop Duplication takes over. Long enough that a
-/// game leaving fullscreen, a mode change or a busy GPU is not mistaken for a capture
-/// that cannot see the display, short enough that a frozen picture recovers on its own.
+/// How long a display's Windows Graphics Capture may deliver no picture while an
+/// exclusive-fullscreen app is in front before Desktop Duplication takes over. Long enough
+/// that a game leaving fullscreen, a mode change or a busy GPU is not mistaken for a
+/// capture that cannot see the display, short enough that a frozen picture recovers on its
+/// own.
 pub const FULLSCREEN_STALL: Duration = Duration::from_secs(2);
 
+/// What sits in front of the streamed display, for [`duplication_for_fullscreen`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InFront {
+    /// Nothing that can present: the desktop, one of Windows' own shell windows
+    /// (Progman, WorkerW, Shell_TrayWnd), one of the host's own windows, or no foreground
+    /// window at all (minimised, cloaked).
+    Nothing,
+    /// Another program's window that does not cover the whole display, or one whose
+    /// bounds cannot be read.
+    Partial,
+    /// Another program's window that covers the whole display.
+    Covering,
+}
+
+/// Whether the Capture method setting lets the host choose the backend: Automatic, which
+/// an unset or unrecognised value stands in for (as the frame limiter resolves them). An
+/// explicit method is the user's, including for the one-reconnect Windows Graphics
+/// Capture against Desktop Duplication comparison, and is never overridden.
+pub fn automatic_capture(capture: &str) -> bool {
+    matches!(capture.trim().to_ascii_lowercase().as_str(), "" | "auto")
+}
+
 /// Whether a display's stream should move from Windows Graphics Capture to Desktop
-/// Duplication. WGC reads the compositor's output: an app that presents straight to the
-/// display, as a fullscreen-exclusive game or emulator does, never reaches that output,
-/// so the picture stops with no error while the display keeps changing, and Desktop
-/// Duplication, which reads what the display shows, captures it. Only a window covering
-/// the whole display presents that way, so a windowed app, a window target and a merely
-/// static desktop (whose last picture is still the right one) never qualify.
+/// Duplication. WGC reads the compositor's output, so an app in exclusive fullscreen (as
+/// some games and emulators are) presents past it: the picture stops with no error while
+/// the display keeps changing, and Desktop Duplication, which reads what the display
+/// shows, captures it. Every one of these is required:
+///
+/// - the Capture method is Automatic (an explicit method stays),
+/// - the open capture is WGC of the display itself, not of one app's window,
+/// - it has sent no picture for [`FULLSCREEN_STALL`],
+/// - another program's window covers the whole display, and
+/// - Windows reports an exclusive-fullscreen app (`QUNS_RUNNING_D3D_FULL_SCREEN`).
+///
+/// A static desktop, a paused borderless game, a windowed app and a window target never
+/// qualify, and neither does a stream whose user named a method.
 pub fn duplication_for_fullscreen(
+    automatic: bool,
     backend: &str,
     display: bool,
     idle: Duration,
-    fullscreen: bool,
+    in_front: InFront,
+    exclusive_fullscreen: bool,
 ) -> bool {
-    backend == "wgc" && display && fullscreen && idle >= FULLSCREEN_STALL
+    automatic
+        && backend == "wgc"
+        && display
+        && idle >= FULLSCREEN_STALL
+        && in_front == InFront::Covering
+        && exclusive_fullscreen
 }
 
 #[derive(Default)]

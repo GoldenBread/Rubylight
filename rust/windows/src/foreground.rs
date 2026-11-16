@@ -2,6 +2,7 @@
 //! overlays, and the foreground window's process.
 
 use crate::capture::Display;
+use butterpollo_core::capture_policy::InFront;
 use std::sync::{Arc, Mutex, mpsc};
 use windows::{
     Win32::{Foundation::*, Graphics::Dwm::*, System::Threading::*, UI::WindowsAndMessaging::*},
@@ -146,43 +147,94 @@ fn fullscreen(rect: RECT, capture: [i32; 4], framed: bool) -> bool {
         && rect.bottom >= capture[3].saturating_sub(2)
 }
 
-/// Whether the foreground window covers the whole of `display` (the primary for an
-/// empty name) right now, as a fullscreen game or emulator does. Such an app can
-/// present straight to the display, which Windows Graphics Capture never sees; capture
-/// then reads the display with Desktop Duplication
-/// (`butterpollo_core::capture_policy::duplication_for_fullscreen`). Read-only: no
-/// window is touched, activated or resized.
-pub fn covers_display(display: &str) -> bool {
+/// What sits in front of `display` (the primary for an empty name) right now, for
+/// `butterpollo_core::capture_policy::duplication_for_fullscreen`: the foreground
+/// window's coverage of the display, with Windows' own shell and desktop windows and
+/// this process's own windows kept apart, since they cover it without being an app that
+/// can present past the compositor. Read-only: no window is touched, activated or
+/// resized.
+pub fn in_front(display: &str) -> InFront {
     let Some(display) = crate::capture::display_rect(display) else {
-        return false;
+        return InFront::Nothing;
     };
     // SAFETY: each call takes a window handle or no arguments, and writes only into a
     // live local of the size passed. No window state is changed.
     unsafe {
         let window = GetForegroundWindow();
-        if window.is_invalid() || IsIconic(window).as_bool() {
-            return false;
+        if window.is_invalid() {
+            return InFront::Nothing;
         }
+        let mut pid = 0;
+        GetWindowThreadProcessId(window, Some(&mut pid));
+        let mut class = [0u16; 256];
+        let count = GetClassNameW(window, &mut class).max(0) as usize;
+        // A shell window Windows reports when the desktop is focused (Progman, the
+        // taskbar's classes) or one of our own covers the display without presenting
+        // past the compositor.
+        let nothing = window == GetDesktopWindow()
+            || window == GetShellWindow()
+            || shell_class(&String::from_utf16_lossy(&class[..count]))
+            || pid == GetCurrentProcessId()
+            || IsIconic(window).as_bool();
         let mut cloaked = 0u32;
         let _ = DwmGetWindowAttribute(window, DWMWA_CLOAKED, (&mut cloaked as *mut u32).cast(), 4);
-        if cloaked != 0 {
-            return false;
-        }
         // A caption or resize border means a window, never a fullscreen picture.
         let style = GetWindowLongPtrW(window, GWL_STYLE) as u32;
         let framed = style & (WS_CAPTION.0 | WS_THICKFRAME.0) != 0;
         let mut frame = RECT::default();
-        if DwmGetWindowAttribute(
+        // SAFETY: `frame` is a live local of the size passed.
+        let readable = DwmGetWindowAttribute(
             window,
             DWMWA_EXTENDED_FRAME_BOUNDS,
             (&mut frame as *mut RECT).cast(),
             std::mem::size_of::<RECT>() as u32,
         )
-        .is_err()
-        {
-            return false;
+        .is_ok();
+        classify(
+            nothing || cloaked != 0,
+            readable.then_some(frame),
+            display,
+            framed,
+        )
+    }
+}
+
+/// [`in_front`] from values alone: `nothing` for Windows' shell and desktop windows, this
+/// process's windows, a minimised or cloaked window; otherwise `Covering` when a frame
+/// without a caption or resize border covers the whole display.
+fn classify(nothing: bool, frame: Option<RECT>, display: [i32; 4], framed: bool) -> InFront {
+    if nothing {
+        return InFront::Nothing;
+    }
+    match frame {
+        Some(frame) if fullscreen(frame, display, framed) => InFront::Covering,
+        _ => InFront::Partial,
+    }
+}
+
+/// Whether `class` is one of Windows' own shell or desktop window classes: the desktop,
+/// its WorkerW layers, the taskbar and the shell's default view. They cover the display
+/// without being an app that can present past the compositor.
+fn shell_class(class: &str) -> bool {
+    matches!(
+        class,
+        "Progman" | "WorkerW" | "SHELLDLL_DefView" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
+    )
+}
+
+/// Whether Windows reports an exclusive-fullscreen (Direct3D) app in front right now:
+/// `SHQueryUserNotificationState() == QUNS_RUNNING_D3D_FULL_SCREEN`, the state Windows
+/// uses to hold notifications back for a fullscreen game. A game in a borderless window
+/// does not set it, and a failed query reports false, which leaves capture as it is.
+pub fn exclusive_fullscreen() -> bool {
+    use windows::Win32::UI::Shell::{QUNS_RUNNING_D3D_FULL_SCREEN, SHQueryUserNotificationState};
+    // SAFETY: the call takes no arguments and writes only into its own result.
+    match unsafe { SHQueryUserNotificationState() } {
+        Ok(state) => state == QUNS_RUNNING_D3D_FULL_SCREEN,
+        Err(error) => {
+            tracing::debug!(%error, "the shell's fullscreen state is unavailable");
+            false
         }
-        fullscreen(frame, display, framed)
     }
 }
 
@@ -446,5 +498,58 @@ mod tests {
         ));
         // A maximised window keeps its caption and is no fullscreen picture.
         assert!(!fullscreen(full, display, true));
+    }
+    #[test]
+    fn the_shell_the_desktop_and_our_own_windows_are_no_fullscreen_app() {
+        let display = [-1920, 0, 0, 1080];
+        let whole = Some(RECT {
+            left: -1920,
+            top: 0,
+            right: 0,
+            bottom: 1080,
+        });
+        // The shell window Windows reports when the desktop is focused (Progman) covers
+        // the display, and an idle desktop sends WGC no picture: neither may count as an
+        // app that presents past the compositor.
+        assert_eq!(classify(true, whole, display, false), InFront::Nothing);
+        for class in [
+            "Progman",
+            "WorkerW",
+            "SHELLDLL_DefView",
+            "Shell_TrayWnd",
+            "Shell_SecondaryTrayWnd",
+        ] {
+            assert!(shell_class(class), "{class}");
+        }
+        for class in [
+            "ApplicationFrameWindow",
+            "rpcs3",
+            "RPCS3",
+            "",
+            "Progman2",
+            "workerw",
+        ] {
+            assert!(!shell_class(class), "{class}");
+        }
+        // Another program's window covering the display is the exclusive-fullscreen case.
+        assert_eq!(classify(false, whole, display, false), InFront::Covering);
+        // A maximised window keeps its caption, so it does not count.
+        assert_eq!(classify(false, whole, display, true), InFront::Partial);
+        // A window covering only half of it, or bounds that cannot be read, do not count.
+        assert_eq!(
+            classify(
+                false,
+                Some(RECT {
+                    left: -1920,
+                    top: 0,
+                    right: -960,
+                    bottom: 1080
+                }),
+                display,
+                false
+            ),
+            InFront::Partial
+        );
+        assert_eq!(classify(false, None, display, false), InFront::Partial);
     }
 }
