@@ -1,6 +1,6 @@
 // The Sessions page's wording and search, kept out of the component so the tests can
 // read them: `Sessions.test.mjs`.
-import type { SessionHistoryEntry } from './api';
+import type { SessionHistoryEntry, StreamSession } from './api';
 import { duration } from './format';
 
 /** How a session ended, in the console's words, and how loudly to say it. */
@@ -67,18 +67,35 @@ export function fpsText(value: number): string {
   return value > 0 ? `${value.toFixed(1)} fps` : '–';
 }
 
+/** The p95 figure; a dash until the host has 20 sampled seconds to take 5% of. */
+export function p95Text(value: number): string {
+  return value > 0 ? value.toFixed(1) : '–';
+}
+
 /** What the stream sent on average, else the encoder's last rate. */
 export function bitrateText(entry: SessionHistoryEntry): string {
   const kbps = entry.mean_bitrate_kbps > 0 ? entry.mean_bitrate_kbps : entry.bitrate_kbps;
   return kbps > 0 ? `${(kbps / 1000).toFixed(1)} Mbps` : '–';
 }
 
-/** The client's reported loss; finer than a tenth of a percent when it is small. */
+/** The client's reported loss; a dash when it reported nothing, never 0%. */
 export function lossText(entry: SessionHistoryEntry): string {
   const value = entry.loss_percent;
+  if (value == null) return '–';
   return `${value.toFixed(value > 0 && value < 1 ? 2 : 1)}%`;
 }
 
 export function durationText(entry: SessionHistoryEntry): string {
   return entry.duration_ms > 0 ? duration(Math.round(entry.duration_ms / 1000)) : '–';
+}
+
+/**
+ * Whether a stream the page listed is gone: its entry is in the history now.
+ * The count also catches one of two streams sharing a device's uuid leaving.
+ */
+export function aStreamEnded(before: StreamSession[] | null, after: StreamSession[]): boolean {
+  if (!before?.length) return false;
+  if (after.length < before.length) return true;
+  const running = new Set(after.map((stream) => stream.uuid));
+  return before.some((stream) => !running.has(stream.uuid));
 }

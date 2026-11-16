@@ -4,19 +4,26 @@
 //! A stream's entry is written once, when its thread tears down or its start fails, and
 //! its frame rate is sampled every second meanwhile (`Host::session_tick`). A journal
 //! left by a host that stopped mid-stream becomes an `interrupted` entry at the next
-//! start. Saving happens on the stream's own teardown thread; the console only reads.
+//! start, its duration ending at the journal's last heartbeat. A thread of its own saves
+//! the store, so a slow disk or a virus scanner never delays a stream's teardown; the
+//! console only reads.
 use crate::state::{Host, Session};
 use butterpollo_core::{
     log_analysis,
+    native_api::session::State,
     session::{Role, Transport},
     session_history::{self as history, Caps, Entry, Store},
-    session_state::{Journal, State},
+    session_state::Journal,
     timing_record::codec_name,
 };
 use std::{
     collections::{BTreeMap, VecDeque},
     path::{Path, PathBuf},
-    sync::{Mutex, PoisonError, atomic::Ordering},
+    sync::{
+        Arc, Mutex, PoisonError,
+        atomic::Ordering,
+        mpsc::{self, Receiver, Sender},
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -26,6 +33,9 @@ pub const FILE: &str = "session-history.json";
 const SAMPLE_EVERY: Duration = Duration::from_secs(1);
 /// The most frame-rate samples kept per stream: a day of seconds.
 const MAX_SAMPLES: usize = 24 * 60 * 60;
+/// The sampled seconds a `p95_fps` needs: below this the slowest second is not
+/// a percentile, so no figure is stored.
+const P95_SAMPLES: usize = 20;
 
 fn now_ms() -> u64 {
     SystemTime::now()
@@ -65,8 +75,10 @@ impl Samples {
     }
     /// The near-bottom of the sampled frame rates: 5% of the seconds ran at or
     /// below it, which is the 95th percentile of their frame times in fps.
+    /// `None` until a full 5% of seconds is one sample, so a short stream shows
+    /// no p95 rather than its single worst second.
     fn p95(&self) -> Option<f64> {
-        if self.fps.is_empty() {
+        if self.fps.len() < P95_SAMPLES {
             return None;
         }
         let mut sorted: Vec<f64> = self.fps.iter().copied().collect();
@@ -76,11 +88,21 @@ impl Samples {
     }
 }
 
+enum Message {
+    /// Save the store as it is now.
+    Save,
+    /// Answer once everything before this message was saved.
+    Flush(Sender<()>),
+}
+
 /// The saved history and the running streams' samples.
 pub struct History {
     directory: PathBuf,
-    store: Mutex<Store>,
+    store: Arc<Mutex<Store>>,
     samples: Mutex<BTreeMap<String, Samples>>,
+    /// The saver thread; `None` when it could not start, and each push then
+    /// saves on its caller.
+    saver: Option<Sender<Message>>,
 }
 impl History {
     /// Reads the history saved in `directory`. A damaged file starts from none
@@ -106,10 +128,30 @@ impl History {
             }
         };
         store.prune_with(now_ms(), Caps::default());
+        let store = Arc::new(Mutex::new(store));
+        let (saver, messages) = mpsc::channel();
+        let writer = {
+            let store = store.clone();
+            let path = path.clone();
+            std::thread::Builder::new()
+                .name("session-history".into())
+                .spawn(move || save(&store, &path, &messages))
+        };
+        let saver = match writer {
+            Ok(_) => Some(saver),
+            Err(error) => {
+                tracing::error!(
+                    %error,
+                    "the session history writer could not start; a stream saves its entry before its teardown returns"
+                );
+                None
+            }
+        };
         Self {
             directory: directory.to_owned(),
-            store: Mutex::new(store),
+            store,
             samples: Mutex::new(BTreeMap::new()),
+            saver,
         }
     }
     /// Newest first.
@@ -129,17 +171,79 @@ impl History {
             .or_default()
             .sample(frames, now);
     }
-    /// Adds an entry as the newest session and saves the history.
+    /// Adds an entry as the newest session and has it saved: on the saver thread
+    /// when it runs, so a stream's teardown never waits for the disk.
     fn push(&self, entry: Entry) {
-        let mut store = self.store.lock().unwrap_or_else(PoisonError::into_inner);
-        store.push(entry, now_ms());
-        let path = self.directory.join(FILE);
-        if let Err(error) = butterpollo_core::state::write_json(&path, &*store) {
+        self.store
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(entry, now_ms());
+        self.save();
+    }
+    fn save(&self) {
+        if let Some(saver) = &self.saver
+            && saver.send(Message::Save).is_ok()
+        {
+            return;
+        }
+        let store = self
+            .store
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        save_now(&self.directory.join(FILE), &store);
+    }
+    /// Waits until the saver wrote everything pushed before this call, up to
+    /// five seconds. For a clean shutdown and for tests.
+    pub fn flush(&self) {
+        let Some(saver) = &self.saver else {
+            return;
+        };
+        let (ack, done) = mpsc::channel();
+        if saver.send(Message::Flush(ack)).is_ok() {
+            let _ = done.recv_timeout(Duration::from_secs(5));
+        }
+    }
+}
+
+/// The saver thread: writes the newest store once per burst of messages, so a
+/// co-op session ending several streams at once writes the file once.
+fn save(store: &Mutex<Store>, path: &Path, messages: &Receiver<Message>) {
+    let mut last: Option<Store> = None;
+    while let Ok(first) = messages.recv() {
+        let mut flushes = vec![];
+        let mut handle = |message| match message {
+            Message::Save => {}
+            Message::Flush(ack) => flushes.push(ack),
+        };
+        handle(first);
+        // Only the newest store matters: drop the waits of the same burst.
+        while let Ok(message) = messages.try_recv() {
+            handle(message);
+        }
+        let store = store.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        // A failed write is retried by the next message; `last` only records
+        // what the file holds.
+        if last.as_ref() != Some(&store) && save_now(path, &store) {
+            last = Some(store);
+        }
+        for ack in flushes {
+            let _ = ack.send(());
+        }
+    }
+}
+
+/// Saves `store`; false when the file could not be written.
+fn save_now(path: &Path, store: &Store) -> bool {
+    match butterpollo_core::state::write_json(path, store) {
+        Ok(()) => true,
+        Err(error) => {
             tracing::warn!(
                 path = %path.display(),
                 error = %format!("{error:#}"),
-                "the session history could not be saved; this session stays until the host stops"
+                "the session history could not be saved; it stays in memory until the host stops"
             );
+            false
         }
     }
 }
@@ -170,7 +274,8 @@ impl Host {
     }
 
     /// Writes the entry of a stream the previous host stopped during: its journal
-    /// only knows the device, the app and when the session began.
+    /// knows the device, the app and when the session began, and its last
+    /// heartbeat ends the duration, so the host's downtime is not counted.
     pub fn record_interrupted_session(&self, journal: &Journal) {
         if journal.state != State::Streaming {
             return;
@@ -188,9 +293,19 @@ impl Host {
                 .map(|client| client.name.clone())
                 .unwrap_or_default()
         };
-        let ended_unix_ms = now_ms();
+        // A journal from a host before the heartbeat has no last-seen time: its
+        // duration is unknown (0) rather than the time until this start.
+        let ended_unix_ms = journal.last_seen_unix_ms.max(journal.since_unix_ms);
+        let detail = if journal.last_seen_unix_ms == 0 {
+            "The host stopped during the session; its duration is unknown."
+        } else {
+            "The host stopped during the session; its duration ends at the host's last minute, so the last part is not counted."
+        };
         let app = journal.app.as_ref();
         self.session_history.push(Entry {
+            // The stream's own id is left by the crash: a restart's entry needs
+            // its own, unique for the page's keyed list.
+            id: format!("interrupted-{}-{ended_unix_ms}", journal.since_unix_ms),
             device: owner.unwrap_or_default().to_owned(),
             device_name,
             app_id: app.map_or(0, |app| app.app_id),
@@ -199,7 +314,7 @@ impl Host {
             transport: String::new(),
             codec: String::new(),
             end_reason: history::REASON_INTERRUPTED.into(),
-            end_detail: "The host stopped during the session.".into(),
+            end_detail: detail.into(),
             started_unix_ms: journal.since_unix_ms,
             ended_unix_ms,
             duration_ms: ended_unix_ms.saturating_sub(journal.since_unix_ms),
@@ -213,6 +328,7 @@ fn entry(session: &Session, reason: &str, app: String, samples: Option<&Samples>
     let launch = &session.launch;
     let config = &session.config;
     let mode = session.stream_mode();
+    let started = reason != history::REASON_START_FAILED;
     let duration_ms = session.started.elapsed().as_millis() as u64;
     let seconds = duration_ms as f64 / 1000.;
     let frames = session.stats.frames.load(Ordering::Relaxed);
@@ -225,10 +341,12 @@ fn entry(session: &Session, reason: &str, app: String, samples: Option<&Samples>
             0.
         }
     });
-    let p95_fps = samples.and_then(Samples::p95).unwrap_or(mean_fps);
+    // No figure until a full 5% of the samples is one: see `Samples::p95`.
+    let p95_fps = samples.and_then(Samples::p95).unwrap_or(0.);
     // The client reports the video packets it did not receive through its FEC
-    // blocks; as a share of what the host sent, that is the loss it saw.
-    let (missing, _, _) = session
+    // blocks; as a share of what the host sent, that is the loss it saw. No
+    // valid report is not the same as no loss.
+    let fec = session
         .stats
         .performance
         .lock()
@@ -251,11 +369,21 @@ fn entry(session: &Session, reason: &str, app: String, samples: Option<&Samples>
         role: role_name(launch.role).into(),
         transport: transport_name(launch.transport).into(),
         codec: codec_name(config.codec).into(),
-        width: mode.width,
-        height: mode.height,
-        fps: mode.fps_millihz.saturating_add(500) / 1000,
+        // A stream that never started has no picture and no rate: it must not
+        // read as the request it was asked for.
+        width: if started { mode.width } else { 0 },
+        height: if started { mode.height } else { 0 },
+        fps: if started {
+            mode.fps_millihz.saturating_add(500) / 1000
+        } else {
+            0
+        },
         hdr: config.hdr,
-        bitrate_kbps: session.bitrate.load(Ordering::Relaxed),
+        bitrate_kbps: if started {
+            session.bitrate.load(Ordering::Relaxed)
+        } else {
+            0
+        },
         mean_bitrate_kbps: rounded(
             if seconds > 0. {
                 bytes as f64 * 8. / duration_ms as f64
@@ -266,14 +394,8 @@ fn entry(session: &Session, reason: &str, app: String, samples: Option<&Samples>
         ),
         mean_fps: rounded(mean_fps, 10.),
         p95_fps: rounded(p95_fps, 10.),
-        loss_percent: rounded(
-            if packets > 0 {
-                missing as f64 * 100. / packets as f64
-            } else {
-                0.
-            },
-            100.,
-        ),
+        loss_percent: (fec.reports > 0 && packets > 0)
+            .then(|| rounded(fec.missing_packets as f64 * 100. / packets as f64, 100.)),
         end_reason: reason.into(),
         end_detail: detail,
         end_category: category.map(str::to_owned),

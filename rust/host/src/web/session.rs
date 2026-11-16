@@ -50,6 +50,7 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str) -> anyhow::Result<Val
                 "sessions": h.session_history.entries(),
                 "limit": butterpollo_core::session_history::MAX_ENTRIES,
                 "days": butterpollo_core::session_history::MAX_AGE_MS / 86_400_000,
+                "bytes": butterpollo_core::session_history::MAX_BYTES,
             })
         }
         ("GET", "/api/session/status") => {

@@ -151,17 +151,17 @@ const sessionHistory = [
     end_detail: 'Stream ended: AMF error AMF_ENCODER_NOT_PRESENT (24)', started_unix_ms: (ended(14_400) - 2_640) * 1000,
     ended_unix_ms: ended(14_400) * 1000, duration_ms: 2_640_000 },
   { id: 'stream-3', device: 'deck', device_name: 'Steam Deck', app_id: 12, app: 'Hades II', role: 'stream', transport: 'moonlight',
-    codec: 'h264', width: 1280, height: 800, fps: 60, hdr: false, bitrate_kbps: 12_000, mean_bitrate_kbps: 0,
-    mean_fps: 0, p95_fps: 0, loss_percent: 0, end_reason: 'start_failed', end_category: null,
+    codec: 'h264', width: 0, height: 0, fps: 0, hdr: false, bitrate_kbps: 0, mean_bitrate_kbps: 0,
+    mean_fps: 0, p95_fps: 0, loss_percent: null, end_reason: 'start_failed', end_category: null,
     end_detail: 'the stream could not start: the app exited before its first frame', started_unix_ms: ended(90_000) * 1000,
     ended_unix_ms: ended(90_000) * 1000, duration_ms: 0 },
   { id: 'stream-4', device: 'phone', device_name: 'Pixel 9', app_id: 3, app: 'Portal 2', role: 'stream', transport: 'webrtc',
     codec: 'pyrowave', width: 2560, height: 1440, fps: 90, hdr: false, bitrate_kbps: 60_000, mean_bitrate_kbps: 58_200,
-    mean_fps: 89.1, p95_fps: 86.4, loss_percent: 0, end_reason: 'interrupted', end_category: null,
-    end_detail: 'The host stopped during the session.', started_unix_ms: (ended(259_200) - 1_500) * 1000,
-    ended_unix_ms: ended(259_200) * 1000, duration_ms: 1_500_000 },
+    mean_fps: 89.1, p95_fps: 86.4, loss_percent: null, end_reason: 'interrupted', end_category: null,
+    end_detail: 'The host stopped during the session; its duration ends at the host\'s last minute, so the last part is not counted.',
+    started_unix_ms: (ended(259_200) - 1_500) * 1000, ended_unix_ms: ended(259_200) * 1000, duration_ms: 1_500_000 },
 ];
-replies['/api/sessions/history'] = { status: true, limit: 200, days: 90, sessions: sessionsState === 'empty' ? [] : sessionHistory };
+replies['/api/sessions/history'] = { status: true, limit: 200, days: 90, bytes: 262_144, sessions: sessionsState === 'empty' ? [] : sessionHistory };
 if (sessionsState === 'live') replies['/api/rtsp/sessions'] = { status: true, sessions: [liveStream()] };
 /** Requests for the device list so far: paired-now pairs Pixel 9 after the first. */
 let clientLists = 0;

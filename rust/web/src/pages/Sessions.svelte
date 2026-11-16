@@ -8,14 +8,16 @@
   import Panel from '../components/Panel.svelte';
   import Table from '../components/Table.svelte';
   import { api, CODEC_NAMES, type SessionHistoryEntry, type StreamSession } from '../lib/api';
-  import { ago, duration, poll, when } from '../lib/format';
+  import { ago, duration, marked, poll, when } from '../lib/format';
   import {
+    aStreamEnded,
     bitrateText,
     categoryLabel,
     durationText,
     fpsText,
     lossText,
     matches,
+    p95Text,
     pictureText,
     reasonLabel,
     reasonTone,
@@ -53,8 +55,13 @@
     try {
       const reply = await api.sessions.streams();
       if (id !== latest) return;
-      streams = reply.sessions ?? [];
+      const next = reply.sessions ?? [];
+      const ended = aStreamEnded(streams, next);
+      streams = next;
       streamsError = '';
+      // A stream that just left is in the history by now; the slower history
+      // poll covers a write that lands after this one.
+      if (ended) void marked(loadHistory);
     } catch (failure) {
       if (id !== latest) return;
       streamsError = reason(failure);
@@ -62,8 +69,14 @@
   }
 
   onMount(() => {
-    void loadHistory();
-    return poll(refreshStreams, 2000);
+    // The first history load is the poll's own; a stream that ends is reloaded
+    // at once above, and this slower tick catches anything else.
+    const stopHistory = poll(loadHistory, 15_000);
+    const stopStreams = poll(refreshStreams, 2000);
+    return () => {
+      stopHistory();
+      stopStreams();
+    };
   });
 </script>
 
@@ -71,7 +84,7 @@
   <PageHeader
     title="Sessions"
     subtitle={caps
-      ? `Every stream this PC ran, newest first: the last ${caps.limit}, kept for ${caps.days} days.`
+      ? `Every stream this PC ran, newest first: up to the last ${caps.limit}, kept for ${caps.days} days.`
       : 'Every stream this PC ran, with how it went, newest first.'}
   />
 
@@ -157,7 +170,7 @@
               <td class="picture">{pictureText(entry)}</td>
               <td class="numeric">
                 <span class="value">{fpsText(entry.mean_fps)}</span>
-                <span class="sub">p95 {entry.p95_fps > 0 ? entry.p95_fps.toFixed(1) : '–'}</span>
+                <span class="sub">p95 {p95Text(entry.p95_fps)}</span>
               </td>
               <td class="numeric">{bitrateText(entry)}</td>
               <td class="numeric">{lossText(entry)}</td>

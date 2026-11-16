@@ -7,8 +7,10 @@
 //! `GET /api/sessions/history`.
 //!
 //! The store only holds the newest sessions: [`MAX_ENTRIES`] entries, nothing
-//! older than [`MAX_AGE_MS`] and at most [`MAX_BYTES`] of JSON. The newest entry
-//! is always kept, so a single entry never empties the history.
+//! older than [`MAX_AGE_MS`] and at most [`MAX_BYTES`] of JSON. The caps are
+//! fixed on purpose (there is no setting): the byte and count caps always keep
+//! the newest entry, and the age cap drops anything older than the window, even
+//! an entry pushed late.
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
@@ -64,11 +66,13 @@ pub struct Entry {
     pub mean_fps: f64,
     /// The near-bottom of the per-second frame rates: 5% of the sampled seconds
     /// ran at or below it, the 95th percentile of their frame times in fps.
-    /// Equal to `mean_fps` until a second was sampled.
+    /// 0 until 20 seconds were sampled: below that the slowest second is not a
+    /// percentile, and the console shows no figure.
     pub p95_fps: f64,
     /// The client's reported missing video packets, as a percentage of the
-    /// packets the host sent. 0 when the client reports no FEC blocks.
-    pub loss_percent: f64,
+    /// packets the host sent, or `None` when the client reported no FEC blocks
+    /// (WebRTC, older clients): "not reported" is not "no loss".
+    pub loss_percent: Option<f64>,
     /// One of [`REASON_ENDED`], [`REASON_FAILED`], [`REASON_START_FAILED`] or
     /// [`REASON_INTERRUPTED`].
     pub end_reason: String,
@@ -137,9 +141,9 @@ impl Store {
         self.push_with(entry, now_ms, Caps::default());
     }
     /// Adds `entry` and applies `caps`: sessions that ended before
-    /// `now_ms - caps.age_ms` go, then the oldest entries until the store holds
-    /// at most `caps.entries` and `caps.bytes` of JSON. The newest entry is
-    /// always kept.
+    /// `now_ms - caps.age_ms` go (the new one too, when it ended that long ago),
+    /// then the oldest entries until the store holds at most `caps.entries` and
+    /// `caps.bytes` of JSON. The byte and count caps always keep the newest entry.
     pub fn push_with(&mut self, entry: Entry, now_ms: u64, caps: Caps) {
         self.entries.push_front(entry);
         self.prune_with(now_ms, caps);
@@ -213,6 +217,19 @@ mod tests {
     }
 
     #[test]
+    fn an_entry_older_than_the_window_is_not_kept() {
+        // A journal's interrupted entry can be late; one that ended before the
+        // window is dropped even though it was just pushed.
+        let caps = Caps {
+            age_ms: 60_000,
+            ..Default::default()
+        };
+        let mut store = Store::default();
+        store.push_with(entry("stale", 1_000), 100_000, caps);
+        assert_eq!(store.entries().count(), 0);
+    }
+
+    #[test]
     fn the_byte_cap_drops_old_entries_but_keeps_the_newest() {
         let caps = Caps {
             entries: 100,
@@ -253,8 +270,10 @@ mod tests {
     fn a_damaged_or_unknown_history_reads_as_none() {
         assert!(Store::parse(b"{\"entries\": [tru").is_none());
         assert!(Store::parse(b"").is_none());
-        let mut future = Store::default();
-        future.version = VERSION + 1;
+        let future = Store {
+            version: VERSION + 1,
+            ..Default::default()
+        };
         assert!(Store::parse(&future.to_bytes()).is_none());
     }
 
@@ -267,6 +286,7 @@ mod tests {
         let entry = store.entries().next().unwrap();
         assert_eq!(entry.id, "one");
         assert_eq!(entry.end_reason, "");
-        assert_eq!(entry.loss_percent, 0.);
+        assert_eq!(entry.loss_percent, None);
+        assert_eq!(entry.p95_fps, 0.);
     }
 }

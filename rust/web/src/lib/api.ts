@@ -689,22 +689,22 @@ export interface SessionHistoryEntry {
   transport: 'moonlight' | 'webrtc';
   /** `h264`, `hevc`, `av1` or `pyrowave`. */
   codec: string;
-  /** The picture the stream ran at, after any mid-stream mode switch. */
+  /** The picture the stream ran at, after any mid-stream mode switch; 0 when it never started. */
   width: number;
   height: number;
   fps: number;
   hdr: boolean;
-  /** The encoder's bitrate when the stream ended. */
+  /** The encoder's bitrate when the stream ended; 0 when it never started. */
   bitrate_kbps: number;
-  /** What the stream actually sent on average. */
+  /** What the video actually sent on average; audio is not counted. */
   mean_bitrate_kbps: number;
   mean_fps: number;
-  /** The frame rate 5% of the sampled seconds ran at or below (the 95th percentile of frame time). */
+  /** The frame rate 5% of the sampled seconds ran at or below (the 95th percentile of frame time); 0 until 20 seconds were sampled. */
   p95_fps: number;
-  /** The client's reported missing video packets, as a share of what the host sent. */
-  loss_percent: number;
+  /** The client's reported missing video packets, as a share of what the host sent; null when it reported no FEC blocks. */
+  loss_percent: number | null;
   end_reason: 'ended' | 'failed' | 'start_failed' | 'interrupted' | string;
-  /** The host's words for a failure, when it failed. */
+  /** The host's words for a failure, when it failed. An interrupted session ends at the host's last heartbeat. */
   end_detail: string;
   /** `encoder`, `capture`, `network` or `driver` when the log analysis knows the failure. */
   end_category: 'encoder' | 'capture' | 'network' | 'driver' | null;
@@ -715,10 +715,12 @@ export interface SessionHistoryEntry {
 export interface SessionHistory {
   status: true;
   sessions: SessionHistoryEntry[];
-  /** How many sessions are kept; the page says so. */
+  /** How many sessions are kept at most; the page says so. */
   limit: number;
   /** How many days a session is kept; the page says so. */
   days: number;
+  /** The byte cap that can trim below `limit` sooner; the page says "up to". */
+  bytes: number;
 }
 
 export interface SessionStatus {

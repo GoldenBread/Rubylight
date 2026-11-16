@@ -980,7 +980,9 @@ async fn the_library_steam_switch_and_the_steam_library_setting_agree() {
 
 #[tokio::test]
 async fn the_session_history_route_lists_ended_streams_newest_first_and_requires_signing_in() {
-    use butterpollo_core::session_history::{MAX_AGE_MS, MAX_ENTRIES, REASON_ENDED, REASON_FAILED};
+    use butterpollo_core::session_history::{
+        MAX_AGE_MS, MAX_BYTES, MAX_ENTRIES, REASON_ENDED, REASON_FAILED,
+    };
     let f = Fixture::new();
     let empty = value(
         request(&f, "GET", "/api/sessions/history", Value::Null).await,
@@ -997,6 +999,11 @@ async fn the_session_history_route_lists_ended_streams_newest_first_and_requires
         empty["days"].as_u64(),
         Some(MAX_AGE_MS / 86_400_000),
         "and the age cap"
+    );
+    assert_eq!(
+        empty["bytes"].as_u64(),
+        Some(MAX_BYTES as u64),
+        "and the byte cap that can trim below the count"
     );
     let client = f.client(0x071f1f00);
     let first = f.session(client.clone(), Role::Stream);

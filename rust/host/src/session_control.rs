@@ -262,6 +262,9 @@ impl Host {
         let facts = self.session_facts();
         let now = now_ms();
         control.machine.observe(&facts, now);
+        // Once a minute, the journal says the host is alive: a crash's duration
+        // then ends at that beat, not at the next start.
+        control.machine.heartbeat(now);
         let result = f(&mut control.machine, &facts, now);
         control.persist();
         // Whatever moved the machine (End session, Close game, the grace period running out,
@@ -678,6 +681,8 @@ impl Host {
     pub fn session_shutdown(&self) {
         self.with_session(|machine, _, now| machine.reset(now));
         self.session_flush();
+        // The last stream's entry, written on the saver thread.
+        self.session_history.flush();
     }
     /// Wait until the journal writer has applied everything it was told, up
     /// to five seconds. For a clean shutdown and for tests.
