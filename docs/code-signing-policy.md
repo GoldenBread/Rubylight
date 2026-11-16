@@ -1,6 +1,6 @@
 # Code signing policy
 
-Rubylight's Windows releases are signed with the maintainer's code signing certificate for open-source developers, issued by Certum to **Open Source Developer Ramazan Kara**, starting with the first release after 4.7.1. Earlier releases are unsigned. The certificate's private key stays in Certum's cloud signing service (SimplySign) and is used only after the maintainer signs in with a second factor. Nightjar's Windows installer and `nightjar.exe` are signed with the same certificate in the same way.
+Rubylight's Windows releases are signed with the maintainer's code signing certificate for open-source developers, issued by Certum to **Open Source Developer Ramazan Kara**, starting with the first release after 4.7.1. Earlier releases are unsigned. The certificate's private key stays in Certum's cloud signing service (SimplySign). The release workflow signs in to it with the maintainer's Certum account and its one-time-code secret, stored as GitHub secrets that only the signing job of a run on `main` or a `v*` tag can read. Nightjar's Windows installers and `nightjar.exe` are signed with the same certificate in the same way.
 
 ## Team roles
 
@@ -10,13 +10,13 @@ Rubylight has one maintainer, who holds every role.
 | --- | --- | --- |
 | Committers | May change the source code in the repository without another review. | [Ramazan Kara (RamazanKara)](https://github.com/RamazanKara) |
 | Reviewers | Review every change proposed by someone who is not a committer, such as a pull request, before it is merged. | [Ramazan Kara (RamazanKara)](https://github.com/RamazanKara) |
-| Signers | Sign each release on their own PC, deciding whether a build may be released as signed. | [Ramazan Kara (RamazanKara)](https://github.com/RamazanKara) |
+| Releasers | Push the release tag, which builds, signs and publishes the release, deciding whether a build may be released as signed. | [Ramazan Kara (RamazanKara)](https://github.com/RamazanKara) |
 
-Team members use multi-factor authentication for GitHub and for the signing service. When the team grows, this table is updated before a new member gets any of these roles.
+Team members use multi-factor authentication for GitHub. Anyone who can push a release tag or change the release workflow can have a build signed, so only the maintainer can. When the team grows, this table is updated before a new member gets any of these roles.
 
 ## What is signed
 
-Only files built from this repository's source code by its GitHub Actions workflow ([rust-windows.yml](../.github/workflows/rust-windows.yml)) are signed, as that workflow published them to the draft release:
+Only files built from this repository's source code by its GitHub Actions workflow ([rust-windows.yml](../.github/workflows/rust-windows.yml)) are signed:
 
 - Rubylight's executables and DLLs: the host, its service and start programs, setup (also installed as `uninstall.exe`), the diagnostic probes and the Vulkan HDR layer.
 - The installer that carries them, `rubylight-setup-<version>.exe`.
@@ -54,9 +54,9 @@ Drivers from other projects that setup installs come with their own install scri
 
 ## How a release is signed
 
-1. Pushing a version tag (`v2.*` to `v9.*`), or the maintainer starting the workflow's release on `main`, runs the Windows workflow on GitHub-hosted runners. It builds everything that ships from that commit and tests and lints the same commit in jobs of the same run. Only when those pass does it create the release, as a draft nobody else can see or download.
-2. On their PC the maintainer runs [sign-local.ps1](../rust/release/sign-local.ps1), which downloads the draft's package and installer, checks that the installer carries exactly that package, and signs Rubylight's own binaries, then the display driver's catalog, made from the signed driver DLL, then the installer built again from the signed package. Each signature gets a timestamp.
-3. The script checks every signature and timestamp, and that the catalog covers the driver's files, then replaces the draft's files and `SHA256SUMS` and publishes the release. If any step fails, nothing is published, signed or unsigned.
+1. Pushing a version tag (`v2.*` to `v9.*`), or the maintainer starting the workflow's release on `main`, runs the Windows workflow on GitHub-hosted runners. It builds everything that ships from that commit and tests and lints the same commit in jobs of the same run. Nothing is signed until those pass.
+2. A separate signing job, the only one that can read the signing secrets, takes the built package and installer, logs its runner in to SimplySign ([certum-login.ps1](../client/scripts/certum-login.ps1)) and runs [sign-local.ps1](../rust/release/sign-local.ps1). That checks that the installer carries exactly that package, then signs Rubylight's own binaries, then the display driver's catalog, made from the signed driver DLL, then the installer built again from the signed package. Each signature gets a timestamp.
+3. The script checks every signature, its signer and its timestamp, and that the catalog covers the driver's files. The workflow publishes the release from the signed files only; if any step fails, nothing is published, signed or unsigned.
 
 Pull requests and ordinary pushes to `main` are never signed. Changes to build scripts and the workflow are reviewed like any other source code, because they decide what gets signed.
 

@@ -512,9 +512,62 @@ jobs:
           path: ${{ runner.temp }}/butterpollo-rust-target/rubylight-nvidia-component-*.zip
           if-no-files-found: error
           retention-days: 30
-  publish:
+  # Signs the release with the maintainer's Certum code signing certificate when
+  # the repository variable CERTUM_SIGNING is 'true' (SignPath, when configured,
+  # signs instead). The key stays in Certum's cloud: client/scripts/certum-login.ps1
+  # logs this runner in to SimplySign with the release-signing environment's
+  # secrets, and rust/release/sign-local.ps1 signs the binaries, the display
+  # driver's catalog and the installer in SignPath's order. Only this job sees the
+  # secrets; publish never publishes without its signed files.
+  certum:
     needs: [tag, test, lint, windows]
-    if: ${{ !cancelled() && needs.tag.result == 'success' && (needs.tag.outputs.run || (needs.test.result == 'success' && needs.lint.result == 'success' && needs.windows.result == 'success')) }}
+    if: ${{ !cancelled() && vars.CERTUM_SIGNING == 'true' && needs.tag.result == 'success' && needs.tag.outputs.sign != 'true' && (needs.tag.outputs.run || (needs.test.result == 'success' && needs.lint.result == 'success' && needs.windows.result == 'success')) }}
+    runs-on: windows-2022
+    timeout-minutes: 30
+    environment: release-signing
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.tag.outputs.version }}
+      BUILD: ${{ needs.tag.outputs.run || github.run_id }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: The unsigned build
+        run: |
+          gh run download $env:BUILD -n butterpollo-rust-windows-x64 -D build
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory unsigned | Out-Null
+          Move-Item "build\butterpollo-setup-$env:VERSION.exe" "unsigned\rubylight-setup-$env:VERSION.exe"
+          Move-Item build\butterpollo-rust-release.zip "unsigned\rubylight-$env:VERSION-windows-x64.zip"
+      # Inf2Cat catalogs the signed driver; installed only when the image lacks it.
+      - name: Windows Driver Kit
+        run: |
+          $kits = "${env:ProgramFiles(x86)}\Windows Kits\10"
+          if (Test-Path "$kits\bin\*\x86\Inf2Cat.exe") { exit 0 }
+          winget install --id Microsoft.WindowsWDK.10.0.26100 --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+          if (!(Test-Path "$kits\bin\*\x86\Inf2Cat.exe")) { throw 'Inf2Cat is still missing after installing the Windows Driver Kit' }
+      - name: Log in to SimplySign
+        env:
+          CERTUM_USERNAME: ${{ secrets.CERTUM_USERNAME }}
+          CERTUM_TOTP_SECRET: ${{ secrets.CERTUM_TOTP_SECRET }}
+        run: .\client\scripts\certum-login.ps1
+      - name: Sign
+        run: .\rust\release\sign-local.ps1 -Tag "v$env:VERSION" -From unsigned -NoUpload -WorkDirectory "$env:RUNNER_TEMP\certum"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rubylight-signed
+          path: ${{ runner.temp }}/certum/out/
+          if-no-files-found: error
+          retention-days: 7
+  publish:
+    needs: [tag, test, lint, windows, certum]
+    # With CERTUM_SIGNING nothing is published unless certum signed it.
+    if: ${{ !cancelled() && needs.tag.result == 'success' && (needs.tag.outputs.run || (needs.test.result == 'success' && needs.lint.result == 'success' && needs.windows.result == 'success')) && (vars.CERTUM_SIGNING != 'true' || needs.tag.outputs.sign == 'true' || needs.certum.result == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -525,9 +578,11 @@ jobs:
       VERSION: ${{ needs.tag.outputs.version }}
       TAG: ${{ needs.tag.outputs.tag }}
       BUILD: ${{ needs.tag.outputs.run || github.run_id }}
-      # With LOCAL_SIGNING the release stays a draft until the maintainer signs
-      # its Windows files and publishes it with rust/release/sign-local.ps1.
-      LOCAL_SIGNING: ${{ vars.LOCAL_SIGNING == 'true' && needs.tag.outputs.sign != 'true' }}
+      # certum's signed files, when it signed them.
+      CERTUM_SIGNED: ${{ needs.certum.result == 'success' }}
+      # Otherwise, with LOCAL_SIGNING the release stays a draft until the maintainer
+      # signs its Windows files and publishes it with rust/release/sign-local.ps1.
+      LOCAL_SIGNING: ${{ vars.LOCAL_SIGNING == 'true' && vars.CERTUM_SIGNING != 'true' && needs.tag.outputs.sign != 'true' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
       - name: Publish the release
@@ -537,11 +592,18 @@ jobs:
             exit 0
           fi
           python3 rust/release/notes.py "$TAG" --out body.md --run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$BUILD"
-          gh run download "$BUILD" -n butterpollo-rust-windows-x64 -D build
-          mkdir out
-          mv "build/butterpollo-setup-$VERSION.exe" "out/rubylight-setup-$VERSION.exe"
-          mv build/butterpollo-rust-release.zip "out/rubylight-$VERSION-windows-x64.zip"
-          (cd out && sha256sum * > SHA256SUMS)
+          if [[ $CERTUM_SIGNED == true ]]; then
+            # The signed zip, installer and SHA256SUMS, from this run.
+            gh run download "$GITHUB_RUN_ID" -n rubylight-signed -D out
+            test -f "out/rubylight-setup-$VERSION.exe" && test -f "out/rubylight-$VERSION-windows-x64.zip" && test -f out/SHA256SUMS
+            (cd out && sha256sum -c SHA256SUMS)
+          else
+            gh run download "$BUILD" -n butterpollo-rust-windows-x64 -D build
+            mkdir out
+            mv "build/butterpollo-setup-$VERSION.exe" "out/rubylight-setup-$VERSION.exe"
+            mv build/butterpollo-rust-release.zip "out/rubylight-$VERSION-windows-x64.zip"
+            (cd out && sha256sum * > SHA256SUMS)
+          fi
           flags=()
           if [[ $LOCAL_SIGNING == true ]]; then
             flags+=(--draft)

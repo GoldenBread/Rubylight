@@ -15,6 +15,9 @@
 # ISCC comes from -Iscc, $env:ISCC, a usual install folder, or else the Inno Setup version and
 # SHA-256 that .github/workflows/release.yml pins, installed for the current user.
 # -NoUpload signs into the work folder only (any release, also a published one), for a dry run.
+# -From <folder> takes the two zips from that folder instead of the release and implies -NoUpload,
+# leaving SHA256SUMS to whoever publishes: release.yml's sign-windows job uses it. -Smoke runs
+# build-installer.ps1's install test on the signed x86_64 installer (CI runners only).
 param(
     [Parameter(Mandatory)][string]$Tag,
     [string]$Repository = 'RamazanKara/nightjar',
@@ -22,6 +25,8 @@ param(
     [string]$Subject = 'CN=Open Source Developer Ramazan Kara',
     [string]$TimestampUrl = 'http://time.certum.pl',
     [string]$Iscc = '',
+    [string]$From,
+    [switch]$Smoke,
     [switch]$NoUpload
 )
 $ErrorActionPreference = 'Stop'
@@ -78,13 +83,16 @@ function Get-InnoSetup {
 $signtool = Get-Signtool
 $certificate = Get-SigningCertificate
 Write-Host "Signing Nightjar $Tag as $($certificate.Subject) ($($certificate.Thumbprint))"
-$release = gh release view $Tag -R $Repository --json isDraft,assets,body | ConvertFrom-Json
-if ($LASTEXITCODE -ne 0) { throw "No release $Tag in $Repository" }
-if (!$release.isDraft -and !$NoUpload) { throw "$Tag is published already; this script only signs draft releases (-NoUpload for a dry run)" }
-$assets = @($release.assets.name)
+if ($From) { $NoUpload = $true }
 $arches = 'x86_64', 'arm64'
 $files = foreach ($arch in $arches) { "nightjar-desktop-$Version-windows-$arch.zip"; "nightjar-desktop-$Version-windows-$arch-setup.exe" }
-foreach ($name in @($files) + $sumsName) { if ($assets -notcontains $name) { throw "$Tag has no $name yet; wait for the release workflow" } }
+if (!$From) {
+    $release = gh release view $Tag -R $Repository --json isDraft,assets,body | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0) { throw "No release $Tag in $Repository" }
+    if (!$release.isDraft -and !$NoUpload) { throw "$Tag is published already; this script only signs draft releases (-NoUpload for a dry run)" }
+    $assets = @($release.assets.name)
+    foreach ($name in @($files) + $sumsName) { if ($assets -notcontains $name) { throw "$Tag has no $name yet; wait for the release workflow" } }
+}
 
 if (Test-Path -LiteralPath $WorkDirectory) {
     # Only a folder an earlier run of this script made.
@@ -95,8 +103,12 @@ $download = Join-Path $WorkDirectory 'download'
 $out = Join-Path $WorkDirectory 'out'
 New-Item -ItemType Directory -Path $download, $out -Force | Out-Null
 $isccPath = Get-InnoSetup
-gh release download $Tag -R $Repository -D $download --clobber @(foreach ($arch in $arches) { '-p'; "nightjar-desktop-$Version-windows-$arch.zip" }) -p $sumsName
-if ($LASTEXITCODE -ne 0) { throw "Downloading $Tag's Windows files failed" }
+if ($From) {
+    foreach ($arch in $arches) { Copy-Item -LiteralPath (Join-Path $From "nightjar-desktop-$Version-windows-$arch.zip") -Destination $download }
+} else {
+    gh release download $Tag -R $Repository -D $download --clobber @(foreach ($arch in $arches) { '-p'; "nightjar-desktop-$Version-windows-$arch.zip" }) -p $sumsName
+    if ($LASTEXITCODE -ne 0) { throw "Downloading $Tag's Windows files failed" }
+}
 
 # ISCC runs the sign tool as one command line with $f for the file: put signtool on PATH so
 # the command needs no quoted path.
@@ -115,11 +127,16 @@ foreach ($arch in $arches) {
     # As package-windows.ps1 packs it: the files at the zip's top.
     $zip = Join-Path $out $zipName
     Compress-Archive -Path "$stage\*" -DestinationPath $zip -CompressionLevel Optimal
-    & (Join-Path $client 'protocol\desktop\packaging\windows\build-installer.ps1') -Zip $zip -Out $out -Iscc $isccPath -SignCommand $signCommand | Out-Host
+    $smokeThis = $Smoke -and $arch -eq 'x86_64'
+    & (Join-Path $client 'protocol\desktop\packaging\windows\build-installer.ps1') -Zip $zip -Out $out -Iscc $isccPath -SignCommand $signCommand -Smoke:$smokeThis | Out-Host
     $setup = Join-Path $out "nightjar-desktop-$Version-windows-$arch-setup.exe"
     Assert-Signed $setup
 }
 
+if ($From) {
+    Get-ChildItem -LiteralPath $out -File | ForEach-Object { Write-Host "Signed: $($_.FullName)" }
+    return
+}
 # SHA256SUMS keeps its other lines and order; the Windows files get their new hashes.
 $sums = Join-Path $download $sumsName
 $lines = foreach ($line in (Get-Content -LiteralPath $sums)) {

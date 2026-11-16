@@ -580,6 +580,81 @@ jobs:
             dist/*-setup.exe
           if-no-files-found: error
 
+  # Signs both Windows builds with the maintainer's Certum code signing certificate when the
+  # repository variable CERTUM_SIGNING is 'true': on one x64 runner (SimplySign Desktop is x64
+  # only) it logs in to SimplySign with the release-signing environment's secrets
+  # (scripts/certum-login.ps1), signs nightjar.exe in each zip and rebuilds both installers signed
+  # (scripts/sign-windows-release.ps1 -From), running the install test on the x86_64 one again.
+  # Without the variable it passes the unsigned builds through. Only this job sees the secrets;
+  # release publishes what this job hands it, and a failed signing publishes nothing.
+  sign-windows:
+    needs: [preflight, desktop-windows]
+    runs-on: windows-latest
+    timeout-minutes: 40
+    environment: release-signing
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+      SIGN: ${{ vars.CERTUM_SIGNING == 'true' }}
+      INNO_SETUP_VERSION: 6.7.4
+      INNO_SETUP_SHA256: a549929319f9120716677c685535ca4671e4b937b5fdc87e2585f32d8eb30e8c
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: desktop-windows-*
+          path: unsigned
+          merge-multiple: true
+      - name: Inno Setup
+        if: ${{ env.SIGN == 'true' }}
+        run: |
+          $setup = Join-Path $env:RUNNER_TEMP "innosetup-$env:INNO_SETUP_VERSION.exe"
+          $tag = 'is-' + $env:INNO_SETUP_VERSION.Replace('.', '_')
+          Invoke-WebRequest "https://github.com/jrsoftware/issrc/releases/download/$tag/innosetup-$env:INNO_SETUP_VERSION.exe" -OutFile $setup -MaximumRetryCount 10 -RetryIntervalSec 30
+          $sha = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($sha -ne $env:INNO_SETUP_SHA256) { throw "innosetup-$env:INNO_SETUP_VERSION.exe is $sha, expected $env:INNO_SETUP_SHA256" }
+          $dir = Join-Path $env:RUNNER_TEMP 'inno-setup'
+          $process = Start-Process $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/CURRENTUSER', '/NOICONS', "/DIR=`"$dir`"" -Wait -PassThru
+          if ($process.ExitCode -ne 0 -or -not (Test-Path "$dir\ISCC.exe")) { throw "Inno Setup did not install (exit $($process.ExitCode))" }
+          "ISCC=$dir\ISCC.exe" >> $env:GITHUB_ENV
+      - name: Log in to SimplySign
+        if: ${{ env.SIGN == 'true' }}
+        env:
+          CERTUM_USERNAME: ${{ secrets.CERTUM_USERNAME }}
+          CERTUM_TOTP_SECRET: ${{ secrets.CERTUM_TOTP_SECRET }}
+        run: ./scripts/certum-login.ps1
+      - name: Sign
+        if: ${{ env.SIGN == 'true' }}
+        run: |
+          ./scripts/sign-windows-release.ps1 -Tag "v$env:VERSION" -From unsigned -Iscc $env:ISCC -Smoke -WorkDirectory "$env:RUNNER_TEMP\sign"
+          New-Item -ItemType Directory windows | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\sign\out\*" windows
+      - name: Unsigned
+        if: ${{ env.SIGN != 'true' }}
+        run: |
+          New-Item -ItemType Directory windows | Out-Null
+          Copy-Item unsigned\* windows
+      - name: Check the files
+        run: |
+          foreach ($arch in 'x86_64', 'arm64') {
+            foreach ($name in "nightjar-desktop-$env:VERSION-windows-$arch.zip", "nightjar-desktop-$env:VERSION-windows-$arch-setup.exe") {
+              if (!(Test-Path "windows\$name")) { throw "$name is missing" }
+            }
+            if ($env:SIGN -eq 'true') {
+              $signature = Get-AuthenticodeSignature "windows\nightjar-desktop-$env:VERSION-windows-$arch-setup.exe"
+              if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -ne $env:CERTUM_THUMBPRINT -or !$signature.TimeStamperCertificate) { throw "the $arch installer is not signed: $($signature.Status)" }
+            }
+          }
+          "signed=$env:SIGN" > windows\signed.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-release
+          path: windows/
+          if-no-files-found: error
+          retention-days: 7
+
   desktop-macos:
     # The Mac desktop client: protocol/desktop/package-macos.py builds the release Nightjar.app
     # with its own SDL, Opus, dav1d and decode-only FFmpeg (macos-deps.sh) and zips it. Each
@@ -792,7 +867,7 @@ jobs:
         run: rm -f "$RUNNER_TEMP/nightjar-release.keystore"
 
   release:
-    needs: [preflight, desktop-linux, desktop-windows, desktop-macos, android]
+    needs: [preflight, desktop-linux, desktop-windows, sign-windows, desktop-macos, android]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -808,6 +883,18 @@ jobs:
           pattern: desktop-*
           path: desktop
           merge-multiple: true
+      # The Windows zips and installers sign-windows handed on (signed when CERTUM_SIGNING is on)
+      # replace the build jobs' copies.
+      - name: Fetch the Windows packages
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-release
+          path: windows
+      - name: Use the Windows packages
+        run: |
+          rm -f desktop/nightjar-desktop-*-windows-*
+          cp windows/nightjar-desktop-*-windows-* desktop/
+          grep -qx 'signed=true' windows/signed.txt && echo "WINDOWS_SIGNED=true" >> "$GITHUB_ENV" || true
       - name: Fetch the signed Android build
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -834,6 +921,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir out
+          if [[ $WINDOWS_SIGNED == true ]]; then
+            DESKTOP_SIGNING="the Windows installers and nightjar.exe are signed by Ramazan Kara (Certum open-source code signing certificate); the other desktop packages (Linux .deb, .rpm, AppImage, Flatpak and tar.gz; macOS zip with an ad-hoc signature, not notarized) are not signed."
+          else
+            DESKTOP_SIGNING="the desktop packages (Windows installer and zip; Linux .deb, .rpm, AppImage, Flatpak and tar.gz; macOS zip with an ad-hoc signature, not notarized) are not signed."
+          fi
           cp desktop/nightjar-desktop-* android/* out/
           (cd out && sha256sum nightjar-* nightjar.apk >"SHA256SUMS-$VERSION.txt")
           flags=()
@@ -856,7 +948,7 @@ jobs:
             if [ "${#flags[@]}" != 0 ]; then gh release edit "$GITHUB_REF_NAME" "${flags[@]}"; fi
           else
             gh release create "$GITHUB_REF_NAME" out/* --verify-tag --title "Nightjar $VERSION" \
-              --notes "The APKs are signed by CI with the Nightjar release key; the desktop packages (Windows installer and zip; Linux .deb, .rpm, AppImage, Flatpak and tar.gz; macOS zip with an ad-hoc signature, not notarized) are not signed. SHA-256 hashes of everything are in SHA256SUMS-$VERSION.txt." "${flags[@]}"
+              --notes "The APKs are signed by CI with the Nightjar release key; $DESKTOP_SIGNING SHA-256 hashes of everything are in SHA256SUMS-$VERSION.txt." "${flags[@]}"
           fi
           echo "::notice::published $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME"
       - name: Dry run result

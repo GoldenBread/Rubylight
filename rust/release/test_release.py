@@ -680,8 +680,9 @@ class Signing(unittest.TestCase):
         # the release publish made, without signing anything.
         job = lambda name: re.search(rf'(?ms)^  {name}:\n(.*?)(?=^  \S)', self.workflow)[1]
         publish = job('publish')
-        self.assertIn('    needs: [tag, test, lint, windows]\n', publish)
+        self.assertIn('    needs: [tag, test, lint, windows, certum]\n', publish)
         self.assertNotIn('nvidia', publish)
+        self.assertNotIn('nvidia', job('certum').split('steps:')[0])
         assets = job('nvidia-assets')
         self.assertIn('    needs: [tag, nvidia, publish]\n', assets)
         self.assertIn("needs.publish.result == 'success'", assets)
@@ -716,7 +717,7 @@ class Signing(unittest.TestCase):
         # With LOCAL_SIGNING the maintainer signs on their PC (sign-local.ps1),
         # so publish must never make the unsigned files public; SignPath wins.
         publish = re.search(r'(?ms)^  publish:\n(.*?)(?=^  \S)', self.workflow)[1]
-        self.assertIn("LOCAL_SIGNING: ${{ vars.LOCAL_SIGNING == 'true' && needs.tag.outputs.sign != 'true' }}", publish)
+        self.assertIn("LOCAL_SIGNING: ${{ vars.LOCAL_SIGNING == 'true' && vars.CERTUM_SIGNING != 'true' && needs.tag.outputs.sign != 'true' }}", publish)
         self.assertRegex(publish, r'if \[\[ \$LOCAL_SIGNING == true \]\]; then\n\s+flags\+=\(--draft\)')
         script = (ROOT / 'rust/release/sign-local.ps1').read_text(encoding='utf-8')
         # The SignPath order through the same phases: binaries, the catalog made
@@ -727,6 +728,43 @@ class Signing(unittest.TestCase):
         self.assertEqual(positions, sorted(positions))
         self.assertIn('if (!$release.isDraft -and !$NoUpload)', script)
         self.assertIn('$migrateName = "rubylight-nvidia-setup-$Version.exe"', script)
+
+    def test_certum_signing_fails_closed_and_keeps_the_secrets_in_one_job(self):
+        # CI signs with the Certum certificate in the certum job only; with
+        # CERTUM_SIGNING on, publish never ships files certum did not sign.
+        def job(name):
+            return re.search(rf'(?ms)^  {name}:\n(.*?)(?=^  \S)', self.workflow)[1]
+        certum = job('certum')
+        self.assertIn("vars.CERTUM_SIGNING == 'true'", certum)
+        self.assertIn("needs.tag.outputs.sign != 'true'", certum)
+        self.assertIn('environment: release-signing', certum)
+        self.assertIn('.\\client\\scripts\\certum-login.ps1', certum)
+        self.assertIn('.\\rust\\release\\sign-local.ps1 -Tag "v$env:VERSION" -From unsigned -NoUpload', certum)
+        self.assertIn('name: rubylight-signed', certum)
+        for other in ('tag', 'test', 'lint', 'windows', 'nvidia', 'publish', 'nvidia-assets'):
+            self.assertNotIn('CERTUM_TOTP_SECRET', job(other), other)
+        publish = job('publish')
+        self.assertIn('needs: [tag, test, lint, windows, certum]', publish)
+        self.assertIn("(vars.CERTUM_SIGNING != 'true' || needs.tag.outputs.sign == 'true' || needs.certum.result == 'success')", publish)
+        self.assertIn("CERTUM_SIGNED: ${{ needs.certum.result == 'success' }}", publish)
+        self.assertIn('gh run download "$GITHUB_RUN_ID" -n rubylight-signed -D out', publish)
+        self.assertIn("vars.CERTUM_SIGNING != 'true'", publish.split('LOCAL_SIGNING:')[1].split('\n')[0])
+        check = (ROOT / '.github/workflows/signing-check.yml').read_text(encoding='utf-8')
+        self.assertIn('workflow_dispatch', check)
+        self.assertNotIn('gh release', check)
+        login = (ROOT / 'client/scripts/certum-login.ps1').read_text(encoding='utf-8')
+        self.assertIn("$attempt -le 2", login)
+        self.assertNotIn('Write-Host $env:CERTUM_TOTP_SECRET', login)
+
+    def test_certum_totp_matches_rfc_6238(self):
+        if shutil.which('pwsh') is None and shutil.which('powershell') is None:
+            self.skipTest('PowerShell is not installed')
+        shell = shutil.which('pwsh') or shutil.which('powershell')
+        result = subprocess.run([shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                                 str(ROOT / 'client/scripts/certum-login.ps1'), '-SelfTest'],
+                                capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('TOTP self-test passed', result.stdout)
 
     def test_only_release_runs_sign(self):
         # Every SignPath request waits for a manual approval, so only the tag

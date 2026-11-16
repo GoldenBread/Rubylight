@@ -1,0 +1,57 @@
+# Checks that CI can still sign with the maintainer's Certum certificate: logs a
+# runner in to SimplySign (client/scripts/certum-login.ps1) and signs main's
+# latest Windows build with rust/release/sign-local.ps1, exactly as a release's
+# certum job does, then throws the result away. Run it by hand before a release
+# after anything changed on Certum's side (a new SimplySign Desktop, a renewed
+# certificate), or when certum failed.
+name: Signing check
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  sign:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    environment: release-signing
+    env:
+      GH_TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Main's latest build
+        run: |
+          $run = gh run list -R $env:GITHUB_REPOSITORY --workflow rust-windows.yml --branch main --event push --status success --limit 1 --json databaseId -q '.[0].databaseId'
+          if (!$run) { throw 'main has no successful Rubylight Windows run' }
+          gh run download $run -R $env:GITHUB_REPOSITORY -n butterpollo-rust-windows-x64 -D build
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $setup = Get-ChildItem build -Filter 'butterpollo-setup-*.exe' | Select-Object -First 1
+          $version = $setup.BaseName -replace '^butterpollo-setup-', ''
+          New-Item -ItemType Directory unsigned | Out-Null
+          Move-Item $setup.FullName "unsigned\rubylight-setup-$version.exe"
+          Move-Item build\butterpollo-rust-release.zip "unsigned\rubylight-$version-windows-x64.zip"
+          "VERSION=$version" >> $env:GITHUB_ENV
+          Write-Host "Signing run $run's build of $version"
+      - name: Windows Driver Kit
+        run: |
+          $kits = "${env:ProgramFiles(x86)}\Windows Kits\10"
+          if (Test-Path "$kits\bin\*\x86\Inf2Cat.exe") { exit 0 }
+          winget install --id Microsoft.WindowsWDK.10.0.26100 --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+          if (!(Test-Path "$kits\bin\*\x86\Inf2Cat.exe")) { throw 'Inf2Cat is still missing after installing the Windows Driver Kit' }
+      - name: Log in to SimplySign
+        env:
+          CERTUM_USERNAME: ${{ secrets.CERTUM_USERNAME }}
+          CERTUM_TOTP_SECRET: ${{ secrets.CERTUM_TOTP_SECRET }}
+        run: .\client\scripts\certum-login.ps1
+      - name: Sign
+        run: .\rust\release\sign-local.ps1 -Tag "v$env:VERSION" -From unsigned -NoUpload -WorkDirectory "$env:RUNNER_TEMP\certum"
+      - name: Check the signatures
+        run: |
+          foreach ($file in Get-ChildItem "$env:RUNNER_TEMP\certum\out" -Filter *.exe) {
+            $signature = Get-AuthenticodeSignature $file.FullName
+            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -ne $env:CERTUM_THUMBPRINT -or !$signature.TimeStamperCertificate) { throw "$($file.Name): $($signature.Status)" }
+            Write-Host "$($file.Name): signed by $($signature.SignerCertificate.Subject.Split(',')[0]), timestamped"
+          }

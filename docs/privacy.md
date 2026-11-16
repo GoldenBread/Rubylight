@@ -50,7 +50,7 @@ The installer makes no internet connections. Support bundles and crash dumps are
 
 ## Code signing
 
-Windows releases are signed by the maintainer with a Certum code signing certificate through Certum's SimplySign service, which receives only the hashes of the release's files, never anything from your PC. See the [code signing policy](code-signing-policy.md).
+Windows releases are signed with the maintainer's Certum code signing certificate through Certum's SimplySign service, by GitHub Actions; SimplySign receives only the hashes of the release's files, never anything from your PC. See the [code signing policy](code-signing-policy.md).
 
 ## Questions
 

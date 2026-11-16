@@ -57,6 +57,8 @@ function Invoke-Sign([string[]]$Files) {
     foreach ($file in $Files) {
         & $script:signtool verify /pa $file | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "The signature of $file does not verify" }
+        $signature = Get-AuthenticodeSignature -LiteralPath $file
+        if ($signature.SignerCertificate.Thumbprint -ne $script:certificate.Thumbprint -or !$signature.TimeStamperCertificate) { throw "$file is not signed by $Subject with a timestamp" }
     }
 }
 function Invoke-Phase([string]$Phase, [string]$SigningDirectory) {
