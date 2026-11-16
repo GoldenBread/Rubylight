@@ -674,18 +674,19 @@ impl Media {
     }
     fn capture(
         &self,
-        kind: &str,
         hdr: bool,
         config: &Config,
         rate: butterpollo_core::framegen::Rate,
         phase: &str,
         prepared: Arc<crate::display_session::Ready>,
     ) -> Result<Arc<Source>> {
+        // One read of the stream's policy: the method and the repeat mode
+        // must agree, or a capture is keyed under one and opened as the other.
+        let (kind, constant_rate) = prepared.capture_method();
         let output = prepared.output();
         let aligned = config.boolean("wgc_slot_aligned_publish", false);
-        let constant_rate = prepared.constant_rate();
         let capture_config = capture_config(config);
-        let key = CaptureKey::new(kind, &output, hdr, &capture_config, phase, constant_rate);
+        let key = CaptureKey::new(&kind, &output, hdr, &capture_config, phase, constant_rate);
         let mut captures = self.captures.lock().unwrap();
         captures.retain(|_, source| source.strong_count() > 0);
         if let Some(existing) = captures.get(&key).and_then(Weak::upgrade)
@@ -706,7 +707,6 @@ impl Media {
         let worker_grid = grid.clone();
         let backend = Arc::new(Mutex::new(""));
         let worker_backend = backend.clone();
-        let kind = kind.to_owned();
         let (started_tx, started_rx) = std::sync::mpsc::sync_channel(1);
         // Before the wait below begins: the capture's tries end within it.
         let started = Instant::now();
@@ -836,9 +836,11 @@ impl Media {
                     let mut last_frame = Instant::now();
                     // Constant-rate capture (`capture = wgcc`): one picture per
                     // stream slot, the last one again when nothing new was
-                    // composed for it.
+                    // composed for it. `origin` names the content of a fresh
+                    // picture so its repeats reuse the converted picture.
                     let mut constant = constant_rate
                         .then(butterpollo_core::capture_policy::ConstantRate::default);
+                    let mut origin = 0u64;
                     while !worker_stop.load(Ordering::Acquire) {
                         if Instant::now() >= check_target {
                             check_target = Instant::now() + Duration::from_millis(100);
@@ -904,17 +906,22 @@ impl Media {
                                 let (captured, focus) = (image.captured, image.focus);
                                 let published = Instant::now();
                                 image.published = published;
-                                worker.publish_focus(Arc::new(image), captured, focus)?;
                                 if let Some(rate) = &mut constant {
+                                    origin = origin.wrapping_add(1).max(1);
+                                    image.origin = origin;
                                     rate.published(published);
                                 }
+                                worker.publish_focus(Arc::new(image), captured, focus)?;
                             }
                             Ok(None) => {
-                                // The slot's period follows a changed stream
-                                // rate (and a phase lock), so read it here.
-                                let constant_period = constant
-                                    .as_ref()
-                                    .map(|_| worker_grid.lock().unwrap().period);
+                                // The slot's period is the fastest stream using
+                                // this capture, so a rate change and a shared
+                                // capture both follow it; the grid's period is
+                                // the fallback before a stream declares one.
+                                let constant_period = constant.as_ref().map(|_| {
+                                    let fallback = worker_grid.lock().unwrap().period;
+                                    worker.repeat_period(fallback)
+                                });
                                 // Nothing composed for this slot: publish the last
                                 // picture again, stamped now, so the encoder keeps a
                                 // steady cadence instead of repeating a still one.
@@ -933,8 +940,13 @@ impl Media {
                                                 repeat.wgc_stamp = None;
                                                 repeat.focus = None;
                                                 repeat.repeat = true;
-                                                rate.published(now);
-                                                worker.publish_repeat(Arc::new(repeat), now)?;
+                                                repeat.origin = picture.origin;
+                                                // A refused repeat (a capture
+                                                // restart) leaves the slot for the
+                                                // next try.
+                                                if worker.publish_repeat(Arc::new(repeat), now)? {
+                                                    rate.published(now);
+                                                }
                                             }
                                             // No picture to repeat (the capture is
                                             // being recreated): wait a period for
@@ -949,12 +961,17 @@ impl Media {
                                     worker.poll_interval(poll_interval)
                                 } else { poll_interval };
                                 let interval = capture.wait_interval(last_frame.elapsed(), interval);
-                                let deadline = Instant::now() + interval;
+                                let now = Instant::now();
+                                let deadline = now + interval;
                                 // Never sleep past the next constant-rate slot.
+                                // One already due could not be published (a
+                                // capture restart): the next poll tries again.
                                 let due = constant_period
                                     .and_then(|period| constant.as_ref().and_then(|rate| rate.due(period)));
                                 let until = capture.publication_deadline().unwrap_or(deadline).min(deadline);
-                                let until = due.map_or(until, |due| until.min(due));
+                                let until = due
+                                    .filter(|due| *due > now)
+                                    .map_or(until, |due| until.min(due));
                                 match capture.frame_signal() {
                                     // Frame announcements interrupt both active polling
                                     // and the longer wait used by a static source.
@@ -1050,7 +1067,6 @@ impl Media {
         latest: &'a mut Option<Arc<Source>>,
     ) -> Result<(&'a mut Arc<Source>, Arc<capture::Consumer>)> {
         let latest = latest.insert(self.capture(
-            &prepared.capture(),
             s.config.hdr,
             c,
             butterpollo_core::framegen::Rate(s.config.fps_millihz()),
@@ -1092,7 +1108,8 @@ impl Media {
         let source_refresh_hz = butterpollo_windows::display::mode(&first.gpu.display.display_name)
             .ok()
             .map(|mode| mode.dmDisplayFrequency);
-        tracing::info!(width=s.config.width,height=s.config.height,fps=f64::from(s.config.fps_millihz())/1000.,requested_fps=s.config.fps,bitrate_kbps=s.bitrate.load(Ordering::Relaxed),configured_bitrate_kbps=s.config.configured_bitrate_kbps,codec=s.config.codec,hdr=s.config.hdr,ten_bit=s.config.ten_bit(),full_range=s.config.full_range(),color_matrix=s.config.color_matrix(),vrr=s.config.vrr_low_latency,packet_size=s.config.packet_size,pyrowave_records=s.config.pyrowave_records,pyrowave_row_order=s.config.pyrowave_row_order,requested_capture=%prepared.capture(),constant_rate=prepared.constant_rate(),requested_encoder=c.get("encoder","auto"),encoder=encoder.as_ref().unwrap().backend(),adapter=%first.gpu.display.adapter,source_width=first.width,source_height=first.height,source_refresh_hz,source_pixel=?first.pixel,"stream configured");
+        let (requested_capture, constant_rate) = prepared.capture_method();
+        tracing::info!(width=s.config.width,height=s.config.height,fps=f64::from(s.config.fps_millihz())/1000.,requested_fps=s.config.fps,bitrate_kbps=s.bitrate.load(Ordering::Relaxed),configured_bitrate_kbps=s.config.configured_bitrate_kbps,codec=s.config.codec,hdr=s.config.hdr,ten_bit=s.config.ten_bit(),full_range=s.config.full_range(),color_matrix=s.config.color_matrix(),vrr=s.config.vrr_low_latency,packet_size=s.config.packet_size,pyrowave_records=s.config.pyrowave_records,pyrowave_row_order=s.config.pyrowave_row_order,requested_capture=%requested_capture,constant_rate=constant_rate,requested_encoder=c.get("encoder","auto"),encoder=encoder.as_ref().unwrap().backend(),adapter=%first.gpu.display.adapter,source_width=first.width,source_height=first.height,source_refresh_hz,source_pixel=?first.pixel,"stream configured");
         if s.config.chroma_packing != 0 {
             let (coded_width, coded_height) = s.config.coded_size();
             tracing::info!(

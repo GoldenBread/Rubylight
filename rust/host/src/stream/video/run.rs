@@ -42,6 +42,9 @@ impl SessionThread<'_> {
         // for others mid-stream (0x5532); the encoder is rebuilt from this copy.
         let mut stream = s.config.clone();
         let mut rates = butterpollo_core::reconfigure::Rates::new(&stream, c.get("minimum_fps_target", "20"));
+        // A constant-rate capture publishes for its fastest stream: this one's
+        // stream rate, shared with any other stream on the same capture.
+        capture_wake.set_period(rates.period);
         // The rate pacing follows, and the period the send path reads.
         let mut paced_rate = stream.fps_millihz();
         let stream_period = std::cell::Cell::new(rates.period);
@@ -990,6 +993,7 @@ impl SessionThread<'_> {
                 if stream.fps_millihz() != paced_rate {
                     paced_rate = stream.fps_millihz();
                     rates = butterpollo_core::reconfigure::Rates::new(&stream, c.get("minimum_fps_target", "20"));
+                    capture_wake.set_period(rates.period);
                     stream_period.set(rates.period);
                     progress.set_period(rates.period);
                     cadence = butterpollo_core::stream_policy::Cadence::new(Instant::now(), rates.period, c.boolean("wgc_pacing_smoothing", true));

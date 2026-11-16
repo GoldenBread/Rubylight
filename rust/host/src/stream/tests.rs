@@ -1351,7 +1351,9 @@ fn shared_capture_separates_explicit_wgc_intervals_without_splitting_ddx() {
         assert_eq!(key(kind, ""), key(kind, "wgc_helper_streaming_scope=true"));
     }
     // Constant rate publishes between frames, so a stream with it never
-    // shares a capture opened for variable-rate WGC.
+    // shares a capture opened for variable-rate WGC. Streams of the same
+    // method still share, and the capture publishes for the fastest of them
+    // (`Latest::repeat_period`).
     let config = Config::default();
     assert_ne!(
         CaptureKey::new("wgc", "display", false, &config, "", false),

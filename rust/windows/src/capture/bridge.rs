@@ -746,6 +746,7 @@ impl Session {
             })),
             focus: None,
             repeat: false,
+            origin: 0,
         })
     }
 }

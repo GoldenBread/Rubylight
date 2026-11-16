@@ -156,6 +156,20 @@ fn a_constant_rate_repeat_is_a_picture_of_its_own() {
     assert!(!cadence.extends_picture());
 }
 #[test]
+fn a_real_frame_right_after_a_repeat_is_a_picture_of_its_own() {
+    let ms = 1_000_000;
+    let mut cadence = Freshness::default();
+    cadence.observe_focus(0, ms, None);
+    cadence.observe_repeat(5 * ms, ms);
+    // The game's next frame 1 ms after the repeat: captures less than 2 ms
+    // apart are one picture otherwise, and the capture cannot tell either.
+    cadence.observe_focus(6 * ms, ms, None);
+    assert_eq!(cadence.picture_start(), Some(6 * ms));
+    // Without a repeat the 2 ms rule still merges these.
+    cadence.observe_focus(7 * ms, ms, None);
+    assert_eq!(cadence.picture_start(), Some(6 * ms));
+}
+#[test]
 fn cached_statistics_match_the_original_policy_across_cadence_changes_and_resets() {
     fn reference(cadence: &Freshness, age: u64, normal: u64) -> u64 {
         if cadence.count < 8 {

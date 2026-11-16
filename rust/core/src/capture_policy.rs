@@ -48,6 +48,11 @@ pub struct Freshness {
     focus_start: Option<u64>,
     focus_interval: Option<u64>,
     extends: bool,
+    /// The latest publication repeated the previous picture (`capture = wgcc`):
+    /// the next capture starts a picture of its own even less than
+    /// `PICTURE_GAP` after it, since a real game frame can land that soon
+    /// after a repeat and must not be absorbed into it.
+    repeated: bool,
 }
 impl Freshness {
     /// A capture this soon after the previous one belongs to the same picture.
@@ -175,6 +180,11 @@ impl Freshness {
     /// the distinction.
     pub fn observe_focus(&mut self, captured: u64, delay: u64, focus: Option<bool>) {
         let mut same_picture = self.record(captured, delay);
+        // A real capture after a repeat is a new picture of the game, however
+        // soon it comes: a game frame can land within 2 ms of a repeat.
+        if std::mem::take(&mut self.repeated) {
+            same_picture = false;
+        }
         self.extends = false;
         let animating = match (self.focus_at, self.focus_interval) {
             (Some(at), Some(interval)) => {
@@ -220,11 +230,12 @@ impl Freshness {
         self.focus_at = None;
         self.focus_start = None;
         self.focus_interval = None;
+        self.repeated = true;
         self.published(captured, false);
     }
     /// Record the interval since the previous publication, and whether the
-    /// capture belongs to the previous picture. Returns all history to empty
-    /// after a gap of half a second or more.
+    /// capture belongs to the previous picture. Clears all history after a
+    /// gap of half a second or more.
     fn record(&mut self, captured: u64, delay: u64) -> bool {
         let mut same_picture = false;
         if let Some(previous) = self.last {
