@@ -26,6 +26,10 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, replace
 from pathlib import Path
 
+# One thread per worker process; the pool supplies the parallelism.
+for _var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_var, "1")
+
 import numpy as np
 from scipy import ndimage
 
@@ -520,7 +524,7 @@ def bound(out: Path, clip: str, source: str, frames: int = 41):
                 row[f"s{sg}_u{a}"] = psnr(np.rint(np.clip(o + a * (o - blur), 0, 255)), r)
         rows.append(row)
     mean = {k: float(np.mean([r[k] for r in rows])) for k in rows[0]}
-    best = max((k for k in mean if k.startswith("s")), key=mean.get)
+    best = max((k for k in mean if "_u" in k), key=mean.get)
     result = {"clip": clip, "source": source, "frames": [10, frames - 1], "sgsr1": mean["sgsr1"],
               "bilinear": mean["bilinear"], "best": best, "best_psnr": mean[best],
               "gain_over_sgsr1": mean[best] - mean["sgsr1"]}
@@ -531,11 +535,15 @@ def bound(out: Path, clip: str, source: str, frames: int = 41):
     print(json.dumps(result))
 
 
-def fusion(out: Path, clip: str, source: str):
-    """Oracle K-frame fusion in screen space: every output pixel gathers 4x4 samples from each of
-    the current and K-1 previous decoded frames at their exact motion-compensated positions,
-    Gaussian-weighted by distance, then an unsharp mask. What a non-recursive temporal method
-    could reach with perfect motion, at 16 * K texture fetches per output pixel."""
+def fusion(out: Path, clip: str, source: str, estimated: bool = False):
+    """K-frame fusion in screen space: every output pixel gathers 4x4 samples from each of the
+    current and K-1 previous decoded frames at their motion-compensated positions, weighted by
+    a Gaussian of their distance, then an unsharp mask; 16 * K fetches per output pixel.
+
+    With exact motion this is what a non-recursive temporal method could reach. With
+    `estimated`, each earlier frame's motion comes from the block matcher (frame pair t, t-k),
+    and earlier samples are also weighted by match confidence and by their difference from the
+    current frame's bilinear picture, so a wrong vector costs little."""
     meta = json.loads((out / "meta.json").read_text())
     n = meta["clips"][clip]["frames"]
     d = out / "clips" / clip
@@ -543,45 +551,76 @@ def fusion(out: Path, clip: str, source: str):
     scale = w / NW
     native = np.fromfile(d / "native.rgb", np.uint8).reshape(n, NH, NW, 3)
     dec = np.fromfile(d / f"{source}.rgb", np.uint8).reshape(n, h, w, 3)
-    v = PAN_VELOCITY[clip]
-    dv = np.array(v, np.float32) / SUPERSAMPLE * scale  # stream px per frame
     ox, oy = U.output_axes(NW, NH)
-    px, py = ox * scale, oy * scale
+    px, py = np.meshgrid(ox * scale, oy * scale)
+    dv = np.array(PAN_VELOCITY.get(clip, (0, 0)), np.float32) / SUPERSAMPLE * scale
+    ks = (1, 4) if estimated else (1, 4, 8)
+    sigmas = (0.35,) if estimated else (0.25, 0.35, 0.5)
+    taus = (0.06, None) if estimated else (None,)
+    cfg = U.TemporalConfig(subpel="lk")
+
+    def pyramid(f):
+        y = U.luma(f)
+        return [y, U.down2(y), U.down2(U.down2(y))]
+
     psnr = lambda a, b: 10 * math.log10(255.0 ** 2 / np.mean((a - b) ** 2))
     res = {}
     for t in range(12, 41, 4):
         r = native[t].astype(np.float64)
         cur = dec[t].astype(np.float32) / 255
         res.setdefault("sgsr1", []).append(psnr(np.rint(U.upscale_sgsr1(cur, NW, NH, 1.5) * 255), r))
-        for K in (1, 4, 8):
-            for sigma in (0.25, 0.35, 0.5):
-                acc = 0.0
-                wacc = 0.0
-                for k in range(K):
-                    f = dec[t - k].astype(np.float32) / 255
-                    qx = px + k * dv[0] - 0.5
-                    qy = py + k * dv[1] - 0.5
-                    x0 = np.floor(qx).astype(np.int64)
-                    y0 = np.floor(qy).astype(np.int64)
-                    for sy in (-1, 0, 1, 2):
-                        for sx in (-1, 0, 1, 2):
-                            ddx = (x0 + sx - qx)[None, :]
-                            ddy = (y0 + sy - qy)[:, None]
-                            wgt = np.exp(-(ddx * ddx + ddy * ddy) / (2 * sigma * sigma))
-                            acc = acc + U.fetch_sep(f, y0 + sy, x0 + sx) * wgt[..., None]
-                            wacc = wacc + wgt
-                o = acc / wacc[..., None]
-                for a in (0.0, 1.0, 2.0):
-                    oo = np.clip(o + a * (o - U.blur121(o)), 0, 1)
-                    res.setdefault(f"K{K}_s{sigma}_u{a}", []).append(psnr(np.rint(oo * 255), r))
+        base = U.upscale_bilinear(cur, NW, NH)
+        fields = [(np.zeros((NH, NW, 2), np.float32), np.ones((NH, NW), np.float32))]
+        p0 = pyramid(cur) if estimated else None
+        pred = np.zeros((-(-h // 8), -(-w // 8), 2), np.float32)
+        for k in range(1, max(ks)):
+            if estimated:
+                m = U.estimate_motion(p0, pyramid(dec[t - k].astype(np.float32) / 255), pred, cfg)
+                pred = m.vectors * (k + 1) / k
+                mv = U.bilinear_sep(m.vectors, ox * scale / 8, oy * scale / 8)
+                cf = U.bilinear_sep(m.confidence, ox * scale / 8, oy * scale / 8)
+            else:
+                mv = np.broadcast_to(k * dv, (NH, NW, 2))
+                cf = np.ones((NH, NW), np.float32)
+            fields.append((mv, cf))
+        for K in ks:
+            for sigma in sigmas:
+                for tau in taus:
+                    acc = 0.0
+                    wacc = 0.0
+                    for k in range(K):
+                        f = dec[t - k].astype(np.float32) / 255
+                        mv, cf = fields[k]
+                        qx = px + mv[..., 0] - 0.5
+                        qy = py + mv[..., 1] - 0.5
+                        x0 = np.floor(qx).astype(np.int64)
+                        y0 = np.floor(qy).astype(np.int64)
+                        for sy in (-1, 0, 1, 2):
+                            for sx in (-1, 0, 1, 2):
+                                ddx = x0 + sx - qx
+                                ddy = y0 + sy - qy
+                                smp = U.fetch(f, y0 + sy, x0 + sx)
+                                wgt = np.exp(-(ddx * ddx + ddy * ddy) / (2 * sigma * sigma))
+                                if k and estimated:
+                                    wgt = wgt * cf
+                                    if tau is not None:
+                                        diff = np.abs(smp - base).max(-1)
+                                        wgt = wgt * np.exp(-(diff * diff) / (2 * tau * tau))
+                                acc = acc + smp * wgt[..., None]
+                                wacc = wacc + wgt
+                    o = acc / np.maximum(wacc, 1e-8)[..., None]
+                    for a in (0.0, 1.0, 2.0):
+                        oo = np.clip(o + a * (o - U.blur121(o)), 0, 1)
+                        res.setdefault(f"K{K}_s{sigma}_t{tau}_u{a}", []).append(psnr(np.rint(oo * 255), r))
     mean = {k: float(np.mean(x)) for k, x in res.items()}
-    best = {K: max((k for k in mean if k.startswith(f"K{K}_")), key=mean.get) for K in (1, 4, 8)}
-    result = {"clip": clip, "source": source, "sgsr1": mean["sgsr1"],
+    best = {K: max((k for k in mean if k.startswith(f"K{K}_")), key=mean.get) for K in ks}
+    result = {"clip": clip, "source": source, "motion": "estimated" if estimated else "exact",
+              "sgsr1": mean["sgsr1"],
               **{f"K{K}": {"best": best[K], "psnr": mean[best[K]],
                            "gain_over_sgsr1": mean[best[K]] - mean["sgsr1"]} for K in best}}
     path = out / "fusion.json"
     allres = json.loads(path.read_text()) if path.exists() else {}
-    allres[f"{clip}/{source}"] = result
+    allres[f"{clip}/{source}/{result['motion']}"] = result
     path.write_text(json.dumps(allres, indent=1))
     print(json.dumps(result))
 
@@ -641,6 +680,7 @@ def main():
     ap.add_argument("--methods", nargs="*")
     ap.add_argument("--variants", nargs="*", default=[])
     ap.add_argument("--workers", type=int, default=6)
+    ap.add_argument("--estimated", action="store_true", help="fusion: estimated motion")
     a = ap.parse_args()
     if a.command == "selftest":
         selftest()
@@ -653,7 +693,7 @@ def main():
     elif a.command == "fusion":
         for clip in a.clips or ["pan_slow"]:
             for src in a.source:
-                fusion(a.out, clip, src)
+                fusion(a.out, clip, src, a.estimated)
     elif a.command == "run":
         run(a.out, a.clips, a.conditions, a.methods, a.variants, a.workers)
     else:
