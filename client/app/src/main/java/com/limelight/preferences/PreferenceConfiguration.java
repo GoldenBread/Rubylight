@@ -1509,6 +1509,15 @@ public class PreferenceConfiguration {
         if (editor != null) editor.apply();
     }
 
+    /**
+     * The saved "Jumbo video packets" setting alone. The launch thread reads it before the stream
+     * configuration exists, and the whole configuration loads the native bridge on the audio path.
+     */
+    public static boolean jumboFrames(Context context) {
+        return PreferenceManager.getDefaultSharedPreferences(context)
+                .getBoolean(JUMBO_FRAMES_PREF_STRING, false);
+    }
+
     public static PreferenceConfiguration readPreferences(Context context) {
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
         migrateToNativeDefaults(context);

@@ -1140,8 +1140,8 @@ public class NvConnection {
         // its 1024/1184-byte packets. The probe is the host's PyroWave UDP probe, but the
         // negotiated size applies to every video codec.
         context.jumboFallback = false;
-        PreferenceConfiguration jumboPrefs = PreferenceConfiguration.readPreferences(appContext);
-        if (jumboPrefs.jumboFrames &&
+        boolean jumboFrames = PreferenceConfiguration.jumboFrames(appContext);
+        if (jumboFrames &&
                 context.negotiatedRemoteStreaming != StreamConfiguration.STREAM_CFG_REMOTE &&
                 details.supportsPyroWavePaceCalibration() &&
                 context.hostCaps.maxVideoPacket() > HostCapabilities.STOCK_MAX_VIDEO_PACKET) {
@@ -1176,7 +1176,7 @@ public class NvConnection {
                 context.jumboFallback = true;
                 LimeLog.warning("Jumbo video packets could not be tested (" + e + "); streaming normal packets");
             }
-        } else if (jumboPrefs.jumboFrames && context.negotiatedRemoteStreaming != StreamConfiguration.STREAM_CFG_REMOTE) {
+        } else if (jumboFrames && context.negotiatedRemoteStreaming != StreamConfiguration.STREAM_CFG_REMOTE) {
             // The row is hidden where no saved PC offers jumbo, but a saved choice stays. No test
             // ran, so log it without a notice: the stream is simply stock.
             LimeLog.info("Jumbo video packets are on, but this PC does not offer or cannot test them; streaming normal packets");

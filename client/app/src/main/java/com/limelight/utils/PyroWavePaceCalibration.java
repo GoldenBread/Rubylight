@@ -165,7 +165,7 @@ public final class PyroWavePaceCalibration {
         }
         // Calibrate at the size the stream will use: jumbo only when the user turned it on, so a
         // stock setup keeps today's 1392-byte probes and its saved pace.
-        int packetSize = PreferenceConfiguration.readPreferences(activity).jumboFrames
+        int packetSize = PreferenceConfiguration.jumboFrames(activity)
                 ? packetSizeFor(current.caps != null ? current.caps.maxVideoPacket() : 0)
                 : PACKET_SIZE;
         int probeKbps = PyroWavePace.probeKbps(bitrateKbps, fps, packetSize,
