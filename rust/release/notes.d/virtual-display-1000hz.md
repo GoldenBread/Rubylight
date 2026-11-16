@@ -1,4 +1,0 @@
-# Virtual display refresh
-
-- **1000 Hz by default.** New virtual displays run at 1000 Hz, so a game capped at the stream's frame rate waits at most 1 ms for a refresh. With a test picture capped at 60 fps, 0.04 % of frame intervals were more than 4 ms off at 1000 Hz, against 0.23 % at twice and 2.22 % at four times the stream rate, where frames can land in alternate refresh slots as the cap's timer drifts onto the display's refresh. An earlier run measured 1000 Hz about 1 ms slower than twice the stream rate at 60 fps. Twice and four times the stream rate stay selectable, and Off still ends the automatic FPS cap.
-- **A refused refresh no longer leaves the display slow.** When Windows refuses the refresh a virtual display asks for and keeps a slower one at the right resolution, the display now asks for the fastest refresh it offers below the refused one, without a warning.

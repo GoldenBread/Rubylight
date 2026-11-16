@@ -1,2 +1,0 @@
-# DualSense identity
-- **Controller settings explain a game that drifts with the DualSense.** Some games read the controller's name and can treat the VHF DualSense as an unknown controller, so the camera or cursor can drift with no input; the controller settings and docs now say that the VHF pad reports the virtual gamepad driver's name and has no USB parent, and that such a game can use **DualSense with waveform haptics (USB/IP)** (usbip-win2, Sony's USB identity, any client) or **Xbox Series**. Automatic selection is unchanged.
