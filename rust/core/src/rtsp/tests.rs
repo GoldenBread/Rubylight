@@ -491,3 +491,36 @@ fn fractional_negotiation_does_not_use_stale_display_refresh() {
         119880
     );
 }
+#[test]
+fn a_host_cap_keeps_the_display_size_and_codes_a_smaller_picture() {
+    let mut n = Negotiated::from_sdp(
+        b"a=x-nv-video[0].clientViewportWd:3840\na=x-nv-video[0].clientViewportHt:2160\n",
+    )
+    .unwrap();
+    assert_eq!(n.display_size(), (3840, 2160));
+    assert!(!n.capped());
+    n.set_display_size((3840, 2160), Some((2560, 1440)));
+    assert_eq!((n.width, n.height), (2560, 1440));
+    assert_eq!(n.display_size(), (3840, 2160));
+    assert!(n.capped());
+    n.validate().unwrap();
+    // A request within the cap is coded as it is, and a cap cleared codes the
+    // request again.
+    n.set_display_size((1920, 1080), Some((2560, 1440)));
+    assert_eq!((n.width, n.height), (1920, 1080));
+    assert_eq!(n.display_size(), (1920, 1080));
+    assert!(!n.capped());
+    // A packed 4:4:4 stream is capped by its source size; the coded geometry
+    // follows.
+    let mut packed = Negotiated {
+        width: 3840,
+        height: 2160,
+        codec: 1,
+        chroma_packing: 1,
+        ..Default::default()
+    };
+    packed.set_display_size((3840, 2160), Some((2560, 1440)));
+    assert_eq!((packed.width, packed.height), (2560, 1440));
+    assert_eq!(packed.display_size(), (3840, 2160));
+    packed.validate().unwrap();
+}

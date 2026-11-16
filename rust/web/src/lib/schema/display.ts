@@ -756,4 +756,27 @@ export const settings: Setting[] = [
     default: '1920x1080x60',
     advanced: true,
   },
+  {
+    key: 'max_stream_resolution',
+    label: 'Maximum stream resolution',
+    description:
+      'Caps the picture every stream is encoded at, whatever size a device asks for. Leave it at Native unless your network or encoder needs a smaller picture.',
+    details:
+      'Native encodes what each device asks for. A cap fits the picture inside it, keeping its shape, with black bars where the shapes differ, while the PC\'s display still runs at the size the device asked for: games and text are still rendered at that size, and only the encoded picture is smaller. It applies to Moonlight and browser streams, and a saved value applies from the next connection; the stream card and the host log say when a stream was capped. The bitrate stays the stream\'s budget, so each pixel gets more of it.',
+    category: 'display',
+    group: 'Resolution and refresh rate',
+    control: {
+      kind: 'text',
+      placeholder: 'native',
+      mono: true,
+      presets: [
+        { value: 'native', label: 'Native (what each device asks for)' },
+        { value: '1920x1080', label: '1920 × 1080' },
+        { value: '2560x1440', label: '2560 × 1440' },
+        { value: '3840x2160', label: '3840 × 2160' },
+      ],
+    },
+    default: 'native',
+    advanced: true,
+  },
 ];

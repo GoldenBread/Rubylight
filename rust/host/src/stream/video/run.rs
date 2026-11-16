@@ -40,7 +40,9 @@ impl SessionThread<'_> {
         } = media;
         // The stream's size and rate. A client whose display changes can ask
         // for others mid-stream (0x5532); the encoder is rebuilt from this copy.
+        // The host's `max_stream_resolution` cap shrinks only the coded picture.
         let mut stream = s.config.clone();
+        let resolution_cap = c.max_stream_resolution();
         let mut rates = butterpollo_core::reconfigure::Rates::new(&stream, c.get("minimum_fps_target", "20"));
         // The rate pacing follows, and the period the send path reads.
         let mut paced_rate = stream.fps_millihz();
@@ -969,17 +971,21 @@ impl SessionThread<'_> {
                     let enabled = runtime_config.boolean("stream_reconfigure", true);
                     match butterpollo_core::reconfigure::refusal(&stream, enabled) {
                         Some(reason) => {
-                            refuse_switch(&s, from, butterpollo_core::rate_change::refusal_reason(enabled));
+                            refuse_switch(&s, from, butterpollo_core::reconfigure::Mode::applied(&stream), butterpollo_core::rate_change::refusal_reason(enabled));
                             tracing::info!(client = %s.launch.client.name, from = %from, to = %to, reason, "reconfigure refused");
                         }
                         None => {
                             tracing::info!(client = %s.launch.client.name, from = %from, to = %to, "reconfigure requested");
-                            to.apply_to(&mut stream);
+                            to.apply_to(&mut stream, resolution_cap);
                             if (to.width, to.height) != (from.width, from.height) {
-                                self.follow_size(&prepared, (stream.width, stream.height));
+                                self.follow_size(&prepared, stream.display_size());
                             }
                             s.rebuild_link_rate(&stream, c.link_rate_adaptation(), max_bitrate_kbps(&s, &c));
                             rebuild_congestion(&s, &stream, &c);
+                            s.reconfigure
+                                .lock()
+                                .unwrap()
+                                .applied_now(butterpollo_core::reconfigure::Mode::applied(&stream));
                             switching.get_or_insert((from, Instant::now()));
                             rebuild_encoder = true;
                         }
@@ -1336,15 +1342,15 @@ impl SessionThread<'_> {
                             // asked for: the stream goes back to the mode it had.
                             if let Some((from, _)) = switching.take() {
                                 let to = butterpollo_core::reconfigure::Mode::of(&stream);
-                                from.apply_to(&mut stream);
+                                from.apply_to(&mut stream, resolution_cap);
                                 // The link rate, and the display or co-op window, were
                                 // already set for the refused mode.
                                 s.rebuild_link_rate(&stream, c.link_rate_adaptation(), max_bitrate_kbps(&s, &c));
                                 rebuild_congestion(&s, &stream, &c);
                                 if (to.width, to.height) != (from.width, from.height) {
-                                    self.follow_size(&prepared, (stream.width, stream.height));
+                                    self.follow_size(&prepared, stream.display_size());
                                 }
-                                refuse_switch(&s, from, butterpollo_core::rate_change::Reason::EncoderFailed);
+                                refuse_switch(&s, from, butterpollo_core::reconfigure::Mode::applied(&stream), butterpollo_core::rate_change::Reason::EncoderFailed);
                                 tracing::info!(client = %s.launch.client.name, from = %from, to = %to, error = %format!("{error:#}"), "reconfigure refused: the encoder cannot make this mode; keeping the previous one");
                                 continue;
                             }
@@ -1621,13 +1627,13 @@ impl SessionThread<'_> {
                         // cannot be created at it.
                         if let Some((from, _)) = switching.take() {
                             let to = butterpollo_core::reconfigure::Mode::of(&stream);
-                            from.apply_to(&mut stream);
+                            from.apply_to(&mut stream, resolution_cap);
                             s.rebuild_link_rate(&stream, c.link_rate_adaptation(), max_bitrate_kbps(&s, &c));
                             rebuild_congestion(&s, &stream, &c);
                             if (to.width, to.height) != (from.width, from.height) {
-                                self.follow_size(&prepared, (stream.width, stream.height));
+                                self.follow_size(&prepared, stream.display_size());
                             }
-                            refuse_switch(&s, from, butterpollo_core::rate_change::Reason::EncoderFailed);
+                            refuse_switch(&s, from, butterpollo_core::reconfigure::Mode::applied(&stream), butterpollo_core::rate_change::Reason::EncoderFailed);
                             tracing::info!(client = %s.launch.client.name, from = %from, to = %to, error = %format!("{error:#}"), "reconfigure refused: the encoder failed at this mode; keeping the previous one");
                             rebuild_encoder = true;
                             continue;

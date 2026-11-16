@@ -269,12 +269,12 @@ impl<P, A> Session<P, A> {
     pub fn new(launch: Launch<P, A>, config: Negotiated) -> Arc<Self> {
         let launch_peer = launch.peer.to_canonical();
         let bitrate = config.bitrate_kbps;
-        let mode = crate::reconfigure::Mode::of(&config);
         let started = Instant::now();
         let picture = (
             u16::try_from(config.width).unwrap_or(u16::MAX),
             u16::try_from(config.height).unwrap_or(u16::MAX),
         );
+        let reconfigure = crate::reconfigure::Reconfiguration::of(&config);
         Arc::new(Self {
             encoder: Default::default(),
             capture_warnings: Default::default(),
@@ -309,7 +309,7 @@ impl<P, A> Session<P, A> {
             fec_split_on: AtomicBool::new(false),
             fec_split: AtomicU32::new(0),
             phase_sync: Default::default(),
-            reconfigure: std::sync::Mutex::new(crate::reconfigure::Reconfiguration::new(mode)),
+            reconfigure: std::sync::Mutex::new(reconfigure),
             rate_changes: Default::default(),
             stats: Stats::default(),
             started,
@@ -410,8 +410,13 @@ impl<P, A> Session<P, A> {
         self.stop.load(Ordering::Acquire)
     }
     /// The size and rate the stream runs at now: the negotiated ones until the
-    /// client asks for others (0x5532).
+    /// client asks for others (0x5532), coded no larger than the host's cap.
     pub fn stream_mode(&self) -> crate::reconfigure::Mode {
+        self.reconfigure.lock().unwrap().applied()
+    }
+    /// The size and rate the client asked for, which its display keeps; the
+    /// coded picture is [`Self::stream_mode`] under the host's cap.
+    pub fn requested_mode(&self) -> crate::reconfigure::Mode {
         self.reconfigure.lock().unwrap().current()
     }
     pub fn stop(&self) {
@@ -1602,7 +1607,7 @@ impl<P, A> Session<P, A> {
         let mode = self.stream_mode();
         let fps = mode.fps_millihz.saturating_add(500) / 1000;
         let (width, height) = (mode.width, mode.height);
-        let requested_fps = if mode == crate::reconfigure::Mode::of(&self.config) {
+        let requested_fps = if mode == crate::reconfigure::Mode::applied(&self.config) {
             self.config.fps
         } else {
             fps

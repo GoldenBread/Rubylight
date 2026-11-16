@@ -1241,7 +1241,7 @@ fn start_live(
     let followers = handle.followers();
     h.webrtc_links
         .put(launch.id.clone(), handle.with_audio_layout(audio_layout));
-    let negotiated = Negotiated::webrtc(
+    let mut negotiated = Negotiated::webrtc(
         settings.width,
         settings.height,
         settings.fps,
@@ -1249,6 +1249,13 @@ fn start_live(
         settings.hdr,
         settings.bitrate_kbps,
         settings.audio_channels as u8,
+    );
+    // The browser's canvas is the display; a host cap shrinks only the picture
+    // the encoder codes.
+    crate::stream::cap_stream_resolution(
+        &mut negotiated,
+        &h.config.read().unwrap(),
+        &launch.warnings,
     );
     let started = h.sessions.lock().unwrap().start(launch.clone(), negotiated);
     let session = started.map_err(|error| Rejected::Host(error.context("starting the session")))?;

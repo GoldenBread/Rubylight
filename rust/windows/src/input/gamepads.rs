@@ -521,7 +521,13 @@ impl Gamepads {
         }
         let attached = (|| -> Result<_> {
             let exe = steam_deck_pad::usbip_exe().context("usbip-win2 is not installed")?;
-            dualsense_pad::DualSensePad::plug(&exe, Slot::reserve()?, id, caps)
+            dualsense_pad::DualSensePad::plug(
+                &exe,
+                Slot::reserve()?,
+                id,
+                caps,
+                self.policy.dualsense_haptics_gain,
+            )
         })();
         let pad = match attached {
             Ok(pad) => pad,

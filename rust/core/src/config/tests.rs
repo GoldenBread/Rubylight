@@ -154,6 +154,31 @@ fn pyrowave_encode_overlap_is_off_until_turned_on() {
 }
 
 #[test]
+fn the_stream_resolution_cap_is_native_until_set_and_refuses_other_text() {
+    let mut config = super::Config::default();
+    // Today's behaviour: every device gets the picture it asks for.
+    assert_eq!(config.max_stream_resolution(), None);
+    let saved = serde_json::json!({ "max_stream_resolution": "2560x1440" });
+    config.update(saved.as_object().unwrap()).unwrap();
+    assert_eq!(config.max_stream_resolution(), Some((2560, 1440)));
+    // Clearing it goes back to native, as a reset does.
+    let reset = serde_json::json!({ "max_stream_resolution": "" });
+    config.update(reset.as_object().unwrap()).unwrap();
+    assert_eq!(config.max_stream_resolution(), None);
+    // The console refuses text that is neither native nor a size it could use.
+    for refused in ["1440p", "2560x", "100x100", "8000x2160"] {
+        let bad = serde_json::json!({ "max_stream_resolution": refused });
+        assert!(
+            config.update(bad.as_object().unwrap()).is_err(),
+            "{refused}"
+        );
+    }
+    let native = serde_json::json!({ "max_stream_resolution": "native" });
+    config.update(native.as_object().unwrap()).unwrap();
+    assert_eq!(config.max_stream_resolution(), None);
+}
+
+#[test]
 fn audio_passthrough_is_on_unless_turned_off() {
     assert!(super::Config::default().audio_passthrough());
     for (text, on) in [

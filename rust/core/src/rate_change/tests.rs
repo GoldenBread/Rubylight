@@ -279,7 +279,7 @@ impl Session {
     }
 
     fn went_back(&mut self, from: Mode, reason: Reason) {
-        self.reconfigure.refused(from);
+        self.reconfigure.refused(from, from);
         self.changes.switched(from, Some(reason));
     }
 

@@ -204,6 +204,10 @@ pub struct Policy {
     pub always_send_scancodes: bool,
     pub high_resolution_scrolling: bool,
     pub forward_rumble: bool,
+    /// `dualsense_haptics_gain`: how strongly a game's own waveform haptics
+    /// drive a USB/IP DualSense's actuators, in percent of what it sent
+    /// (default 100). Ordinary rumble and triggers are never scaled.
+    pub dualsense_haptics_gain: u16,
     pub motion_as_ds4: bool,
     pub touchpad_as_ds4: bool,
     /// `ds4_back_as_touchpad_click`: Back also clicks the touchpad of a
@@ -282,6 +286,7 @@ impl Policy {
             always_send_scancodes: config.boolean("always_send_scancodes", true),
             high_resolution_scrolling: config.boolean("high_resolution_scrolling", true),
             forward_rumble: config.boolean("forward_rumble", true),
+            dualsense_haptics_gain: crate::dualsense::haptics_gain(config),
             motion_as_ds4: config.boolean("motion_as_ds4", true),
             touchpad_as_ds4: config.boolean("touchpad_as_ds4", true),
             ds4_back_as_touchpad_click: config.boolean("ds4_back_as_touchpad_click", true),

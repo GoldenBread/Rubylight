@@ -303,3 +303,83 @@ pub(super) fn apply_overrides(
     }
     Ok(())
 }
+
+/// Caps `stream`'s coded picture at the host's `max_stream_resolution`, leaving
+/// the display at the size the client asked for, and tells the device and the
+/// console why when the picture is smaller. `stream` holds the requested size
+/// when this is called (a launch's mode or an ANNOUNCE).
+pub(crate) fn cap_stream_resolution(
+    stream: &mut butterpollo_core::rtsp::Negotiated,
+    config: &Config,
+    warnings: &butterpollo_core::session::Warnings,
+) {
+    let cap = config.max_stream_resolution();
+    stream.set_display_size((stream.width, stream.height), cap);
+    let Some((cap_width, cap_height)) = cap.filter(|_| stream.capped()) else {
+        warnings.clear("stream_resolution_cap");
+        return;
+    };
+    let (display_width, display_height) = stream.display_size();
+    tracing::info!(
+        coded_width = stream.width,
+        coded_height = stream.height,
+        display_width,
+        display_height,
+        cap_width,
+        cap_height,
+        "stream resolution capped"
+    );
+    warnings.set(
+        "stream_resolution_cap",
+        format!(
+            "This stream is {}x{} because Maximum stream resolution (max_stream_resolution) is {cap_width}x{cap_height}. The PC's display keeps {display_width}x{display_height}, so the picture is scaled to the smaller size; set max_stream_resolution to native for the size the device asks for.",
+            stream.width, stream.height
+        ),
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn negotiated(width: u32, height: u32) -> butterpollo_core::rtsp::Negotiated {
+        butterpollo_core::rtsp::Negotiated {
+            width,
+            height,
+            ..Default::default()
+        }
+    }
+
+    fn reason(warnings: &butterpollo_core::session::Warnings) -> Option<String> {
+        warnings
+            .snapshot()
+            .into_iter()
+            .find(|warning| warning.code == "stream_resolution_cap")
+            .map(|warning| warning.message)
+    }
+
+    #[test]
+    fn a_resolution_cap_codes_1440p_while_the_display_keeps_4k_and_says_why() {
+        let warnings = butterpollo_core::session::Warnings::default();
+        let config = Config::parse("max_stream_resolution = 2560x1440\n").unwrap();
+        let mut capped = negotiated(3840, 2160);
+        cap_stream_resolution(&mut capped, &config, &warnings);
+        assert_eq!((capped.width, capped.height), (2560, 1440));
+        assert_eq!(capped.display_size(), (3840, 2160));
+        let text = reason(&warnings).expect("a capped stream says why");
+        assert!(text.contains("2560x1440"), "{text}");
+        assert!(text.contains("3840x2160"), "{text}");
+        // Native, today's default, codes the request and clears the reason.
+        let mut native = negotiated(3840, 2160);
+        cap_stream_resolution(&mut native, &Config::default(), &warnings);
+        assert_eq!((native.width, native.height), (3840, 2160));
+        assert_eq!(native.display_size(), (3840, 2160));
+        assert!(reason(&warnings).is_none());
+        // A request the cap fits in is coded as it is, and keeps the display.
+        let mut small = negotiated(1920, 1080);
+        cap_stream_resolution(&mut small, &config, &warnings);
+        assert_eq!((small.width, small.height), (1920, 1080));
+        assert_eq!(small.display_size(), (1920, 1080));
+        assert!(reason(&warnings).is_none());
+    }
+}

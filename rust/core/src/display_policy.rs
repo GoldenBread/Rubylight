@@ -312,6 +312,60 @@ pub fn parse_resolution(text: &str) -> Option<(u32, u32)> {
     let height = height.trim().parse::<u32>().ok()?;
     ((1..=16384).contains(&width) && (1..=16384).contains(&height)).then_some((width, height))
 }
+/// The setting that caps the picture every stream is encoded at.
+pub const MAX_STREAM_RESOLUTION: &str = "max_stream_resolution";
+/// The value that leaves every device the size it asks for: the default.
+pub const MAX_STREAM_RESOLUTION_NATIVE: &str = "native";
+/// The smallest and largest cap, the range the streamed display itself has
+/// (`dd_manual_resolution`).
+pub const MAX_STREAM_RESOLUTION_RANGE: (u32, u32, u32, u32) = (320, 200, 7680, 4320);
+
+/// The cap `max_stream_resolution` sets: `None` for `native` (or an empty
+/// value), which leaves each device the picture it asks for, and an error for
+/// anything else but a `WIDTHxHEIGHT` within [`MAX_STREAM_RESOLUTION_RANGE`].
+pub fn parse_max_stream_resolution(text: &str) -> Result<Option<(u32, u32)>> {
+    let text = crate::config::number_text(text);
+    if text.is_empty() || text.eq_ignore_ascii_case(MAX_STREAM_RESOLUTION_NATIVE) {
+        return Ok(None);
+    }
+    let (min_width, min_height, max_width, max_height) = MAX_STREAM_RESOLUTION_RANGE;
+    match parse_resolution(text) {
+        Some((width, height))
+            if (min_width..=max_width).contains(&width)
+                && (min_height..=max_height).contains(&height) =>
+        {
+            Ok(Some((width, height)))
+        }
+        _ => bail!(
+            "{MAX_STREAM_RESOLUTION} must be {MAX_STREAM_RESOLUTION_NATIVE} or WIDTHxHEIGHT between {min_width}x{min_height} and {max_width}x{max_height}"
+        ),
+    }
+}
+/// The size a stream is encoded at when the client asks for `requested` and
+/// the host caps it at `cap`: the largest even size of the same shape that
+/// fits inside the cap, never larger than the request. A cap the request fits
+/// in changes nothing, and neither does none. The display keeps `requested`;
+/// the converter letterboxes its picture inside the coded size when the shapes
+/// differ.
+pub fn capped_encode_size(requested: (u32, u32), cap: Option<(u32, u32)>) -> (u32, u32) {
+    let even = |value: u32| (value & !1).max(2);
+    let Some(cap) = cap.map(|(width, height)| (even(width), even(height))) else {
+        return requested;
+    };
+    if requested.0 <= cap.0 && requested.1 <= cap.1 {
+        return requested;
+    }
+    let scale = (f64::from(cap.0) / f64::from(requested.0.max(1)))
+        .min(f64::from(cap.1) / f64::from(requested.1.max(1)));
+    let fit = |value: u32, limit: u32| {
+        let scaled = even((f64::from(value) * scale).round() as u32);
+        // A picture keeps the encoder's own floor (64 px) where the cap allows
+        // it; an extreme shape is widened rather than failing the stream.
+        let floor = 64.min(limit);
+        scaled.clamp(floor, limit.max(floor))
+    };
+    (fit(requested.0, cap.0), fit(requested.1, cap.1))
+}
 /// A `DISPLAYCONFIG_ROTATION` (1 upright to 4, 270° clockwise) in degrees.
 pub fn rotation_degrees(rotation: u32) -> Option<u16> {
     match rotation {
