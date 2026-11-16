@@ -9,8 +9,8 @@ public class PadLayoutTest {
 
     @Test public void anUneditedLayoutSavesAsTheVersionAlone() {
         PadLayout layout = new PadLayout();
-        assertEquals("v1", layout.serialize());
-        assertTrue(PadLayout.parse("v1").isDefault());
+        assertEquals("v2", layout.serialize());
+        assertTrue(PadLayout.parse("v2").isDefault());
         assertTrue(PadLayout.parse(null).isDefault());
     }
 
@@ -60,7 +60,7 @@ public class PadLayoutTest {
         PadLayout layout = new PadLayout();
         assertTrue("Not in the default layout", layout.spec(PadLayout.Control.WASD).hidden);
         assertTrue(layout.isDefault());
-        assertEquals("v1", layout.serialize());
+        assertEquals("v2", layout.serialize());
         layout.spec(PadLayout.Control.WASD).hidden = false;
         layout.moveTo(PadLayout.Control.WASD, 600, 700, 2400, 1080, DENSITY);
         layout.setScale(PadLayout.Control.WASD, 1.2f);
@@ -134,11 +134,11 @@ public class PadLayoutTest {
         PadLayout withStick = new PadLayout();
         withStick.spec(PadLayout.Control.WASD).hidden = false;
         String text = withStick.serialize();
-        assertEquals("v1|WASD,-,-,1.000,100,0", text);
+        assertEquals("v2|WASD,-,-,1.000,100,0", text);
     }
 
     @Test public void anotherVersionLoadsAsTheDefault() {
-        assertTrue(PadLayout.parse("v2|FACE,0.5,0.5,1,100,0").isDefault());
+        assertTrue(PadLayout.parse("v3|FACE,0.5,0.5,1,100,0").isDefault());
         assertTrue(PadLayout.parse("").isDefault());
     }
 
@@ -159,11 +159,11 @@ public class PadLayoutTest {
     }
 
     /**
-     * The WASD stick and a Steam Controller control: no default layout shows either, and both take the middle of the
-     * screen, so with both turned on one of them is moved.
+     * Two controls the default layout leaves out (or the Steam setting gates) may take the same place when both are
+     * shown, so the editor moves one rather than the default layout having to fit every combination.
      */
     private static boolean bothOptional(PadLayout.Control a, PadLayout.Control b) {
-        return (a == PadLayout.Control.WASD && b.steam) || (b == PadLayout.Control.WASD && a.steam);
+        return (a.hiddenByDefault || a.steam) && (b.hiddenByDefault || b.steam);
     }
 
     @Test public void theDefaultClustersDoNotOverlapOnPhonesInBothOrientations() {
@@ -238,5 +238,60 @@ public class PadLayoutTest {
         layout.reset();
         assertTrue(layout.isDefault());
         assertFalse("A copy is its own", copy.isDefault());
+    }
+
+    @Test public void glyphsAndTheTouchpadModeAreSavedAndMigrateFromV1() {
+        PadLayout layout = new PadLayout();
+        layout.setGlyph(PadLayout.Glyph.PLAYSTATION);
+        layout.setPointerMode(PadLayout.PointerMode.CAMERA);
+        assertEquals("v2|glyph=playstation|mode=camera", layout.serialize());
+        PadLayout back = PadLayout.parse(layout.serialize());
+        assertEquals(PadLayout.Glyph.PLAYSTATION, back.glyph());
+        assertEquals(PadLayout.PointerMode.CAMERA, back.pointerMode());
+        assertFalse(back.isDefault());
+        back.reset();
+        assertEquals(PadLayout.Glyph.XBOX, back.glyph());
+        assertEquals(PadLayout.PointerMode.MOUSE, back.pointerMode());
+        assertTrue(back.isDefault());
+
+        // A layout from the version before these fields: Xbox glyphs and a mouse touchpad.
+        PadLayout old = PadLayout.parse("v1|FACE,0.7083,0.5556,1.300,100,0");
+        assertEquals(PadLayout.Glyph.XBOX, old.glyph());
+        assertEquals(PadLayout.PointerMode.MOUSE, old.pointerMode());
+        assertEquals(1.3f, old.spec(PadLayout.Control.FACE).scale, 1e-3);
+        // An unknown glyph or mode reads as the default rather than dropping the whole layout.
+        PadLayout unknown = PadLayout.parse("v2|glyph=atari|mode=laser|LB,-,-,1,100,0");
+        assertEquals(PadLayout.Glyph.XBOX, unknown.glyph());
+        assertEquals(PadLayout.PointerMode.MOUSE, unknown.pointerMode());
+        assertEquals(PadLayout.MAX_OPACITY, unknown.spec(PadLayout.Control.LB).opacity);
+    }
+
+    @Test public void presetsShowTheControlsTheyName() {
+        PadLayout minimal = new PadLayout();
+        minimal.applyPreset(PadLayout.Preset.MINIMAL);
+        for (PadLayout.Control control : PadLayout.Control.values()) {
+            boolean wanted = control == PadLayout.Control.LEFT_STICK || control == PadLayout.Control.RIGHT_STICK ||
+                    control == PadLayout.Control.DPAD || control == PadLayout.Control.FACE ||
+                    control == PadLayout.Control.SELECT || control == PadLayout.Control.START;
+            if (!control.steam) assertEquals(control.name(), !wanted, minimal.spec(control).hidden);
+        }
+        // The pointer touchpad and the WASD stick are opt-in controls; Minimal leaves both out.
+        assertTrue(minimal.spec(PadLayout.Control.POINTER_PAD).hidden);
+        assertTrue(minimal.spec(PadLayout.Control.WASD).hidden);
+
+        PadLayout full = new PadLayout();
+        full.applyPreset(PadLayout.Preset.FULL);
+        for (PadLayout.Control control : PadLayout.Control.values()) {
+            if (control.steam) continue;
+            // Every gamepad control and the pointer touchpad show; the WASD stick is a keyboard control and stays opt-in.
+            assertEquals(control.name(), control == PadLayout.Control.WASD, full.spec(control).hidden);
+        }
+        assertFalse(full.spec(PadLayout.Control.POINTER_PAD).hidden);
+
+        PadLayout back = new PadLayout();
+        back.applyPreset(PadLayout.Preset.FULL);
+        back.applyPreset(PadLayout.Preset.DEFAULT);
+        assertTrue(back.isDefault());
+        assertEquals("v2", back.serialize());
     }
 }

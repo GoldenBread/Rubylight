@@ -19,6 +19,11 @@ public final class PadLayout {
         /** A stick that holds W, A, S and D instead of moving an axis. Not in the default layout: Show adds it. */
         WASD(Shape.STICK, true),
         /**
+         * A Steam Deck-like touchpad that moves the PC's pointer, or the camera as a right stick, with tap, right-click
+         * and two-finger scroll. Not in the default layout: the editor adds it.
+         */
+        POINTER_PAD(Shape.TOUCHPAD, true),
+        /**
          * A Steam Controller's (2026) trackpads, back buttons and grip touch, as the classic controller offers them.
          * They show only with the Steam Controller controls setting; {@link ModernController#forcedHidden} keeps them
          * off otherwise.
@@ -55,14 +60,23 @@ public final class PadLayout {
         }
     }
 
-    /** {@code PAD} is a Steam Controller trackpad: a rounded square. */
-    public enum Shape { STICK, DPAD, FACE, PILL, ROUND, PAD }
+    /** {@code PAD} is a Steam Controller trackpad: a rounded square. {@code TOUCHPAD} is the pointer touchpad, wider than tall. */
+    public enum Shape { STICK, DPAD, FACE, PILL, ROUND, PAD, TOUCHPAD }
+
+    /** The face letters and shoulder names printed on the controls. */
+    public enum Glyph { XBOX, PLAYSTATION, NINTENDO }
+
+    /** What the pointer touchpad moves: the PC's pointer, or the camera as the right stick. */
+    public enum PointerMode { MOUSE, CAMERA }
+
+    /** A ready-made selection of controls; {@link #applyPreset} places them at their defaults. */
+    public enum Preset { DEFAULT, MINIMAL, FULL }
 
     public static final float MIN_SCALE = .5f, MAX_SCALE = 2f;
     public static final int MIN_OPACITY = 10, MAX_OPACITY = 100;
     /** The longest side of the default unit: a tablet's controls stop growing past a large phone's. */
     static final float MAX_UNIT_DP = 440;
-    private static final String VERSION = "v1";
+    private static final String VERSION = "v2";
 
     /** One control's settings. {@code cx} and {@code cy} are fractions of the surface; NaN means the default place. */
     public static final class Spec {
@@ -95,6 +109,8 @@ public final class PadLayout {
     }
 
     private final Spec[] specs = new Spec[Control.values().length];
+    private Glyph glyph = Glyph.XBOX;
+    private PointerMode pointerMode = PointerMode.MOUSE;
 
     public PadLayout() {
         for (Control control : Control.values()) specs[control.ordinal()] = new Spec(control.hiddenByDefault);
@@ -107,14 +123,19 @@ public final class PadLayout {
     public PadLayout copy() {
         PadLayout copy = new PadLayout();
         for (int i = 0; i < specs.length; i++) copy.specs[i].copyFrom(specs[i]);
+        copy.glyph = glyph;
+        copy.pointerMode = pointerMode;
         return copy;
     }
 
     public void copyFrom(PadLayout other) {
         for (int i = 0; i < specs.length; i++) specs[i].copyFrom(other.specs[i]);
+        glyph = other.glyph;
+        pointerMode = other.pointerMode;
     }
 
     public boolean isDefault() {
+        if (glyph != Glyph.XBOX || pointerMode != PointerMode.MOUSE) return false;
         for (Spec spec : specs) {
             if (!spec.isDefault()) return false;
         }
@@ -123,6 +144,52 @@ public final class PadLayout {
 
     public void reset() {
         for (Spec spec : specs) spec.copyFrom(new Spec(spec.defaultHidden));
+        glyph = Glyph.XBOX;
+        pointerMode = PointerMode.MOUSE;
+    }
+
+    public Glyph glyph() {
+        return glyph;
+    }
+
+    public void setGlyph(Glyph glyph) {
+        this.glyph = glyph == null ? Glyph.XBOX : glyph;
+    }
+
+    public PointerMode pointerMode() {
+        return pointerMode;
+    }
+
+    public void setPointerMode(PointerMode mode) {
+        pointerMode = mode == null ? PointerMode.MOUSE : mode;
+    }
+
+    /**
+     * Shows the controls a preset names, at their default places, sizes and opacity: Minimal keeps the sticks, the
+     * D-pad, the face cluster and View and Menu; Full adds every other gamepad control and the pointer touchpad. The
+     * Steam Controller controls follow their own setting and stay as they are; the WASD stick, a keyboard control,
+     * stays opt-in like the pointer touchpad.
+     */
+    public void applyPreset(Preset preset) {
+        reset();
+        if (preset == Preset.DEFAULT) return;
+        for (Control control : Control.values()) {
+            if (control.steam) continue;
+            boolean shown;
+            switch (preset) {
+                case MINIMAL:
+                    shown = control == Control.LEFT_STICK || control == Control.RIGHT_STICK || control == Control.DPAD ||
+                            control == Control.FACE || control == Control.SELECT || control == Control.START;
+                    break;
+                case FULL:
+                    shown = control != Control.WASD;
+                    break;
+                default:
+                    shown = !control.hiddenByDefault;
+                    break;
+            }
+            spec(control).hidden = !shown;
+        }
     }
 
     public void setScale(Control control, float scale) {
@@ -159,12 +226,15 @@ public final class PadLayout {
             case FACE: return .40f;
             case PILL: return .25f;
             case PAD: return .22f;
+            case TOUCHPAD: return .30f;
             default: return control == Control.L3 || control == Control.R3 ? .13f : .11f;
         }
     }
 
     static float baseHeight(Control control) {
-        return control.shape == Shape.PILL ? .12f : baseWidth(control);
+        if (control.shape == Shape.PILL) return .12f;
+        if (control.shape == Shape.TOUCHPAD) return .19f;
+        return baseWidth(control);
     }
 
     /**
@@ -234,6 +304,12 @@ public final class PadLayout {
             }
             case TOUCHPAD: x = width / 2; y = .035f * u + round + Math.max(.02f * u, 8 * density) + pillH / 2; break;
             case HOME: x = width / 2; y = .035f * u + round / 2; break;
+            case POINTER_PAD:
+                // The middle of the surface, where a phone held in two hands leaves the thumb room. Both it and the
+                // WASD stick are left out of the default layout; with both added, one gets moved.
+                x = width / 2;
+                y = height / 2;
+                break;
             default: {
                 // A Steam Controller control: its place comes from the arrangement the surface has room for.
                 float[] centers = steamCenters(width, height, u, density);
@@ -253,9 +329,9 @@ public final class PadLayout {
         if (y + size / 2 > height) return false;
         float[] center = new float[2];
         for (Control other : Control.values()) {
-            // The Steam Controller controls, off unless their setting is on, leave the WASD stick's default place
-            // where it was. The trackpads take the middle too, so with both shown one of them wants moving.
-            if (other == self || other.steam) continue;
+            // The controls the default layout leaves out, and the Steam Controller controls a setting keeps off, do not
+            // push the WASD stick from its place; when both optional middle controls are shown, one gets moved.
+            if (other == self || other.steam || other.hiddenByDefault) continue;
             defaultCenter(other, width, height, u, density, center);
             float w = width(other, u, density, 1), h = height(other, u, density, 1);
             if (Math.abs(center[0] - x) < (w + size) / 2 && Math.abs(center[1] - y) < (h + size) / 2) return false;
@@ -392,9 +468,11 @@ public final class PadLayout {
         return out;
     }
 
-    /** "v1|ID,cx,cy,scale,opacity,hidden|..." for controls that differ from the default; "v1" alone for none. */
+    /** "v2|glyph=playstation|mode=camera|ID,cx,cy,scale,opacity,hidden|..." for edits; "v2" alone for none. */
     public String serialize() {
         StringBuilder out = new StringBuilder(VERSION);
+        if (glyph != Glyph.XBOX) out.append("|glyph=").append(glyph.name().toLowerCase(Locale.ROOT));
+        if (pointerMode != PointerMode.MOUSE) out.append("|mode=").append(pointerMode.name().toLowerCase(Locale.ROOT));
         for (Control control : Control.values()) {
             Spec spec = spec(control);
             if (spec.isDefault()) continue;
@@ -409,17 +487,32 @@ public final class PadLayout {
     }
 
     /**
-     * Reads {@link #serialize} output. Unknown controls and broken entries are skipped and the rest
-     * kept, so a layout from a newer version still loads what this one knows. Null or another version
-     * gives the default layout.
+     * Reads {@link #serialize} output; "v1" layouts saved before the glyphs, the pointer touchpad and its mode load
+     * as an Xbox layout with a mouse touchpad. Unknown controls, unknown settings and broken entries are skipped and
+     * the rest kept, so a layout from a newer version still loads what this one knows. Null or another version gives
+     * the default layout.
      */
     public static PadLayout parse(String text) {
         PadLayout layout = new PadLayout();
         if (text == null) return layout;
         String[] parts = text.split("\\|");
-        if (parts.length == 0 || !VERSION.equals(parts[0])) return layout;
+        if (parts.length == 0 || (!VERSION.equals(parts[0]) && !"v1".equals(parts[0]))) return layout;
         for (int i = 1; i < parts.length; i++) {
-            String[] fields = parts[i].split(",", -1);
+            String part = parts[i];
+            if (part.startsWith("glyph=")) {
+                try {
+                    layout.glyph = Glyph.valueOf(part.substring("glyph=".length()).toUpperCase(Locale.ROOT));
+                } catch (IllegalArgumentException ignored) {
+                    // A glyph from a newer build: Xbox, what this one shows.
+                }
+                continue;
+            }
+            if (part.startsWith("mode=")) {
+                layout.pointerMode = "camera".equalsIgnoreCase(part.substring("mode=".length())) ?
+                        PointerMode.CAMERA : PointerMode.MOUSE;
+                continue;
+            }
+            String[] fields = part.split(",", -1);
             if (fields.length < 6) continue;
             Control control = Control.named(fields[0]);
             if (control == null) continue;

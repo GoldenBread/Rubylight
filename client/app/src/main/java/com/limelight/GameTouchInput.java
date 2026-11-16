@@ -436,6 +436,8 @@ final class GameTouchInput {
     }
 
     void showControllerLayoutDialog() {
+        // A connected gamepad may have kept the controls off the screen; their layout is still editable.
+        game.ensureOnscreenControllers();
         if (game.modernController != null) {
             // The modern controller edits in place: drag, pinch and the panel instead of modes.
             game.modernController.startEditing();
@@ -447,7 +449,9 @@ final class GameTouchInput {
                             VirtualController.ControllerMode.MoveButtons,
                             VirtualController.ControllerMode.ResizeButtons,
                             VirtualController.ControllerMode.Active};
+                    game.virtualController.show();
                     game.virtualController.setControllerMode(modes[which]);
+                    if (which == 2 && game.physicalControllerConnected) game.setPhysicalControllerConnected(true);
                 }).setNegativeButton(android.R.string.cancel, null).create());
     }
 

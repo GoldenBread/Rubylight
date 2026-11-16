@@ -604,6 +604,11 @@
             android:dialogMessage="@string/hint_vibrate_osc"
             android:defaultValue="true" />
         <com.limelight.preferences.MaterialSwitchPreference
+            android:key="checkbox_osc_auto_hide"
+            android:title="@string/title_osc_auto_hide"
+            android:dialogMessage="@string/summary_osc_auto_hide"
+            android:defaultValue="true" />
+        <com.limelight.preferences.MaterialSwitchPreference
             android:key="checkbox_only_show_L3R3"
             android:title="@string/title_only_l3r3"
             android:dialogMessage="@string/summary_only_l3r3"

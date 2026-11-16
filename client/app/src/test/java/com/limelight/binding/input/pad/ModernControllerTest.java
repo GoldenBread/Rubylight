@@ -12,6 +12,7 @@ import android.widget.FrameLayout;
 import com.limelight.binding.input.HeldInputState;
 import com.limelight.binding.input.StickMath;
 import com.limelight.nvstream.input.ControllerPacket;
+import com.limelight.nvstream.input.MouseButtonPacket;
 import com.limelight.preferences.PreferenceConfiguration;
 import com.limelight.ui.UiNavigationTest;
 
@@ -47,11 +48,22 @@ public class ModernControllerTest {
     };
     private FrameLayout frame;
     private PreferenceConfiguration prefs;
+    /** The pointer touchpad's output, recorded by the tests below. */
+    private final List<int[]> pointerMoves = new ArrayList<>();
+    private final List<Integer> pointerButtons = new ArrayList<>();
+    private final List<int[]> pointerScrolls = new ArrayList<>();
+    private final ModernController.PointerSink pointerSink = new ModernController.PointerSink() {
+        @Override public void move(int dx, int dy) { pointerMoves.add(new int[] {dx, dy}); }
+        @Override public void button(int button, boolean down) { pointerButtons.add(down ? button : -button); }
+        @Override public void scroll(int vertical, int horizontal) { pointerScrolls.add(new int[] {vertical, horizontal}); }
+    };
 
     @Before
     public void setUp() {
         Context app = RuntimeEnvironment.getApplication();
         ModernController.clearLayouts(app);
+        app.getSharedPreferences(com.limelight.binding.input.virtual_controller.VirtualControllerConfigurationLoader.OSC_PREFERENCE,
+                Context.MODE_PRIVATE).edit().clear().commit();
         UiNavigationTest.Screen screen = Robolectric.buildActivity(UiNavigationTest.Screen.class).setup().visible().get();
         frame = new FrameLayout(screen);
         screen.setContentView(frame, new FrameLayout.LayoutParams(1600, 720));
@@ -61,6 +73,9 @@ public class ModernControllerTest {
         // HOME follows the guide button setting; on here so every control is covered.
         prefs.showGuideButton = true;
         prefs.showTouchpadButton = true;
+        pointerMoves.clear();
+        pointerButtons.clear();
+        pointerScrolls.clear();
         layout();
     }
 
@@ -501,7 +516,7 @@ public class ModernControllerTest {
         assertEquals(.7f, controller(GAME).layout().spec(PadLayout.Control.FACE).scale, 1e-3);
         assertEquals(.7f, controller("pc-1/app-8").layout().spec(PadLayout.Control.FACE).scale, 1e-3);
         assertFalse(RuntimeEnvironment.getApplication().getSharedPreferences(ModernController.PREFS, Context.MODE_PRIVATE)
-                .contains(ModernController.GLOBAL_KEY + ":" + GAME));
+                .contains(PadLayoutKeys.key(true, GAME)));
     }
 
     @Test public void aStreamWithoutAGameSavesOnlyTheSharedLayout() {
@@ -627,5 +642,144 @@ public class ModernControllerTest {
         assertEquals("Still named for TalkBack", frame.getContext().getString(com.limelight.R.string.pad_edit_hide),
                 hide.getContentDescription());
         controller.destroy();
+    }
+
+    /** A layout edited in portrait is stored for portrait; landscape keeps its own. */
+    @Test @Config(qualifiers = "w360dp-h800dp-port-xhdpi")
+    public void portraitAndLandscapeKeepTheirOwnLayouts() {
+        frame.getLayoutParams().width = 720;
+        frame.getLayoutParams().height = 1600;
+        ModernController controller = new ModernController(frame.getContext(), frame, sink, prefs, GAME);
+        controller.refreshLayout();
+        controller.show();
+        frame.measure(View.MeasureSpec.makeMeasureSpec(720, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(1600, View.MeasureSpec.EXACTLY));
+        frame.layout(0, 0, 720, 1600);
+        PadLayout draft = controller.layout().copy();
+        draft.setScale(PadLayout.Control.FACE, 1.4f);
+        controller.save(draft, false);
+        android.content.SharedPreferences store = RuntimeEnvironment.getApplication()
+                .getSharedPreferences(ModernController.PREFS, Context.MODE_PRIVATE);
+        assertTrue("Saved for portrait", store.contains(PadLayoutKeys.key(false, null)));
+        assertFalse("Not for landscape", store.contains(PadLayoutKeys.key(true, null)));
+        controller.destroy();
+    }
+
+    /** A layout saved by the version before separate orientations loads in both. */
+    @Test public void anOlderSharedLayoutStillLoads() {
+        RuntimeEnvironment.getApplication().getSharedPreferences(ModernController.PREFS, Context.MODE_PRIVATE)
+                .edit().putString(PadLayoutKeys.legacyKey(null), "v1|FACE,0.7083,0.5556,1.300,100,0").commit();
+        ModernController controller = controller(GAME);
+        assertEquals(.7083f, controller.layout().spec(PadLayout.Control.FACE).cx, 1e-4);
+        assertEquals(1.3f, controller.layout().spec(PadLayout.Control.FACE).scale, 1e-3);
+    }
+
+    /** The first modern stream after a classic one keeps the classic controls' places. */
+    @Test public void aClassicLayoutIsCarriedOverOnce() {
+        RuntimeEnvironment.getApplication().getSharedPreferences(
+                        com.limelight.binding.input.virtual_controller.VirtualControllerConfigurationLoader.OSC_PREFERENCE,
+                        Context.MODE_PRIVATE)
+                .edit().putString("13", "{\"LEFT\":1200,\"TOP\":400,\"WIDTH\":200,\"HEIGHT\":200}").commit();
+        // A stream that never saw the modern controller: the one-time carry-over is still due.
+        RuntimeEnvironment.getApplication().getSharedPreferences(ModernController.PREFS, Context.MODE_PRIVATE)
+                .edit().remove("classic-migrated").commit();
+        ModernController controller = controller(GAME);
+        PadLayout.Spec stick = controller.layout().spec(PadLayout.Control.RIGHT_STICK);
+        assertTrue("The classic right stick's place is carried over", stick.placed());
+        assertEquals(1300f / 1600f, stick.cx, .01f);
+        assertTrue(RuntimeEnvironment.getApplication().getSharedPreferences(ModernController.PREFS, Context.MODE_PRIVATE)
+                .contains(PadLayoutKeys.legacyKey(null)));
+        controller.destroy();
+        // The carried layout is used again, not re-migrated from whatever the classic controller holds later.
+        assertTrue(controller(GAME).layout().spec(PadLayout.Control.RIGHT_STICK).placed());
+    }
+
+    @Test public void theEditorAddsThePointerTouchpadAndSetsItsMode() {
+        ModernController controller = controller(GAME);
+        assertEquals(View.GONE, controller.view(PadLayout.Control.POINTER_PAD).getVisibility());
+        controller.startEditing();
+        PadEditor editor = (PadEditor) frame.getChildAt(frame.getChildCount() - 1);
+        View add = editor.findViewById(com.limelight.R.id.pad_editor_add_touchpad);
+        assertEquals(View.VISIBLE, add.getVisibility());
+        assertTrue(add.performClick());
+        assertEquals(PadLayout.Control.POINTER_PAD, editor.selected());
+        assertFalse(editor.draft().spec(PadLayout.Control.POINTER_PAD).hidden);
+        View mode = editor.findViewById(com.limelight.R.id.pad_editor_pointer_mode);
+        assertEquals(View.VISIBLE, mode.getVisibility());
+        assertTrue(mode.performClick());
+        assertEquals(PadLayout.PointerMode.CAMERA, editor.draft().pointerMode());
+        assertTrue(mode.performClick());
+        assertEquals(PadLayout.PointerMode.MOUSE, editor.draft().pointerMode());
+        controller.finishEditing(true);
+        layout();
+        assertEquals(View.VISIBLE, controller.view(PadLayout.Control.POINTER_PAD).getVisibility());
+    }
+
+    /** The pointer touchpad is built from a saved layout with its mode, and it sends through the pointer sink. */
+    private ModernController pointerController(boolean camera) {
+        ModernController first = controller(GAME);
+        PadLayout draft = first.layout().copy();
+        draft.spec(PadLayout.Control.POINTER_PAD).hidden = false;
+        draft.setPointerMode(camera ? PadLayout.PointerMode.CAMERA : PadLayout.PointerMode.MOUSE);
+        first.save(draft, false);
+        first.destroy();
+        ModernController controller = controller(GAME);
+        controller.setPointerSink(pointerSink);
+        return controller;
+    }
+
+    @Test public void aPointerTouchpadDragMovesTheMouseAndATapClicks() {
+        pointerMoves.clear();
+        pointerButtons.clear();
+        PadControlView pad = pointerController(false).view(PadLayout.Control.POINTER_PAD);
+        assertEquals(View.VISIBLE, pad.getVisibility());
+        float x = pad.getWidth() / 2f, y = pad.getHeight() / 2f;
+
+        pad.down(0, x, y, 1000);
+        pad.move(0, x + 40, y, 1_010_000_000L);
+        assertFalse("A drag moves the pointer", pointerMoves.isEmpty());
+        assertTrue("and a fast drag is accelerated", pointerMoves.get(pointerMoves.size() - 1)[0] > 40);
+        pad.up(0, 1200);
+        assertTrue("A drag is not a click", pointerButtons.isEmpty());
+
+        pad.down(0, x, y, 2000);
+        pad.up(0, 2080);
+        assertEquals(2, pointerButtons.size());
+        assertEquals(Integer.valueOf(MouseButtonPacket.BUTTON_LEFT), pointerButtons.get(0));
+        assertEquals(Integer.valueOf(-MouseButtonPacket.BUTTON_LEFT), pointerButtons.get(1));
+    }
+
+    @Test public void twoFingersOnThePointerTouchpadTapRightAndDragToScroll() {
+        pointerButtons.clear();
+        pointerScrolls.clear();
+        PadControlView pad = pointerController(false).view(PadLayout.Control.POINTER_PAD);
+        float x = pad.getWidth() / 2f, y = pad.getHeight() / 2f;
+
+        pad.down(0, x, y, 1000);
+        pad.down(1, x + 30, y, 1050);
+        pad.up(1, 1100);
+        pad.up(0, 1150);
+        assertEquals("Two fingers tap the right button", 2, pointerButtons.size());
+        assertEquals(Integer.valueOf(MouseButtonPacket.BUTTON_RIGHT), pointerButtons.get(0));
+
+        pointerButtons.clear();
+        pad.down(0, x, y, 2000);
+        pad.down(1, x + 30, y, 2050);
+        pad.move(1, x + 30, y + 80, 2_100_000_000L);
+        pad.up(1, 2200);
+        pad.up(0, 2250);
+        assertFalse("Two fingers dragging scroll", pointerScrolls.isEmpty());
+        assertTrue(pointerButtons.isEmpty());
+    }
+
+    @Test public void thePointerTouchpadAsACameraPushesTheRightStickAndLetsGo() {
+        PadControlView pad = pointerController(true).view(PadLayout.Control.POINTER_PAD);
+        float x = pad.getWidth() / 2f, y = pad.getHeight() / 2f;
+        pad.down(0, x, y, 1000);
+        pad.move(0, x + 100, y, 1_010_000_000L);
+        assertTrue("A fast drag turns right", last()[3] > 0);
+        assertEquals(0, last()[4]);
+        pad.release();
+        assertEquals("Letting go centers the camera", 0, last()[3] | last()[4]);
     }
 }

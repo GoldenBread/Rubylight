@@ -329,6 +329,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             InputDeviceContext context = prepareInputDevice(deviceId);
             if (context != null) sendControllerInputPacket(context);
         }
+        announcePresence();
     }
 
     @Override
@@ -343,6 +344,47 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             context.destroy();
             if (context.external && context.assignedControllerNumber) announceBuiltInControls(context.controllerNumber);
         }
+        announcePresence();
+    }
+
+    /** Tells a listener when a physical controller comes or goes, so the on-screen controls can step aside. */
+    public interface PresenceListener {
+        void onControllerPresenceChanged(boolean connected);
+    }
+
+    private PresenceListener presenceListener;
+    private boolean externalPresent;
+
+    public synchronized void setPresenceListener(PresenceListener listener) {
+        presenceListener = listener;
+        externalPresent = hasExternalControllers();
+    }
+
+    /** An external gamepad is connected: Bluetooth or USB, not the handheld's own built-in controls. */
+    public synchronized boolean hasExternalControllers() {
+        for (InputDeviceContext context : inputDeviceContexts.values()) {
+            if (context.external) return true;
+        }
+        if (!usbDeviceContexts.isEmpty()) return true;
+        // Before the first input event, look at what is attached rather than waiting for it to send one.
+        if (inputManager == null) return false;
+        for (int id : inputManager.getInputDeviceIds()) {
+            InputDevice device = inputManager.getInputDevice(id);
+            if (device != null && isExternal(device) &&
+                    (hasJoystickAxes(device) || hasGamepadButtons(device))) return true;
+        }
+        return false;
+    }
+
+    private void announcePresence() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainThreadHandler.post(this::announcePresence);
+            return;
+        }
+        boolean now = hasExternalControllers();
+        if (now == externalPresent) return;
+        externalPresent = now;
+        if (presenceListener != null) presenceListener.onControllerPresenceChanged(now);
     }
 
     // This can happen when gaining/losing input focus with some devices.
@@ -375,6 +417,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
         // Stop new device contexts from being created or used
         stopped = true;
+        presenceListener = null;
 
         // Unregister our input device callbacks
         inputManager.unregisterInputDeviceListener(this);
@@ -4801,6 +4844,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             usbDeviceContexts.remove(controller.getControllerId());
             if (context.assignedControllerNumber) announceBuiltInControls(context.controllerNumber);
         }
+        announcePresence();
     }
 
     @Override
@@ -4816,6 +4860,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         UsbDeviceContext context = createUsbDeviceContextForDevice(controller);
         usbDeviceContexts.put(controller.getControllerId(), context);
         if (connectionStarted && conn.canSendControllerInput()) sendControllerInputPacket(context);
+        announcePresence();
     }
 
     class GenericControllerContext {

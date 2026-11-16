@@ -2,6 +2,7 @@ package com.limelight.binding.input.pad;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
 import android.graphics.Rect;
 import android.os.Handler;
 import android.os.Looper;
@@ -11,23 +12,35 @@ import android.widget.FrameLayout;
 
 import com.limelight.binding.input.HeldInputState;
 import com.limelight.binding.input.LayoutGamepad;
+import com.limelight.binding.input.touch.PointerAcceleration;
+import com.limelight.binding.input.virtual_controller.VirtualControllerConfigurationLoader;
 import com.limelight.preferences.PreferenceConfiguration;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
  * The modern on-screen controller: analog sticks that float or stay put, a D-pad, the face cluster,
- * shoulders, triggers, stick clicks and View, Menu and Home, and a WASD stick the layout editor can add. Controls
- * are separate views in the stream's frame so touches between them reach the stream. Its input is the on-screen
- * gamepad, the same report the classic controller sends (the WASD stick sends keys), and its layout is kept for
- * all games or for one game. With the Steam Controller controls setting it adds that controller's trackpads, back
- * buttons and grip touch, sent as the classic controller sends them.
+ * shoulders, triggers, stick clicks and View, Menu and Home, a WASD stick and a pointer touchpad the layout
+ * editor can add, and Xbox, PlayStation or Nintendo glyphs. Controls are separate views in the stream's frame
+ * so touches between them reach the stream. Its input is the on-screen gamepad, the same report the classic
+ * controller sends (the WASD stick sends keys, the pointer touchpad mouse input), and its layout is kept per
+ * orientation for all games or for one game. With the Steam Controller controls setting it adds that
+ * controller's trackpads, back buttons and grip touch, sent as the classic controller sends them.
  */
 public final class ModernController {
     static final String PREFS = "osc_modern";
-    static final String GLOBAL_KEY = "layout";
+    static final String GLOBAL_KEY = PadLayoutKeys.ROOT;
+    /** The classic controller's saved layout, read once to carry it over. */
+    static final String CLASSIC_PREFS = VirtualControllerConfigurationLoader.OSC_PREFERENCE;
+    /** The classic controller's element ids, for the one-time carry-over. */
+    private static final int[] CLASSIC_BOXES = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+            18, 19, 20, 21, 22, 23, 24, 25};
     /** The classic controller's resends: some hosts drop a report that follows another closely. */
     private static final long[] RESEND_MS = {25, 50, 75};
 
@@ -45,14 +58,25 @@ public final class ModernController {
     private final Runnable resend;
     private final View.OnLayoutChangeListener resize;
     private PadLayout layout;
-    private boolean perGame, shown = true;
+    private boolean perGame, shown = true, landscape;
     private PadEditor editor;
     private final float[] box = new float[4];
     private TouchSink touchSink;
+    private PointerSink pointerSink;
 
     /** Where the Steam Controller trackpads' touches go: touchpad 0 of the on-screen controls' pad. */
     public interface TouchSink {
         void touch(byte eventType, int pointerId, float x, float y, float pressure);
+    }
+
+    /** Where the pointer touchpad's mouse output goes; without one it sends nothing. */
+    public interface PointerSink {
+        /** Relative pointer movement in pixels. */
+        void move(int dx, int dy);
+        /** A mouse button from {@link com.limelight.nvstream.input.MouseButtonPacket}. */
+        void button(int button, boolean down);
+        /** Scroll in high-resolution units, 120 to a notch; either may be zero. */
+        void scroll(int vertical, int horizontal);
     }
 
     /**
@@ -64,11 +88,12 @@ public final class ModernController {
         this.context = context;
         this.frame = frame;
         this.prefs = prefs;
-        this.gameKey = gameKey == null || gameKey.isEmpty() ? null : GLOBAL_KEY + ":" + gameKey;
+        this.gameKey = gameKey == null || gameKey.isEmpty() ? null : gameKey;
         this.store = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         this.gamepad = new LayoutGamepad(sink);
         this.keys = sink::key;
         this.painter = new PadPainter(context);
+        this.landscape = landscape();
         resend = gamepad::resend;
         resize = (v, l, t, r, b, ol, ot, or, ob) -> {
             if (r - l != or - ol || b - t != ob - ot) place();
@@ -76,10 +101,57 @@ public final class ModernController {
         load();
     }
 
+    private boolean landscape() {
+        return context.getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
+    }
+
     private void load() {
-        String game = gameKey == null ? null : store.getString(gameKey, null);
-        perGame = game != null;
-        layout = PadLayout.parse(perGame ? game : store.getString(GLOBAL_KEY, null));
+        // This orientation's layout first, then the layout an older version kept for both orientations, then the
+        // shared one. The last two are what a saved layout from before the split reads as.
+        String text = store.getString(PadLayoutKeys.key(landscape, gameKey), null);
+        perGame = text != null && gameKey != null;
+        if (text == null && gameKey != null) {
+            text = store.getString(PadLayoutKeys.key(landscape, null), null);
+            perGame = false;
+        }
+        if (text == null) {
+            text = store.getString(PadLayoutKeys.legacyKey(gameKey), null);
+            perGame = text != null && gameKey != null;
+        }
+        if (text == null) text = store.getString(PadLayoutKeys.legacyKey(null), null);
+        layout = PadLayout.parse(text);
+        if (text == null) layout.copyFrom(migrateClassic());
+        painter.setGlyph(layout.glyph());
+    }
+
+    /**
+     * The first time the modern controller is shown with nothing saved, a classic layout the player arranged is
+     * carried over once, so switching styles keeps the controls where their thumbs know them.
+     */
+    private PadLayout migrateClassic() {
+        if (store.getBoolean("classic-migrated", false)) return new PadLayout();
+        SharedPreferences classic = context.getSharedPreferences(CLASSIC_PREFS, Context.MODE_PRIVATE);
+        Map<Integer, float[]> boxes = new HashMap<>();
+        for (int id : CLASSIC_BOXES) {
+            String json = classic.getString(String.valueOf(id), null);
+            if (json == null) continue;
+            try {
+                JSONObject config = new JSONObject(json);
+                boxes.put(id, new float[] {config.getInt("LEFT"), config.getInt("TOP"),
+                        config.getInt("WIDTH"), config.getInt("HEIGHT")});
+            } catch (JSONException ignored) {
+                // A corrupt classic control is simply not carried over.
+            }
+        }
+        if (boxes.isEmpty()) return new PadLayout();
+        android.util.DisplayMetrics metrics = context.getResources().getDisplayMetrics();
+        PadLayout migrated = ClassicLayoutMigration.migrate(boxes, metrics.widthPixels, metrics.heightPixels,
+                metrics.density);
+        if (!migrated.isDefault()) {
+            store.edit().putString(PadLayoutKeys.legacyKey(null), migrated.serialize())
+                    .putBoolean("classic-migrated", true).apply();
+        }
+        return migrated;
     }
 
     /** Sends the Steam Controller trackpads' touches here; without a sink they send nothing. */
@@ -89,6 +161,12 @@ public final class ModernController {
 
     private void touch(byte eventType, int pointerId, float x, float y, float pressure) {
         if (touchSink != null) touchSink.touch(eventType, pointerId, x, y, pressure);
+    }
+
+    /** Sends the pointer touchpad's mouse output here; without a sink it sends nothing. */
+    public void setPointerSink(PointerSink sink) {
+        pointerSink = sink;
+        for (PadControlView view : views.values()) view.setPointerSink(sink);
     }
 
     /** Whether the settings keep this control off whatever the layout says. */
@@ -109,12 +187,18 @@ public final class ModernController {
         releaseInput();
         removeElements();
         load();
+        painter.setGlyph(layout.glyph());
+        String curve = prefs.trackpadAcceleration ? prefs.trackpadAccelerationCurve : PointerAcceleration.MEDIUM;
         for (PadLayout.Control control : PadLayout.Control.values()) {
             if (forcedHidden(control)) continue;
             PadControlView view = new PadControlView(context, control, painter, gamepad, this::changed, keys);
             view.configureStick(prefs.oscFloatingSticks, prefs.oscStickDeadzone / 100f);
             view.setHaptics(prefs.vibrateOsc);
             view.setTouchSink(this::touch);
+            view.setPointerSink(pointerSink);
+            if (control == PadLayout.Control.POINTER_PAD) {
+                view.configurePointer(layout.pointerMode() == PadLayout.PointerMode.CAMERA, curve);
+            }
             views.put(control, view);
             frame.addView(view, new FrameLayout.LayoutParams(0, 0, Gravity.TOP | Gravity.START));
         }
@@ -174,6 +258,36 @@ public final class ModernController {
         shown = false;
         releaseInput();
         place();
+    }
+
+    /**
+     * The window turned: loads this orientation's own layout. An editor's unsaved draft is left alone, since its
+     * Done writes to the orientation the stream is in when it closes.
+     */
+    public void onOrientationChanged() {
+        boolean now = landscape();
+        if (now == landscape) return;
+        landscape = now;
+        // An open editor keeps its draft; Done saves it to the orientation the stream is in when it closes.
+        if (editor != null) return;
+        releaseInput();
+        load();
+        applyAppearance();
+        place();
+        if (onLayoutChanged != null) onLayoutChanged.run();
+    }
+
+    /** Redraws the controls after the glyphs or the pointer touchpad's mode changed. */
+    private void applyAppearance() {
+        painter.setGlyph(layout.glyph());
+        String curve = prefs.trackpadAcceleration ? prefs.trackpadAccelerationCurve : PointerAcceleration.MEDIUM;
+        for (Map.Entry<PadLayout.Control, PadControlView> entry : views.entrySet()) {
+            PadControlView view = entry.getValue();
+            if (entry.getKey() == PadLayout.Control.POINTER_PAD) {
+                view.configurePointer(layout.pointerMode() == PadLayout.PointerMode.CAMERA, curve);
+            }
+            view.invalidate();
+        }
     }
 
     public void releaseInput() {
@@ -245,6 +359,9 @@ public final class ModernController {
         editor = null;
         frame.removeView(closing);
         if (save) save(closing.draft(), closing.perGame());
+        else load(); // Cancel after a rotation shows the new orientation's saved layout, not the old one.
+        // Cancel also restores the glyphs and pointer mode the editor previewed.
+        applyAppearance();
         place();
         if (onLayoutChanged != null) onLayoutChanged.run();
     }
@@ -261,19 +378,25 @@ public final class ModernController {
         SharedPreferences.Editor edit = store.edit();
         String text = draft.serialize();
         if (forThisGame && gameKey != null) {
-            edit.putString(gameKey, text);
+            edit.putString(PadLayoutKeys.key(landscape, gameKey), text);
         } else {
-            // Saving for all games drops this game's own layout, so the shared one shows here too.
-            edit.putString(GLOBAL_KEY, text);
-            if (gameKey != null) edit.remove(gameKey);
+            // Saving for all games drops this game's own layouts, in both orientations, so the shared one shows here.
+            edit.putString(PadLayoutKeys.key(landscape, null), text);
+            if (gameKey != null) {
+                edit.remove(PadLayoutKeys.key(landscape, gameKey));
+                edit.remove(PadLayoutKeys.otherOrientationKey(landscape, gameKey));
+                edit.remove(PadLayoutKeys.legacyKey(gameKey));
+            }
         }
         edit.apply();
         perGame = forThisGame && gameKey != null;
+        applyAppearance();
     }
 
-    /** Forgets every saved modern layout, for all games and for each game. */
+    /** Forgets every saved modern layout, for all games and for each game; Reset means default, not the old classic layout. */
     public static void clearLayouts(Context context) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply();
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear()
+                .putBoolean("classic-migrated", true).apply();
     }
 
     PadLayout layout() {
