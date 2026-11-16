@@ -1,0 +1,3 @@
+# Wi-Fi burst pacing ceiling
+
+- **A Wi-Fi stream's automatic burst pacing stops at three times the bitrate.** A client that reports a Wi-Fi or cellular route, such as Nightjar, no longer probes its video bursts toward the host's 1 GbE default while its own link rate is unknown: automatic burst pacing still starts at twice the bitrate, and may now climb to three times it, or 1.25 times the wire demand when that is higher, instead of up to 800 Mbps. Frames spend a few milliseconds longer on the wire, so an access point is less likely to queue them as loss, and the encoder's keyframe-size cap follows the lower pace. A client that reports its own link rate is still held below it.

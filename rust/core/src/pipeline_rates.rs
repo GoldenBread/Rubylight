@@ -241,15 +241,16 @@ pub fn millihertz(frames: u64, window_ms: u32) -> u32 {
     u32::try_from(rate).unwrap_or(UNKNOWN - 1).min(UNKNOWN - 1)
 }
 
-/// How many complete timing windows below 95% of the stream rate the source
-/// must stay before the host says so. Three 5 s windows keep a hitch, a level
-/// load or a scene change from being reported as a limit.
+/// How many complete timing windows below 97% of the stream rate the source
+/// must stay before the host says so. Three 5 s windows (15 s) keep a hitch, a
+/// level load or a scene change from being reported as a limit.
 pub const LOW_WINDOWS: u32 = 3;
 /// How many complete windows at the stream rate clear the warning: 30 s, so a
 /// rate that merely touches the threshold does not make it flicker.
 pub const CLEAR_WINDOWS: u32 = 6;
-/// A source below this share of the stream rate counts as the limit.
-const LOW_PERCENT: u32 = 95;
+/// A source below this share of the stream rate counts as the limit: 116 of
+/// 120 fps is below it (the issue #124 game), a healthy 119.x is not.
+const LOW_PERCENT: u32 = 97;
 /// Below two new pictures a second there is nothing to judge: the picture is
 /// static and the host repeats what it has, which is not a slow game.
 const STATIC_MHZ: u32 = 2_000;
@@ -296,12 +297,16 @@ impl SourceRate {
         }
         if target_mhz != self.target_mhz {
             // The stream changed rate: its old target no longer describes the
-            // warning, and the new one needs its own streaks.
+            // warning, and the new one needs its own streaks. A standing
+            // warning is cleared; with none, this first complete window counts
+            // against the new target instead of being discarded.
             self.target_mhz = target_mhz;
             self.low_windows = 0;
             self.good_windows = 0;
             self.told = None;
-            return self.warned.take().map(|_| SourceRateWarning::Cleared);
+            if self.warned.take().is_some() {
+                return Some(SourceRateWarning::Cleared);
+            }
         }
         let source = source_mhz?;
         if source < STATIC_MHZ {
@@ -567,10 +572,34 @@ mod tests {
         assert_eq!(at(&mut watch, t, 3, TARGET, 90_000), None);
         assert_eq!(at(&mut watch, t, 4, TARGET, 90_000), None);
         assert_eq!(at(&mut watch, t, 5, TARGET, 90_000), below(90));
-        // A source at exactly 95% of the stream is not below it.
+        // A source at exactly 97% of the stream is not below it.
         let mut watch = SourceRate::default();
         for n in 0..10 {
-            assert_eq!(at(&mut watch, t, n, TARGET, 114_000), None);
+            assert_eq!(at(&mut watch, t, n, TARGET, 116_400), None);
+        }
+    }
+
+    #[test]
+    fn issue_124s_116_of_120_fps_warns_but_a_healthy_capped_119_does_not() {
+        // The game in issue #124 rendered 116 of a 120 fps stream (96.7%): the
+        // warning must fire after three windows, not stay silent as it did at
+        // a 95% threshold.
+        let mut slow = SourceRate::default();
+        let t = Instant::now();
+        assert_eq!(at(&mut slow, t, 0, TARGET, 116_000), None);
+        assert_eq!(at(&mut slow, t, 1, TARGET, 116_000), None);
+        assert_eq!(at(&mut slow, t, 2, TARGET, 116_000), below(115));
+        // A game capped at 119.x of 120 fps (99.5%) is healthy: no warning,
+        // however long it runs.
+        let mut capped = SourceRate::default();
+        for n in 0..20 {
+            assert_eq!(at(&mut capped, t, n, TARGET, 119_400), None);
+        }
+        // 116.5 of 120 (97.1%, the bundle's median window) is above the
+        // threshold on its own; the sustained dips are what warn there.
+        let mut median = SourceRate::default();
+        for n in 0..20 {
+            assert_eq!(at(&mut median, t, n, TARGET, 116_500), None);
         }
     }
 

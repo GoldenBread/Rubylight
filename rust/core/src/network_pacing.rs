@@ -116,9 +116,9 @@ pub fn client_floor_bps(stream_kbps: u32, host_link_bps: u64, client_link_bps: u
 /// wired host that base is the 1 GbE default, not the client's Wi-Fi link:
 /// probing toward it turns every frame into a microburst at LAN rate, which an
 /// access point queues and the client sees as loss and jitter. Three times the
-/// encoder bitrate keeps a whole frame on the wire for a few milliseconds of
-/// its period, and never below the wire demand plus a quarter, so a stream
-/// with heavy FEC still fits. A client link hint, when one is reported, caps
+/// encoder bitrate (in bit/s) keeps a whole frame on the wire for a few
+/// milliseconds of its period, and never below the wire demand plus a quarter,
+/// so a stream with heavy FEC still fits. A client link hint, when reported, caps
 /// it as elsewhere. A wired or unknown route keeps its base unchanged.
 pub fn automatic_burst_ceiling_bps(
     base_bps: u64,
@@ -131,8 +131,10 @@ pub fn automatic_burst_ceiling_bps(
     if !wireless {
         return base;
     }
+    // `stream_kbps` is kbit/s and the ceiling is bit/s, so three times is
+    // ×3000, not ×3; the latter would pin every real stream at its floor.
     let burst = u64::from(stream_kbps)
-        .saturating_mul(3)
+        .saturating_mul(3000)
         .max(demand_bps.saturating_add(demand_bps / 4))
         .max(1_000_000);
     let capped = match client_link_bps {

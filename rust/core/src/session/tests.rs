@@ -1219,7 +1219,9 @@ fn a_wireless_clients_reported_link_caps_its_automatic_burst_ceiling() {
     );
     s.configure_automatic_pacing(true);
     // 4/5 of the announced 100 Mbps link, above 1.1x the bitrate, instead of
-    // 3x the bitrate or the wired route.
+    // 3x the bitrate or the wired route. Nightjar reports its wireless route
+    // with link speed 0 today; this pins the contract for a client that
+    // reports both.
     assert_eq!(s.video_pacing_bps(800_000_000, 75_000_000), 80_000_000);
     assert_eq!(
         s.automatic_pacing.lock().unwrap().snapshot()["ceiling_kbps"],
