@@ -1311,22 +1311,43 @@ impl<P, A> Session<P, A> {
         self.automatic_pacing_on.load(Ordering::Acquire)
     }
     pub fn video_pacing_bps(&self, base: u64, needed: u64) -> u64 {
-        let paced = self.automatic_pacing.lock().unwrap().rate(
-            base,
-            needed,
-            self.bitrate.load(Ordering::Acquire),
-        );
+        let kbps = self.bitrate.load(Ordering::Acquire);
+        let ceiling = self.automatic_pacing_ceiling(base, needed, kbps);
+        let paced = self
+            .automatic_pacing
+            .lock()
+            .unwrap()
+            .rate(ceiling, needed, kbps);
         self.adaptive_pacing_bps(paced)
     }
     /// Encoder-side budget queries must not change the sender's feedback
     /// state when recovery parity differs from the current ordinary-frame FEC.
     pub fn preview_video_pacing_bps(&self, base: u64, needed: u64) -> u64 {
-        let paced = self.automatic_pacing.lock().unwrap().preview_rate(
-            base,
-            needed,
-            self.bitrate.load(Ordering::Acquire),
-        );
+        let kbps = self.bitrate.load(Ordering::Acquire);
+        let ceiling = self.automatic_pacing_ceiling(base, needed, kbps);
+        let paced = self
+            .automatic_pacing
+            .lock()
+            .unwrap()
+            .preview_rate(ceiling, needed, kbps);
         self.adaptive_pacing_bps(paced)
+    }
+    /// What the automatic burst controller may probe to. The sender passes the
+    /// route's own base, which for a wireless client is the host's wired
+    /// ceiling: the client's report caps that for H.264, HEVC and AV1 instead of
+    /// probing to LAN rate. PyroWave paces from its own calibrated route policy
+    /// and keeps it.
+    fn automatic_pacing_ceiling(&self, base: u64, needed: u64, encoder_kbps: u32) -> u64 {
+        if !self.automatic_pacing_enabled() || self.config.codec > 2 {
+            return base;
+        }
+        crate::network_pacing::automatic_burst_ceiling_bps(
+            base,
+            encoder_kbps,
+            needed,
+            self.config.client_wireless,
+            u64::from(self.client_link_mbps()) * 1_000_000,
+        )
     }
     /// Pacing slows for the session once the client loses a keyframe or
     /// repeatedly reports unrecoverable ordinary frames

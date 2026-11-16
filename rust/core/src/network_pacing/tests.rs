@@ -615,6 +615,35 @@ fn a_client_that_reports_wifi_gets_wifi_pacing_from_the_first_frame() {
 }
 
 #[test]
+fn a_wireless_clients_automatic_burst_ceiling_is_not_the_host_link() {
+    const M: u64 = 1_000_000;
+    const GBPS: u64 = 1_000_000_000;
+    // 4K120 HEVC at 63 Mbps, wire demand 75 Mbps: the host's 1 GbE base is
+    // 800 Mbps, but a Wi-Fi client may only have its frames burst at 3x the
+    // bitrate, well above the demand's 1.25x headroom.
+    let ceiling =
+        |route, wireless, link| automatic_burst_ceiling_bps(route, 63_000, 75 * M, wireless, link);
+    assert_eq!(ceiling(800 * M, true, 0), 189 * M);
+    assert_eq!(ceiling(800 * M, true, 0), 3 * 63 * M);
+    // A wired or unknown route keeps exactly the base it had.
+    assert_eq!(ceiling(800 * M, false, 0), 800 * M);
+    assert_eq!(ceiling(GBPS, false, 0), GBPS);
+    // The route still wins when it is lower than the Wi-Fi burst policy.
+    assert_eq!(ceiling(100 * M, true, 0), 100 * M);
+    // A demand the bitrate does not explain (heavy FEC) keeps its 1.25x.
+    assert_eq!(
+        automatic_burst_ceiling_bps(800 * M, 40_000, 200 * M, true, 0),
+        250 * M
+    );
+    // A client that announces a slow link caps bursts to 4/5 of it, but the
+    // stream itself is never paced under 1.1x the bitrate for the hint.
+    assert_eq!(ceiling(800 * M, true, 100 * M), 80 * M);
+    assert_eq!(ceiling(800 * M, true, 70 * M), 69_300_000);
+    // A fast link hint does not raise the Wi-Fi burst ceiling.
+    assert_eq!(ceiling(800 * M, true, 866 * M), 189 * M);
+}
+
+#[test]
 fn only_wireless_starting_rates_follow_bitrate_without_capping_pyrowave_demand() {
     for kbps in [9_300, 19_000, 60_000, 149_000] {
         for link in [0, 1_000_000_000, 2_500_000_000] {
