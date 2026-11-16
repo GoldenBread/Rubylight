@@ -61,6 +61,38 @@ fn warnings_survive_preparation_and_clear_after_recovery() {
     assert_eq!(other.info()["warnings"], serde_json::json!([]));
 }
 #[test]
+fn a_capped_stream_reports_its_display_size_beside_the_coded_picture() {
+    let mut config = Negotiated {
+        width: 2560,
+        height: 1440,
+        ..Default::default()
+    };
+    config.set_display_size((3840, 2160), Some((2560, 1440)));
+    let session = Session::new(launch("capped", Role::Stream), config);
+    let info = session.info();
+    assert_eq!(
+        (info["width"].as_u64(), info["height"].as_u64()),
+        (Some(2560), Some(1440))
+    );
+    assert_eq!(
+        (
+            info["display_width"].as_u64(),
+            info["display_height"].as_u64()
+        ),
+        (Some(3840), Some(2160))
+    );
+    // Without a cap both pairs are the negotiated size.
+    let plain = Session::new(launch("plain", Role::Stream), Negotiated::default());
+    let info = plain.info();
+    assert_eq!(
+        (
+            info["display_width"].as_u64(),
+            info["display_height"].as_u64()
+        ),
+        (Some(1920), Some(1080))
+    );
+}
+#[test]
 fn a_roam_moves_the_client_and_restarts_the_media_ping_wait() {
     let mut launch = launch("roam", Role::Stream);
     launch.peer = "::ffff:192.168.1.20".parse().unwrap();

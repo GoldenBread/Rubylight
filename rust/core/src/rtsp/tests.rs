@@ -523,4 +523,21 @@ fn a_host_cap_keeps_the_display_size_and_codes_a_smaller_picture() {
     assert_eq!((packed.width, packed.height), (2560, 1440));
     assert_eq!(packed.display_size(), (3840, 2160));
     packed.validate().unwrap();
+    // A very tall picture under a cap keeps a coded width AMD packed HEVC
+    // accepts instead of failing for the cap's doing.
+    let mut tall = Negotiated {
+        width: 720,
+        height: 7680,
+        codec: 1,
+        chroma_packing: 1,
+        fps: 60,
+        rate_millihz: 60_000,
+        bitrate_kbps: 20_000,
+        ..Default::default()
+    };
+    tall.set_display_size((720, 7680), Some((320, 200)));
+    assert_eq!((tall.width, tall.height), (192, 200));
+    assert_eq!(tall.display_size(), (720, 7680));
+    assert!(tall.coded_size().0 >= 192);
+    tall.validate().unwrap();
 }

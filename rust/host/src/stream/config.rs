@@ -315,6 +315,18 @@ pub(crate) fn cap_stream_resolution(
 ) {
     let cap = config.max_stream_resolution();
     stream.set_display_size((stream.width, stream.height), cap);
+    report_stream_resolution_cap(stream, cap, warnings);
+}
+
+/// Tells the device and the console that the host's cap codes a smaller picture
+/// than the display keeps, and clears that reason when none does. Runs at the
+/// connection and after a size change the client asked for, so a switch into
+/// the cap takes the reason off the stream card.
+pub(crate) fn report_stream_resolution_cap(
+    stream: &butterpollo_core::rtsp::Negotiated,
+    cap: Option<(u32, u32)>,
+    warnings: &butterpollo_core::session::Warnings,
+) {
     let Some((cap_width, cap_height)) = cap.filter(|_| stream.capped()) else {
         warnings.clear("stream_resolution_cap");
         return;
@@ -381,5 +393,28 @@ mod tests {
         assert_eq!((small.width, small.height), (1920, 1080));
         assert_eq!(small.display_size(), (1920, 1080));
         assert!(reason(&warnings).is_none());
+    }
+
+    #[test]
+    fn a_size_change_into_the_cap_takes_the_reason_off_the_stream_card() {
+        let warnings = butterpollo_core::session::Warnings::default();
+        let cap = Some((2560, 1440));
+        let mut capped = negotiated(3840, 2160);
+        capped.set_display_size((3840, 2160), cap);
+        report_stream_resolution_cap(&capped, cap, &warnings);
+        assert!(reason(&warnings).is_some());
+        // The client asks for a size the cap fits mid-stream: the reason no
+        // longer applies when the switch lands.
+        let mut smaller = negotiated(1920, 1080);
+        smaller.set_display_size((1920, 1080), cap);
+        report_stream_resolution_cap(&smaller, cap, &warnings);
+        assert!(reason(&warnings).is_none());
+        // A switch to another size the cap still shrinks rewrites it.
+        let mut again = negotiated(3840, 2160);
+        again.set_display_size((3840, 2160), cap);
+        report_stream_resolution_cap(&again, cap, &warnings);
+        let text = reason(&warnings).expect("capped again");
+        assert!(text.contains("2560x1440"), "{text}");
+        assert!(text.contains("3840x2160"), "{text}");
     }
 }

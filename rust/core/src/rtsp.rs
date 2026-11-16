@@ -350,7 +350,15 @@ impl Negotiated {
     /// ([`crate::display_policy::capped_encode_size`]). A request the cap
     /// allows is coded as it is.
     pub fn set_display_size(&mut self, requested: (u32, u32), cap: Option<(u32, u32)>) {
-        let coded = crate::display_policy::capped_encode_size(requested, cap);
+        let mut coded = crate::display_policy::capped_encode_size(requested, cap);
+        // AMD packed HEVC refuses a coded width below 192 (`validate`): a very
+        // tall picture under a cap is widened, never refused for the cap's doing.
+        if self.chroma_packing != 0
+            && coded != requested
+            && let Some((cap_width, _)) = cap
+        {
+            coded.0 = coded.0.max(192.min(requested.0).min(cap_width));
+        }
         self.width = coded.0;
         self.height = coded.1;
         if coded == requested {

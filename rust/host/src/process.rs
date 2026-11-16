@@ -10,6 +10,22 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+/// The stream values a device's connection commands read. The size is the one
+/// the device asked for, which its display keeps: a host `max_stream_resolution`
+/// cap shrinks only the coded picture, so `SUNSHINE_CLIENT_WIDTH/HEIGHT` keep
+/// reporting the requested size, as they always did.
+fn client_stream_environment(
+    stream: &butterpollo_core::rtsp::Negotiated,
+    fps: String,
+) -> BTreeMap<String, String> {
+    let (width, height) = stream.display_size();
+    BTreeMap::from([
+        ("SUNSHINE_CLIENT_WIDTH".to_owned(), width.to_string()),
+        ("SUNSHINE_CLIENT_HEIGHT".to_owned(), height.to_string()),
+        ("SUNSHINE_CLIENT_FPS".to_owned(), fps),
+        ("SUNSHINE_CLIENT_HDR".to_owned(), stream.hdr.to_string()),
+    ])
+}
 /// Administrator-configured hooks run once for each connected transport, with
 /// its environment saved for disconnect even if the application exits first.
 pub struct ClientCommands {
@@ -56,21 +72,17 @@ impl ClientCommands {
             butterpollo_core::pairing::command_device_name(&s.launch.client.name),
         );
         environment.insert("SUNSHINE_CLIENT_UUID".into(), s.launch.client.uuid.clone());
-        environment.insert("SUNSHINE_CLIENT_WIDTH".into(), s.config.width.to_string());
-        environment.insert("SUNSHINE_CLIENT_HEIGHT".into(), s.config.height.to_string());
-        environment.insert(
-            "SUNSHINE_CLIENT_FPS".into(),
-            if h.config
-                .read()
-                .unwrap()
-                .boolean("envvar_compatibility_mode", false)
-            {
-                s.config.fps.to_string()
-            } else {
-                butterpollo_core::framegen::Rate(s.config.fps_millihz()).to_string()
-            },
-        );
-        environment.insert("SUNSHINE_CLIENT_HDR".into(), s.config.hdr.to_string());
+        let fps = if h
+            .config
+            .read()
+            .unwrap()
+            .boolean("envvar_compatibility_mode", false)
+        {
+            s.config.fps.to_string()
+        } else {
+            butterpollo_core::framegen::Rate(s.config.fps_millihz()).to_string()
+        };
+        environment.extend(client_stream_environment(&s.config, fps));
         for (key, value) in environment.clone() {
             if let Some(suffix) = key.strip_prefix("SUNSHINE_") {
                 environment.insert(format!("APOLLO_{suffix}"), value);

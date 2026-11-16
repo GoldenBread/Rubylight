@@ -977,6 +977,7 @@ impl SessionThread<'_> {
                         None => {
                             tracing::info!(client = %s.launch.client.name, from = %from, to = %to, "reconfigure requested");
                             to.apply_to(&mut stream, resolution_cap);
+                            report_stream_resolution_cap(&stream, resolution_cap, &s.launch.warnings);
                             if (to.width, to.height) != (from.width, from.height) {
                                 self.follow_size(&prepared, stream.display_size());
                             }
@@ -1343,6 +1344,7 @@ impl SessionThread<'_> {
                             if let Some((from, _)) = switching.take() {
                                 let to = butterpollo_core::reconfigure::Mode::of(&stream);
                                 from.apply_to(&mut stream, resolution_cap);
+                                report_stream_resolution_cap(&stream, resolution_cap, &s.launch.warnings);
                                 // The link rate, and the display or co-op window, were
                                 // already set for the refused mode.
                                 s.rebuild_link_rate(&stream, c.link_rate_adaptation(), max_bitrate_kbps(&s, &c));
@@ -1628,6 +1630,7 @@ impl SessionThread<'_> {
                         if let Some((from, _)) = switching.take() {
                             let to = butterpollo_core::reconfigure::Mode::of(&stream);
                             from.apply_to(&mut stream, resolution_cap);
+                            report_stream_resolution_cap(&stream, resolution_cap, &s.launch.warnings);
                             s.rebuild_link_rate(&stream, c.link_rate_adaptation(), max_bitrate_kbps(&s, &c));
                             rebuild_congestion(&s, &stream, &c);
                             if (to.width, to.height) != (from.width, from.height) {

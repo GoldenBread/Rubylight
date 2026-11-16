@@ -29,7 +29,10 @@ use audio_sink::{AudioPace, AudioSink, GameStreamAudio, WebRtcAudio};
 use butterpollo_core::audio_passthrough::Codec;
 #[cfg(test)]
 use config::{apply_overrides, sets_peak};
-pub(crate) use config::{cap_stream_resolution, device_config, effective_config, launch_app};
+pub(crate) use config::{
+    cap_stream_resolution, device_config, effective_config, launch_app,
+    report_stream_resolution_cap,
+};
 #[cfg(test)]
 use control::{
     CONTROL_EVENT_LIMIT, ControlPeer, ControlSocket, FEEDBACK_CHANNEL, INPUT_OVERFLOW, INPUT_QUEUE,

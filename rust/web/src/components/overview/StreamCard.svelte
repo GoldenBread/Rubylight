@@ -74,7 +74,10 @@
   </header>
 
   <ul class="spec">
-    <li class="num">{stream.width}×{stream.height} at {stream.fps} fps</li>
+    <li class="num">
+      {stream.width}×{stream.height} at {stream.fps} fps{#if stream.display_width && stream.display_height && (stream.display_width !== stream.width || stream.display_height !== stream.height)}
+        (display {stream.display_width}×{stream.display_height}){/if}
+    </li>
     <li>{codec}</li>
     {#if stream.encoder}<li>Encoder: {encoders[stream.encoder] ?? 'Other encoder'}</li>{/if}
     {#if stream.hdr}<li><abbr title="High dynamic range">HDR</abbr></li>{/if}
