@@ -1,7 +1,7 @@
 # Installs Rubylight's display driver package on this PC. Elevated (setup runs it as SYSTEM).
 #
-# An unsigned package (build-package.ps1 without -TestSign, and every release until SignPath
-# signs the catalog) is signed here with a key that exists only for the length of this script.
+# An unsigned package (build-package.ps1 without -TestSign, and every release up to 4.7.1, before
+# releases signed the catalog) is signed here with a key that exists only for the length of this script.
 # A UMDF driver needs no Microsoft signature: Plug and Play installs a package whose catalog
 # chains to a root in LocalMachine\Root and whose signer is in TrustedPublisher, and WUDFHost
 # loads the DLL (no embedded signature needed without /INTEGRITYCHECK). So this script
@@ -12,7 +12,7 @@
 #   5. removes the certificate of the previous local install.
 # Once the key is gone nobody, Rubylight included, can sign anything this PC trusts with it.
 #
-# A package whose catalog SignPath signed is installed as it is: only its publisher
+# A package whose catalog a release signed (rust/release/sign-local.ps1) is installed as it is: only its publisher
 # certificate goes into TrustedPublisher (so Windows does not ask), and a locally signed
 # install before it is cleaned up as above.
 #
@@ -174,7 +174,7 @@ function Install-Package {
     $hadDevice = [bool](Get-Device)
     try {
         if ($status -eq 'Valid') {
-            # Signed by SignPath: trust that publisher for driver installs, nothing more.
+            # Signed for a release: trust that publisher for driver installs, nothing more.
             $publisher = (Get-AuthenticodeSignature -LiteralPath (Join-Path $work 'rubylight_vdisplay.cat')).SignerCertificate
             if (-not (Test-Path "Cert:\LocalMachine\TrustedPublisher\$($publisher.Thumbprint)")) {
                 Add-Trust $publisher 'TrustedPublisher'

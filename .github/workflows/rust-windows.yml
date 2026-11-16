@@ -525,6 +525,9 @@ jobs:
       VERSION: ${{ needs.tag.outputs.version }}
       TAG: ${{ needs.tag.outputs.tag }}
       BUILD: ${{ needs.tag.outputs.run || github.run_id }}
+      # With LOCAL_SIGNING the release stays a draft until the maintainer signs
+      # its Windows files and publishes it with rust/release/sign-local.ps1.
+      LOCAL_SIGNING: ${{ vars.LOCAL_SIGNING == 'true' && needs.tag.outputs.sign != 'true' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
       - name: Publish the release
@@ -540,7 +543,10 @@ jobs:
           mv build/butterpollo-rust-release.zip "out/rubylight-$VERSION-windows-x64.zip"
           (cd out && sha256sum * > SHA256SUMS)
           flags=()
-          if [[ $VERSION == *-* ]]; then flags+=(--prerelease); else flags+=(--latest); fi
+          if [[ $LOCAL_SIGNING == true ]]; then
+            flags+=(--draft)
+            echo "::notice::$TAG is a draft until rust/release/sign-local.ps1 signs and publishes it"
+          elif [[ $VERSION == *-* ]]; then flags+=(--prerelease); else flags+=(--latest); fi
           gh release create "$TAG" --target "$GITHUB_SHA" --title "Rubylight $VERSION" --notes-file body.md "${flags[@]}" out/*
           echo "::notice::published $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
   # Attaches the NVIDIA files to the release publish made. The release never

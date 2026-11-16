@@ -1,30 +1,28 @@
 # Code signing policy
 
-Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).
-
-Rubylight's Windows releases are signed through the SignPath Foundation's programme for open-source projects, starting with the first release published after the project's SignPath setup is complete. Earlier releases are unsigned. A signed file names **SignPath Foundation** as its publisher.
+Rubylight's Windows releases are signed with the maintainer's code signing certificate for open-source developers, issued by Certum to **Open Source Developer Ramazan Kara**, starting with the first release after 4.7.1. Earlier releases are unsigned. The certificate's private key stays in Certum's cloud signing service (SimplySign) and is used only after the maintainer signs in with a second factor. Nightjar's Windows installer and `nightjar.exe` are signed with the same certificate in the same way.
 
 ## Team roles
 
-Rubylight has one maintainer, who holds every role SignPath asks a project to assign.
+Rubylight has one maintainer, who holds every role.
 
 | Role | What it means | Members |
 | --- | --- | --- |
 | Committers | May change the source code in the repository without another review. | [Ramazan Kara (RamazanKara)](https://github.com/RamazanKara) |
 | Reviewers | Review every change proposed by someone who is not a committer, such as a pull request, before it is merged. | [Ramazan Kara (RamazanKara)](https://github.com/RamazanKara) |
-| Approvers | Approve each signing request in SignPath, deciding whether a build may be released as signed. | [Ramazan Kara (RamazanKara)](https://github.com/RamazanKara) |
+| Signers | Sign each release on their own PC, deciding whether a build may be released as signed. | [Ramazan Kara (RamazanKara)](https://github.com/RamazanKara) |
 
-Team members use multi-factor authentication for GitHub and for SignPath. When the team grows, this table is updated before a new member gets any of these roles.
+Team members use multi-factor authentication for GitHub and for the signing service. When the team grows, this table is updated before a new member gets any of these roles.
 
 ## What is signed
 
-Only files built from this repository's source code by its GitHub Actions workflow ([rust-windows.yml](../.github/workflows/rust-windows.yml)) are signed:
+Only files built from this repository's source code by its GitHub Actions workflow ([rust-windows.yml](../.github/workflows/rust-windows.yml)) are signed, as that workflow published them to the draft release:
 
 - Rubylight's executables and DLLs: the host, its service and start programs, setup (also installed as `uninstall.exe`), the diagnostic probes and the Vulkan HDR layer.
 - The installer that carries them, `rubylight-setup-<version>.exe`.
 - Rubylight's own virtual display driver: its DLL and catalog.
 
-Every signed executable and DLL carries the product name **Rubylight** and the release's version, and SignPath refuses files that don't ([artifact configurations](../.signpath/)). The [code signing guide](code-signing.md) describes the setup.
+Every signed executable and DLL carries the product name **Rubylight** and the release's version, and the signing script refuses files that don't ([sign-local.ps1](../rust/release/sign-local.ps1)). The [code signing guide](code-signing.md) describes the setup.
 
 Files from other projects ship as their projects released them and are never signed with Rubylight's certificate:
 
@@ -35,7 +33,7 @@ Files from other projects ship as their projects released them and are never sig
 
 RTX HDR and RTX Video enhancement call NVIDIA's proprietary NGX library and need NVIDIA's `nvngx_truehdr.dll` and `nvngx_vsr.dll`, which may not be relicensed under the GPL. No signed file contains them: they ship in a separate, unsigned archive, the NVIDIA component (`rust\build.ps1 -Nvidia`):
 
-- its own workflow job builds it from the same commit, and another attaches it to the release after the signed files are published, as `rubylight-nvidia-component-<version>.zip`; neither calls SignPath, and the signed release never waits on them; `sign-artifacts.ps1` and the [artifact configurations](../.signpath/) name only the signed build's folder and files;
+- its own workflow job builds it from the same commit, and another attaches it to the release after the signed files are published, as `rubylight-nvidia-component-<version>.zip`; neither is signed, and the signed release never waits on them; `sign-artifacts.ps1`, which chooses the files to sign, names only the signed build's folder and files;
 - the signed host downloads it only when the user asks on the console, from the release of its own version; it checks the archive against GitHub's SHA-256 digest and NVIDIA's files against digests in the host's source, keeps it outside the signed installation in a folder only administrators may change, and checks every file again before each use;
 - the adapter in it (`butterpollo_truehdr.dll`, GPL-3.0, built from `rust/truehdr-runtime`) is Rubylight's only code that links NGX.
 
@@ -49,17 +47,16 @@ Libraries whose projects publish no signed builds ship unsigned: the Opus DLL an
 
 Setup adds certificates to Windows' certificate stores on the PC it installs on. Its first page says so before anything is installed, and uninstalling removes them.
 
-- **Rubylight's virtual display driver.** Windows installs a driver only from a publisher it trusts. Until SignPath signs the driver's catalog, `install-local.ps1` creates a code-signing certificate on the PC, signs the catalog with it, adds the certificate to `LocalMachine\Root` and `LocalMachine\TrustedPublisher`, and deletes its private key, which never leaves the PC and cannot be exported. With the key gone, that certificate can sign nothing else, for Rubylight or for anyone else. Every PC trusts only its own. A catalog signed by SignPath is installed as it is: only its SignPath Foundation certificate goes into `TrustedPublisher`, so Windows does not ask before installing the driver. Reinstalling replaces the previous certificate, and uninstalling Rubylight removes the certificates and the driver even when the other drivers stay. ([Driver README](../rust/drivers/rubylight-vdisplay/README.md#shipping-before-signpath-signs-it-signed-on-the-users-pc))
+- **Rubylight's virtual display driver.** Windows installs a driver only from a publisher it trusts. For an unsigned catalog (releases up to 4.7.1, and builds of your own), `install-local.ps1` creates a code-signing certificate on the PC, signs the catalog with it, adds the certificate to `LocalMachine\Root` and `LocalMachine\TrustedPublisher`, and deletes its private key, which never leaves the PC and cannot be exported. With the key gone, that certificate can sign nothing else, for Rubylight or for anyone else. Every PC trusts only its own. A release's signed catalog is installed as it is: only its publisher certificate (Open Source Developer Ramazan Kara) goes into `TrustedPublisher`, so Windows does not ask before installing the driver. Reinstalling replaces the previous certificate, and uninstalling Rubylight removes the certificates and the driver even when the other drivers stay. ([Driver README](../rust/drivers/rubylight-vdisplay/README.md#shipping-before-signpath-signs-it-signed-on-the-users-pc))
 - **The local web console.** So browsers open `https://localhost` without a warning, the host makes a root certificate named "Rubylight local console", with a random part of its own so no two hosts' roots share a name, on first start, uses it to issue the console's own certificate, and discards its private key. Setup adds that root to `LocalMachine\Root`. It is restricted to `localhost`, `127.0.0.0/8` and `::1`, may not issue further certificate authorities, and cannot vouch for any other site. Uninstalling removes it.
 
 Drivers from other projects that setup installs come with their own install scripts, which may trust their publishers' certificates in the same way.
 
 ## How a release is signed
 
-1. Pushing a version tag (`v2.*` to `v9.*`), or the maintainer starting the workflow's release on `main`, runs the Windows workflow on GitHub-hosted runners. It builds everything that ships from that commit, without caches from earlier runs, and tests and lints the same commit in jobs of the same run. Nothing is sent for signing until those pass.
-2. The workflow uploads Rubylight's own binaries to SignPath, and then the display driver's catalog, made from the signed driver DLL. SignPath checks with GitHub that the build came from this repository's workflow and commit, then waits for an approver.
-3. The approver checks that the request belongs to the release being published and approves it, for each request. The workflow puts the signed files in the package, builds the installer, and sends the installer for signing the same way.
-4. The workflow checks every signature and timestamp before it publishes the release. If any signing step fails, nothing is published, signed or unsigned.
+1. Pushing a version tag (`v2.*` to `v9.*`), or the maintainer starting the workflow's release on `main`, runs the Windows workflow on GitHub-hosted runners. It builds everything that ships from that commit and tests and lints the same commit in jobs of the same run. Only when those pass does it create the release, as a draft nobody else can see or download.
+2. On their PC the maintainer runs [sign-local.ps1](../rust/release/sign-local.ps1), which downloads the draft's package and installer, checks that the installer carries exactly that package, and signs Rubylight's own binaries, then the display driver's catalog, made from the signed driver DLL, then the installer built again from the signed package. Each signature gets a timestamp.
+3. The script checks every signature and timestamp, and that the catalog covers the driver's files, then replaces the draft's files and `SHA256SUMS` and publishes the release. If any step fails, nothing is published, signed or unsigned.
 
 Pull requests and ordinary pushes to `main` are never signed. Changes to build scripts and the workflow are reviewed like any other source code, because they decide what gets signed.
 
@@ -69,7 +66,7 @@ Rubylight streams to the devices you pair and announces itself on your local net
 
 ## Check a download
 
-In Explorer, right-click the installer, choose **Properties** and open **Digital Signatures**: the signer is SignPath Foundation, with a timestamp. In PowerShell:
+In Explorer, right-click the installer, choose **Properties** and open **Digital Signatures**: the signer is Open Source Developer Ramazan Kara, with a timestamp. In PowerShell:
 
 ```powershell
 Get-AuthenticodeSignature .\rubylight-setup-<version>.exe | Format-List Status, SignerCertificate, TimeStamperCertificate
@@ -79,4 +76,4 @@ Each release also lists the SHA-256 of its files in `SHA256SUMS`.
 
 ## Reporting a problem
 
-If you think a file signed for Rubylight breaks this policy, open an [issue](https://github.com/RamazanKara/Rubylight/issues) or tell SignPath at support@signpath.io.
+If you think a file signed for Rubylight breaks this policy, open an [issue](https://github.com/RamazanKara/Rubylight/issues) or report it to Certum, which issued the certificate.

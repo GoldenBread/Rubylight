@@ -712,6 +712,22 @@ class Signing(unittest.TestCase):
         updater = (ROOT / 'rust/host/src/updater.rs').read_text(encoding='utf-8')
         self.assertIn('const INSTALLERS: &[&str] = &["rubylight-setup", "butterpollo-setup"];', updater)
 
+    def test_local_signing_holds_the_release_as_a_draft(self):
+        # With LOCAL_SIGNING the maintainer signs on their PC (sign-local.ps1),
+        # so publish must never make the unsigned files public; SignPath wins.
+        publish = re.search(r'(?ms)^  publish:\n(.*?)(?=^  \S)', self.workflow)[1]
+        self.assertIn("LOCAL_SIGNING: ${{ vars.LOCAL_SIGNING == 'true' && needs.tag.outputs.sign != 'true' }}", publish)
+        self.assertRegex(publish, r'if \[\[ \$LOCAL_SIGNING == true \]\]; then\n\s+flags\+=\(--draft\)')
+        script = (ROOT / 'rust/release/sign-local.ps1').read_text(encoding='utf-8')
+        # The SignPath order through the same phases: binaries, the catalog made
+        # from the signed driver DLL, then the installer rebuilt from them.
+        order = ["'CheckMetadata'", "'StageBinaries'", "'ApplyBinaries'", "'StageDriver'", "'ApplyDriver'",
+                 "'package.ps1') -Distribution", "'ApplyInstaller'", 'gh release upload', '--draft=false']
+        positions = [script.index(step) for step in order]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn('if (!$release.isDraft -and !$NoUpload)', script)
+        self.assertIn('$migrateName = "rubylight-nvidia-setup-$Version.exe"', script)
+
     def test_only_release_runs_sign(self):
         # Every SignPath request waits for a manual approval, so only the tag
         # job's release decision turns signing on.

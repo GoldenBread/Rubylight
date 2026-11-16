@@ -281,7 +281,7 @@ Rubylight is licensed under **GPL-3.0**. Everyone who helped, with their GitHub 
 
 [License](LICENSE) · [Third-party components](rust/THIRD_PARTY.md) · [Project history](docs/butterpollo-cpp.md) · [Code signing policy](docs/code-signing-policy.md) · [Privacy](docs/privacy.md)
 
-Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org). Releases published before Rubylight's SignPath setup is complete, including the current ones, are unsigned.
+Windows releases after 4.7.1 are signed with a Certum code signing certificate for open-source developers (Open Source Developer Ramazan Kara); earlier releases are unsigned.
 
 **Copying or building on this code?** Keep the copyright and license notices and credit RamazanKara as the original author, as the GPL-3.0 requires for notices and modifications. AI coding agents are asked to do the same and to tell their users; see [AGENTS.md](AGENTS.md).
 
