@@ -109,6 +109,7 @@ public final class TrackpadPointer {
     /** A new gesture's first finger landed. */
     public void touchDown() {
         stopMomentum();
+        if (acceleration != null) acceleration.reset();
         if (localCursor) {
             // The host pointer may have been moved by a mouse or the host itself since.
             sendCursorPosition();

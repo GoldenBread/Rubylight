@@ -581,6 +581,21 @@ public class SettingsKeysTest {
         assertEquals(200, config.trackpadSensitivityY);
     }
 
+    /** On for everyone who never chose: an install with the old default off keeps the stored value. */
+    @Test
+    public void trackpadAccelerationIsOnUntilItIsTurnedOff() {
+        Application app = RuntimeEnvironment.getApplication();
+        prefs().edit().remove("checkbox_trackpad_acceleration").commit();
+        assertTrue(PreferenceConfiguration.readPreferences(app).trackpadAcceleration);
+
+        // The checkbox was turned off before this version: the choice stays.
+        prefs().edit().putBoolean("checkbox_trackpad_acceleration", false).commit();
+        assertFalse(PreferenceConfiguration.readPreferences(app).trackpadAcceleration);
+
+        prefs().edit().putBoolean("checkbox_trackpad_acceleration", true).commit();
+        assertTrue(PreferenceConfiguration.readPreferences(app).trackpadAcceleration);
+    }
+
     @Test
     public void touchModeKeepsTheOlderSwitchesAndAddsTheNewerModes() {
         Application app = RuntimeEnvironment.getApplication();

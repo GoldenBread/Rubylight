@@ -64,7 +64,7 @@ ADVICE = {
     "touch_mode": "Use Trackpad for relative cursor movement, Trackpad (touchpad gestures) for the same with a physical touchpad’s gestures (tap-and-a-half drag, flick momentum), Direct mouse to point at a screen location, Multi-touch for host touch input, Local cursor for a pointer drawn on this device with no round trip, or Touch off to ignore fingers while playing with a controller (Back still opens the stream menu). Unsupported native touch falls back to Direct mouse. The picker's Help explains each mode. See [touch modes](controls.md#touch-modes).",
     "seekbar_trackpad_speed": "Adjust Trackpad movement; 100% is normal speed.",
     "seekbar_local_cursor_speed": "Adjust Local cursor movement; at 100% the drawn pointer moves as far as your finger.",
-    "checkbox_trackpad_acceleration": "Enable so slow finger movement aims precisely and fast swipes cover more distance. Trackpad and Local cursor; applies from the next stream.",
+    "checkbox_trackpad_acceleration": "Slow finger movement aims precisely and fast swipes cover more distance. Leave it on unless you prefer the pointer to follow your finger one to one; Trackpad and Local cursor apply it from the next stream.",
     "list_trackpad_acceleration_curve": "Choose how strongly fast swipes are sped up.",
     "checkbox_trackpad_momentum": "Enable so the pointer keeps gliding after a quick flick. A new touch, a mode change, the stream menu, picture-in-picture and disconnecting stop it at once. Trackpad and Local cursor.",
     "list_trackpad_momentum_glide": "Choose how far the pointer glides.",

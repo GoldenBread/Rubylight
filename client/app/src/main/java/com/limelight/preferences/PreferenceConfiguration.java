@@ -290,6 +290,8 @@ public class PreferenceConfiguration {
     private static final int DEFAULT_VIBRATE_FALLBACK_STRENGTH = 100;
     private static final boolean DEFAULT_FLIP_FACE_BUTTONS = false;
     private static final boolean DEFAULT_TOUCHSCREEN_TRACKPAD = true;
+    // On for an install that never touched the checkbox; a stored false is a choice and stays off.
+    static final boolean DEFAULT_TRACKPAD_ACCELERATION = true;
     private static final int DEFAULT_TRACKPAD_SPEED = 100;
     private static final int DEFAULT_MOUSE_SPEED = 100;
     private static final int DEFAULT_TRACKPAD_SENSITIVITY = 100;
@@ -1777,7 +1779,7 @@ public class PreferenceConfiguration {
         config.touchscreenTrackpad = TouchMode.legacyTrackpad(config.touchMode);
         config.trackpadSpeed = Math.max(25, Math.min(400, prefs.getInt(TRACKPAD_SPEED_PREF_STRING, DEFAULT_TRACKPAD_SPEED)));
         config.localCursorSpeed = Math.max(25, Math.min(400, prefs.getInt(LOCAL_CURSOR_SPEED_PREF_STRING, DEFAULT_TRACKPAD_SPEED)));
-        config.trackpadAcceleration = prefs.getBoolean(TRACKPAD_ACCELERATION_PREF_STRING, false);
+        config.trackpadAcceleration = prefs.getBoolean(TRACKPAD_ACCELERATION_PREF_STRING, DEFAULT_TRACKPAD_ACCELERATION);
         config.trackpadAccelerationCurve = prefs.getString(TRACKPAD_ACCELERATION_CURVE_PREF_STRING,
                 PointerAcceleration.MEDIUM);
         config.trackpadMomentum = prefs.getBoolean(TRACKPAD_MOMENTUM_PREF_STRING, false);
