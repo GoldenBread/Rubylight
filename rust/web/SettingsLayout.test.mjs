@@ -52,17 +52,30 @@ test('every setting lands in one tab, under a group that tab orders or folds', (
   assert.ok(groupRank('advanced', 'Console') < groupRank('advanced', DEBUG_GROUP));
 });
 
-test('Picture folds HDR, frame pacing, the frame limiter and after a stream in place, open when customized', async () => {
+test('the groups most people leave alone fold in place, open when customized', async () => {
   const { FOLDED_GROUPS } = await server.ssrLoadModule('/src/lib/schema/main.ts');
-  assert.deepEqual([...FOLDED_GROUPS].sort(), ['After a stream', 'Frame limiter', 'Frame pacing', 'HDR']);
+  assert.deepEqual([...FOLDED_GROUPS].sort(), [
+    'After a stream', 'Battle.net options', 'Capture', 'EA app options', 'Epic Games options', 'Frame limiter',
+    'Frame pacing', 'GOG options', 'Game folders', 'HDR', 'Lossless Scaling', 'Microsoft Store and Xbox options',
+    'Playnite', 'Playnite launch focus', 'Remote monitors', 'Steam Deck and back grips', 'Steam options',
+    'Ubisoft Connect options',
+  ]);
   for (const group of FOLDED_GROUPS) {
     const members = schema.settings.filter((setting) => setting.group === group);
     assert.ok(members.length > 0, group);
-    for (const setting of members) assert.equal(settingsGroup(setting.category), 'picture', setting.key);
+    // A group name lives in one tab: its settings show together.
+    const tabs = new Set(members.map((setting) => settingsGroup(setting.category)));
+    assert.equal(tabs.size, 1, group);
     // They keep their place in the tab's order instead of moving down with the expert groups.
     assert.equal(EXPERT_GROUPS.has(group), false, group);
-    assert.ok(groupRank('picture', group) < 1000, group);
+    assert.ok(groupRank([...tabs][0], group) < 1000, group);
   }
+  // The launcher groups belong to Games, where each Games tile links its own options.
+  for (const group of ['Steam options', 'Playnite', 'Game folders', 'Lossless Scaling']) {
+    const member = schema.settings.find((setting) => setting.group === group);
+    assert.equal(settingsGroup(member.category), 'games', group);
+  }
+  assert.equal(settingsGroup(schema.settings.find((setting) => setting.group === 'Steam Deck and back grips').category), 'sound');
   const page = await source('pages/Settings.svelte');
   assert.match(page, /\{:else if EXPERT_GROUPS\.has\(item\.name\) \|\| FOLDED_GROUPS\.has\(item\.name\)\}/);
   // A customized group starts open; the contents bar and a link to one of its settings open it.
