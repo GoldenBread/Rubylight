@@ -1052,7 +1052,10 @@ impl Batch {
             })?;
             match result {
                 Ok(()) => sent += packet.len(),
-                Err(error) if self.dont_fragment && error == WSAEMSGSIZE => {
+                // The video socket is process-wide: another session may have set DF even when
+                // this batch did not, so a stock-size datagram can hit the path's limit too.
+                // Drop it like a path-MTU refusal; ending a stock stream is worse.
+                Err(error) if error == WSAEMSGSIZE => {
                     self.too_large(1, error);
                 }
                 Err(error) if transient(error) => self.dropped(1, error),
