@@ -1019,6 +1019,16 @@
     </PreferenceCategory>
 
     <!-- Debug: settings whose default is right for nearly everyone, kept for troubleshooting. -->
+    <!-- Their own game_info_keys file, not the default preferences (GameInfo.keyPrefs): out of presets, profiles,
+         exports and backups. Empty keys mean no request and no new rows. -->
+    <PreferenceCategory android:key="category_game_info" android:title="@string/game_info_category">
+        <Preference android:key="game_info_steamgriddb" android:title="@string/game_info_sgdb_title"
+            android:summary="@string/game_info_sgdb_summary" android:persistent="false" />
+        <Preference android:key="game_info_igdb_client_id" android:title="@string/game_info_igdb_id_title"
+            android:summary="@string/game_info_igdb_id_summary" android:persistent="false" />
+        <Preference android:key="game_info_igdb_client_secret" android:title="@string/game_info_igdb_secret_title"
+            android:summary="@string/game_info_igdb_secret_summary" android:persistent="false" />
+    </PreferenceCategory>
     <PreferenceCategory android:key="category_debug">
         <com.limelight.preferences.MaterialListPreference
             android:key="list_fec_choice"

@@ -520,4 +520,27 @@
     <string name="title_jumbo_frames">Pacchetti video jumbo</string>
     <string name="summary_jumbo_frames">Invia il video in meno pacchetti più grandi quando il PC e ogni collegamento trasportano frame jumbo da 9000 byte. Ogni stream parte qualche secondo più tardi mentre Nightjar prova la rete e usa pacchetti normali se il test fallisce. Lascialo disattivato se la rete cablata non è configurata per i frame jumbo.</string>
     <string name="jumbo_frames_fallback">I pacchetti video jumbo non hanno superato il test su questa rete, quindi lo stream usa pacchetti normali.</string>
+    <string name="game_info_category">Copertine e informazioni sui giochi</string>
+    <string name="game_info_sgdb_title">Chiave API di SteamGridDB</string>
+    <string name="game_info_sgdb_summary">Copertine da SteamGridDB per i giochi senza copertina sul tuo PC. I nomi dei tuoi giochi vengono inviati a SteamGridDB; lascia vuoto per usare solo le copertine del tuo PC.</string>
+    <string name="game_info_igdb_id_title">ID client di IGDB</string>
+    <string name="game_info_igdb_id_summary">Generi, temi e tempo di gioco di ogni titolo, e filtri della libreria per genere e durata, da IGDB. I nomi dei tuoi giochi vengono inviati a IGDB; lascia vuoto a meno che tu non abbia un’app per sviluppatori Twitch.</string>
+    <string name="game_info_igdb_secret_title">Client secret di IGDB</string>
+    <string name="game_info_igdb_secret_summary">Il client secret della stessa app per sviluppatori Twitch. I dati dei giochi richiedono entrambi.</string>
+    <string name="game_info_genres">Generi</string>
+    <string name="game_info_themes">Temi</string>
+    <string name="game_info_time_to_beat">Tempo di gioco</string>
+    <string name="game_info_story">Storia</string>
+    <string name="game_info_extras">Storia + extra</string>
+    <string name="game_info_everything">Tutto</string>
+    <string name="game_info_hours">%1$s h</string>
+    <string name="game_info_genre">Genere</string>
+    <string name="game_info_any_genre">Qualsiasi genere</string>
+    <string name="game_info_length">Durata</string>
+    <string name="game_info_any_length">Qualsiasi durata</string>
+    <string name="game_info_length_short">Meno di 5 ore</string>
+    <string name="game_info_length_medium">Da 5 a 15 ore</string>
+    <string name="game_info_length_long">Da 15 a 40 ore</string>
+    <string name="game_info_length_very_long">Oltre 40 ore</string>
+    <string name="game_info_credits">Copertine da SteamGridDB. Dati dei giochi da IGDB.com.</string>
 </resources>

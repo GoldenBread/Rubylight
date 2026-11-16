@@ -15,7 +15,7 @@ All Rust is one Cargo workspace in `protocol/`.
 | `rubylight-protocol` | `protocol/core/` | Wire formats shared with the host, `no_std`: each extension message in a module of its own, every message id in [`ids.rs`](../protocol/core/src/ids.rs). |
 | `rubylight-traverse` | `protocol/traverse/` | Internet play, shared with the host: DHT records, STUN, PCP and NAT-PMP, hole punching and the tunnel that reach a paired PC from outside its network. |
 | `nightjar-core` | `protocol/client/` | The streaming engine: pairing and HTTPS, RTSP, control, video and audio receive, input, USB forwarding. |
-| `nightjar-policy` | `protocol/policy/` | Decisions without I/O or a clock: bitrate, the quality ladder, the recovery budget, the overlay, the stream menu. Both apps call it, so they decide alike. |
+| `nightjar-policy` | `protocol/policy/` | Decisions without I/O or a clock: bitrate, the quality ladder, the recovery budget, the overlay, the stream menu, the SteamGridDB and IGDB lookup (`game_info/`). Both apps call it, so they decide alike. |
 | `nightjar-desktop` | `protocol/desktop/` | The Windows, Linux and macOS app. |
 | `nightjar-android` | `protocol/android/` | `libnightjar_core.so`, the JNI side of the Android app's Rust engine. |
 | `rubylight-protocol-ffi` | `protocol/ffi/` | A C interface to `rubylight-protocol` for the Android app's C code. |
@@ -45,13 +45,14 @@ A feature lands in both apps in one change. What they share goes into `nightjar-
 | Entry, command line | `main.rs` holds the app's state (`App`) and its loop; `cli.rs` |
 | What the app does | `app.rs` (saving, shutdown), `app/launcher.rs` (the launcher's events and frames), `app/command.rs` (carries out what the UI returns), `app/launch.rs` (starting a stream), `app/session.rs` (a running stream and its end), `app/overlay.rs` (statistics, toasts and the stream menu over the picture), `app/renderer.rs` (the window's renderer) |
 | UI | `gui.rs` (egui on SDL3), `ui.rs` and `ui/`: pages only draw and return commands. Settings page: `ui/settings.rs` |
-| PCs and apps | `hosts.rs`: discovery and app lists on worker threads, results as events (`hosts/events.rs` applies them); `hosts/pairing.rs`, `hosts/power.rs` (wake, sleep, updates), `hosts/native.rs` (the native API's reads), `hosts/covers.rs` |
+| PCs and apps | `hosts.rs`: discovery and app lists on worker threads, results as events (`hosts/events.rs` applies them); `hosts/pairing.rs`, `hosts/power.rs` (wake, sleep, updates), `hosts/native.rs` (the native API's reads), `hosts/covers.rs`, `hosts/game_info.rs` (SteamGridDB covers and IGDB facts for the games) |
 | Stream | `stream/mod.rs` (session worker), `stream/connect.rs` (launch), `stream/negotiate.rs` (mode, bitrate, codecs, HDR), `stream/pipeline.rs` (picture loop, decoder order), `stream/present.rs` and `stream/present/` (the video texture; `stream/present/pacer.rs` decides when a picture is shown), `stream/input.rs`, `stream/recovery.rs`, `stream/guests.rs`, `stream/touchpad/` |
 | Decode | `media.rs` (FFmpeg, Opus), `vulkan_video.rs`, `amd_decode.rs`, `linux_video.rs`, `dmabuf.rs`, `stream/pyrowave.rs`, `stream/pyrowave_gpu.rs` |
 | Windows only | `stream/direct.rs`, `stream/d3d11.rs`, `stream/amf_scaler.rs`, `stream/wasapi.rs`, `stream/microphone.rs` |
 | Linux only | `dmabuf.rs`, `vulkan_video.rs`, `stream/wl_scanout.rs`, `stream/wl_presentation.rs`, `stream/drm_vrr.rs`, `stream/planes_gpu.rs`, `kms/` with `stream/kms_scanout.rs` (DRM/KMS output without a desktop), `stream/touchpad/evdev.rs` |
 | macOS only | `metal/`, `stream/macos_video_check.rs` |
 | Settings, text | `config.rs`, `strings.rs`, `strings/` |
+| Artwork and game facts | `game_info.rs` (keys, HTTPS, the record and image cache) over `nightjar_policy::game_info`; the HTTPS is `update_net.rs`'s `exchange` |
 
 `cfg(unix)` includes macOS: Linux-only code takes `target_os = "linux"`. A changed shader `.spv` needs its Metal translation from `protocol/desktop/src/metal/generate.py`.
 
@@ -69,6 +70,7 @@ A stream runs on one of two engines. The Rust engine is `nightjar-core` behind [
 | Input, audio | `binding/input/ControllerHandler.java`, `binding/input/driver/`, `binding/input/touch/`, `binding/input/virtual_controller/`, `binding/audio/` |
 | Settings | `preferences/PreferenceConfiguration.java`, `preferences/StreamSettings.java` |
 | PCs, library, UI | `computers/`, `console/`, `ui/`, `grid/` |
+| Artwork and game facts | `console/GameInfo.java` (keys, OkHttp, cache), `console/GameInfoModel.java` (`nightjar_policy::game_info` through `protocol/android/src/game_info.rs`), `console/GameInfoFilter.java` |
 | Native API, files | `nativeapi/`, `files/` |
 
 Native code beside the engines, in `app/src/main/jni/`: `pyrowave-renderer/`, `vulkan/`, `evdev_reader/`, `window-dataspace/`.

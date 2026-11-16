@@ -261,6 +261,9 @@ public class CachedAppAssetLoader {
 
             final ImageView imageView = imageViewRef.get();
             final TextView textView = textViewRef.get();
+            if (bitmap == null && settled && imageView != null && textView != null) {
+                requestCoverFallback(tuple, imageView, textView);
+            }
             if (getLoaderTask(imageView) == this && textView != null && bitmap == null && placeholder) {
                 // The cached placeholder: the title on the cover's own surface, as for a game without art
                 imageView.setImageDrawable(new AsyncDrawable(imageView.getResources(), noAppImageBitmap, this));
@@ -303,6 +306,42 @@ public class CachedAppAssetLoader {
                 }
             }
         }
+    }
+
+    /** Games whose cover was asked of SteamGridDB through this loader. */
+    private final java.util.Set<Integer> coverFallbackAsked = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * The host has no cover of its own for this game (a 404 or its grey placeholder): when a SteamGridDB key is set,
+     * the lookup runs on its own thread, the image replaces the placeholder in the disk cache, and the view loads it.
+     * Silent when it finds nothing. A real cover from the host never gets here.
+     */
+    private void requestCoverFallback(LoaderTuple tuple, ImageView imageView, TextView textView) {
+        android.content.Context context = imageView.getContext().getApplicationContext();
+        if (!com.limelight.console.GameInfo.coverWanted(context)) return;
+        if (!coverFallbackAsked.add(tuple.app.getAppId())) return;
+        WeakReference<ImageView> imageRef = new WeakReference<>(imageView);
+        WeakReference<TextView> textRef = new WeakReference<>(textView);
+        android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+        com.limelight.console.GameInfo.get(context).cover(tuple.app.getAppName(), tuple.app.getGameId(), file -> {
+            if (file == null) return;
+            try (InputStream in = new java.io.FileInputStream(file)) {
+                diskLoader.populateCacheWithStream(tuple, in);
+            } catch (IOException e) {
+                return;
+            }
+            main.post(() -> {
+                withoutArt.remove(tuple.app.getAppId());
+                ImageView view = imageRef.get();
+                TextView text = textRef.get();
+                LoaderTask current = getLoaderTask(view);
+                // A view bound to another game since stays with that game's load.
+                if (view != null && text != null && (current == null || current.tuple == null || current.tuple.equals(tuple))) {
+                    populateImageView(tuple.app, view, text);
+                }
+                if (artListener != null) artListener.accept(tuple.app);
+            });
+        });
     }
 
     /** A cover frame crops its art to fill it, whatever the art's shape. */

@@ -587,4 +587,27 @@
     <string name="title_jumbo_frames">Jumbo video packets</string>
     <string name="summary_jumbo_frames">Sends video in fewer, larger packets when the PC and every link carry 9000-byte jumbo frames. Each stream starts a few seconds later while Nightjar tests the network, and uses normal packets if the test fails. Leave it off unless your wired network is set up for jumbo frames.</string>
     <string name="jumbo_frames_fallback">Jumbo video packets didn’t pass the test on this network, so the stream uses normal packets.</string>
+    <string name="game_info_category">Artwork and game info</string>
+    <string name="game_info_sgdb_title">SteamGridDB API key</string>
+    <string name="game_info_sgdb_summary">Covers from SteamGridDB for games your PC has none for. Your game names go to SteamGridDB; leave it empty to keep only your PC\'s covers.</string>
+    <string name="game_info_igdb_id_title">IGDB client ID</string>
+    <string name="game_info_igdb_id_summary">Genres, themes and time to beat for each game, and library filters by genre and length, from IGDB. Your game names go to IGDB; leave it empty unless you have a Twitch developer app.</string>
+    <string name="game_info_igdb_secret_title">IGDB client secret</string>
+    <string name="game_info_igdb_secret_summary">The client secret of the same Twitch developer app. Game facts need both.</string>
+    <string name="game_info_genres">Genres</string>
+    <string name="game_info_themes">Themes</string>
+    <string name="game_info_time_to_beat">Time to beat</string>
+    <string name="game_info_story">Story</string>
+    <string name="game_info_extras">Story + extras</string>
+    <string name="game_info_everything">Everything</string>
+    <string name="game_info_hours">%1$s h</string>
+    <string name="game_info_genre">Genre</string>
+    <string name="game_info_any_genre">Any genre</string>
+    <string name="game_info_length">Length</string>
+    <string name="game_info_any_length">Any length</string>
+    <string name="game_info_length_short">Under 5 hours</string>
+    <string name="game_info_length_medium">5 to 15 hours</string>
+    <string name="game_info_length_long">15 to 40 hours</string>
+    <string name="game_info_length_very_long">Over 40 hours</string>
+    <string name="game_info_credits">Artwork from SteamGridDB. Game facts from IGDB.com.</string>
 </resources>

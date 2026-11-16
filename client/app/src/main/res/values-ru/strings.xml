@@ -520,4 +520,27 @@
     <string name="title_jumbo_frames">Крупные видеопакеты</string>
     <string name="summary_jumbo_frames">Отправляет видео меньшим числом более крупных пакетов, когда ПК и каждая линия передают кадры jumbo по 9000 байт. Каждый поток запускается на несколько секунд позже, пока Nightjar проверяет сеть, и использует обычные пакеты, если проверка не пройдена. Оставьте выключенным, если ваша проводная сеть не настроена для кадров jumbo.</string>
     <string name="jumbo_frames_fallback">Крупные видеопакеты не прошли проверку в этой сети, поэтому поток использует обычные пакеты.</string>
+    <string name="game_info_category">Обложки и сведения об играх</string>
+    <string name="game_info_sgdb_title">Ключ API SteamGridDB</string>
+    <string name="game_info_sgdb_summary">Обложки из SteamGridDB для игр, у которых нет обложки на вашем PC. Названия игр отправляются в SteamGridDB; оставьте поле пустым, чтобы использовать только обложки с вашего PC.</string>
+    <string name="game_info_igdb_id_title">ID клиента IGDB</string>
+    <string name="game_info_igdb_id_summary">Из IGDB: жанры, темы и время прохождения каждой игры, а также фильтры библиотеки по жанру и длительности. Названия игр отправляются в IGDB; оставьте поле пустым, если у вас нет приложения разработчика Twitch.</string>
+    <string name="game_info_igdb_secret_title">Секрет клиента IGDB</string>
+    <string name="game_info_igdb_secret_summary">Секрет клиента того же приложения разработчика Twitch. Для сведений об играх нужны оба.</string>
+    <string name="game_info_genres">Жанры</string>
+    <string name="game_info_themes">Темы</string>
+    <string name="game_info_time_to_beat">Время прохождения</string>
+    <string name="game_info_story">Сюжет</string>
+    <string name="game_info_extras">Сюжет + доп. задания</string>
+    <string name="game_info_everything">Всё</string>
+    <string name="game_info_hours">%1$s ч</string>
+    <string name="game_info_genre">Жанр</string>
+    <string name="game_info_any_genre">Любой жанр</string>
+    <string name="game_info_length">Длительность</string>
+    <string name="game_info_any_length">Любая длительность</string>
+    <string name="game_info_length_short">Меньше 5 часов</string>
+    <string name="game_info_length_medium">От 5 до 15 часов</string>
+    <string name="game_info_length_long">От 15 до 40 часов</string>
+    <string name="game_info_length_very_long">Больше 40 часов</string>
+    <string name="game_info_credits">Обложки — SteamGridDB. Сведения об играх — IGDB.com.</string>
 </resources>

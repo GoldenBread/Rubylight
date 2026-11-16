@@ -520,4 +520,27 @@
     <string name="title_jumbo_frames">점보 비디오 패킷</string>
     <string name="summary_jumbo_frames">PC와 모든 구간이 9000바이트 점보 프레임을 전달할 때 더 적고 큰 패킷으로 비디오를 보냅니다. Nightjar가 네트워크를 테스트하는 동안 각 스트림 시작이 몇 초 늦어지며, 테스트에 실패하면 일반 패킷을 사용합니다. 유선 네트워크가 점보 프레임에 맞게 설정된 경우가 아니면 끄세요.</string>
     <string name="jumbo_frames_fallback">이 네트워크에서 점보 비디오 패킷 테스트를 통과하지 못해 일반 패킷으로 스트리밍합니다.</string>
+    <string name="game_info_category">표지와 게임 정보</string>
+    <string name="game_info_sgdb_title">SteamGridDB API 키</string>
+    <string name="game_info_sgdb_summary">PC에 표지가 없는 게임의 표지를 SteamGridDB에서 가져옵니다. 게임 이름은 SteamGridDB로 전송됩니다. 비워 두면 PC에 있는 표지만 사용합니다.</string>
+    <string name="game_info_igdb_id_title">IGDB 클라이언트 ID</string>
+    <string name="game_info_igdb_id_summary">IGDB에서 게임별 장르, 테마, 클리어 시간과 장르·길이별 라이브러리 필터를 가져옵니다. 게임 이름은 IGDB로 전송됩니다. Twitch 개발자 앱이 있을 때만 입력하세요.</string>
+    <string name="game_info_igdb_secret_title">IGDB 클라이언트 시크릿</string>
+    <string name="game_info_igdb_secret_summary">같은 Twitch 개발자 앱의 클라이언트 시크릿입니다. 게임 정보를 가져오려면 둘 다 필요합니다.</string>
+    <string name="game_info_genres">장르</string>
+    <string name="game_info_themes">테마</string>
+    <string name="game_info_time_to_beat">클리어 시간</string>
+    <string name="game_info_story">스토리</string>
+    <string name="game_info_extras">스토리 + 서브</string>
+    <string name="game_info_everything">전체</string>
+    <string name="game_info_hours">%1$s시간</string>
+    <string name="game_info_genre">장르</string>
+    <string name="game_info_any_genre">모든 장르</string>
+    <string name="game_info_length">길이</string>
+    <string name="game_info_any_length">모든 길이</string>
+    <string name="game_info_length_short">5시간 미만</string>
+    <string name="game_info_length_medium">5~15시간</string>
+    <string name="game_info_length_long">15~40시간</string>
+    <string name="game_info_length_very_long">40시간 이상</string>
+    <string name="game_info_credits">표지는 SteamGridDB에서, 게임 정보는 IGDB.com에서 제공합니다.</string>
 </resources>

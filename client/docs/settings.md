@@ -287,6 +287,14 @@ Tier: Main rows show when a section opens; More rows fold behind the section's l
 | Chipset tuning<br>`checkbox_experimental_chipset_tuning` | More | Off | On; Off | Off by default. Sends `vdec-lowlatency` to MediaTek Dimensity (`c2.mtk`) decoders and, with decoder performance hints on, asks Samsung Exynos decoders for the operating rate they declare next to the realtime priority hint. Needs vendor low-latency options on and HEVC low-latency flags not disabled. Only the first configure try carries them, so a decoder that rejects them falls back to the normal options. If video stops or stutters, turn it off. |
 | Frames waiting for the decoder<br>`list_decode_queue_frames` | More | 15 frames | 3 frames; 5 frames; 8 frames; 15 frames | 15 frames by default, the bound moonlight-common-c has always used; in Advanced, Compatibility. How many complete frames may wait for a decoder that falls behind before they are dropped and the PC is asked for a key frame. Fewer frames keep delay from building up on a slow decoder, at the cost of more frequent stutters while the key frame arrives. Both streaming engines use it, but only with a decoder that queues frames: most hardware decoders take each frame directly and have no queue, so the choice does nothing for them. Leave it at 15 unless the picture lags further and further behind on a slow device. Desktop Nightjar has the same setting. Applies to the next stream. |
 
+#### Artwork and game info
+
+| Setting / preference key | Tier | Default | Choices and units | When to change or use |
+| --- | --- | --- | --- | --- |
+| SteamGridDB API key<br>`game_info_steamgriddb` | More | No stored default | Action | Optional; empty by default, and then Nightjar sends nothing. Shows SteamGridDB's cover for a game your PC has none for; your PC's own cover always wins. Your game names go to SteamGridDB. Stored in its own file, not in presets, profiles or backups. |
+| IGDB client ID<br>`game_info_igdb_client_id` | More | No stored default | Action | Optional; empty by default, and then Nightjar sends nothing. With the client secret, shows genres, themes and time to beat on a game's page and adds Genre and Length filters to All games. Your game names go to IGDB. Needs a Twitch developer app. Stored in its own file, not in presets, profiles or backups. |
+| IGDB client secret<br>`game_info_igdb_client_secret` | More | No stored default | Action | The client secret of the same Twitch developer app as the IGDB client ID; game facts need both. Stored in its own file, not in presets, profiles or backups. |
+
 ### Debug
 
 | Setting / preference key | Tier | Default | Choices and units | When to change or use |

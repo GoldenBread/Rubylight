@@ -520,4 +520,27 @@
     <string name="title_jumbo_frames">Jumbo video paketleri</string>
     <string name="summary_jumbo_frames">PC ve her bağlantı 9000 baytlık jumbo çerçeveleri taşıdığında videoyu daha az sayıda daha büyük paketlerle gönderir. Nightjar ağı test ederken her yayın birkaç saniye geç başlar ve test başarısız olursa normal paketler kullanılır. Kablolu ağınız jumbo çerçeveler için ayarlanmadıysa kapalı bırakın.</string>
     <string name="jumbo_frames_fallback">Jumbo video paketleri bu ağdaki testi geçemedi, bu yüzden akış normal paketler kullanıyor.</string>
+    <string name="game_info_category">Kapaklar ve oyun bilgileri</string>
+    <string name="game_info_sgdb_title">SteamGridDB API anahtarı</string>
+    <string name="game_info_sgdb_summary">PC\'nizde kapağı olmayan oyunlar için SteamGridDB\'den kapak alır. Oyun adları SteamGridDB\'ye gönderilir; boş bırakırsanız yalnızca PC\'nizdeki kapaklar kullanılır.</string>
+    <string name="game_info_igdb_id_title">IGDB istemci kimliği</string>
+    <string name="game_info_igdb_id_summary">IGDB\'den her oyun için türler, temalar ve bitirme süresi, ayrıca türe ve uzunluğa göre kitaplık filtreleri. Oyun adları IGDB\'ye gönderilir; Twitch geliştirici uygulamanız yoksa boş bırakın.</string>
+    <string name="game_info_igdb_secret_title">IGDB istemci gizli anahtarı</string>
+    <string name="game_info_igdb_secret_summary">Aynı Twitch geliştirici uygulamasının istemci gizli anahtarı. Oyun bilgileri için ikisi de gerekir.</string>
+    <string name="game_info_genres">Türler</string>
+    <string name="game_info_themes">Temalar</string>
+    <string name="game_info_time_to_beat">Bitirme süresi</string>
+    <string name="game_info_story">Hikâye</string>
+    <string name="game_info_extras">Hikâye + ekstralar</string>
+    <string name="game_info_everything">Her şey</string>
+    <string name="game_info_hours">%1$s sa</string>
+    <string name="game_info_genre">Tür</string>
+    <string name="game_info_any_genre">Tüm türler</string>
+    <string name="game_info_length">Uzunluk</string>
+    <string name="game_info_any_length">Tüm uzunluklar</string>
+    <string name="game_info_length_short">5 saatten kısa</string>
+    <string name="game_info_length_medium">5-15 saat</string>
+    <string name="game_info_length_long">15-40 saat</string>
+    <string name="game_info_length_very_long">40 saatten uzun</string>
+    <string name="game_info_credits">Kapaklar SteamGridDB\'den. Oyun bilgileri IGDB.com\'dan.</string>
 </resources>

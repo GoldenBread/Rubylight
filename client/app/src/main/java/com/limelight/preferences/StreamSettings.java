@@ -140,7 +140,7 @@ public class StreamSettings extends NightjarActivity {
         SECTIONS.put("app", new String[] {"category_app_main", "category_more_app", "category_ui_settings",
                 "category_accessibility"});
         SECTIONS.put("advanced", new String[] {"category_advanced_settings", "category_more_advanced",
-                "category_advanced_compatibility"});
+                "category_advanced_compatibility", "category_game_info"});
         // Settings whose default is right for nearly everyone, kept for troubleshooting.
         SECTIONS.put("debug", new String[] {"category_debug", "category_more_debug", "category_debug_pyrowave",
                 "category_debug_decoder", "category_debug_diagnostics"});
@@ -2400,9 +2400,35 @@ public class StreamSettings extends NightjarActivity {
                     .setMessage(message).setPositiveButton(android.R.string.ok, null).create());
         }
 
+        /**
+         * A key row of Artwork and game info: opens a text box holding the key. The key is kept in the game_info_keys
+         * file, never in the default preferences, and never shown in the row, whose summary is its help.
+         */
+        private void bindGameInfoKey(String row, String storedAs, int title) {
+            findPreference(row).setOnPreferenceClickListener(preference -> {
+                android.content.SharedPreferences keys = com.limelight.console.GameInfo.keyPrefs(getActivity());
+                android.widget.EditText input = new android.widget.EditText(getActivity());
+                input.setSingleLine(true);
+                input.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                        | android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
+                input.setText(keys.getString(storedAs, ""));
+                input.setSelection(input.getText().length());
+                AlertDialog dialog = new NavigationDialogBuilder(getActivity()).setTitle(title).setView(input)
+                        .setPositiveButton(android.R.string.ok, (d, which) -> {
+                            String value = input.getText().toString().trim();
+                            if (value.isEmpty()) keys.edit().remove(storedAs).apply();
+                            else keys.edit().putString(storedAs, value).apply();
+                        })
+                        .setNegativeButton(android.R.string.cancel, null).create();
+                UiHelper.showDialog(getActivity(), dialog);
+                return true;
+            });
+        }
+
         private void showAbout() {
             AlertDialog about = new NavigationDialogBuilder(getActivity()).setTitle(R.string.title_about)
-                    .setMessage(getString(R.string.summary_about, BuildConfig.VERSION_NAME))
+                    .setMessage(getString(R.string.summary_about, BuildConfig.VERSION_NAME) + "\n\n"
+                            + getString(R.string.game_info_credits))
                     .setPositiveButton(android.R.string.ok, null)
                     .setNeutralButton(R.string.settings_source, (dialog, which) ->
                             HelpLauncher.launchUrl(getActivity(), "https://github.com/RamazanKara/nightjar"))
@@ -2639,6 +2665,9 @@ public class StreamSettings extends NightjarActivity {
                 showAbout();
                 return true;
             });
+            bindGameInfoKey("game_info_steamgriddb", com.limelight.console.GameInfo.KEY_STEAMGRIDDB, R.string.game_info_sgdb_title);
+            bindGameInfoKey("game_info_igdb_client_id", com.limelight.console.GameInfo.KEY_IGDB_ID, R.string.game_info_igdb_id_title);
+            bindGameInfoKey("game_info_igdb_client_secret", com.limelight.console.GameInfo.KEY_IGDB_SECRET, R.string.game_info_igdb_secret_title);
             findPreference("pin_lock").setOnPreferenceClickListener(preference -> {
                 com.limelight.pin.PinLockSettingsActivity.open(getActivity());
                 return true;

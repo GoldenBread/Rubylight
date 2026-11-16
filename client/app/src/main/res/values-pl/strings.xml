@@ -520,4 +520,27 @@
     <string name="title_jumbo_frames">Pakiety wideo jumbo</string>
     <string name="summary_jumbo_frames">Wysyła obraz w mniejszej liczbie większych pakietów, gdy PC i każde łącze przenoszą ramki jumbo 9000 bajtów. Każdy strumień startuje kilka sekund później, podczas gdy Nightjar testuje sieć, i używa zwykłych pakietów, jeśli test się nie powiedzie. Pozostaw wyłączone, chyba że twoja sieć przewodowa jest skonfigurowana dla ramek jumbo.</string>
     <string name="jumbo_frames_fallback">Pakiety wideo jumbo nie przeszły testu w tej sieci, więc strumień używa zwykłych pakietów.</string>
+    <string name="game_info_category">Okładki i informacje o grach</string>
+    <string name="game_info_sgdb_title">Klucz API SteamGridDB</string>
+    <string name="game_info_sgdb_summary">Okładki ze SteamGridDB dla gier bez okładki na Twoim PC. Nazwy gier trafiają do SteamGridDB; zostaw puste, aby używać tylko okładek z Twojego PC.</string>
+    <string name="game_info_igdb_id_title">ID klienta IGDB</string>
+    <string name="game_info_igdb_id_summary">Z IGDB: gatunki, motywy i czas ukończenia każdej gry oraz filtry biblioteki według gatunku i długości. Nazwy gier trafiają do IGDB; zostaw puste, chyba że masz aplikację deweloperską Twitch.</string>
+    <string name="game_info_igdb_secret_title">Klucz tajny klienta IGDB</string>
+    <string name="game_info_igdb_secret_summary">Klucz tajny tej samej aplikacji deweloperskiej Twitch. Dane o grach wymagają obu.</string>
+    <string name="game_info_genres">Gatunki</string>
+    <string name="game_info_themes">Motywy</string>
+    <string name="game_info_time_to_beat">Czas ukończenia</string>
+    <string name="game_info_story">Fabuła</string>
+    <string name="game_info_extras">Fabuła + dodatki</string>
+    <string name="game_info_everything">Wszystko</string>
+    <string name="game_info_hours">%1$s godz.</string>
+    <string name="game_info_genre">Gatunek</string>
+    <string name="game_info_any_genre">Każdy gatunek</string>
+    <string name="game_info_length">Długość</string>
+    <string name="game_info_any_length">Każda długość</string>
+    <string name="game_info_length_short">Poniżej 5 godzin</string>
+    <string name="game_info_length_medium">5–15 godzin</string>
+    <string name="game_info_length_long">15–40 godzin</string>
+    <string name="game_info_length_very_long">Ponad 40 godzin</string>
+    <string name="game_info_credits">Okładki ze SteamGridDB. Dane o grach z IGDB.com.</string>
 </resources>

@@ -20,6 +20,8 @@ public class NvApp {
     private boolean hdrSupported;
     private String appUuid = "";
     private String stableId = "";
+    /** The library's game id (steam:1145360) when the host gave one; names the game for artwork lookups. */
+    private String gameId;
     private int hostIndex = Integer.MAX_VALUE;
     private String artVersion = "";
     private boolean monitorResume;
@@ -69,6 +71,14 @@ public class NvApp {
 
     public String getAppUuid() {
         return appUuid;
+    }
+
+    public String getGameId() {
+        return gameId;
+    }
+
+    public void setGameId(String gameId) {
+        this.gameId = gameId;
     }
 
     /** What the host's library calls the game; stays on this device, as the PC's own list may not know it. */

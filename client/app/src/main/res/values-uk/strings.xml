@@ -520,4 +520,27 @@
     <string name="title_jumbo_frames">Великі відеопакети</string>
     <string name="summary_jumbo_frames">Надсилає відео меншою кількістю більших пакетів, коли ПК і кожна ланка передають кадри jumbo по 9000 байтів. Кожен потік запускається на кілька секунд пізніше, поки Nightjar перевіряє мережу, і використовує звичайні пакети, якщо перевірка не пройдена. Залиште вимкненим, якщо ваша дротова мережа не налаштована для кадрів jumbo.</string>
     <string name="jumbo_frames_fallback">Великі відеопакети не пройшли перевірку в цій мережі, тому потік використовує звичайні пакети.</string>
+    <string name="game_info_category">Обкладинки та відомості про ігри</string>
+    <string name="game_info_sgdb_title">Ключ API SteamGridDB</string>
+    <string name="game_info_sgdb_summary">Обкладинки зі SteamGridDB для ігор без обкладинки на вашому PC. Назви ігор надсилаються до SteamGridDB; залиште поле порожнім, щоб використовувати лише обкладинки з вашого PC.</string>
+    <string name="game_info_igdb_id_title">ID клієнта IGDB</string>
+    <string name="game_info_igdb_id_summary">З IGDB: жанри, теми й час проходження кожної гри, а також фільтри бібліотеки за жанром і тривалістю. Назви ігор надсилаються до IGDB; залиште поле порожнім, якщо у вас немає застосунку розробника Twitch.</string>
+    <string name="game_info_igdb_secret_title">Секрет клієнта IGDB</string>
+    <string name="game_info_igdb_secret_summary">Секрет клієнта того самого застосунку розробника Twitch. Для відомостей про ігри потрібні обидва.</string>
+    <string name="game_info_genres">Жанри</string>
+    <string name="game_info_themes">Теми</string>
+    <string name="game_info_time_to_beat">Час проходження</string>
+    <string name="game_info_story">Сюжет</string>
+    <string name="game_info_extras">Сюжет + побічні квести</string>
+    <string name="game_info_everything">Усе</string>
+    <string name="game_info_hours">%1$s год</string>
+    <string name="game_info_genre">Жанр</string>
+    <string name="game_info_any_genre">Будь-який жанр</string>
+    <string name="game_info_length">Тривалість</string>
+    <string name="game_info_any_length">Будь-яка тривалість</string>
+    <string name="game_info_length_short">Менше 5 годин</string>
+    <string name="game_info_length_medium">Від 5 до 15 годин</string>
+    <string name="game_info_length_long">Від 15 до 40 годин</string>
+    <string name="game_info_length_very_long">Понад 40 годин</string>
+    <string name="game_info_credits">Обкладинки — SteamGridDB. Відомості про ігри — IGDB.com.</string>
 </resources>

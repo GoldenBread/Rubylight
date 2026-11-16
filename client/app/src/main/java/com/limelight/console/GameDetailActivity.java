@@ -123,6 +123,9 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
     private TextView title;
     private TextView status;
     private TextView host;
+    /** Genres, themes and time to beat from IGDB; gone without a record or IGDB keys. */
+    private TextView factsView;
+    private String factsShownFor;
     private TextView note;
     private MaterialButton play;
     private MaterialButton end;
@@ -210,6 +213,13 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
         title = findViewById(R.id.detail_title);
         status = findViewById(R.id.detail_status);
         host = findViewById(R.id.detail_host);
+        factsView = new TextView(this);
+        androidx.core.widget.TextViewCompat.setTextAppearance(factsView, R.style.TextAppearance_Nightjar_Supporting);
+        factsView.setTextColor(host.getTextColors());
+        factsView.setPadding(0, getResources().getDimensionPixelSize(R.dimen.space_xs), 0, 0);
+        factsView.setVisibility(View.GONE);
+        ViewGroup hostParent = (ViewGroup) host.getParent();
+        hostParent.addView(factsView, hostParent.indexOfChild(host) + 1);
         note = findViewById(R.id.detail_note);
         play = findViewById(R.id.detail_play);
         end = findViewById(R.id.detail_end);
@@ -691,6 +701,7 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
         host.setText(m.hostName);
         setTitle(m.title);
         covers.bind(CoverLoaders.coverHost(computer, m.source), CoverLoaders.appOf(m.title, m.appId, m.source), cover, coverText);
+        renderFacts(m);
 
         CharSequence chip = null;
         if (m.state == GameDetailModel.State.RUNNING) {
@@ -797,6 +808,31 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
         com.limelight.preferences.AppQuitOnLeave.setEnabled(this, hostUuid, m.source.appUuid, m.appId, enabled);
         renderQuitOnLeave(m, quitOnLeaveComputer);
         quitOnLeave.announceForAccessibility(quitOnLeaveNote.getText());
+    }
+
+    /** The game's facts under the host line, from a record kept on disk or a lookup that runs in the background. */
+    private void renderFacts(GameDetailModel m) {
+        if (factsView == null || !GameInfo.factsWanted(this)) return;
+        String gameId = m.source == null ? null : m.source.gameId;
+        String id = m.title + "\n" + gameId;
+        if (id.equals(factsShownFor)) return;
+        factsShownFor = id;
+        factsView.setVisibility(View.GONE);
+        java.util.function.Consumer<org.json.JSONObject> show = facts -> {
+            if (isFinishing() || isDestroyed() || !id.equals(factsShownFor)) return;
+            java.util.List<String> lines = GameInfo.describe(this, facts);
+            if (lines.isEmpty()) return;
+            factsView.setText(android.text.TextUtils.join("\n", lines));
+            factsView.setVisibility(View.VISIBLE);
+        };
+        GameInfo info = GameInfo.get(this);
+        Thread thread = new Thread(() -> {
+            org.json.JSONObject kept = info.cachedFacts(m.title, gameId);
+            if (kept != null) runOnUiThread(() -> show.accept(kept));
+            else info.facts(m.title, gameId, show);
+        }, "game-info-facts");
+        thread.setDaemon(true);
+        thread.start();
     }
 
     /** The TV chip line: the state with its dot, installed or not when the host says, and HDR when the game has it. */
