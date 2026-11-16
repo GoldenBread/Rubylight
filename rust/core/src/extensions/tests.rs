@@ -184,10 +184,9 @@ fn jumbo_packets_are_offered_and_checked_against_the_offer() {
     // The size is one constant, 8192 bytes, a multiple of 16.
     assert_eq!(video_packet::MAX_VIDEO_PACKET, 8192);
     assert_eq!(video_packet::MAX_VIDEO_PACKET % 16, 0);
-    let packet = |packet_size: usize| {
-        let mut n = Negotiated::default();
-        n.packet_size = packet_size;
-        n
+    let packet = |packet_size: usize| Negotiated {
+        packet_size,
+        ..Default::default()
     };
     // Stock Moonlight's 1400 is accepted whatever is offered.
     for offered in [Offered::NONE, ALL_ON] {

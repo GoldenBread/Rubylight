@@ -120,7 +120,9 @@ fn main() -> anyhow::Result<()> {
                 let copied = Instant::now();
                 if sync {
                     // As the capture copies: ordered on the GPU, then waited for here.
-                    handoff.copy(&copy.as_ref().unwrap().0, &texture)?.wait()?;
+                    handoff
+                        .copy(&copy.as_ref().unwrap().0, &texture, None)?
+                        .wait()?;
                 } else {
                     // A plain copy on the compute queue, unordered with DWM.
                     raw.0.Reset()?;

@@ -920,6 +920,7 @@ const SERVERINFO_FIELDS: &[(&str, Reading)] = &[
     ("PyroWaveCriticalFecPercentage", Reading::Read),
     ("PyroWaveMinParityShards", Reading::Read),
     ("Packed444Modes", Reading::Read),
+    ("MaxVideoPacket", Reading::Read),
     ("HdrFormats", Reading::Read),
     ("FecControlVersion", Reading::Read),
     ("BandwidthProbeVersion", Reading::Read),

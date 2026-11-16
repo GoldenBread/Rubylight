@@ -474,7 +474,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        host_dropped(&session, 7, false);
+        host_dropped(&session, 7, false, false);
         assert_eq!(session.stats.frames_lost_on_send.load(Ordering::Relaxed), 1);
         assert_eq!(
             session.stats.send_loss_recoveries.load(Ordering::Relaxed),
@@ -490,7 +490,7 @@ mod tests {
         }
         session.stats.video_frame.store(70, Ordering::Release);
         for frame in 50..=52 {
-            host_dropped(&session, frame, false);
+            host_dropped(&session, frame, false, false);
         }
         let (from, to) = session
             .tick_link_rate(
