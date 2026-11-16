@@ -110,9 +110,11 @@ if (!(Get-LoginWindow)) { throw 'The SimplySign Desktop login window did not ope
 
 $certificate = $null
 for ($attempt = 1; $attempt -le 2 -and !$certificate; $attempt++) {
-    if (!(Get-LoginWindow)) {
-        Start-Process $app
-        Start-Sleep -Seconds 4
+    # A login that worked late closes the window; wait for its certificate rather than log in again.
+    if ($attempt -gt 1 -and !(Get-LoginWindow)) {
+        $deadline = (Get-Date).AddSeconds($TimeoutSeconds / 2)
+        while ((Get-Date) -lt $deadline -and !($certificate = Get-Certificate)) { Start-Sleep -Seconds 3 }
+        break
     }
     if (!(Show-LoginWindow)) { throw 'The SimplySign Desktop login window is gone' }
     # A code with at least 15 seconds left, made just before it is typed.

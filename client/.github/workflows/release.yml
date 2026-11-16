@@ -591,7 +591,11 @@ jobs:
     needs: [preflight, desktop-windows]
     runs-on: windows-latest
     timeout-minutes: 40
-    environment: release-signing
+    # The secrets' environment (main and v* tags only) only when signing, so dry runs from
+    # other branches still pass the builds through.
+    environment: ${{ vars.CERTUM_SIGNING == 'true' && 'release-signing' || '' }}
+    outputs:
+      signed: ${{ steps.check.outputs.signed }}
     env:
       VERSION: ${{ needs.preflight.outputs.version }}
       SIGN: ${{ vars.CERTUM_SIGNING == 'true' }}
@@ -637,6 +641,7 @@ jobs:
           New-Item -ItemType Directory windows | Out-Null
           Copy-Item unsigned\* windows
       - name: Check the files
+        id: check
         run: |
           foreach ($arch in 'x86_64', 'arm64') {
             foreach ($name in "nightjar-desktop-$env:VERSION-windows-$arch.zip", "nightjar-desktop-$env:VERSION-windows-$arch-setup.exe") {
@@ -647,7 +652,7 @@ jobs:
               if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -ne $env:CERTUM_THUMBPRINT -or !$signature.TimeStamperCertificate) { throw "the $arch installer is not signed: $($signature.Status)" }
             }
           }
-          "signed=$env:SIGN" > windows\signed.txt
+          "signed=$env:SIGN" >> $env:GITHUB_OUTPUT
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: windows-release
@@ -876,6 +881,7 @@ jobs:
       VERSION: ${{ needs.preflight.outputs.version }}
       # Only a tag push (or a manual run on a tag with dry_run off) publishes.
       PUBLISH: ${{ github.ref_type == 'tag' && !inputs.dry_run }}
+      WINDOWS_SIGNED: ${{ needs.sign-windows.outputs.signed }}
     steps:
       - name: Fetch the desktop packages
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -894,7 +900,6 @@ jobs:
         run: |
           rm -f desktop/nightjar-desktop-*-windows-*
           cp windows/nightjar-desktop-*-windows-* desktop/
-          grep -qx 'signed=true' windows/signed.txt && echo "WINDOWS_SIGNED=true" >> "$GITHUB_ENV" || true
       - name: Fetch the signed Android build
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
