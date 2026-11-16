@@ -326,7 +326,7 @@ def run_job(args):
             methods[v] = cfg
     if method_names:
         methods = {k: v for k, v in methods.items() if k in method_names}
-    scale = w / NW
+    sx, sy = w / NW, h / NH
     results = {}
     for name, spec in methods.items():
         t0 = time.time()
@@ -347,9 +347,9 @@ def run_job(args):
                 orc = None
                 if oracle is not None:
                     # Native-pixel field sampled at stream pixel centres, in stream pixels.
-                    ys = ((np.arange(h) + 0.5) / scale).astype(int)
-                    xs = ((np.arange(w) + 0.5) / scale).astype(int)
-                    orc = np.asarray(oracle[t])[ys][:, xs] * scale
+                    ys = ((np.arange(h) + 0.5) / sy).astype(int)
+                    xs = ((np.arange(w) + 0.5) / sx).astype(int)
+                    orc = np.asarray(oracle[t])[ys][:, xs] * np.array([sx, sy], np.float32)
                 o = temporal.process(src, orc)
             o255 = np.rint(np.clip(o, 0, 1) * 255.0)  # what an 8-bit display shows
             r = native[t].astype(np.float64)
@@ -432,9 +432,9 @@ def report(out: Path):
         cells = []
         for k in names:
             if agg[k]:
-                cells.append("**{:.2f} / {:.4f} / {:.2f}**".format(
+                cells.append("**{:.2f} / {:.4f} / {:.2f}** ({} clips)".format(
                     np.mean([s["psnr"] for s in agg[k]]), np.mean([s["ssim"] for s in agg[k]]),
-                    np.mean([s["flicker"] for s in agg[k]])))
+                    np.mean([s["flicker"] for s in agg[k]]), len(agg[k])))
             else:
                 cells.append("")
         lines.append("| mean | " + " | ".join(cells) + " |")
@@ -488,14 +488,16 @@ def bound(out: Path, clip: str, source: str, frames: int = 41):
     d = out / "clips" / clip
     native = np.fromfile(d / "native.rgb", np.uint8).reshape(n, NH, NW, 3)
     if source.startswith("raw-"):
-        scale = 0.5
-        w, h = stream_size(scale)
+        w, h = stream_size(0.5)
         dec = raw_downscale(d / "native.rgb", frames, w, h, source[4:])
     else:
         w, h = meta["conditions"][source]["stream"]
-        scale = w / NW
         dec = np.fromfile(d / f"{source}.rgb", np.uint8).reshape(n, h, w, 3)
-    stride = round(SUPERSAMPLE / scale)  # world pixels per stream pixel
+    # World pixels per stream pixel, the same whole number on both axes, or the splat is wrong.
+    stride_x, stride_y = SUPERSAMPLE * NW / w, SUPERSAMPLE * NH / h
+    if stride_x != stride_y or stride_x != int(stride_x):
+        raise ValueError(f"bound needs a whole stride on both axes, got {stride_x} x {stride_y}")
+    stride = int(stride_x)
     v = PAN_VELOCITY[clip]
     pad = 32
     S = np.zeros((NH * SUPERSAMPLE + abs(v[1]) * frames + 2 * pad,
@@ -562,12 +564,15 @@ def fusion(out: Path, clip: str, source: str, estimated: bool = False, global_mo
     n = meta["clips"][clip]["frames"]
     d = out / "clips" / clip
     w, h = meta["conditions"][source]["stream"]
-    scale = w / NW
+    sx, sy = w / NW, h / NH
     native = np.fromfile(d / "native.rgb", np.uint8).reshape(n, NH, NW, 3)
     dec = np.fromfile(d / f"{source}.rgb", np.uint8).reshape(n, h, w, 3)
     ox, oy = U.output_axes(NW, NH)
-    px, py = np.meshgrid(ox * scale, oy * scale)
-    dv = np.array(PAN_VELOCITY.get(clip, (0, 0)), np.float32) / SUPERSAMPLE * scale
+    px, py = np.meshgrid(ox * sx, oy * sy)
+    if not estimated and clip not in PAN_VELOCITY:
+        raise ValueError(f"exact-motion fusion needs a clip with known velocity, not {clip}")
+    v = PAN_VELOCITY.get(clip, (0, 0))
+    dv = np.array([v[0] * sx, v[1] * sy], np.float32) / SUPERSAMPLE
     ks = (1, 4) if estimated else (1, 4, 8)
     sigmas = (0.35,) if estimated else (0.25, 0.35, 0.5)
     taus = (0.06, None) if estimated else (None,)
@@ -594,8 +599,8 @@ def fusion(out: Path, clip: str, source: str, estimated: bool = False, global_mo
                 vec = m.vectors
                 if global_motion:
                     vec = np.broadcast_to(np.median(vec.reshape(-1, 2), 0), vec.shape)
-                mv = U.bilinear_sep(np.ascontiguousarray(vec), ox * scale / 8, oy * scale / 8)
-                cf = U.bilinear_sep(m.confidence, ox * scale / 8, oy * scale / 8)
+                mv = U.bilinear_sep(np.ascontiguousarray(vec), ox * sx / 8, oy * sy / 8)
+                cf = U.bilinear_sep(m.confidence, ox * sx / 8, oy * sy / 8)
             else:
                 mv = np.broadcast_to(k * dv, (NH, NW, 2))
                 cf = np.ones((NH, NW), np.float32)

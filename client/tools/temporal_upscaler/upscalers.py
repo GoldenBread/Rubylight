@@ -1,7 +1,7 @@
-# TemporalUpscaler._upscale adapts Snapdragon Game Super Resolution 2:
+# TemporalUpscaler._upscale and fast_lanczos_sgsr2 adapt Snapdragon Game Super Resolution 2:
 # Copyright (c) 2024, Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause (full notice: LICENSE-SGSR2.txt).
-# The SGSR 1 port follows sgsr.frag: Copyright (c) 2025, Qualcomm Innovation Center, Inc.,
+# The SGSR 1 port (_sgsr1_gl) follows sgsr.frag: Copyright (c) 2025, Qualcomm Innovation Center, Inc.,
 # BSD-3-Clause (client/app/src/main/assets/NOTICE-SGSR1.txt).
 """Upscalers evaluated by the harness: bilinear, SGSR 1 and Nightjar's temporal upscaler.
 

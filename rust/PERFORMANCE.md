@@ -109,7 +109,7 @@ block matching on the decoded luma (quarter-resolution search +-4 texels and
 last frame's vector, +-1 at half and full resolution, parabolic sub-pixel
 fit); a match confidence (residual against block contrast) in place of SGSR
 2's depth-edge term; zero jitter; history reset when mean confidence falls
-under 0.25 (all four cuts found in both scales, no reset in any other clip).
+under 0.25.
 Upscale: SGSR 2's 2-pass upscale pass with SGSR 1's output as the current
 estimate, Catmull-Rom history in half floats. About 40 texture fetches per
 output pixel at 2x against SGSR 1's 13. Variants: `t_detail` accumulates
@@ -171,9 +171,8 @@ sub-pixel motion there are no new sample positions.
 fusion`, 16 fetches per earlier frame per output pixel). On pan_slow, best of
 a sweep per setting: exact motion +0.66 dB (4 frames) and +1.08 dB (8 frames)
 over SGSR 1 at 0.20 bits per pixel, +0.28 and +0.40 at 0.08. The block
-matcher's per-block vectors give -0.07 dB with 4 frames: their error is 0.13
-to 0.19 stream pixels at the median and 0.6 to 0.8 at the 90th percentile
-(bicubic encode), mostly outlier blocks. The median of each frame pair's
+matcher's per-block vectors give -0.07 dB with 4 frames. The median of each
+frame pair's
 vectors, right for a pure pan, gives +0.65 dB, as good as exact motion. But one
 fixed setting across all ten clips (4 frames, median vector, 0.35 px kernel,
 difference weighting, unsharp 1.0; 64 fetches per pixel and three motion
@@ -185,9 +184,9 @@ motion clips lose about the same (-0.57 against -0.54 dB).
 level with SGSR 1 even with exact motion, and loses 0.5 to 1.6 dB with the
 motion we estimate. Multi-frame fusion gains only on sub-pixel pans, where a
 global motion estimate suffices, and loses elsewhere at about seven times
-SGSR 1's fetches. Numbers and per-frame data were produced in
-`D:\CodexArtifacts\temporal-upscaler`; the reports, bounds and fusion results
-are in `client/tools/temporal_upscaler/results/`.
+SGSR 1's fetches. The reports, bounds and fusion results are in
+`client/tools/temporal_upscaler/results/`; `harness.py prepare` and `run`
+reproduce the rest.
 
 ## November 16: virtual display refresh and a capped game's frame spacing
 
