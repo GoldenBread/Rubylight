@@ -10,6 +10,7 @@
 
 mod bridge;
 pub mod collections;
+pub mod game_info;
 pub mod echo;
 mod engine;
 pub mod extras;
