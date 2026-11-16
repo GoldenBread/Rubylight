@@ -53,7 +53,8 @@ CONDITIONS = {
     "h264-0.50x-area-lowrate": (0.5, "area", 0.08),
 }
 HEADLINE = ["h264-0.50x-area", "h264-0.67x-area"]
-TUNING_CLIPS = ["pan_slow", "object", "testsrc2"]
+# Clips looked at while tuning; every other clip is held out.
+TUNING_CLIPS = ["pan_slow", "static", "object", "hud"]
 
 
 def stream_size(scale):
@@ -82,7 +83,7 @@ def text_tile(size: int, line_height: int, seed: int) -> np.ndarray:
     for _ in range(th // line_height + 1):
         lines.append(" ".join(rng.choice(words, 14)))
     path = Path(os.environ.get("TEMP", ".")) / f"harness-text-{seed}.txt"
-    path.write_text("\n".join(lines), encoding="ascii")
+    path.write_text("\n".join(lines), encoding="ascii", newline="\n")
     esc = lambda p: str(p).replace("\\", "/").replace(":", "\\:")
     src = (f"color=c=0x1c2430:s={tw}x{th},drawtext=fontfile='{esc(FONT)}':textfile='{esc(path)}':"
            f"fontsize={size}:fontcolor=0xf0e8d0:line_spacing={line_height - size}:x=24:y=16")
@@ -241,7 +242,7 @@ def prepare(out: Path):
                             "-pix_fmt", "rgb24", str(d / f"{cond}.rgb")], check=True)
             meta["conditions"][cond] = {"stream": [w, h], "kernel": kernel, "bpp": bpp, "kbps": kbps}
         print("prepared", name, flush=True)
-    (out / "meta.json").write_text(json.dumps(meta, indent=1))
+    (out / "meta.json").write_text(json.dumps(meta, indent=1), newline="\n")
 
 
 # --------------------------------------------------------------------------------------------
@@ -298,6 +299,11 @@ VARIANTS = {
     "t_accum_sharpen_oracle": dict(current="bilinear", alpha_scale=15.0, output_usm=2.0,
                                    motion="oracle"),
 }
+FUSION_VARIANTS = {
+    "f4_median": dict(frames=4, motion="median"),
+    "f4_block": dict(frames=4, motion="block"),
+    "f4_oracle": dict(frames=4, motion="oracle"),
+}
 
 
 def run_job(args):
@@ -312,7 +318,10 @@ def run_job(args):
     oracle = np.load(d / "oracle.npy", mmap_mode="r") if meta["clips"][clip]["oracle"] else None
     methods = methods_for(oracle is not None)
     for v in variants:
-        cfg = replace(U.TemporalConfig(), **VARIANTS[v])
+        if v in FUSION_VARIANTS:
+            cfg = U.FusionConfig(**FUSION_VARIANTS[v])
+        else:
+            cfg = replace(U.TemporalConfig(), **VARIANTS[v])
         if cfg.motion != "oracle" or oracle is not None:
             methods[v] = cfg
     if method_names:
@@ -324,6 +333,8 @@ def run_job(args):
         temporal = None
         if isinstance(spec, U.TemporalConfig):
             temporal = U.TemporalUpscaler(w, h, NW, NH, spec)
+        elif isinstance(spec, U.FusionConfig):
+            temporal = U.FusionUpscaler(w, h, NW, NH, spec)
         per = {"psnr": [], "ssim": [], "flicker": [], "hf_ratio": []}
         prev_o = prev_r = None
         for t in range(n):
@@ -377,7 +388,7 @@ def run(out: Path, clips, conds, method_names, variants, workers):
             for name, v in r.items():
                 v["summary"] = summarize(v["per_frame"])
                 results.setdefault(cond, {}).setdefault(clip, {})[name] = v
-            res_path.write_text(json.dumps(results))
+            res_path.write_text(json.dumps(results), newline="\n")
             print("done", clip, cond, flush=True)
 
 
@@ -392,7 +403,8 @@ def report(out: Path):
     lines.append("Native 1280x720 at 60 fps; PSNR in dB over RGB, SSIM on luma, flicker = mean "
                  "|change of output luma - change of native luma| between frames (0-255, lower is "
                  "steadier), HF = Laplacian energy relative to native (1.0 = as detailed as native).")
-    lines.append(f"Tuning clips: {', '.join(TUNING_CLIPS)}; every other clip and condition is held out.")
+    lines.append(f"Clips looked at while tuning: {', '.join(TUNING_CLIPS)}; the others are held out. "
+                 "Under motion the temporal error also tracks each frame's spatial error.")
     lines.append("")
     for cond, by_clip in results.items():
         c = meta["conditions"][cond]
@@ -446,7 +458,7 @@ def report(out: Path):
                 rows = [" ".join(f"{p[c + i]:.1f}" for i in range(8)) for c in (30, 60, 90, 120)]
                 lines.append(f"- {k}: " + " | ".join(rows))
             lines.append("")
-    (out / "report.md").write_text("\n".join(lines), encoding="utf-8")
+    (out / "report.md").write_text("\n".join(lines), encoding="utf-8", newline="\n")
     print(out / "report.md")
 
 
@@ -493,8 +505,8 @@ def bound(out: Path, clip: str, source: str, frames: int = 41):
     k0 = int(math.floor(centre))
     fr = centre - k0
     psnr = lambda a, b: 10 * math.log10(255.0 ** 2 / np.mean((a - b) ** 2))
-    sigmas = (1.0, 1.5, 2.0, 2.5, 3.0)
-    usms = (0.0, 0.5, 1.0, 1.5)
+    sigmas = (0.5, 0.75, 1.0, 1.5, 2.0, 3.0)
+    usms = (0.0, 0.5, 1.0, 1.5, 2.0, 3.0)
     rows = []
     for t in range(frames):
         ox, oy = v[0] * t + pad, v[1] * t + pad
@@ -531,11 +543,11 @@ def bound(out: Path, clip: str, source: str, frames: int = 41):
     path = out / "bound.json"
     allres = json.loads(path.read_text()) if path.exists() else {}
     allres[f"{clip}/{source}"] = result
-    path.write_text(json.dumps(allres, indent=1))
+    path.write_text(json.dumps(allres, indent=1), newline="\n")
     print(json.dumps(result))
 
 
-def fusion(out: Path, clip: str, source: str, estimated: bool = False):
+def fusion(out: Path, clip: str, source: str, estimated: bool = False, global_motion: bool = False):
     """K-frame fusion in screen space: every output pixel gathers 4x4 samples from each of the
     current and K-1 previous decoded frames at their motion-compensated positions, weighted by
     a Gaussian of their distance, then an unsharp mask; 16 * K fetches per output pixel.
@@ -543,7 +555,9 @@ def fusion(out: Path, clip: str, source: str, estimated: bool = False):
     With exact motion this is what a non-recursive temporal method could reach. With
     `estimated`, each earlier frame's motion comes from the block matcher (frame pair t, t-k),
     and earlier samples are also weighted by match confidence and by their difference from the
-    current frame's bilinear picture, so a wrong vector costs little."""
+    current frame's bilinear picture, so a wrong vector costs little. With `global_motion` each
+    frame pair's block field is replaced by its median, which is right for a pure pan and shows
+    how much the matcher's outliers cost."""
     meta = json.loads((out / "meta.json").read_text())
     n = meta["clips"][clip]["frames"]
     d = out / "clips" / clip
@@ -577,7 +591,10 @@ def fusion(out: Path, clip: str, source: str, estimated: bool = False):
             if estimated:
                 m = U.estimate_motion(p0, pyramid(dec[t - k].astype(np.float32) / 255), pred, cfg)
                 pred = m.vectors * (k + 1) / k
-                mv = U.bilinear_sep(m.vectors, ox * scale / 8, oy * scale / 8)
+                vec = m.vectors
+                if global_motion:
+                    vec = np.broadcast_to(np.median(vec.reshape(-1, 2), 0), vec.shape)
+                mv = U.bilinear_sep(np.ascontiguousarray(vec), ox * scale / 8, oy * scale / 8)
                 cf = U.bilinear_sep(m.confidence, ox * scale / 8, oy * scale / 8)
             else:
                 mv = np.broadcast_to(k * dv, (NH, NW, 2))
@@ -614,14 +631,15 @@ def fusion(out: Path, clip: str, source: str, estimated: bool = False):
                         res.setdefault(f"K{K}_s{sigma}_t{tau}_u{a}", []).append(psnr(np.rint(oo * 255), r))
     mean = {k: float(np.mean(x)) for k, x in res.items()}
     best = {K: max((k for k in mean if k.startswith(f"K{K}_")), key=mean.get) for K in ks}
-    result = {"clip": clip, "source": source, "motion": "estimated" if estimated else "exact",
+    motion = ("estimated-median" if global_motion else "estimated") if estimated else "exact"
+    result = {"clip": clip, "source": source, "motion": motion,
               "sgsr1": mean["sgsr1"],
               **{f"K{K}": {"best": best[K], "psnr": mean[best[K]],
                            "gain_over_sgsr1": mean[best[K]] - mean["sgsr1"]} for K in best}}
     path = out / "fusion.json"
     allres = json.loads(path.read_text()) if path.exists() else {}
     allres[f"{clip}/{source}/{result['motion']}"] = result
-    path.write_text(json.dumps(allres, indent=1))
+    path.write_text(json.dumps(allres, indent=1), newline="\n")
     print(json.dumps(result))
 
 
@@ -681,6 +699,8 @@ def main():
     ap.add_argument("--variants", nargs="*", default=[])
     ap.add_argument("--workers", type=int, default=6)
     ap.add_argument("--estimated", action="store_true", help="fusion: estimated motion")
+    ap.add_argument("--global-motion", action="store_true",
+                    help="fusion --estimated: use each frame pair's median vector")
     a = ap.parse_args()
     if a.command == "selftest":
         selftest()
@@ -693,7 +713,7 @@ def main():
     elif a.command == "fusion":
         for clip in a.clips or ["pan_slow"]:
             for src in a.source:
-                fusion(a.out, clip, src, a.estimated)
+                fusion(a.out, clip, src, a.estimated, a.global_motion)
     elif a.command == "run":
         run(a.out, a.clips, a.conditions, a.methods, a.variants, a.workers)
     else:

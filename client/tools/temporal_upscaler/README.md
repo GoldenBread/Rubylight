@@ -69,8 +69,13 @@ pixel off centre.
   output; `t_accum_sharpen` accumulates bilinear and sharpens on output; others in `VARIANTS`.
 - `bound`: the best any jitter-free temporal method could do on a pan: exact global motion,
   every past sample splatted onto the world grid, Gaussian reconstruction and an unsharp mask.
-- `fusion`: exact-motion fusion of the last K decoded frames in screen space, 16 x K fetches
-  per output pixel.
+- `fusion`: fusion of the last K decoded frames in screen space, 16 x K fetches per output
+  pixel, with exact motion, or with `--estimated` the block matcher's vectors (`--global-motion`:
+  each frame pair's median vector).
+- `f4_median`, `f4_oracle` (`--variants`): that fusion as a per-frame method over every clip
+  (`FusionUpscaler`: 4 frames, one fixed setting).
+
+`results/` holds the reports, bounds and fusion numbers of the 2026-11-16 run.
 
 ## Metrics
 

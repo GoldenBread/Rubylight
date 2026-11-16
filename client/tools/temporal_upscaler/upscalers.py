@@ -574,6 +574,90 @@ class TemporalUpscaler:
         return np.clip(out + detail, 0.0, 1.0).astype(f32), out.astype(f32)
 
 
+@dataclass(frozen=True)
+class FusionConfig:
+    """Multi-frame fusion: the current and the last frames - 1 decoded frames, sampled at their
+    motion-compensated positions in screen space; no recursion, no added delay."""
+
+    frames: int = 4
+    motion: str = "median"  # median (one vector per frame pair) | block | oracle
+    sigma: float = 0.35  # Gaussian sample weight, stream pixels
+    tau: float | None = 0.06  # earlier samples far from the current bilinear picture fade out
+    usm: float = 1.0  # unsharp mask on the way out
+    edge_sharpness: float = 1.5  # SGSR 1 on frames without history
+
+
+class FusionUpscaler:
+    """16 * frames fetches per output pixel plus one motion pass per earlier frame."""
+
+    def __init__(self, w: int, h: int, W: int, H: int, cfg: FusionConfig):
+        self.w, self.h, self.W, self.H, self.cfg = w, h, W, H, cfg
+        ox, oy = output_axes(W, H)
+        self.px1 = ox * np.float32(w / W)
+        self.py1 = oy * np.float32(h / H)
+        self.px, self.py = np.meshgrid(self.px1, self.py1)
+        self.history = []  # newest first: (frame, luma pyramid)
+        self.motion_cfg = TemporalConfig(subpel="lk")
+        self.stats = {"cuts": 0, "frames": 0}
+
+    def process(self, src: np.ndarray, oracle: np.ndarray | None = None) -> np.ndarray:
+        cfg = self.cfg
+        y = luma(src)
+        pyr = [y, down2(y), down2(down2(y))]
+        self.stats["frames"] += 1
+        bh, bw = -(-self.h // 8), -(-self.w // 8)
+        pred = np.zeros((bh, bw, 2), np.float32)
+        taps = []
+        for k, (frame, fpyr) in enumerate(self.history, start=1):
+            if cfg.motion == "oracle":
+                if oracle is None:
+                    raise ValueError("oracle motion requested without an oracle field")
+                mv = k * bilinear_sep(oracle, self.px1, self.py1)  # constant-velocity clips
+                cf = np.ones(mv.shape[:2], np.float32)
+            else:
+                m = estimate_motion(pyr, fpyr, pred, self.motion_cfg)
+                if k == 1 and m.cut:
+                    self.stats["cuts"] += 1
+                    self.history = []
+                    taps = []
+                    break
+                pred = m.vectors * (k + 1) / k
+                vec = m.vectors
+                if cfg.motion == "median":
+                    vec = np.broadcast_to(np.median(vec.reshape(-1, 2), 0), vec.shape)
+                mv = bilinear_sep(np.ascontiguousarray(vec), self.px1 / 8, self.py1 / 8)
+                cf = bilinear_sep(m.confidence, self.px1 / 8, self.py1 / 8)
+            taps.append((frame, mv, cf))
+        self.history = ([(src, pyr)] + self.history)[: cfg.frames - 1]
+        if not taps:
+            return upscale_sgsr1(src, self.W, self.H, cfg.edge_sharpness)
+
+        base = upscale_bilinear(src, self.W, self.H)
+        acc = 0.0
+        wacc = 0.0
+        zero = (np.zeros(self.px.shape + (2,), np.float32), None)
+        for k, (frame, mv, cf) in enumerate([(src,) + zero] + taps):
+            qx = self.px + mv[..., 0] - 0.5
+            qy = self.py + mv[..., 1] - 0.5
+            x0 = np.floor(qx).astype(np.int64)
+            y0 = np.floor(qy).astype(np.int64)
+            for sy in (-1, 0, 1, 2):
+                for sx in (-1, 0, 1, 2):
+                    dx = x0 + sx - qx
+                    dy = y0 + sy - qy
+                    smp = fetch(frame, y0 + sy, x0 + sx)
+                    wgt = np.exp(-(dx * dx + dy * dy) / (2.0 * cfg.sigma * cfg.sigma))
+                    if k:
+                        wgt = wgt * cf
+                        if cfg.tau is not None:
+                            diff = np.abs(smp - base).max(-1)
+                            wgt = wgt * np.exp(-(diff * diff) / (2.0 * cfg.tau * cfg.tau))
+                    acc = acc + smp * wgt[..., None]
+                    wacc = wacc + wgt
+        o = acc / np.maximum(wacc, 1e-8)[..., None]
+        return np.clip(o + cfg.usm * (o - blur121(o)), 0.0, 1.0).astype(np.float32)
+
+
 def fetch_cost(cfg: TemporalConfig, w: int, h: int, W: int, H: int) -> dict:
     """Texture fetches per frame by pass: a GPU cost proxy until it is timed on hardware."""
     B = cfg.block

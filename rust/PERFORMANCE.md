@@ -87,33 +87,34 @@ acceptable GPU cost and without an added frame of delay? It does not, so no
 app gets it. Everything below is offline, on this PC's CPU; nothing ran on a
 GPU, so there are no GPU times.
 
-**Setup.** `client/tools/temporal_upscaler/` (README there). Ten
-self-generated 1280x720 60 fps clips (sub-pixel, whole-pixel, fast and
-beyond-search-range pans over a 7680x4320 world of Mandelbrot, text,
-`testsrc2`, `sierpinski`, `life` and a zone plate; a moving object; a static
-HUD over a pan; `testsrc2`; a Mandelbrot zoom; four hard cuts). Area
-downscale as the host's own (`color.hlsl` `resize()`), libx264 `veryfast
-zerolatency`, no B-frames, one keyframe, one-frame VBV at 0.20 bits per
-pixel (2.8 Mbit/s at 640x360, 4.9 Mbit/s at 854x480), decoded, upscaled to
-1280x720 and compared with native. SGSR 1 is a line-for-line port of
+**Setup.** `client/tools/temporal_upscaler/` (README there; reports and
+JSON in its `results/`). Ten self-generated 1280x720 60 fps clips (sub-pixel,
+whole-pixel, fast and beyond-search-range pans over a 7680x4320 world of
+Mandelbrot, text, `testsrc2`, `sierpinski`, `life` and a zone plate; a moving
+object; a static HUD over a pan; `testsrc2`; a Mandelbrot zoom; four hard
+cuts). Area downscale as the host's own (`color.hlsl` `resize()`), libx264
+`veryfast zerolatency`, no B-frames, one keyframe, one-frame VBV at 0.20 bits
+per pixel (2.8 Mbit/s at 640x360, 4.9 Mbit/s at 854x480), decoded, upscaled
+to 1280x720 and compared with native. SGSR 1 is a line-for-line port of
 `sgsr.frag` at the default sharpness (50). PSNR in dB over RGB, SSIM on luma,
 "temporal error" is the mean absolute difference between the output's and
-native's frame-to-frame luma change (0-255). The synthetic content is dense,
-so absolute PSNR is low for every method; compare columns, not the numbers
-with other entries. Tuning used pan_slow, object and testsrc2; static and hud
-were also looked at while tuning.
+native's frame-to-frame luma change (0-255); under motion it also tracks each
+frame's spatial error. The synthetic content is dense, so absolute PSNR is low
+for every method; compare columns, not the numbers with other entries. Tuning
+probes used pan_slow, static, object and hud; the other six clips are held
+out.
 
 **The temporal upscaler.** Motion per 8x8 stream block from hierarchical
 block matching on the decoded luma (quarter-resolution search +-4 texels and
 last frame's vector, +-1 at half and full resolution, parabolic sub-pixel
 fit); a match confidence (residual against block contrast) in place of SGSR
 2's depth-edge term; zero jitter; history reset when mean confidence falls
-under 0.25 (found all four cuts, no false cut in the other clips). Upscale:
-SGSR 2's 2-pass upscale pass with SGSR 1's output as the current estimate,
-Catmull-Rom history in half floats. About 40 texture fetches per output
-pixel at 2x against SGSR 1's 13. Variants: `t_detail` accumulates bilinear
-and adds SGSR 1's edge detail on the way out; `t_accum_sharpen` accumulates
-bilinear and sharpens on the way out.
+under 0.25 (all four cuts found in both scales, no reset in any other clip).
+Upscale: SGSR 2's 2-pass upscale pass with SGSR 1's output as the current
+estimate, Catmull-Rom history in half floats. About 40 texture fetches per
+output pixel at 2x against SGSR 1's 13. Variants: `t_detail` accumulates
+bilinear and adds SGSR 1's edge detail on the way out; `t_accum_sharpen`
+accumulates bilinear and sharpens on the way out.
 
 Means over the ten clips (PSNR / SSIM / temporal error) and the change
 against SGSR 1 per clip:
@@ -126,6 +127,7 @@ against SGSR 1 per clip:
 | temporal, zero motion | 16.44 / 0.6722 / 18.70 | -3.15 / -5.41 |
 | t_detail | 19.03 / 0.7900 / 14.00 | -0.56 / -0.89 |
 | t_accum_sharpen | 18.98 / 0.7941 / 14.31 | -0.61 / -1.08 |
+| 4-frame fusion (below) | 19.18 / 0.8035 / 13.86 | -0.41 / -1.15 |
 
 | 0.67x (854x480) | All clips | vs SGSR 1, mean / worst clip |
 |---|---|---|
@@ -135,43 +137,57 @@ against SGSR 1 per clip:
 | t_detail | 20.52 / 0.8455 / 11.64 | -0.52 / -1.03 |
 | t_accum_sharpen | 20.01 / 0.8439 / 12.10 | -1.03 / -2.21 |
 
-No variant beat SGSR 1 on PSNR on any clip at either scale. Steadier only on
-the static clip (temporal error 0.33 against SGSR 1's 0.46, 0.18 with zero
-motion), where it loses most for its content: x264 refines a still picture over
-many frames, so the newest frame is always the best one and history only
-drags in older, worse frames.
+On five clips (pan_slow, static, object, hud, cuts) at 0.5x with a bicubic
+downscale, the temporal upscaler is -1.27 dB against SGSR 1 (`t_detail`
+-0.56); through H.264 at 0.08 bits per pixel (1.1 Mbit/s) -0.84 dB
+(`t_detail` -0.35).
 
-**With exact motion** (the seven clips whose motion is known): the
-temporal upscaler is -0.23 dB (0.5x) and -0.48 dB (0.67x) against SGSR 1;
-`t_accum_sharpen` +0.16 dB (worst clip -0.02) and +0.02 dB (worst -1.71).
-So even perfect motion leaves a recursive, jitter-free accumulator level with
-SGSR 1: at a fixed 2x ratio every output pixel sits at the same distance from
-its input samples in every frame, so the current frame never contributes more
-where it is better sampled, and resampling the history each frame softens it.
+No variant of the temporal upscaler beat SGSR 1 on PSNR on any clip. Its
+temporal error is lower than SGSR 1's only on the static clip (0.33 against
+0.46, 0.18 with zero motion) and the Mandelbrot zoom (21.73 against 21.85),
+and `t_accum_sharpen`'s on testsrc2 at 0.5x (0.98 against 1.00). On the static
+clip x264 refines the picture over many frames, so the newest frame is always
+the best one and history drags in older, worse frames.
+
+**With exact motion** (the seven clips whose motion is known): the temporal
+upscaler is -0.23 dB (0.5x) and -0.48 dB (0.67x) against SGSR 1;
+`t_accum_sharpen` +0.16 dB at 0.5x (worst clip -0.02) and +0.02 dB at 0.67x,
+where the six moving clips average +0.31 dB and the static one loses 1.71 dB
+to its output sharpening overshooting (Laplacian energy above native's). So
+even perfect motion leaves a recursive, jitter-free accumulator about level
+with SGSR 1 at 2x, where every output pixel sits at the same distance from its
+input samples in every frame, so the current frame never counts more where it
+is better sampled, and resampling the history each frame softens it.
 
 **What history could gain at best** (`harness.py bound`, pan_slow only,
-exact global motion, every past sample splatted onto the world grid,
-Gaussian reconstruction and an unsharp mask): +4.8 dB over SGSR 1 un-encoded
-(area), +1.4 dB through H.264 at 0.20 bits per pixel, +0.2 dB at 0.08.
-Whole-pixel pans (pan_int) gain nothing: without jitter or sub-pixel motion
-there are no new sample positions. The 0.67x bound is not computed (854 is not
-exactly two thirds of 1280, which the splatting assumes).
+exact global motion, every past sample splatted onto the world grid, Gaussian
+reconstruction and an unsharp mask, best of a sweep): +4.8 dB over SGSR 1
+un-encoded (area), at least +1.5 dB through H.264 at 0.20 bits per pixel and
++0.4 dB at 0.08 (both optima at the sweep's strongest unsharp mask, so possibly
+more). A whole-pixel pan (pan_int) gains nothing (-0.65 dB): without jitter or
+sub-pixel motion there are no new sample positions.
 
-**Fusing the last K decoded frames** (`harness.py fusion`, pan_slow, 16 x K
-fetches per output pixel): exact motion gives +0.66 dB (K = 4) and +1.08 dB
-(K = 8) over SGSR 1 at 0.20 bits per pixel, +0.28 and +0.40 at 0.08; with the
-block matcher's motion (LK sub-pixel step, confidence and difference
-weighting) K = 4 gives -0.07 and -0.11 dB. On the same pan through the
-bicubic 0.20 encode the matcher's vectors are off by 0.13 to 0.19 stream pixels at the median and 0.6 to 0.8 at
-the 90th percentile, against the 0.35 px kernel the fusion needs.
+**Fusing the last frames** instead of a recursive history (`harness.py
+fusion`, 16 fetches per earlier frame per output pixel). On pan_slow, best of
+a sweep per setting: exact motion +0.66 dB (4 frames) and +1.08 dB (8 frames)
+over SGSR 1 at 0.20 bits per pixel, +0.28 and +0.40 at 0.08. The block
+matcher's per-block vectors give -0.07 dB with 4 frames: their error is 0.13
+to 0.19 stream pixels at the median and 0.6 to 0.8 at the 90th percentile
+(bicubic encode), mostly outlier blocks. The median of each frame pair's
+vectors, right for a pure pan, gives +0.65 dB, as good as exact motion. But one
+fixed setting across all ten clips (4 frames, median vector, 0.35 px kernel,
+difference weighting, unsharp 1.0; 64 fetches per pixel and three motion
+passes) loses 0.41 dB on average (table above): pan_int -1.15, pan_vfast
+-1.11, static -0.74, best testsrc2 +0.16; with exact motion the seven
+motion clips lose about the same (-0.57 against -0.54 dB).
 
-**Decision.** Not shipped: no practical configuration beat SGSR 1, the
-headroom exists only with sub-pixel-exact motion on sub-pixel motion, and
-the motion we can estimate from encoded video is not that accurate. Picking
-it up again needs motion from the host (the encoder's own motion vectors or a
-camera hint) or host-side jitter, not a better client upscaler. Numbers and
-per-frame data: `D:\CodexArtifacts\temporal-upscaler\eval` (`report.md`,
-`results.json`, `bound.json`, `fusion-results.txt`).
+**Decision.** Not shipped. The SGSR 2-shaped recursive upscaler only draws
+level with SGSR 1 even with exact motion, and loses 0.5 to 1.6 dB with the
+motion we estimate. Multi-frame fusion gains only on sub-pixel pans, where a
+global motion estimate suffices, and loses elsewhere at about seven times
+SGSR 1's fetches. Numbers and per-frame data were produced in
+`D:\CodexArtifacts\temporal-upscaler`; the reports, bounds and fusion results
+are in `client/tools/temporal_upscaler/results/`.
 
 ## November 16: virtual display refresh and a capped game's frame spacing
 
