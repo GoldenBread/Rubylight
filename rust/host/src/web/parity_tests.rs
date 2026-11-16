@@ -979,6 +979,58 @@ async fn the_library_steam_switch_and_the_steam_library_setting_agree() {
 }
 
 #[tokio::test]
+async fn the_session_history_route_lists_ended_streams_newest_first_and_requires_signing_in() {
+    use butterpollo_core::session_history::{MAX_AGE_MS, MAX_ENTRIES, REASON_ENDED, REASON_FAILED};
+    let f = Fixture::new();
+    let empty = value(
+        request(&f, "GET", "/api/sessions/history", Value::Null).await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(empty["sessions"], json!([]));
+    assert_eq!(
+        empty["limit"].as_u64(),
+        Some(MAX_ENTRIES as u64),
+        "the page names the count cap"
+    );
+    assert_eq!(
+        empty["days"].as_u64(),
+        Some(MAX_AGE_MS / 86_400_000),
+        "and the age cap"
+    );
+    let client = f.client(0x071f1f00);
+    let first = f.session(client.clone(), Role::Stream);
+    f.host.record_session(&first, REASON_ENDED);
+    let second = f.session(client, Role::Stream);
+    second.fail("the encoder failed");
+    f.host.record_session(&second, REASON_FAILED);
+    let listed = value(
+        request(&f, "GET", "/api/sessions/history", Value::Null).await,
+        StatusCode::OK,
+    )
+    .await;
+    let sessions = listed["sessions"].as_array().unwrap();
+    assert_eq!(sessions.len(), 2);
+    assert_eq!(sessions[0]["id"], json!(second.launch.id));
+    assert_eq!(sessions[0]["end_reason"], json!("failed"));
+    assert_eq!(sessions[0]["device_name"], json!("Parity device"));
+    assert_eq!(sessions[1]["id"], json!(first.launch.id));
+    assert_eq!(sessions[1]["end_reason"], json!("ended"));
+    // Like every other read, the history needs the console's sign-in or a token.
+    let anonymous = router(f.host.clone())
+        .layer(Extension(f.connection(true)))
+        .oneshot(
+            Request::builder()
+                .uri("/api/sessions/history")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn the_console_lists_forwarded_usb_devices_and_detaches_them() {
     use butterpollo_core::usb_forward::{UsbMessage, UsbReason, UsbState};
     let f = Fixture::new();

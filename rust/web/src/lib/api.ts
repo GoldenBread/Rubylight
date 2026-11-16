@@ -676,6 +676,51 @@ export interface ConsoleRecovery {
   reason: string;
 }
 
+/** One stream that ended, from `GET /api/sessions/history` (newest first). */
+export interface SessionHistoryEntry {
+  /** The stream's own id. */
+  id: string;
+  /** The device's paired uuid and its name at the time. */
+  device: string;
+  device_name: string;
+  app_id: number;
+  app: string;
+  role: Role;
+  transport: 'moonlight' | 'webrtc';
+  /** `h264`, `hevc`, `av1` or `pyrowave`. */
+  codec: string;
+  /** The picture the stream ran at, after any mid-stream mode switch. */
+  width: number;
+  height: number;
+  fps: number;
+  hdr: boolean;
+  /** The encoder's bitrate when the stream ended. */
+  bitrate_kbps: number;
+  /** What the stream actually sent on average. */
+  mean_bitrate_kbps: number;
+  mean_fps: number;
+  /** The frame rate 5% of the sampled seconds ran at or below (the 95th percentile of frame time). */
+  p95_fps: number;
+  /** The client's reported missing video packets, as a share of what the host sent. */
+  loss_percent: number;
+  end_reason: 'ended' | 'failed' | 'start_failed' | 'interrupted' | string;
+  /** The host's words for a failure, when it failed. */
+  end_detail: string;
+  /** `encoder`, `capture`, `network` or `driver` when the log analysis knows the failure. */
+  end_category: 'encoder' | 'capture' | 'network' | 'driver' | null;
+  started_unix_ms: number;
+  ended_unix_ms: number;
+  duration_ms: number;
+}
+export interface SessionHistory {
+  status: true;
+  sessions: SessionHistoryEntry[];
+  /** How many sessions are kept; the page says so. */
+  limit: number;
+  /** How many days a session is kept; the page says so. */
+  days: number;
+}
+
 export interface SessionStatus {
   status: true;
   activeSessions: number;
@@ -1340,6 +1385,8 @@ export const api = {
   sessions: {
     status: () => get<SessionStatus>('/api/session/status'),
     streams: () => get<{ status: true; sessions: StreamSession[] }>('/api/rtsp/sessions'),
+    /** The ended streams, newest first, within the host's count and age caps. */
+    history: () => get<SessionHistory>('/api/sessions/history'),
     console: () => get<{ status: true; recovery: ConsoleRecovery }>('/api/session/console'),
     returnToConsole: (recovery: ConsoleRecovery) => post<Ok>('/api/session/console', {
       session_id: recovery.session_id,

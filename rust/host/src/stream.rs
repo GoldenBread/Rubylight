@@ -981,6 +981,7 @@ impl Media {
             let reason = format!("the stream could not start: {e:#}");
             h.sessions.lock().unwrap().fail_start(&s, reason);
             h.record_failure(&s);
+            h.record_session(&s, butterpollo_core::session_history::REASON_START_FAILED);
             tracing::error!(error=%e,"could not start session worker");
             h.session_webhook("session.ended", &s);
         }

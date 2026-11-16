@@ -38,6 +38,7 @@ mod rtsp_server;
 mod runtime;
 mod service_tasks;
 mod session_control;
+mod session_history;
 mod session_notes;
 mod settings_backup;
 #[cfg(any(debug_assertions, test))]

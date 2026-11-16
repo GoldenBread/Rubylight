@@ -342,6 +342,16 @@ impl Performance {
         };
         *counter = counter.saturating_add(1);
     }
+    /// The client's FEC report totals since the stream started: packets it
+    /// reported missing, frames FEC recovered and frames it could not recover.
+    /// The session history reports the missing share as the stream's loss.
+    pub fn fec_totals(&self) -> (u64, u64, u64) {
+        (
+            self.fec_missing_packets,
+            self.fec_recovered_frames,
+            self.fec_unrecoverable_frames,
+        )
+    }
     /// Counts one block report and returns what it says, or `None` for an
     /// invalid, unsent, stale or duplicate report.
     pub fn record_fec_status(
