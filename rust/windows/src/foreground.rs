@@ -145,6 +145,47 @@ fn fullscreen(rect: RECT, capture: [i32; 4], framed: bool) -> bool {
         && rect.right >= capture[2].saturating_sub(2)
         && rect.bottom >= capture[3].saturating_sub(2)
 }
+
+/// Whether the foreground window covers the whole of `display` (the primary for an
+/// empty name) right now, as a fullscreen game or emulator does. Such an app can
+/// present straight to the display, which Windows Graphics Capture never sees; capture
+/// then reads the display with Desktop Duplication
+/// (`butterpollo_core::capture_policy::duplication_for_fullscreen`). Read-only: no
+/// window is touched, activated or resized.
+pub fn covers_display(display: &str) -> bool {
+    let Some(display) = crate::capture::display_rect(display) else {
+        return false;
+    };
+    // SAFETY: each call takes a window handle or no arguments, and writes only into a
+    // live local of the size passed. No window state is changed.
+    unsafe {
+        let window = GetForegroundWindow();
+        if window.is_invalid() || IsIconic(window).as_bool() {
+            return false;
+        }
+        let mut cloaked = 0u32;
+        let _ = DwmGetWindowAttribute(window, DWMWA_CLOAKED, (&mut cloaked as *mut u32).cast(), 4);
+        if cloaked != 0 {
+            return false;
+        }
+        // A caption or resize border means a window, never a fullscreen picture.
+        let style = GetWindowLongPtrW(window, GWL_STYLE) as u32;
+        let framed = style & (WS_CAPTION.0 | WS_THICKFRAME.0) != 0;
+        let mut frame = RECT::default();
+        if DwmGetWindowAttribute(
+            window,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            (&mut frame as *mut RECT).cast(),
+            std::mem::size_of::<RECT>() as u32,
+        )
+        .is_err()
+        {
+            return false;
+        }
+        fullscreen(frame, display, framed)
+    }
+}
+
 fn visible_executable(request: &Request) -> Option<(String, u32)> {
     struct Scan<'a> {
         request: &'a Request,
@@ -378,5 +419,32 @@ mod tests {
             capture,
             true
         ));
+    }
+    #[test]
+    fn only_a_borderless_window_over_the_streamed_display_is_a_fullscreen_picture() {
+        // A display to the left of the primary one that a fullscreen app covers: the
+        // probe that moves a frozen Windows Graphics Capture stream to Desktop
+        // Duplication reads the captured display, never the primary by assumption.
+        let display = [-1920, 0, 0, 1080];
+        let full = RECT {
+            left: -1920,
+            top: 0,
+            right: 0,
+            bottom: 1080,
+        };
+        assert!(fullscreen(full, display, false));
+        // A borderless window of the other display leaves this one alone.
+        assert!(!fullscreen(
+            RECT {
+                left: 0,
+                top: 0,
+                right: 1920,
+                bottom: 1080
+            },
+            display,
+            false
+        ));
+        // A maximised window keeps its caption and is no fullscreen picture.
+        assert!(!fullscreen(full, display, true));
     }
 }

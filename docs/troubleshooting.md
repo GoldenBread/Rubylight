@@ -188,6 +188,8 @@ On a Radeon, start from the default encoder settings: `amd_usage=ultralowlatency
 
 If the freeze returns, change one setting per reconnect (WGC against Desktop Duplication, then `gpu_compute_conversion` on against off) and note which one changes the result.
 
+A fullscreen game or emulator that draws straight to the display can stop Windows Graphics Capture's picture without an error, because WGC reads what Windows composes rather than what the display shows. The host notices a streamed display that sent no picture for 2 seconds while a window covers it, captures that display with Desktop Duplication instead, and logs `no picture while a fullscreen app covers the display; capturing it with Desktop Duplication`. If the picture still stops, the app presents to a display the host cannot duplicate (check `capture backend opened`), and setting **All settings → Picture → Capture → Capture method** to **Desktop Duplication** before connecting is the next step.
+
 Send the host log **from `CLIENT CONNECTED` through `CLIENT DISCONNECTED`**, plus startup and probe failures and the client log around the failure time. The default **Information** log level already writes encoder settings, display setup and the 5-second `stream timings` lines. **Debug** (`min_log_level=debug`) adds GPU scheduling and probe details and applies right away. Keep whole lines, including their fields. In particular include:
 
 - `stream configured`, `capture backend opened`, `compute queue ready for colour conversion` and, at debug level, `GPU process scheduling configured`.

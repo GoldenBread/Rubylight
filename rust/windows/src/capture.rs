@@ -147,6 +147,18 @@ pub(crate) fn window_client(config: &butterpollo_core::config::Config) -> bool {
     butterpollo_core::app_window::settings(config)
         .is_some_and(|settings| settings.frame == butterpollo_core::app_window::Frame::Client)
 }
+
+/// The desktop rectangle of `name` as [left, top, right, bottom], the primary
+/// display for an empty name; `None` when it is not on the desktop.
+pub(crate) fn display_rect(name: &str) -> Option<[i32; 4]> {
+    let display = select_display(&displays().ok()?, name).ok()??;
+    Some([
+        display.x,
+        display.y,
+        display.x.saturating_add(display.width as i32),
+        display.y.saturating_add(display.height as i32),
+    ])
+}
 /// The primary display's name, which capture opens when the stream's display
 /// did not come back.
 pub fn primary_display() -> Option<String> {

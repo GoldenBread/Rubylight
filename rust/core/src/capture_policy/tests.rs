@@ -1,5 +1,34 @@
 use super::*;
 #[test]
+fn a_fullscreen_app_freezes_wgc_but_not_desktop_duplication() {
+    let stalled = FULLSCREEN_STALL;
+    // A fullscreen app over a streamed display while WGC sends nothing: its picture
+    // reaches the display, not the compositor WGC reads.
+    assert!(duplication_for_fullscreen("wgc", true, stalled, true));
+    assert!(duplication_for_fullscreen(
+        "wgc",
+        true,
+        stalled + Duration::from_secs(30),
+        true
+    ));
+    // A budget for a mode change, a busy GPU or a game leaving fullscreen.
+    assert!(!duplication_for_fullscreen(
+        "wgc",
+        true,
+        stalled - Duration::from_millis(1),
+        true
+    ));
+    // The last picture is still right while the desktop itself is static, and a windowed
+    // app never presents past the compositor.
+    assert!(!duplication_for_fullscreen("wgc", true, stalled, false));
+    // A window target is captured by WGC whatever else runs, and only a display can be
+    // duplicated; the display driver's push and Desktop Duplication already read it.
+    assert!(!duplication_for_fullscreen("wgc", false, stalled, true));
+    for backend in ["ddx", "idd-push", "amd", "closed"] {
+        assert!(!duplication_for_fullscreen(backend, true, stalled, true));
+    }
+}
+#[test]
 fn compositions_tell_a_focus_change_only_by_dirty_rectangles_inside_it() {
     // A game window at (100, 50)-(1380, 770) on the second display of a
     // desktop whose first display is 2560 wide.

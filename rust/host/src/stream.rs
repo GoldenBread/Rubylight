@@ -744,7 +744,10 @@ impl Media {
                     // place of the stream's, which is gone, and the stream's
                     // display it was opened for. The display can be recreated
                     // while capture opens; the next check then sees that.
-                    let reopen = |lost: Capture, target: &(String, u64)| -> Result<(Capture, bool, (String, u64))> {
+                    // `chosen` is normally the stream's own backend; a display whose
+                    // Windows Graphics Capture picture stopped asks for Desktop
+                    // Duplication instead. A refused switch keeps the working one.
+                    let reopen = |lost: Capture, target: &(String, u64), chosen: &str| -> Result<(Capture, bool, (String, u64))> {
                         let recovery_started = Instant::now();
                         // Desktop Duplication reports the pointer's shape only
                         // when it changes; the new capture starts from this one.
@@ -782,7 +785,18 @@ impl Media {
                                     thread::sleep(RECOVERY_RETRY);
                                     continue;
                                 }
-                                ReopenOn::Stream => Capture::open_for_stream_reported(&next.0, &kind, hdr, &capture_config, capture_warnings.clone()),
+                                ReopenOn::Stream => match Capture::open_for_stream_reported(&next.0, chosen, hdr, &capture_config, capture_warnings.clone()) {
+                                    Ok(opened) => Ok(opened),
+                                    // Keep the backend that was working: Desktop
+                                    // Duplication cannot capture this display (another
+                                    // vendor's GPU drives it, or it is turned), and a
+                                    // frozen picture is worse than a picture.
+                                    Err(error) if chosen != kind.as_str() => {
+                                        capture_warnings.set("capture_backend", format!("Capturing with Windows Graphics Capture: Desktop Duplication cannot capture this display ({error:#})."));
+                                        Capture::open_for_stream_reported(&next.0, &kind, hdr, &capture_config, capture_warnings.clone())
+                                    }
+                                    Err(error) => Err(error),
+                                },
                                 // By name: the WGC helper checks it opened the display asked for.
                                 ReopenOn::Primary => butterpollo_windows::capture::primary_display()
                                     .context("no display is on the desktop")
@@ -824,13 +838,20 @@ impl Media {
                         capture_config.integer("capture_poll_interval_us", 500).clamp(100, 1000) as u64,
                     );
                     let mut last_frame = Instant::now();
+                    // The backend this stream reopens on: its own, or Desktop
+                    // Duplication after a frozen display picture moved to it.
+                    let mut backend = kind.clone();
+                    // When to ask again whether a frozen display's picture is one
+                    // Windows Graphics Capture cannot see; see the `Ok(None)` arm.
+                    let mut stall_check = Instant::now();
+                    let mut prefer_duplication = false;
                     while !worker_stop.load(Ordering::Acquire) {
                         if Instant::now() >= check_target {
                             check_target = Instant::now() + Duration::from_millis(100);
                             let next = prepared.capture_target();
                             let available = kind == "wgc"
                                 && butterpollo_windows::capture::wgc_desktop_available();
-                            let return_to_wgc = available && !user_desktop && capture.backend() == "ddx";
+                            let return_to_wgc = available && !user_desktop && capture.backend() == "ddx" && backend != "ddx";
                             user_desktop = available;
                             // Back from the primary display once the stream's returns.
                             let returned = on_primary && butterpollo_windows::capture::display_present(&next.0);
@@ -860,7 +881,7 @@ impl Media {
                             if restart || next != target || return_to_wgc || returned {
                                 let lost = std::mem::replace(&mut capture, Capture::Closed);
                                 progress.mark(crate::stall_watch::Phase::Reopen);
-                                (capture, on_primary, target) = match reopen(lost, &next) {
+                                (capture, on_primary, target) = match reopen(lost, &next, &backend) {
                                     Ok(capture) => capture,
                                     Err(_) if worker_stop.load(Ordering::Acquire) => return Ok(()),
                                     Err(error) => return Err(error),
@@ -891,6 +912,48 @@ impl Media {
                                 worker.publish_focus(Arc::new(image), captured, focus)?;
                             }
                             Ok(None) => {
+                                // Windows Graphics Capture reads the compositor's output. An
+                                // app that presents straight to the display (fullscreen
+                                // exclusive, as emulators and some games do) never reaches
+                                // that output, so the picture stops with no error while the
+                                // display keeps changing; Desktop Duplication reads what
+                                // the display shows and captures it (issue #123).
+                                let now = Instant::now();
+                                let idle = now.saturating_duration_since(last_frame);
+                                let display = butterpollo_windows::capture::WindowTarget::parse(&target.0).ok().flatten().is_none();
+                                if !prefer_duplication
+                                    && capture.backend() == "wgc"
+                                    && display
+                                    && idle >= butterpollo_core::capture_policy::FULLSCREEN_STALL
+                                    && now >= stall_check
+                                {
+                                    stall_check = now + Duration::from_millis(500);
+                                    if butterpollo_core::capture_policy::duplication_for_fullscreen(
+                                        capture.backend(),
+                                        display,
+                                        idle,
+                                        butterpollo_windows::foreground::covers_display(&target.0),
+                                    ) {
+                                        prefer_duplication = true;
+                                        tracing::info!(idle_ms = idle.as_millis(), output = %target.0, "no picture while a fullscreen app covers the display; capturing it with Desktop Duplication");
+                                        let lost = std::mem::replace(&mut capture, Capture::Closed);
+                                        progress.mark(crate::stall_watch::Phase::Reopen);
+                                        (capture, on_primary, target) = match reopen(lost, &target, "ddx") {
+                                            Ok(capture) => capture,
+                                            Err(_) if worker_stop.load(Ordering::Acquire) => return Ok(()),
+                                            Err(error) => return Err(error),
+                                        };
+                                        if capture.backend() == "ddx" {
+                                            backend = "ddx".to_owned();
+                                            capture_warnings.set("capture_backend", "No picture came from Windows Graphics Capture while a fullscreen app was in front, so this display is captured with Desktop Duplication, which reads the display itself. Fullscreen-exclusive games and emulators can present past Windows Graphics Capture; this session stays on Desktop Duplication.");
+                                        }
+                                        opened_display = prepared.display_target();
+                                        capture.set_claim_grid(worker_grid.clone(), aligned);
+                                        *worker_backend.lock().unwrap() = capture.backend();
+                                        last_frame = Instant::now();
+                                        continue;
+                                    }
+                                }
                                 let interval = if capture_config.boolean("capture_predictive_poll", false)
                                     && capture.backend() == "ddx" {
                                     worker.poll_interval(poll_interval)
@@ -937,7 +1000,7 @@ impl Media {
                                 }
                                 let lost = std::mem::replace(&mut capture, Capture::Closed);
                                 progress.mark(crate::stall_watch::Phase::Reopen);
-                                (capture, on_primary, target) = match reopen(lost, &target) {
+                                (capture, on_primary, target) = match reopen(lost, &target, &backend) {
                                     Ok(capture) => capture,
                                     Err(_) if worker_stop.load(Ordering::Acquire) => return Ok(()),
                                     Err(error) => return Err(error),

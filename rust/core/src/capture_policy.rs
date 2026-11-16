@@ -11,6 +11,29 @@ pub fn notification_wait_interval(idle: Duration, pending: bool, poll: Duration)
         poll.max(Duration::from_millis(10))
     }
 }
+
+/// How long a display's Windows Graphics Capture may deliver no picture while a
+/// fullscreen app is in front before Desktop Duplication takes over. Long enough that a
+/// game leaving fullscreen, a mode change or a busy GPU is not mistaken for a capture
+/// that cannot see the display, short enough that a frozen picture recovers on its own.
+pub const FULLSCREEN_STALL: Duration = Duration::from_secs(2);
+
+/// Whether a display's stream should move from Windows Graphics Capture to Desktop
+/// Duplication. WGC reads the compositor's output: an app that presents straight to the
+/// display, as a fullscreen-exclusive game or emulator does, never reaches that output,
+/// so the picture stops with no error while the display keeps changing, and Desktop
+/// Duplication, which reads what the display shows, captures it. Only a window covering
+/// the whole display presents that way, so a windowed app, a window target and a merely
+/// static desktop (whose last picture is still the right one) never qualify.
+pub fn duplication_for_fullscreen(
+    backend: &str,
+    display: bool,
+    idle: Duration,
+    fullscreen: bool,
+) -> bool {
+    backend == "wgc" && display && fullscreen && idle >= FULLSCREEN_STALL
+}
+
 #[derive(Default)]
 pub struct Intervals {
     last: Option<i64>,

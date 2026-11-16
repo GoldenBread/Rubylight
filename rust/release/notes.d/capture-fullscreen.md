@@ -1,0 +1,2 @@
+# Capture
+- **A fullscreen emulator or game no longer freezes the stream.** Windows Graphics Capture reads what Windows composes for the screen, so an app that presents straight to the display can stop the picture with no error while the app itself keeps running. A streamed display that sends no picture for 2 seconds while a window covers it is now captured with Desktop Duplication, which reads what the display shows, and the stream card says why it switched.
