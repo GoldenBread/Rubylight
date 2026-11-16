@@ -377,6 +377,10 @@ pub fn planned_latch(since_last_flip_us: Option<u64>, display_period_us: u64) ->
 pub struct FlipGuard {
     /// When the last present was issued (us), whatever its kind.
     pub last_flip_us: Option<u64>,
+    /// The last present went out with sync interval 1 (`scan_sync::ScanWait::Latch`): its scan
+    /// starts at the vblank, so the time until it does is the latch's delay, not a tearing
+    /// flip's landing (`scan_sync::landing_ns`).
+    pub last_flip_latched: bool,
     /// Presents that went out with tearing.
     pub tearing: u64,
     /// Presents latched by `planned_latch`.

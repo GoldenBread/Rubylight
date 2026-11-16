@@ -109,11 +109,49 @@ fn a_scan_under_way_is_waited_out_to_its_end() {
 }
 
 #[test]
+fn a_wait_that_would_cost_the_next_picture_its_turn_latches_instead() {
+    // The reporter's panel at 120 fps (Nightjar issue 111): a frame is 8.33 ms, a picture is
+    // drawn 1.1 ms after its time, and a tearing flip reaches the panel 1.4 ms after the call.
+    let (frame, drawing, landing) = (8_330_000, 1_100_000, 1_400_000);
+    let budget = frame - drawing;
+    // The scan ends 4 ms on: the wait and its flip reach the screen before the next picture.
+    assert_eq!(scan_wait(4_000_000, budget, landing), ScanWait::Wait);
+    // 6.2 ms on, the reporter's average wait: 7.6 ms, past the next picture's due time.
+    assert_eq!(scan_wait(6_200_000, budget, landing), ScanWait::Latch);
+    // The boundary is the budget less the landing.
+    assert_eq!(scan_wait(budget - landing, budget, landing), ScanWait::Wait);
+    assert_eq!(scan_wait(budget - landing + 1, budget, landing), ScanWait::Latch);
+    // A 60 fps stream on the same panel has a frame's budget: every scan is waited out.
+    assert_eq!(scan_wait(8_060_000, 16_666_000 - drawing, landing), ScanWait::Wait);
+    // A picture already late has no budget left: latch.
+    assert_eq!(scan_wait(1, 0, landing), ScanWait::Latch);
+    // A stream far below the panel's rate: the scan never costs the next picture.
+    assert_eq!(scan_wait(8_060_000, 33_333_000, landing), ScanWait::Wait);
+}
+
+#[test]
+fn the_landing_median_is_what_the_wait_decision_uses() {
+    let mut times = Times::default();
+    assert_eq!(times.median_ns(), None);
+    for _ in 0..19 { times.push(1_250_000); }
+    times.push(4_600_000);
+    assert_eq!(times.median_ns(), Some(1_300_000), "the 1.25 ms step's upper edge");
+}
+
+#[test]
 fn the_log_counts_presents_that_went_out_into_a_scan() {
     let tally = Tally { cut_short: 3, wrapped: 2, ..Tally::default() };
     assert_eq!(tally.lines(), vec![
         "VRR: 3 presents went out before the scan under way had ended (the wait reached its limit or the scan line could not be read)".to_string(),
         "VRR: 2 waits ended as the display began its next scan, with no reading past the last row".to_string(),
+    ]);
+}
+
+#[test]
+fn the_log_counts_presents_that_latched_instead_of_waiting() {
+    let tally = Tally { latched: 17, ..Tally::default() };
+    assert_eq!(tally.lines(), vec![
+        "VRR: 17 presents went out with sync interval 1 instead of waiting for a scan that would have cost the next picture its turn".to_string(),
     ]);
 }
 

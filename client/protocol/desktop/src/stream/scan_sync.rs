@@ -18,6 +18,11 @@
 //!   present waits for the one before it to start its scan (`on_its_way`), and then for that scan.
 //!
 //! The counts and times go to the log at the stream's end (`Tally::lines`).
+//!
+//! A wait that would run past the next picture's due time is skipped (`scan_wait`): the present
+//! goes out at once with sync interval 1, and the swap chain shows it whole at the scan's end, the
+//! next safe beam position. Waiting there would hold the thread while the next picture is ready,
+//! and at a stream rate equal to the display's the screen would then show a picture a scan.
 
 /// How long a present waits for the one before it to start its scan (ns), counted from that
 /// present: `scanline::RESTART_WINDOW_NS`, the longest a flip took on the test monitor plus 1 ms.
@@ -155,6 +160,12 @@ pub const REST_PRESENTS: u32 = 300;
 /// and a sleep can overshoot. The wait is at most one scan plus this.
 pub const SCAN_WAIT_SLACK_NS: u64 = 1_000_000;
 
+/// How long a tearing present takes to reach the screen (ns) until the stream has measured its
+/// own (`Tally::landing`): the handheld of Nightjar issue 111 started its scan 1.4 ms after the
+/// present at the median (4.6 ms in its first log), the 240 Hz test monitor 0.4 ms. A wait that
+/// lands past the next picture's due time is what `scan_wait` turns into a latched present.
+pub const TEAR_LANDING_NS: u64 = 2_000_000;
+
 /// Waits for a scan under way longer than this sleep most of it (ns)...
 const SLEEP_FROM_NS: u64 = 1_500_000;
 /// ...and spin the last millisecond, reading the beam: a sleep can overshoot, and on a display that
@@ -187,6 +198,33 @@ pub fn scan_step(left_ns: Option<u64>, read: bool, waited_ns: u64, limit_ns: u64
     let Some(left) = left_ns else { return ScanStep::Go };
     if waited_ns >= limit_ns { return ScanStep::CutShort; }
     if left > SLEEP_FROM_NS { ScanStep::Sleep((left - SPIN_LAST_NS).min(limit_ns - waited_ns)) } else { ScanStep::Spin }
+}
+
+/// What a present that meets a scan under way does about it (`scan_wait`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScanWait {
+    /// Wait for the beam to leave the last row, then present with tearing: the picture reaches
+    /// the display `landing_ns` after the present, sooner than a latched flip when the scan is
+    /// nearly over.
+    Wait,
+    /// Present at once with sync interval 1: the swap chain holds the picture to the scan's end,
+    /// so it is shown whole, and this thread is free for the next picture.
+    Latch,
+}
+
+/// Whether a present with `left_ns` until the scan under way ends waits for it, given `budget_ns`
+/// until the next picture is due and `landing_ns` for a tearing present to reach the screen.
+///
+/// A wait that runs past the next picture's due time holds the present thread while that picture
+/// is ready, so every present waits out the scan the one before it started. At 120 fps on a
+/// 120 Hz panel the display then shows one picture a scan plus the flip's landing, about 105 a
+/// second, and the pacer replaces every eighth: the reporter's 5.5.0 log (Nightjar issue 111,
+/// Radeon 890M) had 24,651 frames, 21,313 presents and 3,022 replaced in 213 s, 6.20 ms a wait,
+/// and the stream felt like a 60 fps one. Sync interval 1 skips the wait: the swap chain
+/// shows the picture whole at the scan's end, which is the next safe beam position, and the next
+/// picture is presented on time.
+pub fn scan_wait(left_ns: u64, budget_ns: u64, landing_ns: u64) -> ScanWait {
+    if left_ns.saturating_add(landing_ns) <= budget_ns { ScanWait::Wait } else { ScanWait::Latch }
 }
 
 /// How a wait for a scan under way ended (`wait_out`).
@@ -268,6 +306,11 @@ impl Times {
 
     pub fn count(&self) -> u32 { self.count }
 
+    /// The median time (ns), None before the first. The step's upper edge, as `within_ms`.
+    pub fn median_ns(&self) -> Option<u64> {
+        (self.count > 0).then(|| (self.within_ms(0.5) * 1e6) as u64)
+    }
+
     /// The time `share` of them stayed within (ms), to the step: the step's upper edge, so a time
     /// is never shown shorter than it was. 0 when there are none.
     pub fn within_ms(&self, share: f64) -> f64 {
@@ -310,6 +353,8 @@ pub struct Tally {
     pub cut_short: u32,
     /// Waits that ended with the counter going back to the next scan (`Waited::wrapped`).
     pub wrapped: u32,
+    /// Presents that skipped the wait and went out with sync interval 1 (`ScanWait::Latch`).
+    pub latched: u32,
 }
 
 impl Tally {
@@ -350,6 +395,9 @@ impl Tally {
         }
         if self.wrapped > 0 {
             lines.push(format!("VRR: {} waits ended as the display began its next scan, with no reading past the last row", self.wrapped));
+        }
+        if self.latched > 0 {
+            lines.push(format!("VRR: {} presents went out with sync interval 1 instead of waiting for a scan that would have cost the next picture its turn", self.latched));
         }
         if self.drawing.count() > 0 {
             lines.push(format!("VRR: a picture's drawing was finished before its present, after {} ({} not waited for)",
