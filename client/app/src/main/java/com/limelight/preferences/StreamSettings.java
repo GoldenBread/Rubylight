@@ -1749,7 +1749,8 @@ public class StreamSettings extends NightjarActivity {
             setShown("seekbar_vibrate_fallback_strength", prefs.getBoolean("checkbox_vibrate_fallback", false));
             setShown("checkbox_usb_bind_all", prefs.getBoolean("checkbox_usb_driver", true));
             setShown("checkbox_usb_dualsense_haptics", prefs.getBoolean("checkbox_usb_dualsense", false));
-            setShown("list_trackpad_acceleration_curve", prefs.getBoolean("checkbox_trackpad_acceleration",
+            setShown("list_trackpad_acceleration_curve", prefs.getBoolean(
+                    PreferenceConfiguration.TRACKPAD_ACCELERATION_PREF_STRING,
                     PreferenceConfiguration.DEFAULT_TRACKPAD_ACCELERATION));
             setShown("list_trackpad_momentum_glide", prefs.getBoolean("checkbox_trackpad_momentum", false));
             boolean onScreen = SettingRules.onScreenControlsOn(prefs);

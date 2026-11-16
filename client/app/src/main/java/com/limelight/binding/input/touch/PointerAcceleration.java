@@ -18,8 +18,12 @@ public final class PointerAcceleration {
      * follow a real change of pace.
      */
     static final int WINDOW_MOVES = 3;
-    /** A move after this long without one starts the speed over: what came before says nothing. */
-    static final long WINDOW_NS = 50_000_000L;
+    /**
+     * A move after this long without one starts the speed over: what came before says nothing. The
+     * window is wide enough for three 17 ms moves, which is what a 60 Hz panel reports in whole
+     * milliseconds, so the average keeps all three there.
+     */
+    static final long WINDOW_NS = 60_000_000L;
     // Event times are whole milliseconds; shorter gaps would turn rounding into huge speeds.
     static final long MIN_INTERVAL_NS = 4_000_000L;
 

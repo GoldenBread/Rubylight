@@ -131,8 +131,8 @@ Tier: Main rows show when a section opens; More rows fold behind the section's l
 | Mouse speed<br>`seekbar_mouse_speed` | More | 100% | 25%–400%; step 1% | Adjust physical relative mouse movement; 100% is normal speed. |
 | Mouse back/forward buttons<br>`checkbox_mouse_nav_buttons` | More | Off | On; Off | Enable to send mouse Back/Forward buttons. Disable if it interferes with right-click. |
 | Trackpad speed<br>`seekbar_trackpad_speed` | More | 100% | 25%–400%; step 1% | Adjust Trackpad movement; 100% is normal speed. |
-| Local cursor speed<br>`seekbar_local_cursor_speed` | More | 100% | 25%–400%; step 1% | Adjust Local cursor movement; at 100% the drawn pointer moves as far as your finger. |
-| Trackpad acceleration<br>`checkbox_trackpad_acceleration` | More | On | On; Off | Slow finger movement aims precisely and fast swipes cover more distance. Leave it on unless you prefer the pointer to follow your finger one to one; Trackpad and Local cursor apply it from the next stream. |
+| Local cursor speed<br>`seekbar_local_cursor_speed` | More | 100% | 25%–400%; step 1% | Adjust Local cursor movement; with Trackpad acceleration off, 100% moves the drawn pointer as far as your finger. |
+| Trackpad acceleration<br>`checkbox_trackpad_acceleration_v2` | More | On | On; Off | Slow finger movement aims precisely and fast swipes cover more distance. Leave it on unless you prefer the pointer to follow your finger one to one; Trackpad and Local cursor apply it from the next stream. |
 | Acceleration strength<br>`list_trackpad_acceleration_curve` | More | Medium | Gentle; Medium; Strong | Choose how strongly fast swipes are sped up. Shown while Trackpad acceleration is On. |
 | Glide after a flick<br>`checkbox_trackpad_momentum` | More | Off | On; Off | Enable so the pointer keeps gliding after a quick flick. A new touch, a mode change, the stream menu, picture-in-picture and disconnecting stop it at once. Trackpad and Local cursor. |
 | Glide distance<br>`list_trackpad_momentum_glide` | More | Medium | Short; Medium; Long | Choose how far the pointer glides. Shown while Glide after a flick is On. |

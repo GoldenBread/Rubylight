@@ -147,7 +147,10 @@ public class PreferenceConfiguration {
     private static final String TOUCHSCREEN_TRACKPAD_PREF_STRING = "checkbox_touchscreen_trackpad";
     private static final String TRACKPAD_SPEED_PREF_STRING = "seekbar_trackpad_speed";
     private static final String LOCAL_CURSOR_SPEED_PREF_STRING = "seekbar_local_cursor_speed";
-    private static final String TRACKPAD_ACCELERATION_PREF_STRING = "checkbox_trackpad_acceleration";
+    // A new key: the old one's stored false was the old default, not a choice (see the migration).
+    static final String TRACKPAD_ACCELERATION_PREF_STRING = "checkbox_trackpad_acceleration_v2";
+    // Retired: only read by the migration, and never reused for anything else.
+    static final String RETIRED_TRACKPAD_ACCELERATION_PREF_STRING = "checkbox_trackpad_acceleration";
     private static final String TRACKPAD_ACCELERATION_CURVE_PREF_STRING = "list_trackpad_acceleration_curve";
     private static final String TRACKPAD_MOMENTUM_PREF_STRING = "checkbox_trackpad_momentum";
     private static final String TRACKPAD_MOMENTUM_GLIDE_PREF_STRING = "list_trackpad_momentum_glide";
@@ -1399,6 +1402,27 @@ public class PreferenceConfiguration {
         return wasOff;
     }
 
+    // Trackpad acceleration used to start off, and first launch or opening Settings stored that
+    // default like a choice. It now starts on. Its old key cannot tell an explicit off from the old
+    // default, so every install moves to the new key once with the new default (on); turning it off
+    // afterwards is kept. The old key is forgotten and must not be reused.
+    static boolean migrateTrackpadAccelerationDefault(SharedPreferences prefs) {
+        if (prefs.contains(TRACKPAD_ACCELERATION_PREF_STRING)) {
+            // Settings or a later version already wrote the new key: keep it and forget the old name.
+            if (prefs.contains(RETIRED_TRACKPAD_ACCELERATION_PREF_STRING)) {
+                prefs.edit().remove(RETIRED_TRACKPAD_ACCELERATION_PREF_STRING).apply();
+            }
+            return false;
+        }
+        boolean wasOff = prefs.contains(RETIRED_TRACKPAD_ACCELERATION_PREF_STRING)
+                && !prefs.getBoolean(RETIRED_TRACKPAD_ACCELERATION_PREF_STRING, false);
+        prefs.edit()
+                .putBoolean(TRACKPAD_ACCELERATION_PREF_STRING, true)
+                .remove(RETIRED_TRACKPAD_ACCELERATION_PREF_STRING)
+                .apply();
+        return wasOff;
+    }
+
     // Set once Android's low-latency mode was switched off on the decoders of erratum 23, so a later On is kept.
     static final String CODEC_LOW_LATENCY_CORRUPTION_OFF_PREF_STRING = "codec_low_latency_corruption_off";
 
@@ -1528,6 +1552,9 @@ public class PreferenceConfiguration {
         migrateToNativeDefaults(context);
         if (migrateAutoReconnectDefault(prefs)) {
             com.limelight.LimeLog.info("Stream recovery switched to its new default: on");
+        }
+        if (migrateTrackpadAccelerationDefault(prefs)) {
+            com.limelight.LimeLog.info("Trackpad acceleration switched to its new default: on");
         }
         PreferenceConfiguration config = new PreferenceConfiguration();
         String savedResolution = null;

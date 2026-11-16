@@ -176,6 +176,7 @@ public class SettingsKeysTest {
     private static final Set<String> RETIRED = new HashSet<>(Arrays.asList(
             "checkbox_gl_render", // "Render through OpenGL", replaced by Render through Vulkan
             "checkbox_auto_bitrate", // renamed adaptive_bitrate (PreferenceConfiguration.RENAMED_PREFS)
+            "checkbox_trackpad_acceleration", // moved to _v2 with the new on default (see the migration)
             "checkbox_always_dark", "checkbox_oled_black")); // the theme's switches, one value now (AppTheme.THEME)
 
     @Test
@@ -387,7 +388,7 @@ public class SettingsKeysTest {
         reads.put(com.limelight.binding.input.touch.TouchMode.PREF, new Read("trackpad", "local_cursor", c -> c.touchMode));
         reads.put("seekbar_trackpad_speed", new Read(100, 200, c -> c.trackpadSpeed));
         reads.put("seekbar_local_cursor_speed", new Read(100, 200, c -> c.localCursorSpeed));
-        reads.put("checkbox_trackpad_acceleration", new Read(false, true, c -> c.trackpadAcceleration));
+        reads.put("checkbox_trackpad_acceleration_v2", new Read(false, true, c -> c.trackpadAcceleration));
         reads.put("list_trackpad_acceleration_curve", new Read("medium", "strong", c -> c.trackpadAccelerationCurve));
         reads.put("checkbox_trackpad_momentum", new Read(false, true, c -> c.trackpadMomentum));
         reads.put("list_trackpad_momentum_glide", new Read("medium", "long", c -> c.trackpadMomentumGlide));
@@ -579,21 +580,6 @@ public class SettingsKeysTest {
         config = PreferenceConfiguration.readPreferences(app);
         assertEquals(-200, config.trackpadSensitivityX);
         assertEquals(200, config.trackpadSensitivityY);
-    }
-
-    /** On for everyone who never chose: an install with the old default off keeps the stored value. */
-    @Test
-    public void trackpadAccelerationIsOnUntilItIsTurnedOff() {
-        Application app = RuntimeEnvironment.getApplication();
-        prefs().edit().remove("checkbox_trackpad_acceleration").commit();
-        assertTrue(PreferenceConfiguration.readPreferences(app).trackpadAcceleration);
-
-        // The checkbox was turned off before this version: the choice stays.
-        prefs().edit().putBoolean("checkbox_trackpad_acceleration", false).commit();
-        assertFalse(PreferenceConfiguration.readPreferences(app).trackpadAcceleration);
-
-        prefs().edit().putBoolean("checkbox_trackpad_acceleration", true).commit();
-        assertTrue(PreferenceConfiguration.readPreferences(app).trackpadAcceleration);
     }
 
     @Test

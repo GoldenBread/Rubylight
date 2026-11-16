@@ -3,7 +3,7 @@
     <string name="stream_touch_off_help">O toque está desativado. Deslize para voltar ou toque em Voltar para abrir o menu da transmissão.</string>
     <string name="title_local_cursor_speed">Velocidade do cursor local</string>
     <string name="title_trackpad_acceleration">Aceleração do trackpad</string>
-    <string name="summary_trackpad_acceleration">Movimentos lentos do dedo miram com precisão e deslizes rápidos vão mais longe. Deixe-a ativada a menos que prefira que o ponteiro siga o dedo um para um; Touchpad e Cursor local a aplicam a partir da próxima transmissão.</string>
+    <string name="summary_trackpad_acceleration">Movimentos lentos do dedo miram com precisão e deslizes rápidos vão mais longe. Deixe-a ativada a menos que prefira que o ponteiro siga o dedo um para um; Trackpad e Cursor local a aplicam a partir da próxima transmissão.</string>
     <string name="title_trackpad_acceleration_curve">Intensidade da aceleração</string>
     <string-array name="trackpad_acceleration_curve_names">
         <item>Suave</item>

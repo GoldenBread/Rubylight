@@ -131,6 +131,32 @@ public class PointerAccelerationTest {
     }
 
     @Test
+    public void sixtyHertzSamplesKeepAllThreeMovesInTheWindow() {
+        PointerAcceleration acceleration = PointerAcceleration.forCurve(PointerAcceleration.MEDIUM);
+        // A 60 Hz panel reports whole milliseconds that alternate 16 and 17: three 17 ms moves must
+        // all stay in the window, so the average is 12 dp in 51 ms, not 10 dp in 34 ms.
+        acceleration.gain(1, 0, 0, 1);
+        float gain = 0;
+        float[] distances = {2, 4, 6};
+        for (int i = 0; i < distances.length; i++) {
+            gain = acceleration.gain(distances[i], 0, (i + 1) * 17_000_000L, 1);
+        }
+        assertEquals(acceleration.gainForSpeed(12 * 1e9f / 51_000_000L), gain, 1e-4f);
+    }
+
+    @Test
+    public void intervalsBelowFourMillisecondsCountAsFour() {
+        PointerAcceleration acceleration = PointerAcceleration.forCurve(PointerAcceleration.MEDIUM);
+        acceleration.gain(0, 0, 0, 1);
+        float gain = 0;
+        // Whole-millisecond rounding makes 1 ms gaps unreliable; each counts as 4 ms (250 dp/s).
+        for (long gap : new long[] {1, 2, 3}) {
+            gain = acceleration.gain(1, 0, gap * 1_000_000L, 1);
+        }
+        assertEquals(acceleration.gainForSpeed(250), gain, 1e-4f);
+    }
+
+    @Test
     public void zeroAndHugeIntervalsAreSafe() {
         PointerAcceleration acceleration = PointerAcceleration.forCurve(PointerAcceleration.STRONG);
         acceleration.gain(2, 0, 0, 1);
