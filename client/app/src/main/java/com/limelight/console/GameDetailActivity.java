@@ -813,8 +813,9 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
     /** The game's facts under the host line, from a record kept on disk or a lookup that runs in the background. */
     private void renderFacts(GameDetailModel m) {
         if (factsView == null || !GameInfo.factsWanted(this)) return;
-        String gameId = m.source == null ? null : m.source.gameId;
-        String id = m.title + "\n" + gameId;
+        GameInfo.Game game = new GameInfo.Game(m.title, m.source == null ? null : m.source.gameId,
+                m.source == null ? null : m.source.storeSource, m.source == null ? null : m.source.storeId);
+        String id = game.name + "\n" + game.gameId + "\n" + game.storeSource + "\n" + game.storeId;
         if (id.equals(factsShownFor)) return;
         factsShownFor = id;
         factsView.setVisibility(View.GONE);
@@ -827,9 +828,9 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
         };
         GameInfo info = GameInfo.get(this);
         Thread thread = new Thread(() -> {
-            org.json.JSONObject kept = info.cachedFacts(m.title, gameId);
+            org.json.JSONObject kept = info.cachedFacts(game);
             if (kept != null) runOnUiThread(() -> show.accept(kept));
-            else info.facts(m.title, gameId, show);
+            else info.facts(game, show);
         }, "game-info-facts");
         thread.setDaemon(true);
         thread.start();

@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * The wire contract with libnightjar_core (protocol/android/src/game_info_contract.json, which the Rust side's test
@@ -104,12 +105,14 @@ public class GameInfoModelTest {
 
     @Test
     public void cleanSendsTheContractsRequestAndReadsItsAnswer() throws Exception {
-        for (int nth = 0; nth < 2; nth++) {
+        for (int nth = 0; nth < 3; nth++) {
             JSONObject c = caseOf("clean", nth);
             Fixed calls = new Fixed(c);
             JSONObject request = c.getJSONObject("request");
             GameInfoModel.Cleaned cleaned = GameInfoModel.clean(calls, request.getString("name"),
-                    request.isNull("game_id") ? null : request.getString("game_id"));
+                    request.isNull("game_id") ? null : request.getString("game_id"),
+                    request.has("store") ? request.getJSONObject("store").getString("source") : null,
+                    request.has("store") ? request.getJSONObject("store").getString("id") : null);
             assertSent(request, calls.sent);
             JSONObject ok = c.getJSONObject("response").getJSONObject("ok");
             assertEquals(ok.getString("clean"), cleaned.clean);
@@ -244,6 +247,7 @@ public class GameInfoModelTest {
     }
 
     private static final GameInfoModel.Keys IGDB = new GameInfoModel.Keys("", "id", "secret");
+    private static final GameInfo.Game DOOM = new GameInfo.Game("Doom", null, null, null);
 
     @Test
     public void aFullLookupEndsInARecordOnDisk() throws Exception {
@@ -257,7 +261,7 @@ public class GameInfoModelTest {
             return new GameInfoModel.Reply(200, "[]", null);
         }, () -> IGDB, false);
 
-        GameInfo.Entry entry = info.resolve("Doom", null, false, true);
+        GameInfo.Entry entry = info.resolve(DOOM, false, true);
 
         assertNotNull(entry);
         assertEquals(1, sent.size());
@@ -272,7 +276,7 @@ public class GameInfoModelTest {
         GameInfo again = new GameInfo(dir, library, request -> {
             throw new AssertionError("a fresh record needs no request");
         }, () -> IGDB, false);
-        assertNotNull(again.resolve("Doom", null, false, true).facts());
+        assertNotNull(again.resolve(DOOM, false, true).facts());
     }
 
     @Test
@@ -289,7 +293,7 @@ public class GameInfoModelTest {
                 () -> IGDB, false);
         info.setSleeper(slept::add);
 
-        GameInfo.Entry entry = info.resolve("Doom", null, false, true);
+        GameInfo.Entry entry = info.resolve(DOOM, false, true);
 
         assertNotNull(entry);
         assertEquals(Collections.singletonList(2000L), slept);
@@ -306,7 +310,7 @@ public class GameInfoModelTest {
         library.script.add(send("igdb"));
         library.script.add(done());
         GameInfo info = new GameInfo(temp(), library, request -> new GameInfoModel.Reply(0, "", null), () -> IGDB, false);
-        assertNotNull(info.resolve("Doom", null, false, true));
+        assertNotNull(info.resolve(DOOM, false, true));
         assertEquals(0, library.replies.get(0).getInt("status"));
         assertTrue(library.replies.get(0).isNull("retry_after"));
     }
@@ -326,11 +330,11 @@ public class GameInfoModelTest {
         GameInfo info = new GameInfo(temp(), library, request -> {
             throw new AssertionError("no key, no request");
         }, () -> new GameInfoModel.Keys("", "", ""), true);
-        assertNull(info.resolve("Doom", null, true, true));
+        assertNull(info.resolve(DOOM, true, true));
         boolean[] called = {false};
-        info.cover("Doom", null, file -> called[0] = true);
-        info.facts("Doom", null, facts -> called[0] = true);
-        info.prefetchFacts(Collections.singletonList(new String[] {"Doom", null}), () -> called[0] = true);
+        info.cover(DOOM, file -> called[0] = true);
+        info.facts(DOOM, facts -> called[0] = true);
+        info.prefetchFacts(Collections.singletonList(DOOM), () -> called[0] = true);
         Thread.sleep(100);
         assertFalse(called[0]);
         assertTrue(library.replies.isEmpty());
@@ -341,7 +345,7 @@ public class GameInfoModelTest {
         // Only the SteamGridDB key: cover lookups, no facts.
         assertNull(new GameInfo(temp(), library, request -> {
             throw new AssertionError("IGDB is off");
-        }, () -> new GameInfoModel.Keys("k", "", ""), false).resolve("Doom", null, false, true));
+        }, () -> new GameInfoModel.Keys("k", "", ""), false).resolve(DOOM, false, true));
     }
 
     /** Answers the library op the way the real one does for two genres and lengths, by the games it is given. */
@@ -432,5 +436,136 @@ public class GameInfoModelTest {
         assertEquals(Arrays.asList("Genres: Shooter · Adventure", "Themes: Horror",
                 "Time to beat: Story 20 h · Story + extras 24 h"), lines);
         assertTrue(GameInfo.describe(context, hours, null).isEmpty());
+    }
+
+    private static boolean waitFor(java.util.function.BooleanSupplier condition) throws Exception {
+        for (int i = 0; i < 100 && !condition.getAsBoolean(); i++) Thread.sleep(50);
+        return condition.getAsBoolean();
+    }
+
+    @Test
+    public void aSteamStoreEntryIsPassedToTheCleanOp() throws Exception {
+        JSONObject c = caseOf("clean", 2);
+        Fixed calls = new Fixed(c);
+        JSONObject request = c.getJSONObject("request");
+        GameInfoModel.clean(calls, request.getString("name"), request.getString("game_id"), "steam", "1145360");
+        assertSent(request, calls.sent);
+        // Without a store entry the key is left out.
+        Fixed plain = new Fixed(caseOf("clean", 1));
+        GameInfoModel.clean(plain, "Mafia: Definitive Edition", null, null, null);
+        assertFalse(plain.sent.has("store"));
+    }
+
+    @Test
+    public void aJobWithLargeNumbersGoesThroughStartAndNextUnchanged() throws Exception {
+        // Fingerprints are whole numbers up to 2^53; none may pass through a double on the way (org.json would).
+        for (int i = 0; i < 50; i++) {
+            long fingerprint = (1L << 53) - 1 - i * 7919L;
+            long second = (1L << 52) + i * 104729L;
+            JSONObject job = new JSONObject().put("art_keys", fingerprint).put("info_keys", second).put("at", 0);
+            String[] sentJob = new String[1];
+            GameInfoModel.Calls calls = request -> {
+                try {
+                    JSONObject r = new JSONObject(request);
+                    JSONObject ok = new JSONObject();
+                    if (r.getString("op").equals("start")) {
+                        ok.put("job", job).put("step", new JSONObject().put("wait", 1));
+                    } else {
+                        sentJob[0] = r.getJSONObject("job").toString();
+                        ok.put("job", r.getJSONObject("job")).put("step", done());
+                    }
+                    return new JSONObject().put("ok", ok).toString();
+                } catch (Exception e) {
+                    throw new AssertionError(e);
+                }
+            };
+            GameInfoModel.Finished finished = GameInfoModel.lookup(calls, request -> new GameInfoModel.Reply(200, "", null),
+                    millis -> { }, () -> 1000L, () -> 5L, new JSONObject().put("name", "Doom").put("steam", JSONObject.NULL),
+                    IGDB, false, true, null);
+            assertNotNull(finished);
+            JSONObject back = new JSONObject(sentJob[0]);
+            assertEquals(fingerprint, back.getLong("art_keys"));
+            assertEquals(second, back.getLong("info_keys"));
+            assertTrue(sentJob[0].contains(Long.toString(fingerprint)));
+        }
+    }
+
+    @Test
+    public void onlyTheHostsNotFoundCountsAsNoCover() throws Exception {
+        assertTrue(com.limelight.grid.assets.NetworkAssetLoader.isNotFound(new com.limelight.nvstream.http.HostHttpResponseException(404, "x")));
+        assertFalse(com.limelight.grid.assets.NetworkAssetLoader.isNotFound(new com.limelight.nvstream.http.HostHttpResponseException(500, "x")));
+        assertTrue(com.limelight.grid.assets.NetworkAssetLoader.isNotFound(new java.io.FileNotFoundException("404")));
+        assertFalse(com.limelight.grid.assets.NetworkAssetLoader.isNotFound(new java.io.IOException("timeout")));
+    }
+
+    @Test
+    public void changedKeysAskTheFactsAgain() throws Exception {
+        FakeLibrary library = new FakeLibrary();
+        for (int i = 0; i < 4; i++) {
+            library.script.add(send("igdb"));
+            library.script.add(done());
+        }
+        // One script position per lookup: start returns script[0], next script[1]; so run each lookup from a fresh script.
+        AtomicInteger sends = new AtomicInteger();
+        GameInfoModel.Keys[] now = {IGDB};
+        GameInfo info = new GameInfo(temp(), library, request -> {
+            sends.incrementAndGet();
+            return new GameInfoModel.Reply(500, "", null);
+        }, () -> now[0], true);
+
+        info.prefetchFacts(Collections.singletonList(DOOM), () -> { });
+        assertTrue(waitFor(() -> sends.get() == 1));
+        // The same keys: the game is not asked again.
+        info.prefetchFacts(Collections.singletonList(DOOM), () -> { });
+        Thread.sleep(200);
+        assertEquals(1, sends.get());
+        // New keys: asked again.
+        now[0] = new GameInfoModel.Keys("", "id2", "secret2");
+        info.prefetchFacts(Collections.singletonList(DOOM), () -> { });
+        assertTrue(waitFor(() -> sends.get() == 2));
+    }
+
+    @Test
+    public void aCoverOnDiskComesWithoutAnyRequestAndViewsShareOneLookup() throws Exception {
+        FakeLibrary library = new FakeLibrary();
+        library.freshAnswer = true;
+        File dir = temp();
+        // A record that points at a cover, and the cover's image beside it.
+        Files.write(new File(dir, "record.json").toPath(), new JSONObject().put("key", "name:doom").put("fetched_at", 1000)
+                .put("cover", "https://example.invalid/c.png").toString().getBytes(StandardCharsets.UTF_8));
+        GameInfo info = new GameInfo(dir, library, request -> {
+            throw new AssertionError("a kept cover needs no request");
+        }, () -> new GameInfoModel.Keys("k", "", ""), true);
+
+        // Not downloaded yet: the cache read finds no file and fetches nothing.
+        assertNull(info.cachedCover(DOOM));
+        assertEquals(0, info.downloads());
+
+        File image = new File(new File(dir, "img"), "cover.png");
+        assertTrue(image.getParentFile().mkdirs());
+        Files.write(image.toPath(), new byte[] {1, 2, 3});
+        assertNotNull(info.cachedCover(DOOM));
+
+        AtomicInteger delivered = new AtomicInteger();
+        for (int i = 0; i < 5; i++) info.cover(DOOM, file -> {
+            if (file != null) delivered.incrementAndGet();
+        });
+        assertTrue(waitFor(() -> delivered.get() == 5));
+        assertEquals(0, info.downloads());
+    }
+
+    @Test
+    public void aMissingCoverIsFetchedOnceAndAFailureIsNotRepeated() throws Exception {
+        FakeLibrary library = new FakeLibrary();
+        library.freshAnswer = true;
+        File dir = temp();
+        Files.write(new File(dir, "record.json").toPath(), new JSONObject().put("key", "name:doom").put("fetched_at", 1000)
+                .put("cover", "http://127.0.0.1:1/c.png").toString().getBytes(StandardCharsets.UTF_8));
+        GameInfo info = new GameInfo(dir, library, request -> new GameInfoModel.Reply(0, "", null),
+                () -> new GameInfoModel.Keys("k", "", ""), false);
+        assertNull(info.resolve(DOOM, true, false).image);
+        assertEquals(1, info.downloads());
+        assertNull(info.resolve(DOOM, true, false).image);
+        assertEquals(1, info.downloads());
     }
 }

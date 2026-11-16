@@ -655,16 +655,21 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
         for (HomeModel.GameCard card : cards) signature.append(card.key).append(';');
         if (signature.toString().equals(factsLoadedFor)) return;
         factsLoadedFor = signature.toString();
-        List<String[]> games = new ArrayList<>();
-        for (HomeModel.GameCard card : cards) games.add(new String[] {card.key, card.title, card.source == null ? null : card.source.gameId});
+        List<String> keys = new ArrayList<>();
+        List<GameInfo.Game> games = new ArrayList<>();
+        for (HomeModel.GameCard card : cards) {
+            keys.add(card.key);
+            games.add(new GameInfo.Game(card.title, card.source == null ? null : card.source.gameId,
+                    card.source == null ? null : card.source.storeSource, card.source == null ? null : card.source.storeId));
+        }
         GameInfo info = GameInfo.get(this);
         Thread thread = new Thread(() -> {
             java.util.Map<String, org.json.JSONObject> found = new java.util.HashMap<>();
-            List<String[]> missing = new ArrayList<>();
-            for (String[] game : games) {
-                org.json.JSONObject kept = info.cachedFacts(game[1], game[2]);
-                if (kept != null) found.put(game[0], kept);
-                else missing.add(new String[] {game[1], game[2]});
+            List<GameInfo.Game> missing = new ArrayList<>();
+            for (int i = 0; i < games.size(); i++) {
+                org.json.JSONObject kept = info.cachedFacts(games.get(i));
+                if (kept != null) found.put(keys.get(i), kept);
+                else missing.add(games.get(i));
             }
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed() || found.isEmpty()) return;

@@ -22,6 +22,9 @@ public class NvApp {
     private String stableId = "";
     /** The library's game id (steam:1145360) when the host gave one; names the game for artwork lookups. */
     private String gameId;
+    /** The game's store entry (source "steam" and the store's id), when the host gave one; names the game for lookups. */
+    private String storeSource;
+    private String storeId;
     private int hostIndex = Integer.MAX_VALUE;
     private String artVersion = "";
     private boolean monitorResume;
@@ -79,6 +82,19 @@ public class NvApp {
 
     public void setGameId(String gameId) {
         this.gameId = gameId;
+    }
+
+    public String getStoreSource() {
+        return storeSource;
+    }
+
+    public String getStoreId() {
+        return storeId;
+    }
+
+    public void setStoreEntry(String source, String id) {
+        this.storeSource = source;
+        this.storeId = id;
     }
 
     /** What the host's library calls the game; stays on this device, as the PC's own list may not know it. */

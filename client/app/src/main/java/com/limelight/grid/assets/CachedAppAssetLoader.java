@@ -261,7 +261,8 @@ public class CachedAppAssetLoader {
 
             final ImageView imageView = imageViewRef.get();
             final TextView textView = textViewRef.get();
-            if (bitmap == null && settled && imageView != null && textView != null) {
+            // Only the host's 404 or its placeholder; a failed load says nothing about the game's cover.
+            if (bitmap == null && (placeholder || tuple.hostHasNoCover) && imageView != null && textView != null) {
                 requestCoverFallback(tuple, imageView, textView);
             }
             if (getLoaderTask(imageView) == this && textView != null && bitmap == null && placeholder) {
@@ -308,13 +309,14 @@ public class CachedAppAssetLoader {
         }
     }
 
-    /** Games whose cover was asked of SteamGridDB through this loader. */
+    /** Games whose SteamGridDB cover is being looked up through this loader now. */
     private final java.util.Set<Integer> coverFallbackAsked = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     /**
-     * The host has no cover of its own for this game (a 404 or its grey placeholder): when a SteamGridDB key is set,
-     * the lookup runs on its own thread, the image replaces the placeholder in the disk cache, and the view loads it.
-     * Silent when it finds nothing. A real cover from the host never gets here.
+     * The host answered 404 for this game's cover or sent its grey placeholder: when a SteamGridDB key is set, the
+     * lookup runs off the main thread and its image is shown in place of the title. The host's own box-art cache is
+     * never written: the image comes from the game-info cache and lives in memory here, so a real cover the host
+     * sends later still wins. Silent when it finds nothing.
      */
     private void requestCoverFallback(LoaderTuple tuple, ImageView imageView, TextView textView) {
         android.content.Context context = imageView.getContext().getApplicationContext();
@@ -323,14 +325,12 @@ public class CachedAppAssetLoader {
         WeakReference<ImageView> imageRef = new WeakReference<>(imageView);
         WeakReference<TextView> textRef = new WeakReference<>(textView);
         android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
-        com.limelight.console.GameInfo.get(context).cover(tuple.app.getAppName(), tuple.app.getGameId(), file -> {
-            if (file == null) return;
-            try (InputStream in = new java.io.FileInputStream(file)) {
-                diskLoader.populateCacheWithStream(tuple, in);
-            } catch (IOException e) {
-                return;
-            }
+        com.limelight.console.GameInfo.get(context).cover(com.limelight.console.GameInfo.Game.of(tuple.app), file -> {
+            ScaledBitmap art = file == null ? null : decodeFallback(file);
             main.post(() -> {
+                coverFallbackAsked.remove(tuple.app.getAppId());
+                if (art == null) return;
+                memoryLoader.populateCache(tuple, art);
                 withoutArt.remove(tuple.app.getAppId());
                 ImageView view = imageRef.get();
                 TextView text = textRef.get();
@@ -342,6 +342,16 @@ public class CachedAppAssetLoader {
                 if (artListener != null) artListener.accept(tuple.app);
             });
         });
+    }
+
+    private ScaledBitmap decodeFallback(java.io.File file) {
+        android.graphics.BitmapFactory.Options bounds = new android.graphics.BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        android.graphics.BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
+        android.graphics.BitmapFactory.Options options = new android.graphics.BitmapFactory.Options();
+        options.inSampleSize = Math.max(1, (int) scalingDivider);
+        Bitmap bitmap = android.graphics.BitmapFactory.decodeFile(file.getAbsolutePath(), options);
+        return bitmap == null ? null : new ScaledBitmap(bounds.outWidth, bounds.outHeight, bitmap);
     }
 
     /** A cover frame crops its art to fill it, whatever the art's shape. */
@@ -476,6 +486,8 @@ public class CachedAppAssetLoader {
         public final ComputerDetails computer;
         public final NvApp app;
         public final String cacheKey;
+        /** Set by the last network load: the host answered 404, it has no cover for the game. */
+        public volatile boolean hostHasNoCover;
 
         public LoaderTuple(ComputerDetails computer, NvApp app) {
             this.computer = computer;

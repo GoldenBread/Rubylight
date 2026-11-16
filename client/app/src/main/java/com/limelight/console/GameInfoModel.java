@@ -136,9 +136,14 @@ public final class GameInfoModel {
         }
     }
 
-    static Cleaned clean(Calls calls, String name, String gameId) throws JSONException {
-        JSONObject ok = ask(calls, new JSONObject().put("op", "clean").put("name", name)
-                .put("game_id", gameId == null ? JSONObject.NULL : gameId));
+    /** {@code storeSource} and {@code storeId} are the library's store entry; a "steam" one gives the Steam app id. */
+    static Cleaned clean(Calls calls, String name, String gameId, String storeSource, String storeId) throws JSONException {
+        JSONObject request = new JSONObject().put("op", "clean").put("name", name)
+                .put("game_id", gameId == null ? JSONObject.NULL : gameId);
+        if (storeSource != null && storeId != null) {
+            request.put("store", new JSONObject().put("source", storeSource).put("id", storeId));
+        }
+        JSONObject ok = ask(calls, request);
         return new Cleaned(ok.getString("clean"), ok.getString("key"), ok.isNull("steam") ? null : ok.getLong("steam"));
     }
 

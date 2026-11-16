@@ -50,6 +50,7 @@ final class CoverLoaders {
             app.setAppUuid(source.appUuid);
             app.setStableId(source.stableId());
             app.setGameId(source.gameId);
+            app.setStoreEntry(source.storeSource, source.storeId);
             app.setArtVersion(source.coverVersion == null ? "" : source.coverVersion);
         }
         return app;
@@ -84,7 +85,6 @@ final class CoverLoaders {
         if (!GameInfo.coverWanted(context)) return;
         String tag = "game-info:" + app.getAssetCacheKey();
         image.setTag(tag);
-        GameInfo info = GameInfo.get(context);
         java.util.function.Consumer<java.io.File> show = file -> {
             if (file == null) return;
             DisplayMetrics metrics = context.getResources().getDisplayMetrics();
@@ -105,16 +105,9 @@ final class CoverLoaders {
                 if (artListener != null) artListener.accept(app);
             });
         };
-        String name = app.getAppName();
-        String gameId = app.getGameId();
-        // Kept on disk already: no request. Otherwise the lookup runs on the shared worker thread.
-        Thread thread = new Thread(() -> {
-            java.io.File kept = info.cachedCover(name, gameId);
-            if (kept != null) show.accept(kept);
-            else info.cover(name, gameId, show);
-        }, "game-info-cover");
-        thread.setDaemon(true);
-        thread.start();
+        // A cover kept on disk comes without a request; otherwise the lookup runs on the shared worker. Both off the
+        // main thread, on bounded executors, and views asking for one game share one lookup.
+        GameInfo.get(context).cover(GameInfo.Game.of(app), show);
     }
 
     /** The cover if it is in memory now (never starts a load), else null. */
