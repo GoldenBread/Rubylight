@@ -17,6 +17,46 @@ pub const KEY_SETTING: &str = "steamgriddb_api_key";
 /// What the console is shown for a saved key, and a save that sends it back keeps the key.
 pub const MASK: &str = "********";
 
+/// The file in the profile's administrators-only `credentials` folder that holds the key the
+/// console saved. A key written into `sunshine.conf` by hand is read too.
+pub const KEY_FILE: &str = "steamgriddb_api_key";
+/// The app field that says its cover came from SteamGridDB: the `image-path` it was given. A
+/// launcher's or Playnite's cover replaces such a cover; one that no longer matches it was
+/// cleared or replaced, and the app never gets a SteamGridDB cover again.
+pub const COVER_FIELD: &str = "steamgriddb-cover";
+
+/// Whether the app's cover is the one SteamGridDB gave it.
+pub fn fetched_cover(app: &Value) -> bool {
+    let marker = app.get(COVER_FIELD).and_then(Value::as_str).unwrap_or("");
+    !marker.is_empty() && app.get("image-path").and_then(Value::as_str) == Some(marker)
+}
+
+/// The kind of a downloaded image, `png` or `jpeg`, when both its `Content-Type` (when given)
+/// and its first bytes say so. Anything else is not converted.
+pub fn image_type(content_type: Option<&str>, bytes: &[u8]) -> Option<&'static str> {
+    let sniffed = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        "png"
+    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        "jpeg"
+    } else {
+        return None;
+    };
+    let declared = content_type.map(|value| {
+        value
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase()
+    });
+    match declared.as_deref() {
+        None => Some(sniffed),
+        Some("image/png") if sniffed == "png" => Some(sniffed),
+        Some("image/jpeg" | "image/jpg") if sniffed == "jpeg" => Some(sniffed),
+        _ => None,
+    }
+}
+
 /// Portrait grids as Moonlight shows covers: 600x900, still images the host can convert, without
 /// images tagged NSFW, humor or epilepsy.
 const GRID_FILTER: &str = "dimensions=600x900&mimes=image/png,image/jpeg&types=static&nsfw=false&humor=false&epilepsy=false";
@@ -245,6 +285,42 @@ mod tests {
             matching_game(br#"{"success":true,"data":[]}"#, "Doom"),
             None
         );
+    }
+
+    #[test]
+    fn only_a_png_or_jpeg_that_says_so_is_an_image() {
+        let png = b"\x89PNG\r\n\x1a\nrest";
+        let jpeg = [0xff, 0xd8, 0xff, 0xe0];
+        assert_eq!(image_type(Some("image/png"), png), Some("png"));
+        assert_eq!(
+            image_type(Some("Image/JPEG; charset=x"), &jpeg),
+            Some("jpeg")
+        );
+        assert_eq!(image_type(None, png), Some("png"));
+        assert_eq!(
+            image_type(Some("image/jpeg"), png),
+            None,
+            "the type must match"
+        );
+        assert_eq!(image_type(Some("text/html"), png), None);
+        assert_eq!(image_type(Some("image/png"), b"<html>"), None);
+        assert_eq!(image_type(Some("image/webp"), b"RIFF....WEBP"), None);
+    }
+
+    #[test]
+    fn a_cover_is_steamgriddbs_while_its_mark_matches() {
+        use serde_json::json;
+        assert!(fetched_cover(
+            &json!({"image-path": "C:/c/sgdb_a.png", COVER_FIELD: "C:/c/sgdb_a.png"})
+        ));
+        assert!(
+            !fetched_cover(&json!({"image-path": "", COVER_FIELD: "C:/c/sgdb_a.png"})),
+            "cleared"
+        );
+        assert!(!fetched_cover(
+            &json!({"image-path": "D:/mine.png", COVER_FIELD: "C:/c/sgdb_a.png"})
+        ));
+        assert!(!fetched_cover(&json!({"image-path": "D:/mine.png"})));
     }
 
     #[test]

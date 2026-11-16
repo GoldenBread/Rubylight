@@ -1315,9 +1315,13 @@ pub fn reconcile(
                 if image.is_empty()
                     || image == FALLBACK_IMAGE
                     || (!previous.is_empty() && image == previous)
+                    || crate::steamgriddb::fetched_cover(app)
                 {
                     let before = app.clone();
                     let cover = generic(cover);
+                    if let Some(fields) = app.as_object_mut() {
+                        fields.remove(crate::steamgriddb::COVER_FIELD);
+                    }
                     app["image-path"] = json!(cover);
                     app["steam-artwork-client-path"] = json!(cover);
                     app["steam-artwork-client-compatible"] = json!(true);

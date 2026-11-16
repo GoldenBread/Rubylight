@@ -18,8 +18,9 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
             if let Some(values) = v.as_object_mut() {
                 values.remove("webhooks");
                 // The SteamGridDB key never comes back either: a saved one shows as the mask.
-                if let Some(key) = values.get_mut(sgdb::KEY_SETTING) {
-                    *key = json!(sgdb::MASK);
+                values.remove(sgdb::KEY_SETTING);
+                if crate::steamgriddb::has_key(h) {
+                    values.insert(sgdb::KEY_SETTING.into(), json!(sgdb::MASK));
                 }
             }
             v["status"] = json!(true);
@@ -35,14 +36,21 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
             for key in ["status", "platform", "version"] {
                 object.remove(key);
             }
-            // The mask GET showed keeps the saved key.
-            if object
-                .get(sgdb::KEY_SETTING)
-                .and_then(Value::as_str)
-                .map(str::trim)
-                == Some(sgdb::MASK)
-            {
-                object.remove(sgdb::KEY_SETTING);
+            // The SteamGridDB key is kept in the administrators-only credentials folder, never in
+            // sunshine.conf, which every local user can read. The mask GET showed keeps it.
+            let steamgriddb_key = match object.remove(sgdb::KEY_SETTING) {
+                None => None,
+                Some(Value::String(text)) if text.trim() == sgdb::MASK => None,
+                Some(Value::Null) => Some(String::new()),
+                Some(Value::String(text)) => {
+                    sgdb::check_key(&text).map_err(|message| anyhow::anyhow!(message))?;
+                    Some(text.trim().to_owned())
+                }
+                Some(_) => anyhow::bail!("{} must be text", sgdb::KEY_SETTING),
+            };
+            if steamgriddb_key.is_some() {
+                // A copy written into sunshine.conf by hand goes.
+                object.insert(sgdb::KEY_SETTING.into(), Value::Null);
             }
             if object.contains_key("webhooks") {
                 anyhow::bail!(
@@ -60,6 +68,9 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
             };
             next.update(&object)?;
             next.check_saved(object.keys())?;
+            if let Some(key) = &steamgriddb_key {
+                crate::steamgriddb::store_key(h, Some(key))?;
+            }
             state::atomic_write(&h.config_path, next.text().as_bytes())?;
             let warning =
                 butterpollo_windows::vulkan::reconcile(next.boolean("vulkan_hdr_layer", true))

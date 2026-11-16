@@ -688,10 +688,14 @@ pub fn reconcile(
         };
         matched.insert(key(&game.id));
         if !owned(app) {
-            if field(app, "image-path").is_empty()
+            // A cover from SteamGridDB stands in only until Playnite has one.
+            if (field(app, "image-path").is_empty() || crate::steamgriddb::fetched_cover(app))
                 && let Some((Some(cover), _)) = artwork.get(&key(&game.id))
             {
                 app["image-path"] = json!(cover.to_string_lossy().replace('\\', "/"));
+                if let Some(fields) = app.as_object_mut() {
+                    fields.remove(crate::steamgriddb::COVER_FIELD);
+                }
             }
             continue;
         }
