@@ -1,0 +1,7 @@
+- Home can show only one PC's games (PC options).
+- A game's page opens the stream profile chooser.
+- New Light theme.
+- Sharper colored text (4:4:4) now works with PyroWave.
+- GPU driver ZIPs with one top folder import.
+- An HDR stream that Vulkan could only tone-map moves to the standard renderer.
+- TV: one focus ring on Retry, PC card icon inset, shelves fade under the hero, dialog buttons that do not fit stack.
