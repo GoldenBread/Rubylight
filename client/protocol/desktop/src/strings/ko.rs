@@ -1634,4 +1634,8 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("Sharper colored text needs a hardware decoder. Choose one under Decoder in Settings, or turn off Sharper colored text, then start the stream again.", "‘더 선명한 컬러 텍스트’에는 하드웨어 디코더가 필요합니다. ‘설정’의 ‘디코더’에서 선택하거나 ‘더 선명한 컬러 텍스트’를 끈 다음 스트림을 다시 시작하세요."),
     ("This stream’s picture cannot be shown with any decoder on this device. Choose another Video codec or Decoder in Settings, then start the stream again.", "이 기기의 어떤 디코더로도 이 스트림의 화면을 표시할 수 없습니다. ‘설정’에서 다른 ‘비디오 코덱’이나 ‘디코더’를 선택한 다음 스트림을 다시 시작하세요."),
     ("File transfers failed: {}", "실패한 파일 전송: {}"),
+    ("Whole frames under VRR", "VRR에서 온전한 프레임"),
+    ("Nightjar’s wait", "Nightjar 대기"),
+    ("Windows V-Sync", "Windows의 V-Sync"),
+    ("How a frame that meets the screen still drawing waits, with Variable refresh rate On: Automatic uses Nightjar’s wait and switches to Windows V-Sync where that wait can tear, while Nightjar’s wait never switches. Windows V-Sync can add up to one refresh of delay; choose it only if frames still tear on Automatic.", "가변 주사율이 사용일 때 화면이 아직 그리는 중인 프레임이 기다리는 방식입니다. 자동은 Nightjar 대기를 쓰고 그 대기로 티어링이 생길 수 있는 화면에서는 Windows V-Sync로 바꾸며, Nightjar 대기는 바꾸지 않습니다. Windows V-Sync는 최대 한 번의 화면 갱신만큼 지연을 더할 수 있으니 자동에서도 프레임이 찢어질 때만 고르세요."),
 ];

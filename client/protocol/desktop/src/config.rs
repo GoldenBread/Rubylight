@@ -184,6 +184,28 @@ impl GraphicsCard {
     }
 }
 
+/// How Tear-free VRR (`vrr_tear_free`, Windows) waits for a scan under way, "Whole frames under
+/// VRR" in Debug: Automatic is the wait for the beam (`present::VrrSync::Scan`) that turns to sync
+/// interval 1 on a display whose presents start no scan (`scan_sync::UNTRUSTED_MISSES`); Scan
+/// keeps that wait, VSync presents with sync interval 1 from the start (`VrrSync::Present1`).
+/// `NIGHTJAR_VRR_SYNC` overrides it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VrrWait {
+    #[default]
+    Automatic,
+    Scan,
+    VSync,
+}
+
+impl VrrWait {
+    #[cfg_attr(not(windows), allow(dead_code))] // the menu is drawn only on Windows
+    pub const ALL: [Self; 3] = [Self::Automatic, Self::Scan, Self::VSync];
+
+    pub fn label(self) -> &'static str {
+        match self { Self::Automatic => en("Automatic"), Self::Scan => en("Nightjar’s wait"), Self::VSync => en("Windows V-Sync") }
+    }
+}
+
 /// Frame pacing without VRR, Android's `frame_pacing` (`FramePacingPolicy`): how decoded pictures
 /// wait for the display. `stream::present` applies it; with VRR it does not apply, as on Android.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -361,6 +383,8 @@ pub struct Settings {
     /// the last one waits for it to finish, at most one refresh, and is shown whole
     /// (`present::VrrSync::Scan`). On by default; off shows every frame at once, with tearing.
     pub vrr_tear_free: bool,
+    /// How Tear-free VRR waits (`VrrWait`, Windows): Automatic by default.
+    pub vrr_wait: VrrWait,
     /// Without VRR: wait for the display's refresh (no tearing).
     pub vsync: bool,
     /// Without VRR: how pictures wait for the display (Android's `frame_pacing`).
@@ -1094,6 +1118,7 @@ impl Default for Settings {
             vrr: true,
             present_at_host_times: true,
             vrr_tear_free: true,
+            vrr_wait: VrrWait::Automatic,
             vsync: true,
             frame_pacing: FramePacing::Latency,
             drop_late_frames: true,

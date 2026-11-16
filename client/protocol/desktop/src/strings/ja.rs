@@ -1634,4 +1634,8 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("Sharper colored text needs a hardware decoder. Choose one under Decoder in Settings, or turn off Sharper colored text, then start the stream again.", "「色付きテキストをより鮮明に」にはハードウェアデコーダーが必要です。「設定」の「デコーダー」で選ぶか、「色付きテキストをより鮮明に」をオフにして、ストリームを開始し直してください。"),
     ("This stream’s picture cannot be shown with any decoder on this device. Choose another Video codec or Decoder in Settings, then start the stream again.", "このデバイスのどのデコーダーでも、このストリームの映像を表示できません。「設定」で別の「映像コーデック」または「デコーダー」を選び、ストリームを開始し直してください。"),
     ("File transfers failed: {}", "失敗したファイル転送：{}"),
+    ("Whole frames under VRR", "VRR時のフレーム全体表示"),
+    ("Nightjar’s wait", "Nightjarの待機"),
+    ("Windows V-Sync", "WindowsのV-Sync"),
+    ("How a frame that meets the screen still drawing waits, with Variable refresh rate On: Automatic uses Nightjar’s wait and switches to Windows V-Sync where that wait can tear, while Nightjar’s wait never switches. Windows V-Sync can add up to one refresh of delay; choose it only if frames still tear on Automatic.", "可変リフレッシュレートがオンのとき、画面がまだ描画中のフレームの待ち方です。自動はNightjarの待機を使い、その待機でティアリングが起きうる画面ではWindowsのV-Syncに切り替えます。Nightjarの待機は切り替わりません。WindowsのV-Syncは最大1リフレッシュ分の遅延が加わることがあります。自動でもティアリングが残る場合だけ選んでください。"),
 ];

@@ -1634,4 +1634,8 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("Sharper colored text needs a hardware decoder. Choose one under Decoder in Settings, or turn off Sharper colored text, then start the stream again.", "“Chữ màu sắc nét hơn” cần bộ giải mã phần cứng. Hãy chọn một bộ trong mục “Bộ giải mã” của Cài đặt, hoặc tắt “Chữ màu sắc nét hơn”, rồi bắt đầu lại stream."),
     ("This stream’s picture cannot be shown with any decoder on this device. Choose another Video codec or Decoder in Settings, then start the stream again.", "Không bộ giải mã nào trên thiết bị này hiển thị được hình ảnh của stream này. Hãy chọn “Codec video” hoặc “Bộ giải mã” khác trong Cài đặt, rồi bắt đầu lại stream."),
     ("File transfers failed: {}", "Truyền tệp thất bại: {}"),
+    ("Whole frames under VRR", "Khung hình trọn vẹn khi VRR"),
+    ("Nightjar’s wait", "Chờ của Nightjar"),
+    ("Windows V-Sync", "V-Sync của Windows"),
+    ("How a frame that meets the screen still drawing waits, with Variable refresh rate On: Automatic uses Nightjar’s wait and switches to Windows V-Sync where that wait can tear, while Nightjar’s wait never switches. Windows V-Sync can add up to one refresh of delay; choose it only if frames still tear on Automatic.", "Cách một khung hình chờ khi màn hình vẫn đang vẽ khung trước, với Tần số quét thay đổi ở Bật: Tự động dùng cách chờ của Nightjar và chuyển sang V-Sync của Windows ở màn hình mà cách chờ đó có thể gây xé hình, còn Chờ của Nightjar không bao giờ chuyển. V-Sync của Windows có thể thêm độ trễ tới một lần làm mới; chỉ chọn nó nếu khung hình vẫn bị xé ở Tự động."),
 ];

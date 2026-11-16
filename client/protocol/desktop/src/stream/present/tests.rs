@@ -1668,7 +1668,7 @@ fn a_display_whose_presents_start_no_scan_turns_tear_free_vrr_to_sync_interval_1
         assert!(!vrr.distrust_scan(), "once");
     }
     // A sync the switch chose stays, and so do Fastest (off) and the other measurement syncs.
-    let mut forced = VrrPacing::new(true, PacingMode::Vsync, VrrSync::Scan, PacingMode::Immediate).with_sync_forced(true);
+    let mut forced = VrrPacing::new(true, PacingMode::Vsync, VrrSync::Scan, PacingMode::Immediate).with_wait(crate::config::VrrWait::Automatic, true);
     assert!(!forced.distrust_scan());
     assert_eq!(forced.sync, VrrSync::Scan);
     for sync in [VrrSync::Off, VrrSync::Blank, VrrSync::Present1] {
@@ -1676,4 +1676,28 @@ fn a_display_whose_presents_start_no_scan_turns_tear_free_vrr_to_sync_interval_1
         assert!(!vrr.distrust_scan(), "{sync:?}");
         assert_eq!((vrr.sync, vrr.distrusted), (sync, false));
     }
+}
+
+#[test]
+fn whole_frames_under_vrr_picks_the_wait_unless_the_switch_set_one() {
+    use crate::config::VrrWait;
+    let scan = || VrrPacing::new(true, PacingMode::Vsync, VrrSync::Scan, PacingMode::Immediate);
+    // Automatic: the beam's wait, which may still turn.
+    let auto = scan().with_wait(VrrWait::Automatic, false);
+    assert_eq!((auto.sync, auto.distrusted, auto.sync_forced), (VrrSync::Scan, false, false));
+    // Nightjar's wait stays, whatever the display check finds.
+    let mut kept = scan().with_wait(VrrWait::Scan, false);
+    assert!(!kept.distrust_scan());
+    assert_eq!(kept.sync, VrrSync::Scan);
+    // Windows V-Sync: sync interval 1 from the first present.
+    let mut vsync = scan().with_wait(VrrWait::VSync, false);
+    assert_eq!((vsync.sync, vsync.distrusted), (VrrSync::Present1, true));
+    let mut mode = PacingMode::Immediate;
+    assert_eq!(vsync.step(&mut mode, None, 0), Some(1));
+    // NIGHTJAR_VRR_SYNC wins over the setting.
+    let set = scan().with_wait(VrrWait::VSync, true);
+    assert_eq!((set.sync, set.distrusted, set.sync_forced), (VrrSync::Scan, false, true));
+    // Fastest: nothing to wait for.
+    let fastest = VrrPacing::new(true, PacingMode::Vsync, VrrSync::Off, PacingMode::Immediate).with_wait(VrrWait::VSync, false);
+    assert_eq!((fastest.sync, fastest.distrusted), (VrrSync::Off, false));
 }

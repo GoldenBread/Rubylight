@@ -1634,4 +1634,8 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("Sharper colored text needs a hardware decoder. Choose one under Decoder in Settings, or turn off Sharper colored text, then start the stream again.", "“Daha keskin renkli metin” için donanım kod çözücüsü gerekir. Ayarlar’daki “Kod çözücü” bölümünden birini seçin veya “Daha keskin renkli metin” seçeneğini kapatın, ardından yayını yeniden başlatın."),
     ("This stream’s picture cannot be shown with any decoder on this device. Choose another Video codec or Decoder in Settings, then start the stream again.", "Bu yayının görüntüsü bu cihazdaki hiçbir kod çözücüyle gösterilemiyor. Ayarlar’dan başka bir “Video kodeği” veya “Kod çözücü” seçin, ardından yayını yeniden başlatın."),
     ("File transfers failed: {}", "Başarısız dosya aktarımları: {}"),
+    ("Whole frames under VRR", "VRR’de tam kareler"),
+    ("Nightjar’s wait", "Nightjar’ın beklemesi"),
+    ("Windows V-Sync", "Windows’un V-Sync’i"),
+    ("How a frame that meets the screen still drawing waits, with Variable refresh rate On: Automatic uses Nightjar’s wait and switches to Windows V-Sync where that wait can tear, while Nightjar’s wait never switches. Windows V-Sync can add up to one refresh of delay; choose it only if frames still tear on Automatic.", "Değişken yenileme hızı Açık iken, ekran hâlâ çizerken gelen bir karenin nasıl beklediği: Otomatik, Nightjar’ın beklemesini kullanır ve bu beklemenin yırtılma yapabildiği ekranlarda Windows V-Sync’e geçer; Nightjar’ın beklemesi hiç geçmez. Windows V-Sync bir yenilemeye kadar gecikme ekleyebilir; yalnızca kareler Otomatik’te de yırtılıyorsa seçin."),
 ];

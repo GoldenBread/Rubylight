@@ -1634,4 +1634,8 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("Sharper colored text needs a hardware decoder. Choose one under Decoder in Settings, or turn off Sharper colored text, then start the stream again.", "「更清晰的彩色文字」需要硬體解碼器。請在「設定」的「解碼器」中選擇一個，或關閉「更清晰的彩色文字」，然後重新開始串流。"),
     ("This stream’s picture cannot be shown with any decoder on this device. Choose another Video codec or Decoder in Settings, then start the stream again.", "這部裝置上的任何解碼器都無法顯示此串流的畫面。請在「設定」中選擇其他「視訊編解碼器」或「解碼器」，然後重新開始串流。"),
     ("File transfers failed: {}", "失敗的檔案傳輸：{}"),
+    ("Whole frames under VRR", "VRR 下的完整畫面"),
+    ("Nightjar’s wait", "Nightjar 的等待"),
+    ("Windows V-Sync", "Windows 垂直同步"),
+    ("How a frame that meets the screen still drawing waits, with Variable refresh rate On: Automatic uses Nightjar’s wait and switches to Windows V-Sync where that wait can tear, while Nightjar’s wait never switches. Windows V-Sync can add up to one refresh of delay; choose it only if frames still tear on Automatic.", "可變更新頻率為開啟時，影格遇到螢幕仍在繪製上一格時如何等待：自動使用 Nightjar 的等待，並在該等待可能撕裂的螢幕上改用 Windows 垂直同步；Nightjar 的等待從不切換。Windows 垂直同步最多可能增加一次更新的延遲；僅當自動下畫面仍有撕裂時才選擇它。"),
 ];

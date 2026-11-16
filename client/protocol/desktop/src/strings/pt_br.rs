@@ -1634,4 +1634,8 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer de recepção: o sistema concedeu 
     ("Sharper colored text needs a hardware decoder. Choose one under Decoder in Settings, or turn off Sharper colored text, then start the stream again.", "Texto colorido mais nítido precisa de um decodificador de hardware. Escolha um em Decodificador, nas Configurações, ou desative Texto colorido mais nítido e inicie a transmissão novamente."),
     ("This stream’s picture cannot be shown with any decoder on this device. Choose another Video codec or Decoder in Settings, then start the stream again.", "A imagem desta transmissão não pode ser exibida com nenhum decodificador deste dispositivo. Escolha outro Codec de vídeo ou Decodificador em Configurações e inicie a transmissão novamente."),
     ("File transfers failed: {}", "Transferências de arquivos com falha: {}"),
+    ("Whole frames under VRR", "Quadros inteiros com VRR"),
+    ("Nightjar’s wait", "Espera do Nightjar"),
+    ("Windows V-Sync", "V-Sync do Windows"),
+    ("How a frame that meets the screen still drawing waits, with Variable refresh rate On: Automatic uses Nightjar’s wait and switches to Windows V-Sync where that wait can tear, while Nightjar’s wait never switches. Windows V-Sync can add up to one refresh of delay; choose it only if frames still tear on Automatic.", "Como espera um quadro que encontra a tela ainda desenhando, com Taxa de atualização variável em Ativado: Automático usa a espera do Nightjar e muda para o V-Sync do Windows onde essa espera pode causar tearing, enquanto a espera do Nightjar nunca muda. O V-Sync do Windows pode adicionar até uma atualização de atraso; escolha-o só se os quadros ainda rasgarem em Automático."),
 ];

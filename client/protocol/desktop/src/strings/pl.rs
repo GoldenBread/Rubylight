@@ -1634,4 +1634,8 @@ sudo sysctl -w net.core.rmem_max={}", "Bufor odbioru: system przydzielił {0} Ki
     ("Sharper colored text needs a hardware decoder. Choose one under Decoder in Settings, or turn off Sharper colored text, then start the stream again.", "„Ostrzejszy kolorowy tekst” wymaga dekodera sprzętowego. Wybierz go w sekcji „Dekoder” w Ustawieniach albo wyłącz „Ostrzejszy kolorowy tekst”, a potem uruchom strumień ponownie."),
     ("This stream’s picture cannot be shown with any decoder on this device. Choose another Video codec or Decoder in Settings, then start the stream again.", "Obrazu tego strumienia nie można wyświetlić żadnym dekoderem na tym urządzeniu. Wybierz inny „Kodek wideo” lub „Dekoder” w Ustawieniach, a potem uruchom strumień ponownie."),
     ("File transfers failed: {}", "Nieudane transfery plików: {}"),
+    ("Whole frames under VRR", "Całe klatki przy VRR"),
+    ("Nightjar’s wait", "Oczekiwanie Nightjara"),
+    ("Windows V-Sync", "V-Sync Windows"),
+    ("How a frame that meets the screen still drawing waits, with Variable refresh rate On: Automatic uses Nightjar’s wait and switches to Windows V-Sync where that wait can tear, while Nightjar’s wait never switches. Windows V-Sync can add up to one refresh of delay; choose it only if frames still tear on Automatic.", "Jak czeka klatka, która trafia na ekran wciąż rysujący poprzednią, przy Zmiennej częstotliwości odświeżania na Wł.: Automatycznie używa oczekiwania Nightjara i przełącza na V-Sync Windows tam, gdzie to oczekiwanie może rwać obraz, a Oczekiwanie Nightjara nigdy nie przełącza. V-Sync Windows może dodać do jednego odświeżenia opóźnienia; wybierz go tylko, jeśli klatki nadal się rwą przy Automatycznie."),
 ];

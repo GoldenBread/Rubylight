@@ -1634,4 +1634,8 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приймання: систе
     ("Sharper colored text needs a hardware decoder. Choose one under Decoder in Settings, or turn off Sharper colored text, then start the stream again.", "Функції «Чіткіший кольоровий текст» потрібен апаратний декодер. Виберіть його в пункті «Декодер» у «Налаштуваннях» або вимкніть «Чіткіший кольоровий текст», потім знову запустіть трансляцію."),
     ("This stream’s picture cannot be shown with any decoder on this device. Choose another Video codec or Decoder in Settings, then start the stream again.", "Зображення цієї трансляції не може показати жоден декодер на цьому пристрої. Виберіть інший «Відеокодек» або «Декодер» у «Налаштуваннях», потім знову запустіть трансляцію."),
     ("File transfers failed: {}", "Не вдалося передати файлів: {}"),
+    ("Whole frames under VRR", "Цілі кадри з VRR"),
+    ("Nightjar’s wait", "Очікування Nightjar"),
+    ("Windows V-Sync", "V-Sync Windows"),
+    ("How a frame that meets the screen still drawing waits, with Variable refresh rate On: Automatic uses Nightjar’s wait and switches to Windows V-Sync where that wait can tear, while Nightjar’s wait never switches. Windows V-Sync can add up to one refresh of delay; choose it only if frames still tear on Automatic.", "Як чекає кадр, коли екран ще малює попередній, за Змінної частоти оновлення «Увімкнено»: «Автоматично» використовує очікування Nightjar і перемикається на V-Sync Windows там, де це очікування може давати розриви, а «Очікування Nightjar» не перемикається ніколи. V-Sync Windows може додати затримку до одного оновлення; обирайте його, лише якщо кадри рвуться і в режимі «Автоматично»."),
 ];

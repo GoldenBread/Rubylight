@@ -174,9 +174,14 @@ impl VrrPacing {
         Self { lfc, ..self }
     }
 
-    /// Keeps `sync` as `NIGHTJAR_VRR_SYNC` chose it (`distrust_scan`).
-    pub fn with_sync_forced(self, sync_forced: bool) -> Self {
-        Self { sync_forced, ..self }
+    /// Applies Whole frames under VRR (`config::VrrWait`) to Tear-free VRR's wait: Automatic leaves
+    /// the turn to `distrust_scan`, Scan keeps the beam's wait, VSync presents with sync interval 1
+    /// from the start. A sync `NIGHTJAR_VRR_SYNC` set (`env_set`) stays as set.
+    pub fn with_wait(mut self, wait: crate::config::VrrWait, env_set: bool) -> Self {
+        use crate::config::VrrWait;
+        if !env_set && wait == VrrWait::VSync { self.distrust_scan(); }
+        self.sync_forced = env_set || wait != VrrWait::Automatic;
+        self
     }
 
     /// Turns Tear-free VRR's wait for the beam (`VrrSync::Scan`) to sync interval 1 for the rest of

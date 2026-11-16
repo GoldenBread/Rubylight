@@ -79,6 +79,8 @@ with tearing. How the wait is done depends on the system:
   closes, and the overlay's Pacing line says "tear-free with V-Sync". It costs delay now and then:
   measured on a 240 Hz VRR monitor at 60 fps against showing every frame at once, the 95th
   percentile from present to screen went from 1.2 to 8.3 ms.
+  The setting **Whole frames under VRR** in Debug keeps Nightjar's wait or uses Windows V-Sync
+  from the start, for testing a screen either way.
 - **Linux, drawing straight to the display** (KMS, without a desktop): Nightjar hands each picture
   to the display in step with it. A picture handed over during a refresh is taken when that
   refresh ends, and starts the next one. Up to Nightjar 5.3.0 every VRR stream there was shown at

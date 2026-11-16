@@ -497,6 +497,8 @@ fn the_section_key_table_is_what_the_page_draws() {
         "fractional_vsync" => true,
         "renderer" | "display_output" | "video_planes" | "high_performance_gpu_power" | "vulkan_video_first" | "vulkan_rfi" => cfg!(target_os = "linux"),
         "graphics_card" => graphics_card_here(),
+        // Windows' wait for the scan line, with Variable refresh rate On.
+        "vrr_wait" => cfg!(windows) && vrr,
         _ => true,
     };
     for vrr in [false, true] {
@@ -520,14 +522,17 @@ fn the_section_key_table_is_what_the_page_draws() {
 #[test]
 fn the_developer_rows_and_diagnostics_are_in_debug() {
     // Android's main rows in its order, then PyroWave's, the decoder's, the cursor and Diagnostics.
-    const DEBUG: [&str; 12] = ["error_correction", "tell_host_wireless", "tell_host_link_speed",
-        "network_priority", "unbatched_input", "full_range", "pyrowave_decoder", "pyrowave_async_compute", "decoder",
+    const DEBUG: [&str; 13] = ["error_correction", "tell_host_wireless", "tell_host_link_speed",
+        "network_priority", "unbatched_input", "full_range", "vrr_wait", "pyrowave_decoder", "pyrowave_async_compute", "decoder",
         "vulkan_video_first", "vulkan_rfi", "cursor_shapes"];
     assert_eq!(SETTINGS_SECTIONS.last(), Some(&"Debug"));
     // Prioritize stream traffic does something on Linux and Windows, so only they draw it; Vulkan
     // video is Linux's; the compute queue is the GPU decoder's, macOS's default is the processor.
     let wanted = DEBUG.into_iter()
         .filter(|k| *k != "network_priority" || cfg!(any(target_os = "linux", windows)))
+        // Whole frames under VRR needs Windows presenting with tearing, which this harness does not
+        // report (`whole_frames_under_vrr_shows_only_with_vrr_on_and_offered` covers it).
+        .filter(|k| *k != "vrr_wait")
         .filter(|k| !matches!(*k, "vulkan_video_first" | "vulkan_rfi") || cfg!(target_os = "linux"))
         .filter(|k| *k != "pyrowave_async_compute" || Settings::default().pyrowave_decoder == crate::config::PyroWaveDecoder::Gpu)
         .collect::<Vec<_>>();
@@ -1975,4 +1980,22 @@ fn frames_waiting_for_the_decoder_show_their_choice() {
     assert_eq!(row, Some(&("decode_queue_frames", "list_decode_queue_frames")));
     s.decode_queue_frames = 5;
     assert_eq!(value_text("decode_queue_frames", &s, &crate::stream::Display { width: 1920, height: 1080, refresh_hz: 60.0, refresh_reported: true }, crate::glyphs::Style::Xbox), "5 frames");
+}
+
+/// Whole frames under VRR shows where Variable refresh rate does, with its On: not where Windows
+/// cannot present with tearing (the VRR row is hidden and streams use no VRR), nor with Fastest.
+#[test]
+fn whole_frames_under_vrr_shows_only_with_vrr_on_and_offered() {
+    let drawn = |s: Settings, tearing: bool| {
+        let mut f = settings_with(s);
+        f.l.tearing_supported = tearing;
+        open_folds(&mut f);
+        f.l.settings_view.section = "Debug";
+        f.settle();
+        setting_keys(&f).contains(&"vrr_wait")
+    };
+    assert_eq!(drawn(Settings::default(), true), cfg!(windows));
+    assert!(!drawn(Settings::default(), false), "no tearing: no VRR on Windows, no scan-line wait elsewhere");
+    assert!(!drawn(Settings { present_at_host_times: false, vrr_tear_free: false, ..Settings::default() }, true), "Fastest");
+    assert!(!drawn(Settings { vrr: false, ..Settings::default() }, true), "VRR off");
 }

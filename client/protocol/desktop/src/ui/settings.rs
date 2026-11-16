@@ -46,7 +46,7 @@ pub(super) const SECTION_KEYS: [&[&[&str]]; 8] = [
         &["ui_zoom"], &["high_contrast"], &["reduce_motion"]],
     &[&["graphics_card"], &["renderer"], &["display_output"], &["video_planes"], &["high_performance_gpu_power"], &["sops"], &["decode_queue_frames"]],
     &[&["error_correction"], &["tell_host_wireless"], &["tell_host_link_speed"],
-        &["network_priority"], &["unbatched_input"], &["full_range"],
+        &["network_priority"], &["unbatched_input"], &["full_range"], &["vrr_wait"],
         &["pyrowave_decoder"], &["pyrowave_async_compute"],
         &["decoder"], &["software_slices"], &["vulkan_video_first"], &["vulkan_rfi"], &["cursor_shapes"],
         &["link_probe"], &["post_stream_decode_time"]],
@@ -1569,6 +1569,21 @@ impl Launcher {
                 toggle(ui, &mut s.unbatched_input)
             });
             setting_row(ui, s, &mut rows, &["full_range"], "Full color range", "Asks for full-range video, for full shadow and highlight detail. Blacks crush or highlights clip unless the PC and the screen both use full range; leave it off unless you know both do.", |ui, s| toggle(ui, &mut s.full_range));
+            // Tear-free VRR's wait for the scan line is Windows'; Variable refresh rate's On asks for it.
+            if cfg!(windows) {
+                rows.when(s.vrr && s.vrr_tear_free && vrr_offered);
+                setting_row(ui, s, &mut rows, &["vrr_wait"], "Whole frames under VRR", "How a frame that meets the screen still drawing waits, with Variable refresh rate On: Automatic uses Nightjar’s wait and switches to Windows V-Sync where that wait can tear, while Nightjar’s wait never switches. Windows V-Sync can add up to one refresh of delay; choose it only if frames still tear on Automatic.", |ui, s| {
+                    Combo::from_id_salt("vrr-wait")
+                        .selected_text(tr(s.vrr_wait.label()))
+                        .show_ui(ui, |ui| {
+                            for wait in crate::config::VrrWait::ALL {
+                                ui.selectable_value(&mut s.vrr_wait, wait, tr(wait.label()));
+                            }
+                        })
+                        .response
+                });
+                rows.always();
+            }
             rows.group(en("PyroWave"));
             if let Some(reason) = &gpu_decoder_error {
                 rows.note(trf("GPU decoding isn’t available here: {}", &[reason]), *TERTIARY);
@@ -2406,6 +2421,7 @@ pub(super) fn value_text(key: &str, s: &Settings, display: &Display, style: crat
         "decoder" => decoder_name(s.decoder).to_owned(),
         "renderer" => tr(s.renderer.label()).to_owned(),
         "graphics_card" => tr(s.graphics_card.label()).to_owned(),
+        "vrr_wait" => tr(s.vrr_wait.label()).to_owned(),
         "display_output" => tr(s.display_output.label()).to_owned(),
         "pyrowave_decoder" => tr(s.pyrowave_decoder.label()).to_owned(),
         "window_mode" => window_name(s.window_mode).to_owned(),

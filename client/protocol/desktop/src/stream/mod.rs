@@ -980,6 +980,14 @@ impl Streaming {
         if matches!(vrr_sync, present::VrrSync::Scan | present::VrrSync::Blank) && !vrr_check {
             eprintln!("nightjar: VRR sync {} reads the scan line; the display check's verdict changes no pacing on this stream", vrr_sync.label());
         }
+        let sync_set = sync_env.as_deref().is_some_and(|sync| !sync.trim().is_empty());
+        let vrr_pacing = present::VrrPacing::new(vrr_check, vrr_fallback, vrr_sync, connecting.pacing).with_present_check(present_check).with_lfc(vrr_lfc)
+            .with_wait(settings.vrr_wait, sync_set);
+        if vrr_pacing.distrusted {
+            eprintln!("nightjar: VRR: tear-free presents wait for the refresh (sync interval 1), as Whole frames under VRR asks");
+        } else if vrr_sync == present::VrrSync::Scan && settings.vrr_wait == config::VrrWait::Scan && !sync_set {
+            eprintln!("nightjar: VRR: tear-free presents keep Nightjar's wait, as Whole frames under VRR asks");
+        }
         let mut doctor = doctor::Doctor::default();
         doctor.receive_buffer = session.video_receive_buffer();
         let direct_motion = direct_motion::DirectMotion::new(session.input_handle(), facts.touch);
@@ -1003,8 +1011,7 @@ impl Streaming {
             phase: phase::Phase::default(),
             race_probe: None,
             // The sync interval as `App::begin_stream` set it.
-            vrr: present::VrrPacing::new(vrr_check, vrr_fallback, vrr_sync, connecting.pacing).with_present_check(present_check).with_lfc(vrr_lfc)
-                .with_sync_forced(sync_env.as_deref().is_some_and(|sync| !sync.trim().is_empty())),
+            vrr: vrr_pacing,
             skip_over_waiting: env_flag("NIGHTJAR_PRESENT_SKIP").unwrap_or(true),
             present_deadline_us: std::env::var("NIGHTJAR_PRESENT_DEADLINE_US").ok().and_then(|us| us.parse().ok()),
             held_margin_us: std::env::var("NIGHTJAR_HELD_MARGIN_US").ok().and_then(|us| us.parse().ok()).inspect(|us| {

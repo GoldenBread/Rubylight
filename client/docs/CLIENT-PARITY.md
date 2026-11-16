@@ -72,6 +72,7 @@ The tables below have no macOS column. The Mac client shares the desktop library
 | Sharper colored text (YUV 4:4:4) | Yes | Yes | Yes | See [Sharper colored text](#sharper-colored-text-yuv-444). |
 | PyroWave | Yes | Yes | Yes | Decoding, the bandwidth test, pace calibration and PyroWave's own automatic bitrate (`nightjar-policy`). When the decoder falls behind, the desktop skips to the newest frame. |
 | Decode PyroWave on a compute queue (setting) | N/A | Yes | Yes | Off by default. Android's renderer has no separate compute queue ([PyroWave decoding](pyrowave-decode.md)). |
+| Whole frames under VRR (setting) | N/A | Yes | N/A | Automatic by default; Nightjar's wait or Windows V-Sync for testing. Only Windows waits on the scan line; Android, macOS and Linux show whole frames through the system or synchronised flips ([Real VRR](real-vrr.md#tear-free-vrr-on-windows)). |
 | Upscaling (FSR 1, SGSR 1) | Yes | Yes | Yes | Windows also offers the GPU's video upscaler (**AI enhancement**). |
 | Render through Vulkan | Yes | N/A | N/A | |
 | Renderer choice (**Settings → Advanced**) | N/A | N/A | Yes | Automatic starts on OpenGL and switches to the GPU (Vulkan) renderer when a stream needs it; OpenGL and GPU force one. |

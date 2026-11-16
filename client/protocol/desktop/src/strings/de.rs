@@ -1634,4 +1634,8 @@ sudo sysctl -w net.core.rmem_max={2}"),
     ("Sharper colored text needs a hardware decoder. Choose one under Decoder in Settings, or turn off Sharper colored text, then start the stream again.", "„Schärferer farbiger Text“ braucht einen Hardware-Decoder. Wähle in den Einstellungen unter Decoder einen aus oder schalte „Schärferer farbiger Text“ aus und starte den Stream dann neu."),
     ("This stream’s picture cannot be shown with any decoder on this device. Choose another Video codec or Decoder in Settings, then start the stream again.", "Das Bild dieses Streams kann mit keinem Decoder auf diesem Gerät angezeigt werden. Wähle in den Einstellungen einen anderen Videocodec oder Decoder und starte den Stream dann neu."),
     ("File transfers failed: {}", "Fehlgeschlagene Dateiübertragungen: {}"),
+    ("Whole frames under VRR", "Ganze Bilder bei VRR"),
+    ("Nightjar’s wait", "Nightjars Warten"),
+    ("Windows V-Sync", "Windows-V-Sync"),
+    ("How a frame that meets the screen still drawing waits, with Variable refresh rate On: Automatic uses Nightjar’s wait and switches to Windows V-Sync where that wait can tear, while Nightjar’s wait never switches. Windows V-Sync can add up to one refresh of delay; choose it only if frames still tear on Automatic.", "Wie ein Bild wartet, das auf einen noch zeichnenden Bildschirm trifft, bei Variabler Bildwiederholrate An: Automatisch nutzt Nightjars Warten und wechselt zu Windows-V-Sync, wo dieses Warten zu Tearing führen kann; Nightjars Warten wechselt nie. Windows-V-Sync kann bis zu eine Bildwiederholung Verzögerung hinzufügen; wähle es nur, wenn Bilder bei Automatisch weiter zerreißen."),
 ];
