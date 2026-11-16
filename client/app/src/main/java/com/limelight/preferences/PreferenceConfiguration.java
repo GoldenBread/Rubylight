@@ -108,7 +108,7 @@ public class PreferenceConfiguration {
     private static final String SHOW_TOUCHPAD_BUTTON_PREF_STRING = "checkbox_show_touchpad_button";
     public static final String OSC_STEAM_CONTROLS_PREF_STRING = "checkbox_osc_steam_controls";
     private static final String LEGACY_DISABLE_FRAME_DROP_PREF_STRING = "checkbox_disable_frame_drop";
-    private static final String ENABLE_HDR_PREF_STRING = "checkbox_enable_hdr";
+    static final String ENABLE_HDR_PREF_STRING = "checkbox_enable_hdr";
     static final String THERMAL_PROTECTION_PREF_STRING = "checkbox_thermal_protection";
     private static final String ENABLE_SDR10_PREF_STRING = "checkbox_enable_sdr_10bit";
     private static final String ENABLE_PIP_PREF_STRING = "checkbox_enable_pip";

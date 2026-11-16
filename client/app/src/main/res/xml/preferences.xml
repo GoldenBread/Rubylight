@@ -16,6 +16,39 @@
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:seekbar="http://schemas.moonlight-stream.com/apk/res/seekbar">
 
+    <!-- Recommended: the simple layer (SimpleProfile). Its choices write the values of the sections below;
+         a value changed there shows here as Custom (settings_custom). "Screen" is a read-only line: the
+         profile always streams at this device's own size and refresh rate. -->
+    <PreferenceCategory android:key="category_simple_main">
+        <com.limelight.preferences.SimpleProfilePreference
+            android:key="simple_smoothness"
+            android:title="@string/title_simple_smoothness"
+            android:dialogMessage="@string/summary_simple_smoothness"
+            android:entries="@array/simple_smoothness_names"
+            android:entryValues="@array/simple_smoothness_values" />
+        <com.limelight.preferences.SimpleProfilePreference
+            android:key="simple_picture"
+            android:title="@string/title_simple_picture"
+            android:dialogMessage="@string/summary_simple_picture"
+            android:entries="@array/simple_picture_names"
+            android:entryValues="@array/simple_picture_values" />
+        <Preference android:key="simple_screen" android:title="@string/title_simple_screen"
+            android:summary="@string/summary_simple_screen" android:persistent="false" />
+        <com.limelight.preferences.SimpleProfilePreference
+            android:key="simple_hdr"
+            android:title="@string/title_enable_hdr"
+            android:dialogMessage="@string/summary_enable_hdr"
+            android:entries="@array/simple_hdr_names"
+            android:entryValues="@array/simple_hdr_values" />
+        <com.limelight.preferences.ConsoleModePreference
+            android:key="checkbox_console_home"
+            android:title="@string/title_simple_console"
+            android:dialogMessage="@string/summary_simple_console"
+            android:defaultValue="true" />
+        <Preference android:key="simple_back_to_recommended" android:title="@string/simple_back_to_recommended"
+            android:summary="@string/summary_simple_back_to_recommended" android:persistent="false" />
+    </PreferenceCategory>
+
     <!-- Video -->
     <PreferenceCategory android:key="category_video_main">
         <com.limelight.preferences.ResolutionPreference

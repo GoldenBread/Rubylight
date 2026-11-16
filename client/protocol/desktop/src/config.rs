@@ -657,6 +657,12 @@ pub struct Settings {
     /// Open on Home (Continue playing, the library across PCs) when a paired PC has the
     /// Rubylight native API. Off starts on the list of PCs. Not a per-PC or per-game override.
     pub console_home: bool,
+    /// The simple layer's choices (Android's `simple_smoothness`, `simple_picture`, `simple_hdr`):
+    /// three plain settings that write the concrete values above when a player picks one in Settings.
+    /// A player who never opens the simple layer keeps every default above untouched.
+    pub simple_smoothness: nightjar_policy::simple_profile::Smoothness,
+    pub simple_picture: nightjar_policy::simple_profile::Picture,
+    pub simple_hdr: nightjar_policy::simple_profile::Hdr,
     /// A click on a PC that runs a game goes straight back into it instead of opening its
     /// library (Android's `checkbox_quick_resume`). Not a per-PC or per-game override.
     pub quick_resume: bool,
@@ -1238,6 +1244,9 @@ impl Default for Settings {
             frame_warp: false,
             open_on_start: OpenOnStart::Pcs,
             console_home: true,
+            simple_smoothness: nightjar_policy::simple_profile::Smoothness::Balanced,
+            simple_picture: nightjar_policy::simple_profile::Picture::Auto,
+            simple_hdr: nightjar_policy::simple_profile::Hdr::Auto,
             quick_resume: false,
             input_only_any_host: false,
             home_layout: HomeLayout::Rows,

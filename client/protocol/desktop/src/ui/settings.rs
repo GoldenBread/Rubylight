@@ -11,18 +11,21 @@ use nightjar_policy::choices::{BackButton, LowerBitrate, Roaming, SystemKeys};
 use nightjar_policy::controllers::Controllers;
 use nightjar_policy::open_play::StartScreen;
 use nightjar_policy::presets::{self, Preset};
+use nightjar_policy::simple_profile as simple;
 use crate::config::FramePacing;
 use nightjar_policy::stream_menu::{Hotkey, NO_TILE};
 
-/// The settings sections in the order Android lists them (App only on the main settings).
-pub(super) const SETTINGS_SECTIONS: [&str; 8] = [en("Video"), en("Display & image"), en("Controls"), en("Audio"), en("Streaming"), en("App"), en("Advanced"), en("Debug")];
+/// The settings sections in the order Android lists them (App only on the main settings). Setup is the
+/// simple layer (SimpleProfile): three plain choices over the settings the other sections hold.
+pub(super) const SETTINGS_SECTIONS: [&str; 9] = [en("Setup"), en("Video"), en("Display & image"), en("Controls"), en("Audio"), en("Streaming"), en("App"), en("Advanced"), en("Debug")];
 
 /// Every setting row's keys, by section, in the order the page draws them with every fold open;
 /// the first key names the row. Rows that show only with another setting (Custom resolution,
 /// Bitrate, the controller mouse's options) share their keys or are listed where they show. Action
 /// rows (a page, a test) store nothing and are not listed. A test keeps this equal to what the
 /// page draws.
-pub(super) const SECTION_KEYS: [&[&[&str]]; 8] = [
+pub(super) const SECTION_KEYS: [&[&[&str]]; 9] = [
+    &[&["simple_smoothness"], &["simple_picture"], &["simple_hdr"]],
     &[&["width", "height"], &["fps"], &["bitrate_kbps"], &["adaptive_bitrate", "client_hint_bitrate"], &["codec"], &["hdr"],
         &["prefer_yuv444", "experimental_packed_444"], &["sdr_10bit"], &["frame_warp"], &["adaptive_quality"], &["quality_min_short_edge"], &["quality_min_fps"],
         &["hdr_desktop_brightness"], &["rtx_hdr"], &["rtx_video"]],
@@ -94,9 +97,9 @@ pub(super) struct SettingsView {
     /// The search the rows showed last frame: another one starts its results at the top.
     shown_query: String,
     /// The rows the search found last frame, per section.
-    pub(super) found: [usize; 8],
+    pub(super) found: [usize; 9],
     /// Each section's fold is open (its "More … settings" chosen), until Nightjar closes.
-    pub(super) more: [bool; 8],
+    pub(super) more: [bool; 9],
     /// Another section was opened: its rows start at the top.
     pub(super) to_top: bool,
     /// Reset all (or Clear all on a PC's, game's or profile's settings) waits for its confirmation.
@@ -150,6 +153,137 @@ fn section_index(name: &str) -> usize {
     SETTINGS_SECTIONS.iter().position(|s| *s == name).unwrap_or(0)
 }
 
+fn simple_smoothness_name(value: simple::Smoothness) -> &'static str {
+    match value {
+        simple::Smoothness::Smoothest => en("Smoothest"),
+        simple::Smoothness::Balanced => en("Balanced"),
+        simple::Smoothness::LowestDelay => en("Lowest delay"),
+    }
+}
+
+fn simple_picture_name(value: simple::Picture) -> &'static str {
+    match value {
+        simple::Picture::Auto => en("Auto (recommended)"),
+        simple::Picture::Best => en("Best"),
+        simple::Picture::SaveData => en("Save data"),
+    }
+}
+
+fn simple_hdr_name(value: simple::Hdr) -> &'static str {
+    match value {
+        simple::Hdr::Auto => en("Auto (recommended)"),
+        simple::Hdr::Off => en("Off"),
+    }
+}
+
+/// What the simple layer measured about this computer and screen (SimpleProfile).
+fn simple_caps(display: &Display, hdr_display: bool, vrr: bool) -> simple::Capabilities {
+    simple::Capabilities {
+        display: simple::Display {
+            width: display.width,
+            height: display.height,
+            refresh_hz: display.refresh_hz.round().max(0.0) as u32,
+            hdr: hdr_display,
+            vrr,
+        },
+        // The stream negotiates its codec and HDR with the PC; a desktop decoder has no benchmark
+        // here, so the screen's own rate leads.
+        decoder: simple::Decoder { h264: true, hevc: true, av1: true, hdr: true, max_fps_at_native: None },
+        host: simple::Host::default(),
+    }
+}
+
+/// The stream's current settings, as the simple layer compares them.
+fn simple_current(s: &Settings, display: &Display) -> simple::Current {
+    let (_, _, _, default_kbps) = stream_mode(&Settings { bitrate_kbps: 0, ..s.clone() }, *display);
+    let fps = if s.fps == 0 || s.fps == display.refresh_hz.round() as u32 { None } else { Some(s.fps) };
+    let pacing = match s.frame_pacing {
+        FramePacing::Latency => Some(simple::Pacing::Latency),
+        FramePacing::Balanced => Some(simple::Pacing::Balanced),
+        FramePacing::Smoothness => Some(simple::Pacing::Smoothest),
+        FramePacing::CapFps => None,
+    };
+    let bitrate_milli = match (s.bitrate_kbps, default_kbps) {
+        (0, _) => None,
+        (chosen, 0) => Some(chosen),
+        (chosen, default) => Some((f64::from(chosen) * 1000.0 / f64::from(default)).round() as u32),
+    };
+    let codec = match s.codec {
+        CodecPreference::Auto => simple::Codec::Auto,
+        CodecPreference::H264 => simple::Codec::H264,
+        CodecPreference::Hevc => simple::Codec::Hevc,
+        CodecPreference::Av1 => simple::Codec::Av1,
+        // PyroWave is no codec the simple layer offers, so these settings read as Custom.
+        CodecPreference::PyroWave | CodecPreference::PyroWave444 => simple::Codec::H264,
+    };
+    simple::Current {
+        native_resolution: s.width == 0 && s.height == 0,
+        fps,
+        pacing,
+        vrr: s.vrr,
+        latency_switches: s.unbatched_input && s.network_priority,
+        bitrate_milli,
+        codec,
+        hdr: s.hdr,
+        adaptive_bitrate: s.adaptive_bitrate || s.client_hint_bitrate,
+        adaptive_quality: match s.adaptive_quality {
+            crate::config::QualityMode::Off => Some(simple::AdaptiveQuality::Off),
+            crate::config::QualityMode::Battery => Some(simple::AdaptiveQuality::SavePower),
+            crate::config::QualityMode::Motion | crate::config::QualityMode::Detail => None,
+        },
+    }
+}
+
+/// Writes a simple profile's values into this computer's settings.
+fn simple_apply(s: &mut Settings, display: &Display, caps: &simple::Capabilities, choices: simple::Choices) {
+    let values = simple::values(choices, caps);
+    (s.simple_smoothness, s.simple_picture, s.simple_hdr) = (choices.smoothness, choices.picture, choices.hdr);
+    // The simple layer streams at this screen's own size and refresh rate.
+    (s.width, s.height) = (0, 0);
+    s.fps = values.fps.unwrap_or(0);
+    s.frame_pacing = match values.pacing {
+        simple::Pacing::Latency => FramePacing::Latency,
+        simple::Pacing::Balanced => FramePacing::Balanced,
+        simple::Pacing::Smoothest => FramePacing::Smoothness,
+    };
+    s.drop_late_frames = true;
+    s.host_frame_times = false;
+    s.vrr = values.vrr;
+    if values.vrr {
+        s.present_at_host_times = true;
+    }
+    if values.latency_switches {
+        s.unbatched_input = true;
+        s.network_priority = true;
+    }
+    let (_, _, _, default_kbps) = stream_mode(&Settings { bitrate_kbps: 0, ..s.clone() }, *display);
+    s.bitrate_kbps = match values.bitrate {
+        simple::Bitrate::Default => 0,
+        simple::Bitrate::Factor(milli) => (u64::from(default_kbps) * u64::from(milli) / 1000) as u32,
+    };
+    s.adaptive_bitrate = values.adaptive_bitrate;
+    s.client_hint_bitrate = false;
+    s.adaptive_quality = match values.adaptive_quality {
+        simple::AdaptiveQuality::Off => crate::config::QualityMode::Off,
+        simple::AdaptiveQuality::SavePower => crate::config::QualityMode::Battery,
+    };
+    s.codec = match values.codec {
+        simple::Codec::Auto => CodecPreference::Auto,
+        simple::Codec::H264 => CodecPreference::H264,
+        simple::Codec::Hevc => CodecPreference::Hevc,
+        simple::Codec::Av1 => CodecPreference::Av1,
+    };
+    s.hdr = values.hdr;
+}
+
+/// The simple layer's choices from the current settings, or the stored ones while they are Custom.
+fn simple_state(s: &Settings, display: &Display, caps: &simple::Capabilities) -> (simple::Choices, bool) {
+    match simple::chosen(&simple_current(s, display), caps) {
+        Some(choices) => (choices, false),
+        None => (simple::Choices { smoothness: s.simple_smoothness, picture: s.simple_picture, hdr: s.simple_hdr }, true),
+    }
+}
+
 impl Launcher {
     /// Escape or B on a settings page: closes the search first (leaves its field, then clears
     /// it). True when it did, so the page stays.
@@ -175,9 +309,11 @@ impl Launcher {
 
     pub(super) fn settings_page(&mut self, ui: &mut Ui, view: &View<'_>, commands: &mut Vec<Command>) {
         let layered = self.screen != Screen::Settings;
-        let sections: Vec<&'static str> = SETTINGS_SECTIONS.into_iter().filter(|s| !(layered && *s == "App")).collect();
+        let sections: Vec<&'static str> = SETTINGS_SECTIONS.into_iter().filter(|s| !(layered && (*s == "App" || *s == "Setup"))).collect();
         if !sections.contains(&self.settings_view.section) {
-            self.settings_view.section = sections[0];
+            // A page opened anew keeps Video, as it did before Setup led the list; Setup is the first
+            // entry in the rail, and a search or a link can still open it.
+            self.settings_view.section = if self.settings_view.section.is_empty() { en("Video") } else { sections[0] };
         }
         // A page opened anew starts without the last visit's search; the section stays.
         if self.focus_screen && self.restore_key.is_none() {
@@ -572,7 +708,7 @@ impl Launcher {
             section: "",
             group: "",
             heading: None,
-            found: [0; 8],
+            found: [0; 9],
             shown: true,
             more: self.settings_view.more,
             mains: 0,
@@ -640,6 +776,99 @@ impl Launcher {
                 probe.and_then(Result::err)
             };
             let gpu_decoder_error = if s.codec.is_pyrowave() { gpu_probe(ui) } else { None };
+
+            if open == en("Setup") {
+                rows.section(ui, en("Setup"));
+                let caps = simple_caps(&display, self.hdr_display, vrr_offered);
+                // Stream smoothness
+                let (mut choices, custom) = simple_state(s, &display, &caps);
+                let mut smoothness = choices.smoothness;
+                let smoothness_text = if custom { tr("Custom") } else { tr(simple_smoothness_name(smoothness)) };
+                setting_row(ui, s, &mut rows, &["simple_smoothness"], "Stream smoothness",
+                    "Picks how steady the picture is and how soon it reaches the screen: Smoothest holds every frame for a steady cadence with a little more delay, Lowest delay shows the newest frame at once. Leave it on Balanced unless a game judders or feels slow.",
+                    |ui, s| {
+                        let response = Combo::from_id_salt("simple-smoothness").selected_text(smoothness_text).show_ui(ui, |ui| {
+                            for each in simple::Smoothness::ALL {
+                                ui.selectable_value(&mut smoothness, each, tr(simple_smoothness_name(each)));
+                            }
+                        }).response;
+                        if smoothness != choices.smoothness {
+                            choices.smoothness = smoothness;
+                            simple_apply(s, &display, &caps, choices);
+                        }
+                        response
+                    });
+                // Picture quality
+                let (mut choices, custom) = simple_state(s, &display, &caps);
+                let mut picture = choices.picture;
+                let picture_text = if custom { tr("Custom") } else { tr(simple_picture_name(picture)) };
+                setting_row(ui, s, &mut rows, &["simple_picture"], "Picture quality",
+                    "Sets the bitrate and codec: Best spends more network for a sharper picture, Save data uses less and lowers quality when the link struggles. Leave it on Auto unless you need the extra sharpness or the lower data use.",
+                    |ui, s| {
+                        let response = Combo::from_id_salt("simple-picture").selected_text(picture_text).show_ui(ui, |ui| {
+                            for each in simple::Picture::ALL {
+                                ui.selectable_value(&mut picture, each, tr(simple_picture_name(each)));
+                            }
+                        }).response;
+                        if picture != choices.picture {
+                            choices.picture = picture;
+                            simple_apply(s, &display, &caps, choices);
+                        }
+                        response
+                    });
+                // The screen the simple layer streams at: this one, read-only.
+                rows.action("simple_screen");
+                setting_row(ui, s, &mut rows, &[], "Screen",
+                    "This device's own resolution and refresh rate. Lower it under Video if the stream stutters.",
+                    |ui, _| ui.label(RichText::new(trf("{}×{} at {} Hz", &[&display.width, &display.height, &(display.refresh_hz.round() as u32)])).color(*ON_SURFACE)));
+                // HDR
+                let (mut choices, custom) = simple_state(s, &display, &caps);
+                let mut hdr = choices.hdr;
+                let hdr_text = if custom { tr("Custom") } else { tr(simple_hdr_name(hdr)) };
+                setting_row(ui, s, &mut rows, &["simple_hdr"], "HDR",
+                    "Brighter highlights and richer color on an HDR screen. Auto turns it on where this screen, the decoder and the PC support it; turn it off if the picture looks washed out.",
+                    |ui, s| {
+                        let response = Combo::from_id_salt("simple-hdr").selected_text(hdr_text).show_ui(ui, |ui| {
+                            for each in simple::Hdr::ALL {
+                                ui.selectable_value(&mut hdr, each, tr(simple_hdr_name(each)));
+                            }
+                        }).response;
+                        if hdr != choices.hdr {
+                            choices.hdr = hdr;
+                            simple_apply(s, &display, &caps, choices);
+                        }
+                        response
+                    });
+                // Console mode: the existing Home start screen, not a second launcher.
+                rows.action("simple_console");
+                let mut console = s.console_home;
+                setting_row(ui, s, &mut rows, &[], "Console mode",
+                    "Opens straight into this PC's games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open on the list of PCs.",
+                    |ui, s| {
+                        let response = toggle(ui, &mut console);
+                        if response.changed() {
+                            s.console_home = console;
+                            if console {
+                                s.open_on_start = crate::config::OpenOnStart::Pcs;
+                            }
+                        }
+                        response
+                    });
+                // Back to recommended
+                rows.action("simple_back");
+                let mut back = false;
+                setting_row(ui, s, &mut rows, &[], "Back to recommended",
+                    "Returns the three choices above to what this device does best; the settings they stand for change with them.",
+                    |ui, _| {
+                        let response = text_button(ui, "Back to recommended");
+                        back = response.clicked();
+                        response
+                    });
+                if back {
+                    let recommended = simple::recommended(&caps);
+                    simple_apply(s, &display, &caps, recommended);
+                }
+            }
 
             rows.section(ui, en("Video"));
             let native = trf("Native ({}x{})", &[&display.width, &display.height]);
@@ -724,7 +953,7 @@ impl Launcher {
                 if s.fps != before { *custom_fps_on = Some(screen); }
             }
             let (w, h, fps, bitrate) = stream_mode(s, display);
-            let recommended = stream_mode(&Settings { bitrate_kbps: 0, ..s.clone() }, display).3;
+            let recommended = stream_mode(&Settings { bitrate_kbps: 0, ..s.clone() }, *display).3;
             let mut automatic = s.bitrate_kbps == 0;
             setting_row(ui, s, &mut rows, &["bitrate_kbps"], "Automatic bitrate", "Nightjar picks the bitrate for the resolution, frame rate and codec, and follows them when they change. Turn it off to set the bitrate yourself.", |ui, s| {
                 let r = toggle(ui, &mut automatic);
@@ -2422,6 +2651,9 @@ fn reduce_motion_name(mode: ReduceMotion) -> &'static str {
 pub(super) fn value_text(key: &str, s: &Settings, display: &Display, style: crate::glyphs::Style) -> String {
     match key {
         "open_on_start" | "console_home" => start_screen_name(start_screen(s), None),
+        "simple_smoothness" => tr(simple_smoothness_name(s.simple_smoothness)).to_owned(),
+        "simple_picture" => tr(simple_picture_name(s.simple_picture)).to_owned(),
+        "simple_hdr" => tr(simple_hdr_name(s.simple_hdr)).to_owned(),
         "controllers" | "multi_controller" => tr(controllers_name(Controllers::from_saved(s.controllers, s.multi_controller))).to_owned(),
         "adaptive_bitrate" | "client_hint_bitrate" => tr(lower_bitrate_name(LowerBitrate::from_saved(s.adaptive_bitrate, s.client_hint_bitrate))).to_owned(),
         "back_opens_menu" | "back_as_guide" => tr(back_button_name(BackButton::from_saved(s.back_opens_menu, s.back_as_guide))).to_owned(),
@@ -2493,7 +2725,8 @@ pub(super) fn value_text(key: &str, s: &Settings, display: &Display, style: crat
 
 /// The main rows of each section, as `client/app/src/main/res/values/settings_tiers.xml` lists them
 /// by Android preference key, in `SETTINGS_SECTIONS` order. A test keeps the two equal.
-pub(super) const MAIN_KEYS: [(&str, &[&str]); 8] = [
+pub(super) const MAIN_KEYS: [(&str, &[&str]); 9] = [
+    ("simple", &["simple_smoothness", "simple_picture", "simple_screen", "simple_hdr", "checkbox_console_home", "simple_back_to_recommended"]),
     ("video", &["list_resolution", "list_fps", "automatic_bitrate", "seekbar_bitrate_kbps", "adaptive_bitrate", "list_mobile_bitrate_kbps", "video_format", "checkbox_enable_hdr"]),
     ("display", &["video_scaling", "stream_orientation", "checkbox_vrr", "frame_pacing"]),
     ("input", &["touch_mode", "checkbox_absolute_mouse_mode", "controllers", "controller_button_mapping", "controller_test", "checkbox_show_onscreen_controls", "checkbox_keyboard_follows_text_fields", "checkbox_clipboard_sync"]),
@@ -2509,6 +2742,9 @@ pub(super) const MAIN_KEYS: [(&str, &[&str]); 8] = [
 /// `present_at_host_times` matches Android's `checkbox_real_vrr`; on the desktop it is a key of
 /// the Variable refresh rate row, as the desktop-only `vrr_tear_free` is.
 pub(super) const ANDROID_KEYS: &[(&str, &str)] = &[
+    // Setup (the simple layer)
+    ("simple_smoothness", "simple_smoothness"), ("simple_picture", "simple_picture"), ("simple_hdr", "simple_hdr"),
+    ("simple_console", "checkbox_console_home"), ("simple_screen", "simple_screen"), ("simple_back", "simple_back_to_recommended"),
     // Video
     ("width", "list_resolution"), ("fps", "list_fps"), ("bitrate_kbps", "seekbar_bitrate_kbps"),
     ("adaptive_bitrate", "adaptive_bitrate"), ("mobile_bitrate", "list_mobile_bitrate_kbps"), ("codec", "video_format"),
@@ -2571,9 +2807,9 @@ pub(super) const DESKTOP_MAIN: [&str; 3] = ["window_mode", "graphics_card", "ren
 
 /// The action rows: they open a page or run a test and store nothing, so no setting key names them.
 #[cfg_attr(not(test), allow(dead_code))]
-pub(super) const ACTION_ROWS: [&str; 17] = ["mobile_bitrate", "controller_buttons", "controller_test", "keyboard_shortcuts", "stream_hotkeys",
+pub(super) const ACTION_ROWS: [&str; 20] = ["mobile_bitrate", "controller_buttons", "controller_test", "keyboard_shortcuts", "stream_hotkeys",
     "connection_test", "pin_lock", "help", "report_problem", "check_updates_now", "sign_in", "about_app", "logs", "reset_all", "pyrowave_pace",
-    "latency_benchmark", "export_latency_csv"];
+    "latency_benchmark", "export_latency_csv", "simple_console", "simple_screen", "simple_back"];
 
 /// Whether the row `id` (a setting's first key, an action's name) is one of its section's main rows.
 pub(super) fn main_row(id: &str) -> bool {
@@ -2599,12 +2835,12 @@ pub(super) struct Rows<'a> {
     /// (true), a group's title (empty: a gap only).
     heading: Option<(bool, &'static str)>,
     /// Rows drawn, per section.
-    found: [usize; 8],
+    found: [usize; 9],
     /// Whether the rows that follow are drawn: a setting they depend on or this device can rule
     /// them out (`when`).
     shown: bool,
     /// Each section's fold is open.
-    more: [bool; 8],
+    more: [bool; 9],
     /// The section's main rows and folded rows its gates show so far, and whether its first
     /// folded row came.
     mains: usize,

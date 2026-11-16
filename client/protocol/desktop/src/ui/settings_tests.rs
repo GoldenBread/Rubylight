@@ -16,7 +16,7 @@ fn settings_with(changed: Settings) -> Frames {
 
 /// Opens every section's fold, as its "More … settings" row does.
 fn open_folds(f: &mut Frames) {
-    f.l.settings_view.more = [true; 8];
+    f.l.settings_view.more = [true; 9];
     f.settle();
 }
 
@@ -85,7 +85,7 @@ fn the_d_pad_scrolls_each_row_it_reaches_into_view() {
     let mut f = Frames::new(record("PC", true, false), Reach::Online);
     f.size = vec2(1280.0, 600.0);
     f.l.settings = Settings { adaptive_quality: crate::config::QualityMode::Motion, ..Settings::default() };
-    f.l.settings_view.more = [true; 8];
+    f.l.settings_view.more = [true; 9];
     let id = f.hosts.list[0].id;
     for page in [Screen::Settings, Screen::HostSettings(id)] {
         if page == Screen::Settings { f.l.go(page) } else { f.l.open_host_settings(id, &f.hosts.list[0]) }
@@ -195,12 +195,13 @@ fn a_section_opens_from_its_entry_by_mouse_and_by_controller() {
 #[test]
 fn a_sections_fold_counts_its_rows_and_opens_and_closes() {
     let mut f = settings_with(Settings::default());
-    assert_eq!(f.l.settings_view.more, [false; 8]);
+    let video = SETTINGS_SECTIONS.iter().position(|s| *s == "Video").unwrap();
+    assert_eq!(f.l.settings_view.more, [false; 9]);
     assert!(f.l.settings_view.drawn.iter().all(|(_, folded)| !folded), "only main rows: {:?}", f.l.settings_view.drawn);
     assert!(!shows(&f, "Sharper colored text"), "{:?}", f.drawn);
     let more = fold_words(&f).expect("Video has a fold");
     click_text(&mut f, &more);
-    assert!(f.l.settings_view.more[0] && shows(&f, "Fewer Video settings") && shows(&f, "Sharper colored text"), "{:?}", f.drawn);
+    assert!(f.l.settings_view.more[video] && shows(&f, "Fewer Video settings") && shows(&f, "Sharper colored text"), "{:?}", f.drawn);
     let drawn = f.l.settings_view.drawn.clone();
     let folded = drawn.iter().filter(|(_, folded)| *folded).count();
     assert_eq!(more, format!("More Video settings ({folded})"), "the count is the rows it opens: {drawn:?}");
@@ -211,7 +212,7 @@ fn a_sections_fold_counts_its_rows_and_opens_and_closes() {
     assert!(shows(&f, "Channels") && !shows(&f, "Mute audio") && fold_words(&f).is_some_and(|w| w.starts_with("More Audio settings")), "{:?}", f.drawn);
     click_text(&mut f, "Video");
     click_text(&mut f, "Fewer Video settings");
-    assert!(!f.l.settings_view.more[0] && !shows(&f, "Sharper colored text"), "{:?}", f.drawn);
+    assert!(!f.l.settings_view.more[video] && !shows(&f, "Sharper colored text"), "{:?}", f.drawn);
     // The search finds a folded row, and draws no fold.
     f.l.settings_view.query = "colored text".into();
     f.settle();
@@ -377,7 +378,7 @@ fn profiles_sit_above_the_sections_and_open_their_page() {
     f.size = vec2(800.0, 4000.0);
     f.settle();
     let chips: Vec<&str> = f.drawn.iter().map(String::as_str).filter(|t| *t == "Profiles" || SETTINGS_SECTIONS.contains(t)).collect();
-    assert_eq!(chips[..2], ["Profiles", "Video"], "{:?}", f.drawn);
+    assert_eq!(chips[..3], ["Profiles", "Setup", "Video"], "{:?}", f.drawn);
 }
 
 /// A PC's row box: unticked and ticked as a checkbox for readers, named for its row, and a click
@@ -728,7 +729,7 @@ fn a_pcs_own_value_on_a_hidden_row_comes_back_with_its_row() {
     let mut f = Frames::new(record("PC", true, false), Reach::Online);
     f.size = vec2(1280.0, 4000.0);
     f.ctx.enable_accesskit();
-    f.l.settings_view.more = [true; 8];
+    f.l.settings_view.more = [true; 9];
     f.hosts.list[0].record.settings = Some(serde_json::from_str(r#"{"codec":"PyroWave","prefer_yuv444":true}"#).unwrap());
     let id = f.hosts.list[0].id;
     f.l.open_host_settings(id, &f.hosts.list[0]);
@@ -977,7 +978,7 @@ fn settings_screenshots() {
             // Every section: its main rows, then its fold open, top and end.
             for (at, section) in SETTINGS_SECTIONS.iter().enumerate() {
                 f.l.settings_view.section = section;
-                f.l.settings_view.more = [false; 8];
+                f.l.settings_view.more = [false; 9];
                 f.l.settings_view.to_top = true;
                 shoot(&mut f, &format!("settings-section-{at}"));
                 f.l.settings_view.more[at] = true;
@@ -986,7 +987,7 @@ fn settings_screenshots() {
                 f.scroll_to_end();
                 shoot(&mut f, &format!("settings-section-{at}-more-end"));
             }
-            f.l.settings_view.more = [true; 8];
+            f.l.settings_view.more = [true; 9];
             // Dual screen mode on: Second screen resolution can be changed.
             f.l.settings.dual_screen = true;
             f.l.settings_view.section = "Streaming";
@@ -1032,7 +1033,7 @@ fn settings_screenshots() {
             // The microphone's rows, and Frame pacing's PC's frame times (V-Sync's row gives way).
             f.l.settings.microphone = true;
             f.l.settings.host_frame_times = true;
-            f.l.settings_view.more = [true; 8];
+            f.l.settings_view.more = [true; 9];
             f.l.settings_view.section = "Audio";
             f.l.settings_view.to_top = true;
             shoot(&mut f, "settings-microphone");
@@ -1065,7 +1066,7 @@ fn settings_screenshots() {
                     f.hosts.list[0].record.pace = Some(crate::config::PaceCalibration { pace_mbps: 180, client_link_mbps: 1000, host_link_mbps: 2500, wifi: false, ssid: None, qualified: true });
                 }
                 f.l.go(Screen::Settings);
-                f.l.settings_view.more = [true; 8];
+                f.l.settings_view.more = [true; 9];
                 f.l.settings_view.section = "Streaming";
                 f.l.settings_view.to_top = true;
                 shoot(&mut f, &format!("settings-connection-test-{count}"));
@@ -1865,7 +1866,7 @@ fn display_arrangement_holds_virtual_display_and_a_pick_writes_both_keys() {
     let saved = Settings { host_display: HostDisplay::Physical, virtual_display: true, ..Settings::default() };
     let mut f = settings_with(saved.clone());
     f.l.settings_view.section = "Display & image";
-    f.l.settings_view.more = [true; 8];
+    f.l.settings_view.more = [true; 9];
     f.settle();
     assert_eq!(row_words(&f, row), ["Physical display", "Reset"], "Reset puts both keys back");
     assert!(!shows(&f, "PC render resolution"), "Physical display has no virtual display: {:?}", f.drawn);
@@ -1899,7 +1900,7 @@ fn a_pc_without_display_modes_offers_only_the_virtual_display_switch() {
     f.size = vec2(1280.0, 12000.0);
     f.l.settings = Settings { host_display: HostDisplay::Exclusive, virtual_display: false, ..Settings::default() };
     f.l.settings_view.section = "Display & image";
-    f.l.settings_view.more = [true; 8];
+    f.l.settings_view.more = [true; 9];
     let id = f.hosts.list[0].id;
     f.l.open_host_settings(id, &f.hosts.list[0]);
     f.settle();
@@ -1925,7 +1926,7 @@ fn a_layer_holding_one_key_of_a_row_keeps_it_alone_until_a_value_is_chosen() {
     f.size = vec2(1280.0, 12000.0);
     f.l.settings = Settings { host_display: HostDisplay::Exclusive, ..Settings::default() };
     f.l.settings_view.section = "Display & image";
-    f.l.settings_view.more = [true; 8];
+    f.l.settings_view.more = [true; 9];
     let id = f.hosts.list[0].id;
     f.l.open_host_settings(id, &f.hosts.list[0]);
     f.settle();
@@ -1974,7 +1975,7 @@ fn an_arrangement_picked_on_a_pcs_page_leaves_its_virtual_display_switch_to_the_
     let mut f = Frames::new(record("PC", true, false), Reach::Online);
     f.size = vec2(1280.0, 12000.0);
     f.l.settings_view.section = "Display & image";
-    f.l.settings_view.more = [true; 8];
+    f.l.settings_view.more = [true; 9];
     let id = f.hosts.list[0].id;
     f.l.open_host_settings(id, &f.hosts.list[0]);
     f.settle();
@@ -2025,4 +2026,49 @@ fn whole_frames_under_vrr_shows_only_with_vrr_on_and_offered() {
     assert!(!drawn(Settings::default(), false), "no tearing: no VRR on Windows, no scan-line wait elsewhere");
     assert!(!drawn(Settings { present_at_host_times: false, vrr_tear_free: false, ..Settings::default() }, true), "Fastest");
     assert!(!drawn(Settings { vrr: false, ..Settings::default() }, true), "VRR off");
+}
+
+#[test]
+fn the_simple_layer_writes_and_reads_the_settings_it_stands_for() {
+    let display = Display { width: 2560, height: 1440, refresh_hz: 120.0, refresh_reported: true };
+    let caps = simple_caps(&display, false, true);
+    let mut s = Settings::default();
+    let recommended = simple::recommended(&caps);
+    simple_apply(&mut s, &display, &caps, recommended);
+    assert_eq!((s.width, s.height, s.fps), (0, 0, 0), "the screen's own size and rate");
+    assert_eq!(s.frame_pacing, FramePacing::Balanced);
+    assert!(s.vrr && s.present_at_host_times);
+    assert_eq!(s.bitrate_kbps, 0, "the bitrate for the size and rate");
+    assert!(!s.hdr);
+    let (choices, custom) = simple_state(&s, &display, &caps);
+    assert!(!custom);
+    assert_eq!(choices, recommended);
+    // One changed advanced setting reads as Custom.
+    s.frame_pacing = FramePacing::CapFps;
+    assert!(simple_state(&s, &display, &caps).1);
+    // Save data lowers the bitrate and lets it fall when the link struggles.
+    simple_apply(&mut s, &display, &caps, simple::Choices { picture: simple::Picture::SaveData, ..recommended });
+    assert!(s.adaptive_bitrate && s.adaptive_quality == crate::config::QualityMode::Battery);
+    assert!(s.bitrate_kbps > 0 && s.bitrate_kbps < stream_mode(&Settings::default(), display).3);
+    let (choices, custom) = simple_state(&s, &display, &caps);
+    assert!(!custom && choices.picture == simple::Picture::SaveData);
+}
+
+#[test]
+fn the_setup_section_shows_the_simple_layer_and_back_applies_it() {
+    let mut f = settings_with(Settings::default());
+    f.l.tearing_supported = true;
+    f.l.settings_view.section = "Setup";
+    f.settle();
+    for row in ["Stream smoothness", "Picture quality", "Screen", "HDR", "Console mode", "Back to recommended"] {
+        assert!(shows(&f, row), "{row} is not drawn: {:?}", f.drawn);
+    }
+    assert!(!row_words(&f, "Stream smoothness").iter().any(|word| *word == "Custom"), "{:?}", row_words(&f, "Stream smoothness"));
+    f.l.settings.frame_pacing = FramePacing::CapFps;
+    f.settle();
+    assert!(row_words(&f, "Stream smoothness").iter().any(|word| *word == "Custom"), "{:?}", row_words(&f, "Stream smoothness"));
+    let _ = click_value(&mut f, "Back to recommended", "Back to recommended");
+    f.settle();
+    assert_eq!(f.l.settings.frame_pacing, FramePacing::Balanced);
+    assert!(!row_words(&f, "Stream smoothness").iter().any(|word| *word == "Custom"), "{:?}", row_words(&f, "Stream smoothness"));
 }

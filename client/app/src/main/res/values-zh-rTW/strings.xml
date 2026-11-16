@@ -520,4 +520,26 @@
     <string name="title_jumbo_frames">巨型視訊封包</string>
     <string name="summary_jumbo_frames">當 PC 和每一段鏈路都能承載 9000 位元組的巨型幀時，用更少、更大的封包傳送視訊。Nightjar 測試網路時，每次串流會晚幾秒開始；測試失敗則使用一般封包。除非你的有線網路已為巨型幀設定好，否則請保持關閉。</string>
     <string name="jumbo_frames_fallback">巨型視訊封包未通過此網路的測試，因此串流使用一般封包。</string>
+    <string name="settings_simple_title">推薦</string>
+    <string name="title_simple_smoothness">串流流暢度</string>
+    <string name="summary_simple_smoothness">選擇畫面有多穩定以及多快到達螢幕：最流暢會保留每一幀以獲得穩定節奏，但延遲稍高；最低延遲會立即顯示最新一幀。除非遊戲卡頓或感覺遲緩，否則保持平衡。</string>
+    <string name="simple_smoothest">最流暢</string>
+    <string name="simple_balanced">平衡</string>
+    <string name="simple_lowest_delay">最低延遲</string>
+    <string name="title_simple_picture">畫面品質</string>
+    <string name="summary_simple_picture">設定位元率和編解碼器：最佳會使用更多網路換取更清晰的畫面；節省資料會減少用量，並在連線吃力時降低品質。除非需要額外清晰度或更少流量，否則保持自動。</string>
+    <string name="simple_picture_auto">自動（推薦）</string>
+    <string name="simple_picture_best">最佳</string>
+    <string name="simple_picture_save_data">節省資料</string>
+    <string name="title_simple_screen">螢幕</string>
+    <string name="summary_simple_screen">此裝置自身的解析度和更新率。如果串流卡頓，可在影片中降低。</string>
+    <string name="simple_screen_value">%1$d×%2$d，%3$d Hz</string>
+    <string name="simple_hdr_auto">自動（推薦）</string>
+    <string name="title_simple_console">主機模式</string>
+    <string name="summary_simple_console">直接以全螢幕開啟此 PC 的遊戲，可用控制器或遙控器選擇。電視或掌機請保持開啟；關閉則開啟 PC 清單。</string>
+    <string name="simple_back_to_recommended">回復推薦設定</string>
+    <string name="summary_simple_back_to_recommended">將上面三項回復為此裝置表現最佳的選擇；它們代表的設定也會隨之改變。</string>
+    <string name="simple_profile_failed">無法在此裝置上讀取推薦設定</string>
+    <string name="settings_section_simple">推薦</string>
+    <string name="settings_section_simple_summary">三個簡單選擇；下方各節包含所有細節。</string>
 </resources>

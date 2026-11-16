@@ -520,4 +520,26 @@
     <string name="title_jumbo_frames">Pacchetti video jumbo</string>
     <string name="summary_jumbo_frames">Invia il video in meno pacchetti più grandi quando il PC e ogni collegamento trasportano frame jumbo da 9000 byte. Ogni stream parte qualche secondo più tardi mentre Nightjar prova la rete e usa pacchetti normali se il test fallisce. Lascialo disattivato se la rete cablata non è configurata per i frame jumbo.</string>
     <string name="jumbo_frames_fallback">I pacchetti video jumbo non hanno superato il test su questa rete, quindi lo stream usa pacchetti normali.</string>
+    <string name="settings_simple_title">Consigliato</string>
+    <string name="title_simple_smoothness">Fluidità dello streaming</string>
+    <string name="summary_simple_smoothness">Sceglie quanto è stabile l'immagine e quanto presto arriva sullo schermo: Il più fluido trattiene ogni fotogramma per un ritmo costante con un po' più di ritardo, Ritardo minimo mostra subito il fotogramma più recente. Lascia su Bilanciato a meno che un gioco non scatti o sembri lento.</string>
+    <string name="simple_smoothest">Il più fluido</string>
+    <string name="simple_balanced">Bilanciato</string>
+    <string name="simple_lowest_delay">Ritardo minimo</string>
+    <string name="title_simple_picture">Qualità dell'immagine</string>
+    <string name="summary_simple_picture">Imposta il bitrate e il codec: Migliore spende più rete per un'immagine più nitida, Risparmia dati ne usa meno e abbassa la qualità quando la connessione fatica. Lascia su Auto a meno che tu non voglia la nitidezza extra o meno dati.</string>
+    <string name="simple_picture_auto">Auto (consigliato)</string>
+    <string name="simple_picture_best">Migliore</string>
+    <string name="simple_picture_save_data">Risparmia dati</string>
+    <string name="title_simple_screen">Schermo</string>
+    <string name="summary_simple_screen">La risoluzione e la frequenza di aggiornamento di questo dispositivo. Abbassala in Video se lo streaming scatta.</string>
+    <string name="simple_screen_value">%1$d×%2$d a %3$d Hz</string>
+    <string name="simple_hdr_auto">Auto (consigliato)</string>
+    <string name="title_simple_console">Modalità console</string>
+    <string name="summary_simple_console">Apre direttamente i giochi di questo PC a schermo intero, dove un controller o un telecomando può sceglierne uno. Lasciala attiva per un televisore o un handheld; disattivala per aprire l'elenco dei PC.</string>
+    <string name="simple_back_to_recommended">Torna a consigliato</string>
+    <string name="summary_simple_back_to_recommended">Riporta le tre scelte sopra a ciò che questo dispositivo fa meglio; le impostazioni che rappresentano cambiano con esse.</string>
+    <string name="simple_profile_failed">Impossibile leggere le impostazioni consigliate su questo dispositivo</string>
+    <string name="settings_section_simple">Consigliato</string>
+    <string name="settings_section_simple_summary">Tre scelte semplici; le sezioni sotto contengono ogni dettaglio.</string>
 </resources>

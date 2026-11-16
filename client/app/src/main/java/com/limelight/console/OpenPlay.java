@@ -33,7 +33,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class OpenPlay {
     /** The setting: {@code pcs}, {@code last} or {@code chosen}. */
     public static final String SETTING = "list_open_on_start";
-    private static final String DEFAULT = "pcs";
+    /** Show the list of PCs (or Home, with {@code checkbox_console_home}). */
+    public static final String DEFAULT = "pcs";
     private static final String FILE = "open_play";
     private static final String ARMED = "armed";
     private static final String GAME = "game";

@@ -516,6 +516,9 @@ pub struct Launcher {
     back_slot: Option<f32>,
     /// The display's tearing support, for the VRR setting's note.
     pub tearing_supported: bool,
+    /// A display of this computer shows HDR, read once when SDL starts (`sdl::any_display_hdr`).
+    /// The simple layer's HDR Auto turns HDR on only when this is true; a test's launcher has none.
+    pub(crate) hdr_display: bool,
     /// The renderer's Direct3D 11 device, which the PyroWave GPU decoder's settings probe runs on.
     pub gpu_device: Option<crate::stream::pipeline::GpuDevice>,
     pub display: Display,
@@ -638,6 +641,7 @@ impl Launcher {
             pending_play: None,
             back_slot: None,
             tearing_supported: false,
+            hdr_display: false,
             gpu_device: None,
             display,
             fullscreen_modes: Vec::new(),
