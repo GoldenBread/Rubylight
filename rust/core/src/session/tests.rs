@@ -1137,7 +1137,7 @@ fn pyrowave_packet_adaptation_responds_to_distinct_lost_frames() {
 }
 
 #[test]
-fn a_wireless_client_stream_starts_at_the_controllers_seed_and_climbs_to_the_wifi_ceiling() {
+fn a_wireless_client_stream_starts_at_the_controllers_seed_and_climbs_toward_the_route_ceiling() {
     let config = crate::config::Config::default();
     for (wireless, expected) in [(true, 126_000_000), (false, 800_000_000)] {
         let negotiated = Negotiated {
@@ -1156,14 +1156,10 @@ fn a_wireless_client_stream_starts_at_the_controllers_seed_and_climbs_to_the_wif
         assert!(!s.client_wireless_sets_route_pacing());
         assert_eq!(s.video_pacing_bps(800_000_000, 75_000_000), expected);
         if !wireless {
-            // A wired client keeps the route ceiling it always had: the
-            // controller is off by default and no client report caps it.
             continue;
         }
         // Clean feedback lets the rate climb above twice the bitrate, in
-        // steps of at most 12.5%, and never past the Wi-Fi burst ceiling:
-        // three times the encoder bitrate, not the 1 GbE route.
-        let ceiling = 3 * 63_000_000;
+        // steps of at most 12.5%, and never past the route ceiling.
         let start = Instant::now();
         s.tick_automatic_pacing(start, Duration::from_millis(2));
         let mut rate = expected;
@@ -1174,11 +1170,10 @@ fn a_wireless_client_stream_starts_at_the_controllers_seed_and_climbs_to_the_wif
             s.tick_automatic_pacing(now, Duration::from_millis(2));
             let next = s.video_pacing_bps(800_000_000, 75_000_000);
             assert!(next >= rate && next <= rate + rate / 8, "{rate} -> {next}");
-            assert!(next <= ceiling, "{next} past the Wi-Fi ceiling");
+            assert!(next <= 800_000_000);
             rate = next;
         }
         assert!(rate > 2 * 63_000_000, "never climbed: {rate}");
-        assert_eq!(rate, ceiling);
     }
     // Without the controller the hint sets the route pacing instead.
     for (setting, codec) in [
@@ -1203,30 +1198,6 @@ fn a_wireless_client_stream_starts_at_the_controllers_seed_and_climbs_to_the_wif
     }
     let wired = Session::new(launch("wired", Role::Stream), Negotiated::default());
     assert!(!wired.client_wireless_sets_route_pacing());
-}
-
-#[test]
-fn a_wireless_clients_reported_link_caps_its_automatic_burst_ceiling() {
-    let s = Session::new(
-        launch("wireless-link", Role::Stream),
-        Negotiated {
-            codec: 1,
-            bitrate_kbps: 63_000,
-            client_wireless: true,
-            pyrowave_client_link_mbps: 100,
-            ..Default::default()
-        },
-    );
-    s.configure_automatic_pacing(true);
-    // 4/5 of the announced 100 Mbps link, above 1.1x the bitrate, instead of
-    // 3x the bitrate or the wired route. Nightjar reports its wireless route
-    // with link speed 0 today; this pins the contract for a client that
-    // reports both.
-    assert_eq!(s.video_pacing_bps(800_000_000, 75_000_000), 80_000_000);
-    assert_eq!(
-        s.automatic_pacing.lock().unwrap().snapshot()["ceiling_kbps"],
-        80_000
-    );
 }
 
 #[test]

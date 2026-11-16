@@ -615,58 +615,6 @@ fn a_client_that_reports_wifi_gets_wifi_pacing_from_the_first_frame() {
 }
 
 #[test]
-fn a_wireless_clients_automatic_burst_ceiling_is_not_the_host_link() {
-    const M: u64 = 1_000_000;
-    const GBPS: u64 = 1_000_000_000;
-    // 4K120 HEVC at 63 Mbps, wire demand 75 Mbps: the host's 1 GbE base is
-    // 800 Mbps, but a Wi-Fi client may only have its frames burst at 3x the
-    // bitrate, well above the demand's 1.25x headroom.
-    let ceiling =
-        |route, wireless, link| automatic_burst_ceiling_bps(route, 63_000, 75 * M, wireless, link);
-    assert_eq!(ceiling(800 * M, true, 0), 189 * M);
-    assert_eq!(ceiling(800 * M, true, 0), 3 * 63 * M);
-    // A wired or unknown route keeps exactly the base it had.
-    assert_eq!(ceiling(800 * M, false, 0), 800 * M);
-    assert_eq!(ceiling(GBPS, false, 0), GBPS);
-    // The route still wins when it is lower than the Wi-Fi burst policy.
-    assert_eq!(ceiling(100 * M, true, 0), 100 * M);
-    // A demand the bitrate does not explain (heavy FEC) keeps its 1.25x.
-    assert_eq!(
-        automatic_burst_ceiling_bps(800 * M, 40_000, 200 * M, true, 0),
-        250 * M
-    );
-    // A client that announces a slow link caps bursts to 4/5 of it, but the
-    // stream itself is never paced under 1.1x the bitrate for the hint.
-    assert_eq!(ceiling(800 * M, true, 100 * M), 80 * M);
-    assert_eq!(ceiling(800 * M, true, 70 * M), 69_300_000);
-    // A fast link hint does not raise the Wi-Fi burst ceiling.
-    assert_eq!(ceiling(800 * M, true, 866 * M), 189 * M);
-}
-
-#[test]
-fn a_150_mbps_streams_wireless_burst_ceiling_is_450_mbps_in_bits_per_second() {
-    // 150 000 kbit/s is a 150 Mbps encoder; three times it is 450 Mbps of
-    // burst. Reading the kbit/s figure as bit/s would give 450 000 bps and
-    // leave the controller pinned at its 1.25x-wire-demand floor.
-    assert_eq!(
-        automatic_burst_ceiling_bps(1_000_000_000, 150_000, 160_000_000, true, 0),
-        450_000_000
-    );
-}
-
-#[test]
-fn a_wireless_streams_keyframe_cap_follows_its_three_times_ceiling() {
-    // 4K120 HEVC at 63 Mbps: the keyframe cap follows the pace, so the Wi-Fi
-    // ceiling gives a smaller cap than the wired route, still above the two
-    // average frames every recovery frame gets.
-    let period = Duration::from_secs_f64(1. / 120.);
-    let wifi = recovery_frame_cap(189_000_000, 63_000, period, 20, 1392, false);
-    let wired = recovery_frame_cap(800_000_000, 63_000, period, 20, 1392, false);
-    assert!(wifi >= two_frames(63_000, period), "{wifi}");
-    assert!(wifi < wired, "{wifi} against {wired}");
-}
-
-#[test]
 fn only_wireless_starting_rates_follow_bitrate_without_capping_pyrowave_demand() {
     for kbps in [9_300, 19_000, 60_000, 149_000] {
         for link in [0, 1_000_000_000, 2_500_000_000] {

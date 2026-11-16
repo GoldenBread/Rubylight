@@ -110,44 +110,6 @@ pub fn client_floor_bps(stream_kbps: u32, host_link_bps: u64, client_link_bps: u
     }
 }
 
-/// The ceiling the loss-responsive burst controller may probe to, from what
-/// the client reports about its own path. A client that reports a wireless
-/// route and no link rate leaves the host with the route base alone, and on a
-/// wired host that base is the 1 GbE default, not the client's Wi-Fi link:
-/// probing toward it turns every frame into a microburst at LAN rate, which an
-/// access point queues and the client sees as loss and jitter. Three times the
-/// encoder bitrate (in bit/s) keeps a whole frame on the wire for a few
-/// milliseconds of its period, and never below the wire demand plus a quarter,
-/// so a stream with heavy FEC still fits. A client link hint, when reported, caps
-/// it as elsewhere. A wired or unknown route keeps its base unchanged.
-pub fn automatic_burst_ceiling_bps(
-    base_bps: u64,
-    stream_kbps: u32,
-    demand_bps: u64,
-    wireless: bool,
-    client_link_bps: u64,
-) -> u64 {
-    let base = base_bps.max(1);
-    if !wireless {
-        return base;
-    }
-    // `stream_kbps` is kbit/s and the ceiling is bit/s, so three times is
-    // ×3000, not ×3; the latter would pin every real stream at its floor.
-    let burst = u64::from(stream_kbps)
-        .saturating_mul(3000)
-        .max(demand_bps.saturating_add(demand_bps / 4))
-        .max(1_000_000);
-    let capped = match client_link_bps {
-        0 => burst,
-        link => {
-            burst
-                .min(link.saturating_mul(4) / 5)
-                .max(client_floor_bps(stream_kbps, base_bps, link))
-        }
-    };
-    capped.min(base).max(1)
-}
-
 /// The client's hint is below what the encoder sends, so the floor decides.
 pub fn client_link_below_stream(
     stream_kbps: u32,

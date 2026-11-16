@@ -337,9 +337,9 @@ fn the_wireless_hint_sets_the_route_pace_only_when_no_controller_owns_the_stream
         pace(&session, &config, &packetizer, period, peer, route).bps,
         300_000_000
     );
-    // The controller owns it: its start is its seed in both cases, but the
-    // wireless client's ceiling is the Wi-Fi burst cap (3x the bitrate), not
-    // the host's 1 GbE route; a client that reports nothing keeps 800 Mbps.
+    // The controller owns it: base and ceiling stay the host route's
+    // 800 Mbps and the start is the controller's seed, exactly as with
+    // `host_adaptive_pacing` on a client that reports nothing.
     let (owned, owned_config, owned_keyframe_loss) = wireless_hint_stream(&fixture, "", 1, true);
     let (host_opt_in, host_config, _) =
         wireless_hint_stream(&fixture, "host_adaptive_pacing=true", 1, false);
@@ -358,10 +358,6 @@ fn the_wireless_hint_sets_the_route_pace_only_when_no_controller_owns_the_stream
     );
     assert_eq!(
         owned.automatic_pacing.lock().unwrap().snapshot()["ceiling_kbps"],
-        120_000
-    );
-    assert_eq!(
-        host_opt_in.automatic_pacing.lock().unwrap().snapshot()["ceiling_kbps"],
         800_000
     );
     // The encoder's recovery-frame cap is what `host_adaptive_pacing`
@@ -374,27 +370,8 @@ fn the_wireless_hint_sets_the_route_pace_only_when_no_controller_owns_the_stream
     // PyroWave is not owned by the controller unless it is opted in.
     let (pyrowave, _, _) = wireless_hint_stream(&fixture, "", 3, true);
     assert!(pyrowave.client_wireless_sets_route_pacing());
-    let (pyrowave, pyrowave_config, _) =
-        wireless_hint_stream(&fixture, "host_adaptive_pacing=true", 3, true);
+    let (pyrowave, _, _) = wireless_hint_stream(&fixture, "host_adaptive_pacing=true", 3, true);
     assert!(!pyrowave.client_wireless_sets_route_pacing());
-    // PyroWave paces from its own route policy, so the Wi-Fi burst cap of
-    // H.264, HEVC and AV1 does not touch it even when it is opted in.
-    assert_eq!(
-        pace(
-            &pyrowave,
-            &pyrowave_config,
-            &packetizer,
-            period,
-            peer,
-            route
-        )
-        .bps,
-        80_000_000
-    );
-    assert_eq!(
-        pyrowave.automatic_pacing.lock().unwrap().snapshot()["ceiling_kbps"],
-        800_000
-    );
 }
 
 #[test]

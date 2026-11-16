@@ -656,7 +656,7 @@ const video: Setting[] = [
     description:
       'Sends video packets slowly at first, then faster, and backs off when the device reports loss. It adds delay when a stream starts; turn it on only for a link that loses bursts.',
     details:
-      'A manual pacing rate turns it off, and while it is on, Slow down after video loss stays off. Adds startup delay without changing picture bitrate or FPS; probing can still lose packets. Off by default, including for PyroWave. On a client that reports a Wi-Fi route the ceiling is three times the encoder bitrate, or 1.25 times the wire demand when that is higher, instead of the wired route ceiling. Changes apply on the next connection.',
+      'A manual pacing rate turns it off, and while it is on, Slow down after video loss stays off. Adds startup delay without changing picture bitrate or FPS; probing can still lose packets. Off by default, including for PyroWave. Changes apply on the next connection.',
     category: 'video',
     group: 'Bitrate and network',
     control: { kind: 'toggle' },
@@ -671,7 +671,7 @@ const video: Setting[] = [
     description:
       'Paces video adaptively from the first frame, not after the first lost frames, for a client that reports Wi-Fi or cellular. Leave it on: streams lost fewer frames on weak Wi-Fi.',
     details:
-      'Applies to H.264, HEVC and AV1 for clients that report a wireless route, such as Nightjar. Starts at twice the encoder bitrate, probes up in small steps while the link stays clean, up to three times the encoder bitrate on a Wi-Fi route, or 1.25 times the wire demand when that is higher (its access point, not the host’s 1 GbE port, sets the real limit), and backs off on loss, without changing picture bitrate or FPS. Slow down after video loss does not run on such a stream. PyroWave keeps its own pacing. Changes apply on the next connection. A manual pacing rate turns it off. With this setting off, H.264, HEVC and AV1 are still paced with the Wi-Fi route policy (twice the encoder bitrate, no probing) from the first frame; a manual pacing rate always wins. With an RX 7900 XT host and a Ryzen 7 8845HS laptop on a weak 2.4 GHz Wi-Fi link, it cut unrecoverable frames from 61 to 15.7 per 90-second stream.',
+      'Applies to H.264, HEVC and AV1 for clients that report a wireless route, such as Nightjar. Starts at twice the encoder bitrate, probes up in small steps while the link stays clean, up to the route limit, and backs off on loss, without changing picture bitrate or FPS. Slow down after video loss does not run on such a stream. PyroWave keeps its own pacing. Changes apply on the next connection. A manual pacing rate turns it off. With this setting off, H.264, HEVC and AV1 are still paced with the Wi-Fi route policy (twice the encoder bitrate, no probing) from the first frame; a manual pacing rate always wins. With an RX 7900 XT host and a Ryzen 7 8845HS laptop on a weak 2.4 GHz Wi-Fi link, it cut unrecoverable frames from 61 to 15.7 per 90-second stream; on a clean 5 GHz link it changed nothing.',
     category: 'video',
     group: 'Bitrate and network',
     control: { kind: 'toggle' },
