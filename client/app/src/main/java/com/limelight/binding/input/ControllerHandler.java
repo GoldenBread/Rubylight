@@ -3044,8 +3044,8 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     }
 
     private void rumbleSingleVibrator(Vibrator vibrator, short lowFreqMotor, short highFreqMotor, int strengthPercent) {
-        // Since we can only use a single amplitude value, mix the two motors (80% of the big one,
-        // 33% of the small one), shape the result by the rumble feel and scale it by the strength.
+        // Since we can only use a single amplitude value, scale each motor by the strength, mix them
+        // (80% of the big one, 33% of the small one) and shape the result by the rumble feel.
         // NB: This value is 0-255 as required by VibrationEffect.
         int simulatedAmplitude = RumblePolicy.singleMotorAmplitude(lowFreqMotor, highFreqMotor, rumbleFeel, strengthPercent);
 

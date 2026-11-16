@@ -67,16 +67,22 @@ public final class RumblePolicy {
         return Math.min(255, (shapeMotor((short) (amplitude * 257), feel) & 0xffff) >> 8);
     }
 
+    /** Scales an unsigned 16-bit motor level by a percentage, capped at full strength. */
+    public static short scaleMotor(short motor, int strengthPercent) {
+        int scaled = ((motor & 0xffff) * Math.max(0, strengthPercent)) / 100;
+        return (short) Math.min(scaled, Short.MAX_VALUE * 2);
+    }
+
     /**
-     * The one amplitude (0-255) for a device with a single motor: 80% of the big motor and 33% of
-     * the small one, shaped by the feel, then scaled by the strength percent (capped at full).
+     * The one amplitude (0-255) for a device with a single motor: each motor scaled by the
+     * strength percent (capped at full), then 80% of the big motor and 33% of the small one, then
+     * the feel's curve. Standard is the mix alone, so strength still sets it at every percent.
      */
     public static int singleMotorAmplitude(short lowFreqMotor, short highFreqMotor, Feel feel, int strengthPercent) {
-        int low = (lowFreqMotor >> 8) & 0xFF;
-        int high = (highFreqMotor >> 8) & 0xFF;
+        int low = (scaleMotor(lowFreqMotor, strengthPercent) >> 8) & 0xFF;
+        int high = (scaleMotor(highFreqMotor, strengthPercent) >> 8) & 0xFF;
         int mixed = Math.min(255, (int) ((low * 0.80) + (high * 0.33)));
-        int shaped = shapeAmplitude(mixed, feel);
-        return Math.min(255, (shaped * Math.max(0, strengthPercent)) / 100);
+        return shapeAmplitude(mixed, feel);
     }
 
     /** The PWM period a device without amplitude control is pulsed over, in milliseconds. */

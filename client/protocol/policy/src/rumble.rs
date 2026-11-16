@@ -99,7 +99,10 @@ mod tests {
 
     #[test]
     fn a_stored_feel_reads_by_its_snake_case_name() {
-        assert_eq!(serde_json::from_str::<RumbleFeel>("\"strong\"").unwrap(), RumbleFeel::Strong);
+        assert_eq!(
+            serde_json::from_str::<RumbleFeel>("\"strong\"").unwrap(),
+            RumbleFeel::Strong
+        );
         assert_eq!(RumbleFeel::default(), RumbleFeel::Standard);
     }
 }

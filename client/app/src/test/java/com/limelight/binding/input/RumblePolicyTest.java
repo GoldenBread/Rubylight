@@ -31,16 +31,39 @@ public class RumblePolicyTest {
     }
 
     @Test
-    public void deviceFallbackStrengthScalesTheAmplitudeAndCapsAtFull() {
-        RumblePolicy.Feel standard = RumblePolicy.Feel.STANDARD;
-        // 0xFF00 on the big motor mixes to 204 (80%).
-        assertEquals(204, RumblePolicy.singleMotorAmplitude((short) 0xFF00, (short) 0, standard, 100));
-        assertEquals(102, RumblePolicy.singleMotorAmplitude((short) 0xFF00, (short) 0, standard, 50));
-        assertEquals(255, RumblePolicy.singleMotorAmplitude((short) 0xFFFF, (short) 0xFFFF, standard, 200));
-        assertEquals(0, RumblePolicy.singleMotorAmplitude((short) 0xFFFF, (short) 0xFFFF, standard, 0));
-        assertEquals(0, RumblePolicy.singleMotorAmplitude((short) 0xFFFF, (short) 0xFFFF, standard, -10));
-        // A level too small to reach 1 after the mix stays silent, as before.
-        assertEquals(0, RumblePolicy.singleMotorAmplitude((short) 0, (short) 0x0100, standard, 100));
+    public void deviceFallbackStrengthScalesUnsignedLevelsAndCapsAtFull() {
+        assertEquals((short) 0x7FFF, RumblePolicy.scaleMotor((short) 0xFFFE, 50));
+        assertEquals((short) 0xFFFE, RumblePolicy.scaleMotor((short) 0xFFFF, 200));
+        assertEquals((short) 0x2000, RumblePolicy.scaleMotor((short) 0x1000, 200));
+        assertEquals(0, RumblePolicy.scaleMotor((short) 0xFFFF, 0));
+        assertEquals(0, RumblePolicy.scaleMotor((short) 0xFFFF, -10));
+    }
+
+    @Test
+    public void standardSingleMotorAmplitudeIsTheOldScaleThenMixAtEveryStrength() {
+        short[][] levels = {{(short) 0xFF00, 0}, {0, (short) 0xFFFF}, {(short) 0x8000, (short) 0x4000},
+                {(short) 0xFFFF, (short) 0xFFFF}, {(short) 0x0180, (short) 0x0100}, {(short) 0x1234, (short) 0xABCD}};
+        for (int strength = 1; strength <= 200; strength++) {
+            for (short[] l : levels) {
+                // The code before the feel: scale each motor, then 80% and 33% of their top bytes.
+                int low = (RumblePolicy.scaleMotor(l[0], strength) >> 8) & 0xFF;
+                int high = (RumblePolicy.scaleMotor(l[1], strength) >> 8) & 0xFF;
+                int old = Math.min(255, (int) ((low * 0.80) + (high * 0.33)));
+                assertEquals("strength " + strength, old,
+                        RumblePolicy.singleMotorAmplitude(l[0], l[1], RumblePolicy.Feel.STANDARD, strength));
+            }
+        }
+        assertEquals(204, RumblePolicy.singleMotorAmplitude((short) 0xFF00, (short) 0, RumblePolicy.Feel.STANDARD, 100));
+        assertEquals(0, RumblePolicy.singleMotorAmplitude((short) 0xFFFF, (short) 0xFFFF, RumblePolicy.Feel.STANDARD, 0));
+    }
+
+    @Test
+    public void strengthScalesBeforeTheFeelSoStrongsFloorSurvivesIt() {
+        // Half strength on a weak level: Strong lifts the scaled amplitude, it is not scaled away.
+        int standard = RumblePolicy.singleMotorAmplitude((short) 0x3000, (short) 0, RumblePolicy.Feel.STANDARD, 50);
+        int strong = RumblePolicy.singleMotorAmplitude((short) 0x3000, (short) 0, RumblePolicy.Feel.STRONG, 50);
+        assertTrue(standard > 0 && standard < 64);
+        assertTrue(strong >= 64);
     }
 
     // The same table is in nightjar_policy::rumble's tests (client/protocol/policy/src/rumble.rs).

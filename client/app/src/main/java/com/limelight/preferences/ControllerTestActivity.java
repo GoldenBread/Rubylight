@@ -42,6 +42,7 @@ import com.google.android.material.color.MaterialColors;
 import com.limelight.LimeLog;
 import com.limelight.R;
 import com.limelight.binding.input.ControllerTestModel;
+import com.limelight.binding.input.RumblePolicy;
 import com.limelight.binding.input.driver.AbstractController;
 import com.limelight.binding.input.driver.UsbDriverListener;
 import com.limelight.binding.input.driver.UsbDriverService;
@@ -83,6 +84,7 @@ public class ControllerTestActivity extends NightjarActivity implements UsbDrive
     private final List<Chip> chips = new ArrayList<>();
     private SticksView sticks;
     private boolean rumbleDisabledForStreams;
+    private RumblePolicy.Feel rumbleFeel = RumblePolicy.Feel.STANDARD;
 
     // The controller under test: an Android input device, or one Nightjar's USB driver owns.
     private InputDevice device;
@@ -153,6 +155,7 @@ public class ControllerTestActivity extends NightjarActivity implements UsbDrive
         }
         PreferenceConfiguration config = PreferenceConfiguration.readPreferences(this);
         rumbleDisabledForStreams = config.disableRumble;
+        rumbleFeel = RumblePolicy.Feel.fromKey(config.rumbleFeel);
         usbBound = (config.usbDriver || config.usbDualSense || config.usbSwitchPro) &&
                 bindService(new Intent(this, UsbDriverService.class), usbConnection, Context.BIND_AUTO_CREATE);
         inputManager = (InputManager) getSystemService(Context.INPUT_SERVICE);
@@ -423,13 +426,13 @@ public class ControllerTestActivity extends NightjarActivity implements UsbDrive
     }
 
     private void usbRumble(short strong, short weak) {
-        usbController.rumble(strong, weak);
+        usbController.rumble(RumblePolicy.shapeMotor(strong, rumbleFeel), RumblePolicy.shapeMotor(weak, rumbleFeel));
         handler.removeCallbacks(rumbleTimeout);
         handler.postDelayed(rumbleTimeout, RUMBLE_MS);
     }
 
     private void usbTriggerRumble(short left, short right) {
-        usbController.rumbleTriggers(left, right);
+        usbController.rumbleTriggers(RumblePolicy.shapeMotor(left, rumbleFeel), RumblePolicy.shapeMotor(right, rumbleFeel));
         handler.removeCallbacks(rumbleTimeout);
         handler.postDelayed(rumbleTimeout, RUMBLE_MS);
     }

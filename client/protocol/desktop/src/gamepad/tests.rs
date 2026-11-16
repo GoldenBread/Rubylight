@@ -77,6 +77,20 @@ fn virtual_gamepad_round_trip() {
 
         pads.rumble(0, 0x1234, 0x5678);
         assert_eq!(RUMBLE.load(std::sync::atomic::Ordering::SeqCst), 0x1234_5678);
+        // A feel reaches the motors through its curve: Strong lifts a weak level and keeps full
+        // strength, Subtle caps it.
+        pads.rumble_feel = nightjar_policy::rumble::RumbleFeel::Strong;
+        pads.rumble(0, 0x1000, 0xFFFF);
+        let strong = RUMBLE.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(strong >> 16, u32::from(nightjar_policy::rumble::shape(0x1000, nightjar_policy::rumble::RumbleFeel::Strong)));
+        assert!(strong >> 16 > 0x1000, "Strong lifts a weak level");
+        assert_eq!(strong & 0xFFFF, 0xFFFF);
+        pads.rumble_feel = nightjar_policy::rumble::RumbleFeel::Subtle;
+        pads.rumble(0, 0xFFFF, 0xFFFF);
+        assert_eq!(RUMBLE.load(std::sync::atomic::Ordering::SeqCst), (39_321 << 16) | 39_321);
+        pads.rumble_feel = nightjar_policy::rumble::RumbleFeel::Standard;
+        pads.rumble(0, 0x1234, 0x5678);
+        assert_eq!(RUMBLE.load(std::sync::atomic::Ordering::SeqCst), 0x1234_5678);
         pads.disable_rumble = true;
         pads.rumble(0, 0x4321, 0x8765);
         assert_eq!(RUMBLE.load(std::sync::atomic::Ordering::SeqCst), 0x1234_5678);
