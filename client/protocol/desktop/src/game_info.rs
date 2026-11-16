@@ -151,12 +151,12 @@ impl GameInfo {
         }
         let available = Available { art: wants.cover, info: wants.facts };
         let key = names::key(&game.name, game.steam);
-        if let Some(record) = self.kept(&key).filter(|r| r.fresh(wall_secs(), available)) {
+        if let Some(record) = self.kept(&key).filter(|r| r.fresh_with(wall_secs(), available, &keys)) {
             return Some(record);
         }
         let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
         // Another worker may have looked it up while this one waited.
-        if let Some(record) = self.kept(&key).filter(|r| r.fresh(wall_secs(), available)) {
+        if let Some(record) = self.kept(&key).filter(|r| r.fresh_with(wall_secs(), available, &keys)) {
             return Some(record);
         }
         let mut job = Job::new(game.clone(), keys.clone(), wants, session.take(), wall_secs());
@@ -215,7 +215,7 @@ impl GameInfo {
 /// The game a host lists, as a lookup takes it: its title and its Steam app id when the host gave
 /// one (Rubylight's native library: `game_id` `steam:<id>`, or a Steam store entry).
 pub fn game_of(title: &str, game_id: Option<&str>, store: Option<(&str, &str)>) -> Game {
-    let steam = names::steam_id(game_id).or_else(|| store.filter(|(source, _)| *source == "steam").and_then(|(_, id)| id.parse().ok()).filter(|id| *id > 0));
+    let steam = names::steam_of(game_id, store);
     Game { name: title.to_owned(), steam }
 }
 

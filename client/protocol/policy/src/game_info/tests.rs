@@ -543,3 +543,54 @@ fn a_job_runs_over_the_json_calls() {
     assert_eq!(done["record"]["key"], "name:hades");
     assert_eq!(done["record"]["fetched_at"], 9);
 }
+
+/// Every number a job or record carries fits a Java long, as Android's `org.json` keeps it: a wider
+/// one comes back as a double, which serde refuses. The key hashes are cut to 53 bits for that.
+#[test]
+fn a_job_crosses_androids_json_with_any_keys() {
+    fn longs_only(value: &serde_json::Value) -> bool {
+        match value {
+            serde_json::Value::Number(n) => n.as_i64().is_some_and(|n| n.unsigned_abs() < (1 << 53)),
+            serde_json::Value::Array(items) => items.iter().all(longs_only),
+            serde_json::Value::Object(fields) => fields.values().all(longs_only),
+            _ => true,
+        }
+    }
+    for n in 0..500 {
+        let keys = Keys { steamgriddb: format!("sgdb-{n}"), igdb_client_id: format!("id-{n}"), igdb_client_secret: format!("secret-{n}") };
+        assert!(keys.art_fingerprint() < 1 << 53 && keys.info_fingerprint() < 1 << 53);
+        let mut job = Job::new(Game { name: "Hades".into(), steam: Some(1145360) }, keys, ALL, None, 1_789_000_000);
+        let _ = job.next(None, 10_000);
+        let value = serde_json::to_value(&job).unwrap();
+        assert!(longs_only(&value), "{n}: a number past a long's exact range");
+        // Through text and back, as the app hands it over.
+        let again: Job = serde_json::from_str(&value.to_string()).unwrap();
+        assert_eq!(again, job);
+    }
+}
+
+#[test]
+fn a_failure_with_other_keys_is_asked_again_with_the_corrected_ones() {
+    let wrong = keys(true, true);
+    let job = Job::new(Game { name: "Hades".into(), steam: None }, wrong.clone(), ALL, None, 1_000);
+    let (done, _) = run(job, |_| status(401));
+    let record = done.record;
+    assert_eq!((record.art, record.info), (Outcome::Failed, Outcome::Failed));
+    assert!(record.fresh_with(1_001, BOTH, &wrong), "the same keys wait their hour");
+    let mut corrected = wrong.clone();
+    corrected.igdb_client_secret = "right-secret".into();
+    assert!(!record.fresh_with(1_001, BOTH, &corrected), "a corrected secret asks now");
+    // A part not wanted is not asked for its keys.
+    assert!(record.fresh_with(1_001, Available { art: true, info: false }, &corrected));
+    // A record found with the old keys holds with new ones.
+    let found = Record { art: Outcome::Found, info: Outcome::Found, ..record };
+    assert!(found.fresh_with(1_001, BOTH, &corrected));
+}
+
+#[test]
+fn a_steam_store_entry_names_the_app_id_too() {
+    assert_eq!(steam_of(None, Some(("steam", "20"))), Some(20));
+    assert_eq!(steam_of(Some("steam:10"), Some(("steam", "20"))), Some(10), "the game id first");
+    assert_eq!(steam_of(Some("epic:x"), Some(("epic", "x"))), None);
+    assert_eq!(steam_of(None, Some(("steam", "0"))), None);
+}

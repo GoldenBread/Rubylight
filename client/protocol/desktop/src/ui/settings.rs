@@ -44,8 +44,7 @@ pub(super) const SECTION_KEYS: [&[&[&str]]; 8] = [
         &["dual_screen"], &["second_screen_width", "second_screen_height"], &["input_only_any_host"]],
     &[&["theme"], &["language"], &["open_on_start", "console_home"], &["quick_resume"], &["check_updates"], &["home_card_size"],
         &["ui_zoom"], &["high_contrast"], &["reduce_motion"]],
-    &[&["graphics_card"], &["renderer"], &["display_output"], &["video_planes"], &["high_performance_gpu_power"], &["sops"], &["decode_queue_frames"],
-        &["steamgriddb_key"], &["igdb_client_id"], &["igdb_client_secret"]],
+    &[&["graphics_card"], &["renderer"], &["display_output"], &["video_planes"], &["high_performance_gpu_power"], &["sops"], &["decode_queue_frames"]],
     &[&["error_correction"], &["tell_host_wireless"], &["tell_host_link_speed"],
         &["network_priority"], &["unbatched_input"], &["full_range"],
         &["pyrowave_decoder"], &["pyrowave_async_compute"],
@@ -2604,9 +2603,9 @@ pub(super) const DESKTOP_MAIN: [&str; 3] = ["window_mode", "graphics_card", "ren
 
 /// The action rows: they open a page or run a test and store nothing, so no setting key names them.
 #[cfg_attr(not(test), allow(dead_code))]
-pub(super) const ACTION_ROWS: [&str; 17] = ["mobile_bitrate", "controller_buttons", "controller_test", "keyboard_shortcuts", "stream_hotkeys",
+pub(super) const ACTION_ROWS: [&str; 20] = ["mobile_bitrate", "controller_buttons", "controller_test", "keyboard_shortcuts", "stream_hotkeys",
     "connection_test", "pin_lock", "help", "report_problem", "check_updates_now", "sign_in", "about_app", "logs", "reset_all", "pyrowave_pace",
-    "latency_benchmark", "export_latency_csv"];
+    "latency_benchmark", "export_latency_csv", "steamgriddb_key", "igdb_client_id", "igdb_client_secret"];
 
 /// Whether the row `id` (a setting's first key, an action's name) is one of its section's main rows.
 pub(super) fn main_row(id: &str) -> bool {

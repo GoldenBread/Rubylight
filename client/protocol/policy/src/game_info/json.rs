@@ -2,7 +2,7 @@
 //! Every request is an object with an `op`; every answer is `{"ok": ...}` or `{"error": "invalid",
 //! "detail": why}`. The app's `GameInfoModelTest` and this module's test read the same contract file.
 //!
-//! - `{"op": "clean", "name": n, "game_id": id | null}`: `{"clean": text, "key": key, "steam": id | null}`
+//! - `{"op": "clean", "name": n, "game_id": id | null, "store": {"source", "id"} | null}`: `{"clean": text, "key": key, "steam": id | null}`
 //! - `{"op": "start", "game": {"name", "steam"}, "keys": {...}, "wants": {...}, "session": s | null,
 //!   "wall_secs": t, "now_ms": t}`: `{"job": job, "step": step}`
 //! - `{"op": "next", "job": job, "reply": {"status", "body", "retry_after"} | null, "now_ms": t}`:
@@ -36,6 +36,9 @@ enum Call {
         name: String,
         #[serde(default)]
         game_id: Option<String>,
+        /// The library's store entry, `{"source", "id"}`: a `steam` one names the app id too.
+        #[serde(default)]
+        store: Option<StoreEntry>,
     },
     Start {
         game: Game,
@@ -83,10 +86,18 @@ enum Call {
     },
 }
 
+#[derive(Deserialize)]
+struct StoreEntry {
+    #[serde(default)]
+    source: String,
+    #[serde(default)]
+    id: String,
+}
+
 fn answer(call: Call) -> Value {
     match call {
-        Call::Clean { name, game_id } => {
-            let steam = names::steam_id(game_id.as_deref());
+        Call::Clean { name, game_id, store } => {
+            let steam = names::steam_of(game_id.as_deref(), store.as_ref().map(|s| (s.source.as_str(), s.id.as_str())));
             json!({"clean": names::clean(&name), "key": names::key(&name, steam), "steam": steam})
         }
         Call::Start { game, keys, wants, session, wall_secs, now_ms } => {
@@ -99,7 +110,7 @@ fn answer(call: Call) -> Value {
             json!({"job": job, "step": step})
         }
         Call::Merge { record, older } => json!({"record": record.merged(older.as_ref())}),
-        Call::Fresh { record, now_secs, keys } => json!({"fresh": record.fresh(now_secs, keys.available())}),
+        Call::Fresh { record, now_secs, keys } => json!({"fresh": record.fresh_with(now_secs, keys.available(), &keys)}),
         Call::Library { games, genre, length } => {
             let facts: Vec<Option<&Facts>> = games.iter().map(Option::as_ref).collect();
             let shown: Vec<usize> = facts.iter().enumerate().filter(|(_, f)| library::shows(**f, genre.as_deref(), length)).map(|(at, _)| at).collect();

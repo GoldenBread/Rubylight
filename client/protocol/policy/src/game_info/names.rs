@@ -144,6 +144,12 @@ pub fn key(name: &str, steam: Option<u64>) -> String {
     }
 }
 
+/// The Steam app id of a host's game: from its game id, else from a `steam` store entry
+/// (`(source, id)`).
+pub fn steam_of(game_id: Option<&str>, store: Option<(&str, &str)>) -> Option<u64> {
+    steam_id(game_id).or_else(|| store.filter(|(source, _)| *source == "steam").and_then(|(_, id)| id.trim().parse().ok()).filter(|id| *id > 0))
+}
+
 /// The Steam app id in a host's game id, as Rubylight's native API gives it (`steam:<id>`).
 pub fn steam_id(game_id: Option<&str>) -> Option<u64> {
     let id = game_id?.trim().strip_prefix("steam:")?;

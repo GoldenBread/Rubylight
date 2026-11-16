@@ -102,12 +102,13 @@ impl Hosts {
                     }
                 },
             };
-            // The PC's own cover wins; SteamGridDB's only stands in for none.
+            // The PC's own cover wins; SteamGridDB's only stands in for none (a 404 or the
+            // placeholder, never a failed load), fetched on its own worker and landing as a later
+            // cover of the same version.
             let real = bytes.as_deref().is_some_and(|b| !nightjar_core::http::is_placeholder_box_art(b));
-            let bytes = match fallback {
-                Some((info, game)) if !real => info.cover(&game).or(bytes),
-                _ => bytes,
-            };
+            if let Some((worker, game)) = fallback.filter(|_| !real) {
+                let _ = worker.send(super::game_info::CoverJob { id, app, version: version.clone(), game, scale });
+            }
             let (image, ambient, sized) = art_and_ambient(bytes, scale);
             Some(Event::Art { id, app, version, image, ambient, sized })
         });

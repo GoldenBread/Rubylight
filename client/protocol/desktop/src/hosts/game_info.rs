@@ -6,10 +6,40 @@ use nightjar_policy::game_info::job::{Game, Keys};
 
 use super::*;
 
+/// A cover the PC left out, for the SteamGridDB worker: it lands as the cover of `app` at
+/// `version`, sized for `scale`.
+pub struct CoverJob {
+    pub id: u64,
+    pub app: i32,
+    pub version: String,
+    pub game: Game,
+    pub scale: f32,
+}
+
 impl Hosts {
-    /// Starts looking games up with `info`: a worker for facts, and SteamGridDB covers in the
-    /// cover workers.
+    /// Starts looking games up with `info`: a worker for facts and one for SteamGridDB covers,
+    /// apart from the cover workers, which never wait on the services.
     pub fn set_game_info(&mut self, info: crate::game_info::Shared) {
+        let (covers, jobs) = channel::<CoverJob>();
+        let events = self.sender.clone();
+        let waker = self.waker.clone();
+        let worker = info.clone();
+        let started = std::thread::Builder::new().name("nightjar-game-art".into()).spawn(move || {
+            for CoverJob { id, app, version, game, scale } in jobs {
+                let Some(bytes) = worker.cover(&game) else { continue };
+                let (image, ambient, sized) = super::covers::art_and_ambient(Some(bytes), scale);
+                if image.is_none() {
+                    continue;
+                }
+                if events.send(Event::Art { id, app, version, image, ambient, sized }).is_err() {
+                    return;
+                }
+                waker();
+            }
+        });
+        if started.is_ok() {
+            self.cover_worker = Some(covers);
+        }
         let (sender, games) = channel::<Game>();
         let events = self.sender.clone();
         let waker = self.waker.clone();
@@ -92,11 +122,12 @@ impl Hosts {
 
     /// What a cover worker needs to fill a gap with SteamGridDB's cover for `app` on `host`:
     /// None without its key, or for an app the PC's list does not name.
-    pub(super) fn cover_fallback(&self, host: &Host, app: i32) -> Option<(crate::game_info::Shared, Game)> {
-        let info = self.game_info.clone().filter(|i| i.keys().art())?;
+    pub(super) fn cover_fallback(&self, host: &Host, app: i32) -> Option<(Sender<CoverJob>, Game)> {
+        self.game_info.as_ref().filter(|i| i.keys().art())?;
+        let worker = self.cover_worker.clone()?;
         let game = host.library()?.games.iter().find(|g| g.app_id as i32 == app)?;
         let store = game.store.as_ref().map(|s| (s.source.as_str(), s.id.as_str()));
-        Some((info, crate::game_info::game_of(&game.title, game.game_id.as_deref(), store)))
+        Some((worker, crate::game_info::game_of(&game.title, game.game_id.as_deref(), store)))
     }
 
     /// Facts put in place without a worker, for tests and the demo's screenshots.

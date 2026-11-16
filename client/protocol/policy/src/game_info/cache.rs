@@ -80,6 +80,13 @@ pub struct Record {
     /// When the facts part was asked, likewise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub info_at: Option<u64>,
+    /// A hash of the key the art part was asked with (`Keys::art_fingerprint`), so a failure
+    /// with a wrong key does not outlive the corrected one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub art_keys: Option<u64>,
+    /// A hash of the IGDB client ID and secret the facts part was asked with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub info_keys: Option<u64>,
 }
 
 /// Which services have keys now.
@@ -114,6 +121,15 @@ impl Record {
             .all(|(outcome, available, age)| holds_for(outcome, available).is_some_and(|limit| age < limit))
     }
 
+    /// [`Self::fresh`] for a lookup with `keys`: besides, a part wanted that failed with other keys
+    /// than these is asked again now (a key corrected after a refusal).
+    pub fn fresh_with(&self, now: u64, available: Available, keys: &super::job::Keys) -> bool {
+        let failed_elsewhere = |outcome: Outcome, available: bool, asked_with: Option<u64>, now_with: u64| available && outcome == Outcome::Failed && asked_with != Some(now_with);
+        self.fresh(now, available)
+            && !failed_elsewhere(self.art, available.art, self.art_keys, keys.art_fingerprint())
+            && !failed_elsewhere(self.info, available.info, self.info_keys, keys.info_fingerprint())
+    }
+
     /// `self`, a new lookup's record, with the parts it did not ask ([`Outcome::Skipped`]) taken
     /// from `older`, the record kept before, with their own times. A facts-only lookup so keeps
     /// the art found before, and the reverse.
@@ -122,6 +138,7 @@ impl Record {
         if self.art == Outcome::Skipped && older.art != Outcome::Skipped {
             self.art = older.art;
             self.art_at = Some(older.art_at.unwrap_or(older.fetched_at));
+            self.art_keys = older.art_keys;
             self.cover = older.cover.clone();
             self.hero = older.hero.clone();
             self.logo = older.logo.clone();
@@ -129,6 +146,7 @@ impl Record {
         if self.info == Outcome::Skipped && older.info != Outcome::Skipped {
             self.info = older.info;
             self.info_at = Some(older.info_at.unwrap_or(older.fetched_at));
+            self.info_keys = older.info_keys;
             self.facts = older.facts.clone();
         }
         // Facts found before a failed retry stay shown until a lookup gets them again.

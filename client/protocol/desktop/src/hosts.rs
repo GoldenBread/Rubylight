@@ -721,6 +721,9 @@ pub struct Hosts {
     facts_asked: std::collections::HashSet<String>,
     /// The worker that looks facts up, one game at a time.
     facts_worker: Option<Sender<nightjar_policy::game_info::job::Game>>,
+    /// The worker that fetches SteamGridDB covers for the gaps the cover workers found, so a
+    /// lookup waiting on the services never holds a cover worker.
+    cover_worker: Option<Sender<game_info::CoverJob>>,
     /// The demo's PCs while a first-run page shows a shorter list.
     #[cfg(feature = "demo-library")]
     pub(crate) demo_shelf: Vec<Host>,
@@ -872,6 +875,7 @@ impl Hosts {
             facts: HashMap::new(),
             facts_asked: std::collections::HashSet::new(),
             facts_worker: None,
+            cover_worker: None,
             #[cfg(feature = "demo-library")]
             demo_shelf: Vec::new(),
         };

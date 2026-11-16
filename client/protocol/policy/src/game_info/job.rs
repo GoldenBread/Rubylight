@@ -107,14 +107,33 @@ impl Keys {
         [self.steamgriddb.trim(), self.igdb_client_id.trim(), self.igdb_client_secret.trim()]
     }
 
+    /// A hash of all three keys, for a session to start over when they change.
     fn fingerprint(&self) -> u64 {
-        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-        for byte in [self.steamgriddb.trim(), "\0", self.igdb_client_id.trim(), "\0", self.igdb_client_secret.trim()].concat().bytes() {
+        fingerprint(&[self.steamgriddb.trim(), self.igdb_client_id.trim(), self.igdb_client_secret.trim()])
+    }
+
+    /// A hash of SteamGridDB's key, which a record's art part was asked with.
+    pub fn art_fingerprint(&self) -> u64 {
+        fingerprint(&[self.steamgriddb.trim()])
+    }
+
+    /// A hash of IGDB's client ID and secret, which a record's facts part was asked with.
+    pub fn info_fingerprint(&self) -> u64 {
+        fingerprint(&[self.igdb_client_id.trim(), self.igdb_client_secret.trim()])
+    }
+}
+
+/// FNV-1a over `parts` (each ended by a 0 byte), cut to 53 bits: it travels through Android's
+/// JSON, whose numbers are doubles, so a wider one would come back changed.
+fn fingerprint(parts: &[&str]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for part in parts {
+        for byte in part.bytes().chain(std::iter::once(0)) {
             hash ^= u64::from(byte);
             hash = hash.wrapping_mul(0x0100_0000_01b3);
         }
-        hash
     }
+    hash & ((1 << 53) - 1)
 }
 
 /// What a lookup wants.
@@ -247,7 +266,7 @@ impl Job {
         if session.keys != fingerprint {
             session = Session { pace: session.pace, keys: fingerprint, ..Session::default() };
         }
-        let record = Record { key: names::key(&game.name, game.steam), fetched_at: wall_secs, ..Record::default() };
+        let record = Record { key: names::key(&game.name, game.steam), fetched_at: wall_secs, art_keys: Some(keys.art_fingerprint()), info_keys: Some(keys.info_fingerprint()), ..Record::default() };
         let mut job = Job { game, keys, wants, session, record, stage: Stage::Done, pending: None, sent: false, tries: 0, hold_until_ms: 0, renewed: false, log: Vec::new() };
         job.stage = job.art_start();
         job
@@ -382,6 +401,8 @@ impl Job {
     fn fail_part(&mut self) {
         self.pending = None;
         self.tries = 0;
+        // A failed try's backoff is no reason to hold the next part; the service's pace still is.
+        self.hold_until_ms = 0;
         if self.is_art() {
             self.record.art = Outcome::Failed;
             self.stage = self.info_start();
@@ -400,6 +421,7 @@ impl Job {
         self.stage = stage;
         self.pending = None;
         self.tries = 0;
+        self.hold_until_ms = 0;
     }
 
     fn answer(&mut self, reply: Reply, now_ms: u64) {

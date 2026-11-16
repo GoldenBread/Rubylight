@@ -10,6 +10,11 @@
     "response": {"ok": {"clean": "Mafia", "key": "name:mafia", "steam": null}}
   },
   {
+    "name": "a Steam store entry names the app id when the game id does not",
+    "request": {"op": "clean", "name": "Hades", "game_id": "custom:7", "store": {"source": "steam", "id": "1145360"}},
+    "response": {"ok": {"clean": "Hades", "key": "steam:1145360", "steam": 1145360}}
+  },
+  {
     "name": "a record still holds while no new key was added",
     "request": {"op": "fresh", "record": {"key": "steam:1", "fetched_at": 1000, "art": "found", "info": "skipped"}, "now_secs": 2000, "keys": {"steamgriddb": "k"}},
     "response": {"ok": {"fresh": true}}
