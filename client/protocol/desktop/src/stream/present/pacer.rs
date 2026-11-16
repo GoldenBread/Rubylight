@@ -125,7 +125,8 @@ pub struct VrrPacing {
     /// scan line too.
     pub lfc: bool,
     /// Refreshes each V-Sync picture stays on the display (fractional V-Sync,
-    /// `nightjar_policy::vsync::refreshes_per_frame`), given as its sync interval. 1 shows each
+    /// `nightjar_policy::vsync::refreshes_per_frame`). The stream holds each picture itself until
+    /// the refresh that opens its turn, so the swap chain keeps sync interval 1; 1 shows each
     /// picture at the next refresh.
     pub refreshes: u32,
     /// `NIGHTJAR_VRR_SYNC` chose `sync`, which then stays as chosen (`distrust_scan`).
@@ -496,10 +497,11 @@ pub fn uncomposed_fullscreen(exclusive: bool, windows: bool) -> bool {
     exclusive && windows
 }
 
-/// How far ahead of its turn a held picture goes out: `base_us` (the desktop's deadline, or 2 ms
-/// where nothing composes), plus the draws after the hold (`draw_us`, with Frame Warp). The sum
-/// stays under 4/5 of a refresh, and never under `base_us`: a slow AI enhancement draw would
-/// otherwise aim a picture at the refresh before its turn.
+/// The desktop's deadline a held picture's turn must make: `base_us` (the desktop's deadline, or
+/// 2 ms where nothing composes), plus the draws after the hold (`draw_us`, with Frame Warp), since a
+/// picture that comes late for its turn may have to draw after its hold. The sum stays under 4/5 of a
+/// refresh, and never under `base_us`. The present itself goes out just after the refresh that opens
+/// the turn (`HELD_LATCH_GUARD_US`).
 pub fn held_margin_us(base_us: u64, draw_us: Option<u64>, refresh_us: u64) -> u64 {
     let Some(draw_us) = draw_us else { return base_us };
     (base_us + draw_us).min((refresh_us * 4 / 5).max(base_us))
@@ -509,7 +511,8 @@ pub fn held_margin_us(base_us: u64, draw_us: Option<u64>, refresh_us: u64) -> u6
 /// for a stream whose presents skip. A waiting present and exclusive fullscreen, which nothing
 /// composes, keep the refresh itself. A picture fractional V-Sync holds for its turn is aimed at
 /// its hold's own margin instead (`Streaming::held_margin_us`): aimed at the refresh, a source that
-/// moves its frames a picture at a time puts them under the margin, where each misses its turn.
+/// moves its frames a picture at a time puts them under the margin, where each misses its turn,
+/// while aimed at the deadline it can come late for the refresh that opens the turn.
 pub fn phase_lock_aim_us(skipping: bool, exclusive: bool, set_us: Option<i64>, refresh_hz: f32) -> i64 {
     if !skipping || exclusive { return 0; }
     set_us.unwrap_or_else(|| deadline_before_refresh(refresh_hz))

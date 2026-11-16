@@ -1650,6 +1650,25 @@ fn fractional_v_sync_holds_v_sync_pictures_only_and_follows_the_rates() {
     assert_eq!(vrr.step(&mut mode, None, 0), None);
 }
 
+/// Fractional V-Sync on a stream faster than the held rate (four pictures within one 16.7 ms hold):
+/// each turn shows the newest picture and the ones it replaces are dropped, so the pictures never
+/// go out a refresh apart.
+#[test]
+fn a_stream_faster_than_the_held_rate_drops_the_pictures_it_cannot_hold() {
+    let mut pacer = Pacer::new(PacingMode::Vsync, 8_333).with_frame_pacing(FramePacing::Latency, 60);
+    let (mut shown, mut dropped) = (Vec::new(), 0);
+    for turn in 0..10u64 {
+        for picture in 0..4 {
+            pacer.accept(decoded(turn * 16_667 + picture * 4_000));
+        }
+        let (picture, replaced) = pacer.take_due(turn * 16_667 + 16_000);
+        dropped += replaced;
+        if let Some(picture) = picture { shown.push(picture.decoded.ready_us); }
+    }
+    assert_eq!(shown, (0..10u64).map(|turn| turn * 16_667 + 12_000).collect::<Vec<_>>(), "one picture a turn, the newest");
+    assert_eq!(dropped, 30, "the three pictures it replaced each turn");
+}
+
 #[test]
 fn a_display_whose_presents_start_no_scan_turns_tear_free_vrr_to_sync_interval_1() {
     // Tear-free VRR (`VrrSync::Scan`) presents with tearing after its own wait for the beam.

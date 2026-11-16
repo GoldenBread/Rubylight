@@ -511,8 +511,9 @@ pub struct Streaming {
     /// `NIGHTJAR_PRESENT_DEADLINE_US` for measurement runs, in place of
     /// `present::deadline_before_refresh`.
     present_deadline_us: Option<i64>,
-    /// `NIGHTJAR_HELD_MARGIN_US` for measurement runs: how long before its turn a picture held
-    /// by fractional V-Sync is presented (`Streaming::hold_for_turn`).
+    /// `NIGHTJAR_HELD_MARGIN_US` for measurement runs: the desktop's deadline a held picture's turn
+    /// must make, which says which turn a late picture takes and what the phase report aims at
+    /// (`Streaming::held_margin_us`).
     held_margin_us: Option<u64>,
     /// `NIGHTJAR_HELD_REPORT=0` for measurement runs: a held stream's phase reports count to
     /// each refresh instead of each turn (60 fps on 120 Hz then missed 6.7% of turns, against 0.2%).
@@ -1018,7 +1019,7 @@ impl Streaming {
             skip_over_waiting: env_flag("NIGHTJAR_PRESENT_SKIP").unwrap_or(true),
             present_deadline_us: std::env::var("NIGHTJAR_PRESENT_DEADLINE_US").ok().and_then(|us| us.parse().ok()),
             held_margin_us: std::env::var("NIGHTJAR_HELD_MARGIN_US").ok().and_then(|us| us.parse().ok()).inspect(|us| {
-                eprintln!("nightjar: NIGHTJAR_HELD_MARGIN_US: fractional V-Sync's held pictures go out {us} us before their turn");
+                eprintln!("nightjar: NIGHTJAR_HELD_MARGIN_US: fractional V-Sync's held pictures must make their turn {us} us before the refresh");
             }),
             held_report_refresh: std::env::var_os("NIGHTJAR_HELD_REPORT").is_some_and(|v| v == "0"),
             held_anchor: phase::HeldAnchor::default(),
