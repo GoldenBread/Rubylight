@@ -1423,6 +1423,20 @@ fn wgc_interval_is_unrestricted_by_default_and_preserves_overrides() {
     }
     assert!(!default.values.contains_key("wgc_high_rate_capture"));
 }
+/// The video socket lives for the process. A jumbo session sets its
+/// don't-fragment flag, a stock session neither sets nor clears it, and only
+/// the last jumbo session clears it.
+#[test]
+fn the_video_sockets_fragmentation_flag_follows_the_live_jumbo_sessions() {
+    let mut sessions = super::JumboSessions::default();
+    assert!(sessions.enter(), "the first jumbo session sets the flag");
+    assert!(!sessions.enter(), "a second one leaves it set");
+    assert!(!sessions.leave(), "the last jumbo session has not gone yet");
+    assert!(sessions.leave(), "the last one clears the flag");
+    // A stock session never calls in, so a later jumbo session sets it again.
+    assert!(sessions.enter());
+}
+
 #[test]
 fn shared_capture_separates_explicit_wgc_intervals_without_splitting_ddx() {
     let key = |kind, setting: &str| {

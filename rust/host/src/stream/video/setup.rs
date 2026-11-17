@@ -326,23 +326,26 @@ impl SessionThread<'_> {
         };
         // A jumbo stream's datagrams must fail at the sender, visibly, rather
         // than be fragmented and lost whole on a hop that carries less than the
-        // path's MTU. Stock sizes fit every path, so they clear the option: the
-        // video socket lives for the process, and a jumbo session must not
-        // leave a later stock session refusing its own datagrams.
+        // path's MTU. Stock sizes fit every path, so only jumbo sessions touch
+        // the option: the video socket lives for the process, and the flag
+        // follows the live jumbo sessions rather than the last stream to start.
         let jumbo =
             packetizer.packet_size > usize::from(butterpollo_core::video_packet::STOCK_MAX_VIDEO_PACKET);
-        match butterpollo_windows::net::set_dont_fragment(&m.video, jumbo) {
-            Ok(()) if jumbo => tracing::info!(
-                packet_size = packetizer.packet_size,
-                "video socket refuses fragmentation"
-            ),
-            Ok(()) => {}
-            Err(error) => tracing::warn!(
-                packet_size = packetizer.packet_size,
-                jumbo,
-                %error,
-                "video socket could not set fragmentation; jumbo packets may fragment or stock packets may be refused"
-            ),
+        if jumbo {
+            match m.join_jumbo() {
+                Ok(()) => {
+                    workers.jumbo = true;
+                    tracing::info!(
+                        packet_size = packetizer.packet_size,
+                        "video socket refuses fragmentation"
+                    );
+                }
+                Err(error) => tracing::warn!(
+                    packet_size = packetizer.packet_size,
+                    %error,
+                    "video socket could not set fragmentation; jumbo packets may fragment on a hop with a smaller MTU"
+                ),
+            }
         }
         let next_wire_frame = std::cell::Cell::new(u64::from(packetizer.frame));
         // New pictures claimed and not yet sent, for the stage timings.

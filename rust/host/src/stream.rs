@@ -446,6 +446,10 @@ pub struct Media {
     pub(crate) mic: Option<Arc<crate::mic::Counters>>,
     peers: Mutex<Peers>,
     captures: Mutex<HashMap<CaptureKey, Weak<Source>>>,
+    /// The live jumbo sessions, whose datagrams the shared socket must refuse
+    /// to fragment. The socket lives for the process, so the flag follows the
+    /// count rather than any one session's start or end.
+    jumbo: Mutex<JumboSessions>,
     control_port: u16,
     bind: IpAddr,
     /// The control worker's answer to [`Media::clients_told_of_shutdown`].
@@ -603,6 +607,26 @@ fn capture_config(config: &Config) -> Config {
     );
     capture
 }
+/// How many live sessions send jumbo video packets over the shared video
+/// socket. The first one sets the socket's don't-fragment flag and the last
+/// one clears it, so a stock client never inherits a jumbo session's flag.
+#[derive(Default)]
+struct JumboSessions {
+    live: u32,
+}
+impl JumboSessions {
+    /// A session starts sending jumbo packets; whether it is the first.
+    fn enter(&mut self) -> bool {
+        self.live = self.live.saturating_add(1);
+        self.live == 1
+    }
+    /// A session stops; whether it was the last.
+    fn leave(&mut self) -> bool {
+        self.live = self.live.saturating_sub(1);
+        self.live == 0
+    }
+}
+
 impl Media {
     /// The address the host listens on: unspecified unless it was bound to one.
     pub fn bind(&self) -> IpAddr {
@@ -658,6 +682,7 @@ impl Media {
             mic,
             peers: Mutex::default(),
             captures: Mutex::new(HashMap::new()),
+            jumbo: Mutex::default(),
             control_port: ports.control,
             bind,
             shutdown_requested: AtomicBool::new(false),
@@ -730,6 +755,34 @@ impl Media {
                 }
             })?;
         Ok(m)
+    }
+    /// A session starts sending jumbo video packets: the socket refuses to
+    /// fragment them while any live session needs that. The flag is set on
+    /// the first jumbo session only, so a stock session's start or end never
+    /// changes it.
+    fn join_jumbo(&self) -> Result<()> {
+        let first = self.jumbo.lock().unwrap().enter();
+        if !first {
+            return Ok(());
+        }
+        if let Err(error) = butterpollo_windows::net::set_dont_fragment(&self.video, true) {
+            // The session does not count as jumbo; its packets fragment as
+            // they did before, and the caller warns. A flag one address
+            // family took before the other failed is cleared again.
+            self.jumbo.lock().unwrap().leave();
+            let _ = butterpollo_windows::net::set_dont_fragment(&self.video, false);
+            return Err(error);
+        }
+        Ok(())
+    }
+    /// A jumbo session ended: the flag is cleared when it was the last one,
+    /// never behind a stock session's back.
+    fn leave_jumbo(&self) {
+        if self.jumbo.lock().unwrap().leave()
+            && let Err(error) = butterpollo_windows::net::set_dont_fragment(&self.video, false)
+        {
+            tracing::warn!(%error, "video socket could not clear its don't-fragment flag");
+        }
     }
     fn capture(
         &self,

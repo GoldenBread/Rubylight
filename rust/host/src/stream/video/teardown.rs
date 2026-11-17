@@ -21,6 +21,7 @@ impl SessionThread<'_> {
             webrtc_sender,
             keyframe_loss_memory,
             timing_record,
+            jumbo,
             #[cfg(test)]
             fixture_preparation,
             coop_watch: _coop_watch,
@@ -34,6 +35,11 @@ impl SessionThread<'_> {
         // longer reaches.
         h.record_failure(&s);
         s.stop();
+        // The shared video socket outlives this stream: its don't-fragment flag
+        // goes with the last jumbo session, not with this one if others remain.
+        if jumbo {
+            m.leave_jumbo();
+        }
         // Congestion control over the whole stream, for the A/B (`congestion_ab.py`).
         if s.congestion_active() {
             let cc = s.congestion_snapshot();
