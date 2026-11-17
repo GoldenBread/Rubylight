@@ -137,6 +137,7 @@ pub mod steam_pad;
 pub mod steamgriddb;
 pub mod stream_policy;
 pub mod stream_preset;
+pub mod stutter_report;
 pub mod switch2;
 pub mod text_input;
 pub mod timing_record;
