@@ -158,7 +158,9 @@ impl Streaming {
         }
         let secs = elapsed.as_secs_f64();
         let stats = self.session.stats();
-        let c = &self.shared.counters;
+        // Its own handle: the counters are read on after a toast below borrows the stream.
+        let shared = Arc::clone(&self.shared);
+        let c = &shared.counters;
         let now = (
             // The frames that arrived for the decoder: the ones it skipped for a newer frame too.
             stats.frames_submitted + stats.frames_skipped,
