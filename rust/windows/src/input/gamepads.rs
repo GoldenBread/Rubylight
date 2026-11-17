@@ -1187,10 +1187,19 @@ impl Gamepads {
                 updates.push((*id, buttons, *left_trigger, *right_trigger, *sticks));
             }
         }
+        // One pad's failure must not skip the others' back-button update: try
+        // every pad and report the last error, as the input and feedback paths
+        // treat each pad on its own.
+        let mut last_error = None;
         for (id, buttons, left, right, sticks) in updates {
-            self.submit(id, buttons, left, right, &sticks)?;
+            if let Err(error) = self.submit(id, buttons, left, right, &sticks) {
+                last_error = Some(error);
+            }
         }
-        keepalive
+        match last_error {
+            Some(error) => Err(error),
+            None => keepalive,
+        }
     }
     /// Controllers whose client is asked for motion again, with their
     /// arrival capabilities: a ViGEmBus DualShock 4 whose gyro went silent,

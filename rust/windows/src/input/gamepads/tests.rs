@@ -711,6 +711,42 @@ fn a_state_that_turns_a_pad_back_on_clears_its_deferred_removal() {
     pads.active.clear();
 }
 
+/// A back-button timeout due on two pads: one pad's failed submit must not
+/// skip the other's update, and the last error is reported.
+#[test]
+fn refresh_updates_every_pad_and_returns_the_last_failure() {
+    let mut pads = scripted_pads();
+    pads.policy.back_button_timeout = Some(Duration::ZERO);
+    for id in [0u16, 1] {
+        pads.active.insert(id, id + 2);
+        pads.profiles.insert(id, 4);
+        pads.apply(&Event::Controller {
+            id,
+            active: 0b11,
+            buttons: 0x20,
+            left_trigger: 0,
+            right_trigger: 0,
+            sticks: [0; 4],
+        })
+        .unwrap();
+    }
+    // The timeout has passed: both pads' back buttons are due.
+    std::thread::sleep(Duration::from_millis(150));
+    script(&mut pads).calls.clear();
+    script(&mut pads).submits = VecDeque::from([
+        Err(anyhow::anyhow!("first pad failed")),
+        Err(anyhow::anyhow!("second pad failed")),
+    ]);
+    let error = pads.refresh().unwrap_err();
+    assert!(format!("{error:#}").contains("second pad failed"));
+    assert_eq!(
+        script(&mut pads).calls,
+        ["submit 2", "submit 3"],
+        "the second pad was updated after the first failed"
+    );
+    pads.active.clear();
+}
+
 /// A driver whose answers a test scripts, for the paths that only a real
 /// sleep can otherwise reach.
 fn scripted_pads() -> Gamepads {
