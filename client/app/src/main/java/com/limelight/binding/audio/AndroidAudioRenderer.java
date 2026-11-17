@@ -722,10 +722,19 @@ public class AndroidAudioRenderer implements AudioRenderer {
     static void downmixStereo(short[] input, int length, int channels, short[] stereo) {
         for (int frame = 0; frame < length / channels; frame++) {
             for (int side = 0; side < 2; side++) {
-                // The decoder supplies FL FR C LFE RL RR [SL SR].
+                // The decoder supplies FL FR C LFE RL RR [SL SR]; four channels are quad, FL FR RL RR,
+                // with neither C nor LFE. Mixing their index 2 as a centre gave both ears the left rear
+                // and lost the right one.
                 int base = frame * channels;
-                float mix = input[base + side] + 0.7071f * input[base + 2];
-                for (int c = 4 + side; c < channels; c += 2) mix += 0.7071f * input[base + c];
+                float mix = input[base + side];
+                int firstSurround;
+                if (channels == 4) {
+                    firstSurround = 2 + side;
+                } else {
+                    if (channels >= 3) mix += 0.7071f * input[base + 2];
+                    firstSurround = 4 + side;
+                }
+                for (int c = firstSurround; c < channels; c += 2) mix += 0.7071f * input[base + c];
                 stereo[frame * 2 + side] = (short)Math.max(-32768, Math.min(32767, Math.round(mix)));
             }
         }
