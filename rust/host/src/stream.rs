@@ -862,7 +862,9 @@ impl Media {
                                     Err(error) if chosen != kind.as_str() => {
                                         match Capture::open_for_stream_reported(&next.0, &kind, hdr, &capture_config, capture_warnings.clone()) {
                                             Ok(opened) => {
-                                                capture_warnings.set("capture_backend", format!("Capturing with Windows Graphics Capture: Desktop Duplication cannot capture this display ({error:#})."));
+                                                if opened.backend() == "wgc" {
+                                                    capture_warnings.set("capture_backend", format!("Capturing with Windows Graphics Capture: Desktop Duplication cannot capture this display ({error:#})."));
+                                                }
                                                 Ok(opened)
                                             }
                                             Err(failure) => Err(failure),
