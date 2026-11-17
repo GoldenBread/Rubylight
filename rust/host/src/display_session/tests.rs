@@ -1945,13 +1945,14 @@ fn explicit_virtual_layouts_take_precedence_over_the_legacy_primary_flag() {
             .insert("virtual-display-primary".into(), true.into());
     }
 }
-/// One stream to the device (`planned` layout, `owner` as the stream sets it
+/// One stream to the device (the `planned` layout, `owner` as the stream sets it
 /// when Windows took the layout) that ends with the stream's display in the
 /// `ended` state; `during` runs while it is connected. Returns the device's
 /// layout settings afterwards.
 fn stream_then_disconnect(
     fixture: &crate::state::test_support::Fixture,
     client: &butterpollo_core::state::Client,
+    planned: &str,
     owner: bool,
     ended: Vec<(String, bool)>,
     during: impl FnOnce(),
@@ -1960,8 +1961,8 @@ fn stream_then_disconnect(
     *fixture.host.config.write().unwrap() = config.clone();
     let mut prepared = test_prepared(&fixture.host);
     prepared.output = r"\\.\DISPLAY9".into();
-    prepared.virtual_layout = Some("extended_primary".into());
-    prepared.inherited_layout = Some("extended_primary".into());
+    prepared.virtual_layout = Some(planned.into());
+    prepared.inherited_layout = Some(planned.into());
     prepared.layout_owner = owner.then(|| client.uuid.clone());
     prepared.layout_snapshot = Some(ended);
     let limiter =
@@ -2022,18 +2023,15 @@ fn a_browser_on_this_pc_teaches_its_device_no_layout() {
         stream("dd_config_revert_delay=0", true),
         ("extended_primary".to_owned(), None, None)
     );
-    // The same plan set by the user, from the same browser, and from elsewhere: it is learned.
+    // The same plan set by the user, from the same browser, and from elsewhere: Windows
+    // moving the primary back at the end is nobody's choice either.
     for this_pc in [true, false] {
         assert_eq!(
             stream(
                 "dd_config_revert_delay=0\nvirtual_display_layout=extended_primary",
                 this_pc
             ),
-            (
-                "extended_primary".to_owned(),
-                Some(serde_json::json!("extended")),
-                Some(serde_json::json!("extended_primary")),
-            )
+            ("extended_primary".to_owned(), None, None)
         );
     }
 }
@@ -2063,8 +2061,14 @@ fn a_device_layout_the_user_set_survives_every_stream() {
         let client = fixture.client(u32::MAX);
         set_device_layout(&fixture, layout);
         for _stream in 0..3 {
-            let (kept, over) =
-                stream_then_disconnect(&fixture, &client, true, windows_moved_the_primary(), || {});
+            let (kept, over) = stream_then_disconnect(
+                &fixture,
+                &client,
+                "extended_primary",
+                true,
+                windows_moved_the_primary(),
+                || {},
+            );
             assert_eq!(kept, Some(serde_json::json!(layout)));
             assert_eq!(over, None);
         }
@@ -2074,10 +2078,14 @@ fn a_device_layout_the_user_set_survives_every_stream() {
 fn a_device_layout_the_user_sets_during_a_stream_is_not_replaced_at_disconnect() {
     let fixture = crate::state::test_support::Fixture::new();
     let client = fixture.client(u32::MAX);
-    let (kept, over) =
-        stream_then_disconnect(&fixture, &client, true, windows_moved_the_primary(), || {
-            set_device_layout(&fixture, "exclusive")
-        });
+    let (kept, over) = stream_then_disconnect(
+        &fixture,
+        &client,
+        "extended_primary",
+        true,
+        windows_moved_the_primary(),
+        || set_device_layout(&fixture, "exclusive"),
+    );
     assert_eq!(kept, Some(serde_json::json!("exclusive")));
     assert_eq!(over, None);
 }
@@ -2120,29 +2128,37 @@ fn a_layout_windows_refused_is_not_learned() {
     // The stream sets no layout owner when Windows did not take the layout.
     let fixture = crate::state::test_support::Fixture::new();
     let client = fixture.client(u32::MAX);
-    let (kept, over) =
-        stream_then_disconnect(&fixture, &client, false, windows_moved_the_primary(), || {});
+    let (kept, over) = stream_then_disconnect(
+        &fixture,
+        &client,
+        "extended_primary",
+        false,
+        windows_moved_the_primary(),
+        || {},
+    );
     assert_eq!((kept, over), (None, None));
 }
 #[test]
 fn a_learned_device_layout_is_replaced_but_a_chosen_one_is_not_learned_over() {
     let fixture = crate::state::test_support::Fixture::new();
     let client = fixture.client(u32::MAX);
-    // No device layout: the one the user left the stream in is learned.
-    let (kept, over) =
-        stream_then_disconnect(&fixture, &client, true, windows_moved_the_primary(), || {});
-    assert_eq!(kept, Some(serde_json::json!("extended")));
-    assert_eq!(over, Some(serde_json::json!("extended_primary")));
+    // No device layout: the "Show only on 2" the user left the stream in is learned.
+    let only = || vec![(r"\\.\DISPLAY9".to_string(), true)];
+    let (kept, over) = stream_then_disconnect(&fixture, &client, "extended", true, only(), || {});
+    assert_eq!(kept, Some(serde_json::json!("exclusive")));
+    assert_eq!(over, Some(serde_json::json!("extended")));
     // "global" is no layout of its own.
     set_device_layout(&fixture, "global");
-    let (kept, _) =
-        stream_then_disconnect(&fixture, &client, true, windows_moved_the_primary(), || {});
-    assert_eq!(kept, Some(serde_json::json!("extended")));
-    // A learned layout follows what the user leaves the next stream in.
-    let only = vec![(r"\\.\DISPLAY9".to_string(), true)];
-    let (kept, over) = stream_then_disconnect(&fixture, &client, true, only, || {});
+    let (kept, _) = stream_then_disconnect(&fixture, &client, "extended", true, only(), || {});
     assert_eq!(kept, Some(serde_json::json!("exclusive")));
-    assert_eq!(over, Some(serde_json::json!("extended_primary")));
+    // A learned layout follows what the user leaves the next stream in.
+    let primary = vec![
+        (r"\\.\DISPLAY9".to_string(), true),
+        (r"\\.\DISPLAY1".to_string(), false),
+    ];
+    let (kept, over) = stream_then_disconnect(&fixture, &client, "extended", true, primary, || {});
+    assert_eq!(kept, Some(serde_json::json!("extended_primary")));
+    assert_eq!(over, Some(serde_json::json!("extended")));
 }
 #[test]
 fn a_layout_saved_before_the_user_marker_existed_stays_learnable() {
@@ -2156,6 +2172,7 @@ fn a_layout_saved_before_the_user_marker_existed_stays_learnable() {
     let (kept, over) = stream_then_disconnect(
         &fixture,
         &client,
+        "extended_primary",
         true,
         vec![(r"\\.\DISPLAY9".into(), true)],
         || {},
@@ -2165,32 +2182,31 @@ fn a_layout_saved_before_the_user_marker_existed_stays_learnable() {
 }
 #[test]
 fn a_learned_device_layout_yields_when_the_host_layout_changes() {
-    // Issue #40: "extended" was learned over the host's "extended_primary";
-    // switching the host to "exclusive" must take effect.
+    // Issue #40: "exclusive" was learned over the host's "extended"; switching
+    // the host to "extended_primary" must take effect.
     let mut client: butterpollo_core::state::Client =
         serde_json::from_value(serde_json::json!({"name":"Device","uuid":"device","cert":""}))
             .unwrap();
     client
         .extra
-        .insert("virtual_display_layout".into(), "extended".into());
-    client
-        .extra
-        .insert(LEARNED_OVER.into(), "extended_primary".into());
+        .insert("virtual_display_layout".into(), "exclusive".into());
+    client.extra.insert(LEARNED_OVER.into(), "extended".into());
+    let extended = Config::parse("virtual_display_layout=extended").unwrap();
     let primary = Config::parse("virtual_display_layout=extended_primary").unwrap();
-    let exclusive = Config::parse("virtual_display_layout=exclusive").unwrap();
     assert_eq!(
-        virtual_display_layout(&primary, &client, None, None),
-        "extended"
-    );
-    assert_eq!(
-        virtual_display_layout(&exclusive, &client, None, None),
+        virtual_display_layout(&extended, &client, None, None),
         "exclusive"
     );
+    assert_eq!(
+        virtual_display_layout(&primary, &client, None, None),
+        "extended_primary"
+    );
+
     // A layout the user set for the device has no marker and always applies.
     client.extra.remove(LEARNED_OVER);
     assert_eq!(
-        virtual_display_layout(&exclusive, &client, None, None),
-        "extended"
+        virtual_display_layout(&primary, &client, None, None),
+        "exclusive"
     );
 }
 #[test]

@@ -828,8 +828,12 @@ pub fn beside_the_users(before: &[Node], target: &Node) -> Vec<Node> {
 /// `extended_primary` when it is the primary. A planned `exclusive` is left
 /// alone: the stream puts that layout back itself when Windows switches a
 /// display on, so a different one at the end came from Windows or a game, not
-/// the user. Isolated layouts, which Windows' own choices cannot express, and a
-/// stream display that is off are never learned.
+/// the user. A planned `extended_primary` keeps the primary too: Windows or a
+/// game moving it back to a monitor is not the user's choice either, and
+/// learning it made every later stream ignore the setting. Its end with the
+/// stream's display alone is the user's "Show only on 2" and is learned.
+/// Isolated layouts, which Windows' own choices cannot express, and a stream
+/// display that is off are never learned.
 pub fn chosen_layout(
     planned: &str,
     stream_display: &str,
@@ -849,6 +853,9 @@ pub fn chosen_layout(
     } else {
         "extended"
     };
+    if planned == "extended_primary" && chosen == "extended" {
+        return None;
+    }
     (chosen != planned).then_some(chosen)
 }
 

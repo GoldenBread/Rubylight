@@ -173,13 +173,20 @@ fn a_layout_chosen_during_the_stream_is_kept_for_the_device() {
         chosen_layout("extended", vd, &on(&[(vd, true), (r"\\.\DISPLAY1", false)])),
         Some("extended_primary")
     );
+    // A primary plan keeps its primary: Windows or a game moving it back to a
+    // monitor is not the user's choice, so it is never learned as "extended".
     assert_eq!(
         chosen_layout(
             "extended_primary",
             vd,
             &on(&[(vd, false), (r"\\.\DISPLAY1", true)])
         ),
-        Some("extended")
+        None
+    );
+    // The user's "Show only on 2" from there is learned.
+    assert_eq!(
+        chosen_layout("extended_primary", vd, &on(&[(vd, true)])),
+        Some("exclusive")
     );
     // Unchanged, the stream's display off ("Show only on 1"), an exclusive
     // stream (kept by the host itself) and isolated layouts learn nothing.
