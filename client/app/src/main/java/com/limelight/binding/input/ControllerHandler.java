@@ -155,7 +155,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     // Under rumbleLock: while the stream has no focus the motors stay off, and the host's latest
     // levels per controller number ({low, high, left trigger, right trigger}) come back with focus.
     private boolean rumblePaused;
-    private final Map<Short, short[]> rumbleLevels = new HashMap<>();
+    // Concurrent: a pad removed clears its slot's levels without the rumble lock, whose holders take
+    // the handler's lock (usbPadsOf) the other way round. All other access is under rumbleLock.
+    private final Map<Short, short[]> rumbleLevels = new java.util.concurrent.ConcurrentHashMap<>();
     private final VibratorManager deviceVibratorManager;
     private final SensorManager deviceSensorManager;
     private final SceManager sceManager;
@@ -902,6 +904,25 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         if (context.assignedControllerNumber && (activeControllerMask & (1 << context.controllerNumber)) == 0) {
             controllerSlotsWithInput.set(context.controllerNumber, 0);
         }
+        if (context.assignedControllerNumber && !slotStillAssigned(context, context.controllerNumber)) {
+            // The next pad in this slot must not play the old pad's levels when rumble resumes.
+            rumbleLevels.remove(context.controllerNumber);
+        }
+    }
+
+    /** Whether another pad still plays as this controller slot, after {@code released} goes. */
+    private boolean slotStillAssigned(GenericControllerContext released, int controllerNumber) {
+        for (InputDeviceContext other : inputDeviceContexts.values()) {
+            if (other != released && other.assignedControllerNumber && other.controllerNumber == controllerNumber) {
+                return true;
+            }
+        }
+        for (UsbDeviceContext other : usbDeviceContexts.values()) {
+            if (other != released && other.assignedControllerNumber && other.controllerNumber == controllerNumber) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean isAssociatedJoystick(InputDevice originalDevice, InputDevice possibleAssociatedJoystick) {
@@ -3114,17 +3135,17 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         short[] levels = levelsOf(controllerNumber);
         levels[0] = lowFreqMotor;
         levels[1] = highFreqMotor;
-        if (rumblePaused) {
-            return;
-        }
 
         for (InputDeviceContext deviceContext : inputDeviceContexts.values()) {
 
             if (deviceContext.assignedControllerNumber && deviceContext.controllerNumber == controllerNumber) {
                 foundMatchingDevice = true;
 
+                // Also while rumble is paused: a trigger update right after it resumes re-sends both
+                // motor levels, and must not bring back the ones from before the pause.
                 deviceContext.lowFreqMotor = lowFreqMotor;
                 deviceContext.highFreqMotor = highFreqMotor;
+                if (rumblePaused) continue;
 
                 // Prefer the documented Android 12 rumble API which can handle dual vibrators on PS/Xbox controllers
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && deviceContext.vibratorManager != null) {
@@ -3152,6 +3173,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 if (stopped) deviceContext.cancelMotors();
             }
         }
+        if (rumblePaused) return;
 
         List<AbstractController> usbPads = usbPadsOf(controllerNumber);
         if (usbPads == null) {
@@ -3201,9 +3223,6 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         short[] levels = levelsOf(controllerNumber);
         levels[2] = leftTrigger;
         levels[3] = rightTrigger;
-        if (rumblePaused) {
-            return;
-        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             for (InputDeviceContext deviceContext : inputDeviceContexts.values()) {
@@ -3211,6 +3230,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 if (deviceContext.assignedControllerNumber && deviceContext.controllerNumber == controllerNumber) {
                     deviceContext.leftTriggerMotor = leftTrigger;
                     deviceContext.rightTriggerMotor = rightTrigger;
+                    if (rumblePaused) continue;
 
                     if (deviceContext.quadVibrators) {
                         rumbleQuadVibrators(deviceContext.vibratorManager,
@@ -3220,6 +3240,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                     }
                 }
             }
+        }
+        if (rumblePaused) {
+            return;
         }
 
         List<AbstractController> usbPads = usbPadsOf(controllerNumber);
