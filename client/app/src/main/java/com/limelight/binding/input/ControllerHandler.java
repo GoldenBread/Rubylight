@@ -364,10 +364,10 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     public synchronized boolean hasExternalControllers() {
         for (InputDeviceContext context : inputDeviceContexts.values()) {
             // A handheld's own pad is always there; counting it would keep the touch controls off for good. A remote
-            // advertising gamepad keys has no sticks and is not a controller either.
+            // or an ordinary keyboard is not a controller either.
             InputDevice device = context.inputDevice;
-            if (device != null && countsAsExternalController(context.external, hasJoystickAxes(device),
-                    isHandheldControls(device))) {
+            if (device != null && countsAsExternalController(context.external, isGamepadDevice(device),
+                    isRemoteControlDevice(device), isAlphabeticKeyboard(device), isHandheldControls(device))) {
                 return true;
             }
         }
@@ -376,8 +376,8 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         if (inputManager == null) return false;
         for (int id : inputManager.getInputDeviceIds()) {
             InputDevice device = inputManager.getInputDevice(id);
-            if (device != null && countsAsExternalController(isExternal(device), hasJoystickAxes(device),
-                    isHandheldControls(device))) {
+            if (device != null && countsAsExternalController(isExternal(device), isGamepadDevice(device),
+                    isRemoteControlDevice(device), isAlphabeticKeyboard(device), isHandheldControls(device))) {
                 return true;
             }
         }
@@ -386,10 +386,29 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
     /**
      * Whether an attached device counts as a physical controller beside the touch controls: Android lists it as
-     * external, it has sticks, and it is not the handheld's own pad. A remote's gamepad keys are not a pad.
+     * external, it has gamepad buttons or sticks, it is neither a remote nor an ordinary keyboard, and it is not the
+     * handheld's own pad.
      */
-    static boolean countsAsExternalController(boolean external, boolean sticks, boolean handheldControls) {
-        return external && sticks && !handheldControls;
+    static boolean countsAsExternalController(boolean external, boolean gamepad, boolean remote, boolean keyboard,
+                                              boolean handheldControls) {
+        return external && gamepad && !remote && !keyboard && !handheldControls;
+    }
+
+    /**
+     * Whether the device is a controller at all: gamepad buttons or sticks. A fight stick or an NES-style pad with
+     * only a hat and buttons has no X/Y sticks and still counts.
+     */
+    private static boolean isGamepadDevice(InputDevice device) {
+        return hasJoystickAxes(device) || hasGamepadButtons(device);
+    }
+
+    /**
+     * Whether this is an ordinary keyboard rather than a pad that also types: its layout is alphabetic and it has
+     * neither gamepad buttons nor the gamepad's A button.
+     */
+    private static boolean isAlphabeticKeyboard(InputDevice device) {
+        return device.getKeyboardType() == InputDevice.KEYBOARD_TYPE_ALPHABETIC &&
+                !hasGamepadButtons(device) && !device.hasKeys(KeyEvent.KEYCODE_BUTTON_A)[0];
     }
 
     private void announcePresence() {
@@ -1845,8 +1864,6 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     /** Whether a gamepad Android lists as external is the handheld's own controls (see {@link #looksLikeHandheldControls}). */
     private boolean isHandheldControls(InputDevice device) {
         if (device == null) return false;
-        boolean sticks = hasJoystickAxes(device);
-        if (!sticks) return false;
         int gamepads = 0;
         for (int id : InputDevice.getDeviceIds()) {
             InputDevice other = InputDevice.getDevice(id);
@@ -1859,42 +1876,19 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 if (usb.getVendorId() == device.getVendorId() && usb.getProductId() == device.getProductId()) attachedUsb = true;
             }
         }
-        return looksLikeHandheldControls(device.getName(), device.getVendorId(), gamepads == 1, attachedUsb, sticks,
-                bluetoothDevice(device));
-    }
-
-    /**
-     * Whether the device's events come over Bluetooth. Android 14 knows; before it the answer is unknown, so null,
-     * and so it is when the hidden InputDevice.getBluetoothAddress() that this calls by reflection is refused.
-     */
-    @android.annotation.SuppressLint("PrivateApi")
-    private static Boolean bluetoothDevice(InputDevice device) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return null;
-        try {
-            String address = (String) InputDevice.class.getMethod("getBluetoothAddress").invoke(device);
-            return address != null && !address.isEmpty();
-        } catch (Exception | LinkageError e) {
-            // The platform hid its answer: keep the older check rather than call a Bluetooth pad built-in.
-            return null;
-        }
+        return looksLikeHandheldControls(device.getName(), device.getVendorId(), gamepads == 1, attachedUsb);
     }
 
     /**
      * Whether a gamepad Android lists as external is a handheld's built-in controls. A Retroid Pocket's is
-     * "Xbox Wireless Controller" with its maker's vendor ID (0x2022:0x3002) on an internal bus, so its name and
-     * vendor alone prove nothing. Its properties do: a built-in pad did not come over Bluetooth (Android 14's
-     * InputDevice.getBluetoothAddress() reports that), and it is missing from the USB device list too. It must also
-     * have sticks, so a remote's gamepad keys never count as a pad. Before Android 14 the Bluetooth transport is
-     * unknown, and the older name and vendor guess decides.
-     *
-     * @param bluetooth whether events come over Bluetooth, or null where Android cannot say
+     * "Xbox Wireless Controller" with its maker's vendor ID (0x2022:0x3002) on an internal bus. So: named Xbox
+     * without Microsoft's vendor ID, the only gamepad, and absent from the USB device list, which is where an
+     * attached pad appears. A real Xbox pad has Microsoft's ID, and a USB pad is in the list.
      */
-    static boolean looksLikeHandheldControls(String name, int vendorId, boolean onlyGamepad, boolean attachedUsb,
-                                             boolean sticks, Boolean bluetooth) {
-        if (!sticks || attachedUsb) return false;
-        if (bluetooth != null) return !bluetooth;
-        return name != null && name.toLowerCase(java.util.Locale.ROOT).contains("xbox") &&
-                vendorId != 0x045e && vendorId != 0 && onlyGamepad;
+    static boolean looksLikeHandheldControls(String name, int vendorId, boolean onlyGamepad, boolean attachedUsb) {
+        return !attachedUsb && onlyGamepad && name != null &&
+                name.toLowerCase(java.util.Locale.ROOT).contains("xbox") &&
+                vendorId != 0x045e && vendorId != 0;
     }
 
     /**

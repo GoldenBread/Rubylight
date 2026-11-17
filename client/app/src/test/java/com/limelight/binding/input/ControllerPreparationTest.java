@@ -702,6 +702,11 @@ public class ControllerPreparationTest {
 
     private static void addInputDevice(Activity activity, int id, boolean external, int sources,
                                        String name, int vendor, int product) {
+        addInputDevice(activity, id, external, sources, name, vendor, product, InputDevice.KEYBOARD_TYPE_NONE);
+    }
+
+    private static void addInputDevice(Activity activity, int id, boolean external, int sources,
+                                       String name, int vendor, int product, int keyboardType) {
         InputDevice device = ShadowInputDevice.makeInputDeviceNamed(name);
         ReflectionHelpers.setField(device, "mVendorId", vendor);
         ReflectionHelpers.setField(device, "mProductId", product);
@@ -709,6 +714,7 @@ public class ControllerPreparationTest {
         ReflectionHelpers.setField(device, "mDescriptor", "controller-" + id);
         ReflectionHelpers.setField(device, "mIsExternal", external);
         ReflectionHelpers.setField(device, "mSources", sources);
+        ReflectionHelpers.setField(device, "mKeyboardType", keyboardType);
         ReflectionHelpers.setField(device, "mMotionRanges", new ArrayList<InputDevice.MotionRange>());
         if ((sources & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK) {
             for (int axis : new int[] {MotionEvent.AXIS_X, MotionEvent.AXIS_Y}) {
@@ -1113,40 +1119,50 @@ public class ControllerPreparationTest {
     }
 
     @Test public void aHandheldsOwnPadListedAsExternalIsToldApartFromARealXboxPad() {
-        // Retroid Pocket 6: "Xbox Wireless Controller", 0x2022:0x3002, external, on an internal bus, and Android 13
-        // cannot say whether it came over Bluetooth: null, so the name and vendor check decides.
-        assertTrue(ControllerHandler.looksLikeHandheldControls("Xbox Wireless Controller", 0x2022, true, false,
-                true, null));
+        // Retroid Pocket 6: "Xbox Wireless Controller", 0x2022:0x3002, external, on an internal bus and absent
+        // from the USB device list, so the name and vendor check decides.
+        assertTrue(ControllerHandler.looksLikeHandheldControls("Xbox Wireless Controller", 0x2022, true, false));
         assertFalse("A real Xbox pad", ControllerHandler.looksLikeHandheldControls("Xbox Wireless Controller",
-                0x045e, true, false, true, null));
+                0x045e, true, false));
         assertFalse("Beside another pad", ControllerHandler.looksLikeHandheldControls("Xbox Wireless Controller",
-                0x2022, false, false, true, null));
+                0x2022, false, false));
         assertFalse("Attached by USB", ControllerHandler.looksLikeHandheldControls("Xbox Wireless Controller",
-                0x2022, true, true, true, null));
+                0x2022, true, true));
         assertFalse("Another kind of pad", ControllerHandler.looksLikeHandheldControls("8BitDo Pro 2",
-                0x2dc8, true, false, true, null));
+                0x2dc8, true, false));
     }
 
-    /**
-     * M5: the transport and the sticks decide, not the name. A Bluetooth pad stays a controller even when it calls
-     * itself an Xbox one; the handheld's own pad is built in whatever it is called; a remote is not a controller.
-     */
-    @Test public void padPropertiesDecideBuiltInBesideABluetoothPadAndARemote() {
-        // A third-party pad in Xbox mode, but Android 14 says its events come over Bluetooth: it is external.
-        assertFalse("A Bluetooth pad keeps the touch controls away", ControllerHandler.looksLikeHandheldControls(
-                "Xbox Wireless Controller", 0x0f0d, true, false, true, true));
-        // The handheld's own controls need no Xbox name: on an internal bus, with sticks, and no Bluetooth.
-        assertTrue("The built-in pad is built in whatever it is called", ControllerHandler.looksLikeHandheldControls(
-                "Retroid Pocket Controls", 0x2022, true, false, true, false));
-        // A remote has gamepad keys and a D-pad, but no sticks.
-        assertFalse("A remote is not a controller", ControllerHandler.countsAsExternalController(true, false, false));
-        // The same properties through the presence rule: the Bluetooth pad counts, the built-in pad never does.
-        assertTrue(ControllerHandler.countsAsExternalController(true, true,
-                ControllerHandler.looksLikeHandheldControls("Xbox Wireless Controller", 0x0f0d, true, false,
-                        true, true)));
-        assertFalse(ControllerHandler.countsAsExternalController(true, true,
-                ControllerHandler.looksLikeHandheldControls("Retroid Pocket Controls", 0x2022, true, false,
-                        true, false)));
+    /** LOW: a fight stick with only a hat and buttons has no X/Y sticks, and is still a controller. */
+    @Test public void aPadWithOnlyAHatAndButtonsCountsAsAController() {
+        try (ActivityController<Activity> activity = Robolectric.buildActivity(Activity.class).create()) {
+            addInputDevice(activity.get(), 7, true, InputDevice.SOURCE_GAMEPAD | InputDevice.SOURCE_DPAD,
+                    "Fight Stick", 0x0f0d, 0x00c1);
+            ControllerHandler handler = new ControllerHandler(activity.get(), new Connection(73), null,
+                    new PreferenceConfiguration());
+            try {
+                assertTrue("Buttons and a hat are a pad", handler.hasExternalControllers());
+            } finally {
+                handler.destroy();
+            }
+        }
+    }
+
+    /** LOW: a TV remote's D-pad and an alphabetic keyboard, even with a pointer nub, are not controllers. */
+    @Test public void aRemoteAndAnAlphabeticKeyboardAreNotControllers() {
+        try (ActivityController<Activity> activity = Robolectric.buildActivity(Activity.class).create()) {
+            addInputDevice(activity.get(), 7, true, InputDevice.SOURCE_DPAD, "Fire TV Remote", 0, 0);
+            ControllerHandler handler = new ControllerHandler(activity.get(), new Connection(73), null,
+                    new PreferenceConfiguration());
+            try {
+                assertFalse("A remote's D-pad is no pad", handler.hasExternalControllers());
+                // An alphabetic keyboard whose pointer reports joystick axes: sticks alone do not make it a pad.
+                addInputDevice(activity.get(), 8, true, InputDevice.SOURCE_KEYBOARD | InputDevice.SOURCE_JOYSTICK,
+                        "Keyboard", 0, 0, InputDevice.KEYBOARD_TYPE_ALPHABETIC);
+                assertFalse("A keyboard is no pad", handler.hasExternalControllers());
+            } finally {
+                handler.destroy();
+            }
+        }
     }
 
     @Test public void aHandheldsOwnPadCarriesTheTouchpadButton() {
