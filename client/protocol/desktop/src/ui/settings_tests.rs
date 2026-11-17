@@ -503,6 +503,8 @@ fn the_section_key_table_is_what_the_page_draws() {
         "fractional_vsync" => true,
         "renderer" | "display_output" | "video_planes" | "high_performance_gpu_power" | "vulkan_video_first" | "vulkan_rfi" => cfg!(target_os = "linux"),
         "videotoolbox_rfi" => cfg!(target_os = "macos"),
+        // A Mac's GPU decoder uses the graphics queue of a device of its own.
+        "pyrowave_async_compute" => !cfg!(target_os = "macos"),
         "graphics_card" => graphics_card_here(),
         // Windows' wait for the scan line, with Variable refresh rate On.
         "vrr_wait" => cfg!(windows) && vrr,
