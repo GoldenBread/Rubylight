@@ -992,6 +992,20 @@ impl Launcher {
         let close = Rect::from_min_size(pos2(rect.right() - 8.0 - SETUP_CARD_CLOSE, rect.top() + 8.0), Vec2::splat(SETUP_CARD_CLOSE));
         let close = round_button(ui, close, Icon::Close, tr("Dismiss"));
         self.focus_item(&close, "setup-card-dismiss", false);
+        // The button is small and stands between the top bar and the hero: egui's arrow keys pick
+        // what lies straight above or below and would pass it. A move by Up or Down from one side
+        // of the card to the other stops on it instead.
+        let focused = ui.ctx().memory(|m| m.focused()).and_then(|id| ui.ctx().read_response(id)).map(|r| r.rect);
+        if let (Some(from), Some(now)) = (self.setup_card_from.take(), focused) {
+            let crossed = (from.top() >= rect.bottom() && now.bottom() <= rect.top())
+                || (from.bottom() <= rect.top() && now.top() >= rect.bottom());
+            if crossed && matches!(self.dialog, Dialog::None) && !egui::Popup::is_any_open(ui.ctx()) {
+                close.request_focus();
+            }
+        }
+        if ui.input(|i| i.key_pressed(egui::Key::ArrowUp) || i.key_pressed(egui::Key::ArrowDown)) {
+            self.setup_card_from = focused;
+        }
         ui.add_space(space::M);
         if close.clicked() {
             self.settings.setup_card_host = None;
