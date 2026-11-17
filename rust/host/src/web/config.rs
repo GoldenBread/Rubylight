@@ -77,16 +77,24 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
                 );
             }
             // The key follows a saved configuration: a failed write must not
-            // change what this PC sends to SteamGridDB.
+            // change what this PC sends to SteamGridDB. Once the settings are
+            // written they still apply if the key cannot be stored.
             state::atomic_write(&h.config_path, next.text().as_bytes())?;
+            let mut warnings = Vec::new();
             if let Some(key) = &steamgriddb_key {
-                crate::steamgriddb::store_key(h, Some(key))?;
-                crate::steamgriddb::key_changed(h);
+                match crate::steamgriddb::store_key(h, Some(key)) {
+                    Ok(()) => crate::steamgriddb::key_changed(h),
+                    Err(error) => warnings.push(format!(
+                        "The settings were saved, but the SteamGridDB API key was not ({error:#}). Enter it again."
+                    )),
+                }
             }
-            let warning =
+            if let Err(error) =
                 butterpollo_windows::vulkan::reconcile(next.boolean("vulkan_hdr_layer", true))
-                    .err()
-                    .map(|e| e.to_string());
+            {
+                warnings.push(error.to_string());
+            }
+            let warning = (!warnings.is_empty()).then(|| warnings.join(" "));
             crate::logging::apply(next.log_level());
             if let Some(port) = h.port_override {
                 next.values.insert("port".into(), port.to_string());
