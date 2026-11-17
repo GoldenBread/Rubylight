@@ -1216,17 +1216,13 @@ const input: Setting[] = [
     key: 'enable_dsu_server',
     label: 'Motion server for emulators (DSU)',
     description:
-      "Lets emulators such as Cemu, Dolphin and Citra read each streamed controller's gyro, buttons and touch (DSU, cemuhook). Leave it off unless you use one: it has no password.",
+      "Lets emulators such as Cemu, Dolphin and Citra read each streamed controller's gyro, buttons and touch (DSU, cemuhook). It listens only on this PC.",
     details:
-      "The server answers on every network interface without a password, so other devices on your network can read controller input too; the Windows Firewall blocks them unless you allow the port. It serves each streamed controller's gyroscope, accelerometer, buttons and touch. In the emulator, choose DSU or cemuhook motion and the server 127.0.0.1 with the port below. Controllers take slots 1 to 4 in the order they connect.",
+      "The server answers on this PC only (127.0.0.1), where an emulator on this PC reaches it, and other devices cannot; it has no password. In the emulator, choose DSU or cemuhook motion with server 127.0.0.1 and the port below. Controllers take slots 1 to 4 in the order they connect. To serve an emulator on another PC, turn on Motion server on the local network below.",
     category: 'input',
     group: 'Controllers',
     control: { kind: 'toggle' },
     default: false,
-    cautionWhen: (values) =>
-      on(values, 'enable_dsu_server', false)
-        ? 'No password: other devices on your network can read controller input if the Windows Firewall allows the port.'
-        : undefined,
     restart: true,
     inactiveHint: "Turn on Controllers under Input devices to use this setting. Paired devices also need the Controllers permission.",
     visibleWhen: controllerOn,
@@ -1240,6 +1236,25 @@ const input: Setting[] = [
     group: 'Controllers',
     control: { kind: 'number', min: 1024, max: 65535, step: 1 },
     default: 26760,
+    restart: true,
+    inactiveHint: 'Turn on Controllers under Input devices and Motion server for emulators (DSU) to use this setting.',
+    visibleWhen: (values) => controllerOn(values) && on(values, 'enable_dsu_server', false),
+  },
+  {
+    key: 'dsu_server_lan',
+    label: 'Motion server on the local network',
+    description:
+      'Lets an emulator on another PC read the streamed controllers over the DSU protocol. Off keeps the server on this PC, where an emulator on the same PC reaches it.',
+    details:
+      'The server has no password and any device on the network can read controller input, so turn it on only on a network you trust. Takes effect after a host restart.',
+    category: 'input',
+    group: 'Controllers',
+    control: { kind: 'toggle' },
+    default: false,
+    cautionWhen: (values) =>
+      on(values, 'dsu_server_lan', false)
+        ? 'No password: any device on your network can read controller input. Turn this on only on a network you trust.'
+        : undefined,
     restart: true,
     inactiveHint: 'Turn on Controllers under Input devices and Motion server for emulators (DSU) to use this setting.',
     visibleWhen: (values) => controllerOn(values) && on(values, 'enable_dsu_server', false),
