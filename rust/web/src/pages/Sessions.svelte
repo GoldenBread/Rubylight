@@ -192,7 +192,8 @@
         </tbody>
       </Table>
       <p class="footnote muted">
-        p95 is the frame rate the slowest 5% of sampled seconds ran at or below. Loss is what the
+        Bitrate is what the stream sent on average; when the network held it below the rate it asked
+        for, the requested rate follows. p95 is the frame rate the slowest 5% of sampled seconds ran at or below. Loss is what the
         device reported missing, as a share of the video the host sent.
       </p>
     {/if}

@@ -730,6 +730,8 @@ export interface SessionHistoryEntry {
   hdr: boolean;
   /** The encoder's bitrate when the stream ended; 0 when it never started. */
   bitrate_kbps: number;
+  /** The bitrate the stream asked for; 0 when it never started or for an entry saved by an older host. */
+  requested_bitrate_kbps: number;
   /** What the video actually sent on average; audio is not counted. */
   mean_bitrate_kbps: number;
   mean_fps: number;

@@ -72,10 +72,17 @@ export function p95Text(value: number): string {
   return value > 0 ? value.toFixed(1) : '–';
 }
 
-/** What the stream sent on average, else the encoder's last rate. */
+/** What the stream sent on average, else the encoder's last rate, and the
+ * rate it asked for when the network held the encoder below it. */
 export function bitrateText(entry: SessionHistoryEntry): string {
   const kbps = entry.mean_bitrate_kbps > 0 ? entry.mean_bitrate_kbps : entry.bitrate_kbps;
-  return kbps > 0 ? `${(kbps / 1000).toFixed(1)} Mbps` : '–';
+  if (kbps <= 0) return '–';
+  const shown = `${(kbps / 1000).toFixed(1)} Mbps`;
+  const requested = entry.requested_bitrate_kbps;
+  // The mean can sit above the last rate, so the comparison is the rate the
+  // encoder ended at: the stream was held below what it asked for.
+  const held = requested > 0 && entry.bitrate_kbps > 0 && entry.bitrate_kbps < requested * 0.95;
+  return held ? `${shown} of ${(requested / 1000).toFixed(1)} Mbps` : shown;
 }
 
 /** The client's reported loss; a dash when it reported nothing, never 0%. */
