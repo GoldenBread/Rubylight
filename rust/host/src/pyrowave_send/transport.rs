@@ -53,6 +53,7 @@ pub(super) fn run(
         let bps = pace(&current, &config, frame.kbps, frame.wire_frame, route);
         send_buffer.fit(&socket, bps);
         if report {
+            crate::video_send::check_route_mtu(&current, frame.peer, current.config.packet_size);
             network_pacing::report_rate(
                 &current.launch.warnings,
                 bps,

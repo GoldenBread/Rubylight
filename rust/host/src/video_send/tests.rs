@@ -7,6 +7,30 @@ const WAIT: Duration = Duration::from_secs(5);
 fn peer() -> SocketAddr {
     "127.0.0.1:12345".parse().unwrap()
 }
+
+#[test]
+fn a_shrunken_route_mtu_only_warns_when_a_jumbo_packet_does_not_fit() {
+    // 8192 + 64 fits a 9000-byte path, not a 1500- or 1280-byte one.
+    assert!(mtu_carries(9000, 8192));
+    assert!(!mtu_carries(8192, 8192));
+    assert!(!mtu_carries(1500, 8192));
+    let warning = mtu_warning(1280, 8192);
+    assert!(warning.contains("1280"), "{warning}");
+    assert!(warning.contains("8192"), "{warning}");
+    assert!(warning.contains("64 bytes of headers"), "{warning}");
+    // Only this session's warning list changes; a stock packet size fits.
+    let f = crate::state::test_support::Fixture::new();
+    let client = f.client(u32::MAX);
+    let s = f.session(client, butterpollo_core::session::Role::Stream);
+    check_route_mtu_with(&s, peer(), 8192, |_| Some(1280));
+    let warnings = s.launch.warnings.snapshot();
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0].code, "network_mtu");
+    assert!(warnings[0].message.contains("1280"));
+    s.launch.warnings.clear("network_mtu");
+    check_route_mtu_with(&s, peer(), 1400, |_| Some(1280));
+    assert!(s.launch.warnings.snapshot().is_empty());
+}
 fn frame(index: u8) -> Encoded {
     Encoded {
         framing: None,
