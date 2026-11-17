@@ -196,6 +196,11 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
         if (startNs != 0) policy.checkStall(nowNs - startNs);
         long oldestNs = frames.oldestReleaseNs();
         if (oldestNs != 0) policy.checkStall(nowNs - oldestNs);
+        // A temporal pass that stays over budget hands over to SGSR 1 here, on the GL thread between
+        // draws, instead of ending upscaling: no decoder restart, and its own window starts then.
+        if (!closed && policy.getReason() == UpscalingPolicy.Reason.NONE && policy.takeTemporalFallback()) {
+            handler.post(() -> fallBackFromTemporal("too slow"));
+        }
     }
 
     private void initialize(Context context, Surface output, int width, int height,
@@ -321,6 +326,7 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
             passes.build(context, vertex, SgsrConstants.viewport(width, height), SgsrConstants.edgeSharpness(sharpness));
             temporal = passes;
             temporalCrop = pictureCrop;
+            policy.setTemporalActive(true);
         } catch (IOException | RuntimeException e) {
             temporal = passes;
             fallBackFromTemporal(e.getMessage());
@@ -329,6 +335,7 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
 
     /** Ends the temporal passes for the rest of the stream; SGSR 1 draws from this draw on. */
     private void fallBackFromTemporal(String reason) {
+        policy.setTemporalActive(false);
         // Clears the error flags, so the SGSR 1 draws are not blamed for the temporal passes
         drainGlErrors();
         if (temporal != null) temporal.release();
