@@ -487,6 +487,7 @@ impl App {
         }
         // Before any decoder probe: the Vulkan video Debug settings change the backend order.
         media::use_vulkan_video_settings(settings.vulkan_video_first, settings.vulkan_rfi);
+        media::use_videotoolbox_rfi_setting(settings.videotoolbox_rfi);
         // Before the launch: a stream that cannot have sharper colored text starts without it,
         // instead of launching the game and being refused in the handshake.
         let refused_now = self.full_chroma_off == Some(host_id);

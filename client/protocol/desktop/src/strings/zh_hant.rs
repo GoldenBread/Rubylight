@@ -1186,6 +1186,7 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("Slices for software decoding", "軟體解碼分片"),
     ("Vulkan video first", "優先 Vulkan Video"),
     ("Vulkan video recovery", "Vulkan Video 復原"),
+    ("VideoToolbox recovery", "VideoToolbox 復原"),
     ("Text and button size", "文字和按鈕大小"),
     ("Test the link before starting", "開始前測試連結"),
     // The stream menu's tiles and its shortcut pages (stream_menu.rs).
@@ -1438,6 +1439,7 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("For comparing. The PC splits each frame into slices that the CPU decodes in parallel; in our measurements it was worse than off. Leave it off.", "用於比較。電腦將每個影格分成多個分片，由 CPU 平行解碼；實測結果更差。請保持關閉。"),
     ("Tries Vulkan video decoding before VAAPI. Leave it off: VAAPI avoids a copy too and recovers from a lost frame without a keyframe (a full new picture).", "先嘗試 Vulkan 視訊解碼，再使用 VAAPI。請保持關閉：VAAPI 同樣能省去一次複製，而且遺失影格後不需要關鍵影格（一張完整的新畫面）就能恢復。"),
     ("For comparing. With Vulkan video decoding, repairs a lost frame without waiting for a keyframe (a full new picture). Leave it off.", "用於比較。使用 Vulkan 視訊解碼時，不必等待關鍵影格（一張完整的新畫面）就能修復遺失的影格。請保持關閉。"),
+    ("For comparing. With VideoToolbox decoding, repairs a lost frame without waiting for a keyframe (a full new picture, about four times larger). Not yet measured on a Mac; leave it off unless you are comparing.", "用於比較。使用 VideoToolbox 解碼時，不必等待關鍵影格（一張完整的新畫面，大約大四倍）就能修復遺失的影格。尚未在 Mac 上測量；除非要比較，否則請保持關閉。"),
     ("Draws the PC’s cursor here in Desktop pointer mode, without video delay.", "在「桌面指標」模式下於此處繪製電腦的游標，沒有視訊延遲。"),
     ("1:1 pixels", "1:1 像素"),
     // Android features on the desktop: Presets, Theme, Check for updates now, About, small box art,

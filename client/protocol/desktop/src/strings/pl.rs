@@ -1186,6 +1186,7 @@ sudo sysctl -w net.core.rmem_max={}", "Bufor odbioru: system przydzielił {0} Ki
     ("Slices for software decoding", "Plastry dla dekodowania programowego"),
     ("Vulkan video first", "Najpierw Vulkan Video"),
     ("Vulkan video recovery", "Odzyskiwanie z Vulkan Video"),
+    ("VideoToolbox recovery", "Odzyskiwanie z VideoToolbox"),
     ("Text and button size", "Rozmiar tekstu i przycisków"),
     ("Test the link before starting", "Testuj łącze przed startem"),
     // The stream menu's tiles and its shortcut pages (stream_menu.rs).
@@ -1438,6 +1439,7 @@ sudo sysctl -w net.core.rmem_max={}", "Bufor odbioru: system przydzielił {0} Ki
     ("For comparing. The PC splits each frame into slices that the CPU decodes in parallel; in our measurements it was worse than off. Leave it off.", "Do porównań. Komputer dzieli każdą klatkę na części (slices), które CPU dekoduje równolegle; w pomiarach wypadło gorzej. Zostaw wyłączone."),
     ("Tries Vulkan video decoding before VAAPI. Leave it off: VAAPI avoids a copy too and recovers from a lost frame without a keyframe (a full new picture).", "Próbuje dekodowania przez Vulkan Video przed VAAPI. Zostaw wyłączone: VAAPI też unika kopiowania i radzi sobie z utraconą klatką bez klatki kluczowej (pełnego nowego obrazu)."),
     ("For comparing. With Vulkan video decoding, repairs a lost frame without waiting for a keyframe (a full new picture). Leave it off.", "Do porównań. Przy dekodowaniu przez Vulkan Video naprawia utraconą klatkę bez czekania na klatkę kluczową (pełny nowy obraz). Zostaw wyłączone."),
+    ("For comparing. With VideoToolbox decoding, repairs a lost frame without waiting for a keyframe (a full new picture, about four times larger). Not yet measured on a Mac; leave it off unless you are comparing.", "Do porównań. Przy dekodowaniu przez VideoToolbox naprawia utraconą klatkę bez czekania na klatkę kluczową (pełny nowy obraz, około cztery razy większy). Jeszcze niezmierzone na Macu; zostaw wyłączone, chyba że porównujesz."),
     ("Draws the PC’s cursor here in Desktop pointer mode, without video delay.", "Rysuje tutaj kursor komputera w trybie Wskaźnik pulpitu, bez opóźnienia obrazu."),
     ("1:1 pixels", "Piksele 1:1"),
     // Android features on the desktop: Presets, Theme, Check for updates now, About, small box art,

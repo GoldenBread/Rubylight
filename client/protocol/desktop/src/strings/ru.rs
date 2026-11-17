@@ -1186,6 +1186,7 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приёма: система �
     ("Slices for software decoding", "Слайсы для программного декодирования"),
     ("Vulkan video first", "Сначала Vulkan Video"),
     ("Vulkan video recovery", "Восстановление с Vulkan Video"),
+    ("VideoToolbox recovery", "Восстановление с VideoToolbox"),
     ("Text and button size", "Размер текста и кнопок"),
     ("Test the link before starting", "Проверять соединение перед началом"),
     // The stream menu's tiles and its shortcut pages (stream_menu.rs).
@@ -1438,6 +1439,7 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приёма: система �
     ("For comparing. The PC splits each frame into slices that the CPU decodes in parallel; in our measurements it was worse than off. Leave it off.", "Для сравнения. ПК делит каждый кадр на части (слайсы), которые CPU декодирует параллельно; в замерах стало хуже. Оставьте выключенным."),
     ("Tries Vulkan video decoding before VAAPI. Leave it off: VAAPI avoids a copy too and recovers from a lost frame without a keyframe (a full new picture).", "Пробует декодирование через Vulkan Video раньше, чем VAAPI. Оставьте выключенным: VAAPI тоже обходится без копирования и восстанавливается после потери кадра без ключевого кадра (целого нового изображения)."),
     ("For comparing. With Vulkan video decoding, repairs a lost frame without waiting for a keyframe (a full new picture). Leave it off.", "Для сравнения. При декодировании через Vulkan Video восстанавливает потерянный кадр, не дожидаясь ключевого кадра (целого нового изображения). Оставьте выключенным."),
+    ("For comparing. With VideoToolbox decoding, repairs a lost frame without waiting for a keyframe (a full new picture, about four times larger). Not yet measured on a Mac; leave it off unless you are comparing.", "Для сравнения. При декодировании через VideoToolbox восстанавливает потерянный кадр, не дожидаясь ключевого кадра (целого нового изображения, примерно вчетверо большего). На Mac ещё не измерено; оставьте выключенным, если не сравниваете."),
     ("Draws the PC’s cursor here in Desktop pointer mode, without video delay.", "Рисует курсор ПК здесь в режиме «Указатель рабочего стола», без задержки видео."),
     ("1:1 pixels", "Пиксели 1:1"),
     // Android features on the desktop: Presets, Theme, Check for updates now, About, small box art,

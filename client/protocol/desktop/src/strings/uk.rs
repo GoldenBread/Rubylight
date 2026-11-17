@@ -1186,6 +1186,7 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приймання: систе
     ("Slices for software decoding", "Слайси для програмного декодування"),
     ("Vulkan video first", "Спершу Vulkan Video"),
     ("Vulkan video recovery", "Відновлення з Vulkan Video"),
+    ("VideoToolbox recovery", "Відновлення з VideoToolbox"),
     ("Text and button size", "Розмір тексту й кнопок"),
     ("Test the link before starting", "Перевіряти з’єднання перед початком"),
     // The stream menu's tiles and its shortcut pages (stream_menu.rs).
@@ -1438,6 +1439,7 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приймання: систе
     ("For comparing. The PC splits each frame into slices that the CPU decodes in parallel; in our measurements it was worse than off. Leave it off.", "Для порівняння. ПК ділить кожен кадр на частини (слайси), які CPU декодує паралельно; у вимірюваннях стало гірше. Залиште вимкненим."),
     ("Tries Vulkan video decoding before VAAPI. Leave it off: VAAPI avoids a copy too and recovers from a lost frame without a keyframe (a full new picture).", "Пробує декодування через Vulkan Video раніше, ніж VAAPI. Залиште вимкненим: VAAPI теж обходиться без копіювання й відновлюється після втрати кадру без ключового кадру (цілого нового зображення)."),
     ("For comparing. With Vulkan video decoding, repairs a lost frame without waiting for a keyframe (a full new picture). Leave it off.", "Для порівняння. Під час декодування через Vulkan Video відновлює втрачений кадр, не чекаючи ключового кадру (цілого нового зображення). Залиште вимкненим."),
+    ("For comparing. With VideoToolbox decoding, repairs a lost frame without waiting for a keyframe (a full new picture, about four times larger). Not yet measured on a Mac; leave it off unless you are comparing.", "Для порівняння. Під час декодування через VideoToolbox відновлює втрачений кадр, не чекаючи ключового кадру (цілого нового зображення, приблизно вчетверо більшого). На Mac ще не виміряно; залиште вимкненим, якщо не порівнюєте."),
     ("Draws the PC’s cursor here in Desktop pointer mode, without video delay.", "Малює курсор ПК тут у режимі «Вказівник робочого столу», без затримки відео."),
     ("1:1 pixels", "Пікселі 1:1"),
     // Android features on the desktop: Presets, Theme, Check for updates now, About, small box art,

@@ -1186,6 +1186,7 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("Slices for software decoding", "Lát cắt cho giải mã phần mềm"),
     ("Vulkan video first", "Ưu tiên Vulkan Video"),
     ("Vulkan video recovery", "Khôi phục với Vulkan Video"),
+    ("VideoToolbox recovery", "Khôi phục với VideoToolbox"),
     ("Text and button size", "Cỡ chữ và nút"),
     ("Test the link before starting", "Kiểm tra liên kết trước khi bắt đầu"),
     // The stream menu's tiles and its shortcut pages (stream_menu.rs).
@@ -1438,6 +1439,7 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("For comparing. The PC splits each frame into slices that the CPU decodes in parallel; in our measurements it was worse than off. Leave it off.", "Dùng để so sánh. PC chia mỗi khung hình thành các lát cắt để CPU giải mã song song; kết quả đo kém hơn. Nên để tắt."),
     ("Tries Vulkan video decoding before VAAPI. Leave it off: VAAPI avoids a copy too and recovers from a lost frame without a keyframe (a full new picture).", "Thử giải mã bằng Vulkan Video trước VAAPI. Nên để tắt: VAAPI cũng tránh được một lần sao chép và phục hồi sau khi mất khung hình mà không cần khung hình chính (một hình mới hoàn chỉnh)."),
     ("For comparing. With Vulkan video decoding, repairs a lost frame without waiting for a keyframe (a full new picture). Leave it off.", "Dùng để so sánh. Khi giải mã bằng Vulkan Video, sửa khung hình bị mất mà không chờ khung hình chính (một hình mới hoàn chỉnh). Nên để tắt."),
+    ("For comparing. With VideoToolbox decoding, repairs a lost frame without waiting for a keyframe (a full new picture, about four times larger). Not yet measured on a Mac; leave it off unless you are comparing.", "Dùng để so sánh. Khi giải mã bằng VideoToolbox, sửa khung hình bị mất mà không chờ khung hình chính (một hình mới hoàn chỉnh, lớn gấp khoảng bốn lần). Chưa được đo trên Mac; nên để tắt trừ khi bạn đang so sánh."),
     ("Draws the PC’s cursor here in Desktop pointer mode, without video delay.", "Ở chế độ Con trỏ máy tính, vẽ con trỏ của PC ở đây, không có độ trễ video."),
     ("1:1 pixels", "Pixel 1:1"),
     // Android features on the desktop: Presets, Theme, Check for updates now, About, small box art,

@@ -51,7 +51,7 @@ pub(super) const SECTION_KEYS: [&[&[&str]]; 9] = [
     &[&["error_correction"], &["tell_host_wireless"], &["tell_host_link_speed"],
         &["network_priority"], &["unbatched_input"], &["full_range"],
         &["pyrowave_decoder"], &["pyrowave_async_compute"],
-        &["decoder"], &["software_slices"], &["vulkan_video_first"], &["vulkan_rfi"], &["cursor_shapes"],
+        &["decoder"], &["software_slices"], &["vulkan_video_first"], &["vulkan_rfi"], &["videotoolbox_rfi"], &["cursor_shapes"],
         &["link_probe"], &["post_stream_decode_time"]],
 ];
 
@@ -1962,6 +1962,15 @@ impl Launcher {
                 }
                 setting_row(ui, s, &mut rows, &["vulkan_rfi"], "Vulkan video recovery", "For comparing. With Vulkan video decoding, repairs a lost frame without waiting for a keyframe (a full new picture). Leave it off.", |ui, s| {
                     toggle(ui, &mut s.vulkan_rfi)
+                });
+            }
+            // VideoToolbox is macOS's hardware decoder.
+            if cfg!(target_os = "macos") {
+                if s.decoder == DecoderPreference::Software {
+                    unused_with(&mut rows, decoder_name(s.decoder));
+                }
+                setting_row(ui, s, &mut rows, &["videotoolbox_rfi"], "VideoToolbox recovery", "For comparing. With VideoToolbox decoding, repairs a lost frame without waiting for a keyframe (a full new picture, about four times larger). Not yet measured on a Mac; leave it off unless you are comparing.", |ui, s| {
+                    toggle(ui, &mut s.videotoolbox_rfi)
                 });
             }
             rows.group("");

@@ -594,6 +594,9 @@ pub struct Settings {
     /// Debug, Linux: Vulkan video recovers lost frames with reference frame invalidation. Off by
     /// default, unmeasured (`NIGHTJAR_VULKAN_RFI` overrides it).
     pub vulkan_rfi: bool,
+    /// Debug, macOS: VideoToolbox recovers lost frames with reference frame invalidation. Off by
+    /// default, unmeasured on a Mac (`NIGHTJAR_VIDEOTOOLBOX_RFI` overrides it).
+    pub videotoolbox_rfi: bool,
     /// Video: PyroWave's GPU decoder decodes on a separate compute queue where the GPU has one
     /// (`stream::pyrowave_sdk::queue`); without one it changes nothing. Off by default: the client
     /// it is ported from reverted it for delaying Wayland presentation, and the ABBA on the 780M
@@ -1227,6 +1230,7 @@ impl Default for Settings {
             software_slices: false,
             vulkan_video_first: false,
             vulkan_rfi: false,
+            videotoolbox_rfi: false,
             pyrowave_async_compute: false,
             auto_reconnect: true,
             auto_reconnect_default_on: true,

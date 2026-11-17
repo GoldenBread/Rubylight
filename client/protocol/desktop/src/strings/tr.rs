@@ -1186,6 +1186,7 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("Slices for software decoding", "Yazılım kod çözme için dilimler"),
     ("Vulkan video first", "Önce Vulkan Video"),
     ("Vulkan video recovery", "Vulkan Video ile kurtarma"),
+    ("VideoToolbox recovery", "VideoToolbox ile kurtarma"),
     ("Text and button size", "Metin ve düğme boyutu"),
     ("Test the link before starting", "Başlamadan önce bağlantıyı test et"),
     // The stream menu's tiles and its shortcut pages (stream_menu.rs).
@@ -1438,6 +1439,7 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("For comparing. The PC splits each frame into slices that the CPU decodes in parallel; in our measurements it was worse than off. Leave it off.", "Karşılaştırma içindir. Bilgisayar her kareyi, CPU’nun paralel çözdüğü dilimlere böler; ölçümlerde daha kötü çıktı. Kapalı bırakın."),
     ("Tries Vulkan video decoding before VAAPI. Leave it off: VAAPI avoids a copy too and recovers from a lost frame without a keyframe (a full new picture).", "VAAPI’den önce Vulkan Video ile kod çözmeyi dener. Kapalı bırakın: VAAPI de kopyalamadan çalışır ve kaybolan bir kareyi anahtar kare (tam yeni bir görüntü) olmadan telafi eder."),
     ("For comparing. With Vulkan video decoding, repairs a lost frame without waiting for a keyframe (a full new picture). Leave it off.", "Karşılaştırma içindir. Vulkan Video ile kod çözerken kaybolan bir kareyi, anahtar kareyi (tam yeni bir görüntü) beklemeden onarır. Kapalı bırakın."),
+    ("For comparing. With VideoToolbox decoding, repairs a lost frame without waiting for a keyframe (a full new picture, about four times larger). Not yet measured on a Mac; leave it off unless you are comparing.", "Karşılaştırma içindir. VideoToolbox ile kod çözerken kaybolan bir kareyi, anahtar kareyi (yaklaşık dört kat büyük, tam yeni bir görüntü) beklemeden onarır. Mac'te henüz ölçülmedi; karşılaştırma yapmıyorsanız kapalı bırakın."),
     ("Draws the PC’s cursor here in Desktop pointer mode, without video delay.", "Masaüstü işaretçisi modunda bilgisayarın imlecini burada, video gecikmesi olmadan çizer."),
     ("1:1 pixels", "1:1 piksel"),
     // Android features on the desktop: Presets, Theme, Check for updates now, About, small box art,
