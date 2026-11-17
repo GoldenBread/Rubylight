@@ -77,11 +77,46 @@ fn elevated() -> bool {
     butterpollo_windows::process::elevated().unwrap_or(true)
 }
 
+/// The host's own folder above the component root: `%ProgramData%\Butterpollo`
+/// for the installed host, the profile otherwise. Setup locks it down for the
+/// installed host, so it is where [`trusted`]'s check of who may change
+/// folders ends.
+fn data_root(root: &Path) -> Result<&Path> {
+    root.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .context("the NVIDIA components' folder has no parent")
+}
+
 /// Refuse a folder that is not this host's own: a link on the way to it, or
-/// for an elevated host ([`elevated`]), a folder anyone but administrators
-/// may change, or one above it they don't own.
-fn trusted(folder: &Path, elevated: bool) -> Result<()> {
+/// for an elevated host ([`elevated`]), a folder from it up to the host's
+/// data root that anyone but administrators may change, or one they don't
+/// own. Above the data root only the link check applies: that folder's own
+/// permissions already stop anyone else from moving it away and putting a
+/// link in its place.
+fn trusted(folder: &Path, data_root: &Path, elevated: bool) -> Result<()> {
+    trusted_with(
+        folder,
+        data_root,
+        elevated,
+        crate::neural::folder::administrators_hold,
+    )
+}
+
+/// [`trusted`], with `hold` in place of
+/// [`crate::neural::folder::administrators_hold`].
+fn trusted_with(
+    folder: &Path,
+    data_root: &Path,
+    elevated: bool,
+    hold: impl Fn(&Path, bool) -> Result<(), String>,
+) -> Result<()> {
     use std::os::windows::fs::MetadataExt;
+    ensure!(
+        folder.starts_with(data_root),
+        "{} is not in this host's own folder {}",
+        folder.display(),
+        data_root.display()
+    );
     for path in folder
         .ancestors()
         .filter(|path| !path.as_os_str().is_empty())
@@ -93,10 +128,10 @@ fn trusted(folder: &Path, elevated: bool) -> Result<()> {
             "{} is a link to elsewhere, and the NVIDIA components are kept behind none",
             path.display()
         );
-        if elevated {
-            crate::neural::folder::administrators_hold(path, path == folder).map_err(|problem| {
+        if elevated && path.starts_with(data_root) {
+            hold(path, path == folder).map_err(|problem| {
                 anyhow!(
-                    "the NVIDIA components are kept only where nobody but administrators may change them: {problem}"
+                    "the NVIDIA components are kept only in Rubylight's own folders, which nobody but administrators may change: {problem}"
                 )
             })?;
         }
@@ -128,11 +163,12 @@ fn ensure_root(root: &Path) -> Result<()> {
 /// checking its folder; the `--nvidia-probe` process finds it this way too.
 pub fn component_for(profile: &Path) -> Result<Component> {
     let root = pins::root(profile);
+    let data_root = data_root(&root)?;
     let record = Record::read(&root)?.context("the NVIDIA components are not installed")?;
     let elevated = elevated();
-    trusted(&root, elevated)?;
+    trusted(&root, data_root, elevated)?;
     let folder = record.files(&root);
-    trusted(&folder, elevated)?;
+    trusted(&folder, data_root, elevated)?;
     Ok(Component {
         folder,
         adapter_sha256: record.adapter_sha256,
@@ -248,7 +284,7 @@ fn forget(root: &Path) -> Result<()> {
     if !exists(root)? {
         return Ok(());
     }
-    trusted(root, elevated())?;
+    trusted(root, data_root(root)?, elevated())?;
     match std::fs::remove_file(root.join(RECORD)) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -285,7 +321,7 @@ pub fn start(h: &Shared) {
             if !exists(&root)? {
                 return Ok(None);
             }
-            trusted(&root, elevated())?;
+            trusted(&root, data_root(&root)?, elevated())?;
             let record = Record::read(&root)?;
             clean(&root, record.as_ref().map(|record| record.folder.as_str()))?;
             Ok(record)
@@ -428,7 +464,7 @@ fn clean(root: &Path, keep: Option<&str>) -> Result<()> {
     if !exists(root)? {
         return Ok(());
     }
-    trusted(root, elevated())?;
+    trusted(root, data_root(root)?, elevated())?;
     for entry in std::fs::read_dir(root)?.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         if Some(name.as_str()) == keep || name == NGX_DATA || name == RECORD {
@@ -687,7 +723,7 @@ async fn fetch(h: &Shared) -> Result<Record> {
         let root = root.clone();
         tokio::task::spawn_blocking(move || {
             ensure_root(&root)?;
-            trusted(&root, elevated())
+            trusted(&root, data_root(&root)?, elevated())
         })
         .await??;
     }
