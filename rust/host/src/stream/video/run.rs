@@ -42,6 +42,9 @@ impl SessionThread<'_> {
         // for others mid-stream (0x5532); the encoder is rebuilt from this copy.
         let mut stream = s.config.clone();
         let mut rates = butterpollo_core::reconfigure::Rates::new(&stream, c.get("minimum_fps_target", "20"));
+        // A constant-rate capture publishes for its fastest stream: this one's
+        // stream rate, shared with any other stream on the same capture.
+        capture_wake.set_period(rates.period);
         // The rate pacing follows, and the period the send path reads.
         let mut paced_rate = stream.fps_millihz();
         let stream_period = std::cell::Cell::new(rates.period);
@@ -990,6 +993,7 @@ impl SessionThread<'_> {
                 if stream.fps_millihz() != paced_rate {
                     paced_rate = stream.fps_millihz();
                     rates = butterpollo_core::reconfigure::Rates::new(&stream, c.get("minimum_fps_target", "20"));
+                    capture_wake.set_period(rates.period);
                     stream_period.set(rates.period);
                     progress.set_period(rates.period);
                     cadence = butterpollo_core::stream_policy::Cadence::new(Instant::now(), rates.period, c.boolean("wgc_pacing_smoothing", true));
@@ -1423,7 +1427,8 @@ impl SessionThread<'_> {
                         source_id = latest.trace_source_id(),
                         stream_id = %s.launch.id,
                         fresh,
-                        choice = if fresh { "fresh" } else if recovering { "recovery_repeat" } else { "static_repeat" },
+                        repeat = image.repeat,
+                        choice = if image.repeat { "capture_repeat" } else if fresh { "fresh" } else if recovering { "recovery_repeat" } else { "static_repeat" },
                         selected_is_latest,
                         latest_capture_id,
                         encoder_pending = encoding,
@@ -1445,7 +1450,7 @@ impl SessionThread<'_> {
                     );
                     *admission = AdmissionTrace::default();
                 }
-                if timings_logged && fresh && claim_ages.len() < 4096 {
+                if timings_logged && fresh && !image.repeat && claim_ages.len() < 4096 {
                     let micros = |d: Duration| d.as_micros().min(u128::from(u64::MAX)) as u64;
                     claim_ages.push((
                         micros(image.acquired.saturating_duration_since(image.captured)),
@@ -1661,8 +1666,10 @@ impl SessionThread<'_> {
                 let (slot, pictures, captures) = latest.frame_counts();
                 let (pictures, captures) = pipeline_follow.advance(slot, pictures, captures);
                 s.stats.pipeline.captured(pictures, captures);
-                s.stats.pipeline.submitted(!fresh);
-                if fresh {
+                // A constant-rate repeat has no new content, so the pipeline
+                // reads it as the repeat it is (`capture = wgcc`).
+                s.stats.pipeline.submitted(!fresh || image.repeat);
+                if fresh && !image.repeat {
                     claims.borrow_mut().push(butterpollo_core::performance::Claim {
                         key: presented_image.captured,
                         presented: image.captured,
@@ -1733,7 +1740,8 @@ impl SessionThread<'_> {
                 first_seen = None;
                 send_frames(output, peer, call_latency, latest, capture_tick)?;
                 // After the frame went out, off its path: Frame Warp's passes.
-                frame_warp.frame(h, s, &image, fresh, (stream.width, stream.height));
+                // A constant-rate repeat carries no new content to warp.
+                frame_warp.frame(h, s, &image, fresh && !image.repeat, (stream.width, stream.height));
             }
             Ok(())
         })()

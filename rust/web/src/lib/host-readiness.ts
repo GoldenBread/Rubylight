@@ -42,6 +42,7 @@ const plural = (count: number, one: string, many: string) => `${count} ${count =
 const CAPTURE: Record<string, string> = {
   'idd-push': 'Direct driver push',
   wgc: 'Windows Graphics Capture',
+  wgcc: 'Windows Graphics Capture, constant rate',
   dxgi: 'Desktop Duplication',
   ddx: 'Desktop Duplication',
   amd: 'AMD Direct Capture',

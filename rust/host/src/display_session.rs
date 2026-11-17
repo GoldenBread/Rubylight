@@ -1197,6 +1197,14 @@ impl Ready {
     pub fn capture(&self) -> String {
         self.framegen.lock().unwrap().capture.clone()
     }
+    /// The capture method this stream opens and whether it publishes its last
+    /// picture again every stream period (`capture = wgcc`), from one read of
+    /// the stream's policy: a change between two reads could open a capture
+    /// keyed under one and built as the other.
+    pub fn capture_method(&self) -> (String, bool) {
+        let framegen = self.framegen.lock().unwrap();
+        (framegen.capture.clone(), framegen.constant_rate)
+    }
     /// The stream turned between portrait and landscape (0x5532): its display
     /// follows on the heartbeat, off the stream loop, when the device's
     /// `dd_rotation_option` is auto.

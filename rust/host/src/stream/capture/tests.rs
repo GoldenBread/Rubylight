@@ -403,3 +403,47 @@ fn reset_wakes_each_waiter_and_skips_waiting_until_resources_are_released() -> R
     ));
     Ok(())
 }
+
+#[test]
+fn a_constant_rate_repeat_is_a_capture_but_not_a_picture_of_the_source() -> Result<()> {
+    let latest = Latest::<u8>::new();
+    let start = Instant::now();
+    latest.publish_captured(Arc::new(1), start)?;
+    let (_, pictures, captures) = latest.frame_counts();
+    assert_eq!((pictures, captures), (1, 1));
+    // Nothing was composed for the slot: the same picture goes out again,
+    // stamped when it is published.
+    assert!(latest.publish_repeat(Arc::new(1), start + Duration::from_millis(6))?);
+    let (_, pictures, captures) = latest.frame_counts();
+    assert_eq!((pictures, captures), (1, 2));
+    // The next real capture is a picture of the game again.
+    latest.publish_captured(Arc::new(2), start + Duration::from_millis(12))?;
+    let (_, pictures, captures) = latest.frame_counts();
+    assert_eq!((pictures, captures), (2, 3));
+    assert_eq!(*latest.current()?.unwrap(), 2);
+    Ok(())
+}
+
+#[test]
+fn a_shared_capture_publishes_for_its_fastest_stream() -> Result<()> {
+    let latest = Latest::<u8>::new();
+    let fallback = Duration::from_millis(20);
+    // Before a stream declares a rate, the capture's own period applies.
+    assert_eq!(latest.repeat_period(fallback), fallback);
+    let slow = latest.subscribe(Weak::new())?;
+    slow.set_period(Duration::from_millis(10));
+    assert_eq!(latest.repeat_period(fallback), Duration::from_millis(10));
+    let fast = latest.subscribe(Weak::new())?;
+    fast.set_period(Duration::from_millis(5));
+    assert_eq!(latest.repeat_period(fallback), Duration::from_millis(5));
+    // A departing stream leaves the fastest remaining one.
+    drop(fast);
+    assert_eq!(latest.repeat_period(fallback), Duration::from_millis(10));
+    // A stream that has not declared one yet does not set a rate.
+    let quiet = latest.subscribe(Weak::new())?;
+    assert_eq!(latest.repeat_period(fallback), Duration::from_millis(10));
+    drop(quiet);
+    drop(slow);
+    assert_eq!(latest.repeat_period(fallback), fallback);
+    Ok(())
+}

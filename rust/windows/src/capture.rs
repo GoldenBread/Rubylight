@@ -1115,6 +1115,15 @@ pub struct GpuImage {
     /// Whether the picture changed the foreground window, from WGC's dirty
     /// regions: `None` when the capture cannot tell (`Freshness::observe_focus`).
     pub focus: Option<bool>,
+    /// This picture repeats the previous one: constant-rate capture
+    /// (`capture = wgcc`) published it again because nothing was composed for
+    /// the stream's slot. Its stamps are the publication's, not a composition's.
+    pub repeat: bool,
+    /// The capture publication that first carried this content, when the
+    /// capture publishes repeats (`capture = wgcc`): a repeat keeps it, so an
+    /// enhancement reuses the picture it made from the same content. 0 when
+    /// the capture does not repeat.
+    pub origin: u64,
 }
 /// A shown pointer Desktop Duplication supplied beside a picture.
 pub struct PointerShape<'a> {
@@ -1140,8 +1149,8 @@ impl GpuImage {
             pixels: &cursor.pixels,
         })
     }
-    /// Take `source`'s timing, pointer and focus for a picture made from it
-    /// (the NVIDIA image enhancements).
+    /// Take `source`'s timing, pointer, focus and content identity for a
+    /// picture made from it (the NVIDIA image enhancements).
     pub(crate) fn inherit(&mut self, source: &GpuImage) {
         self.captured = source.captured;
         self.wgc_stamp = source.wgc_stamp;
@@ -1149,6 +1158,8 @@ impl GpuImage {
         self.published = source.published;
         self.cursor = source.cursor.clone();
         self.focus = source.focus;
+        self.repeat = source.repeat;
+        self.origin = source.origin;
     }
     /// Leave the pointer out of this picture, for a device that draws it itself. Only a
     /// pointer the capture supplies apart can be left out.
@@ -1243,6 +1254,8 @@ impl GpuImage {
                 ready: None,
                 lease: None,
                 focus: None,
+                repeat: false,
+                origin: 0,
             })
         }
     }
@@ -1439,6 +1452,8 @@ impl GpuPool {
                 ready,
                 lease: None,
                 focus: None,
+                repeat: false,
+                origin: 0,
             }))
         }
     }

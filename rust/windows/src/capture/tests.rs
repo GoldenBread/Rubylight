@@ -951,6 +951,34 @@ fn pointer_only_snapshots_reuse_pixels_and_missed_desktop_updates_invalidate_the
 }
 
 #[test]
+#[ignore = "requires native D3D11 textures"]
+fn an_inherited_picture_keeps_the_repeat_and_origin_of_its_source() -> Result<()> {
+    let _com = ComGuard::new()?;
+    let gpu = Device::new("")?;
+    let upload = |value| {
+        GpuImage::upload(
+            &gpu,
+            &Image {
+                width: 4,
+                height: 4,
+                stride: 16,
+                bytes: vec![value; 64],
+                captured: Instant::now(),
+                pixel: Pixel::Bgra8,
+            },
+        )
+    };
+    let mut source = upload(32)?;
+    source.repeat = true;
+    source.origin = 7;
+    let mut converted = upload(128)?;
+    converted.inherit(&source);
+    assert!(converted.repeat);
+    assert_eq!(converted.origin, 7);
+    Ok(())
+}
+
+#[test]
 #[ignore = "requires native D3D11/D3D12 sharing and readback"]
 fn unshareable_frame_falls_back_without_waiting_for_another_desktop_update() -> Result<()> {
     let _com = ComGuard::new()?;

@@ -1163,8 +1163,8 @@ fn background_capture_never_recovers_onto_the_primary_display() {
     butterpollo_core::background::apply(&mut background);
     for capture in ["auto", "wgc", "ddx"] {
         assert_ne!(
-            CaptureKey::new(capture, "display", false, &plain, ""),
-            CaptureKey::new(capture, "display", false, &background, "")
+            CaptureKey::new(capture, "display", false, &plain, "", false),
+            CaptureKey::new(capture, "display", false, &background, "", false)
         );
     }
 }
@@ -1335,6 +1335,7 @@ fn shared_capture_separates_explicit_wgc_intervals_without_splitting_ddx() {
             false,
             &capture_config(&Config::parse(setting).unwrap()),
             "",
+            false,
         )
     };
     for kind in ["wgc", "auto"] {
@@ -1349,12 +1350,22 @@ fn shared_capture_separates_explicit_wgc_intervals_without_splitting_ddx() {
         assert_eq!(key(kind, ""), key(kind, "wgc_drain_to_newest=true"));
         assert_eq!(key(kind, ""), key(kind, "wgc_helper_streaming_scope=true"));
     }
+    // Constant rate publishes between frames, so a stream with it never
+    // shares a capture opened for variable-rate WGC. Streams of the same
+    // method still share, and the capture publishes for the fastest of them
+    // (`Latest::repeat_period`).
+    let config = Config::default();
+    assert_ne!(
+        CaptureKey::new("wgc", "display", false, &config, "", false),
+        CaptureKey::new("wgc", "display", false, &config, "", true)
+    );
 }
 #[test]
 fn shared_capture_respects_compute_overrides_and_independent_frame_phases() {
     let config = Config::default();
-    let key =
-        |config: &Config, phase: &str| CaptureKey::new("wgc", "display", false, config, phase);
+    let key = |config: &Config, phase: &str| {
+        CaptureKey::new("wgc", "display", false, config, phase, false)
+    };
     let default = key(&config, "first");
     assert_eq!(default, key(&config, "second"));
     let mut helper = config.clone();

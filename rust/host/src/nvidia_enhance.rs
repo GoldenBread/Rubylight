@@ -249,10 +249,12 @@ mod active {
         failed: Option<Enhancement>,
         /// The capture device the filters were made on.
         device: usize,
-        /// The last source picture and its enhanced copy: a repeated picture
-        /// is encoded again without a second conversion, and the stream's
-        /// freshness check sees the same picture.
-        last: Option<(Weak<GpuImage>, Arc<GpuImage>)>,
+        /// The last source picture, the content identity it carried, and its
+        /// enhanced copy: a repeated picture is encoded again without a second
+        /// conversion, and the stream's freshness check sees the same picture.
+        /// A constant-rate repeat names its content (`GpuImage::origin`), so
+        /// the copy made for the fresh picture serves its repeats.
+        last: Option<(Weak<GpuImage>, u64, Arc<GpuImage>)>,
         profiles: Option<Profiles>,
         foreground: Option<butterpollo_windows::foreground::Tracker>,
         profile_due: Option<Instant>,
@@ -306,15 +308,31 @@ mod active {
             {
                 self.last = None;
             }
-            if let Some((source, enhanced)) = &self.last
-                && std::ptr::eq(source.as_ptr(), Arc::as_ptr(&image))
+            if let Some((source, origin, enhanced)) = &self.last
+                && (std::ptr::eq(source.as_ptr(), Arc::as_ptr(&image))
+                    // A repeat carries the origin of the picture it repeats:
+                    // the converted copy is already the same content.
+                    || (image.repeat && *origin != 0 && *origin == image.origin))
             {
-                return (enhanced.clone(), changed);
+                if !image.repeat {
+                    return (enhanced.clone(), changed);
+                }
+                // A repeat is a picture of its own to the stream: the same
+                // converted texture, its own stamps, and no second pass.
+                let mut repeat = (**enhanced).clone();
+                repeat.captured = image.captured;
+                repeat.acquired = image.acquired;
+                repeat.published = image.published;
+                repeat.wgc_stamp = image.wgc_stamp;
+                repeat.focus = image.focus;
+                repeat.repeat = true;
+                repeat.origin = image.origin;
+                return (Arc::new(repeat), changed);
             }
             match self.convert(config, wanted, &image) {
                 Ok(enhanced) => {
                     let enhanced = Arc::new(enhanced);
-                    self.last = Some((Arc::downgrade(&image), enhanced.clone()));
+                    self.last = Some((Arc::downgrade(&image), image.origin, enhanced.clone()));
                     (enhanced, changed)
                 }
                 Err(error) => {

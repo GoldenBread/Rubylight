@@ -1,5 +1,5 @@
 //! Capture publication and idle-wait policy, independent of Windows/GPU APIs.
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Preserve short active polls and pending GPU handoffs. After 100 ms without
 /// a frame, notifications can interrupt a longer wait; the 10 ms bound still
@@ -108,6 +108,11 @@ pub struct Freshness {
     focus_start: Option<u64>,
     focus_interval: Option<u64>,
     extends: bool,
+    /// The latest publication repeated the previous picture (`capture = wgcc`):
+    /// the next capture starts a picture of its own even less than
+    /// `PICTURE_GAP` after it, since a real game frame can land that soon
+    /// after a repeat and must not be absorbed into it.
+    repeated: bool,
 }
 impl Freshness {
     /// A capture this soon after the previous one belongs to the same picture.
@@ -234,23 +239,11 @@ impl Freshness {
     /// (typing, a caret) leaves every update a picture of its own, as without
     /// the distinction.
     pub fn observe_focus(&mut self, captured: u64, delay: u64, focus: Option<bool>) {
-        let mut same_picture = false;
-        if let Some(previous) = self.last {
-            let interval = captured.saturating_sub(previous);
-            if captured > previous && interval <= 500_000_000 {
-                self.intervals[self.next] = interval;
-                self.delays[self.next] = delay;
-                self.next = (self.next + 1) % self.intervals.len();
-                self.count = (self.count + 1).min(self.intervals.len());
-                same_picture = interval < Self::PICTURE_GAP;
-            } else {
-                self.count = 0;
-                self.next = 0;
-                self.picture = None;
-                self.focus_at = None;
-                self.focus_start = None;
-                self.focus_interval = None;
-            }
+        let mut same_picture = self.record(captured, delay);
+        // A real capture after a repeat is a new picture of the game, however
+        // soon it comes: a game frame can land within 2 ms of a repeat.
+        if std::mem::take(&mut self.repeated) {
+            same_picture = false;
         }
         self.extends = false;
         let animating = match (self.focus_at, self.focus_interval) {
@@ -283,6 +276,49 @@ impl Freshness {
             }
             _ => {}
         }
+        self.published(captured, same_picture);
+    }
+    /// Observe a picture a constant-rate capture published again at the
+    /// stream period with nothing new composed (`capture = wgcc`): a picture
+    /// of its own, so a consumer paces it like a game frame instead of
+    /// re-encoding a still one at the still-picture rate. The focus history
+    /// is dropped: the publication cadence is the capture's now, not the
+    /// game's.
+    pub fn observe_repeat(&mut self, captured: u64, delay: u64) {
+        self.record(captured, delay);
+        self.extends = false;
+        self.focus_at = None;
+        self.focus_start = None;
+        self.focus_interval = None;
+        self.repeated = true;
+        self.published(captured, false);
+    }
+    /// Record the interval since the previous publication, and whether the
+    /// capture belongs to the previous picture. Clears all history after a
+    /// gap of half a second or more.
+    fn record(&mut self, captured: u64, delay: u64) -> bool {
+        let mut same_picture = false;
+        if let Some(previous) = self.last {
+            let interval = captured.saturating_sub(previous);
+            if captured > previous && interval <= 500_000_000 {
+                self.intervals[self.next] = interval;
+                self.delays[self.next] = delay;
+                self.next = (self.next + 1) % self.intervals.len();
+                self.count = (self.count + 1).min(self.intervals.len());
+                same_picture = interval < Self::PICTURE_GAP;
+            } else {
+                self.count = 0;
+                self.next = 0;
+                self.picture = None;
+                self.focus_at = None;
+                self.focus_start = None;
+                self.focus_interval = None;
+            }
+        }
+        same_picture
+    }
+    /// Account for one publication, once its picture is known.
+    fn published(&mut self, captured: u64, same_picture: bool) {
         self.last = Some(captured);
         if !same_picture {
             match self.picture {
@@ -355,6 +391,59 @@ impl Intervals {
         sorted[self.count / 2]
     }
 }
+/// Publication pacing for constant-rate capture (`capture = wgcc`): one
+/// picture per stream slot, the last one published again when nothing new was
+/// composed, and every publication stamped when it happens so a consumer
+/// paces it like a game frame instead of repeating a still picture itself.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ConstantRate {
+    last: Option<Instant>,
+}
+
+/// What a constant-rate capture does with the newest picture it holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Publish {
+    /// A new composition is ready: publish it now.
+    Fresh,
+    /// Nothing new by the slot: publish the last picture again now.
+    Repeat,
+    /// Nothing to publish before `at`.
+    Wait(Instant),
+}
+
+impl ConstantRate {
+    /// The next slot: one period after the last publication. `None` before the
+    /// first picture, so nothing is repeated that was never captured.
+    pub fn due(&self, period: Duration) -> Option<Instant> {
+        self.last.map(|last| last + period)
+    }
+
+    /// A picture was published at `at`; the next slot is one period after it.
+    /// A publisher that ran late resumes with one picture, never a burst of
+    /// the slots it missed.
+    pub fn published(&mut self, at: Instant) {
+        self.last = Some(at);
+    }
+
+    /// What to do with a picture at `now`. A new composition is never held
+    /// back: holding it would add up to a period of delay to every frame of a
+    /// slow game. A repeat only fills a slot the last publication has already
+    /// left empty, so the publications never exceed one per period on a still
+    /// source. `None` before the first publication, when there is no picture
+    /// to repeat and no slot to fill.
+    pub fn decide(&self, now: Instant, period: Duration, fresh: bool) -> Option<Publish> {
+        if fresh {
+            return Some(Publish::Fresh);
+        }
+        let due = self.due(period)?;
+        Some(if now >= due {
+            Publish::Repeat
+        } else {
+            Publish::Wait(due)
+        })
+    }
+}
+
 /// Defer a copy only when a newer composition can precede the same encode slot.
 /// The deadline preserves a lone update if the source becomes static.
 pub fn publication_deadline(
