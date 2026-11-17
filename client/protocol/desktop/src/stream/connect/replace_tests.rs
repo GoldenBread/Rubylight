@@ -144,6 +144,27 @@ fn jumbo_is_probed_only_on_a_local_route_and_only_when_the_pc_offers_it() {
     assert_eq!(reset_packet_size(1392, 1024), 1024);
 }
 
+// #126: the PC refuses the probe while a stream or a launch is pending, so a pre-flight sent
+// after the launch always fell back to normal packets. The probe must finish before the launch,
+// and the launch must carry the packet size it chose.
+#[test]
+fn the_jumbo_pre_flight_asks_the_pc_before_the_launch() {
+    let order = std::cell::RefCell::new(Vec::new());
+    let packet_size = std::cell::Cell::new(i32::from(rubylight_protocol::video_packet::STOCK_MAX_VIDEO_PACKET));
+    let launched = preflight_then_launch(
+        || {
+            order.borrow_mut().push("pre-flight");
+            packet_size.set(8192);
+        },
+        || {
+            order.borrow_mut().push("launch");
+            packet_size.get()
+        },
+    );
+    assert_eq!(launched, 8192, "the launch asks for the size the pre-flight chose");
+    assert_eq!(*order.borrow(), ["pre-flight", "launch"]);
+}
+
 // A blocked media port: the stream never shows a picture and its error shows at once, not after
 // five reconnects and a minute (Moonlight V+ PC 6792aeed).
 #[test]
