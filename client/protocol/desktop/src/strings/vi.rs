@@ -1302,6 +1302,7 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("GPU decoding isn’t available here: {}", "Giải mã bằng GPU không khả dụng ở đây: {}"),
     ("Fewer {} settings", "Ẩn bớt cài đặt {}"),
     ("More {} settings ({})", "Xem thêm cài đặt {0} ({1})"),
+    ("More settings", "Cài đặt khác"),
     ("Different settings for different networks.", "Cài đặt khác nhau cho từng mạng."),
     ("Refresh rate", "Tần số quét"),
     ("Image", "Hình ảnh"),

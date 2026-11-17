@@ -1302,6 +1302,7 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("GPU decoding isn’t available here: {}", "여기서는 GPU 디코딩을 사용할 수 없습니다: {}"),
     ("Fewer {} settings", "{} 설정 접기"),
     ("More {} settings ({})", "{0} 설정 더 보기({1})"),
+    ("More settings", "추가 설정"),
     ("Different settings for different networks.", "네트워크마다 다른 설정을 사용합니다."),
     ("Refresh rate", "주사율"),
     ("Image", "화질"),

@@ -1,24 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The settings overview. The first row opens the simple layer: three plain choices that write the settings
-     the sections hold, the screen it streams at, HDR, console mode and Back to recommended (SimpleProfile,
-     nightjar-policy's simple_profile). Under it, Profiles opens the named profiles (StreamProfilesActivity);
-     each other row opens the section of the same key in StreamSettings.SECTIONS. A choice changed in a
-     section shows in the simple layer as Custom. -->
+<!-- The settings overview, simple first. Recommended opens the simple layer: three plain choices that write the
+     settings the sections hold, the screen it streams at, HDR, console mode and Back to recommended (SimpleProfile,
+     nightjar-policy's simple_profile). Controls, Audio and App follow, and "More settings" unfolds the rest in
+     place (StreamSettings.RAIL_FOLDED): the presets, Profiles (StreamProfilesActivity) and the sections that hold
+     every detail. Each section row opens the section of the same key in StreamSettings.SECTIONS. A choice changed
+     in a section shows in the simple layer as Custom. Desktop Nightjar lists its sections in the same order. -->
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
     <Preference android:key="simple" android:title="@string/settings_section_simple"
         android:summary="@string/settings_section_simple_summary" />
+    <Preference android:key="input" android:title="@string/settings_section_input"
+        android:summary="@string/settings_section_input_summary" />
+    <Preference android:key="audio" android:title="@string/settings_section_audio" />
+    <Preference android:key="app" android:title="@string/settings_section_app" />
+    <!-- The fold: stores nothing, shows and hides the rows below it. -->
+    <Preference android:key="more_sections" android:title="@string/settings_more" android:persistent="false" />
     <com.limelight.preferences.PresetPreference android:key="stream_presets" android:title="@string/stream_presets" />
     <!-- Profiles span every section, so they sit with the presets; the summary names the one in use. -->
     <Preference android:key="stream_profiles" android:title="@string/profiles_title"
         android:summary="@string/profiles_summary_none" />
     <Preference android:key="video" android:title="@string/settings_section_video" />
     <Preference android:key="display" android:title="@string/settings_section_display" />
-    <Preference android:key="input" android:title="@string/settings_section_input"
-        android:summary="@string/settings_section_input_summary" />
-    <Preference android:key="audio" android:title="@string/settings_section_audio" />
     <Preference android:key="streaming" android:title="@string/settings_section_streaming"
         android:summary="@string/settings_section_streaming_summary" />
-    <Preference android:key="app" android:title="@string/settings_section_app" />
     <Preference android:key="advanced" android:title="@string/settings_section_advanced"
         android:summary="@string/settings_advanced_summary" />
     <Preference android:key="debug" android:title="@string/settings_section_debug"

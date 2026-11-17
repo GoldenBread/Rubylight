@@ -702,17 +702,27 @@ fn profiles_and_shortcuts_pop_back_to_settings() {
 fn settings_sections_follow_androids_order() {
     let mut f = Frames::new(record("PC", true, false), Reach::Online);
     f.size = vec2(1280.0, 12000.0);
-    f.l.go(Screen::Settings);
-    f.settle();
-    // The list beside the rows names the sections in order, then the open one heads the rows.
+    video_settings(&mut f);
+    // The list beside the rows names the sections as Android's does, the simple ones first and the
+    // rest in Android's order, then the open one heads the rows.
+    let listed: [&str; 9] = ["Recommended", "Controls", "Audio", "App", "Video", "Display & image", "Streaming", "Advanced", "Debug"];
     let titles: Vec<&str> = f.drawn.iter().map(String::as_str).filter(|t| SETTINGS_SECTIONS.contains(t)).collect();
-    assert_eq!(titles[..9], SETTINGS_SECTIONS, "the list names the sections in order");
-    assert_eq!(titles[9..], ["Video"], "and the first is open");
+    assert_eq!(titles[..9], listed, "the list names the sections in order");
+    assert_eq!(titles[9..], ["Video"], "and the chosen one is open");
     // A narrow window lists them as chips above the rows, in the same order.
     f.size = vec2(800.0, 12000.0);
     f.settle();
     let titles: Vec<&str> = f.drawn.iter().map(String::as_str).filter(|t| SETTINGS_SECTIONS.contains(t)).collect();
-    assert_eq!(titles[..9], SETTINGS_SECTIONS, "the chips name the sections in order");
+    assert_eq!(titles[..9], listed, "the chips name the sections in order");
+}
+
+/// The main settings on Video with the whole list of sections, as after "More settings" and Video
+/// were chosen: a first visit opens Recommended with the sections of detail folded.
+fn video_settings(f: &mut Frames) {
+    f.l.go(Screen::Settings);
+    f.l.settings_view.rail_more = true;
+    f.l.settings_view.section = "Video";
+    f.settle();
 }
 
 /// The widgets a screen reader can press or change that have no name to say, with their role and place.
@@ -815,11 +825,10 @@ fn settings_main_rows_are_androids_tiers() {
 fn settings_show_a_sections_main_rows_then_a_counted_fold() {
     let mut f = Frames::new(record("PC", true, false), Reach::Online);
     f.size = vec2(1280.0, 12000.0);
-    f.l.go(Screen::Settings);
-    f.settle();
+    video_settings(&mut f);
     assert!(shows(&f, "Lower bitrate") && !shows(&f, "Automatic quality"), "{:?}", f.drawn);
     assert!(!shows(&f, "Recover interrupted streams") && !shows(&f, "Fine-tuning"), "one section at a time, no catch-all group");
-    let fold = |f: &Frames| f.drawn.iter().find(|t| t.starts_with("More ") || t.starts_with("Fewer ")).cloned();
+    let fold = |f: &Frames| f.drawn.iter().find(|t| (t.starts_with("More ") || t.starts_with("Fewer ")) && *t != "More settings").cloned();
     let id = f.hosts.list[0].id;
     for screen in [Screen::Settings, Screen::HostSettings(id)] {
         f.l.go(screen);
@@ -861,8 +870,7 @@ fn settings_show_a_sections_main_rows_then_a_counted_fold() {
 fn resolution_and_frame_rate_offer_presets_and_custom_with_its_row() {
     let mut f = Frames::new(record("PC", true, false), Reach::Online);
     f.size = vec2(1280.0, 12000.0);
-    f.l.go(Screen::Settings);
-    f.settle();
+    video_settings(&mut f);
     assert!(!shows(&f, "Custom resolution") && !shows(&f, "Custom frame rate"), "Native and Display need no rows");
     // The open menu, under its button, scrolls when it is taller than the space it gets.
     let wheel_over = |f: &mut Frames, button: &str| {
@@ -3041,8 +3049,7 @@ fn settings_scroll_beside_their_column_on_a_wide_window() {
     let mut f = Frames::new(record("Desk", true, true), Reach::Online);
     f.size = vec2(1920.0, 640.0);
     f.l.settings_view.more = [true; 9];
-    f.l.go(Screen::Settings);
-    f.settle();
+    video_settings(&mut f);
     let top = |f: &Frames| f.placed.iter().find(|(t, ..)| t == "Video codec").map(|p| p.1.top()).expect("the Video codec row");
     let before = top(&f);
     let beside = Pos2::new(1500.0, 600.0);
@@ -5859,6 +5866,8 @@ fn the_arrow_keys_keep_the_focus_clear_of_the_chrome_on_every_long_page() {
     let size = vec2(1280.0, 480.0);
     for (name, page) in [("all-games", Page::AllGames), ("apps", Page::Apps), ("settings", Page::Settings), ("pc-settings", Page::PcSettings)] {
         let mut f = demo_frames(size);
+        // Recommended, where Settings open, fits this window: Video is long enough to walk.
+        (f.l.settings_view.rail_more, f.l.settings_view.section) = (true, "Video");
         demo_page(&mut f, page);
         let focused = |f: &Frames| {
             let id = f.ctx.memory(|m| m.focused()).expect("something is focused");
@@ -5901,11 +5910,14 @@ fn the_arrow_keys_keep_the_focus_clear_of_the_chrome_on_every_long_page() {
 #[test]
 fn the_side_list_stays_below_the_chrome_while_the_rows_scroll() {
     use super::demo::Page;
-    let mut f = demo_frames(vec2(1600.0, 700.0));
+    // Tall enough for the whole list, More settings open: a shorter window's list goes with the page.
+    let mut f = demo_frames(vec2(1600.0, 860.0));
     // Every row: a section long enough to scroll.
     f.l.settings_view.more = [true; 9];
     let top_of = |f: &Frames, text: &str| f.placed.iter().find(|(t, ..)| t == text).map(|p| p.1.top()).unwrap_or_else(|| panic!("{text} is drawn"));
     demo_page(&mut f, Page::Settings);
+    f.l.settings_view.section = "Video";
+    f.settle();
     let (entry, row) = (top_of(&f, "Audio"), top_of(&f, "Video codec"));
     wheel(&mut f, Pos2::new(1500.0, 600.0), -200.0);
     assert!(top_of(&f, "Video codec") < row - 50.0, "the rows move");

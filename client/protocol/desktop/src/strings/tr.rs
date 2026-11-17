@@ -1302,6 +1302,7 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("GPU decoding isn’t available here: {}", "GPU ile kod çözme burada kullanılamıyor: {}"),
     ("Fewer {} settings", "Daha az ayar: {}"),
     ("More {} settings ({})", "Daha fazla ayar: {0} ({1})"),
+    ("More settings", "Diğer ayarlar"),
     ("Different settings for different networks.", "Farklı ağlar için farklı ayarlar."),
     ("Refresh rate", "Yenileme hızı"),
     ("Image", "Görüntü"),

@@ -1302,6 +1302,7 @@ sudo sysctl -w net.core.rmem_max={}", "Bufor odbioru: system przydzielił {0} Ki
     ("GPU decoding isn’t available here: {}", "Dekodowanie GPU jest tu niedostępne: {}"),
     ("Fewer {} settings", "Mniej ustawień: {}"),
     ("More {} settings ({})", "Więcej ustawień: {0} ({1})"),
+    ("More settings", "Więcej ustawień"),
     ("Different settings for different networks.", "Różne ustawienia dla różnych sieci."),
     ("Refresh rate", "Częstotliwość odświeżania"),
     ("Image", "Obraz"),

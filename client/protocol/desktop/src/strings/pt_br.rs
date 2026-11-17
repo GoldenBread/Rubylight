@@ -1302,6 +1302,7 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer de recepção: o sistema concedeu 
     ("GPU decoding isn’t available here: {}", "A decodificação por GPU está indisponível aqui: {}"),
     ("Fewer {} settings", "Menos configurações: {}"),
     ("More {} settings ({})", "Mais configurações: {0} ({1})"),
+    ("More settings", "Mais configurações"),
     ("Different settings for different networks.", "Configurações diferentes para redes diferentes."),
     ("Refresh rate", "Taxa de atualização"),
     ("Image", "Imagem"),

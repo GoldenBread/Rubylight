@@ -27,6 +27,12 @@ import static org.junit.Assert.*;
         shadows = com.limelight.PcViewLifecycleTest.NoNativeMoonBridge.class,
         instrumentedPackages = "com.limelight.nvstream.jni")
 public class SettingsPanesTest {
+    /** These tests walk the whole list of sections: More settings is open, as for a user who chose it. */
+    @org.junit.Before
+    public void openMoreSettings() {
+        StreamSettings.rememberRail(org.robolectric.RuntimeEnvironment.getApplication(), true);
+    }
+
     private static final String WIDE = "w1280dp-h720dp-land-mdpi";
     private static final String TV = "w960dp-h540dp-land-television-xhdpi";
 
@@ -109,13 +115,13 @@ public class SettingsPanesTest {
             StreamSettings screen = controller.get();
             assertTrue(screen.getFragmentManager().findFragmentById(R.id.settings_sections)
                     instanceof StreamSettings.RootFragment);
-            assertEquals("video", shownSection(screen));
+            assertEquals("simple", shownSection(screen));
             assertEquals(screen.getString(R.string.settings), screen.getTitle().toString());
             assertNull("the selected tab names the page", ((com.google.android.material.appbar.MaterialToolbar)
                     screen.findViewById(R.id.settings_toolbar)).getTitle());
             assertEquals(View.VISIBLE, screen.findViewById(R.id.shell_bar).getVisibility());
             ListView list = sections(screen);
-            assertTrue("the section on the right is marked on the left", list.isItemChecked(row(list, "video")));
+            assertTrue("the section on the right is marked on the left", list.isItemChecked(row(list, "simple")));
         } finally { controller.pause().stop().destroy(); }
     }
 
@@ -407,7 +413,7 @@ public class SettingsPanesTest {
         try {
             ListView list = sections(second.get());
             assertEquals("simple", ((Preference) list.getItemAtPosition(0)).getKey());
-            assertEquals("video", shownSection(second.get()));
+            assertEquals("simple", shownSection(second.get()));
         } finally { second.pause().stop().destroy(); }
     }
 
@@ -443,7 +449,7 @@ public class SettingsPanesTest {
     @Test @Config(qualifiers = WIDE)
     public void narrowingTheScreenOpensTheListWhenNoSectionWasPicked() {
         ActivityController<StreamSettings> wide = open();
-        assertEquals("video", shownSection(wide.get()));
+        assertEquals("simple", shownSection(wide.get()));
         ActivityController<StreamSettings> phone = restore(PHONE, save(wide));
         try {
             StreamSettings screen = phone.get();
@@ -474,7 +480,7 @@ public class SettingsPanesTest {
         ActivityController<StreamSettings> wide = restore(WIDE, save(phone));
         try {
             StreamSettings screen = wide.get();
-            assertEquals("video", shownSection(screen));
+            assertEquals("simple", shownSection(screen));
             assertTrue(screen.getFragmentManager().findFragmentById(R.id.settings_sections) instanceof StreamSettings.RootFragment);
         } finally { wide.pause().stop().destroy(); }
     }

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TV Settings' More settings row: a rail row (settings_section_tv) whose name may take a second line, since it is
+     the longest in the rail and names what unfolds. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="@dimen/settings_section_min_height"
+    android:gravity="center_vertical" android:paddingStart="@dimen/space_l" android:paddingEnd="@dimen/space_l"
+    android:paddingTop="@dimen/space_s" android:paddingBottom="@dimen/space_s"
+    android:descendantFocusability="blocksDescendants" android:background="@drawable/tv_settings_rail_row">
+    <ImageView android:id="@android:id/icon" android:layout_width="24dp" android:layout_height="24dp"
+        android:layout_marginEnd="@dimen/space_l" app:tint="@color/tv_rail_icon" android:duplicateParentState="true"
+        android:importantForAccessibility="no" />
+    <TextView android:id="@android:id/title" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+        android:maxLines="2" android:ellipsize="end" android:duplicateParentState="true"
+        android:textAppearance="@style/TextAppearance.Nightjar.Glass.TvRailRow" android:textColor="@color/tv_rail_title" />
+</LinearLayout>

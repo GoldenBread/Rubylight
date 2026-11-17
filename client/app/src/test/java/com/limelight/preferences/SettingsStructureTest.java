@@ -48,6 +48,12 @@ import static org.robolectric.Shadows.shadowOf;
         shadows = com.limelight.PcViewLifecycleTest.NoNativeMoonBridge.class,
         instrumentedPackages = "com.limelight.nvstream.jni")
 public class SettingsStructureTest {
+    /** These tests walk the whole list of sections: More settings is open, as for a user who chose it. */
+    @org.junit.Before
+    public void openMoreSettings() {
+        StreamSettings.rememberRail(org.robolectric.RuntimeEnvironment.getApplication(), true);
+    }
+
     static void settle(StreamSettings screen) {
         ShadowLooper.idleMainLooper(150, TimeUnit.MILLISECONDS);
         screen.getFragmentManager().executePendingTransactions();
@@ -132,8 +138,8 @@ public class SettingsStructureTest {
             StreamSettings screen = controller.get();
             settle(screen);
             PreferenceScreen root = ((StreamSettings.RootFragment) shown(screen)).getPreferenceScreen();
-            assertEquals(Arrays.asList("simple", "stream_presets", "stream_profiles", "video", "display", "input", "audio", "streaming",
-                    "app", "advanced", "debug"), keys(root));
+            assertEquals(Arrays.asList("simple", "input", "audio", "app", "more_sections", "stream_presets", "stream_profiles", "video", "display",
+                "streaming", "advanced", "debug"), keys(root));
             assertEquals(screen.getString(R.string.settings_section_display), root.findPreference("display").getTitle());
             assertNotNull(root.findPreference("display").getSummary());
             assertNotNull(root.findPreference("audio").getSummary());

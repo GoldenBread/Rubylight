@@ -320,6 +320,30 @@ public class GameDetailShellTest {
         }
     }
 
+    /** Held sideways the page is Home's hero: the chip line, glass buttons, and a Play that cannot start is dimmed. */
+    @Test
+    @Config(qualifiers = "w800dp-h360dp-land")
+    public void sidewaysThePageHasTheChipLineAndADisabledPlayIsDimmed() throws Exception {
+        ActivityController<Detail> controller = detail();
+        try {
+            Detail page = loaded(controller);
+            assertTrue(page.findViewById(R.id.detail_backdrop) != null);
+            page.render(portal(",\"store\":{\"source\":\"steam\",\"id\":\"400\"}"), tower());
+            assertEquals(View.VISIBLE, page.findViewById(R.id.detail_chips).getVisibility());
+            assertEquals(View.VISIBLE, page.findViewById(R.id.detail_store).getVisibility());
+            View play = page.findViewById(R.id.detail_play);
+            assertTrue(play instanceof com.limelight.ui.GlassButton);
+            assertTrue(page.findViewById(R.id.detail_favourite) instanceof com.limelight.ui.GlassButton);
+            assertTrue(play.isEnabled());
+            assertEquals(1f, play.getAlpha(), 0f);
+            page.render(portal(",\"installed\":false,\"store\":{\"source\":\"steam\",\"id\":\"400\"}"), tower());
+            assertFalse(play.isEnabled());
+            assertTrue("a Play that does nothing does not glow like one that starts", play.getAlpha() < 0.6f);
+        } finally {
+            controller.pause().stop().destroy();
+        }
+    }
+
     @Test
     @Config(qualifiers = "television")
     public void onTelevisionTheChipLineNamesTheStoreWithItsGlyph() throws Exception {

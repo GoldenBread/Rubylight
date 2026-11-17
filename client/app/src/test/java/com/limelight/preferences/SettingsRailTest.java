@@ -36,6 +36,12 @@ import java.util.concurrent.TimeUnit;
         shadows = com.limelight.PcViewLifecycleTest.NoNativeMoonBridge.class,
         instrumentedPackages = "com.limelight.nvstream.jni")
 public class SettingsRailTest {
+    /** These tests walk the whole list of sections: More settings is open, as for a user who chose it. */
+    @org.junit.Before
+    public void openMoreSettings() {
+        StreamSettings.rememberRail(org.robolectric.RuntimeEnvironment.getApplication(), true);
+    }
+
     private ActivityController<StreamSettings> controller;
 
     @After
@@ -156,8 +162,8 @@ public class SettingsRailTest {
     @Test
     public void aSnappedRailStaysWhereItSettled() {
         StreamSettings screen = open(Motion.REDUCE);
-        screen.showSection("audio");
-        reveal(screen, "audio");
+        screen.showSection("streaming");
+        reveal(screen, "streaming");
         ListView list = sections(screen);
         int first = list.getFirstVisiblePosition();
         int top = list.getChildAt(0).getTop();
@@ -172,7 +178,7 @@ public class SettingsRailTest {
             assertTrue("the top row on screen is whole", row.getTop() >= list.getPaddingTop());
             break;
         }
-        assertEquals(middleOf(screen, "audio"), barMiddle(screen), 1f);
+        assertEquals(middleOf(screen, "streaming"), barMiddle(screen), 1f);
     }
 
     @Test

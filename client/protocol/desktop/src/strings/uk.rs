@@ -1302,6 +1302,7 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приймання: систе
     ("GPU decoding isn’t available here: {}", "Декодування на GPU тут недоступне: {}"),
     ("Fewer {} settings", "Менше налаштувань: {}"),
     ("More {} settings ({})", "Більше налаштувань: {0} ({1})"),
+    ("More settings", "Інші налаштування"),
     ("Different settings for different networks.", "Різні налаштування для різних мереж."),
     ("Refresh rate", "Частота оновлення"),
     ("Image", "Зображення"),

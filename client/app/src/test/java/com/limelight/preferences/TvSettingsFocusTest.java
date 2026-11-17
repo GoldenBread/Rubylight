@@ -50,6 +50,12 @@ import java.util.concurrent.TimeUnit;
 // Real text metrics: the rows' heights decide whether the list moves its selection or scrolls inside a row.
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public class TvSettingsFocusTest {
+    /** These tests walk the whole list of sections: More settings is open, as for a user who chose it. */
+    @org.junit.Before
+    public void openMoreSettings() {
+        StreamSettings.rememberRail(org.robolectric.RuntimeEnvironment.getApplication(), true);
+    }
+
     private ActivityController<StreamSettings> controller;
 
     @After
@@ -126,8 +132,8 @@ public class TvSettingsFocusTest {
             assertTrue(list.hasFocus());
             visited.add(keyAt(list, list.getSelectedItemPosition()));
         }
-        assertEquals(Arrays.asList("simple", "stream_presets", "stream_profiles", "video", "display", "input",
-                "audio", "streaming", "app", "advanced", "debug"), visited);
+        assertEquals(Arrays.asList("simple", "input", "audio", "app", "more_sections", "stream_presets", "stream_profiles", "video", "display",
+                "streaming", "advanced", "debug"), visited);
         for (int i = list.getCount() - 2; i >= 0; i--) {
             press(screen, KeyEvent.KEYCODE_DPAD_UP);
             assertEquals("Up moves one row", i, list.getSelectedItemPosition());

@@ -1302,6 +1302,7 @@ sudo sysctl -w net.core.rmem_max={}", "接收缓冲区：系统只分配了所�
     ("GPU decoding isn’t available here: {}", "此处 GPU 解码不可用：{}"),
     ("Fewer {} settings", "收起{}设置"),
     ("More {} settings ({})", "更多{0}设置（{1}）"),
+    ("More settings", "更多设置"),
     ("Different settings for different networks.", "为不同网络保留不同设置。"),
     ("Refresh rate", "刷新率"),
     ("Image", "画面"),

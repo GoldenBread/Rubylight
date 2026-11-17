@@ -1302,6 +1302,7 @@ sudo sysctl -w net.core.rmem_max={}", "Tampon de réception : le système a acco
     ("GPU decoding isn’t available here: {}", "Le décodage GPU est indisponible ici : {}"),
     ("Fewer {} settings", "Moins de paramètres {}"),
     ("More {} settings ({})", "Plus de paramètres {0} ({1})"),
+    ("More settings", "Plus de paramètres"),
     ("Different settings for different networks.", "Des paramètres différents pour différents réseaux."),
     ("Refresh rate", "Fréquence de rafraîchissement"),
     ("Image", "Image"),

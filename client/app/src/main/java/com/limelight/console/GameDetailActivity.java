@@ -138,7 +138,7 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
     private TextView quitOnLeaveNote;
     private GameDetailModel quitOnLeaveGame;
     private ComputerDetails quitOnLeaveComputer;
-    /** TV only (null on a phone): the backdrop, and the chip line with the installed and HDR chips. */
+    /** On a TV and on the page held sideways (null on a phone held upright): the backdrop, and the chip line with the installed and HDR chips. */
     private BackdropView backdrop;
     private View chips;
     private TextView installed;
@@ -473,13 +473,21 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
     }
 
     /**
-     * The TV page sits on the game's backdrop. Opened from Home, it is the picture Home was showing for the game,
+     * The TV page and the page held sideways sit on the game's backdrop. Opened from Home, it is the picture Home was showing for the game,
      * shown at once, so the page change keeps the screen's light; otherwise it fades in when the cover is loaded.
      */
     private void setUpAmbience() {
-        int canvas = AppTheme.tvCanvas(this);
+        com.limelight.ui.GlassForm form = com.limelight.ui.GlassForm.of(this);
+        boolean tv = form == com.limelight.ui.GlassForm.TELEVISION;
+        int canvas = tv ? AppTheme.tvCanvas(this)
+                : com.google.android.material.color.MaterialColors.getColor(backdrop, R.attr.glassCanvas);
+        // Held sideways the page is Home's hero grown to a page: the ambient bakes for the theme and fades as Home's does.
+        // This layout is the sideways one whatever the device, so a phone turned on its side bakes as a handheld does.
+        if (!tv) HomeChrome.setUpBackdrop(this, com.limelight.ui.GlassForm.HANDHELD, backdrop, canvas);
         getWindow().setBackgroundDrawable(new ColorDrawable(canvas));
         ((ViewGroup) findViewById(android.R.id.content)).setClipChildren(false);
+        // The system bars' padding sits on the content view as well: the backdrop reaches under the status bar, as Home's does.
+        if (!tv) ((ViewGroup) findViewById(android.R.id.content)).setClipToPadding(false);
         backdrop.setCanvasColor(canvas);
         backdrop.setDim(AppTheme.isHighContrast(this) ? 0.85f : 1f);
         backdrop.setOnCovered(() -> getWindow().setBackgroundDrawable(null));
@@ -575,8 +583,11 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
         }
         if (repository == null) {
             repository = createRepository(uniqueId);
-            covers = new CoverLoaders(this, uniqueId, Math.round(
-                    getResources().getDimension(R.dimen.detail_cover_width) / getResources().getDisplayMetrics().density));
+            // As wide as the cover is laid out: the sideways page's is larger than the portrait page's.
+            View cover = findViewById(R.id.detail_poster);
+            float coverWidth = cover != null && cover.getLayoutParams().width > 0 ? cover.getLayoutParams().width
+                    : getResources().getDimension(R.dimen.detail_cover_width);
+            covers = new CoverLoaders(this, uniqueId, Math.round(coverWidth / getResources().getDisplayMetrics().density));
             if (backdrop != null) {
                 covers.setArtListener(app -> {
                     if (app.getAppId() == appId) askBackdrop();

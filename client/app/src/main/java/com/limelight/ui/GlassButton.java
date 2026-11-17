@@ -26,6 +26,13 @@ public class GlassButton extends MaterialButton {
     private final float pressScale;
     private final Runnable invalidator = this::invalidate;
 
+    /** A button that cannot be pressed says so: glass has one fill and one text colour, so the whole capsule dims. */
+    @Override
+    public void setEnabled(boolean enabled) {
+        super.setEnabled(enabled);
+        setAlpha(enabled ? 1f : 0.45f);
+    }
+
     public GlassButton(Context context, AttributeSet attrs) {
         super(context, attrs);
         TypedArray a = context.obtainStyledAttributes(attrs, R.styleable.GlassButton);

@@ -1302,6 +1302,7 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("GPU decoding isn’t available here: {}", "ここではGPUデコードを利用できません: {}"),
     ("Fewer {} settings", "{}の設定の表示を減らす"),
     ("More {} settings ({})", "{0}の設定をさらに表示（{1}）"),
+    ("More settings", "その他の設定"),
     ("Different settings for different networks.", "ネットワークごとに異なる設定を使います。"),
     ("Refresh rate", "リフレッシュレート"),
     ("Image", "画質"),

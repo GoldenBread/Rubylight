@@ -26,4 +26,21 @@
         <item name="android:textAppearance">@style/TextAppearance.Nightjar.TvChip</item>
         <item name="android:importantForAccessibility">no</item>
     </style>
+
+    <!-- A chip on the game page held sideways: Home's hero chip, a glass pill in the theme's own ink. A status chip
+         leads with a dot (drawableStart). -->
+    <style name="Widget.Nightjar.DetailChip" parent="">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">26dp</item>
+        <item name="android:background">@drawable/glass_chip</item>
+        <item name="android:paddingStart">10dp</item>
+        <item name="android:paddingEnd">10dp</item>
+        <item name="android:drawablePadding">5dp</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:ellipsize">end</item>
+        <item name="android:textAppearance">@style/TextAppearance.Nightjar.Label</item>
+        <item name="android:textColor">?attr/colorOnSurface</item>
+        <item name="android:importantForAccessibility">no</item>
+    </style>
 </resources>

@@ -115,14 +115,19 @@ final class HomeChrome {
 
     /** The ambient's look on this form factor, and the glass tinted from it. */
     static void setUpBackdrop(Activity activity, com.limelight.ui.GlassHost host, GlassForm form, BackdropView backdrop, int canvas) {
+        setUpBackdrop(activity, form, backdrop, canvas);
+        int fadeMs = com.limelight.ui.Motion.reduced(activity) ? 0
+                : activity.getResources().getInteger(R.integer.nj_motion_ambient_ms);
+        backdrop.setAmbientListener((bitmap, animate) -> host.setAmbient(bitmap, animate, fadeMs));
+    }
+
+    /** The ambient's look on this form factor, for a page without glass chrome of its own (a game's page). */
+    static void setUpBackdrop(Activity activity, GlassForm form, BackdropView backdrop, int canvas) {
         AppTheme.Look look = AppTheme.look(activity);
         backdrop.setBake(look == AppTheme.Look.DAY, form == GlassForm.PHONE);
         float[] stops = form == GlassForm.PHONE ? PHONE_STOPS : form == GlassForm.HANDHELD ? HANDHELD_STOPS : TV_STOPS;
         float[] alphas = form == GlassForm.PHONE ? PHONE_ALPHAS : form == GlassForm.HANDHELD ? HANDHELD_ALPHAS : TV_ALPHAS;
         backdrop.setFade(canvas, stops, look == AppTheme.Look.HIGH_CONTRAST ? SOLID_ALPHAS : alphas);
-        int fadeMs = com.limelight.ui.Motion.reduced(activity) ? 0
-                : activity.getResources().getInteger(R.integer.nj_motion_ambient_ms);
-        backdrop.setAmbientListener((bitmap, animate) -> host.setAmbient(bitmap, animate, fadeMs));
     }
 
     /** The PC capsule: its host's name and whether it answers; hidden until there is a host to name. */
