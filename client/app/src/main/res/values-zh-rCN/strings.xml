@@ -410,7 +410,9 @@
     <string name="upscaling_bilinear">平滑</string>
     <string name="upscaling_fsr1">锐利（FSR）</string>
     <string name="upscaling_sgsr1">锐利，骁龙（SGSR）</string>
-    <string name="summary_upscaling">小于屏幕的串流画面如何放大。FSR 和 SGSR 会锐化边缘，但要占用一些 GPU 时间和电量；HDR 串流放大时不使用它们。</string>
+    <string name="upscaling_sgsr2">时域，骁龙（SGSR 2）</string>
+    <string name="upscaling_temporal_unavailable">%1$s；时域放大不可用</string>
+    <string name="summary_upscaling">小于屏幕的串流画面如何放大。FSR 和 SGSR 会锐化边缘，但要占用一些 GPU 时间和电量；时域会重用之前的画面来重建细节，但在我们的测试中画面比 SGSR 更柔和，GPU 开销约为其三倍，除非想要比较，否则请保持 SGSR。HDR 串流放大时不使用它们。</string>
     <string name="title_upscaling_sharpness">放大锐度</string>
     <string name="summary_upscaling_sharpness" formatted="false">FSR 或 SGSR 加入的锐化程度。边缘发虚时调高；边缘出现光晕时调低。</string>
     <string name="upscaling_sharpness_value">%1$d%%</string>

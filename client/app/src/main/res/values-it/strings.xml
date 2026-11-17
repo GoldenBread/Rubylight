@@ -410,7 +410,9 @@
     <string name="upscaling_bilinear">Morbido</string>
     <string name="upscaling_fsr1">Nitido (FSR)</string>
     <string name="upscaling_sgsr1">Nitido, Snapdragon (SGSR)</string>
-    <string name="summary_upscaling">Come viene ingrandito uno stream più piccolo dello schermo. FSR e SGSR rendono i bordi più nitidi al costo di un po’ di lavoro della GPU e di batteria; gli stream HDR vengono ingranditi senza di essi.</string>
+    <string name="upscaling_sgsr2">Temporale, Snapdragon (SGSR 2)</string>
+    <string name="upscaling_temporal_unavailable">%1$s; upscaling temporale non disponibile</string>
+    <string name="summary_upscaling">Come viene ingrandito uno stream più piccolo dello schermo. FSR e SGSR rendono i bordi più nitidi al costo di un po’ di lavoro della GPU e di batteria; Temporale riutilizza i fotogrammi precedenti per ricostruire i dettagli, ma nei nostri test appariva più morbido di SGSR con circa il triplo del lavoro della GPU, quindi lascia SGSR a meno che tu non voglia confrontare. Gli stream HDR vengono ingranditi senza di essi.</string>
     <string name="title_upscaling_sharpness">Nitidezza dell’upscaling</string>
     <string name="summary_upscaling_sharpness" formatted="false">Quanta nitidezza aggiungono FSR o SGSR. Aumentala se i bordi sono morbidi; abbassala se intorno ai bordi compaiono aloni.</string>
     <string name="upscaling_sharpness_value">%1$d%%</string>

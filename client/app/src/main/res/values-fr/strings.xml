@@ -410,7 +410,9 @@
     <string name="upscaling_bilinear">Lisse</string>
     <string name="upscaling_fsr1">Net (FSR)</string>
     <string name="upscaling_sgsr1">Net, Snapdragon (SGSR)</string>
-    <string name="summary_upscaling">La façon dont un stream plus petit que l’écran est agrandi. FSR et SGSR accentuent les contours au prix d’un peu de temps GPU et de batterie ; les streams HDR sont agrandis sans eux.</string>
+    <string name="upscaling_sgsr2">Temporel, Snapdragon (SGSR 2)</string>
+    <string name="upscaling_temporal_unavailable">%1$s ; mise à l’échelle temporelle indisponible</string>
+    <string name="summary_upscaling">La façon dont un stream plus petit que l’écran est agrandi. FSR et SGSR accentuent les contours au prix d’un peu de temps GPU et de batterie ; Temporel réutilise les images précédentes pour reconstruire les détails, mais dans nos tests l’image était plus douce qu’avec SGSR pour environ trois fois son travail GPU, gardez donc SGSR sauf si vous voulez comparer. Les streams HDR sont agrandis sans eux.</string>
     <string name="title_upscaling_sharpness">Netteté de la mise à l’échelle</string>
     <string name="summary_upscaling_sharpness" formatted="false">L’accentuation ajoutée par FSR ou SGSR. Augmentez-la si les contours sont flous ; baissez-la s’ils montrent des halos.</string>
     <string name="upscaling_sharpness_value">%1$d %%</string>

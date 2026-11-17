@@ -514,11 +514,13 @@
     <string name="upscaling_bilinear">Smooth</string>
     <string name="upscaling_fsr1">Sharp (FSR)</string>
     <string name="upscaling_sgsr1">Sharp, Snapdragon (SGSR)</string>
-    <string name="summary_upscaling">How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; HDR streams are enlarged without them.</string>
+    <string name="upscaling_sgsr2">Temporal, Snapdragon (SGSR 2)</string>
+    <string name="summary_upscaling">How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; Temporal reuses earlier frames to rebuild detail, but in our tests looked softer than SGSR at about three times its GPU work, so leave SGSR on unless you want to compare. HDR streams are enlarged without them.</string>
     <string name="title_upscaling_sharpness">Upscaling sharpness</string>
     <string name="summary_upscaling_sharpness" formatted="false">How much sharpening FSR or SGSR adds. Raise it for soft edges; lower it if edges show halos.</string>
     <string name="upscaling_sharpness_value">%1$d%%</string>
     <string name="upscaling_direct">Off (direct output)</string>
+    <string name="upscaling_temporal_unavailable">%1$s; temporal upscaling unavailable</string>
     <string name="title_vulkan_render">Render through Vulkan</string>
     <string name="summary_vulkan_render">Presents video through Vulkan, for frame-generation overlays that hook into it. It adds some latency and turns upscaling off; leave it off unless you use such an overlay.</string>
     <string name="vulkan_render_fallback">Vulkan rendering is not used. %1$s</string>

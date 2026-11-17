@@ -76,8 +76,8 @@ Tier: Main rows show when a section opens; More rows fold behind the section's l
 
 | Setting / preference key | Tier | Default | Choices and units | When to change or use |
 | --- | --- | --- | --- | --- |
-| Upscaling<br>`upscaling_mode` | More | Off | Off; Smooth; Sharp (FSR); Sharp, Snapdragon (SGSR) | Choose a stream resolution below the screen size for SDR upscaling. Smooth is bilinear; Sharp (FSR) and Sharp, Snapdragon (SGSR) add edge sharpening. PyroWave uses SGSR for both FSR and SGSR selections. HDR and 10-bit streams use direct output; the row says so. |
-| Upscaling sharpness<br>`upscaling_sharpness` | More | 50% | 0%–100%; step 1% | Reduce for halos or ringing; raise for soft edges. Applies on the next stream. At 0%, FSR skips extra sharpening; SGSR still reconstructs edges. Shown only with Sharp (FSR) or Sharp, Snapdragon (SGSR). |
+| Upscaling<br>`upscaling_mode` | More | Off | Off; Smooth; Sharp (FSR); Sharp, Snapdragon (SGSR); Temporal, Snapdragon (SGSR 2) | Choose a stream resolution below the screen size for SDR upscaling. Smooth is bilinear; Sharp (FSR) and Sharp, Snapdragon (SGSR) add edge sharpening. Temporal, Snapdragon (SGSR 2) reuses earlier frames to rebuild detail, but in our tests looked softer than SGSR at about three times its GPU work, so leave SGSR on unless you want to compare; where the GPU cannot run it, SGSR runs instead and the stats overlay says so. PyroWave uses SGSR for both FSR and SGSR selections. HDR and 10-bit streams use direct output; the row says so. |
+| Upscaling sharpness<br>`upscaling_sharpness` | More | 50% | 0%–100%; step 1% | Reduce for halos or ringing; raise for soft edges. Applies on the next stream. At 0%, FSR skips extra sharpening; SGSR still reconstructs edges. Shown only with Sharp (FSR), Sharp, Snapdragon (SGSR) or Temporal, Snapdragon (SGSR 2). |
 | Video position<br>`video_alignment` | More | Center | Center; Top | Top places a Fit or 1:1 picture at the top of the screen, leaving the space below for the soft keyboard or the lower half of a half-folded phone. No effect on Fill and Stretch, which cover the whole screen. |
 
 #### PC display
@@ -379,7 +379,7 @@ Implementation: [HostStreamSettings.java](../app/src/main/java/com/limelight/pre
 | Frame rate | Same as all PCs, or 1–1000 FPS with up to two decimal places | Request fractional rates such as 59.94 or 119.88 Hz. **Use this screen** fills in maximum display refresh; VRR uses the panel maximum. |
 | Bitrate | Same as all PCs, or 0.5–2000 Mbps with up to three decimal places | Set this PC's bandwidth budget. The host applies its own ceiling; Nightjar follows the bitrate it reports. |
 | Video codec | Same as all PCs, Automatic, Prefer AV1, Prefer HEVC, H.264, PyroWave | Compare codecs on this PC and device. PyroWave is listed only for PCs that can stream it, and says why when this device can't decode it. |
-| Upscaling | Same as all PCs, Off, Smooth, Sharp (FSR), Sharp, Snapdragon (SGSR) | Choose a scaler for this PC's lower-resolution SDR stream. |
+| Upscaling | Same as all PCs, Off, Smooth, Sharp (FSR), Sharp, Snapdragon (SGSR), Temporal, Snapdragon (SGSR 2) | Choose a scaler for this PC's lower-resolution SDR stream. |
 | Upscaling sharpness | Same as all PCs, or 0–100% | Sharpening strength for the sharp scalers. |
 | HDR / Variable refresh rate | Same as all PCs, On, Off | Enable for a compatible host and screen. |
 | Frame pacing | Same as all PCs, Lowest latency, Balanced, Balanced with FPS limit, Smoothest video (more delay) | Pick this PC's trade-off between latency and smoothness. Variable refresh rate replaces it with Lowest latency. |

@@ -212,6 +212,59 @@ static void dataspaceSymbolLookup() {
     assert(pyroFindSymbol(name, noNativewindow, lookup) == &setter);
 }
 
+// The temporal mode (UPSCALE_TEMPORAL): its reasons, which pipeline draws, the state Java shows and
+// the sizes of its targets.
+static void temporalUpscaling() {
+    static_assert(UPSCALE_TEMPORAL == 3);
+    static_assert(TEMPORAL_OFF == 0 && TEMPORAL_ACTIVE == 1 && TEMPORAL_FALLBACK == 2);
+    const auto fit = pyroViewport(1280, 720, 2400, 1080, false);
+    assert(pyroUpscalingReason(UPSCALE_TEMPORAL, false, 1280, 720, fit, true) == UPSCALING_ACTIVE);
+    // Neither the temporal pipelines nor SGSR 1
+    assert(pyroUpscalingReason(UPSCALE_TEMPORAL, false, 1280, 720, fit, false) == UPSCALING_GPU_ERROR);
+    assert(pyroUpscalingReason(UPSCALE_TEMPORAL, true, 1280, 720, fit, true) == UPSCALING_HDR);
+    const auto native = pyroViewport(1920, 1080, 1920, 1080, false);
+    assert(pyroUpscalingReason(UPSCALE_TEMPORAL, false, 1920, 1080, native, true) == UPSCALING_NOT_NEEDED);
+
+    assert(pyroUpscalePath(UPSCALING_ACTIVE, UPSCALE_TEMPORAL, true, true) == UPSCALE_PATH_TEMPORAL);
+    assert(pyroUpscalePath(UPSCALING_ACTIVE, UPSCALE_TEMPORAL, false, true) == UPSCALE_PATH_TEMPORAL);
+    // Setup failed or Frame Warp is on: SGSR 1, else the direct pass
+    assert(pyroUpscalePath(UPSCALING_ACTIVE, UPSCALE_TEMPORAL, true, false) == UPSCALE_PATH_SGSR);
+    assert(pyroUpscalePath(UPSCALING_ACTIVE, UPSCALE_TEMPORAL, false, false) == UPSCALE_PATH_DIRECT);
+    assert(pyroUpscalePath(UPSCALING_HDR, UPSCALE_TEMPORAL, true, true) == UPSCALE_PATH_DIRECT);
+    assert(pyroUpscalePath(UPSCALING_NOT_NEEDED, UPSCALE_TEMPORAL, true, true) == UPSCALE_PATH_DIRECT);
+    // The other modes never take the temporal path
+    assert(pyroUpscalePath(UPSCALING_ACTIVE, UPSCALE_SGSR, true, true) == UPSCALE_PATH_SGSR);
+    assert(pyroUpscalePath(UPSCALING_ACTIVE, UPSCALE_SGSR, false, true) == UPSCALE_PATH_DIRECT);
+    assert(pyroUpscalePath(UPSCALING_ACTIVE, UPSCALE_BILINEAR, true, true) == UPSCALE_PATH_DIRECT);
+    assert(pyroUpscalePath(UPSCALING_DISABLED, UPSCALE_OFF, true, true) == UPSCALE_PATH_DIRECT);
+
+    assert(pyroTemporalState(UPSCALE_SGSR, false, true, false) == TEMPORAL_OFF);
+    assert(pyroTemporalState(UPSCALE_TEMPORAL, true, false, false) == TEMPORAL_OFF);
+    assert(pyroTemporalState(UPSCALE_TEMPORAL, false, true, false) == TEMPORAL_ACTIVE);
+    assert(pyroTemporalState(UPSCALE_TEMPORAL, false, false, false) == TEMPORAL_FALLBACK);
+    assert(pyroTemporalState(UPSCALE_TEMPORAL, false, true, true) == TEMPORAL_FALLBACK);
+
+    // ceil(w / 8) motion blocks, floor halves for the pyramid
+    const auto sizes = pyroTemporalSizes(1281, 721);
+    assert(sizes.motion.width == 161 && sizes.motion.height == 91);
+    assert(sizes.luma1.width == 640 && sizes.luma1.height == 360);
+    assert(sizes.luma2.width == 320 && sizes.luma2.height == 180);
+    const auto exact = pyroTemporalSizes(1920, 1080);
+    assert(exact.motion.width == 240 && exact.motion.height == 135);
+    assert(exact.luma2.width == 480 && exact.luma2.height == 270);
+    const auto tiny = pyroTemporalSizes(1, 1);
+    assert(tiny.luma2.width == 1 && tiny.motion.height == 1);
+
+    const auto output = pyroTemporalOutputExtent(fit);
+    assert(output.width == 1920 && output.height == 1080);
+    const auto fractional = pyroTemporalOutputExtent({0.0f, 0.0f, 1919.6f, 1080.4f});
+    assert(fractional.width == 1920 && fractional.height == 1080);
+    // 1.5x per axis: 2.25 area, cubed 11.39; 2x per axis: 64, capped at 20
+    same(pyroTemporalBoxStatic(1280, 720, {1920, 1080}), 2.25f * 2.25f * 2.25f);
+    same(pyroTemporalBoxStatic(960, 540, {1920, 1080}), 20.0f);
+    same(pyroTemporalBoxStatic(1920, 1080, {1920, 1080}), 1.0f);
+}
+
 int main() {
     swapchainFormatSelection();
     dataspaceSymbolLookup();
@@ -248,4 +301,5 @@ int main() {
     assert(pyroUpscalingReason(UPSCALE_SGSR, false, 1920, 1080, smaller, true) == UPSCALING_NOT_NEEDED);
     const auto mixed = pyroViewport(1920, 1080, 2560, 720, true);
     assert(pyroUpscalingReason(UPSCALE_SGSR, false, 1920, 1080, mixed, true) == UPSCALING_NOT_NEEDED);
+    temporalUpscaling();
 }
