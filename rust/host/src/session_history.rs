@@ -384,11 +384,7 @@ fn entry(session: &Session, reason: &str, app: String, samples: Option<&Samples>
         } else {
             0
         },
-        requested_bitrate_kbps: if started {
-            config.bitrate_kbps
-        } else {
-            0
-        },
+        requested_bitrate_kbps: if started { config.bitrate_kbps } else { 0 },
         mean_bitrate_kbps: rounded(
             if seconds > 0. {
                 bytes as f64 * 8. / duration_ms as f64
