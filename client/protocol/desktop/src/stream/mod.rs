@@ -989,7 +989,7 @@ impl Streaming {
         if vrr_pacing.distrusted {
             eprintln!("nightjar: VRR: tear-free presents wait for the refresh (sync interval 1), as Whole frames under VRR asks");
         } else if vrr_sync == present::VrrSync::Scan && settings.vrr_wait == config::VrrWait::Scan && !sync_set {
-            eprintln!("nightjar: VRR: tear-free presents keep Nightjar's wait, as Whole frames under VRR asks");
+            eprintln!("nightjar: VRR: tear-free presents keep Nightjar's wait for the scan line, and go out with sync interval 1 (whole at the next refresh) when that wait would cost the next picture its turn, as Whole frames under VRR asks");
         }
         let mut doctor = doctor::Doctor::default();
         doctor.receive_buffer = session.video_receive_buffer();
@@ -1334,6 +1334,8 @@ impl Streaming {
         // The swapchain's HDR answer may have changed with the display: ask SDL again.
         crate::sdl::forget_swapchain_answers();
         self.phase.reset();
+        // The landing is the display's: the wait's budget measures it afresh on another one.
+        self.scan_tally.forget_landing();
         // Fractional V-Sync's turns count on the old display's refreshes: they start over.
         (self.held_anchor, self.held_clock, self.held_stats) = Default::default();
         self.display_change = Some(Instant::now());

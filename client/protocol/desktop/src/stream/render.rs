@@ -438,8 +438,10 @@ impl Streaming {
     /// that on the same display, and says so once (`present::VrrPacing::distrust_scan`).
     fn distrust_scan_line(vrr: &mut present::VrrPacing, probe: &race_probe::RaceProbe, wait: crate::config::VrrWait) {
         let display = probe.display_id();
-        // Nightjar's wait never turns to Windows V-Sync, so choosing it forgets a display an
-        // earlier stream found not refreshing on present: Automatic starts afresh there.
+        // Nightjar's wait does not take the display check's switch to Windows V-Sync, so choosing
+        // it forgets a display an earlier stream found not refreshing on present: Automatic starts
+        // afresh there. (A wait that would cost the next picture its turn still presents with sync
+        // interval 1, `scan_sync::scan_wait`; that is the wait's own budget, not this verdict.)
         if wait == crate::config::VrrWait::Scan {
             if let Some(display) = display { scan_sync::clear_untrusted(display); }
         }
@@ -463,8 +465,8 @@ impl Streaming {
     /// is shown whole. That wait is for `VrrSync::Scan` and for Real VRR on a display the keeper
     /// repeats pictures for, where a scan under way is rare; a stream that shows pictures as they
     /// come tears instead, as it asked to. Returns whether the present goes out with sync interval 1
-    /// instead of waiting (`scan_sync::scan_wait`): the wait would have run past the next picture's
-    /// due time and cost the display a whole refresh.
+    /// instead (`scan_sync::scan_wait`): waiting for the scan and its landing would have run past
+    /// the next picture's due time, and sync interval 1 shows this one whole at the next refresh.
     ///
     /// The beam alone says too little (`scan_sync`): `VrrSync::Scan` also waits for the present
     /// before this one to start its scan while that one is still on its way, and has the GPU
@@ -497,18 +499,17 @@ impl Streaming {
             }
         }
         if syncs { sample = self.wait_for_landing(&beam, sample); }
-        // The next picture is due one frame after this one's. A wait that runs past it holds
-        // this thread while that picture is ready and costs the display a whole refresh
-        // (`scan_sync::scan_wait`): the swap chain's sync interval 1 shows the picture whole at
-        // the scan's end, the next safe beam position, and frees the thread for the next one.
+        // The next picture is taken to be due one frame after this one's. A wait whose landing
+        // would pass that time would show this picture after the next one is due, which can then
+        // replace it before it is shown; at a stream rate equal to the display's each picture
+        // starts a scan a landing after the last one ends (`scan_sync::scan_wait`). Sync interval
+        // 1 shows this picture whole at the next refresh instead, and the present returns there,
+        // without a landing after it.
         if syncs {
             if let (Some(left), Some(due)) = (beam.scan_left_ns(&sample), due_us) {
-                let budget_ns = due.saturating_add(self.pacer.frame_us()).saturating_sub(session::now_us()) * 1000;
+                let budget_ns = scan_sync::wait_budget_ns(due, self.pacer.frame_us(), session::now_us());
                 let landing_ns = self.scan_tally.landing.median_ns().unwrap_or(scan_sync::TEAR_LANDING_NS);
-                if scan_sync::scan_wait(left, budget_ns, landing_ns) == scan_sync::ScanWait::Latch {
-                    self.scan_tally.latched += 1;
-                    return true;
-                }
+                if scan_sync::scan_wait(left, budget_ns, landing_ns) == scan_sync::ScanWait::Latch { return true; }
             }
         }
         // Until the beam leaves the last row, reading it again after each sleep: at most one scan
@@ -545,9 +546,8 @@ impl Streaming {
         let Some(since_present_ns) = self.flip_on_its_way(beam, &sample) else {
             if let Some(last_us) = self.flip_guard.last_flip_us {
                 let since_present_ns = session::now_us().saturating_sub(last_us) * 1000;
-                if let Some(took) = scan_sync::landing_ns(beam.since_scan_ns(&sample), since_present_ns) {
-                    if !latched_before { self.scan_tally.landing.push(took); }
-                }
+                let took = scan_sync::landing_ns(beam.since_scan_ns(&sample), since_present_ns);
+                self.scan_tally.landing_measured(took, latched_before);
             }
             self.scan_tally.found_landed();
             return sample;
@@ -568,8 +568,9 @@ impl Streaming {
             std::hint::spin_loop();
         };
         let waited = begun.elapsed().as_nanos() as u64;
-        if landed && !latched_before {
-            if let Some(took) = scan_sync::landing_ns(beam.since_scan_ns(&last), since_present_ns + waited) { self.scan_tally.landing.push(took); }
+        if landed {
+            let took = scan_sync::landing_ns(beam.since_scan_ns(&last), since_present_ns + waited);
+            self.scan_tally.landing_measured(took, latched_before);
         }
         if self.scan_tally.waited_for(waited, landed) {
             eprintln!("nightjar: VRR: {} presents in a row started no scan within {} ms, the next {} do not wait for the one before",
@@ -989,7 +990,8 @@ impl Streaming {
         // Keys, clicks and controllers leave from their own threads while V-Sync holds the present,
         // and while a VRR present waits for the picture's drawing and the scan under way: nearly
         // every present of a stream at the display's top rate does, for most of a scan. So does a
-        // VRR present with sync interval 1 once Tear-free VRR turned to it, in the swap chain.
+        // VRR present with sync interval 1 once Tear-free VRR turned to it, or when the wait would
+        // cost the next picture its turn (`scan_sync::ScanWait::Latch`), in the swap chain.
         let mode_tears = self.pacer.mode != PacingMode::Vsync;
         let holds = !mode_tears || (probe && self.vrr.sync == present::VrrSync::Scan && self.scan_settles) || self.vrr.distrusted;
         if holds {
@@ -1029,18 +1031,22 @@ impl Streaming {
         let issued_us = session::now_us();
         let blank = self.blank_present(renderer, probe);
         // SAFETY: a live renderer.
+        let mut latched = false;
         let refused = unsafe {
             let done = if skips { present::present_without_waiting(renderer, self.skipped.hold()) } else { present::NoWait::Failed };
             if skips { self.no_wait_present = done != present::NoWait::Failed; }
             if done == present::NoWait::Failed && !blank {
-                // Sync interval 1 holds a picture whole at the scan's end when the wait for it
-                // would have cost the next picture its turn (`scan_sync::scan_wait`).
-                if !latch || !present::present_adaptive(renderer, true) { SDL_RenderPresent(renderer); }
+                // Sync interval 1 shows the picture whole at the next refresh when the wait for
+                // the scan would have cost the next picture its turn (`scan_sync::scan_wait`).
+                // SDL's own present tears, so only a successful adaptive present is a latch.
+                latched = latch && present::present_adaptive(renderer, true);
+                if !latched { SDL_RenderPresent(renderer); }
             }
             done == present::NoWait::Refused
         };
         self.flip_guard.last_flip_us = Some(issued_us);
-        self.flip_guard.last_flip_latched = latch;
+        self.flip_guard.last_flip_latched = latched;
+        if latched { self.scan_tally.latched += 1; }
         let returned_us = session::now_us();
         if let Some(warp) = self.frame_warp.as_mut() { warp.presented(returned_us); }
         #[cfg(target_os = "linux")]

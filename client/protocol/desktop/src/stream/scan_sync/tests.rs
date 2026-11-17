@@ -139,6 +139,43 @@ fn the_landing_median_is_what_the_wait_decision_uses() {
 }
 
 #[test]
+fn the_wait_budget_is_the_time_until_the_next_picture_is_due() {
+    // A picture 1.1 ms into its frame, at 120 fps: 7.23 ms are left before the next one is due.
+    assert_eq!(wait_budget_ns(8_000_000, 8_330, 8_001_100), 7_230_000);
+    // The inputs are µs and the budget is ns, as `scan_wait` reads it.
+    assert_eq!(wait_budget_ns(8_330, 8_330, 8_330), 8_330_000);
+    // A picture more than a frame late leaves no budget.
+    assert_eq!(wait_budget_ns(0, 8_330, 9_000), 0);
+    // Saturation, not a wrap: a wrong due time cannot turn the budget into a huge one.
+    assert_eq!(wait_budget_ns(u64::MAX, u64::MAX, 0), u64::MAX);
+}
+
+#[test]
+fn a_latched_presents_scan_time_is_no_tearing_landing() {
+    let mut tally = Tally::default();
+    tally.landing_measured(Some(1_400_000), false);
+    assert_eq!(tally.landing.count(), 1);
+    // The latch's scan starts at the next refresh: its time says nothing about a flip's landing.
+    tally.landing_measured(Some(6_200_000), true);
+    assert_eq!(tally.landing.count(), 1);
+    // A present that never started a scan measured nothing either.
+    tally.landing_measured(None, false);
+    assert_eq!(tally.landing.count(), 1);
+    assert_eq!(tally.landing.median_ns(), Some(1_500_000));
+}
+
+#[test]
+fn a_display_change_forgets_the_landing() {
+    let mut tally = Tally::default();
+    tally.landing_measured(Some(1_400_000), false);
+    assert_eq!(tally.landing.median_ns(), Some(1_500_000));
+    // The landing belongs to the old panel, not the one the stream moves to.
+    tally.forget_landing();
+    assert_eq!(tally.landing.count(), 0);
+    assert_eq!(tally.landing.median_ns(), None);
+}
+
+#[test]
 fn the_log_counts_presents_that_went_out_into_a_scan() {
     let tally = Tally { cut_short: 3, wrapped: 2, ..Tally::default() };
     assert_eq!(tally.lines(), vec![
@@ -151,7 +188,7 @@ fn the_log_counts_presents_that_went_out_into_a_scan() {
 fn the_log_counts_presents_that_latched_instead_of_waiting() {
     let tally = Tally { latched: 17, ..Tally::default() };
     assert_eq!(tally.lines(), vec![
-        "VRR: 17 presents went out with sync interval 1 instead of waiting for a scan that would have cost the next picture its turn".to_string(),
+        "VRR: 17 presents went out with sync interval 1 because waiting for the scan would have cost the next picture its turn".to_string(),
     ]);
 }
 

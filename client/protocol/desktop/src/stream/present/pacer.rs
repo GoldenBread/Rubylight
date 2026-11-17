@@ -175,8 +175,10 @@ impl VrrPacing {
     }
 
     /// Applies Whole frames under VRR (`config::VrrWait`) to Tear-free VRR's wait: Automatic leaves
-    /// the turn to `distrust_scan`, Scan keeps the beam's wait, VSync presents with sync interval 1
-    /// from the start. A sync `NIGHTJAR_VRR_SYNC` set (`env_set`) stays as set.
+    /// the turn to `distrust_scan`, Scan keeps the beam's wait and does not take that turn (a wait
+    /// that would cost the next picture its turn still presents with sync interval 1,
+    /// `scan_sync::scan_wait`), VSync presents with sync interval 1 from the start. A sync
+    /// `NIGHTJAR_VRR_SYNC` set (`env_set`) stays as set.
     pub fn with_wait(mut self, wait: crate::config::VrrWait, env_set: bool) -> Self {
         use crate::config::VrrWait;
         if !env_set && wait == VrrWait::VSync { self.distrust_scan(); }
@@ -276,7 +278,9 @@ pub enum VrrSync {
     /// Sync interval 1: the flip is immediate on an idle display and waits out a scan under way.
     Present1,
     /// Wait out a scan under way on this thread (the beam from the scan line, at most one scan),
-    /// then present with tearing.
+    /// then present with tearing. When that wait's landing would pass the next picture's due
+    /// time, present with sync interval 1 instead (`scan_sync::scan_wait`), shown whole at the
+    /// next refresh.
     Scan,
     /// Tears only when the display is in its vertical blank and the present before it has left the
     /// queue, as read just before the present; any other present goes out with sync interval 1 and
@@ -378,7 +382,7 @@ pub struct FlipGuard {
     /// When the last present was issued (us), whatever its kind.
     pub last_flip_us: Option<u64>,
     /// The last present went out with sync interval 1 (`scan_sync::ScanWait::Latch`): its scan
-    /// starts at the vblank, so the time until it does is the latch's delay, not a tearing
+    /// starts at the next refresh, so the time until it does is the latch's own, not a tearing
     /// flip's landing (`scan_sync::landing_ns`).
     pub last_flip_latched: bool,
     /// Presents that went out with tearing.
@@ -584,8 +588,8 @@ pub unsafe fn present_without_waiting(renderer: *mut SDL_Renderer, hold: std::ti
 #[cfg(not(windows))]
 pub unsafe fn present_without_waiting(_renderer: *mut SDL_Renderer, _hold: std::time::Duration) -> NoWait { NoWait::Failed }
 
-/// Presents with sync interval 1 when `latched` (the flip waits out a scan under way), else with
-/// tearing. Returns whether the present succeeded.
+/// Presents with sync interval 1 when `latched` (the scan wait would cost the next picture its
+/// turn, `scan_sync::ScanWait::Latch`), else with tearing. Returns whether the present succeeded.
 ///
 /// # Safety
 /// `renderer` is the live D3D11 renderer of this thread.
