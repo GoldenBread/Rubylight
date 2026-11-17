@@ -12,7 +12,17 @@
 # (a patch both carry must be the same file). Needs git, gcc/g++, cmake 3.27 or newer, ninja and
 # the Vulkan headers (libvulkan-dev); the library loads libvulkan.so.1 at run time through volk.
 # package-linux.sh reads <folder> through its first argument.
+#
+# On macOS it builds libpyrowave-shared.dylib the same way, for the minimum macOS in
+# MACOSX_DEPLOYMENT_TARGET (13.0 when unset), with Xcode's clang and Homebrew's cmake and ninja;
+# package-macos.py bundles it with --pyrowave-sdk <folder>. The Vulkan headers come from
+# VULKAN_HEADERS_DIR (an include folder) where the system has none.
 set -euo pipefail
+case "$(uname -s)" in
+	Darwin) lib_name=libpyrowave-shared.dylib; export MACOSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET:-13.0} ;;
+	*) lib_name=libpyrowave-shared.so ;;
+esac
+sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd "$here/.." && pwd)
@@ -85,35 +95,46 @@ for name in "${names[@]}"; do
 done
 
 build=$work/build
+extra=()
+[[ -n ${VULKAN_HEADERS_DIR:-} ]] && extra+=("-DCMAKE_C_FLAGS=-I$VULKAN_HEADERS_DIR" "-DCMAKE_CXX_FLAGS=-I$VULKAN_HEADERS_DIR")
 cmake -S "$src" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$work/install" \
-	-DPYROWAVE_DEVEL=OFF -DPYROWAVE_UTILS=OFF
+	-DPYROWAVE_DEVEL=OFF -DPYROWAVE_UTILS=OFF ${extra[@]+"${extra[@]}"}
 cmake --build "$build" ${jobs:+--parallel "$jobs"}
 cmake --install "$build" --strip
 
-libs=("$work"/install/lib*/libpyrowave-shared.so "$work"/install/lib*/*/libpyrowave-shared.so)
+libs=("$work"/install/lib*/$lib_name "$work"/install/lib*/*/$lib_name)
 lib=
 for candidate in "${libs[@]}"; do [[ -e $candidate ]] && lib=$candidate && break; done
-[[ -n $lib ]] || { echo "error: the build did not install libpyrowave-shared.so" >&2; find "$work/install" -name '*pyrowave*' >&2; exit 1; }
-lib=$(readlink -f "$lib")
+[[ -n $lib ]] || { echo "error: the build did not install $lib_name" >&2; find "$work/install" -name '*pyrowave*' >&2; exit 1; }
+lib=$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$lib")
 
 rm -rf "$out/licenses"
 mkdir -p "$out/licenses"
 cp "$src/LICENSE" "$out/licenses/LICENSE"
 cp "$src/Granite/LICENSE" "$out/licenses/LICENSE.Granite"
 cp "$src/Granite/third_party/volk/LICENSE.md" "$out/licenses/LICENSE.volk.md"
-rm -f "$out/libpyrowave-shared.so"
-cp "$lib" "$out/libpyrowave-shared.so"
+rm -f "$out/$lib_name"
+cp "$lib" "$out/$lib_name"
 
-api=$(sed -n 's/^#define PYROWAVE_API_VERSION_\(MAJOR\|MINOR\|PATCH\) \([0-9]*\)$/\2/p' "$src/pyrowave.h" | paste -sd.)
+api=$(sed -nE 's/^#define PYROWAVE_API_VERSION_(MAJOR|MINOR|PATCH) ([0-9]*)$/\2/p' "$src/pyrowave.h" | paste -sd. -)
 [[ $api == "$api_pin" ]] || { echo "error: built API $api, the pin is $api_pin" >&2; exit 1; }
 
 # The library may link libstdc++ and libgcc statically or dynamically, but never the Vulkan loader
 # (volk loads it) and nothing outside the C library and the C++ runtime.
-needed=$(readelf -d "$out/libpyrowave-shared.so" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p')
-echo "Needed by libpyrowave-shared.so:"
+if [[ $lib_name == *.dylib ]]; then
+	install_name_tool -id "@rpath/$lib_name" "$out/$lib_name"
+	needed=$(otool -L "$out/$lib_name" | tail -n +3 | sed -E 's/^[[:space:]]*//; s/ \(compatibility.*//')
+	if grep -vqE '^/(usr/lib|System/Library)/' <<<"$needed"; then
+		echo "error: $lib_name links a library outside the system" >&2
+		exit 1
+	fi
+else
+	needed=$(readelf -d "$out/$lib_name" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p')
+fi
+echo "Needed by $lib_name:"
 sed 's/^/  /' <<<"$needed"
 if grep -Eq '^libvulkan' <<<"$needed"; then
-	echo "error: libpyrowave-shared.so links the Vulkan loader" >&2
+	echo "error: $lib_name links the Vulkan loader" >&2
 	exit 1
 fi
 
@@ -122,10 +143,10 @@ fi
 	echo "granite_commit=$granite_sha"
 	echo "api_version=$api"
 	echo "patches=$patches_pin"
-	echo "compiler=$(gcc --version | head -n1)"
+	echo "compiler=$(${CXX:-c++} --version | head -n1)"
 	echo "cmake=$(cmake --version | head -n1)"
-	echo "needed=$(paste -sd, <<<"$needed")"
-	echo "so_sha256=$(sha256sum "$out/libpyrowave-shared.so" | cut -d' ' -f1)"
+	echo "needed=$(paste -sd, - <<<"$needed")"
+	echo "so_sha256=$(sha256 "$out/$lib_name")"
 	echo "built=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } >"$out/build-info.txt"
 echo "PyroWave SDK $sha with $patches_pin built into $out"
