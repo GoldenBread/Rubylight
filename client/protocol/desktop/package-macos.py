@@ -209,13 +209,6 @@ def main():
                 "library_path": "../../../Frameworks/libvulkan_kosmickrisp.dylib", "api_version": "1.4.0",
                 "is_portability_driver": False}}, indent=2) + "\n")
             shutil.copytree(args.vulkan / "licenses", notices, dirs_exist_ok=True)
-            # SPIRV-Tools is linked into the driver; its texts live in the Rubylight monorepo only.
-            extra = ROOT.parent / "third-party/licenses"
-            if extra.is_dir():
-                for name in ("SPIRV-Tools-LICENSE.txt", "SPIRV-Headers-LICENSE.txt"):
-                    shutil.copy2(extra / name, notices / name)
-            else:
-                print("warning: third-party/licenses not found; SPIRV-Tools and SPIRV-Headers license texts not copied", file=sys.stderr)
         for item in [binary, *libs]:
             slices = output("lipo", "-archs", item).split()
             if slices != [arch]:

@@ -93,12 +93,24 @@ for lib in "$prefix"/lib/*.dylib; do
   fi
 done
 
-mkdir -p "$prefix/licenses/Mesa" "$prefix/licenses/Vulkan-Loader"
+# The license texts the app carries (client/docs/index.md): Mesa's licenses/, which its
+# docs/license.rst points at instead of holding the MIT text, the KosmicKrisp copyright holders
+# that licenses/MIT leaves out, and the two SPIR-V projects statically inside the driver. The otool
+# check above leaves nothing linked outside the system, so nothing else from Homebrew (LLVM, libclc,
+# SPIRV-LLVM-Translator, which KosmicKrisp's meson build does not depend on) is in the driver.
+rm -rf "$prefix/licenses"
+mkdir -p "$prefix/licenses/SPIRV-Tools" "$prefix/licenses/SPIRV-Headers" "$prefix/licenses/Vulkan-Loader"
+cp -R "$work/mesa/licenses" "$prefix/licenses/Mesa"
 cp "$work/mesa/docs/license.rst" "$prefix/licenses/Mesa/license.rst"
+sed -n '1,/^ \*\//p' "$work/mesa/src/kosmickrisp/vulkan/kk_device.c" > "$prefix/licenses/Mesa/KosmicKrisp-copyright.txt"
+cp "$work/spirv-tools/LICENSE" "$prefix/licenses/SPIRV-Tools/LICENSE"
+cp "$work/spirv-headers/LICENSE" "$prefix/licenses/SPIRV-Headers/LICENSE"
 cp "$work/loader/LICENSE.txt" "$prefix/licenses/Vulkan-Loader/LICENSE.txt"
 {
   echo "mesa=26.2.7 (KosmicKrisp)"
   echo "vulkan_loader=vulkan-sdk-1.4.357.0"
+  echo "spirv_tools=vulkan-sdk-1.4.357.0"
+  echo "spirv_headers=vulkan-sdk-1.4.357.0"
   echo "llvm=$(llvm-config --version)"
   echo "xcode=$(xcodebuild -version | head -n1)"
 } > "$prefix/build-info.txt"

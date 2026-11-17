@@ -55,6 +55,14 @@ def main():
         icd = contents / "Resources/vulkan/icd.d/kosmickrisp_icd.json"
         if args.kosmickrisp and not icd.exists():
             raise ValueError(f"KosmicKrisp was asked for but {icd} is missing")
+        if args.kosmickrisp:
+            # macos-vulkan.sh copies these from the sources it builds; the app must carry them.
+            missing = [name for name in (
+                "Mesa/MIT", "Mesa/KosmicKrisp-copyright.txt", "SPIRV-Tools/LICENSE",
+                "SPIRV-Headers/LICENSE", "Vulkan-Loader/LICENSE.txt",
+            ) if not (contents / "Resources/Licenses" / name).is_file()]
+            if missing:
+                raise ValueError(f"KosmicKrisp is bundled without license texts: {', '.join(missing)}")
         if icd.exists():
             if args.arch != "arm64":
                 raise ValueError("KosmicKrisp is bundled in a build for Intel Macs")
