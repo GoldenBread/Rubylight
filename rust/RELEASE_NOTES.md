@@ -8,7 +8,7 @@ Rubylight, called Butterpollo until rc.29, is written in Rust: host, native help
 
 ## New in 4.8.0
 
-Rubylight 4.8.0 keeps the stream at its full rate when a game is capped below it, falls back to Desktop Duplication when an exclusive-fullscreen game freezes Windows Graphics Capture, and tells you in the console when the game, not the network, is what holds the stream back. It adds a history of past streams, SteamGridDB covers, a stream resolution cap and a DualSense haptics strength, and fixes controllers after sleep, the Steam Controller's left grip and the NVIDIA components' install check (#115). It comes with Nightjar 5.10.0.
+Rubylight 4.8.0 is about a stream that never lets go of its frame rate, and a console that tells you why. A game capped below the stream's rate now keeps the stream at its full rate, an exclusive-fullscreen game can no longer freeze the picture on Automatic, and the console names the game or the desktop when it is what holds the stream back. A new Sessions page lists what each stream did, SteamGridDB fills in missing covers, a resolution cap and a DualSense haptics strength join the settings, and controllers play again after the PC wakes. It comes with Nightjar 5.10.0.
 
 ### Highlights
 
@@ -44,6 +44,7 @@ Rubylight 4.8.0 keeps the stream at its full rate when a game is capped below it
 
 ### Fixes
 
+- **A stream returns to Windows Graphics Capture after a UAC prompt or the lock screen.** Windows Graphics Capture falls back to Desktop Duplication on the secure desktop, and a reopen now uses the capture method the stream is set to again, instead of staying on Desktop Duplication for the rest of the stream. Only a game picture moved to Desktop Duplication by the fullscreen fallback stays there for the session. A display push or AMD Direct Capture that was unavailable once is tried again on a reopen too.
 - **The NVIDIA components install and remove on PCs where another account may change the drive or `C:\ProgramData`.** Before **Download** or **Remove**, Rubylight checked every folder above its own, up to the drive, and refused when Windows lets any other account change one; the installer never needed that, so the console showed "can be changed by another account" even when Rubylight ran as administrator (issue #115). It now checks only its own folder, `%ProgramData%\Butterpollo`, and what is inside it: a link on the way, or one of its own folders another account may change, is still refused. From that check until the components are loaded, Rubylight holds its own folder open and every folder down to the components, and Windows then refuses to rename or delete any of them, so the folder named a moment later still holds the files that were checked, even on a PC where another account may move folders in `C:\ProgramData` itself. Neural Rendering's download is still checked up to the same folder.
 
 **Tested.** No stream was run on this release's changes: constant-rate capture, the fullscreen fallback, the resolution cap, the haptics gain, the source frame-rate warning, session history and SteamGridDB covers are covered by unit tests (the SteamGridDB lookups with a fake HTTP layer), and none has run on a GPU, a DualSense or against SteamGridDB itself; the next reports settle that. Rubylight's builds, tests, clippy and the console's checks pass in CI on the tagged commit.
