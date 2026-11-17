@@ -143,6 +143,34 @@ fn reopen_on(
         ReopenOn::Wait
     }
 }
+/// The backend a capture reopens on: the stream's own (the configured one),
+/// again after an ordinary reopen such as the secure desktop's, or Desktop
+/// Duplication for the rest of the session once the fullscreen fallback moved
+/// a frozen picture there. A backend that fell back for a while, as an
+/// unavailable Rubylight display push does to Windows Graphics Capture, is
+/// therefore tried again on the next reopen.
+fn reopen_backend(kind: &str, switched_to_duplication: bool) -> &str {
+    if switched_to_duplication { "ddx" } else { kind }
+}
+/// Whether a capture on Desktop Duplication reopens on Windows Graphics
+/// Capture now that the desktop is visible again: it fell back because WGC
+/// cannot capture a secure desktop (a UAC prompt, the lock screen), not
+/// because the fullscreen fallback moved a frozen game picture there, which
+/// keeps its source for the session, nor because the stream asked for Desktop
+/// Duplication itself.
+fn returns_to_wgc(
+    available: bool,
+    was_available: bool,
+    capture_backend: &str,
+    kind: &str,
+    switched_to_duplication: bool,
+) -> bool {
+    available
+        && !was_available
+        && !switched_to_duplication
+        && capture_backend == "ddx"
+        && kind != "ddx"
+}
 /// How long a stream waits for its capture to start: past
 /// [`SAME_WINDOW_WAIT`] only for the try of a window the game opened after a
 /// whole helper start went by on the one it replaced (#59).
@@ -860,13 +888,11 @@ impl Media {
                         capture_config.integer("capture_poll_interval_us", 500).clamp(100, 1000) as u64,
                     );
                     let mut last_frame = Instant::now();
-                    // The backend this stream reopens on: its own, or Desktop
-                    // Duplication after a frozen display picture moved to it.
-                    let mut backend = kind.clone();
                     // When to ask again whether a frozen display's picture is one
                     // Windows Graphics Capture cannot see; see the `Ok(None)` arm.
                     let mut stall_check = Instant::now();
-                    // One attempt per capture worker, and whether it moved the stream.
+                    // One attempt per capture worker, and whether it moved the stream
+                    // to Desktop Duplication for good: from then on it reopens there.
                     let mut duplication_tried = false;
                     let mut switched_to_duplication = false;
                     // Constant-rate capture (`capture = wgcc`): one picture per
@@ -882,7 +908,7 @@ impl Media {
                             let next = prepared.capture_target();
                             let available = kind == "wgc"
                                 && butterpollo_windows::capture::wgc_desktop_available();
-                            let return_to_wgc = available && !user_desktop && capture.backend() == "ddx" && backend != "ddx";
+                            let return_to_wgc = returns_to_wgc(available, user_desktop, capture.backend(), &kind, switched_to_duplication);
                             user_desktop = available;
                             // Back from the primary display once the stream's returns.
                             let returned = on_primary && butterpollo_windows::capture::display_present(&next.0);
@@ -912,13 +938,12 @@ impl Media {
                             if restart || next != target || return_to_wgc || returned {
                                 let lost = std::mem::replace(&mut capture, Capture::Closed);
                                 progress.mark(crate::stall_watch::Phase::Reopen);
-                                (capture, on_primary, target) = match reopen(lost, &next, &backend) {
+                                (capture, on_primary, target) = match reopen(lost, &next, reopen_backend(&kind, switched_to_duplication)) {
                                     Ok(capture) => capture,
                                     Err(_) if worker_stop.load(Ordering::Acquire) => return Ok(()),
                                     Err(error) => return Err(error),
                                 };
-                                backend = capture.backend().to_owned();
-                                if switched_to_duplication && backend == "ddx" {
+                                if switched_to_duplication {
                                     capture_warnings.set("capture_backend", DUPLICATION_WARNING);
                                 }
                                 opened_display = prepared.display_target();
@@ -987,8 +1012,7 @@ impl Media {
                                             Err(_) if worker_stop.load(Ordering::Acquire) => return Ok(()),
                                             Err(error) => return Err(error),
                                         };
-                                        backend = capture.backend().to_owned();
-                                        if backend == "ddx" {
+                                        if capture.backend() == "ddx" {
                                             switched_to_duplication = true;
                                             capture_warnings.set("capture_backend", DUPLICATION_WARNING);
                                         }
@@ -1096,13 +1120,12 @@ impl Media {
                                 }
                                 let lost = std::mem::replace(&mut capture, Capture::Closed);
                                 progress.mark(crate::stall_watch::Phase::Reopen);
-                                (capture, on_primary, target) = match reopen(lost, &target, &backend) {
+                                (capture, on_primary, target) = match reopen(lost, &target, reopen_backend(&kind, switched_to_duplication)) {
                                     Ok(capture) => capture,
                                     Err(_) if worker_stop.load(Ordering::Acquire) => return Ok(()),
                                     Err(error) => return Err(error),
                                 };
-                                backend = capture.backend().to_owned();
-                                if switched_to_duplication && backend == "ddx" {
+                                if switched_to_duplication {
                                     capture_warnings.set("capture_backend", DUPLICATION_WARNING);
                                 }
                                 opened_display = prepared.display_target();

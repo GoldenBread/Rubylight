@@ -1029,6 +1029,34 @@ fn a_game_window_target_reopens_on_itself_never_the_primary_display() {
         assert_eq!(missing, None, "{target}");
     }
 }
+#[test]
+fn a_capture_reopens_on_its_own_backend_unless_the_fullscreen_fallback_moved_it() {
+    // An ordinary reopen such as the secure desktop's tries the stream's own
+    // backend again: Rubylight's display push and AMD Direct Capture, which
+    // fell back while they were unavailable, get their next try.
+    assert_eq!(reopen_backend("wgc", false), "wgc");
+    assert_eq!(reopen_backend("idd-push", false), "idd-push");
+    assert_eq!(reopen_backend("amd", false), "amd");
+    // The fullscreen fallback's Desktop Duplication shows the game a frozen
+    // WGC picture could not, so it keeps it for the session.
+    assert_eq!(reopen_backend("wgc", true), "ddx");
+    assert_eq!(reopen_backend("idd-push", true), "ddx");
+}
+#[test]
+fn a_secure_desktops_duplication_returns_to_wgc_but_the_fullscreen_fallback_keeps_it() {
+    // A UAC prompt or the lock screen left a WGC stream on Desktop Duplication;
+    // with the desktop visible again it reopens on WGC.
+    assert!(returns_to_wgc(true, false, "ddx", "wgc", false));
+    // The fullscreen fallback keeps the source that shows the game.
+    assert!(!returns_to_wgc(true, false, "ddx", "wgc", true));
+    // A stream that asked for Desktop Duplication itself stays there, and a
+    // desktop already usable or still unusable is no reason to reopen.
+    assert!(!returns_to_wgc(true, false, "ddx", "ddx", false));
+    assert!(!returns_to_wgc(true, true, "ddx", "wgc", false));
+    assert!(!returns_to_wgc(false, true, "ddx", "wgc", false));
+    assert!(!returns_to_wgc(false, false, "ddx", "wgc", false));
+    assert!(!returns_to_wgc(true, false, "wgc", "wgc", false));
+}
 /// #56: a Nucleus Co-op game replaced its splash window, or resized its
 /// window, as the stream's first capture opened, and the stream ended; the
 /// client's reconnect seconds later worked.
