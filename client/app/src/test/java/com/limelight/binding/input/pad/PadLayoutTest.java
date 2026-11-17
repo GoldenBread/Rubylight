@@ -294,4 +294,20 @@ public class PadLayoutTest {
         assertTrue(back.isDefault());
         assertEquals("v2", back.serialize());
     }
+
+    /** L2: a control preset changes which controls show, not the glyph family or what the pointer touchpad does. */
+    @Test public void aPresetKeepsTheGlyphsAndTheTouchpadMode() {
+        PadLayout layout = new PadLayout();
+        layout.setGlyph(PadLayout.Glyph.PLAYSTATION);
+        layout.setPointerMode(PadLayout.PointerMode.CAMERA);
+        layout.applyPreset(PadLayout.Preset.MINIMAL);
+        assertEquals(PadLayout.Glyph.PLAYSTATION, layout.glyph());
+        assertEquals(PadLayout.PointerMode.CAMERA, layout.pointerMode());
+        layout.applyPreset(PadLayout.Preset.FULL);
+        assertEquals(PadLayout.Glyph.PLAYSTATION, layout.glyph());
+        assertEquals(PadLayout.PointerMode.CAMERA, layout.pointerMode());
+        layout.applyPreset(PadLayout.Preset.DEFAULT);
+        assertEquals(PadLayout.Glyph.PLAYSTATION, layout.glyph());
+        assertEquals(PadLayout.PointerMode.CAMERA, layout.pointerMode());
+    }
 }

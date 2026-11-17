@@ -171,7 +171,13 @@ public final class PadLayout {
      * stays opt-in like the pointer touchpad.
      */
     public void applyPreset(Preset preset) {
+        // A preset chooses which controls show; the glyph family and what the pointer touchpad does are the
+        // player's other choices and stay as they are, so the editor's buttons do not visibly revert.
+        Glyph keptGlyph = glyph;
+        PointerMode keptPointerMode = pointerMode;
         reset();
+        glyph = keptGlyph;
+        pointerMode = keptPointerMode;
         if (preset == Preset.DEFAULT) return;
         for (Control control : Control.values()) {
             if (control.steam) continue;

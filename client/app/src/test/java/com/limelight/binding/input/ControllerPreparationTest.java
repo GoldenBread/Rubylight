@@ -1127,6 +1127,27 @@ public class ControllerPreparationTest {
         assertTrue((connection.arrivalButtons & ControllerPacket.TOUCHPAD_FLAG) != 0);
     }
 
+    /** Auto-hide must not treat a handheld's built-in pad as a controller that takes the touch controls away. */
+    @Test public void aHandheldsOwnPadIsNotAnExternalController() {
+        try (ActivityController<Activity> activity = Robolectric.buildActivity(Activity.class).create()) {
+            // The handheld's only gamepad, listed as external on an internal bus, like a Retroid Pocket's.
+            addInputDevice(activity.get(), 7, true, InputDevice.SOURCE_JOYSTICK | InputDevice.SOURCE_GAMEPAD,
+                    "Xbox Wireless Controller", 0x2022, 0x3002);
+            PreferenceConfiguration prefs = new PreferenceConfiguration();
+            ControllerHandler handler = new ControllerHandler(activity.get(), new Connection(73), null, prefs);
+            try {
+                assertFalse("The handheld's own controls never hide the touch controls",
+                        handler.hasExternalControllers());
+                // A real Xbox pad beside it is an external controller, whichever one is looked at.
+                addInputDevice(activity.get(), 9, true, InputDevice.SOURCE_JOYSTICK | InputDevice.SOURCE_GAMEPAD,
+                        "Xbox Wireless Controller", 0x045e, 0x0b12);
+                assertTrue(handler.hasExternalControllers());
+            } finally {
+                handler.destroy();
+            }
+        }
+    }
+
     @Test public void aRealXboxPadKeepsItsTypeBesideTheTouchpadButton() {
         Connection connection = arrivalOfXboxNamedPad(0x045e);
         assertEquals(MoonBridge.LI_CTYPE_XBOX, connection.arrivalType);

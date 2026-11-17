@@ -186,7 +186,26 @@ public class PointerAccelerationTest {
         assertEquals(acceleration.gainForSpeed(PointerAcceleration.FAST_SPEED), feed(acceleration, 40, 0, 4), 1e-4f);
         acceleration.reset();
         assertEquals(acceleration.gainForSpeed(0), acceleration.gain(40, 0, 10 * FRAME_NS, 1), 0);
+        assertEquals("A reset gesture has no speed behind it", 0, acceleration.speed(), 0);
         assertEquals(acceleration.gainForSpeed(500), acceleration.gain(4, 0, 11 * FRAME_NS, 1), 1e-4f);
+    }
+
+    /** The camera stick maps the same smoothed speed the pointer's gain uses, so it is exposed in dp per second. */
+    @Test
+    public void theSpeedBehindTheGainIsDistanceOverTimeInDpPerSecond() {
+        PointerAcceleration acceleration = PointerAcceleration.forCurve(PointerAcceleration.MEDIUM);
+        assertEquals(0, acceleration.speed(), 0);
+        acceleration.gain(4, 0, 0, 1);
+        assertEquals("The first move only starts the clock", 0, acceleration.speed(), 0);
+        acceleration.gain(4, 0, FRAME_NS, 1);
+        assertEquals(4 * 1e9f / FRAME_NS, acceleration.speed(), 1e-3f);
+        acceleration.gain(4, 0, 2 * FRAME_NS, 1);
+        assertEquals("Two moves of 4 dp over two 8 ms intervals", 8 * 1e9f / (2 * FRAME_NS),
+                acceleration.speed(), 1e-3f);
+        float gain = acceleration.gain(0, 0, 3 * FRAME_NS, 1);
+        assertEquals("The gain is for that speed", acceleration.gainForSpeed(acceleration.speed()), gain, 1e-4f);
+        acceleration.reset();
+        assertEquals(0, acceleration.speed(), 0);
     }
 
     @Test

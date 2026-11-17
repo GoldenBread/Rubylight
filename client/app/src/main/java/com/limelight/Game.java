@@ -7,6 +7,7 @@ import com.limelight.binding.input.capture.InputCaptureProvider;
 import com.limelight.binding.input.touch.TrackpadPointer;
 import com.limelight.binding.input.driver.UsbDriverService;
 import com.limelight.binding.input.evdev.EvdevListener;
+import com.limelight.binding.input.pad.PointerMove;
 import com.limelight.binding.input.virtual_controller.VirtualController;
 import com.limelight.binding.video.DecoderSetupFailure;
 import com.limelight.binding.video.DisplayCapsReporter;
@@ -105,6 +106,9 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
     // Set while the host sends its cursor shapes for the Local cursor; read on the control thread.
     volatile HostCursorShapes hostCursorShapes;
     boolean nativeTouchEnabled;
+    // The modern controller's pointer touchpad, in the host's pixels as the screen touchpad is.
+    final PointerMove pointerMove = new PointerMove();
+    private final int[] pointerMoveDelta = new int[2];
 
     ControllerHandler controllerHandler;
     KeyboardTranslator keyboardTranslator;
@@ -1202,7 +1206,17 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
     // The on-screen controls' switch, Hide while a controller is connected, and whether one is here.
     boolean onscreenControlsShown() {
         return prefConfig != null && com.limelight.binding.input.pad.PadVisibility.shouldShow(
-                prefConfig.onscreenController, prefConfig.oscAutoHideOnController, physicalControllerConnected);
+                prefConfig.onscreenController, prefConfig.oscAutoHideOnController, physicalControllerConnected,
+                prefConfig.sendControllers, touchControlsWithPad());
+    }
+
+    /**
+     * The settings that deliberately use the touch controls together with a physical pad: Only L3/R3 supplements the
+     * pad, and, in the one-player-each mode, the on-screen controls can be a player of their own beside it. A pad must
+     * not hide them then.
+     */
+    private boolean touchControlsWithPad() {
+        return prefConfig.onlyL3R3 || (prefConfig.onscreenOwnPlayer && prefConfig.multiController);
     }
 
     /** A physical controller came or went: the on-screen controls follow the Hide while a controller is connected setting. */
@@ -1221,7 +1235,7 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         }
     }
 
-    private void hideOnscreenControllers() {
+    void hideOnscreenControllers() {
         if (virtualController != null) {
             if (virtualController.getControllerMode() != VirtualController.ControllerMode.Active) {
                 // Leaving the editor saves the moved controls, so a controller arriving does not discard them.
@@ -1247,13 +1261,16 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         if (prefConfig.modernOnscreenController()) {
             ensureModernController();
             modernController.show();
-            return;
+        } else {
+            if (virtualController == null) {
+                virtualController = new VirtualController(controllerHandler, (FrameLayout) streamView.getParent(), this);
+            }
+            virtualController.refreshLayout();
+            virtualController.show();
         }
-        if (virtualController == null) {
-            virtualController = new VirtualController(controllerHandler, (FrameLayout) streamView.getParent(), this);
-        }
-        virtualController.refreshLayout();
-        virtualController.show();
+        // The controls came back: the microphone and menu buttons follow the top row again, as after hiding.
+        touchInput.updateMicButton();
+        touchInput.updateMenuButton();
     }
 
     /** Builds the modern controller without showing it, so its layout can be edited while a gamepad hides it. */
@@ -1277,10 +1294,15 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         modernController.setTouchSink((type, pointer, x, y, pressure) -> {
             if (controllerHandler != null) controllerHandler.reportOscTouch(type, pointer, x, y, pressure);
         });
-        // The pointer touchpad: the same relative mouse input as the screen's own touchpad.
+        // The pointer touchpad: the screen touchpad's host-pixel scaling, Trackpad speed and kept fraction.
         modernController.setPointerSink(new com.limelight.binding.input.pad.ModernController.PointerSink() {
             @Override public void move(int dx, int dy) {
-                if (conn != null) conn.sendMouseMove((short) dx, (short) dy);
+                if (conn == null || streamView.getWidth() <= 0 || streamView.getHeight() <= 0) return;
+                pointerMove.setViewport(prefConfig.width, prefConfig.height, streamView.getWidth(),
+                        streamView.getHeight(), prefConfig.trackpadSpeed);
+                if (pointerMove.move(dx, dy, pointerMoveDelta)) {
+                    conn.sendMouseMove((short) pointerMoveDelta[0], (short) pointerMoveDelta[1]);
+                }
             }
             @Override public void button(int button, boolean down) {
                 if (conn == null) return;

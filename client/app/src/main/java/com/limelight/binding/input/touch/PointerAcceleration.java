@@ -39,6 +39,7 @@ public final class PointerAcceleration {
     private long lastEventTime = -1;
     private float pendingDistance;
     private float gain;
+    private float speed;
 
     private PointerAcceleration(float slowGain, float fastGain) {
         this.slowGain = slowGain;
@@ -72,6 +73,16 @@ public final class PointerAcceleration {
         lastEventTime = -1;
         pendingDistance = 0;
         gain = slowGain;
+        speed = 0;
+    }
+
+    /**
+     * The smoothed finger speed in dp per second behind the last {@link #gain}: what a mapping that is not
+     * a pointer gain, such as the on-screen controls' camera stick, needs. Zero before the first move and
+     * after {@link #reset}.
+     */
+    public float speed() {
+        return speed;
     }
 
     /**
@@ -89,6 +100,7 @@ public final class PointerAcceleration {
             // The first move has no interval behind it: start at the slow end.
             lastEventTime = eventTimeNs;
             gain = slowGain;
+            speed = 0;
             return gain;
         }
         long interval = eventTimeNs - lastEventTime;
@@ -106,11 +118,13 @@ public final class PointerAcceleration {
             windowTime = 0;
             pendingDistance = 0;
             gain = slowGain;
+            speed = 0;
             return gain;
         }
         add(distance + pendingDistance, interval);
         pendingDistance = 0;
-        gain = gainForSpeed(windowTime > 0 ? windowDistance * 1e9f / windowTime : 0f);
+        speed = windowTime > 0 ? windowDistance * 1e9f / windowTime : 0f;
+        gain = gainForSpeed(speed);
         return gain;
     }
 

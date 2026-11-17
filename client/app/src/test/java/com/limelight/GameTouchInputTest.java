@@ -880,6 +880,36 @@ public class GameTouchInputTest {
         }
     }
 
+    /** M2: the pointer touchpad moves the host pointer in the stream's pixels and at Trackpad speed. */
+    @Test public void thePointerTouchpadsMovementIsInHostPixels() {
+        RecordingConnection connection = new RecordingConnection();
+        Game game = game(connection);
+        game.prefConfig.onscreenController = true;
+        game.prefConfig.oscStyle = PreferenceConfiguration.OSC_STYLE_MODERN;
+        game.prefConfig.width = 1920;
+        game.prefConfig.height = 1080;
+        game.prefConfig.trackpadSpeed = 100;
+        ReflectionHelpers.setField(game, "app", new com.limelight.nvstream.http.NvApp("Game", 7, false));
+        StreamView stream = new StreamView(game);
+        FrameLayout parent = new FrameLayout(game);
+        parent.addView(stream);
+        parent.measure(View.MeasureSpec.makeMeasureSpec(1600, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(720, View.MeasureSpec.EXACTLY));
+        parent.layout(0, 0, 1600, 720);
+        ReflectionHelpers.setField(game, "streamView", stream);
+
+        game.showOnscreenController();
+        assertNotNull(game.modernController);
+        com.limelight.binding.input.pad.ModernController.PointerSink sink =
+                ReflectionHelpers.getField(game.modernController, "pointerSink");
+        sink.move(100, 0);
+        assertEquals("1920 host pixels across a 1600 px view", 120, connection.moves.get(0)[0]);
+        sink.move(0, 100);
+        assertEquals("1080 host pixels down a 720 px view", 150, connection.moves.get(1)[1]);
+        game.modernController.destroy();
+        assertEquals("Destroying the controls leaves the stream alone", 1, parent.getChildCount());
+    }
+
     private static class RecordingConnection extends NvConnection {
         final List<int[]> positions = new ArrayList<>();
         final List<float[]> touches = new ArrayList<>();

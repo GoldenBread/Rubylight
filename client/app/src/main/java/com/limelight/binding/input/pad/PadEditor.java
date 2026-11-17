@@ -254,8 +254,10 @@ final class PadEditor extends FrameLayout {
         boolean touchpadOut = editable(PadLayout.Control.POINTER_PAD) && draft.spec(PadLayout.Control.POINTER_PAD).hidden;
         addTouchpad.setVisibility(touchpadOut ? VISIBLE : GONE);
         pointerMode.setVisibility(selected == PadLayout.Control.POINTER_PAD ? VISIBLE : GONE);
-        pointerMode.setText(getContext().getString(draft.pointerMode() == PadLayout.PointerMode.CAMERA ?
-                R.string.pad_touchpad_camera : R.string.pad_touchpad_mouse));
+        boolean camera = draft.pointerMode() == PadLayout.PointerMode.CAMERA;
+        // The text names the mode now; the description names what pressing gives, since the button switches.
+        pointerMode.setText(getContext().getString(camera ? R.string.pad_touchpad_camera : R.string.pad_touchpad_mouse));
+        pointerMode.setContentDescription(getContext().getString(camera ? R.string.pad_touchpad_mouse : R.string.pad_touchpad_camera));
         glyphs.setText(glyphName(getContext(), draft.glyph()));
         preset.setText(getContext().getString(R.string.pad_edit_preset));
     }

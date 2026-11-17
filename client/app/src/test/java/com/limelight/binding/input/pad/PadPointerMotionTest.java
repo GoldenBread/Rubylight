@@ -22,6 +22,40 @@ public class PadPointerMotionTest {
         assertTrue("acceleration is allowed to pass the finger's own 40 px", fast[0] > 40);
     }
 
+    /** H2: a gesture starts slow, and speed is distance over the time it took, not one move's distance over nothing. */
+    @Test public void theFirstMoveOfAGestureIsSlowAndSpeedIsDistanceOverTime() {
+        PadPointerMotion tracker = new PadPointerMotion();
+        int[] out = new int[2];
+        tracker.move(100, 0, 0, DENSITY, out);
+        assertEquals("No interval behind the first move", 0, tracker.speed(), 0);
+        assertEquals("Medium's slow gain, not a flick's: 100 px at 0.6", 60, out[0]);
+
+        // 4 px every 10 ms at density 2 is 200 dp/s. Two moves are 4 dp over 10 ms, not 8 dp over 10 ms.
+        tracker.reset();
+        tracker.move(4, 0, 0, DENSITY, out);
+        tracker.move(4, 0, 10_000_000L, DENSITY, out);
+        assertEquals(200, tracker.speed(), 1e-3f);
+        tracker.move(4, 0, 20_000_000L, DENSITY, out);
+        assertEquals("Three moves: 6 dp over 20 ms", 200, tracker.speed(), 1e-3f);
+        // The same pace on a denser screen is the same dp speed, so the same gain.
+        PadPointerMotion dense = new PadPointerMotion();
+        dense.move(8, 0, 0, 4, out);
+        dense.move(8, 0, 10_000_000L, 4, out);
+        dense.move(8, 0, 20_000_000L, 4, out);
+        assertEquals(200, dense.speed(), 1e-3f);
+    }
+
+    @Test public void aGestureStartsAtTheSlowEndAfterReset() {
+        PadPointerMotion tracker = new PadPointerMotion();
+        int[] out = new int[2];
+        for (int i = 0; i < 3; i++) tracker.move(40, 0, i * 10_000_000L, DENSITY, out);
+        assertTrue("Fast by now", tracker.speed() > 1000);
+        tracker.reset();
+        tracker.move(40, 0, 100_000_000L, DENSITY, out);
+        assertEquals("A new gesture is slow again", 0, tracker.speed(), 0);
+        assertEquals(24, out[0]);
+    }
+
     @Test public void theSpeedUsesOnlyTheLastThreeSamples() {
         PadPointerMotion tracker = new PadPointerMotion();
         int[] out = new int[2];

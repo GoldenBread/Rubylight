@@ -14,6 +14,7 @@ import com.limelight.binding.input.touch.TrackpadArea;
 import com.limelight.binding.input.touch.TrackpadContext;
 import com.limelight.binding.input.touch.TrackpadPointer;
 import com.limelight.binding.input.evdev.EvdevListener;
+import com.limelight.binding.input.pad.ClassicEditor;
 import com.limelight.binding.input.touch.TouchContext;
 import com.limelight.binding.input.virtual_controller.VirtualController;
 import com.limelight.computers.HostNotices;
@@ -443,16 +444,24 @@ final class GameTouchInput {
             game.modernController.startEditing();
             return;
         }
+        // The classic editor moves the controls themselves, so they appear only while their switch is on, and
+        // a gamepad that hides them takes them away again once the edit ends.
+        ClassicEditor.Controls controls = new ClassicEditor.Controls() {
+            @Override public boolean switchOn() { return game.prefConfig.onscreenController; }
+            @Override public boolean belongOnScreen() { return game.onscreenControlsShown(); }
+            @Override public void show() { game.virtualController.show(); }
+            @Override public void hide() { game.hideOnscreenControllers(); }
+        };
+        ClassicEditor.open(controls);
         game.menuActions.showStreamDialog(new NavigationDialogBuilder(game).setTitle(R.string.stream_controls_layout)
                 .setItems(R.array.stream_control_layout_actions, (dialog, which) -> {
                     VirtualController.ControllerMode[] modes = {
                             VirtualController.ControllerMode.MoveButtons,
                             VirtualController.ControllerMode.ResizeButtons,
                             VirtualController.ControllerMode.Active};
-                    game.virtualController.show();
-                    game.virtualController.setControllerMode(modes[which]);
-                    if (which == 2 && game.physicalControllerConnected) game.setPhysicalControllerConnected(true);
-                }).setNegativeButton(android.R.string.cancel, null).create());
+                    ClassicEditor.choose(controls, which == 2);
+                    if (controls.switchOn()) game.virtualController.setControllerMode(modes[which]);
+                }).setNegativeButton(android.R.string.cancel, (dialog, which) -> ClassicEditor.cancel(controls)).create());
     }
 
     void setInputGrabState(boolean grab) {

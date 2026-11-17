@@ -363,14 +363,15 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     /** An external gamepad is connected: Bluetooth or USB, not the handheld's own built-in controls. */
     public synchronized boolean hasExternalControllers() {
         for (InputDeviceContext context : inputDeviceContexts.values()) {
-            if (context.external) return true;
+            // A handheld's own pad is always there; counting it would keep the touch controls off for good.
+            if (context.external && !isHandheldControls(context.inputDevice)) return true;
         }
         if (!usbDeviceContexts.isEmpty()) return true;
         // Before the first input event, look at what is attached rather than waiting for it to send one.
         if (inputManager == null) return false;
         for (int id : inputManager.getInputDeviceIds()) {
             InputDevice device = inputManager.getInputDevice(id);
-            if (device != null && isExternal(device) &&
+            if (device != null && isExternal(device) && !isHandheldControls(device) &&
                     (hasJoystickAxes(device) || hasGamepadButtons(device))) return true;
         }
         return false;

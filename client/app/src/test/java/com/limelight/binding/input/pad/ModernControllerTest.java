@@ -708,6 +708,10 @@ public class ModernControllerTest {
         assertEquals(View.VISIBLE, mode.getVisibility());
         assertTrue(mode.performClick());
         assertEquals(PadLayout.PointerMode.CAMERA, editor.draft().pointerMode());
+        com.google.android.material.button.MaterialButton modeButton =
+                editor.findViewById(com.limelight.R.id.pad_editor_pointer_mode);
+        assertEquals("The button names the mode now", "Camera", modeButton.getText().toString());
+        assertEquals("and its description the mode pressing gives", "Mouse", modeButton.getContentDescription().toString());
         assertTrue(mode.performClick());
         assertEquals(PadLayout.PointerMode.MOUSE, editor.draft().pointerMode());
         controller.finishEditing(true);
@@ -733,12 +737,17 @@ public class ModernControllerTest {
         pointerButtons.clear();
         PadControlView pad = pointerController(false).view(PadLayout.Control.POINTER_PAD);
         assertEquals(View.VISIBLE, pad.getVisibility());
+        assertEquals("The pad says what it does", "MOUSE", pad.state().label);
         float x = pad.getWidth() / 2f, y = pad.getHeight() / 2f;
 
         pad.down(0, x, y, 1000);
-        pad.move(0, x + 40, y, 1_010_000_000L);
-        assertFalse("A drag moves the pointer", pointerMoves.isEmpty());
-        assertTrue("and a fast drag is accelerated", pointerMoves.get(pointerMoves.size() - 1)[0] > 40);
+        // A gesture starts at the slow end, so acceleration shows from the second move on.
+        pad.move(0, x + 20, y, 1_010_000_000L);
+        pad.move(0, x + 40, y, 1_020_000_000L);
+        assertEquals("Both moves reach the pointer", 2, pointerMoves.size());
+        int first = pointerMoves.get(0)[0], second = pointerMoves.get(1)[0];
+        assertTrue("A faster move is accelerated: " + first + " then " + second, second > first);
+        assertTrue("and passes the finger's own 20 px", second > 20);
         pad.up(0, 1200);
         assertTrue("A drag is not a click", pointerButtons.isEmpty());
 
@@ -773,13 +782,123 @@ public class ModernControllerTest {
     }
 
     @Test public void thePointerTouchpadAsACameraPushesTheRightStickAndLetsGo() {
-        PadControlView pad = pointerController(true).view(PadLayout.Control.POINTER_PAD);
+        ModernController controller = pointerController(true);
+        PadControlView pad = controller.view(PadLayout.Control.POINTER_PAD);
+        assertEquals("The pad says it is the camera", "CAM", pad.state().label);
         float x = pad.getWidth() / 2f, y = pad.getHeight() / 2f;
         pad.down(0, x, y, 1000);
+        // The camera starts at rest like the pointer: its speed needs an interval behind it.
+        pad.move(0, x + 50, y, 1_005_000_000L);
         pad.move(0, x + 100, y, 1_010_000_000L);
         assertTrue("A fast drag turns right", last()[3] > 0);
         assertEquals(0, last()[4]);
         pad.release();
         assertEquals("Letting go centers the camera", 0, last()[3] | last()[4]);
+    }
+
+    /** H3: this game's own layout, in the old single key, keeps winning after the player saves one for all games. */
+    @Test public void aGamesOwnLayoutWinsOverASharedOneSavedLater() {
+        android.content.SharedPreferences store = RuntimeEnvironment.getApplication()
+                .getSharedPreferences(ModernController.PREFS, Context.MODE_PRIVATE);
+        store.edit()
+                .putString(PadLayoutKeys.legacyKey(GAME), "v1|FACE,0.7083,0.5556,1.300,100,0")
+                .putString(PadLayoutKeys.key(true, null), "v1|FACE,0.3000,0.4000,0.700,100,0")
+                .commit();
+        ModernController controller = controller(GAME);
+        assertEquals("The game's own layout wins", 1.3f,
+                controller.layout().spec(PadLayout.Control.FACE).scale, 1e-3);
+        assertEquals(.7083f, controller.layout().spec(PadLayout.Control.FACE).cx, 1e-4);
+        assertEquals("A game without its own layout gets the shared one", .7f,
+                controller("pc-1/app-8").layout().spec(PadLayout.Control.FACE).scale, 1e-3);
+    }
+
+    /** M5: saving "for all games" in portrait must not delete the game's landscape layout. */
+    @Test @Config(qualifiers = "w360dp-h800dp-port-xhdpi")
+    public void savingForAllGamesKeepsTheOtherOrientationsPerGameLayout() {
+        android.content.SharedPreferences store = RuntimeEnvironment.getApplication()
+                .getSharedPreferences(ModernController.PREFS, Context.MODE_PRIVATE);
+        store.edit().putString(PadLayoutKeys.key(true, GAME), "v1|FACE,0.7083,0.5556,1.300,100,0").commit();
+        frame.getLayoutParams().width = 720;
+        frame.getLayoutParams().height = 1600;
+        ModernController controller = new ModernController(frame.getContext(), frame, sink, prefs, GAME);
+        controller.refreshLayout();
+        frame.measure(View.MeasureSpec.makeMeasureSpec(720, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(1600, View.MeasureSpec.EXACTLY));
+        frame.layout(0, 0, 720, 1600);
+        PadLayout draft = controller.layout().copy();
+        draft.setScale(PadLayout.Control.FACE, .7f);
+        controller.save(draft, false);
+        assertTrue("Saved for all games in portrait", store.contains(PadLayoutKeys.key(false, null)));
+        assertTrue("The game's landscape layout stays", store.contains(PadLayoutKeys.key(true, GAME)));
+        assertFalse("This orientation's own per-game layout goes", store.contains(PadLayoutKeys.key(false, GAME)));
+        controller.destroy();
+    }
+
+    /** M6: a scroll is never a right click, even when the first finger lifts before the scroll starts. */
+    @Test public void aScrollNeverRightClicksAfterTheFirstFingerLifts() {
+        pointerButtons.clear();
+        pointerScrolls.clear();
+        PadControlView pad = pointerController(false).view(PadLayout.Control.POINTER_PAD);
+        float x = pad.getWidth() / 2f, y = pad.getHeight() / 2f;
+
+        pad.down(0, x, y, 1000);
+        pad.down(1, x + 30, y, 1020);
+        pad.up(0, 1080);
+        pad.move(1, x + 30, y + 80, 1_100_000_000L);
+        pad.up(1, 1200);
+        assertFalse("The second finger scrolls", pointerScrolls.isEmpty());
+        assertTrue("and the scroll does not right-click: " + pointerButtons, pointerButtons.isEmpty());
+    }
+
+    /** M6: a finger that stays after its partner lifts is not a two-finger tap. */
+    @Test public void aLingeringFingerIsNotATwoFingerTap() {
+        pointerButtons.clear();
+        PadControlView pad = pointerController(false).view(PadLayout.Control.POINTER_PAD);
+        float x = pad.getWidth() / 2f, y = pad.getHeight() / 2f;
+
+        pad.down(0, x, y, 1000);
+        pad.down(1, x + 30, y, 1010);
+        pad.up(0, 1090);
+        pad.up(1, 1400);
+        assertTrue("A late lift is not a tap: " + pointerButtons, pointerButtons.isEmpty());
+    }
+
+    /** M3: other controls report once per event; only the pointer touchpad needs every historical sample. */
+    @Test public void historicalSamplesChangeOnlyThePointerTouchpad() {
+        ModernController controller = pointerController(false);
+        PadControlView pad = controller.view(PadLayout.Control.POINTER_PAD);
+        float x = pad.getWidth() / 2f, y = pad.getHeight() / 2f;
+        pad.down(0, x, y, 1000);
+        pointerMoves.clear();
+        MotionEvent drag = MotionEvent.obtain(1000, 1010, MotionEvent.ACTION_MOVE, x + 60, y, 0);
+        drag.addBatch(1005, x + 30, y, 1f, 1f, 0);
+        assertEquals("The event carries a historical sample", 1, drag.getHistorySize());
+        pad.onTouchEvent(drag);
+        drag.recycle();
+        assertTrue("The pointer pad uses each sample's own time: " + pointerMoves.size(), pointerMoves.size() >= 2);
+
+        PadControlView stick = controller.view(PadLayout.Control.LEFT_STICK);
+        float size = Math.min(stick.getWidth(), stick.getHeight()), travel = PadPainter.travel(size);
+        float cx = stick.getWidth() / 2f, cy = stick.getHeight() / 2f;
+        long now = android.os.SystemClock.uptimeMillis();
+        MotionEvent down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, cx, cy, 0);
+        stick.onTouchEvent(down);
+        down.recycle();
+        int before = reports.size();
+        MotionEvent move = MotionEvent.obtain(now, now + 10, MotionEvent.ACTION_MOVE, cx + travel, cy, 0);
+        move.addBatch(now + 5, cx + travel / 2, cy, 1f, 1f, 0);
+        stick.onTouchEvent(move);
+        move.recycle();
+        assertEquals("A stick reports once for the event, as it always has", 1, reports.size() - before);
+    }
+
+    /** L4: showing the controls again tells the microphone button to move back below the top row. */
+    @Test public void showingTheControlsAgainTellsTheMicrophoneButtonToMove() {
+        ModernController controller = controller(GAME);
+        int[] runs = {0};
+        controller.setOnLayoutChanged(() -> runs[0]++);
+        controller.hide();
+        controller.show();
+        assertEquals(1, runs[0]);
     }
 }

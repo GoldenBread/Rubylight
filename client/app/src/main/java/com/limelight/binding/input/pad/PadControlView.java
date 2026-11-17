@@ -60,10 +60,11 @@ final class PadControlView extends View {
     private final float density;
     private static final float SCROLL_DP_PER_NOTCH = 24, SCROLL_UNITS_PER_NOTCH = 120, HORIZONTAL_SCROLL_RATIO = .5f;
     private static final int CAMERA_TICK_MS = 16;
-    private long pointerDownAt, pointerTickNs;
+    private long pointerTickNs;
     private float pointerTravel;
     private final float[] pointerLastX = new float[2], pointerLastY = new float[2];
-    private boolean pointerScrolled, pointerSecondDown, pointerRightTap;
+    private final long[] pointerDownAt = new long[2];
+    private boolean pointerScrolled, pointerSecondDown, pointerTap;
     /** The event time of the move being handled, in nanoseconds; the pointer touchpad's smoothing needs it. */
     private long touchTimeNs;
     private final Runnable cameraTick = new Runnable() {
@@ -161,7 +162,8 @@ final class PadControlView extends View {
     void configurePointer(boolean camera, String curve) {
         pointerCamera = camera;
         pointerMotion = new PadPointerMotion(PointerAcceleration.forCurve(curve));
-        state.label = control == PadLayout.Control.POINTER_PAD && camera ? "CAM" : "";
+        // The pad itself says which it does, so a glance tells the Camera mode from the Mouse one.
+        state.label = control == PadLayout.Control.POINTER_PAD ? (camera ? "CAM" : "MOUSE") : "";
         redraw();
     }
 
@@ -217,12 +219,16 @@ final class PadControlView extends View {
                 break;
             }
             case MotionEvent.ACTION_MOVE:
-                // Historical samples carry their own times, so the pointer's speed is not one spike per frame.
-                for (int history = 0; history < event.getHistorySize(); history++) {
-                    touchTimeNs = event.getHistoricalEventTime(history) * 1_000_000L;
-                    for (int i = 0; i < event.getPointerCount(); i++) {
-                        touchPressure = event.getPressure(i);
-                        move(event.getPointerId(i), event.getHistoricalX(i, history), event.getHistoricalY(i, history));
+                // Historical samples carry their own times, so the pointer touchpad's speed is not one spike per
+                // frame. Every other control reports once per event, as it always has: extra stick, button and touch
+                // reports for intermediate positions would change existing input.
+                if (control.shape == PadLayout.Shape.TOUCHPAD) {
+                    for (int history = 0; history < event.getHistorySize(); history++) {
+                        long time = event.getHistoricalEventTime(history) * 1_000_000L;
+                        for (int i = 0; i < event.getPointerCount(); i++) {
+                            touchPressure = event.getPressure(i);
+                            move(event.getPointerId(i), event.getHistoricalX(i, history), event.getHistoricalY(i, history), time);
+                        }
                     }
                 }
                 touchTimeNs = event.getEventTime() * 1_000_000L;
@@ -284,9 +290,9 @@ final class PadControlView extends View {
                     pointerIds[0] = pointer;
                     pointerIds[1] = -1;
                     state.pressed = true;
-                    pointerDownAt = time;
+                    pointerDownAt[0] = time;
                     pointerTravel = 0;
-                    pointerScrolled = pointerSecondDown = pointerRightTap = false;
+                    pointerScrolled = pointerSecondDown = pointerTap = false;
                     pointerLastX[0] = x;
                     pointerLastY[0] = y;
                     touchTimeNs = time * 1_000_000L;
@@ -300,6 +306,7 @@ final class PadControlView extends View {
                     // A second finger turns the gesture into scroll or right-click; the pointer stops where it was.
                     pointerIds[1] = pointer;
                     pointerSecondDown = true;
+                    pointerDownAt[1] = time;
                     pointerLastX[1] = x;
                     pointerLastY[1] = y;
                     removeCallbacks(cameraTick);
@@ -369,14 +376,22 @@ final class PadControlView extends View {
             case TOUCHPAD: {
                 int pointerSlot = pointer == pointerIds[0] ? 0 : pointerIds[1] >= 0 && pointer == pointerIds[1] ? 1 : -1;
                 if (pointerSlot < 0) return;
-                float dx = x - pointerLastX[pointerSlot], dy = y - pointerLastY[pointerSlot];
+                // The centroid travels with the fingers: each contributes its share, so two fingers moving
+                // together scroll once rather than twice, and a finger left after a lift scrolls at its own pace.
+                int fingers = (pointerIds[0] >= 0 ? 1 : 0) + (pointerIds[1] >= 0 ? 1 : 0);
+                float dx = (x - pointerLastX[pointerSlot]) / fingers, dy = (y - pointerLastY[pointerSlot]) / fingers;
                 pointerLastX[pointerSlot] = x;
                 pointerLastY[pointerSlot] = y;
                 pointerTravel += (float) Math.hypot(dx, dy);
                 if (pointerSecondDown) {
-                    // Two fingers scroll; neither moves the pointer, even after one lifts.
-                    if (pointerTravel > PadInput.TOUCHPAD_TAP_SLOP_DP * density) pointerScrolled = true;
-                    scrollBy(dx, dy);
+                    // Scrolling starts only past the tap slop, so a two-finger tap with a small drift stays a
+                    // tap and never both scrolls and clicks right; two fingers scroll; neither moves the
+                    // pointer, even after one lifts.
+                    if (!pointerScrolled && pointerTravel > PadInput.TOUCHPAD_TAP_SLOP_DP * density) {
+                        pointerScrolled = true;
+                        pointerTap = false;
+                    }
+                    if (pointerScrolled) scrollBy(dx, dy);
                     redraw();
                 } else if (pointerSlot == 0) {
                     state.touchX = x;
@@ -451,7 +466,7 @@ final class PadControlView extends View {
         removeCallbacks(cameraTick);
         if (control.shape == PadLayout.Shape.TOUCHPAD) {
             if (pointerCamera) gamepad.setStick(slot(), TouchLayout.RIGHT, 0, 0);
-            pointerSecondDown = pointerScrolled = pointerRightTap = false;
+            pointerSecondDown = pointerScrolled = pointerTap = false;
             pointerIds[1] = -1;
             if (pointerMotion != null) pointerMotion.reset();
             scrollV = new MouseDeltaAccumulator();
@@ -491,20 +506,23 @@ final class PadControlView extends View {
         boolean first = pointer == pointerIds[0];
         boolean second = pointerIds[1] >= 0 && pointer == pointerIds[1];
         if (!first && !second) return;
+        int slot = first ? 0 : 1;
         if (first) pointerIds[0] = -1;
         if (second) pointerIds[1] = -1;
-        boolean tap = !pointerScrolled && PadInput.touchpadTap(time - pointerDownAt, pointerTravel, density);
+        // Each finger's own touch decides: short, and staying near where it landed. A finger that lingers
+        // after its partner lifts is not a tap, so it cannot turn a scroll or a long touch into a right click.
+        boolean tap = !pointerScrolled && PadInput.touchpadTap(time - pointerDownAt[slot], pointerTravel, density);
         if (pointerIds[0] >= 0 || pointerIds[1] >= 0) {
-            // One finger still down: keep the verdict for the lift that ends the gesture.
-            if (pointerSecondDown) pointerRightTap = tap;
+            // A finger is still down: the right click needs the last lift to be a tap too.
+            pointerTap = tap;
             return;
         }
         if (pointerSecondDown) {
-            if (pointerRightTap || tap) click(MouseButtonPacket.BUTTON_RIGHT);
+            if (pointerTap && tap) click(MouseButtonPacket.BUTTON_RIGHT);
         } else if (tap) {
             click(MouseButtonPacket.BUTTON_LEFT);
         }
-        pointerSecondDown = pointerScrolled = pointerRightTap = false;
+        pointerSecondDown = pointerScrolled = pointerTap = false;
         pointerIds[0] = pointerIds[1] = -1;
         state.pressed = false;
         state.touchX = Float.NaN;

@@ -106,18 +106,15 @@ public final class ModernController {
     }
 
     private void load() {
-        // This orientation's layout first, then the layout an older version kept for both orientations, then the
-        // shared one. The last two are what a saved layout from before the split reads as.
+        // This game's own layout first, in this version or the older one, then the layout shared by all games. A
+        // game's own choice always wins, so a shared layout saved later never shadows it.
         String text = store.getString(PadLayoutKeys.key(landscape, gameKey), null);
         perGame = text != null && gameKey != null;
         if (text == null && gameKey != null) {
-            text = store.getString(PadLayoutKeys.key(landscape, null), null);
-            perGame = false;
-        }
-        if (text == null) {
             text = store.getString(PadLayoutKeys.legacyKey(gameKey), null);
-            perGame = text != null && gameKey != null;
+            perGame = text != null;
         }
+        if (text == null) text = store.getString(PadLayoutKeys.key(landscape, null), null);
         if (text == null) text = store.getString(PadLayoutKeys.legacyKey(null), null);
         layout = PadLayout.parse(text);
         if (text == null) layout.copyFrom(migrateClassic());
@@ -252,6 +249,8 @@ public final class ModernController {
     public void show() {
         shown = true;
         place();
+        // What sits below the top row (the microphone button) follows the controls back, as when they hide.
+        if (onLayoutChanged != null) onLayoutChanged.run();
     }
 
     public void hide() {
@@ -380,11 +379,11 @@ public final class ModernController {
         if (forThisGame && gameKey != null) {
             edit.putString(PadLayoutKeys.key(landscape, gameKey), text);
         } else {
-            // Saving for all games drops this game's own layouts, in both orientations, so the shared one shows here.
+            // Saving for all games drops this game's own layout in this orientation so the shared one shows
+            // here. The other orientation keeps its own, so saving in portrait never deletes a landscape one.
             edit.putString(PadLayoutKeys.key(landscape, null), text);
             if (gameKey != null) {
                 edit.remove(PadLayoutKeys.key(landscape, gameKey));
-                edit.remove(PadLayoutKeys.otherOrientationKey(landscape, gameKey));
                 edit.remove(PadLayoutKeys.legacyKey(gameKey));
             }
         }
