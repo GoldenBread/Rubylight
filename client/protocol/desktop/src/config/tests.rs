@@ -616,8 +616,7 @@ fn beam_race_is_off_unless_the_file_says_otherwise() {
 
 #[test]
 fn pyrowave_decoder_uses_the_platform_default_and_reads_from_the_file() {
-    // On a Mac too: there the GPU decoder falls back to the CPU one where it cannot run.
-    let default = PyroWaveDecoder::Gpu;
+    let default = if cfg!(target_os = "macos") { PyroWaveDecoder::Cpu } else { PyroWaveDecoder::Gpu };
     assert_eq!(Settings::default().pyrowave_decoder, default);
     let old: Settings = serde_json::from_str("{\"fps\": 90}").unwrap();
     assert_eq!(old.pyrowave_decoder, default, "an older file gets the default");
