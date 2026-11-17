@@ -840,10 +840,17 @@ impl Media {
                                     // Keep the backend that was working: Desktop
                                     // Duplication cannot capture this display (another
                                     // vendor's GPU drives it, or it is turned), and a
-                                    // frozen picture is worse than a picture.
+                                    // frozen picture is worse than a picture. The
+                                    // warning says so after the reopen: opening the
+                                    // stream's own backend clears it otherwise.
                                     Err(error) if chosen != kind.as_str() => {
-                                        capture_warnings.set("capture_backend", format!("Capturing with Windows Graphics Capture: Desktop Duplication cannot capture this display ({error:#})."));
-                                        Capture::open_for_stream_reported(&next.0, &kind, hdr, &capture_config, capture_warnings.clone())
+                                        match Capture::open_for_stream_reported(&next.0, &kind, hdr, &capture_config, capture_warnings.clone()) {
+                                            Ok(opened) => {
+                                                capture_warnings.set("capture_backend", format!("Capturing with Windows Graphics Capture: Desktop Duplication cannot capture this display ({error:#})."));
+                                                Ok(opened)
+                                            }
+                                            Err(failure) => Err(failure),
+                                        }
                                     }
                                     Err(error) => Err(error),
                                 },
