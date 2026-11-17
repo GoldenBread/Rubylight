@@ -75,6 +75,14 @@ public class PcView extends NightjarActivity implements AdapterFragmentCallbacks
     private ActionSheet pcMenu;
     private PcGridAdapter pcGridAdapter;
     private ShortcutHelper shortcutHelper;
+    // The replay when polling starts runs on the UI thread; the shortcut service is a binder call, so
+    // publishing is moved off it.
+    private final java.util.concurrent.ExecutorService shortcutPublisher =
+            java.util.concurrent.Executors.newSingleThreadExecutor(task -> {
+                Thread thread = new Thread(task, "PC shortcuts");
+                thread.setDaemon(true);
+                return thread;
+            });
     private final HostActions hostActions = new HostActions(this, new HostActions.Callbacks() {
         @Override public ComputerManagerService.ComputerManagerBinder binder() { return managerBinder; }
         @Override public boolean isForeground() { return inForeground; }
@@ -396,7 +404,14 @@ public class PcView extends NightjarActivity implements AdapterFragmentCallbacks
                         // Add a launcher shortcut for this PC (off the main thread to prevent ANRs)
                         ComputerManagerService.ComputerManagerBinder binder = managerBinder;
                         if (binder != null && binder.isPersistent() && details.pairState == PairState.PAIRED) {
-                            shortcutHelper.createAppViewShortcutForOnlineHost(details);
+                            // startPolling replays each PC on the caller's thread, which is the UI thread here.
+                            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+                                ComputerDetails snapshot = new ComputerDetails(details);
+                                shortcutPublisher.execute(
+                                        () -> shortcutHelper.createAppViewShortcutForOnlineHost(snapshot));
+                            } else {
+                                shortcutHelper.createAppViewShortcutForOnlineHost(details);
+                            }
                         }
                         // Home needs a library to open on; read it once for a host that has the native API.
                         if (binder != null) {
@@ -434,6 +449,7 @@ public class PcView extends NightjarActivity implements AdapterFragmentCallbacks
 
         if (chrome != null) chrome.stop();
         hostActions.destroy();
+        shortcutPublisher.shutdownNow();
         if (serviceWaitThread != null) {
             serviceWaitThread.interrupt();
         }
