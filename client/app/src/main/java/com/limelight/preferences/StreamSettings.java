@@ -888,6 +888,8 @@ public class StreamSettings extends NightjarActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        // The decoder scan the Recommended rows compare against runs on a worker, not here.
+        SimpleProfile.warmCapabilities();
         // Framework fragments are recreated by super.onCreate(), before our views exist, and their lists read this.
         twoPane = getResources().getBoolean(R.bool.settings_two_pane);
         moreOpen.addAll(rememberedMore());

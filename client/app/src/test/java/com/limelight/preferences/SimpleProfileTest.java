@@ -49,6 +49,7 @@ public class SimpleProfileTest {
         prefs = PreferenceManager.getDefaultSharedPreferences(context);
         prefs.edit().clear().commit();
         SimpleProfile.forgetCapabilities();
+        SimpleProfile.forgetCodecs();
         SimpleProfileModel.use(SimpleProfileTest::fake);
     }
 
@@ -62,6 +63,7 @@ public class SimpleProfileTest {
         context.getSharedPreferences("decoder_benchmark", Context.MODE_PRIVATE).edit().clear().commit();
         ShadowMediaCodecList.reset();
         SimpleProfile.forgetCapabilities();
+        SimpleProfile.forgetCodecs();
         SimpleProfileModel.use(null);
     }
 
@@ -280,6 +282,28 @@ public class SimpleProfileTest {
                 PreferenceConfiguration.ENABLE_HDR_PREF_STRING, OpenPlay.SETTING, HomeSettings.PREF_KEY}) {
             assertEquals(key, before.get(key), prefs.getAll().get(key));
         }
+    }
+
+    @Test
+    public void theDecoderListIsReadOnceForTheAppRunNotEverySettingsVisit() {
+        MediaFormat format = MediaFormat.createVideoFormat("video/hevc", 1920, 1080);
+        MediaCodecInfo codec = MediaCodecInfoBuilder.newBuilder()
+                .setName("OMX.rubylight.hevc.decoder")
+                .setIsEncoder(false)
+                .setIsHardwareAccelerated(true)
+                .setCapabilities(MediaCodecInfoBuilder.CodecCapabilitiesBuilder.newBuilder()
+                        .setMediaFormat(format)
+                        .setColorFormats(new int[] {MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface})
+                        .build())
+                .build();
+        ShadowMediaCodecList.addCodec(codec);
+        assertTrue(SimpleProfile.capabilities(context).hevc);
+
+        // Settings resumes and drops what it measures, but Android's decoder list does not change
+        // while the app runs: the next visit answers without scanning again.
+        ShadowMediaCodecList.reset();
+        SimpleProfile.forgetCapabilities();
+        assertTrue("the decoder list is kept for the run", SimpleProfile.capabilities(context).hevc);
     }
 
     @Test
