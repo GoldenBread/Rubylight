@@ -258,6 +258,30 @@ final class HomeChrome {
             }
         });
         fade.setBackground(gradient);
+        // At rest the list's first row starts at the top edge and nothing is cut, so the scrim must not paint over it
+        // (a black strip over the ambient, nightjar#7). It rises only as far as content has passed the edge.
+        list.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override public void onScrolled(RecyclerView view, int dx, int dy) {
+                fitTopFade(fade);
+            }
+        });
+        list.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> fitTopFade(fade));
+        fitTopFade(fade);
+    }
+
+    private void fitTopFade(View fade) {
+        View first = list.getChildAt(0);
+        int firstTop = first == null ? 0 : first.getTop() - list.getPaddingTop();
+        fade.setAlpha(topScrimAlpha(firstTop, fade.getHeight()));
+    }
+
+    /**
+     * How strong the top scrim stands: nothing while the list's first row starts at its top edge, full once content has
+     * passed that edge by the scrim's height. A row that starts exactly there is not cut, so it is not dimmed either.
+     */
+    static float topScrimAlpha(int firstTop, int height) {
+        if (height <= 0 || firstTop >= 0) return 0f;
+        return Math.min(1f, -firstTop / (float) height);
     }
 
     static int[] topColors(int canvas) {

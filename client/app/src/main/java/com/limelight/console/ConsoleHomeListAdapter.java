@@ -224,6 +224,26 @@ final class ConsoleHomeListAdapter extends RecyclerView.Adapter<RecyclerView.Vie
     }
 
     /**
+     * The heading of the section {@code position} belongs to, or {@code position} itself for a heading. A TV brings a
+     * card in from its section's start, so the title above it stays on screen (nightjar#7).
+     */
+    int sectionStart(int position) {
+        if (rows.isEmpty()) return position;
+        int at = Math.max(0, Math.min(position, rows.size() - 1));
+        for (int i = at; i >= 0; i--) {
+            if (rows.get(i).type == HEADER) {
+                return i;
+            }
+        }
+        return at;
+    }
+
+    /** Where bringing {@code position} in starts the list: its section's heading on a TV, else the card itself. */
+    int reveal(int position, boolean television) {
+        return television ? sectionStart(position) : position;
+    }
+
+    /**
      * Where focus starts: the game that runs now (in Continue playing, else anywhere), otherwise the first card.
      * The Favourites row stays first on screen either way.
      */

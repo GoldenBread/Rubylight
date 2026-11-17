@@ -183,6 +183,29 @@ public class HomeViewScreenTest {
         assertNull(holder.itemView.findViewById(R.id.console_title));
     }
 
+    /** nightjar#7: a card brought in with its section's title above the list's edge read as a tile cut off beneath the hero. */
+    @Test
+    @Config(qualifiers = "w960dp-h540dp-land-television-xhdpi")
+    public void aTvCardIsRevealedUnderItsSectionTitle() throws Exception {
+        prefs.edit().putString(HomeView.KEY_LAYOUT, "grid").putString(HomeView.KEY_GROUP, "store").commit();
+        HomeShellTest.Home home = home().get();
+        ConsoleHomeListAdapter adapter = ReflectionHelpers.getField(home, "adapter");
+        adapter.submit(storeModel(), home.view().group);
+        assertEquals("the first card comes in with the first heading still in view",
+                0, adapter.reveal(adapter.firstCard(), true));
+        int headings = 0;
+        for (int i = 0; i < adapter.getItemCount(); i++) {
+            if (adapter.viewTypeAt(i) != ConsoleHomeListAdapter.HEADER) continue;
+            headings++;
+            if (headings == 2) {
+                assertEquals("a card of a later section comes in under its heading", i, adapter.reveal(i + 1, true));
+            }
+        }
+        assertTrue("the fixture has more than one section", headings >= 2);
+        // A phone and a tablet bring the card itself, as before.
+        assertEquals(adapter.firstCard(), adapter.reveal(adapter.firstCard(), false));
+    }
+
     @Test
     @Config(qualifiers = "w960dp-h540dp-land-television-xhdpi")
     public void aTvGridOfOneLibraryHasOneHeading() throws Exception {
