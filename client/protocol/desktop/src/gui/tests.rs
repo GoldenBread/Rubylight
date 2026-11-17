@@ -102,8 +102,9 @@ fn a_wheel_turn_scrolls_without_a_motion_first() {
     assert!(page_offset(&mut gui) > 0.0, "the turn scrolls the page under the pointer");
 }
 
-/// macOS's natural scrolling (SDL_MOUSEWHEEL_FLIPPED) scrolls the launcher the way the system
-/// setting says: SDL's values already carry it. Elsewhere the flag still turns the turn back.
+/// SDL_MOUSEWHEEL_FLIPPED reports natural scrolling, it is no turn to undo: SDL 3.4 already applied
+/// the system's direction to the values on macOS and Wayland, so the launcher scrolls the way the
+/// system setting says there too.
 #[test]
 fn a_natural_scrolling_turn_scrolls_like_the_system_says() {
     let scale = Scale { pixels_per_point: 1.0, density: 1.0 };
@@ -116,12 +117,7 @@ fn a_natural_scrolling_turn_scrolls_like_the_system_says() {
     event.wheel.mouse_y = 150.0;
     let mut gui = Gui::new();
     gui.handle(&event, scale);
-    let offset = page_offset(&mut gui);
-    if cfg!(target_os = "macos") {
-        assert!(offset > 0.0, "a turn toward the user moves down the page, flipped or not");
-    } else {
-        assert_eq!(offset, 0.0, "turned back, the turn scrolls up a page already at its top");
-    }
+    assert!(page_offset(&mut gui) > 0.0, "a turn toward the user moves down the page, flipped or not");
 }
 
 #[test]

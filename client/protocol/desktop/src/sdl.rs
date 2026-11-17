@@ -5,19 +5,13 @@ use std::path::Path;
 
 use sdl3_sys::everything::*;
 
-/// A wheel turn as the launcher and the PC take it. On macOS SDL already applies the system's
-/// natural scrolling to `x` and `y` and only reports it in `direction` (SDL_MOUSEWHEEL_FLIPPED:
-/// "multiply by -1 to change them back"); turning it back scrolled against every other Mac app.
-/// Elsewhere the flag is turned back as before: Windows and X11 never set it, and Wayland, which
-/// does for its natural scrolling, keeps the behaviour it had.
+/// A wheel turn as the launcher and the PC take it. SDL 3.4 already applies the system's natural
+/// scrolling to `x` and `y` on macOS and Wayland, where the compositor adjusts the values, and
+/// reports it in `direction` only (SDL_MOUSEWHEEL_FLIPPED: "multiply by -1 to change them back");
+/// turning it back scrolled against the system setting on both (moonlight-qt keeps SDL's values).
+/// Windows and X11 never set the flag.
 pub fn wheel_turn(w: &SDL_MouseWheelEvent) -> (f32, f32) {
-    wheel_turn_on(w, cfg!(target_os = "macos"))
-}
-
-/// `wheel_turn`, with `system_direction` keeping SDL's values as they come.
-fn wheel_turn_on(w: &SDL_MouseWheelEvent, system_direction: bool) -> (f32, f32) {
-    let flip = if !system_direction && w.direction == SDL_MOUSEWHEEL_FLIPPED { -1.0 } else { 1.0 };
-    (w.x * flip, w.y * flip)
+    (w.x, w.y)
 }
 
 #[cfg(test)]
@@ -1472,17 +1466,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_wheel_turn_keeps_macos_natural_scrolling_and_elsewhere_turns_it_back() {
+    fn a_wheel_turn_keeps_sdls_values_on_every_platform() {
         // SAFETY: an all-zero SDL_MouseWheelEvent is a valid value.
         let mut w: SDL_MouseWheelEvent = unsafe { std::mem::zeroed() };
         (w.x, w.y) = (1.5, -2.0);
-        for system in [false, true] {
-            assert_eq!(wheel_turn_on(&w, system), (1.5, -2.0), "an unflipped turn stays as it is");
-        }
+        assert_eq!(wheel_turn(&w), (1.5, -2.0), "an unflipped turn stays as it is");
         w.direction = SDL_MOUSEWHEEL_FLIPPED;
-        assert_eq!(wheel_turn_on(&w, true), (1.5, -2.0), "macOS: SDL's values already follow the system setting");
-        assert_eq!(wheel_turn_on(&w, false), (-1.5, 2.0), "Wayland keeps its earlier direction");
-        assert_eq!(wheel_turn(&w), wheel_turn_on(&w, cfg!(target_os = "macos")));
+        assert_eq!(wheel_turn(&w), (1.5, -2.0),
+            "macOS and Wayland already adjusted the values to the system setting, the flag only reports it");
     }
 
     #[test]
