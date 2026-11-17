@@ -393,11 +393,9 @@ impl Streaming {
         // Fractional V-Sync follows the display's refresh and the stream's rate as they change.
         let held = self.vrr.held(self.pacer.mode);
         let refreshes = self.vsync_refreshes();
-        if refreshes != self.vrr.refreshes {
-            // The turns are on a new grid, and a display mode may restart its refresh count: the old
-            // grid's aim and lateness say nothing about them.
-            self.held_anchor.restart();
-        }
+        // The turns are on a new grid, and a display mode may restart its refresh count: the old
+        // grid's aim and lateness say nothing about them. A stream at one rate keeps its turns.
+        self.held_anchor.restart_on_rate_change(self.vrr.refreshes, refreshes);
         self.vrr.set_refreshes(refreshes);
         let probe = self.race_probe.as_ref();
         // Once per hold: a swap chain whose statistics failed tries the hold again every few seconds.

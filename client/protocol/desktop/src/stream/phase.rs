@@ -149,6 +149,17 @@ impl HeldAnchor {
     /// after the change.
     pub fn restart(&mut self) { *self = Self::default(); }
 
+    /// A new rate (`refreshes`, `VrrPacing::refreshes` after `Streaming::sync_vrr` read it) against
+    /// the one the turns count on (`before`) starts them over when the two differ: the old grid's
+    /// aim and lateness say nothing about the new one, and a display mode may restart its refresh
+    /// count. The same rate keeps them, which is every present of a stream that did not change.
+    /// Returns whether the turns started over.
+    pub fn restart_on_rate_change(&mut self, before: u32, refreshes: u32) -> bool {
+        if refreshes == before { return false; }
+        self.restart();
+        true
+    }
+
     /// The refresh the last picture shows at, from the last present shown (`present_count` at
     /// `present_refresh`) and the latest refresh, which the statistics cover unless `stale` (their
     /// vblank time is a refresh or more in the past): the one it was shown at, else the refresh its
@@ -781,7 +792,8 @@ mod tests {
     }
 
     /// Another display or stream rate: the next picture counts from the first one shown after it,
-    /// not from the old grid's aim or lateness.
+    /// not from the old grid's aim or lateness. The rate the turns count on is compared: the same
+    /// rate keeps them, which is every present of a stream that did not change.
     #[test]
     fn a_rate_change_starts_the_turns_over() {
         let mut anchor = HeldAnchor::default();
@@ -790,7 +802,9 @@ mod tests {
         anchor.hold(100_500, 100_000, 100, Some(100), 2, 1000, 300, 50, u64::MAX, 0);
         anchor.presented(8);
         assert_eq!(anchor.last_refresh(7, 100, 101, false), Some(102), "the old grid's aim");
-        anchor.restart();
+        assert!(!anchor.restart_on_rate_change(2, 2), "the same rate keeps the turns");
+        assert_eq!(anchor.last_refresh(7, 100, 101, false), Some(102), "nothing started over");
+        assert!(anchor.restart_on_rate_change(2, 3), "a new rate starts them over");
         assert_eq!(anchor.last_refresh(7, 100, 101, false), None, "nothing known of a picture after the change");
         assert_eq!(anchor.pending, None);
         assert_eq!(anchor.hold(101_500, 101_000, 101, None, 3, 1000, 300, 50, u64::MAX, 0), 0, "nothing held yet");
@@ -1056,14 +1070,14 @@ mod tests {
         assert!(changed.contains("(self.held_anchor, self.held_clock, self.held_stats) = Default::default();"));
     }
 
-    /// A new stream or display rate starts the turns over too, not only another display: the grid
-    /// they count on changed, and the refresh count may have (`Streaming::sync_vrr`).
+    /// The condition reaches the turns through `sync_vrr`, which reads the rate the pacer holds and
+    /// sets the new one after it: a restart moved outside that comparison would reset the anchor
+    /// every present and stop all holding.
     #[test]
-    fn a_new_rate_starts_the_held_turns_over() {
+    fn the_rate_change_reaches_the_turns_before_the_new_rate_holds() {
         let sync = function(include_str!("render.rs"), "fn sync_vrr(");
-        let changed = sync.find("if refreshes != self.vrr.refreshes").expect("looks at the rate");
-        assert!(sync[changed..].contains("self.held_anchor.restart()"), "restarts the anchor");
-        assert!(changed < sync.find("self.vrr.set_refreshes(refreshes)").unwrap(), "before the new rate holds");
+        let restarted = sync.find("restart_on_rate_change(self.vrr.refreshes, refreshes)").expect("looks at the rate");
+        assert!(restarted < sync.find("self.vrr.set_refreshes(refreshes)").unwrap(), "before the new rate holds");
     }
 
     #[test]
