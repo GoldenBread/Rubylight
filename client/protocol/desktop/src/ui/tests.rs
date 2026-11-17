@@ -2936,7 +2936,8 @@ fn the_first_pairing_offers_the_setup_card_once() {
 fn the_setup_card_says_what_auto_chose_and_is_dismissed_from_the_keys() {
     let mut f = home_with_games(3);
     let id = f.hosts.list[0].id;
-    let top_of = |placed: &[(String, Rect, Rect)], text: &str| placed.iter().find(|(t, ..)| t == text).map(|p| p.1.top());
+    // The lowest of a text: the top bar says "PCs" as well, above the shelf of that name.
+    let top_of = |placed: &[(String, Rect, Rect)], text: &str| placed.iter().filter(|(t, ..)| t == text).map(|p| p.1.top()).reduce(f32::max);
     let (play_before, pcs_before) = (top_of(&f.placed, "Play"), top_of(&f.placed, "PCs"));
     f.l.settings.setup_card_host = Some(id);
     f.l.settings.setup_card_seen = true;
