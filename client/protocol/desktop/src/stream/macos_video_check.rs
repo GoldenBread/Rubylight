@@ -228,7 +228,7 @@ fn benchmark_fixture(window: *mut SDL_Window) {
             let input = video.size();
             let output = (input.0 * 3 / 2, input.1 * 3 / 2);
             let mut native = (mode == crate::config::Upscaling::MetalFx).then(|| super::super::metalfx::Spatial::new(renderer, input, output).expect("MetalFX benchmark"));
-            let shader = mode.is_shader().then(|| upscale::Upscaler::new(renderer, input, output, mode).expect("shader benchmark"));
+            let mut shader = mode.is_shader().then(|| upscale::Upscaler::new(renderer, input, output, mode).expect("shader benchmark"));
             let target = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_TARGET, output.0, output.1);
             assert!(!target.is_null());
             let mut times = Vec::new();
@@ -240,7 +240,7 @@ fn benchmark_fixture(window: *mut SDL_Window) {
                     let texture = native.draw(renderer, buffer, &info).expect("native benchmark draw");
                     if index >= 5 { gpu.push(native.gpu_ms); }
                     texture
-                } else { shader.as_ref().unwrap().draw(renderer, video.sdl_texture(renderer), 50).expect("shader benchmark draw") };
+                } else { shader.as_mut().unwrap().draw(renderer, video.sdl_texture(renderer), 50).expect("shader benchmark draw") };
                 assert!(SDL_SetRenderTarget(renderer, target));
                 assert!(SDL_RenderTexture(renderer, scaled, ptr::null(), ptr::null()));
                 let surface = SDL_RenderReadPixels(renderer, ptr::null());
