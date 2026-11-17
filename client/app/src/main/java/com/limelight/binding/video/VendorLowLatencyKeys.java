@@ -43,6 +43,14 @@ final class VendorLowLatencyKeys {
     static final Collection<String> QUALCOMM_DECLARED_ONLY = Collections.unmodifiableList(Arrays.asList(
             "vendor.qti-ext-dec-info-misr.disable", "vendor.qti-ext-dec-instant-decode.enable",
             "vendor.qti-ext-dec-error-correction.conceal"));
+    // Qualcomm's extension keys apply only to its own decoders, matched by codec-name prefix. A
+    // decoder of another vendor can list them (the Dolby Vision decoder on the Lenovo Legion Tab
+    // Y700 declares picture-order and the output-fence pair) but does not implement them: those
+    // keys there broke the picture into white line segments (issue 129).
+    private static final String QUALCOMM_EXT_PREFIX = "vendor.qti-ext";
+    // The prefixes of MediaCodecHelper.qualcommDecoderPrefixes, repeated here so the filter is
+    // independent of that class's initialization.
+    private static final String[] QUALCOMM_DECODER_PREFIXES = {"omx.qcom", "c2.qti", "c2.qcom"};
 
     static {
         Map<String, Integer> known = new LinkedHashMap<>();
@@ -141,21 +149,44 @@ final class VendorLowLatencyKeys {
 
     /**
      * Keys to set for a decoder exposing these integer vendor parameters: every known key it
-     * declares, plus any other integer switch whose name says it enables low latency.
+     * declares, plus any other integer switch whose name says it enables low latency. Qualcomm's
+     * extension keys are left out unless the decoder name is Qualcomm's, even when the decoder
+     * declares them (issue 129).
      */
-    static Map<String, Integer> forSupported(Collection<String> integerParams) {
+    static Map<String, Integer> forSupported(String decoderName, Collection<String> integerParams) {
+        boolean qualcomm = isQualcommDecoder(decoderName);
         Map<String, Integer> keys = new LinkedHashMap<>();
         for (Map.Entry<String, Integer> known : KNOWN.entrySet()) {
-            if (containsIgnoreCase(integerParams, known.getKey())) {
+            if ((qualcomm || !isQualcommExt(known.getKey())) &&
+                    containsIgnoreCase(integerParams, known.getKey())) {
                 keys.put(known.getKey(), known.getValue());
             }
         }
         for (String param : integerParams) {
-            if (!containsIgnoreCase(keys.keySet(), param) && looksLikeLowLatencySwitch(param)) {
+            if ((qualcomm || !isQualcommExt(param)) && !containsIgnoreCase(keys.keySet(), param)
+                    && looksLikeLowLatencySwitch(param)) {
                 keys.put(param, 1);
             }
         }
         return keys;
+    }
+
+    /** Whether a codec name is one of Qualcomm's, matched by prefix like the rest of the code. */
+    static boolean isQualcommDecoder(String decoderName) {
+        if (decoderName == null) {
+            return false;
+        }
+        String lower = decoderName.toLowerCase(Locale.ROOT);
+        for (String prefix : QUALCOMM_DECODER_PREFIXES) {
+            if (lower.startsWith(prefix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isQualcommExt(String key) {
+        return key.toLowerCase(Locale.ROOT).startsWith(QUALCOMM_EXT_PREFIX);
     }
 
     /**

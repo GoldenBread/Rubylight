@@ -561,7 +561,7 @@ public class MediaCodecHelper {
         if (params == null) {
             return false;
         }
-        for (String key : VendorLowLatencyKeys.forSupported(params).keySet()) {
+        for (String key : VendorLowLatencyKeys.forSupported(decoderName, params).keySet()) {
             if (VendorLowLatencyKeys.isCoreSwitch(key)) {
                 LimeLog.info(decoderName + " supports low latency option: " + key);
                 return true;
@@ -869,7 +869,7 @@ public class MediaCodecHelper {
                 LimeLog.info(decoderInfo.getName() + " declares Snapdragon extras: " +
                         VendorLowLatencyKeys.declaredQualcommExtras(vendorParams));
             }
-            for (Map.Entry<String, Integer> key : VendorLowLatencyKeys.forSupported(vendorParams).entrySet()) {
+            for (Map.Entry<String, Integer> key : VendorLowLatencyKeys.forSupported(decoderInfo.getName(), vendorParams).entrySet()) {
                 if (tryNumber > 0 && VendorLowLatencyKeys.QUALCOMM_DECLARED_ONLY.contains(key.getKey())) {
                     continue;
                 }

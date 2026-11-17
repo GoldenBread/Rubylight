@@ -394,6 +394,23 @@ public class DecoderTuningKeysTest {
 
     @Test
     @Config(sdk = 33)
+    public void dolbyVisionDecodersNeverGetTheSnapdragonExtras() {
+        String[] declared = Arrays.copyOf(QTI_KEYS, QTI_KEYS.length + QTI_EXTRAS.length);
+        System.arraycopy(QTI_EXTRAS, 0, declared, QTI_KEYS.length, QTI_EXTRAS.length);
+        for (String name : new String[] {"c2.dolby.decoder.hevc", "c2.dolby.decoder.dvhe"}) {
+            MediaFormat format = MediaFormat.createVideoFormat("video/dolby-vision", 1920, 1200);
+            MediaCodecHelper.setDecoderLowLatencyOptions(format, decoder(name, declared), 0, true, true, true, false);
+            // Dolby's decoder declares the Snapdragon extension keys on the Lenovo Legion Tab Y700
+            // but does not implement them; setting them broke the picture (issue 129).
+            assertAbsent(name, format, QTI_KEYS);
+            assertAbsent(name, format, QTI_EXTRAS);
+            assertAbsent(name, format, "vendor.qti-ext-dec-frame-drop.enable");
+            assertEquals(name, 1, format.getInteger(MediaFormat.KEY_LOW_LATENCY));
+        }
+    }
+
+    @Test
+    @Config(sdk = 33)
     public void eachSnapdragonDecoderLogsTheExtrasItDeclaresOnce() {
         List<String> lines = new java.util.ArrayList<>();
         java.util.logging.Handler handler = new java.util.logging.Handler() {
