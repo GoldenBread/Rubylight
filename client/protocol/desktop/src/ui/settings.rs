@@ -1233,7 +1233,7 @@ impl Launcher {
             setting_row(ui, s, &mut rows, &["fractional_vsync"], "Fractional V-Sync", "On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Measured on Windows, it adds 1 to 2 ms of delay on most frames and 2.5 to 4 ms on the slowest ones; turn it on if motion judders with V-Sync.", |ui, s| toggle(ui, &mut s.fractional_vsync));
             rows.always();
             rows.group(en("Image"));
-            setting_row(ui, s, &mut rows, &["upscaling"], "Upscaling", "How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; HDR streams are enlarged without them.", |ui, s| {
+            setting_row(ui, s, &mut rows, &["upscaling"], "Upscaling", "How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; Temporal reuses earlier frames to rebuild detail, but in our tests looked softer than SGSR at three to four times its GPU work, so leave SGSR on unless you want to compare. HDR streams are enlarged without them.", |ui, s| {
                 Combo::from_id_salt("upscaling").selected_text(tr(s.upscaling.label())).show_ui(ui, |ui| {
                     // AI enhancement is offered only where the GPU's probe finds the vendor's super
                     // resolution or RTX Video HDR. It loads the AMF runtime, so it runs once per
@@ -1241,7 +1241,7 @@ impl Launcher {
                     let probe = crate::stream::enhance::settings_probe(probe_device);
                     if probe.is_none() { ui.ctx().request_repaint_after(std::time::Duration::from_millis(200)); }
                     let ai_offered = probe.flatten().is_some();
-                    for mode in [crate::config::Upscaling::Bilinear, crate::config::Upscaling::Fsr1, crate::config::Upscaling::Sgsr1, crate::config::Upscaling::Ai] {
+                    for mode in [crate::config::Upscaling::Bilinear, crate::config::Upscaling::Fsr1, crate::config::Upscaling::Sgsr1, crate::config::Upscaling::Sgsr2, crate::config::Upscaling::Ai] {
                         if mode == crate::config::Upscaling::Ai && !ai_offered && s.upscaling != mode { continue; }
                         ui.selectable_value(&mut s.upscaling, mode, tr(mode.label()));
                     }

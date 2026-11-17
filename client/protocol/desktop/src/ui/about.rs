@@ -38,7 +38,7 @@ pub(super) const CREDITS: [Credit; 9] = [
 
 /// The components the desktop client ships, each under its own licence (the packages carry their
 /// notices: `package-windows.ps1` and the others).
-pub(super) const COMPONENTS: [(&str, &str); 9] = [
+pub(super) const COMPONENTS: [(&str, &str); 10] = [
     ("SDL", "zlib"),
     ("FFmpeg", "LGPL-2.1-or-later"),
     ("dav1d", "BSD-2-Clause"),
@@ -47,6 +47,7 @@ pub(super) const COMPONENTS: [(&str, &str); 9] = [
     ("Granite", "MIT"),
     ("AMD FSR 1", "MIT"),
     ("Qualcomm SGSR 1", "BSD-3-Clause"),
+    ("Qualcomm SGSR 2", "BSD-3-Clause"),
     ("sonora", "BSD-3-Clause"),
     ("Figtree", "OFL-1.1"),
 ];

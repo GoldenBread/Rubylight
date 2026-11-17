@@ -6,7 +6,8 @@ import android.os.Build;
 
 public final class UpscalingPolicy {
     public enum Mode {
-        OFF("off"), BILINEAR("bilinear"), FSR1("fsr1"), SGSR1("sgsr1");
+        // Ordinals index R.array.upscaling_names: a new mode goes last.
+        OFF("off"), BILINEAR("bilinear"), FSR1("fsr1"), SGSR1("sgsr1"), SGSR2("sgsr2");
 
         public final String value;
 

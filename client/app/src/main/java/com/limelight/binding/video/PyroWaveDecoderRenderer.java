@@ -150,8 +150,10 @@ public final class PyroWaveDecoderRenderer {
         return new File("/dev/kgsl-3d0").exists();
     }
 
-    // SGSR serves both GPU upscaling choices: it is a single pass, cheaper than FSR's two.
+    // SGSR serves both single-frame GPU upscaling choices: it is a single pass, cheaper than FSR's two. SGSR 2 is the
+    // temporal upscaler (presentation.h UPSCALE_TEMPORAL), which falls back to SGSR 1.
     static int upscaleMode(UpscalingPolicy.Mode mode) {
+        if (mode == UpscalingPolicy.Mode.SGSR2) return 3;
         return mode == UpscalingPolicy.Mode.FSR1 || mode == UpscalingPolicy.Mode.SGSR1 ? 1 :
                 mode == UpscalingPolicy.Mode.BILINEAR ? 2 : 0;
     }
@@ -337,6 +339,17 @@ public final class PyroWaveDecoderRenderer {
         }
     }
 
+    // The temporal upscaler's state (presentation.h PyroWaveTemporalState): off when Temporal (SGSR 2) is not chosen
+    // or the stream is ten-bit; fallback when it is chosen but SGSR 1 runs, because the device refused its images or
+    // shaders or Frame Warp is on.
+    public static final int TEMPORAL_OFF = 0;
+    public static final int TEMPORAL_ACTIVE = 1;
+    public static final int TEMPORAL_FALLBACK = 2;
+
+    public synchronized int temporalState() {
+        return handle != 0 ? nativeGetTemporalState(handle) : TEMPORAL_OFF;
+    }
+
     synchronized boolean hasMaxClocks() {
         return maxClocksContext != null;
     }
@@ -478,6 +491,7 @@ public final class PyroWaveDecoderRenderer {
                                            String hooks, String directory, String name);
     private static native String nativeGetDriver(long handle);
     private static native int nativeGetUpscalingReason(long handle);
+    private static native int nativeGetTemporalState(long handle);
     private static native boolean nativeSetGpuMaxClocks(boolean enabled);
     private static native long nativeSubmitFrame(long handle, byte[] data, int length, long ptsUs,
                                                 long hostPresentationTimeUs, long vsyncNs, long intervalNs);

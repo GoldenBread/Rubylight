@@ -216,11 +216,11 @@ final class SettingRules {
                 android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q;
     }
 
-    /** Only FSR and SGSR sharpen; Off and Smooth have nothing to adjust. */
+    /** Only FSR, SGSR and Temporal sharpen; Off and Smooth have nothing to adjust. */
     static boolean upscalingUsesSharpness(SharedPreferences prefs) {
         if (!upscalingApplies(prefs)) return false;
         String mode = prefs.getString(PreferenceConfiguration.UPSCALING_PREF_STRING, "off");
-        return "fsr1".equals(mode) || "sgsr1".equals(mode);
+        return "fsr1".equals(mode) || "sgsr1".equals(mode) || "sgsr2".equals(mode);
     }
 
     /** The lowest resolution and frame rate only matter while automatic quality runs. */
