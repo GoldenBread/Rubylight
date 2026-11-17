@@ -1460,13 +1460,36 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 hdr ? HdrFormatPolicy.baseLayerName(announcedHdrFormat) : "SDR (the PC reports SDR)");
     }
 
+    /**
+     * The overlay's name of the GLES presenter's mode, from upscaling_names: SGSR 1's, with the note that temporal
+     * upscaling is unavailable, when Temporal fell back (GlesUpscaler.temporalFallbackReason()).
+     */
+    static String glesModeName(String[] names, UpscalingPolicy.Mode mode, boolean temporalFellBack,
+                               String unavailableFormat) {
+        if (mode == UpscalingPolicy.Mode.SGSR2 && temporalFellBack) {
+            return String.format(unavailableFormat, names[UpscalingPolicy.Mode.SGSR1.ordinal()]);
+        }
+        return names[mode.ordinal()];
+    }
+
+    /** The overlay's name of what PyroWave's Vulkan renderer enlarges with, from its temporalState(). */
+    static String pyroWaveModeName(int temporalState, UpscalingPolicy.Mode mode, String bilinearName,
+                                   String unavailableFormat) {
+        if (temporalState == PyroWaveDecoderRenderer.TEMPORAL_ACTIVE) return "Temporal (Vulkan)";
+        if (temporalState == PyroWaveDecoderRenderer.TEMPORAL_FALLBACK) {
+            return String.format(unavailableFormat, "SGSR (Vulkan)");
+        }
+        return mode == UpscalingPolicy.Mode.BILINEAR ? bilinearName : "SGSR (Vulkan)";
+    }
+
     private String upscalingStats() {
         if (packing != null) return packedStats();
         if ((videoFormat & MoonBridge.VIDEO_FORMAT_MASK_PYROWAVE) != 0) {
             UpscalingPolicy.Reason reason = pyroWaveRenderer.getUpscalingReason();
             String mode = reason == UpscalingPolicy.Reason.NONE ?
-                    (prefs.upscalingMode == UpscalingPolicy.Mode.BILINEAR ?
-                            context.getString(R.string.upscaling_bilinear) : "SGSR (Vulkan)") :
+                    pyroWaveModeName(pyroWaveRenderer.temporalState(), prefs.upscalingMode,
+                            context.getString(R.string.upscaling_bilinear),
+                            context.getString(R.string.upscaling_temporal_unavailable)) :
                     context.getString(R.string.upscaling_direct);
             String text = context.getString(R.string.perf_overlay_upscaling_pyrowave, mode);
             String explanation = upscalingReason(reason);
@@ -1475,7 +1498,9 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         GlesUpscaler presenter = upscaler;
         boolean active = presenter != null;
         String mode = active ? (presenter.drawsFrameWarp() ? context.getString(R.string.title_frame_warp) :
-                context.getResources().getStringArray(R.array.upscaling_names)[prefs.upscalingMode.ordinal()]) :
+                glesModeName(context.getResources().getStringArray(R.array.upscaling_names), prefs.upscalingMode,
+                        presenter.temporalFallbackReason() != null,
+                        context.getString(R.string.upscaling_temporal_unavailable))) :
                 context.getString(R.string.upscaling_direct);
         float addedMs = upscalingPolicy == null ? -1 : upscalingPolicy.getAddedMs();
         String text = context.getString(R.string.perf_overlay_upscaling, mode, metric(active ? addedMs : 0, " ms"));

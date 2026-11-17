@@ -81,7 +81,7 @@ open the host's device permissions and enable **Launch applications** for the pa
 `~/Library/Application Support/Nightjar/`. Microphone forwarding requires microphone access.
 **Control + Option + Shift + Tab** opens the stream menu. **Control + Option + Shift + Q** leaves it.
 
-FSR1, SGSR1, planar conversion, packed full chroma and PyroWave's Rust decoder use Metal fragment
+FSR1, SGSR1, temporal upscaling, planar conversion, packed full chroma and PyroWave's Rust decoder use Metal fragment
 shaders. PyroWave defaults to the CPU decoder on macOS. Its upstream Vulkan SDK backend is available
 on Windows and Linux. HDR requires an HDR display and a compatible host. Live streaming has been
 verified on Apple Silicon. The Metal and VideoToolbox
@@ -96,7 +96,7 @@ Run these checks from `protocol/` with the development libraries installed. The 
 Apple Silicon and Intel, runs the headless suites and checks the relocated bundle's signature,
 version and dylib references. The opt-in hardware check needs a Metal-capable display and a
 VideoToolbox HEVC Main10 decoder. It compares pixels from native NV12 and P010 imports with their
-mapped planes, then exercises FSR1, SGSR1, PyroWave and packed chroma.
+mapped planes, then exercises FSR1, SGSR1, temporal upscaling, PyroWave and packed chroma.
 
 ```sh
 cargo test --locked -p nightjar-desktop -p nightjar-core -p nightjar-policy
@@ -196,7 +196,7 @@ Everything below works on Windows and Linux unless a platform is named; the [mac
 - H.264, HEVC and AV1 with hardware decoding: D3D11VA on Windows (HEVC 4:4:4 too, through Moonlight's FFmpeg patch in `ffmpeg-patches/windows/`, which FFmpeg 9 lacks); on Linux VA-API, then Vulkan video, then V4L2 M2M (ARM handhelds and boards; 10-bit HEVC where the driver offers P010, through `ffmpeg-patches/`, tested with a fake decoder by `test-v4l2-p010.sh`), then NVDEC. Before a stream, each format is decoded once on the hardware decoder, and only what decodes is offered to the PC; a decoder that gives up mid-stream hands over to the next, with a notice.
 - PyroWave decodes on the GPU or the CPU, with a bandwidth test and a frame-pace calibration per network, and skips to the newest frame when the decoder falls behind.
 - HDR: HDR10 and HLG, plus Dolby Vision profiles 8.1 and 10.1 on Windows from hosts that send them. On Linux, HDR streams present as HDR10 PQ where the compositor offers it, else scRGB. **Less color banding** (10-bit SDR) and **Sharper colored text** (YUV 4:4:4, native or packed full chroma) where the host and decoder support them; Windows decodes HEVC 4:4:4 in hardware on GPUs whose decoder has it.
-- Upscaling with bilinear, FSR 1, SGSR 1 or AI enhancement (the GPU vendor's video super resolution).
+- Upscaling with bilinear, FSR 1, SGSR 1, temporal upscaling (SGSR 2) or AI enhancement (the GPU vendor's video super resolution).
 - Variable refresh rate with frames shown at the PC's frame times, frame pacing modes and V-Sync without VRR, fractional refresh rates, virtual displays and the PC's display arrangement.
 - **Dual screen mode**: with a second monitor and a host that supports it, a second stream of the same game opens full screen on it.
 

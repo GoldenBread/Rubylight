@@ -10,7 +10,7 @@ public class UpscalingPolicyTest {
     @Test
     public void onlySmallerSdrMediaCodecStreamsUseTheGpu() {
         assertEquals(DISABLED, decision(OFF, 1280, 720, 1920, 1080, false, false, true));
-        for (UpscalingPolicy.Mode mode : new UpscalingPolicy.Mode[] {BILINEAR, FSR1, SGSR1}) {
+        for (UpscalingPolicy.Mode mode : new UpscalingPolicy.Mode[] {BILINEAR, FSR1, SGSR1, SGSR2}) {
             assertEquals(NONE, decision(mode, 1280, 720, 1920, 1080, false, false, true));
             assertEquals(NONE, decision(mode, 1920, 1080, 2560, 1440, false, false, true));
             assertEquals(HDR, decision(mode, 1280, 720, 1920, 1080, true, false, true));
@@ -24,6 +24,9 @@ public class UpscalingPolicyTest {
         assertEquals(OFF, UpscalingPolicy.Mode.fromPreference(null));
         assertEquals(FSR1, UpscalingPolicy.Mode.fromPreference("fsr1"));
         assertEquals(SGSR1, UpscalingPolicy.Mode.fromPreference("sgsr1"));
+        assertEquals(SGSR2, UpscalingPolicy.Mode.fromPreference("sgsr2"));
+        // R.array.upscaling_names is indexed by ordinal: Temporal was appended last
+        assertEquals(4, SGSR2.ordinal());
     }
 
     @Test

@@ -157,6 +157,7 @@ A D3D12-only host and virtual-display-only streaming are not offered. Any such p
 | moonlight-common-c client, Linux (stands in for stock Moonlight on another PC) | Tested | NUC on wired LAN: PIN pairing, then 60 s of HEVC 1080p60, every frame decoded | [Alpha.1 gate](../rust/PERFORMANCE.md#october-22-30-alpha1-hardware-gate) | 3.0 alpha.1, 2026-10-22 |
 | Moonlight Android 12.2 on a phone | Tested | Retroid Pocket 6, Wi-Fi 5 GHz | HEVC 1080p60: 59.7 fps mean over 80 s of host stream timings, encode 3.11 ms, host processing 0.40 ms, 0.00 % network drops, no errors | 3.0 main, 2026-10-24 |
 | Moonlight on iOS and other stock clients | Supported | None | Not run | - |
+| Nightjar temporal upscaling ("Temporal, Snapdragon (SGSR 2)": Android GLES, Android PyroWave Vulkan, desktop) | Experimental | None: not run on a device or in a stream; the algorithm was measured only in the offline harness | [Temporal upscaler, measured offline](../rust/PERFORMANCE.md#november-16-a-temporal-upscaler-for-nightjar-measured-offline-not-landed); unit tests for the setting, probe and fallback | Nightjar main, 2026-11-17 |
 
 ## 5. Radeon 3D settings (ADLX)
 

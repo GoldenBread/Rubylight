@@ -410,7 +410,9 @@
     <string name="upscaling_bilinear">平滑</string>
     <string name="upscaling_fsr1">銳利（FSR）</string>
     <string name="upscaling_sgsr1">銳利，Snapdragon（SGSR）</string>
-    <string name="summary_upscaling">比螢幕小的串流畫面如何放大。FSR 和 SGSR 會銳化邊緣，但會佔用一些 GPU 時間和電力；HDR 串流放大時不使用它們。</string>
+    <string name="upscaling_sgsr2">時域，Snapdragon（SGSR 2）</string>
+    <string name="upscaling_temporal_unavailable">%1$s；時域升頻無法使用</string>
+    <string name="summary_upscaling">比螢幕小的串流畫面如何放大。FSR 和 SGSR 會銳化邊緣，但會佔用一些 GPU 時間和電力；時域會重用先前的畫面來重建細節，但在我們的測試中畫面比 SGSR 柔和，GPU 負擔為其三到四倍，除非想比較，否則請保持 SGSR。HDR 串流放大時不使用它們。</string>
     <string name="title_upscaling_sharpness">升頻銳利度</string>
     <string name="summary_upscaling_sharpness" formatted="false">FSR 或 SGSR 加入的銳化程度。邊緣偏軟時調高；邊緣出現光暈時調低。</string>
     <string name="upscaling_sharpness_value">%1$d%%</string>

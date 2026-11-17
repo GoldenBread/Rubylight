@@ -158,6 +158,7 @@ Choose **Settings → Display & image → Upscaling** or override it in a PC pro
 | Smooth | Bilinear scaling through GLES for MediaCodec or Vulkan for PyroWave. |
 | Sharp (FSR) | AMD FSR 1.0: EASU reconstruction followed by RCAS sharpening. |
 | Sharp, Snapdragon (SGSR) | Qualcomm SGSR 1: single-pass spatial reconstruction. |
+| Temporal, Snapdragon (SGSR 2) | Reuses earlier frames: motion found on the decoded picture, a history adapted from Qualcomm SGSR 2 that resets on a scene cut, and SGSR 1's edge detail on top. No added frame of delay. In our offline tests its picture was softer than SGSR 1's at three to four times the GPU work ([measurements](../../rust/PERFORMANCE.md#november-16-a-temporal-upscaler-for-nightjar-measured-offline-not-landed)). If the device lacks half-float render targets or a pass fails, SGSR 1 runs instead and the Debug overlay says so. |
 
 MediaCodec GPU upscaling requires lower-resolution SDR video, GLES 3.0 and the required external-image support. Native/larger input, HDR and 10-bit use direct output. Under GPU overload or after a resize, this path switches to direct output for the rest of the session; reconnect to retry.
 

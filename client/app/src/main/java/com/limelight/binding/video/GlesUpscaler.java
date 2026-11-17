@@ -66,6 +66,16 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
     private static final int ERROR_CHECK_INTERVAL = 120;
     private static final long FENCE_WAIT_NS = 4_000_000L;
     private int drawnFrames;
+    // Upscaling's Temporal mode (GlesTemporalUpscaler), null when it does not run: another mode, Frame Warp, packed
+    // 4:4:4, or after it fell back to SGSR 1, whose program is built alongside it. The reason it fell back, for the
+    // overlay; null while it runs or was never asked for.
+    private GlesTemporalUpscaler temporal;
+    private volatile String temporalFallbackReason;
+    // The crop the temporal history was built with: a new one starts it over.
+    private float[] temporalCrop;
+    // Temporal passes are checked for GL errors on their first frames, then at the interval above.
+    private static final int TEMPORAL_FIRST_CHECKS = 2;
+    private int temporalFrames;
     private volatile boolean closed;
     private volatile String failureDetail;
     // Frame Warp (docs/frame-warp.md): the picture drawn without upscaling, shifted by warp.frag. The fields below
@@ -238,7 +248,7 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
         String vertex = shaderSource(context, "upscale.vert");
         upscaleProgram = program(vertex, shaderSource(context, frameWarp ? "warp.frag" :
                 packing != null ? "packed444.frag" : mode == UpscalingPolicy.Mode.FSR1 ? "easu.frag" :
-                        mode == UpscalingPolicy.Mode.SGSR1 ? "sgsr.frag" : "bilinear.frag"));
+                        isSgsr(mode) ? "sgsr.frag" : "bilinear.frag"));
         GLES30.glUseProgram(upscaleProgram);
         GLES30.glUniform1i(GLES30.glGetUniformLocation(upscaleProgram, "source"), 0);
         transformUniform = GLES30.glGetUniformLocation(upscaleProgram, "textureTransform");
@@ -271,7 +281,7 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
             require(GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER) == GLES30.GL_FRAMEBUFFER_COMPLETE,
                     "EASU framebuffer");
             GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
-        } else if (mode == UpscalingPolicy.Mode.SGSR1) {
+        } else if (isSgsr(mode)) {
             GLES30.glUniform4fv(GLES30.glGetUniformLocation(upscaleProgram, "viewportInfo"), 1,
                     SgsrConstants.viewport(width, height), 0);
             GLES30.glUniform1f(GLES30.glGetUniformLocation(upscaleProgram, "edgeSharpness"),
@@ -289,11 +299,60 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
         GLES30.glDisable(GLES30.GL_DITHER);
         GLES30.glClearColor(0f, 0f, 0f, 1f);
         require(GLES30.glGetError() == GLES30.GL_NO_ERROR, "GLES setup");
+        if (mode == UpscalingPolicy.Mode.SGSR2 && packing == null && !frameWarp) {
+            startTemporal(context, vertex, width, height, sharpness);
+        }
         if (frameWarp) {
             // This thread's looper: the redraws between pictures run here, with the draws. The first picture drawn with
             // a locked model asks for the first refresh (applyWarp()).
             choreographer = Choreographer.getInstance();
         }
+    }
+
+    /** SGSR 1 draws Temporal's frames too when the temporal passes cannot run: its program is built either way. */
+    private static boolean isSgsr(UpscalingPolicy.Mode mode) {
+        return mode == UpscalingPolicy.Mode.SGSR1 || mode == UpscalingPolicy.Mode.SGSR2;
+    }
+
+    /** Builds the temporal passes beside the SGSR 1 program already made, or falls back to that program, loudly. */
+    private void startTemporal(Context context, String vertex, int width, int height, int sharpness) {
+        GlesTemporalUpscaler passes = new GlesTemporalUpscaler(width, height, viewport[2], viewport[3]);
+        try {
+            passes.build(context, vertex, SgsrConstants.viewport(width, height), SgsrConstants.edgeSharpness(sharpness));
+            temporal = passes;
+            temporalCrop = pictureCrop;
+        } catch (IOException | RuntimeException e) {
+            temporal = passes;
+            fallBackFromTemporal(e.getMessage());
+        }
+    }
+
+    /** Ends the temporal passes for the rest of the stream; SGSR 1 draws from this draw on. */
+    private void fallBackFromTemporal(String reason) {
+        // Clears the error flags, so the SGSR 1 draws are not blamed for the temporal passes
+        drainGlErrors();
+        if (temporal != null) temporal.release();
+        temporal = null;
+        drainGlErrors();
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0);
+        GLES30.glClearColor(0f, 0f, 0f, 1f);
+        String text = reason == null ? "unknown failure" : reason;
+        temporalFallbackReason = text;
+        LimeLog.warning("Temporal upscaling unavailable, SGSR 1 draws instead: " + text);
+    }
+
+    private static void drainGlErrors() {
+        // Bounded: a lost context can report errors on every call
+        for (int i = 0; i < 16 && GLES30.glGetError() != GLES30.GL_NO_ERROR; i++) { }
+    }
+
+    /**
+     * Why upscaling's Temporal mode fell back to SGSR 1 for this stream (the probe refused, a temporal shader or
+     * target failed, or a GL error during its passes); null while it runs or when it was not asked for.
+     */
+    String temporalFallbackReason() {
+        return temporalFallbackReason;
     }
 
     /** The HUD mask texture on unit 1, empty until the host sends one. */
@@ -599,6 +658,34 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
 
     /** Draws the latched picture and presents it at presentNs; ptsUs is its decoder time, for Frame Warp. */
     private void render(long ptsUs, long presentNs) {
+        boolean checkErrors = BuildConfig.DEBUG || ++drawnFrames % ERROR_CHECK_INTERVAL == 0;
+        if (temporal != null) {
+            float[] crop = pictureCrop;
+            if (!java.util.Arrays.equals(crop, temporalCrop)) {
+                temporalCrop = crop;
+                temporal.reset();
+            }
+            temporal.render(sourceTexture, transform, viewport);
+            int error = checkErrors || temporalFrames++ < TEMPORAL_FIRST_CHECKS ? GLES30.glGetError() :
+                    GLES30.GL_NO_ERROR;
+            // A GL error in the temporal passes hands this frame and the rest of the stream to SGSR 1, drawn below;
+            // GPU_ERROR (direct output) follows only when SGSR 1 fails too.
+            if (error != GLES30.GL_NO_ERROR) {
+                fallBackFromTemporal("GL error 0x" + Integer.toHexString(error) + " in the temporal passes");
+            }
+        }
+        if (temporal == null) drawUpscaled(ptsUs, checkErrors);
+        fence = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        require(fence != 0, "GPU completion fence");
+        require(EGLExt.eglPresentationTimeANDROID(display, window, presentNs), "EGL presentation time");
+        if (frameWarp) lastTargetNs = presentNs > 0 ? presentNs : System.nanoTime();
+        require(EGL14.eglSwapBuffers(display, window), "EGL swap");
+        GLES30.glFlush();
+        pollCompletion();
+    }
+
+    /** The single-pass (or FSR's two-pass) draw of the latched picture into the window. */
+    private void drawUpscaled(long ptsUs, boolean checkErrors) {
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0);
         GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, sourceTexture);
         GLES30.glUseProgram(upscaleProgram);
@@ -615,16 +702,7 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT);
         GLES30.glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3);
-        if (BuildConfig.DEBUG || ++drawnFrames % ERROR_CHECK_INTERVAL == 0) {
-            require(GLES30.glGetError() == GLES30.GL_NO_ERROR, "Upscaling draw");
-        }
-        fence = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-        require(fence != 0, "GPU completion fence");
-        require(EGLExt.eglPresentationTimeANDROID(display, window, presentNs), "EGL presentation time");
-        if (frameWarp) lastTargetNs = presentNs > 0 ? presentNs : System.nanoTime();
-        require(EGL14.eglSwapBuffers(display, window), "EGL swap");
-        GLES30.glFlush();
-        pollCompletion();
+        if (checkErrors) require(GLES30.glGetError() == GLES30.GL_NO_ERROR, "Upscaling draw");
     }
 
     private void pollCompletion() {
