@@ -839,6 +839,12 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private long heldEarlySinceNs;
     private volatile long heldAnchorNs;
     private volatile int heldAnchorRefreshes = 1;
+    // Balanced at the panel's own rate, released as outputs come out: the refresh each output is
+    // shown at, one per refresh (RefreshSlots). Decoder thread; reset when the display changes.
+    private final RefreshSlots refreshSlots = new RefreshSlots();
+    private final RefreshSlots.Slot refreshSlot = new RefreshSlots.Slot();
+    private boolean slotPlateauLogged;
+    private boolean slotSurplusLogged;
     private HandlerThread choreographerHandlerThread;
     private Handler choreographerHandler;
     private final Object vsyncMonitor = new Object();
@@ -3522,8 +3528,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     static long nextVsyncTimeNs(long nowNs, long vsyncNs, long intervalNs, long presentationDeadlineNs) {
         // Before the first callback there is no display phase to align to.
         if (vsyncNs == 0 || intervalNs <= 0) return nowNs;
-        long intervals = Math.max(1, (nowNs + presentationDeadlineNs - vsyncNs) / intervalNs + 1);
-        return vsyncNs + intervals * intervalNs;
+        return RefreshSlots.firstVsyncNs(nowNs, vsyncNs, intervalNs, presentationDeadlineNs);
     }
 
     /** Extra slack before the latch the phase lock keeps when the scheduler places frames. */
@@ -3603,6 +3608,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             appVsyncOffsetNs = streamDisplay.getAppVsyncOffsetNanos();
             // Wait for a sample from the new mode before reporting its phase.
             vsyncTimeNs = 0;
+            refreshSlots.reset();
             pyroWaveDisplayClock.reset(vsyncIntervalNs);
         }
     }
@@ -4134,6 +4140,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         else {
             long releaseNs = System.nanoTime();
             long displayAtNs;
+            boolean surplus = false;
             if (prefs.framePacing == PreferenceConfiguration.FRAME_PACING_MAX_SMOOTHNESS ||
                     prefs.framePacing == PreferenceConfiguration.FRAME_PACING_CAP_FPS) {
                 // Retain the ordinary smooth-mode presentation behavior after
@@ -4146,6 +4153,14 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 // frame is due first.
                 displayAtNs = hostFrameClock.presentNs(lastPtsUs, releaseNs);
             }
+            else if (prefs.framePacing == PreferenceConfiguration.FRAME_PACING_BALANCED) {
+                // Balanced at the panel's own rate gives each output the next free refresh
+                // (RefreshSlots). Released without a time, two outputs that come out inside one
+                // refresh both land on the same vsync, the compositor replaces one, and the
+                // screen keeps the frame before them for two refreshes.
+                displayAtNs = planRefreshSlot(releaseNs);
+                surplus = refreshSlot.drop;
+            }
             else {
                 // Use a PTS that will cause this frame to be dropped if another comes in within
                 // the same V-sync period. "Now" lets the compositor take it at its very next
@@ -4154,7 +4169,18 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 // holds it for its turn instead (heldDisplayNs).
                 displayAtNs = heldDisplayNs(releaseNs);
             }
-            if (displayQueueDropDue(releaseNs)) {
+            if (surplus) {
+                // The display already waits for the refreshes this output could have used: show
+                // neither it nor an older frame later (the catch-up above drops older outputs too).
+                if (!slotSurplusLogged) {
+                    slotSurplusLogged = true;
+                    LimeLog.info("Balanced: a surplus output came with two refreshes already claimed, dropping it");
+                }
+                frameLatencyStats.onDropReason(lastIndex, "slot_backlog");
+                frameLatencyStats.onOutputReleased(lastIndex, releaseNs, false, reportsRenderTimes());
+                videoDecoder.releaseOutputBuffer(lastIndex, false);
+                shown = false;
+            } else if (displayQueueDropDue(releaseNs)) {
                 dropForDisplayQueue(lastIndex, releaseNs);
                 shown = false;
             } else {
@@ -4269,6 +4295,39 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         heldAnchorNs = targetNs;
         heldAnchorRefreshes = refreshes;
         return targetNs - intervalNs / 2;
+    }
+
+    /**
+     * Balanced at the panel's own rate, released as outputs come out: the time to release this
+     * output with, the next free refresh less half a refresh (RefreshSlots). Without a grid to
+     * plan on (no vsync sample yet, an adaptive screen, an upscaler drawing the frame) it is the
+     * release time itself, and the frame lands wherever the compositor latches it, as before.
+     */
+    private long planRefreshSlot(long releaseNs) {
+        long vsyncNs, intervalNs, deadlineNs;
+        boolean grid;
+        synchronized (vsyncMonitor) {
+            grid = outputVsyncAvailable && upscaler == null && !adaptiveInUse() &&
+                    vsyncTimeNs != 0 && vsyncIntervalNs > 0;
+            vsyncNs = vsyncTimeNs;
+            intervalNs = vsyncIntervalNs;
+            deadlineNs = vsyncPresentationDeadlineNs;
+        }
+        if (!grid) {
+            refreshSlots.reset();
+            refreshSlot.vsyncNs = 0;
+            refreshSlot.targetNs = releaseNs;
+            refreshSlot.drop = false;
+            return releaseNs;
+        }
+        refreshSlots.plan(releaseNs, vsyncNs, intervalNs, deadlineNs, refreshSlot);
+        if (!slotPlateauLogged) {
+            slotPlateauLogged = true;
+            LimeLog.info(String.format(Locale.US,
+                    "Balanced: each output takes the next free refresh, one per refresh (%.2f ms, due %.2f ms before it)",
+                    intervalNs / 1e6, (intervalNs / 2) / 1e6));
+        }
+        return refreshSlot.drop ? releaseNs : refreshSlot.targetNs;
     }
 
     /** Balanced, see FramePacingPolicy.balancedPacesOnVsync. Host frame times keep the vsync callback. */
@@ -4676,6 +4735,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 pacing == PreferenceConfiguration.FRAME_PACING_MAX_SMOOTHNESS ? "smoothest" : "mode " + pacing) +
                 (pacing == PreferenceConfiguration.FRAME_PACING_BALANCED ? " (release passes as outputs came out " +
                         balancedOnOutput + ", outputs queued for vsync " + balancedOnVsync + ")" : "") +
+                (refreshSlots.planned() > 0 ? ", refreshes claimed " + refreshSlots.planned() +
+                        ", surplus dropped " + refreshSlots.dropped() : "") +
                 (vulkanOutputs > 0 ? ", Vulkan renderer " + vulkanOutputs + " outputs" : "") +
                 ", PC frame times " + onOff(hostFrameTimes) +
                 ", " + timedToScreen() +

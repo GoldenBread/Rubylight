@@ -942,7 +942,11 @@ public class MediaCodecHelper {
         // (c2.qti.hevc.decoder.low_latency) that made the decoder produce no output at all
         // (28 frames in, none out, DecoderHungException after 5 s), so it is not ported.
         if (useVendorOptions && tryNumber < 3 && isDecoderInList(qualcommDecoderPrefixes, decoderInfo.getName())) {
-            videoFormat.setInteger("vendor.qti-ext-dec-frame-drop.enable", 1);
+            // Off by default: the decoder may drop a picture the display then never sees.
+            // debug.nightjar.qti_frame_drop 1 turns it on for A/B runs.
+            if (debugSwitch("qti_frame_drop", false)) {
+                videoFormat.setInteger("vendor.qti-ext-dec-frame-drop.enable", 1);
+            }
             if (decoderInfo.getName().toLowerCase(Locale.ROOT).startsWith("omx.qcom")) {
                 videoFormat.setInteger("vendor.qti-ext-dec-dpb-output-delay.enable", 0);
                 videoFormat.setInteger("vendor.qti-ext-dec-picture-type.enable", 0);
