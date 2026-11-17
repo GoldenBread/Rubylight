@@ -49,7 +49,9 @@ pub fn goes_direct(conditions: Conditions) -> bool {
     conditions.switch && !conditions.failed && conditions.swap_chain && !conditions.partial
 }
 
-pub use super::present::{draws_one_to_one, whole_pixel_shift};
+pub use super::present::draws_one_to_one;
+#[cfg(test)]
+use super::present::whole_pixel_shift;
 
 /// The shader's constants (`Direct` in planes_direct.hlsl, register b1).
 #[repr(C)]
