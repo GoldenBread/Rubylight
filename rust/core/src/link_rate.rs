@@ -23,7 +23,7 @@
 //! where it follows the stream's demand, not a client pace hint,
 //! `pacing_max_bitrate_kbps` or a wired client link. With record framing only a
 //! lost coarse block loses the frame ([`LinkRate::frame_lost`]). PyroWave stops
-//! at its severe-detail-loss rate, and its keyframe requests are no evidence:
+//! at its test-scene detail level, and its keyframe requests are no evidence:
 //! every picture is intra, so the session passes none of them on, and a
 //! PyroWave client is judged by its FEC status reports alone.
 //!
@@ -612,7 +612,7 @@ pub struct LinkRate {
     /// PyroWave record framing: only the coarse block (block 0) carries the
     /// picture, so only its loss loses the frame (see [`Self::frame_lost`]).
     records: bool,
-    /// PyroWave whose floor (its severe-detail-loss rate) is at or above the
+    /// PyroWave whose test-scene detail level is at or above the
     /// stream's own bitrate: cuts stop at half the bitrate instead, and the
     /// floor warning says this link loses PyroWave (see
     /// [`Self::pyrowave_no_room`]).
@@ -656,11 +656,14 @@ impl Default for LinkRate {
     }
 }
 
-/// PyroWave's floor: its severe-detail-loss rate
-/// ([`crate::pyrowave::minimum_kbps`], about 186 Mbps at 1080p60), in the
-/// session's bitrate, which the sender scales by configured over negotiated.
-pub(crate) fn pyrowave_floor_kbps(stream: &Negotiated) -> u32 {
-    let minimum = crate::pyrowave::minimum_kbps(stream.width, stream.height, stream.fps_millihz());
+/// PyroWave's detail floor: the bitrate below which the project's test scenes lost
+/// detail ([`crate::pyrowave::minimum_kbps`], about 186 Mbps at 1080p60), in the
+/// session's bitrate, which the sender scales by configured over negotiated. The
+/// floor uses the whole frame rate, as the client's own minimum does, so 59.94 fps
+/// is compared as 60.
+pub fn pyrowave_floor_kbps(stream: &Negotiated) -> u32 {
+    let minimum =
+        crate::pyrowave::minimum_kbps(stream.width, stream.height, stream.fps.saturating_mul(1000));
     if stream.configured_bitrate_kbps == 0 {
         return minimum;
     }
@@ -780,7 +783,7 @@ impl LinkRate {
             this.reason = "wire_budget_too_small";
             return this;
         };
-        // Below its severe-detail-loss rate PyroWave is no picture worth having:
+        // Below the level where the project's test scenes kept detail, PyroWave loses text and texture detail:
         // it stops there and the warning says to use HEVC or AV1.
         let lowest = if pyrowave {
             pyrowave_floor_kbps(stream)

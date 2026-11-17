@@ -987,7 +987,7 @@ fn only_a_lost_coarse_block_loses_a_pyrowave_frame() {
 /// Review 2026-10-29: the floor was 2 Mbps for every codec, far under the
 /// rate at which PyroWave keeps a usable picture (187 Mbps at 1080p60).
 #[test]
-fn pyrowave_stops_at_its_severe_detail_loss_rate_and_says_so() {
+fn pyrowave_stops_at_its_test_scene_detail_level_and_says_so() {
     let minimum = crate::pyrowave::minimum_kbps(1920, 1080, 60_000);
     let lr = LinkRate::new(true, &pyrowave(400_000), 0, 20);
     assert_eq!(lr.floor_kbps, minimum);
@@ -3128,5 +3128,28 @@ fn a_second_dip_recovers_like_the_first() {
     assert!(
         second <= first + 5.,
         "second dip: {second:.1} s, first {first:.1} s"
+    );
+}
+
+#[test]
+fn the_pyrowave_floor_uses_whole_frames_per_second() {
+    // A 59.94 or 119.88 stream is judged at the whole rate, as the client's own minimum is.
+    let stream = |fps, rate_millihz| Negotiated {
+        codec: 3,
+        width: 1920,
+        height: 1080,
+        fps,
+        rate_millihz,
+        bitrate_kbps: 1000,
+        configured_bitrate_kbps: 1000,
+        ..Default::default()
+    };
+    assert_eq!(
+        pyrowave_floor_kbps(&stream(60, 59_940)),
+        crate::pyrowave::minimum_kbps(1920, 1080, 60_000)
+    );
+    assert_eq!(
+        pyrowave_floor_kbps(&stream(120, 119_880)),
+        crate::pyrowave::minimum_kbps(1920, 1080, 120_000)
     );
 }

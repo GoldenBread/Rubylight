@@ -43,8 +43,7 @@ test('recovered warnings disappear without invented timing measurements', () => 
 
 test('PyroWave quality warning uses the current encoder bitrate', () => {
   const result = html({ video_format: 3, pyrowave_minimum_kbps: 200_000, pyrowave_recommended_kbps: 300_000 });
-  assert.match(result, /PyroWave bitrate is too low/);
-  assert.match(result, /severe detail loss/);
+  assert.match(result, /below the level where the project's test scenes kept detail/);
 });
 
 test('the disconnect button names the device whose stream it ends', () => {

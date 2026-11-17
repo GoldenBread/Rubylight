@@ -1267,15 +1267,13 @@ impl Media {
                 "packed 4:4:4 stream"
             );
         }
-        let minimum = butterpollo_core::pyrowave::minimum_kbps(
-            s.config.width,
-            s.config.height,
-            s.config.fps_millihz(),
-        );
+        // The same floor link-rate adaptation stops at, measured on the project's test scenes.
+        // Whole frames per second, as the client's minimum is, so 59.94 compares as 60.
+        let minimum = butterpollo_core::link_rate::pyrowave_floor_kbps(&s.config);
         let recommended = butterpollo_core::pyrowave::recommended_kbps(
             s.config.width,
             s.config.height,
-            s.config.fps_millihz(),
+            s.config.fps.saturating_mul(1000),
         );
         let bitrate = s.bitrate.load(Ordering::Relaxed);
         if s.config.codec == 3 && bitrate < minimum {
@@ -1283,7 +1281,7 @@ impl Media {
                 bitrate_kbps = bitrate,
                 minimum_kbps = minimum,
                 recommended_kbps = recommended,
-                "PyroWave bitrate is too low: severe detail loss is likely. Raise the bitrate in Moonlight with network headroom, or use HEVC or AV1"
+                "PyroWave bitrate is below the level where the project's test scenes kept detail; text and textures may lose detail. Raise the bitrate in Moonlight with network headroom, lower the resolution or frame rate, or use HEVC or AV1"
             );
         } else if s.config.codec == 3 && bitrate < recommended {
             tracing::warn!(

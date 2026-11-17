@@ -50,9 +50,9 @@ pub fn aligned_payload(packet_size: usize) -> usize {
         0
     }
 }
-/// Severe detail loss warning: 2.5 bpp below 1080p, otherwise 1.5 bpp.
+/// The level where the project's test scenes kept detail: 2.5 bpp below 1080p, otherwise 1.5 bpp.
 /// One-pixel text in the 720p desktop needed more bits per pixel.
-/// These synthetic-scene floors are not clean-picture targets; see rust/PERFORMANCE.md.
+/// These synthetic-scene rates are not clean-picture targets; see rust/PERFORMANCE.md.
 pub fn minimum_kbps(width: u32, height: u32, fps_millihz: u32) -> u32 {
     bitrate_kbps(
         width,

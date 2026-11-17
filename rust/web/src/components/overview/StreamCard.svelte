@@ -108,7 +108,7 @@
   {#if starved || belowRecommended}
     <p class="note warn" class:danger={starved} role="status">
       {#if starved}
-        PyroWave bitrate is too low: below <span class="num">{minimum}</span> Mbps, severe detail loss is likely.
+        PyroWave is below the level where the project's test scenes kept detail: below <span class="num">{minimum}</span> Mbps, text and textures may lose detail.
       {:else}
         PyroWave bitrate is below recommended: text and textures may lose detail.
       {/if}

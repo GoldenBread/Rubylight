@@ -537,19 +537,19 @@ async fn bitrate(
             let minimum = butterpollo_core::pyrowave::minimum_kbps(
                 s.config.width,
                 s.config.height,
-                s.config.fps_millihz(),
+                s.config.fps.saturating_mul(1000),
             );
             let recommended = butterpollo_core::pyrowave::recommended_kbps(
                 s.config.width,
                 s.config.height,
-                s.config.fps_millihz(),
+                s.config.fps.saturating_mul(1000),
             );
             if s.config.codec == 3 && applied < minimum {
                 tracing::warn!(
                     bitrate_kbps = applied,
                     minimum_kbps = minimum,
                     recommended_kbps = recommended,
-                    "PyroWave bitrate is too low: severe detail loss is likely. Raise the bitrate in Moonlight with network headroom, or use HEVC or AV1"
+                    "PyroWave bitrate is below the level where the project's test scenes kept detail; text and textures may lose detail. Raise the bitrate in Moonlight with network headroom, lower the resolution or frame rate, or use HEVC or AV1"
                 );
             } else if s.config.codec == 3 && applied < recommended {
                 tracing::warn!(

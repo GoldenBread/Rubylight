@@ -679,7 +679,7 @@ export interface StreamSession {
   };
   /** Error correction (%) for the next video frame; adaptive FEC moves it. Null for PyroWave. */
   fec_percent?: number | null;
-  /** PyroWave streams: severe detail loss is likely below this bitrate. */
+  /** PyroWave streams: text and textures may lose detail below this bitrate. */
   pyrowave_minimum_kbps: number | null;
   /** A clean-picture target from synthetic scenes, not a quality guarantee. */
   pyrowave_recommended_kbps: number | null;

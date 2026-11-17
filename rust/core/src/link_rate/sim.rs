@@ -229,7 +229,7 @@ impl Sim {
         sim
     }
 
-    /// The same stream at 120 fps, where PyroWave's severe-detail floor (373
+    /// The same stream at 120 fps, where PyroWave's test-scene detail level (373
     /// Mbps at 1080p120) is above its own requested rate: the controller has
     /// no quality floor to cut to, which is the 2026-11-17 4K120 field case.
     pub fn pyrowave_no_room(link: Link, negotiated_kbps: u32, feedback_ms: f64) -> Self {

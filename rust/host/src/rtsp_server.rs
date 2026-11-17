@@ -331,15 +331,6 @@ async fn connection(
                         negotiated.audio_quality = !host.contains("0.0.0.0");
                     }
                     let config = crate::stream::effective_config(&h, &launch)?;
-                    // The client's own number, before FEC, audio and control come off
-                    // (`stream_policy::apply`): PyroWave's floor is stated against the rate a
-                    // player sets, so a stream asking exactly the floor is not refused for the
-                    // few Mbps the picture gives up to sound and control.
-                    let client_bitrate_kbps = if negotiated.configured_bitrate_kbps > 0 {
-                        negotiated.configured_bitrate_kbps
-                    } else {
-                        negotiated.bitrate_kbps
-                    };
                     // A host-wide cap (`max_stream_resolution`) codes a smaller
                     // picture than the client asked for; the stream's display
                     // keeps the size it asked for. The device and console say why.
@@ -496,24 +487,11 @@ async fn connection(
                         tracing::warn!(codec = negotiated.codec, ten_bit = negotiated.ten_bit(), %detail, "refusing stream: requested codec is unavailable");
                         h.record_launch_failure(&launch.client.uuid, &detail);
                         note_codec_refusal(&launch.warnings, Some(detail));
-                    } else if let Some(detail) =
-                        pyrowave_minimum_refusal(&negotiated, client_bitrate_kbps, &config)
-                    {
-                        code = 400;
-                        reason = "PyroWave bitrate is below its minimum";
-                        tracing::warn!(
-                            codec = negotiated.codec,
-                            bitrate_kbps = negotiated.bitrate_kbps,
-                            %detail,
-                            "refusing stream: PyroWave is below its minimum bitrate"
-                        );
-                        h.record_launch_failure(&launch.client.uuid, &detail);
-                        launch.warnings.set("pyrowave_minimum", detail);
                     } else {
                         // A retry that asks for an available codec drops the
                         // refusal the earlier attempt left on this launch.
                         note_codec_refusal(&launch.warnings, None);
-                        launch.warnings.clear("pyrowave_minimum");
+                        note_pyrowave_minimum(&launch.warnings, &negotiated);
                         h.clear_failure(&launch.client.uuid);
                         configs
                             .lock()
@@ -655,42 +633,41 @@ fn note_codec_refusal(warnings: &butterpollo_core::session::Warnings, refusal: O
         None => warnings.clear("codec_unavailable"),
     }
 }
-/// Why a PyroWave stream asking for less than its mode's minimum is refused, or `None` when it may
-/// start: another codec, at or above the floor, or the player turned on
-/// `pyrowave_allow_below_minimum`. Below the floor every frame loses detail severely even on a
-/// perfect link, so a broken picture is not streamed silently. The RTSP reason line is fixed text:
-/// this detail goes to the log and `/serverinfo`, which Nightjar shows under its start failure.
-fn pyrowave_minimum_refusal(
-    negotiated: &Negotiated,
-    requested_kbps: u32,
-    config: &butterpollo_core::config::Config,
-) -> Option<String> {
-    if negotiated.codec != 3 || config.pyrowave_allow_below_minimum() {
-        return None;
+/// Notes a PyroWave stream below the bitrate where the project's test scenes kept detail: the
+/// console card and the log say so, and the stream still starts. The floor is the same function
+/// link-rate adaptation stops at, so the two agree, and a client asking exactly the floor is not
+/// below it just because the picture gives up a few Mbps to sound and control.
+fn note_pyrowave_minimum(warnings: &butterpollo_core::session::Warnings, stream: &Negotiated) {
+    if stream.codec != 3 {
+        warnings.clear("pyrowave_minimum");
+        return;
     }
-    let ceiling = config
-        .integer("max_bitrate", 0)
-        .clamp(0, i64::from(u32::MAX)) as u32;
-    let wire = if ceiling > 0 {
-        requested_kbps.min(ceiling)
-    } else {
-        requested_kbps
-    };
+    let floor = butterpollo_core::link_rate::pyrowave_floor_kbps(stream);
+    let bitrate = stream.bitrate_kbps;
+    if bitrate >= floor {
+        warnings.clear("pyrowave_minimum");
+        return;
+    }
     let minimum = butterpollo_core::pyrowave::minimum_kbps(
-        negotiated.width,
-        negotiated.height,
-        negotiated.fps_millihz(),
+        stream.width,
+        stream.height,
+        stream.fps.saturating_mul(1000),
     );
-    (wire < minimum).then(|| {
-        format!(
-            "PyroWave at {}x{} at {} fps needs at least {} Mbps, and this stream gets {} Mbps: lower the resolution or frame rate, use HEVC or AV1, or turn on \"Stream PyroWave below its minimum bitrate\" in the host console to stream it anyway",
-            negotiated.width,
-            negotiated.height,
-            negotiated.fps_millihz().div_ceil(1000),
-            minimum.div_ceil(1000),
-            wire.div_ceil(1000)
-        )
-    })
+    let detail = format!(
+        "PyroWave at {}x{} at {} fps is below the level where the project's test scenes kept detail: {} Mbps or more, and this stream gets {} Mbps. Text and textures may lose detail; raise the client bitrate with network headroom, lower the resolution or frame rate, or use HEVC or AV1.",
+        stream.width,
+        stream.height,
+        stream.fps,
+        minimum.div_ceil(1000),
+        bitrate.div_ceil(1000)
+    );
+    tracing::warn!(
+        bitrate_kbps = bitrate,
+        floor_kbps = floor,
+        minimum_kbps = minimum,
+        "PyroWave bitrate is below the level where the project's test scenes kept detail"
+    );
+    warnings.set("pyrowave_minimum", detail);
 }
 
 #[cfg(test)]
@@ -713,7 +690,7 @@ mod tests {
         assert!(warnings.snapshot().is_empty());
     }
 
-    fn pyrowave_stream(bitrate_kbps: u32) -> Negotiated {
+    fn pyrowave_stream(bitrate_kbps: u32, configured_kbps: u32) -> Negotiated {
         Negotiated {
             codec: 3,
             width: 3840,
@@ -721,60 +698,61 @@ mod tests {
             fps: 120,
             rate_millihz: 120_000,
             bitrate_kbps,
+            configured_bitrate_kbps: configured_kbps,
             ..Negotiated::default()
         }
     }
 
-    fn host_config(values: &[(&str, &str)]) -> butterpollo_core::config::Config {
-        butterpollo_core::config::Config {
-            values: values
-                .iter()
-                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
-                .collect(),
-        }
+    #[test]
+    fn a_pyrowave_stream_below_the_test_scene_level_is_warned_about_not_refused() {
+        let warnings = Warnings::default();
+        note_pyrowave_minimum(&warnings, &pyrowave_stream(799_000, 800_000));
+        let shown = warnings.snapshot();
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].code, "pyrowave_minimum");
+        assert!(
+            shown[0].message.contains("1493 Mbps"),
+            "{}",
+            shown[0].message
+        );
+        assert!(
+            shown[0].message.contains("799 Mbps"),
+            "{}",
+            shown[0].message
+        );
+        // At the floor the client asked for, the picture's few Mbps to sound and control do not
+        // count as below it: the game runs, with no warning.
+        note_pyrowave_minimum(&warnings, &pyrowave_stream(1_489_420, 1_492_992));
+        assert!(warnings.snapshot().is_empty());
+        // Another codec clears a warning left by an earlier negotiation.
+        note_pyrowave_minimum(&warnings, &pyrowave_stream(799_000, 800_000));
+        let mut hevc = pyrowave_stream(799_000, 800_000);
+        hevc.codec = 1;
+        note_pyrowave_minimum(&warnings, &hevc);
+        assert!(warnings.snapshot().is_empty());
     }
 
     #[test]
-    fn a_pyrowave_stream_below_the_modes_minimum_is_refused_with_the_numbers() {
-        let refused =
-            pyrowave_minimum_refusal(&pyrowave_stream(799_000), 799_000, &host_config(&[]))
-                .expect("4K120 at 799 Mbps is below its 1493 Mbps floor");
-        assert!(refused.contains("1493 Mbps"), "{refused}");
-        assert!(refused.contains("799 Mbps"), "{refused}");
-        assert!(
-            refused.contains("pyrowave_allow_below_minimum")
-                || refused.contains("Stream PyroWave below its minimum"),
-            "{refused}"
-        );
-        // At or above the floor, another codec, and the player's explicit setting all stream. The
-        // floor is compared with the number the client set, so asking exactly it is not refused for
-        // the few Mbps the picture gives up to sound and control.
-        assert_eq!(
-            pyrowave_minimum_refusal(&pyrowave_stream(1_492_992), 1_492_992, &host_config(&[])),
-            None
-        );
-        assert_eq!(
-            pyrowave_minimum_refusal(&pyrowave_stream(1_500_000), 1_500_000, &host_config(&[])),
-            None
-        );
-        let mut hevc = pyrowave_stream(799_000);
-        hevc.codec = 1;
-        assert_eq!(
-            pyrowave_minimum_refusal(&hevc, 799_000, &host_config(&[])),
-            None
-        );
-        let allowed = host_config(&[("pyrowave_allow_below_minimum", "true")]);
-        assert_eq!(
-            pyrowave_minimum_refusal(&pyrowave_stream(799_000), 799_000, &allowed),
-            None
-        );
-        // A host cap that leaves less than the floor is refused, naming the capped rate.
-        let capped = pyrowave_minimum_refusal(
-            &pyrowave_stream(799_000),
-            2_000_000,
-            &host_config(&[("max_bitrate", "800000")]),
-        )
-        .expect("the host cap leaves 800 Mbps");
-        assert!(capped.contains("800 Mbps"), "{capped}");
+    fn the_floor_uses_the_whole_frame_rate_not_the_fractional_one() {
+        // 59.94 fps must be judged at 60 fps, as the client's minimum is; a stream between the two
+        // floors is warned about.
+        let mut stream = Negotiated {
+            codec: 3,
+            width: 1920,
+            height: 1080,
+            fps: 60,
+            rate_millihz: 59_940,
+            bitrate_kbps: 186_500,
+            configured_bitrate_kbps: 186_500,
+            ..Negotiated::default()
+        };
+        let warnings = Warnings::default();
+        note_pyrowave_minimum(&warnings, &stream);
+        assert_eq!(warnings.snapshot().len(), 1);
+        // The 60 fps floor itself passes.
+        stream.bitrate_kbps = 186_624;
+        stream.configured_bitrate_kbps = 186_624;
+        note_pyrowave_minimum(&warnings, &stream);
+        assert!(warnings.snapshot().is_empty());
     }
 }

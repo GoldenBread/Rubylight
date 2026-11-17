@@ -1143,7 +1143,7 @@ impl Continuity {
 }
 
 /// Encoder kbps the controller never goes below on H.264, HEVC and AV1; PyroWave stops at its
-/// severe-detail-loss rate, as the link-rate controller does.
+/// test-scene detail level, as the link-rate controller does.
 pub const FLOOR_KBPS: u32 = 2_000;
 
 /// The controller with the session's bookkeeping around it, behind one mutex: the joins of a
