@@ -110,7 +110,7 @@ const video: Setting[] = [
     key: SETTING,
     label: 'Stream preset',
     description:
-      'One choice that fills in the AMD and NVIDIA encoder settings you have not set yourself. Balanced suits almost everyone; settings you change below always win.',
+      'One choice for encoder speed against picture quality. Balanced suits almost everyone; settings you change below always win.',
     details:
       'Balanced is Rubylight\'s defaults. Lowest latency limits every frame, recovery keyframes (full pictures the stream restarts from after loss) included, to one frame\'s share of the bitrate, and asks NVENC to split HEVC and AV1 frames across its engines where supported. Reference quality leaves recovery keyframes unlimited, which suits a fast, steady link. No preset changes the rate control. Most values come from our own measurements; the NVIDIA split mode follows NVIDIA\'s documentation and other hosts\' defaults. A device or an app can choose its own preset.',
     category: 'video',
