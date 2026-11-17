@@ -32,7 +32,7 @@
 
 <table>
   <tr>
-    <td width="33%" valign="top"><img src="docs/media/showcase/console-home.png" alt="The Rubylight console's Home page: Ready to play, the last game played, the host name and paired devices, and the first games of the library with their covers."><br><sub><b>The console.</b> Home walks you through pairing and your first game.</sub></td>
+    <td width="33%" valign="top"><img src="docs/media/showcase/console-home.webp" alt="The Rubylight console's Home page: Ready to play, the last game played, the host name and paired devices, and the first games of the library with their covers."><br><sub><b>The console.</b> Home walks you through pairing and your first game.</sub></td>
     <td width="33%" valign="top"><img src="client/docs/assets/shots/tv-home.png" alt="Nightjar's Home on a TV: a game in the hero and a Recently played row of posters with store badges (demo library)."><br><sub><b>Your library on the TV.</b> Every launcher's games, with their covers.</sub></td>
     <td width="33%" valign="top"><img src="client/docs/assets/shots/stream-menu-radeon.png" alt="Nightjar's session menu over a running game: bitrate, the Wi-Fi link, and Radeon Anti-Lag, Radeon Chill and frame rate target changed during the stream (demo stream)."><br><sub><b>Tune it while you play.</b> Bitrate and Radeon settings without leaving the game.</sub></td>
   </tr>
@@ -105,6 +105,13 @@ Open **https://localhost:47990** on the PC and Home walks you through pairing, b
   <tr>
     <td><img src="docs/media/showcase/console-all-settings.png" alt="All settings: six tabs from This PC to Advanced, the Picture tab open with its topics, a search field and one line of explanation per setting."></td>
     <td><img src="docs/media/showcase/console-help.png" alt="Help: what a device needs to connect to this PC, the known problems found in the host log, and the support bundle."></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td><img src="docs/media/showcase/console-settings.webp" alt="Settings: the Stream preset set to Balanced, virtual display, stream resolution and what happens to your monitors, then audio, microphone and controllers, each with a plain explanation."></td>
+    <td><img src="docs/media/showcase/console-sessions.webp" alt="Sessions: the stream running now, then a history of earlier streams with the device, game, picture, frame rate, bitrate, loss, duration and how each ended."></td>
   </tr>
 </table>
 
@@ -265,6 +272,7 @@ Rubylight is licensed under **GPL-3.0**. Everyone who helped, with their GitHub 
 - Thanks to **Nonary** for Vibepollo, **ClassicOldSong** for Apollo, and **LizardByte and the Sunshine contributors**.
 - The AMD encoder's low-latency defaults, the statistical video FEC and the encoder/FEC budget split draw on **qiin2333's** and the contributors' work in AlkaidLab's Foundation Sunshine. The HDR10+ and HDR Vivid metadata writers, their GPU luminance statistics and the HLG encoding curve are ported in part from **the Foundation Sunshine authors'** code (GPL-3.0), as are the AMF video converter option with its HLG prepass and AMD Direct Capture's settings for capturing AMD Fluid Motion Frames, and per-app stream-menu commands and the settings backup and restore follow theirs. The per-app RTX HDR and RTX Video enhancement, and the HDR proxy RTX Video enhancement uses, follow their image enhancement design; the NVIDIA component and its adapter's NGX set-up follow their native sideload components and TrueHDR adapter.
 - The NVIDIA encoder's native YUV 4:4:4 input, its conversion layout and capability check are ported from **LizardByte and the Sunshine contributors'** Sunshine (GPL-3.0), compared against Foundation Sunshine's copy of the same path; the DSCP switch follows Sunshine's.
+- KosmicKrisp, the Vulkan-on-Metal driver Nightjar for macOS bundles, is by **LunarG and the Mesa contributors** (MIT); the Vulkan loader and SPIRV-Tools are by **The Khronos Group** (Apache-2.0).
 - PyroWave and Granite are by **Themaister** (MIT); the PyroWave Moonlight protocol and clients are **joemossjr16's** work.
 - Composite DualSense haptics draw on **Nonary's** Vibepollo protocol and its DualSense rumble-stop fix, **Chase Payne's** libvirtualgamepad USB reports and **HIDMaestro contributors'** composite descriptors.
 - The virtual Steam Controller is **jlobue10's** profile in Nonary's libvirtualgamepad, and the host maps clients onto it as **Nonary's** Vibepollo does.

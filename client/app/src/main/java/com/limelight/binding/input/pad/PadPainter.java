@@ -37,6 +37,8 @@ final class PadPainter {
         boolean stickActive;
         /** A trackpad's finger inside the box, in pixels; NaN while none touches it. */
         float touchX = Float.NaN, touchY = Float.NaN;
+        /** The pointer touchpad's short mode word ("MOUSE" or "CAM"); empty for other controls and in the editor. */
+        String label = "";
 
         void clear() {
             flags = 0; pressed = false; stickX = 0; stickY = 0; centerX = Float.NaN; centerY = Float.NaN; stickActive = false;
@@ -58,6 +60,8 @@ final class PadPainter {
     private final RadialGradient shadowShader = new RadialGradient(0, 0, 1,
             new int[] {0x66000000, 0x4D000000, 0x00000000}, new float[] {0, .8f, 1}, Shader.TileMode.CLAMP);
     private final Paint shadowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    /** The face letters and shoulder names; the layout editor changes it and every view redraws. */
+    private PadLayout.Glyph glyph = PadLayout.Glyph.XBOX;
     /** The stick geometry for the last size drawn, recomputed only when a stick's size changes. */
     private float stickSize = Float.NaN, stickBase, stickKnob;
     private final float[] knobAt = new float[2];
@@ -82,6 +86,10 @@ final class PadPainter {
         return accent;
     }
 
+    void setGlyph(PadLayout.Glyph glyph) {
+        this.glyph = glyph;
+    }
+
     /** Draws {@code control} filling the box ({@code left}, {@code top}, {@code width}, {@code height}). */
     void draw(Canvas canvas, PadLayout.Control control, float left, float top, float width, float height, State state) {
         switch (control.shape) {
@@ -90,6 +98,7 @@ final class PadPainter {
             case FACE: drawFace(canvas, left, top, Math.min(width, height), state.flags); break;
             case PILL: drawPill(canvas, control, left, top, width, height, state.pressed); break;
             case PAD: drawTrackpad(canvas, control, left, top, width, height, state); break;
+            case TOUCHPAD: drawPointerPad(canvas, left, top, width, height, state); break;
             default: drawRound(canvas, control, left, top, Math.min(width, height), state.pressed); break;
         }
     }
@@ -312,7 +321,7 @@ final class PadPainter {
             float cx = left + PadInput.FACE_CENTERS[i][0] * size, cy = top + PadInput.FACE_CENTERS[i][1] * size;
             boolean held = (flags & PadInput.FACE_FLAGS[i]) != 0;
             glass(canvas, held, cx, cy, r);
-            label(canvas, PadInput.FACE_LABELS[i], cx, cy, r * .95f, held);
+            label(canvas, PadGlyphs.face(glyph, i), cx, cy, r * .95f, held);
         }
     }
 
@@ -336,7 +345,8 @@ final class PadPainter {
             canvas.drawLine(rect.centerX(), t + h * .3f, rect.centerX(), t + h * .7f, stroke);
             return;
         }
-        String name = pillLabel(control);
+        String name = PadGlyphs.shoulder(control, glyph);
+        if (name == null) name = pillLabel(control);
         // A long label (the grips') shrinks to stay inside the pill.
         text.setTextSize(rect.height() * .42f);
         float fit = Math.min(1, rect.width() * .8f / Math.max(1, text.measureText(name)));
@@ -367,6 +377,38 @@ final class PadPainter {
             fill.setColor(accent);
             canvas.drawCircle(left + Math.max(0, Math.min(width, state.touchX)), top + Math.max(0, Math.min(height, state.touchY)),
                     size * .09f, fill);
+        }
+    }
+
+    /**
+     * The pointer touchpad: a wide glass pad with a mouse-shaped mark and the mode's short word, so a glance says
+     * whether it moves the pointer or the camera; the finger shows as an amber dot while it touches.
+     */
+    private void drawPointerPad(Canvas canvas, float left, float top, float width, float height, State state) {
+        float inset = stroke.getStrokeWidth();
+        rect.set(left + inset, top + inset, left + width - inset, top + height - inset);
+        float radius = Math.min(rect.width(), rect.height()) * .18f;
+        fill.setColor(state.pressed ? GLASS_STRONG : GLASS);
+        canvas.drawRoundRect(rect, radius, radius, fill);
+        stroke.setColor(state.pressed ? accent : RIM);
+        canvas.drawRoundRect(rect, radius, radius, stroke);
+        float size = Math.min(rect.width(), rect.height());
+        // A small mouse: its body, its two buttons and the wheel between them.
+        float mw = size * .30f, mh = size * .42f;
+        float ml = rect.centerX() - mw / 2, mt = rect.centerY() - mh / 2;
+        stroke.setColor(LABEL);
+        stroke.setStrokeWidth(1.5f * density);
+        rect.set(ml, mt, ml + mw, mt + mh);
+        canvas.drawRoundRect(rect, mw * .45f, mw * .45f, stroke);
+        canvas.drawLine(rect.centerX(), mt, rect.centerX(), mt + mh * .38f, stroke);
+        canvas.drawLine(rect.centerX(), mt + mh * .62f, rect.centerX(), mt + mh, stroke);
+        if (state.label != null && !state.label.isEmpty()) {
+            label(canvas, state.label, rect.centerX(), rect.bottom - size * .10f, size * .16f, state.pressed);
+        }
+        if (state.pressed && !Float.isNaN(state.touchX)) {
+            fill.setColor(accent);
+            canvas.drawCircle(left + Math.max(0, Math.min(width, state.touchX)), top + Math.max(0, Math.min(height, state.touchY)),
+                    size * .10f, fill);
         }
     }
 

@@ -2,8 +2,14 @@
 //!
 //! `cpu` is the Rust decoder with GPU wavelets in the presenter; `gpu` is the SDK's Vulkan decoder
 //! writing planes the presenter draws. Each mode checks only its own requirements: `cpu` never
-//! loads the SDK's library, and `gpu` never falls back to `cpu`, so a missing piece is reported with
-//! its reason instead of being papered over.
+//! loads the SDK's library, and on Windows and Linux `gpu` never falls back to `cpu`, so a missing
+//! piece is reported with its reason instead of being papered over.
+//!
+//! On macOS `gpu` decodes through the Vulkan loader and Mesa's KosmicKrisp driver bundled in
+//! Nightjar.app, which run on Apple silicon with macOS 26 or later only; elsewhere, or when the
+//! driver or the decoder does not start, the stream decodes on the processor and says why
+//! (`mac_choice`). The Mac's default is the processor (`config::PyroWaveDecoder`); `gpu` is a
+//! choice until a Mac measures it.
 
 use crate::config::PyroWaveDecoder;
 
@@ -19,6 +25,71 @@ pub fn availability(
     }
 }
 
+/// The Vulkan loader in `Contents/Frameworks` and KosmicKrisp's manifest in
+/// `Contents/Resources/vulkan/icd.d`, as LunarG lays a Mac app bundle out.
+pub const LOADER_NAME: &str = "libvulkan.1.dylib";
+pub const ICD_NAME: &str = "kosmickrisp_icd.json";
+
+/// The loader and manifest of the bundle whose executable is `exe` (`Contents/MacOS/nightjar`).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn bundle_paths(exe: &std::path::Path) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    let contents = exe.parent()?.parent()?;
+    Some((contents.join("Frameworks").join(LOADER_NAME), contents.join("Resources/vulkan/icd.d").join(ICD_NAME)))
+}
+
+/// The first macOS whose Metal 4 KosmicKrisp needs.
+pub const KOSMICKRISP_MACOS: u32 = 26;
+
+/// What decodes PyroWave on a Mac.
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub enum MacChoice {
+    /// The SDK's decoder on the bundled Vulkan driver.
+    Gpu,
+    /// The Rust decoder; with the reason when the setting asked for the GPU.
+    Cpu(Option<String>),
+}
+
+/// The decoder for a Mac with `arm64` (Apple silicon) and macOS `major`: the GPU decoder where the
+/// setting asks for it and `probe` (the bundled driver and the decoder starting) passes, else the
+/// processor, with the reason the GPU decoder does not run.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn mac_choice(setting: PyroWaveDecoder, arm64: bool, major: u32, probe: impl FnOnce() -> Result<(), String>) -> MacChoice {
+    match setting {
+        PyroWaveDecoder::Cpu => MacChoice::Cpu(None),
+        PyroWaveDecoder::Gpu if !arm64 => MacChoice::Cpu(Some("GPU decoding needs a Mac with Apple silicon".to_owned())),
+        PyroWaveDecoder::Gpu if major < KOSMICKRISP_MACOS => {
+            MacChoice::Cpu(Some(format!("GPU decoding needs macOS {KOSMICKRISP_MACOS} or later, this Mac runs macOS {major}")))
+        }
+        PyroWaveDecoder::Gpu => match probe() {
+            Ok(()) => MacChoice::Gpu,
+            Err(reason) => MacChoice::Cpu(Some(reason)),
+        },
+    }
+}
+
+/// This Mac's macOS major version (`kern.osproductversion`), 0 when unknown.
+#[cfg(target_os = "macos")]
+pub fn macos_major() -> u32 {
+    let mut buffer = [0u8; 32];
+    let mut size = buffer.len();
+    // SAFETY: sysctlbyname writes at most `size` bytes into `buffer` and the length into `size`.
+    let result = unsafe { libc::sysctlbyname(c"kern.osproductversion".as_ptr(), buffer.as_mut_ptr().cast(), &mut size, std::ptr::null_mut(), 0) };
+    if result != 0 {
+        return 0;
+    }
+    let text = std::str::from_utf8(&buffer[..size.min(buffer.len())]).unwrap_or("").trim_end_matches('\0');
+    text.split('.').next().and_then(|major| major.parse().ok()).unwrap_or(0)
+}
+
+/// `mac_choice` for this Mac and `setting`, the probe being `gpu_probe` on the renderer's `device`:
+/// a plane shader that does not build is then the processor's reason, shown as the stream's start
+/// notice, where a probe without the device found out only once the stream asked for a picture.
+#[cfg(target_os = "macos")]
+pub fn this_mac(setting: PyroWaveDecoder, ten_bit: bool, device: *mut std::ffi::c_void) -> MacChoice {
+    mac_choice(setting, cfg!(target_arch = "aarch64"), macos_major(), || gpu_probe(device, ten_bit))
+}
+
 /// `nightjar --check-pyrowave <report file>`: what a package check needs to know without a window
 /// (the Windows exe has no console). It writes `load:` (the SDK library next to the executable
 /// was found, loaded and has a supported ABI) and `probe:` (a decoder builds on the default GPU)
@@ -26,6 +97,12 @@ pub fn availability(
 /// (no usable GPU, as on a CI runner), 1 when the library did not load.
 pub fn package_check(report: &std::path::Path) -> i32 {
     let dir = super::pyrowave_sdk::dll_path().and_then(|dll| dll.parent().map(std::path::Path::to_path_buf)).unwrap_or_default();
+    #[cfg(target_os = "macos")]
+    {
+        let arm64 = cfg!(target_arch = "aarch64");
+        let major = macos_major();
+        eprintln!("nightjar: macOS {major}, {}", if arm64 { "Apple silicon" } else { "Intel" });
+    }
     package_check_at(&dir, report)
 }
 
@@ -39,8 +116,11 @@ fn package_check_at(dir: &std::path::Path, report: &std::path::Path) -> i32 {
             let result = super::pyrowave_sdk::probe(None, false);
             #[cfg(target_os = "linux")]
             let result = super::pyrowave_sdk::probe(false);
-            #[cfg(not(any(windows, target_os = "linux")))]
-            let result: Result<(), String> = Err("PyroWave GPU decoding needs Windows or Linux".to_owned());
+            #[cfg(target_os = "macos")]
+            let result = match mac_choice(PyroWaveDecoder::Gpu, cfg!(target_arch = "aarch64"), macos_major(), || super::pyrowave_sdk::probe(false)) {
+                MacChoice::Gpu => Ok(()),
+                MacChoice::Cpu(reason) => Err(format!("the processor decodes: {}", reason.unwrap_or_default())),
+            };
             result
         }
         Err(_) => Err("skipped: the library did not load".to_owned()),
@@ -82,9 +162,19 @@ pub fn gpu_probe(device: *mut std::ffi::c_void, ten_bit: bool) -> Result<(), Str
     unsafe { super::planes_gpu::PlanesPass::compiles(device.cast(), ten_bit) }
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
-pub fn gpu_probe(_device: *mut std::ffi::c_void, _ten_bit: bool) -> Result<(), String> {
-    Err("PyroWave GPU decoding needs Windows or Linux".to_owned())
+/// The `gpu` mode's requirements on a Mac: the bundled Vulkan driver, a device of the decoder's own
+/// on it and the SDK decoder there (`pyrowave_sdk::probe`); the planes the decoder reads back are
+/// drawn with the Metal plane shader the processor's software pictures use already, which is built
+/// here whenever the caller has the renderer's device.
+#[cfg(target_os = "macos")]
+pub fn gpu_probe(device: *mut std::ffi::c_void, ten_bit: bool) -> Result<(), String> {
+    super::pyrowave_sdk::probe(ten_bit)?;
+    if device.is_null() {
+        // `this_mac` checks before a renderer exists; the launch's own probe passes the device.
+        return Ok(());
+    }
+    // SAFETY: A live device pointer from the renderer; shader creation is thread-safe in SDL.
+    unsafe { super::planes_gpu::PlanesPass::compiles(device.cast(), ten_bit) }
 }
 
 /// The settings probes' results by format, None while one runs, and the threads that run them.
@@ -262,6 +352,39 @@ mod tests {
         let error = gpu_probe(std::ptr::null_mut(), false).unwrap_err();
         assert!(error.contains("SDL GPU renderer"), "{error}");
         assert_eq!(super::super::pyrowave_sdk::Api::shared_loads(), loads);
+    }
+
+    #[test]
+    fn a_mac_decodes_on_the_gpu_only_with_apple_silicon_macos_26_and_a_passing_probe() {
+        use PyroWaveDecoder::{Cpu, Gpu};
+        let never = || -> Result<(), String> { panic!("the probe runs only where the GPU decoder can") };
+        assert_eq!(mac_choice(Cpu, true, 26, never), MacChoice::Cpu(None), "a CPU choice is kept and probes nothing");
+        assert_eq!(mac_choice(Gpu, true, 26, || Ok(())), MacChoice::Gpu);
+        assert_eq!(mac_choice(Gpu, true, 27, || Ok(())), MacChoice::Gpu);
+        let MacChoice::Cpu(Some(intel)) = mac_choice(Gpu, false, 26, never) else { panic!("Intel decodes on the CPU") };
+        assert!(intel.contains("Apple silicon"), "{intel}");
+        let MacChoice::Cpu(Some(old)) = mac_choice(Gpu, true, 15, never) else { panic!("macOS 15 decodes on the CPU") };
+        assert!(old.contains("macOS 26") && old.contains("macOS 15"), "{old}");
+        assert_eq!(mac_choice(Gpu, true, 26, || Err("the bundled Vulkan driver finds no GPU it supports".into())),
+            MacChoice::Cpu(Some("the bundled Vulkan driver finds no GPU it supports".into())), "the probe's reason is kept");
+    }
+
+    #[test]
+    fn a_mac_plane_shader_that_does_not_build_decodes_on_the_processor_and_is_named() {
+        // `gpu_probe` hands the plane shader's error to `mac_choice` when it has the renderer's
+        // device; that is the processor fallback the launch shows as its start notice, not the
+        // refused stream a probe without the device allowed.
+        let reason = "the plane shader cannot be created: its Metal pass does not compile";
+        assert_eq!(mac_choice(PyroWaveDecoder::Gpu, true, 26, || Err(reason.to_owned())),
+            MacChoice::Cpu(Some(reason.to_owned())), "a shader error is the processor's reason");
+    }
+
+    #[test]
+    fn the_bundle_keeps_the_loader_in_frameworks_and_the_manifest_in_resources() {
+        let exe = std::path::Path::new("/Applications/Nightjar.app/Contents/MacOS/nightjar");
+        let (loader, icd) = bundle_paths(exe).unwrap();
+        assert_eq!(loader, std::path::Path::new("/Applications/Nightjar.app/Contents/Frameworks/libvulkan.1.dylib"));
+        assert_eq!(icd, std::path::Path::new("/Applications/Nightjar.app/Contents/Resources/vulkan/icd.d/kosmickrisp_icd.json"));
     }
 
     #[test]

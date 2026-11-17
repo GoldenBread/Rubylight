@@ -3,16 +3,30 @@ package com.limelight;
 import android.content.ContentProvider;
 import android.content.ContentResolver;
 import android.content.ContentValues;
+import android.content.Context;
 import android.content.UriMatcher;
 import android.database.Cursor;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.Typeface;
 import android.net.Uri;
+import android.os.Build;
 import android.os.ParcelFileDescriptor;
+import android.text.Layout;
+import android.text.StaticLayout;
+import android.text.TextPaint;
+import android.text.TextUtils;
+
+import androidx.annotation.RequiresApi;
 
 import com.limelight.grid.assets.DiskAssetLoader;
 import com.limelight.grid.assets.PlaceholderArt;
 
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.util.List;
 
 public class PosterContentProvider extends ContentProvider {
@@ -27,6 +41,9 @@ public class PosterContentProvider extends ContentProvider {
     private static final UriMatcher sUriMatcher;
     private static final String BOXART_PATH = "boxart";
     private static final int BOXART_URI_ID = 1;
+    private static final String TITLE_POSTER_DIR = "tv-posters";
+    private static final int POSTER_WIDTH = 300;
+    private static final int POSTER_HEIGHT = 450;
 
     static {
         sUriMatcher = new UriMatcher(UriMatcher.NO_MATCH);
@@ -59,11 +76,73 @@ public class PosterContentProvider extends ContentProvider {
             throw new FileNotFoundException();
         }
         File file = mDiskAssetLoader.getFile(uuid, appId);
-        // The host's grey stand-in is no poster: the TV home screen shows the title instead.
         if (PlaceholderArt.isCover(file)) {
             return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY);
         }
+        // No cover of the game's own (none cached, or the host's grey stand-in): the poster with the
+        // game's title the channel wrote, since the TV home screen draws a failed poster as an
+        // empty grey card. Only the app writes posters; this only reads them.
+        File poster = titlePosterFile(getContext(), uuid, appId);
+        if (poster.isFile()) {
+            return ParcelFileDescriptor.open(poster, ParcelFileDescriptor.MODE_READ_ONLY);
+        }
         throw new FileNotFoundException();
+    }
+
+    /** Where the title poster of the game with cover key {@code appId} on PC {@code uuid} is kept. */
+    public static File titlePosterFile(Context context, String uuid, String appId) {
+        return new File(new File(context.getCacheDir(), TITLE_POSTER_DIR), uuid + "-" + appId + ".png");
+    }
+
+    /**
+     * Writes the poster with the game's title the provider serves while the game has no cover of its
+     * own (TvChannelHelper, for a channel's card).
+     */
+    @RequiresApi(Build.VERSION_CODES.M)
+    public static void writeTitlePoster(Context context, String uuid, String appId, String title) throws IOException {
+        writeTitlePoster(titlePosterFile(context, uuid, appId), title.trim(),
+                context.getColor(R.color.night_primary_container), context.getColor(R.color.night_on_primary_container));
+    }
+
+    /** The title on the app's colours at the size the cached covers have (2:3, as the channel's cards). */
+    @RequiresApi(Build.VERSION_CODES.M)
+    static void writeTitlePoster(File target, String title, int background, int text) throws IOException {
+        File dir = target.getParentFile();
+        if (dir != null && !dir.isDirectory() && !dir.mkdirs()) {
+            throw new IOException("cannot create " + dir);
+        }
+        Bitmap bitmap = Bitmap.createBitmap(POSTER_WIDTH, POSTER_HEIGHT, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap);
+        canvas.drawColor(background);
+        TextPaint paint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+        paint.setColor(text);
+        paint.setTextSize(POSTER_WIDTH / 9f);
+        paint.setTypeface(Typeface.DEFAULT_BOLD);
+        int margin = POSTER_WIDTH / 10;
+        StaticLayout layout = StaticLayout.Builder.obtain(title, 0, title.length(), paint, POSTER_WIDTH - 2 * margin)
+                .setAlignment(Layout.Alignment.ALIGN_CENTER)
+                .setMaxLines(6)
+                .setEllipsize(TextUtils.TruncateAt.END)
+                .build();
+        canvas.save();
+        canvas.translate(margin, Math.max(margin, (POSTER_HEIGHT - layout.getHeight()) / 2f));
+        layout.draw(canvas);
+        canvas.restore();
+        File temporary = File.createTempFile("poster-", ".tmp", dir);
+        try {
+            try (FileOutputStream out = new FileOutputStream(temporary)) {
+                if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                    throw new IOException("PNG encoding failed");
+                }
+            }
+            if (!temporary.renameTo(target)) {
+                throw new IOException("cannot publish " + target);
+            }
+        } finally {
+            bitmap.recycle();
+            //noinspection ResultOfMethodCallIgnored
+            temporary.delete();
+        }
     }
 
     @Override

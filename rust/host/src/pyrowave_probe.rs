@@ -29,8 +29,6 @@ pub fn bind(local: IpAddr) -> Result<ReplySocket> {
         socket2::Domain::IPV4
     };
     let socket = socket2::Socket::new(domain, socket2::Type::DGRAM, Some(socket2::Protocol::UDP))?;
-    // A frame-shaped burst at a fast pace queues many packets at once.
-    let _ = socket.set_send_buffer_size(4 * 1024 * 1024);
     socket.bind(&SocketAddr::new(local, 0).into())?;
     socket.set_nonblocking(true)?;
     Ok(ReplySocket::new(UdpSocket::from(socket))?)
@@ -116,6 +114,11 @@ pub fn send(socket: &ReplySocket, peer: SocketAddr, request: &Request) -> Result
     let start = Instant::now();
     let mut pacer = butterpollo_core::network_pacing::Pacer::new(start);
     let pace_bps = u64::from(request.burst.map_or(request.kbps, |burst| burst.pace_kbps)) * 1000;
+    // The stream sizes its socket to its pace; use the same buffer here, so a
+    // probe at 800 Mbps is not measured with 4 MiB the stream never has.
+    let _ = socket2::SockRef::from(&**socket).set_send_buffer_size(
+        butterpollo_core::network_pacing::paced_send_buffer(pace_bps),
+    );
     let batch_limit =
         butterpollo_core::network_pacing::pyrowave_batch_limit(pace_bps, packet_len, ipv6);
     // An overloaded sender stops instead of queueing an ever later probe.

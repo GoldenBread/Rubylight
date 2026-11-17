@@ -329,6 +329,9 @@ unsafe impl Send for Hardware {}
 /// environment variables win over them for test runs.
 static VULKAN_VIDEO_FIRST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static VULKAN_RFI: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The Debug setting "VideoToolbox recovery" (`Settings::videotoolbox_rfi`) of the stream being
+/// set up, off by default; `NIGHTJAR_VIDEOTOOLBOX_RFI` wins over it.
+static VIDEOTOOLBOX_RFI: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Takes the Vulkan video Debug settings of the stream about to start, before any decoder order
 /// or capability is worked out for it.
@@ -345,6 +348,17 @@ fn vulkan_video_first_setting() -> bool {
 /// The "Vulkan video recovery" setting ([`use_vulkan_video_settings`]).
 pub fn vulkan_rfi_setting() -> bool {
     VULKAN_RFI.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Takes the "VideoToolbox recovery" setting of the stream about to start, before its decoder
+/// capabilities are worked out.
+pub fn use_videotoolbox_rfi_setting(rfi: bool) {
+    VIDEOTOOLBOX_RFI.store(rfi, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The "VideoToolbox recovery" setting ([`use_videotoolbox_rfi_setting`]).
+pub fn videotoolbox_rfi_setting() -> bool {
+    VIDEOTOOLBOX_RFI.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 impl Hardware {

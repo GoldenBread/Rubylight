@@ -331,6 +331,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             InputDeviceContext context = prepareInputDevice(deviceId);
             if (context != null) sendControllerInputPacket(context);
         }
+        announcePresence();
     }
 
     @Override
@@ -345,6 +346,82 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             context.destroy();
             if (context.external && context.assignedControllerNumber) announceBuiltInControls(context.controllerNumber);
         }
+        announcePresence();
+    }
+
+    /** Tells a listener when a physical controller comes or goes, so the on-screen controls can step aside. */
+    public interface PresenceListener {
+        void onControllerPresenceChanged(boolean connected);
+    }
+
+    private PresenceListener presenceListener;
+    private boolean externalPresent;
+
+    public synchronized void setPresenceListener(PresenceListener listener) {
+        presenceListener = listener;
+        externalPresent = hasExternalControllers();
+    }
+
+    /** An external gamepad is connected: Bluetooth or USB, not the handheld's own built-in controls. */
+    public synchronized boolean hasExternalControllers() {
+        for (InputDeviceContext context : inputDeviceContexts.values()) {
+            // A handheld's own pad is always there; counting it would keep the touch controls off for good. A remote
+            // or an ordinary keyboard is not a controller either.
+            InputDevice device = context.inputDevice;
+            if (device != null && countsAsExternalController(context.external, isGamepadDevice(device),
+                    isRemoteControlDevice(device), isAlphabeticKeyboard(device), isHandheldControls(device))) {
+                return true;
+            }
+        }
+        if (!usbDeviceContexts.isEmpty()) return true;
+        // Before the first input event, look at what is attached rather than waiting for it to send one.
+        if (inputManager == null) return false;
+        for (int id : inputManager.getInputDeviceIds()) {
+            InputDevice device = inputManager.getInputDevice(id);
+            if (device != null && countsAsExternalController(isExternal(device), isGamepadDevice(device),
+                    isRemoteControlDevice(device), isAlphabeticKeyboard(device), isHandheldControls(device))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether an attached device counts as a physical controller beside the touch controls: Android lists it as
+     * external, it has gamepad buttons or sticks, it is neither a remote nor an ordinary keyboard, and it is not the
+     * handheld's own pad.
+     */
+    static boolean countsAsExternalController(boolean external, boolean gamepad, boolean remote, boolean keyboard,
+                                              boolean handheldControls) {
+        return external && gamepad && !remote && !keyboard && !handheldControls;
+    }
+
+    /**
+     * Whether the device is a controller at all: gamepad buttons or sticks. A fight stick or an NES-style pad with
+     * only a hat and buttons has no X/Y sticks and still counts.
+     */
+    private static boolean isGamepadDevice(InputDevice device) {
+        return hasJoystickAxes(device) || hasGamepadButtons(device);
+    }
+
+    /**
+     * Whether this is an ordinary keyboard rather than a pad that also types: its layout is alphabetic and it has
+     * neither gamepad buttons nor the gamepad's A button.
+     */
+    private static boolean isAlphabeticKeyboard(InputDevice device) {
+        return device.getKeyboardType() == InputDevice.KEYBOARD_TYPE_ALPHABETIC &&
+                !hasGamepadButtons(device) && !device.hasKeys(KeyEvent.KEYCODE_BUTTON_A)[0];
+    }
+
+    private void announcePresence() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainThreadHandler.post(this::announcePresence);
+            return;
+        }
+        boolean now = hasExternalControllers();
+        if (now == externalPresent) return;
+        externalPresent = now;
+        if (presenceListener != null) presenceListener.onControllerPresenceChanged(now);
     }
 
     // This can happen when gaining/losing input focus with some devices.
@@ -377,6 +454,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
         // Stop new device contexts from being created or used
         stopped = true;
+        presenceListener = null;
 
         // Unregister our input device callbacks
         inputManager.unregisterInputDeviceListener(this);
@@ -1823,14 +1901,15 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     }
 
     /**
-     * Whether a gamepad Android lists as external is a handheld's built-in controls. A Retroid
-     * Pocket's is "Xbox Wireless Controller" with its maker's vendor ID (0x2022:0x3002) on an
-     * internal bus. So: named Xbox without Microsoft's vendor ID, the only gamepad, and not an
-     * attached USB device. A real Xbox pad has Microsoft's ID, and a USB pad is in the USB list.
+     * Whether a gamepad Android lists as external is a handheld's built-in controls. A Retroid Pocket's is
+     * "Xbox Wireless Controller" with its maker's vendor ID (0x2022:0x3002) on an internal bus. So: named Xbox
+     * without Microsoft's vendor ID, the only gamepad, and absent from the USB device list, which is where an
+     * attached pad appears. A real Xbox pad has Microsoft's ID, and a USB pad is in the list.
      */
     static boolean looksLikeHandheldControls(String name, int vendorId, boolean onlyGamepad, boolean attachedUsb) {
-        return name != null && name.toLowerCase(java.util.Locale.ROOT).contains("xbox") &&
-                vendorId != 0x045e && vendorId != 0 && onlyGamepad && !attachedUsb;
+        return !attachedUsb && onlyGamepad && name != null &&
+                name.toLowerCase(java.util.Locale.ROOT).contains("xbox") &&
+                vendorId != 0x045e && vendorId != 0;
     }
 
     /**
@@ -4824,6 +4903,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             usbDeviceContexts.remove(controller.getControllerId());
             if (context.assignedControllerNumber) announceBuiltInControls(context.controllerNumber);
         }
+        announcePresence();
     }
 
     @Override
@@ -4839,6 +4919,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         UsbDeviceContext context = createUsbDeviceContextForDevice(controller);
         usbDeviceContexts.put(controller.getControllerId(), context);
         if (connectionStarted && conn.canSendControllerInput()) sendControllerInputPacket(context);
+        announcePresence();
     }
 
     class GenericControllerContext {

@@ -349,7 +349,7 @@ fn query_devices() -> Result<Vec<DeviceCaps>, String> {
     }
 }
 
-unsafe fn caps_of(instance: &ash::Instance, device: vk::PhysicalDevice) -> DeviceCaps {
+pub unsafe fn caps_of(instance: &ash::Instance, device: vk::PhysicalDevice) -> DeviceCaps {
     let mut subgroup = vk::PhysicalDeviceSubgroupProperties::default();
     let mut properties = vk::PhysicalDeviceProperties2::default().push_next(&mut subgroup);
     instance.get_physical_device_properties2(device, &mut properties);

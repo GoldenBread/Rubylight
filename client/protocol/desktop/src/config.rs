@@ -105,7 +105,10 @@ pub enum DecoderPreference {
 /// by the PyroWave library's Vulkan decoder (docs/pyrowave-decode.md). `Gpu` never falls back
 /// to the CPU: when the library or the adapter cannot do it, PyroWave is not offered and the
 /// reason is shown. The default is `Gpu` on Windows and Linux (the ABBAs in docs/pyrowave-decode.md:
-/// lower `receive_to_present_ms` at p50 and p95 and no lower fps on every leg). A Linux client
+/// lower `receive_to_present_ms` at p50 and p95 and no lower fps on every leg) and `Cpu` on macOS.
+/// There `Gpu` decodes through the bundled KosmicKrisp Vulkan driver on Apple silicon with macOS 26
+/// or later and falls back to `Cpu` with a notice elsewhere (`pyrowave_mode::mac_choice`); it stays
+/// a choice until a Mac measures it. A Linux client
 /// without `libpyrowave-shared.so` (a source build; `package-linux.sh -s` ships it) fails the probe
 /// like a Windows one without the DLL: PyroWave is not offered, with the reason and the way out
 /// (switch to `Cpu`); every other codec works.
@@ -323,11 +326,20 @@ pub enum Upscaling {
     /// The GPU vendor's video super resolution and, on NVIDIA, RTX Video HDR (`stream::enhance`);
     /// offered only where the probe finds them (Direct3D 11).
     Ai,
+    /// macOS 13+ MetalFX spatial scaler, offered after a device probe.
+    MetalFx,
 }
 
 impl Upscaling {
     pub fn label(self) -> &'static str {
-        match self { Self::Bilinear => "Bilinear", Self::Fsr1 => "FSR 1", Self::Sgsr1 => "SGSR 1", Self::Sgsr2 => en("Temporal (SGSR 2)"), Self::Ai => en("AI enhancement") }
+        match self {
+            Self::Bilinear => "Bilinear",
+            Self::Fsr1 => "FSR 1",
+            Self::Sgsr1 => "SGSR 1",
+            Self::Sgsr2 => en("Temporal (SGSR 2)"),
+            Self::Ai => en("AI enhancement"),
+            Self::MetalFx => "MetalFX",
+        }
     }
 
     /// The shader upscalers (`stream::upscale`), which take the sharpness setting.
@@ -420,7 +432,8 @@ pub struct Settings {
     pub host_frame_times: bool,
     /// Fractional V-Sync (Android's `checkbox_fractional_vsync`): with V-Sync pacing on a display
     /// that refreshes at 2 to 4 times the stream's rate, each picture stays for exactly that many
-    /// refreshes (`nightjar_policy::vsync::refreshes_per_frame`, the sync interval on Windows).
+    /// refreshes (`nightjar_policy::vsync::refreshes_per_frame`). The client holds each picture until
+    /// the refresh that opens its turn and keeps the swap chain's sync interval at 1.
     pub fractional_vsync: bool,
     /// The performance overlay is on (Android's `checkbox_enable_perf_overlay`), showing
     /// `overlay_mode` in the `overlay_position` corner. The stream menu and its shortcut change
@@ -594,6 +607,9 @@ pub struct Settings {
     /// Debug, Linux: Vulkan video recovers lost frames with reference frame invalidation. Off by
     /// default, unmeasured (`NIGHTJAR_VULKAN_RFI` overrides it).
     pub vulkan_rfi: bool,
+    /// Debug, macOS: VideoToolbox recovers lost frames with reference frame invalidation. Off by
+    /// default, unmeasured on a Mac (`NIGHTJAR_VIDEOTOOLBOX_RFI` overrides it).
+    pub videotoolbox_rfi: bool,
     /// Video: PyroWave's GPU decoder decodes on a separate compute queue where the GPU has one
     /// (`stream::pyrowave_sdk::queue`); without one it changes nothing. Off by default: the client
     /// it is ported from reverted it for delaying Wayland presentation, and the ABBA on the 780M
@@ -1227,6 +1243,7 @@ impl Default for Settings {
             software_slices: false,
             vulkan_video_first: false,
             vulkan_rfi: false,
+            videotoolbox_rfi: false,
             pyrowave_async_compute: false,
             auto_reconnect: true,
             auto_reconnect_default_on: true,
@@ -1282,7 +1299,7 @@ impl Settings {
         [
             (self.experimental_packed_444, "packed full chroma"),
             (self.codec.is_pyrowave(), en("PyroWave")),
-            (self.upscaling != Upscaling::Bilinear, "upscaling"),
+            (self.upscaling.is_shader() || self.upscaling == Upscaling::Ai, "upscaling"),
             (self.prefer_yuv444, "4:4:4"),
             (self.sdr_10bit, "10-bit SDR"),
             (self.hdr, en("HDR")),

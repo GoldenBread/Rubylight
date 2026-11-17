@@ -8,6 +8,7 @@ on:
     branches: [main]
     paths:
       - 'client/protocol/**'
+      - 'client/scripts/**'
       - 'client/app/build.gradle'
       - 'client/app/src/main/assets/**'
       - 'client/app/src/main/res/**'
@@ -77,3 +78,74 @@ jobs:
           python3 desktop/package-macos.py --debug --arch x86_64 --zip
           ditto -x -k target/x86_64-apple-darwin/debug/Nightjar-*-macos-x86_64.zip "$RUNNER_TEMP/intel-archive"
           python3 desktop/tests/verify_macos_bundle.py --arch x86_64 --inspect-only "$RUNNER_TEMP/intel-archive/Nightjar.app"
+
+  # PyroWave's GPU decoder on Apple silicon: Mesa's KosmicKrisp Vulkan driver (Metal 4, macOS 26)
+  # and the Vulkan loader, built and cached here, then a check that the loader finds the driver
+  # through the manifest the app ships. The runner is a virtual Mac: whether its GPU takes
+  # KosmicKrisp is printed, not required.
+  kosmickrisp:
+    name: KosmicKrisp on macos-26
+    runs-on: macos-26
+    timeout-minutes: 150
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
+      RUSTUP_TOOLCHAIN: stable
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+    defaults:
+      run:
+        working-directory: client/protocol
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install build tools
+        run: |
+          brew install meson ninja cmake pkg-config nasm bison flex libclc spirv-llvm-translator
+          # LLVM 23, the major KosmicKrisp is built and tested with: Homebrew keeps it as llvm@23
+          # once its llvm moves on, and has no llvm@23 while llvm itself is 23.
+          brew install llvm@23 2>/dev/null || brew install llvm
+          rustup toolchain install stable --profile minimal --no-self-update
+      # Restored and saved apart, so a later failing step keeps the 30-minute Mesa build cached.
+      - id: vulkan-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: client/protocol/target/macos-vulkan/*/prefix
+          key: macos-vulkan-${{ runner.arch }}-${{ hashFiles('client/protocol/desktop/macos-vulkan.sh', 'client/protocol/desktop/macos-vulkan-requirements.txt') }}
+      - name: Build KosmicKrisp and the Vulkan loader
+        run: |
+          set -o pipefail
+          desktop/macos-vulkan.sh "$PWD/target/macos-vulkan" | tee "$RUNNER_TEMP/macos-vulkan.log"
+          prefix=$(tail -n1 "$RUNNER_TEMP/macos-vulkan.log")
+          echo "VULKAN_PREFIX=$prefix" >> "$GITHUB_ENV"
+          cat "$prefix/build-info.txt"
+      - if: steps.vulkan-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: client/protocol/target/macos-vulkan/*/prefix
+          key: macos-vulkan-${{ runner.arch }}-${{ hashFiles('client/protocol/desktop/macos-vulkan.sh', 'client/protocol/desktop/macos-vulkan-requirements.txt') }}
+      - name: The loader finds KosmicKrisp through a bundle-style manifest
+        run: |
+          icd="$RUNNER_TEMP/kosmickrisp_icd.json"
+          printf '{"file_format_version": "1.0.1", "ICD": {"library_path": "%s", "api_version": "1.4.0", "is_portability_driver": false}}\n' "$VULKAN_PREFIX/lib/libvulkan_kosmickrisp.dylib" > "$icd"
+          sw_vers
+          system_profiler SPDisplaysDataType | sed -n '1,20p'
+          VK_LOADER_DEBUG=driver python3 desktop/tests/macos_vulkan_probe.py "$VULKAN_PREFIX/lib/libvulkan.1.dylib" "$icd"
+      - name: Build the PyroWave SDK for macOS
+        run: |
+          set -o pipefail
+          brew install vulkan-headers
+          VULKAN_HEADERS_DIR="$(brew --prefix vulkan-headers)/include"             ../scripts/build-pyrowave-sdk.sh -o "$PWD/target/pyrowave-sdk" -H "$GITHUB_WORKSPACE"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: client/protocol/target/macos-native/*/prefix
+          key: macos-media-${{ runner.arch }}-${{ hashFiles('client/protocol/desktop/macos-deps.sh') }}
+      # As release.yml's arm64 leg packages it: a release build, zipped, then unpacked and checked.
+      - name: Package the release Nightjar.app with KosmicKrisp and the PyroWave SDK
+        run: |
+          python3 desktop/package-macos.py --arch arm64 --zip --vulkan "$VULKAN_PREFIX" --pyrowave-sdk "$PWD/target/pyrowave-sdk"
+          zip=$(ls target/aarch64-apple-darwin/release/Nightjar-*-macos-arm64.zip)
+          ditto -x -k "$zip" "$RUNNER_TEMP/unpacked"
+          python3 desktop/tests/verify_macos_bundle.py --arch arm64 --kosmickrisp "$RUNNER_TEMP/unpacked/Nightjar.app"
+      - name: PyroWave GPU decoder smoke, or its named CPU fallback
+        run: desktop/tests/pyrowave_mac_smoke.sh "$RUNNER_TEMP/unpacked/Nightjar.app"

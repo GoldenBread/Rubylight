@@ -42,6 +42,12 @@ pub(super) fn run(
             frame
         };
         let Some(mut frame) = frame else { continue };
+        // One frame's send may wait about a picture period for room in a full
+        // socket (a busy CPU keeps it full for tens of milliseconds); then the
+        // rest of this picture is abandoned rather than spreading its holes.
+        batch.begin_frame(network_pacing::frame_send_wait(
+            current.stream_mode().period(),
+        ));
         let report = route_check.due(Instant::now(), frame.peer);
         let route = link_watch.get(frame.peer);
         let client = client_path(&current);
@@ -74,6 +80,7 @@ pub(super) fn run(
             .video_frame
             .store(u64::from(frame.wire_frame) + 1, Ordering::Release);
         let mut handed = std::mem::take(&mut frame.blocks).into_iter();
+        let mut stalled = false;
         while let Some(packets) = handed
             .next()
             .or_else(|| frame.streamed.then(|| next_block(shared)).flatten())
@@ -96,6 +103,7 @@ pub(super) fn run(
                     return Ok(());
                 }
                 let count = Batch::count(remaining, batch_limit(bps, remaining[0].len(), ipv6));
+                let dropped = batch.dropped;
                 let bytes = batch.send(&socket, &remaining[..count], frame.peer)?;
                 if bytes > 0 {
                     current
@@ -115,14 +123,27 @@ pub(super) fn run(
                     .bytes
                     .fetch_add(bytes as u64, Ordering::Relaxed);
                 remaining = &remaining[count..];
+                // The socket stayed full for this whole frame's wait: give up
+                // the rest of this picture, not the later ones.
+                if bytes == 0 && batch.dropped > dropped && batch.frame_wait_spent() {
+                    stalled = true;
+                    break;
+                }
             }
             shared.pool.give(packets);
+            if stalled {
+                break;
+            }
         }
+        if stalled {
+            discard_rest(shared, handed, frame.streamed);
+        }
+        batch.end_frame();
         // The next frame's blocks may leave as they are built.
         let abandoned = {
             let mut ready = shared.ready.lock().unwrap();
             ready.sending = false;
-            std::mem::take(&mut ready.abandoned)
+            std::mem::take(&mut ready.abandoned) || stalled
         };
         if batch.dropped != packets_dropped {
             host_dropped(
@@ -199,6 +220,26 @@ pub(super) fn next_block(shared: &Slot) -> Option<PacketBlock> {
             .wait_timeout(ready, Duration::from_millis(20))
             .unwrap()
             .0;
+    }
+}
+
+/// The blocks of a stalled frame nobody will send go back to the pool: the
+/// rest of those handed over with it and, for a frame handed over block by
+/// block, every later block the packetizer still builds. Left queued they
+/// keep [`Ready::idle`] false for the rest of the session, so no later frame
+/// leaves block by block, and they never return to the pool.
+pub(super) fn discard_rest(
+    shared: &Slot,
+    handed: impl Iterator<Item = PacketBlock>,
+    streamed: bool,
+) {
+    for block in handed {
+        shared.pool.give(block);
+    }
+    if streamed {
+        while let Some(block) = next_block(shared) {
+            shared.pool.give(block);
+        }
     }
 }
 
@@ -331,14 +372,14 @@ fn pace(current: &Session, config: &Config, kbps: u32, wire_frame: u32, route: L
 /// the network's: the client's report of the frame is not counted against the
 /// link, and the link-rate controller counts it as a send loss (E3).
 fn host_dropped(current: &Session, wire_frame: u32, oversized: bool, transient: bool) {
-    current.keyframe_abandoned(wire_frame);
+    current.keyframe_abandoned_as(wire_frame, transient);
     current.request_send_loss_recovery();
     if oversized {
         // The path's MTU refused the datagrams, not a transient socket error.
         crate::video_send::oversized_warning(current);
     }
     if transient {
-        current.launch.warnings.event("network_send", "PyroWave video packets were dropped by the host after transient socket send failures. Lower bitrate and check the network adapter; the log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
+        current.launch.warnings.event("network_send", "The PC could not send the video fast enough (its CPU or network adapter fell behind), so PyroWave video packets were dropped and the client may stutter. Close other work on the PC, or lower the bitrate, resolution or frame rate. The log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
     }
 }
 

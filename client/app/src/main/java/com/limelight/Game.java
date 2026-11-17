@@ -7,6 +7,7 @@ import com.limelight.binding.input.capture.InputCaptureProvider;
 import com.limelight.binding.input.touch.TrackpadPointer;
 import com.limelight.binding.input.driver.UsbDriverService;
 import com.limelight.binding.input.evdev.EvdevListener;
+import com.limelight.binding.input.pad.PointerMove;
 import com.limelight.binding.input.virtual_controller.VirtualController;
 import com.limelight.binding.video.DecoderSetupFailure;
 import com.limelight.binding.video.DisplayCapsReporter;
@@ -105,6 +106,9 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
     // Set while the host sends its cursor shapes for the Local cursor; read on the control thread.
     volatile HostCursorShapes hostCursorShapes;
     boolean nativeTouchEnabled;
+    // The modern controller's pointer touchpad, in the host's pixels as the screen touchpad is.
+    final PointerMove pointerMove = new PointerMove();
+    private final int[] pointerMoveDelta = new int[2];
 
     ControllerHandler controllerHandler;
     KeyboardTranslator keyboardTranslator;
@@ -121,6 +125,8 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
     VirtualController virtualController;
     // The modern on-screen controller, used instead of the classic one when the settings ask for it.
     com.limelight.binding.input.pad.ModernController modernController;
+    // An external gamepad is connected; with Hide while a controller is connected the on-screen controls leave.
+    volatile boolean physicalControllerConnected;
     com.limelight.ui.MicButton micButton;
     com.limelight.ui.MenuButton menuButton;
 
@@ -629,8 +635,12 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         if (virtualController != null && prefConfig.onscreenController) {
             // Refresh layout of OSC for possible new screen size
             virtualController.refreshLayout();
+            if (!onscreenControlsShown()) virtualController.hide();
         }
-        // The modern controller and the microphone button follow their frame's size by themselves.
+        // The modern controller follows its frame's size by itself, but portrait and landscape have their own layouts.
+        if (modernController != null && prefConfig.onscreenController) {
+            modernController.onOrientationChanged();
+        }
 
         videoOutput.applyVideoScaling();
 
@@ -683,11 +693,8 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
 
                 // Restore overlays to previous state when leaving PiP
 
-                if (virtualController != null && prefConfig.onscreenController && canSendInput) {
-                    virtualController.show();
-                }
-                if (modernController != null && prefConfig.onscreenController && canSendInput) {
-                    modernController.show();
+                if (onscreenControlsShown() && canSendInput) {
+                    showOnscreenController();
                 }
                 touchInput.updateMicButton();
                 touchInput.updateMenuButton();
@@ -1196,42 +1203,152 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         return !adaptiveBitrate && !rateChangeBitrate && !adaptiveQuality;
     }
 
+    // The on-screen controls' switch, Hide while a controller is connected, and whether one is here.
+    boolean onscreenControlsShown() {
+        return prefConfig != null && com.limelight.binding.input.pad.PadVisibility.shouldShow(
+                prefConfig.onscreenController, prefConfig.oscAutoHideOnController, physicalControllerConnected,
+                prefConfig.sendControllers, touchControlsWithPad());
+    }
+
+    /**
+     * The settings that deliberately use the touch controls together with a physical pad: Only L3/R3 supplements the
+     * pad, and, in the one-player-each mode, the on-screen controls can be a player of their own beside it. A pad must
+     * not hide them then.
+     */
+    private boolean touchControlsWithPad() {
+        return prefConfig.onlyL3R3 || (prefConfig.onscreenOwnPlayer && prefConfig.multiController);
+    }
+
+    /** A physical controller came or went: the on-screen controls follow the Hide while a controller is connected setting. */
+    void setPhysicalControllerConnected(boolean connected) {
+        physicalControllerConnected = connected;
+        if (prefConfig == null || !prefConfig.oscAutoHideOnController || !prefConfig.onscreenController) return;
+        if (isFinishing()) return;
+        // An open editor is the player's work; it stays until Done or Cancel, even with a controller in hand.
+        if (connected && modernController != null && modernController.isEditing()) return;
+        if (connected && virtualController != null &&
+                virtualController.getControllerMode() != VirtualController.ControllerMode.Active) return;
+        // The settings decide, not a pad's arrival: Only L3/R3, the on-screen controls as their own player, and
+        // Controllers Off all keep touch with a pad, and this is where their controls used to disappear.
+        if (!onscreenControlsShown()) {
+            hideOnscreenControllers();
+        } else if (!isHidingOverlays && conn != null && conn.canSendInput()) {
+            showOnscreenController();
+        }
+    }
+
+    void hideOnscreenControllers() {
+        if (virtualController != null) {
+            if (virtualController.getControllerMode() != VirtualController.ControllerMode.Active) {
+                // Leaving the editor saves the moved controls, so a controller arriving does not discard them.
+                virtualController.setControllerMode(VirtualController.ControllerMode.Active);
+            }
+            virtualController.hide();
+        }
+        if (modernController != null) {
+            modernController.finishEditing(false);
+            modernController.hide();
+        }
+        if (micButton != null) micButton.place();
+        if (menuButton != null) menuButton.place();
+        if (performanceOverlayScroll != null) performanceOverlayScroll.requestLayout();
+    }
+
     // Creates the on-screen controller the settings ask for, or brings the existing one back.
     void showOnscreenController() {
-        if (prefConfig.modernOnscreenController()) {
-            if (modernController == null) {
-                String game = com.limelight.binding.input.TouchLayout.profileKey(getIntent().getStringExtra(EXTRA_PC_UUID),
-                        app.getAppUuid(), app.getAppId());
-                modernController = new com.limelight.binding.input.pad.ModernController(this,
-                        (FrameLayout) streamView.getParent(), new com.limelight.binding.input.HeldInputState.Sink() {
-                            // The WASD stick: Windows virtual-key codes, sent like the PC keyboard's keys.
-                            @Override public void key(int key, boolean down) { keyboardInput.sendOnScreenKey(key, down); }
-                            @Override public void mouse(int button, boolean down) { }
-                            @Override public void gamepad(int buttons, short leftX, short leftY, short rightX, short rightY,
-                                                          byte leftTrigger, byte rightTrigger) {
-                                // The same on-screen gamepad report as the classic controller.
-                                if (controllerHandler != null) controllerHandler.reportOscState(buttons,
-                                        leftX, leftY, rightX, rightY, leftTrigger, rightTrigger);
-                            }
-                        }, prefConfig, game);
-                // The Steam Controller trackpads, as the classic controller sends them.
-                modernController.setTouchSink((type, pointer, x, y, pressure) -> {
-                    if (controllerHandler != null) controllerHandler.reportOscTouch(type, pointer, x, y, pressure);
-                });
-                modernController.setOnLayoutChanged(() -> {
-                    if (micButton != null) micButton.place();
-                    if (menuButton != null) menuButton.place();
-                });
-                modernController.refreshLayout();
-            }
-            modernController.show();
+        if (!onscreenControlsShown()) {
+            hideOnscreenControllers();
             return;
         }
-        if (virtualController == null) {
-            virtualController = new VirtualController(controllerHandler, (FrameLayout) streamView.getParent(), this);
+        if (prefConfig.modernOnscreenController()) {
+            ensureModernController();
+            // The stream may have turned while a pad kept the controls off the screen, so the switch brings this
+            // orientation's layout back with the controls, as onConfigurationChanged would have.
+            modernController.onOrientationChanged();
+            modernController.show();
+        } else {
+            if (virtualController == null) {
+                virtualController = new VirtualController(controllerHandler, (FrameLayout) streamView.getParent(), this);
+            }
+            virtualController.refreshLayout();
+            virtualController.show();
         }
-        virtualController.refreshLayout();
-        virtualController.show();
+        // The controls came back: the microphone and menu buttons follow the top row again, as after hiding.
+        touchInput.updateMicButton();
+        touchInput.updateMenuButton();
+    }
+
+    /** Builds the modern controller without showing it, so its layout can be edited while a gamepad hides it. */
+    private void ensureModernController() {
+        if (modernController != null) return;
+        String game = com.limelight.binding.input.TouchLayout.profileKey(getIntent().getStringExtra(EXTRA_PC_UUID),
+                app.getAppUuid(), app.getAppId());
+        modernController = new com.limelight.binding.input.pad.ModernController(this,
+                (FrameLayout) streamView.getParent(), new com.limelight.binding.input.HeldInputState.Sink() {
+                    // The WASD stick: Windows virtual-key codes, sent like the PC keyboard's keys.
+                    @Override public void key(int key, boolean down) { keyboardInput.sendOnScreenKey(key, down); }
+                    @Override public void mouse(int button, boolean down) { }
+                    @Override public void gamepad(int buttons, short leftX, short leftY, short rightX, short rightY,
+                                                  byte leftTrigger, byte rightTrigger) {
+                        // The same on-screen gamepad report as the classic controller.
+                        if (controllerHandler != null) controllerHandler.reportOscState(buttons,
+                                leftX, leftY, rightX, rightY, leftTrigger, rightTrigger);
+                    }
+                }, prefConfig, game);
+        // The Steam Controller trackpads, as the classic controller sends them.
+        modernController.setTouchSink((type, pointer, x, y, pressure) -> {
+            if (controllerHandler != null) controllerHandler.reportOscTouch(type, pointer, x, y, pressure);
+        });
+        // The pointer touchpad: the screen touchpad's host-pixel scaling, Trackpad speed, kept fraction and zoom.
+        modernController.setPointerSink(new com.limelight.binding.input.pad.ModernController.PointerSink() {
+            @Override public void move(int dx, int dy) {
+                if (conn == null || streamView.getWidth() <= 0 || streamView.getHeight() <= 0) return;
+                float zoom = trackpadPointer != null && trackpadPointer.isLocalCursor() ?
+                        trackpadPointer.zoomScale() : 1;
+                pointerMove.setViewport(prefConfig.width, prefConfig.height, streamView.getWidth(),
+                        streamView.getHeight(), prefConfig.trackpadSpeed, zoom);
+                if (!pointerMove.move(dx, dy, pointerMoveDelta)) return;
+                // The same route as the screen touchpad: a local cursor, or the mouse's absolute position, needs
+                // trackpadPointer's own bookkeeping, and a plain mouse move is its fallback.
+                if (trackpadPointer != null) {
+                    trackpadPointer.stopMomentum();
+                    trackpadPointer.moveBy((short) pointerMoveDelta[0], (short) pointerMoveDelta[1]);
+                } else {
+                    conn.sendMouseMove((short) pointerMoveDelta[0], (short) pointerMoveDelta[1]);
+                }
+            }
+            @Override public void button(int button, boolean down) {
+                if (conn == null) return;
+                if (down) conn.sendMouseButtonDown((byte) button);
+                else conn.sendMouseButtonUp((byte) button);
+            }
+            @Override public void scroll(int vertical, int horizontal) {
+                if (conn == null) return;
+                if (vertical != 0) conn.sendMouseHighResScroll((short) vertical);
+                if (horizontal != 0) conn.sendMouseHighResHScroll((short) horizontal);
+            }
+        });
+        modernController.setOnLayoutChanged(() -> {
+            if (micButton != null) micButton.place();
+            if (menuButton != null) menuButton.place();
+            // An editor opened while a gamepad kept the controls off brings them back only if it should.
+            if (!onscreenControlsShown()) modernController.hide();
+        });
+        modernController.refreshLayout();
+        // Editing may build the controls while a gamepad keeps them off the screen; the editor itself still shows.
+        if (!onscreenControlsShown()) modernController.hide();
+    }
+
+    /** The controls of the chosen style exist, whether or not a gamepad is keeping them off the screen. */
+    void ensureOnscreenControllers() {
+        if (prefConfig == null) return;
+        if (prefConfig.modernOnscreenController()) {
+            ensureModernController();
+        } else if (virtualController == null) {
+            virtualController = new VirtualController(controllerHandler, (FrameLayout) streamView.getParent(), this);
+            virtualController.refreshLayout();
+            if (!onscreenControlsShown()) virtualController.hide();
+        }
     }
 
     interface RouteProbe { String problem(String host, int port); }

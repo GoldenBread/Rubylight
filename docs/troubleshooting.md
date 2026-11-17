@@ -108,6 +108,8 @@ In the host log, `WebRTC offer's host candidate` and `guest offer's host candida
 
 The stream card shows the active encoder and warnings for the current session. Each warning also writes a `WARN` log line with its cause and a next step. Capture recovery and audio capture warnings clear when those paths recover. Dropped packets, frames and input, and audio device changes, stay on the card for 30 seconds after they last happened. A warning describes a fallback or limitation, not a measured latency penalty.
 
+![The stream card on Home with a warning that the game renders about 48 fps, below the 120 fps the stream can show.](media/showcase/console-source-rate.webp)
+
 - **Encoder failure:** AMF on Radeon and NVENC on NVIDIA are the only encoders for H.264, HEVC and AV1. If the GPU's encoder cannot start, the stream fails with its error in the log; there is no software encoder to fall back to. Check that error and the graphics driver.
 - **Graphics queue conversion or copies:** compute setup failed. A busy game can delay capture or conversion. Lower the game's GPU load or check the graphics driver.
 - **Desktop Duplication or capture interrupted:** WGC or its helper could not capture. UAC and lock screens can cause a temporary change. Unlock the desktop; if the warning persists, check the helper error. A display size change reopens capture.

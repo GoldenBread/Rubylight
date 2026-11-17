@@ -82,13 +82,39 @@ open the host's device permissions and enable **Launch applications** for the pa
 **Control + Option + Shift + Tab** opens the stream menu. **Control + Option + Shift + Q** leaves it.
 
 FSR1, SGSR1, temporal upscaling, planar conversion, packed full chroma and PyroWave's Rust decoder use Metal fragment
-shaders. PyroWave defaults to the CPU decoder on macOS. Its upstream Vulkan SDK backend is available
-on Windows and Linux. HDR requires an HDR display and a compatible host. Live streaming has been
+shaders. On Apple silicon with macOS 26 or later, PyroWave decodes with its upstream Vulkan SDK through
+Mesa's KosmicKrisp driver and the Vulkan loader, which an arm64 `package-macos.py --vulkan <prefix>
+--pyrowave-sdk <folder>` build bundles (`macos-vulkan.sh` builds them, `scripts/build-pyrowave-sdk.sh`
+the SDK); the decoded planes are read back into memory for the Metal renderer. PyroWave defaults to the CPU
+decoder on macOS; the GPU decoder is a choice there, and elsewhere, or when the driver or the decoder does not
+start, the CPU decoder runs and the stream says why. `nightjar
+--check-pyrowave <report>` names which. HDR requires an HDR display and a compatible host. Live streaming has been
 verified on Apple Silicon. The Metal and VideoToolbox
 checks passed on Apple Silicon and on an Intel MacBook Pro with a Radeon Pro 560 running Ventura
 13.7.8. The Intel Mac decoded HEVC Main and Main10. Its hardware probe declined AV1. Live HDR and
 physical controllers still need hardware verification.
 The launcher opens Core Audio when a stream starts, so pairing and browsing work while an audio device is unavailable.
+
+### MetalFX spatial upscaling
+
+On macOS 13+, **Settings → Display & image → Image → Upscaling → MetalFX** appears when
+Apple's device probe reports support. It scales hardware-decoded SDR NV12/P010 video
+on the GPU, including 10-bit SDR. The existing FSR 1 and SGSR 1 options remain available;
+bilinear remains the default. MetalFX controls its own sharpening.
+
+The pass converts the decoder's IOSurface to RGB using the frame's color matrix and range,
+runs the perceptual spatial scaler, then copies to an IOSurface from a ring of four, imported
+by SDL's native Metal renderer. It performs no CPU pixel readback. It currently waits for the GPU before
+handing the result to SDL. The statistics line's GPU time includes conversion, scaling and
+the output copy; it is not total stream latency.
+
+HDR, software decoding, BT.2020 SDR, Frame Warp, formats requiring SDL's GPU renderer (such as
+PyroWave and packed chroma), and native-size or smaller outputs keep the existing presentation
+path; the overlay's upscaling line names which.
+Creation/submission failures fall back to bilinear for the stream. Intel device support must
+be determined by the probe on the actual Mac; Apple Silicon support does not establish it.
+HDR MetalFX color processing and low-bitrate game-image quality remain to be evaluated.
+See [implementation and local measurements](../../docs/macos-metalfx.md).
 
 ### Verify on a Mac
 
@@ -104,6 +130,13 @@ cargo test --locked --manifest-path core/Cargo.toml
 cargo test --locked -p nightjar-desktop --features demo-library --test macos_video -- --ignored --nocapture
 python3 desktop/tests/verify_macos_bundle.py target/release/Nightjar.app
 ```
+
+The Metal check also compares MetalFX's 8-bit and 10-bit SDR output with decoded fixtures,
+when supported. To compare larger frames, set `NIGHTJAR_METALFX_FIXTURE` to a local
+single-frame Annex-B HEVC file without frame reordering while running the check. It warms up five iterations,
+then measures 30 completed draws with synchronous readback for MetalFX, FSR 1 and SGSR 1,
+and saves diagnostic BMPs in the system temporary directory. Those comparison times include
+readback and are not live-stream latency; only MetalFX also reports GPU command time.
 
 The last command uses a previously packaged release app. When checking an Intel cross-build on
 Apple Silicon, add `--arch x86_64 --inspect-only` and supply the Intel app path. Run the same
@@ -369,7 +402,7 @@ The launcher and the stream share one SDL3 window and one `SDL_Renderer`. egui i
 | `NIGHTJAR_FORCE_VAAPI` | Linux: `1` keeps VA-API in the decoder order on a VA driver that wraps another API (nvidia-vaapi-driver, the VDPAU backend). |
 | `NIGHTJAR_VULKAN_VIDEO` | Linux: `1` tries Vulkan video first and picks the GPU renderer for it, `0` leaves Vulkan video out, and the GPU renderer's device is made without its video extensions. |
 | `NIGHTJAR_DESKTOP_RFI` | A/B switch, on unless `0`: reference frame invalidation. |
-| `NIGHTJAR_VULKAN_VIDEO_GPU_FIRST`, `NIGHTJAR_DESKTOP_SLICES`, `NIGHTJAR_VULKAN_RFI` | A/B switches for the Debug settings Vulkan video first, Slices for software decoding and Vulkan video recovery (all off by default): `1` or `0` wins over the setting. |
+| `NIGHTJAR_VULKAN_VIDEO_GPU_FIRST`, `NIGHTJAR_DESKTOP_SLICES`, `NIGHTJAR_VULKAN_RFI`, `NIGHTJAR_VIDEOTOOLBOX_RFI` | A/B switches for the Debug settings Vulkan video first, Slices for software decoding, Vulkan video recovery and VideoToolbox recovery (all off by default): `1` or `0` wins over the setting. |
 | `NIGHTJAR_VAAPI_VULKAN_MAP` | Linux A/B switch, on unless `0`: on the GPU renderer, VA-API opens on the renderer's GPU (its DRM render node) and its pictures are mapped into Vulkan images on the renderer's device (DMA-BUF import, `VK_EXT_image_drm_format_modifier`) for the presenter's GPU copy, instead of being mapped to memory and uploaded. Why the mapping is not used is logged once. |
 | `NIGHTJAR_PYROWAVE_SAMPLE_PLANES` | Linux A/B switch, on unless `0`: where PyroWave decodes on the renderer's Vulkan device, the presenter samples the decoder's planes in place, holding each plane set until the GPU finished the draws that read it, instead of copying them into its own textures first. Which path is used is logged once. |
 | `NIGHTJAR_UNMAPPED_VULKAN_VIDEO` | Linux A/B switch, on unless `0`: on the GPU renderer, a VA-API stream whose pictures cannot be mapped into the renderer's Vulkan images (the reason is logged) is decoded with Vulkan video on the renderer's device instead, where that decodes the stream; `0` keeps VA-API with each picture mapped to memory and uploaded. `1` also takes `NIGHTJAR_VAAPI_VULKAN_MAP=0` for a refusal, for test runs. |

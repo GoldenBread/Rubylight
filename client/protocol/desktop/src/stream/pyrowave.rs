@@ -11,7 +11,6 @@ use rubylight_protocol::pyrowave::{push_container, Records};
 use crate::media::Picture;
 use super::stage_times::Stages;
 use super::pyrowave_sdk::GpuDecoder;
-#[cfg(not(target_os = "macos"))]
 use super::pyrowave_sdk::GpuConfig;
 
 struct Band {
@@ -614,7 +613,6 @@ fn pass_records(records: &mut Records, early: bool, data: &[u8]) {
 /// The PyroWave decoder of a stream, on the CPU or on the GPU (`Settings::pyrowave_decoder`).
 pub enum Pyrowave {
     Cpu(Box<Decoder>),
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
     Gpu(Box<GpuStream>),
 }
 
@@ -911,7 +909,14 @@ impl GpuStream {
         GpuDecoder::for_renderer(device, config).map(Self::with_decoder)
     }
 
-    #[cfg(not(target_os = "macos"))]
+    /// macOS: the SDK decoder on a Vulkan device of its own on the bundled KosmicKrisp driver,
+    /// its planes read back for the Metal renderer (`GpuDecoder::on_own_vulkan`).
+    #[cfg(target_os = "macos")]
+    pub fn new(width: usize, height: usize, chroma444: bool, ten_bit: bool, slots: usize) -> Result<Self, String> {
+        let config = GpuConfig { width: width as u32, height: height as u32, chroma444, ten_bit, slots };
+        GpuDecoder::on_own_vulkan(super::pyrowave_sdk::Api::shared()?, config).map(Self::with_decoder)
+    }
+
     pub fn with_decoder(gpu: GpuDecoder) -> Self {
         let config = gpu.config();
         Self {

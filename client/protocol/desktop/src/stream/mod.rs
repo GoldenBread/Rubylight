@@ -38,6 +38,14 @@ pub(crate) use present::macos_video_check::run as check_metal;
 mod shader;
 mod temporal;
 mod upscale;
+#[cfg(target_os = "macos")]
+mod metalfx;
+pub fn metalfx_supported() -> bool {
+    #[cfg(target_os = "macos")]
+    return metalfx::supported();
+    #[cfg(not(target_os = "macos"))]
+    false
+}
 pub mod frame_warp;
 pub mod enhance;
 #[cfg(windows)]
@@ -494,6 +502,11 @@ pub struct Streaming {
     pub pacer: Pacer,
     pub texture: VideoTexture,
     upscaler: Option<upscale::Upscaler>,
+    #[cfg(target_os = "macos")]
+    metalfx: Option<metalfx::Spatial>,
+    /// Why MetalFX does not draw the current picture (`metalfx::blocker`), for the overlay.
+    #[cfg(target_os = "macos")]
+    metalfx_blocked: Option<&'static str>,
     /// AI enhancement (`config::Upscaling::Ai`) for the current picture shape and output size.
     #[cfg(windows)]
     enhancer: Option<enhance::Enhancer>,
@@ -514,11 +527,19 @@ pub struct Streaming {
     /// A/B run (`present::skips_instead_of_waiting`).
     skip_over_waiting: bool,
     /// `NIGHTJAR_PRESENT_DEADLINE_US` for measurement runs, in place of
-    /// `present::deadline_before_refresh`.
+    /// `present::deadline_before_refresh` (a held stream is aimed at its hold's lead instead,
+    /// `Streaming::present`).
     present_deadline_us: Option<i64>,
-    /// `NIGHTJAR_HELD_MARGIN_US` for measurement runs: how long before its turn a picture held
-    /// by fractional V-Sync is presented (`Streaming::hold_for_turn`).
+    /// `NIGHTJAR_HELD_MARGIN_US` for measurement runs: the desktop's deadline a held picture's turn
+    /// must make, which says which turn a late picture takes (`Streaming::held_margin_us`); the phase
+    /// report aims the host's frames at the present lead instead (`phase::held_present_lead_us`).
     held_margin_us: Option<u64>,
+    /// `NIGHTJAR_HELD_GUARD_US` for measurement runs: how long after the refresh that opens a held
+    /// picture's turn its present goes out, and so how much of the refresh the swap chain has to
+    /// latch it. Read once when the stream starts (`phase::held_guard_from_env`), 0.4 ms unless set,
+    /// and clamped to half a refresh at use; the phase report aims the host's frames at that lead
+    /// (`phase::held_present_lead_us`).
+    held_guard_us: u64,
     /// `NIGHTJAR_HELD_REPORT=0` for measurement runs: a held stream's phase reports count to
     /// each refresh instead of each turn (60 fps on 120 Hz then missed 6.7% of turns, against 0.2%).
     held_report_refresh: bool,
@@ -743,6 +764,10 @@ pub struct Streaming {
     /// Early frames and fallbacks at the last overlay update.
     last_early: (u64, u64),
     last_video: (u64, u64, u64),
+    /// Frames PyroWave's decoder passed over at the last overlay update, the seconds in a row it
+    /// has been behind, and whether the stream has said so (`stats::fell_behind`).
+    last_skipped: u64,
+    behind: stats::Behind,
     started: Instant,
     first_frame: bool,
     /// Pictures in a row the presenter could not show.
@@ -895,6 +920,7 @@ impl Streaming {
             0
         };
         crate::sdl::alt_f4_to_host(true);
+        crate::sdl::keep_screen_awake(true);
         if facts.host_timing {
             let _ = session.send(ClientMessage::HostTimingRequest(HostTimingRequest { enabled: true }));
         }
@@ -1013,6 +1039,10 @@ impl Streaming {
                 .with_host_frame_times(settings.host_frame_times),
             texture: VideoTexture::new(connecting.settings.upscaling == config::Upscaling::Bilinear, hdr_stream),
             upscaler: None,
+            #[cfg(target_os = "macos")]
+            metalfx: None,
+            #[cfg(target_os = "macos")]
+            metalfx_blocked: None,
             #[cfg(windows)]
             enhancer: None,
             upscale_failed: false,
@@ -1025,8 +1055,9 @@ impl Streaming {
             skip_over_waiting: env_flag("NIGHTJAR_PRESENT_SKIP").unwrap_or(true),
             present_deadline_us: std::env::var("NIGHTJAR_PRESENT_DEADLINE_US").ok().and_then(|us| us.parse().ok()),
             held_margin_us: std::env::var("NIGHTJAR_HELD_MARGIN_US").ok().and_then(|us| us.parse().ok()).inspect(|us| {
-                eprintln!("nightjar: NIGHTJAR_HELD_MARGIN_US: fractional V-Sync's held pictures go out {us} us before their turn");
+                eprintln!("nightjar: NIGHTJAR_HELD_MARGIN_US: fractional V-Sync's held pictures must make their turn {us} us before the refresh");
             }),
+            held_guard_us: phase::held_guard_from_env(),
             held_report_refresh: std::env::var_os("NIGHTJAR_HELD_REPORT").is_some_and(|v| v == "0"),
             held_anchor: phase::HeldAnchor::default(),
             held_wait_us: None,
@@ -1157,6 +1188,8 @@ impl Streaming {
             host_average: HostAverage::default(),
             last_early: (0, 0),
             last_video: (0, 0, 0),
+            last_skipped: 0,
+            behind: stats::Behind::default(),
             started: Instant::now(),
             first_frame: false,
             unshown: render::Unshown::default(),
@@ -1244,7 +1277,6 @@ impl Streaming {
 
     /// Shows `text` below the notice still showing, for as long again, so a notice that comes
     /// right after the start's (the video planes giving up at the first picture) loses neither.
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub fn add_toast(&mut self, text: impl Into<String>) {
         let text = text.into();
         let joined = joined_toast(self.toast.as_ref().map(|(shown, at)| (shown.as_str(), at.elapsed())), &text);
@@ -2297,6 +2329,7 @@ impl Streaming {
         }
         self.cursor.clear();
         crate::sdl::alt_f4_to_host(false);
+        crate::sdl::keep_screen_awake(false);
         for controller in 0..16 {
             if self.audio_status.0[usize::from(controller)] != 0 {
                 let _ = self.session.send(ClientMessage::ControllerAudioStatus { controller, flags: 0 });
@@ -2306,6 +2339,8 @@ impl Streaming {
         unsafe { SDL_ShowCursor() };
         pads.reset();
         self.upscaler = None;
+        #[cfg(target_os = "macos")]
+        { self.metalfx = None; }
         #[cfg(windows)]
         { self.enhancer = None; }
         self.texture.destroy();
