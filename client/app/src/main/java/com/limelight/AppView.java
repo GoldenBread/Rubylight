@@ -438,6 +438,9 @@ public class AppView extends NightjarActivity implements AdapterFragmentCallback
     }
 
     private void populateAppGridWithCache() {
+        // The grid says it is loading until the saved list (or the host's) paints; a cache miss
+        // must not wait for the reader to say so.
+        loadAppsBlocking();
         Context app = getApplicationContext();
         String uuid = uuidString;
         Thread reader = new Thread(() -> {
@@ -456,17 +459,14 @@ public class AppView extends NightjarActivity implements AdapterFragmentCallback
             }
             String rawList = raw;
             List<NvApp> apps = parsed;
+            if (apps == null) return;
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed() || appGridAdapter == null) return;
                 // A poll may have brought the host's own list while the cache was read: it is newer.
                 if (lastRawApplist != null) return;
-                if (apps != null) {
-                    lastRawApplist = rawList;
-                    updateUiWithAppList(apps);
-                    LimeLog.info("Loaded applist from cache");
-                } else {
-                    loadAppsBlocking();
-                }
+                lastRawApplist = rawList;
+                updateUiWithAppList(apps);
+                LimeLog.info("Loaded applist from cache");
             });
         }, "applist-cache");
         reader.setDaemon(true);

@@ -116,8 +116,10 @@ public class AppViewLifecycleTest {
             ReflectionHelpers.setField(screen, "managerServiceBound", true);
 
             ReflectionHelpers.callInstanceMethod(screen, "populateAppGridWithCache");
-            // The list is read on a worker: nothing reached the grid yet, so no caller waited for the file.
+            // The list is read on a worker: nothing reached the grid yet, and the grid already says
+            // it is loading rather than waiting for the reader to find a missing cache.
             assertEquals(0, adapter.getCount());
+            assertEquals(View.VISIBLE, screen.findViewById(R.id.library_loading).getVisibility());
 
             long deadline = System.currentTimeMillis() + 5000;
             while (adapter.getCount() == 0 && System.currentTimeMillis() < deadline) {
@@ -126,6 +128,7 @@ public class AppViewLifecycleTest {
             }
             assertEquals(3, adapter.getCount());
             assertEquals(LIBRARY, ReflectionHelpers.getField(screen, "lastRawApplist"));
+            assertEquals(View.GONE, screen.findViewById(R.id.library_loading).getVisibility());
         } finally {
             controller.pause().stop().destroy();
         }
