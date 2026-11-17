@@ -88,6 +88,13 @@ impl Spatial {
         self.input == input && self.output == output
     }
 
+    /// The last scaled picture, which a present without a new picture draws again (`fresh` is
+    /// false): the pass and its wait for the GPU would cost about five milliseconds and draw the
+    /// same picture.
+    pub fn output(&self) -> Option<*mut SDL_Texture> {
+        (!self.texture.is_null()).then_some(self.texture)
+    }
+
     /// The caller keeps the decoded picture alive until this synchronous GPU submission completes.
     pub unsafe fn draw(
         &mut self,

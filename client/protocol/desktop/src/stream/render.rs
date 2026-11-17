@@ -993,7 +993,14 @@ impl Streaming {
                                 if self.metalfx.is_some() { eprintln!("nightjar: MetalFX upscaling {}x{} to {}x{}", input.0, input.1, output.0, output.1); }
                             }
                             let (buffer, info) = source.unwrap();
-                            match self.metalfx.as_mut().and_then(|p| p.draw(renderer, buffer, &info)) {
+                            // A present without a new picture (an overlay redraw, a repeat) shows
+                            // the last MetalFX output again, not a second pass of the same picture.
+                            let reused = if fresh { None } else { self.metalfx.as_ref().and_then(|pass| pass.output()) };
+                            let drawn = match reused {
+                                Some(scaled) => Some(scaled),
+                                None => self.metalfx.as_mut().and_then(|pass| pass.draw(renderer, buffer, &info)),
+                            };
+                            match drawn {
                                 Some(scaled) => texture = scaled,
                                 None => {
                                     eprintln!("nightjar: MetalFX {} failed for {}x{} to {}x{}; bilinear for this stream", if self.metalfx.is_some() { "submission" } else { "creation" }, input.0, input.1, output.0, output.1);
