@@ -42,11 +42,7 @@ impl SessionThread<'_> {
         // Where this stream's pictures lost time, from the stamps the send path
         // took: one line for the log and the support bundle, naming the stage.
         let period = s.stream_mode().period();
-        let stutter = {
-            let performance = s.stats.performance.lock().unwrap();
-            performance.stutter_window()
-        }
-        .report(period);
+        let stutter = s.stats.stutter_window().report(period);
         if stutter.pictures() > 0 {
             let ms = |us: u64| (us as f64 / 100.0).round() / 10.0;
             let dominant = stutter.dominant();
