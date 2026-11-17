@@ -45,8 +45,9 @@ pub fn blocker(c: &Conditions) -> Option<&'static str> {
     if c.failed { return Some("MetalFX unavailable"); }
     if c.hdr { return Some("HDR"); }
     if c.frame_warp { return Some("Frame Warp is on"); }
-    if !c.metal_renderer { return Some("4:4:4 or PyroWave needs SDL's GPU renderer"); }
+    // Before the renderer: software decoding of 10-bit SDR also takes SDL's GPU renderer.
     if !c.hardware { return Some("not a hardware-decoded picture"); }
+    if !c.metal_renderer { return Some("4:4:4 or PyroWave needs SDL's GPU renderer"); }
     if c.bt2020 { return Some("BT.2020 colour"); }
     let (input, output) = (c.input, c.output);
     if output.0 < input.0 || output.1 < input.1 || output == input { return Some("no upscale needed"); }
@@ -254,6 +255,8 @@ mod tests {
         assert_eq!(named(|c| c.metal_renderer = false), Some("4:4:4 or PyroWave needs SDL's GPU renderer"));
         assert_eq!(named(|c| c.hardware = false), Some("not a hardware-decoded picture"));
         assert_eq!(named(|c| c.bt2020 = true), Some("BT.2020 colour"));
+        // Software-decoded 10-bit SDR takes SDL's GPU renderer too; its decoding is the reason.
+        assert_eq!(named(|c| { c.hardware = false; c.metal_renderer = false; }), Some("not a hardware-decoded picture"));
         assert_eq!(named(|c| c.output = c.input), Some("no upscale needed"));
         assert_eq!(named(|c| c.output = (1280, 720)), Some("no upscale needed"));
         assert_eq!(named(|c| c.output = (2880, 1000)), Some("no upscale needed"));

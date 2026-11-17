@@ -60,7 +60,8 @@ pub fn possible(video_planes: bool, renderer_name: &str) -> Result<(), String> {
 /// upscaling, Frame Warp, and the 4:4:4 paths the renderer rebuilds or converts.
 pub fn renderer_work(settings: &crate::config::Settings) -> Option<&'static str> {
     [
-        (settings.upscaling != crate::config::Upscaling::Bilinear, "Upscaling"),
+        // MetalFX is macOS's and never runs here: as Bilinear, as `kms::without_gpu` keeps it.
+        (!matches!(settings.upscaling, crate::config::Upscaling::Bilinear | crate::config::Upscaling::MetalFx), "Upscaling"),
         (settings.frame_warp, "Frame Warp"),
         (settings.codec.is_pyrowave(), "PyroWave"),
         (settings.prefer_yuv444 || settings.experimental_packed_444, "Sharper colored text"),

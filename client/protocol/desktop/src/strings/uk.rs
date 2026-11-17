@@ -1342,6 +1342,7 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приймання: систе
     ("Balanced, keep every frame", "Збалансовано, зберігати кожен кадр"),
     ("PC’s frame times", "Ритм ПК"),
     ("Waits for the screen’s refresh, so the picture never tears; the wait adds latency. Turn it off for the lowest latency if tearing doesn’t bother you.", "Чекає оновлення екрана, тому зображення ніколи не розривається; очікування додає затримку. Вимкніть заради найменшої затримки, якщо розриви вам не заважають."),
+    ("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; HDR streams are enlarged without them.", "Як збільшується трансляція, менша за екран. FSR і SGSR роблять краї чіткішими ціною навантаження на GPU й витрати заряду; HDR-трансляції збільшуються без них."),
     ("How a stream smaller than the screen is enlarged. FSR, SGSR and MetalFX (macOS) sharpen edges at some GPU time and battery, MetalFX also adding a few milliseconds of delay; HDR streams are enlarged without them.", "Як збільшується трансляція, менша за екран. FSR, SGSR і MetalFX (macOS) роблять краї чіткішими ціною навантаження на GPU й витрати заряду, а MetalFX ще й додає кілька мілісекунд затримки; HDR-трансляції збільшуються без них."),
     ("Upscaling sharpness", "Різкість масштабування"),
     ("How much sharpening FSR or SGSR adds. Raise it for soft edges; lower it if edges show halos.", "Скільки різкості додають FSR або SGSR. Збільште, якщо краї розмиті; зменште, якщо навколо країв видно ореоли."),

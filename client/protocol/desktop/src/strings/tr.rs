@@ -1342,6 +1342,7 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("Balanced, keep every frame", "Dengeli, her kareyi tut"),
     ("PC’s frame times", "Bilgisayarın kare zamanlaması"),
     ("Waits for the screen’s refresh, so the picture never tears; the wait adds latency. Turn it off for the lowest latency if tearing doesn’t bother you.", "Ekranın yenilenmesini bekler, böylece görüntü asla yırtılmaz; bu bekleme gecikme ekler. Yırtılma sizi rahatsız etmiyorsa en düşük gecikme için kapatın."),
+    ("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; HDR streams are enlarged without them.", "Ekrandan küçük bir yayının nasıl büyütüldüğü. FSR ve SGSR kenarları keskinleştirir, karşılığında biraz GPU süresi ve pil harcar; HDR yayınlar bunlar olmadan büyütülür."),
     ("How a stream smaller than the screen is enlarged. FSR, SGSR and MetalFX (macOS) sharpen edges at some GPU time and battery, MetalFX also adding a few milliseconds of delay; HDR streams are enlarged without them.", "Ekrandan küçük bir yayının nasıl büyütüldüğü. FSR, SGSR ve MetalFX (macOS) kenarları keskinleştirir, karşılığında biraz GPU süresi ve pil harcar, MetalFX ayrıca birkaç milisaniye gecikme ekler; HDR yayınlar bunlar olmadan büyütülür."),
     ("Upscaling sharpness", "Ölçekleme keskinliği"),
     ("How much sharpening FSR or SGSR adds. Raise it for soft edges; lower it if edges show halos.", "FSR veya SGSR’nin eklediği keskinleştirme miktarı. Kenarlar yumuşaksa artırın; kenarlarda hale oluşuyorsa azaltın."),

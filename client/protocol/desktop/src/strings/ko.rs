@@ -1342,6 +1342,7 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("Balanced, keep every frame", "균형, 모든 프레임 유지"),
     ("PC’s frame times", "PC의 프레임 타이밍"),
     ("Waits for the screen’s refresh, so the picture never tears; the wait adds latency. Turn it off for the lowest latency if tearing doesn’t bother you.", "화면 새로 고침을 기다리므로 화면이 찢어지지 않지만, 기다리는 만큼 지연 시간이 늘어납니다. 화면 찢어짐이 거슬리지 않는다면, 끄면 지연 시간이 가장 낮아집니다."),
+    ("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; HDR streams are enlarged without them.", "화면보다 작은 스트림을 확대하는 방식입니다. FSR과 SGSR은 윤곽을 선명하게 하지만 GPU 시간과 배터리를 조금 더 씁니다. HDR 스트림은 이 기능 없이 확대됩니다."),
     ("How a stream smaller than the screen is enlarged. FSR, SGSR and MetalFX (macOS) sharpen edges at some GPU time and battery, MetalFX also adding a few milliseconds of delay; HDR streams are enlarged without them.", "화면보다 작은 스트림을 확대하는 방식입니다. FSR, SGSR, MetalFX(macOS)는 윤곽을 선명하게 하지만 GPU 시간과 배터리를 조금 더 쓰고, MetalFX는 지연도 몇 밀리초 늘어납니다. HDR 스트림은 이 기능 없이 확대됩니다."),
     ("Upscaling sharpness", "업스케일링 선명도"),
     ("How much sharpening FSR or SGSR adds. Raise it for soft edges; lower it if edges show halos.", "FSR 또는 SGSR이 더하는 선명화 정도입니다. 윤곽이 흐릿하면 높이고, 윤곽에 후광(헤일로)이 보이면 낮추세요."),

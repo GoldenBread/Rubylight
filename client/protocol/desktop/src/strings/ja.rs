@@ -1342,6 +1342,7 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("Balanced, keep every frame", "バランス（全フレームを保持）"),
     ("PC’s frame times", "PC のフレームタイミング"),
     ("Waits for the screen’s refresh, so the picture never tears; the wait adds latency. Turn it off for the lowest latency if tearing doesn’t bother you.", "画面のリフレッシュを待つため、映像にティアリングが起きませんが、待つ分だけ遅延が増えます。ティアリングが気にならない場合は、オフにすると遅延が最小になります。"),
+    ("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; HDR streams are enlarged without them.", "画面より小さいストリームを拡大する方法です。FSRとSGSRは輪郭をくっきりさせますが、GPUの処理時間とバッテリーを少し使います。HDRストリームはこれらを使わずに拡大されます。"),
     ("How a stream smaller than the screen is enlarged. FSR, SGSR and MetalFX (macOS) sharpen edges at some GPU time and battery, MetalFX also adding a few milliseconds of delay; HDR streams are enlarged without them.", "画面より小さいストリームを拡大する方法です。FSR、SGSR、MetalFX（macOS）は輪郭をくっきりさせますが、GPUの処理時間とバッテリーを少し使い、MetalFXはさらに遅延が数ミリ秒増えます。HDRストリームはこれらを使わずに拡大されます。"),
     ("Upscaling sharpness", "アップスケーリングのシャープネス"),
     ("How much sharpening FSR or SGSR adds. Raise it for soft edges; lower it if edges show halos.", "FSRまたはSGSRが加えるシャープ化の強さです。輪郭がぼやける場合は上げ、輪郭に縁取り（ハロー）が出る場合は下げてください。"),
