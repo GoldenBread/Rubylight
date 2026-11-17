@@ -666,6 +666,9 @@ jobs:
     # architecture builds on its own runner, so the unpacked zip is verified and launched there.
     # The app carries an ad-hoc signature only (no Developer ID, not notarized): Gatekeeper asks
     # once on first start, as protocol/desktop/README.md#macos describes.
+    # The Apple silicon app also bundles the PyroWave SDK, the Vulkan loader and Mesa's KosmicKrisp
+    # (macos-vulkan.sh), so PyroWave can decode on the GPU on macOS 26 when the user picks it;
+    # KosmicKrisp builds against the macOS 26 SDK, hence that leg's runner. The Intel app has none.
     needs: preflight
     # A Mac failure shows as a failed leg and a warning at the release; the rest still ships.
     continue-on-error: true
@@ -674,11 +677,14 @@ jobs:
       matrix:
         include:
           - arch: arm64
-            runner: macos-15
+            runner: macos-26
+            gpu-pyrowave: true
           - arch: x86_64
             runner: macos-15-intel
+            gpu-pyrowave: false
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    # A tag run builds Mesa (about 30 minutes) and the PyroWave SDK from source.
+    timeout-minutes: 150
     permissions:
       contents: read
     env:
@@ -686,6 +692,8 @@ jobs:
       NJ_ARCH: ${{ matrix.arch }}
       MACOSX_DEPLOYMENT_TARGET: '13.0'
       RUSTUP_TOOLCHAIN: stable
+      # The PyroWave patches the SDK build checks against (as desktop-linux's).
+      RUBYLIGHT_SHA: 957ace5a9cdb14b5f39cffbe662f0df1dcb41caf
     defaults:
       run:
         working-directory: protocol
@@ -697,20 +705,76 @@ jobs:
         run: |
           brew install cmake meson ninja pkg-config nasm
           rustup toolchain install stable --profile minimal --no-self-update
+      - name: Rubylight host files for the PyroWave SDK
+        if: matrix.gpu-pyrowave
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: RamazanKara/Rubylight
+          ref: ${{ env.RUBYLIGHT_SHA }}
+          path: rubylight-host
+          sparse-checkout: |
+            rust/tools/build_pyrowave.sh
+            rust/codec-patches/pyrowave
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Install the KosmicKrisp and PyroWave SDK build tools
+        if: matrix.gpu-pyrowave
+        run: brew install bison flex llvm libclc spirv-llvm-translator vulkan-headers
+      # As desktop-linux's: dry runs on main use and save these caches; a tag run rebuilds them, so
+      # nothing a branch run cached ends up in a published package.
+      - name: KosmicKrisp cache
+        id: vulkan-cache
+        if: matrix.gpu-pyrowave && github.ref_type != 'tag'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: protocol/target/macos-vulkan/*/prefix
+          key: macos-vulkan-${{ runner.arch }}-${{ hashFiles('protocol/desktop/macos-vulkan.sh') }}
+      - name: Build KosmicKrisp and the Vulkan loader
+        if: matrix.gpu-pyrowave
+        run: |
+          set -o pipefail
+          desktop/macos-vulkan.sh "$PWD/target/macos-vulkan" | tee "$RUNNER_TEMP/macos-vulkan.log"
+          prefix=$(tail -n1 "$RUNNER_TEMP/macos-vulkan.log")
+          echo "VULKAN_PREFIX=$prefix" >> "$GITHUB_ENV"
+          cat "$prefix/build-info.txt"
+      - name: PyroWave SDK cache
+        id: sdk-cache
+        if: matrix.gpu-pyrowave && github.ref_type != 'tag'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            pyrowave-sdk/libpyrowave-shared.dylib
+            pyrowave-sdk/build-info.txt
+            pyrowave-sdk/licenses
+          key: pyrowave-sdk-macos-${{ matrix.arch }}-${{ env.RUBYLIGHT_SHA }}-${{ hashFiles('protocol/desktop/pyrowave-sdk.pin', 'scripts/build-pyrowave-sdk.sh', 'scripts/pyrowave-macos/*.patch', 'app/src/main/jni/pyrowave-renderer/patches/*.patch') }}
+      - name: Build the PyroWave SDK
+        if: matrix.gpu-pyrowave && steps.sdk-cache.outputs.cache-hit != 'true'
+        working-directory: .
+        run: |
+          VULKAN_HEADERS_DIR="$(brew --prefix vulkan-headers)/include" \
+            bash scripts/build-pyrowave-sdk.sh -o "$GITHUB_WORKSPACE/pyrowave-sdk" -H "$GITHUB_WORKSPACE/rubylight-host"
       # The media libraries macos.yml caches on main; restored only, so a release never writes it.
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: protocol/target/macos-native/*/prefix
           key: macos-media-${{ runner.arch }}-${{ hashFiles('protocol/desktop/macos-deps.sh') }}
       - name: Build and zip the application
-        run: python3 desktop/package-macos.py --arch "$NJ_ARCH" --zip
+        run: |
+          if [ "${{ matrix.gpu-pyrowave }}" = true ]; then
+            python3 desktop/package-macos.py --arch "$NJ_ARCH" --zip --vulkan "$VULKAN_PREFIX" --pyrowave-sdk "$GITHUB_WORKSPACE/pyrowave-sdk"
+          else
+            python3 desktop/package-macos.py --arch "$NJ_ARCH" --zip
+          fi
       - name: Verify and launch the unpacked zip
         run: |
           triple=$( [ "$NJ_ARCH" = arm64 ] && echo aarch64-apple-darwin || echo x86_64-apple-darwin )
           zip="target/$triple/release/Nightjar-$VERSION-macos-$NJ_ARCH.zip"
           test -s "$zip" || { echo "::error::$zip was not built (the app version must match $VERSION)"; exit 1; }
           ditto -x -k "$zip" "$RUNNER_TEMP/unpacked"
-          python3 desktop/tests/verify_macos_bundle.py --arch "$NJ_ARCH" "$RUNNER_TEMP/unpacked/Nightjar.app"
+          python3 desktop/tests/verify_macos_bundle.py --arch "$NJ_ARCH" ${{ matrix.gpu-pyrowave && '--kosmickrisp' || '' }} "$RUNNER_TEMP/unpacked/Nightjar.app"
+          if [ "${{ matrix.gpu-pyrowave }}" = true ]; then
+            desktop/tests/pyrowave_mac_smoke.sh "$RUNNER_TEMP/unpacked/Nightjar.app"
+          fi
           mkdir -p ../dist
           cp "$zip" "../dist/nightjar-desktop-$VERSION-macos-$NJ_ARCH.zip"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
