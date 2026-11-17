@@ -20,7 +20,8 @@
 use crate::state::Shared;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use butterpollo_core::nvidia_component::{self as pins, ADAPTER, NGX_DATA, Pinned, RECORD, Record};
-use butterpollo_windows::nvidia_enhance::{self as loader, Component, Hold};
+use butterpollo_windows::nvidia_enhance::{self as loader, Component};
+use butterpollo_windows::process::Hold;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{

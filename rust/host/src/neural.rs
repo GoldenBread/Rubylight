@@ -26,6 +26,7 @@ use butterpollo_core::{
     neural::{self, Download, Gpu, Placed, Release},
     state::App,
 };
+use butterpollo_windows::process::Hold;
 use folder::{PACKAGE, Package, Request, Response, Writer};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -1006,9 +1007,11 @@ fn ensure_root(root: &Path) -> Result<()> {
 /// it, a cache anyone but administrators may change, or a folder from it up
 /// to the host's data root they don't own or whose folders they may move
 /// away and replace. A release planted there would reach every game. Above
-/// the data root only the link check applies: that folder's own permissions
-/// already stop anyone else from moving it away and putting a link in its
-/// place.
+/// the data root only the link check applies, and not because those folders are
+/// safe: `C:\ProgramData` itself lets other accounts move folders on a PC where
+/// it was opened up, so a check there would refuse every user. The callers hold
+/// the cache and its data root open instead ([`Hold`]), which is what keeps the
+/// paths this check passed naming what is later read.
 fn trusted_root(root: &Path, data_root: &Path, system: bool) -> Result<()> {
     trusted_root_with(root, data_root, system, folder::administrators_hold)
 }
@@ -1095,11 +1098,13 @@ fn launch_cache(h: &Shared) -> Result<Option<folder::Cached>> {
     if !root.exists() {
         return Ok(None);
     }
-    trusted_root(
-        &root,
-        &data_root(h),
-        butterpollo_windows::process::is_system(),
-    )?;
+    let data_root = data_root(h);
+    trusted_root(&root, &data_root, butterpollo_windows::process::is_system())?;
+    // Held while the cache is read, so the root that was checked is the one
+    // whose release is named: another account that may move folders in
+    // `C:\ProgramData` cannot swap it in between.
+    let _held = Hold::new([root.as_path(), data_root.as_path()])
+        .context("cannot open the Neural Rendering cache")?;
     let pin = pinned(h);
     Ok(cached(&root)
         .filter(|(_, package)| serves(package, &pin))
@@ -1172,11 +1177,12 @@ async fn fetch_locked(
 ) -> Result<(PathBuf, Package)> {
     let root = cache_root(h);
     ensure_root(&root)?;
-    trusted_root(
-        &root,
-        &data_root(h),
-        butterpollo_windows::process::is_system(),
-    )?;
+    let data_root = data_root(h);
+    trusted_root(&root, &data_root, butterpollo_windows::process::is_system())?;
+    // Held from the check through the verification and the download, so the
+    // cache that was checked cannot be renamed away and replaced meanwhile.
+    let _held = Hold::new([root.as_path(), data_root.as_path()])
+        .context("cannot open the Neural Rendering cache")?;
     let pin = pinned(h);
     // Its files as checked when they came, or it goes and comes again.
     if let Some(have) = cached(&root).filter(|(_, package)| serves(package, &pin)) {
