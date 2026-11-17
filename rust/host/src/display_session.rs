@@ -1581,7 +1581,9 @@ impl Prepared {
             revision: 0,
             recovery: Recovery::new(),
             layout_watch: Default::default(),
-            primary_watch: Default::default(),
+            primary_watch: butterpollo_core::display_policy::PrimaryWatch::starting(
+                std::time::Instant::now(),
+            ),
             departures: display_arrangement::departures(),
             wake_layouts: display_arrangement::wake_layouts(),
             console_session: None,
@@ -2480,7 +2482,7 @@ impl Prepared {
                         .into_iter()
                         .map(|m| (m.display_name, m.primary))
                         .collect();
-                    match butterpollo_core::display_policy::chosen_layout(
+                    match butterpollo_core::display_policy::layout_mismatch(
                         expected, &output, &active,
                     ) {
                         None => true,
@@ -2608,7 +2610,9 @@ impl Prepared {
                 revision,
                 recovery: Recovery::new(),
                 layout_watch: Default::default(),
-                primary_watch: Default::default(),
+                primary_watch: butterpollo_core::display_policy::PrimaryWatch::starting(
+                    std::time::Instant::now(),
+                ),
                 departures: display_arrangement::departures(),
                 wake_layouts: display_arrangement::wake_layouts(),
                 console_session: None,

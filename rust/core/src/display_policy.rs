@@ -845,6 +845,25 @@ pub fn chosen_layout(
     stream_display: &str,
     active: &[(String, bool)],
 ) -> Option<&'static str> {
+    let shown = layout_mismatch(planned, stream_display, active)?;
+    // A demotion from `extended_primary` is never learned: Windows or a game moved the
+    // primary, which the stream puts back itself.
+    if planned == "extended_primary" && shown == "extended" {
+        return None;
+    }
+    Some(shown)
+}
+
+/// The layout Windows shows for a stream that planned `planned`, when it differs from it:
+/// `active` lists the displays on now and whether each is primary, and only the stream's
+/// display on is `exclusive`. None when the stream's display is off or the plan is not an
+/// extended layout, or when Windows shows the planned one. This is the start-of-stream check
+/// of what Windows took; [`chosen_layout`] adds the rule for what may be learned.
+pub fn layout_mismatch(
+    planned: &str,
+    stream_display: &str,
+    active: &[(String, bool)],
+) -> Option<&'static str> {
     if !matches!(planned, "extended" | "extended_primary") {
         return None;
     }
@@ -852,17 +871,14 @@ pub fn chosen_layout(
         .iter()
         .find(|(name, _)| name.eq_ignore_ascii_case(stream_display))
         .map(|(_, primary)| *primary)?;
-    let chosen = if active.len() == 1 {
+    let shown = if active.len() == 1 {
         "exclusive"
     } else if primary {
         "extended_primary"
     } else {
         "extended"
     };
-    if planned == "extended_primary" && chosen == "extended" {
-        return None;
-    }
-    (chosen != planned).then_some(chosen)
+    (shown != planned).then_some(shown)
 }
 
 /// When the heartbeat checks [`switched_back_on`] and puts the stream's layout
@@ -1046,6 +1062,14 @@ impl PrimaryWatch {
     /// Whether to look at the displays now: a refused restore waits before its next try.
     pub fn due(&self, now: std::time::Instant) -> bool {
         self.next_check.is_none_or(|next| now >= next)
+    }
+    /// A watch for a stream that is starting: Windows has just been given the layout, which is
+    /// a change of its own, so a primary it did not take is put back (issue #33: the reporter's
+    /// stream opened with the virtual display on but not the main screen).
+    pub fn starting(now: std::time::Instant) -> Self {
+        let mut watch = Self::default();
+        watch.changed(now);
+        watch
     }
     /// Whether Windows kept taking the primary back and this stream leaves it there.
     pub fn stopped(&self) -> bool {

@@ -218,6 +218,35 @@ fn a_layout_chosen_during_the_stream_is_kept_for_the_device() {
 }
 
 #[test]
+fn an_extended_primary_start_without_primary_is_reported_and_watched() {
+    use super::{PrimaryAction, PrimaryWatch, chosen_layout, layout_mismatch};
+    let vd = r"\\.\DISPLAY9";
+    let active = vec![(vd.to_string(), false), (r"\\.\DISPLAY1".to_string(), true)];
+    // The start-of-stream check sees a layout Windows did not take, even though learning
+    // must not keep that demotion for the device.
+    assert_eq!(
+        layout_mismatch("extended_primary", vd, &active),
+        Some("extended")
+    );
+    assert_eq!(chosen_layout("extended_primary", vd, &active), None);
+    // The start is a change Windows made as it took the layout: the watch puts the primary
+    // back after the settle (issue #33's stream opened with the display on but not primary).
+    let start = std::time::Instant::now();
+    let mut watch = PrimaryWatch::starting(start);
+    assert_eq!(watch.observe(true, start), PrimaryAction::Wait);
+    assert_eq!(
+        watch.observe(true, start + super::LayoutWatch::SETTLE),
+        PrimaryAction::Restore
+    );
+    // A watch that did not start is not armed by a move Windows made before it existed.
+    let mut watch = PrimaryWatch::default();
+    assert_eq!(
+        watch.observe(true, start + super::LayoutWatch::SETTLE),
+        PrimaryAction::Wait
+    );
+}
+
+#[test]
 fn a_primary_move_windows_made_is_put_back_but_a_plain_one_is_left_alone() {
     use super::{Arrangement, PrimaryAction, PrimaryWatch, primary_moved};
     // Only the layouts that keep the user's displays on and make the stream's display
