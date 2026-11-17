@@ -18,6 +18,7 @@ use nightjar_core::http::{
     PcPower, PcPowerOffer, PowerError, PowerReply, Reason, ServerInfo, DEFAULT_HTTP_PORT,
 };
 
+use rubylight_protocol::invite_uri::InviteUri;
 use rubylight_protocol::pairing_uri::PairingUri;
 
 use crate::strings::{en, tr, trf};
@@ -490,7 +491,25 @@ pub const PAIR_LINK_MISMATCH: &str =
     en("This PC’s certificate does not match the pairing link, so Nightjar did not pair. Pair only with a link or QR code from your own PC.");
 pub const LINK_INVALID: &str = en("That pairing link is not valid. Show a new QR code on the PC and copy its link again.");
 pub const ADDRESS_INVALID: &str = en("That address is not valid");
-pub const CLIPBOARD_NO_LINK: &str = en("Copy the link under the QR code on the PC’s Devices page, then paste it here.");
+pub const CLIPBOARD_NO_LINK: &str =
+    en("Copy the link under the QR code on the PC’s Devices page, then paste it here.");
+/// An invite link that does not read ([`nightjar_core::invite::NOT_AN_INVITE`]).
+pub const INVITE_INVALID: &str = en("This is not a Nightjar invite link");
+
+/// The engine's words for an invite that did not work, in the user's language where they are
+/// known ([`nightjar_core::invite`]); anything else as it came.
+pub fn invite_error(error: &str) -> String {
+    const KNOWN: [&str; 4] = [
+        en("This is not a Nightjar invite link"),
+        en("This invite has expired. Ask for a new one."),
+        en("The PC did not accept this invite: it was already used, taken back or has expired. Ask for a new one."),
+        en("Turn on Play over the internet in Nightjar's settings, then open the invite again."),
+    ];
+    KNOWN
+        .iter()
+        .find(|known| **known == error)
+        .map_or_else(|| error.to_owned(), |known| tr(known).to_owned())
+}
 pub const UNPAIR_FAILED: &str = en("Failed to unpair. The PC may still list this device.");
 pub const UNPAIR_NOT_PAIRED: &str = en("Device was not paired.");
 // A quit the PC refused because another device started the game, worded like Nightjar Android's.
@@ -548,6 +567,12 @@ pub enum Event {
         id: u64,
         request: u64,
         result: Result<String, String>,
+    },
+    /// An invite opened: the PC reached and paired over the internet, or why not. `id` is the
+    /// PC in the list once the answer was taken in.
+    Invited {
+        result: Result<Box<nightjar_core::invite::Redeemed>, String>,
+        id: Option<u64>,
     },
     Apps {
         id: u64,
@@ -792,12 +817,17 @@ pub enum Entry {
     Address(String, Option<u16>),
     /// A QR pairing link (`rubylight://pair?...`) to add the PC and pair with at once.
     Link(Box<PairingUri>),
+    /// An invite to play over the internet (`rubylight://invite#...`).
+    Invite(Box<InviteUri>),
 }
 
 /// Reads an Add PC entry. A pairing link that does not parse is refused with [`LINK_INVALID`],
 /// never read as an address.
 pub fn parse_entry(text: &str) -> Result<Entry, &'static str> {
     let text = text.trim();
+    if InviteUri::is_link(text) {
+        return parse_invite(text).map(Entry::Invite);
+    }
     if PairingUri::is_link(text) {
         return parse_link(text).map(Entry::Link);
     }
@@ -814,6 +844,13 @@ pub fn parse_link(text: &str) -> Result<Box<PairingUri>, &'static str> {
         link.host = bare.to_owned();
     }
     Ok(Box::new(link))
+}
+
+/// Reads an invite link; anything else is refused with [`INVITE_INVALID`].
+pub fn parse_invite(text: &str) -> Result<Box<InviteUri>, &'static str> {
+    InviteUri::parse(text.trim())
+        .map(Box::new)
+        .ok_or(INVITE_INVALID)
 }
 
 pub(crate) fn describe(error: &nightjar_core::http::Error) -> String {
@@ -1085,6 +1122,62 @@ impl Hosts {
 
     /// Adds a host by address and checks it at once. Returns its ID. No port is the default one,
     /// as a PC is an address and a port: a PC listed there under another port is another PC.
+    /// Opens an invite on a thread: the PC is reached over the internet, paired as a guest and
+    /// added (or updated) once [`Event::Invited`] comes back.
+    pub fn redeem_invite(&mut self, link: InviteUri) {
+        let Some(identity) = self.identity.clone() else {
+            let _ = self.sender.send(Event::Invited {
+                result: Err(tr(
+                    "Nightjar has no client identity yet. Restart Nightjar and try again.",
+                )
+                .to_owned()),
+                id: None,
+            });
+            return;
+        };
+        self.spawn("invite", move || {
+            let now = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+            let result =
+                nightjar_core::invite::redeem(&link, identity, &device_name(), now).map(Box::new);
+            Some(Event::Invited { result, id: None })
+        });
+    }
+
+    /// A PC paired from an invite: updates the PC with that ID, or adds it. Its address is where
+    /// it answered; a punched path's loopback end finds the PC through the tunnel again.
+    fn apply_invite(&mut self, redeemed: &nightjar_core::invite::Redeemed) -> u64 {
+        let known = self
+            .list
+            .iter()
+            .position(|h| h.record.unique_id == redeemed.unique_id);
+        let id = match known {
+            Some(at) => {
+                let host = &mut self.list[at];
+                host.record.server_certificate = Some(redeemed.server_certificate_pem.clone());
+                host.record.internet_play = Some(redeemed.reply.clone());
+                host.record.https_port = redeemed.https_port;
+                host.apps = Apps::NotLoaded;
+                crate::logfile::add_secrets(&host.record);
+                host.id
+            }
+            None => self.insert(HostRecord {
+                unique_id: redeemed.unique_id.clone(),
+                name: redeemed.name.clone(),
+                address: redeemed.address.ip().to_string(),
+                http_port: redeemed.address.port(),
+                https_port: redeemed.https_port,
+                server_certificate: Some(redeemed.server_certificate_pem.clone()),
+                internet_play: Some(redeemed.reply.clone()),
+                manual: true,
+                ..Default::default()
+            }),
+        };
+        self.poll_one(id);
+        id
+    }
+
     pub fn add_manual(&mut self, address: &str, port: Option<u16>) -> u64 {
         let wanted = http_port(port.unwrap_or(DEFAULT_HTTP_PORT));
         let here = |h: &Host| h.record.address.eq_ignore_ascii_case(address);

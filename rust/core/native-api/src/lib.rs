@@ -96,4 +96,7 @@ pub mod feature {
     /// [`crate::guests`]: `GET /session/guests` and its actions answer, while the host's
     /// `guest_join` lets another device join the running game as a guest.
     pub const SESSION_GUESTS: &str = "session.guests";
+    /// [`crate::guests::InviteCreate`]: `GET /session/guests/invites` and its actions answer,
+    /// while pairing new devices is on: invites to play over the internet.
+    pub const GUEST_INVITES: &str = "session.guest-invites";
 }

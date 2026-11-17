@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 use egui::Ui;
 use nightjar_core::http::{
-    AppRole, Feature, GuestAction, HostClient, SessionGuest, SessionGuests, FEATURE_SESSION_GUESTS, GUESTS_POLL_MS,
-    GUEST_CONTROLLER, GUEST_KEYBOARD_MOUSE, GUEST_VIEW,
+    AppRole, Feature, GuestAction, HostClient, InviteCreate, InviteCreated, SessionGuest,
+    SessionGuests, GUESTS_POLL_MS, GUEST_CONTROLLER, GUEST_KEYBOARD_MOUSE, GUEST_VIEW,
 };
 
 use crate::strings::{tr, trf};
@@ -28,6 +28,19 @@ pub enum GuestsAnswer {
     NotOffered,
     Read(Result<SessionGuests, String>),
     Changed(Result<SessionGuests, String>),
+    /// Whether this device may make invites to play over the internet, read with the capabilities.
+    MayInvite(bool),
+    /// A new invite, or why there is none.
+    Invite(Result<InviteCreated, String>),
+}
+
+/// An invite to play over the internet made from the stream menu.
+#[derive(Default)]
+pub enum Invite {
+    #[default]
+    None,
+    Making,
+    Made(InviteCreated),
 }
 
 #[derive(Default)]
@@ -43,6 +56,10 @@ pub struct Guests {
     /// An action pressed while a read or another action was out: sent once that answers.
     pending: Option<GuestAction>,
     next: Option<Instant>,
+    /// This device may make invites (`session.guest-invites` with Approve new devices or Host
+    /// control).
+    may_invite: bool,
+    invite: Invite,
 }
 
 impl Guests {
@@ -58,6 +75,22 @@ impl Guests {
     /// Takes the PC's answer. Returns the toasts to show: a failed change. A new join request is
     /// put on screen through [`Self::take_prompt`].
     pub fn answered(&mut self, answer: GuestsAnswer, now: Instant) -> Vec<String> {
+        // The invite's answers come beside the list's reads and leave them alone.
+        match answer {
+            GuestsAnswer::MayInvite(may) => {
+                self.may_invite = may;
+                return Vec::new();
+            }
+            GuestsAnswer::Invite(Ok(made)) => {
+                self.invite = Invite::Made(made);
+                return Vec::new();
+            }
+            GuestsAnswer::Invite(Err(error)) => {
+                self.invite = Invite::None;
+                return vec![trf("Could not make an invite: {}", &[&error])];
+            }
+            _ => {}
+        }
         self.busy = false;
         match answer {
             GuestsAnswer::NotOffered => {
@@ -87,7 +120,10 @@ impl Guests {
                 self.next = Some(now + poll_after(self.read.as_ref()));
                 Vec::new()
             }
-            GuestsAnswer::Changed(Err(error)) => vec![trf("Could not change the guests: {}", &[&error])],
+            GuestsAnswer::Changed(Err(error)) => {
+                vec![trf("Could not change the guests: {}", &[&error])]
+            }
+            GuestsAnswer::MayInvite(_) | GuestsAnswer::Invite(_) => Vec::new(),
         }
     }
 
@@ -111,6 +147,11 @@ impl Guests {
         }
         self.busy = true;
         Some(action)
+    }
+
+    /// Whether the stream menu offers an invite to play over the internet.
+    pub fn may_invite(&self) -> bool {
+        self.may_invite
     }
 
     /// The action kept while the PC was busy, once it answered.
@@ -177,12 +218,17 @@ impl Streaming {
         self.guests.busy = true;
         std::thread::spawn(move || {
             if offered.is_none() {
-                match client.native_capabilities() {
-                    Ok(caps) if !caps.features.iter().any(|f| f == FEATURE_SESSION_GUESTS) => {
+                match client.native_capabilities_with_files() {
+                    Ok(caps) if !caps.offers_session_guests() => {
                         return shared.notify(Notice::Guests(GuestsAnswer::NotOffered));
                     }
-                    Ok(_) => {}
-                    Err(e) => return shared.notify(Notice::Guests(GuestsAnswer::Read(Err(e.to_string())))),
+                    Ok(caps) => {
+                        shared.notify(Notice::Guests(GuestsAnswer::MayInvite(caps.may_invite())))
+                    }
+                    Err(e) => {
+                        return shared
+                            .notify(Notice::Guests(GuestsAnswer::Read(Err(e.to_string()))))
+                    }
                 }
             }
             shared.notify(Notice::Guests(GuestsAnswer::Read(client.session_guests().map_err(|e| e.to_string()))));
@@ -199,6 +245,52 @@ impl Streaming {
             let answer = client.guest_action(&action).map_err(|e| e.to_string());
             shared.notify(Notice::Guests(GuestsAnswer::Changed(answer)));
         });
+    }
+
+    /// Makes an invite to play over the internet with the PC's default permission, on a thread.
+    fn create_invite(&mut self) {
+        let Some(client) = self.guests_client() else {
+            return;
+        };
+        self.guests.invite = Invite::Making;
+        let shared = self.shared.clone();
+        std::thread::spawn(move || {
+            let answer = client
+                .create_invite(&InviteCreate::default())
+                .map_err(|e| e.to_string());
+            shared.notify(Notice::Guests(GuestsAnswer::Invite(answer)));
+        });
+    }
+
+    /// The invite part of the Guests row: make one, then copy it to send.
+    fn show_invite(&mut self, ui: &mut Ui) {
+        ui.separator();
+        match &self.guests.invite {
+            Invite::None => {
+                if ui.button(tr("Invite a friend over the internet")).clicked() {
+                    self.create_invite();
+                }
+            }
+            Invite::Making => {
+                ui.weak(tr("Making an invite…"));
+            }
+            Invite::Made(made) => {
+                ui.label(tr("Send this invite to one person. It pairs their Nightjar as a guest once, and works for a day."));
+                let message = trf(
+                    "Join my game with Nightjar: open this link in Nightjar, or copy it and paste it under Add PC.\n{}",
+                    &[&made.link],
+                );
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button(tr("Copy invite")).clicked() {
+                        ui.ctx().copy_text(message);
+                        self.show_toast(tr("Invite copied"));
+                    }
+                    if ui.button(tr("New invite")).clicked() {
+                        self.guests.invite = Invite::None;
+                    }
+                });
+            }
+        }
     }
 
     /// The Guests row's contents in the stream menu.
@@ -253,6 +345,9 @@ impl Streaming {
         }
         if let Some(action) = chosen {
             self.guest_action(action);
+        }
+        if self.guests.may_invite() {
+            self.show_invite(ui);
         }
     }
 }

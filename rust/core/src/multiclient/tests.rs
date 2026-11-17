@@ -469,6 +469,7 @@ fn refusals_have_their_client_text_and_status() {
         Refusal::Unanswered,
         Refusal::GameEnded,
         Refusal::Revoked,
+        Refusal::InvitedJoinsOnly,
     ] {
         assert!(!refusal.message().is_empty());
         assert!((400..600).contains(&refusal.status()));

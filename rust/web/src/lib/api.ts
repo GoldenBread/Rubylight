@@ -974,6 +974,35 @@ export interface JoinWaiting {
   /** Until the join gives up. */
   seconds_left: number;
 }
+/** `GET /api/session-guests/invites`: invites to play over the internet (docs/multiclient.md). */
+export interface InviteLink {
+  id: number;
+  permission: GuestPermission;
+  /** Unix seconds. */
+  created: number;
+  /** Unix seconds the link, and the access it gives, end. */
+  expires: number;
+}
+export interface InvitedFriend {
+  uuid: string;
+  name: string;
+  permission: GuestPermission;
+  /** Unix seconds its access ends and the host removes it. */
+  until: number;
+}
+export interface GuestInvites {
+  links: InviteLink[];
+  friends: InvitedFriend[];
+  max_links: number;
+  default_seconds: number;
+}
+/** A new invite: the link is shown once and never kept by the host. */
+export interface InviteCreated {
+  id: number;
+  link: string;
+  expires: number;
+  permission: GuestPermission;
+}
 export interface SessionGuestsStatus {
   policy: GuestJoinPolicy;
   default_permission: GuestPermission;
@@ -1465,6 +1494,14 @@ export const api = {
       post<SessionGuestsStatus>('/api/session-guests/permission', { id, permission }),
     /** Hands the keyboard and mouse to guest `id`, or back to the device playing with null. */
     keyboardMouse: (id: number | null) => post<SessionGuestsStatus>('/api/session-guests/keyboard-mouse', { id }),
+    invites: () => get<GuestInvites>('/api/session-guests/invites'),
+    /** A link that pairs one friend's Nightjar over the internet, for `seconds` (300 to 604800). */
+    invite: (permission: GuestPermission, seconds: number) =>
+      post<InviteCreated>('/api/session-guests/invites', { permission, seconds }),
+    /** Takes back a link nobody used yet. */
+    revokeInvite: (id: number) => post<GuestInvites>('/api/session-guests/invites/revoke', { id }),
+    /** Removes a device paired from an invite. */
+    removeInvited: (uuid: string) => post<GuestInvites>('/api/session-guests/invites/revoke', { uuid }),
   },
   coop: {
     status: () => get<CoopStatus>('/api/coop'),

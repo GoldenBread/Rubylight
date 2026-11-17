@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="invite_not_a_link">Ce n’est pas un lien d’invitation Nightjar</string>
+    <string name="invite_expired">Cette invitation a expiré. Demandez-en une nouvelle.</string>
+    <string name="invite_refused">Le PC n’a pas accepté cette invitation : elle a déjà servi, a été retirée ou a expiré. Demandez-en une nouvelle.</string>
+    <string name="invite_internet_off">Activez « Jouer via Internet » dans les réglages de Nightjar, puis rouvrez l’invitation.</string>
+    <string name="invite_failed_title">Impossible de rejoindre par internet</string>
+    <string name="invite_confirm_title">Rejoindre %1$s par internet ?</string>
+    <string name="invite_confirm_body">Cet appareil s’associe à ce PC en invité : vous pouvez rejoindre une partie qu’on y joue quand on vous laisse entrer. L’invitation ne sert qu’une fois.</string>
+    <string name="invite_permission">Ce que vous pouvez faire : %1$s</string>
+    <string name="invite_connecting">Connexion à %1$s par internet…</string>
+    <string name="invite_connecting_hint">Cela peut prendre jusqu’à une minute.</string>
+    <string name="invite_accepted_title">Invitation acceptée</string>
+    <string name="invite_accepted">%1$s est maintenant dans votre liste. Rejoignez une partie qu’on y joue ; on vous laissera entrer.</string>
+    <string name="invite_make_failed">Impossible de créer une invitation : %1$s</string>
+    <string name="invite_title">Inviter un ami par internet</string>
+    <string name="invite_making">Création de l’invitation…</string>
+    <string name="invite_made">Envoyez cette invitation à une seule personne. Elle associe son Nightjar en invité une fois et reste valable un jour.</string>
+    <string name="invite_copy">Copier l’invitation</string>
+    <string name="invite_copied">Invitation copiée</string>
+    <string name="invite_share_text">Rejoins ma partie avec Nightjar : ouvre ce lien dans Nightjar, ou copie-le et colle-le dans « Ajouter un PC ».\n%1$s</string>
+    <string name="invite_share">Partager l’invitation</string>
+    <string name="invite_this_pc">le PC</string>
+</resources>

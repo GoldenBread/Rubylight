@@ -12,6 +12,8 @@ import androidx.appcompat.app.AlertDialog;
 
 import com.limelight.PcView;
 import com.limelight.R;
+import com.limelight.computers.Invites;
+import com.limelight.nvstream.http.InviteLink;
 import com.limelight.nvstream.http.PairingLink;
 import com.limelight.pin.PinGate;
 import com.limelight.ui.NavigationDialogBuilder;
@@ -19,9 +21,9 @@ import com.limelight.ui.NightjarActivity;
 import com.limelight.utils.UiHelper;
 
 /**
- * Takes a rubylight://pair link from a browser, a QR reader or any other app. Any web page can open one, so nothing
- * is added or paired until the user says so; the scanner and the address field in {@link AddComputerManually} go
- * straight to pairing.
+ * Takes a rubylight://pair link, or a rubylight://invite link to play on a friend's PC over the internet, from a
+ * browser, a QR reader or any other app. Any web page can open one, so nothing is added or paired until the user says
+ * so; the scanner and the address field in {@link AddComputerManually} go straight to pairing.
  *
  * <p>This screen is a window with only the question in it, in a task of its own that leaves no trace in Recents.
  * While the gate is held ({@link LinkGate}) it ends before it is ever shown: a stream under it does not stop, because
@@ -73,19 +75,29 @@ public class PairLinkActivity extends NightjarActivity {
             startActivity(new Intent(this, PcView.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             finish();
         } else {
-            PairingLink link = PairingLink.parse(LinkGate.take());
+            String text = LinkGate.take();
+            if (InviteLink.looksLikeLink(text)) {
+                InviteLink invite = InviteLink.parse(text);
+                if (invite == null) {
+                    refuse(R.string.invite_not_a_link);
+                } else {
+                    confirmInvite(invite);
+                }
+                return;
+            }
+            PairingLink link = PairingLink.parse(text);
             if (link == null) {
-                refuse();
+                refuse(R.string.addpc_qr_invalid);
             } else {
                 confirm(link);
             }
         }
     }
 
-    private void refuse() {
+    private void refuse(int message) {
         question = new NavigationDialogBuilder(this)
                 .setTitle(R.string.conn_error_title)
-                .setMessage(R.string.addpc_qr_invalid)
+                .setMessage(message)
                 .setPositiveButton(android.R.string.ok, (ignored, which) -> askNext())
                 .setOnCancelListener(ignored -> askNext())
                 .create();
@@ -99,10 +111,45 @@ public class PairLinkActivity extends NightjarActivity {
                 .setTitle(R.string.pair_pairing_title)
                 .setMessage(name.isEmpty() ? address : name + "\n" + address)
                 .setNegativeButton(android.R.string.cancel, (ignored, which) -> askNext())
-                .setPositiveButton(R.string.pcview_menu_pair_pc, (ignored, which) -> pair(link))
+                .setPositiveButton(R.string.pcview_menu_pair_pc, (ignored, which) -> pair(link.text))
                 .setOnCancelListener(ignored -> askNext())
                 .create();
-        // Cancel has focus: a key or button already held down must not pair. An overlay cannot tap Pair for the user.
+        guard(dialog);
+        question = dialog;
+        dialog.show();
+    }
+
+    /**
+     * An invite says whose PC, that this device pairs with it as a guest and what the friend may do; Join opens it.
+     * One whose own end has passed only says so.
+     */
+    private void confirmInvite(InviteLink invite) {
+        String name = Invites.shownName(this, invite);
+        if (invite.expired(System.currentTimeMillis() / 1000)) {
+            question = new NavigationDialogBuilder(this)
+                    .setTitle(R.string.invite_failed_title)
+                    .setMessage(R.string.invite_expired)
+                    .setPositiveButton(android.R.string.ok, (ignored, which) -> askNext())
+                    .setOnCancelListener(ignored -> askNext())
+                    .create();
+            question.show();
+            return;
+        }
+        AlertDialog dialog = new NavigationDialogBuilder(this)
+                .setTitle(getString(R.string.invite_confirm_title, name))
+                .setMessage(getString(R.string.invite_confirm_body) + "\n\n"
+                        + getString(R.string.invite_permission, Invites.permissionLabel(this, invite.permission)))
+                .setNegativeButton(android.R.string.cancel, (ignored, which) -> askNext())
+                .setPositiveButton(R.string.guests_join, (ignored, which) -> pair(invite.text))
+                .setOnCancelListener(ignored -> askNext())
+                .create();
+        guard(dialog);
+        question = dialog;
+        dialog.show();
+    }
+
+    /** Cancel has focus: a key or button already held down must not pair. An overlay cannot tap Pair for the user. */
+    private void guard(AlertDialog dialog) {
         dialog.setOnShowListener(ignored -> {
             Button pair = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
             pair.setFilterTouchesWhenObscured(true);
@@ -113,13 +160,11 @@ public class PairLinkActivity extends NightjarActivity {
             cancel.setFocusableInTouchMode(true);
             cancel.requestFocus();
         });
-        question = dialog;
-        dialog.show();
     }
 
-    private void pair(PairingLink link) {
+    private void pair(String link) {
         question = null;
-        LinkGate.confirm(link.text);
+        LinkGate.confirm(link);
         startActivity(new Intent(this, AddComputerManually.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 .putExtra(AddComputerManually.EXTRA_FROM_LINK, true));

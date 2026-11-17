@@ -1700,7 +1700,69 @@ impl PowerHost for FakePc {
 }
 
 fn accepted() -> Result<PowerReply, PowerError> {
-    Ok(power_reply(202, "Sleep request accepted; native completion is not confirmed", [true, true, false], None))
+    Ok(power_reply(
+        202,
+        "Sleep request accepted; native completion is not confirmed",
+        [true, true, false],
+        None,
+    ))
+}
+
+fn invite_link(name: &str) -> rubylight_protocol::invite_uri::InviteUri {
+    rubylight_protocol::invite_uri::InviteUri {
+        secret: [3; 32],
+        unique_id: "HOST-1".into(),
+        cert_sha256: [7; 32],
+        name: name.into(),
+        expires: 4_000_000_000,
+        permission: "controller".into(),
+        ports: rubylight_protocol::invite_uri::InvitePorts {
+            http: 47989,
+            https: 47984,
+            ..Default::default()
+        },
+        session: None,
+        endpoints: Vec::new(),
+        nat: String::new(),
+        ipv6: Vec::new(),
+        external_ipv4: None,
+        mapped_ports: false,
+    }
+}
+
+#[test]
+fn add_pc_reads_invites_and_refuses_a_broken_one_as_an_invite() {
+    let invite = invite_link("Den");
+    let pasted = format!(
+        "  {}
+",
+        invite.to_uri()
+    );
+    assert_eq!(
+        parse_entry(&pasted),
+        Ok(Entry::Invite(Box::new(invite.clone())))
+    );
+    let broken = invite.to_uri().replace("&perm=controller", "&perm=admin");
+    assert_eq!(parse_entry(&broken), Err(INVITE_INVALID));
+    assert_eq!(INVITE_INVALID, nightjar_core::invite::NOT_AN_INVITE);
+}
+
+#[test]
+fn the_engines_invite_errors_are_the_ones_translated() {
+    for known in [
+        nightjar_core::invite::NOT_AN_INVITE,
+        nightjar_core::invite::EXPIRED,
+        nightjar_core::invite::REFUSED,
+        nightjar_core::invite::INTERNET_OFF,
+    ] {
+        crate::strings::tests::with_lang(crate::strings::Lang::De, || {
+            assert_ne!(invite_error(known), known, "{known} has a German text");
+        });
+    }
+    assert_eq!(
+        invite_error("the PC did not answer"),
+        "the PC did not answer"
+    );
 }
 
 #[test]

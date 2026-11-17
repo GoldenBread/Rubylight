@@ -7211,6 +7211,91 @@ fn a_link_from_outside_pairs_only_when_pair_is_chosen() {
     assert!(f.no_dialog());
 }
 
+fn invite(name: &str, expires: u64) -> rubylight_protocol::invite_uri::InviteUri {
+    rubylight_protocol::invite_uri::InviteUri {
+        secret: [3; 32],
+        unique_id: "HOST-1".into(),
+        cert_sha256: [7; 32],
+        name: name.into(),
+        expires,
+        permission: "controller".into(),
+        ports: rubylight_protocol::invite_uri::InvitePorts {
+            http: 47989,
+            https: 47984,
+            ..Default::default()
+        },
+        session: None,
+        endpoints: Vec::new(),
+        nat: String::new(),
+        ipv6: Vec::new(),
+        external_ipv4: None,
+        mapped_ports: false,
+    }
+}
+
+fn redeems(commands: &[Command]) -> bool {
+    commands
+        .iter()
+        .any(|c| matches!(c, Command::RedeemInvite(_)))
+}
+
+#[test]
+fn an_invite_from_outside_is_opened_only_when_join_is_chosen() {
+    let mut f = Frames::new(record("Desk", true, false), Reach::Online);
+    let link = invite("Den PC", 4_000_000_000);
+    f.l.open_link(&link.to_uri());
+    let commands = f.settle();
+    assert!(!redeems(&commands), "opening it asks, nothing more");
+    assert!(matches!(f.l.dialog, Dialog::ConfirmInvite { .. }));
+    assert!(
+        f.placed.iter().any(|(t, ..)| t.contains("Den PC")),
+        "the PC is named"
+    );
+    let join = f
+        .placed
+        .iter()
+        .find(|(t, ..)| t == tr("Join"))
+        .expect("Join is drawn")
+        .1
+        .center();
+    assert!(
+        !redeems(&f.click_at(join, egui::PointerButton::Primary)),
+        "not in its first second"
+    );
+    f.time += 1.0;
+    f.settle();
+    let commands = f.click_at(join, egui::PointerButton::Primary);
+    let chosen = commands.iter().find_map(|c| {
+        if let Command::RedeemInvite(chosen) = c {
+            Some(chosen)
+        } else {
+            None
+        }
+    });
+    assert_eq!(chosen.map(|chosen| **chosen == link), Some(true));
+    assert!(f.no_dialog());
+}
+
+#[test]
+fn an_expired_invite_says_so_and_offers_no_join() {
+    let mut f = Frames::new(record("Desk", true, false), Reach::Online);
+    f.l.open_link(&invite("Den PC", 1).to_uri());
+    f.settle();
+    f.time += 2.0;
+    f.settle();
+    assert!(f
+        .placed
+        .iter()
+        .any(|(t, ..)| t == tr("This invite has expired. Ask for a new one.")));
+    assert!(!f.placed.iter().any(|(t, ..)| t == tr("Join")));
+    f.l.dialog = Dialog::None;
+    f.l.open_link("rubylight://invite#v=2");
+    assert!(
+        matches!(f.l.dialog, Dialog::Message { .. }),
+        "a broken invite is refused, never asked about"
+    );
+}
+
 #[test]
 fn pair_only_works_once_the_question_has_been_there_a_second() {
     let mut f = Frames::new(record("Desk", true, false), Reach::Online);

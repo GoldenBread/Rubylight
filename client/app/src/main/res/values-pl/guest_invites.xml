@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="invite_not_a_link">To nie jest link z zaproszeniem do Nightjar</string>
+    <string name="invite_expired">To zaproszenie wygasło. Poproś o nowe.</string>
+    <string name="invite_refused">Komputer nie przyjął tego zaproszenia: zostało już użyte, wycofane lub wygasło. Poproś o nowe.</string>
+    <string name="invite_internet_off">Włącz „Graj przez internet” w ustawieniach Nightjar, a potem otwórz zaproszenie ponownie.</string>
+    <string name="invite_failed_title">Nie udało się dołączyć przez internet</string>
+    <string name="invite_confirm_title">Dołączyć do %1$s przez internet?</string>
+    <string name="invite_confirm_body">To urządzenie sparuje się z tym komputerem jako gość: możesz dołączyć do gry, w którą ktoś tam gra, gdy cię wpuści. Zaproszenie działa raz.</string>
+    <string name="invite_permission">Co możesz robić: %1$s</string>
+    <string name="invite_connecting">Łączenie z %1$s przez internet…</string>
+    <string name="invite_connecting_hint">Może to potrwać do minuty.</string>
+    <string name="invite_accepted_title">Zaproszenie przyjęte</string>
+    <string name="invite_accepted">%1$s jest teraz na twojej liście. Dołącz do gry, w którą ktoś tam gra; ta osoba cię wpuści.</string>
+    <string name="invite_make_failed">Nie udało się utworzyć zaproszenia: %1$s</string>
+    <string name="invite_title">Zaproś znajomego przez internet</string>
+    <string name="invite_making">Tworzenie zaproszenia…</string>
+    <string name="invite_made">Wyślij to zaproszenie jednej osobie. Sparuje jej Nightjar jako gościa jeden raz i działa przez dobę.</string>
+    <string name="invite_copy">Kopiuj zaproszenie</string>
+    <string name="invite_copied">Zaproszenie skopiowane</string>
+    <string name="invite_share_text">Dołącz do mojej gry w Nightjar: otwórz ten link w Nightjar albo skopiuj go i wklej w „Dodaj komputer”.\n%1$s</string>
+    <string name="invite_share">Udostępnij zaproszenie</string>
+    <string name="invite_this_pc">komputer</string>
+</resources>

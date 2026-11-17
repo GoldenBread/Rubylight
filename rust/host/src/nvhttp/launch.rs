@@ -62,7 +62,21 @@ pub(super) fn start(h: Shared, connection: Connection, args: Args, resume: bool)
     // and the client is the device's second screen (`as_requested`), which every session rule
     // treats as a device of its own, so it neither replaces the first screen's stream nor shares
     // its display. Only a launch of a paired, authorized device gets there.
-    let authorized = validate_launch_client(&h, &connection, control, resume);
+    let joins_running = control.is_none()
+        && !resume
+        && requested != 0
+        && active.as_ref().is_some_and(|game| game.app.id == requested);
+    let authorized = validate_launch_client(&h, &connection, control, resume).or_else(|error| {
+        // A device paired from an invite may not launch: it joins the game being played with
+        // View streams alone, as a resume of it would.
+        if !joins_running {
+            return Err(error);
+        }
+        match validate_launch_client(&h, &connection, control, true) {
+            Ok(client) if crate::invites::invited(&client).is_some() => Ok(client),
+            _ => Err(error),
+        }
+    });
     let client = match authorized {
         Ok(c) => c,
         Err(error) => {

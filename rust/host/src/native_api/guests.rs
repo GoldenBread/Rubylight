@@ -17,8 +17,8 @@ use butterpollo_core::{
     native_api::{
         error::ErrorCode,
         guests::{
-            GuestApprove, GuestId, GuestKeyboardMouse, GuestPermission, JoinRequest, SessionGuest,
-            SessionGuests,
+            GuestApprove, GuestId, GuestInvites, GuestKeyboardMouse, GuestPermission, InviteCreate,
+            InviteCreated, InviteRevoke, JoinRequest, SessionGuest, SessionGuests,
         },
     },
     state::{Client, device_uuid},
@@ -206,4 +206,114 @@ pub async fn keyboard_mouse(
         .give_keyboard_mouse(body.id)
         .map_err(failed)?;
     answer(&h, &client)
+}
+
+/// The caller, when it may invite: Approve new devices or Host control.
+fn inviter(h: &Shared, c: &Connection) -> Result<Client, Failure> {
+    let client = caller(h, c)?;
+    if !client.may_approve_pairing() {
+        return Err(Failure::new(
+            ErrorCode::PermissionRequired,
+            "Inviting someone takes Approve new devices or Host control.",
+        ));
+    }
+    Ok(client)
+}
+
+fn invites_view(h: &Shared) -> Result<GuestInvites, Failure> {
+    serde_json::from_value(crate::invites::view(h))
+        .map_err(|error| Failure::new(ErrorCode::Internal, format!("{error}")))
+}
+
+/// `GET /session/guests/invites`: the links waiting and the devices paired from one.
+pub async fn invites(State(h): State<Shared>, Extension(c): Extension<Connection>) -> Reply {
+    inviter(&h, &c)?;
+    let view = tokio::task::spawn_blocking(move || invites_view(&h))
+        .await
+        .map_err(|_| Failure::new(ErrorCode::Internal, "The invite list failed."))??;
+    Ok(json(StatusCode::OK, &view))
+}
+
+/// `POST /session/guests/invites`: a new link, shown once.
+pub async fn invite(
+    State(h): State<Shared>,
+    Extension(c): Extension<Connection>,
+    request: Request,
+) -> Reply {
+    let client = inviter(&h, &c)?;
+    let body: InviteCreate =
+        serde_json::from_slice(&read_body(request).await?).map_err(|error| {
+            Failure::new(ErrorCode::InvalidRequest, format!("Invalid body: {error}."))
+        })?;
+    let wanted = body.permission.as_deref().map(permission).transpose()?;
+    let lifetime = match body.seconds {
+        Some(seconds) => {
+            let lifetime = Duration::from_secs(seconds);
+            if !(MIN_LIFETIME..=MAX_LIFETIME).contains(&lifetime) {
+                return Err(Failure::new(
+                    ErrorCode::InvalidValue,
+                    "An invite works from 300 to 604800 seconds.",
+                ));
+            }
+            Some(lifetime)
+        }
+        None => None,
+    };
+    let created = tokio::task::spawn_blocking(move || {
+        crate::invites::create(&h, wanted, lifetime, Some(&client))
+    })
+    .await
+    .map_err(|_| Failure::new(ErrorCode::Internal, "The invite failed."))?
+    .map_err(|failure| {
+        let code = match failure {
+            crate::invites::CreateFailure::NotAllowed => ErrorCode::PermissionRequired,
+            crate::invites::CreateFailure::PairingOff => ErrorCode::TemporarilyUnavailable,
+            crate::invites::CreateFailure::Policy(_) => ErrorCode::InvalidValue,
+            crate::invites::CreateFailure::Internal(_) => ErrorCode::Internal,
+        };
+        Failure::new(code, failure.message())
+    })?;
+    Ok(json(
+        StatusCode::OK,
+        &InviteCreated {
+            id: created.id,
+            link: created.link,
+            expires: created.expires,
+            permission: created.permission.as_str().into(),
+        },
+    ))
+}
+
+/// `POST /session/guests/invites/revoke`: takes back a link, or removes a device paired from one.
+pub async fn revoke_invite(
+    State(h): State<Shared>,
+    Extension(c): Extension<Connection>,
+    request: Request,
+) -> Reply {
+    inviter(&h, &c)?;
+    let body: InviteRevoke =
+        serde_json::from_slice(&read_body(request).await?).map_err(|error| {
+            Failure::new(ErrorCode::InvalidRequest, format!("Invalid body: {error}."))
+        })?;
+    let view = tokio::task::spawn_blocking(move || {
+        let found = match (body.id, body.uuid.as_deref()) {
+            (Some(id), None) => Ok(crate::invites::revoke(&h, id)),
+            (None, Some(uuid)) => crate::invites::remove(&h, uuid)
+                .map_err(|error| Failure::new(ErrorCode::Internal, format!("{error:#}"))),
+            _ => Err(Failure::new(
+                ErrorCode::InvalidRequest,
+                "Send the id of a link or the uuid of an invited device.",
+            )),
+        }?;
+        if !found {
+            return Err(Failure::new(
+                ErrorCode::NotFound,
+                "That invite or invited device is no longer there.",
+            ));
+        }
+        invites_view(&h)
+    })
+    .await
+    .map_err(|_| Failure::new(ErrorCode::Internal, "Taking the invite back failed."))??;
+    Ok(json(StatusCode::OK, &view))
 }

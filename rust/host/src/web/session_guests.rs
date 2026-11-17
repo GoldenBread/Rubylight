@@ -102,6 +102,57 @@ pub(super) fn handle(h: &Shared, method: &Method, path: &str, data: &Value) -> R
                 None => missing_id(),
             },
         },
+        ("GET", "/api/session-guests/invites") => Json(crate::invites::view(h)).into_response(),
+        ("POST", "/api/session-guests/invites") => {
+            let wanted = match data.get("permission") {
+                None | Some(Value::Null) => None,
+                Some(_) => match permission(data) {
+                    Some(permission) => Some(permission),
+                    None => return bad_permission(),
+                },
+            };
+            let lifetime = match data.get("seconds") {
+                None | Some(Value::Null) => None,
+                Some(seconds) => match seconds.as_u64().map(Duration::from_secs) {
+                    Some(lifetime) if (MIN_LIFETIME..=MAX_LIFETIME).contains(&lifetime) => {
+                        Some(lifetime)
+                    }
+                    _ => {
+                        return error(StatusCode::BAD_REQUEST, "seconds must be 300 to 604800");
+                    }
+                },
+            };
+            match crate::invites::create(h, wanted, lifetime, None) {
+                Ok(created) => Json(json!({
+                    "id": created.id,
+                    "link": created.link,
+                    "expires": created.expires,
+                    "permission": created.permission.as_str(),
+                }))
+                .into_response(),
+                Err(failure) => error(StatusCode::BAD_REQUEST, &failure.message()),
+            }
+        }
+        ("POST", "/api/session-guests/invites/revoke") => {
+            let found = match (id(data), data.get("uuid").and_then(Value::as_str)) {
+                (Some(id), None) => Ok(crate::invites::revoke(h, id)),
+                (None, Some(uuid)) => crate::invites::remove(h, uuid),
+                _ => {
+                    return error(
+                        StatusCode::BAD_REQUEST,
+                        "send the id of a link or the uuid of an invited device",
+                    );
+                }
+            };
+            match found {
+                Ok(true) => Json(crate::invites::view(h)).into_response(),
+                Ok(false) => error(
+                    StatusCode::NOT_FOUND,
+                    "that invite or invited device is no longer there",
+                ),
+                Err(failure) => error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{failure:#}")),
+            }
+        }
         _ => error(StatusCode::NOT_FOUND, "not found"),
     }
 }

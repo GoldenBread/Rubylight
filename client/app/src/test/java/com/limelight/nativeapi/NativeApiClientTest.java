@@ -191,6 +191,19 @@ public class NativeApiClientTest {
     }
 
     @Test
+    public void invitesNeedTheHostsFeatureAndApproveNewDevicesOrHostControl() throws Exception {
+        String features = "\"features\":[\"session.guest-invites\"]";
+        assertTrue(NativeCapabilities.parse(new JSONObject("{\"api_version\":1,\"permissions\":{\"pairing_approve\":true},"
+                + features + "}")).mayInvite());
+        assertTrue(NativeCapabilities.parse(new JSONObject("{\"api_version\":1,\"permissions\":{\"host_control\":true},"
+                + features + "}")).mayInvite());
+        assertFalse("a guest may not", NativeCapabilities.parse(new JSONObject("{\"api_version\":1,"
+                + "\"permissions\":{\"view\":true,\"launch\":true}," + features + "}")).mayInvite());
+        assertFalse("not offered", NativeCapabilities.parse(new JSONObject("{\"api_version\":1,"
+                + "\"permissions\":{\"host_control\":true},\"features\":[]}")).mayInvite());
+    }
+
+    @Test
     public void resumeIsTheLaunchPathAndNotASessionAction() {
         for (NativeSession.ActionId id : new NativeSession.ActionId[] {NativeSession.ActionId.RESUME,
                 NativeSession.ActionId.UNKNOWN}) {
@@ -421,6 +434,17 @@ public class NativeApiClientTest {
         assertTrue(caps.launch && caps.view && caps.list);
         assertFalse(caps.hostControl);
         assertTrue(caps.features.contains("session.close_game"));
+    }
+
+    @Test
+    public void anInviteIsAskedWithThePcsDefaults() throws Exception {
+        transport.reply("pc", "guests.invite", ok("{\"id\":4,\"link\":\"rubylight://invite#v=1\",\"expires\":1800000000,"
+                + "\"permission\":\"controller\"}"));
+        NativeGuests.Invite made = client().createInvite();
+        assertEquals("rubylight://invite#v=1", made.link);
+        assertEquals(1_800_000_000L, made.expires);
+        assertEquals(java.util.Collections.singletonList("pc|guests.invite"), transport.calls);
+        assertEquals(java.util.Collections.singletonList(""), transport.arguments);
     }
 
     @Test

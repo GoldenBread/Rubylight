@@ -411,6 +411,27 @@ impl App {
         }
         for event in events {
             match event {
+                HostEvent::Invited { result, id } => {
+                    if matches!(self.launcher.dialog, Dialog::Inviting { .. }) {
+                        self.launcher.dialog = Dialog::None;
+                    }
+                    match (result, id) {
+                        (Ok(redeemed), Some(id)) => {
+                            self.save_hosts();
+                            self.hosts.load_apps(id);
+                            self.launcher.open(Screen::Apps(id));
+                            self.launcher.notify(
+                                tr("Invite accepted"),
+                                trf("{} is on your list now. Join a game someone plays there; they let you in.", &[&redeemed.name]),
+                            );
+                        }
+                        (Ok(_), None) => {}
+                        (Err(error), _) => self.launcher.notify(
+                            tr("Could not join over the internet"),
+                            crate::hosts::invite_error(&error),
+                        ),
+                    }
+                }
                 HostEvent::Paired { id, result, .. } => {
                     if self.launcher.pairing_finished(id, result.map(|_| ())) {
                         self.save_hosts();

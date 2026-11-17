@@ -221,6 +221,18 @@ impl Host for Fake {
         self.note(&format!("guest {}", action.request().0));
         Ok(serde_json::from_str(GUESTS).unwrap())
     }
+    fn create_invite(&self, create: &InviteCreate) -> Result<InviteCreated, Error> {
+        self.note(&format!(
+            "invite {:?} {:?}",
+            create.permission, create.seconds
+        ));
+        Ok(InviteCreated {
+            id: 4,
+            link: "rubylight://invite#v=1".to_owned(),
+            expires: 1_900_000_000,
+            permission: "controller".to_owned(),
+        })
+    }
     fn install_host_update(&self) -> Result<HostUpdate, Error> {
         self.note("update install");
         Ok(serde_json::from_str(
@@ -546,7 +558,30 @@ fn guests_reach_the_host_and_bad_actions_do_not() {
     assert_eq!(approved["ok"]["owner"], "Fold7");
     let bad = parse(&execute(&fake, "guests.action", r#"{"action":"permission","id":3,"permission":"admin"}"#));
     assert_eq!(bad["error"]["kind"], "invalid_argument");
-    assert_eq!(*fake.calls.lock().unwrap(), ["guests", "guest session/guests/approve"]);
+    assert_eq!(
+        *fake.calls.lock().unwrap(),
+        ["guests", "guest session/guests/approve"]
+    );
+}
+
+#[test]
+fn an_invite_is_made_with_the_pcs_defaults_or_the_ones_asked_for() {
+    let fake = Fake::default();
+    let made = parse(&execute(&fake, "guests.invite", ""));
+    assert_eq!(made["ok"]["link"], "rubylight://invite#v=1");
+    assert_eq!(made["ok"]["expires"], 1_900_000_000u64);
+    let asked = parse(&execute(
+        &fake,
+        "guests.invite",
+        r#"{"permission":"view","seconds":3600}"#,
+    ));
+    assert_eq!(asked["ok"]["id"], 4);
+    let bad = parse(&execute(&fake, "guests.invite", r#"{"seconds":"soon"}"#));
+    assert_eq!(bad["error"]["kind"], "invalid_argument");
+    assert_eq!(
+        *fake.calls.lock().unwrap(),
+        ["invite None None", "invite Some(\"view\") Some(3600)"]
+    );
 }
 
 #[test]

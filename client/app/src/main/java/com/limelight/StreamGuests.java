@@ -1,6 +1,10 @@
 package com.limelight;
 
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.DialogInterface;
+import android.content.Intent;
 import android.widget.Toast;
 
 import androidx.annotation.VisibleForTesting;
@@ -20,6 +24,8 @@ import java.util.Set;
  * Guests from other devices, on the device playing (feature session.guests): asks "X wants to join your game" with
  * Let in and Deny while the host waits for an answer, and lists the guests in the stream menu with what each may do,
  * the keyboard and mouse, Kick and Block. Reads the host every 2 s while it may manage guests, every 10 s otherwise.
+ * Where the PC offers invites and this device may make them, the Guests menu also makes an invite to play over the
+ * internet, to share with a friend.
  */
 final class StreamGuests {
     /** How often a device that doesn't manage the guests looks again: it may become the device playing. */
@@ -32,6 +38,8 @@ final class StreamGuests {
     private final Set<Integer> asked = new HashSet<>();
     private volatile NativeGuests latest;
     private volatile Thread polling;
+    /** Whether the PC offers invites and this device may make them, read once when polling starts. */
+    private volatile boolean mayInvite;
     private AlertDialog prompt;
     private int promptFor = -1;
 
@@ -65,6 +73,11 @@ final class StreamGuests {
 
     private void poll() {
         Thread self = Thread.currentThread();
+        try {
+            mayInvite = client.capabilities().mayInvite();
+        } catch (NativeApiException e) {
+            LimeLog.info("Invites not offered: " + e.getMessage());
+        }
         while (polling == self) {
             NativeGuests read = null;
             try {
@@ -155,6 +168,7 @@ final class StreamGuests {
         NavigationDialogBuilder builder = new NavigationDialogBuilder(game);
         builder.setTitle(R.string.guests_title);
         List<NativeGuests.Request> waiting = answerable(read);
+        if (mayInvite) builder.setNeutralButton(R.string.invite_title, (dialog, which) -> invite());
         if (read.guests.isEmpty() && waiting.isEmpty()) {
             builder.setMessage(R.string.guests_none).setPositiveButton(android.R.string.ok, null).show();
             return;
@@ -261,6 +275,49 @@ final class StreamGuests {
                 });
             }
         }, "Guest action").start();
+    }
+
+    /** Makes an invite off the UI thread and offers it to share or copy; a refusal is shown in the host's words. */
+    private void invite() {
+        Toast.makeText(game, R.string.invite_making, Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            try {
+                NativeGuests.Invite made = client.createInvite();
+                game.runOnUiThread(() -> {
+                    if (!game.isFinishing()) showInvite(made);
+                });
+            } catch (NativeApiException e) {
+                LimeLog.warning("Invite failed: " + e.getMessage());
+                game.runOnUiThread(() -> {
+                    if (game.isFinishing()) return;
+                    Toast.makeText(game, game.getString(R.string.invite_make_failed, e.getMessage()), Toast.LENGTH_LONG).show();
+                });
+            }
+        }, "Guest invite").start();
+    }
+
+    /** The message a friend gets: what to do with the link, then the link. */
+    @VisibleForTesting
+    static String inviteMessage(Context context, String link) {
+        return context.getString(R.string.invite_share_text, link);
+    }
+
+    private void showInvite(NativeGuests.Invite made) {
+        String message = inviteMessage(game, made.link);
+        new NavigationDialogBuilder(game)
+                .setTitle(R.string.invite_title)
+                .setMessage(R.string.invite_made)
+                .setPositiveButton(R.string.invite_share, (dialog, which) -> game.startActivity(Intent.createChooser(
+                        new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, message),
+                        game.getString(R.string.invite_title))))
+                .setNeutralButton(R.string.invite_copy, (dialog, which) -> {
+                    ClipboardManager clipboard = (ClipboardManager) game.getSystemService(Context.CLIPBOARD_SERVICE);
+                    if (clipboard == null) return;
+                    clipboard.setPrimaryClip(ClipData.newPlainText(game.getString(R.string.invite_title), message));
+                    Toast.makeText(game, R.string.invite_copied, Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
     }
 
     /** Whether {@code action} answers a join request. */

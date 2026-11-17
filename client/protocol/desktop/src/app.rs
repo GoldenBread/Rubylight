@@ -130,6 +130,19 @@ impl App {
         self.hosts.pair_link(id, link);
     }
 
+    /// Opens an invite to play over the internet: the PC is looked for, paired as a guest and
+    /// added; the answer closes the progress dialog.
+    pub(crate) fn redeem_invite(&mut self, link: rubylight_protocol::invite_uri::InviteUri) {
+        let name = link.shown_name();
+        let name = if name.is_empty() {
+            tr("the PC").to_owned()
+        } else {
+            name
+        };
+        self.launcher.dialog = Dialog::Inviting { name };
+        self.hosts.redeem_invite(link);
+    }
+
     /// Shows a link the system opened with Nightjar, once nothing else is in the way: a stream
     /// (this runs only between them), a stream being started, an open dialog or the PIN screen.
     fn open_waiting_link(&mut self) {
@@ -156,8 +169,18 @@ impl App {
                 self.save_hosts();
             }
             Ok(hosts::Entry::Link(link)) => self.pair_link(*link),
+            // Typed or pasted here on purpose: asked about all the same, as it can come from anyone.
+            Ok(hosts::Entry::Invite(link)) => {
+                self.launcher.dialog = Dialog::ConfirmInvite { link, shown: None }
+            }
             // The link holds a PIN and passphrase: it is not shown back.
-            Err(hosts::LINK_INVALID) => self.launcher.message(tr("Could not pair"), tr(hosts::LINK_INVALID)),
+            Err(hosts::LINK_INVALID) => self
+                .launcher
+                .message(tr("Could not pair"), tr(hosts::LINK_INVALID)),
+            Err(hosts::INVITE_INVALID) => self.launcher.message(
+                tr("Could not join over the internet"),
+                tr(hosts::INVITE_INVALID),
+            ),
             Err(why) => self.launcher.message(tr(why), text.trim()),
         }
     }

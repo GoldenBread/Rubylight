@@ -20,6 +20,11 @@ use super::native_api::session::{ActionId, CouchMenu, CouchMenuRequest, Session,
 use super::native_api::wake::Wake;
 use super::native_api::PREFIX;
 use super::neural::{Neural, NeuralWrite};
+use super::pc_power::{HostUpdate, PcPower, PcPowerOffer, PowerRequest};
+use super::session_guests::{
+    GuestAction, InviteCreate, InviteCreated, SessionGuests, FEATURE_GUEST_INVITES,
+    FEATURE_SESSION_GUESTS,
+};
 use super::transport::{self, Body, Request, Timeouts};
 use super::{Error, HostClient, LONG_CONNECT_TIMEOUT, READ_TIMEOUT};
 use serde::de::{DeserializeOwned, Error as _};
@@ -167,6 +172,16 @@ impl NativeCapabilities {
     /// "Approve new devices" or Host control.
     pub fn may_approve_pairing(&self) -> bool {
         self.offers_pairing_approve()
+            && (self.files.pairing_approve || self.capabilities.permissions.host_control)
+    }
+
+    /// Whether this device may make invites to play over the internet: the PC offers them
+    /// (`session.guest-invites`) and this device holds "Approve new devices" or Host control.
+    pub fn may_invite(&self) -> bool {
+        self.capabilities
+            .features
+            .iter()
+            .any(|f| f == FEATURE_GUEST_INVITES)
             && (self.files.pairing_approve || self.capabilities.permissions.host_control)
     }
 }
@@ -420,6 +435,19 @@ impl HostClient {
     pub fn guest_action(&self, action: &GuestAction) -> Result<SessionGuests, Error> {
         let (path, body) = action.request();
         self.native(path, Some(&body), MAX_JSON_BYTES, ACTION_READ_TIMEOUT)
+    }
+
+    /// Makes an invite to play over the internet ([`NativeCapabilities::may_invite`]): a link that
+    /// pairs one friend's Nightjar as a guest. The link is answered once; keep it only to share it.
+    pub fn create_invite(&self, invite: &InviteCreate) -> Result<InviteCreated, Error> {
+        let body = serde_json::to_vec(invite)
+            .map_err(|e| Error::InvalidArgument(format!("invite: {e}")))?;
+        self.native(
+            "session/guests/invites",
+            Some(&body),
+            MAX_JSON_BYTES,
+            ACTION_READ_TIMEOUT,
+        )
     }
 
     /// Installs the host's pending update, ending this device's own stream. Needs Host control;

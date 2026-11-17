@@ -23,9 +23,10 @@ use nightjar_core::http::native_api::radeon::{Radeon, SettingsWrite};
 use nightjar_core::http::native_api::session::{ActionId, CouchMenu, CouchMenuRequest, Session};
 use nightjar_core::http::native_api::wake::Wake;
 use nightjar_core::http::{
-    update_arrived, valid_pairing_pin, ClientIdentity, Coop, CoopJoined, Error, HostClient,
-    HostUpdate, NativeCapabilities, NativeLibrary, PairingApprove, PairingApproved, PairingRequests, PcPower, PcPowerOffer, PowerError, PowerReply, Refusal, StreamMove,
-    GuestAction, SessionGuests,
+    update_arrived, valid_pairing_pin, ClientIdentity, Coop, CoopJoined, Error, GuestAction,
+    HostClient, HostUpdate, InviteCreate, InviteCreated, NativeCapabilities, NativeLibrary,
+    PairingApprove, PairingApproved, PairingRequests, PcPower, PcPowerOffer, PowerError,
+    PowerReply, Refusal, SessionGuests, StreamMove,
 };
 use nightjar_core::http::{Neural, NeuralWrite};
 
@@ -64,6 +65,7 @@ pub trait Host {
     fn deny_pairing(&self, id: &str) -> Result<PairingRequests, Error>;
     fn session_guests(&self) -> Result<SessionGuests, Error>;
     fn guest_action(&self, action: &GuestAction) -> Result<SessionGuests, Error>;
+    fn create_invite(&self, create: &InviteCreate) -> Result<InviteCreated, Error>;
     fn wake(&self) -> Result<Wake, Error>;
     fn coop(&self) -> Result<Coop, Error>;
     fn join_coop(&self, session: u32) -> Result<CoopJoined, Error>;
@@ -136,6 +138,9 @@ impl Host for HostClient {
     }
     fn guest_action(&self, action: &GuestAction) -> Result<SessionGuests, Error> {
         HostClient::guest_action(self, action)
+    }
+    fn create_invite(&self, create: &InviteCreate) -> Result<InviteCreated, Error> {
+        HostClient::create_invite(self, create)
     }
     fn wake(&self) -> Result<Wake, Error> {
         HostClient::wake(self)
@@ -379,6 +384,13 @@ pub fn execute(host: &dyn Host, op: &str, argument: &str) -> String {
         "guests.action" => match GuestAction::from_json(argument) {
             Ok(action) => ok(host.guest_action(&action)),
             Err(e) => argument_error(e),
+        },
+        "guests.invite" if argument.trim().is_empty() => {
+            ok(host.create_invite(&InviteCreate::default()))
+        }
+        "guests.invite" => match serde_json::from_str::<InviteCreate>(argument) {
+            Ok(create) => ok(host.create_invite(&create)),
+            Err(e) => argument_error(format!("invite: {e}")),
         },
         "wake" => ok(host.wake()),
         "coop" => ok(host.coop()),

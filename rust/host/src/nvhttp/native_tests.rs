@@ -32,6 +32,7 @@ mod couch_menu;
 mod files;
 mod folders;
 mod guests;
+mod invites;
 mod launcher;
 mod neural;
 mod pairing;

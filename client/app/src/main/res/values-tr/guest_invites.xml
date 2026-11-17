@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="invite_not_a_link">Bu bir Nightjar davet bağlantısı değil</string>
+    <string name="invite_expired">Bu davetin süresi doldu. Yeni bir davet isteyin.</string>
+    <string name="invite_refused">Bilgisayar bu daveti kabul etmedi: daha önce kullanıldı, geri alındı ya da süresi doldu. Yeni bir davet isteyin.</string>
+    <string name="invite_internet_off">Nightjar ayarlarında “İnternet üzerinden oyna”yı açın, ardından daveti yeniden açın.</string>
+    <string name="invite_failed_title">İnternet üzerinden katılınamadı</string>
+    <string name="invite_confirm_title">%1$s bilgisayarına internet üzerinden katılınsın mı?</string>
+    <string name="invite_confirm_body">Bu cihaz o bilgisayarla konuk olarak eşleşir: orada biri oynarken o seni içeri alırsa oyuna katılabilirsin. Davet bir kez çalışır.</string>
+    <string name="invite_permission">Yapabileceklerin: %1$s</string>
+    <string name="invite_connecting">%1$s ile internet üzerinden bağlanılıyor…</string>
+    <string name="invite_connecting_hint">Bu bir dakikaya kadar sürebilir.</string>
+    <string name="invite_accepted_title">Davet kabul edildi</string>
+    <string name="invite_accepted">%1$s artık listende. Orada birinin oynadığı bir oyuna katıl; o seni içeri alır.</string>
+    <string name="invite_make_failed">Davet oluşturulamadı: %1$s</string>
+    <string name="invite_title">İnternet üzerinden arkadaş davet et</string>
+    <string name="invite_making">Davet oluşturuluyor…</string>
+    <string name="invite_made">Bu daveti yalnızca bir kişiye gönder. Onun Nightjar’ını bir kez konuk olarak eşleştirir ve bir gün geçerlidir.</string>
+    <string name="invite_copy">Daveti kopyala</string>
+    <string name="invite_copied">Davet kopyalandı</string>
+    <string name="invite_share_text">Nightjar ile oyunuma katıl: bu bağlantıyı Nightjar’da aç ya da kopyalayıp “Bilgisayar ekle”ye yapıştır.\n%1$s</string>
+    <string name="invite_share">Daveti paylaş</string>
+    <string name="invite_this_pc">bilgisayar</string>
+</resources>

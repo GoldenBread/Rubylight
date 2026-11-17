@@ -112,10 +112,25 @@ pub(super) async fn do_pair(
             bail!("pairing request limit reached for this address");
         }
         if let Some(auth) = args.get("otpauth") {
+            let salt_text = args.get("salt").map_or("", String::as_str);
+            // An invite's PIN (`crate::invites`): 128 bits derived from the link's secret. It
+            // is spent only when the pairing completes, so a dropped handshake can try again.
+            if let Some((invite, pin)) = crate::invites::matching(&h, auth, salt_text) {
+                tracing::info!(client=%name, invite, %peer, "Pairing from an invite");
+                let mut pair = Pairing::for_invite(id, name, certificate, &salt, &pin, invite)?;
+                pair.peer = Some(peer);
+                h.pairings.lock().unwrap().insert(pair)?;
+                return Ok(vec![
+                    ("paired".into(), "1".into()),
+                    (
+                        "plaincert".into(),
+                        hex::encode(h.identity.certificate.as_bytes()),
+                    ),
+                ]);
+            }
             // One-time PIN pairing (Artemis). A wrong hash still gets an
             // ordinary answer, with a random PIN that fails the next step.
             // The QR code's PIN and the one typed in Artemis are tried both.
-            let salt_text = args.get("salt").map_or("", String::as_str);
             let matched = h.otp.lock().unwrap().take_matching(auth, salt_text, peer)?;
             let (pin, name, permission) = if let Some(otp) = matched {
                 tracing::info!(client=%name, "Pairing with a one-time PIN");
@@ -254,6 +269,10 @@ pub(super) async fn do_pair(
                     ("pairingsecret".into(), hex::encode(response)),
                 ])
             }
+            Step::Secret(secret) if p.invite.is_some() => {
+                p.finish(secret)?;
+                finish_invite(&h, p, peer)
+            }
             Step::Secret(secret) => {
                 p.finish(secret)?;
                 let mut state = h.paired.write().unwrap();
@@ -322,6 +341,63 @@ pub(super) async fn do_pair(
         }
     }
     result
+}
+
+/// The end of a pairing that answered an invite: the invite is spent, and the device is paired as
+/// an invited guest (`butterpollo_core::invites`), never with a first device's rights. A device
+/// already paired on its own keeps its rights.
+fn finish_invite(
+    h: &Shared,
+    p: &butterpollo_core::pairing::Pairing,
+    peer: std::net::IpAddr,
+) -> Result<Vec<(String, String)>> {
+    let invite = p.invite.context("not an invite's pairing")?;
+    let mut state = h.paired.write().unwrap();
+    let same = |c: &&Client| c.cert.trim() == p.certificate.trim();
+    let existing = state.clients.iter().find(same).map(|c| c.uuid.clone());
+    let uuid = existing
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let (perm, guest) = crate::invites::spend(h, &state, invite, &uuid, &p.name)?;
+    let mut extra = std::collections::BTreeMap::new();
+    extra.insert(butterpollo_core::invites::MARKER.to_owned(), guest.marker());
+    state
+        .add(
+            &h.paired_path,
+            Client {
+                name: p.name.clone(),
+                cert: p.certificate.clone(),
+                uuid: uuid.clone(),
+                perm,
+                enabled: true,
+                extra,
+            },
+        )
+        .map_err(|error| {
+            tracing::error!(error = %format!("{error:#}"), "an invited device could not be saved");
+            error.context(crate::native_api::pairing::NotSaved)
+        })?;
+    if existing.is_some() {
+        let mut next = state.clone();
+        if let Some(client) = next.clients.iter_mut().find(|c| c.uuid == uuid)
+            && crate::invites::apply(client, perm, guest)
+        {
+            next.save(&h.paired_path)?;
+            *state = next;
+        }
+    }
+    drop(state);
+    tracing::info!(client=%p.name, invite, %peer, until = guest.until, "device paired from an invite");
+    crate::internet_play::refresh(h);
+    h.webhook(
+        "pairing.paired",
+        serde_json::json!({"device": crate::webhooks::device(&uuid, &p.name), "transport": "invite"}),
+    );
+    butterpollo_windows::tray::notify(
+        "Your invite was used",
+        &format!("{} can join the game you play when you let it in.", p.name),
+    );
+    Ok(vec![("paired".into(), "1".into())])
 }
 
 pub(super) async fn unpair(

@@ -82,6 +82,9 @@ pub struct Pairing {
     /// The paired device that typed the PIN, by uuid; `None` for the console.
     /// Lives here so the cap can't be dropped with anything but the session.
     pub approver: Option<String>,
+    /// The invite (`crate::invites`) whose PIN this pairing answered: finishing it spends the
+    /// invite and pairs the device as an invited guest.
+    pub invite: Option<u32>,
     phase: Phase,
     key: [u8; 16],
     server_secret: [u8; 16],
@@ -114,6 +117,41 @@ impl Pairing {
         if pin.len() != 4 || !pin.bytes().all(|c| c.is_ascii_digit()) {
             bail!("PIN must contain four digits");
         }
+        Self::with_pin(unique_id, name, certificate, salt, pin)
+    }
+    /// A pairing answering an invite (`crate::invites`): its PIN is 32 hex digits derived from
+    /// the invite's secret, never typed, so a recorded pairing gives nobody a PIN to guess.
+    pub fn for_invite(
+        unique_id: String,
+        name: String,
+        certificate: String,
+        salt: &[u8],
+        pin: &str,
+        invite: u32,
+    ) -> Result<Self> {
+        validate_device_name(&name)?;
+        if pin.len() != 32 || !pin.bytes().all(|c| c.is_ascii_hexdigit()) {
+            bail!("an invite's PIN is 32 hex digits");
+        }
+        let mut pairing = Self::with_pin(unique_id, name, certificate, salt, pin)?;
+        pairing.invite = Some(invite);
+        Ok(pairing)
+    }
+    fn with_pin(
+        unique_id: String,
+        name: String,
+        certificate: String,
+        salt: &[u8],
+        pin: &str,
+    ) -> Result<Self> {
+        if unique_id.is_empty()
+            || unique_id.len() > 256
+            || !unique_id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+        {
+            bail!("invalid client identity");
+        }
         if salt.len() < 16 {
             bail!("salt is too short");
         }
@@ -126,6 +164,7 @@ impl Pairing {
             peer: None,
             permission: None,
             approver: None,
+            invite: None,
             phase: Phase::Cert,
             key: crypto::pin_key(salt[..16].try_into().unwrap(), pin),
             server_secret: crypto::random(),
@@ -260,6 +299,47 @@ mod tests {
             assert!(validate_device_name(name).is_ok(), "{name}");
             assert_eq!(without_direction_controls(name), name);
         }
+    }
+    #[test]
+    fn an_invites_pin_is_long_and_never_a_typed_one() {
+        let client = crypto::Identity::generate().unwrap();
+        let pin = "0123456789abcdef0123456789ABCDEF";
+        let made = |pin: &str| {
+            Pairing::for_invite(
+                "client-1".into(),
+                "Friend".into(),
+                client.certificate.clone(),
+                &[5; 16],
+                pin,
+                7,
+            )
+        };
+        let pairing = made(pin).unwrap();
+        assert_eq!(pairing.invite, Some(7));
+        assert_eq!(pairing.key, crypto::pin_key(&[5; 16], pin));
+        for wrong in ["1234", &pin[..31], &format!("{}g", &pin[..31])] {
+            assert!(made(wrong).is_err(), "{wrong}");
+        }
+        // A typed pairing takes four digits only, and is no invite's.
+        let typed = Pairing::new(
+            "client-1".into(),
+            "Phone".into(),
+            client.certificate.clone(),
+            &[5; 16],
+            "1234",
+        )
+        .unwrap();
+        assert_eq!(typed.invite, None);
+        assert!(
+            Pairing::new(
+                "client-1".into(),
+                "Phone".into(),
+                client.certificate.clone(),
+                &[5; 16],
+                pin
+            )
+            .is_err()
+        );
     }
     #[test]
     fn pair_with_real_rsa_certificates_and_existing_wire_format() {

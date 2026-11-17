@@ -31,6 +31,24 @@ Moonlight clients show the text in their launch error.
 
 Nightjar waits up to 120 seconds for a join answer. Moonlight clients that give up on a launch sooner than 45 seconds show their own timeout instead. In that case, answer sooner or switch to **Let in without asking**.
 
+## Invite a friend over the internet
+
+A friend who has never been on your network can join with Nightjar on Android, Windows, Linux or macOS. No PIN, no port forwarding and no visit are needed:
+
+1. **Make an invite.** In the console, **Invite a friend** on Home, under the Guests card; or, in your own Nightjar during a stream, **Guests** in the stream menu, then **Invite a friend over the internet**. Making one needs **Approve new devices** or **Host control** on that device.
+2. **Send the link to one person.** It looks like `rubylight://invite#…`. Many chat apps don't make such a link clickable, so the friend can also copy it and paste it under **Add PC** in Nightjar.
+3. **The friend opens it** and confirms **Join**. Nightjar finds the PC over the internet (its IPv6 address, a forwarded port, or a path punched through both routers, as [Play over the internet](internet-play.md) does), pairs as a guest without a PIN, and lists the PC. This can take up to a minute.
+4. **The friend joins your game**: they select the game you play and press **Join**, and you let them in as any guest.
+
+What an invite gives, and what it doesn't:
+
+- **One device, once.** An invite pairs one device and is spent then; a second use is refused. It ends after a day (in the console: 1 hour, 24 hours or 7 days; through the API 5 minutes to 7 days) and can be taken back while unused. At most 8 unused invites exist at a time. They are kept in memory only: a host restart ends every unused one.
+- **Guest rights only, until the invite's time ends.** The friend's device gets the invite's guest permission (View, Controller, or Controller with keyboard and mouse, never more than the device that made it holds). It never gets Launch, Host control, Approve new devices or a first device's rights, and the PC's other settings and apps stay out of its reach. It can only join a game someone plays, and the player is always asked first, whatever **When another device joins the running game** says. When the invite's time ends, the host unpairs the device. **Invited devices** in the console's invite card removes one earlier.
+- **Play over the internet only for this.** With `internet_play` off, the host runs its rendezvous only while an unused invite or an invited device needs it, only for those, and stops it after. With it on, an invited device is reached like any other.
+- **The PC is checked.** The link names the PC's certificate: Nightjar pairs only with the PC that made it. Pairing with an invite works only while **Allow pairing** (`enable_pairing`) is on.
+
+The link is a secret, like a key to a guest seat: anyone who holds it before your friend uses it can join in their place, as a guest you still let in. Send it only to the friend, and take it back in the console if it went astray. Everything after `#` stays on the devices that open it: a browser never sends it to a website.
+
 ## What a guest may do
 
 **What a guest may do** (`guest_permission`, default `controller`) is the permission a guest gets when the owner lets it in without choosing one. The owner can change it for each guest at any time.
@@ -93,6 +111,7 @@ Sound reaches each guest like any second stream of the PC.
 
 - A guest sees and hears everything the owner's stream shows, including notifications and other windows on that display. Let in only people you'd let watch your screen.
 - The owner's device, the console and devices with Host control see each guest's and requester's device name, what it may do, and when it joined. Guests and other paired devices see the same list but can't change it.
+- An invited friend's device name and when its time ends are listed under **Invited devices** in the console. The host keeps the invite links in memory only, and the invited device with its paired devices until its time ends.
 - The host keeps the guest list in memory only. Nothing about guests is written to disk, except log lines that name the device and what happened (joined, let in, denied, kicked, blocked, ended).
 - Watching the PC's local mouse and keyboard uses raw input only to see that someone at the PC used them. Nothing about what was typed or where the mouse moved is kept or sent.
 
@@ -100,6 +119,7 @@ See also [Privacy](privacy.md#your-own-devices).
 
 ## For developers
 
+- **Invites:** the native API lists `session.guest-invites` while **Allow pairing** (`enable_pairing`) is on. An invite carries, after `#`, a 32-byte secret `k`, the PC's ID, certificate SHA-256, name, end, permission and ports, and the PC's last public endpoints, NAT type, IPv6 and forwarded IPv4 hints. Both sides derive from `k` (HKDF-SHA256, salt `rubylight internet play v1`) the rendezvous secret for [Play over the internet](internet-play.md) and a one-time pairing PIN of 32 hex digits, which the host accepts only for that invite; the client refuses a PC whose certificate is not the link's. The paired device carries `invited_guest` (`until`, `permission`) in its `extra`. Code: `rust/core/src/invites.rs`, `rust/host/src/invites.rs`, `client/protocol/core/src/invite_uri.rs`, `client/protocol/traverse/src/invite.rs`, `client/protocol/client/src/invite.rs`.
 - **Host capability:** the native API lists the feature `session.guests` while `guest_join` is not `off`. Clients show Join, the approval prompt and the guest list only when it is listed. The host keeps `PROTOCOL_VERSION`, and Moonlight clients use no new messages: a guest's stream is an ordinary stream.
 - **Endpoints:** the routes and types are in [Native API: Session](native-api.md#session), under Guests from other devices. The console's equivalents are under `/api/session-guests`.
 - **Code:**

@@ -18,6 +18,9 @@ import com.limelight.computers.HostActions;
 import com.limelight.R;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.NvHTTP;
+import com.limelight.computers.InternetPlay;
+import com.limelight.computers.Invites;
+import com.limelight.nvstream.http.InviteLink;
 import com.limelight.nvstream.http.PairingLink;
 import com.limelight.nvstream.jni.MoonBridge;
 import com.limelight.utils.Dialog;
@@ -184,7 +187,48 @@ public class AddComputerManually extends NightjarActivity {
                 && (uri.getPort() == -1 || (uri.getPort() > 0 && uri.getPort() <= 65535));
     }
 
+    /**
+     * Opens an invite to play over the internet: the PC is looked for through the link's rendezvous (up to about a
+     * minute), this device pairs as a guest with the link's secret, and the PC is kept with its internet details.
+     */
+    private void redeemInvite(String text, ComputerManagerService.ComputerManagerBinder binder) throws InterruptedException {
+        InviteLink invite = InviteLink.parse(text);
+        String name = Invites.shownName(this, invite);
+        final Thread attempt = Thread.currentThread();
+        SpinnerDialog dialog = SpinnerDialog.displayDialog(this, getString(R.string.invite_connecting, name),
+                getString(R.string.invite_connecting_hint), () -> cancelAdd(attempt));
+        ComputerDetails added = null;
+        String failure = null;
+        try {
+            if (invite == null) {
+                failure = getString(R.string.invite_not_a_link);
+            } else if (invite.expired(System.currentTimeMillis() / 1000)) {
+                failure = getString(R.string.invite_expired);
+            } else {
+                added = Invites.redeem(this, invite.text, binder);
+            }
+        } catch (InternetPlay.Unreachable e) {
+            failure = Invites.errorText(this, e.getMessage());
+        }
+        dialog.dismiss();
+        if (Thread.currentThread().isInterrupted() || isFinishing() || isDestroyed()) {
+            throw new InterruptedException();
+        }
+        if (added != null) {
+            String shown = added.name == null || added.name.isEmpty() ? name : added.name;
+            forAttempt(attempt, () -> Dialog.displayDialog(this, getString(R.string.invite_accepted_title),
+                    getString(R.string.invite_accepted, shown), true));
+        } else {
+            String words = failure;
+            forAttempt(attempt, () -> Dialog.displayDialog(this, getString(R.string.invite_failed_title), words, false));
+        }
+    }
+
     private void doAddPc(String rawUserInput, ComputerManagerService.ComputerManagerBinder binder) throws InterruptedException {
+        if (InviteLink.looksLikeLink(rawUserInput)) {
+            redeemInvite(rawUserInput, binder);
+            return;
+        }
         boolean wrongSiteLocal = false;
         boolean invalidInput = false;
         boolean pinnedElsewhere = false;
@@ -513,8 +557,13 @@ public class AddComputerManually extends NightjarActivity {
             hostText.requestFocus();
             return true;
         }
-        boolean isLink = PairingLink.looksLikeLink(hostAddress);
-        if (isLink && PairingLink.parse(hostAddress) == null) {
+        boolean isInvite = InviteLink.looksLikeLink(hostAddress);
+        if (isInvite && InviteLink.parse(hostAddress) == null) {
+            hostInput.setError(getString(R.string.invite_not_a_link));
+            return true;
+        }
+        boolean isLink = isInvite || PairingLink.looksLikeLink(hostAddress);
+        if (isLink && !isInvite && PairingLink.parse(hostAddress) == null) {
             hostInput.setError(getString(R.string.addpc_qr_invalid));
             return true;
         }

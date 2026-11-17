@@ -80,6 +80,7 @@ pub mod image_quality;
 pub mod input;
 pub mod input_latency;
 pub mod input_policy;
+pub mod invites;
 pub mod keyboard_layout;
 pub mod keyframe_loss;
 pub mod launcher_prompt;
@@ -155,6 +156,8 @@ pub mod version;
 pub mod virtual_hid;
 pub mod virtual_output;
 pub mod wake;
+/// The invite link (`rubylight://invite#...`) that pairs a friend's Nightjar over the internet.
+pub use rubylight_protocol::invite_uri;
 /// The QR pairing link (`rubylight://pair?...`) the console shows.
 pub use rubylight_protocol::pairing_uri;
 pub mod webhook;

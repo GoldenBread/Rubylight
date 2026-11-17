@@ -249,17 +249,33 @@ impl DeviceGuests {
     /// meanwhile.
     pub(crate) fn gate(&self, h: &Shared, join: &Join) -> Result<Gate, Refusal> {
         let config = h.config_snapshot();
-        let join_policy = JoinPolicy::from_config(&config);
+        // A device paired from an invite only ever joins the game being played, as a guest the
+        // player lets in, with its invite's permission, whatever `guest_join` says.
+        let invited = crate::invites::invited(join.client);
+        let join_policy = if invited.is_some() {
+            JoinPolicy::Ask
+        } else {
+            JoinPolicy::from_config(&config)
+        };
+        if invited.is_some() && (!join.plain || !join.joins_game) {
+            return Err(Refusal::InvitedJoinsOnly);
+        }
         if join_policy == JoinPolicy::Off || !join.plain || !join.joins_game {
             return Ok(Gate::NotGuest);
         }
         let device = device_uuid(&join.client.uuid);
         let Some((generation, owner)) = running_game(h) else {
-            return Ok(Gate::NotGuest);
+            return match invited {
+                Some(_) => Err(Refusal::InvitedJoinsOnly),
+                None => Ok(Gate::NotGuest),
+            };
         };
         // The device's own game, and a press of Continue here under way, are no guest's.
         if owner == device || h.claim_live() {
-            return Ok(Gate::NotGuest);
+            return match invited {
+                Some(_) => Err(Refusal::InvitedJoinsOnly),
+                None => Ok(Gate::NotGuest),
+            };
         }
         let name = butterpollo_core::webrtc::guests::guest_name(&join.client.name);
         let (admission, ended) = {
@@ -269,7 +285,7 @@ impl DeviceGuests {
                 device,
                 &name,
                 join_policy,
-                policy::default_permission(&config),
+                invited.map_or_else(|| policy::default_permission(&config), |g| g.permission),
                 unix_now(),
                 Instant::now(),
             );

@@ -143,6 +143,9 @@ pub enum Refusal {
     GameEnded,
     /// The owner revoked this device's place in this game.
     Revoked,
+    /// A device paired from an invite (`crate::invites`) asked for anything but joining the game
+    /// someone plays: no game runs, another app, or a stream of another kind.
+    InvitedJoinsOnly,
 }
 
 impl Refusal {
@@ -155,6 +158,7 @@ impl Refusal {
             Self::Unanswered => JOIN_UNANSWERED,
             Self::GameEnded => GAME_ENDED,
             Self::Revoked => REVOKED,
+            Self::InvitedJoinsOnly => INVITED_JOINS_ONLY,
         }
     }
 
@@ -164,7 +168,7 @@ impl Refusal {
             Self::Full => 503,
             Self::Denied | Self::Revoked => 403,
             Self::Unanswered => 408,
-            Self::GameEnded => 409,
+            Self::GameEnded | Self::InvitedJoinsOnly => 409,
         }
     }
 }
@@ -177,6 +181,8 @@ pub const GAME_ENDED: &str = "The game ended before you could join";
 pub const KICKED: &str = "The player removed you from the game";
 /// When the owner revoked its guest place: it may not join this game again.
 pub const REVOKED: &str = "The player does not let you join this game";
+/// When a device paired from an invite asks for anything but joining the game being played.
+pub const INVITED_JOINS_ONLY: &str = "You can only join a game someone is playing on this PC";
 /// When its guest time ran out.
 pub const EXPIRED: &str = "Your time as a guest in this game ended";
 /// When the game the guest joined ended, or another started.

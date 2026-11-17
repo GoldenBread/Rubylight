@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="invite_not_a_link">Este não é um link de convite do Nightjar</string>
+    <string name="invite_expired">Este convite expirou. Peça um novo.</string>
+    <string name="invite_refused">O PC não aceitou este convite: ele já foi usado, foi cancelado ou expirou. Peça um novo.</string>
+    <string name="invite_internet_off">Ative “Jogar pela internet” nas configurações do Nightjar e abra o convite de novo.</string>
+    <string name="invite_failed_title">Não foi possível entrar pela internet</string>
+    <string name="invite_confirm_title">Entrar em %1$s pela internet?</string>
+    <string name="invite_confirm_body">Este dispositivo pareia com esse PC como convidado: você pode entrar em um jogo que alguém esteja jogando lá quando essa pessoa deixar. O convite funciona uma vez.</string>
+    <string name="invite_permission">O que você pode fazer: %1$s</string>
+    <string name="invite_connecting">Conectando a %1$s pela internet…</string>
+    <string name="invite_connecting_hint">Isso pode levar até um minuto.</string>
+    <string name="invite_accepted_title">Convite aceito</string>
+    <string name="invite_accepted">%1$s agora está na sua lista. Entre em um jogo que alguém esteja jogando lá; a pessoa deixa você entrar.</string>
+    <string name="invite_make_failed">Não foi possível criar um convite: %1$s</string>
+    <string name="invite_title">Convidar um amigo pela internet</string>
+    <string name="invite_making">Criando um convite…</string>
+    <string name="invite_made">Envie este convite para uma só pessoa. Ele pareia o Nightjar dela como convidado uma vez e vale por um dia.</string>
+    <string name="invite_copy">Copiar convite</string>
+    <string name="invite_copied">Convite copiado</string>
+    <string name="invite_share_text">Entre no meu jogo com o Nightjar: abra este link no Nightjar, ou copie e cole em “Adicionar PC”.\n%1$s</string>
+    <string name="invite_share">Compartilhar convite</string>
+    <string name="invite_this_pc">o PC</string>
+</resources>

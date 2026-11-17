@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="invite_not_a_link">Nightjar 초대 링크가 아닙니다</string>
+    <string name="invite_expired">이 초대는 만료되었습니다. 새 초대를 요청하세요.</string>
+    <string name="invite_refused">PC가 이 초대를 받지 않았습니다. 이미 사용되었거나 취소되었거나 만료되었습니다. 새 초대를 요청하세요.</string>
+    <string name="invite_internet_off">Nightjar 설정에서 \'인터넷으로 플레이\'를 켠 다음 초대를 다시 여세요.</string>
+    <string name="invite_failed_title">인터넷으로 참가하지 못했습니다</string>
+    <string name="invite_confirm_title">인터넷으로 %1$s에 참가할까요?</string>
+    <string name="invite_confirm_body">이 기기는 해당 PC에 게스트로 페어링됩니다. 누군가 그곳에서 플레이하는 게임에 그 사람이 들여보내 주면 참가할 수 있습니다. 초대는 한 번만 쓸 수 있습니다.</string>
+    <string name="invite_permission">할 수 있는 것: %1$s</string>
+    <string name="invite_connecting">인터넷으로 %1$s에 연결하는 중…</string>
+    <string name="invite_connecting_hint">최대 1분 정도 걸릴 수 있습니다.</string>
+    <string name="invite_accepted_title">초대를 수락했습니다</string>
+    <string name="invite_accepted">%1$s이(가) 목록에 추가되었습니다. 그곳에서 누군가 플레이하는 게임에 참가하면 그 사람이 들여보내 줍니다.</string>
+    <string name="invite_make_failed">초대를 만들지 못했습니다: %1$s</string>
+    <string name="invite_title">인터넷으로 친구 초대</string>
+    <string name="invite_making">초대를 만드는 중…</string>
+    <string name="invite_made">이 초대는 한 사람에게만 보내세요. 상대의 Nightjar를 게스트로 한 번 페어링하며 하루 동안 유효합니다.</string>
+    <string name="invite_copy">초대 복사</string>
+    <string name="invite_copied">초대를 복사했습니다</string>
+    <string name="invite_share_text">Nightjar로 내 게임에 참가해 줘: 이 링크를 Nightjar에서 열거나, 복사해서 \'PC 추가\'에 붙여 넣어.\n%1$s</string>
+    <string name="invite_share">초대 공유</string>
+    <string name="invite_this_pc">PC</string>
+</resources>
