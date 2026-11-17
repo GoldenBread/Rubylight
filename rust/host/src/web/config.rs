@@ -76,11 +76,13 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
                     "the SteamGridDB API key could not be moved out of sunshine.conf"
                 );
             }
+            // The key follows a saved configuration: a failed write must not
+            // change what this PC sends to SteamGridDB.
+            state::atomic_write(&h.config_path, next.text().as_bytes())?;
             if let Some(key) = &steamgriddb_key {
                 crate::steamgriddb::store_key(h, Some(key))?;
                 crate::steamgriddb::key_changed(h);
             }
-            state::atomic_write(&h.config_path, next.text().as_bytes())?;
             let warning =
                 butterpollo_windows::vulkan::reconcile(next.boolean("vulkan_hdr_layer", true))
                     .err()
