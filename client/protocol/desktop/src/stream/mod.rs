@@ -509,11 +509,12 @@ pub struct Streaming {
     /// A/B run (`present::skips_instead_of_waiting`).
     skip_over_waiting: bool,
     /// `NIGHTJAR_PRESENT_DEADLINE_US` for measurement runs, in place of
-    /// `present::deadline_before_refresh`.
+    /// `present::deadline_before_refresh` (a held stream is aimed at its hold's lead instead,
+    /// `Streaming::present`).
     present_deadline_us: Option<i64>,
     /// `NIGHTJAR_HELD_MARGIN_US` for measurement runs: the desktop's deadline a held picture's turn
-    /// must make, which says which turn a late picture takes and what the phase report aims at
-    /// (`Streaming::held_margin_us`).
+    /// must make, which says which turn a late picture takes (`Streaming::held_margin_us`); the phase
+    /// report aims the host's frames at the present lead instead (`phase::held_present_lead_us`).
     held_margin_us: Option<u64>,
     /// `NIGHTJAR_HELD_REPORT=0` for measurement runs: a held stream's phase reports count to
     /// each refresh instead of each turn (60 fps on 120 Hz then missed 6.7% of turns, against 0.2%).

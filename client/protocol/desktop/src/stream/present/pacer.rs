@@ -509,10 +509,10 @@ pub fn held_margin_us(base_us: u64, draw_us: Option<u64>, refresh_us: u64) -> u6
 
 /// How far ahead of the refresh the phase lock aims: `set_us` (a measurement run's) or that deadline,
 /// for a stream whose presents skip. A waiting present and exclusive fullscreen, which nothing
-/// composes, keep the refresh itself. A picture fractional V-Sync holds for its turn is aimed at
-/// its hold's own margin instead (`Streaming::held_margin_us`): aimed at the refresh, a source that
-/// moves its frames a picture at a time puts them under the margin, where each misses its turn,
-/// while aimed at the deadline it can come late for the refresh that opens the turn.
+/// composes, keep the refresh itself. A picture fractional V-Sync holds for its turn is aimed at the
+/// hold's own target instead (`phase::held_present_lead_us`, the refresh it is presented in plus
+/// `HELD_LATCH_GUARD_US`): aimed at the deadline, a host that steers delivered the picture after the
+/// refresh that opens the turn, so the hold never waited.
 pub fn phase_lock_aim_us(skipping: bool, exclusive: bool, set_us: Option<i64>, refresh_hz: f32) -> i64 {
     if !skipping || exclusive { return 0; }
     set_us.unwrap_or_else(|| deadline_before_refresh(refresh_hz))

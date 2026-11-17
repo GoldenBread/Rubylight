@@ -106,6 +106,14 @@ pub const EARLY_SPARE_US: u64 = 3_000;
 /// 120 Hz). The guard keeps the present out of the scan of the refresh before the turn.
 pub const HELD_LATCH_GUARD_US: u64 = 400;
 
+/// How long before the refresh that shows a held picture the picture must be ready, µs: its present
+/// goes out `guard_us` after the refresh that opens the turn, and the report shifts its latch back
+/// by this (`aimed`), so the host delivers the picture before the hold. It is the hold's own target
+/// (`HeldAnchor::hold`): a steering lock delivers before it, the hold waits it out, and the present
+/// goes out just after the opening refresh. Aimed at the desktop's deadline instead, the host
+/// delivered after the present target and the hold never waited.
+pub fn held_present_lead_us(period_us: u64, guard_us: u64) -> u64 { period_us.saturating_sub(guard_us) }
+
 /// Which refresh the last picture of a held stream was shown at (fractional V-Sync), and where the
 /// next one's turn is. The swap chain's statistics name the last present shown, which may be a
 /// redraw without a picture (the menu, the overlay, Frame Warp's shift): its turn would put the next
@@ -135,13 +143,20 @@ impl HeldAnchor {
         (self.picture, self.shown_at, self.aimed) = (count, None, self.pending.take());
     }
 
+    /// Another refresh rate or stream rate (`Streaming::sync_vrr`): the turns count on a new grid,
+    /// and a display whose mode changed may restart its refresh count, so the aims and lateness of
+    /// the old one say nothing about the turns now. The next picture counts from the first one shown
+    /// after the change.
+    pub fn restart(&mut self) { *self = Self::default(); }
+
     /// The refresh the last picture shows at, from the last present shown (`present_count` at
-    /// `present_refresh`) and the latest refresh: the one it was shown at, else the refresh its hold
-    /// aimed it at plus the lateness the display showed (`late`), while it waits or once a redraw
-    /// passed it unseen, else the latest refresh it may have reached, and None when it is not known
-    /// (no picture yet, or an unaimed one a redraw passed unseen).
+    /// `present_refresh`) and the latest refresh, which the statistics cover unless `stale` (their
+    /// vblank time is a refresh or more in the past): the one it was shown at, else the refresh its
+    /// hold aimed it at plus the lateness the display showed (`late`), while it waits or once a
+    /// redraw passed it unseen, else the latest refresh it may have reached, and None when it is not
+    /// known (no picture yet, or an unaimed one a redraw passed unseen).
     #[cfg_attr(not(windows), allow(dead_code))] // Only Windows counts refreshes.
-    pub fn last_refresh(&mut self, present_count: u32, present_refresh: u32, sync_refresh: u32) -> Option<u32> {
+    pub fn last_refresh(&mut self, present_count: u32, present_refresh: u32, sync_refresh: u32, stale: bool) -> Option<u32> {
         if self.picture == 0 || present_refresh == 0 { return None; }
         if present_count == self.picture {
             self.shown_at = Some(present_refresh);
@@ -153,24 +168,31 @@ impl HeldAnchor {
         if !waiting { return aimed; }
         // Still waiting: the refresh its aim names, plus the lateness the display showed, and past
         // that the latest refresh it may have reached; a picture without an aim shows at the next.
-        // Counting from the next refresh once the aim had come made every other hold land a refresh
-        // off (holds of 3 and 1 in turn at 60 fps on 120 Hz).
-        Some(aimed.map_or(sync_refresh.wrapping_add(1), |aimed| {
-            if (aimed.wrapping_sub(sync_refresh) as i32) >= 0 { aimed } else { sync_refresh }
+        // The aim counts while it is still ahead, and the latest refresh only where the statistics
+        // are a refresh stale, so the picture may have been shown at one they do not cover. The
+        // latest refresh they do cover is not a picture's: a present they leave out of
+        // `present_count` was not shown at it, so a missed turn counts from the next refresh, never
+        // from the one it missed (that made the next turn a refresh early and the one after it a
+        // refresh short, once a miss; holds of 3 and 1 in turn, the residual 3% at 60 fps).
+        let next = sync_refresh.wrapping_add(1);
+        Some(aimed.map_or(next, |aimed| {
+            if (aimed.wrapping_sub(sync_refresh) as i32) > 0 { aimed } else if stale { sync_refresh } else { next }
         }))
     }
 
     /// Fractional V-Sync: how long a picture waits before its present, which then goes out at the
     /// next refresh, so it is shown at its turn: `held` refreshes after the refresh the last picture
-    /// shows at (`last`, `last_refresh`). The present goes out just after the refresh that opens the
-    /// turn, `guard` into it, so the swap chain has the whole refresh to latch the flip; `margin` is
-    /// the desktop's deadline before a refresh, which only says which turn a picture that comes late
-    /// takes (the first whose deadline it still makes, at most `held` refreshes and one more behind a
-    /// last picture still waiting). Nothing for a picture later than that, which the next ones then
-    /// count from, or with no hold or no known last picture. A swap chain's own sync interval holds the
-    /// picture too, but a picture early for its turn waits in the swap chain's queue, where each one
-    /// after it waits as well and the phase report, which counts within the hold, never sees it: 60 fps
-    /// on 120 Hz went from 9 to 36 ms that way.
+    /// shows at (`last`, `last_refresh`). The present goes out `guard` into the refresh that opens
+    /// the turn, so the swap chain has the whole refresh to latch the flip; `held_present_lead_us`
+    /// (the same `period` and `guard`) is the target the phase lock aims the host's frames at, so a
+    /// steering lock delivers the picture before its hold. `margin` is the desktop's deadline before
+    /// a refresh, which only says which turn a picture that comes late takes (the first whose
+    /// deadline it still makes, at most `held` refreshes and one more behind a last picture still
+    /// waiting). Nothing for a picture later than that, which the next ones then count from, or with
+    /// no hold or no known last picture. A swap chain's own sync interval holds the picture too, but
+    /// a picture early for its turn waits in the swap chain's queue, where each one after it waits as
+    /// well and the phase report, which counts within the hold, never sees it: 60 fps on 120 Hz went
+    /// from 9 to 36 ms that way.
     ///
     /// Pictures that come `early_spare` and a refresh ahead of their turn's open for `early_for` in a
     /// row move the turns a refresh earlier, once: a source whose clock runs ahead of the display brings
@@ -191,8 +213,10 @@ impl HeldAnchor {
         let guard = guard.min(i64::MAX as u64) as i64;
         let mut ahead = i64::from(last.wrapping_add(held).wrapping_sub(sync_refresh) as i32);
         // The present goes out just after the refresh before the turn: the swap chain latches the
-        // flip into the turn with a whole refresh to spare.
-        let wait = |ahead: i64| sync_ticks as i64 + (ahead - 1) * period + guard - now as i64;
+        // flip into the turn with a whole refresh to spare. The phase lock aims at the same point
+        // (`held_present_lead_us`), so the picture is ready before this wait starts.
+        let lead = held_present_lead_us(period as u64, guard as u64) as i64;
+        let wait = |ahead: i64| sync_ticks as i64 + ahead * period - lead - now as i64;
         // A refresh earlier is still after the last picture's: `held` is 2 or more.
         if wait(ahead - 1) >= early_spare.min(i64::MAX as u64) as i64 {
             let since = *self.early_since.get_or_insert(now);
@@ -266,7 +290,7 @@ impl HeldClock {
 
     /// `HeldAnchor::hold` for the next picture, `period_us` a refresh: how long it waits before its
     /// present, `margin_us` the desktop's deadline and `HELD_LATCH_GUARD_US` the guard after the
-    /// refresh that opens its turn.
+    /// refresh that opens its turn, whose lead the phase report aims at (`held_present_lead_us`).
     pub fn hold(&mut self, now_us: u64, held: u32, period_us: u64, margin_us: u64) -> u64 {
         (self.held, self.period_us) = (held, period_us);
         let Some(last) = self.last_us().filter(|_| held > 1 && period_us > 0) else {
@@ -351,6 +375,16 @@ impl StatsWatch {
     }
 }
 
+/// Whether a swap chain's statistics are a refresh stale: the vblank they name (`SyncQPCTime`, QPC)
+/// is `period` or more in the past, so a later refresh may have passed that they do not cover
+/// (`HeldAnchor::last_refresh`). Callers check the time is positive.
+#[cfg(windows)]
+fn stats_stale(sync_qpc_time: i64, period: u64) -> bool {
+    // SAFETY: a plain query of the clock.
+    let now = unsafe { SDL_GetPerformanceCounter() };
+    now.saturating_sub(sync_qpc_time as u64) > period
+}
+
 /// `HeldAnchor::hold` for the renderer's swap chain, in microseconds; None when its statistics
 /// cannot be read (`StatsWatch`).
 #[cfg(windows)]
@@ -364,11 +398,13 @@ pub fn held_wait_us(renderer: *mut SDL_Renderer, refresh_hz: f32, held: u32, mar
         let chain = IDXGISwapChain::from_raw_borrowed(&chain)?;
         let mut stats = DXGI_FRAME_STATISTICS::default();
         if chain.GetFrameStatistics(&mut stats).is_err() || stats.SyncQPCTime <= 0 { return None; }
-        let last = anchor.last_refresh(stats.PresentCount, stats.PresentRefreshCount, stats.SyncRefreshCount);
         let freq = SDL_GetPerformanceFrequency() as f64;
         let ticks = |us: f64| (us * freq / 1e6) as u64;
+        let period = ticks(1e6 / f64::from(refresh_hz));
+        let last = anchor.last_refresh(stats.PresentCount, stats.PresentRefreshCount, stats.SyncRefreshCount,
+            stats_stale(stats.SyncQPCTime, period));
         let wait = anchor.hold(SDL_GetPerformanceCounter(), stats.SyncQPCTime as u64, stats.SyncRefreshCount, last,
-            held, ticks(1e6 / f64::from(refresh_hz)), ticks(margin_us as f64), ticks(HELD_LATCH_GUARD_US as f64),
+            held, period, ticks(margin_us as f64), ticks(HELD_LATCH_GUARD_US as f64),
             ticks(EARLY_SPARE_US as f64), ticks(EARLY_FOR_US as f64));
         Some((wait as f64 * 1e6 / freq) as u64)
     }
@@ -408,7 +444,8 @@ pub fn timing(renderer: *mut SDL_Renderer, refresh_hz: f32, held: u32, anchor: &
         });
         let held_stats = stats.filter(|s| s.SyncQPCTime > 0).map(|s| {
             let ticks_per_refresh = (period_ns as f64 * SDL_GetPerformanceFrequency() as f64 / 1e9) as u64;
-            let last = if held > 1 { anchor.last_refresh(s.PresentCount, s.PresentRefreshCount, s.SyncRefreshCount) } else { None };
+            let stale = stats_stale(s.SyncQPCTime, ticks_per_refresh);
+            let last = if held > 1 { anchor.last_refresh(s.PresentCount, s.PresentRefreshCount, s.SyncRefreshCount, stale) } else { None };
             let (latch, _) = held_latch(s.SyncQPCTime as u64, s.SyncRefreshCount, last, held, ticks_per_refresh);
             let (_, period) = held_latch(0, s.SyncRefreshCount, last, held, period_ns as u64);
             (latch, period as i64)
@@ -697,20 +734,67 @@ mod tests {
         assert_eq!(held_wait(0, 50_000, 100, Some(100), 2, 1000, 0), 3_000, "never more than the hold and one refresh");
     }
 
+    /// The phase lock and the hold are one: the aim the report sends is the hold's own target
+    /// (`held_present_lead_us`), so a steering host delivers the picture before the present and the
+    /// hold waits the lock's margin. Aimed at the deadline the turn must make instead, the lock
+    /// delivered after the present target and the hold clamped to nothing.
+    #[test]
+    fn a_steering_lock_delivers_at_the_present_lead_and_the_hold_waits() {
+        // 120 Hz: refresh 100 at 833_300 (the last picture's), 101 at 841_633, the turn 102 at
+        // 849_966; the deadline 5_000 before a refresh, the report's period 2 refreshes.
+        let (period, guard, margin, laps) = (8_333u64, HELD_LATCH_GUARD_US, 5_000u64, 16_666u64);
+        let lead = held_present_lead_us(period, guard);
+        assert_eq!(lead, period - guard);
+        // The lock puts the early edge `DEFAULT_MARGIN_NS` past the reported aim.
+        let lock_us = 1_500i64;
+        let (turn, latch) = (849_966i64, 833_300i64);
+        let ready = turn - lead as i64 - lock_us;
+        let (aimed_latch, report_period_ns) = aimed(Some((latch, (laps * 1_000) as i64)), lead as i64).unwrap();
+        assert_eq!(aimed_latch - ready + report_period_ns / 1_000, lock_us, "the lock reads its own margin, one report period on");
+        let mut anchor = HeldAnchor::default();
+        let wait = anchor.hold(ready as u64, latch as u64, 100, Some(100), 2, period, margin, guard, u64::MAX, 0);
+        assert_eq!(wait as i64, lock_us, "delivered before its present: the hold waits");
+        assert_eq!(ready + wait as i64, turn - lead as i64, "just after the refresh that opens the turn");
+        assert_eq!(anchor.pending, Some(102));
+        // Aimed at the deadline instead: ready after the present target, and nothing waits.
+        let late_ready = turn - margin as i64 - lock_us;
+        let late_wait = HeldAnchor::default().hold(late_ready as u64, 841_633, 101, Some(100), 2, period, margin, guard, u64::MAX, 0);
+        assert_eq!(late_wait, 0, "the present goes out on the draw's completion, after the refresh that opens the turn");
+        assert!(late_ready > turn - lead as i64, "after the present target");
+    }
+
     #[test]
     fn the_anchor_is_the_last_pictures_refresh_not_a_redraws() {
         let mut anchor = HeldAnchor::default();
-        assert_eq!(anchor.last_refresh(5, 100, 100), None, "no picture yet");
+        assert_eq!(anchor.last_refresh(5, 100, 100, false), None, "no picture yet");
         anchor.presented(7);
-        assert_eq!(anchor.last_refresh(6, 100, 101), Some(102), "still waiting: the next refresh");
-        assert_eq!(anchor.last_refresh(7, 102, 102), Some(102), "shown");
+        assert_eq!(anchor.last_refresh(6, 100, 101, false), Some(102), "still waiting: the next refresh");
+        assert_eq!(anchor.last_refresh(7, 102, 102, false), Some(102), "shown");
         // A redraw (present 8) shown at 103 leaves the turns counting from 102.
-        assert_eq!(anchor.last_refresh(8, 103, 103), Some(102));
+        assert_eq!(anchor.last_refresh(8, 103, 103, false), Some(102));
         anchor.presented(10);
-        assert_eq!(anchor.last_refresh(9, 104, 104), Some(105), "the next picture waits");
-        assert_eq!(anchor.last_refresh(11, 106, 106), None, "passed by a redraw unseen: not known");
+        assert_eq!(anchor.last_refresh(9, 104, 104, false), Some(105), "the next picture waits");
+        assert_eq!(anchor.last_refresh(11, 106, 106, false), None, "passed by a redraw unseen: not known");
         anchor.presented(1);
-        assert_eq!(anchor.last_refresh(u32::MAX, 106, 106), Some(107), "waiting across the counter's wrap");
+        assert_eq!(anchor.last_refresh(u32::MAX, 106, 106, false), Some(107), "waiting across the counter's wrap");
+    }
+
+    /// Another display or stream rate: the next picture counts from the first one shown after it,
+    /// not from the old grid's aim or lateness.
+    #[test]
+    fn a_rate_change_starts_the_turns_over() {
+        let mut anchor = HeldAnchor::default();
+        anchor.presented(7);
+        assert_eq!(anchor.last_refresh(7, 100, 100, false), Some(100));
+        anchor.hold(100_500, 100_000, 100, Some(100), 2, 1000, 300, 50, u64::MAX, 0);
+        anchor.presented(8);
+        assert_eq!(anchor.last_refresh(7, 100, 101, false), Some(102), "the old grid's aim");
+        anchor.restart();
+        assert_eq!(anchor.last_refresh(7, 100, 101, false), None, "nothing known of a picture after the change");
+        assert_eq!(anchor.pending, None);
+        assert_eq!(anchor.hold(101_500, 101_000, 101, None, 3, 1000, 300, 50, u64::MAX, 0), 0, "nothing held yet");
+        anchor.presented(9);
+        assert_eq!(anchor.last_refresh(8, 102, 102, false), Some(103), "an unaimed picture shows at the next refresh");
     }
 
     #[test]
@@ -718,19 +802,20 @@ mod tests {
         let mut anchor = HeldAnchor::default();
         // Last picture shown at 100 (present 7); the next one's turn is 102.
         anchor.presented(7);
-        assert_eq!(anchor.last_refresh(7, 100, 100), Some(100));
+        assert_eq!(anchor.last_refresh(7, 100, 100, false), Some(100));
         assert_eq!(anchor.hold(10_100, 10_000, 100, Some(100), 2, 1000, 300, 50, u64::MAX, 0), 950);
         anchor.presented(8);
         // The statistics still name present 7 at the latest refresh 101: its turn, not 102.
-        assert_eq!(anchor.last_refresh(7, 100, 101), Some(102), "aimed at 102");
-        assert_eq!(anchor.last_refresh(7, 100, 100), Some(102), "even read a refresh behind");
-        assert_eq!(anchor.last_refresh(7, 100, 102), Some(102), "102 is the latest refresh: it may be showing now");
-        assert_eq!(anchor.last_refresh(7, 100, 103), Some(103), "103 came and it is still unseen: it missed, 103 at the earliest");
+        assert_eq!(anchor.last_refresh(7, 100, 101, false), Some(102), "aimed at 102");
+        assert_eq!(anchor.last_refresh(7, 100, 100, false), Some(102), "even read a refresh behind");
+        assert_eq!(anchor.last_refresh(7, 100, 102, false), Some(103), "102 is covered and the presents leave it out: it missed");
+        assert_eq!(anchor.last_refresh(7, 100, 102, true), Some(102), "read a refresh stale: it may be showing at its aim");
+        assert_eq!(anchor.last_refresh(7, 100, 103, false), Some(104), "103 came and it is still unseen: 104 at the earliest");
         // A redraw (present 9) passed it unseen: still its aimed refresh, not unknown.
-        assert_eq!(anchor.last_refresh(9, 103, 103), Some(102));
+        assert_eq!(anchor.last_refresh(9, 103, 103, false), Some(102));
         // Seen a refresh late: the refresh it was shown at.
         anchor.presented(10);
-        assert_eq!(anchor.last_refresh(10, 105, 105), Some(105), "the statistics win");
+        assert_eq!(anchor.last_refresh(10, 105, 105, false), Some(105), "the statistics win");
     }
 
     /// A display whose composition lands a picture a refresh after the refresh its hold aimed it at
@@ -743,21 +828,21 @@ mod tests {
         // Picture 2's hold aims it at 102; the display shows it at 103, a refresh after the aim.
         assert_eq!(anchor.hold(100_500, 100_000, 100, Some(100), 2, 1000, 300, 50, u64::MAX, 0), 550);
         anchor.presented(2);
-        assert_eq!(anchor.last_refresh(2, 103, 103), Some(103), "seen a refresh after its aim");
+        assert_eq!(anchor.last_refresh(2, 103, 103, false), Some(103), "seen a refresh after its aim");
         // Picture 3 is aimed at 105, and the display will show it at 106. While the statistics still
         // name picture 2, its turn counts from 106, not from the aim 105.
         assert_eq!(anchor.hold(103_500, 103_000, 103, Some(103), 2, 1000, 300, 50, u64::MAX, 0), 550);
         anchor.presented(3);
-        assert_eq!(anchor.last_refresh(2, 103, 104), Some(106));
+        assert_eq!(anchor.last_refresh(2, 103, 104, false), Some(106));
         // A display that shows pictures where they were aimed counts from the aim.
         let mut on_time = HeldAnchor::default();
         on_time.presented(1);
         assert_eq!(on_time.hold(100_500, 100_000, 100, Some(100), 2, 1000, 300, 50, u64::MAX, 0), 550);
         on_time.presented(2);
-        assert_eq!(on_time.last_refresh(2, 102, 102), Some(102));
+        assert_eq!(on_time.last_refresh(2, 102, 102, false), Some(102));
         assert_eq!(on_time.hold(102_500, 102_000, 102, Some(102), 2, 1000, 300, 50, u64::MAX, 0), 550);
         on_time.presented(3);
-        assert_eq!(on_time.last_refresh(2, 102, 103), Some(104), "the aim");
+        assert_eq!(on_time.last_refresh(2, 102, 103, false), Some(104), "the aim");
     }
 
     #[test]
@@ -766,7 +851,7 @@ mod tests {
         // Turn 102 at 12_000 passed (now 12_900, margin 300), and 103's deadline (12_700) too: 104.
         assert_eq!(anchor.hold(12_900, 12_000, 102, Some(100), 2, 1000, 300, 50, u64::MAX, 0), 0);
         anchor.presented(5);
-        assert_eq!(anchor.last_refresh(4, 101, 102), Some(104));
+        assert_eq!(anchor.last_refresh(4, 101, 102, false), Some(104));
     }
 
     /// A stream faster than the held rate must not shorten a hold: a picture takes its own turn,
@@ -796,7 +881,7 @@ mod tests {
         anchor.presented(1);
         let mut shown = vec![100u32];
         for (sync, offset) in [(100u32, 500u64), (103, 600), (106, 400), (109, 900)] {
-            let last = anchor.last_refresh(shown.len() as u32, *shown.last().unwrap(), sync);
+            let last = anchor.last_refresh(shown.len() as u32, *shown.last().unwrap(), sync, false);
             let wait = anchor.hold(sync as u64 * 1000 + offset, u64::from(sync) * 1000, sync, last, 3, 1000, 300, 50, u64::MAX, 0);
             assert_eq!(wait + offset, 2_050, "waits for the refresh that opens its turn, whatever its arrival");
             let aim = anchor.pending.unwrap();
@@ -970,6 +1055,16 @@ mod tests {
         assert!(changed.contains("(self.held_anchor, self.held_clock, self.held_stats) = Default::default();"));
     }
 
+    /// A new stream or display rate starts the turns over too, not only another display: the grid
+    /// they count on changed, and the refresh count may have (`Streaming::sync_vrr`).
+    #[test]
+    fn a_new_rate_starts_the_held_turns_over() {
+        let sync = function(include_str!("render.rs"), "fn sync_vrr(");
+        let changed = sync.find("if refreshes != self.vrr.refreshes").expect("looks at the rate");
+        assert!(sync[changed..].contains("self.held_anchor.restart()"), "restarts the anchor");
+        assert!(changed < sync.find("self.vrr.set_refreshes(refreshes)").unwrap(), "before the new rate holds");
+    }
+
     #[test]
     fn pictures_a_refresh_early_for_long_enough_move_the_turns_a_refresh_earlier() {
         let mut anchor = HeldAnchor::default();
@@ -987,7 +1082,7 @@ mod tests {
         assert_eq!(anchor.hold(10_000, 10_000, 100, Some(100), 3, 1000, 300, 50, 1_000, 5_000), 2_050);
         assert_eq!(anchor.hold(15_000, 15_000, 105, Some(105), 3, 1000, 300, 50, 1_000, 5_000), 1_050, "moved: 107 for 108");
         anchor.presented(9);
-        assert_eq!(anchor.last_refresh(8, 105, 105), Some(107));
+        assert_eq!(anchor.last_refresh(8, 105, 105, false), Some(107));
         assert_eq!(anchor.hold(15_000, 15_000, 105, Some(105), 3, 1000, 300, 50, 1_000, 5_000), 2_050, "the run starts over");
         // Too little to spare (250 of 1000) never moves them.
         let mut anchor = HeldAnchor::default();

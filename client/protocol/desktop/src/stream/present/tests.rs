@@ -1650,23 +1650,118 @@ fn fractional_v_sync_holds_v_sync_pictures_only_and_follows_the_rates() {
     assert_eq!(vrr.step(&mut mode, None, 0), None);
 }
 
-/// Fractional V-Sync on a stream faster than the held rate (four pictures within one 16.7 ms hold):
-/// each turn shows the newest picture and the ones it replaces are dropped, so the pictures never
-/// go out a refresh apart.
+/// The phase report, the lock and the hold, end to end with the stream loop: the report aims at the
+/// present lead (`held_present_lead_us`), the lock puts the picture `DEFAULT_MARGIN_NS` past that
+/// aim, the loop takes it (`Pacer::take_due`) and holds it until the refresh that opens its turn.
+/// Every present then goes out just after that refresh, one hold apart, and the hold really waits;
+/// aimed at the deadline the turn must make, the lock delivered after the present target and the
+/// hold never waited.
 #[test]
-fn a_stream_faster_than_the_held_rate_drops_the_pictures_it_cannot_hold() {
-    let mut pacer = Pacer::new(PacingMode::Vsync, 8_333).with_frame_pacing(FramePacing::Latency, 60);
-    let (mut shown, mut dropped) = (Vec::new(), 0);
-    for turn in 0..10u64 {
-        for picture in 0..4 {
-            pacer.accept(decoded(turn * 16_667 + picture * 4_000));
-        }
-        let (picture, replaced) = pacer.take_due(turn * 16_667 + 16_000);
-        dropped += replaced;
-        if let Some(picture) = picture { shown.push(picture.decoded.ready_us); }
+fn a_steered_stream_meets_its_hold_at_the_present_lead() {
+    use crate::stream::phase;
+    const REFRESH_US: u64 = 8_333;
+    const HELD: u32 = 2;
+    const MARGIN_US: u64 = 5_000;
+    const GUARD_US: u64 = phase::HELD_LATCH_GUARD_US;
+    // `PhaseLock::DEFAULT_MARGIN_NS`: where a steering host puts the early edge past the aim.
+    const LOCK_US: i64 = 1_500;
+    let lead = phase::held_present_lead_us(REFRESH_US, GUARD_US);
+    assert_eq!(lead, REFRESH_US - GUARD_US);
+    let mut pacer = Pacer::new(PacingMode::Vsync, i64::from(HELD) * REFRESH_US as i64).with_frame_pacing(FramePacing::Latency, 60);
+    let mut anchor = phase::HeldAnchor::default();
+    // The last picture was shown at refresh 100 (t = 833_300): the next turn is refresh 102.
+    let mut shown = Some(100u32);
+    let mut presents = Vec::new();
+    for turn in (102..=108).step_by(HELD as usize) {
+        let turn_us = u64::from(turn) * REFRESH_US;
+        let ready_us = turn_us - lead - LOCK_US as u64;
+        pacer.accept(decoded(ready_us));
+        let (picture, replaced) = pacer.take_due(ready_us);
+        assert!(picture.is_some() && replaced == 0, "the lock delivers the picture when its turn is due");
+        // The report latches on the latest grid refresh at the delivery, and the lock reads its own
+        // margin one report period on from the aim.
+        let latest = (ready_us / REFRESH_US) as u32;
+        let (latch_us, report_period_us) = phase::held_latch(latest as u64 * REFRESH_US, latest, shown, HELD, REFRESH_US);
+        let (aimed_latch, report_period_ns) = phase::aimed(Some((latch_us as i64, (report_period_us * 1_000) as i64)), lead as i64).unwrap();
+        assert_eq!(report_period_ns / 1_000, (u64::from(HELD) * REFRESH_US) as i64, "the report's period is the hold");
+        assert_eq!(aimed_latch - ready_us as i64 + report_period_ns / 1_000, LOCK_US, "the lock's margin, one period on");
+        let wait = anchor.hold(ready_us, latest as u64 * REFRESH_US, latest, shown, HELD, REFRESH_US, MARGIN_US, GUARD_US,
+            phase::EARLY_SPARE_US, phase::EARLY_FOR_US);
+        assert_eq!(wait as i64, LOCK_US, "the picture is ready before its hold: the hold waits the lock's margin");
+        let present = ready_us + wait;
+        assert_eq!(present, turn_us - lead, "the present goes out just after the refresh that opens the turn");
+        presents.push(present);
+        anchor.presented(turn - 100);
+        // The display shows it at that turn's refresh, where the next grid counts from.
+        shown = Some(present.div_ceil(REFRESH_US) as u32);
+        assert_eq!(shown, Some(turn));
     }
-    assert_eq!(shown, (0..10u64).map(|turn| turn * 16_667 + 12_000).collect::<Vec<_>>(), "one picture a turn, the newest");
-    assert_eq!(dropped, 30, "the three pictures it replaced each turn");
+    assert!(presents.windows(2).all(|pair| pair[1] - pair[0] == u64::from(HELD) * REFRESH_US), "one hold apart: {presents:?}");
+}
+
+/// A stream faster than the held rate, in the renderer's order: the loop sleeps until the oldest
+/// waiting picture is due (`Pacer::next_due`), takes the due pictures (`Pacer::take_due`), and holds
+/// the one it keeps until the refresh that opens its turn (`HeldAnchor::hold`). One picture a turn,
+/// a whole hold apart; the pictures that come during a hold wait for the next turn, where the take
+/// drops the ones it replaces. Taking all four at once would show the newest of them; the loop
+/// cannot, the hold blocks it, so a turn shows the picture that was newest when the last present
+/// went out, up to a hold after it was.
+#[test]
+fn a_stream_faster_than_the_hold_shows_one_picture_a_turn_in_the_renderers_order() {
+    use crate::stream::phase;
+    const REFRESH_US: u64 = 8_333;
+    const HELD: u32 = 2;
+    const MARGIN_US: u64 = 5_000;
+    const GUARD_US: u64 = phase::HELD_LATCH_GUARD_US;
+    // 240 fps: a picture every 4 167 µs, four to a turn of 16 666.
+    const PICTURE_US: u64 = 4_167;
+    let lead = phase::held_present_lead_us(REFRESH_US, GUARD_US);
+    let mut pacer = Pacer::new(PacingMode::Vsync, i64::from(HELD) * REFRESH_US as i64).with_frame_pacing(FramePacing::Latency, 60);
+    let mut anchor = phase::HeldAnchor::default();
+    let (mut next_ready, mut now) = (100_000u64, 100_000u64);
+    let mut last: Option<u32> = None;
+    let (mut accepted, mut count, mut shown, mut dropped, mut presents) = (0u32, 0u32, Vec::new(), 0u32, Vec::new());
+    for _ in 0..12 {
+        // The receive side delivers the pictures whose time has come; the loop then waits for the
+        // oldest one it has, or for the next picture when nothing waits.
+        while next_ready <= now {
+            pacer.accept(decoded(next_ready));
+            accepted += 1;
+            next_ready += PICTURE_US;
+        }
+        let Some(due) = pacer.next_due() else { now = next_ready; continue };
+        if due > now { now = due; continue; }
+        let (picture, replaced) = pacer.take_due(now);
+        dropped += replaced;
+        let Some(picture) = picture else { continue };
+        let latest = (now / REFRESH_US) as u32;
+        let wait = anchor.hold(now, u64::from(latest) * REFRESH_US, latest, last, HELD, REFRESH_US, MARGIN_US, GUARD_US,
+            phase::EARLY_SPARE_US, phase::EARLY_FOR_US);
+        now += wait;
+        count += 1;
+        anchor.presented(count);
+        shown.push(picture.decoded.ready_us);
+        presents.push(now);
+        // The swap chain shows it at the next refresh, where the next turn counts from.
+        last = Some(now.div_ceil(REFRESH_US) as u32);
+        // The draw and the present call take a moment; the next picture is due after this one.
+        now += 1;
+    }
+    assert!(shown.len() >= 6, "a few turns: {shown:?}");
+    assert_eq!(accepted as usize, shown.len() + dropped as usize, "every picture shown or dropped: {shown:?} dropped {dropped}");
+    assert!(dropped > 0, "the pictures a hold replaces are dropped");
+    // Every present after the first startup one goes out just after the refresh that opens a turn,
+    // a whole hold after the one before.
+    for pair in presents[1..].windows(2) {
+        assert_eq!(pair[1] - pair[0], u64::from(HELD) * REFRESH_US, "one turn apart: {presents:?}");
+    }
+    assert!(presents[1..].iter().all(|present| (present + lead).is_multiple_of(REFRESH_US)), "at the present lead: {presents:?}");
+    // A picture was already waiting when the previous turn's present went out: the loop woke for it
+    // and took it, not a newer one that came during the hold (those wait for the next turn or are
+    // dropped, so a turn shows a picture up to a hold after it was the newest).
+    for (at, ready) in shown.iter().enumerate().skip(2) {
+        assert!(*ready < presents[at - 1], "the oldest due picture took the turn: {shown:?} at {presents:?}");
+    }
 }
 
 #[test]

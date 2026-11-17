@@ -332,10 +332,11 @@ impl Streaming {
 
     /// The deadline a held picture's turn must make: the desktop's, or 2 ms in Windows' exclusive
     /// fullscreen, which nothing composes (`NIGHTJAR_HELD_MARGIN_US` sets this base for a
-    /// measurement). It says which turn a picture that comes late takes, and it is what the phase
-    /// report aims the host's frames at; the present itself goes out just after the refresh that
-    /// opens the turn. With Frame Warp the hold comes before the draw, so the draw's recent time is
-    /// added (`present::held_margin_us`).
+    /// measurement). It only says which turn a picture that comes late takes: the present itself
+    /// goes out just after the refresh that opens the turn, and the phase report aims the host's
+    /// frames at that present lead (`phase::held_present_lead_us`), not at this deadline. With Frame
+    /// Warp the hold comes before the draw, so the draw's recent time is added
+    /// (`present::held_margin_us`).
     fn held_margin_us(&self, renderer: *mut SDL_Renderer) -> u64 {
         #[cfg(target_os = "linux")]
         if self.kms_engaged() { return present::held_base_margin_us(self.held_margin_us, true, self.plan.display.refresh_hz); }
@@ -392,6 +393,11 @@ impl Streaming {
         // Fractional V-Sync follows the display's refresh and the stream's rate as they change.
         let held = self.vrr.held(self.pacer.mode);
         let refreshes = self.vsync_refreshes();
+        if refreshes != self.vrr.refreshes {
+            // The turns are on a new grid, and a display mode may restart its refresh count: the old
+            // grid's aim and lateness say nothing about them.
+            self.held_anchor.restart();
+        }
         self.vrr.set_refreshes(refreshes);
         let probe = self.race_probe.as_ref();
         // Once per hold: a swap chain whose statistics failed tries the hold again every few seconds.
@@ -1106,10 +1112,12 @@ impl Streaming {
                 let unclocked = !cfg!(windows) && held > 1 && clocked.is_none();
                 if unclocked { report_held = 1; }
                 let timing = clocked.or_else(|| phase::timing(renderer, refresh_hz, report_held, &mut self.held_anchor));
-                // Fractional V-Sync: the lock aims at the deadline of the refresh each picture's hold
-                // ends on, which its present has to make.
+                // Fractional V-Sync: the lock aims at the hold's own target, the present lead
+                // (`phase::held_present_lead_us`), not at the deadline the turn must make: aimed at
+                // the deadline, the host delivered the picture after the refresh that opens its
+                // turn, so the hold never waited and its present raced the refresh.
                 let aim_us = if held > 1 && !unclocked {
-                    self.present_deadline_us.unwrap_or(self.held_margin_us(renderer) as i64)
+                    phase::held_present_lead_us(refresh_us, phase::HELD_LATCH_GUARD_US) as i64
                 } else {
                     present::phase_lock_aim_us(skipping, exclusive, self.present_deadline_us, refresh_hz) + room_us
                 };
