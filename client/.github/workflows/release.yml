@@ -670,8 +670,10 @@ jobs:
     # (macos-vulkan.sh), so PyroWave can decode on the GPU on macOS 26 when the user picks it;
     # KosmicKrisp builds against the macOS 26 SDK, hence that leg's runner. The Intel app has none.
     needs: preflight
-    # A Mac failure shows as a failed leg and a warning at the release; the rest still ships.
-    continue-on-error: true
+    # The Apple silicon app carries the bundled Vulkan driver and PyroWave SDK, so a failure there
+    # fails the release: a Mac download that silently ships without it is what this leg guards. The
+    # Intel app stays a warning, so a runner problem there does not hold the other downloads.
+    continue-on-error: ${{ matrix.arch == 'x86_64' }}
     strategy:
       fail-fast: false
       matrix:
