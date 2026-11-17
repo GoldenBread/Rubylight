@@ -111,9 +111,9 @@ impl Upscaler {
 
     /// `draw` with Frame Warp's `warp` applied as the picture is copied in, at its own size, so
     /// the upscaler works on the shifted picture (its triangles built in `mesh`).
-    /// Temporal upscaling advances its history only with a `fresh` (newly decoded) picture: a
-    /// repeat or a Frame Warp redraw of the same picture shows its last output again, so no
-    /// picture enters the history twice (and a redraw's shift does not reach a temporal picture).
+    /// Temporal upscaling advances its history only with a `fresh` (whole, newly decoded)
+    /// picture: a repeat, or a beam race's present of a picture's first slices, shows its last
+    /// output again, so no picture enters the history twice or in part.
     pub fn draw_warped(&mut self, renderer: *mut SDL_Renderer, source: *mut SDL_Texture, sharpness: u32, warp: &super::frame_warp::WarpDraw,
         mesh: &mut super::frame_warp::Mesh, fresh: bool) -> Result<*mut SDL_Texture, String> {
         let failed = |what: &str| format!("{what}: {}", crate::sdl::error());
@@ -156,9 +156,13 @@ pub fn effective_mode(setting: Upscaling, temporal_failed: bool) -> Upscaling {
 }
 
 /// The stats line's name of the running upscaler, which says why SGSR 1 stands in for temporal
-/// upscaling.
-pub fn running_label(setting: Upscaling, temporal_failed: bool) -> &'static str {
-    if setting == Upscaling::Sgsr2 && temporal_failed { "SGSR 1 (temporal unavailable)" } else { setting.label() }
+/// upscaling: it failed, or Frame Warp is on (`frame_warp`).
+pub fn running_label(setting: Upscaling, temporal_failed: bool, frame_warp: bool) -> &'static str {
+    match setting {
+        Upscaling::Sgsr2 if temporal_failed => "SGSR 1 (temporal unavailable)",
+        Upscaling::Sgsr2 if frame_warp => "SGSR 1 (temporal off with Frame Warp)",
+        _ => setting.label(),
+    }
 }
 
 /// The part of a source texture an upscaler reads: the picture's `input` size from the top left.
@@ -255,9 +259,10 @@ mod tests {
         assert_eq!(effective_mode(Upscaling::Sgsr2, false), Upscaling::Sgsr2);
         assert_eq!(effective_mode(Upscaling::Sgsr2, true), Upscaling::Sgsr1);
         assert_eq!(effective_mode(Upscaling::Fsr1, true), Upscaling::Fsr1, "only temporal upscaling falls back to SGSR 1");
-        assert_eq!(running_label(Upscaling::Sgsr2, false), "Temporal (SGSR 2)");
-        assert_eq!(running_label(Upscaling::Sgsr2, true), "SGSR 1 (temporal unavailable)");
-        assert_eq!(running_label(Upscaling::Sgsr1, true), "SGSR 1");
+        assert_eq!(running_label(Upscaling::Sgsr2, false, false), "Temporal (SGSR 2)");
+        assert_eq!(running_label(Upscaling::Sgsr2, true, false), "SGSR 1 (temporal unavailable)");
+        assert_eq!(running_label(Upscaling::Sgsr2, false, true), "SGSR 1 (temporal off with Frame Warp)");
+        assert_eq!(running_label(Upscaling::Sgsr1, true, true), "SGSR 1");
     }
 
     #[cfg(not(target_os = "macos"))]

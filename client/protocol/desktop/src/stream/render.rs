@@ -658,7 +658,7 @@ impl Streaming {
         }
         // One shift for all of a frame's slices and its own present (`Presenter::draw`).
         if let Some(warp) = self.frame_warp.as_mut() { self.texture.warp = warp.draw(Some(self.racer.seq())); }
-        let flipped = self.render_flip(renderer, draw_overlay, true, None);
+        let flipped = self.render_flip(renderer, draw_overlay, true, false, None);
         self.needs_redraw = false;
         self.racer.presented(flipped.issued_us, &scan);
         for (band, _) in &batch {
@@ -834,7 +834,7 @@ impl Streaming {
         }
         if self.upscale_failed { "Bilinear (GPU unavailable)".into() }
         else if self.texture.is_hdr() { "Bilinear (HDR)".into() }
-        else if self.upscaler.is_some() { upscale::running_label(self.settings.upscaling, self.temporal_failed).into() }
+        else if self.upscaler.is_some() { upscale::running_label(self.settings.upscaling, self.temporal_failed, self.frame_warp.is_some()).into() }
         else { "Bilinear (no upscale needed)".into() }
     }
 
@@ -930,10 +930,10 @@ impl Streaming {
         self.exit = Some(Exit::Ended(Some(tr("PyroWave pictures cannot be shown on this device. Choose another Video codec in Settings, then start the stream again.").to_owned())));
     }
 
-    /// Draws the texture and the overlay and presents. `probe`, set for a newly decoded picture
-    /// and not for a redraw, reads the beam around the present and advances temporal upscaling;
+    /// Draws the texture and the overlay and presents. `fresh` is a whole newly decoded picture,
+    /// which advances temporal upscaling. `probe` reads the beam around the present;
     /// `due_us` is when the picture was due, for the wait's budget against the next one.
-    fn render_flip(&mut self, renderer: *mut SDL_Renderer, draw_overlay: &mut impl FnMut(&mut Self, *mut SDL_Renderer), probe: bool, due_us: Option<u64>) -> Flipped {
+    fn render_flip(&mut self, renderer: *mut SDL_Renderer, draw_overlay: &mut impl FnMut(&mut Self, *mut SDL_Renderer), probe: bool, fresh: bool, due_us: Option<u64>) -> Flipped {
         // SAFETY: drawing on a live renderer.
         unsafe {
             let (mut w, mut h) = (0, 0);
@@ -968,16 +968,24 @@ impl Streaming {
                     let warp = std::mem::take(&mut self.texture.warp);
                     // Temporal upscaling that cannot be made or fails to draw gives way to SGSR 1
                     // for the rest of the stream, and draws this picture with it.
+                    // Frame Warp shifts each redraw between pictures, which temporal upscaling
+                    // cannot show without feeding a picture into its history twice: SGSR 1 draws
+                    // while Frame Warp is on, said in the log and the stats line.
+                    let warp_on = self.frame_warp.is_some();
+                    if warp_on && self.settings.upscaling == config::Upscaling::Sgsr2 && !self.temporal_warp_logged {
+                        eprintln!("nightjar: temporal upscaling does not run with Frame Warp; the stream uses SGSR 1");
+                        self.temporal_warp_logged = true;
+                    }
                     let upscaled = loop {
-                        let mode = upscale::effective_mode(self.settings.upscaling, self.temporal_failed);
+                        let mode = upscale::effective_mode(self.settings.upscaling, self.temporal_failed || warp_on);
                         let mut refused = None;
                         if !self.upscaler.as_ref().is_some_and(|u| u.matches(input, output, mode)) {
                             self.upscaler = upscale::Upscaler::new(renderer, input, output, mode).map_err(|e| refused = Some(e)).ok();
                         }
                         let drawn = match self.upscaler.as_mut() {
-                            // `probe` is set exactly for a newly decoded picture (both callers); a repeat or
-                            // a Frame Warp redraw leaves temporal upscaling's history as it is.
-                            Some(u) => u.draw_warped(renderer, texture, self.settings.upscale_sharpness, &warp, &mut self.texture.warp_mesh, probe),
+                            // Only a whole newly decoded picture (`fresh`) moves temporal upscaling's
+                            // history on; a repeat or a beam race's slice present shows its last output.
+                            Some(u) => u.draw_warped(renderer, texture, self.settings.upscale_sharpness, &warp, &mut self.texture.warp_mesh, fresh),
                             None => Err(refused.unwrap_or_default()),
                         };
                         match drawn {
@@ -1249,7 +1257,7 @@ impl Streaming {
         }
         let (flipped, by_kms) = match self.kms_flip(window, &mut draw_overlay, has_picture) {
             Some(flipped) => (flipped, true),
-            None => (self.render_flip(renderer, &mut draw_overlay, has_picture, picture.as_ref().map(|p| p.present_us)), false),
+            None => (self.render_flip(renderer, &mut draw_overlay, has_picture, has_picture, picture.as_ref().map(|p| p.present_us)), false),
         };
         self.needs_redraw = false;
         // The draw after the hold, which the hold's margin has to leave time for.
