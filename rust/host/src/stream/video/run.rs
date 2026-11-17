@@ -141,7 +141,10 @@ impl SessionThread<'_> {
         } else {
             None
         };
-        let mut metadata_due = Instant::now() + Duration::from_secs(1);
+        // The first picture updates HDR metadata after the enhancer has chosen
+        // its conversion: RTX HDR's peak comes from that selection, not only
+        // from the configuration the encoder was made with.
+        let mut metadata_due = Instant::now();
         // A keyframe a while after an AMF reference-invalidation recovery.
         let mut confirm_keyframe: Option<Instant> = None;
         let mut timing_due = Instant::now() + Duration::from_secs(5);
