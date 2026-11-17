@@ -94,7 +94,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install build tools
-        run: brew install meson ninja cmake pkg-config bison flex llvm libclc spirv-llvm-translator spirv-tools
+        run: brew install meson ninja cmake pkg-config bison flex llvm libclc spirv-llvm-translator
       # Restored and saved apart, so a later failing step keeps the 30-minute Mesa build cached.
       - id: vulkan-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

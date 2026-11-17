@@ -54,11 +54,21 @@ cmake --install "$work/loader-build"
 cp "$(cd "$work/loader-install/lib" && pwd -P)/$(readlink "$work/loader-install/lib/libvulkan.1.dylib" || echo libvulkan.1.dylib)" "$prefix/lib/libvulkan.1.dylib"
 install_name_tool -id @rpath/libvulkan.1.dylib "$prefix/lib/libvulkan.1.dylib"
 
+# SPIRV-Tools, static, so the driver carries it instead of linking Homebrew's dylib.
+fetch spirv-headers https://github.com/KhronosGroup/SPIRV-Headers/archive/refs/tags/vulkan-sdk-1.4.357.0.tar.gz 4d703067a7e06331ccb37bdfed3f9b7879cc61969a2689ae95c95db34a47ff07
+fetch spirv-tools https://github.com/KhronosGroup/SPIRV-Tools/archive/refs/tags/vulkan-sdk-1.4.357.0.tar.gz d31e7109b6ef3559067e53e520870eafed7c9534d00db9728814b6df03fa4a5e
+cmake -S "$work/spirv-tools" -B "$work/spirv-tools-build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=26.0 -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+  -DSPIRV-Headers_SOURCE_DIR="$work/spirv-headers" -DSPIRV_SKIP_TESTS=ON -DSPIRV_SKIP_EXECUTABLES=ON \
+  -DSPIRV_WERROR=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX="$work/spirv-install" -DCMAKE_INSTALL_LIBDIR=lib
+cmake --build "$work/spirv-tools-build" --parallel "$jobs"
+cmake --install "$work/spirv-tools-build"
+
 # KosmicKrisp, as docs.mesa3d.org/drivers/kosmickrisp.html builds it, for Metal 4 (macOS 26).
 python3 -m venv "$work/venv"
 "$work/venv/bin/pip" install --quiet mako packaging pyyaml
 export PATH="$work/venv/bin:$brew/opt/llvm/bin:$brew/opt/bison/bin:$brew/opt/flex/bin:$PATH"
-export PKG_CONFIG_PATH="$brew/opt/llvm/lib/pkgconfig:$brew/opt/libclc/share/pkgconfig:$brew/opt/spirv-llvm-translator/lib/pkgconfig:$brew/opt/spirv-tools/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+export PKG_CONFIG_PATH="$work/spirv-install/lib/pkgconfig:$brew/opt/llvm/lib/pkgconfig:$brew/opt/libclc/share/pkgconfig:$brew/opt/spirv-llvm-translator/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 (
   export MACOSX_DEPLOYMENT_TARGET=26.0
   meson setup "$work/mesa-build" "$work/mesa" --prefix "$work/mesa-install" --libdir lib \
