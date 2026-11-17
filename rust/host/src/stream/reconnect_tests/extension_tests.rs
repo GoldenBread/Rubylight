@@ -255,7 +255,9 @@ a=x-nv-audio.surround.channelMask:185919
 /// message (0x010e) as on HEVC. Without PyroWave Main10 the same ANNOUNCE is refused.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn hlg_on_pyrowave_is_offered_and_sends_the_hdr_mode_message() -> Result<()> {
-    let h = Harness::new(10_000, 1).await?;
+    // The harness streams a 640x480 test picture at 20 Mbps, below PyroWave's minimum for that mode:
+    // allow it, since this test is about the HLG offer, not the bitrate floor.
+    let h = Harness::configured(10_000, 1, "pyrowave_allow_below_minimum=true").await?;
     let sdp = "a=x-nv-vqos[0].bitStreamFormat:3\r\na=x-nv-video[0].dynamicRangeMode:1\r\na=x-rl-video[0].hdrFormat:2\r\n";
     let launch = h.launch_hdr(0, false, None).await?;
     let describe = h.rtsp(&launch, 10, "DESCRIBE", "").await?;

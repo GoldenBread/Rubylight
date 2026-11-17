@@ -615,6 +615,13 @@ impl Config {
     pub fn pyrowave_encode_overlap(&self) -> bool {
         self.boolean("pyrowave_encode_overlap", false)
     }
+
+    /// Whether a PyroWave stream may start below the mode's minimum bitrate
+    /// (`pyrowave_allow_below_minimum`, off by default): below the floor every frame loses detail
+    /// severely even on a perfect link, so such a launch is refused with the reason instead.
+    pub fn pyrowave_allow_below_minimum(&self) -> bool {
+        self.boolean("pyrowave_allow_below_minimum", false)
+    }
     /// Video datagrams the WebRTC media thread drops per thousand (`webrtc_loss_permille`, 0 to
     /// 1000), as a lossy link does. A measurement switch, 0 by default.
     pub fn webrtc_loss_permille(&self) -> u32 {

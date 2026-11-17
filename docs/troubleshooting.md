@@ -157,7 +157,7 @@ For a report, include the log from stream startup, especially `stream configured
 
 ## PyroWave shows blurred grey blocks
 
-A very low bitrate can leave PyroWave with only coarse brightness and little colour or fine detail. The stream card and log distinguish `PyroWave bitrate is too low` (red, below the severe-loss floor) from `PyroWave bitrate is below recommended` (amber, text and textures may lose detail).
+A very low bitrate can leave PyroWave with only coarse brightness and little colour or fine detail. A stream that would start below the severe-loss floor is refused with the reason (Nightjar shows it; a stock Moonlight client shows that the stream could not start), unless **Codecs: Stream PyroWave below its minimum** (`pyrowave_allow_below_minimum`) is on. For a stream that runs below the floor, the stream card and log distinguish `PyroWave bitrate is too low` (red, below the severe-loss floor) from `PyroWave bitrate is below recommended` (amber, text and textures may lose detail).
 
 At 60 fps the floor and recommendation are **139/277 Mbps for 720p**, **187/399 Mbps for 1080p** and **747/1593 Mbps for 4K**, rounded up. They come from desktop and game test scenes on AMD, including SDR and HDR, 4:2:0 and 4:4:4; picture content still decides how clean any one stream looks. One-pixel text at 720p needs more bits per pixel than the larger text at higher resolutions. [Capture and video](configuration.md#capture-and-video) explains the two levels.
 
