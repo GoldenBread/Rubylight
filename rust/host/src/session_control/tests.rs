@@ -650,10 +650,10 @@ fn when_the_grace_period_runs_out_the_session_ends_as_end_session_does() {
 }
 
 /// A game that ignores close outlasts the shutdown budget: its undo command
-/// runs for seconds before `end_app` returns. The kept display layout and
-/// audio route go back before that, so they do not wait behind it.
+/// runs for seconds before `end_app` returns. Its audio route stays while it
+/// is asked to close, then goes after the grace rather than waiting for it.
 #[test]
-fn shutdown_releases_the_kept_display_and_audio_before_a_game_that_ignores_close() {
+fn shutdown_releases_the_audio_route_after_its_grace_when_the_game_ignores_close() {
     let setup = Setup::new("");
     let host = setup.host();
     let mut app = setup.game();
@@ -675,13 +675,18 @@ fn shutdown_releases_the_kept_display_and_audio_before_a_game_that_ignores_close
     let stopping = setup.fixture.host.clone();
     let began = Instant::now();
     let stopped = std::thread::spawn(move || stopping.stop_app(crate::state::AppStop::Shutdown));
-    let released = (0..30).any(|_| {
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert!(
+        host.app_audio.lock().unwrap().is_some(),
+        "the audio route was released before the game was asked to close"
+    );
+    let released = (0..300).any(|_| {
         std::thread::sleep(std::time::Duration::from_millis(10));
         host.app_audio.lock().unwrap().is_none() && host.app_display.lock().unwrap().is_empty()
     });
     assert!(
         released,
-        "the display and audio route were still held while the game's undo command ran"
+        "the display and audio route were still held after the audio grace"
     );
     stopped.join().unwrap();
     assert!(

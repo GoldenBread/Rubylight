@@ -14,6 +14,9 @@ use std::{
     time::{Duration, Instant},
 };
 pub type Shared = Arc<Host>;
+/// How long a game at shutdown keeps its audio route while it closes. Past
+/// this the route goes back even if the game ignores close.
+const AUDIO_RELEASE_GRACE: Duration = Duration::from_millis(250);
 type FileStamp = (std::time::SystemTime, u64);
 /// When a file was last written and its size; None while it is missing.
 fn file_stamp(path: &std::path::Path) -> Option<FileStamp> {
@@ -625,13 +628,39 @@ impl Host {
         // Stopping the app waits for it to exit, up to its exit timeout and
         // undo commands: never under the lock every serverinfo request takes.
         let app = self.current_app.lock().unwrap().take();
-        // At shutdown the wait runs under a budget: a game that ignores close
-        // must not leave the host's display layout and audio route behind, so
-        // they go back before the game is asked to.
+        // At shutdown the wait runs under a budget. The display layout goes
+        // back before the game is asked to close; its audio route stays while
+        // it closes, and a game that ignores close loses the route after a
+        // short grace rather than holding it until the next host start.
         if matches!(why, AppStop::Shutdown) {
-            let audio = self.app_audio.lock().unwrap().take();
             let displays = std::mem::take(&mut *self.app_display.lock().unwrap());
-            drop((audio, displays));
+            drop(displays);
+            let done = std::sync::atomic::AtomicBool::new(false);
+            std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    let deadline = std::time::Instant::now() + AUDIO_RELEASE_GRACE;
+                    while !done.load(std::sync::atomic::Ordering::Acquire)
+                        && std::time::Instant::now() < deadline
+                    {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    if !done.load(std::sync::atomic::Ordering::Acquire) {
+                        let audio = self.app_audio.lock().unwrap().take();
+                        if audio.is_some() {
+                            tracing::warn!(
+                                "the game had not closed when its audio route's grace ran out; releasing it"
+                            );
+                        }
+                        drop(audio);
+                    }
+                });
+                self.end_app(app, why);
+                done.store(true, std::sync::atomic::Ordering::Release);
+                drop(self.app_audio.lock().unwrap().take());
+                drop(std::mem::take(&mut *self.app_display.lock().unwrap()));
+            });
+            drop(teardown);
+            return;
         }
         self.end_app(app, why);
         let audio = self.app_audio.lock().unwrap().take();
