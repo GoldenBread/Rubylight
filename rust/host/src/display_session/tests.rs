@@ -2675,6 +2675,57 @@ fn a_primary_windows_keeps_taking_back_stays_on_the_card() {
     report.primary_restored();
     assert_eq!(codes(&warnings), ["display_primary_kept"]);
 }
+#[test]
+fn only_a_primary_the_layout_makes_for_this_stream_is_watched() {
+    use butterpollo_core::display_policy::Arrangement;
+    let applies = |planned: Arrangement, lease_primary, active, secure, excused| {
+        Prepared::primary_watch_applies(planned, lease_primary, active, secure, excused, true)
+    };
+    assert!(applies(Arrangement::Primary, true, true, false, false));
+    // A second stream, another device's display or a second screen joins beside the first
+    // owner's, and the layout makes only that one primary: re-laying this one out could
+    // never change it, yet the old watch did so every 750 ms forever.
+    assert!(!applies(Arrangement::Primary, false, true, false, false));
+    // Extended keeps the PC's primary; exclusive keeps it by switching the others off.
+    for planned in [Arrangement::Extended, Arrangement::Exclusive] {
+        assert!(!applies(planned, true, true, false, false));
+    }
+    // A paused stream holds its layout but has nobody to show a move to.
+    assert!(!applies(Arrangement::Primary, true, false, false, false));
+    // The secure desktop and the layout watch's excuse are Windows' own rearranging: a
+    // restore then could not tell its choice from a refusal, so nothing is reported.
+    assert!(!applies(Arrangement::Primary, true, true, true, false));
+    assert!(!applies(Arrangement::Primary, true, true, false, true));
+    // A refused restore waits before the next try.
+    assert!(!Prepared::primary_watch_applies(
+        Arrangement::Primary,
+        true,
+        true,
+        false,
+        false,
+        false
+    ));
+}
+#[test]
+fn a_primary_move_without_a_windows_change_is_left_alone() {
+    use butterpollo_core::display_policy::{LayoutWatch, PrimaryAction, PrimaryWatch};
+    let start = std::time::Instant::now();
+    let mut watch = PrimaryWatch::default();
+    // The user picks the monitor as the main screen in Windows, or a game takes it: no
+    // display arrived or left and the session did not change, so nothing starts the watch,
+    // however long the move lasts.
+    for seconds in [0, 1, 10, 60, 600] {
+        let now = start + Duration::from_secs(seconds);
+        assert_eq!(watch.observe(true, now), PrimaryAction::Wait, "{seconds}s");
+    }
+    // Windows changed the layout: the move that follows is put back after the settle.
+    watch.changed(start);
+    assert_eq!(watch.observe(true, start), PrimaryAction::Wait);
+    assert_eq!(
+        watch.observe(true, start + LayoutWatch::SETTLE),
+        PrimaryAction::Restore
+    );
+}
 
 #[test]
 fn a_shared_virtual_display_raised_by_a_joining_stream_is_no_finding() {

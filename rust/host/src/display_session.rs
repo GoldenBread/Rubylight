@@ -1930,8 +1930,11 @@ impl Prepared {
             }
         };
         if !butterpollo_core::display_policy::primary_moved(arrangement.arrangement(), shown) {
-            if shown.is_some() {
-                self.primary_watch.settled();
+            // Nothing is pending even when Windows shows no primary for the display (it is
+            // off, or still being laid out): a move that was timing must start again from
+            // where it is next seen.
+            self.primary_watch.restored(now);
+            if shown == Some(true) {
                 self.mode_report.primary_restored();
             }
             return;
@@ -1940,7 +1943,10 @@ impl Prepared {
             return;
         }
         tracing::info!(output = %self.output, "the stream's display lost the primary one; laying the display out as primary again");
-        let retained = self.remote_monitors();
+        // The displays left on stay on while the rest are laid out again, as the layout
+        // watch keeps them for its own reapplies.
+        let mut retained = self.remote_monitors();
+        retained.extend(self.layout_watch.kept().iter().cloned());
         match arrangement.reapply(&self.output, &retained) {
             Ok(()) => {
                 // Windows accepted the layout; whether it moved the primary is the look after
