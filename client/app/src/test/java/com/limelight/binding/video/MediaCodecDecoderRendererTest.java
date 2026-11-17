@@ -12,17 +12,6 @@ import static org.junit.Assert.*;
 
 public class MediaCodecDecoderRendererTest {
     @Test
-    public void aPictureOfAnotherSizeRebuildsForWhatArrivedNotForWhatWasAsked() {
-        // A host that answers a reconfigure with its own size: the upscaler follows the picture.
-        assertArrayEquals(new int[] {1920, 1080},
-                MediaCodecDecoderRenderer.upscalerSizeForPicture(1920, 1080, 1280, 720, 1280, 720));
-        // AMD's AV1 encoders leave their alignment padding in: the same picture, not a new size.
-        assertNull(MediaCodecDecoderRenderer.upscalerSizeForPicture(1920, 1088, 1920, 1080, 1920, 1080));
-        // The size the upscaler already samples: nothing to rebuild.
-        assertNull(MediaCodecDecoderRenderer.upscalerSizeForPicture(1280, 720, 1280, 720, 1280, 720));
-    }
-
-    @Test
     public void aSizeChangeRebuildsTheUpscalerForTheNewSizesButNotForTheSameOnes() {
         // A fold or a stream size change moved what the upscaler draws to or samples: it is built again.
         assertTrue(MediaCodecDecoderRenderer.upscalerSizedDifferently(1920, 1080, 2560, 1440,

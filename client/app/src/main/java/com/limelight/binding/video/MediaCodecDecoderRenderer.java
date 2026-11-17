@@ -1127,9 +1127,14 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 configuredFormat.setInteger(MediaFormat.KEY_MAX_HEIGHT, maxDecodeHeight);
                 restart = true;
             }
-            // The upscaler is not rebuilt for the size asked for here: the host may answer with
-            // another one, and the picture's own size arrives with its output format. A picture of
-            // a new size then rebuilds it for that size (checkUpscalingOutputFormat, configure).
+            if (upscaler != null && (width != initialWidth || height != initialHeight)) {
+                // The GLES upscaler is built for the stream size it started with: after the restart it is
+                // rebuilt for the new one, instead of upscaling ending for the rest of the stream.
+                upscalingPolicy.fail(UpscalingPolicy.Reason.SIZE_CHANGED);
+                initialWidth = width;
+                initialHeight = height;
+                restart = true;
+            }
             if (restart) {
                 // An expected "recovery", like an HDR change.
                 codecRecoveryAttempts = 0;
@@ -1624,22 +1629,6 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private void checkUpscalingOutputFormat() {
         GlesUpscaler current = upscaler;
         if (current == null) return;
-        if (packing == null) {
-            int[] visible = decodedVisibleSize();
-            if (visible != null) {
-                int[] moved = upscalerSizeForPicture(visible[0], visible[1], expectedWidth, expectedHeight,
-                        initialWidth, initialHeight);
-                if (moved != null) {
-                    // The host answered the reconfigure with a size of its own. The upscaler the
-                    // decoder draws into was built for the old size, so the restart rebuilds it for
-                    // the picture that arrived, not for the size that was asked for.
-                    initialWidth = moved[0];
-                    initialHeight = moved[1];
-                    upscalingPolicy.fail(UpscalingPolicy.Reason.SIZE_CHANGED);
-                    return;
-                }
-            }
-        }
         // AV1 from AMD encoders arrives with its alignment padding uncropped; the upscaler samples
         // the stream's part of it, and only a picture of another size ends upscaling.
         float[] crop = UpscalingPolicy.checkOutputFormat(outputFormat, packing != null, initialWidth, initialHeight,
@@ -1658,34 +1647,6 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                                      String glRenderer, PerfOverlayListener perfListener) {
         this(activity, prefs, crashListener, consecutiveCrashCount, meteredData, requestedHdr,
                 glRenderer, perfListener, activity.getWindowManager().getDefaultDisplay());
-    }
-
-    /** The visible picture the decoder's output format reports, or null when it does not report a size. */
-    private int[] decodedVisibleSize() {
-        try {
-            if (!outputFormat.containsKey(MediaFormat.KEY_WIDTH) || !outputFormat.containsKey(MediaFormat.KEY_HEIGHT)) {
-                return null;
-            }
-            return StreamResizePolicy.visibleSize(outputFormat.getInteger(MediaFormat.KEY_WIDTH),
-                    outputFormat.getInteger(MediaFormat.KEY_HEIGHT),
-                    formatInteger(outputFormat, "crop-left"), formatInteger(outputFormat, "crop-right"),
-                    formatInteger(outputFormat, "crop-top"), formatInteger(outputFormat, "crop-bottom"));
-        } catch (RuntimeException e) {
-            LimeLog.warning("Cannot read the decoded size: " + e);
-            return null;
-        }
-    }
-
-    /**
-     * The stream size the upscaler must be built for when the decoder reports a visible picture of
-     * {@code visibleWidth x visibleHeight}, or null when it is the size the stream already has (the
-     * alignment padding of the same picture included). Read from the picture, not from the size the
-     * host was asked for: it can answer with a size of its own.
-     */
-    static int[] upscalerSizeForPicture(int visibleWidth, int visibleHeight, int expectedWidth,
-                                        int expectedHeight, int currentWidth, int currentHeight) {
-        int[] shown = StreamResizePolicy.shownSize(visibleWidth, visibleHeight, expectedWidth, expectedHeight);
-        return shown[0] == currentWidth && shown[1] == currentHeight ? null : shown;
     }
 
     public MediaCodecDecoderRenderer(Activity activity, PreferenceConfiguration prefs,
