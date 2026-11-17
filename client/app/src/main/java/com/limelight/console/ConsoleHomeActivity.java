@@ -827,7 +827,8 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
                 if (holder != null) {
                     holder.itemView.requestFocus();
                 } else {
-                    grid.scrollToPosition(now);
+                    // A TV brings the card in under its section's title, not with the title above the list's edge.
+                    grid.scrollToPosition(adapter.reveal(now, isTelevision()));
                     focusPending = true;
                 }
             });
@@ -1109,7 +1110,7 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
                     holder.itemView.requestFocus();
                 }
             } else {
-                grid.scrollToPosition(position);
+                grid.scrollToPosition(adapter.reveal(position, isTelevision()));
                 list.post(() -> {
                     RecyclerView.ViewHolder later = list.findViewHolderForAdapterPosition(position);
                     if (later != null) {

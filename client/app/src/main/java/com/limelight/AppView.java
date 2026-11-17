@@ -591,6 +591,9 @@ public class AppView extends NightjarActivity implements AdapterFragmentCallback
             ((android.view.ViewGroup.MarginLayoutParams) librarySearch.getLayoutParams()).setMarginStart(left + side);
             ((android.view.ViewGroup.MarginLayoutParams) librarySearch.getLayoutParams()).setMarginEnd(right + side);
             placeSummary(left + side, right + side);
+            android.view.ViewGroup.MarginLayoutParams statusBanner = (android.view.ViewGroup.MarginLayoutParams) findViewById(R.id.library_status_banner).getLayoutParams();
+            statusBanner.setMarginStart(left + side);
+            statusBanner.setMarginEnd(right + side);
             gridStart = left + side;
             gridEnd = right + side;
         }
@@ -797,12 +800,31 @@ public class AppView extends NightjarActivity implements AdapterFragmentCallback
         TextView status = findViewById(R.id.app_list_status);
         status.setVisibility(message == 0 ? View.GONE : View.VISIBLE);
         if (message != 0) status.setText(message);
-        findViewById(R.id.library_status_panel).setVisibility(message == 0 ? View.GONE : View.VISIBLE);
+        // A TV that still shows its saved games gets the line above the grid; the panel is for a grid with nothing in it,
+        // where nothing would be covered (nightjar#7).
+        boolean inline = message != 0 && visible > 0 && GlassForm.of(this) == GlassForm.TELEVISION;
+        findViewById(R.id.library_status_banner).setVisibility(inline ? View.VISIBLE : View.GONE);
+        TextView bannerText = findViewById(R.id.app_list_status_banner);
+        if (inline) bannerText.setText(message);
+        findViewById(R.id.library_status_panel).setVisibility(message == 0 || inline ? View.GONE : View.VISIBLE);
         TextView retryButton = findViewById(R.id.library_retry);
         retryButton.setText(action);
         retryButton.setOnClickListener(retry);
         boolean offered = message != 0 && !loadingApps;
         retryButton.setVisibility(offered ? View.VISIBLE : View.GONE);
+        TextView bannerRetry = findViewById(R.id.library_retry_banner);
+        bannerRetry.setText(action);
+        bannerRetry.setOnClickListener(retry);
+        bannerRetry.setVisibility(inline && offered ? View.VISIBLE : View.GONE);
+        // The line stands between the top row and the grid: Down reaches its Retry before the games.
+        if (GlassForm.of(this) == GlassForm.TELEVISION) {
+            int down = inline && offered ? R.id.library_retry_banner : R.id.fragmentView;
+            for (int id : new int[] {R.id.library_back, R.id.library_options, R.id.library_search_button}) {
+                View top = findViewById(id);
+                if (top != null) top.setNextFocusDownId(down);
+            }
+            bannerRetry.setNextFocusDownId(R.id.fragmentView);
+        }
         // An empty grid has nothing for a remote to land on: what can be done about it takes the focus.
         View focused = getCurrentFocus();
         if (offered && visible == 0 && !retryButton.isInTouchMode() && (focused == null || focused.getId() == R.id.fragmentView)) {
