@@ -529,8 +529,10 @@ impl Transport<'_> {
         let (link_packets, link_bytes) =
             super::reached_socket(sent_packets, self.batch.dropped - dropped, sent_bytes, ipv6);
         s.record_link_sent(frame.wire_frame, link_packets, link_bytes);
+        let refused = self.batch.dropped.saturating_sub(self.batch.oversized)
+            != dropped.saturating_sub(oversized);
         if lost.unrecoverable() {
-            s.keyframe_abandoned(frame.wire_frame);
+            s.keyframe_abandoned_as(frame.wire_frame, refused);
             tracing::debug!(
                 frame = frame.wire_frame,
                 idr = frame.idr,
@@ -540,10 +542,8 @@ impl Transport<'_> {
         } else {
             self.send_loss.delivered(frame.idr);
         }
-        if self.batch.dropped.saturating_sub(self.batch.oversized)
-            != dropped.saturating_sub(oversized)
-        {
-            s.launch.warnings.event("network_send", "The PC is too busy to send the stream (CPU fully loaded), so video packets were dropped. You may see stutter or recovery frames; close other work on the PC, or lower the resolution or frame rate. The log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
+        if refused {
+            s.launch.warnings.event("network_send", "The PC could not send the video fast enough (its CPU or network adapter fell behind), so video packets were dropped. You may see stutter or recovery frames; close other work on the PC, or lower the bitrate, resolution or frame rate. The log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
         }
         super::report_oversized(s, &self.batch, oversized);
         s.stats.latency_us.store(frame.latency, Ordering::Relaxed);

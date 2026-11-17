@@ -59,8 +59,9 @@ pub struct Entry {
     /// The encoder's bitrate when the stream ended, in kbps.
     pub bitrate_kbps: u32,
     /// The bitrate the stream was asked for (the negotiated rate), in kbps;
-    /// `bitrate_kbps` is what the encoder ran at when it ended. A stream the
-    /// network held below the request keeps the two apart. 0 for a stream that
+    /// `bitrate_kbps` is what the encoder ran at when it ended. They differ when
+    /// something held the encoder below the request: the network, the client
+    /// setting the bitrate, or the host's own limit. 0 for a stream that
     /// never started, and for an entry saved before this field existed.
     pub requested_bitrate_kbps: u32,
     /// What the video actually sent on average: its bytes over the stream's

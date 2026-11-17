@@ -1123,7 +1123,7 @@ impl<P, A> Session<P, A> {
                         if change.reason == "send_losses" =>
                     {
                         format!(
-                            "The PC is too busy to send the stream (CPU fully loaded), so the host lowered the video bitrate to {} and does not raise it while video packets are refused. Close other work on the PC, or lower the resolution or frame rate in Moonlight.",
+                            "The PC could not send the stream fast enough (its CPU or network adapter fell behind and the socket refused video packets), so the host lowered the video bitrate to {} and raises it again once the PC keeps up. Close other work on the PC, or lower the resolution or frame rate in Moonlight.",
                             mbps(change.to_kbps)
                         )
                     }
@@ -1177,7 +1177,7 @@ impl<P, A> Session<P, A> {
                     keyframe_requests = e.keyframe_requests,
                     loss_windows = e.loss_windows,
                     loss_share_percent = e.loss_share * 100.,
-                    "the PC is too busy to send the stream; lowering the video bitrate"
+                    "the PC could not send the stream fast enough (its socket refused video packets); lowering the video bitrate"
                 )
             }
             ChangeKind::StepDown if !was_limited => tracing::warn!(
@@ -1204,7 +1204,7 @@ impl<P, A> Session<P, A> {
                 delivered_kbps = change.delivered_kbps,
                 send_losses = e.send_losses,
                 loss_share_percent = e.loss_share * 100.,
-                "the PC is too busy to send the stream even at the lowest video bitrate"
+                "the PC could not send the stream fast enough even at the lowest video bitrate (its socket refused video packets)"
             ),
             ChangeKind::Floor if warned => tracing::warn!(
                 stream_id = %self.launch.id,
@@ -1467,9 +1467,9 @@ impl<P, A> Session<P, A> {
             if kind == LatchKind::Startup {
                 self.launch.warnings.set("network_keyframe_loss", format!("The first video frame was lost on the way to this device ({reason}), so video is paced like Wi-Fi for now. This limits packet bursts without reducing the encoder bitrate. The host returns to the normal rate after 10 seconds without further loss."));
             } else if kind == LatchKind::Send {
-                self.launch.warnings.set("network_keyframe_loss", format!("The PC was too busy to send video packets ({reason}), so video is paced like Wi-Fi for now. This limits packet bursts without reducing the encoder bitrate. The host returns to the normal rate after 10 seconds without further loss."));
+                self.launch.warnings.set("network_keyframe_loss", format!("The PC could not send video packets fast enough ({reason}; its CPU or network adapter fell behind), so video is paced like Wi-Fi for now. This limits packet bursts without reducing the encoder bitrate. The host returns to the normal rate after 10 seconds without further loss."));
             } else if host_only {
-                self.launch.warnings.set("network_keyframe_loss", format!("The PC was too busy to send video packets ({reason}), so video is paced like Wi-Fi for the rest of the stream. This limits packet bursts without reducing the encoder bitrate. The device reported no loss; close other work on the PC if this continues."));
+                self.launch.warnings.set("network_keyframe_loss", format!("The PC could not send video packets fast enough ({reason}; its CPU or network adapter fell behind), so video is paced like Wi-Fi for the rest of the stream. This limits packet bursts without reducing the encoder bitrate. The device reported no loss; close other work on the PC, or check the network adapter and its driver, if this continues."));
             } else {
                 self.launch.warnings.set("network_keyframe_loss", format!("Video frames were lost on the way to this device ({reason}), so video is now paced like Wi-Fi for the rest of the stream. This limits packet bursts without reducing the encoder bitrate. Check the network path if loss continues."));
             }
@@ -1480,10 +1480,17 @@ impl<P, A> Session<P, A> {
     pub fn keyframe_loss_rate_bps(&self, base: u64, safe: u64) -> u64 {
         self.keyframe_loss.lock().unwrap().bps(base, safe)
     }
+    /// The host stopped sending this frame part way because its socket
+    /// refused packets: loss on send. See [`Self::keyframe_abandoned_as`].
+    pub fn keyframe_abandoned(&self, wire_frame: u32) {
+        self.keyframe_abandoned_as(wire_frame, true);
+    }
     /// The host stopped sending this frame part way: loss on send. It counts
     /// toward slower pacing under its own reason, and the client's report of
-    /// the same frame is not counted again.
-    pub fn keyframe_abandoned(&self, wire_frame: u32) {
+    /// the same frame is not counted again. `refused` is whether the socket
+    /// refused packets of it (a full buffer); a frame lost only to datagrams
+    /// too large for the path does not make the PC's send path the limit.
+    pub fn keyframe_abandoned_as(&self, wire_frame: u32, refused: bool) {
         self.stats
             .frames_lost_on_send
             .fetch_add(1, Ordering::Relaxed);
@@ -1498,7 +1505,11 @@ impl<P, A> Session<P, A> {
         if self.link_sent.live() {
             let mut link = self.link_rate.lock().unwrap();
             link.drain(&self.link_sent);
-            link.rate.on_send_loss(wire_frame, Instant::now());
+            if refused {
+                link.rate.on_send_loss(wire_frame, Instant::now());
+            } else {
+                link.rate.on_send_too_large(wire_frame, Instant::now());
+            }
         }
         self.report_keyframe_loss(latched, ignored);
     }

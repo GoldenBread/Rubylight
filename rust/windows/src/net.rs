@@ -391,29 +391,49 @@ pub fn datagram_lost(error: &std::io::Error) -> bool {
 }
 /// How long one send, or all of one batch's sends together, wait for room in
 /// a full socket buffer before dropping. Per datagram, 64 refused datagrams
-/// would hold the sender for 256 ms. A video frame shares one deadline over
-/// all its batches ([`Batch::begin_frame`]), about a frame period, at most
-/// 20 ms.
+/// would hold the sender for 256 ms. Within a video frame
+/// ([`Batch::begin_frame`]) all its batches share one deadline: the later of
+/// the frame's own (about a frame period from its start, at most 20 ms) and
+/// this long after the frame's first refusal.
 pub const WRITABLE_WAIT: std::time::Duration = std::time::Duration::from_millis(4);
 const BUFFER_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(1);
 /// The writable wait left to one send call, started at its first full buffer.
 #[derive(Default)]
 struct WaitBudget {
     deadline: Option<std::time::Instant>,
+    /// The frame's own deadline ([`Batch::begin_frame`]), if one is in flight.
+    frame_until: Option<std::time::Instant>,
+    /// Full-buffer refusals seen by this send call.
+    refusals: u32,
     backoff_timer: Option<crate::timing::Timer>,
 }
 impl WaitBudget {
-    /// A budget shared by every batch of the frame in flight: the deadline is
-    /// the frame's, so a socket that stays full is not waited on again for
-    /// each batch, and the rest of that frame is abandoned instead.
-    fn for_frame(deadline: Option<std::time::Instant>) -> Self {
+    /// A budget shared by every batch of the frame in flight: `deadline` is
+    /// the frame's, once a batch of it met a full socket, so a socket that
+    /// stays full is not waited on again for each batch and the rest of that
+    /// frame is abandoned instead; `until` is the frame's own deadline.
+    fn for_frame(until: Option<std::time::Instant>, deadline: Option<std::time::Instant>) -> Self {
         Self {
             deadline,
+            frame_until: until,
             ..Default::default()
         }
     }
+    /// The deadline, set at the first full buffer: [`WRITABLE_WAIT`] from
+    /// then, or the frame's own deadline if that is later. A frame that took
+    /// most of its period to pace out still gets the usual wait.
     fn deadline_at(&mut self, now: std::time::Instant) -> std::time::Instant {
-        *self.deadline.get_or_insert(now + WRITABLE_WAIT)
+        let wait = now + WRITABLE_WAIT;
+        *self
+            .deadline
+            .get_or_insert(self.frame_until.map_or(wait, |until| until.max(wait)))
+    }
+    /// Count a full-buffer refusal; true from the second on, when the retry
+    /// should pause first. A socket can poll writable and still refuse a
+    /// large segmented batch, and polling alone would spin on it.
+    fn refused_again(&mut self) -> bool {
+        self.refusals += 1;
+        self.refusals > 1
     }
     /// Milliseconds to wait for a full buffer now; 0 once the budget is spent.
     fn take(&mut self, now: std::time::Instant) -> i32 {
@@ -472,8 +492,9 @@ pub struct WritableWaits {
     pub last_error: i32,
 }
 /// ENOBUFS can come from transport/driver allocation pressure while the socket
-/// still polls writable. Pause briefly before one retry rather than hot-polling
-/// that readiness bit or dropping an entire segmented batch immediately.
+/// still polls writable. Pause briefly before a retry rather than hot-polling
+/// that readiness bit or dropping an entire segmented batch immediately. A
+/// repeated WSAEWOULDBLOCK pauses the same way before it polls again.
 fn buffer_available(
     socket: &UdpSocket,
     error: WSA_ERROR,
@@ -483,10 +504,20 @@ fn buffer_available(
     if let Some(trace) = trace.as_mut() {
         trace.last_error = error.0;
     }
+    let again = budget.refused_again();
     if error == WSAEWOULDBLOCK {
+        if again && !pause(budget, trace.as_deref_mut()) {
+            return false;
+        }
         return writable(socket, budget, trace);
     }
     debug_assert_eq!(error, WSAENOBUFS);
+    pause(budget, trace)
+}
+
+/// Wait [`BUFFER_RETRY_DELAY`] if the budget leaves time for a retry after
+/// it; false when it does not.
+fn pause(budget: &mut WaitBudget, trace: Option<&mut WritableWaits>) -> bool {
     let started = std::time::Instant::now();
     let Some(retry_at) = budget.backoff_at(started) else {
         return false;
@@ -510,7 +541,9 @@ fn buffer_available(
 /// A successful UDP send must never be repeated. Retry buffer pressure for as
 /// long as the caller's budget allows, so a socket that is full for a moment
 /// (a busy CPU, a late transmit completion) carries the batch instead of
-/// losing it; all other errors retain their existing drop/fatal handling.
+/// losing it; `wait` paces the retries ([`buffer_available`] pauses 1 ms
+/// before each after the first). All other errors retain their existing
+/// drop/fatal handling.
 fn send_with_retry<T>(
     mut send: impl FnMut() -> std::result::Result<T, WSA_ERROR>,
     mut wait: impl FnMut(WSA_ERROR) -> bool,
@@ -907,10 +940,10 @@ pub struct Batch {
     pub dont_fragment: bool,
     /// Enabled by the sender only for pacing traces.
     pub waits: Option<WritableWaits>,
-    /// The deadline every batch of the frame in flight shares for a full
-    /// socket (see [`Batch::begin_frame`]); `None` outside a frame, where one
-    /// batch waits [`WRITABLE_WAIT`] on its own.
-    frame_deadline: Option<std::time::Instant>,
+    /// The frame in flight (see [`Batch::begin_frame`]): its own deadline,
+    /// and the deadline its batches share once one met a full socket. `None`
+    /// outside a frame, where one batch waits [`WRITABLE_WAIT`] on its own.
+    frame: Option<FrameWait>,
     unreported: u64,
     reported: Option<std::time::Instant>,
 }
@@ -923,24 +956,37 @@ impl Default for Batch {
             oversized: 0,
             dont_fragment: false,
             waits: None,
-            frame_deadline: None,
+            frame: None,
             unreported: 0,
             reported: None,
         }
     }
 }
+#[derive(Clone, Copy)]
+struct FrameWait {
+    until: std::time::Instant,
+    deadline: Option<std::time::Instant>,
+}
 impl Batch {
-    /// Start one video frame: every batch of it shares this wait for room in
-    /// a full socket, and the frame's sender abandons the rest of it once the
-    /// deadline passes. Returns the deadline for the sender to compare.
-    pub fn begin_frame(&mut self, wait: std::time::Duration) -> std::time::Instant {
-        let deadline = std::time::Instant::now() + wait;
-        self.frame_deadline = Some(deadline);
-        deadline
+    /// Start one video frame: its batches share one wait for room in a full
+    /// socket, up to `wait` from now or [`WRITABLE_WAIT`] from the frame's
+    /// first refusal, whichever is later (see [`Batch::frame_wait_spent`]).
+    pub fn begin_frame(&mut self, wait: std::time::Duration) {
+        self.frame = Some(FrameWait {
+            until: std::time::Instant::now() + wait,
+            deadline: None,
+        });
     }
     /// The frame is over: a later batch outside a frame gets its own wait.
     pub fn end_frame(&mut self) {
-        self.frame_deadline = None;
+        self.frame = None;
+    }
+    /// The frame in flight met a full socket and its shared wait is over:
+    /// its sender gives up the rest of it.
+    pub fn frame_wait_spent(&self) -> bool {
+        self.frame
+            .and_then(|frame| frame.deadline)
+            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
     }
     /// How many of the leading `packets` one segmented send carries: equal
     /// sizes, then at most one shorter, at most 64 and 65507 bytes in all.
@@ -987,7 +1033,7 @@ impl Batch {
             tracing::warn!(
                 code = error.0,
                 dropped = self.unreported,
-                "UDP send failed: the PC is too busy to send the stream (CPU fully loaded), so packets were dropped and the client may stutter. Close other work on the PC or lower the bitrate"
+                "UDP send failed: the socket stayed full, so packets were dropped and the client may stutter. The PC could not send fast enough (its CPU or network adapter fell behind); close other work on the PC or lower the bitrate"
             );
             self.unreported = 0;
             self.reported = Some(std::time::Instant::now());
@@ -1034,7 +1080,24 @@ impl Batch {
             return Ok(0);
         }
         let mut source = socket.source(peer);
-        let mut budget = WaitBudget::for_frame(self.frame_deadline);
+        let mut budget = WaitBudget::for_frame(
+            self.frame.map(|frame| frame.until),
+            self.frame.and_then(|frame| frame.deadline),
+        );
+        let result = self.send_within(socket, packets, peer, &mut source, &mut budget);
+        if let Some(frame) = self.frame.as_mut() {
+            frame.deadline = budget.deadline;
+        }
+        result
+    }
+    fn send_within(
+        &mut self,
+        socket: &ReplySocket,
+        packets: &[Vec<u8>],
+        peer: SocketAddr,
+        source: &mut Option<IpAddr>,
+        budget: &mut WaitBudget,
+    ) -> Result<usize> {
         if self.offload
             && packets.len() > 1
             && packets.len() <= 64
@@ -1045,8 +1108,8 @@ impl Batch {
             && (1..=packets[0].len()).contains(&packets.last().unwrap().len())
         {
             let result;
-            (result, source) = socket.send_pinned(peer, source, |source| {
-                self.send_segmented(socket, packets, peer, source, &mut budget)
+            (result, *source) = socket.send_pinned(peer, *source, |source| {
+                self.send_segmented(socket, packets, peer, source, budget)
             })?;
             match result {
                 Ok(sent) => return Ok(sent),
@@ -1073,16 +1136,9 @@ impl Batch {
         let mut sent = 0;
         for packet in packets {
             let result;
-            (result, source) = socket.send_pinned(peer, source, |source| {
+            (result, *source) = socket.send_pinned(peer, *source, |source| {
                 self.system_calls += 1;
-                send_one(
-                    socket,
-                    packet,
-                    peer,
-                    source,
-                    &mut budget,
-                    self.waits.as_mut(),
-                )
+                send_one(socket, packet, peer, source, budget, self.waits.as_mut())
             })?;
             match result {
                 Ok(()) => sent += packet.len(),

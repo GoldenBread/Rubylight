@@ -102,21 +102,51 @@ fn persistent_pressure_and_an_expired_budget_do_not_loop_or_hide_errors() {
 
 #[test]
 fn one_frame_shares_a_single_wait_for_room_in_the_socket() {
+    let ms = std::time::Duration::from_millis;
     let start = std::time::Instant::now();
     // The frame's deadline, not a fresh WRITABLE_WAIT per batch: a busy CPU
     // may keep the socket full for a whole picture period.
-    let mut budget = WaitBudget::for_frame(Some(start + std::time::Duration::from_millis(20)));
+    let mut budget = WaitBudget::for_frame(Some(start + ms(20)), None);
     assert_eq!(budget.take(start), 20);
-    assert_eq!(budget.take(start + std::time::Duration::from_millis(12)), 8);
-    assert_eq!(budget.take(start + std::time::Duration::from_millis(20)), 0);
-    assert!(
-        budget
-            .backoff_at(start + std::time::Duration::from_millis(20))
-            .is_none()
-    );
+    assert_eq!(budget.take(start + ms(12)), 8);
+    assert_eq!(budget.take(start + ms(20)), 0);
+    assert!(budget.backoff_at(start + ms(20)).is_none());
+    // A frame paced out over most of its period meets its first full socket
+    // late: it still gets the usual wait from then, not what is left.
+    let mut late = WaitBudget::for_frame(Some(start + ms(20)), None);
+    assert_eq!(late.take(start + ms(18)), WRITABLE_WAIT.as_millis() as i32);
+    // A later batch of the same frame shares the deadline the first one set.
+    let mut next = WaitBudget::for_frame(Some(start + ms(20)), late.deadline);
+    assert_eq!(next.take(start + ms(21)), 1);
+    assert_eq!(next.take(start + ms(22)), 0);
     // Outside a frame one batch gets the old short wait.
     let mut batch = WaitBudget::default();
     assert_eq!(batch.take(start), WRITABLE_WAIT.as_millis() as i32);
+}
+
+/// Review 2026-11-17: the retry loop polled a socket that reported writable
+/// and refused again at once, spinning for the whole frame wait. From the
+/// second refusal on it pauses a millisecond first, so a 20 ms wait is about
+/// twenty tries.
+#[test]
+fn a_socket_that_polls_writable_but_refuses_is_not_spun_on() {
+    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let mut budget = WaitBudget::for_frame(
+        Some(std::time::Instant::now() + std::time::Duration::from_millis(20)),
+        None,
+    );
+    let mut sends = 0;
+    let started = std::time::Instant::now();
+    let result: std::result::Result<usize, _> = send_with_retry(
+        || {
+            sends += 1;
+            Err(WSAEWOULDBLOCK)
+        },
+        |error| buffer_available(&socket, error, &mut budget, None),
+    );
+    assert_eq!(result, Err(WSAEWOULDBLOCK));
+    assert!(started.elapsed() >= std::time::Duration::from_millis(15));
+    assert!((2..=30).contains(&sends), "{sends} tries in 20 ms");
 }
 
 #[test]

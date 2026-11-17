@@ -72,7 +72,7 @@
       {#if limited}
         <Badge tone="warn">
           {#if limited.reason === 'send_losses'}
-            Bitrate limited by the PC (too busy to send):
+            Bitrate limited by the PC (it could not send fast enough):
           {:else}
             Bitrate limited by the network:
           {/if}

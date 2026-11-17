@@ -87,12 +87,12 @@ test('a bitrate the host lowered for the network is shown on the card', () => {
   assert.match(html({ encoder_bitrate_kbps: 2_000, link_rate: link('floor', 2_000, 15_000) }), /Bitrate limited by the network/);
 });
 
-test('a bitrate the host lowered because the PC is too busy says so', () => {
+test('a bitrate the host lowered because the PC could not send says so', () => {
   const pc = html({
     encoder_bitrate_kbps: 9_000,
     link_rate: { ...link('limited', 9_000, 15_000), reason: 'send_losses' },
   });
-  assert.match(pc, /Bitrate limited by the PC \(too busy to send\)/);
+  assert.match(pc, /Bitrate limited by the PC \(it could not send fast enough\)/);
   assert.doesNotMatch(pc, /limited by the network/);
 });
 

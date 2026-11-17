@@ -514,24 +514,36 @@ fn a_pyrowave_stream_with_no_room_under_it_is_told_to_use_hevc_or_av1() {
     lose_frames(&s, 50..=54);
     let (_, cut) = s
         .tick_link_rate(end + Duration::from_millis(200), Duration::from_millis(10))
-        .expect("the first cut goes under the no-room floor");
-    assert!(cut < 200_000, "{cut}");
+        .expect("loss cuts a stream with no room under it");
+    assert!((100_000..200_000).contains(&cut), "{cut}");
     assert_eq!(s.info()["link_rate"]["state"], "limited");
-    // More loss at the learned rate: there is nothing lower the picture can
-    // take, so the warning names PyroWave's own floor.
-    for frame in 64..=80u32 {
-        let at = end + Duration::from_millis(1_000 + 8 * u64::from(frame - 64));
-        s.record_link_sent_at(frame, 300, 420_000, at);
+    // More loss: it stops at half its bitrate, and since PyroWave has no
+    // usable picture that low the warning names HEVC and AV1.
+    // The reports are stamped with the real clock, so every round stays
+    // within the 2 s evidence window of it.
+    for round in 0..2u32 {
+        let first = 64 + round * 30;
+        // Past the last change's fence (500 ms).
+        let from = end + Duration::from_millis(650 * u64::from(round) + 800);
+        // Frames the size of the bitrate now in effect, 8 ms apart: an
+        // encoder that follows the cuts.
+        let bytes = s.bitrate.load(Ordering::Acquire);
+        for frame in first..=first + 16 {
+            let at = from + Duration::from_millis(8 * u64::from(frame - first));
+            s.record_link_sent_at(frame, bytes as usize / 1_400, u64::from(bytes), at);
+        }
+        s.stats
+            .video_frame
+            .store(u64::from(first + 26), Ordering::Release);
+        lose_frames(&s, first + 6..=first + 10);
+        s.tick_link_rate(from + Duration::from_millis(150), Duration::from_millis(10));
     }
-    s.stats.video_frame.store(90, Ordering::Release);
-    lose_frames(&s, 70..=74);
-    s.tick_link_rate(
-        end + Duration::from_millis(2_000),
-        Duration::from_millis(10),
-    );
     assert_eq!(s.info()["link_rate"]["state"], "floor");
     let message = link_warning(&s).expect("the link warning");
-    assert!(message.contains("loses PyroWave video at"), "{message}");
+    assert!(
+        message.contains("loses PyroWave video at 100 Mbps"),
+        "{message}"
+    );
     assert!(message.contains("HEVC or AV1"), "{message}");
     assert!(!message.contains("lowest bitrate"), "{message}");
     // The floor again after a quiet spell is INFO, not a second WARN.
@@ -2376,7 +2388,7 @@ fn only_pyrowave_sessions_report_quality_bitrates() {
     }
 }
 #[test]
-fn host_only_loss_on_a_remembered_route_names_the_busy_pc() {
+fn host_only_loss_on_a_remembered_route_names_the_pc_not_the_path() {
     const FAST: u64 = 800_000_000;
     const SAFE: u64 = 62_000_000;
     let s = Session::new(launch("onn", Role::Stream), Negotiated::default());
@@ -2393,7 +2405,10 @@ fn host_only_loss_on_a_remembered_route_names_the_busy_pc() {
         .as_str()
         .unwrap()
         .to_owned();
-    assert!(message.contains("PC was too busy"), "{message}");
+    assert!(
+        message.contains("PC could not send video packets fast enough"),
+        "{message}"
+    );
     assert!(message.contains("rest of the stream"), "{message}");
     assert!(!message.contains("network path"), "{message}");
 }
@@ -2638,7 +2653,7 @@ fn frames_the_host_could_not_send_slow_the_stream_and_the_clients_report_adds_no
         s.info()["warnings"][0]["message"]
             .as_str()
             .unwrap()
-            .contains("The PC was too busy to send video packets")
+            .contains("The PC could not send video packets fast enough")
     );
     // Two such frames are not enough, and the client reporting them is the
     // same loss, not more of it.

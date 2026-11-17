@@ -73,14 +73,15 @@ export function p95Text(value: number): string {
 }
 
 /** What the stream sent on average, else the encoder's last rate, and the
- * rate it asked for when the network held the encoder below it. */
+ * rate it asked for when the encoder ended below it. That says nothing of
+ * why: the network, the client or the host's own limit may have set it. */
 export function bitrateText(entry: SessionHistoryEntry): string {
   const kbps = entry.mean_bitrate_kbps > 0 ? entry.mean_bitrate_kbps : entry.bitrate_kbps;
   if (kbps <= 0) return '–';
   const shown = `${(kbps / 1000).toFixed(1)} Mbps`;
   const requested = entry.requested_bitrate_kbps;
   // The mean can sit above the last rate, so the comparison is the rate the
-  // encoder ended at: the stream was held below what it asked for.
+  // encoder ended at.
   const held = requested > 0 && entry.bitrate_kbps > 0 && entry.bitrate_kbps < requested * 0.95;
   return held ? `${shown} of ${(requested / 1000).toFixed(1)} Mbps` : shown;
 }
