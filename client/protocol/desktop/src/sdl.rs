@@ -1485,6 +1485,7 @@ mod tests {
         assert_eq!(wheel_turn(&w), wheel_turn_on(&w, cfg!(target_os = "macos")));
     }
 
+    #[test]
     fn the_hdr10_swapchain_gets_the_hosts_metadata_capped_at_the_output_peak() {
         // BT.2020 primaries and D65 in 1/50000 units, a 1000-nit mastering display at 0.005 nits.
         let host = nightjar_core::control::HdrMetadata {
