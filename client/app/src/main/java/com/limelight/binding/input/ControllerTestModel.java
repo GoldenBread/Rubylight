@@ -93,7 +93,8 @@ public final class ControllerTestModel {
      * Whether the test shows this device's own motion sensors for a pad, as a stream gives them to
      * player 1 (nightjar#131): the pad has none of its own, "Use device motion sensors" is on, the
      * pad is not pinned as Xbox (which leaves out motion), and the device has a gyroscope or
-     * accelerometer. A handheld's built-in controls usually have their motion sensors here.
+     * accelerometer. A handheld's built-in controls usually have their motion sensors here. A
+     * stream gives them only to player 1; the test has one pad and shows what it gets as player 1.
      */
     public static boolean usesDeviceMotion(boolean padHasMotion, boolean fallbackToDevice, boolean pinnedXbox,
                                            boolean deviceHasMotion) {

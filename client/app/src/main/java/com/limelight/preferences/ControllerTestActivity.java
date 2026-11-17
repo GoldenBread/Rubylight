@@ -260,7 +260,7 @@ public class ControllerTestActivity extends NightjarActivity implements UsbDrive
         else if (dev.getVibrator().hasVibrator()) {
             vibrator = dev.getVibrator();
         }
-        selectDeviceMotion(dev);
+        selectDeviceMotion(dev.getVendorId(), dev.getProductId(), dev.getName());
         hasTouchpad = hasTouchpad(dev);
         if (resumed) {
             registerSensors();
@@ -269,14 +269,16 @@ public class ControllerTestActivity extends NightjarActivity implements UsbDrive
         render();
     }
 
-    // A pad without motion sensors of its own streams this device's, as player 1 does in a stream.
-    private void selectDeviceMotion(InputDevice dev) {
+    // A pad without motion sensors of its own streams this device's, as player 1 does in a stream
+    // (the test has one pad, so it shows what that pad gets as player 1). `name` is null for a pad
+    // the USB driver runs, as its button map is keyed.
+    private void selectDeviceMotion(int vendorId, int productId, String name) {
         SensorManager system = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
         if (system == null) return;
         Sensor deviceGyro = system.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
         Sensor deviceAccel = system.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
         boolean pinnedXbox = ControllerButtonMap.load(this,
-                ControllerButtonMap.deviceKey(dev.getVendorId(), dev.getProductId(), dev.getName()))
+                ControllerButtonMap.deviceKey(vendorId, productId, name))
                 .connectAs() == MoonBridge.LI_CTYPE_XBOX;
         if (ControllerTestModel.usesDeviceMotion(hasMotion, motionFallbackToDevice, pinnedXbox,
                 deviceGyro != null || deviceAccel != null)) {
@@ -725,6 +727,11 @@ public class ControllerTestActivity extends NightjarActivity implements UsbDrive
         if (hasMotion) {
             controller.setMotionEventState(MoonBridge.LI_MOTION_TYPE_ACCEL, (short) 60);
             controller.setMotionEventState(MoonBridge.LI_MOTION_TYPE_GYRO, (short) 60);
+        }
+        // As ControllerHandler's takesDeviceMotion for a USB pad without its own sensors.
+        selectDeviceMotion(controller.getVendorId(), controller.getProductId(), null);
+        if (resumed) {
+            registerSensors();
         }
         buildActions();
         render();
