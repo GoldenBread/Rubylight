@@ -9,7 +9,7 @@ the default. No SDL or protocol changes are required.
 
 Hardware-decoded NV12 and P010 SDR pictures are imported into a Core Video Metal
 texture cache. A compute pass converts the visible picture to nonlinear RGB using
-the AVFrame's range and BT.601, BT.709 or BT.2020 matrix. MetalFX's perceptual
+the AVFrame's range and BT.601 or BT.709 matrix. MetalFX's perceptual
 spatial scaler writes a private texture (MetalFX requires private storage for its
 output), then a blit copies it to a BGRA IOSurface. SDL's native Metal renderer
 imports that surface. There is no CPU pixel readback in the streaming path.
