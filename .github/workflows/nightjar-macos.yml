@@ -77,3 +77,38 @@ jobs:
           python3 desktop/package-macos.py --debug --arch x86_64 --zip
           ditto -x -k target/x86_64-apple-darwin/debug/Nightjar-*-macos-x86_64.zip "$RUNNER_TEMP/intel-archive"
           python3 desktop/tests/verify_macos_bundle.py --arch x86_64 --inspect-only "$RUNNER_TEMP/intel-archive/Nightjar.app"
+
+  # PyroWave's GPU decoder on Apple silicon: Mesa's KosmicKrisp Vulkan driver (Metal 4, macOS 26)
+  # and the Vulkan loader, built and cached here, then a check that the loader finds the driver
+  # through the manifest the app ships. The runner is a virtual Mac: whether its GPU takes
+  # KosmicKrisp is printed, not required.
+  kosmickrisp:
+    name: KosmicKrisp on macos-26
+    runs-on: macos-26
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: client/protocol
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install build tools
+        run: brew install meson ninja cmake pkg-config bison flex llvm libclc spirv-llvm-translator spirv-tools
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: client/protocol/target/macos-vulkan/*/prefix
+          key: macos-vulkan-${{ runner.arch }}-${{ hashFiles('client/protocol/desktop/macos-vulkan.sh') }}
+      - name: Build KosmicKrisp and the Vulkan loader
+        run: |
+          prefix=$(desktop/macos-vulkan.sh "$PWD/target/macos-vulkan" | tail -n1)
+          echo "VULKAN_PREFIX=$prefix" >> "$GITHUB_ENV"
+          cat "$prefix/build-info.txt"
+      - name: The loader finds KosmicKrisp through a bundle-style manifest
+        run: |
+          icd="$RUNNER_TEMP/kosmickrisp_icd.json"
+          printf '{"file_format_version": "1.0.1", "ICD": {"library_path": "%s", "api_version": "1.4.0", "is_portability_driver": false}}
+'             "$VULKAN_PREFIX/lib/libvulkan_kosmickrisp.dylib" > "$icd"
+          sw_vers
+          system_profiler SPDisplaysDataType | sed -n '1,20p'
+          VK_LOADER_DEBUG=driver python3 desktop/tests/macos_vulkan_probe.py "$VULKAN_PREFIX/lib/libvulkan.1.dylib" "$icd"
