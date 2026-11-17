@@ -321,11 +321,13 @@ pub enum Upscaling {
     /// The GPU vendor's video super resolution and, on NVIDIA, RTX Video HDR (`stream::enhance`);
     /// offered only where the probe finds them (Direct3D 11).
     Ai,
+    /// macOS 13+ MetalFX spatial scaler, offered after a device probe.
+    MetalFx,
 }
 
 impl Upscaling {
     pub fn label(self) -> &'static str {
-        match self { Self::Bilinear => "Bilinear", Self::Fsr1 => "FSR 1", Self::Sgsr1 => "SGSR 1", Self::Ai => en("AI enhancement") }
+        match self { Self::Bilinear => "Bilinear", Self::Fsr1 => "FSR 1", Self::Sgsr1 => "SGSR 1", Self::Ai => en("AI enhancement"), Self::MetalFx => "MetalFX" }
     }
 
     /// The shader upscalers (`stream::upscale`), which take the sharpness setting.
@@ -1280,7 +1282,7 @@ impl Settings {
         [
             (self.experimental_packed_444, "packed full chroma"),
             (self.codec.is_pyrowave(), en("PyroWave")),
-            (self.upscaling != Upscaling::Bilinear, "upscaling"),
+            (self.upscaling.is_shader() || self.upscaling == Upscaling::Ai, "upscaling"),
             (self.prefer_yuv444, "4:4:4"),
             (self.sdr_10bit, "10-bit SDR"),
             (self.hdr, en("HDR")),

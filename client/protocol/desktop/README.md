@@ -90,6 +90,27 @@ checks passed on Apple Silicon and on an Intel MacBook Pro with a Radeon Pro 560
 physical controllers still need hardware verification.
 The launcher opens Core Audio when a stream starts, so pairing and browsing work while an audio device is unavailable.
 
+### MetalFX spatial upscaling
+
+On macOS 13+, **Settings → Display & image → Image → Upscaling → MetalFX** appears when
+Apple's device probe reports support. It scales hardware-decoded SDR NV12/P010 video
+on the GPU, including 10-bit SDR. The existing FSR 1 and SGSR 1 options remain available;
+bilinear remains the default. MetalFX controls its own sharpening.
+
+The pass converts the decoder's IOSurface to RGB using the frame's color matrix and range,
+runs the perceptual spatial scaler, then copies to an IOSurface from a ring of four, imported
+by SDL's native Metal renderer. It performs no CPU pixel readback. It currently waits for the GPU before
+handing the result to SDL. The statistics line's GPU time includes conversion, scaling and
+the output copy; it is not total stream latency.
+
+HDR, software decoding, BT.2020 SDR, Frame Warp, formats requiring SDL's GPU renderer (such as
+PyroWave and packed chroma), and native-size or smaller outputs keep the existing presentation
+path; the overlay's upscaling line names which.
+Creation/submission failures fall back to bilinear for the stream. Intel device support must
+be determined by the probe on the actual Mac; Apple Silicon support does not establish it.
+HDR MetalFX color processing and low-bitrate game-image quality remain to be evaluated.
+See [implementation and local measurements](../../docs/macos-metalfx.md).
+
 ### Verify on a Mac
 
 Run these checks from `protocol/` with the development libraries installed. The macOS CI builds on
@@ -104,6 +125,13 @@ cargo test --locked --manifest-path core/Cargo.toml
 cargo test --locked -p nightjar-desktop --features demo-library --test macos_video -- --ignored --nocapture
 python3 desktop/tests/verify_macos_bundle.py target/release/Nightjar.app
 ```
+
+The Metal check also compares MetalFX's 8-bit and 10-bit SDR output with decoded fixtures,
+when supported. To compare larger frames, set `NIGHTJAR_METALFX_FIXTURE` to a local
+single-frame Annex-B HEVC file without frame reordering while running the check. It warms up five iterations,
+then measures 30 completed draws with synchronous readback for MetalFX, FSR 1 and SGSR 1,
+and saves diagnostic BMPs in the system temporary directory. Those comparison times include
+readback and are not live-stream latency; only MetalFX also reports GPU command time.
 
 The last command uses a previously packaged release app. When checking an Intel cross-build on
 Apple Silicon, add `--arch x86_64 --inspect-only` and supply the Intel app path. Run the same

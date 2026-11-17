@@ -1341,7 +1341,7 @@ sudo sysctl -w net.core.rmem_max={}", "Bufor odbioru: system przydzielił {0} Ki
     ("Balanced, keep every frame", "Zrównoważone, zachowaj każdą klatkę"),
     ("PC’s frame times", "Rytm komputera"),
     ("Waits for the screen’s refresh, so the picture never tears; the wait adds latency. Turn it off for the lowest latency if tearing doesn’t bother you.", "Czeka na odświeżenie ekranu, więc obraz nigdy się nie rozrywa; czekanie dodaje opóźnienie. Wyłącz, aby uzyskać najniższe opóźnienie, jeśli rozrywanie obrazu ci nie przeszkadza."),
-    ("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; HDR streams are enlarged without them.", "Jak powiększany jest strumień mniejszy niż ekran. FSR i SGSR wyostrzają krawędzie kosztem pewnego obciążenia GPU i baterii; strumienie HDR są powiększane bez nich."),
+    ("How a stream smaller than the screen is enlarged. FSR, SGSR and MetalFX (macOS) sharpen edges at some GPU time and battery, MetalFX also adding a few milliseconds of delay; HDR streams are enlarged without them.", "Jak powiększany jest strumień mniejszy niż ekran. FSR, SGSR i MetalFX (macOS) wyostrzają krawędzie kosztem pewnego obciążenia GPU i baterii, a MetalFX dodaje też kilka milisekund opóźnienia; strumienie HDR są powiększane bez nich."),
     ("Upscaling sharpness", "Ostrość skalowania"),
     ("How much sharpening FSR or SGSR adds. Raise it for soft edges; lower it if edges show halos.", "Jak mocno FSR lub SGSR wyostrza obraz. Zwiększ, jeśli krawędzie są miękkie; zmniejsz, jeśli wokół krawędzi widać obwódki."),
     ("Video position", "Położenie obrazu"),

@@ -1341,7 +1341,7 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("Balanced, keep every frame", "Cân bằng, giữ mọi khung hình"),
     ("PC’s frame times", "Nhịp khung hình của PC"),
     ("Waits for the screen’s refresh, so the picture never tears; the wait adds latency. Turn it off for the lowest latency if tearing doesn’t bother you.", "Chờ màn hình làm mới nên hình ảnh không bao giờ bị xé; việc chờ làm tăng độ trễ. Tắt để có độ trễ thấp nhất nếu xé hình không làm bạn khó chịu."),
-    ("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; HDR streams are enlarged without them.", "Cách phóng to stream nhỏ hơn màn hình. FSR và SGSR làm nét các cạnh, đổi lại tốn thêm chút thời gian GPU và pin; stream HDR được phóng to mà không dùng chúng."),
+    ("How a stream smaller than the screen is enlarged. FSR, SGSR and MetalFX (macOS) sharpen edges at some GPU time and battery, MetalFX also adding a few milliseconds of delay; HDR streams are enlarged without them.", "Cách phóng to stream nhỏ hơn màn hình. FSR, SGSR và MetalFX (macOS) làm nét các cạnh, đổi lại tốn thêm chút thời gian GPU và pin, MetalFX còn tăng độ trễ thêm vài mili giây; stream HDR được phóng to mà không dùng chúng."),
     ("Upscaling sharpness", "Độ sắc nét khi nâng độ phân giải"),
     ("How much sharpening FSR or SGSR adds. Raise it for soft edges; lower it if edges show halos.", "Mức làm nét mà FSR hoặc SGSR thêm vào. Tăng nếu các cạnh bị mờ; giảm nếu quanh các cạnh xuất hiện quầng sáng."),
     ("Video position", "Vị trí video"),

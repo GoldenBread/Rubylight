@@ -50,7 +50,7 @@ A feature lands in both apps in one change. What they share goes into `nightjar-
 | Decode | `media.rs` (FFmpeg, Opus), `vulkan_video.rs`, `amd_decode.rs`, `linux_video.rs`, `dmabuf.rs`, `stream/pyrowave.rs`, `stream/pyrowave_gpu.rs` |
 | Windows only | `stream/direct.rs`, `stream/d3d11.rs`, `stream/amf_scaler.rs`, `stream/wasapi.rs`, `stream/microphone.rs` |
 | Linux only | `dmabuf.rs`, `vulkan_video.rs`, `stream/wl_scanout.rs`, `stream/wl_presentation.rs`, `stream/drm_vrr.rs`, `stream/planes_gpu.rs`, `kms/` with `stream/kms_scanout.rs` (DRM/KMS output without a desktop), `stream/touchpad/evdev.rs` |
-| macOS only | `metal/`, `stream/macos_video_check.rs` |
+| macOS only | `metal/`, `stream/macos_video_check.rs`, `stream/metalfx.rs` with its Objective-C bridge `stream/metalfx.m` (MetalFX upscaling, compiled by `build.rs`) |
 | Settings, text | `config.rs`, `strings.rs`, `strings/` |
 | Artwork and game facts | `game_info.rs` (keys, HTTPS, the record and image cache) over `nightjar_policy::game_info`; the HTTPS is `update_net.rs`'s `exchange` |
 

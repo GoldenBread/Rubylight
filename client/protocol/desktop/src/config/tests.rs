@@ -1268,3 +1268,17 @@ fn fractional_v_sync_is_off_in_settings_saved_before_it_and_keeps_a_choice() {
     let saved = serde_json::to_value(&on).unwrap();
     assert_eq!(saved["fractional_vsync"], serde_json::Value::Bool(true), "saved under its own name");
 }
+
+#[test]
+fn native_metalfx_settings_roundtrip_without_requesting_sdl_gpu_shaders() {
+    let settings = Settings { upscaling: Upscaling::MetalFx, ..Settings::default() };
+    assert_eq!(settings.gpu_need(), None);
+    assert!(!settings.upscaling.is_shader(), "MetalFX does not use the sharpness shader setting");
+    let stored = serde_json::to_value(&settings).unwrap();
+    assert_eq!(stored["upscaling"], "MetalFx");
+    let restored: Settings = serde_json::from_value(stored).unwrap();
+    assert_eq!(restored.upscaling, Upscaling::MetalFx);
+    for (name, value) in [("Bilinear", Upscaling::Bilinear), ("Fsr1", Upscaling::Fsr1), ("Sgsr1", Upscaling::Sgsr1), ("Ai", Upscaling::Ai)] {
+        assert_eq!(serde_json::from_value::<Upscaling>(serde_json::json!(name)).unwrap(), value);
+    }
+}

@@ -938,3 +938,14 @@ pub(super) mod macos_video_check;
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+#[cfg(target_os = "macos")]
+impl VideoTexture {
+    pub(super) fn metalfx_source(&self) -> Option<(*mut c_void, media::FrameInfo)> {
+        let frame = self.held.as_ref()?;
+        let info = frame.info();
+        if info.kind != media::FRAME_VIDEOTOOLBOX || self.is_hdr() { return None; }
+        let buffer: *mut c_void = unsafe { frame.raw.as_ref().data[3].cast() };
+        (!buffer.is_null()).then_some((buffer, info))
+    }
+}

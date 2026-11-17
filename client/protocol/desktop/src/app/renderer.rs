@@ -232,7 +232,7 @@ impl App {
             return;
         }
         let shaders = settings.codec.is_pyrowave() || settings.experimental_packed_444
-            || settings.prefer_yuv444 || settings.upscaling != config::Upscaling::Bilinear
+            || settings.prefer_yuv444 || settings.upscaling.is_shader() || settings.upscaling == config::Upscaling::Ai
             || (settings.decoder == DecoderPreference::Software && (settings.hdr || settings.sdr_10bit));
         if (sdl::renderer_name(self.renderer) == "gpu") != shaders
             || sdl::swapchain_takes_hdr(self.renderer) != settings.hdr

@@ -1341,7 +1341,7 @@ sudo sysctl -w net.core.rmem_max={}", "Tampon de réception : le système a acco
     ("Balanced, keep every frame", "Équilibré, garder chaque image"),
     ("PC’s frame times", "Rythme du PC"),
     ("Waits for the screen’s refresh, so the picture never tears; the wait adds latency. Turn it off for the lowest latency if tearing doesn’t bother you.", "Attend le rafraîchissement de l’écran, pour que l’image ne se déchire jamais ; cette attente ajoute de la latence. Désactivez-le pour la latence la plus faible si le déchirement ne vous gêne pas."),
-    ("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; HDR streams are enlarged without them.", "La façon dont un stream plus petit que l’écran est agrandi. FSR et SGSR accentuent les contours au prix d’un peu de temps GPU et de batterie ; les streams HDR sont agrandis sans eux."),
+    ("How a stream smaller than the screen is enlarged. FSR, SGSR and MetalFX (macOS) sharpen edges at some GPU time and battery, MetalFX also adding a few milliseconds of delay; HDR streams are enlarged without them.", "La façon dont un stream plus petit que l’écran est agrandi. FSR, SGSR et MetalFX (macOS) accentuent les contours au prix d’un peu de temps GPU et de batterie, MetalFX ajoutant aussi quelques millisecondes de latence ; les streams HDR sont agrandis sans eux."),
     ("Upscaling sharpness", "Netteté de la mise à l’échelle"),
     ("How much sharpening FSR or SGSR adds. Raise it for soft edges; lower it if edges show halos.", "L’accentuation ajoutée par FSR ou SGSR. Augmentez-la si les contours sont flous ; baissez-la s’ils montrent des halos."),
     ("Video position", "Position de la vidéo"),
