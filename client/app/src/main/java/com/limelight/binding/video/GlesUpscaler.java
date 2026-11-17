@@ -54,9 +54,6 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
     private int sourceTexture, intermediateTexture, framebuffer;
     private int upscaleProgram, rcasProgram, transformUniform;
     private int surfaceWidth, surfaceHeight;
-    // The size of the window surface this upscaler draws to, as it last measured it. A fold, a turn
-    // or a split screen resizes that surface; the renderer rebuilds the upscaler for this size.
-    private volatile int[] measuredSurface = {0, 0};
     private int[] viewport;
     private long fence;
     // workStartNs is when the decoder released the frame (for the stall check); gpuStartNs is when
@@ -165,11 +162,6 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
         return inputSurface;
     }
 
-    /** The window surface size this upscaler last measured; a rebuild is built for it. */
-    int[] measuredSurfaceSize() {
-        return measuredSurface;
-    }
-
     /** Whether a cropped edge ends half a texel inside: bilinear sampling, which does not clamp. */
     boolean insetsCroppedEdges() {
         return packing == null && mode == UpscalingPolicy.Mode.BILINEAR;
@@ -251,7 +243,6 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
         querySurfaceSize();
         surfaceWidth = size[0];
         surfaceHeight = size[1];
-        measuredSurface = new int[] {surfaceWidth, surfaceHeight};
         viewport = UpscalingPolicy.viewport(packing == null ? width : packing.width,
                 packing == null ? height : packing.height, surfaceWidth, surfaceHeight, stretch);
         // Frame Warp draws at any size: it shifts the picture rather than upscaling it.
@@ -644,7 +635,6 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
             pendingDrops = (int) frame[2];
             querySurfaceSize();
             if (size[0] != surfaceWidth || size[1] != surfaceHeight) {
-                measuredSurface = new int[] {size[0], size[1]};
                 if (packing == null && !frameWarp) {
                     policy.fail(UpscalingPolicy.Reason.SIZE_CHANGED);
                     return;

@@ -66,35 +66,4 @@ public class UpscalingRebuildTest {
             }
         }
     }
-
-    @Test
-    public void aRebuildIsSizedByTheSurfaceTheUpscalerMeasured() {
-        try (ActivityController<Activity> activity = Robolectric.buildActivity(Activity.class).create()) {
-            MediaCodecDecoderRenderer renderer = renderer(activity.get());
-            SurfaceTexture texture = new SurfaceTexture(0);
-            Surface surface = new Surface(texture);
-            try {
-                // The stream still starts at 1280x720 on a 1280x720 surface, but the window has
-                // since been resized to 2560x1440 (a split screen), which setRenderTarget never saw.
-                ReflectionHelpers.setField(renderer, "renderTarget", surface);
-                ReflectionHelpers.setField(renderer, "renderWidth", 1280);
-                ReflectionHelpers.setField(renderer, "renderHeight", 720);
-                ReflectionHelpers.setField(renderer, "initialWidth", 1280);
-                ReflectionHelpers.setField(renderer, "initialHeight", 720);
-
-                ReflectionHelpers.callInstanceMethod(renderer, "setupUpscaling",
-                        ReflectionHelpers.ClassParameter.from(int[].class, new int[] {2560, 1440}));
-
-                UpscalingPolicy policy = ReflectionHelpers.getField(renderer, "upscalingPolicy");
-                // Up to 1280x720 inside 2560x1440 is no upscaling at all; the measured surface is
-                // what decides, not the size recorded when the stream started.
-                assertNotEquals(UpscalingPolicy.Reason.NO_UPSCALE, policy.getReason());
-            } finally {
-                GlesUpscaler built = ReflectionHelpers.getField(renderer, "upscaler");
-                if (built != null) built.close();
-                surface.release();
-                texture.release();
-            }
-        }
-    }
 }
