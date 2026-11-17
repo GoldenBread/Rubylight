@@ -157,7 +157,7 @@ Each default below is what a fresh install uses, checked against the host code. 
 | When another device joins the running game — `guest_join` | `off` | Your own devices join or resume the running game as before; choose Ask the player to let guests in yourself. |
 | What a guest may do — `guest_permission` | `controller` | A guest plays with its own controller; the keyboard and mouse stay yours until you hand them over. |
 | Sleep after idle — `sleep_after_idle_minutes` | `0` (off) | The PC sleeps only when you ask it to. |
-| Lock Windows when the last device leaves — `lock_on_last_disconnect` | `false` | Locking changes what you find at the PC after a stream, so it waits for you to ask, as in Parsec and Apollo. |
+| Lock Windows when the last device leaves — `lock_on_last_disconnect` | `false` | Locking changes what you find at the PC after a stream, so it waits for you to ask. |
 | Check for updates — `update_check_interval` | `86400` seconds | Once a day. |
 | Daily check time — `update_check_time` | empty | The interval decides when the host checks, not a time of day. |
 | Install updates automatically — `auto_update` | `false` | You are told about an update and install it when you choose. |
@@ -975,7 +975,7 @@ A paired client such as [Nightjar](https://github.com/RamazanKara/nightjar) uses
 
 ### Lock Windows when the last device leaves
 
-**Lock Windows when the last device leaves** (`lock_on_last_disconnect`, under **All settings → This PC → Privacy**, default `false`) locks the signed-in Windows session once no device has been connected for 10 seconds: no stream, launch, browser stream or controller session. The PC is then not left signed in for whoever sits at it, as with Parsec's privacy mode.
+**Lock Windows when the last device leaves** (`lock_on_last_disconnect`, under **All settings → This PC → Privacy**, default `false`) locks the signed-in Windows session once no device has been connected for 10 seconds: no stream, launch, browser stream or controller session. The PC is then not left signed in for whoever sits at it.
 
 - It never locks during a stream. A device that moves the stream with **Continue here**, roams or reconnects within the 10 seconds keeps the PC unlocked, and the host checks again right before it locks.
 - It locks once each time the last device leaves, and only after a device was connected: starting the host or turning the setting on locks nothing.

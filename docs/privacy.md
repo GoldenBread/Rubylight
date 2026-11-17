@@ -8,7 +8,7 @@ This page lists everything the current Rubylight release sends over a network, s
 
 ## Third-party services
 
-Seven features contact services outside your network. The update check and Steam covers are on by default; the others run only when you use them.
+These features contact services outside your network. The update check and Steam covers are on by default; the others run only when you use them.
 
 | Feature | When it runs | Where it connects | What that service receives |
 | --- | --- | --- | --- |

@@ -29,7 +29,7 @@ When a network returns, the stream continues in place where it can: after a [cli
 
 Immediate reconnects do not happen on mobile data unless **Keep streaming when the network changes** is on **Any network**, or when **Wait through network dropouts** is set above the 10-second timeout, since the tolerance then decides. Every attempt first waits while the PC has no route, checking every half second, instead of failing and backing off. If the minute ends without a route, the reconnect dialog says so.
 
-Nightjar for Windows and Linux follows the same rules, checking the route to the PC once a second. With **Wait through network dropouts** at its default of 3 seconds, it also reconnects immediately, while its window is not minimized.
+Nightjar for Windows and Linux follows the same rules, checking the route to the PC once a second. With **Wait through network dropouts** at its default, Off, it also reconnects immediately, while its window is not minimized.
 
 ### Leaving and returning
 
