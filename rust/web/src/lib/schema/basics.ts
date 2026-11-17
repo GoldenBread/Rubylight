@@ -1216,9 +1216,9 @@ const input: Setting[] = [
     key: 'enable_dsu_server',
     label: 'Motion server for emulators (DSU)',
     description:
-      "Lets emulators such as Cemu, Dolphin and Citra read each streamed controller's gyro, buttons and touch (DSU, cemuhook). It listens only on this PC.",
+      "Lets emulators read controllers' gyro, buttons and touch (DSU). It listens on this PC only unless Motion server on the local network is on; leave it off unless you use one.",
     details:
-      "The server answers on this PC only (127.0.0.1), where an emulator on this PC reaches it, and other devices cannot; it has no password. In the emulator, choose DSU or cemuhook motion with server 127.0.0.1 and the port below. Controllers take slots 1 to 4 in the order they connect. To serve an emulator on another PC, turn on Motion server on the local network below.",
+      "The server answers on this PC only (127.0.0.1), where an emulator on this PC reaches it, unless Motion server on the local network is on. It has no password. In the emulator, choose DSU or cemuhook motion with server 127.0.0.1 and the port below. Controllers take slots 1 to 4 in the order they connect. To serve an emulator on another PC, turn on Motion server on the local network below.",
     category: 'input',
     group: 'Controllers',
     control: { kind: 'toggle' },
@@ -1244,9 +1244,9 @@ const input: Setting[] = [
     key: 'dsu_server_lan',
     label: 'Motion server on the local network',
     description:
-      'Lets an emulator on another PC read the streamed controllers over the DSU protocol. Off keeps the server on this PC, where an emulator on the same PC reaches it.',
+      'Lets a remote emulator read controllers over DSU; no password: any device on the network can read input. Leave it off unless the emulator runs on another PC on a network you trust.',
     details:
-      'The server has no password and any device on the network can read controller input, so turn it on only on a network you trust. Takes effect after a host restart.',
+      'The server has no password and any device on the network can read controller input; turn it on only on a network you trust. Takes effect after a host restart.',
     category: 'input',
     group: 'Controllers',
     control: { kind: 'toggle' },

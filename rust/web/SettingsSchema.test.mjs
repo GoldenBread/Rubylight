@@ -895,15 +895,17 @@ test('a value that exposes the PC, loses progress or adds delay says so; the def
 test('the DSU server is on this PC unless local-network access is turned on', () => {
   const server = settings.get('enable_dsu_server');
   assert.equal(server.restart, true);
+  assert.match(server.description, /leave it off unless you use one/);
   assert.match(server.details, /127\.0\.0\.1/);
   assert.match(server.details, /this PC only/);
-  assert.match(server.details, /other devices cannot/);
+  assert.match(server.details, /unless Motion server on the local network is on/);
   assert.equal(server.cautionWhen, undefined);
   const lan = settings.get('dsu_server_lan');
   assert.deepEqual([lan.category, lan.group, lan.default], ['input', 'Controllers', false]);
   assert.equal(lan.restart, true);
-  assert.match(lan.description, /emulator on another PC/);
-  assert.match(lan.description, /Off keeps the server on this PC/);
+  assert.match(lan.description, /emulator runs on another PC on a network you trust/);
+  assert.match(lan.description, /no password/);
+  assert.match(lan.description, /any device on the network can read input/);
   assert.match(lan.details, /no password/i);
   assert.match(lan.details, /network you trust/i);
   assert.match(lan.cautionWhen({ dsu_server_lan: 'enabled' }), /No password/);
