@@ -238,6 +238,14 @@ fn an_extended_primary_start_without_primary_is_reported_and_watched() {
         watch.observe(true, start + super::LayoutWatch::SETTLE),
         PrimaryAction::Restore
     );
+    // The first heartbeat can come after the event window: the start still decides.
+    let mut watch = PrimaryWatch::starting(start);
+    let late = start + PrimaryWatch::WINDOW * 2;
+    assert_eq!(watch.observe(true, late), PrimaryAction::Wait);
+    assert_eq!(
+        watch.observe(true, late + super::LayoutWatch::SETTLE),
+        PrimaryAction::Restore
+    );
     // A watch that did not start is not armed by a move Windows made before it existed.
     let mut watch = PrimaryWatch::default();
     assert_eq!(

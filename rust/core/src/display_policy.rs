@@ -1049,6 +1049,9 @@ pub struct PrimaryWatch {
     attempt: bool,
     /// Windows kept taking the primary back: this stream leaves it where Windows puts it.
     stopped: bool,
+    /// This stream just started: its first look decides, without the event window, which can
+    /// be older than the first heartbeat.
+    starting: bool,
 }
 impl PrimaryWatch {
     /// Restores and refusals within [`Self::RETURN_WINDOW`] after which the watch stops for
@@ -1066,10 +1069,12 @@ impl PrimaryWatch {
     }
     /// A watch for a stream that is starting: Windows has just been given the layout, which is
     /// a change of its own, so a primary it did not take is put back (issue #33: the reporter's
-    /// stream opened with the virtual display on but not the main screen).
+    /// stream opened with the virtual display on but not the main screen). Its first look
+    /// decides, so a slow first heartbeat does not lose the start.
     pub fn starting(now: std::time::Instant) -> Self {
         let mut watch = Self::default();
         watch.changed(now);
+        watch.starting = true;
         watch
     }
     /// Whether Windows kept taking the primary back and this stream leaves it there.
@@ -1088,15 +1093,21 @@ impl PrimaryWatch {
         self.since = None;
         self.armed_until = None;
         self.attempt = false;
+        self.starting = false;
     }
     /// Record what this look found: the stream's display is on but not the primary one
     /// (`demoted`), or it is.
     pub fn observe(&mut self, demoted: bool, now: std::time::Instant) -> PrimaryAction {
+        let starting = std::mem::replace(&mut self.starting, false);
         if !demoted || self.stopped {
             self.since = None;
             return PrimaryAction::Wait;
         }
-        if !self.armed_until.is_some_and(|until| now < until) {
+        if starting {
+            // The first look after a start: a demotion now is the start's, however long the
+            // stream took to get here.
+            self.armed_until = Some(now + Self::WINDOW);
+        } else if !self.armed_until.is_some_and(|until| now < until) {
             // Nothing changed the displays: the primary is where the user or a game put it.
             self.since = None;
             return PrimaryAction::Wait;
@@ -1114,12 +1125,14 @@ impl PrimaryWatch {
     pub fn settled(&mut self) {
         self.since = None;
         self.attempt = false;
+        self.starting = false;
     }
     /// The stream's display has the primary one again: the watch disarms, and true when the
     /// restores and refusals reached [`Self::RETURNS`] within [`Self::RETURN_WINDOW`] and the
     /// watch stops for the stream.
     pub fn restored(&mut self, now: std::time::Instant) -> bool {
         self.since = None;
+        self.starting = false;
         // A look that found nothing to restore is not a restore: only a layout put back for
         // the primary counts, or every quiet heartbeat would reach the limit.
         if !std::mem::replace(&mut self.attempt, false) {
@@ -1134,6 +1147,7 @@ impl PrimaryWatch {
     pub fn failed(&mut self, now: std::time::Instant) -> bool {
         self.since = None;
         self.attempt = false;
+        self.starting = false;
         self.next_check = Some(now + LayoutWatch::RETRY);
         self.count(now)
     }

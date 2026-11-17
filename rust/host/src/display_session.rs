@@ -1892,8 +1892,8 @@ impl Prepared {
         if !arrangement.arrangement().primary_beside_the_users() || !lease_primary {
             return;
         }
-        // The change is remembered even while the secure desktop or its excuse holds the
-        // restore back: after it, the primary Windows moved is still this stream's to put back.
+        // The change is remembered even while the secure desktop holds the restore back:
+        // after it, the primary Windows moved is still this stream's to put back.
         if changed {
             self.primary_watch.changed(now);
         }
