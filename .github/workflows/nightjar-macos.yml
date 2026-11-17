@@ -8,6 +8,7 @@ on:
     branches: [main]
     paths:
       - 'client/protocol/**'
+      - 'client/scripts/**'
       - 'client/app/build.gradle'
       - 'client/app/src/main/assets/**'
       - 'client/app/src/main/res/**'
@@ -139,7 +140,7 @@ jobs:
       - name: Package Nightjar.app with KosmicKrisp and the PyroWave SDK
         run: |
           python3 desktop/package-macos.py --debug --vulkan "$VULKAN_PREFIX" --pyrowave-sdk "$PWD/target/pyrowave-sdk"
-          python3 desktop/tests/verify_macos_bundle.py target/debug/Nightjar.app
+          python3 desktop/tests/verify_macos_bundle.py --kosmickrisp target/debug/Nightjar.app
       # Exit 0: the GPU decoder started on KosmicKrisp. Exit 2: it did not, and the report names why
       # the processor decodes instead (expected where the runner's virtual GPU does not take
       # KosmicKrisp). Exit 1: the SDK library did not load, which fails the job.
@@ -152,6 +153,9 @@ jobs:
           cat "$RUNNER_TEMP/pyrowave.txt"
           case $code in
             0) echo "::notice::PyroWave GPU decoding started on KosmicKrisp on this runner" ;;
-            2) grep -q "the processor decodes" "$RUNNER_TEMP/pyrowave.txt" && echo "::notice::PyroWave falls back to the processor on this runner, with its reason" ;;
+            # Only a runner without a device the driver supports may fall back; a driver, loader or
+            # SDK that fails to load or start fails the job.
+            2) grep -Eq "the processor decodes: (Vulkan lists no devices|the bundled Vulkan driver finds no GPU it supports)" "$RUNNER_TEMP/pyrowave.txt" || exit 1
+               echo "::notice::PyroWave falls back to the processor on this runner: it has no Metal 4 GPU" ;;
             *) exit 1 ;;
           esac

@@ -28,6 +28,8 @@ def main():
     parser.add_argument("app", type=Path)
     parser.add_argument("--arch", choices=["arm64", "x86_64"], default=platform.machine(),
                         help="architecture expected in the executable and every bundled dylib")
+    parser.add_argument("--kosmickrisp", action="store_true",
+                        help="the app was packaged with --vulkan: the driver, its manifest and the loader must be there")
     parser.add_argument("--inspect-only", action="store_true",
                         help="check a cross build on a Mac that cannot execute it")
     args = parser.parse_args()
@@ -51,6 +53,8 @@ def main():
             if name in linked:
                 raise ValueError(f"{binary.name} links {name}; it must open it at run time")
         icd = contents / "Resources/vulkan/icd.d/kosmickrisp_icd.json"
+        if args.kosmickrisp and not icd.exists():
+            raise ValueError(f"KosmicKrisp was asked for but {icd} is missing")
         if icd.exists():
             if args.arch != "arm64":
                 raise ValueError("KosmicKrisp is bundled in a build for Intel Macs")
