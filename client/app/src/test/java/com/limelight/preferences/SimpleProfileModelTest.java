@@ -31,7 +31,7 @@ public class SimpleProfileModelTest {
 
     private static SimpleProfileModel.Capabilities hdrCapabilities() {
         return new SimpleProfileModel.Capabilities(1920, 1080, 120, true, true,
-                true, true, true, true, null, true, true);
+                true, true, true, true, true, true, true);
     }
 
     @Before
