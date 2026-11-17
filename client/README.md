@@ -10,13 +10,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/RamazanKara/nightjar/releases/latest"><img src="https://img.shields.io/github/v/release/RamazanKara/nightjar?label=release&color=e8a33d" alt="Latest release"></a>
-  <a href="https://github.com/RamazanKara/nightjar/releases"><img src="https://img.shields.io/github/downloads/RamazanKara/nightjar/total?color=e8a33d" alt="Total downloads"></a>
-  <a href="LICENSE.txt"><img src="https://img.shields.io/github/license/RamazanKara/nightjar?color=e8a33d" alt="License: GPL-3.0"></a>
+  <a id="download" href="https://github.com/RamazanKara/nightjar/releases/latest"><img src="docs/assets/download.svg" width="260" height="52" alt="Download Nightjar"></a>
 </p>
 
 <p align="center">
-  <a id="download" href="https://github.com/RamazanKara/nightjar/releases/latest"><img src="docs/assets/download.svg" width="260" height="52" alt="Download Nightjar"></a>
+  <a href="https://github.com/RamazanKara/nightjar/releases/latest"><img src="https://img.shields.io/github/v/release/RamazanKara/nightjar?label=release&color=e8a33d" alt="Latest release"></a>
+  <a href="https://github.com/RamazanKara/nightjar/releases"><img src="https://img.shields.io/github/downloads/RamazanKara/nightjar/total?color=e8a33d" alt="Total downloads"></a>
+  <a href="LICENSE.txt"><img src="https://img.shields.io/github/license/RamazanKara/nightjar?color=e8a33d" alt="License: GPL-3.0"></a>
 </p>
 
 <p align="center">
@@ -24,47 +24,83 @@
   <sub>Works with Sunshine, Apollo, Vibepollo, Rubylight, NVIDIA GameStream and every other Moonlight-compatible host.</sub>
 </p>
 
+<div align="center">
+
+**[Install](#install)** · [What you get](#what-you-get) · [Get started](#get-started-in-three-steps) · [Documentation](docs/index.md) · [Releases](https://github.com/RamazanKara/nightjar/releases) · [Website](https://ramazankara.github.io/nightjar/)
+
+</div>
+
 <p align="center">
-  <a href="https://ramazankara.github.io/nightjar/assets/trailer-16x9.mp4"><img src="docs/assets/nightjar-trailer.webp" width="880" alt="Nightjar trailer: Home on a TV, its glass tinted by each focused cover, a game's page, a handheld stream with the performance overlay, the stream menu, Radeon settings and the PC keyboard, picture-in-picture on a phone, the feature list and the supported platforms (offline demo library)"></a><br>
-  <sub><a href="https://ramazankara.github.io/nightjar/assets/trailer-16x9.mp4"><b>▶ Watch the full trailer</b></a></sub>
+  <a href="docs/assets/readme/nightjar-tour.mp4"><img src="docs/assets/readme/nightjar-tour.webp" width="880" alt="Nightjar with a controller: Home, its glass taking the colours of each focused cover, a game's page with Resume, then a stream with the stream menu and the on-screen controls (offline demo library and a sample scene)."></a><br>
+  <sub><b>Nightjar with a controller:</b> Home, a game's page, the stream menu and the on-screen controls. <a href="docs/assets/readme/nightjar-tour.mp4">Watch it as a video</a></sub>
 </p>
 
-## Why Nightjar
+## What you get
+
+<table>
+  <tr>
+    <td width="33%" valign="top"><h4>One library for every PC</h4>The games of every paired PC on one Home, with covers, Continue playing and a page for each game.<br><a href="#one-library-for-every-pc">The library</a></td>
+    <td width="33%" valign="top"><h4>At home on every screen</h4>Phones, handhelds, TVs, Windows, Linux, the Steam Deck and macOS, by controller, remote, touch, mouse or keyboard.<br><a href="#at-home-on-every-screen">Screens</a></td>
+    <td width="33%" valign="top"><h4>Simple first</h4>A Recommended page with a few choices set for your device, and every other setting one step further down.<br><a href="#simple-first-every-setting-when-you-want-it">Settings</a></td>
+  </tr>
+  <tr>
+    <td valign="top"><h4>Smooth, and it stays in the game</h4>Frames paced to your display, Real VRR, Frame Warp, a bitrate that follows the network and a stream that recovers by itself.<br><a href="#smooth-and-it-stays-in-the-game">Smoothness</a></td>
+    <td valign="top"><h4>The picture your screen can show</h4>H.264, HEVC, AV1 and PyroWave, HDR10, HDR10+, Dolby Vision, 4:4:4, upscaling, and sound up to 7.1.4.<br><a href="#the-picture-and-sound-your-setup-can-play">Picture and sound</a></td>
+    <td valign="top"><h4>Every controller, touch and pen</h4>Up to 16 controllers, on-screen controls you lay out yourself, a full PC keyboard, trackpad touch and pens.<br><a href="#every-controller-touch-and-pen">Controls</a></td>
+  </tr>
+  <tr>
+    <td valign="top"><h4>Tune it while you play</h4>A stream menu for the bitrate, the keyboard, the clipboard and, where the PC offers them, its graphics settings.<br><a href="#tune-it-while-you-play">The stream menu</a></td>
+    <td valign="top"><h4>Together, and away from home</h4>Join a friend's game as a guest, take a co-op seat, and reach your PC from anywhere over a private VPN.<br><a href="#play-together-and-away-from-home">Together and away</a></td>
+    <td valign="top"><h4>Private by design</h4>No accounts, advertising or analytics. Everything travels only between your device and your PC.<br><a href="#private-by-design">Privacy</a></td>
+  </tr>
+</table>
 
 Nightjar speaks the Moonlight protocol, so it works with the host you already run, and every host gets the complete stream: hardware decoding, HDR10, surround sound, every controller, touch, mouse and keyboard, recovery and diagnostics. It turns on more from the capabilities each PC's host reports, never from the host's name.
 
+## A closer look
+
 ### One library for every PC
 
-Home gathers the games of every paired PC, with cover art, **Continue playing** and a page for each game that shows its store, the PC it runs on, whether it is running and the exact settings the stream will use. On a TV, each store gets its own shelf. Pick a game on a sleeping PC and Nightjar wakes the PC and starts it.
+Home gathers the games of every paired PC, with cover art, **Continue playing** and a page for each game that shows its store, the PC it runs on, whether it is running and the exact settings the stream will use. The glass takes the colours of the cover in focus. On a TV, each store gets its own shelf. Pick a game on a sleeping PC and Nightjar wakes the PC and starts it.
 
 Store shelves, Steam collections and Playnite categories and the richer game pages come from a Rubylight PC; with any other Moonlight host, Home shows the PC's app list. Games from any host also launch from Android TV's home screen, Beacon, ES-DE, Daijisho, Pegasus and the desktop command line, which takes moonlight-qt's `stream` options too, so launchers such as MoonDeck keep working.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img src="docs/assets/shots/tv-game-page.png" alt="A game's page on a TV, lit by the cover's sunset colours: Racing Game running on Living-room PC, with Resume, Add to favourites and Quit game, the stream settings it will use and the switch to quit the game on leaving (demo library)"><br><sub><b>A page for every game.</b> Its store, the PC it runs on, whether it is running, and the exact settings the stream will use.</sub></td>
-<td width="50%" valign="top"><img src="docs/assets/shots/tv-all-games.png" alt="All games on a TV under a starry night sky, filtered by store: All, Installed, Games, Steam, Epic Games, GOG and Xbox, with posters (demo library)"><br><sub><b>Every store in one place.</b> Steam, Epic Games, GOG, EA app, Ubisoft Connect, Battle.net and Xbox, filtered with one press.</sub></td>
+<td width="50%" valign="top"><img src="docs/assets/readme/tv-home.webp" alt="Home on a TV: Racing Game in focus, the background in its cover's sunset colours, a Continue playing row and the Recently played row below (demo library)"><br><sub><b>Home.</b> Your games first, in the colours of the cover in focus.</sub></td>
+<td width="50%" valign="top"><img src="docs/assets/readme/tv-game.webp" alt="A game's page on a TV, lit by the cover's sunset colours: Racing Game running on Living-room PC, with Resume, Add to favourites and Quit game, and the stream settings it will use (demo library)"><br><sub><b>A page for every game.</b> Its store, the PC it runs on, whether it is running, and the exact settings the stream will use.</sub></td>
 </tr>
 </table>
 
 ### At home on every screen
 
-Every screen works with a controller or a TV remote as well as touch, mouse and keyboard. On a handheld, Home, the library and the stream menu follow the controller, with the button for each action on screen. Android adds picture-in-picture, rotation and foldables; the desktop app runs natively on Windows (x86-64 and ARM64), Linux, the Steam Deck in Game Mode and macOS, with the same engine and settings.
-
-Phones, TVs and computers share one settings layout with search and presets. Settings can differ per PC and per game, with profiles that switch by network: mobile data, home Wi-Fi or other Wi-Fi. Pick System, Dark or OLED black. Nightjar comes in 15 languages, with high contrast, reduced motion and screen reader support.
+Every screen works with a controller or a TV remote as well as touch, mouse and keyboard. On a handheld, Home, the library and the stream menu follow the controller, with the button for each action on screen. On a phone held upright, a game's page is a sheet under its cover. Android adds picture-in-picture, rotation and foldables; the desktop app runs natively on Windows (x86-64 and ARM64), Linux, the Steam Deck in Game Mode and macOS, with the same engine and settings.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img src="docs/assets/shots/android-settings-recommended.png" alt="Settings on an Android tablet: the Recommended page with Stream smoothness, Picture quality, Screen and HDR, a Console mode switch and Back to recommended, beside the list of settings sections (demo data)"><br><sub><b>Start with Recommended.</b> Stream smoothness, Picture quality and HDR in a few choices; every other setting is under More settings.</sub></td>
-<td width="50%" valign="top"><img src="docs/assets/shots/android-stream-menu.png" alt="Nightjar's stream menu over a running game: keyboard, PC keyboard, overlay, microphone, touch mode, on-screen controls, zoom and clipboard buttons, a bitrate slider, Disconnect and Quit game (demo stream)"><br><sub><b>The stream menu.</b> Keyboard, touch mode, clipboard and the bitrate, with Disconnect and Quit game.</sub></td>
+<td width="50%" valign="top"><img src="docs/assets/readme/handheld-home.webp" alt="Home on a handheld: Racing Game running, with Resume, Favourite and Quit game, a Continue playing list and the Recently played row, under a glass top bar (demo library)"><br><sub><b>Made for handhelds.</b> Every action has its button on screen.</sub></td>
+<td width="50%" valign="top"><img src="docs/assets/readme/desktop-home.webp" alt="Nightjar on the desktop: Home with Racing Game in progress, Resume and Quit game, and a row of cover art per store, under a top bar with Home, PCs, Settings and Help (demo library)"><br><sub><b>On the desktop too.</b> Windows, Linux and macOS, with a row per store on Home. <a href="protocol/desktop/README.md#using-nightjar">More of the desktop app</a></sub></td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img src="docs/assets/readme/handheld-light.webp" alt="The same Home in the light theme: Racing Game with Resume, Favourite and Quit game on a pale background (demo library)"><br><sub><b>Light, dark or OLED black.</b> Or whatever the system uses.</sub></td>
+<td width="50%" valign="top"><img src="docs/assets/readme/desktop-all-games.webp" alt="All games on the desktop: a grid of covers with filters for Installed, Games and each store (demo library)"><br><sub><b>Every store in one place.</b> Steam, Epic Games, GOG, EA app, Ubisoft Connect, Battle.net and Xbox, filtered with one press.</sub></td>
 </tr>
 </table>
 
-<table>
-<tr>
-<td width="50%" valign="top"><img src="docs/assets/shots/handheld-home.png" alt="Home on a handheld: Racing Game running, with Resume, Favourite and Quit game, a Continue playing list and the Recently played row, under a glass top bar (demo library)"><br><sub><b>Made for handhelds.</b> Every action has its button on screen.</sub></td>
-<td width="50%" valign="top"><img src="docs/assets/shots/desktop-home.png" alt="Nightjar for Windows: Home tinted by Racing Game's cover, the game in progress with Resume, Favourite and Quit game, a Continue list and a row of cover art per store, under a top bar with Home, PCs, Settings and Help (demo library)"><br><sub><b>On the desktop too.</b> Windows, Linux and macOS, with a row per store on Home. <a href="protocol/desktop/README.md#using-nightjar">More of the desktop app</a></sub></td>
-</tr>
-</table>
+<p align="center">
+  <img src="docs/assets/readme/phone-home.webp" width="270" alt="Home on a phone held upright: a card that says once what the automatic settings use with this PC, then the Continue playing list (demo library)">
+  &nbsp;&nbsp;
+  <img src="docs/assets/readme/phone-game.webp" width="270" alt="A game's page on a phone held upright: the cover on its own colours and a sheet below it with Resume, Add to favourites, Quit game and the stream settings (demo library)"><br>
+  <sub><b>On a phone.</b> Home says once what the automatic settings use; a game's page is a sheet under its cover.</sub>
+</p>
+
+### Simple first, every setting when you want it
+
+Settings open on **Recommended**: **Stream smoothness**, **Picture quality**, the screen and **HDR**, each on Auto, which uses what your device measured as best, and **Back to recommended** returns to it. **Console mode** opens Nightjar straight into Home. Controls, Audio and App follow, and **More settings** unfolds the rest, with search, presets and help on every row.
+
+Phones, TVs and computers share one settings layout. Settings can differ per PC and per game, with profiles that switch by network: mobile data, home Wi-Fi or other Wi-Fi. Nightjar comes in 15 languages, with high contrast, reduced motion and screen reader support.
+
+<p align="center"><img src="docs/assets/readme/desktop-settings.webp" width="820" alt="Settings on the desktop, on the Recommended page: Stream smoothness, Picture quality, Screen and HDR on Auto, a Console mode switch and Back to recommended, beside Controls, Audio, App and More settings (demo data)"></p>
 
 ### Smooth, and it stays in the game
 
@@ -76,7 +112,7 @@ Hardware decoding is tuned for [each decoder family](docs/decoder-flags.md), and
 
 ### The picture and sound your setup can play
 
-H.264, HEVC and AV1 on the hardware decoder, and the PyroWave codec decoded on the GPU. HDR10 with any HDR-capable host; HDR10+, HLG and Dolby Vision where the PC, decoder and display support them, and on Linux HDR straight to the desktop. Full-chroma 4:4:4 keeps small text sharp, and Nightjar checks before a stream starts whether the PC and the device can do it. Upscaling uses FSR 1, Snapdragon GSR or, on Windows, the graphics card's video upscaler.
+H.264, HEVC and AV1 on the hardware decoder, and the PyroWave codec decoded on the GPU, on Apple silicon Macs with macOS 26 or later too. HDR10 with any HDR-capable host; HDR10+, HLG and Dolby Vision where the PC, decoder and display support them, and on Linux HDR straight to the desktop. Full-chroma 4:4:4 keeps small text sharp, and Nightjar checks before a stream starts whether the PC and the device can do it. Upscaling uses FSR 1, Snapdragon GSR, MetalFX on a Mac or, on Windows, the graphics card's video upscaler.
 
 Sound comes in stereo, 5.1, 7.1 and 7.1.4, or as PCM, Dolby Digital or Dolby Digital Plus passed through to a receiver, soundbar or TV. The microphone has echo cancellation on every platform, plus noise suppression, gain and one-tap mute on Android.
 
@@ -84,35 +120,44 @@ Sound comes in stereo, 5.1, 7.1 and 7.1.4, or as PCM, Dolby Digital or Dolby Dig
 
 Up to 16 controllers, with mapping per model. Sunshine-based PCs add DualSense adaptive triggers, motion and touchpads, and on Android Nightjar's own USB drivers handle the DualSense's lightbar and haptics, Xbox and Switch Pro controllers. Touch works as a trackpad, directly, as multi-touch or with a local cursor, with pinch zoom, and pens send pressure and tilt; a laptop's touchpad gives the PC its own touchpad gestures on PCs that take them.
 
+- **On-screen controls you lay out yourself.** Classic and Modern styles with an editor inside the stream, Xbox, PlayStation or Nintendo glyphs, presets, a layout for each orientation, and a pointer touchpad that moves the mouse or the camera. They hide while a controller is connected, and can be a player of their own.
 - **A real PC keyboard.** Esc, F1 to F12, arrows and sticky modifiers, by touch, controller or TV remote, and a soft keyboard that opens when a text field on the PC takes focus.
 - **Your own hotkeys.** Every stream hotkey can be changed or turned off, your keyboard shortcuts become stream-menu tiles, and controller chords open the menu.
-- **On-screen and input-only.** On Android, an on-screen pad can be its own player. An **Input-only** stream sends controls and feedback without the video, to any PC.
+- **Input-only.** An **Input-only** stream sends controls and feedback without the video, to any PC.
 
-<p align="center"><img src="docs/assets/shots/stream-keyboard.png" width="720" alt="A handheld stream with Nightjar's PC keyboard open: Esc, F1 to F12, arrows, navigation keys and modifiers, with G focused for a controller (demo data)"></p>
+<table>
+<tr>
+<td width="50%" valign="top"><img src="docs/assets/readme/stream-controls.webp" alt="A stream with the Modern on-screen controls: two sticks, a D-pad, A B X Y, shoulder buttons and triggers over the game (demo stream)"><br><sub><b>On-screen controls.</b> Sticks, D-pad, buttons and triggers where you put them.</sub></td>
+<td width="50%" valign="top"><img src="docs/assets/readme/stream-keyboard.webp" alt="A stream with Nightjar's PC keyboard open: Esc, F1 to F12, arrows, navigation keys and modifiers, with G focused for a controller (demo stream)"><br><sub><b>The PC keyboard.</b> Every key of a desktop keyboard, by touch or controller.</sub></td>
+</tr>
+</table>
 
 ### Tune it while you play
 
-The stream menu changes the bitrate and frame rate during a stream, with hosts that accept it. With a Rubylight PC it does much more: the PC's Radeon or NVIDIA graphics settings, **Continue here** to move a running game to the device in your hands, **Stream here too**, a second screen for dual-screen devices, a free slot in a co-op game, **Microphone only**, and the PC's power and update controls.
+The stream menu changes the bitrate and frame rate during a stream, with hosts that accept it. With a Rubylight PC it does much more: the PC's Radeon or NVIDIA graphics settings, a game's frame generation on the PC, **Continue here** to move a running game to the device in your hands, **Stream here too**, a second screen for dual-screen devices, **Microphone only**, and the PC's power and update controls.
 
 With Apollo, Vibepollo and Rubylight, clipboard text travels to the PC. With a Rubylight PC, the clipboard syncs both ways, with images, and files, the PC's shared folders and USB devices plugged into your device reach the PC.
 
-<p align="center"><img src="docs/assets/shots/stream-menu-radeon.png" width="720" alt="The Session and graphics panel in glass beside the stream: the Wi-Fi link and the PC's Radeon settings, Anti-Lag, Chill, its maximum FPS and Frame Rate Target Control (demo data)"></p>
-
-### Know why a stream stuttered
-
 A performance overlay in three levels of detail shows the network and decoding, and the PC's CPU and GPU readings from a host that sends them. A [stream health](docs/stream-health.md) report explains stutter in plain words, and an input latency test, a decoder benchmark that runs without a PC, frame timings as CSV, a network speed test and redacted problem reports help find the rest.
 
-<p align="center"><img src="docs/assets/shots/stream-stats.png" width="720" alt="A handheld stream with the Statistics overlay: resolution, codec, frame rate, bitrate, round trip, decode time and the PC's CPU and GPU readings (demo data)"></p>
+<table>
+<tr>
+<td width="50%" valign="top"><img src="docs/assets/readme/stream-menu.webp" alt="Nightjar's stream menu over a running game: keyboard, PC keyboard, overlay, microphone, touch mode, on-screen controls, zoom and clipboard buttons, a bitrate slider, Disconnect and Quit game (demo stream)"><br><sub><b>The stream menu.</b> Keyboard, touch mode, clipboard and the bitrate, with Disconnect and Quit game.</sub></td>
+<td width="50%" valign="top"><img src="docs/assets/readme/stream-stats.webp" alt="A stream with the Statistics overlay: resolution, codec, frame rate, bitrate, round trip, decode time and the PC's CPU and GPU readings (demo stream with scripted readings)"><br><sub><b>Know why a stream stuttered.</b> The overlay, from one line to every stage.</sub></td>
+</tr>
+</table>
 
-### Play away from home
+### Play together, and away from home
 
-**Play away from home** in a PC's settings walks you through connecting this device and the PC over a private VPN such as Tailscale, then tests the PC from where you are. Nightjar also tries the PC's IPv6 address and a forwarded port, and with a Rubylight PC that offers it, a direct path both sides punch through their routers, without port forwarding. [Play away from home](docs/remote-setup.md)
+- **Join as a guest.** On a PC that offers guests, **Join** on a game another device plays asks that device to let you in: the same picture and sound, your own controller, and the keyboard and mouse only if the player grants them.
+- **Take a co-op seat.** Take a free player slot in a PC's split-screen co-op session, or return to your own.
+- **Play away from home.** **Play away from home** in a PC's settings walks you through connecting this device and the PC over a private VPN such as Tailscale, then tests the PC from where you are. Nightjar also tries the PC's IPv6 address and a forwarded port, and with a Rubylight PC that offers it, a direct path both sides punch through their routers, without port forwarding. [Play away from home](docs/remote-setup.md)
 
 ### Private by design
 
 No accounts, advertising or analytics, and nothing sent to its developers. Video, audio, input, clipboard and files travel only between your device and your PC. Licensed under the GPL-3.0 and developed in the open.
 
-<sub>Screenshots and the trailer use Nightjar's offline demo with a sample library and an original test animation; the performance numbers shown in them are illustrations. Measured results are [below](#measured-performance).</sub>
+<sub>The pictures and the film on this page use Nightjar's offline demo with a sample library and an original test animation; the readings shown in them are scripted, not measured.</sub>
 
 The [feature overview](docs/features.md) lists everything, with a link to each guide, and [each release](https://github.com/RamazanKara/nightjar/releases) says what changed.
 
@@ -180,13 +225,11 @@ Nightjar has its own application ID and pairs separately, so it installs beside 
 >
 > The download here on GitHub stays free and gets the same updates.
 
-## Getting started
+## Get started in three steps
 
-1. Install a Moonlight-compatible host on the PC, such as [Sunshine](https://github.com/LizardByte/Sunshine), [Apollo](https://github.com/ClassicOldSong/Apollo), [Vibepollo](https://github.com/Nonary/Vibepollo) or [Rubylight](https://github.com/RamazanKara/Rubylight).
-2. Open Nightjar on the same network. It lists the PCs it finds; otherwise choose **Add PC** and enter the PC's address.
-3. Select the PC and enter the PIN that Nightjar shows in the host's web UI. With a Rubylight PC you can instead choose **Scan QR code** and scan the code on its **Devices** page.
-4. If the host grants permissions per device, allow this device to list, view and launch apps, and the input types you use.
-5. Pick a game and play.
+1. **Set up the PC.** Install a Moonlight-compatible host on it, such as [Sunshine](https://github.com/LizardByte/Sunshine), [Apollo](https://github.com/ClassicOldSong/Apollo), [Vibepollo](https://github.com/Nonary/Vibepollo) or [Rubylight](https://github.com/RamazanKara/Rubylight).
+2. **Pair.** Open Nightjar on the same network. It lists the PCs it finds; otherwise choose **Add PC** and enter the PC's address. Select the PC and enter the PIN that Nightjar shows in the host's web UI, or with a Rubylight PC choose **Scan QR code** and scan the code its console shows. If the host grants permissions per device, allow this device to list, view and launch apps, and the input types you use.
+3. **Play.** Pick a game.
 
 The [quick start](docs/quick-start.md) and [pairing guide](docs/pairing.md) cover each step, including one-time PINs and Wake-on-LAN. To play outside your home network, see [Play away from home](docs/remote-setup.md).
 
@@ -212,20 +255,7 @@ The **Error correction** setting and host-side automatic bitrate also work with 
 | Linux | x86-64 with glibc 2.35 or newer: Ubuntu 22.04, Debian 12, Fedora 36 or later; aarch64 packages for ARM handhelds and boards. Hardware decoding through VA-API, Vulkan video, V4L2 M2M or NVDEC. |
 | PC | A Moonlight-compatible host. The host's own requirements apply. |
 
-## Measured performance
-
-Our own measurements, against a Rubylight PC with a Radeon RX 7900 XT:
-
-| Device and link | Stream | Result |
-| --- | --- | --- |
-| Retroid Pocket 6, Wi-Fi | HEVC 1080p60, 40 Mbps | 7 ms median picture age, from the PC's capture timestamp to the frame rendered on the device, with either streaming engine (6.92 and 7.04 ms; clock join error about ±0.5 ms; [method and runs](https://github.com/RamazanKara/Rubylight/blob/main/rust/PERFORMANCE.md#october-23-rust-engine-against-the-c-engine-on-android-b8)) |
-| Retroid Pocket 6, Wi-Fi | HEVC 1080p120, 28 Mbps | About 120 fps ([4.0.0 release notes](https://github.com/RamazanKara/nightjar/releases/tag/v4.0.0)) |
-| Retroid Pocket 6, Wi-Fi | PyroWave 1080p120, default bitrate | 119.6 to 120 fps ([4.0.0 release notes](https://github.com/RamazanKara/nightjar/releases/tag/v4.0.0)) |
-| Retroid Pocket 6, Wi-Fi | PyroWave 1080p60, 400 Mbps | 3.0 ms median from a frame's last packet to its decoded picture, p95 3.4 ms (was 6.0 ms; [4.2.0 release notes](https://github.com/RamazanKara/nightjar/releases/tag/v4.2.0)) |
-| Retroid Pocket 6, Wi-Fi | HEVC 1080p60, 150 Mbps | No frames lost in four 60 s runs with Automatic error correction, against 14 over six runs before its floor ([method and runs](https://github.com/RamazanKara/Rubylight/blob/main/rust/PERFORMANCE.md#november-1-client-error-correction-on-real-wi-fi-retroid)) |
-| Desktop PC, 5 % packet loss | HEVC 1080p60, 150 Mbps | 3.39 ms median from a frame's arrival to the screen (was 3.66 ms), 17 % less CPU ([4.2.0 release notes](https://github.com/RamazanKara/nightjar/releases/tag/v4.2.0)) |
-
-Decoder benchmark results for other devices are in [device results](docs/devices.md#devices); the built-in benchmark measures yours.
+Decoder benchmark results by device are in [device results](docs/devices.md#devices); the built-in benchmark measures yours.
 
 ## Documentation
 
