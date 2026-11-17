@@ -54,13 +54,11 @@ public final class SimpleProfileModel {
         public final int width, height, refreshHz;
         public final boolean displayHdr, displayVrr;
         public final boolean h264, hevc, av1, decoderHdr;
-        /** The benchmark's sustained rate at the screen's size, or null when it has not run. */
-        public final Integer maxFpsAtNative;
         /** What the paired PC offers; null is not known yet, which never rules anything out. */
         public final Boolean hostHdr, hostHevc, hostAv1;
 
         public Capabilities(int width, int height, int refreshHz, boolean displayHdr, boolean displayVrr,
-                            boolean h264, boolean hevc, boolean av1, boolean decoderHdr, Integer maxFpsAtNative,
+                            boolean h264, boolean hevc, boolean av1, boolean decoderHdr,
                             Boolean hostHdr, Boolean hostHevc, Boolean hostAv1) {
             this.width = width;
             this.height = height;
@@ -71,7 +69,6 @@ public final class SimpleProfileModel {
             this.hevc = hevc;
             this.av1 = av1;
             this.decoderHdr = decoderHdr;
-            this.maxFpsAtNative = maxFpsAtNative;
             this.hostHdr = hostHdr;
             this.hostHevc = hostHevc;
             this.hostAv1 = hostAv1;
@@ -82,8 +79,7 @@ public final class SimpleProfileModel {
                     .put("display", new JSONObject().put("width", width).put("height", height)
                             .put("refresh_hz", refreshHz).put("hdr", displayHdr).put("vrr", displayVrr))
                     .put("decoder", new JSONObject().put("h264", h264).put("hevc", hevc).put("av1", av1)
-                            .put("hdr", decoderHdr).put("max_fps_at_native",
-                                    maxFpsAtNative == null ? JSONObject.NULL : maxFpsAtNative))
+                            .put("hdr", decoderHdr))
                     .put("host", new JSONObject().put("hdr", hostHdr == null ? JSONObject.NULL : hostHdr)
                             .put("hevc", hostHevc == null ? JSONObject.NULL : hostHevc)
                             .put("av1", hostAv1 == null ? JSONObject.NULL : hostAv1));

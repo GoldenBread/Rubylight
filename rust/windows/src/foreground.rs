@@ -157,6 +157,11 @@ pub fn in_front(display: &str) -> InFront {
     let Some(display) = crate::capture::display_rect(display) else {
         return InFront::Nothing;
     };
+    in_front_rect(display)
+}
+
+/// [`in_front`] for a display rectangle already resolved.
+fn in_front_rect(display: [i32; 4]) -> InFront {
     // SAFETY: each call takes a window handle or no arguments, and writes only into a
     // live local of the size passed. No window state is changed.
     unsafe {

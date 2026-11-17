@@ -14,8 +14,7 @@
         "h264": true,
         "hevc": false,
         "av1": false,
-        "hdr": false,
-        "max_fps_at_native": null
+        "hdr": false
       },
       "host": {
         "hdr": null,
@@ -49,8 +48,7 @@
         "h264": true,
         "hevc": true,
         "av1": true,
-        "hdr": true,
-        "max_fps_at_native": null
+        "hdr": true
       },
       "host": {
         "hdr": true,
@@ -98,8 +96,7 @@
         "h264": true,
         "hevc": true,
         "av1": true,
-        "hdr": true,
-        "max_fps_at_native": null
+        "hdr": true
       },
       "host": {
         "hdr": true,
@@ -148,8 +145,7 @@
         "h264": true,
         "hevc": true,
         "av1": true,
-        "hdr": true,
-        "max_fps_at_native": 60
+        "hdr": true
       },
       "host": {
         "hdr": true,
@@ -160,7 +156,7 @@
     "response": {
       "ok": {
         "native_resolution": true,
-        "fps": 60,
+        "fps": null,
         "pacing": "latency",
         "vrr": false,
         "latency_switches": true,
@@ -215,8 +211,7 @@
         "h264": true,
         "hevc": true,
         "av1": true,
-        "hdr": true,
-        "max_fps_at_native": null
+        "hdr": true
       },
       "host": {
         "hdr": true,
@@ -269,8 +264,7 @@
         "h264": true,
         "hevc": true,
         "av1": true,
-        "hdr": true,
-        "max_fps_at_native": null
+        "hdr": true
       },
       "host": {
         "hdr": true,

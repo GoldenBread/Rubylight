@@ -274,6 +274,7 @@ Rubylight is licensed under **GPL-3.0**. Everyone who helped, with their GitHub 
 - The DSU motion server speaks the protocol of **Jays2Kings', Ryochan7's and schmaldeo's** DS4Windows, with the settings and port of **the Foundation Sunshine authors'** server.
 - Clipboard sync uses the control message frame of **qiin2333's** Moonlight V+ (GPL-3.0).
 - Nightjar desktop predicts the display mode of Windows' Fullscreen by the rule of **SDL's** `SDL_GetClosestFullscreenDisplayMode`, by **Sam Lantinga and the SDL contributors** (zlib).
+- Nightjar's temporal upscaler adapts the upscale pass of **Qualcomm's** [Snapdragon Game Super Resolution 2](https://github.com/SnapdragonStudios/snapdragon-gsr) (BSD-3-Clause), and its SGSR 1 upscaler is Qualcomm's SGSR 1 (BSD-3-Clause).
 - Nightjar's per-controller gyroscope mapping and motion readings are ported from **jvanderv42's** [Nightjar fork](https://github.com/jvanderv42/nightjar) (GPL-3.0).
 - The virtual mouse and its Automatic / Virtual mouse / Injection choice follow **the Foundation Sunshine authors'** virtual mouse, and device touchpads use their touchpad packets; the virtual precision touchpad's reports follow **Bingxing Wang's (imbushuo)** [mac-precision-touchpad](https://github.com/imbushuo/mac-precision-touchpad) (MIT).
 - Rubylight's virtual display driver is based on **Enrico Bühler's (unom)** pf-vdisplay driver from [punktfunk](https://github.com/unom/punktfunk) (MIT OR Apache-2.0).

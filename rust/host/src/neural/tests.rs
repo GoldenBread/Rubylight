@@ -2593,14 +2593,17 @@ fn a_cache_is_used_only_as_this_host_keeps_it() {
 
     // A launch takes the cached release without hashing it: the copy checks
     // each file as it goes, so a changed one never reaches the game.
-    assert_eq!(launch_cache(h).unwrap(), None);
+    assert_eq!(launch_cache(h).unwrap().map(|(cached, _held)| cached), None);
     let folder = release(&cache_root(h), "Alpha0.3.5.8", b"OptiScaler proxy");
     let pak = folder.join(format!("files/full/game/{PAK}"));
     std::fs::write(&pak, "tampered").unwrap();
     // A release Rubylight does not pin is never applied.
-    assert_eq!(launch_cache(h).unwrap(), None);
+    assert_eq!(launch_cache(h).unwrap().map(|(cached, _held)| cached), None);
     pin_to(h, &folder);
-    assert_eq!(launch_cache(h).unwrap(), Some(cached_at(&folder)));
+    assert_eq!(
+        launch_cache(h).unwrap().map(|(cached, _held)| cached),
+        Some(cached_at(&folder))
+    );
     assert_eq!(h.neural.lock().verified, None);
     let exe = game(temp.path());
     let before = names(exe.parent().unwrap());
@@ -2653,6 +2656,45 @@ fn a_cache_is_used_only_as_this_host_keeps_it() {
     pin.tag = "Alpha0.3.5.8";
     package.archives.remove(&addon);
     assert!(!serves(&package, &pin));
+}
+
+/// The cache is held where it was checked: a launch's [`launch_cache`] and an
+/// install's [`Using`] keep it from being renamed away until their copy from
+/// it is done, and let go when they end.
+#[test]
+fn the_cache_cannot_be_moved_while_a_launch_or_an_install_holds_it() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    let root = cache_root(h);
+    std::fs::create_dir_all(&root).unwrap();
+    let folder = release(&root, "Alpha0.3.5.8", b"OptiScaler proxy");
+    pin_to(h, &folder);
+    let moved = root.with_file_name("neural-anr-moved");
+    // A launch finishes an update cut short from this cache: the hold it gets
+    // back keeps the root the trust check approved.
+    let (cached, held) = launch_cache(h).unwrap().expect("the pinned release");
+    assert_eq!(cached.folder, folder);
+    assert!(
+        std::fs::rename(&root, &moved).is_err(),
+        "renamed while a launch holds it"
+    );
+    assert!(root.is_dir(), "the held cache stays where it is");
+    drop(held);
+    std::fs::rename(&root, &moved).unwrap();
+    std::fs::rename(&moved, &root).unwrap();
+    // An install keeps the same hold in its Using until the last file is placed.
+    let held = Hold::new([root.as_path(), data_root(h).as_path()]).unwrap();
+    let using = Using {
+        h: h.clone(),
+        folder: folder.clone(),
+        held: Some(held),
+    };
+    assert!(
+        std::fs::rename(&root, &moved).is_err(),
+        "renamed while an install copies it"
+    );
+    drop(using);
+    std::fs::rename(&root, &moved).unwrap();
 }
 
 /// GitHub as [`fetch`] sees it, on this PC: the pinned release by its tag
@@ -2722,7 +2764,9 @@ async fn serve(listener: tokio::net::TcpListener, list: Value, files: Files) -> 
 /// [`fetch_using`] without holding the release: one fetch at a time.
 async fn fetch(h: &Shared, progress: &(dyn Fn(u64, u64) + Sync)) -> Result<(PathBuf, Package)> {
     let _one = h.neural.fetching.lock().await;
-    fetch_locked(h, progress).await
+    fetch_locked(h, progress)
+        .await
+        .map(|(folder, package, _held)| (folder, package))
 }
 
 /// The cached release `folder` held as [`fetch_using`] holds it for an install.
@@ -2735,6 +2779,7 @@ fn pin(h: &Shared, folder: &Path) -> Using {
     Using {
         h: h.clone(),
         folder: folder.to_path_buf(),
+        held: None,
     }
 }
 
