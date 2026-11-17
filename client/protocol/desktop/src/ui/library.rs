@@ -289,6 +289,25 @@ impl Launcher {
         if !words.is_empty() {
             chips.retain(|c| c.count > 0 || c.filter == console::LibraryFilter::All || c.filter == self.library_filter);
         }
+        // IGDB's facts, with the player's keys: asked for once per game; the Genre and Length
+        // chips come once some game has them.
+        if view.hosts.facts_offered() {
+            let wanted: Vec<_> = entries.iter().chain(hidden).map(entry_game).filter(|(key, _)| !view.hosts.facts_asked(key)).map(|(_, game)| game).collect();
+            if !wanted.is_empty() {
+                commands.push(Command::WantFacts(wanted));
+            }
+        }
+        let facts_of = |entry: &console::Entry| view.hosts.facts(&entry_game(entry).0);
+        let pool_facts: Vec<_> = entries.iter().map(facts_of).collect();
+        let genres = nightjar_policy::game_info::library::genres(&pool_facts);
+        let lengths = nightjar_policy::game_info::library::lengths(&pool_facts);
+        // A choice whose games went away is dropped.
+        if self.genre_filter.as_ref().is_some_and(|g| !genres.iter().any(|c| c.value.eq_ignore_ascii_case(g))) {
+            self.genre_filter = None;
+        }
+        if self.length_filter.is_some_and(|l| !lengths.iter().any(|c| c.value == l)) {
+            self.length_filter = None;
+        }
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(space::S, space::S);
             for chip in &chips {
@@ -314,11 +333,54 @@ impl Launcher {
                     self.library_filter = chip.filter.clone();
                 }
             }
+            if !genres.is_empty() {
+                let name = self.genre_filter.clone().unwrap_or_else(|| tr("Genre").to_owned());
+                let tone = if self.genre_filter.is_some() { Tone::Selected } else { Tone::Chip };
+                let r = button_with(ui, Some(Id::unique(("all-games", "genre"))), None, &name, None, tone, Size::CHIP);
+                self.focus_item(&r, "genre", false);
+                let mut picked = None;
+                let _ = egui::Popup::menu(&r).show(|ui| {
+                    if ui.selectable_label(self.genre_filter.is_none(), tr("Any genre")).clicked() {
+                        picked = Some(None);
+                    }
+                    for choice in &genres {
+                        let on = self.genre_filter.as_ref().is_some_and(|g| g.eq_ignore_ascii_case(&choice.value));
+                        if ui.selectable_label(on, format!("{} ({})", choice.value, choice.count)).clicked() {
+                            picked = Some(Some(choice.value.clone()));
+                        }
+                    }
+                });
+                if let Some(genre) = picked {
+                    self.genre_filter = genre;
+                }
+            }
+            if !lengths.is_empty() {
+                let name = self.length_filter.map_or_else(|| tr("Length").to_owned(), |l| tr(length_name(l)).to_owned());
+                let tone = if self.length_filter.is_some() { Tone::Selected } else { Tone::Chip };
+                let r = button_with(ui, Some(Id::unique(("all-games", "length"))), None, &name, None, tone, Size::CHIP);
+                self.focus_item(&r, "length", false);
+                let mut picked = None;
+                let _ = egui::Popup::menu(&r).show(|ui| {
+                    if ui.selectable_label(self.length_filter.is_none(), tr("Any length")).clicked() {
+                        picked = Some(None);
+                    }
+                    for choice in &lengths {
+                        if ui.selectable_label(self.length_filter == Some(choice.value), format!("{} ({})", tr(length_name(choice.value)), choice.count)).clicked() {
+                            picked = Some(Some(choice.value));
+                        }
+                    }
+                });
+                if let Some(length) = picked {
+                    self.length_filter = length;
+                }
+            }
         });
         // The room a raised cover's ring needs at the top of the scroll comes out of the gap.
         ui.add_space(space::L - LIFT);
         let pool = if self.library_filter == console::LibraryFilter::Hidden { hidden } else { entries };
-        let shown = matching(pool, &self.library_filter, &words);
+        let mut shown = matching(pool, &self.library_filter, &words);
+        let (genre, length) = (self.genre_filter.as_deref(), self.length_filter);
+        shown.retain(|entry| nightjar_policy::game_info::library::shows(facts_of(entry), genre, length));
         // Installed is offered while anything is not, so with nothing installed it holds no game.
         if shown.is_empty() {
             ui.add_space(LIFT);
@@ -566,6 +628,24 @@ fn matching<'a>(pool: &'a [console::Entry], filter: &console::LibraryFilter, wor
         shown.retain(|entry| entry.title.to_lowercase().contains(words));
     }
     shown
+}
+
+/// A library entry as a facts lookup takes it, with the key its facts are kept under.
+pub(super) fn entry_game(entry: &console::Entry) -> (String, nightjar_policy::game_info::job::Game) {
+    let steam = nightjar_policy::game_info::names::steam_id(entry.key.strip_prefix("game:"));
+    let game = nightjar_policy::game_info::job::Game { name: entry.title.clone(), steam };
+    (nightjar_policy::game_info::names::key(&game.name, steam), game)
+}
+
+/// A length bucket's name in the Length chip and its list.
+pub(super) fn length_name(length: nightjar_policy::game_info::library::Length) -> &'static str {
+    use nightjar_policy::game_info::library::Length;
+    match length {
+        Length::Short => en("Under 5 hours"),
+        Length::Medium => en("5 to 15 hours"),
+        Length::Long => en("15 to 40 hours"),
+        Length::VeryLong => en("Over 40 hours"),
+    }
 }
 
 /// What each chip would show for the words in the search.

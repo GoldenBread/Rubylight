@@ -67,12 +67,16 @@ public class SettingsKeysTest {
             "gpu_driver", "keyboard_shortcuts_editor", "stream_hotkeys", "controller_button_mapping",
             "controller_test", "gyro_mapping_profiles", "stream_profiles", "reset_osc", "check_updates_now", "help", "latency_benchmark", "report_problem", "about_app", "reset_all", "export_latency_csv",
             "pin_lock", // opens its own screen; the PIN lives in the pin_lock prefs file
+            // Open a text box; the keys live in the game_info_keys prefs file, out of presets and exports.
+            "game_info_steamgriddb", "game_info_igdb_client_id", "game_info_igdb_client_secret",
             "network_tests", // opens a saved PC's connection tests
             StreamSettings.PACE_CALIBRATION_KEY, // opens a saved PC's tests, where its PyroWave frame pace is measured
             // Pickers that write older switches and store nothing under their own key.
             StreamSettings.SHARP_COLOR_KEY, StreamSettings.CONTROLLERS_KEY,
             // The merged switch writes the three decoder switches and stores nothing itself.
             StreamSettings.LOW_LATENCY_DECODING_KEY, StreamSettings.LOW_LATENCY_CUSTOMIZE_KEY,
+            // The simple layer's screen line and Back to recommended open nothing and store nothing.
+            "simple_screen", "simple_back_to_recommended",
             // Automatic bitrate shows and sets bitrate_user_set and the bitrate; it stores nothing itself.
             StreamSettings.AUTOMATIC_BITRATE_KEY,
             // Back button writes the two Back switches and stores nothing itself (SwitchPairChoice).
@@ -99,6 +103,8 @@ public class SettingsKeysTest {
     // Stored settings that are read outside PreferenceConfiguration.
     private static final Set<String> READ_ELSEWHERE = new HashSet<>(Arrays.asList(
             "performance_overlay_mode", // Game and the overlay
+            "simple_smoothness", "simple_picture", "simple_hdr", // the simple layer writes the values above (SimpleProfile)
+            "simple_vrr_opt_in", "simple_vrr_last", // SimpleProfile keeps the VRR opt-in across Smoothest
             "list_stream_menu_button_y", "list_stream_menu_button_x", "list_stream_menu_button_lb", "list_stream_menu_button_rb", // StreamMenu
             com.limelight.console.OpenPlay.SETTING, // the launch screen, before any stream
             com.limelight.ui.AppTheme.THEME, // AppTheme, including activities opened directly
@@ -176,6 +182,7 @@ public class SettingsKeysTest {
     private static final Set<String> RETIRED = new HashSet<>(Arrays.asList(
             "checkbox_gl_render", // "Render through OpenGL", replaced by Render through Vulkan
             "checkbox_auto_bitrate", // renamed adaptive_bitrate (PreferenceConfiguration.RENAMED_PREFS)
+            "checkbox_trackpad_acceleration", // moved to _v2 with the new on default (see the migration)
             "checkbox_always_dark", "checkbox_oled_black")); // the theme's switches, one value now (AppTheme.THEME)
 
     @Test
@@ -387,7 +394,7 @@ public class SettingsKeysTest {
         reads.put(com.limelight.binding.input.touch.TouchMode.PREF, new Read("trackpad", "local_cursor", c -> c.touchMode));
         reads.put("seekbar_trackpad_speed", new Read(100, 200, c -> c.trackpadSpeed));
         reads.put("seekbar_local_cursor_speed", new Read(100, 200, c -> c.localCursorSpeed));
-        reads.put("checkbox_trackpad_acceleration", new Read(false, true, c -> c.trackpadAcceleration));
+        reads.put("checkbox_trackpad_acceleration_v2", new Read(false, true, c -> c.trackpadAcceleration));
         reads.put("list_trackpad_acceleration_curve", new Read("medium", "strong", c -> c.trackpadAccelerationCurve));
         reads.put("checkbox_trackpad_momentum", new Read(false, true, c -> c.trackpadMomentum));
         reads.put("list_trackpad_momentum_glide", new Read("medium", "long", c -> c.trackpadMomentumGlide));

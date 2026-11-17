@@ -152,7 +152,8 @@ test('spellings the host reads as an option show as that option', () => {
     ['nvenc_split_encode', 'false', 'disabled'],
     ['nvenc_split_encode', 'driver_decides', 'driver_decides'],
     ['capture', 'dxgi', 'ddx'],
-    ['capture', 'WGCC', 'wgc'],
+    // framegen.rs reads wgcc as the constant-rate option now, not as wgc.
+    ['capture', 'WGCC', 'wgcc'],
     ['capture', 'DDX', 'ddx'],
     ['frame_pacing', 'fixed', 'grid'],
     ['virtual_display_layout', 'Extended-Primary', 'extended_primary'],

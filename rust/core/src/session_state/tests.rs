@@ -81,6 +81,28 @@ fn a_launch_goes_through_preparing_and_launching_to_streaming() {
 }
 
 #[test]
+fn a_running_session_beats_once_a_minute_so_a_crash_does_not_count_its_downtime() {
+    let mut m = streaming_machine();
+    assert_eq!(m.journal().unwrap().last_seen_unix_ms, 13);
+    // Under a minute there is nothing new to write.
+    assert!(!m.heartbeat(13 + HEARTBEAT_MS - 1));
+    assert_eq!(m.journal().unwrap().last_seen_unix_ms, 13);
+    assert!(m.heartbeat(13 + HEARTBEAT_MS));
+    assert_eq!(m.journal().unwrap().last_seen_unix_ms, 13 + HEARTBEAT_MS);
+    // A suspended session keeps beating; an idle one has no journal to beat in.
+    let mut suspended = suspended_machine();
+    assert!(suspended.heartbeat(20 + HEARTBEAT_MS));
+    let mut idle = Machine::default();
+    assert!(!idle.heartbeat(HEARTBEAT_MS));
+    // A journal from a host before the heartbeat reads as 0, never as "now".
+    let old = Journal::parse(
+        br#"{"version":1,"state":"streaming","owner":"me","app":null,"since_unix_ms":5}"#,
+    )
+    .unwrap();
+    assert_eq!(old.last_seen_unix_ms, 0);
+}
+
+#[test]
 fn a_failed_launch_falls_back_to_what_still_runs() {
     // Nothing before: idle.
     let mut m = Machine::default();

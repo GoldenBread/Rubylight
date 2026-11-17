@@ -298,6 +298,25 @@ fn the_steam_deck_controller_setting_falls_back_to_auto() {
     assert_eq!(policy.steam_deck, DeckPad::Auto);
 }
 #[test]
+fn the_dualsense_gain_defaults_to_the_games_own_strength() {
+    let gain = |value: &str| {
+        let config = Config::parse(&format!("dualsense_haptics_gain={value}\n")).unwrap();
+        Policy::resolve(&config).unwrap().dualsense_haptics_gain
+    };
+    // Today's behaviour: what the game sent, unscaled.
+    assert_eq!(
+        Policy::resolve(&Config::default())
+            .unwrap()
+            .dualsense_haptics_gain,
+        100
+    );
+    assert_eq!(gain("0"), 0);
+    assert_eq!(gain("1.5"), 150);
+    assert_eq!(gain("4"), 400);
+    // A value the console would refuse keeps the game's own strength.
+    assert_eq!(gain("9"), 100);
+}
+#[test]
 fn key_repeat_delay_follows_vibepollo() {
     let delay = |value: &str| {
         let config = Config::parse(&format!("key_repeat_delay={value}\n")).unwrap();

@@ -3,13 +3,14 @@ package com.limelight.binding.video;
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.Assert.*;
 
 public class VendorLowLatencyKeysTest {
     @Test public void snapdragonEliteGetsLowLatencyPictureOrderAndSoftwareFence() {
-        Map<String, Integer> keys = VendorLowLatencyKeys.forSupported(Arrays.asList(
+        Map<String, Integer> keys = VendorLowLatencyKeys.forSupported("c2.qti.hevc.decoder.low_latency", Arrays.asList(
                 "vendor.qti-ext-dec-low-latency.enable",
                 "vendor.qti-ext-dec-picture-order.enable",
                 "vendor.qti-ext-output-fence.enable",
@@ -23,13 +24,15 @@ public class VendorLowLatencyKeysTest {
     }
 
     @Test public void onlyDeclaredKeysAreSent() {
-        Map<String, Integer> keys = VendorLowLatencyKeys.forSupported(Arrays.asList("vendor.rtc-ext-dec-low-latency.enable"));
+        Map<String, Integer> keys = VendorLowLatencyKeys.forSupported("c2.exynos.hevc.decoder",
+                Arrays.asList("vendor.rtc-ext-dec-low-latency.enable"));
         assertEquals(1, keys.size());
-        assertTrue(VendorLowLatencyKeys.forSupported(Arrays.<String>asList()).isEmpty());
+        assertTrue(VendorLowLatencyKeys.forSupported("c2.qti.hevc.decoder",
+                Arrays.<String>asList()).isEmpty());
     }
 
     @Test public void unknownVendorLowLatencySwitchesAreFoundByName() {
-        Map<String, Integer> keys = VendorLowLatencyKeys.forSupported(Arrays.asList(
+        Map<String, Integer> keys = VendorLowLatencyKeys.forSupported("c2.acme.hevc.decoder", Arrays.asList(
                 "vendor.sprd-dec-low-latency.enable",
                 "vendor.foo.lowlatency.mode",
                 "vendor.foo.low-latency.disable",
@@ -62,14 +65,43 @@ public class VendorLowLatencyKeysTest {
     @Test public void snapdragonExtrasGoOnlyToDecodersThatDeclareThem() {
         String[] extras = {"vendor.qti-ext-dec-info-misr.disable", "vendor.qti-ext-dec-instant-decode.enable",
                 "vendor.qti-ext-dec-error-correction.conceal"};
-        Map<String, Integer> declared = VendorLowLatencyKeys.forSupported(Arrays.asList(extras));
+        Map<String, Integer> declared = VendorLowLatencyKeys.forSupported("c2.qti.hevc.decoder", Arrays.asList(extras));
         Map<String, Integer> byName = VendorLowLatencyKeys.qualcommKeys();
         for (String key : extras) {
             assertEquals(key, Integer.valueOf(1), declared.get(key));
             assertFalse(key, byName.containsKey(key));
             assertFalse(key, VendorLowLatencyKeys.isCoreSwitch(key));
         }
-        assertFalse(VendorLowLatencyKeys.forSupported(Arrays.asList("vendor.qti-ext-dec-low-latency.enable"))
+        assertFalse(VendorLowLatencyKeys.forSupported("c2.qti.hevc.decoder",
+                Arrays.asList("vendor.qti-ext-dec-low-latency.enable"))
                 .containsKey("vendor.qti-ext-dec-instant-decode.enable"));
+    }
+
+    @Test public void snapdragonExtensionKeysGoOnlyToQualcommDecoders() {
+        List<String> declared = Arrays.asList(
+                "vendor.qti-ext-dec-low-latency.enable",
+                "vendor.qti-ext-dec-picture-order.enable",
+                "vendor.qti-ext-output-sw-fence-enable.value",
+                "vendor.qti-ext-output-fence.enable",
+                "vendor.qti-ext-output-fence.fence_type",
+                "vendor.qti-ext-dec-info-misr.disable");
+        for (String name : new String[] {"c2.qti.hevc.decoder.low_latency", "c2.qcom.hevc.decoder",
+                "OMX.qcom.video.decoder.hevc"}) {
+            Map<String, Integer> keys = VendorLowLatencyKeys.forSupported(name, declared);
+            assertEquals(name, declared.size(), keys.size());
+            for (String key : declared) {
+                assertEquals(name + " " + key, Integer.valueOf(1), keys.get(key));
+            }
+        }
+        // Dolby Vision's decoder on the Lenovo Legion Tab Y700 declares the picture-order and
+        // output-fence keys and got them before (issue 129).
+        for (String name : new String[] {"c2.dolby.decoder.hevc", "c2.dolby.decoder.dvhe"}) {
+            Map<String, Integer> keys = VendorLowLatencyKeys.forSupported(name, declared);
+            for (String key : declared) {
+                assertFalse(name + " " + key, keys.containsKey(key));
+            }
+        }
+        assertTrue(VendorLowLatencyKeys.isQualcommDecoder("OMX.qcom.video.decoder.hevc"));
+        assertFalse(VendorLowLatencyKeys.isQualcommDecoder("c2.dolby.decoder.hevc"));
     }
 }

@@ -8,10 +8,29 @@ fn stick_y_inverts_without_overflow() {
 }
 
 static RUMBLE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static TRIGGERS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 unsafe extern "C" fn record_rumble(_: *mut std::ffi::c_void, low: u16, high: u16) -> bool {
     RUMBLE.store((u32::from(low) << 16) | u32::from(high), std::sync::atomic::Ordering::SeqCst);
     true
+}
+
+unsafe extern "C" fn record_triggers(_: *mut std::ffi::c_void, left: u16, right: u16) -> bool {
+    TRIGGERS.store((u32::from(left) << 16) | u32::from(right), std::sync::atomic::Ordering::SeqCst);
+    true
+}
+
+/// The C button's flag (0x40_0000) is a Steam Controller's left grip touch, a
+/// bit this client never sends: only a host that takes controller identities
+/// knows it as C (nightjar#125).
+#[test]
+fn the_c_button_goes_only_to_a_host_that_takes_controller_identities() {
+    assert_eq!(
+        host_buttons(button::C | button::A, true),
+        button::C | button::A
+    );
+    assert_eq!(host_buttons(button::C | button::A, false), button::A);
+    assert_eq!(host_buttons(button::C, false), 0);
 }
 
 /// An SDL virtual gamepad: arrival, a button press and stick motion reach the host's
@@ -32,6 +51,7 @@ fn virtual_gamepad_round_trip() {
         desc.axis_mask = (1u32 << SDL_GAMEPAD_AXIS_COUNT.0) - 1;
         desc.name = c"Nightjar test pad".as_ptr();
         desc.Rumble = Some(record_rumble);
+        desc.RumbleTriggers = Some(record_triggers);
         let id = SDL_AttachVirtualJoystick(&desc);
         assert!(id.0 != 0, "{}", crate::sdl::error());
 
@@ -94,6 +114,25 @@ fn virtual_gamepad_round_trip() {
         pads.disable_rumble = true;
         pads.rumble(0, 0x4321, 0x8765);
         assert_eq!(RUMBLE.load(std::sync::atomic::Ordering::SeqCst), 0x1234_5678);
+
+        // A pad with trigger motors tells the host so, and the host's trigger
+        // rumble (0x5500) reaches SDL's own trigger call, not the grip motors.
+        assert_ne!(
+            describe(&pads.pads[0]).2 & capability::TRIGGER_RUMBLE,
+            0,
+            "the pad's arrival says it has trigger rumble"
+        );
+        pads.disable_rumble = false;
+        pads.rumble_triggers(0, 0x1234, 0x5678);
+        assert_eq!(TRIGGERS.load(std::sync::atomic::Ordering::SeqCst), 0x1234_5678);
+        pads.disable_rumble = true;
+        pads.rumble_triggers(0, 0x4321, 0x8765);
+        assert_eq!(
+            TRIGGERS.load(std::sync::atomic::Ordering::SeqCst),
+            0x1234_5678,
+            "Turn off vibration stops trigger rumble too"
+        );
+        pads.disable_rumble = false;
 
         pads.release(&mut queue);
         assert_eq!(pads.pads[0].buttons, 0);

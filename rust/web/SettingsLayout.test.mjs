@@ -7,9 +7,10 @@ globalThis.location = new URL('http://localhost/');
 globalThis.window = new EventTarget();
 const server = await createTestServer();
 const { schema, settingGroups, settingsGroup, tabOf, groupRank, groupAnchor } = await server.ssrLoadModule('/src/lib/settings-schema.ts');
-const { EXPERT_GROUPS, DEBUG_GROUP } = await server.ssrLoadModule('/src/lib/schema/main.ts');
+const { EXPERT_GROUPS, DEBUG_GROUP, onHome } = await server.ssrLoadModule('/src/lib/schema/main.ts');
 const { describeDefault, numberError, textError } = await server.ssrLoadModule('/src/components/settings/values.ts');
 const { default: SettingControl } = await server.ssrLoadModule('/src/components/settings/SettingControl.svelte');
+const { default: SettingRow } = await server.ssrLoadModule('/src/components/settings/SettingRow.svelte');
 const { render } = await server.ssrLoadModule('svelte/server');
 const settings = new Map(schema.settings.map((setting) => [setting.key, setting]));
 const source = (name) => readFile(new URL(`./src/${name}`, import.meta.url), 'utf8');
@@ -52,17 +53,30 @@ test('every setting lands in one tab, under a group that tab orders or folds', (
   assert.ok(groupRank('advanced', 'Console') < groupRank('advanced', DEBUG_GROUP));
 });
 
-test('Picture folds HDR, frame pacing, the frame limiter and after a stream in place, open when customized', async () => {
+test('the groups most people leave alone fold in place, open when customized', async () => {
   const { FOLDED_GROUPS } = await server.ssrLoadModule('/src/lib/schema/main.ts');
-  assert.deepEqual([...FOLDED_GROUPS].sort(), ['After a stream', 'Frame limiter', 'Frame pacing', 'HDR']);
+  assert.deepEqual([...FOLDED_GROUPS].sort(), [
+    'After a stream', 'Battle.net options', 'Capture', 'EA app options', 'Epic Games options', 'Frame limiter',
+    'Frame pacing', 'GOG options', 'Game folders', 'HDR', 'Lossless Scaling', 'Microsoft Store and Xbox options',
+    'Playnite', 'Playnite launch focus', 'Remote monitors', 'Steam Deck and back grips', 'Steam options',
+    'Ubisoft Connect options',
+  ]);
   for (const group of FOLDED_GROUPS) {
     const members = schema.settings.filter((setting) => setting.group === group);
     assert.ok(members.length > 0, group);
-    for (const setting of members) assert.equal(settingsGroup(setting.category), 'picture', setting.key);
+    // A group name lives in one tab: its settings show together.
+    const tabs = new Set(members.map((setting) => settingsGroup(setting.category)));
+    assert.equal(tabs.size, 1, group);
     // They keep their place in the tab's order instead of moving down with the expert groups.
     assert.equal(EXPERT_GROUPS.has(group), false, group);
-    assert.ok(groupRank('picture', group) < 1000, group);
+    assert.ok(groupRank([...tabs][0], group) < 1000, group);
   }
+  // The launcher groups belong to Games, where each Games tile links its own options.
+  for (const group of ['Steam options', 'Playnite', 'Game folders', 'Lossless Scaling']) {
+    const member = schema.settings.find((setting) => setting.group === group);
+    assert.equal(settingsGroup(member.category), 'games', group);
+  }
+  assert.equal(settingsGroup(schema.settings.find((setting) => setting.group === 'Steam Deck and back grips').category), 'sound');
   const page = await source('pages/Settings.svelte');
   assert.match(page, /\{:else if EXPERT_GROUPS\.has\(item\.name\) \|\| FOLDED_GROUPS\.has\(item\.name\)\}/);
   // A customized group starts open; the contents bar and a link to one of its settings open it.
@@ -136,6 +150,21 @@ test('a preset value shows as its name; any other value as Custom with its own f
   const text = render(SettingControl, { props: { setting: resolution, id: resolution.key, value: '2560x1440', onchange: () => {} } }).body;
   assert.match(text, /<option value="2560x1440"[^>]*selected[^>]*>(?:<!--[^>]*-->)?2560 × 1440/);
   assert.doesNotMatch(text, /type="text"/);
+});
+
+test('the home’s stored fixed resolution renders as its own selected option', () => {
+  const resolution = settings.get('dd_resolution_option');
+  const home = onHome(resolution, 'manual', { dd_manual_resolution: '2560x1440' });
+  const html = render(SettingRow, {
+    props: {
+      setting: home, value: 'manual', stored: true, changed: false, resetting: false, differs: true,
+      onchange: () => {}, onreset: () => {}, onundo: () => {}, oninvalid: () => {},
+    },
+  }).body;
+  assert.match(html, /<option value="manual"[^>]*selected[^>]*>(?:<!--[^>]*-->)?Fixed: 2560 × 1440/);
+  // The schema's own row is untouched: All settings still offers the full choice.
+  assert.equal(resolution.control.options.length, 3);
+  assert.equal(home.label, 'Stream resolution');
 });
 
 test('settings written as JSON say so and fold under their own name', () => {

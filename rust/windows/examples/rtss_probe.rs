@@ -103,6 +103,7 @@ fn main() -> Result<()> {
             sync_limiter: 2,
             automatic_sync: false,
             capture: "wgc".into(),
+            constant_rate: false,
         };
         let lease = limiter::Lease::acquire(&directory, &config, &policy)?;
         let status = limiter::status(&config);

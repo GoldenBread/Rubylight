@@ -80,7 +80,7 @@ public final class DecoderBenchmark {
                         List<String> params = MediaCodecHelper.getIntegerVendorParameters(decoder.getName());
                         if (params != null) {
                             editor.putString(VENDOR_KEYS_PREFIX + suffix,
-                                    String.join(",", VendorLowLatencyKeys.forSupported(params).keySet()));
+                                    String.join(",", VendorLowLatencyKeys.forSupported(decoder.getName(), params).keySet()));
                         }
                     }
                 }

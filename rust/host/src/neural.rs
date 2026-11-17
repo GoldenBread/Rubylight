@@ -938,15 +938,22 @@ fn now() -> u64 {
 /// `%ProgramData%\Butterpollo\neural-anr` for the installed host, the
 /// profile's own `neural-anr` folder for any other.
 pub fn cache_root(h: &Shared) -> PathBuf {
-    legacy_cache_root(h).with_file_name("neural-anr")
+    data_root(h).join("neural-anr")
 }
 
 /// Where Rubylight 3.0 kept its AMDNR download: `neural` beside the cache.
 fn legacy_cache_root(h: &Shared) -> PathBuf {
+    data_root(h).join("neural")
+}
+
+/// The host's own folder: `%ProgramData%\Butterpollo` for the installed
+/// host, the profile otherwise. Setup locks it down for the installed host,
+/// so it is where [`trusted_root`]'s check of who may change folders ends.
+fn data_root(h: &Shared) -> PathBuf {
     if h.directory == butterpollo_core::paths::installed_profile() {
-        butterpollo_core::paths::data_root().join("neural")
+        butterpollo_core::paths::data_root()
     } else {
-        h.directory.join("neural")
+        h.directory.clone()
     }
 }
 
@@ -958,8 +965,12 @@ pub fn clear_legacy_cache(h: &Shared) {
     if !root.exists() {
         return;
     }
-    let cleared = trusted_root(&root, butterpollo_windows::process::is_system())
-        .and_then(|()| std::fs::remove_dir_all(&root).map_err(anyhow::Error::from));
+    let cleared = trusted_root(
+        &root,
+        &data_root(h),
+        butterpollo_windows::process::is_system(),
+    )
+    .and_then(|()| std::fs::remove_dir_all(&root).map_err(anyhow::Error::from));
     match cleared {
         Ok(()) => {
             tracing::info!(folder = %root.display(), "Neural Rendering: deleted the earlier upscaling download")
@@ -992,20 +1003,30 @@ fn ensure_root(root: &Path) -> Result<()> {
 
 /// Refuse a cache that is not this host's own: a link on the way to it, or
 /// for a SYSTEM host, which copies from it into game folders and deletes in
-/// it, a cache anyone but administrators may change, or a folder above it
-/// they don't own or whose folders they may move away and replace. A release
-/// planted there would reach every game.
-fn trusted_root(root: &Path, system: bool) -> Result<()> {
-    trusted_root_with(root, system, folder::administrators_hold)
+/// it, a cache anyone but administrators may change, or a folder from it up
+/// to the host's data root they don't own or whose folders they may move
+/// away and replace. A release planted there would reach every game. Above
+/// the data root only the link check applies: that folder's own permissions
+/// already stop anyone else from moving it away and putting a link in its
+/// place.
+fn trusted_root(root: &Path, data_root: &Path, system: bool) -> Result<()> {
+    trusted_root_with(root, data_root, system, folder::administrators_hold)
 }
 
 /// [`trusted_root`], with `hold` in place of [`folder::administrators_hold`].
 fn trusted_root_with(
     root: &Path,
+    data_root: &Path,
     system: bool,
     hold: impl Fn(&Path, bool) -> Result<(), String>,
 ) -> Result<()> {
     use std::os::windows::fs::MetadataExt;
+    ensure!(
+        root.starts_with(data_root),
+        "{} is not in this host's own folder {}",
+        root.display(),
+        data_root.display()
+    );
     for path in root.ancestors().filter(|path| !path.as_os_str().is_empty()) {
         let meta = std::fs::symlink_metadata(path)
             .with_context(|| format!("cannot read {}", path.display()))?;
@@ -1014,7 +1035,7 @@ fn trusted_root_with(
             "{} is a link to elsewhere, and Neural Rendering keeps no download behind one",
             path.display()
         );
-        if system {
+        if system && path.starts_with(data_root) {
             hold(path, path == root).map_err(|problem| {
                 anyhow!(
                     "Neural Rendering keeps its download only where nobody but administrators may change it: {problem}"
@@ -1074,7 +1095,11 @@ fn launch_cache(h: &Shared) -> Result<Option<folder::Cached>> {
     if !root.exists() {
         return Ok(None);
     }
-    trusted_root(&root, butterpollo_windows::process::is_system())?;
+    trusted_root(
+        &root,
+        &data_root(h),
+        butterpollo_windows::process::is_system(),
+    )?;
     let pin = pinned(h);
     Ok(cached(&root)
         .filter(|(_, package)| serves(package, &pin))
@@ -1147,7 +1172,11 @@ async fn fetch_locked(
 ) -> Result<(PathBuf, Package)> {
     let root = cache_root(h);
     ensure_root(&root)?;
-    trusted_root(&root, butterpollo_windows::process::is_system())?;
+    trusted_root(
+        &root,
+        &data_root(h),
+        butterpollo_windows::process::is_system(),
+    )?;
     let pin = pinned(h);
     // Its files as checked when they came, or it goes and comes again.
     if let Some(have) = cached(&root).filter(|(_, package)| serves(package, &pin)) {

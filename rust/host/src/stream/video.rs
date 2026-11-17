@@ -556,15 +556,16 @@ fn phase_interval(
     Some(interval)
 }
 
-/// A switch the session loop refused or could not make: the stream keeps `from`, and a rate
-/// change the switch carried is answered with `reason`.
+/// A switch the session loop refused or could not make: the stream keeps `from`, codes
+/// `applied`, and a rate change the switch carried is answered with `reason`.
 fn refuse_switch(
     s: &Session,
     from: butterpollo_core::reconfigure::Mode,
+    applied: butterpollo_core::reconfigure::Mode,
     reason: butterpollo_core::rate_change::Reason,
 ) {
     let mut reconfigure = s.reconfigure.lock().unwrap();
-    reconfigure.refused(from);
+    reconfigure.refused(from, applied);
     s.rate_changes.lock().unwrap().switched(from, Some(reason));
 }
 

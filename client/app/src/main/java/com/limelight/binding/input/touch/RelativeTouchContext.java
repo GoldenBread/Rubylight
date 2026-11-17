@@ -15,7 +15,6 @@ public class RelativeTouchContext implements TouchContext {
     private int originalTouchX = 0;
     private int originalTouchY = 0;
     private long originalTouchTime = 0;
-    private long lastMoveTime = 0;
     private boolean cancelled;
     private boolean confirmedMove;
     private boolean confirmedDrag;
@@ -140,7 +139,6 @@ public class RelativeTouchContext implements TouchContext {
 
         originalTouchX = lastTouchX = eventX;
         originalTouchY = lastTouchY = eventY;
-        lastMoveTime = eventTime;
 
         if (isNewFinger) {
             maxPointerCountInGesture = pointerCount;
@@ -257,8 +255,9 @@ public class RelativeTouchContext implements TouchContext {
                 float gain = 1;
                 PointerAcceleration acceleration = pointer.acceleration();
                 if (acceleration != null && pointerCount != 2) {
-                    gain = acceleration.gain(PointerAcceleration.speed(eventX - lastTouchX, eventY - lastTouchY,
-                            eventTime - lastMoveTime, density));
+                    // MotionEvent times are milliseconds; the curve averages in nanoseconds.
+                    gain = acceleration.gain(eventX - lastTouchX, eventY - lastTouchY,
+                            eventTime * 1_000_000L, density);
                 }
                 int deltaX = deltaXAccumulator.scale(eventX - lastTouchX, xFactor * gain);
                 int deltaY = deltaYAccumulator.scale(eventY - lastTouchY, yFactor * gain);
@@ -275,7 +274,6 @@ public class RelativeTouchContext implements TouchContext {
                 }
 
             }
-            lastMoveTime = eventTime;
             lastTouchX = eventX;
             lastTouchY = eventY;
         }

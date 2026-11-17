@@ -499,6 +499,28 @@ fn home_is_on_unless_the_file_says_otherwise() {
     assert!(!off.console_home);
 }
 
+/// The simple layer's choices are stored beside the settings they write; a file from before them
+/// reads as the recommendation, and reading or saving it changes none of the values above.
+#[test]
+fn the_simple_choices_default_to_the_recommendation_and_read_back() {
+    use nightjar_policy::simple_profile::{Hdr, Picture, Smoothness};
+    let s = Settings::default();
+    assert_eq!((s.simple_smoothness, s.simple_picture, s.simple_hdr), (Smoothness::Auto, Picture::Auto, Hdr::Auto));
+    let old: Settings = serde_json::from_str("{\"frame_pacing\":\"Latency\",\"bitrate_kbps\":40000}").unwrap();
+    assert_eq!((old.simple_smoothness, old.simple_picture, old.simple_hdr), (Smoothness::Auto, Picture::Auto, Hdr::Auto));
+    assert_eq!((old.frame_pacing, old.bitrate_kbps), (crate::config::FramePacing::Latency, 40_000), "nothing above changed");
+    let saved = Settings {
+        simple_smoothness: Smoothness::Smoothest,
+        simple_picture: Picture::SaveData,
+        simple_hdr: Hdr::Off,
+        ..Settings::default()
+    };
+    let json = serde_json::to_string(&saved).unwrap();
+    let read: Settings = serde_json::from_str(&json).unwrap();
+    assert_eq!((read.simple_smoothness, read.simple_picture, read.simple_hdr), (Smoothness::Smoothest, Picture::SaveData, Hdr::Off));
+    assert!(json.contains("\"simple_smoothness\":\"smoothest\""), "{json}");
+}
+
 #[test]
 fn the_theme_choice_keeps_the_stored_values_of_the_older_choices() {
     // Names, not positions: the file keeps reading after Light was added last.

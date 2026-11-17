@@ -187,8 +187,10 @@ impl GraphicsCard {
 /// How Tear-free VRR (`vrr_tear_free`, Windows) waits for a scan under way, "Whole frames under
 /// VRR" in Display & image: Automatic is the wait for the beam (`present::VrrSync::Scan`) that turns
 /// to sync interval 1 on a display whose presents start no scan (`scan_sync::UNTRUSTED_MISSES`,
-/// kept across starts); Scan keeps that wait, VSync presents with sync interval 1 from the start
-/// (`VrrSync::Present1`). `NIGHTJAR_VRR_SYNC` overrides it.
+/// kept across starts); Scan keeps that wait and does not take that switch, VSync presents with
+/// sync interval 1 from the start (`VrrSync::Present1`). Both waits present with sync interval 1
+/// when waiting for the scan would cost the next picture its turn (`scan_sync::scan_wait`), shown
+/// whole at the next refresh. `NIGHTJAR_VRR_SYNC` overrides it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VrrWait {
     #[default]
@@ -657,6 +659,12 @@ pub struct Settings {
     /// Open on Home (Continue playing, the library across PCs) when a paired PC has the
     /// Rubylight native API. Off starts on the list of PCs. Not a per-PC or per-game override.
     pub console_home: bool,
+    /// The simple layer's choices (Android's `simple_smoothness`, `simple_picture`, `simple_hdr`):
+    /// three plain settings that write the concrete values above when a player picks one in Settings.
+    /// A player who never opens the simple layer keeps every default above untouched.
+    pub simple_smoothness: nightjar_policy::simple_profile::Smoothness,
+    pub simple_picture: nightjar_policy::simple_profile::Picture,
+    pub simple_hdr: nightjar_policy::simple_profile::Hdr,
     /// A click on a PC that runs a game goes straight back into it instead of opening its
     /// library (Android's `checkbox_quick_resume`). Not a per-PC or per-game override.
     pub quick_resume: bool,
@@ -1238,6 +1246,9 @@ impl Default for Settings {
             frame_warp: false,
             open_on_start: OpenOnStart::Pcs,
             console_home: true,
+            simple_smoothness: nightjar_policy::simple_profile::Smoothness::Auto,
+            simple_picture: nightjar_policy::simple_profile::Picture::Auto,
+            simple_hdr: nightjar_policy::simple_profile::Hdr::Auto,
             quick_resume: false,
             input_only_any_host: false,
             home_layout: HomeLayout::Rows,
@@ -2091,7 +2102,8 @@ impl Store {
     }
 
     /// Forgets one display of `scan_untrusted.json`, or every display with `None`: the user chose
-    /// Nightjar's wait, which never turns to Windows V-Sync (`stream::scan_sync`).
+    /// Nightjar's wait, which does not take the display check's switch to Windows V-Sync
+    /// (`stream::scan_sync`).
     pub fn clear_scan_untrusted(&self, display: Option<&str>) -> std::io::Result<()> {
         let kept = self.scan_untrusted();
         if kept.displays.is_empty() { return Ok(()); }

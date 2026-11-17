@@ -108,6 +108,11 @@ public class SettingsTiersTest {
             }
             // The main rows come first, in the tier's order (Customize's switches sit among them), then the More row.
             List<String> rows = sections.get(section);
+            if (section.equals("simple")) {
+                // The simple layer has no More row: all six of its rows are main.
+                assertEquals(section + " shows its main rows", main, rows);
+                continue;
+            }
             List<String> first = new ArrayList<>(rows.subList(0, rows.indexOf(StreamSettings.MORE_PREFIX + section)));
             first.removeAll(StreamSettings.LOW_LATENCY_CUSTOMIZED);
             assertEquals(section + " opens on its main rows, then More", main, first);

@@ -269,12 +269,12 @@ impl<P, A> Session<P, A> {
     pub fn new(launch: Launch<P, A>, config: Negotiated) -> Arc<Self> {
         let launch_peer = launch.peer.to_canonical();
         let bitrate = config.bitrate_kbps;
-        let mode = crate::reconfigure::Mode::of(&config);
         let started = Instant::now();
         let picture = (
             u16::try_from(config.width).unwrap_or(u16::MAX),
             u16::try_from(config.height).unwrap_or(u16::MAX),
         );
+        let reconfigure = crate::reconfigure::Reconfiguration::of(&config);
         Arc::new(Self {
             encoder: Default::default(),
             capture_warnings: Default::default(),
@@ -309,7 +309,7 @@ impl<P, A> Session<P, A> {
             fec_split_on: AtomicBool::new(false),
             fec_split: AtomicU32::new(0),
             phase_sync: Default::default(),
-            reconfigure: std::sync::Mutex::new(crate::reconfigure::Reconfiguration::new(mode)),
+            reconfigure: std::sync::Mutex::new(reconfigure),
             rate_changes: Default::default(),
             stats: Stats::default(),
             started,
@@ -410,8 +410,13 @@ impl<P, A> Session<P, A> {
         self.stop.load(Ordering::Acquire)
     }
     /// The size and rate the stream runs at now: the negotiated ones until the
-    /// client asks for others (0x5532).
+    /// client asks for others (0x5532), coded no larger than the host's cap.
     pub fn stream_mode(&self) -> crate::reconfigure::Mode {
+        self.reconfigure.lock().unwrap().applied()
+    }
+    /// The size and rate the client asked for, which its display keeps; the
+    /// coded picture is [`Self::stream_mode`] under the host's cap.
+    pub fn requested_mode(&self) -> crate::reconfigure::Mode {
         self.reconfigure.lock().unwrap().current()
     }
     pub fn stop(&self) {
@@ -1602,7 +1607,11 @@ impl<P, A> Session<P, A> {
         let mode = self.stream_mode();
         let fps = mode.fps_millihz.saturating_add(500) / 1000;
         let (width, height) = (mode.width, mode.height);
-        let requested_fps = if mode == crate::reconfigure::Mode::of(&self.config) {
+        // The size the display keeps: the client's request, which a host
+        // `max_stream_resolution` cap leaves alone while it shrinks `width` and
+        // `height`.
+        let requested = self.requested_mode();
+        let requested_fps = if mode == crate::reconfigure::Mode::applied(&self.config) {
             self.config.fps
         } else {
             fps
@@ -1621,6 +1630,6 @@ impl<P, A> Session<P, A> {
             performance.snapshot(),
             stutter.report(mode.period()).snapshot(),
         );
-        serde_json::json!({"warnings":warnings,"encoder":*self.encoder.read().unwrap(),"uuid":self.launch.client.uuid,"device_name":self.launch.client.name,"width":width,"height":height,"fps":fps,"requested_fps":requested_fps,"video_format":self.config.codec,"hdr":self.config.hdr,"vrr":self.config.vrr_low_latency,"encoder_bitrate_kbps":self.bitrate.load(Ordering::Relaxed),"adaptive_bitrate":self.adaptive_bitrate.lock().unwrap().snapshot(),"link_rate":self.link_rate_snapshot(),"congestion":self.congestion_snapshot(),"packet_pacing":self.automatic_pacing.lock().unwrap().snapshot(),"fec_percent":self.fec_percent(),"pyrowave_minimum_kbps":(self.config.codec == 3).then(|| crate::pyrowave::minimum_kbps(self.config.width, self.config.height, self.config.fps_millihz())),"pyrowave_recommended_kbps":(self.config.codec == 3).then(|| crate::pyrowave::recommended_kbps(self.config.width, self.config.height, self.config.fps_millihz())),"audio_channels":self.config.audio_channels,"state":if self.stopping(){"STOPPING"}else{"RUNNING"},"frames_sent":self.stats.frames.load(Ordering::Relaxed),"frames_replaced":self.stats.frames_replaced.load(Ordering::Relaxed),"packets_sent":self.stats.packets.load(Ordering::Relaxed),"bytes_sent":self.stats.bytes.load(Ordering::Relaxed),"idr_requests":self.stats.idr_requests.load(Ordering::Relaxed),"reference_invalidations":self.stats.reference_invalidations.load(Ordering::Relaxed),"send_loss_recoveries":self.stats.send_loss_recoveries.load(Ordering::Relaxed),"frames_lost_on_send":self.stats.frames_lost_on_send.load(Ordering::Relaxed),"keyframes_past_fec":self.stats.keyframes_past_fec.load(Ordering::Relaxed),"slice_delivery_overflows":self.stats.slice_delivery_overflows.load(Ordering::Relaxed),"encode_latency_ms":self.stats.latency_us.load(Ordering::Relaxed) as f64/1000.,"performance":performance,"stutter":stutter,"pipeline_rates":self.console_pipeline_rates(),"uptime_seconds":self.started.elapsed().as_secs_f64(),"role":self.launch.role,"guest":self.launch.guest()})
+        serde_json::json!({"warnings":warnings,"encoder":*self.encoder.read().unwrap(),"uuid":self.launch.client.uuid,"device_name":self.launch.client.name,"width":width,"height":height,"display_width":requested.width,"display_height":requested.height,"fps":fps,"requested_fps":requested_fps,"video_format":self.config.codec,"hdr":self.config.hdr,"vrr":self.config.vrr_low_latency,"encoder_bitrate_kbps":self.bitrate.load(Ordering::Relaxed),"adaptive_bitrate":self.adaptive_bitrate.lock().unwrap().snapshot(),"link_rate":self.link_rate_snapshot(),"congestion":self.congestion_snapshot(),"packet_pacing":self.automatic_pacing.lock().unwrap().snapshot(),"fec_percent":self.fec_percent(),"pyrowave_minimum_kbps":(self.config.codec == 3).then(|| crate::pyrowave::minimum_kbps(self.config.width, self.config.height, self.config.fps_millihz())),"pyrowave_recommended_kbps":(self.config.codec == 3).then(|| crate::pyrowave::recommended_kbps(self.config.width, self.config.height, self.config.fps_millihz())),"audio_channels":self.config.audio_channels,"state":if self.stopping(){"STOPPING"}else{"RUNNING"},"frames_sent":self.stats.frames.load(Ordering::Relaxed),"frames_replaced":self.stats.frames_replaced.load(Ordering::Relaxed),"packets_sent":self.stats.packets.load(Ordering::Relaxed),"bytes_sent":self.stats.bytes.load(Ordering::Relaxed),"idr_requests":self.stats.idr_requests.load(Ordering::Relaxed),"reference_invalidations":self.stats.reference_invalidations.load(Ordering::Relaxed),"send_loss_recoveries":self.stats.send_loss_recoveries.load(Ordering::Relaxed),"frames_lost_on_send":self.stats.frames_lost_on_send.load(Ordering::Relaxed),"keyframes_past_fec":self.stats.keyframes_past_fec.load(Ordering::Relaxed),"slice_delivery_overflows":self.stats.slice_delivery_overflows.load(Ordering::Relaxed),"encode_latency_ms":self.stats.latency_us.load(Ordering::Relaxed) as f64/1000.,"performance":performance,"stutter":stutter,"pipeline_rates":self.console_pipeline_rates(),"uptime_seconds":self.started.elapsed().as_secs_f64(),"role":self.launch.role,"guest":self.launch.guest()})
     }
 }

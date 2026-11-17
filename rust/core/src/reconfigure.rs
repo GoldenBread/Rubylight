@@ -11,7 +11,9 @@ use std::time::{Duration, Instant};
 
 pub use rubylight_protocol::control::{RECONFIGURE_MESSAGE_TYPE, Reconfigure as Request};
 
-/// The stream's video mode: the encoder's picture size and the stream rate.
+/// The stream's video mode: the size the client asks for (which the display
+/// keeps) and the stream rate. The coded picture may be smaller under the
+/// host's `max_stream_resolution` cap; [`Mode::applied`] is that size.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Mode {
     pub width: u32,
@@ -19,7 +21,17 @@ pub struct Mode {
     pub fps_millihz: u32,
 }
 impl Mode {
+    /// The mode the client asked for: the display's size and the stream rate.
     pub fn of(stream: &Negotiated) -> Self {
+        let (width, height) = stream.display_size();
+        Self {
+            width,
+            height,
+            fps_millihz: stream.fps_millihz(),
+        }
+    }
+    /// The mode the encoder runs at: the capped picture size and the rate.
+    pub fn applied(stream: &Negotiated) -> Self {
         Self {
             width: stream.width,
             height: stream.height,
@@ -37,10 +49,11 @@ impl Mode {
     pub fn period(&self) -> Duration {
         crate::framegen::Rate(self.fps_millihz).period()
     }
-    /// The stream configuration at this mode; everything else stays as negotiated.
-    pub fn apply_to(&self, stream: &mut Negotiated) {
-        stream.width = self.width;
-        stream.height = self.height;
+    /// The stream configuration at this mode: the display keeps this size,
+    /// and the picture is coded no larger than the host's `cap`. Everything
+    /// else stays as negotiated.
+    pub fn apply_to(&self, stream: &mut Negotiated, cap: Option<(u32, u32)>) {
+        stream.set_display_size((self.width, self.height), cap);
         stream.rate_millihz = self.fps_millihz;
         stream.fps = self.fps_millihz.saturating_add(500) / 1000;
     }
@@ -89,10 +102,13 @@ struct Pending {
 }
 
 /// A session's requested and current mode. The control thread records requests;
-/// the session loop takes them at a frame boundary.
+/// the session loop takes them at a frame boundary. `current` is the size the
+/// client asked for, which its display keeps; `applied` is the picture the
+/// encoder codes under the host's `max_stream_resolution` cap.
 #[derive(Debug)]
 pub struct Reconfiguration {
     current: Mode,
+    applied: Mode,
     pending: Option<Pending>,
     switched_at: Option<Instant>,
 }
@@ -103,16 +119,36 @@ impl Reconfiguration {
     /// Each switch rebuilds the encoder and costs a keyframe: at most one a second.
     pub const MIN_INTERVAL: Duration = Duration::from_secs(1);
 
+    /// A stream with no host cap: the client's size is the coded one.
     pub fn new(current: Mode) -> Self {
         Self {
             current,
+            applied: current,
             pending: None,
             switched_at: None,
         }
     }
-    /// The mode the stream runs at, or is switching to.
+    /// The stream as negotiated: the size its client asked for, and the coded
+    /// size the host's cap left it.
+    pub fn of(stream: &Negotiated) -> Self {
+        Self {
+            current: Mode::of(stream),
+            applied: Mode::applied(stream),
+            pending: None,
+            switched_at: None,
+        }
+    }
+    /// The mode the stream is set to, as the client asked for it.
     pub fn current(&self) -> Mode {
         self.current
+    }
+    /// The size and rate the encoder runs at: [`Self::current`] under the cap.
+    pub fn applied(&self) -> Mode {
+        self.applied
+    }
+    /// The session loop switched the encoder to `applied` for the current mode.
+    pub fn applied_now(&mut self, applied: Mode) {
+        self.applied = applied;
     }
     /// The mode the stream switches to next: the pending request's, else the current one.
     pub fn requested(&self) -> Mode {
@@ -154,10 +190,11 @@ impl Reconfiguration {
         self.current = pending.mode;
         Some(pending.mode)
     }
-    /// The session did not switch and stays at `mode`.
-    pub fn refused(&mut self, mode: Mode) {
-        self.current = mode;
-        if self.pending.is_some_and(|pending| pending.mode == mode) {
+    /// The session did not switch and stays at `current`, coding `applied`.
+    pub fn refused(&mut self, current: Mode, applied: Mode) {
+        self.current = current;
+        self.applied = applied;
+        if self.pending.is_some_and(|pending| pending.mode == current) {
             self.pending = None;
         }
     }

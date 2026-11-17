@@ -17,6 +17,10 @@ Automatic selects the composite controller only when the chosen profile is DualS
 
 The host exposes Sony USB identity 054c:0ce6 with HID and audio interfaces in the same device. Rubylight does not change the Windows default audio device. If Windows selects the newly attached controller, switch game audio back to your normal output: the DualSense endpoint is for games' dedicated haptic output.
 
+## Haptics strength
+
+**All settings → Sound & controls → Controllers → DualSense haptics strength** (`dualsense_haptics_gain`, 0 to 4 times, `1` by default) scales what a game sends to the two actuators: 0.5 is half as strong, 2 twice as strong, and above 1 loud effects clip at full scale. Ordinary rumble, the lightbar, adaptive triggers and the controller speaker and headset are not scaled. A device or an app can set its own under Devices or Games; the value applies from the next connection, and **Vibration** (`forward_rumble`) turns waveform haptics off entirely. The game's own volume still decides how strong its haptics are; this multiplies that result.
+
 ## Reconnects
 
 A stream disconnect releases held controls and clears buffered audio while retaining virtual controller identities for the same paired client and stream role. Reconnects reuse compatible controllers and their audio endpoints. Devices expire only when no game is running and they have been without a transport for two minutes. A physical controller removal during a stream still detaches that controller. Changing the controller profile or capabilities can recreate it. Nightjar can automatically resume the same running game after eligible interruptions, with bounded retries and manual reconnect after recovery stops; see its [recovery policy](https://github.com/RamazanKara/nightjar/blob/main/docs/recovery-and-quality.md#recovering-a-connection).

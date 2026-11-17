@@ -324,6 +324,68 @@ fn hevc_444_10_decodes_through_d3d11va_and_draws_its_codes() {
     }
 }
 
+/// The 8-bit HEVC 4:4:4 probe fixture (what a host streams as an AYUV surface) through this PC's
+/// D3D11VA decoder and the surface entry, against the same fixture decoded in software and drawn
+/// by the plane entry (ignored: `cargo test -p nightjar-desktop -- --ignored hevc_444_8_decodes_through_d3d11va`).
+/// It skips itself where the GPU has no HEVC 4:4:4 8-bit decoder (AMD) or hands back pictures of
+/// another kind; on NVIDIA and Intel every 4x4 block agrees with the software picture.
+#[test]
+#[ignore = "needs a GPU that decodes HEVC 4:4:4 8-bit through D3D11VA (NVIDIA, Intel)"]
+fn hevc_444_8_decodes_through_d3d11va_and_draws_as_the_software_path() {
+    use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
+    let fixture = include_bytes!("../../../tests/fixtures/hevc-444-8.bin");
+    // SAFETY: Plain D3D11 calls on a device made and used on this thread; the decoder holds its
+    // own reference to the device.
+    unsafe {
+        let (mut device, mut context) = (None, None);
+        if D3D11CreateDevice(None, D3D_DRIVER_TYPE_HARDWARE, HMODULE::default(), D3D11_CREATE_DEVICE_VIDEO_SUPPORT, Some(&[D3D_FEATURE_LEVEL_11_0]),
+            D3D11_SDK_VERSION, Some(&mut device), None, Some(&mut context)).is_err() {
+            eprintln!("skipped: no hardware Direct3D 11 device with video support");
+            return;
+        }
+        let (device, context): (ID3D11Device, ID3D11DeviceContext) = (device.unwrap(), context.unwrap());
+        let mut decoder = match media::VideoDecoder::open(media::Codec::Hevc, media::Hardware::D3d11(device.as_raw()), 1, true) {
+            Ok(decoder) => decoder,
+            Err(why) => { eprintln!("skipped: D3D11VA does not open for HEVC: {why}"); return; }
+        };
+        let status = decoder.send(fixture, 0);
+        let frame = match decoder.receive() {
+            media::Received::Frame(frame) if status >= 0 && !decoder.refused() => frame,
+            _ => { eprintln!("skipped: this GPU's D3D11VA decoder does not decode HEVC 4:4:4 8-bit (status {status})"); return; }
+        };
+        let info = frame.info();
+        if info.kind != media::FRAME_D3D11_444 || info.ten_bit != 0 {
+            eprintln!("skipped: the picture came out as {} (kind {}), not an 8-bit 4:4:4 surface", frame.format_name(), info.kind);
+            return;
+        }
+        assert_eq!((info.ten_bit, info.width, info.height), (0, 256, 256));
+        // The reference picture in software, and the constants both entries convert with: the
+        // same codes at the same range, so only the upload path differs.
+        let mut software = media::VideoDecoder::open(media::Codec::Hevc, media::Hardware::None, 1, false).unwrap();
+        assert_eq!(software.send(fixture, 0), 0);
+        let media::Received::Frame(reference) = software.receive() else { panic!("software HEVC 4:4:4: no decoded frame") };
+        let reference_info = reference.info();
+        assert_eq!((reference_info.kind, reference_info.width, reference_info.height), (media::FRAME_YUV444P, 256, 256));
+        let reference_layout = media::PlanarLayout::of(&reference_info).unwrap();
+        let parameters = crate::stream::present::planar_parameters(&reference_info, reference_layout, false, 1.0, 1.0);
+        let target = linear_target(&device, 256, 256);
+        let mut pass = PlanesPass::new(target.as_raw()).unwrap();
+        pass.draw_surface(&frame, &info, &parameters).unwrap();
+        let hardware = read_back(&device, &context, &target);
+        let reference_target = linear_target(&device, 256, 256);
+        let mut reference_pass = PlanesPass::new(reference_target.as_raw()).unwrap();
+        reference_pass.draw_frame(&reference_info, &parameters).unwrap();
+        let software_pixels = read_back(&device, &context, &reference_target);
+        // The fixture is one 64x64 picture scaled 4x4 in both paths: each block's centre agrees.
+        for block in 0..64 * 64 {
+            let (x, y) = (block % 64 * 4 + 1, block / 64 * 4 + 1);
+            let at = y * 256 + x;
+            assert_close(hardware[at], software_pixels[at],
+                &format!("block {block} (pixel ({x}, {y}), {} against {})", frame.format_name(), reference.format_name()));
+        }
+    }
+}
+
 fn assert_close(got: [f32; 3], expected: [f32; 3], what: &str) {
     assert!(got.iter().zip(expected).all(|(g, e)| (g - e).abs() <= 0.003), "{what}: got {got:?}, expected {expected:?}");
 }

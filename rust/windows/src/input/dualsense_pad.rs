@@ -14,9 +14,16 @@ pub(super) struct DualSensePad {
     _slot: Slot,
 }
 impl DualSensePad {
-    pub(super) fn plug(exe: &Path, slot: Slot, client: u16, caps: u16) -> Result<Self> {
+    pub(super) fn plug(
+        exe: &Path,
+        slot: Slot,
+        client: u16,
+        caps: u16,
+        haptics_gain: u16,
+    ) -> Result<Self> {
         let mut device = DualSense::new(slot.id() as u8, client);
         device.capabilities(caps);
+        device.set_haptics_gain(haptics_gain);
         let pad = Self {
             usb: UsbPad::plug(exe, device, REPORT_PERIOD)?,
             _slot: slot,

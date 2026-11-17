@@ -13,6 +13,7 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.MediaCodecInfoBuilder;
 import org.robolectric.shadows.MediaCodecInfoBuilder.CodecCapabilitiesBuilder;
+import org.robolectric.shadows.ShadowSystemProperties;
 import org.robolectric.util.ReflectionHelpers;
 
 import java.util.Arrays;
@@ -250,7 +251,8 @@ public class DecoderTuningKeysTest {
             MediaFormat first = tune(name, 0, false);
             // The fork's picture-order 0 left the Snapdragon 8 Gen 2 decoder without output.
             assertEquals(name, 1, first.getInteger("vendor.qti-ext-dec-picture-order.enable"));
-            assertEquals(name, 1, first.getInteger("vendor.qti-ext-dec-frame-drop.enable"));
+            // Its frame drop is off by default: the decoder may drop a picture the screen never sees.
+            assertAbsent(name, first, "vendor.qti-ext-dec-frame-drop.enable");
             assertEquals(name, name.startsWith("OMX"), first.containsKey("vendor.qti-ext-dec-dpb-output-delay.enable"));
             assertEquals(name, name.startsWith("OMX"), first.containsKey("vendor.qti-ext-dec-picture-type.enable"));
             MediaFormat third = tune(name, 3, false);
@@ -259,6 +261,23 @@ public class DecoderTuningKeysTest {
         }
         assertAbsent("mtk", tune("c2.mtk.hevc.decoder", 0, false), "vendor.qti-ext-dec-frame-drop.enable");
         assertAbsent("exynos", tune("c2.exynos.hevc.decoder", 0, false), "vendor.qti-ext-dec-frame-drop.enable");
+    }
+
+    @Test
+    public void theQtiFrameDropSwitchAddsTheKeyForAnAbRun() {
+        try {
+            ShadowSystemProperties.override("debug.nightjar.qti_frame_drop", "1");
+            for (String name : new String[] {"c2.qti.hevc.decoder.low_latency", "OMX.qcom.video.decoder.hevc"}) {
+                assertEquals(name, 1, tune(name, 0, false).getInteger("vendor.qti-ext-dec-frame-drop.enable"));
+            }
+            ShadowSystemProperties.override("debug.nightjar.qti_frame_drop", "0");
+            assertAbsent("off again", tune("c2.qti.hevc.decoder.low_latency", 0, false),
+                    "vendor.qti-ext-dec-frame-drop.enable");
+        } finally {
+            ShadowSystemProperties.reset();
+        }
+        assertAbsent("unset", tune("c2.qti.hevc.decoder.low_latency", 0, false),
+                "vendor.qti-ext-dec-frame-drop.enable");
     }
 
     @Test
@@ -319,7 +338,7 @@ public class DecoderTuningKeysTest {
         assertTrue(MediaCodecHelper.setDecoderLowLatencyOptions(format, decoder, 0, true, true, true, false));
         java.util.Set<String> expected = new java.util.HashSet<>(Arrays.asList(QTI_KEYS));
         expected.addAll(Arrays.asList(MediaFormat.KEY_MIME, MediaFormat.KEY_WIDTH, MediaFormat.KEY_HEIGHT,
-                MediaFormat.KEY_LOW_LATENCY, MediaFormat.KEY_OPERATING_RATE, "vendor.qti-ext-dec-frame-drop.enable"));
+                MediaFormat.KEY_LOW_LATENCY, MediaFormat.KEY_OPERATING_RATE));
         assertEquals(expected, format.getKeys());
     }
 
@@ -371,6 +390,23 @@ public class DecoderTuningKeysTest {
         MediaCodecHelper.setDecoderLowLatencyOptions(format, decoder("c2.qti.hevc.decoder.low_latency", QTI_KEYS),
                 0, true, true, true, false);
         assertAbsent("undeclared", format, QTI_EXTRAS);
+    }
+
+    @Test
+    @Config(sdk = 33)
+    public void dolbyVisionDecodersNeverGetTheSnapdragonExtras() {
+        String[] declared = Arrays.copyOf(QTI_KEYS, QTI_KEYS.length + QTI_EXTRAS.length);
+        System.arraycopy(QTI_EXTRAS, 0, declared, QTI_KEYS.length, QTI_EXTRAS.length);
+        for (String name : new String[] {"c2.dolby.decoder.hevc", "c2.dolby.decoder.dvhe"}) {
+            MediaFormat format = MediaFormat.createVideoFormat("video/dolby-vision", 1920, 1200);
+            MediaCodecHelper.setDecoderLowLatencyOptions(format, decoder(name, declared), 0, true, true, true, false);
+            // Dolby's decoder declares the Snapdragon extension keys on the Lenovo Legion Tab Y700
+            // but does not implement them; setting them broke the picture (issue 129).
+            assertAbsent(name, format, QTI_KEYS);
+            assertAbsent(name, format, QTI_EXTRAS);
+            assertAbsent(name, format, "vendor.qti-ext-dec-frame-drop.enable");
+            assertEquals(name, 1, format.getInteger(MediaFormat.KEY_LOW_LATENCY));
+        }
     }
 
     @Test

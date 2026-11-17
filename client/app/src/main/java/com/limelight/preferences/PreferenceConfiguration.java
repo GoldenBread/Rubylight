@@ -108,7 +108,7 @@ public class PreferenceConfiguration {
     private static final String SHOW_TOUCHPAD_BUTTON_PREF_STRING = "checkbox_show_touchpad_button";
     public static final String OSC_STEAM_CONTROLS_PREF_STRING = "checkbox_osc_steam_controls";
     private static final String LEGACY_DISABLE_FRAME_DROP_PREF_STRING = "checkbox_disable_frame_drop";
-    private static final String ENABLE_HDR_PREF_STRING = "checkbox_enable_hdr";
+    static final String ENABLE_HDR_PREF_STRING = "checkbox_enable_hdr";
     static final String THERMAL_PROTECTION_PREF_STRING = "checkbox_thermal_protection";
     private static final String ENABLE_SDR10_PREF_STRING = "checkbox_enable_sdr_10bit";
     private static final String ENABLE_PIP_PREF_STRING = "checkbox_enable_pip";
@@ -147,7 +147,10 @@ public class PreferenceConfiguration {
     private static final String TOUCHSCREEN_TRACKPAD_PREF_STRING = "checkbox_touchscreen_trackpad";
     private static final String TRACKPAD_SPEED_PREF_STRING = "seekbar_trackpad_speed";
     private static final String LOCAL_CURSOR_SPEED_PREF_STRING = "seekbar_local_cursor_speed";
-    private static final String TRACKPAD_ACCELERATION_PREF_STRING = "checkbox_trackpad_acceleration";
+    // A new key: the old one's stored false was the old default, not a choice (see the migration).
+    static final String TRACKPAD_ACCELERATION_PREF_STRING = "checkbox_trackpad_acceleration_v2";
+    // Retired: only read by the migration, and never reused for anything else.
+    static final String RETIRED_TRACKPAD_ACCELERATION_PREF_STRING = "checkbox_trackpad_acceleration";
     private static final String TRACKPAD_ACCELERATION_CURVE_PREF_STRING = "list_trackpad_acceleration_curve";
     private static final String TRACKPAD_MOMENTUM_PREF_STRING = "checkbox_trackpad_momentum";
     private static final String TRACKPAD_MOMENTUM_GLIDE_PREF_STRING = "list_trackpad_momentum_glide";
@@ -290,6 +293,8 @@ public class PreferenceConfiguration {
     private static final int DEFAULT_VIBRATE_FALLBACK_STRENGTH = 100;
     private static final boolean DEFAULT_FLIP_FACE_BUTTONS = false;
     private static final boolean DEFAULT_TOUCHSCREEN_TRACKPAD = true;
+    // On for an install that never touched the checkbox; a stored false is a choice and stays off.
+    static final boolean DEFAULT_TRACKPAD_ACCELERATION = true;
     private static final int DEFAULT_TRACKPAD_SPEED = 100;
     private static final int DEFAULT_MOUSE_SPEED = 100;
     private static final int DEFAULT_TRACKPAD_SENSITIVITY = 100;
@@ -1397,6 +1402,27 @@ public class PreferenceConfiguration {
         return wasOff;
     }
 
+    // Trackpad acceleration used to start off, and first launch or opening Settings stored that
+    // default like a choice. It now starts on. Its old key cannot tell an explicit off from the old
+    // default, so every install moves to the new key once with the new default (on); turning it off
+    // afterwards is kept. The old key is forgotten and must not be reused.
+    static boolean migrateTrackpadAccelerationDefault(SharedPreferences prefs) {
+        if (prefs.contains(TRACKPAD_ACCELERATION_PREF_STRING)) {
+            // Settings or a later version already wrote the new key: keep it and forget the old name.
+            if (prefs.contains(RETIRED_TRACKPAD_ACCELERATION_PREF_STRING)) {
+                prefs.edit().remove(RETIRED_TRACKPAD_ACCELERATION_PREF_STRING).apply();
+            }
+            return false;
+        }
+        boolean wasOff = prefs.contains(RETIRED_TRACKPAD_ACCELERATION_PREF_STRING)
+                && !prefs.getBoolean(RETIRED_TRACKPAD_ACCELERATION_PREF_STRING, false);
+        prefs.edit()
+                .putBoolean(TRACKPAD_ACCELERATION_PREF_STRING, true)
+                .remove(RETIRED_TRACKPAD_ACCELERATION_PREF_STRING)
+                .apply();
+        return wasOff;
+    }
+
     // Set once Android's low-latency mode was switched off on the decoders of erratum 23, so a later On is kept.
     static final String CODEC_LOW_LATENCY_CORRUPTION_OFF_PREF_STRING = "codec_low_latency_corruption_off";
 
@@ -1526,6 +1552,9 @@ public class PreferenceConfiguration {
         migrateToNativeDefaults(context);
         if (migrateAutoReconnectDefault(prefs)) {
             com.limelight.LimeLog.info("Stream recovery switched to its new default: on");
+        }
+        if (migrateTrackpadAccelerationDefault(prefs)) {
+            com.limelight.LimeLog.info("Trackpad acceleration switched to its new default: on");
         }
         PreferenceConfiguration config = new PreferenceConfiguration();
         String savedResolution = null;
@@ -1777,7 +1806,7 @@ public class PreferenceConfiguration {
         config.touchscreenTrackpad = TouchMode.legacyTrackpad(config.touchMode);
         config.trackpadSpeed = Math.max(25, Math.min(400, prefs.getInt(TRACKPAD_SPEED_PREF_STRING, DEFAULT_TRACKPAD_SPEED)));
         config.localCursorSpeed = Math.max(25, Math.min(400, prefs.getInt(LOCAL_CURSOR_SPEED_PREF_STRING, DEFAULT_TRACKPAD_SPEED)));
-        config.trackpadAcceleration = prefs.getBoolean(TRACKPAD_ACCELERATION_PREF_STRING, false);
+        config.trackpadAcceleration = prefs.getBoolean(TRACKPAD_ACCELERATION_PREF_STRING, DEFAULT_TRACKPAD_ACCELERATION);
         config.trackpadAccelerationCurve = prefs.getString(TRACKPAD_ACCELERATION_CURVE_PREF_STRING,
                 PointerAcceleration.MEDIUM);
         config.trackpadMomentum = prefs.getBoolean(TRACKPAD_MOMENTUM_PREF_STRING, false);

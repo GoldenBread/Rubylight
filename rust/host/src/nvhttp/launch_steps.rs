@@ -522,6 +522,9 @@ pub(super) fn prepare_launch_display(
         ..Default::default()
     };
     butterpollo_core::stream_policy::apply_color(&mut stream, &config);
+    // The display keeps the mode the launch asked for; the host's cap shrinks
+    // only the picture the encoder codes.
+    crate::stream::cap_stream_resolution(&mut stream, &config, &launch.warnings);
     stream.validate()?;
     // A co-op player streams its game window: no display is prepared.
     if launch.nucleus.is_some() {

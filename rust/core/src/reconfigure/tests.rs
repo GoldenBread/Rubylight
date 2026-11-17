@@ -121,7 +121,7 @@ fn a_refused_switch_keeps_the_mode() {
     state.on_request(now, mode(7680, 4320, 60));
     let due = state.take_due(now + Reconfiguration::SETTLE);
     assert_eq!(due, Some(mode(7680, 4320, 60)));
-    state.refused(mode(1920, 1080, 60));
+    state.refused(mode(1920, 1080, 60), mode(1920, 1080, 60));
     assert_eq!(state.current(), mode(1920, 1080, 60));
     // Asking again is a new request, not an identical one.
     assert_eq!(
@@ -138,12 +138,12 @@ fn a_refused_switch_withdraws_a_request_for_the_restored_mode() {
     state.on_request(now, mode(7680, 4320, 60));
     state.take_due(now + Reconfiguration::SETTLE).unwrap();
     state.on_request(now + Reconfiguration::SETTLE, original);
-    state.refused(original);
+    state.refused(original, original);
     assert_eq!(state.take_due(now + Duration::from_secs(2)), None);
 
     let latest = mode(2560, 1440, 60);
     state.on_request(now + Duration::from_secs(3), latest);
-    state.refused(original);
+    state.refused(original, original);
     assert_eq!(state.take_due(now + Duration::from_secs(4)), Some(latest));
 }
 
@@ -199,7 +199,7 @@ fn applying_a_mode_changes_only_size_and_rate() {
     };
     let before = stream.clone();
     assert_eq!(Mode::of(&stream), mode(2400, 1080, 0).with_millihz(59_940));
-    mode(2176, 1812, 120).apply_to(&mut stream);
+    mode(2176, 1812, 120).apply_to(&mut stream, None);
     assert_eq!(Mode::of(&stream), mode(2176, 1812, 120));
     assert_eq!((stream.width, stream.height, stream.fps), (2176, 1812, 120));
     assert_eq!(
@@ -209,13 +209,52 @@ fn applying_a_mode_changes_only_size_and_rate() {
     // A fractional rate keeps its exact millihertz.
     mode(1920, 1080, 0)
         .with_millihz(119_880)
-        .apply_to(&mut stream);
+        .apply_to(&mut stream, None);
     assert_eq!((stream.fps, stream.fps_millihz()), (120, 119_880));
     assert_eq!(
         mode(1920, 1080, 0).with_millihz(119_880).to_string(),
         "1920x1080@119.880"
     );
     assert_eq!(mode(2176, 1812, 120).to_string(), "2176x1812@120");
+}
+
+#[test]
+fn the_host_cap_codes_a_smaller_picture_than_the_client_asks_for() {
+    let mut stream = Negotiated {
+        width: 3840,
+        height: 2160,
+        fps: 60,
+        rate_millihz: 60_000,
+        bitrate_kbps: 50_000,
+        codec: 1,
+        ..Default::default()
+    };
+    // No cap: the display and the coded picture are the request.
+    stream.set_display_size((3840, 2160), None);
+    assert_eq!(stream.display_size(), (3840, 2160));
+    assert!(!stream.capped());
+    // A 1440p cap: the display keeps 4K, the encoder codes 1440p.
+    stream.set_display_size((3840, 2160), Some((2560, 1440)));
+    assert_eq!((stream.width, stream.height), (2560, 1440));
+    assert_eq!(stream.display_size(), (3840, 2160));
+    assert!(stream.capped());
+    let mut reconfigure = Reconfiguration::of(&stream);
+    assert_eq!(reconfigure.current(), mode(3840, 2160, 60));
+    assert_eq!(reconfigure.applied(), mode(2560, 1440, 60));
+    // The client's repeated 4K request is the current mode, not a switch.
+    assert_eq!(
+        reconfigure.on_request(Instant::now(), mode(3840, 2160, 60)),
+        Outcome::Unchanged
+    );
+    // A smaller request is coded as it is.
+    mode(1920, 1080, 60).apply_to(&mut stream, Some((2560, 1440)));
+    assert_eq!((stream.width, stream.height), (1920, 1080));
+    assert_eq!(stream.display_size(), (1920, 1080));
+    // A refused switch goes back to both sizes.
+    reconfigure.applied_now(mode(2560, 1440, 60));
+    reconfigure.refused(mode(3840, 2160, 60), mode(2560, 1440, 60));
+    assert_eq!(reconfigure.current(), mode(3840, 2160, 60));
+    assert_eq!(reconfigure.applied(), mode(2560, 1440, 60));
 }
 
 impl Mode {

@@ -20,6 +20,16 @@ impl App {
             Command::Quit => self.running = false,
             Command::OpenOnStart(game) => self.open_play_choose(game),
             Command::SetSignIn(on) => self.sign_in_set(on),
+            Command::SetGameInfoKeys(keys) => {
+                if keys != self.hosts.game_info_keys() {
+                    // Never the keys themselves in the log.
+                    if let Err(e) = crate::game_info::save_keys(self.store.dir(), &keys) {
+                        eprintln!("nightjar: artwork and game info keys not saved: {}", e.kind());
+                    }
+                    self.hosts.set_game_info_keys(keys);
+                }
+            }
+            Command::WantFacts(games) => self.hosts.want_facts(games),
             Command::Power(offer) => {
                 // One at a time: a second confirm while logind waits on its password is dropped.
                 if self.power_request.is_none() {
@@ -81,15 +91,14 @@ impl App {
             }
             Command::ConfirmReplace => {
                 if let Some(mut plan) = self.pending_replace.take() {
-                    if self.connecting.is_some() || self.network_launch.is_some() {
+                    if self.attempts.is_connecting() || self.network_launch.is_some() || self.probe.is_some() {
                         eprintln!("nightjar: another launch is under way; not launching app {} again", plan.app.id);
                         return;
                     }
                     eprintln!("nightjar: launching app {} again, closing the running app as confirmed", plan.app.id);
                     plan.confirm_replace = true;
                     self.refresh_plan(&mut plan);
-                    self.cancelled = false;
-                    self.connecting = Some(Connecting::start(*plan, self.waker.clone()));
+                    self.attempts.begin(Connecting::start(*plan, self.waker.clone()));
                 }
             }
             Command::Pair(host) => {
@@ -431,9 +440,12 @@ Redacted logs, oldest line first; addresses, PC names, PINs and credentials are 
                 if let Some(cli) = self.cli.as_mut() { cli.cancel(); }
                 self.network_launch = None;
                 self.hdr_wait = None;
-                if let Some(c) = &self.connecting {
-                    c.cancel();
-                    self.cancelled = true;
+                if let Some(probe) = self.probe.take() {
+                    eprintln!("nightjar: the start was cancelled while its decoder checks ran; they finish on their own");
+                    self.ending_probes.push(probe);
+                }
+                if self.attempts.cancel() {
+                    eprintln!("nightjar: the start was cancelled; the connecting screen ends and its worker finishes on its own");
                 }
             }
         }

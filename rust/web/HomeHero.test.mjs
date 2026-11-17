@@ -6,7 +6,7 @@ import { createTestServer } from './test-server.mjs';
 globalThis.location = new URL('http://localhost/');
 globalThis.window = new EventTarget();
 const server = await createTestServer();
-const { heroGame, lastPlayed, liveFigures } = await server.ssrLoadModule('/src/components/overview/now-playing.ts');
+const { heroGame, lastPlayed, liveFigures, readyCopy, pairedCopy } = await server.ssrLoadModule('/src/components/overview/now-playing.ts');
 const { knownDevices, newlyPaired } = await server.ssrLoadModule('/src/components/devices/paired.ts');
 const { applyFix, fixes } = await server.ssrLoadModule('/src/lib/host-fixes.svelte.ts');
 const { problems } = await server.ssrLoadModule('/src/lib/host-readiness.ts');
@@ -33,6 +33,19 @@ test('the hero shows the game that runs, else the one the stores last saw played
   assert.deepEqual(heroGame(apps, { appRunning: true, paused: false, appName: 'Gone', app: { name: 'Gone', id: 9, uuid: null } }),
     { app: null, name: 'Gone', state: 'running' });
   assert.equal(heroGame([], { appRunning: false }), null);
+});
+
+test('a paired Home says where a game starts: the device, and this PC by name', () => {
+  const plain = (text) => text.replace(/\u00a0/g, ' ');
+  assert.equal(plain(readyCopy('Gaming PC')), 'Open Nightjar or Moonlight on your device and choose Gaming PC to play.');
+  // The PC's name stays whole at a line break.
+  assert.match(readyCopy('Gaming PC'), /Gaming\u00a0PC/);
+  assert.equal(plain(readyCopy('  ')), 'Open Nightjar or Moonlight on your device and choose this PC to play.');
+  assert.equal(plain(pairedCopy('Pixel 9', 'Gaming PC')), 'Pixel 9 is paired. Open Nightjar or Moonlight on it and choose Gaming PC to play.');
+  const overview = source('pages/Overview.svelte');
+  // The idle hero and the just-paired one both name the way in, from one helper.
+  assert.match(overview, /if \(paired\) return readyCopy\(metadata\?\.host_name\);/);
+  assert.match(overview, /welcomed \? pairedCopy\(welcomed\.name, metadata\?\.host_name\)/);
 });
 
 test('the live figures are the first running stream’s, measured or a dash', () => {
@@ -85,7 +98,7 @@ test('pairing leads an unpaired Home, the access choice waits for a second devic
   assert.match(overview, /<PairPanel bare onpaired=\{\(client\) => \(welcomed = client\)\} \/>/);
   // Launchers sync by themselves: Home has no Add games.
   assert.match(overview, /<PageHeader title="Home" \/>/);
-  assert.doesNotMatch(overview, /Add games|Choose a game in your streaming app|Open Nightjar or Moonlight on your device/);
+  assert.doesNotMatch(overview, /Add games|Choose a game in your streaming app/);
 });
 
 /** Answers the console's requests in order; each answer is [path, body] or [path, body, status]. */

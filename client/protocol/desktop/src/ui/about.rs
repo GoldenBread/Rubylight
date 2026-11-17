@@ -80,6 +80,9 @@ impl Launcher {
             for (name, licence) in COMPONENTS {
                 credit_row(ui, tr(name), licence);
             }
+            // The services Settings → Advanced can use with the player's own keys.
+            ui.add_space(space::M);
+            ui.label(RichText::new(tr("Artwork from SteamGridDB. Game facts from IGDB.com.")).font(regular(text::CAPTION)).color(ON_SURFACE_VARIANT));
         });
     }
 }

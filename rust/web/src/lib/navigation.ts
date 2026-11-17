@@ -36,6 +36,12 @@ export const advanced: NavItem[] = [
     icon: 'maintenance',
     keywords: 'maintenance quit displays layout virtual windows session remote desktop crash co-op nucleus',
   },
+  {
+    path: '/sessions',
+    label: 'Sessions',
+    icon: 'logs',
+    keywords: 'history past streams stats device game fps bitrate loss duration ended failed',
+  },
   { path: '/logs', label: 'Logs', icon: 'logs', keywords: 'log file' },
   { path: '/stream', label: 'Stream in the browser', icon: 'play', keywords: 'webrtc browser play' },
   { path: '/tokens', label: 'API tokens', icon: 'key', keywords: 'api token automation' },

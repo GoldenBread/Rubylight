@@ -1369,14 +1369,14 @@ fn program_files_folders_are_left_to_system() {
 
 /// The installed host's data folder, read only: a SYSTEM host keeps its
 /// download in `neural` there (made writable by administrators only), and
-/// the folder and every one above it pass its check:
+/// the folder passes its check, which ends there:
 /// `cargo test -p butterpollo neural::tests::the_installed -- --ignored`.
 #[test]
 #[ignore = "reads this PC's installed host"]
 fn the_installed_hosts_data_folder_holds_a_system_cache() {
     let data = butterpollo_core::paths::data_root();
     assert!(data.is_dir(), "{} is not installed", data.display());
-    super::trusted_root(&data, true).unwrap();
+    super::trusted_root(&data, &data, true).unwrap();
 }
 
 /// A folder above a SYSTEM host's cache passes when users may only add to
@@ -2496,25 +2496,26 @@ fn the_gpu_check_is_asked_again_once_the_streaming_gpu_is_set_otherwise() {
 }
 
 /// A SYSTEM host asks of the cache itself who may change it, and of each
-/// folder above it who may move it or what it holds.
+/// folder up to the host's data root who may move it or what it holds;
+/// above the data root only the link check applies.
 #[test]
 fn only_the_cache_itself_is_held_whole() {
     let temp = tempdir();
-    let root = temp.path().join("data/neural");
+    let data_root = temp.path().join("data");
+    let root = data_root.join("neural");
     std::fs::create_dir_all(&root).unwrap();
     let asked = Mutex::new(Vec::new());
-    super::trusted_root_with(&root, true, |path, whole| {
+    super::trusted_root_with(&root, &data_root, true, |path, whole| {
         asked.lock().unwrap().push((path.to_path_buf(), whole));
         Ok(())
     })
     .unwrap();
-    let asked = asked.into_inner().unwrap();
-    assert_eq!(asked.len(), root.ancestors().count());
-    for (path, whole) in asked {
-        assert_eq!(whole, path == root, "{}", path.display());
-    }
+    assert_eq!(
+        asked.into_inner().unwrap(),
+        [(root.clone(), true), (data_root.clone(), false)]
+    );
     // An ordinary host asks nothing of the kind.
-    super::trusted_root_with(&root, false, |_, _| panic!("asked")).unwrap();
+    super::trusted_root_with(&root, &data_root, false, |_, _| panic!("asked")).unwrap();
 }
 
 /// A record that can't be read is never taken for empty and written over:
@@ -2566,18 +2567,28 @@ fn a_cache_is_used_only_as_this_host_keeps_it() {
     let temp = tempdir();
     let root = temp.path().join("neural");
     std::fs::create_dir(&root).unwrap();
-    trusted_root(&root, false).unwrap();
+    trusted_root(&root, temp.path(), false).unwrap();
     // This test's folders are its user's to change.
-    let error = format!("{:#}", trusted_root(&root, true).unwrap_err());
+    let error = format!("{:#}", trusted_root(&root, temp.path(), true).unwrap_err());
     assert!(error.contains("nobody but administrators"), "{error}");
     let elsewhere = temp.path().join("elsewhere");
     std::fs::create_dir_all(elsewhere.join("neural")).unwrap();
     let linked = temp.path().join("linked");
     junction(&linked, &elsewhere);
     for root in [linked.clone(), linked.join("neural")] {
-        let error = format!("{:#}", trusted_root(&root, false).unwrap_err());
+        let error = format!("{:#}", trusted_root(&root, temp.path(), false).unwrap_err());
         assert!(error.contains("is a link"), "{error}");
     }
+    // A link above the data root is still no way to the cache.
+    std::fs::create_dir_all(elsewhere.join("data/neural")).unwrap();
+    let above = temp.path().join("above");
+    junction(&above, &elsewhere);
+    let error = format!(
+        "{:#}",
+        trusted_root(&above.join("data/neural"), &above.join("data"), false).unwrap_err()
+    );
+    assert!(error.contains("is a link"), "{error}");
+    std::fs::remove_dir(&above).unwrap();
     std::fs::remove_dir(&linked).unwrap();
 
     // A launch takes the cached release without hashing it: the copy checks

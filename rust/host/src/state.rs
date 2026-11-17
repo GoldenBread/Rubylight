@@ -422,6 +422,8 @@ pub struct Host {
     pub usb: crate::usb_forward::UsbForwarding,
     /// The session state machine and its journal.
     pub session: Mutex<crate::session_control::Control>,
+    /// Ended streams for the console's Sessions page, saved in the profile directory.
+    pub session_history: crate::session_history::History,
     pub confirmations: Mutex<butterpollo_core::remote::Confirmations>,
     pub app_audio: Mutex<Option<Arc<butterpollo_windows::audio_route::Route>>>,
     /// Each client's game display, kept between its streams while the app runs.
@@ -843,6 +845,7 @@ impl Host {
                 .unwrap_or(""),
         );
         let session = crate::session_control::Control::new(&directory);
+        let session_history = crate::session_history::History::load(&directory);
         let maintain_wake = Arc::new(tokio::sync::Notify::new());
         // A launch or a stream that starts ends the maintenance loop's idle wait.
         let sessions = Sessions::default().with_waker({
@@ -915,6 +918,7 @@ impl Host {
             file_transfers: Default::default(),
             usb: Default::default(),
             session: Mutex::new(session),
+            session_history,
             confirmations: Mutex::new(Default::default()),
             app_audio: Mutex::new(None),
             app_display: Mutex::new(BTreeMap::new()),

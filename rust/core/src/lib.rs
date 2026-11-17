@@ -124,6 +124,7 @@ pub mod remote;
 pub mod roaming;
 pub mod rtsp;
 pub mod session;
+pub mod session_history;
 pub mod session_state;
 pub mod settings_backup;
 pub mod stall_watch;

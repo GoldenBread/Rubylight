@@ -40,6 +40,10 @@ pub(super) enum Backend {
     Vhf(Option<HANDLE>),
     /// ViGEmBus, only when `gamepad = vigem_x360` or `vigem_ds4` asks for it.
     Vigem(vigem::Client),
+    /// Tests: a driver whose answers are scripted, for the paths that need a
+    /// real driver's failures and recovery.
+    #[cfg(test)]
+    Fake(fake::Driver),
 }
 impl Backend {
     fn vigem(client: Result<vigem::Client>, profile: u16) -> Result<(Self, u32)> {
@@ -92,6 +96,8 @@ impl Backend {
         match self {
             Self::Vhf(_) => "VHF",
             Self::Vigem(_) => "ViGEmBus",
+            #[cfg(test)]
+            Self::Fake(_) => "fake",
         }
     }
     fn ioctl(
@@ -123,6 +129,10 @@ impl Backend {
         }
     }
     pub(super) fn plug(&mut self, slot: u32, profile: u16) -> Result<()> {
+        #[cfg(test)]
+        if let Self::Fake(driver) = self {
+            return driver.plug(slot);
+        }
         if let Self::Vigem(client) = self {
             return client.plug(slot, profile);
         }
@@ -133,6 +143,10 @@ impl Backend {
         Ok(())
     }
     pub(super) fn unplug(&mut self, slot: u32) -> Result<()> {
+        #[cfg(test)]
+        if let Self::Fake(driver) = self {
+            return driver.unplug(slot);
+        }
         if let Self::Vigem(client) = self {
             return client.unplug(slot);
         }
@@ -147,6 +161,10 @@ impl Backend {
         right: u8,
         sticks: &[i16; 4],
     ) -> Result<()> {
+        #[cfg(test)]
+        if let Self::Fake(driver) = self {
+            return driver.submit(slot);
+        }
         if let Self::Vigem(client) = self {
             return client.submit(slot, buttons, left, right, sticks);
         }
@@ -160,6 +178,10 @@ impl Backend {
         Ok(())
     }
     pub(super) fn motion(&mut self, slot: u32, kind: u8, xyz: &[f32; 3]) -> Result<()> {
+        #[cfg(test)]
+        if let Self::Fake(_) = self {
+            return Ok(());
+        }
         if let Self::Vigem(client) = self {
             return client.motion(slot, kind, xyz);
         }
@@ -174,6 +196,10 @@ impl Backend {
         Ok(())
     }
     pub(super) fn touch(&mut self, update: &GamepadTouchRequest) -> Result<()> {
+        #[cfg(test)]
+        if let Self::Fake(_) = self {
+            return Ok(());
+        }
         if let Self::Vigem(client) = self {
             return client.touch(update.global, update.slot, update.event, update.position);
         }
@@ -181,6 +207,10 @@ impl Backend {
         Ok(())
     }
     pub(super) fn battery(&mut self, slot: u32, state: u8, percent: u8) -> Result<()> {
+        #[cfg(test)]
+        if let Self::Fake(_) = self {
+            return Ok(());
+        }
         if let Self::Vigem(client) = self {
             return client.battery(slot, state, percent);
         }
@@ -198,10 +228,18 @@ impl Backend {
         attributes: &butterpollo_core::steam_pad::SteamAttributes,
     ) -> Result<()> {
         use butterpollo_core::steam_pad::{ATTRIBUTES_IOCTL, attributes_request};
+        #[cfg(test)]
+        if let Self::Fake(_) = self {
+            return Ok(());
+        }
         self.ioctl(ATTRIBUTES_IOCTL, &attributes_request(slot, attributes), 0)?;
         Ok(())
     }
     pub(super) fn feedback(&mut self, slot: u32) -> Result<Option<(u16, Vec<u8>)>> {
+        #[cfg(test)]
+        if let Self::Fake(driver) = self {
+            return driver.feedback(slot);
+        }
         if let Self::Vigem(client) = self {
             return client.feedback(slot);
         }
@@ -216,6 +254,8 @@ impl Backend {
         match self {
             Self::Vigem(client) => client.wait_handle(slot),
             Self::Vhf(_) => None,
+            #[cfg(test)]
+            Self::Fake(_) => None,
         }
     }
     /// Whether the pads are the UMDF VHF driver's, which WUDFHost runs.
@@ -226,6 +266,8 @@ impl Backend {
         match self {
             Self::Vigem(client) => client.feedback_ready(slot),
             Self::Vhf(_) => false,
+            #[cfg(test)]
+            Self::Fake(_) => false,
         }
     }
     /// Keeps a ViGEmBus DualShock 4's report flowing; VHF pads need nothing.
@@ -233,6 +275,8 @@ impl Backend {
         match self {
             Self::Vigem(client) => client.refresh(),
             Self::Vhf(_) => Ok(()),
+            #[cfg(test)]
+            Self::Fake(_) => Ok(()),
         }
     }
     /// The slots whose client should be asked for motion again.
@@ -240,6 +284,8 @@ impl Backend {
         match self {
             Self::Vigem(client) => client.motion_requests(),
             Self::Vhf(_) => Vec::new(),
+            #[cfg(test)]
+            Self::Fake(_) => Vec::new(),
         }
     }
 }
@@ -269,6 +315,51 @@ impl Drop for Backend {
             if let Self::Vhf(Some(handle)) = self {
                 let _ = CloseHandle(*handle);
             }
+        }
+    }
+}
+
+/// A driver whose answers a test scripts: the post-sleep recovery needs a
+/// request to fail and then succeed, without a Windows device.
+#[cfg(test)]
+pub(crate) mod fake {
+    use super::*;
+    use std::collections::{BTreeMap, VecDeque};
+
+    #[derive(Default)]
+    pub(crate) struct Driver {
+        /// Every request, in the order the pads made it: `plug 2`, `submit 2`,
+        /// `unplug 0`, `feedback 2`.
+        pub(crate) calls: Vec<String>,
+        pub(crate) plugs: VecDeque<Result<()>>,
+        pub(crate) unplugs: VecDeque<Result<()>>,
+        pub(crate) submits: VecDeque<Result<()>>,
+        /// What each slot's feedback poll answers; an empty queue is no report.
+        pub(crate) feedback: BTreeMap<u32, FeedbackQueue>,
+    }
+    pub(crate) type FeedbackQueue = VecDeque<Result<Option<(u16, Vec<u8>)>>>;
+    impl Driver {
+        fn answer(queue: &mut VecDeque<Result<()>>) -> Result<()> {
+            queue.pop_front().unwrap_or(Ok(()))
+        }
+        pub(super) fn plug(&mut self, slot: u32) -> Result<()> {
+            self.calls.push(format!("plug {slot}"));
+            Self::answer(&mut self.plugs)
+        }
+        pub(super) fn unplug(&mut self, slot: u32) -> Result<()> {
+            self.calls.push(format!("unplug {slot}"));
+            Self::answer(&mut self.unplugs)
+        }
+        pub(super) fn submit(&mut self, slot: u32) -> Result<()> {
+            self.calls.push(format!("submit {slot}"));
+            Self::answer(&mut self.submits)
+        }
+        pub(super) fn feedback(&mut self, slot: u32) -> Result<Option<(u16, Vec<u8>)>> {
+            self.calls.push(format!("feedback {slot}"));
+            self.feedback
+                .get_mut(&slot)
+                .and_then(VecDeque::pop_front)
+                .unwrap_or(Ok(None))
         }
     }
 }

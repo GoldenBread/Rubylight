@@ -30,6 +30,25 @@ export function heroGame(apps: App[] | null, status: SessionStatus | null): Hero
   return last ? { app: last, name: last.name, state: 'last' } : null;
 }
 
+/**
+ * What Home tells a player whose device is paired and no stream runs: where a
+ * game starts. The device holds the game list, so the console can only name
+ * the way in.
+ */
+export function readyCopy(hostName: string | undefined): string {
+  return `Open Nightjar or Moonlight on your device and choose ${listedAs(hostName)} to play.`;
+}
+
+/** The same for the device that paired just now, under the first-run hero. */
+export function pairedCopy(deviceName: string, hostName: string | undefined): string {
+  return `${deviceName} is paired. Open Nightjar or Moonlight on it and choose ${listedAs(hostName)} to play.`;
+}
+
+/** The PC's name as the client lists it: never broken between its own words. */
+function listedAs(hostName: string | undefined): string {
+  return (hostName?.trim() || 'this PC').replace(/ /g, '\u00A0');
+}
+
 /** The live figures of the first running stream, for the hero; null when none runs. */
 export function liveFigures(streams: StreamSession[]): {
   device: string;

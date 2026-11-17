@@ -1,0 +1,3 @@
+# Source frame-rate warning
+
+- **The console says when the game or desktop holds the stream back.** When the source stays below 97% of what the stream can show for 15 seconds it shows about how many frames per second it is rendering: on a game stream it suggests lowering the game's settings or the stream's frame rate to match, and on a desktop stream it only says how often the screen is updating. What the stream can show is its own frame rate, or the display's refresh rate when that is lower, so a 60 Hz monitor streamed at 120 fps is not reported. A short dip, a level change or a still picture does not trigger it, a still screen clears a standing warning after 30 seconds, and the host log says when the source keeps up again.

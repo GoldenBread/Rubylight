@@ -182,6 +182,10 @@ pub struct Policy {
     /// rather than the RTSS limiter mode setting: [`Policy::for_gpu`] makes it Reflex on NVIDIA.
     pub automatic_sync: bool,
     pub capture: String,
+    /// Whether the capture republishes its last picture every stream period
+    /// (`capture = wgcc`, Vibepollo's constant-rate WGC variant): WGC, plus a
+    /// repeat when nothing was composed for the slot.
+    pub constant_rate: bool,
 }
 impl Policy {
     pub fn resolve(
@@ -212,24 +216,26 @@ impl Policy {
                 _ => 0,
             }
         };
-        let requested_capture = match config.get("capture", "").trim().to_ascii_lowercase() {
-            // Vibepollo's constant-rate WGC variant.
-            wgc if wgc == "wgcc" => "wgc".to_owned(),
-            // `idd-push`: frames pushed by Rubylight's own virtual display driver.
-            // `amd`: AMD Direct Capture, the Radeon driver's presented surface.
-            known
-                if matches!(
-                    known.as_str(),
-                    "" | "auto" | "wgc" | "ddx" | "dxgi" | "idd-push" | "amd"
-                ) =>
-            {
+        let (requested_capture, constant_rate) =
+            match config.get("capture", "").trim().to_ascii_lowercase() {
+                // Vibepollo's constant-rate WGC variant: WGC, and a repeat of
+                // the last picture each stream period.
+                wgc if wgc == "wgcc" => ("wgc".to_owned(), true),
+                // `idd-push`: frames pushed by Rubylight's own virtual display driver.
+                // `amd`: AMD Direct Capture, the Radeon driver's presented surface.
                 known
-            }
-            other => {
-                crate::config::invalid("capture", &other);
-                String::new()
-            }
-        };
+                    if matches!(
+                        known.as_str(),
+                        "" | "auto" | "wgc" | "ddx" | "dxgi" | "idd-push" | "amd"
+                    ) =>
+                {
+                    (known, false)
+                }
+                other => {
+                    crate::config::invalid("capture", &other);
+                    (String::new(), false)
+                }
+            };
         let capture = if requested_capture.is_empty() || requested_capture == "auto" {
             // Resolve Auto before opening capture so the normal WGC path,
             // including the service's user helper and DDX fallback, is used.
@@ -248,6 +254,7 @@ impl Policy {
             sync_limiter: sync,
             automatic_sync,
             capture,
+            constant_rate,
         })
     }
     /// The RTSS mode for the GPU the stream renders and encodes on (`nvidia`: an NVIDIA GPU).

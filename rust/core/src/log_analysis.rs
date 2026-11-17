@@ -458,6 +458,17 @@ pub fn analyze(text: &str) -> Analysis {
     analyze_with(RULES, text)
 }
 
+/// The category of the first rule `text` matches, without a log line: the
+/// session history names a failed stream's cause this way, and the console can
+/// point at the same troubleshooting section. `None` when the host's words
+/// match no rule.
+pub fn classify(text: &str) -> Option<Category> {
+    RULES
+        .iter()
+        .find(|rule| matches(rule, text))
+        .map(|rule| rule.category)
+}
+
 pub fn analyze_with(rules: &[Rule], text: &str) -> Analysis {
     let mut analysis = Analysis::default();
     let mut found: Vec<Option<Finding>> = (0..rules.len()).map(|_| None).collect();

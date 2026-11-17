@@ -318,7 +318,7 @@ public class SettingsPanesTest {
             assertNotNull(result);
             result.getOnPreferenceClickListener().onPreferenceClick(result);
             settle(screen);
-            assertEquals("video", shownSection(screen));
+            assertEquals("simple", shownSection(screen));
             assertEquals("", view.getQuery().toString());
         } finally { controller.pause().stop().destroy(); }
     }
@@ -397,16 +397,16 @@ public class SettingsPanesTest {
     }
 
     @Test @Config(qualifiers = WIDE)
-    public void theRailOpensAtItsTopWithPresetsFirstAlsoWhenRecreatedWide() {
+    public void theRailOpensAtItsTopWithRecommendedFirstAlsoWhenRecreatedWide() {
         ActivityController<StreamSettings> first = open();
         ListView rail = sections(first.get());
-        assertEquals("stream_presets", ((Preference) rail.getItemAtPosition(0)).getKey());
+        assertEquals("simple", ((Preference) rail.getItemAtPosition(0)).getKey());
         assertEquals(0, rail.getFirstVisiblePosition());
         assertEquals("the first row stands whole", rail.getListPaddingTop(), rail.getChildAt(0).getTop());
         ActivityController<StreamSettings> second = restore(WIDE, save(first));
         try {
             ListView list = sections(second.get());
-            assertEquals("stream_presets", ((Preference) list.getItemAtPosition(0)).getKey());
+            assertEquals("simple", ((Preference) list.getItemAtPosition(0)).getKey());
             assertEquals("video", shownSection(second.get()));
         } finally { second.pause().stop().destroy(); }
     }
@@ -522,7 +522,7 @@ public class SettingsPanesTest {
             result.getOnPreferenceClickListener().onPreferenceClick(result);
             settle(screen);
             assertEquals("", view.getQuery().toString());
-            assertEquals("video", shownSection(screen));
+            assertEquals("simple", shownSection(screen));
             screen.getOnBackPressedDispatcher().onBackPressed();
             settle(screen);
             assertEquals("the query is back", "bitrate", view.getQuery().toString());

@@ -72,6 +72,13 @@ impl SessionThread<'_> {
         // A failed stream must not count as a healthy fast-rate probe.
         drop(keyframe_loss_memory);
         h.sessions.lock().unwrap().begin_teardown(&s);
+        // For the Sessions page: one entry per stream, with why it ended.
+        let reason = if s.failed() {
+            butterpollo_core::session_history::REASON_FAILED
+        } else {
+            butterpollo_core::session_history::REASON_ENDED
+        };
+        h.record_session(&s, reason);
         h.session_webhook("session.ended", &s);
         for (audio, peer) in m.peers.lock().unwrap().remove(&s.launch.id) {
             if audio { &m.audio } else { &m.video }.forget(peer);

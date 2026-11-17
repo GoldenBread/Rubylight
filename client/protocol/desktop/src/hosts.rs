@@ -25,6 +25,7 @@ use crate::config::{HostRecord, Store};
 
 mod covers;
 mod events;
+mod game_info;
 mod native;
 mod pairing;
 mod power;
@@ -673,6 +674,8 @@ pub enum Event {
         id: u64,
         result: Result<(), String>,
     },
+    /// A game's artwork and facts record, looked up or read from disk ([`crate::game_info`]).
+    GameInfo(Box<nightjar_policy::game_info::cache::Record>),
 }
 
 pub struct Hosts {
@@ -709,6 +712,18 @@ pub struct Hosts {
     /// Each PC's workers, one per [`Lane`]: a thread that lives as long as the PC is listed runs
     /// its lane's requests in turn, instead of a new thread for each. Dropping the sender ends it.
     pc_workers: HashMap<(u64, Lane), Sender<PcJob>>,
+    /// Artwork and facts from SteamGridDB and IGDB with the player's keys; None in tests and the
+    /// demo, which stay offline.
+    game_info: Option<crate::game_info::Shared>,
+    /// The facts known for each game, by its lookup key ([`crate::game_info::entry_key`]).
+    facts: HashMap<String, nightjar_policy::game_info::cache::Facts>,
+    /// The games whose facts were asked for since the keys last changed.
+    facts_asked: std::collections::HashSet<String>,
+    /// The worker that looks facts up, one game at a time.
+    facts_worker: Option<Sender<nightjar_policy::game_info::job::Game>>,
+    /// The worker that fetches SteamGridDB covers for the gaps the cover workers found, so a
+    /// lookup waiting on the services never holds a cover worker.
+    cover_worker: Option<Sender<game_info::CoverJob>>,
     /// The demo's PCs while a first-run page shows a shorter list.
     #[cfg(feature = "demo-library")]
     pub(crate) demo_shelf: Vec<Host>,
@@ -856,6 +871,11 @@ impl Hosts {
             _mdns: None,
             discovering: false,
             pc_workers: HashMap::new(),
+            game_info: None,
+            facts: HashMap::new(),
+            facts_asked: std::collections::HashSet::new(),
+            facts_worker: None,
+            cover_worker: None,
             #[cfg(feature = "demo-library")]
             demo_shelf: Vec::new(),
         };

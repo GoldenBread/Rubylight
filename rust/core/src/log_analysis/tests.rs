@@ -370,6 +370,17 @@ fn a_line_counts_for_its_first_rule_only() {
 }
 
 #[test]
+fn a_stream_failure_is_classified_without_its_log_line() {
+    // What `Session::failure()` holds after a GPU reset ends the stream.
+    assert_eq!(
+        classify("DXGI_ERROR_DEVICE_REMOVED (0x887A0005): the GPU did not recover"),
+        Some(Category::Driver)
+    );
+    // A failure no rule explains stays uncategorized.
+    assert_eq!(classify("the stream could not start: the app exited"), None);
+}
+
+#[test]
 fn long_lines_are_quoted_shortened_on_a_character_boundary() {
     let line = format!("{T}  WARN x: UDP send failed {}", "ü".repeat(1000));
     let finding = &analyze(&line).findings[0];

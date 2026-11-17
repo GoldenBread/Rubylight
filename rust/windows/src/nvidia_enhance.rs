@@ -31,11 +31,55 @@ const SEARCH: u32 = 0x0000_0100 | 0x0000_0800;
 
 /// The installed component: its folder, the adapter's SHA-256 and NGX's data
 /// folder.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct Component {
     pub folder: PathBuf,
     pub adapter_sha256: String,
     pub data: PathBuf,
+    /// The folders the component is checked and loaded in, held open so that none
+    /// of them can be renamed or deleted while it is the installed one
+    /// ([`Hold`]). A hold is not part of what a component is.
+    pub hold: Hold,
+}
+
+/// Two components are the same when they name the same files: the holds are
+/// what keeps those files there, not what the component is.
+impl PartialEq for Component {
+    fn eq(&self, other: &Self) -> bool {
+        self.folder == other.folder
+            && self.adapter_sha256 == other.adapter_sha256
+            && self.data == other.data
+    }
+}
+impl Eq for Component {}
+
+/// Folders held open without sharing deletion. Windows refuses to rename or
+/// delete a folder whose open handle does not share deletion, so a folder held
+/// this way stays at its path while the hold lives; holding every folder from
+/// the component's up to the host's data root keeps the component's whole path
+/// fixed.
+#[derive(Clone, Debug, Default)]
+pub struct Hold {
+    /// Held for as long as this lives, never read: each handle keeps its
+    /// folder from being renamed or deleted while it is open.
+    _folders: std::sync::Arc<Vec<std::fs::File>>,
+}
+
+impl Hold {
+    /// `folders`, each held open: from the component's folder up to the host's
+    /// data root, since renaming any of them would leave the component's path
+    /// naming something else. Never follows a link.
+    pub fn new<'a>(
+        folders: impl IntoIterator<Item = &'a std::path::Path>,
+    ) -> std::io::Result<Self> {
+        let held = folders
+            .into_iter()
+            .map(|folder| crate::process::open_unfollowed(folder, true))
+            .collect::<std::io::Result<Vec<_>>>()?;
+        Ok(Self {
+            _folders: std::sync::Arc::new(held),
+        })
+    }
 }
 
 static COMPONENT: RwLock<Option<Component>> = RwLock::new(None);
@@ -75,9 +119,11 @@ pub(crate) fn load() -> Result<libloading::Library> {
         .chain(Some(0))
         .collect();
     // SAFETY: The file was just checked against the SHA-256 recorded when it
-    // was installed into a folder only administrators may change; its ABI
-    // function takes nothing and returns a u32 and is checked before any other
-    // symbol is used, and ABI 3's configure takes a NUL-terminated wide path.
+    // was installed into a folder only administrators may change, and the
+    // component's folders are held open ([`Hold`]), so the path still names the
+    // file that was checked; its ABI function takes nothing and returns a u32
+    // and is checked before any other symbol is used, and ABI 3's configure
+    // takes a NUL-terminated wide path.
     unsafe {
         let library: libloading::Library =
             libloading::os::windows::Library::load_with_flags(&path, SEARCH)

@@ -29,6 +29,68 @@ fn a_kept_resolution_is_width_by_height() {
 }
 
 #[test]
+fn the_stream_resolution_cap_is_native_or_a_size_the_display_could_have() {
+    use super::parse_max_stream_resolution;
+    // Today's behaviour, and what an untouched or reset value reads as.
+    for native in ["native", "NATIVE", " Native ", "", "\"native\""] {
+        assert_eq!(
+            parse_max_stream_resolution(native).unwrap(),
+            None,
+            "{native}"
+        );
+    }
+    assert_eq!(
+        parse_max_stream_resolution("2560x1440").unwrap(),
+        Some((2560, 1440))
+    );
+    assert_eq!(
+        parse_max_stream_resolution(" 3840X2160 ").unwrap(),
+        Some((3840, 2160))
+    );
+    for refused in [
+        "1440p",
+        "nativex",
+        "2560",
+        "2560x",
+        "x1440",
+        "319x1440",
+        "2560x199",
+        "7681x2160",
+        "2560x4321",
+        "0x0",
+    ] {
+        assert!(parse_max_stream_resolution(refused).is_err(), "{refused}");
+    }
+}
+
+#[test]
+fn a_capped_stream_keeps_its_shape_inside_the_cap_and_never_grows() {
+    use super::capped_encode_size;
+    // No cap, or one the request fits in, codes exactly the request.
+    assert_eq!(capped_encode_size((3840, 2160), None), (3840, 2160));
+    assert_eq!(
+        capped_encode_size((1920, 1080), Some((2560, 1440))),
+        (1920, 1080)
+    );
+    // The same shape fills the cap exactly.
+    assert_eq!(
+        capped_encode_size((3840, 2160), Some((2560, 1440))),
+        (2560, 1440)
+    );
+    // Another shape is fitted, with black bars added by the converter.
+    assert_eq!(
+        capped_encode_size((3440, 1440), Some((2560, 1440))),
+        (2560, 1072)
+    );
+    assert_eq!(
+        capped_encode_size((1920, 1200), Some((2560, 1080))),
+        (1728, 1080)
+    );
+    // An extreme shape keeps a picture the encoder can code.
+    assert_eq!(capped_encode_size((16384, 64), Some((320, 200))), (320, 64));
+}
+
+#[test]
 fn rotations_are_displayconfig_codes_one_to_four() {
     use super::{rotation_code, rotation_degrees};
     for (code, degrees) in [(1, 0), (2, 90), (3, 180), (4, 270)] {

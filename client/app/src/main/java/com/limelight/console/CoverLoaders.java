@@ -2,6 +2,10 @@ package com.limelight.console;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.DisplayMetrics;
 import android.widget.ImageView;
 import android.widget.TextView;
 
@@ -45,6 +49,8 @@ final class CoverLoaders {
         if (source != null) {
             app.setAppUuid(source.appUuid);
             app.setStableId(source.stableId());
+            app.setGameId(source.gameId);
+            app.setStoreEntry(source.storeSource, source.storeId);
             app.setArtVersion(source.coverVersion == null ? "" : source.coverVersion);
         }
         return app;
@@ -65,9 +71,43 @@ final class CoverLoaders {
             text.setText(app.getAppName());
             text.setVisibility(android.view.View.VISIBLE);
             image.setImageDrawable(null);
+            bindInfoCover(app, image, text);
             return;
         }
         loader(host).populateImageView(app, image, text);
+    }
+
+    /**
+     * A game the host says has no cover (or no host at all): with a SteamGridDB key set, its cover from the lookup
+     * replaces the title once the file is there. Off the main thread; nothing shows when there is none.
+     */
+    private void bindInfoCover(NvApp app, ImageView image, TextView text) {
+        if (!GameInfo.coverWanted(context)) return;
+        String tag = "game-info:" + app.getAssetCacheKey();
+        image.setTag(tag);
+        java.util.function.Consumer<java.io.File> show = file -> {
+            if (file == null) return;
+            DisplayMetrics metrics = context.getResources().getDisplayMetrics();
+            int wanted = Math.max(1, Math.round(coverWidthDp * metrics.density));
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inSampleSize = Math.max(1, bounds.outWidth / (wanted * 2));
+            Bitmap bitmap = BitmapFactory.decodeFile(file.getAbsolutePath(), options);
+            if (bitmap == null) return;
+            new Handler(Looper.getMainLooper()).post(() -> {
+                if (!tag.equals(image.getTag())) return;
+                if (image instanceof com.limelight.ui.PosterImageView) ((com.limelight.ui.PosterImageView) image).setArt(bitmap);
+                else image.setImageBitmap(bitmap);
+                image.setVisibility(android.view.View.VISIBLE);
+                text.setVisibility(android.view.View.GONE);
+                if (artListener != null) artListener.accept(app);
+            });
+        };
+        // A cover kept on disk comes without a request; otherwise the lookup runs on the shared worker. Both off the
+        // main thread, on bounded executors, and views asking for one game share one lookup.
+        GameInfo.get(context).cover(GameInfo.Game.of(app), show);
     }
 
     /** The cover if it is in memory now (never starts a load), else null. */

@@ -118,6 +118,105 @@ fn composite_enumeration_exposes_native_usb_features_and_fixed_audio() {
 }
 
 #[test]
+fn the_haptics_gain_scales_the_games_actuators_and_leaves_rumble_and_speaker_alone() {
+    // The game's four channels: two speaker, two actuators, as S16LE.
+    let mut data = Vec::new();
+    for n in 0..48i16 {
+        for sample in [0x1111, 0x2222, 3000, -7000i16] {
+            data.extend_from_slice(&sample.wrapping_add(n).to_le_bytes());
+        }
+    }
+    let frames = |gain: u16| {
+        let mut pad = DualSense::new(0, 2);
+        pad.capabilities(haptics::CAPABILITY);
+        pad.set_haptics_gain(gain);
+        // The client's audio status: speaker playback and headset on.
+        pad.audio(controller_audio::CONTROL, &[1, 1, 2, 0, 7, 0, 0, 0]);
+        let start = Instant::now();
+        for _ in 0..5 {
+            pad.iso(1, false, &data, data.len()).unwrap();
+        }
+        let pcm: Vec<_> = pad.pcm.drain(start).collect();
+        let speaker: Vec<_> = pad.speaker.drain(start).collect();
+        (pcm[0].samples.clone(), speaker[0].samples.clone())
+    };
+    let (plain, plain_speaker) = frames(HAPTICS_GAIN_DEFAULT);
+    // 100 % is the game's own samples, byte for byte, as before the setting.
+    let expected: Vec<_> = (0..5)
+        .flat_map(|_| {
+            (0..48i16).flat_map(|n| [(3000 + n).to_le_bytes(), (-7000 + n).to_le_bytes()].concat())
+        })
+        .collect();
+    assert_eq!(plain, expected);
+    let (louder, louder_speaker) = frames(200);
+    let expected_louder: Vec<_> = (0..5)
+        .flat_map(|_| {
+            (0..48i16).flat_map(|n| {
+                [(6000 + 2 * n).to_le_bytes(), (-14000 + 2 * n).to_le_bytes()].concat()
+            })
+        })
+        .collect();
+    assert_eq!(louder, expected_louder);
+    // Speaker sound and ordinary feedback are not the game's haptics gain.
+    assert_eq!(plain_speaker, louder_speaker);
+    let (silent, _) = frames(0);
+    assert!(silent.iter().all(|byte| *byte == 0));
+    // Full-scale samples clip instead of wrapping.
+    let loud = [0xff, 0x7f, 0x00, 0x80, 0xff, 0x7f, 0x00, 0x80].repeat(48);
+    let mut pad = DualSense::new(0, 2);
+    pad.capabilities(haptics::CAPABILITY);
+    pad.set_haptics_gain(400);
+    let start = Instant::now();
+    for _ in 0..5 {
+        pad.iso(1, false, &loud, loud.len()).unwrap();
+    }
+    let clipped: Vec<_> = pad.pcm.drain(start).collect();
+    assert!(
+        clipped[0]
+            .samples
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|frame| frame[..2] == [0xff, 0x7f] && frame[2..] == [0x00, 0x80])
+    );
+    // Rumble and trigger feedback pass through the gain untouched.
+    let mut report = [0; 48];
+    report[0] = 2;
+    report[1] = 0x09;
+    report[3] = 120;
+    report[4] = 240;
+    report[22] = 1;
+    pad.output(3, &report);
+    let feedback = pad.take_feedback();
+    assert!(
+        feedback
+            .iter()
+            .any(|(kind, p)| *kind == 0x010b && p == &[0, 240, 0, 120])
+    );
+    assert!(
+        feedback
+            .iter()
+            .any(|(kind, p)| *kind == 0x5503 && p[1] == 1)
+    );
+}
+
+#[test]
+fn the_haptics_gain_accepts_zero_to_four_and_reports_others() {
+    for (value, percent) in [("1", 100), ("1.0", 100), ("0", 0), ("0.35", 35), ("4", 400)] {
+        assert_eq!(parse_haptics_gain(value), Some(percent), "{value}");
+    }
+    for refused in ["5", "-1", "big", "", "1x", "4.01"] {
+        assert_eq!(parse_haptics_gain(refused), None, "{refused}");
+        assert!(check_haptics_gain(refused).is_err(), "{refused}");
+    }
+    // A hand-edited value the console would refuse leaves the game's strength.
+    let config = crate::config::Config::parse("dualsense_haptics_gain = 9\n").unwrap();
+    assert_eq!(haptics_gain(&config), HAPTICS_GAIN_DEFAULT);
+    let config = crate::config::Config::parse("dualsense_haptics_gain = 2.5\n").unwrap();
+    assert_eq!(haptics_gain(&config), 250);
+}
+
+#[test]
 fn usb_audio_preserves_actuator_samples_only_and_obeys_capability_and_altsetting() {
     let mut pad = DualSense::new(0, 2);
     let data: Vec<_> = (0..48)

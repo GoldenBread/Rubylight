@@ -18,7 +18,7 @@
   import RunningApp from '../components/overview/RunningApp.svelte';
   import Sparkline from '../components/overview/Sparkline.svelte';
   import StreamCard from '../components/overview/StreamCard.svelte';
-  import { heroGame, liveFigures } from '../components/overview/now-playing';
+  import { heroGame, liveFigures, pairedCopy, readyCopy } from '../components/overview/now-playing';
   import {
     api, type App, type Client, type CoopSessions, type PowerStatus, type SessionGuestsStatus, type SessionStatus,
     type StreamSession,
@@ -141,6 +141,8 @@
     if (lead === 'live') return figures?.more ? `And to ${devices(figures.more)} more.` : '';
     if (heroProblem) return heroProblem.text;
     if (game && game.state !== 'last') return `${game.name} is ${game.state === 'paused' ? 'paused' : 'running'} on this PC.`;
+    // Paired and idle: the next step is on the device, so name it.
+    if (paired) return readyCopy(metadata?.host_name);
     return '';
   });
   const gameLabel = $derived(
@@ -268,7 +270,7 @@
     <div class="hero-main">
       <div class="hero-body">
         <h2><span class="status-dot" class:ready={welcomed}></span>{welcomed ? 'Ready to play' : 'Let’s connect your device'}</h2>
-        <p class="hero-copy">{welcomed ? `${welcomed.name} is paired and can play your games.` : 'Play your PC games on a phone, tablet, TV or another PC.'}</p>
+        <p class="hero-copy">{welcomed ? pairedCopy(welcomed.name, metadata?.host_name) : 'Play your PC games on a phone, tablet, TV or another PC.'}</p>
         <div class="hero-actions">
           {#if welcomed}<Button variant="primary" href="/library">See your games</Button>{/if}
           {@render helpToggle()}

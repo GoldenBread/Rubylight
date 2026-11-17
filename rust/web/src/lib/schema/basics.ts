@@ -1310,6 +1310,21 @@ const input: Setting[] = [
     visibleWhen: audioHapticsOn,
   },
   {
+    key: 'dualsense_haptics_gain',
+    label: 'DualSense haptics strength',
+    description:
+      "How strongly a game's own fine haptics drive a DualSense with waveform haptics (USB/IP). Leave it at 1×; ordinary vibration and trigger effects keep the game's strength.",
+    details:
+      'A multiple from 0 to 4 of what the game sent, on the actuator sounds only: 0.5 is half as strong, 2 twice as strong, and above 1 loud effects clip. It applies to the DualSense with waveform haptics (USB/IP), needs usbip-win2, and takes effect from the next connection. A device or app can set its own under Devices or Games.',
+    category: 'input',
+    group: 'Controllers',
+    control: { kind: 'number', min: 0, max: 4, step: 0.1, unit: '×' },
+    default: 1,
+    inactiveHint: "Turn on Controllers under Input devices and Vibration to use this setting.",
+    visibleWhen: rumbleOn,
+    advanced: true,
+  },
+  {
     key: 'back_button_timeout',
     label: 'Hold Back for Guide',
     description:
