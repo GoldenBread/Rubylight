@@ -1071,6 +1071,16 @@ pub(crate) async fn api(
     if path == "/api/guests" || path.starts_with("/api/guests/") {
         return guests::handle(&h, &method, path, &data);
     }
+    if path.starts_with("/api/session-guests/invites") {
+        // Making an invite can start the rendezvous and taking one back saves the paired devices:
+        // both block.
+        let (h, method, path, data) = (h.clone(), method.clone(), path.to_owned(), data.clone());
+        return tokio::task::spawn_blocking(move || {
+            session_guests::handle(&h, &method, &path, &data)
+        })
+        .await
+        .unwrap_or_else(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "the invite failed"));
+    }
     if path == "/api/session-guests" || path.starts_with("/api/session-guests/") {
         return session_guests::handle(&h, &method, path, &data);
     }

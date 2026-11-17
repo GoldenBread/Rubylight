@@ -12,7 +12,6 @@ pub mod host_loss;
 pub mod http;
 pub mod internet;
 pub mod input;
-pub mod internet;
 pub mod invite;
 pub mod priority;
 pub mod report;

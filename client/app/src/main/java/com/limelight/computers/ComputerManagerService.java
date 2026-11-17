@@ -648,7 +648,19 @@ public class ComputerManagerService extends Service {
         InternetPlay.save(this, details.uuid, reply);
         if (getLocalDatabaseReference()) {
             try {
-                dbManager.updateComputer(details);
+                // A PC already known here keeps its other addresses and MAC: only what the invite proved changes.
+                synchronized (removalLock) {
+                    ComputerDetails saved = dbManager.getComputerByUUID(details.uuid);
+                    if (saved == null) {
+                        dbManager.updateComputer(details);
+                    } else {
+                        saved.name = details.name;
+                        saved.serverCert = details.serverCert;
+                        saved.httpsPort = details.httpsPort;
+                        if (details.manualAddress != null) saved.manualAddress = details.manualAddress;
+                        dbManager.updateComputer(saved);
+                    }
+                }
             } finally {
                 releaseLocalDatabaseReference();
             }

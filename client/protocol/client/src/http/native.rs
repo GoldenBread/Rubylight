@@ -9,7 +9,9 @@
 
 use super::coop::{Coop, CoopJoined, JoinRequest};
 use super::device_approval::{PairingApprove, PairingApproved, PairingDeny, PairingRequests, FEATURE_PAIRING_APPROVE};
-use super::session_guests::{GuestAction, SessionGuests, FEATURE_SESSION_GUESTS};
+use super::session_guests::{
+    GuestAction, InviteCreate, InviteCreated, SessionGuests, FEATURE_GUEST_INVITES, FEATURE_SESSION_GUESTS,
+};
 use super::pc_power::{HostUpdate, PcPower, PcPowerOffer, PowerRequest};
 use super::native_api::audio::{Audio, AudioWrite};
 use super::native_api::capabilities::Capabilities;
@@ -20,11 +22,6 @@ use super::native_api::session::{ActionId, CouchMenu, CouchMenuRequest, Session,
 use super::native_api::wake::Wake;
 use super::native_api::PREFIX;
 use super::neural::{Neural, NeuralWrite};
-use super::pc_power::{HostUpdate, PcPower, PcPowerOffer, PowerRequest};
-use super::session_guests::{
-    GuestAction, InviteCreate, InviteCreated, SessionGuests, FEATURE_GUEST_INVITES,
-    FEATURE_SESSION_GUESTS,
-};
 use super::transport::{self, Body, Request, Timeouts};
 use super::{Error, HostClient, LONG_CONNECT_TIMEOUT, READ_TIMEOUT};
 use serde::de::{DeserializeOwned, Error as _};
@@ -161,6 +158,13 @@ impl NativeCapabilities {
     /// list, approval prompt and Join are offered.
     pub fn offers_session_guests(&self) -> bool {
         self.capabilities.features.iter().any(|f| f == FEATURE_SESSION_GUESTS)
+    }
+
+    /// Whether the PC makes invites to play over the internet. Its guests list and join prompts
+    /// are then read too, even with `guest_join` off: a friend's device paired from an invite
+    /// always waits for the player to let it in.
+    pub fn offers_guest_invites(&self) -> bool {
+        self.capabilities.features.iter().any(|f| f == FEATURE_GUEST_INVITES)
     }
 
     /// Whether this PC can approve new devices at all, for this device or another.

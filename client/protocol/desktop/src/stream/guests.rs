@@ -219,7 +219,7 @@ impl Streaming {
         std::thread::spawn(move || {
             if offered.is_none() {
                 match client.native_capabilities_with_files() {
-                    Ok(caps) if !caps.offers_session_guests() => {
+                    Ok(caps) if !caps.offers_session_guests() && !caps.offers_guest_invites() => {
                         return shared.notify(Notice::Guests(GuestsAnswer::NotOffered));
                     }
                     Ok(caps) => {

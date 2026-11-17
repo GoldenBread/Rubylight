@@ -2089,7 +2089,9 @@ public class NvConnection {
                 nativeCouchMenu = capabilities.has(NativeCapabilities.COUCH_MENU);
                 nativeUsbForwarding = capabilities.offersUsbForwarding();
                 nativeImageClipboard = capabilities.has(NativeCapabilities.CLIPBOARD_IMAGE);
-                nativeSessionGuests = capabilities.has(NativeCapabilities.SESSION_GUESTS);
+                // A PC that makes invites asks the player about invited friends even with guests off.
+                nativeSessionGuests = capabilities.has(NativeCapabilities.SESSION_GUESTS)
+                        || capabilities.has(NativeCapabilities.GUEST_INVITES);
                 nativeNightMode = capabilities.offersAudio(NativeCapabilities.NIGHT_MODE);
                 nativeHeadphoneSurround = capabilities.offersAudio(NativeCapabilities.HEADPHONE_SURROUND);
                 if (read != null) read.run();

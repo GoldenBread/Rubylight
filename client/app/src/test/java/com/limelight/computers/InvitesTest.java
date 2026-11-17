@@ -70,13 +70,13 @@ public class InvitesTest {
     @Test
     public void thePairedPcIsKeptWithItsCertificateButNoTunnelAddress() throws Exception {
         X509Certificate certificate = certificate();
-        ComputerDetails punched = Invites.details(redeemed("127.77.0.2", certificate));
+        ComputerDetails punched = Invites.details(redeemed("127.78.0.2", certificate));
         assertEquals("0123ABCD-ef", punched.uuid);
         assertEquals("Wohnzimmer", punched.name);
         assertEquals(47984, punched.httpsPort);
         assertEquals(certificate, punched.serverCert);
         assertNull("a punched path's end lasts only as long as its tunnel", punched.manualAddress);
-        assertEquals(new ComputerDetails.AddressTuple("127.77.0.2", 47989), punched.activeAddress);
+        assertEquals(new ComputerDetails.AddressTuple("127.78.0.2", 47989), punched.activeAddress);
 
         ComputerDetails direct = Invites.details(redeemed("2001:db8::2", certificate));
         assertEquals(new ComputerDetails.AddressTuple("2001:db8::2", 47989), direct.manualAddress);

@@ -358,7 +358,7 @@ fn finish_invite(
     let uuid = existing
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let (perm, guest) = crate::invites::spend(h, &state, invite, &uuid, &p.name)?;
+    let (perm, guest) = crate::invites::entitle(h, &state, invite)?;
     let mut extra = std::collections::BTreeMap::new();
     extra.insert(butterpollo_core::invites::MARKER.to_owned(), guest.marker());
     state
@@ -385,6 +385,12 @@ fn finish_invite(
             next.save(&h.paired_path)?;
             *state = next;
         }
+    }
+    // Spent only now: a device that could not be saved leaves the link usable. `paired` is still
+    // held, so no other pairing took it meanwhile; one past its end leaves a device the sweep
+    // removes.
+    if let Err(error) = crate::invites::spend(h, invite, &uuid, &p.name) {
+        tracing::warn!(error = %format!("{error:#}"), invite, "an invite ended while its device paired");
     }
     drop(state);
     tracing::info!(client=%p.name, invite, %peer, until = guest.until, "device paired from an invite");

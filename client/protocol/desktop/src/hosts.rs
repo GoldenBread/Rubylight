@@ -1120,8 +1120,6 @@ impl Hosts {
         Some(daemon)
     }
 
-    /// Adds a host by address and checks it at once. Returns its ID. No port is the default one,
-    /// as a PC is an address and a port: a PC listed there under another port is another PC.
     /// Opens an invite on a thread: the PC is reached over the internet, paired as a guest and
     /// added (or updated) once [`Event::Invited`] comes back.
     pub fn redeem_invite(&mut self, link: InviteUri) {
@@ -1178,6 +1176,8 @@ impl Hosts {
         id
     }
 
+    /// Adds a host by address and checks it at once. Returns its ID. No port is the default one,
+    /// as a PC is an address and a port: a PC listed there under another port is another PC.
     pub fn add_manual(&mut self, address: &str, port: Option<u16>) -> u64 {
         let wanted = http_port(port.unwrap_or(DEFAULT_HTTP_PORT));
         let here = |h: &Host| h.record.address.eq_ignore_ascii_case(address);

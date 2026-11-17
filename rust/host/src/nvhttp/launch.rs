@@ -73,7 +73,7 @@ pub(super) fn start(h: Shared, connection: Connection, args: Args, resume: bool)
             return Err(error);
         }
         match validate_launch_client(&h, &connection, control, true) {
-            Ok(client) if crate::invites::invited(&client).is_some() => Ok(client),
+            Ok(client) if crate::invites::invited_live(&client) => Ok(client),
             _ => Err(error),
         }
     });

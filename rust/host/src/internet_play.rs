@@ -254,8 +254,7 @@ pub(crate) fn refresh(h: &Shared) {
     let Some(service) = service() else { return };
     if needed(h) {
         service.set_devices(devices(h));
-    } else {
-        stop_service();
+    } else if stop_unless_needed(h, false) {
         tracing::info!("Play over the internet stopped: no invite or invited device needs it");
     }
 }
@@ -419,6 +418,36 @@ impl InternetPlay {
     }
 }
 
+/// Stops the rendezvous unless something needs it, deciding under the service's lock so that an
+/// invite made meanwhile, which starts it through [`ensure`], is never left without one. A call
+/// from the refresh task itself leaves its own handle to end with it (`from_refresh`).
+fn stop_unless_needed(h: &Shared, from_refresh: bool) -> bool {
+    let mut running = SERVICE.lock().unwrap();
+    if needed(h) {
+        return false;
+    }
+    let refresh = REFRESH.lock().unwrap().take();
+    if let Some(refresh) = refresh
+        && !from_refresh
+    {
+        refresh.abort();
+    }
+    if let Some(service) = running.take() {
+        service.stop();
+    }
+    true
+}
+
+/// Whether the rendezvous runs now.
+pub(crate) fn running() -> bool {
+    service().is_some()
+}
+
+/// Whether the host listens beyond this PC, so that the rendezvous can start at all.
+pub(crate) fn bound() -> bool {
+    BIND.lock().unwrap().is_some()
+}
+
 fn stop_service() {
     if let Some(refresh) = REFRESH.lock().unwrap().take() {
         refresh.abort();
@@ -505,14 +534,10 @@ pub(crate) fn ensure(h: &Shared) {
         loop {
             tokio::time::sleep(Duration::from_secs(15)).await;
             let Some(service) = service() else { return };
-            if !needed(&h) {
+            if !needed(&h) && stop_unless_needed(&h, true) {
                 tracing::info!(
                     "Play over the internet stopped: no invite or invited device needs it"
                 );
-                REFRESH.lock().unwrap().take();
-                if let Some(service) = SERVICE.lock().unwrap().take() {
-                    service.stop();
-                }
                 return;
             }
             service.set_devices(devices(&h));

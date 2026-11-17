@@ -161,7 +161,23 @@ pub(crate) fn create(
     };
     // The rendezvous starts now, so the record the link points at is there when the friend looks.
     crate::internet_play::ensure(h);
-    let link = link(h, secret, expires, permission).map_err(|error| {
+    let link = link(h, secret, expires, permission).and_then(|link| {
+        // Without the rendezvous only the PC's IPv6 address or forwarded ports reach it; with
+        // neither, a link would lead nowhere.
+        let hints = crate::internet_play::hints(&h.config_snapshot())?;
+        if crate::internet_play::bound()
+            && !crate::internet_play::running()
+            && hints.ipv6.is_empty()
+            && !hints.mapped_ports
+        {
+            anyhow::bail!(
+                "Play over the internet could not start on this PC, so a friend could not reach it. \
+                 The host log says why."
+            );
+        }
+        Ok(link)
+    });
+    let link = link.map_err(|error| {
         h.invites.locked().revoke(id);
         CreateFailure::Internal(error)
     })?;
@@ -264,18 +280,17 @@ pub(crate) fn matching(h: &Shared, auth: &str, salt: &str) -> Option<(u32, Strin
         .map(|i| (i.id, i.pin.clone()))
 }
 
-/// What a device paired from invite `id` gets: its permission bits and `extra`, spending the
-/// invite on device `uuid`. Fails when the invite is gone, spent or past its time, or when the
-/// device that made it may no longer approve devices.
-pub(crate) fn spend(
+/// What a device paired from invite `id` gets: its permission bits and `extra`. Fails when the
+/// invite is gone, spent or past its time, or when the device that made it may no longer approve
+/// devices. The caller holds `paired` for writing until [`spend`], so no other pairing takes the
+/// invite in between.
+pub(crate) fn entitle(
     h: &Shared,
     state: &butterpollo_core::state::PairedState,
     id: u32,
-    uuid: &str,
-    name: &str,
 ) -> Result<(u32, InvitedGuest)> {
     let now = unix_now();
-    let mut invites = h.invites.locked();
+    let invites = h.invites.locked();
     let invite = invites
         .list()
         .iter()
@@ -292,9 +307,6 @@ pub(crate) fn spend(
         permission = policy::capped(permission, maker.perm)
             .context("the device that made this invite may no longer watch streams")?;
     }
-    invites
-        .redeem(id, uuid, name, now)
-        .context("this invite was already used")?;
     Ok((
         policy::device_permission(permission),
         InvitedGuest {
@@ -302,6 +314,15 @@ pub(crate) fn spend(
             permission,
         },
     ))
+}
+
+/// Spends invite `id` on device `uuid`, once that device is saved.
+pub(crate) fn spend(h: &Shared, id: u32, uuid: &str, name: &str) -> Result<()> {
+    h.invites
+        .locked()
+        .redeem(id, uuid, name, unix_now())
+        .map(|_| ())
+        .context("this invite was already used")
 }
 
 /// A device paired again from a new invite while it already was an invited guest: its bits and

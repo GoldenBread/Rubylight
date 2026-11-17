@@ -150,7 +150,7 @@ async fn only_a_device_that_may_approve_new_devices_invites_and_never_beyond_its
         "POST",
         &format!("{PREFIX}/session/guests/invites"),
         Some("application/json"),
-        "{}".into(),
+        "{}",
     )
     .await;
     reply.assert_error(403, "permission_required");
@@ -251,6 +251,18 @@ async fn an_invited_device_only_joins_the_game_being_played_and_the_player_lets_
             permission: Permission::ControllerKeyboardMouse
         }
     );
+
+    // Its time ended and the sweep has not run yet: it joins nothing.
+    let mut ended = friend.clone();
+    ended.extra.insert(
+        MARKER.into(),
+        serde_json::json!({"until": 1, "permission": "controller"}),
+    );
+    assert_eq!(
+        join(s.host(), &ended, true, true).await.unwrap(),
+        Err(Refusal::Revoked)
+    );
+    assert!(!crate::invites::invited_live(&ended));
 }
 
 #[tokio::test]

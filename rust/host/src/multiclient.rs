@@ -260,6 +260,10 @@ impl DeviceGuests {
         if invited.is_some() && (!join.plain || !join.joins_game) {
             return Err(Refusal::InvitedJoinsOnly);
         }
+        // Its time ended: the sweep unpairs it soon, and until then it joins nothing.
+        if invited.is_some_and(|guest| guest.ended(unix_now())) {
+            return Err(Refusal::Revoked);
+        }
         if join_policy == JoinPolicy::Off || !join.plain || !join.joins_game {
             return Ok(Gate::NotGuest);
         }
