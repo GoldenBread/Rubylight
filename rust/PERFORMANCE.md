@@ -82,15 +82,31 @@ This is the dated measurement record. For a guided comparison, start with the [p
 
 ## November 17: a capped path holds its learned rate, and a busy PC is not the network
 
-Field host log of a 4K120 PyroWave stream to a client wired to a mesh node's wireless backhaul (the client reports wired and sends no link hint): 800 Mbps asked, path good for about 600 to 650. At 599 Mbps the control RTT was 8 ms; at 641 to 676 it was 116 to 279 ms and the unrecoverable frame count jumped by hundreds in 5 s. `LinkRate` cut, probed back to the request in 2 to 33 s and cut again: step-downs every 10 to 50 s for the whole session. The same log shows the host's own socket refusing sends (`WSAEWOULDBLOCK` 10035) at rates the path had carried, including at 399 Mbps.
+Field host log of a 4K120 PyroWave stream to a Moonlight client on an Xbox, wired to a mesh node whose wireless backhaul carries about 600 to 650 Mbps (the client sends no link hint): 800 Mbps asked, PyroWave's floor for 4K120 (about 1490 Mbps) above the request. At 599 Mbps sent the control RTT was 8 ms; at 641 to 676 it was 116 to 279 ms and the unrecoverable frame count rose by hundreds in 5 s. Client loss could not lower a stream under its own floor, so it held the request; the host's own socket refusals (`WSAEWOULDBLOCK` 10035), which came in the same seconds, cut it to half, and probes climbed back to 800 within 2 to 33 s: step-downs every 10 to 50 s for the whole session.
 
-That refusal was measured separately (`D:/CodexArtifacts/xbox-pyrowave/probe/probe-summary.txt`, UDP probe on the same PC): while the CPU was fully loaded the socket stayed full 8 ms median, 16 ms p90 and 20 to 58 ms worst. A 950 Mbps pace without a client link hint cost at most 2.7 ms of jitter and no loss, so the 950 Mbps burst cap and the paced send buffer stay.
+The refusal was measured separately (`D:/CodexArtifacts/xbox-pyrowave/probe/probe-summary.txt`, UDP probe on the same PC): while the CPU was fully loaded the socket stayed full 8 ms median, 16 ms p90 and 20 to 58 ms worst. A 950 Mbps pace without a client link hint cost at most 2.7 ms of jitter and no loss, so the 950 Mbps burst cap and the paced send buffer stay.
 
-What changed: `LinkRate` keeps the highest rate that ran clean; a failed step past it waits 10 s, then 20, 40 ... up to 300 s, and a PyroWave stream whose floor is above its own rate may cut once below that floor. The sender waits about a frame (at most 20 ms) for a full socket and then abandons the rest of that picture; refused sends stop probes for 5 s and do not move the learned network ceiling.
+What changed in `LinkRate`: a stream under PyroWave's floor is cut on client loss, to half its bitrate at most; a second failure within 10 % of the last makes the rate it landed on a learned ceiling, a 5 % step past it (alone) waits 10 s and then twice as long after each failure there, up to 300 s, and loss or queue cuts lower that ceiling; once the path has shown a queue, a step confirms only after its overshoot could have filled that queue (up to 10 s) and while the RTT has not risen 15 ms; a queue that stays after a loss cut is cut; refusals with no client loss and a flat RTT teach nothing. The sender waits for a full socket until a frame period after the frame began (at most 20 ms) or 4 ms after the first refusal, whichever is later, then abandons the rest of that picture.
 
-Simulator (`link_rate/sim.rs`, 5 minutes, 1080p PyroWave, 20 % FEC, 50 ms queue, 20 ms feedback): a stream asking 350 Mbps on a 150 Mbps path held at 350 (233 Mbps of wire, 55 % over the path) with no cut before; now it cuts once, learns 263 Mbps and holds at 236 (157 Mbps of wire, 5 % over). 900 Mbps on a 500 Mbps path (1 against 2 cuts, 10 failed probes in both, no lost frames) and 800 Mbps on 1 GbE (no change at all) are unchanged. The simulator does not model the host's socket refusals, so the field sawtooth is not reproduced there.
+Simulator (`link_rate/sim.rs`, `field_report`, 5 minutes a run, debug build): cuts / failed probes / share of seconds offered over the link / p95 queue ms / delivered Mbps / lost frames. Main is `origin/main` at `0e4064b3d`; "first build" is the learned-ceiling branch as a worker left it (`bb00db361`), the review's H1 and H2.
 
-Not run: a real client on the capped path with this build, and an A/B of the 20 ms wait.
+| run | main | first build | now |
+| --- | --- | --- | --- |
+| 4K120 PyroWave 800 on 640 Mbps, 270 ms buffer | 0 / 0 / 100 % / 270 / 641 / 0 % | 1 / 1 / 87 % / 270 / 637 / 0 % | 1 / 5 / 6 % / 28 / 588 / 0 % |
+| same, the host's socket refuses frames while the buffer is over 100 ms | 3 / 3 / 27 % / 99 / 610 / 0.11 % | 2 / 10 / 8 % / 52 / 600 / 0.04 % | 2 / 4 / 4 % / 20 / 582 / 0.02 % |
+| 1080p120 PyroWave 350 on 200 (no room), 50 ms | 0 / 0 / 100 % / 50 / 200 / 0 % | 1 / 1 / 97 % / 50 / 199 / 0 % | 1 / 6 / 5 % / 21 / 183 / 0 % |
+| 1080p60 PyroWave 900 on 500, 50 ms | 1 / 10 / 8 % / 32 / 463 / 0 % | 2 / 10 / 9 % / 33 / 470 / 0 % | 1 / 6 / 6 % / 25 / 458 / 0 % |
+| H.26x 75 on 50, 50 ms | 1 / 10 / 24 % / 35 / 48 / 0.31 % | 3 / 9 / 16 % / 35 / 48 / 0.25 % | 1 / 6 / 20 % / 35 / 47 / 0.28 % |
+| H.26x 75 on 50, 400 ms buffer | 1 / 0 / 90 % / 390 / 50 / 1.00 % | 1 / 0 / 90 % / 390 / 50 / 1.00 % | 2 / 5 / 7 % / 44 / 46 / 0.18 % |
+| 1 GbE, PyroWave 800 | no change, 533 Mbps | same | same |
+| 1 GbE, H.26x 80 | no change, 109 Mbps | same | same |
+| H.26x 40, link 80, 10 from 20 to 40 s | 2 / 1, back to 90 % 19.3 s after | 2 / 1, 20.3 s | 2 / 1, 18.6 s |
+| PyroWave 400, link 1000, 150 from 60 to 90 s | 1 / 1, back to 90 % 2.5 s after | 1 / 2, 26.4 s | 1 / 1, 2.6 s |
+
+In the field shape the stream now settles under the path's edge with a short queue, and its failed retries come further apart (on the first row at 28, 69, 113, 163 and 257 s). It delivers less than main on the first rows because main delivered the full path rate at the price of a permanently full 270 ms buffer. The simulator's drop-tail queue never drops the coarse block a frame starts with, so it shows none of the field's unrecoverable frames; the refusing row is the closer shape.
+
+Not run: a real client on the capped path with this build, and an A/B of the frame-long send wait under CPU load.
+
 ## November 16: a temporal upscaler for Nightjar, measured offline (not landed)
 
 The question: does a temporal upscaler adapted from Qualcomm's Snapdragon Game
