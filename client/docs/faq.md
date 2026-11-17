@@ -28,7 +28,7 @@ Nightjar was previously called Butterpollo and then Rubylight Android. The Andro
 
 ## Can I stream outside my home network?
 
-Yes, when this device can reach the host's streaming ports. Pair on the local network first, then connect through a private network such as Tailscale or your own VPN, and add the PC by its address on that network. [Play away from home](remote-setup.md) walks through it.
+Yes, when this device can reach the host's streaming ports. Pair on the local network first, then connect through a private network such as Tailscale or your own VPN, and add the PC by its address on that network. A PC that offers Play over the internet (Rubylight with the option on) needs no VPN once this device has connected on the PC's network. [Play away from home](remote-setup.md) walks through both.
 
 ## Where do I set device permissions?
 
