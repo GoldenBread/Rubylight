@@ -944,7 +944,6 @@ fn log_unavailable(backend: Hardware, error: &str) {
     eprintln!("nightjar: {} decoding is unavailable: {error}", backend.label());
 }
 
-/// The SDK's decoder (on the renderer's adapter on Windows), with a plane set per picture that can be waiting.
 /// The name the CPU decoder takes on a Mac whose GPU decoder did not start for this stream.
 pub const MAC_CPU_INSTEAD: &str = "PyroWave (Rust, GPU wavelets; the GPU decoder did not start)";
 
@@ -959,6 +958,7 @@ fn mac_cpu_instead(error: &str, width: usize, height: usize, chroma444: bool) ->
     super::pyrowave::Pyrowave::cpu(width, height, chroma444).ok().map(|decoder| (decoder, MAC_CPU_INSTEAD))
 }
 
+/// The SDK's decoder (on the renderer's adapter on Windows), with a plane set per picture that can be waiting.
 fn gpu_pyrowave(device: GpuDevice, setup: &VideoSetup, slots: usize) -> Result<super::pyrowave::Pyrowave, String> {
     #[cfg(windows)]
     {

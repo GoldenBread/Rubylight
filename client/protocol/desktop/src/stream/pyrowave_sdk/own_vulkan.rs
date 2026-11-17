@@ -26,7 +26,8 @@ pub const ICD_ENV: &str = "NIGHTJAR_VULKAN_ICD";
 pub fn bundled() -> Result<(PathBuf, PathBuf), String> {
     let (loader, icd) = match (std::env::var_os(LOADER_ENV), std::env::var_os(ICD_ENV)) {
         (Some(loader), Some(icd)) => (PathBuf::from(loader), PathBuf::from(icd)),
-        _ => {
+        (Some(_), None) | (None, Some(_)) => return Err(format!("set both {LOADER_ENV} and {ICD_ENV}, or neither")),
+        (None, None) => {
             let exe = std::env::current_exe().map_err(|e| format!("cannot locate the executable: {e}"))?;
             crate::stream::pyrowave_mode::bundle_paths(&exe).ok_or("the executable is not inside Nightjar.app")?
         }
@@ -145,19 +146,19 @@ impl OwnVulkan {
                 refused.push(format!("{} has no graphics and compute queue", caps.name));
                 continue;
             };
-            // A device that lists VK_KHR_portability_subset must have it enabled.
+            // A partial Vulkan (VK_KHR_portability_subset, such as MoltenVK) would have to be enabled
+            // and told to the SDK, whose shaders were never checked against its limits: refused.
             let subset = c"VK_KHR_portability_subset";
             let extensions = instance.enumerate_device_extension_properties(physical_device).unwrap_or_default();
-            let names: Vec<*const std::ffi::c_char> = extensions
-                .iter()
-                .filter(|e| e.extension_name_as_c_str() == Ok(subset))
-                .map(|_| subset.as_ptr())
-                .collect();
+            if extensions.iter().any(|e| e.extension_name_as_c_str() == Ok(subset)) {
+                refused.push(format!("{} is a partial Vulkan (VK_KHR_portability_subset)", caps.name));
+                continue;
+            }
             let mut chain = Chain::new();
             chain.enable(features);
             let priority = [1.0f32];
             let queues = [vk::DeviceQueueCreateInfo::default().queue_family_index(family as u32).queue_priorities(&priority)];
-            let mut info = vk::DeviceCreateInfo::default().queue_create_infos(&queues).enabled_extension_names(&names);
+            let mut info = vk::DeviceCreateInfo::default().queue_create_infos(&queues);
             info.p_next = (&raw const chain.pdf2).cast();
             match instance.create_device(physical_device, &info, None) {
                 Ok(device) => return Ok((physical_device, family as u32, features, caps.name, device)),
