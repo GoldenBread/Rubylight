@@ -108,17 +108,35 @@ pub const HELD_LATCH_GUARD_US: u64 = 400;
 
 /// The guard a held picture's present goes out after the refresh that opens its turn, µs:
 /// `HELD_LATCH_GUARD_US` unless a measurement run sets `NIGHTJAR_HELD_GUARD_US` (read once when the
-/// stream starts, `Streaming::new`). The whole aim moves with it (`held_present_lead_us`), so a run
-/// can A/B where the present lands in its turn without a rebuild.
+/// stream starts, `held_guard_from_env`), and a guard past half a refresh is clamped there at use
+/// (`held_present_lead_us`, `HeldAnchor::hold`). The whole aim moves with it, so a run can A/B where
+/// the present lands in its turn without a rebuild.
 pub fn held_guard_us(set: Option<u64>) -> u64 { set.unwrap_or(HELD_LATCH_GUARD_US) }
+
+/// `NIGHTJAR_HELD_GUARD_US` for a measurement run, read once when the stream starts: `held_guard_us`
+/// of it, with one line in the log either way. A value that is not a number of microseconds is left
+/// out and the default is used, so a typo cannot turn the hold into something else silently.
+pub fn held_guard_from_env() -> u64 {
+    let Some(set) = std::env::var_os("NIGHTJAR_HELD_GUARD_US") else { return held_guard_us(None); };
+    let parsed = set.to_str().and_then(|us| us.parse().ok());
+    match parsed {
+        Some(us) => eprintln!("nightjar: NIGHTJAR_HELD_GUARD_US: fractional V-Sync's held presents go out {us} us after the refresh that opens their turn"),
+        None => eprintln!("nightjar: NIGHTJAR_HELD_GUARD_US: {set:?} is not a number of microseconds; using {HELD_LATCH_GUARD_US} us"),
+    }
+    held_guard_us(parsed)
+}
 
 /// How long before the refresh that shows a held picture the picture must be ready, µs: its present
 /// goes out `guard_us` after the refresh that opens the turn, and the report shifts its latch back
 /// by this (`aimed`), so the host delivers the picture before the hold. It is the hold's own target
 /// (`HeldAnchor::hold`): a steering lock delivers before it, the hold waits it out, and the present
 /// goes out just after the opening refresh. Aimed at the desktop's deadline instead, the host
-/// delivered after the present target and the hold never waited.
-pub fn held_present_lead_us(period_us: u64, guard_us: u64) -> u64 { period_us.saturating_sub(guard_us) }
+/// delivered after the present target and the hold never waited. A guard past half the refresh is
+/// clamped to half, so the swap chain keeps about half a refresh to latch the flip and the aim never
+/// reaches the turn.
+pub fn held_present_lead_us(period_us: u64, guard_us: u64) -> u64 {
+    period_us.saturating_sub(guard_us.min(period_us / 2))
+}
 
 /// Which refresh the last picture of a held stream was shown at (fractional V-Sync), and where the
 /// next one's turn is. The swap chain's statistics name the last present shown, which may be a
@@ -201,7 +219,8 @@ impl HeldAnchor {
     /// Fractional V-Sync: how long a picture waits before its present, which then goes out at the
     /// next refresh, so it is shown at its turn: `held` refreshes after the refresh the last picture
     /// shows at (`last`, `last_refresh`). The present goes out `guard` into the refresh that opens
-    /// the turn, so the swap chain has all but the guard of the refresh to latch the flip;
+    /// the turn, so the swap chain has all but the guard of the refresh to latch the flip; a guard
+    /// past half the refresh is clamped to half, so it keeps about half a refresh to latch it.
     /// `held_present_lead_us`
     /// (the same `period` and `guard`) is the target the phase lock aims the host's frames at, so a
     /// steering lock delivers the picture before its hold. `margin` is the desktop's deadline before
@@ -229,7 +248,9 @@ impl HeldAnchor {
             return 0;
         };
         let (period, margin) = (period.min(i64::MAX as u64) as i64, margin.min(i64::MAX as u64) as i64);
-        let guard = guard.min(i64::MAX as u64) as i64;
+        // A guard past half the refresh would leave the swap chain less than half a refresh to latch
+        // the flip: clamp it, as the report's aim does.
+        let guard = guard.min((period / 2) as u64) as i64;
         let mut ahead = i64::from(last.wrapping_add(held).wrapping_sub(sync_refresh) as i32);
         // The present goes out just after the refresh before the turn: the swap chain latches the
         // flip into the turn with all but the guard of a refresh to spare. The phase lock aims at the
@@ -763,6 +784,24 @@ mod tests {
         assert_eq!(held_guard_us(Some(0)), 0);
         assert_eq!(held_guard_us(Some(1_000)), 1_000);
         assert_eq!(held_present_lead_us(8_333, held_guard_us(Some(1_000))), 7_333);
+    }
+
+    /// A guard at or past the period would aim the present at the turn itself, with nothing of the
+    /// refresh left to latch it: the clamp keeps the lead at half a refresh, in the report and in the
+    /// hold alike.
+    #[test]
+    fn a_guard_at_or_past_the_period_is_clamped_to_half_a_refresh() {
+        assert_eq!(held_present_lead_us(8_334, 8_334), 4_167, "a guard of the whole period");
+        assert_eq!(held_present_lead_us(8_334, 8_334 * 2), 4_167, "past it");
+        assert_eq!(held_present_lead_us(8_334, u64::MAX), 4_167, "a typo's");
+        assert_eq!(held_present_lead_us(8_334, 4_167), 4_167, "half is the most");
+        assert_eq!(held_present_lead_us(8_334, 400), 7_934, "the default is well below it");
+        // 120 Hz: refresh 100 at 833_300, the turn 102 at 849_966; half a refresh of guard puts the
+        // present at 845_799, and the picture arrived at 834_000 waits for it.
+        let mut anchor = HeldAnchor::default();
+        let wait = anchor.hold(834_000, 833_300, 100, Some(100), 2, 8_333, 5_000, u64::MAX, u64::MAX, 0);
+        assert_eq!(wait, 11_799, "half a refresh after the refresh that opens the turn, less the arrival");
+        assert_eq!(anchor.pending, Some(102));
     }
 
     /// The phase lock and the hold are one: the aim the report sends is the hold's own target
