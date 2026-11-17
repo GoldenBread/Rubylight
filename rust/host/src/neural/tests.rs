@@ -2593,14 +2593,17 @@ fn a_cache_is_used_only_as_this_host_keeps_it() {
 
     // A launch takes the cached release without hashing it: the copy checks
     // each file as it goes, so a changed one never reaches the game.
-    assert_eq!(launch_cache(h).unwrap(), None);
+    assert_eq!(launch_cache(h).unwrap().map(|(cached, _held)| cached), None);
     let folder = release(&cache_root(h), "Alpha0.3.5.8", b"OptiScaler proxy");
     let pak = folder.join(format!("files/full/game/{PAK}"));
     std::fs::write(&pak, "tampered").unwrap();
     // A release Rubylight does not pin is never applied.
-    assert_eq!(launch_cache(h).unwrap(), None);
+    assert_eq!(launch_cache(h).unwrap().map(|(cached, _held)| cached), None);
     pin_to(h, &folder);
-    assert_eq!(launch_cache(h).unwrap(), Some(cached_at(&folder)));
+    assert_eq!(
+        launch_cache(h).unwrap().map(|(cached, _held)| cached),
+        Some(cached_at(&folder))
+    );
     assert_eq!(h.neural.lock().verified, None);
     let exe = game(temp.path());
     let before = names(exe.parent().unwrap());
@@ -2722,7 +2725,9 @@ async fn serve(listener: tokio::net::TcpListener, list: Value, files: Files) -> 
 /// [`fetch_using`] without holding the release: one fetch at a time.
 async fn fetch(h: &Shared, progress: &(dyn Fn(u64, u64) + Sync)) -> Result<(PathBuf, Package)> {
     let _one = h.neural.fetching.lock().await;
-    fetch_locked(h, progress).await
+    fetch_locked(h, progress)
+        .await
+        .map(|(folder, package, _held)| (folder, package))
 }
 
 /// The cached release `folder` held as [`fetch_using`] holds it for an install.
@@ -2735,6 +2740,7 @@ fn pin(h: &Shared, folder: &Path) -> Using {
     Using {
         h: h.clone(),
         folder: folder.to_path_buf(),
+        held: None,
     }
 }
 
