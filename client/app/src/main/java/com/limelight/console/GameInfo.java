@@ -14,13 +14,14 @@ import com.limelight.nvstream.http.NvApp;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -401,7 +402,7 @@ public final class GameInfo {
                 }
             }
             if (temporary.length() == 0) return false;
-            Files.move(temporary.toPath(), target.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            replace(temporary, target);
             temporary = null;
             return true;
         } catch (IOException | RuntimeException e) {
@@ -416,11 +417,28 @@ public final class GameInfo {
         if (cached != null) return cached;
         try {
             if (!file.isFile()) return null;
-            JSONObject record = new JSONObject(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
+            JSONObject record = new JSONObject(new String(readAll(file), StandardCharsets.UTF_8));
             records.put(key, record);
             return record;
         } catch (IOException | JSONException e) {
             return null;
+        }
+    }
+
+    // java.nio.file needs API 26 and the app supports API 21, so plain java.io. On Android a
+    // rename within one folder replaces the target atomically, as the nio move did.
+    private static void replace(File from, File to) throws IOException {
+        if (from.renameTo(to)) return;
+        if (to.exists() && !to.delete()) throw new IOException("cannot replace " + to.getName());
+        if (!from.renameTo(to)) throw new IOException("cannot move to " + to.getName());
+    }
+
+    private static byte[] readAll(File file) throws IOException {
+        try (InputStream in = new FileInputStream(file); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[16 * 1024];
+            int n;
+            while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
+            return out.toByteArray();
         }
     }
 
@@ -430,8 +448,10 @@ public final class GameInfo {
             File folder = file.getParentFile();
             if (folder != null && !folder.isDirectory() && !folder.mkdirs()) return;
             temporary = File.createTempFile("record-", ".tmp", folder);
-            Files.write(temporary.toPath(), record.toString().getBytes(StandardCharsets.UTF_8));
-            Files.move(temporary.toPath(), file.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            try (OutputStream out = new FileOutputStream(temporary)) {
+                out.write(record.toString().getBytes(StandardCharsets.UTF_8));
+            }
+            replace(temporary, file);
             temporary = null;
         } catch (IOException | RuntimeException e) {
             LimeLog.warning("Game info could not keep a record");
