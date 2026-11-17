@@ -600,6 +600,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     // can otherwise hold the Cocoa thread before the launcher has drawn a window.
     #[cfg(not(target_os = "macos"))]
     let subsystems = subsystems | SDL_INIT_AUDIO;
+    sdl::screen_sleeps_outside_streams();
     // SAFETY: SDL initialisation on the main thread.
     unsafe {
         if !SDL_Init(subsystems) {
