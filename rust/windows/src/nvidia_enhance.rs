@@ -36,8 +36,8 @@ pub struct Component {
     pub folder: PathBuf,
     pub adapter_sha256: String,
     pub data: PathBuf,
-    /// The folders the host checked the component in, held open so that none of
-    /// them can be renamed or deleted while it is the installed one
+    /// The folders the component is checked and loaded in, held open so that none
+    /// of them can be renamed or deleted while it is the installed one
     /// ([`Hold`]). A hold is not part of what a component is.
     pub hold: Hold,
 }

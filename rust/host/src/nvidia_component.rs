@@ -167,19 +167,22 @@ fn ensure_root(root: &Path) -> Result<()> {
 /// The installed component of the host whose profile is `profile`, after
 /// checking its folder; the `--nvidia-probe` process finds it this way too.
 /// The folders from the component's up to the host's data root are held open
-/// until the returned component goes, so none of them can be renamed or
-/// deleted while it is in use: another account with delete rights on
-/// `C:\ProgramData` can move the folders in it (issue #115), and moving any of
-/// these would leave the paths naming other files than the ones checked.
+/// before they are checked and until the returned component goes, so none of
+/// them can be renamed or deleted while it is in use: another account with
+/// delete rights on `C:\ProgramData` can move the folders in it (issue #115),
+/// and moving any of these would leave the paths naming other files than the
+/// ones checked. Held first, so nothing can be swapped between a check and the
+/// hold either.
 pub fn component_for(profile: &Path) -> Result<Component> {
     let root = pins::root(profile);
     let data_root = data_root(&root)?;
     let record = Record::read(&root)?.context("the NVIDIA components are not installed")?;
+    let folder = record.files(&root);
+    let hold = Hold::new([folder.as_path(), root.as_path(), data_root])
+        .context("cannot open the NVIDIA components' folders")?;
     let elevated = elevated();
     trusted(&root, data_root, elevated)?;
-    let folder = record.files(&root);
     trusted(&folder, data_root, elevated)?;
-    let hold = Hold::new([folder.as_path(), root.as_path(), data_root])?;
     Ok(Component {
         folder,
         adapter_sha256: record.adapter_sha256,
