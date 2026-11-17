@@ -349,7 +349,8 @@ impl Streaming {
 
     /// Fractional V-Sync: waits before the picture's present until the refresh that opens its turn
     /// comes (`phase::HeldAnchor::hold`), so the swap chain latches the flip into the turn; its
-    /// margin (`held_margin_us`) is the desktop's deadline the turn must make.
+    /// margin (`held_margin_us`) is the desktop's deadline the turn must make, and its guard
+    /// (`held_guard_us`) how long after the opening refresh the present goes out.
     fn hold_for_turn(&mut self, renderer: *mut SDL_Renderer) {
         let held = self.vrr.held(self.pacer.mode);
         if held <= 1 { return; }
@@ -358,11 +359,12 @@ impl Streaming {
         let wait_us = if cfg!(windows) {
             // Without the statistics nothing is held: the next pictures show at the next refresh
             // and the phase report aims at it (`held_times`).
-            let wait = phase::held_wait_us(renderer, refresh_hz, held, margin_us, &mut self.held_anchor);
+            let wait = phase::held_wait_us(renderer, refresh_hz, held, margin_us, self.held_guard_us, &mut self.held_anchor);
             self.held_stats.read(wait.is_some(), session::now_us());
             wait.unwrap_or(0)
         } else {
-            self.held_clock.hold(session::now_us(), held, (1e6 / f64::from(refresh_hz.max(1.0))) as u64, margin_us)
+            self.held_clock.hold(session::now_us(), held, (1e6 / f64::from(refresh_hz.max(1.0))) as u64, margin_us,
+                self.held_guard_us)
         };
         self.held_wait_us = Some(wait_us);
         if wait_us > 0 {
@@ -1182,11 +1184,12 @@ impl Streaming {
                 if unclocked { report_held = 1; }
                 let timing = clocked.or_else(|| phase::timing(renderer, refresh_hz, report_held, &mut self.held_anchor));
                 // Fractional V-Sync: the lock aims at the hold's own target, the present lead
-                // (`phase::held_present_lead_us`), not at the deadline the turn must make: aimed at
-                // the deadline, the host delivered the picture after the refresh that opens its
-                // turn, so the hold never waited and its present raced the refresh.
+                // (`phase::held_present_lead_us`, the guard `held_guard_us` into the refresh), not at
+                // the deadline the turn must make: aimed at the deadline, the host delivered the
+                // picture after the refresh that opens its turn, so the hold never waited and its
+                // present raced the refresh.
                 let aim_us = if held > 1 && !unclocked {
-                    phase::held_present_lead_us(refresh_us, phase::HELD_LATCH_GUARD_US) as i64
+                    phase::held_present_lead_us(refresh_us, self.held_guard_us) as i64
                 } else {
                     present::phase_lock_aim_us(skipping, exclusive, self.present_deadline_us, refresh_hz) + room_us
                 };

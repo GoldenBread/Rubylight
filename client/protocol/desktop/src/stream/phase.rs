@@ -106,6 +106,12 @@ pub const EARLY_SPARE_US: u64 = 3_000;
 /// 60 fps on 120 Hz). The guard keeps the present out of the scan of the refresh before the turn.
 pub const HELD_LATCH_GUARD_US: u64 = 400;
 
+/// The guard a held picture's present goes out after the refresh that opens its turn, µs:
+/// `HELD_LATCH_GUARD_US` unless a measurement run sets `NIGHTJAR_HELD_GUARD_US` (read once when the
+/// stream starts, `Streaming::new`). The whole aim moves with it (`held_present_lead_us`), so a run
+/// can A/B where the present lands in its turn without a rebuild.
+pub fn held_guard_us(set: Option<u64>) -> u64 { set.unwrap_or(HELD_LATCH_GUARD_US) }
+
 /// How long before the refresh that shows a held picture the picture must be ready, µs: its present
 /// goes out `guard_us` after the refresh that opens the turn, and the report shifts its latch back
 /// by this (`aimed`), so the host delivers the picture before the hold. It is the hold's own target
@@ -302,15 +308,16 @@ impl HeldClock {
     fn last_us(&self) -> Option<u64> { self.shown_us.or(self.aimed_us) }
 
     /// `HeldAnchor::hold` for the next picture, `period_us` a refresh: how long it waits before its
-    /// present, `margin_us` the desktop's deadline and `HELD_LATCH_GUARD_US` the guard after the
-    /// refresh that opens its turn, whose lead the phase report aims at (`held_present_lead_us`).
-    pub fn hold(&mut self, now_us: u64, held: u32, period_us: u64, margin_us: u64) -> u64 {
+    /// present, `margin_us` the desktop's deadline and `guard_us` (`held_guard_us`, µs) how long after
+    /// the refresh that opens its turn the present goes out, whose lead the phase report aims at
+    /// (`held_present_lead_us`).
+    pub fn hold(&mut self, now_us: u64, held: u32, period_us: u64, margin_us: u64, guard_us: u64) -> u64 {
         (self.held, self.period_us) = (held, period_us);
         let Some(last) = self.last_us().filter(|_| held > 1 && period_us > 0) else {
             self.pending_us = None;
-            return self.turns.hold(now_us, 0, 0, None, held, period_us, margin_us, HELD_LATCH_GUARD_US, EARLY_SPARE_US, EARLY_FOR_US);
+            return self.turns.hold(now_us, 0, 0, None, held, period_us, margin_us, guard_us, EARLY_SPARE_US, EARLY_FOR_US);
         };
-        let wait = self.turns.hold(now_us, last, 0, Some(0), held, period_us, margin_us, HELD_LATCH_GUARD_US, EARLY_SPARE_US, EARLY_FOR_US);
+        let wait = self.turns.hold(now_us, last, 0, Some(0), held, period_us, margin_us, guard_us, EARLY_SPARE_US, EARLY_FOR_US);
         self.pending_us = self.turns.pending.take().map(|refresh| last + u64::from(refresh) * period_us);
         wait
     }
@@ -399,9 +406,9 @@ fn stats_stale(sync_qpc_time: i64, period: u64) -> bool {
 }
 
 /// `HeldAnchor::hold` for the renderer's swap chain, in microseconds; None when its statistics
-/// cannot be read (`StatsWatch`).
+/// cannot be read (`StatsWatch`). `guard_us` is `held_guard_us`.
 #[cfg(windows)]
-pub fn held_wait_us(renderer: *mut SDL_Renderer, refresh_hz: f32, held: u32, margin_us: u64, anchor: &mut HeldAnchor) -> Option<u64> {
+pub fn held_wait_us(renderer: *mut SDL_Renderer, refresh_hz: f32, held: u32, margin_us: u64, guard_us: u64, anchor: &mut HeldAnchor) -> Option<u64> {
     use windows::core::Interface;
     use windows::Win32::Graphics::Dxgi::{IDXGISwapChain, DXGI_FRAME_STATISTICS};
     if held <= 1 || refresh_hz <= 0.0 { return Some(0); }
@@ -417,7 +424,7 @@ pub fn held_wait_us(renderer: *mut SDL_Renderer, refresh_hz: f32, held: u32, mar
         let last = anchor.last_refresh(stats.PresentCount, stats.PresentRefreshCount, stats.SyncRefreshCount,
             stats_stale(stats.SyncQPCTime, period));
         let wait = anchor.hold(SDL_GetPerformanceCounter(), stats.SyncQPCTime as u64, stats.SyncRefreshCount, last,
-            held, period, ticks(margin_us as f64), ticks(HELD_LATCH_GUARD_US as f64),
+            held, period, ticks(margin_us as f64), ticks(guard_us as f64),
             ticks(EARLY_SPARE_US as f64), ticks(EARLY_FOR_US as f64));
         Some((wait as f64 * 1e6 / freq) as u64)
     }
@@ -441,7 +448,7 @@ pub fn last_present_count(_: *mut SDL_Renderer) -> u32 { 0 }
 
 /// Only Windows holds pictures for their turn.
 #[cfg(not(windows))]
-pub fn held_wait_us(_: *mut SDL_Renderer, _: f32, _: u32, _: u64, _: &mut HeldAnchor) -> Option<u64> { Some(0) }
+pub fn held_wait_us(_: *mut SDL_Renderer, _: f32, _: u32, _: u64, _: u64, _: &mut HeldAnchor) -> Option<u64> { Some(0) }
 
 #[cfg(windows)]
 pub fn timing(renderer: *mut SDL_Renderer, refresh_hz: f32, held: u32, anchor: &mut HeldAnchor) -> Option<(i64, i64)> {
@@ -748,6 +755,16 @@ mod tests {
         assert_eq!(held_wait(0, 50_000, 100, Some(100), 2, 1000, 0), 3_000, "never more than the hold and one refresh");
     }
 
+    /// The guard is the constant unless a measurement sets one (`NIGHTJAR_HELD_GUARD_US`), and the
+    /// aim moves with it, so a device run can A/B where the present lands in its turn.
+    #[test]
+    fn the_guard_is_the_constant_unless_a_measurement_sets_one() {
+        assert_eq!(held_guard_us(None), HELD_LATCH_GUARD_US);
+        assert_eq!(held_guard_us(Some(0)), 0);
+        assert_eq!(held_guard_us(Some(1_000)), 1_000);
+        assert_eq!(held_present_lead_us(8_333, held_guard_us(Some(1_000))), 7_333);
+    }
+
     /// The phase lock and the hold are one: the aim the report sends is the hold's own target
     /// (`held_present_lead_us`), so a steering host delivers the picture before the present and the
     /// hold waits the lock's margin. Aimed at the deadline the turn must make instead, the lock
@@ -913,27 +930,27 @@ mod tests {
     #[test]
     fn a_clocked_hold_counts_its_turns_from_the_last_pictures_time() {
         let mut clock = HeldClock::default();
-        assert_eq!(clock.hold(10_000, 2, 8_333, 5_000), 0, "no picture yet");
+        assert_eq!(clock.hold(10_000, 2, 8_333, 5_000, HELD_LATCH_GUARD_US), 0, "no picture yet");
         assert_eq!(clock.timing(10_000, 2, 8_333), None);
         // Shown at 100_000; the next one's turn 116_666, opened by the refresh at 108_333.
         clock.presented(1);
         clock.shown(1, 100_000);
         clock.shown(9, 105_000);
-        assert_eq!(clock.hold(103_000, 2, 8_333, 5_000), 5_733, "after the refresh that opens the turn at 108_333");
+        assert_eq!(clock.hold(103_000, 2, 8_333, 5_000, HELD_LATCH_GUARD_US), 5_733, "after the refresh that opens the turn at 108_333");
         assert_eq!(clock.timing(103_000, 2, 8_333), Some((100_000, 16_666_000)));
         assert_eq!(clock.timing(130_000, 2, 8_333), Some((116_666, 16_666_000)));
         // Until its feedback comes, the next counts from the refresh the hold aimed this one at.
         clock.presented(2);
-        assert_eq!(clock.hold(118_000, 2, 8_333, 5_000), 7_399, "from 116_666: turn 133_332, opened at 124_999");
+        assert_eq!(clock.hold(118_000, 2, 8_333, 5_000, HELD_LATCH_GUARD_US), 7_399, "from 116_666: turn 133_332, opened at 124_999");
         assert_eq!(clock.timing(118_000, 2, 8_333), Some((116_666, 16_666_000)));
         // The feedback says it was a refresh late: from there.
         clock.shown(2, 124_999);
-        assert_eq!(clock.hold(126_000, 2, 8_333, 5_000), 7_732);
+        assert_eq!(clock.hold(126_000, 2, 8_333, 5_000, HELD_LATCH_GUARD_US), 7_732);
         // A late picture aims at the first refresh whose deadline it makes, and counts on from it.
         let mut clock = HeldClock::default();
         clock.presented(1);
         clock.shown(1, 100_000);
-        assert_eq!(clock.hold(113_000, 2, 8_333, 5_000), 0);
+        assert_eq!(clock.hold(113_000, 2, 8_333, 5_000, HELD_LATCH_GUARD_US), 0);
         clock.presented(2);
         assert_eq!(clock.timing(130_000, 2, 8_333), Some((124_999, 16_666_000)), "aimed at 124_999");
     }
@@ -945,15 +962,15 @@ mod tests {
         const P: u64 = 8_333;
         let mut clock = HeldClock::default();
         // Picture 1 at 100_000 (nothing known: at once), shown at the refresh 108_333.
-        assert_eq!(clock.hold(100_000, 2, P, 5_000), 0);
+        assert_eq!(clock.hold(100_000, 2, P, 5_000, HELD_LATCH_GUARD_US), 0);
         clock.presented(1);
         // Picture 2, 16.7 ms on: the poll before its hold brings 1's answer.
         clock.shown(1, 108_333);
-        assert_eq!(clock.hold(116_000, 2, P, 5_000), 116_666 + 400 - 116_000, "after the refresh that opens the turn 108_333 + 2 refreshes");
+        assert_eq!(clock.hold(116_000, 2, P, 5_000, HELD_LATCH_GUARD_US), 116_666 + 400 - 116_000, "after the refresh that opens the turn 108_333 + 2 refreshes");
         assert_eq!(clock.timing(116_000, 2, P), Some((108_333, 16_666_000)), "the report has a grid");
         clock.presented(2);
         // Picture 3 before 2's answer came: from the refresh 2 was aimed at.
-        assert_eq!(clock.hold(132_000, 2, P, 5_000), 133_332 + 400 - 132_000);
+        assert_eq!(clock.hold(132_000, 2, P, 5_000, HELD_LATCH_GUARD_US), 133_332 + 400 - 132_000);
         clock.presented(3);
         assert!(clock.timing(140_000, 2, P).is_some());
     }
@@ -964,13 +981,13 @@ mod tests {
     fn a_late_answer_for_the_picture_before_starts_the_turns() {
         const P: u64 = 8_333;
         let mut clock = HeldClock::default();
-        assert_eq!(clock.hold(100_000, 2, P, 5_000), 0);
+        assert_eq!(clock.hold(100_000, 2, P, 5_000, HELD_LATCH_GUARD_US), 0);
         clock.presented(1);
-        assert_eq!(clock.hold(116_000, 2, P, 5_000), 0, "nothing known yet");
+        assert_eq!(clock.hold(116_000, 2, P, 5_000, HELD_LATCH_GUARD_US), 0, "nothing known yet");
         clock.presented(2);
         clock.shown(1, 108_333);
         // 2 counts as shown at 108_333 + 2 refreshes = 124_999: 3's turn 141_665, opened at 133_332.
-        assert_eq!(clock.hold(132_000, 2, P, 5_000), 133_332 + 400 - 132_000);
+        assert_eq!(clock.hold(132_000, 2, P, 5_000, HELD_LATCH_GUARD_US), 133_332 + 400 - 132_000);
         assert_eq!(clock.timing(132_000, 2, P), Some((124_999, 16_666_000)));
         // An answer for an older picture, or one the last picture already has, changes nothing.
         clock.presented(3);

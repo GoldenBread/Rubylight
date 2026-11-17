@@ -509,7 +509,7 @@ pub fn uncomposed_fullscreen(exclusive: bool, windows: bool) -> bool {
 /// 2 ms where nothing composes), plus the draws after the hold (`draw_us`, with Frame Warp), since a
 /// picture that comes late for its turn may have to draw after its hold. The sum stays under 4/5 of a
 /// refresh, and never under `base_us`. The present itself goes out just after the refresh that opens
-/// the turn (`HELD_LATCH_GUARD_US`).
+/// the turn (`phase::held_guard_us`).
 pub fn held_margin_us(base_us: u64, draw_us: Option<u64>, refresh_us: u64) -> u64 {
     let Some(draw_us) = draw_us else { return base_us };
     (base_us + draw_us).min((refresh_us * 4 / 5).max(base_us))
@@ -518,9 +518,9 @@ pub fn held_margin_us(base_us: u64, draw_us: Option<u64>, refresh_us: u64) -> u6
 /// How far ahead of the refresh the phase lock aims: `set_us` (a measurement run's) or that deadline,
 /// for a stream whose presents skip. A waiting present and exclusive fullscreen, which nothing
 /// composes, keep the refresh itself. A picture fractional V-Sync holds for its turn is aimed at the
-/// hold's own target instead (`phase::held_present_lead_us`, the refresh it is presented in plus
-/// `HELD_LATCH_GUARD_US`): aimed at the deadline, a host that steers delivered the picture after the
-/// refresh that opens the turn, so the hold never waited.
+/// hold's own target instead (`phase::held_present_lead_us`, the refresh it is presented in plus the
+/// guard `phase::held_guard_us`): aimed at the deadline, a host that steers delivered the picture
+/// after the refresh that opens the turn, so the hold never waited.
 pub fn phase_lock_aim_us(skipping: bool, exclusive: bool, set_us: Option<i64>, refresh_hz: f32) -> i64 {
     if !skipping || exclusive { return 0; }
     set_us.unwrap_or_else(|| deadline_before_refresh(refresh_hz))
