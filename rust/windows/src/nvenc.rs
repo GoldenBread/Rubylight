@@ -2331,8 +2331,20 @@ impl Session {
         if bitrate == self.stream.bitrate_kbps {
             return Ok(());
         }
-        if bitrate == 0 || bitrate > 800_000 {
+        if bitrate == 0 {
             bail!("NVENC bitrate out of range");
+        }
+        let requested = bitrate;
+        // The same ceiling the stream negotiated under: a stream that opened
+        // above the old reconfigure limit must keep changing its rate instead
+        // of failing.
+        let bitrate = bitrate.min(butterpollo_core::rtsp::MAX_BITRATE_KBPS);
+        if bitrate != requested {
+            tracing::warn!(
+                requested,
+                bitrate,
+                "NVENC bitrate above the stream's maximum; using the maximum"
+            );
         }
         if self.functions.nvEncReconfigureEncoder.is_none() {
             bail!("NVENC driver cannot change bitrate in this session");

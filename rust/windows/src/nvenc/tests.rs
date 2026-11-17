@@ -1110,7 +1110,16 @@ fn failed_bitrate_reconfigure_keeps_the_config_and_a_rise_needs_no_keyframe() ->
     encoder.bitrate(10000)?;
     assert!(!encoder.force_idr);
     assert!(encoder.bitrate(0).is_err());
-    assert!(encoder.bitrate(800001).is_err());
+    // The reconfigure ceiling is the stream's own: 2 Gbit/s, not 800 Mbit/s.
+    encoder.bitrate(1_500_000)?;
+    assert_eq!(encoder.stream.bitrate_kbps, 1_500_000);
+    assert_eq!(encoder.config.rcParams.averageBitRate, 1_500_000_000);
+    encoder.bitrate(2_500_000)?;
+    assert_eq!(
+        encoder.stream.bitrate_kbps,
+        butterpollo_core::rtsp::MAX_BITRATE_KBPS
+    );
+    assert_eq!(encoder.config.rcParams.averageBitRate, 2_000_000_000);
     drop(encoder);
     assert_clean();
     Ok(())
