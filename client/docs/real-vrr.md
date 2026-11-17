@@ -71,9 +71,12 @@ with tearing. How the wait is done depends on the system:
 
 - **Windows:** before each frame Nightjar reads where the screen is in its drawing, and holds a
   frame until the drawing has finished. A frame that follows another closely is also held until
-  that one has reached the screen. Some screens do not always start drawing when a frame reaches
-  them, so where the screen is says too little there. When Nightjar sees that at the start of a
-  stream, it hands the wait to Windows instead (V-Sync under VRR): a frame that meets the screen
+  that one has reached the screen. A frame whose wait for a scan under way would cost the next
+  frame its turn is handed to the swap chain instead: Nightjar presents it with sync interval 1,
+  and the swap chain shows it whole at the next refresh, so the wait ends there rather than a
+  landing later. Some screens do not always start drawing when a frame reaches them, so where the
+  screen is says too little there. When Nightjar sees that at the start of a stream, it hands the
+  wait to Windows instead (V-Sync under VRR): a frame that meets the screen
   idle goes out at once, one that arrives while it draws waits for that refresh to end. That
   holds for the rest of the stream and for later streams to the same screen in this run, and
   after Nightjar starts again: the screen is kept by its monitor's device interface path, not the

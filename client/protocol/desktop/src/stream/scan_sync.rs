@@ -18,6 +18,13 @@
 //!   present waits for the one before it to start its scan (`on_its_way`), and then for that scan.
 //!
 //! The counts and times go to the log at the stream's end (`Tally::lines`).
+//!
+//! A wait that would land past the next picture's due time is handed to the swap chain instead
+//! (`scan_wait`): the present goes out with sync interval 1, the swap chain shows it whole at the
+//! next refresh, and it returns there, without the tearing landing after the scan's end. Waiting
+//! on this thread would show the picture after the next one is due, which can then replace it
+//! before it is shown, and at a stream rate equal to the display's each picture would start a scan
+//! a landing after the last one ended.
 
 /// How long a present waits for the one before it to start its scan (ns), counted from that
 /// present: `scanline::RESTART_WINDOW_NS`, the longest a flip took on the test monitor plus 1 ms.
@@ -103,7 +110,9 @@ pub fn remember_untrusted(display: &str) {
 }
 
 /// Forgets that `display`'s presents did not start their scans, in this run and in the desktop
-/// config: Whole frames under VRR was set to Nightjar's wait, which never turns to Windows V-Sync.
+/// config: Whole frames under VRR was set to Nightjar's wait, which does not take the display
+/// check's switch to Windows V-Sync. (A wait that would cost the next picture its turn presents
+/// with sync interval 1, `scan_wait`, but that is the wait's own budget, not this switch.)
 pub fn clear_untrusted(display: &str) {
     let mut untrusted = UNTRUSTED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let before = untrusted.len();
@@ -112,7 +121,8 @@ pub fn clear_untrusted(display: &str) {
 }
 
 /// Forgets every display found not starting its scans, in this run and in the desktop config:
-/// Whole frames under VRR was set to Nightjar's wait, which never turns to Windows V-Sync.
+/// Whole frames under VRR was set to Nightjar's wait, which does not take the display check's
+/// switch to Windows V-Sync.
 pub fn clear_all() {
     let mut untrusted = UNTRUSTED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if untrusted.is_empty() && KEPT_IN.get().is_none() { return; }
@@ -155,6 +165,12 @@ pub const REST_PRESENTS: u32 = 300;
 /// and a sleep can overshoot. The wait is at most one scan plus this.
 pub const SCAN_WAIT_SLACK_NS: u64 = 1_000_000;
 
+/// How long a tearing present takes to reach the screen (ns) until the stream has measured its
+/// own (`Tally::landing`): the handheld of Nightjar issue 111 started its scan 1.4 ms after the
+/// present at the median (4.6 ms in its first log), the 240 Hz test monitor 0.4 ms. A wait that
+/// lands past the next picture's due time is what `scan_wait` turns into a latched present.
+pub const TEAR_LANDING_NS: u64 = 2_000_000;
+
 /// Waits for a scan under way longer than this sleep most of it (ns)...
 const SLEEP_FROM_NS: u64 = 1_500_000;
 /// ...and spin the last millisecond, reading the beam: a sleep can overshoot, and on a display that
@@ -187,6 +203,39 @@ pub fn scan_step(left_ns: Option<u64>, read: bool, waited_ns: u64, limit_ns: u64
     let Some(left) = left_ns else { return ScanStep::Go };
     if waited_ns >= limit_ns { return ScanStep::CutShort; }
     if left > SLEEP_FROM_NS { ScanStep::Sleep((left - SPIN_LAST_NS).min(limit_ns - waited_ns)) } else { ScanStep::Spin }
+}
+
+/// What a present that meets a scan under way does about it (`scan_wait`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScanWait {
+    /// Wait for the beam to leave the last row, then present with tearing: the picture lands
+    /// `landing_ns` after the wait ends, still before the next picture is due.
+    Wait,
+    /// Present with sync interval 1: the swap chain shows the picture whole at the next refresh,
+    /// and the present returns there instead of a tearing landing later.
+    Latch,
+}
+
+/// Whether a present with `left_ns` until the scan under way ends waits for it, given `budget_ns`
+/// until the next picture is due and `landing_ns` for a tearing present to reach the screen.
+///
+/// A wait that lands past the next picture's due time (`left_ns + landing_ns > budget_ns`) shows
+/// this picture after that time, so the next present can replace it before it is shown: at 120 fps
+/// on a 120 Hz panel each picture then starts a scan a landing after the last one ends, about 105
+/// a second, and the pacer replaces every eighth. The reporter's 5.5.0 log (Nightjar issue 111,
+/// Radeon 890M) had 24,651 frames, 21,313 presents and 3,022 replaced in 213 s, 6.20 ms a wait,
+/// and the stream felt like a 60 fps one. Sync interval 1 hands the wait to the swap chain
+/// instead: the picture is shown whole at the next refresh, before that time, and the present
+/// returns there rather than a landing later. A scan that ends after the next picture is due
+/// leaves no present able to keep it, and the latch still ends no later than the wait would.
+pub fn scan_wait(left_ns: u64, budget_ns: u64, landing_ns: u64) -> ScanWait {
+    if left_ns.saturating_add(landing_ns) <= budget_ns { ScanWait::Wait } else { ScanWait::Latch }
+}
+
+/// How long a present has before the next picture is taken to be due (ns): this picture's
+/// `due_us` plus one frame (`frame_us`), less `now_us`, converted from µs. 0 once it is late.
+pub fn wait_budget_ns(due_us: u64, frame_us: u64, now_us: u64) -> u64 {
+    due_us.saturating_add(frame_us).saturating_sub(now_us).saturating_mul(1000)
 }
 
 /// How a wait for a scan under way ended (`wait_out`).
@@ -268,6 +317,11 @@ impl Times {
 
     pub fn count(&self) -> u32 { self.count }
 
+    /// The median time (ns), None before the first. The step's upper edge, as `within_ms`.
+    pub fn median_ns(&self) -> Option<u64> {
+        (self.count > 0).then(|| (self.within_ms(0.5) * 1e6) as u64)
+    }
+
     /// The time `share` of them stayed within (ms), to the step: the step's upper edge, so a time
     /// is never shown shorter than it was. 0 when there are none.
     pub fn within_ms(&self, share: f64) -> f64 {
@@ -310,6 +364,9 @@ pub struct Tally {
     pub cut_short: u32,
     /// Waits that ended with the counter going back to the next scan (`Waited::wrapped`).
     pub wrapped: u32,
+    /// Presents that went out with sync interval 1 because the wait would have cost the next
+    /// picture its turn (`ScanWait::Latch`).
+    pub latched: u32,
 }
 
 impl Tally {
@@ -342,6 +399,17 @@ impl Tally {
     /// A present found the one before it on the screen: the give-ups were not in a row.
     pub fn found_landed(&mut self) { self.row = 0; }
 
+    /// Records how long a present took to start its scan, unless that present went out with sync
+    /// interval 1: its scan starts at the next refresh, so the time is the latch's own, not a
+    /// tearing present's landing (`landing_ns`).
+    pub fn landing_measured(&mut self, took_ns: Option<u64>, latched: bool) {
+        if let Some(took) = took_ns.filter(|_| !latched) { self.landing.push(took); }
+    }
+
+    /// Forgets the measured landings: they belong to the display, so a stream moved to another
+    /// monitor measures afresh before the wait's budget uses them (`Streaming::display_changed`).
+    pub fn forget_landing(&mut self) { self.landing = Times::default(); }
+
     /// The log's lines at the stream's end, none for a stream that never got this far.
     pub fn lines(&self) -> Vec<String> {
         let mut lines = Vec::new();
@@ -350,6 +418,9 @@ impl Tally {
         }
         if self.wrapped > 0 {
             lines.push(format!("VRR: {} waits ended as the display began its next scan, with no reading past the last row", self.wrapped));
+        }
+        if self.latched > 0 {
+            lines.push(format!("VRR: {} presents went out with sync interval 1 because waiting for the scan would have cost the next picture its turn", self.latched));
         }
         if self.drawing.count() > 0 {
             lines.push(format!("VRR: a picture's drawing was finished before its present, after {} ({} not waited for)",

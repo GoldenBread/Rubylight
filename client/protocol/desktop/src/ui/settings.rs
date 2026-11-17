@@ -1173,7 +1173,7 @@ impl Launcher {
             // Tear-free VRR's wait for the scan line is Windows'; Variable refresh rate's On asks for it.
             if cfg!(windows) {
                 rows.when(s.vrr && s.vrr_tear_free && vrr_offered);
-                setting_row(ui, s, &mut rows, &["vrr_wait"], "Whole frames under VRR", "Automatic shows each picture whole by waiting for the display’s scan line, and switches to Windows V-Sync on a display that does not refresh on present; Nightjar’s wait keeps the scan line’s wait, which can tear there. Windows V-Sync can add up to one refresh of delay, so leave Automatic unless frames still tear.", |ui, s| {
+                setting_row(ui, s, &mut rows, &["vrr_wait"], "Whole frames under VRR", "Automatic shows each picture whole by waiting for the display’s scan line, and switches to Windows V-Sync on a display that does not refresh on present; Nightjar’s wait keeps the scan line’s wait, which can tear there, and presents with sync interval 1 when that wait would cost the next picture its turn, so the display shows it whole at the next refresh. Windows V-Sync can add up to one refresh of delay, so leave Automatic unless frames still tear.", |ui, s| {
                     let before = s.vrr_wait;
                     let response = Combo::from_id_salt("vrr-wait")
                         .selected_text(tr(s.vrr_wait.label()))
@@ -1183,8 +1183,9 @@ impl Launcher {
                             }
                         })
                         .response;
-                    // Nightjar's wait never turns to Windows V-Sync, so the choice forgets every
-                    // display Automatic found not refreshing on present (`scan_untrusted.json`).
+                    // Nightjar's wait does not take the display check's switch to Windows V-Sync,
+                    // so the choice forgets every display Automatic found not refreshing on
+                    // present (`scan_untrusted.json`).
                     if before != crate::config::VrrWait::Scan && s.vrr_wait == crate::config::VrrWait::Scan {
                         crate::stream::scan_sync::clear_all();
                     }
