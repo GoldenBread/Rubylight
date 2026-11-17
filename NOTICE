@@ -13,6 +13,22 @@ rust/codec-patches/pyrowave, two of them adapted from Punktfunk
 (https://git.unom.io/unom/punktfunk, Copyright (c) 2026 unom - Enrico Bühler,
 MIT OR Apache-2.0, used under MIT); the MIT notice is in rust/THIRD_PARTY.md.
 
+KosmicKrisp and the Vulkan loader (Nightjar for macOS)
+
+Nightjar for macOS on Apple silicon bundles libvulkan_kosmickrisp.dylib, the
+KosmicKrisp Vulkan-on-Metal driver from Mesa 26.2.7 by LunarG and the Mesa
+contributors (MIT; https://archive.mesa3d.org/mesa-26.2.7.tar.xz), built by
+client/protocol/desktop/macos-vulkan.sh. It statically links SPIRV-Tools
+vulkan-sdk-1.4.357.0 (Apache-2.0; https://github.com/KhronosGroup/SPIRV-Tools), built
+against SPIRV-Headers vulkan-sdk-1.4.357.0 (Khronos MIT-style license;
+https://github.com/KhronosGroup/SPIRV-Headers). It also bundles libvulkan.1.dylib, the
+Khronos Vulkan loader vulkan-sdk-1.4.357.0 (Apache-2.0;
+https://github.com/KhronosGroup/Vulkan-Loader), and libpyrowave-shared.dylib, the
+PyroWave SDK with Granite and volk (MIT), with a build patch to Granite's
+util/timer.cpp so it builds on macOS (client/scripts/pyrowave-macos). The license texts
+are installed in Nightjar.app/Contents/Resources/Licenses and kept in
+third-party/licenses.
+
 FFmpeg
 
 Windows builds ship avcodec-62.dll and avutil-60.dll from FFmpeg 8.1.3

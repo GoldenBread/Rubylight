@@ -82,8 +82,12 @@ open the host's device permissions and enable **Launch applications** for the pa
 **Control + Option + Shift + Tab** opens the stream menu. **Control + Option + Shift + Q** leaves it.
 
 FSR1, SGSR1, planar conversion, packed full chroma and PyroWave's Rust decoder use Metal fragment
-shaders. PyroWave defaults to the CPU decoder on macOS. Its upstream Vulkan SDK backend is available
-on Windows and Linux. HDR requires an HDR display and a compatible host. Live streaming has been
+shaders. On Apple silicon with macOS 26 or later, PyroWave decodes with its upstream Vulkan SDK through
+Mesa's KosmicKrisp driver and the Vulkan loader, which an arm64 `package-macos.py --vulkan <prefix>
+--pyrowave-sdk <folder>` build bundles (`macos-vulkan.sh` builds them, `scripts/build-pyrowave-sdk.sh`
+the SDK); the decoded planes are read back into memory for the Metal renderer. Elsewhere, or when the
+driver or the decoder does not start, the CPU decoder runs and the stream says why. `nightjar
+--check-pyrowave <report>` names which. HDR requires an HDR display and a compatible host. Live streaming has been
 verified on Apple Silicon. The Metal and VideoToolbox
 checks passed on Apple Silicon and on an Intel MacBook Pro with a Radeon Pro 560 running Ventura
 13.7.8. The Intel Mac decoded HEVC Main and Main10. Its hardware probe declined AV1. Live HDR and
