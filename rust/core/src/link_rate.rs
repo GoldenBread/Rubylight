@@ -384,8 +384,10 @@ pub struct Evidence {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Change {
     pub kind: ChangeKind,
-    /// `unrecoverable_frames`, `fec_loss_share`, `send_losses`,
-    /// `keyframe_requests`, `probe`, `recovered`.
+    /// `unrecoverable_frames`, `fec_loss_share`, `send_losses` (the PC's own
+    /// socket refused frames, the RTT flat), `send_losses_queued` (refusals
+    /// with a queue in the path: the network's), `keyframe_requests`,
+    /// `probe`, `recovered`.
     pub reason: &'static str,
     pub from_kbps: u32,
     pub to_kbps: u32,
@@ -1495,7 +1497,13 @@ impl LinkRate {
         } else if evidence.loss_windows >= LOSS_WINDOWS {
             ("fec_loss_share", true)
         } else if evidence.send_losses >= SEND_LOSS_FRAMES {
-            ("send_losses", true)
+            // Refused sends with a queue standing in the path are the path's
+            // (a switch pausing the adapter); the PC's own only when flat.
+            if self.host_only(&evidence) {
+                ("send_losses", true)
+            } else {
+                ("send_losses_queued", true)
+            }
         } else if ((!self.fec_status_seen || self.probe_unconfirmed(now))
             && evidence.keyframe_requests >= KEYFRAME_REQUESTS)
             || (latch_failed && evidence.keyframe_requests > 0)
@@ -1983,7 +1991,7 @@ impl LinkRate {
         let host_limited = self.host_limited(now);
         // On a path that has shown a queue, a step whose RTT has risen is
         // filling it, however slowly: it is not clean yet.
-        let queued = !self.queue_peak.is_zero();
+        let queued = !self.queue_peak.is_zero() && self.ping_fresh(now);
         for slot in &mut self.pending {
             let Some(step) = slot else { continue };
             // A static picture proves nothing: a step sent just before it
@@ -2062,6 +2070,11 @@ impl LinkRate {
                     self.bad = None;
                     self.near_bad = None;
                     self.forget_knee();
+                    // A minute clean near it: the next failure there is new.
+                    if self.learned.is_none() {
+                        self.failed_at = None;
+                        self.retry_wait = HOLD;
+                    }
                 }
             }
             _ => {}
@@ -2171,12 +2184,13 @@ impl LinkRate {
         self.state = State::Full;
         self.reason = "healthy";
         self.bad = None;
-        // The path carried the request: no ceiling now. The edge it showed
-        // stays known, so a failure there again waits [`RETRY_FIRST`] at
-        // least, not the doubled wait of before.
+        // The path carried the request: no ceiling, no edge and no queue
+        // remembered. A later dip is a new edge, handled as the first was.
         self.learned = None;
         self.next_retry = None;
         self.retry_wait = HOLD;
+        self.failed_at = None;
+        self.queue_peak = Duration::ZERO;
         self.encoder_floor = None;
         self.overshoots = 0;
         self.hold = HOLD;

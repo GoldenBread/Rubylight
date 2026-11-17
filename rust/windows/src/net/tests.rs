@@ -124,6 +124,27 @@ fn one_frame_shares_a_single_wait_for_room_in_the_socket() {
     assert_eq!(batch.take(start), WRITABLE_WAIT.as_millis() as i32);
 }
 
+/// Review 2026-11-17: one brief refusal spent the frame's whole wait, so a
+/// later full socket in the same frame was dropped at once. A batch that
+/// drops nothing ends the full-socket spell.
+#[test]
+fn a_batch_sent_whole_ends_the_frames_full_socket_spell() -> Result<()> {
+    let sender = ReplySocket::bind("127.0.0.1:0")?;
+    let receiver = UdpSocket::bind("127.0.0.1:0")?;
+    let mut batch = Batch::default();
+    batch.begin_frame(std::time::Duration::from_millis(20));
+    let past = std::time::Instant::now() - std::time::Duration::from_millis(1);
+    batch.frame.as_mut().unwrap().deadline = Some(past);
+    assert!(batch.frame_wait_spent());
+    batch.send(&sender, &[vec![7; 64]], receiver.local_addr()?)?;
+    assert_eq!(batch.dropped, 0);
+    assert!(!batch.frame_wait_spent());
+    assert!(batch.frame.unwrap().deadline.is_none());
+    batch.end_frame();
+    assert!(batch.frame.is_none());
+    Ok(())
+}
+
 /// Review 2026-11-17: the retry loop polled a socket that reported writable
 /// and refused again at once, spinning for the whole frame wait. From the
 /// second refusal on it pauses a millisecond first, so a 20 ms wait is about

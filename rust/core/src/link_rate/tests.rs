@@ -3084,3 +3084,49 @@ fn a_queue_left_standing_after_a_loss_cut_is_cut_too() {
     assert!(r.over_link < 0.2, "{r:?}");
     assert!(r.frame_loss < 0.005, "{r:?}");
 }
+
+/// Review 2026-11-17: refusals while a queue stands in the path are the
+/// path's, so they are not reported as the PC's limit.
+#[test]
+fn refusals_with_a_queue_in_the_path_are_not_called_the_pcs() {
+    for (rtt, reason) in [(10, "send_losses"), (60, "send_losses_queued")] {
+        let mut rig = Rig::new(40_000);
+        rig.clean(2_000);
+        rig.rtt = Duration::from_millis(rtt);
+        let mut left = 3;
+        rig.run(200, |lr, frame, now| {
+            if left > 0 {
+                left -= 1;
+                lr.on_send_loss(frame, now);
+            }
+        });
+        let change = &rig.changes.first().expect("refusals cut").1;
+        assert_eq!(change.reason, reason, "rtt {rtt}: {change:?}");
+    }
+}
+
+/// Review 2026-11-17: the edge of one dip stayed known after the stream was
+/// back at its request, so a second, unrelated dip near that rate engaged
+/// the learned ceiling. Each dip that passes recovers the same way.
+#[test]
+fn a_second_dip_recovers_like_the_first() {
+    let link = Link::new(|t| {
+        if (20. ..40.).contains(&t) || (120. ..140.).contains(&t) {
+            10e6
+        } else {
+            80e6
+        }
+    });
+    let mut sim = Sim::new(q(link, 50.), 40_000, 20.);
+    sim.run(200.);
+    let first = sim.reaches(40., 36_000).expect("back after the first dip") - 40.;
+    let second = sim
+        .reaches(140., 36_000)
+        .expect("back after the second dip")
+        - 140.;
+    assert!(first <= 25., "first dip: {first:.1} s");
+    assert!(
+        second <= first + 5.,
+        "second dip: {second:.1} s, first {first:.1} s"
+    );
+}

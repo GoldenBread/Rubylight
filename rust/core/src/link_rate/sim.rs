@@ -628,6 +628,34 @@ fn field_report() {
         r.delivered_mbps,
         r.frame_loss * 100.
     );
+    let mut twice = Sim::new(
+        queued(
+            Link::new(|t| {
+                if (20. ..40.).contains(&t) || (120. ..140.).contains(&t) {
+                    10e6
+                } else {
+                    80e6
+                }
+            }),
+            50.,
+            0.002,
+        ),
+        40_000,
+        20.,
+    );
+    twice.run(RUN);
+    let first = twice.reaches(40., 36_000).map_or(-1., |t| t - 40.);
+    let second = twice.reaches(140., 36_000).map_or(-1., |t| t - 140.);
+    let r = twice.report(0., RUN);
+    println!(
+        "| Two Wi-Fi blips, H.26x 40 on 80 -> 10 -> 80 Mbps (20-40 s, 120-140 s), back to 90 % {first:.1} s and {second:.1} s after | {} | {} | {:.0} % | {:.0} | {:.0} | {:.2} % |",
+        r.cuts,
+        r.failed_probes,
+        r.over_link * 100.,
+        r.p95_queue_ms,
+        r.delivered_mbps,
+        r.frame_loss * 100.
+    );
     let mut blip = Sim::pyrowave(
         queued(Link::step(1000., 150., 60., 90.), 50., 0.002),
         400_000,

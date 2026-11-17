@@ -1084,9 +1084,13 @@ impl Batch {
             self.frame.map(|frame| frame.until),
             self.frame.and_then(|frame| frame.deadline),
         );
+        let dropped = self.dropped;
         let result = self.send_within(socket, packets, peer, &mut source, &mut budget);
         if let Some(frame) = self.frame.as_mut() {
-            frame.deadline = budget.deadline;
+            // The shared deadline lasts only while the socket stays full: a
+            // batch that dropped nothing ends that spell, and a later refusal
+            // starts a new one with at least WRITABLE_WAIT.
+            frame.deadline = budget.deadline.filter(|_| self.dropped > dropped);
         }
         result
     }

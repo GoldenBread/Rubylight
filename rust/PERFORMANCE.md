@@ -101,6 +101,7 @@ Simulator (`link_rate/sim.rs`, `field_report`, 5 minutes a run, debug build): cu
 | 1 GbE, PyroWave 800 | no change, 533 Mbps | same | same |
 | 1 GbE, H.26x 80 | no change, 109 Mbps | same | same |
 | H.26x 40, link 80, 10 from 20 to 40 s | 2 / 1, back to 90 % 19.3 s after | 2 / 1, 20.3 s | 2 / 1, 18.6 s |
+| H.26x 40, link 80, 10 from 20 to 40 s and from 120 to 140 s | 4 / 2, back 19.3 and 17.4 s after | 4 / 2, 20.3 and 19.0 s | 4 / 2, 18.6 and 18.0 s |
 | PyroWave 400, link 1000, 150 from 60 to 90 s | 1 / 1, back to 90 % 2.5 s after | 1 / 2, 26.4 s | 1 / 1, 2.6 s |
 
 In the field shape the stream now settles under the path's edge with a short queue, and its failed retries come further apart (on the first row at 28, 69, 113, 163 and 257 s). It delivers less than main on the first rows because main delivered the full path rate at the price of a permanently full 270 ms buffer. The simulator's drop-tail queue never drops the coarse block a frame starts with, so it shows none of the field's unrecoverable frames; the refusing row is the closer shape.
