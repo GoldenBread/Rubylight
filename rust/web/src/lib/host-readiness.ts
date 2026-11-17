@@ -165,7 +165,7 @@ function capture(meta: Metadata): Check {
   const status = meta.capture_status;
   const backend = status.configured_backend || 'auto';
   const method = backend === 'auto'
-    ? 'Uses direct driver push on Rubylight virtual displays and Windows Graphics Capture on other displays.'
+    ? 'Uses direct driver push on Rubylight virtual displays and Windows Graphics Capture on other displays, with Desktop Duplication when Windows Graphics Capture cannot see a fullscreen app.'
     : backend === 'idd-push'
       ? `Prefers ${CAPTURE[backend]} on Rubylight virtual displays, with Windows capture as fallback.`
       : `Uses ${CAPTURE[backend] ?? 'the configured capture method'}.`;
