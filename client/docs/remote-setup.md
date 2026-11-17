@@ -2,7 +2,7 @@
 
 [Documentation](index.md) · [Pairing](pairing.md) · [Troubleshooting](TROUBLESHOOTING.md)
 
-Nightjar streams from outside the home network over a private VPN such as Tailscale, which connects this device and the PC without exposing the host to the Internet. Nightjar does not install software, change router settings, open public ports or create accounts. The guide works with any paired Moonlight-compatible host.
+Nightjar streams from outside the home network over a private VPN such as Tailscale, which connects this device and the PC without exposing the host to the Internet, or, with a PC that offers it, [without a VPN](#without-a-vpn). Nightjar does not install software, change router settings, open public ports or create accounts. The guide works with any paired Moonlight-compatible host.
 
 ## Set up on Android
 
@@ -15,6 +15,12 @@ Long-press a saved PC, choose **PC settings…**, then **Play away from home**. 
 <p align="center">
   <img src="assets/shots/tv-away-from-home.png" width="720" alt="Play away from home on a TV, step 2 of 3, Connect your devices: a private VPN such as Tailscale connects this device and the PC, with an Open Tailscale setup button and Previous and Next">
 </p>
+
+## Without a VPN
+
+**Settings → Streaming → Play over the internet** (on by default) reaches a PC without a VPN or port forwarding when its host offers it (Rubylight with Play over the internet on). Away from home, Nightjar tries the local network, then the PC's IPv6 address, then a forwarded port, and only then a direct path that both sides punch through their routers, found through a public peer-to-peer directory that holds only encrypted notes ([Privacy](PRIVACY.md)). Connect once on the PC's network first, so the PC can give this device its key. The PC's line names the path in use, and when none works it lists each path and why it failed.
+
+A VPN still works where this cannot: two routers that both change ports per destination can't be punched through. Turn the setting off to never look up or punch a path.
 
 ## Test from Windows and Linux
 

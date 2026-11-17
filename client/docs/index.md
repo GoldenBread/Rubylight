@@ -1,46 +1,76 @@
 # Nightjar documentation
 
-These pages describe the current Nightjar release for Android, Android TV, Fire TV, Windows, Linux and macOS. Nightjar works with any Moonlight-compatible host, such as Sunshine, Apollo, Vibepollo, Rubylight and NVIDIA GameStream, and enables each host extension from the capabilities the host reports.
+[Nightjar](../README.md) · [Download](../README.md#download) · [Settings reference](settings.md) · [Troubleshooting](TROUBLESHOOTING.md)
 
-Conventions used throughout:
+Nightjar streams games from your PC to Android phones, tablets and handhelds, Android TV and Fire TV, and Windows, Linux and macOS computers. It works with any Moonlight-compatible host, such as Sunshine, Apollo, Vibepollo, Rubylight and NVIDIA GameStream, and turns on each host extension from the capabilities the host reports.
+
+Find your task below. Conventions used throughout:
 
 - The **PC** is the computer you stream from; the **host** is the streaming software running on it; **this device** is the one running Nightjar.
 - Settings are named exactly as they appear in the app, with their path: **Settings → Streaming → Recover interrupted streams**.
 - Where a feature depends on the host, the page names the capability it needs and the hosts known to provide it.
 
-New to Nightjar? Read the [quick start](quick-start.md), then return here when you want to tune something. [Download Nightjar](../README.md#download).
+<a id="user-guide"></a>
 
-## User guide
+## Get started
 
-| Page | Contents |
+New to Nightjar? Read the [quick start](quick-start.md): install a host, add the PC, pair and start the first stream.
+
+| I want to | Read |
 | --- | --- |
-| [Quick start](quick-start.md) | Installing a host, adding a PC and starting the first stream |
-| [Pairing and permissions](pairing.md) | PIN, one-time PIN and QR pairing; the per-device permissions a host can set |
-| [Play away from home](remote-setup.md) | Streaming over Tailscale or a forwarded connection, and testing the path |
-| [Home and the session menu](console.md) | Home and its views, game pages, Continue here, PC options and power, Microphone only, Join co-op, the Session and graphics page, TV and accessibility |
-| [Controls](controls.md) | Controllers, touch, mouse, keyboard, pen, on-screen controls and the microphone |
-| [Gamepad navigation](gamepad-navigation.md) | Using the menus and the PC keyboard with a controller |
-| [USB DualSense audio and haptics](dualsense-haptics.md) | Waveform haptics and controller audio over USB |
-| [Video and latency](video-and-latency.md) | Codecs, HDR, PyroWave, refresh rate, scaling, bitrate, error correction and audio |
-| [Frame Warp](video-and-latency.md#frame-warp) | Camera turns on your screen's next refresh with a Rubylight PC, the HUD kept in place |
-| [Real VRR](real-vrr.md) | On a VRR screen, each frame shown at the game's own time on the PC, so the screen keeps the game's rhythm |
-| [Recovery and automatic quality](recovery-and-quality.md) | Recovering interrupted streams, riding out network drops, automatic resolution and frame rate |
-| [Clipboard, files, folders and USB devices](sharing.md) | Sharing with a PC whose host supports it |
-| [Launcher integrations](FRONTENDS.md) | Starting games from Beacon, ES-DE, Daijisho, Pegasus and Android TV's home screen |
-| [Nightjar for macOS, Windows and Linux](../protocol/desktop/README.md) | Installing, running and building the desktop client |
-| [Steam Deck and Linux handhelds](steam-deck.md) | The Flatpak, Game Mode controls and HDR under gamescope |
-| [Features](features.md) | Every feature, with a link to its guide |
+| Install Nightjar | [Download](../README.md#download) · [Nightjar for macOS, Windows and Linux](../protocol/desktop/README.md) · [Steam Deck and Linux handhelds](steam-deck.md) |
+| Stream for the first time | [Quick start](quick-start.md) |
+| Pair with a PIN, a one-time PIN or a QR code | [Pairing and permissions](pairing.md) |
+| Know what Nightjar can do with my host | [Features](features.md) · [Host feature support](PARITY-MATRIX.md) |
 
-## Reference
+## Everyday use
 
-| Page | Contents |
+| I want to | Read |
 | --- | --- |
-| [Settings reference](settings.md) | Every setting on Android and the desktop client, with its default and advice |
-| [Host feature support](PARITY-MATRIX.md) | Each host capability and the hosts known to provide it |
-| [Android and desktop compared](CLIENT-PARITY.md) | Feature availability in the two clients |
-| [Decoder flags](decoder-flags.md) | The low-latency decoder settings applied per chip family |
-| [Device results](devices.md) | Decoder benchmark results from real devices, and how to add yours |
-| [Privacy](PRIVACY.md) | What Nightjar stores, what it sends and to whom |
+| Find my way around Home, a game's page and the PC's options | [Home and the session menu](console.md) |
+| Use the menu during a stream, or leave a game | [The stream menu](controls.md#the-stream-menu) · [Leaving a game](controls.md#leaving-a-game) |
+| Wake or put the PC to sleep | [Wake a sleeping PC](pairing.md#wake-a-sleeping-pc) · [The PC's power](console.md#the-pcs-power-and-host-updates) |
+| Start games from Beacon, ES-DE, Daijisho, Pegasus or the TV's home screen | [Launcher integrations](FRONTENDS.md) |
+| Share the clipboard, files, folders or USB devices with the PC | [Clipboard, files, folders and USB devices](sharing.md) |
+| Change how a setting, a profile or one game behaves | [Settings reference](settings.md) |
+| Use Nightjar on a TV, or with a screen reader | [On a TV](console.md#on-a-tv) · [Accessibility on Android](console.md#accessibility-on-android) · [Accessibility on Windows and Linux](console.md#accessibility-on-windows-and-linux) |
+
+## Play anywhere
+
+| I want to | Read |
+| --- | --- |
+| Play away from home | [Play away from home](remote-setup.md) |
+| Reach a PC without a VPN | [Without a VPN](remote-setup.md#without-a-vpn) |
+| Keep my stream when the network changes | [Recovering a connection](recovery-and-quality.md#recovering-a-connection) |
+
+## Play together
+
+| I want to | Read |
+| --- | --- |
+| Join the game someone else plays on the PC, or let a friend join mine | [Play together](console.md#play-together) |
+| Take a seat in a split-screen co-op game | [Join co-op](console.md#join-co-op) |
+| Move my game to the device in my hand | [Home](console.md#home) |
+
+## Picture and smoothness
+
+| I want to | Read |
+| --- | --- |
+| Choose a codec, HDR, a refresh rate or an upscaler | [Video and latency](video-and-latency.md) |
+| Keep a VRR screen on the game's rhythm | [Real VRR](real-vrr.md) |
+| See camera turns on the next refresh with a Rubylight PC | [Frame Warp](video-and-latency.md#frame-warp) |
+| Let Nightjar pick resolution, frame rate and bitrate | [Recovery and automatic quality](recovery-and-quality.md) |
+| Find out why the stream stuttered | [Stream health](stream-health.md) |
+
+## Controllers
+
+| I want to | Read |
+| --- | --- |
+| Set up a controller, gyro, touch, mouse, keyboard or pen | [Controls](controls.md) |
+| Use the menus with a controller or a remote | [Gamepad navigation](gamepad-navigation.md) · [Menu navigation](controls.md#menu-navigation) |
+| Use on-screen controls on a phone or tablet | [On-screen controls](controls.md#on-screen-controls) |
+| Get DualSense haptics and controller audio over USB | [USB DualSense audio and haptics](dualsense-haptics.md) |
+| Use the microphone | [Microphone](controls.md#microphone) |
+| Play from a Steam Deck in Game Mode | [Steam Deck and Linux handhelds](steam-deck.md) |
 
 ## Troubleshooting
 
@@ -50,7 +80,21 @@ New to Nightjar? Read the [quick start](quick-start.md), then return here when y
 | [Stream health](stream-health.md) | Reading **Why did my stream stutter?** and its reversible bitrate trial |
 | [FAQ](faq.md) | Short answers to common questions |
 
-## Contributing
+## Reference
+
+| Page | Contents |
+| --- | --- |
+| [Settings reference](settings.md) | Every setting on Android and the desktop client, with its default and advice |
+| [Features](features.md) | Every feature, with a link to its guide |
+| [Host feature support](PARITY-MATRIX.md) | Each host capability and the hosts known to provide it |
+| [Android and desktop compared](CLIENT-PARITY.md) | Feature availability in the two clients |
+| [Decoder flags](decoder-flags.md) | The low-latency decoder settings applied per chip family |
+| [Device results](devices.md) | Decoder benchmark results from real devices, and how to add yours |
+| [Privacy](PRIVACY.md) | What Nightjar stores, what it sends and to whom |
+
+<a id="contributing"></a>
+
+## For developers
 
 | Page | Contents |
 | --- | --- |
@@ -67,6 +111,7 @@ Design notes, measurements and audits for contributors. They describe internals 
 | --- | --- |
 | [Beam racing](beam-racing.md), [early decode](early-decode.md), [mouse pace](mouse-pace.md) | Desktop presentation timing, and input sent at the mouse's pace |
 | [PyroWave GPU decoding](pyrowave-decode.md), [PyroWave decode stages](pyrowave-decode-stages.md) | The desktop PyroWave decoder and its measured stages |
+| [MetalFX on macOS](macos-metalfx.md) | The macOS spatial upscaler and its verification |
 | [Refresh rate switching](expected-refresh-switch.md), [HDR on Android displays](expected-hdr10.md) | How the Android app requests refresh rates and HDR, and reports refusals |
 | [Client roaming](protocol/client-roaming.md), [host cursor shapes](protocol/cursor-shape.md), [Frame Warp](protocol/frame-warp.md) | Protocol extensions proposed for Moonlight-compatible hosts |
 | [Android audit, October 2026](android-audit-2026-10.md) | Audit findings and their resolution |
