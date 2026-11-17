@@ -432,11 +432,11 @@ public class ComputerManagerLifecycleTest {
                 synchronized (tuple.networkLock) {
                     pollRunning.countDown();
                     try {
-                        Thread.sleep(300);
+                        Thread.sleep(800);
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                     }
-                    // The poll that the callback waits for answers, after the network change arrived.
+                    // The poll that the worker waits for answers, after the network change arrived.
                     tuple.lastSuccessfulPollMs = android.os.SystemClock.elapsedRealtime();
                 }
             });
@@ -445,14 +445,22 @@ public class ComputerManagerLifecycleTest {
 
             Thread network = new Thread(() -> callback.onLost(null));
             network.start();
+            network.join(300);
+            // The default network callback thread never waits for a poll's lock.
+            assertFalse("the network callback waited for a poll", network.isAlive());
+
             poll.join(5000);
-            network.join(5000);
-            assertFalse(network.isAlive());
+            awaitNetworkChanges(service);
             assertEquals("the poll that answered meanwhile keeps the PC online",
                     ComputerDetails.State.ONLINE, tuple.computer.state);
         } finally {
             controller.destroy();
         }
+    }
+
+    private static void awaitNetworkChanges(ComputerManagerService service) throws Exception {
+        ExecutorService changes = ReflectionHelpers.getField(service, "networkChanges");
+        changes.submit(() -> { }).get(10, TimeUnit.SECONDS);
     }
 
     private static ComputerDetails savedWithCertificate(android.content.Context context, String uuid) {
