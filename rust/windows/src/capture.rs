@@ -151,7 +151,8 @@ pub(crate) fn window_client(config: &butterpollo_core::config::Config) -> bool {
 /// The desktop rectangle of `name` as [left, top, right, bottom], the primary
 /// display for an empty name; `None` when it is not on the desktop.
 pub(crate) fn display_rect(name: &str) -> Option<[i32; 4]> {
-    let display = select_display(&displays().ok()?, name).ok()??;
+    let choices = displays().ok()?;
+    let display = select_display(&choices, name).ok()??;
     Some([
         display.x,
         display.y,
