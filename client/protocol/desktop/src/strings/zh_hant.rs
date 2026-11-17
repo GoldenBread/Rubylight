@@ -1343,7 +1343,7 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("Balanced, keep every frame", "平衡，保留每個影格"),
     ("PC’s frame times", "電腦的影格時間"),
     ("Waits for the screen’s refresh, so the picture never tears; the wait adds latency. Turn it off for the lowest latency if tearing doesn’t bother you.", "等待螢幕更新，因此畫面絕不撕裂；等待會增加延遲。如果不介意撕裂，可關閉以獲得最低延遲。"),
-    ("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; Temporal reuses earlier frames to rebuild detail, but in our tests looked softer than SGSR at about three times its GPU work, so leave SGSR on unless you want to compare. HDR streams are enlarged without them.", "比螢幕小的串流畫面如何放大。FSR 和 SGSR 會銳化邊緣，但會佔用一些 GPU 時間和電力；時域會重用先前的畫面來重建細節，但在我們的測試中畫面比 SGSR 柔和，GPU 負擔約為其三倍，除非想比較，否則請保持 SGSR。HDR 串流放大時不使用它們。"),
+    ("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; Temporal reuses earlier frames to rebuild detail, but in our tests looked softer than SGSR at three to four times its GPU work, so leave SGSR on unless you want to compare. HDR streams are enlarged without them.", "比螢幕小的串流畫面如何放大。FSR 和 SGSR 會銳化邊緣，但會佔用一些 GPU 時間和電力；時域會重用先前的畫面來重建細節，但在我們的測試中畫面比 SGSR 柔和，GPU 負擔為其三到四倍，除非想比較，否則請保持 SGSR。HDR 串流放大時不使用它們。"),
     ("Upscaling sharpness", "超解析度銳利度"),
     ("How much sharpening FSR or SGSR adds. Raise it for soft edges; lower it if edges show halos.", "FSR 或 SGSR 加入的銳化程度。邊緣偏軟時調高；邊緣出現光暈時調低。"),
     ("Video position", "視訊位置"),

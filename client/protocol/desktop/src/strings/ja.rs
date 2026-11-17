@@ -1343,7 +1343,7 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("Balanced, keep every frame", "バランス（全フレームを保持）"),
     ("PC’s frame times", "PC のフレームタイミング"),
     ("Waits for the screen’s refresh, so the picture never tears; the wait adds latency. Turn it off for the lowest latency if tearing doesn’t bother you.", "画面のリフレッシュを待つため、映像にティアリングが起きませんが、待つ分だけ遅延が増えます。ティアリングが気にならない場合は、オフにすると遅延が最小になります。"),
-    ("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; Temporal reuses earlier frames to rebuild detail, but in our tests looked softer than SGSR at about three times its GPU work, so leave SGSR on unless you want to compare. HDR streams are enlarged without them.", "画面より小さいストリームを拡大する方法です。FSR と SGSR は輪郭をくっきりさせますが、GPU の処理時間とバッテリーを少し使います。テンポラルは以前のフレームを再利用して細部を復元しますが、私たちのテストでは SGSR より柔らかい画になり、GPU の負荷は約 3 倍でした。比較したいとき以外は SGSR のままにしてください。HDR ストリームはこれらを使わずに拡大されます。"),
+    ("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; Temporal reuses earlier frames to rebuild detail, but in our tests looked softer than SGSR at three to four times its GPU work, so leave SGSR on unless you want to compare. HDR streams are enlarged without them.", "画面より小さいストリームを拡大する方法です。FSR と SGSR は輪郭をくっきりさせますが、GPU の処理時間とバッテリーを少し使います。テンポラルは以前のフレームを再利用して細部を復元しますが、私たちのテストでは SGSR より柔らかい画になり、GPU の負荷は 3～4 倍でした。比較したいとき以外は SGSR のままにしてください。HDR ストリームはこれらを使わずに拡大されます。"),
     ("Upscaling sharpness", "アップスケーリングのシャープネス"),
     ("How much sharpening FSR or SGSR adds. Raise it for soft edges; lower it if edges show halos.", "FSRまたはSGSRが加えるシャープ化の強さです。輪郭がぼやける場合は上げ、輪郭に縁取り（ハロー）が出る場合は下げてください。"),
     ("Video position", "映像の位置"),

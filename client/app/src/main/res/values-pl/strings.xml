@@ -412,7 +412,7 @@
     <string name="upscaling_sgsr1">Ostre, Snapdragon (SGSR)</string>
     <string name="upscaling_sgsr2">Temporalne, Snapdragon (SGSR 2)</string>
     <string name="upscaling_temporal_unavailable">%1$s; skalowanie temporalne niedostępne</string>
-    <string name="summary_upscaling">Jak powiększany jest strumień mniejszy niż ekran. FSR i SGSR wyostrzają krawędzie kosztem pewnego obciążenia GPU i baterii; Temporalne wykorzystuje wcześniejsze klatki do odtworzenia szczegółów, ale w naszych testach obraz był bardziej miękki niż z SGSR przy około trzykrotnym obciążeniu GPU, więc zostaw SGSR, chyba że chcesz porównać. Strumienie HDR są powiększane bez nich.</string>
+    <string name="summary_upscaling">Jak powiększany jest strumień mniejszy niż ekran. FSR i SGSR wyostrzają krawędzie kosztem pewnego obciążenia GPU i baterii; Temporalne wykorzystuje wcześniejsze klatki do odtworzenia szczegółów, ale w naszych testach obraz był bardziej miękki niż z SGSR przy trzy- do czterokrotnym obciążeniu GPU, więc zostaw SGSR, chyba że chcesz porównać. Strumienie HDR są powiększane bez nich.</string>
     <string name="title_upscaling_sharpness">Ostrość skalowania</string>
     <string name="summary_upscaling_sharpness" formatted="false">Jak mocno FSR lub SGSR wyostrza obraz. Zwiększ, jeśli krawędzie są miękkie; zmniejsz, jeśli wokół krawędzi widać obwódki.</string>
     <string name="upscaling_sharpness_value">%1$d%%</string>

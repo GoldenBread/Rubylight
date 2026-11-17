@@ -412,7 +412,7 @@
     <string name="upscaling_sgsr1">Nítido, Snapdragon (SGSR)</string>
     <string name="upscaling_sgsr2">Temporal, Snapdragon (SGSR 2)</string>
     <string name="upscaling_temporal_unavailable">%1$s; escalado temporal no disponible</string>
-    <string name="summary_upscaling">Cómo se amplía una transmisión más pequeña que la pantalla. FSR y SGSR dan más nitidez a los bordes a costa de algo de tiempo de GPU y batería; Temporal reutiliza fotogramas anteriores para reconstruir detalle, pero en nuestras pruebas se vio más suave que SGSR con unas tres veces su trabajo de GPU, así que deja SGSR salvo que quieras comparar. Las transmisiones HDR se amplían sin ellos.</string>
+    <string name="summary_upscaling">Cómo se amplía una transmisión más pequeña que la pantalla. FSR y SGSR dan más nitidez a los bordes a costa de algo de tiempo de GPU y batería; Temporal reutiliza fotogramas anteriores para reconstruir detalle, pero en nuestras pruebas se vio más suave que SGSR con tres a cuatro veces su trabajo de GPU, así que deja SGSR salvo que quieras comparar. Las transmisiones HDR se amplían sin ellos.</string>
     <string name="title_upscaling_sharpness">Nitidez del escalado</string>
     <string name="summary_upscaling_sharpness" formatted="false">Cuánta nitidez añaden FSR o SGSR. Súbela si los bordes se ven borrosos; bájala si muestran halos.</string>
     <string name="upscaling_sharpness_value">%1$d %%</string>

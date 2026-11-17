@@ -412,7 +412,7 @@
     <string name="upscaling_sgsr1">Чёткое, Snapdragon (SGSR)</string>
     <string name="upscaling_sgsr2">Временное, Snapdragon (SGSR 2)</string>
     <string name="upscaling_temporal_unavailable">%1$s; временное масштабирование недоступно</string>
-    <string name="summary_upscaling">Как увеличивается трансляция, которая меньше экрана. FSR и SGSR делают края чётче ценой нагрузки на GPU и расхода заряда; «Временное» использует предыдущие кадры, чтобы восстановить детали, но в наших тестах картинка была мягче, чем с SGSR, при примерно втрое большей нагрузке на GPU, поэтому оставьте SGSR, если не хотите сравнить. HDR-трансляции увеличиваются без них.</string>
+    <string name="summary_upscaling">Как увеличивается трансляция, которая меньше экрана. FSR и SGSR делают края чётче ценой нагрузки на GPU и расхода заряда; «Временное» использует предыдущие кадры, чтобы восстановить детали, но в наших тестах картинка была мягче, чем с SGSR, при нагрузке на GPU в три–четыре раза больше, поэтому оставьте SGSR, если не хотите сравнить. HDR-трансляции увеличиваются без них.</string>
     <string name="title_upscaling_sharpness">Резкость масштабирования</string>
     <string name="summary_upscaling_sharpness" formatted="false">Сколько резкости добавляют FSR или SGSR. Увеличьте, если края размыты; уменьшите, если вокруг краёв видны ореолы.</string>
     <string name="upscaling_sharpness_value">%1$d%%</string>
