@@ -2972,16 +2972,18 @@ fn the_setup_card_says_what_auto_chose_and_is_dismissed_from_the_keys() {
 
     // The arrow keys (a controller's D-pad) reach its close button; Enter dismisses it for good.
     let mut reached = false;
+    let mut walked = Vec::new();
     for step in 0..36 {
         f.press(if step < 6 { Key::ArrowUp } else { Key::ArrowDown });
         let focused = f.ctx.memory(|m| m.focused()).and_then(|id| f.ctx.read_response(id)).map(|r| r.rect);
+        walked.push(focused);
         // The close button ends the card, right of its words' start and on their line.
         if focused.is_some_and(|r| r.width() < 50.0 && r.left() > title.left() && (r.center().y - title.center().y).abs() < 30.0) {
             reached = true;
             break;
         }
     }
-    assert!(reached, "the arrow keys reach the card's Dismiss");
+    assert!(reached, "the arrow keys reach the card's Dismiss: title {title:?}, focus went {walked:?}");
     let commands = f.press(Key::Enter);
     assert_eq!(f.l.settings.setup_card_host, None);
     assert!(f.l.settings.setup_card_seen, "it never returns");
