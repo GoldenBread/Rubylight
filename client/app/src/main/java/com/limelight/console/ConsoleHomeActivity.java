@@ -827,8 +827,8 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
                 if (holder != null) {
                     holder.itemView.requestFocus();
                 } else {
-                    // A TV brings the card in under its section's title, not with the title above the list's edge.
-                    grid.scrollToPosition(adapter.reveal(now, isTelevision()));
+                    // A TV brings the card in under its section's title where that leaves the card on screen.
+                    revealCard(now);
                     focusPending = true;
                 }
             });
@@ -1110,7 +1110,7 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
                     holder.itemView.requestFocus();
                 }
             } else {
-                grid.scrollToPosition(adapter.reveal(position, isTelevision()));
+                revealCard(position);
                 list.post(() -> {
                     RecyclerView.ViewHolder later = list.findViewHolderForAdapterPosition(position);
                     if (later != null) {
@@ -1119,6 +1119,52 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
                 });
             }
         });
+    }
+
+    /**
+     * Brings the card at {@code position} in so it can take focus. On a TV its section's title shows above it while
+     * that leaves the card on screen; a card further down a long section comes in itself under an empty title's
+     * height, since from the title it would lie past the screen and never be laid out to take focus.
+     */
+    private void revealCard(int position) {
+        ConsoleHomeListAdapter.Reveal reveal = revealFor(position);
+        grid.scrollToPositionWithOffset(reveal.position, reveal.offset);
+    }
+
+    /** Where {@link #revealCard} starts the list for the card at {@code position}, from what the list has laid out. */
+    ConsoleHomeListAdapter.Reveal revealFor(int position) {
+        int heading = adapter.sectionStart(position);
+        int spanCount = grid.getSpanCount();
+        int rows = heading < 0
+                ? 0
+                : grid.getSpanSizeLookup().getSpanGroupIndex(position, spanCount)
+                        - grid.getSpanSizeLookup().getSpanGroupIndex(heading, spanCount);
+        int viewport = list.getHeight() - list.getPaddingTop() - list.getPaddingBottom();
+        return adapter.reveal(position, rows, headingHeight(), cardRowHeight(position), viewport, isTelevision());
+    }
+
+    /** The height a section heading takes: a laid-out one's, else the TV title's share of the list. */
+    private int headingHeight() {
+        for (int i = 0; i < list.getChildCount(); i++) {
+            View child = list.getChildAt(i);
+            if (list.getChildViewHolder(child).getItemViewType() == ConsoleHomeListAdapter.HEADER
+                    && child.getHeight() > 0) {
+                return child.getHeight();
+            }
+        }
+        return getResources().getDimensionPixelSize(R.dimen.home_head_tv);
+    }
+
+    /** The height a row of cards like the one at {@code position} takes, from a laid-out one; 0 when none is. */
+    private int cardRowHeight(int position) {
+        int type = adapter.viewTypeAt(position);
+        for (int i = 0; i < list.getChildCount(); i++) {
+            View child = list.getChildAt(i);
+            if (list.getChildViewHolder(child).getItemViewType() == type && child.getHeight() > 0) {
+                return child.getHeight();
+            }
+        }
+        return 0;
     }
 
     /** The long-press menu of a game card: star or unstar it, hide it. A game not added has no app id for either. */

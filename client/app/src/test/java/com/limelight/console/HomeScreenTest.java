@@ -117,7 +117,9 @@ public class HomeScreenTest {
         ConsoleHomeListAdapter adapter = new ConsoleHomeListAdapter(context, null, uuid -> null, null);
         assertEquals(-1, adapter.firstCard());
         assertEquals(-1, adapter.sectionStart(-1));
-        assertEquals(-1, adapter.reveal(-1, true));
+        ConsoleHomeListAdapter.Reveal reveal = adapter.reveal(-1, 0, 60, 60, 1000, true);
+        assertEquals(-1, reveal.position);
+        assertEquals(0, reveal.offset);
     }
 
     @Test

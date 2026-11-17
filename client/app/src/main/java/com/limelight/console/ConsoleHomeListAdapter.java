@@ -238,9 +238,40 @@ final class ConsoleHomeListAdapter extends RecyclerView.Adapter<RecyclerView.Vie
         return at;
     }
 
-    /** Where bringing {@code position} in starts the list: its section's heading on a TV, else the card itself. */
-    int reveal(int position, boolean television) {
-        return television ? sectionStart(position) : position;
+    /** A place to bring a card in: the position the list starts at, and its top offset in pixels. */
+    static final class Reveal {
+        final int position;
+        final int offset;
+
+        Reveal(int position, int offset) {
+            this.position = position;
+            this.offset = offset;
+        }
+    }
+
+    /**
+     * Whether a card {@code rowsBelowHeading} rows under its section's heading stays on screen when the list starts at
+     * the heading, in a viewport this tall: the heading takes its own height and every row above the card one card
+     * row's. A height or viewport that is not measured yet answers no, so the card is brought in itself rather than
+     * left past the screen where it cannot take focus.
+     */
+    static boolean titleKeepsCardOnScreen(int rowsBelowHeading, int headingHeight, int rowHeight, int viewport) {
+        if (headingHeight <= 0 || rowHeight <= 0 || viewport <= 0) return false;
+        return headingHeight + (long) rowsBelowHeading * rowHeight <= viewport;
+    }
+
+    /**
+     * Where bringing {@code position} in starts the list: a phone goes to the card itself; a TV to its section's
+     * heading while the card stays on screen under it (nightjar#7), else to the card under an empty heading's height,
+     * where it can take focus. {@code rowsBelowHeading} is the card's row distance from the heading's row.
+     */
+    Reveal reveal(int position, int rowsBelowHeading, int headingHeight, int rowHeight, int viewport,
+            boolean television) {
+        if (!television) return new Reveal(position, 0);
+        if (titleKeepsCardOnScreen(rowsBelowHeading, headingHeight, rowHeight, viewport)) {
+            return new Reveal(sectionStart(position), 0);
+        }
+        return new Reveal(position, headingHeight);
     }
 
     /**

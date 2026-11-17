@@ -191,19 +191,26 @@ public class HomeViewScreenTest {
         HomeShellTest.Home home = home().get();
         ConsoleHomeListAdapter adapter = ReflectionHelpers.getField(home, "adapter");
         adapter.submit(storeModel(), home.view().group);
-        assertEquals("the first card comes in with the first heading still in view",
-                0, adapter.reveal(adapter.firstCard(), true));
+        RecyclerView list = home.findViewById(R.id.console_list);
+        layout(list, 1920, 1080);
+        ConsoleHomeListAdapter.Reveal first = home.revealFor(adapter.firstCard());
+        assertEquals("the first card comes in with the first heading still in view", 0, first.position);
+        assertEquals(0, first.offset);
         int headings = 0;
         for (int i = 0; i < adapter.getItemCount(); i++) {
             if (adapter.viewTypeAt(i) != ConsoleHomeListAdapter.HEADER) continue;
             headings++;
             if (headings == 2) {
-                assertEquals("a card of a later section comes in under its heading", i, adapter.reveal(i + 1, true));
+                ConsoleHomeListAdapter.Reveal later = home.revealFor(i + 1);
+                assertEquals("a card of a later section comes in under its heading", i, later.position);
+                assertEquals(0, later.offset);
             }
         }
         assertTrue("the fixture has more than one section", headings >= 2);
         // A phone and a tablet bring the card itself, as before.
-        assertEquals(adapter.firstCard(), adapter.reveal(adapter.firstCard(), false));
+        ConsoleHomeListAdapter.Reveal phone = adapter.reveal(adapter.firstCard(), 1, 120, 300, 1080, false);
+        assertEquals(adapter.firstCard(), phone.position);
+        assertEquals(0, phone.offset);
     }
 
     @Test
