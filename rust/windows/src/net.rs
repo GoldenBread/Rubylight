@@ -560,12 +560,7 @@ fn send_one(
     let send = || send_from(socket, packet, peer, source);
     let mut trace = trace;
     let result = send_with_retry(send, |error| {
-        buffer_available(
-            socket,
-            error,
-            budget,
-            trace.as_mut().map(|trace| &mut **trace),
-        )
+        buffer_available(socket, error, budget, trace.as_deref_mut())
     });
     Ok(match result {
         Ok(size) => {
