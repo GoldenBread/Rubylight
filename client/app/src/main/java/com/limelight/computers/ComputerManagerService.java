@@ -15,6 +15,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -1091,15 +1092,19 @@ public class ComputerManagerService extends Service {
         final ComputerDetails.AddressTuple address = details.activeAddress;
         final int httpsPort = details.httpsPort;
         final X509Certificate cert = details.serverCert;
-        wakeRequests.execute(() -> {
-            try {
-                NvHTTP http = new NvHTTP(address, httpsPort, idManager.getUniqueId(), cert,
-                        PlatformBinding.getCryptoProvider(ComputerManagerService.this));
-                InternetPlay.save(ComputerManagerService.this, uuid, http.getInternetPlay());
-            } catch (IOException e) {
-                LimeLog.warning("Internet play: the PC's details could not be read: " + e.getMessage());
-            }
-        });
+        try {
+            wakeRequests.execute(() -> {
+                try {
+                    NvHTTP http = new NvHTTP(address, httpsPort, idManager.getUniqueId(), cert,
+                            PlatformBinding.getCryptoProvider(ComputerManagerService.this));
+                    InternetPlay.save(ComputerManagerService.this, uuid, http.getInternetPlay());
+                } catch (IOException e) {
+                    LimeLog.warning("Internet play: the PC's details could not be read: " + e.getMessage());
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            // A poll still running while the service goes away: the read is not needed any more.
+        }
     }
 
     /** The PC's native API, or null before it is paired (no address or pinned certificate). */

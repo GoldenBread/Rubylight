@@ -681,4 +681,25 @@ public class ComputerManagerLifecycleTest {
             InternetPlay.use(null);
         }
     }
+
+    @Test
+    public void aPollReadingInternetPlayAfterShutdownDoesNotCrashItsThread() {
+        ServiceController<Manager> controller = Robolectric.buildService(Manager.class).create();
+        ComputerManagerService service = controller.get();
+        ComputerDetails details = new ComputerDetails();
+        details.uuid = "internet-host";
+        details.state = ComputerDetails.State.ONLINE;
+        details.pairState = com.limelight.nvstream.http.PairingManager.PairState.PAIRED;
+        details.serverCert = NativeApiFixtures.certificate();
+        details.internetPath = "lan";
+        details.activeAddress = new ComputerDetails.AddressTuple("192.168.1.9", 47984);
+        details.caps = com.limelight.nvstream.http.TestHosts.caps(
+                com.limelight.nvstream.http.TestHosts.serverInfo("rubylight-serverinfo.xml")
+                        .replace("</root>", "<RustHostInternetPlayVersion>1</RustHostInternetPlayVersion></root>"));
+        controller.destroy();
+
+        // A poll pass may still be running when the service goes away; it must not throw out of here.
+        ReflectionHelpers.callInstanceMethod(service, "readInternetPlay",
+                ReflectionHelpers.ClassParameter.from(ComputerDetails.class, details));
+    }
 }
