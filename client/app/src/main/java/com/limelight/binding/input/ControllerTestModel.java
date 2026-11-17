@@ -89,6 +89,17 @@ public final class ControllerTestModel {
         return sdk >= 33 || (sdk >= 31 && (vendorId == 0x054c || vendorId == 0x057e));
     }
 
+    /**
+     * Whether the test shows this device's own motion sensors for a pad, as a stream gives them to
+     * player 1 (nightjar#131): the pad has none of its own, "Use device motion sensors" is on, the
+     * pad is not pinned as Xbox (which leaves out motion), and the device has a gyroscope or
+     * accelerometer. A handheld's built-in controls usually have their motion sensors here.
+     */
+    public static boolean usesDeviceMotion(boolean padHasMotion, boolean fallbackToDevice, boolean pinnedXbox,
+                                           boolean deviceHasMotion) {
+        return !padHasMotion && fallbackToDevice && !pinnedXbox && deviceHasMotion;
+    }
+
     /** Before Android 14 every light claims RGB control, so only Sony pads are taken at their word. */
     public static boolean trustRgbLight(int sdk, int vendorId, boolean hasRgbControl) {
         return sdk >= 31 && hasRgbControl && (sdk >= 34 || vendorId == 0x054c);

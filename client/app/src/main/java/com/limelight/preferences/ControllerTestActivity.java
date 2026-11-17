@@ -41,6 +41,7 @@ import com.google.android.material.chip.ChipGroup;
 import com.google.android.material.color.MaterialColors;
 import com.limelight.LimeLog;
 import com.limelight.R;
+import com.limelight.binding.input.ControllerButtonMap;
 import com.limelight.binding.input.ControllerTestModel;
 import com.limelight.binding.input.RumblePolicy;
 import com.limelight.binding.input.driver.AbstractController;
@@ -97,6 +98,7 @@ public class ControllerTestActivity extends NightjarActivity implements UsbDrive
     private float[] gyro, accel;
     private String touch;
     private boolean hasTouchpad, hasMotion, resumed;
+    private boolean motionFallbackToDevice;
 
     private VibratorManager vibratorManager;
     private Vibrator vibrator;
@@ -155,6 +157,7 @@ public class ControllerTestActivity extends NightjarActivity implements UsbDrive
         }
         PreferenceConfiguration config = PreferenceConfiguration.readPreferences(this);
         rumbleDisabledForStreams = config.disableRumble;
+        motionFallbackToDevice = config.gamepadMotionSensorsFallbackToDevice;
         rumbleFeel = RumblePolicy.Feel.fromKey(config.rumbleFeel);
         usbBound = (config.usbDriver || config.usbDualSense || config.usbSwitchPro) &&
                 bindService(new Intent(this, UsbDriverService.class), usbConnection, Context.BIND_AUTO_CREATE);
@@ -257,12 +260,31 @@ public class ControllerTestActivity extends NightjarActivity implements UsbDrive
         else if (dev.getVibrator().hasVibrator()) {
             vibrator = dev.getVibrator();
         }
+        selectDeviceMotion(dev);
         hasTouchpad = hasTouchpad(dev);
         if (resumed) {
             registerSensors();
         }
         buildActions();
         render();
+    }
+
+    // A pad without motion sensors of its own streams this device's, as player 1 does in a stream.
+    private void selectDeviceMotion(InputDevice dev) {
+        SensorManager system = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
+        if (system == null) return;
+        Sensor deviceGyro = system.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
+        Sensor deviceAccel = system.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+        boolean pinnedXbox = ControllerButtonMap.load(this,
+                ControllerButtonMap.deviceKey(dev.getVendorId(), dev.getProductId(), dev.getName()))
+                .connectAs() == MoonBridge.LI_CTYPE_XBOX;
+        if (ControllerTestModel.usesDeviceMotion(hasMotion, motionFallbackToDevice, pinnedXbox,
+                deviceGyro != null || deviceAccel != null)) {
+            sensorManager = system;
+            gyroSensor = deviceGyro;
+            accelSensor = deviceAccel;
+            hasMotion = true;
+        }
     }
 
     @RequiresApi(31)
