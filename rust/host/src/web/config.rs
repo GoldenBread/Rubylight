@@ -169,6 +169,7 @@ const RESTART_KEYS: &[&str] = &[
     "webrtc_media_port",
     "enable_dsu_server",
     "dsu_server_port",
+    "dsu_server_lan",
     "system_tray",
     "hide_tray_controls",
     "log_path",

@@ -1,0 +1,2 @@
+# Motion server safety
+- **The motion server for emulators now serves this PC only.** It listens on `127.0.0.1` unless **Motion server on the local network** (`dsu_server_lan`) is turned on, so an emulator on this PC works as before while a cafe, hotel or public network no longer reaches the streamed controllers. The server also serves at most 16 emulators and four controller addresses each, so a flood of requests can no longer hold up controller input; turn the new setting on only on a network you trust.
