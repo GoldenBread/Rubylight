@@ -2,8 +2,8 @@
 <resources>
     <string name="stream_touch_off_help">Il touch è disattivato. Scorri indietro o premi Indietro per il menu dello stream.</string>
     <string name="title_local_cursor_speed">Velocità del cursore locale</string>
-    <string name="title_trackpad_acceleration">Accelerazione del puntatore</string>
-    <string name="summary_trackpad_acceleration">I movimenti lenti del dito spostano meno il puntatore, per mirare con precisione, e gli scorrimenti rapidi lo spostano più lontano. Modalità touch Trackpad e Cursore locale; vale dal prossimo stream.</string>
+    <string name="title_trackpad_acceleration">Accelerazione del trackpad</string>
+    <string name="summary_trackpad_acceleration">I movimenti lenti del dito mirano con precisione e gli scorrimenti rapidi arrivano più lontano. Lasciala attiva a meno che tu non preferisca che il puntatore segua il dito uno a uno; Trackpad e Cursore locale la applicano dal prossimo stream.</string>
     <string name="title_trackpad_acceleration_curve">Intensità dell’accelerazione</string>
     <string-array name="trackpad_acceleration_curve_names">
         <item>Leggera</item>

@@ -2,8 +2,8 @@
 <resources>
     <string name="stream_touch_off_help">Dokunma kapalı. Yayın menüsü için geri kaydırın veya Geri’ye basın.</string>
     <string name="title_local_cursor_speed">Yerel imleç hızı</string>
-    <string name="title_trackpad_acceleration">İşaretçi ivmesi</string>
-    <string name="summary_trackpad_acceleration">Yavaş parmak hareketi imleci daha az oynatır (hassas nişan için), hızlı kaydırmalar daha uzağa taşır. “Trackpad” ve “Yerel imleç” dokunma modları için; sonraki yayından itibaren geçerli olur.</string>
+    <string name="title_trackpad_acceleration">Trackpad ivmesi</string>
+    <string name="summary_trackpad_acceleration">Yavaş parmak hareketi hassas nişan alır, hızlı kaydırmalar daha uzağa gider. İmlecin parmağınızı bire bir izlemesini istemiyorsanız açık bırakın; “Trackpad” ve “Yerel imleç” dokunma modlarında sonraki yayından itibaren geçerli olur.</string>
     <string name="title_trackpad_acceleration_curve">İvme gücü</string>
     <string-array name="trackpad_acceleration_curve_names">
         <item>Hafif</item>

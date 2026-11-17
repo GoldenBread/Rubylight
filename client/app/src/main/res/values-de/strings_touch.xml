@@ -2,8 +2,8 @@
 <resources>
     <string name="stream_touch_off_help">Touch ist aus. Wische zurück oder drücke Zurück für das Stream-Menü.</string>
     <string name="title_local_cursor_speed">Tempo des lokalen Mauszeigers</string>
-    <string name="title_trackpad_acceleration">Zeigerbeschleunigung</string>
-    <string name="summary_trackpad_acceleration">Langsame Fingerbewegungen bewegen den Mauszeiger weniger, für genaues Zielen, und schnelle Wischbewegungen bewegen ihn weiter. Touch-Modi „Trackpad“ und „Lokaler Mauszeiger“; gilt ab dem nächsten Stream.</string>
+    <string name="title_trackpad_acceleration">Trackpad-Beschleunigung</string>
+    <string name="summary_trackpad_acceleration">Langsame Fingerbewegungen zielen präzise, schnelle Wischbewegungen reichen weiter. Lass sie an, außer wenn du möchtest, dass der Mauszeiger deinem Finger eins zu eins folgt; „Trackpad“ und „Lokaler Mauszeiger“ wenden sie ab dem nächsten Stream an.</string>
     <string name="title_trackpad_acceleration_curve">Stärke der Beschleunigung</string>
     <string-array name="trackpad_acceleration_curve_names">
         <item>Sanft</item>

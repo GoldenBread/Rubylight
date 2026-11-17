@@ -443,10 +443,10 @@
             android:max="400"
             android:text="%" />
         <com.limelight.preferences.MaterialSwitchPreference
-            android:key="checkbox_trackpad_acceleration"
+            android:key="checkbox_trackpad_acceleration_v2"
             android:title="@string/title_trackpad_acceleration"
             android:dialogMessage="@string/summary_trackpad_acceleration"
-            android:defaultValue="false" />
+            android:defaultValue="true" />
         <com.limelight.preferences.MaterialListPreference
             android:key="list_trackpad_acceleration_curve"
             android:title="@string/title_trackpad_acceleration_curve"
