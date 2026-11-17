@@ -100,12 +100,31 @@ def setup(args):
     with tempfile.TemporaryDirectory() as tmp:
         db = pathlib.Path(tmp) / 'computers4.db'
         sh(f'am force-stop {PACKAGE}')
+        # A package installed or cleared since its last start has no database or client key until it opens once.
+        if 'computers4.db' not in run_as('ls databases', check=False) or 'client.crt' not in run_as('ls files', check=False):
+            log(f'{PACKAGE} has no database or client key yet: opening it once')
+            sh(f'monkey -p {PACKAGE} -c android.intent.category.LAUNCHER 1', check=False)
+            for _ in range(20):
+                time.sleep(1)
+                if 'computers4.db' in run_as('ls databases', check=False) and 'client.crt' in run_as('ls files', check=False):
+                    break
+            else:
+                raise SystemExit(f'{PACKAGE} made no database or client key: install it and open it once')
+            sh(f'am force-stop {PACKAGE}')
         db.write_bytes(adb('exec-out', 'run-as', PACKAGE, 'cat', 'databases/computers4.db', binary=True))
         con = sqlite3.connect(db)
         row = con.execute('select UUID from Computers where ComputerName = ?', (args.computer,)).fetchone()
         if not row:
-            raise SystemExit(f'the device has no computer named {args.computer}')
-        host_uuid = row[0]
+            # No PIN pairing needed: the entry is made here, with the profile as its host, and both sides' certificates
+            # are exchanged below (a fresh install has none, which is why setup used to stop here).
+            host_uuid = str(uuid.uuid4()).upper()
+            addresses = json.dumps({'local': {'address': BIND, 'port': PORT}})
+            con.execute('insert into Computers (UUID, ComputerName, Addresses) values (?, ?, ?)',
+                        (host_uuid, args.computer, addresses))
+            con.commit()
+            log(f'the device had no computer named {args.computer}: added it ({host_uuid}, {BIND}:{PORT})')
+        else:
+            host_uuid = row[0]
         client_pem = run_as('cat files/client.crt').replace('\r\n', '\n').strip() + '\n'
         if PROFILE.exists() and not args.force:
             raise SystemExit(f'{PROFILE} exists (--force rewrites it)')
