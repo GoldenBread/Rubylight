@@ -977,8 +977,8 @@ impl Launcher {
         };
         let width = SETUP_CARD_W.min(ui.available_width()).max(200.0);
         let place = ui.painter().add(egui::Shape::Noop);
-        // The close button leads, under the page's first column, where Down from it lands.
-        let margin = Margin { left: (SETUP_CARD_CLOSE + 18.0) as i8, right: 18, top: 14, bottom: 14 };
+        // The close button ends the card, as on Android: above the hero's buttons, where Up from them lands.
+        let margin = Margin { left: 18, right: (SETUP_CARD_CLOSE + 18.0) as i8, top: 14, bottom: 14 };
         let shown = Frame::new().inner_margin(margin).show(ui, |ui| {
             ui.set_width(width - f32::from(margin.left) - f32::from(margin.right));
             ui.spacing_mut().item_spacing.y = space::XS;
@@ -989,7 +989,7 @@ impl Launcher {
         let mut shapes = Vec::new();
         glass::without_backdrop(&mut shapes, ui.ctx(), rect, t::RADIUS_GROUP, glass::Material::Menu);
         ui.painter().set(place, egui::Shape::Vec(shapes));
-        let close = Rect::from_min_size(pos2(rect.left() + 8.0, rect.top() + 8.0), Vec2::splat(SETUP_CARD_CLOSE));
+        let close = Rect::from_min_size(pos2(rect.right() - 8.0 - SETUP_CARD_CLOSE, rect.top() + 8.0), Vec2::splat(SETUP_CARD_CLOSE));
         let close = round_button(ui, close, Icon::Close, tr("Dismiss"));
         self.focus_item(&close, "setup-card-dismiss", false);
         ui.add_space(space::M);

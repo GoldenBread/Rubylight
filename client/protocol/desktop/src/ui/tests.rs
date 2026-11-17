@@ -2975,8 +2975,8 @@ fn the_setup_card_says_what_auto_chose_and_is_dismissed_from_the_keys() {
     for step in 0..36 {
         f.press(if step < 6 { Key::ArrowUp } else { Key::ArrowDown });
         let focused = f.ctx.memory(|m| m.focused()).and_then(|id| f.ctx.read_response(id)).map(|r| r.rect);
-        // The close button leads the card, left of its words.
-        if focused.is_some_and(|r| r.right() <= title.left() && (r.center().y - title.center().y).abs() < 30.0) {
+        // The close button ends the card, right of its words' start and on their line.
+        if focused.is_some_and(|r| r.width() < 50.0 && r.left() > title.left() && (r.center().y - title.center().y).abs() < 30.0) {
             reached = true;
             break;
         }
