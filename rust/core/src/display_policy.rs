@@ -988,7 +988,7 @@ impl LayoutWatch {
     }
     /// Whether a reapply now is Windows rearranging after the secure desktop or a session
     /// switch, rather than a display that came back.
-    fn excused(&self, now: std::time::Instant) -> bool {
+    pub fn excused(&self, now: std::time::Instant) -> bool {
         self.excused_until.is_some_and(|until| now < until)
     }
 }

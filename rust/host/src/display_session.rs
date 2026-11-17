@@ -1816,6 +1816,7 @@ impl Prepared {
             now,
             departed || woke || session_changed || returned_from_secure,
             active,
+            secure,
         );
         let Some(arrangement) = &self._arrangement else {
             return Ok(());
@@ -1853,18 +1854,21 @@ impl Prepared {
         result
     }
     /// Whether a primary restore may be looked at now: the layout makes the stream's display
-    /// the primary one, this lease is the stream whose display the layout made primary, and the
-    /// stream is running. A second stream, another device's display or a device's second screen
-    /// joins beside the first owner's and only that one is primary, so laying this stream's
-    /// displays out again would change nothing; a paused stream holds its layout but has
-    /// nobody to show a move to.
+    /// the primary one, this lease is the stream whose display the layout made primary, the
+    /// stream is running, and Windows is not showing the secure desktop or rearranging after
+    /// it. A second stream, another device's display or a device's second screen joins beside
+    /// the first owner's and only that one is primary, so laying this stream's displays out
+    /// again would change nothing; a paused stream holds its layout but has nobody to show a
+    /// move to, and a refusal during the secure desktop is Windows', not this stream's.
     fn primary_watch_applies(
         planned: Arrangement,
         lease_primary: bool,
         active: bool,
+        secure: bool,
+        excused: bool,
         due: bool,
     ) -> bool {
-        planned.primary_beside_the_users() && lease_primary && active && due
+        planned.primary_beside_the_users() && lease_primary && active && !secure && !excused && due
     }
     /// Whether the layout put back for the primary did it: Windows shows the stream's display
     /// as the primary now. A layout Windows accepted but left the primary where it was did
@@ -1879,15 +1883,26 @@ impl Prepared {
     /// is put back, a restore that did not move the primary waits the retry, and a display that
     /// keeps taking it back stops the watch for the stream. The recovery lays the whole layout
     /// out itself while it runs, which includes the primary.
-    fn keep_primary(&mut self, now: std::time::Instant, changed: bool, active: bool) {
+    fn keep_primary(&mut self, now: std::time::Instant, changed: bool, active: bool, secure: bool) {
         use butterpollo_core::display_policy::PrimaryAction;
         let Some(arrangement) = &self._arrangement else {
             return;
         };
+        let lease_primary = arrangement.makes_primary();
+        if !arrangement.arrangement().primary_beside_the_users() || !lease_primary {
+            return;
+        }
+        // The change is remembered even while the secure desktop or its excuse holds the
+        // restore back: after it, the primary Windows moved is still this stream's to put back.
+        if changed {
+            self.primary_watch.changed(now);
+        }
         if !Self::primary_watch_applies(
             arrangement.arrangement(),
-            arrangement.makes_primary(),
+            lease_primary,
             active,
+            secure,
+            self.layout_watch.excused(now),
             self.primary_watch.due(now),
         ) {
             return;
@@ -1904,7 +1919,7 @@ impl Prepared {
                 false
             }
         };
-        if changed || displays_changed {
+        if displays_changed {
             self.primary_watch.changed(now);
         }
         let shown = match butterpollo_windows::display::shown_primary(&self.output) {

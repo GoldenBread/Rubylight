@@ -336,6 +336,18 @@ fn a_move_that_stopped_being_seen_starts_its_settle_again() {
 }
 
 #[test]
+fn an_excuse_lasts_the_window_and_no_longer() {
+    use super::LayoutWatch;
+    let start = std::time::Instant::now();
+    let mut watch = LayoutWatch::default();
+    assert!(!watch.excused(start));
+    watch.excuse(start);
+    assert!(watch.excused(start));
+    assert!(watch.excused(start + LayoutWatch::EXCUSE / 2));
+    assert!(!watch.excused(start + LayoutWatch::EXCUSE));
+}
+
+#[test]
 fn virtual_opt_in_preserves_host_policy_and_device_force_overrides_physical_output() {
     use super::VirtualDisplayRequest;
     let host = VirtualDisplayRequest {
