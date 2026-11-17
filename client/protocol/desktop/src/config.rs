@@ -108,7 +108,7 @@ pub enum DecoderPreference {
 /// lower `receive_to_present_ms` at p50 and p95 and no lower fps on every leg) and `Cpu` on macOS.
 /// There `Gpu` decodes through the bundled KosmicKrisp Vulkan driver on Apple silicon with macOS 26
 /// or later and falls back to `Cpu` with a notice elsewhere (`pyrowave_mode::mac_choice`); it stays
-/// a choice until the release build bundles the driver and a Mac measures it. A Linux client
+/// a choice until a Mac measures it. A Linux client
 /// without `libpyrowave-shared.so` (a source build; `package-linux.sh -s` ships it) fails the probe
 /// like a Windows one without the DLL: PyroWave is not offered, with the reason and the way out
 /// (switch to `Cpu`); every other codec works.

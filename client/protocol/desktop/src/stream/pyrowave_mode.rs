@@ -8,8 +8,8 @@
 //! On macOS `gpu` decodes through the Vulkan loader and Mesa's KosmicKrisp driver bundled in
 //! Nightjar.app, which run on Apple silicon with macOS 26 or later only; elsewhere, or when the
 //! driver or the decoder does not start, the stream decodes on the processor and says why
-//! (`mac_choice`). The Mac's default is `gpu` for that reason: it is the CPU decoder wherever the
-//! GPU one cannot run.
+//! (`mac_choice`). The Mac's default is the processor (`config::PyroWaveDecoder`); `gpu` is a
+//! choice until a Mac measures it.
 
 use crate::config::PyroWaveDecoder;
 
