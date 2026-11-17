@@ -164,8 +164,8 @@ impl Hosts {
         Some(CoverFallback { info, worker, events: self.sender.clone(), waker: self.waker.clone(), game: crate::game_info::game_of(&game.title, game.game_id.as_deref(), store) })
     }
 
-    /// Facts put in place without a worker, for tests and the demo's screenshots.
-    #[cfg(any(test, feature = "demo-library"))]
+    /// Facts put in place without a worker, for tests.
+    #[cfg(test)]
     pub(crate) fn put_facts(&mut self, key: &str, facts: Facts) {
         self.facts.insert(key.to_owned(), facts);
     }

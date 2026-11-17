@@ -91,6 +91,7 @@ pub(crate) struct LaunchProbe {
     result: Receiver<ProbeResult>,
     worker: Option<std::thread::JoinHandle<()>>,
     /// The renderer's device, held for the worker and until the launcher lets go of the check.
+    #[cfg_attr(not(windows), allow(dead_code))]
     device: media::DeviceRef,
     started: Instant,
 }
@@ -124,6 +125,7 @@ impl LaunchProbe {
         self.hardware
     }
 
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub(crate) fn device(&self) -> &media::DeviceRef {
         &self.device
     }
