@@ -598,6 +598,9 @@ impl Gamepads {
                 self.steam_attributes.retain(|i, _| active & (1 << *i) != 0);
                 self.dualsense_failed.retain(|i| active & (1 << *i) != 0);
                 self.states.retain(|i, _| active & (1 << *i) != 0);
+                // A pad this state turns back on is not on its way out: only
+                // the client's removal had deferred its unplug.
+                self.dropped.retain(|i| active & (1 << *i) == 0);
                 // Every state passes here: find the pads that left without
                 // copying the map, which only a removal needs to change.
                 let gone = self.active.keys().fold(0u16, |mask, i| mask | (1 << i)) & !active;

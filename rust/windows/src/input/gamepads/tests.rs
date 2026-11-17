@@ -679,6 +679,38 @@ fn a_feedback_poll_never_brings_back_a_pad_the_client_removed() {
     );
 }
 
+/// A client that sends the controller active again says the removal is over:
+/// the pad must not be forgotten as removed by the next feedback poll.
+#[test]
+fn a_state_that_turns_a_pad_back_on_clears_its_deferred_removal() {
+    let mut pads = scripted_pads();
+    pads.active.insert(0, 2);
+    pads.profiles.insert(0, 4);
+    script(&mut pads)
+        .unplugs
+        .push_back(Err(anyhow::anyhow!("the driver is busy")));
+    // The client's mask no longer has the controller: its removal is deferred.
+    pads.apply(&state(0, 0)).unwrap();
+    assert!(pads.dropped.contains(&0));
+    // The next state has it back before the poll.
+    pads.apply(&state(0, 1)).unwrap();
+    assert!(
+        !pads.dropped.contains(&0),
+        "a pad the client turns on again is not being removed"
+    );
+    script(&mut pads).calls.clear();
+    script(&mut pads)
+        .feedback
+        .insert(2, VecDeque::from([Err(device_removed_error())]));
+    assert!(pads.feedback().is_empty());
+    assert_eq!(
+        script(&mut pads).calls,
+        ["feedback 2", "plug 2"],
+        "the poll re-creates the active pad instead of forgetting it"
+    );
+    pads.active.clear();
+}
+
 /// A driver whose answers a test scripts, for the paths that only a real
 /// sleep can otherwise reach.
 fn scripted_pads() -> Gamepads {
