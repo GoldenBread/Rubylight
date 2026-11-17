@@ -1219,6 +1219,26 @@ fn background_capture_never_recovers_onto_the_primary_display() {
         );
     }
 }
+/// An explicit Capture method is the user's and must never be moved to
+/// Desktop Duplication by the fullscreen fallback of an Automatic stream
+/// sharing its capture. The two therefore never share one.
+#[test]
+fn an_explicit_capture_method_never_shares_an_automatic_streams_capture() {
+    let key = |setting: &str| {
+        CaptureKey::new(
+            "wgc",
+            "display",
+            false,
+            &Config::parse(setting).unwrap(),
+            "",
+            false,
+        )
+    };
+    assert_ne!(key("capture = auto"), key("capture = wgc"));
+    assert_eq!(key("capture = auto"), key("capture = "));
+    assert_eq!(key("capture = wgc"), key("capture = WGC"));
+}
+
 #[test]
 fn pad_feedback_forwards_rumble_and_each_family_extra() {
     let rumble = (

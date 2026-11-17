@@ -461,6 +461,10 @@ pub struct Media {
 struct CaptureKey {
     kind: String,
     output: String,
+    /// The user's Capture method was Automatic, which the fullscreen fallback
+    /// may move to Desktop Duplication. An explicit method never shares its
+    /// capture, or the fallback would move it behind the user's back.
+    automatic: bool,
     hdr: bool,
     adapter: String,
     adapter_id: String,
@@ -487,6 +491,9 @@ impl CaptureKey {
         Self {
             kind: kind.into(),
             output: output.into(),
+            automatic: butterpollo_core::capture_policy::automatic_capture(
+                config.get("capture", ""),
+            ),
             hdr,
             adapter: config.get("adapter_name", "").into(),
             adapter_id: config.get("adapter_pnp_id", "").into(),
