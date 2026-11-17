@@ -98,12 +98,12 @@ pub const EARLY_FOR_US: u64 = 2_000_000;
 pub const EARLY_SPARE_US: u64 = 3_000;
 
 /// How long after the refresh that opens a held picture's turn its present goes out, µs: the
-/// picture is offered to the swap chain right after that refresh, so the chain has the whole refresh
-/// to latch the flip into the turn. Aimed at the composed deadline instead (5 ms before the refresh
-/// at 120 Hz) every present raced it: a picture that came a little late missed its turn, and the
-/// anchor then counted the next one from the refresh it aimed at or from the one the display showed,
-/// depending on the statistics, which gave holds of 3 and 1 in turn (3.4% of the frames at 60 fps on
-/// 120 Hz). The guard keeps the present out of the scan of the refresh before the turn.
+/// picture is offered to the swap chain right after that refresh, so the chain has all but this guard
+/// of the refresh to latch the flip into the turn. Aimed at the composed deadline instead (5 ms before
+/// the refresh at 120 Hz) every present raced it: a picture that came a little late missed its turn,
+/// and the anchor then counted the next one from the refresh it aimed at or from the one the display
+/// showed, depending on the statistics, which gave holds of 3 and 1 in turn (3.4% of the frames at
+/// 60 fps on 120 Hz). The guard keeps the present out of the scan of the refresh before the turn.
 pub const HELD_LATCH_GUARD_US: u64 = 400;
 
 /// How long before the refresh that shows a held picture the picture must be ready, µs: its present
@@ -128,10 +128,10 @@ pub struct HeldAnchor {
     aimed: Option<u32>,
     pending: Option<u32>,
     /// Refreshes the display showed the last picture after the refresh its hold aimed it at, 0 or 1
-    /// (the composed pipeline's own refresh; a bigger difference is a stall, which must not move the
-    /// grid). A display whose composition lands a refresh later than aimed would otherwise count one
-    /// picture's turn from the aim and the next one's from the display, and every other hold would
-    /// land a refresh off: holds of 3 and 1 in turn, the residual 3% at 60 fps.
+    /// (the composed pipeline's own refresh; a bigger difference is a stall, which moves the grid by
+    /// at most this one refresh). A display whose composition lands a refresh later than aimed would
+    /// otherwise count one picture's turn from the aim and the next one's from the display, and every
+    /// other hold would land a refresh off: holds of 3 and 1 in turn, the residual 3% at 60 fps.
     late: u32,
     /// Since when pictures came a refresh early for their turn, in the clock's ticks.
     early_since: Option<u64>,
@@ -182,9 +182,10 @@ impl HeldAnchor {
         // The aim counts while it is still ahead, and the latest refresh only where the statistics
         // are a refresh stale, so the picture may have been shown at one they do not cover. The
         // latest refresh they do cover is not a picture's: a present they leave out of
-        // `present_count` was not shown at it, so a missed turn counts from the next refresh, never
-        // from the one it missed (that made the next turn a refresh early and the one after it a
-        // refresh short, once a miss; holds of 3 and 1 in turn, the residual 3% at 60 fps).
+        // `present_count` was not shown at it, so a missed turn counts from the next refresh the
+        // statistics cover, or from the latest one they name when they are stale, never from the one
+        // it missed (that made the next turn a refresh early and the one after it a refresh short,
+        // once a miss; holds of 3 and 1 in turn, the residual 3% at 60 fps).
         let next = sync_refresh.wrapping_add(1);
         Some(aimed.map_or(next, |aimed| {
             if (aimed.wrapping_sub(sync_refresh) as i32) > 0 { aimed } else if stale { sync_refresh } else { next }
@@ -194,7 +195,8 @@ impl HeldAnchor {
     /// Fractional V-Sync: how long a picture waits before its present, which then goes out at the
     /// next refresh, so it is shown at its turn: `held` refreshes after the refresh the last picture
     /// shows at (`last`, `last_refresh`). The present goes out `guard` into the refresh that opens
-    /// the turn, so the swap chain has the whole refresh to latch the flip; `held_present_lead_us`
+    /// the turn, so the swap chain has all but the guard of the refresh to latch the flip;
+    /// `held_present_lead_us`
     /// (the same `period` and `guard`) is the target the phase lock aims the host's frames at, so a
     /// steering lock delivers the picture before its hold. `margin` is the desktop's deadline before
     /// a refresh, which only says which turn a picture that comes late takes (the first whose
@@ -224,8 +226,8 @@ impl HeldAnchor {
         let guard = guard.min(i64::MAX as u64) as i64;
         let mut ahead = i64::from(last.wrapping_add(held).wrapping_sub(sync_refresh) as i32);
         // The present goes out just after the refresh before the turn: the swap chain latches the
-        // flip into the turn with a whole refresh to spare. The phase lock aims at the same point
-        // (`held_present_lead_us`), so the picture is ready before this wait starts.
+        // flip into the turn with all but the guard of a refresh to spare. The phase lock aims at the
+        // same point (`held_present_lead_us`), so the picture is ready before this wait starts.
         let lead = held_present_lead_us(period as u64, guard as u64) as i64;
         let wait = |ahead: i64| sync_ticks as i64 + ahead * period - lead - now as i64;
         // A refresh earlier is still after the last picture's: `held` is 2 or more.
@@ -721,7 +723,8 @@ mod tests {
     }
 
     /// The present goes out just after the refresh that opens the turn, not at the desktop's
-    /// deadline: the swap chain then has the whole refresh to latch the flip into the turn.
+    /// deadline: the swap chain then has all but the guard of the refresh to latch the flip into the
+    /// turn.
     #[test]
     fn a_held_pictures_present_goes_out_after_the_refresh_that_opens_its_turn() {
         // 120 Hz in µs: refresh 100 at 833_300, 8_333 a refresh, the deadline 5_000 before a
