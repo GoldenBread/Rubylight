@@ -2678,30 +2678,29 @@ fn a_primary_windows_keeps_taking_back_stays_on_the_card() {
 #[test]
 fn only_a_primary_the_layout_makes_for_this_stream_is_watched() {
     use butterpollo_core::display_policy::Arrangement;
-    let applies = |planned: Arrangement, lease_primary, active, secure, excused| {
-        Prepared::primary_watch_applies(planned, lease_primary, active, secure, excused, true)
+    let applies = |planned: Arrangement, lease_primary, active, secure| {
+        Prepared::primary_watch_applies(planned, lease_primary, active, secure, true)
     };
-    assert!(applies(Arrangement::Primary, true, true, false, false));
+    assert!(applies(Arrangement::Primary, true, true, false));
     // A second stream, another device's display or a second screen joins beside the first
     // owner's, and the layout makes only that one primary: re-laying this one out could
     // never change it, yet the old watch did so every 750 ms forever.
-    assert!(!applies(Arrangement::Primary, false, true, false, false));
+    assert!(!applies(Arrangement::Primary, false, true, false));
     // Extended keeps the PC's primary; exclusive keeps it by switching the others off.
     for planned in [Arrangement::Extended, Arrangement::Exclusive] {
-        assert!(!applies(planned, true, true, false, false));
+        assert!(!applies(planned, true, true, false));
     }
     // A paused stream holds its layout but has nobody to show a move to.
-    assert!(!applies(Arrangement::Primary, true, false, false, false));
-    // The secure desktop and the layout watch's excuse are Windows' own rearranging: a
-    // restore then could not tell its choice from a refusal, so nothing is reported.
-    assert!(!applies(Arrangement::Primary, true, true, true, false));
-    assert!(!applies(Arrangement::Primary, true, true, false, true));
+    assert!(!applies(Arrangement::Primary, true, false, false));
+    // The secure desktop is Windows' own rearranging: a restore then could not tell its
+    // choice from a refusal, so nothing is reported. A session switch is not skipped by the
+    // layout watch's excuse any more: the watch's own window ends a move that does not come.
+    assert!(!applies(Arrangement::Primary, true, true, true));
     // A refused restore waits before the next try.
     assert!(!Prepared::primary_watch_applies(
         Arrangement::Primary,
         true,
         true,
-        false,
         false,
         false
     ));

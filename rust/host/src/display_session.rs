@@ -1857,20 +1857,18 @@ impl Prepared {
     }
     /// Whether a primary restore may be looked at now: the layout makes the stream's display
     /// the primary one, this lease is the stream whose display the layout made primary, the
-    /// stream is running, and Windows is not showing the secure desktop or rearranging after
-    /// it. A second stream, another device's display or a device's second screen joins beside
-    /// the first owner's and only that one is primary, so laying this stream's displays out
-    /// again would change nothing; a paused stream holds its layout but has nobody to show a
-    /// move to, and a refusal during the secure desktop is Windows', not this stream's.
+    /// stream is running, and Windows is not showing the secure desktop. A second stream,
+    /// another device's display or a device's second screen joins beside the first owner's
+    /// and only that one is primary, so laying this stream's displays out again would change
+    /// nothing; a paused stream holds its layout but has nobody to show a move to.
     fn primary_watch_applies(
         planned: Arrangement,
         lease_primary: bool,
         active: bool,
         secure: bool,
-        excused: bool,
         due: bool,
     ) -> bool {
-        planned.primary_beside_the_users() && lease_primary && active && !secure && !excused && due
+        planned.primary_beside_the_users() && lease_primary && active && !secure && due
     }
     /// Whether the layout put back for the primary did it: Windows shows the stream's display
     /// as the primary now. A layout Windows accepted but left the primary where it was did
@@ -1904,7 +1902,6 @@ impl Prepared {
             lease_primary,
             active,
             secure,
-            self.layout_watch.excused(now),
             self.primary_watch.due(now),
         ) {
             return;
@@ -1932,12 +1929,14 @@ impl Prepared {
             }
         };
         if !butterpollo_core::display_policy::primary_moved(arrangement.arrangement(), shown) {
-            // Nothing is pending even when Windows shows no primary for the display (it is
-            // off, or still being laid out): a move that was timing must start again from
-            // where it is next seen.
-            self.primary_watch.restored(now);
+            // The display is the primary one, or off or still being laid out. A look that
+            // finds it still primary disarms the watch: a move after this is the user's or a
+            // game's. Without a primary shown, only the pending move is cleared.
             if shown == Some(true) {
+                self.primary_watch.disarm();
                 self.mode_report.primary_restored();
+            } else {
+                self.primary_watch.settled();
             }
             return;
         }

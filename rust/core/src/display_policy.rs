@@ -1002,9 +1002,7 @@ impl LayoutWatch {
     pub fn excuse(&mut self, now: std::time::Instant) {
         self.excused_until = Some(now + Self::EXCUSE);
     }
-    /// Whether a reapply now is Windows rearranging after the secure desktop or a session
-    /// switch, rather than a display that came back.
-    pub fn excused(&self, now: std::time::Instant) -> bool {
+    fn excused(&self, now: std::time::Instant) -> bool {
         self.excused_until.is_some_and(|until| now < until)
     }
 }
@@ -1028,20 +1026,21 @@ pub enum PrimaryAction {
 
 /// Watches the primary a primary layout made, as [`LayoutWatch`] watches the displays a
 /// layout switched off. Windows changes the layout by itself when a display arrives or
-/// leaves, after the secure desktop or a session switch, and can leave the primary on a
-/// monitor; only such a change starts the watch ([`PrimaryWatch::changed`]). A primary picked
-/// while the displays stay as they were is the user's or the game's, and is left alone
-/// (issue #33: a stream that learned such a move kept it for the device). A move must hold
-/// for [`LayoutWatch::SETTLE`] before the layout is put back, a restore Windows refused or
-/// one that did not move the primary waits [`LayoutWatch::RETRY`], and a display that keeps
-/// taking the primary back stops the watch for the rest of the stream after
+/// leaves, when the session changes or the stream starts, and can leave the primary on a
+/// monitor; only such a change starts the watch ([`PrimaryWatch::changed`]), and the watch
+/// disarms as soon as it sees the display still primary or has put it back
+/// ([`PrimaryWatch::disarm`]). A primary picked later is the user's or the game's and is left
+/// alone (issue #33: a stream that learned such a move kept it for the device). A move must
+/// hold for [`LayoutWatch::SETTLE`] before the layout is put back, a restore Windows refused
+/// or one that did not move the primary waits [`LayoutWatch::RETRY`], and a display that
+/// keeps taking the primary back stops the watch for the rest of the stream after
 /// [`PrimaryWatch::RETURNS`] restores within [`PrimaryWatch::RETURN_WINDOW`], as a monitor
 /// that keeps coming back on is left on ([`LayoutWatch`], issue #56).
 #[derive(Debug, Default)]
 pub struct PrimaryWatch {
     since: Option<std::time::Instant>,
     next_check: Option<std::time::Instant>,
-    /// Until when a display that arrived or left still explains a primary move.
+    /// Until when a change Windows made, or the stream's start, explains a primary move.
     armed_until: Option<std::time::Instant>,
     /// When this stream put the primary back, for [`PrimaryWatch::RETURNS`].
     restores: Vec<std::time::Instant>,
@@ -1055,10 +1054,11 @@ impl PrimaryWatch {
     /// Restores within [`Self::RETURN_WINDOW`] after which the watch stops for the stream.
     pub const RETURNS: usize = LayoutWatch::RETURNS;
     pub const RETURN_WINDOW: std::time::Duration = LayoutWatch::RETURN_WINDOW;
-    /// How long a display arriving or leaving, or a session change, explains a primary move.
-    /// The layout watch excuses its own work for [`LayoutWatch::EXCUSE`] after the secure
-    /// desktop and session switches, and the move can follow that.
-    pub const WINDOW: std::time::Duration = std::time::Duration::from_secs(40);
+    /// How long a display arriving or leaving, a session change or the stream's start still
+    /// explains a primary move. Windows settles its rearrangement within a couple of seconds;
+    /// the watch disarms as soon as it sees the display still primary or puts it back, so a
+    /// move later is the user's or a game's.
+    pub const WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
     /// Whether to look at the displays now: a refused restore waits before its next try.
     pub fn due(&self, now: std::time::Instant) -> bool {
         self.next_check.is_none_or(|next| now >= next)
@@ -1075,10 +1075,18 @@ impl PrimaryWatch {
     pub fn stopped(&self) -> bool {
         self.stopped
     }
-    /// A display arrived or left, or Windows changed the session: for [`Self::WINDOW`] a
-    /// primary move is Windows rearranging the desktop, not the user's choice.
+    /// A display arrived or left, Windows changed the session, or the stream started: for
+    /// [`Self::WINDOW`] a primary move is Windows rearranging the desktop, not the user's
+    /// choice.
     pub fn changed(&mut self, now: std::time::Instant) {
         self.armed_until = Some(now + Self::WINDOW);
+    }
+    /// The stream's display is still the primary one, or has it back: nothing waits for a
+    /// restore any more. A move after this is the user's or a game's and is left alone.
+    pub fn disarm(&mut self) {
+        self.since = None;
+        self.armed_until = None;
+        self.attempt = false;
     }
     /// Record what this look found: the stream's display is on but not the primary one
     /// (`demoted`), or it is.
@@ -1106,8 +1114,9 @@ impl PrimaryWatch {
         self.since = None;
         self.attempt = false;
     }
-    /// The stream's display has the primary one again: true when the restores reached
-    /// [`Self::RETURNS`] within [`Self::RETURN_WINDOW`] and the watch stops for the stream.
+    /// The stream's display has the primary one again: the watch disarms, and true when the
+    /// restores reached [`Self::RETURNS`] within [`Self::RETURN_WINDOW`] and the watch stops
+    /// for the stream.
     pub fn restored(&mut self, now: std::time::Instant) -> bool {
         self.since = None;
         // A look that found nothing to restore is not a restore: only a layout put back for
@@ -1115,6 +1124,7 @@ impl PrimaryWatch {
         if !std::mem::replace(&mut self.attempt, false) {
             return self.stopped;
         }
+        self.armed_until = None;
         if self.stopped {
             return true;
         }

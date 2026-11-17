@@ -247,6 +247,29 @@ fn an_extended_primary_start_without_primary_is_reported_and_watched() {
 }
 
 #[test]
+fn a_watch_that_sees_the_display_still_primary_leaves_a_later_move_alone() {
+    use super::{PrimaryAction, PrimaryWatch};
+    let start = std::time::Instant::now();
+    let settle = super::LayoutWatch::SETTLE;
+    let window = PrimaryWatch::WINDOW;
+    // The stream starts with its display primary: the start change is done, and a primary
+    // picked later in Windows is the user's.
+    let mut watch = PrimaryWatch::starting(start);
+    watch.disarm();
+    assert_eq!(watch.observe(true, start + settle), PrimaryAction::Wait);
+    assert_eq!(watch.observe(true, start + window * 2), PrimaryAction::Wait);
+    // A display change arms it again, and after the restore a later move is left alone.
+    watch.changed(start + window * 2);
+    assert_eq!(watch.observe(true, start + window * 2), PrimaryAction::Wait);
+    assert_eq!(
+        watch.observe(true, start + window * 2 + settle),
+        PrimaryAction::Restore
+    );
+    watch.restored(start + window * 2 + settle);
+    assert_eq!(watch.observe(true, start + window * 3), PrimaryAction::Wait);
+}
+
+#[test]
 fn a_primary_move_windows_made_is_put_back_but_a_plain_one_is_left_alone() {
     use super::{Arrangement, PrimaryAction, PrimaryWatch, primary_moved};
     // Only the layouts that keep the user's displays on and make the stream's display
