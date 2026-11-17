@@ -574,6 +574,9 @@ final class GameConnection {
         game.streamRecovery.restoreMicrophoneMute();
         game.conn.setMicrophoneNoticeListener(() -> game.runOnUiThread(game.menuActions::showMicrophoneNotice));
         game.controllerHandler = new ControllerHandler(game, game.conn, game, game.prefConfig);
+        // With Hide while a controller is connected, the on-screen controls step aside for a physical one.
+        game.controllerHandler.setPresenceListener(game::setPhysicalControllerConnected);
+        game.setPhysicalControllerConnected(game.controllerHandler.hasExternalControllers());
         if (DualScreen.isSecond(game.getIntent())) {
             // The controllers belong to the first screen's stream. Stopped here, before the launch request
             // lists them and before the connection announces them, the host never hears of a second set.

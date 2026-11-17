@@ -67,7 +67,7 @@ A stream runs on one of two engines. The Rust engine is `nightjar-core` behind [
 | Stream activity | `Game.java`, with `GameConnection.java`, `GameRecovery.java`, `GameVideoOutput.java`, `GameTouchInput.java`, `GameOverlays.java`, `StreamGuests.java` |
 | Connection | `nvstream/NvConnection.java`, `nvstream/http/` (serverinfo, pairing, [`HostCapabilities`](../app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java)), `nvstream/jni/` |
 | Video | `binding/video/`, led by `binding/video/MediaCodecDecoderRenderer.java` |
-| Input, audio | `binding/input/ControllerHandler.java`, `binding/input/driver/`, `binding/input/touch/`, `binding/input/virtual_controller/`, `binding/audio/` |
+| Input, audio | `binding/input/ControllerHandler.java`, `binding/input/driver/`, `binding/input/touch/`, `binding/input/pad/` (the modern on-screen controller), `binding/input/virtual_controller/`, `binding/audio/` |
 | Settings | `preferences/PreferenceConfiguration.java`, `preferences/StreamSettings.java` |
 | PCs, library, UI | `computers/`, `console/`, `ui/`, `grid/` |
 | Artwork and game facts | `console/GameInfo.java` (keys, OkHttp, cache), `console/GameInfoModel.java` (`nightjar_policy::game_info` through `protocol/android/src/game_info.rs`), `console/GameInfoFilter.java` |

@@ -50,6 +50,14 @@ public class PadInputTest {
         assertFalse("Never tapped", PadInput.stickClick(0, 50));
     }
 
+    @Test public void aPointerTouchpadTapIsShortAndNearWhereItLanded() {
+        assertTrue(PadInput.touchpadTap(120, 10, 2));
+        assertFalse("A long press is a drag, not a tap", PadInput.touchpadTap(400, 10, 2));
+        assertFalse("A moving finger scrolls, it does not click", PadInput.touchpadTap(120, 30, 2));
+        assertTrue("A small finger is more lenient", PadInput.touchpadTap(120, 10, 1));
+        assertFalse("Negative time is a broken event", PadInput.touchpadTap(-1, 0, 2));
+    }
+
     @Test public void simpleControlsHoldTheirOwnButton() {
         assertEquals(ControllerPacket.LB_FLAG, PadInput.buttonFlag(PadLayout.Control.LB));
         assertEquals(ControllerPacket.RB_FLAG, PadInput.buttonFlag(PadLayout.Control.RB));

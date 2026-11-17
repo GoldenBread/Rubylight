@@ -23,6 +23,20 @@
     <string name="pad_edit_show">Show</string>
     <string name="pad_edit_reset">Reset</string>
     <string name="pad_edit_add_wasd">Add WASD stick</string>
+    <string name="pad_edit_add_touchpad">Add touchpad</string>
+    <string name="pad_edit_preset">Preset</string>
+    <string name="pad_edit_glyphs">Button glyphs</string>
+    <string name="pad_pointer_touchpad">Pointer touchpad</string>
+    <string name="pad_touchpad_mouse">Mouse</string>
+    <string name="pad_touchpad_camera">Camera</string>
+    <string name="pad_preset_default">Default</string>
+    <string name="pad_preset_minimal">Minimal</string>
+    <string name="pad_preset_full">Full</string>
+    <string name="pad_glyph_xbox">Xbox</string>
+    <string name="pad_glyph_playstation">PlayStation</string>
+    <string name="pad_glyph_nintendo">Nintendo</string>
+    <string name="title_osc_auto_hide">Hide on-screen controls while a controller is connected</string>
+    <string name="summary_osc_auto_hide">Makes room on the screen when you pick up a gamepad, and brings the controls back when it disconnects. Leave it on unless you use the touch controls and a controller at once.</string>
     <string name="pad_edit_done">Done</string>
     <string name="pad_left_stick">Left stick</string>
     <string name="pad_right_stick">Right stick</string>
@@ -41,4 +55,6 @@
     <string-array name="osc_style_values" translatable="false"><item>classic</item><item>modern</item></string-array>
     <string-array name="osc_stick_mode_names"><item>@string/osc_stick_floating</item><item>@string/osc_stick_fixed</item></string-array>
     <string-array name="osc_stick_mode_values" translatable="false"><item>floating</item><item>fixed</item></string-array>
+    <string-array name="pad_preset_names"><item>@string/pad_preset_default</item><item>@string/pad_preset_minimal</item><item>@string/pad_preset_full</item></string-array>
+    <string-array name="pad_glyph_names"><item>@string/pad_glyph_xbox</item><item>@string/pad_glyph_playstation</item><item>@string/pad_glyph_nintendo</item></string-array>
 </resources>

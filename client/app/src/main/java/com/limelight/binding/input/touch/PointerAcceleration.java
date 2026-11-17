@@ -10,6 +10,11 @@ public final class PointerAcceleration {
     public static final String GENTLE = "gentle";
     public static final String MEDIUM = "medium";
     public static final String STRONG = "strong";
+    /**
+     * No acceleration: every move passes through as it is, as the screen touchpad does with Trackpad acceleration
+     * off. The speed is still measured, for a mapping that needs it (the camera stick).
+     */
+    public static final String LINEAR = "linear";
 
     static final float SLOW_SPEED = 50f;
     static final float FAST_SPEED = 1500f;
@@ -39,6 +44,7 @@ public final class PointerAcceleration {
     private long lastEventTime = -1;
     private float pendingDistance;
     private float gain;
+    private float speed;
 
     private PointerAcceleration(float slowGain, float fastGain) {
         this.slowGain = slowGain;
@@ -47,6 +53,7 @@ public final class PointerAcceleration {
     }
 
     public static PointerAcceleration forCurve(String curve) {
+        if (LINEAR.equals(curve)) return new PointerAcceleration(1f, 1f);
         if (GENTLE.equals(curve)) return new PointerAcceleration(0.8f, 1.6f);
         if (STRONG.equals(curve)) return new PointerAcceleration(0.5f, 3.0f);
         return new PointerAcceleration(0.6f, 2.2f);
@@ -72,6 +79,16 @@ public final class PointerAcceleration {
         lastEventTime = -1;
         pendingDistance = 0;
         gain = slowGain;
+        speed = 0;
+    }
+
+    /**
+     * The smoothed finger speed in dp per second behind the last {@link #gain}: what a mapping that is not
+     * a pointer gain, such as the on-screen controls' camera stick, needs. Zero before the first move and
+     * after {@link #reset}.
+     */
+    public float speed() {
+        return speed;
     }
 
     /**
@@ -89,6 +106,7 @@ public final class PointerAcceleration {
             // The first move has no interval behind it: start at the slow end.
             lastEventTime = eventTimeNs;
             gain = slowGain;
+            speed = 0;
             return gain;
         }
         long interval = eventTimeNs - lastEventTime;
@@ -106,11 +124,13 @@ public final class PointerAcceleration {
             windowTime = 0;
             pendingDistance = 0;
             gain = slowGain;
+            speed = 0;
             return gain;
         }
         add(distance + pendingDistance, interval);
         pendingDistance = 0;
-        gain = gainForSpeed(windowTime > 0 ? windowDistance * 1e9f / windowTime : 0f);
+        speed = windowTime > 0 ? windowDistance * 1e9f / windowTime : 0f;
+        gain = gainForSpeed(speed);
         return gain;
     }
 
