@@ -20,10 +20,10 @@ the ring holds it and its IOSurface use count is back to what the ring's own Met
 texture gives it: SDL's texture of the surface, also kept alive by a command buffer
 still in flight, raises that count. With all four busy a frame gets a surface of
 its own. MetalFX does not flush SDL's renderer first: it reads only the decoded
-picture and writes only its own textures. The textures, ring and scaler are reused
-until dimensions change, and a present without a new picture (an overlay redraw, a repeated
-picture) draws the last output again rather than running the pass a second time. Stream teardown
-releases the pass before the renderer.
+picture and writes only its own textures. The conversion pipeline is built once per device; the
+textures, ring and scaler are reused until dimensions change, and a present without a new picture
+(an overlay redraw, a repeated picture) draws the last output again rather than running the pass a
+second time. Stream teardown releases the pass before the renderer.
 
 HDR, software-decoded pictures, BT.2020 SDR pictures, streams with Frame Warp on, and
 formats that require SDL's GPU renderer retain existing presentation. Native-size and

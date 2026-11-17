@@ -57,6 +57,42 @@ bool nj_metalfx_supported(void) {
     }
 }
 
+// The conversion kernel is the same for every size and scaler, so it is compiled once per device:
+// a window resize builds a new scaler, and newLibraryWithSource there compiled it again on the
+// presenting thread.
+static id<MTLComputePipelineState> nj_conversion_pipeline(id<MTLDevice> device) {
+    static NSMutableDictionary<NSNumber *, id<MTLComputePipelineState>> *pipelines;
+    static NSLock *lock;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        pipelines=[NSMutableDictionary new];
+        lock=[NSLock new];
+    });
+    NSNumber *key=@(device.registryID);
+    [lock lock];
+    id<MTLComputePipelineState> pipeline=pipelines[key];
+    [lock unlock];
+    if (pipeline) return pipeline;
+    // Inputs are normalized NV12/P010. Range and matrix come from AVFrame, not host brand.
+    NSString *source = @"#include <metal_stdlib>\nusing namespace metal;\n"
+    "kernel void yuv(texture2d<float, access::sample> y [[texture(0)]], texture2d<float, access::sample> uv [[texture(1)]], texture2d<float, access::write> rgb [[texture(2)]], constant float4 *p [[buffer(0)]], uint2 xy [[thread_position_in_grid]]) {"
+    "if (xy.x >= rgb.get_width() || xy.y >= rgb.get_height()) return;"
+    "constexpr sampler sm(coord::normalized, address::clamp_to_edge, filter::linear);"
+    "float2 pos=(float2(xy)+0.5)/float2(y.get_width(),y.get_height());"
+    "float l=(y.sample(sm,pos).r-p[0].x)*p[0].y; float2 c=(uv.sample(sm,pos).rg-p[0].z)*p[0].w;"
+    "rgb.write(float4(clamp(float3(l+p[1].x*c.y,l+p[1].y*c.x+p[1].z*c.y,l+p[1].w*c.x),0.0,1.0),1),xy);}";
+    NSError *error = nil;
+    id<MTLLibrary> library = [device newLibraryWithSource:source options:nil error:&error];
+    if (!library) { NSLog(@"Nightjar MetalFX conversion: %@", error); return nil; }
+    pipeline = [device newComputePipelineStateWithFunction:[library newFunctionWithName:@"yuv"] error:&error];
+    if (!pipeline) { NSLog(@"Nightjar MetalFX conversion: %@", error); return nil; }
+    [lock lock];
+    // Another stream may have built it meanwhile; keep one pipeline per device.
+    if (pipelines[key]) pipeline=pipelines[key]; else pipelines[key]=pipeline;
+    [lock unlock];
+    return pipeline;
+}
+
 void *nj_metalfx_new(void *layer, int iw, int ih, int ow, int oh) {
     @autoreleasepool {
         if (@available(macOS 13.0, *)) {
@@ -65,18 +101,7 @@ void *nj_metalfx_new(void *layer, int iw, int ih, int ow, int oh) {
             s.device = ((__bridge CAMetalLayer *)layer).device;
             if (!s.device || ![MTLFXSpatialScalerDescriptor supportsDevice:s.device]) return NULL;
             s.queue = [s.device newCommandQueue];
-            // Inputs are normalized NV12/P010. Range and matrix come from AVFrame, not host brand.
-            NSString *source = @"#include <metal_stdlib>\nusing namespace metal;\n"
-            "kernel void yuv(texture2d<float, access::sample> y [[texture(0)]], texture2d<float, access::sample> uv [[texture(1)]], texture2d<float, access::write> rgb [[texture(2)]], constant float4 *p [[buffer(0)]], uint2 xy [[thread_position_in_grid]]) {"
-            "if (xy.x >= rgb.get_width() || xy.y >= rgb.get_height()) return;"
-            "constexpr sampler sm(coord::normalized, address::clamp_to_edge, filter::linear);"
-            "float2 pos=(float2(xy)+0.5)/float2(y.get_width(),y.get_height());"
-            "float l=(y.sample(sm,pos).r-p[0].x)*p[0].y; float2 c=(uv.sample(sm,pos).rg-p[0].z)*p[0].w;"
-            "rgb.write(float4(clamp(float3(l+p[1].x*c.y,l+p[1].y*c.x+p[1].z*c.y,l+p[1].w*c.x),0.0,1.0),1),xy);}";
-            NSError *error = nil;
-            id<MTLLibrary> library = [s.device newLibraryWithSource:source options:nil error:&error];
-            if (!library) { NSLog(@"Nightjar MetalFX conversion: %@", error); return NULL; }
-            s.convert = [s.device newComputePipelineStateWithFunction:[library newFunctionWithName:@"yuv"] error:&error];
+            s.convert = nj_conversion_pipeline(s.device);
             MTLFXSpatialScalerDescriptor *d = [MTLFXSpatialScalerDescriptor new];
             d.inputWidth=iw; d.inputHeight=ih; d.outputWidth=ow; d.outputHeight=oh;
             d.colorTextureFormat=MTLPixelFormatBGRA8Unorm;
