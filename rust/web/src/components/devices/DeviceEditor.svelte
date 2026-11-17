@@ -15,6 +15,7 @@
     GAMEPAD_OPTIONS,
     LTR_FRAME_OPTIONS,
     PERMISSION_GROUPS,
+    learnedLayoutLabel,
     savingEndsStream,
     toDraft,
     VIRTUAL_DISPLAY_LAYOUTS,
@@ -110,6 +111,8 @@
   let profilesError = $state('');
   let sharedFolders = $state<SharedFolder[] | null>(null);
   let foldersError = $state('');
+  /** The host's virtual display layout; empty until the configuration is read. */
+  let hostLayout = $state('');
   // Open while the device holds a grant; choosing No access must not snap it shut.
   let foldersOpen = $state(untrack(() => Object.keys(draft.shared_folders).length > 0));
 
@@ -133,6 +136,7 @@
     api.config
       .get()
       .then((config) => {
+        hostLayout = typeof config.virtual_display_layout === 'string' ? config.virtual_display_layout : '';
         const read = readFolders(config.shared_folders);
         sharedFolders = read.folders;
         if (read.problem) foldersError = `The Shared folders setting can’t be read, so the PC shares no folder: ${read.problem}.`;
@@ -182,15 +186,8 @@
       'What your monitors do while this device streams on a virtual display.',
   );
 
-  /** The layout a stream learned for this device, as the editor names it, while it is not the user's. */
-  const learnedLayout = $derived(
-    draft.virtual_display_layout_learned_over &&
-      draft.virtual_display_layout &&
-      !draft.virtual_display_layout_set_by_user
-      ? (VIRTUAL_DISPLAY_LAYOUTS.find((layout) => layout.value === draft.virtual_display_layout)?.label ??
-          draft.virtual_display_layout)
-      : '',
-  );
+  /** The layout a stream learned for this device, as the editor names it, while the host's layout still lets it apply. */
+  const learnedLayout = $derived(learnedLayoutLabel(draft, hostLayout));
 
   const presetHint = $derived(
     presets.find((preset) => preset.id === draft.stream_preset)?.description ??

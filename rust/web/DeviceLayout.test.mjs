@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { createTestServer } from './test-server.mjs';
 
 const server = await createTestServer({ configFile: false });
-const { toDraft, changes } = await server.ssrLoadModule('/src/components/devices/device.ts');
+const { toDraft, changes, learnedLayoutLabel } = await server.ssrLoadModule('/src/components/devices/device.ts');
 const client = extra => ({ uuid: 'u', name: 'Phone', perm: 0x071f1f00, enabled: true, connected: false, ...extra });
 
 test('a layout the host learned is not shown as the user\'s, and a rename does not make it so', () => {
@@ -49,4 +49,25 @@ test('a layout a stream learned carries what it replaced, and clearing it follow
   });
   // No marker: the layout is the user's own or the host's, not one a stream learned.
   assert.equal(toDraft(client({ virtual_display_layout: 'extended' })).virtual_display_layout_learned_over, '');
+});
+
+test('a learned layout is named only while the host still has the layout it replaced', () => {
+  const learned = toDraft(
+    client({ virtual_display_layout: 'extended_primary', virtual_display_layout_learned_over: 'extended' }),
+  );
+  const label = 'Extend — make virtual display primary';
+  assert.equal(learnedLayoutLabel(learned, 'extended'), label);
+  // Until the configuration is read, the page cannot tell and still names the layout.
+  assert.equal(learnedLayoutLabel(learned, ''), label);
+  // The host's layout changed, so the host ignores the learned one: the page does not claim it.
+  assert.equal(learnedLayoutLabel(learned, 'exclusive'), '');
+  // A layout the user picked is never called learned.
+  const mine = toDraft(
+    client({
+      virtual_display_layout: 'extended_primary',
+      virtual_display_layout_learned_over: 'extended',
+      virtual_display_layout_set_by_user: true,
+    }),
+  );
+  assert.equal(learnedLayoutLabel(mine, 'extended'), '');
 });

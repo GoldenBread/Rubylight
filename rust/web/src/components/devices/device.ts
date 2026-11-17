@@ -313,6 +313,23 @@ export function toDraft(client: Client): Draft {
   };
 }
 
+/**
+ * The layout a stream learned for this device, as its label, while the host's layout still
+ * lets it apply: the host ignores a learned layout once the app or host layout it replaced
+ * changes, so the page must not say the device still uses it.
+ */
+export function learnedLayoutLabel(draft: Draft, hostLayout: string): string {
+  const over = draft.virtual_display_layout_learned_over;
+  if (!over || !draft.virtual_display_layout || draft.virtual_display_layout_set_by_user) return '';
+  // An empty host layout is a console that has not read the setting yet: say nothing about a
+  // difference it cannot know.
+  if (hostLayout && over !== hostLayout) return '';
+  return (
+    VIRTUAL_DISPLAY_LAYOUTS.find((layout) => layout.value === draft.virtual_display_layout)?.label ??
+    draft.virtual_display_layout
+  );
+}
+
 type Command = { cmd: string; elevated: boolean };
 export type Changes = Record<
   string,
