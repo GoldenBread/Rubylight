@@ -76,7 +76,13 @@ public final class PadLayout {
     public static final int MIN_OPACITY = 10, MAX_OPACITY = 100;
     /** The longest side of the default unit: a tablet's controls stop growing past a large phone's. */
     static final float MAX_UNIT_DP = 440;
-    private static final String VERSION = "v2";
+    /**
+     * Layouts are written as v1, which an older build still reads: it skips the controls, glyphs and pointer mode it
+     * does not know instead of dropping the whole layout, so a downgrade keeps every control it has. The short-lived
+     * v2 prefix this version used is still read.
+     */
+    private static final String VERSION = "v1";
+    private static final String VERSION_V2 = "v2";
 
     /** One control's settings. {@code cx} and {@code cy} are fractions of the surface; NaN means the default place. */
     public static final class Spec {
@@ -474,7 +480,7 @@ public final class PadLayout {
         return out;
     }
 
-    /** "v2|glyph=playstation|mode=camera|ID,cx,cy,scale,opacity,hidden|..." for edits; "v2" alone for none. */
+    /** "v1|glyph=playstation|mode=camera|ID,cx,cy,scale,opacity,hidden|..." for edits; "v1" alone for none. */
     public String serialize() {
         StringBuilder out = new StringBuilder(VERSION);
         if (glyph != Glyph.XBOX) out.append("|glyph=").append(glyph.name().toLowerCase(Locale.ROOT));
@@ -493,16 +499,16 @@ public final class PadLayout {
     }
 
     /**
-     * Reads {@link #serialize} output; "v1" layouts saved before the glyphs, the pointer touchpad and its mode load
-     * as an Xbox layout with a mouse touchpad. Unknown controls, unknown settings and broken entries are skipped and
-     * the rest kept, so a layout from a newer version still loads what this one knows. Null or another version gives
-     * the default layout.
+     * Reads {@link #serialize} output; "v2", the prefix a short-lived build wrote, loads too. The glyphs, the
+     * pointer touchpad and its mode are optional: a layout saved before them loads as an Xbox layout with a mouse
+     * touchpad. Unknown controls, unknown settings and broken entries are skipped and the rest kept, so a layout from
+     * a newer version still loads what this one knows. Null or another version gives the default layout.
      */
     public static PadLayout parse(String text) {
         PadLayout layout = new PadLayout();
         if (text == null) return layout;
         String[] parts = text.split("\\|");
-        if (parts.length == 0 || (!VERSION.equals(parts[0]) && !"v1".equals(parts[0]))) return layout;
+        if (parts.length == 0 || (!VERSION.equals(parts[0]) && !VERSION_V2.equals(parts[0]))) return layout;
         for (int i = 1; i < parts.length; i++) {
             String part = parts[i];
             if (part.startsWith("glyph=")) {

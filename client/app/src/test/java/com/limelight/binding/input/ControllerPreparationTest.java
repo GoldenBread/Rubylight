@@ -1113,12 +1113,40 @@ public class ControllerPreparationTest {
     }
 
     @Test public void aHandheldsOwnPadListedAsExternalIsToldApartFromARealXboxPad() {
-        // Retroid Pocket 6: "Xbox Wireless Controller", 0x2022:0x3002, external, on an internal bus.
-        assertTrue(ControllerHandler.looksLikeHandheldControls("Xbox Wireless Controller", 0x2022, true, false));
-        assertFalse("A real Xbox pad", ControllerHandler.looksLikeHandheldControls("Xbox Wireless Controller", 0x045e, true, false));
-        assertFalse("Beside another pad", ControllerHandler.looksLikeHandheldControls("Xbox Wireless Controller", 0x2022, false, false));
-        assertFalse("Attached by USB", ControllerHandler.looksLikeHandheldControls("Xbox Wireless Controller", 0x2022, true, true));
-        assertFalse("Another kind of pad", ControllerHandler.looksLikeHandheldControls("8BitDo Pro 2", 0x2dc8, true, false));
+        // Retroid Pocket 6: "Xbox Wireless Controller", 0x2022:0x3002, external, on an internal bus, and Android 13
+        // cannot say whether it came over Bluetooth: null, so the name and vendor check decides.
+        assertTrue(ControllerHandler.looksLikeHandheldControls("Xbox Wireless Controller", 0x2022, true, false,
+                true, null));
+        assertFalse("A real Xbox pad", ControllerHandler.looksLikeHandheldControls("Xbox Wireless Controller",
+                0x045e, true, false, true, null));
+        assertFalse("Beside another pad", ControllerHandler.looksLikeHandheldControls("Xbox Wireless Controller",
+                0x2022, false, false, true, null));
+        assertFalse("Attached by USB", ControllerHandler.looksLikeHandheldControls("Xbox Wireless Controller",
+                0x2022, true, true, true, null));
+        assertFalse("Another kind of pad", ControllerHandler.looksLikeHandheldControls("8BitDo Pro 2",
+                0x2dc8, true, false, true, null));
+    }
+
+    /**
+     * M5: the transport and the sticks decide, not the name. A Bluetooth pad stays a controller even when it calls
+     * itself an Xbox one; the handheld's own pad is built in whatever it is called; a remote is not a controller.
+     */
+    @Test public void padPropertiesDecideBuiltInBesideABluetoothPadAndARemote() {
+        // A third-party pad in Xbox mode, but Android 14 says its events come over Bluetooth: it is external.
+        assertFalse("A Bluetooth pad keeps the touch controls away", ControllerHandler.looksLikeHandheldControls(
+                "Xbox Wireless Controller", 0x0f0d, true, false, true, true));
+        // The handheld's own controls need no Xbox name: on an internal bus, with sticks, and no Bluetooth.
+        assertTrue("The built-in pad is built in whatever it is called", ControllerHandler.looksLikeHandheldControls(
+                "Retroid Pocket Controls", 0x2022, true, false, true, false));
+        // A remote has gamepad keys and a D-pad, but no sticks.
+        assertFalse("A remote is not a controller", ControllerHandler.countsAsExternalController(true, false, false));
+        // The same properties through the presence rule: the Bluetooth pad counts, the built-in pad never does.
+        assertTrue(ControllerHandler.countsAsExternalController(true, true,
+                ControllerHandler.looksLikeHandheldControls("Xbox Wireless Controller", 0x0f0d, true, false,
+                        true, true)));
+        assertFalse(ControllerHandler.countsAsExternalController(true, true,
+                ControllerHandler.looksLikeHandheldControls("Retroid Pocket Controls", 0x2022, true, false,
+                        true, false)));
     }
 
     @Test public void aHandheldsOwnPadCarriesTheTouchpadButton() {

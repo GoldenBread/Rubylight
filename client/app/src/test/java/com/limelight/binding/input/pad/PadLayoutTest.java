@@ -9,8 +9,9 @@ public class PadLayoutTest {
 
     @Test public void anUneditedLayoutSavesAsTheVersionAlone() {
         PadLayout layout = new PadLayout();
-        assertEquals("v2", layout.serialize());
-        assertTrue(PadLayout.parse("v2").isDefault());
+        assertEquals("v1", layout.serialize());
+        assertTrue(PadLayout.parse("v1").isDefault());
+        assertTrue("A layout the short-lived v2 build wrote still loads", PadLayout.parse("v2").isDefault());
         assertTrue(PadLayout.parse(null).isDefault());
     }
 
@@ -60,7 +61,7 @@ public class PadLayoutTest {
         PadLayout layout = new PadLayout();
         assertTrue("Not in the default layout", layout.spec(PadLayout.Control.WASD).hidden);
         assertTrue(layout.isDefault());
-        assertEquals("v2", layout.serialize());
+        assertEquals("v1", layout.serialize());
         layout.spec(PadLayout.Control.WASD).hidden = false;
         layout.moveTo(PadLayout.Control.WASD, 600, 700, 2400, 1080, DENSITY);
         layout.setScale(PadLayout.Control.WASD, 1.2f);
@@ -134,12 +135,37 @@ public class PadLayoutTest {
         PadLayout withStick = new PadLayout();
         withStick.spec(PadLayout.Control.WASD).hidden = false;
         String text = withStick.serialize();
-        assertEquals("v2|WASD,-,-,1.000,100,0", text);
+        assertEquals("v1|WASD,-,-,1.000,100,0", text);
     }
 
     @Test public void anotherVersionLoadsAsTheDefault() {
         assertTrue(PadLayout.parse("v3|FACE,0.5,0.5,1,100,0").isDefault());
         assertTrue(PadLayout.parse("").isDefault());
+    }
+
+    /**
+     * L3: layouts stay in the v1 format so a downgraded build keeps the controls it knows, while the v2 prefix this
+     * version briefly wrote still loads.
+     */
+    @Test public void layoutsStayV1SoADowngradeKeepsThemAndV2StillLoads() {
+        PadLayout layout = new PadLayout();
+        layout.setGlyph(PadLayout.Glyph.PLAYSTATION);
+        layout.setPointerMode(PadLayout.PointerMode.CAMERA);
+        layout.spec(PadLayout.Control.WASD).hidden = false;
+        layout.setScale(PadLayout.Control.FACE, 1.3f);
+        String text = layout.serialize();
+        assertTrue("v1, which an older parser accepts", text.startsWith("v1|"));
+        // The glyph and mode entries have no comma fields, so the older parser skips them and keeps its controls.
+        assertTrue(text.contains("|glyph=playstation"));
+        assertTrue(text.contains("|mode=camera"));
+        PadLayout back = PadLayout.parse(text);
+        assertEquals(PadLayout.Glyph.PLAYSTATION, back.glyph());
+        assertEquals(PadLayout.PointerMode.CAMERA, back.pointerMode());
+        assertEquals(1.3f, back.spec(PadLayout.Control.FACE).scale, 1e-3);
+        // A layout the short-lived v2 build wrote still loads, settings and all.
+        PadLayout v2 = PadLayout.parse("v2|FACE,0.7083,0.5556,1.300,100,0|mode=camera");
+        assertEquals(1.3f, v2.spec(PadLayout.Control.FACE).scale, 1e-3);
+        assertEquals(PadLayout.PointerMode.CAMERA, v2.pointerMode());
     }
 
     @Test public void everyControlLiesOnTheSurfaceAtEverySize() {
@@ -244,7 +270,7 @@ public class PadLayoutTest {
         PadLayout layout = new PadLayout();
         layout.setGlyph(PadLayout.Glyph.PLAYSTATION);
         layout.setPointerMode(PadLayout.PointerMode.CAMERA);
-        assertEquals("v2|glyph=playstation|mode=camera", layout.serialize());
+        assertEquals("v1|glyph=playstation|mode=camera", layout.serialize());
         PadLayout back = PadLayout.parse(layout.serialize());
         assertEquals(PadLayout.Glyph.PLAYSTATION, back.glyph());
         assertEquals(PadLayout.PointerMode.CAMERA, back.pointerMode());
@@ -292,7 +318,7 @@ public class PadLayoutTest {
         back.applyPreset(PadLayout.Preset.FULL);
         back.applyPreset(PadLayout.Preset.DEFAULT);
         assertTrue(back.isDefault());
-        assertEquals("v2", back.serialize());
+        assertEquals("v1", back.serialize());
     }
 
     /** L2: a control preset changes which controls show, not the glyph family or what the pointer touchpad does. */

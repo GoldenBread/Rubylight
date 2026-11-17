@@ -1228,7 +1228,9 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         if (connected && modernController != null && modernController.isEditing()) return;
         if (connected && virtualController != null &&
                 virtualController.getControllerMode() != VirtualController.ControllerMode.Active) return;
-        if (connected) {
+        // The settings decide, not a pad's arrival: Only L3/R3, the on-screen controls as their own player, and
+        // Controllers Off all keep touch with a pad, and this is where their controls used to disappear.
+        if (!onscreenControlsShown()) {
             hideOnscreenControllers();
         } else if (!isHidingOverlays && conn != null && conn.canSendInput()) {
             showOnscreenController();
@@ -1260,6 +1262,9 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         }
         if (prefConfig.modernOnscreenController()) {
             ensureModernController();
+            // The stream may have turned while a pad kept the controls off the screen, so the switch brings this
+            // orientation's layout back with the controls, as onConfigurationChanged would have.
+            modernController.onOrientationChanged();
             modernController.show();
         } else {
             if (virtualController == null) {
@@ -1294,13 +1299,21 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         modernController.setTouchSink((type, pointer, x, y, pressure) -> {
             if (controllerHandler != null) controllerHandler.reportOscTouch(type, pointer, x, y, pressure);
         });
-        // The pointer touchpad: the screen touchpad's host-pixel scaling, Trackpad speed and kept fraction.
+        // The pointer touchpad: the screen touchpad's host-pixel scaling, Trackpad speed, kept fraction and zoom.
         modernController.setPointerSink(new com.limelight.binding.input.pad.ModernController.PointerSink() {
             @Override public void move(int dx, int dy) {
                 if (conn == null || streamView.getWidth() <= 0 || streamView.getHeight() <= 0) return;
+                float zoom = trackpadPointer != null && trackpadPointer.isLocalCursor() ?
+                        trackpadPointer.zoomScale() : 1;
                 pointerMove.setViewport(prefConfig.width, prefConfig.height, streamView.getWidth(),
-                        streamView.getHeight(), prefConfig.trackpadSpeed);
-                if (pointerMove.move(dx, dy, pointerMoveDelta)) {
+                        streamView.getHeight(), prefConfig.trackpadSpeed, zoom);
+                if (!pointerMove.move(dx, dy, pointerMoveDelta)) return;
+                // The same route as the screen touchpad: a local cursor, or the mouse's absolute position, needs
+                // trackpadPointer's own bookkeeping, and a plain mouse move is its fallback.
+                if (trackpadPointer != null) {
+                    trackpadPointer.stopMomentum();
+                    trackpadPointer.moveBy((short) pointerMoveDelta[0], (short) pointerMoveDelta[1]);
+                } else {
                     conn.sendMouseMove((short) pointerMoveDelta[0], (short) pointerMoveDelta[1]);
                 }
             }

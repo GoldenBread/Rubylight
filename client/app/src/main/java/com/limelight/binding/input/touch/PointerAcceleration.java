@@ -10,6 +10,11 @@ public final class PointerAcceleration {
     public static final String GENTLE = "gentle";
     public static final String MEDIUM = "medium";
     public static final String STRONG = "strong";
+    /**
+     * No acceleration: every move passes through as it is, as the screen touchpad does with Trackpad acceleration
+     * off. The speed is still measured, for a mapping that needs it (the camera stick).
+     */
+    public static final String LINEAR = "linear";
 
     static final float SLOW_SPEED = 50f;
     static final float FAST_SPEED = 1500f;
@@ -48,6 +53,7 @@ public final class PointerAcceleration {
     }
 
     public static PointerAcceleration forCurve(String curve) {
+        if (LINEAR.equals(curve)) return new PointerAcceleration(1f, 1f);
         if (GENTLE.equals(curve)) return new PointerAcceleration(0.8f, 1.6f);
         if (STRONG.equals(curve)) return new PointerAcceleration(0.5f, 3.0f);
         return new PointerAcceleration(0.6f, 2.2f);

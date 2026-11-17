@@ -3,6 +3,7 @@ package com.limelight.binding.input.pad;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.Canvas;
+import android.os.Build;
 import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
@@ -214,7 +215,7 @@ final class PadControlView extends View {
             case MotionEvent.ACTION_POINTER_DOWN: {
                 int index = event.getActionIndex();
                 touchPressure = event.getPressure(index);
-                touchTimeNs = event.getEventTime() * 1_000_000L;
+                touchTimeNs = eventTimeNs(event, -1);
                 down(event.getPointerId(index), event.getX(index), event.getY(index), event.getEventTime());
                 break;
             }
@@ -224,17 +225,19 @@ final class PadControlView extends View {
                 // reports for intermediate positions would change existing input.
                 if (control.shape == PadLayout.Shape.TOUCHPAD) {
                     for (int history = 0; history < event.getHistorySize(); history++) {
-                        long time = event.getHistoricalEventTime(history) * 1_000_000L;
+                        long time = eventTimeNs(event, history);
                         for (int i = 0; i < event.getPointerCount(); i++) {
                             touchPressure = event.getPressure(i);
                             move(event.getPointerId(i), event.getHistoricalX(i, history), event.getHistoricalY(i, history), time);
                         }
                     }
                 }
-                touchTimeNs = event.getEventTime() * 1_000_000L;
+                // Each sample is stamped with its own event time, not the time it happened to be dispatched: the gap
+                // between them is the finger's speed, and a late frame must not read as a slower one.
+                touchTimeNs = eventTimeNs(event, -1);
                 for (int i = 0; i < event.getPointerCount(); i++) {
                     touchPressure = event.getPressure(i);
-                    move(event.getPointerId(i), event.getX(i), event.getY(i));
+                    move(event.getPointerId(i), event.getX(i), event.getY(i), touchTimeNs);
                 }
                 break;
             case MotionEvent.ACTION_UP:
@@ -295,7 +298,6 @@ final class PadControlView extends View {
                     pointerScrolled = pointerSecondDown = pointerTap = false;
                     pointerLastX[0] = x;
                     pointerLastY[0] = y;
-                    touchTimeNs = time * 1_000_000L;
                     if (pointerMotion != null) pointerMotion.reset();
                     removeCallbacks(cameraTick);
                     state.touchX = x;
@@ -342,6 +344,17 @@ final class PadControlView extends View {
 
     void move(int pointer, float x, float y) {
         move(pointer, x, y, System.nanoTime());
+    }
+
+    /**
+     * An event sample's own time in nanoseconds: {@code history} names a historical sample, -1 the event itself.
+     * Android 14 reports nanoseconds; before it, whole milliseconds are all the event carries, so they are widened.
+     */
+    private static long eventTimeNs(MotionEvent event, int history) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            return history < 0 ? event.getEventTimeNanos() : event.getHistoricalEventTimeNanos(history);
+        }
+        return (history < 0 ? event.getEventTime() : event.getHistoricalEventTime(history)) * 1_000_000L;
     }
 
     void move(int pointer, float x, float y, long eventTimeNs) {

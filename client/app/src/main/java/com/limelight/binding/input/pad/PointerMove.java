@@ -17,12 +17,15 @@ public final class PointerMove {
 
     /**
      * Sets how far one touchpad pixel moves the host pointer: the stream's size (the host's) over the view's, times
-     * Trackpad speed in percent. An unsized view moves nothing rather than jumping once it is laid out.
+     * Trackpad speed in percent and divided by the desktop view's zoom, since a zoomed view shows fewer host pixels
+     * per view pixel. An unsized view moves nothing rather than jumping once it is laid out.
      */
-    public void setViewport(int streamWidth, int streamHeight, int viewWidth, int viewHeight, int speedPercent) {
+    public void setViewport(int streamWidth, int streamHeight, int viewWidth, int viewHeight, int speedPercent,
+                            float zoom) {
         float speed = Math.max(0, speedPercent) / 100f;
-        scaleX = viewWidth > 0 ? streamWidth / (float) viewWidth * speed : 0;
-        scaleY = viewHeight > 0 ? streamHeight / (float) viewHeight * speed : 0;
+        if (!(zoom > 0)) zoom = 1;
+        scaleX = viewWidth > 0 ? streamWidth / (viewWidth * zoom) * speed : 0;
+        scaleY = viewHeight > 0 ? streamHeight / (viewHeight * zoom) * speed : 0;
     }
 
     /**

@@ -142,8 +142,11 @@ public final class ModernController {
         }
         if (boxes.isEmpty()) return new PadLayout();
         android.util.DisplayMetrics metrics = context.getResources().getDisplayMetrics();
-        PadLayout migrated = ClassicLayoutMigration.migrate(boxes, metrics.widthPixels, metrics.heightPixels,
-                metrics.density);
+        // The classic layout is arranged in landscape pixels; a first modern start in portrait must map it with the
+        // same dimensions, because the shared key it is stored under is used in both orientations.
+        float width = Math.max(metrics.widthPixels, metrics.heightPixels);
+        float height = Math.min(metrics.widthPixels, metrics.heightPixels);
+        PadLayout migrated = ClassicLayoutMigration.migrate(boxes, width, height, metrics.density);
         if (!migrated.isDefault()) {
             store.edit().putString(PadLayoutKeys.legacyKey(null), migrated.serialize())
                     .putBoolean("classic-migrated", true).apply();
@@ -185,7 +188,7 @@ public final class ModernController {
         removeElements();
         load();
         painter.setGlyph(layout.glyph());
-        String curve = prefs.trackpadAcceleration ? prefs.trackpadAccelerationCurve : PointerAcceleration.MEDIUM;
+        String curve = prefs.trackpadAcceleration ? prefs.trackpadAccelerationCurve : PointerAcceleration.LINEAR;
         for (PadLayout.Control control : PadLayout.Control.values()) {
             if (forcedHidden(control)) continue;
             PadControlView view = new PadControlView(context, control, painter, gamepad, this::changed, keys);
@@ -279,7 +282,7 @@ public final class ModernController {
     /** Redraws the controls after the glyphs or the pointer touchpad's mode changed. */
     private void applyAppearance() {
         painter.setGlyph(layout.glyph());
-        String curve = prefs.trackpadAcceleration ? prefs.trackpadAccelerationCurve : PointerAcceleration.MEDIUM;
+        String curve = prefs.trackpadAcceleration ? prefs.trackpadAccelerationCurve : PointerAcceleration.LINEAR;
         for (Map.Entry<PadLayout.Control, PadControlView> entry : views.entrySet()) {
             PadControlView view = entry.getValue();
             if (entry.getKey() == PadLayout.Control.POINTER_PAD) {
@@ -384,6 +387,11 @@ public final class ModernController {
             edit.putString(PadLayoutKeys.key(landscape, null), text);
             if (gameKey != null) {
                 edit.remove(PadLayoutKeys.key(landscape, gameKey));
+                // The old single per-game layout is both orientations' fallback: hand it to the other orientation
+                // before removing it, so a downgrade-sized layout is not lost there.
+                String legacy = store.getString(PadLayoutKeys.legacyKey(gameKey), null);
+                String other = PadLayoutKeys.key(!landscape, gameKey);
+                if (legacy != null && !store.contains(other)) edit.putString(other, legacy);
                 edit.remove(PadLayoutKeys.legacyKey(gameKey));
             }
         }
