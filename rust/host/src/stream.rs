@@ -1022,12 +1022,10 @@ impl Media {
                                     && fullscreen_probe_due(now, &mut stall_check)
                                     && butterpollo_windows::foreground::exclusive_fullscreen()
                                 {
-                                    // The capture knows the display it reads: no need to
-                                    // enumerate the displays to find its bounds.
-                                    let in_front = match capture.display_rect() {
-                                        Some(rect) => butterpollo_windows::foreground::in_front_rect(rect),
-                                        None => butterpollo_windows::foreground::in_front(&target.0),
-                                    };
+                                    // The display's rectangle as it is now: a game that
+                                    // changed its mode after the capture opened (issue #123)
+                                    // would not match the rectangle the capture opened on.
+                                    let in_front = butterpollo_windows::foreground::in_front(&target.0);
                                     if butterpollo_core::capture_policy::duplication_for_fullscreen(
                                         automatic,
                                         capture.backend(),
