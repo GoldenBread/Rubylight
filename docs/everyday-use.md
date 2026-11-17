@@ -6,7 +6,7 @@ What you do with Rubylight once the first stream works: find your way around the
 
 ## The console
 
-The console is Rubylight's web page on the PC, at **https://localhost:47990**. The tray icon's menu opens it too.
+The console is Rubylight's web page on the PC, at **https://localhost:47990**. **Open Rubylight** in the tray icon's menu opens it too.
 
 | Page | What it is for |
 | --- | --- |
@@ -45,7 +45,7 @@ There are three ways to stop:
 
 Nightjar offers all three in its session menu. Any Moonlight client reaches them through the [couch menu](configuration.md#couch-menu): hold L3+R3, press Ctrl+Alt+Backspace or hold the top-left corner of the screen. Moonlight's own **Quit** closes the game.
 
-**Close the app when the last device disconnects** (**Settings → Games**, off by default) closes a game once no device is left in it. Leave it off unless you never return to a game you left; with it on, a dropped connection costs you the game ([Close apps on disconnect](configuration.md#close-apps-on-disconnect)).
+**Close the app when the last device disconnects** (**Settings → Games**, off by default) closes a game once no device is left in it. Leave it off if you ever come back to a game you left; with it on, leaving the stream closes the game. Each game can follow this default or choose for itself ([Close apps on disconnect](configuration.md#close-apps-on-disconnect)).
 
 ## Devices and permissions
 

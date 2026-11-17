@@ -24,7 +24,7 @@ A setting you change by hand always wins over the preset ([Stream presets](confi
 By default each device gets a **virtual display** of its own, at the device's resolution and refresh rate, on Windows 11 23H2 and later. Games open on it, and the PC's monitors turn off while you stream so games can't open on them; they come back when the stream ends.
 
 - **Keep your monitors on.** Choose an **Extend** layout under **All settings → Picture → Streamed display → Virtual display layout**. Games may then open on a monitor instead of the stream.
-- **Stream a monitor instead.** Choose **Off, stream a monitor** under **Settings → Picture → Virtual display**. The stream then has the monitor's resolution and refresh rate.
+- **Stream a monitor instead.** Choose **Off, stream a monitor** under **Settings → Picture → Virtual display**. The monitor switches to the device's resolution and the stream's frame rate where it has that mode, and back afterwards; to leave it exactly as it is, set **Monitor setup** to Disabled.
 - **One device, its own choice.** Nightjar can ask, for each PC, for the virtual display alone, beside your monitors, or none.
 
 If the monitors stay off after a stream, **Advanced → Troubleshoot** brings the saved layout back ([Displays and RTSS](configuration.md#displays-and-rtss), [Monitors stay on, or the display layout does not return](troubleshooting.md#monitors-stay-on-or-the-display-layout-does-not-return)).

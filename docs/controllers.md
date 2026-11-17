@@ -43,7 +43,7 @@ Hold L3+R3, press Ctrl+Alt+Backspace or hold the top-left corner of the screen t
 - **Mouse.** With the USB driver installed, the mouse is a virtual USB mouse that games and anti-cheat read like a real one; without it, Rubylight uses Windows' input injection, which some games ignore ([Virtual mouse and touchpad](virtual-mouse.md)).
 - **Touchpad.** A tablet's or laptop's touchpad in Nightjar becomes a Windows precision touchpad, so two-finger scroll and three- and four-finger gestures work.
 - **Touch and pen** reach Windows as touch and pen. **Touch** can turn touches into a mouse or a trackpad instead.
-- **Cursor.** A device that can draw the cursor itself moves it without waiting for the video.
+- **Cursor.** A device that can draw the cursor itself moves it without waiting for the video. It needs Desktop Duplication capture; with other capture the cursor stays in the video.
 
 See [Keyboard, touch, pen and cursor](configuration.md#keyboard-touch-pen-and-cursor).
 
