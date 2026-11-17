@@ -508,6 +508,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("HDR is back on this display.", "O HDR voltou a esta tela."),
     ("PyroWave output unavailable", "Saída PyroWave indisponível"),
     ("PyroWave GPU decoding unavailable", "Decodificação PyroWave por GPU indisponível"),
+    ("PyroWave decoding can’t keep up on this device, so frames are being skipped. Lower the resolution, frame rate or bitrate, or choose HEVC.", "A decodificação PyroWave não acompanha neste dispositivo, então quadros estão sendo pulados. Reduza a resolução, a taxa de quadros ou o bitrate, ou escolha HEVC."),
     ("{}. Switch the PyroWave decoder to CPU in the settings, or pick another codec.", "{}. Mude o decodificador PyroWave para CPU nas configurações ou escolha outro codec."),
     ("PyroWave decoder", "Decodificador PyroWave"),
     ("CPU", "CPU"),

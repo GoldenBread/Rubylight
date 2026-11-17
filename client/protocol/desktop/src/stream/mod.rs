@@ -751,6 +751,10 @@ pub struct Streaming {
     /// Early frames and fallbacks at the last overlay update.
     last_early: (u64, u64),
     last_video: (u64, u64, u64),
+    /// Frames PyroWave's decoder passed over at the last overlay update, the seconds in a row it
+    /// has been behind, and whether the stream has said so (`stats::fell_behind`).
+    last_skipped: u64,
+    behind: stats::Behind,
     started: Instant,
     first_frame: bool,
     /// Pictures in a row the presenter could not show.
@@ -1167,6 +1171,8 @@ impl Streaming {
             host_average: HostAverage::default(),
             last_early: (0, 0),
             last_video: (0, 0, 0),
+            last_skipped: 0,
+            behind: stats::Behind::default(),
             started: Instant::now(),
             first_frame: false,
             unshown: render::Unshown::default(),
