@@ -71,7 +71,12 @@
       {#if stream.guest != null}<Badge>Guest</Badge>{/if}
       {#if limited}
         <Badge tone="warn">
-          Bitrate limited by the network: <span class="num">{rate(stream.encoder_bitrate_kbps)}</span> of
+          {#if limited.reason === 'send_losses'}
+            Bitrate limited by the PC (too busy to send):
+          {:else}
+            Bitrate limited by the network:
+          {/if}
+          <span class="num">{rate(stream.encoder_bitrate_kbps)}</span> of
           <span class="num">{rate(limited.ceiling_kbps)}</span> Mbps{#if limited.encoder_floor_kbps}
             (the encoder cannot go lower){/if}
           {#if limited.reason === 'queue'}(video was held back in a queue){/if}

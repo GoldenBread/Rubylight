@@ -543,7 +543,7 @@ impl Transport<'_> {
         if self.batch.dropped.saturating_sub(self.batch.oversized)
             != dropped.saturating_sub(oversized)
         {
-            s.launch.warnings.event("network_send", "Video packets were dropped by the host after transient socket send failures. You may see stutter or recovery frames; lower bitrate and check the network adapter. The log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
+            s.launch.warnings.event("network_send", "The PC is too busy to send the stream (CPU fully loaded), so video packets were dropped. You may see stutter or recovery frames; close other work on the PC, or lower the resolution or frame rate. The log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
         }
         super::report_oversized(s, &self.batch, oversized);
         s.stats.latency_us.store(frame.latency, Ordering::Relaxed);

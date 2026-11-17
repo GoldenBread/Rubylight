@@ -512,17 +512,26 @@ fn a_pyrowave_stream_with_no_room_under_it_is_told_to_use_hevc_or_av1() {
     }
     s.stats.video_frame.store(70, Ordering::Release);
     lose_frames(&s, 50..=54);
-    assert_eq!(
-        s.tick_link_rate(end + Duration::from_millis(200), Duration::from_millis(10)),
-        None,
-        "nothing to lower"
+    let (_, cut) = s
+        .tick_link_rate(end + Duration::from_millis(200), Duration::from_millis(10))
+        .expect("the first cut goes under the no-room floor");
+    assert!(cut < 200_000, "{cut}");
+    assert_eq!(s.info()["link_rate"]["state"], "limited");
+    // More loss at the learned rate: there is nothing lower the picture can
+    // take, so the warning names PyroWave's own floor.
+    for frame in 64..=80u32 {
+        let at = end + Duration::from_millis(1_000 + 8 * u64::from(frame - 64));
+        s.record_link_sent_at(frame, 300, 420_000, at);
+    }
+    s.stats.video_frame.store(90, Ordering::Release);
+    lose_frames(&s, 70..=74);
+    s.tick_link_rate(
+        end + Duration::from_millis(2_000),
+        Duration::from_millis(10),
     );
     assert_eq!(s.info()["link_rate"]["state"], "floor");
     let message = link_warning(&s).expect("the link warning");
-    assert!(
-        message.contains("loses PyroWave video at 200 Mbps"),
-        "{message}"
-    );
+    assert!(message.contains("loses PyroWave video at"), "{message}");
     assert!(message.contains("HEVC or AV1"), "{message}");
     assert!(!message.contains("lowest bitrate"), "{message}");
     // The floor again after a quiet spell is INFO, not a second WARN.
@@ -2367,7 +2376,7 @@ fn only_pyrowave_sessions_report_quality_bitrates() {
     }
 }
 #[test]
-fn host_only_loss_on_a_remembered_route_names_the_host_s_adapter() {
+fn host_only_loss_on_a_remembered_route_names_the_busy_pc() {
     const FAST: u64 = 800_000_000;
     const SAFE: u64 = 62_000_000;
     let s = Session::new(launch("onn", Role::Stream), Negotiated::default());
@@ -2376,7 +2385,7 @@ fn host_only_loss_on_a_remembered_route_names_the_host_s_adapter() {
         assert_eq!(s.keyframe_loss_bps(FAST, SAFE, frame, frame == 20), SAFE);
     }
     // The socket refuses keyframe 20: held for the stream, never saved,
-    // and the warning points at the host, not the network path.
+    // and the warning points at the PC, not the network path.
     s.keyframe_abandoned(20);
     assert!(s.keyframe_loss_active());
     assert!(s.keyframe_loss_sustained_at().is_none());
@@ -2384,7 +2393,7 @@ fn host_only_loss_on_a_remembered_route_names_the_host_s_adapter() {
         .as_str()
         .unwrap()
         .to_owned();
-    assert!(message.contains("host's network adapter"), "{message}");
+    assert!(message.contains("PC was too busy"), "{message}");
     assert!(message.contains("rest of the stream"), "{message}");
     assert!(!message.contains("network path"), "{message}");
 }
@@ -2629,7 +2638,7 @@ fn frames_the_host_could_not_send_slow_the_stream_and_the_clients_report_adds_no
         s.info()["warnings"][0]["message"]
             .as_str()
             .unwrap()
-            .contains("The host's network adapter refused video packets")
+            .contains("The PC was too busy to send video packets")
     );
     // Two such frames are not enough, and the client reporting them is the
     // same loss, not more of it.

@@ -356,7 +356,7 @@ fn host_dropped(current: &Session, wire_frame: u32, oversized: bool, transient: 
         crate::video_send::oversized_warning(current);
     }
     if transient {
-        current.launch.warnings.event("network_send", "PyroWave video packets were dropped by the host after transient socket send failures. Lower bitrate and check the network adapter; the log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
+        current.launch.warnings.event("network_send", "The PC is too busy to send the stream (CPU fully loaded), so PyroWave video packets were dropped and the client may stutter. Close other work on the PC, or lower the resolution or frame rate. The log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
     }
 }
 

@@ -992,7 +992,7 @@ impl Batch {
             tracing::warn!(
                 code = error.0,
                 dropped = self.unreported,
-                "UDP send failed; packets dropped and the client may stutter. Lower bitrate and check the network adapter"
+                "UDP send failed: the PC is too busy to send the stream (CPU fully loaded), so packets were dropped and the client may stutter. Close other work on the PC or lower the bitrate"
             );
             self.unreported = 0;
             self.reported = Some(std::time::Instant::now());

@@ -1119,6 +1119,14 @@ impl<P, A> Session<P, A> {
         match change.kind {
             ChangeKind::StepDown | ChangeKind::Floor | ChangeKind::EncoderFloor => {
                 let message = match change.kind {
+                    ChangeKind::StepDown | ChangeKind::Floor | ChangeKind::EncoderFloor
+                        if change.reason == "send_losses" =>
+                    {
+                        format!(
+                            "The PC is too busy to send the stream (CPU fully loaded), so the host lowered the video bitrate to {} and does not raise it while video packets are refused. Close other work on the PC, or lower the resolution or frame rate in Moonlight.",
+                            mbps(change.to_kbps)
+                        )
+                    }
                     ChangeKind::Floor if no_room => format!(
                         "This network loses PyroWave video at {}, and PyroWave cannot go lower at this resolution and frame rate and keep a usable picture, so the picture will keep breaking up. HEVC or AV1 will hold up better on this device; or check the network path (Wi-Fi signal, cable, router).",
                         mbps(change.to_kbps)
@@ -1156,6 +1164,22 @@ impl<P, A> Session<P, A> {
             ChangeKind::Probe | ChangeKind::ProbeFailed => {}
         }
         match change.kind {
+            ChangeKind::StepDown if !was_limited && change.reason == "send_losses" => {
+                tracing::warn!(
+                    stream_id = %self.launch.id,
+                    link_rate_change = kind,
+                    reason = change.reason,
+                    from_kbps = change.from_kbps,
+                    to_kbps = change.to_kbps,
+                    delivered_kbps = change.delivered_kbps,
+                    unrecoverable_frames = e.unrecoverable_frames,
+                    send_losses = e.send_losses,
+                    keyframe_requests = e.keyframe_requests,
+                    loss_windows = e.loss_windows,
+                    loss_share_percent = e.loss_share * 100.,
+                    "the PC is too busy to send the stream; lowering the video bitrate"
+                )
+            }
             ChangeKind::StepDown if !was_limited => tracing::warn!(
                 stream_id = %self.launch.id,
                 link_rate_change = kind,
@@ -1170,6 +1194,17 @@ impl<P, A> Session<P, A> {
                 loss_windows = e.loss_windows,
                 loss_share_percent = e.loss_share * 100.,
                 "the network to this device cannot carry the stream; lowering the video bitrate"
+            ),
+            ChangeKind::Floor if warned && change.reason == "send_losses" => tracing::warn!(
+                stream_id = %self.launch.id,
+                link_rate_change = kind,
+                reason = change.reason,
+                from_kbps = change.from_kbps,
+                to_kbps = change.to_kbps,
+                delivered_kbps = change.delivered_kbps,
+                send_losses = e.send_losses,
+                loss_share_percent = e.loss_share * 100.,
+                "the PC is too busy to send the stream even at the lowest video bitrate"
             ),
             ChangeKind::Floor if warned => tracing::warn!(
                 stream_id = %self.launch.id,
@@ -1432,9 +1467,9 @@ impl<P, A> Session<P, A> {
             if kind == LatchKind::Startup {
                 self.launch.warnings.set("network_keyframe_loss", format!("The first video frame was lost on the way to this device ({reason}), so video is paced like Wi-Fi for now. This limits packet bursts without reducing the encoder bitrate. The host returns to the normal rate after 10 seconds without further loss."));
             } else if kind == LatchKind::Send {
-                self.launch.warnings.set("network_keyframe_loss", format!("The host's network adapter refused video packets ({reason}), so video is paced like Wi-Fi for now. This limits packet bursts without reducing the encoder bitrate. The host returns to the normal rate after 10 seconds without further loss."));
+                self.launch.warnings.set("network_keyframe_loss", format!("The PC was too busy to send video packets ({reason}), so video is paced like Wi-Fi for now. This limits packet bursts without reducing the encoder bitrate. The host returns to the normal rate after 10 seconds without further loss."));
             } else if host_only {
-                self.launch.warnings.set("network_keyframe_loss", format!("The host's network adapter refused video packets ({reason}), so video is paced like Wi-Fi for the rest of the stream. This limits packet bursts without reducing the encoder bitrate. The device reported no loss; check the host's network adapter and its driver if this continues."));
+                self.launch.warnings.set("network_keyframe_loss", format!("The PC was too busy to send video packets ({reason}), so video is paced like Wi-Fi for the rest of the stream. This limits packet bursts without reducing the encoder bitrate. The device reported no loss; close other work on the PC if this continues."));
             } else {
                 self.launch.warnings.set("network_keyframe_loss", format!("Video frames were lost on the way to this device ({reason}), so video is now paced like Wi-Fi for the rest of the stream. This limits packet bursts without reducing the encoder bitrate. Check the network path if loss continues."));
             }
