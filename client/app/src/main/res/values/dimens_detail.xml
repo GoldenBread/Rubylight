@@ -8,6 +8,11 @@
          its own, since a value in values-land would outrank the TV's. -->
     <dimen name="detail_cover_land_width">156dp</dimen>
     <dimen name="detail_cover_land_height">234dp</dimen>
+    <!-- The cover above the sheet on a phone held upright: 2:3, small enough that Play stays on the first screen. -->
+    <dimen name="detail_cover_sheet_width">144dp</dimen>
+    <dimen name="detail_cover_sheet_height">216dp</dimen>
     <!-- The game page's rows line up with the text inside its stream settings panel. -->
     <dimen name="detail_row_padding">16dp</dimen>
+    <!-- The widest the text of Home's set-up card runs before it wraps; a phone's screen caps it sooner. -->
+    <dimen name="home_setup_card_text">300dp</dimen>
 </resources>

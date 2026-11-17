@@ -303,14 +303,16 @@ public class GameDetailShellTest {
     }
 
     @Test
-    public void outsideTvAStoreGameNotInstalledRendersWithItsNoteAndNoStoreChip() throws Exception {
-        // The handheld page has no chip line: a store-owned game must still render and say why Play is off.
+    public void uprightAStoreGameNotInstalledRendersWithItsNoteAndItsChips() throws Exception {
+        // The sheet has the chip line of every other form: a store-owned game says its store, and why Play is off.
         ActivityController<Detail> controller = detail();
         try {
             Detail page = loaded(controller);
-            assertNull(page.findViewById(R.id.detail_chips));
-            assertNull(page.findViewById(R.id.detail_store));
+            assertTrue(page.findViewById(R.id.detail_sheet) != null);
             page.render(portal(",\"installed\":false,\"store\":{\"source\":\"steam\",\"id\":\"400\"}"), tower());
+            assertEquals(View.VISIBLE, page.findViewById(R.id.detail_chips).getVisibility());
+            assertEquals(View.VISIBLE, page.findViewById(R.id.detail_store).getVisibility());
+            assertEquals(View.VISIBLE, page.findViewById(R.id.detail_installed).getVisibility());
             android.widget.TextView note = page.findViewById(R.id.detail_note);
             assertEquals(View.VISIBLE, note.getVisibility());
             assertEquals("Not installed on Tower", note.getText().toString());
@@ -406,11 +408,12 @@ public class GameDetailShellTest {
 
     /**
      * Android 7.1 and older take a next-focus target even when it is gone, and focus then stays put: Down from Favourite
-     * must reach the quit-on-leave row while Close game is hidden, and Close game when it shows.
+     * must reach the rows under the buttons while Quit game is hidden, and Right must reach Quit game, which stands
+     * beside Favourite on the sheet, when it shows.
      */
     @Test
     @Config(sdk = 25)
-    public void downFromFavouriteReachesTheQuitOnLeaveRowWhileTheEndButtonIsGone() throws Exception {
+    public void fromFavouriteDownReachesTheRowsBelowAndRightReachesQuitGameOnlyWhileItShows() throws Exception {
         GameDetailModel model = portal(",\"installed\":true");
         ActivityController<Detail> controller = detail();
         try {
@@ -425,14 +428,17 @@ public class GameDetailShellTest {
             page.getWindow().getDecorView().measure(View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY),
                     View.MeasureSpec.makeMeasureSpec(4000, View.MeasureSpec.EXACTLY));
             page.getWindow().getDecorView().layout(0, 0, 1080, 4000);
-            View next = favourite.focusSearch(View.FOCUS_DOWN);
-            assertSame(row, next);
+            assertEquals(View.NO_ID, favourite.getNextFocusRightId());
+            // With no profile to choose the stream settings are not a stop: the next one down is the quit-on-leave row.
+            assertSame(row, favourite.focusSearch(View.FOCUS_DOWN));
 
             end.setVisibility(View.VISIBLE);
             page.getWindow().getDecorView().measure(View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY),
                     View.MeasureSpec.makeMeasureSpec(4000, View.MeasureSpec.EXACTLY));
             page.getWindow().getDecorView().layout(0, 0, 1080, 4000);
-            assertSame(end, favourite.focusSearch(View.FOCUS_DOWN));
+            assertSame(end, favourite.focusSearch(View.FOCUS_RIGHT));
+            assertSame(row, favourite.focusSearch(View.FOCUS_DOWN));
+            assertSame(row, end.focusSearch(View.FOCUS_DOWN));
         } finally {
             controller.pause().stop().destroy();
         }

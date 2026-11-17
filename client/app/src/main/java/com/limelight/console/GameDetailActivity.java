@@ -138,7 +138,7 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
     private TextView quitOnLeaveNote;
     private GameDetailModel quitOnLeaveGame;
     private ComputerDetails quitOnLeaveComputer;
-    /** On a TV and on the page held sideways (null on a phone held upright): the backdrop, and the chip line with the installed and HDR chips. */
+    /** The backdrop, and the chip line with the installed and HDR chips. A layout without them (none today) leaves these null and shows the state chip alone. */
     private BackdropView backdrop;
     private View chips;
     private TextView installed;
@@ -473,7 +473,7 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
     }
 
     /**
-     * The TV page and the page held sideways sit on the game's backdrop. Opened from Home, it is the picture Home was showing for the game,
+     * The page sits on the game's backdrop on every form. Opened from Home, it is the picture Home was showing for the game,
      * shown at once, so the page change keeps the screen's light; otherwise it fades in when the cover is loaded.
      */
     private void setUpAmbience() {
@@ -482,12 +482,22 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
         int canvas = tv ? AppTheme.tvCanvas(this)
                 : com.google.android.material.color.MaterialColors.getColor(backdrop, R.attr.glassCanvas);
         // Held sideways the page is Home's hero grown to a page: the ambient bakes for the theme and fades as Home's does.
-        // This layout is the sideways one whatever the device, so a phone turned on its side bakes as a handheld does.
-        if (!tv) HomeChrome.setUpBackdrop(this, com.limelight.ui.GlassForm.HANDHELD, backdrop, canvas);
+        // That layout is the sideways one whatever the device, so a phone turned on its side bakes as a handheld does.
+        // Held upright the page is the sheet: the ambient is a phone Home's, the art at the top where the cover is.
+        boolean sideways = getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+        if (!tv) HomeChrome.setUpBackdrop(this, sideways ? com.limelight.ui.GlassForm.HANDHELD : com.limelight.ui.GlassForm.PHONE, backdrop, canvas);
         getWindow().setBackgroundDrawable(new ColorDrawable(canvas));
         ((ViewGroup) findViewById(android.R.id.content)).setClipChildren(false);
         // The system bars' padding sits on the content view as well: the backdrop reaches under the status bar, as Home's does.
         if (!tv) ((ViewGroup) findViewById(android.R.id.content)).setClipToPadding(false);
+        // Nothing on the page clips its children, so a focus halo and the sheet's foot can draw past their views. Scrolled,
+        // the page would then run over the bar above it: the scrolling part is cut at its own top edge, and only there.
+        View scroll = findViewById(R.id.detail_scroll);
+        if (scroll != null) {
+            int far = getResources().getDisplayMetrics().heightPixels;
+            scroll.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) ->
+                    v.setClipBounds(new android.graphics.Rect(-far, 0, r - l + far, b - t + far)));
+        }
         backdrop.setCanvasColor(canvas);
         backdrop.setDim(AppTheme.isHighContrast(this) ? 0.85f : 1f);
         backdrop.setOnCovered(() -> getWindow().setBackgroundDrawable(null));

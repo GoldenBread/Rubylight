@@ -18,7 +18,7 @@
         <include layout="@layout/view_shell_bar" />
         <ProgressBar android:id="@+id/detail_loading" style="?android:attr/progressBarStyleHorizontal"
             android:layout_width="match_parent" android:layout_height="4dp" android:indeterminate="true" />
-        <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+        <ScrollView android:id="@+id/detail_scroll" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
             android:clipToPadding="false" android:clipChildren="false" android:fillViewport="true"
             android:scrollbars="none">
             <com.limelight.ui.ContentFrame android:layout_width="match_parent" android:layout_height="wrap_content"
