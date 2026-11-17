@@ -60,6 +60,8 @@ Open **Settings → Controls → Controller test**, or **Test controller** on th
 
 Anything a controller or Android version lacks says so instead of being hidden. Pads that Nightjar's USB driver owns (see below) are read through the driver, as in a stream, and Android 12+ is needed for rumble per motor, lights and motion on other pads. The page works with a D-pad or controller alone: the D-pad and A move around it, and holding B or Back for one second leaves it. Leaving stops rumble, restores the lights and hands USB pads back to Android.
 
+For a controller without motion sensors, the test shows the device's own motion sensors when **Use device motion sensors** is on, as a stream uses them.
+
 ### DualSense and USB
 
 Bluetooth DualSense uses Android's controller path. Controller motion, lights, battery and vibration extensions depend on Android and controller support; motion settings are available on Android 12+, with motion defaulting off on API 31 because of an OS bug.
@@ -168,6 +170,8 @@ Move one finger on the trackpad to move the pointer; tap to left-click, use two 
 The panel follows **Local cursor** and **Mouse mode**, using its own pointer-speed setting. Movement scales to the streamed picture, including local-cursor zoom, so a dense display does not slow it down. Empty panel margins absorb touches, and the panel leaves keyboard focus on the stream. In split-screen or freeform windows, the first direct button press works while Android is restoring window focus.
 
 The gear opens customization: key and panel size, background opacity, pointer speed, scrolling direction, tap-to-click, mouse buttons (including optional middle/Back/Forward), trackpad side, visible banks, and modifiers that stay selected for several keys. **Edit keyboard shortcuts** adds, edits, deletes or reorders saved chords inside the stream. Apply saves panel settings for this device; Reset panel restores defaults while keeping saved shortcuts. Closing the panel, changing modes, losing focus or disconnecting releases held mouse buttons and clears modifiers. The host's input permissions still apply.
+
+On macOS, and on Linux under Wayland, scrolling follows the system's natural scrolling setting, in Nightjar's menus and in a stream.
 
 ### Keyboard follows text fields
 

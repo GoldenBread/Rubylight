@@ -9,6 +9,7 @@ Find your task below. Conventions used throughout:
 - The **PC** is the computer you stream from; the **host** is the streaming software running on it; **this device** is the one running Nightjar.
 - Settings are named exactly as they appear in the app, with their path: **Settings → Streaming → Recover interrupted streams**.
 - Where a feature depends on the host, the page names the capability it needs and the hosts known to provide it.
+- **Windows and Linux** in a page's text means the desktop app, which also runs on macOS; [Nightjar for macOS, Windows and Linux](../protocol/desktop/README.md#macos) says what differs on a Mac.
 
 <a id="user-guide"></a>
 
@@ -84,7 +85,7 @@ New to Nightjar? Read the [quick start](quick-start.md): install a host, add the
 
 | Page | Contents |
 | --- | --- |
-| [Settings reference](settings.md) | Every setting on Android and the desktop client, with its default and advice |
+| [Settings reference](settings.md) | Every setting on Android and the desktop clients, with its default and advice |
 | [Features](features.md) | Every feature, with a link to its guide |
 | [Host feature support](PARITY-MATRIX.md) | Each host capability and the hosts known to provide it |
 | [Android and desktop compared](CLIENT-PARITY.md) | Feature availability in the two clients |
