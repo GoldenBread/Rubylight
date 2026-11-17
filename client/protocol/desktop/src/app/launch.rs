@@ -457,10 +457,14 @@ impl App {
         }
         let mut gpu_decoder = None;
         self.pyrowave_note = None;
+        // The renderer's device, when a PyroWave decoder needs it: the Mac check below probes the
+        // plane shader on it too, so a shader that does not build falls back before the stream.
+        let gpu_device = if settings.codec.is_pyrowave() { self.gpu_device() } else { None };
         // A Mac decodes on the processor where the GPU decoder cannot run, and says why.
         #[cfg(target_os = "macos")]
         if settings.codec.is_pyrowave() && settings.pyrowave_decoder == config::PyroWaveDecoder::Gpu {
-            if let stream::pyrowave_mode::MacChoice::Cpu(reason) = stream::pyrowave_mode::this_mac(settings.pyrowave_decoder, settings.hdr) {
+            let device = gpu_device.map_or(std::ptr::null_mut(), |device| device.0);
+            if let stream::pyrowave_mode::MacChoice::Cpu(reason) = stream::pyrowave_mode::this_mac(settings.pyrowave_decoder, settings.hdr, device) {
                 let reason = reason.unwrap_or_default();
                 eprintln!("nightjar: PyroWave decodes on the processor: {reason}");
                 self.pyrowave_note = Some(trf("PyroWave decodes on the processor: {}", &[&reason]));
@@ -468,7 +472,6 @@ impl App {
             }
         }
         if settings.codec.is_pyrowave() {
-            let gpu_device = self.gpu_device();
             let probed = stream::pyrowave_mode::availability(
                 settings.pyrowave_decoder,
                 || stream::pyrowave_gpu::probe(self.renderer, settings.hdr),

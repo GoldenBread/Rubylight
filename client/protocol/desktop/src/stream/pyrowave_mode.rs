@@ -82,10 +82,12 @@ pub fn macos_major() -> u32 {
     text.split('.').next().and_then(|major| major.parse().ok()).unwrap_or(0)
 }
 
-/// `mac_choice` for this Mac and `setting`, the probe being `gpu_probe`.
+/// `mac_choice` for this Mac and `setting`, the probe being `gpu_probe` on the renderer's `device`:
+/// a plane shader that does not build is then the processor's reason, shown as the stream's start
+/// notice, where a probe without the device found out only once the stream asked for a picture.
 #[cfg(target_os = "macos")]
-pub fn this_mac(setting: PyroWaveDecoder, ten_bit: bool) -> MacChoice {
-    mac_choice(setting, cfg!(target_arch = "aarch64"), macos_major(), || gpu_probe(std::ptr::null_mut(), ten_bit))
+pub fn this_mac(setting: PyroWaveDecoder, ten_bit: bool, device: *mut std::ffi::c_void) -> MacChoice {
+    mac_choice(setting, cfg!(target_arch = "aarch64"), macos_major(), || gpu_probe(device, ten_bit))
 }
 
 /// `nightjar --check-pyrowave <report file>`: what a package check needs to know without a window
@@ -365,6 +367,16 @@ mod tests {
         assert!(old.contains("macOS 26") && old.contains("macOS 15"), "{old}");
         assert_eq!(mac_choice(Gpu, true, 26, || Err("the bundled Vulkan driver finds no GPU it supports".into())),
             MacChoice::Cpu(Some("the bundled Vulkan driver finds no GPU it supports".into())), "the probe's reason is kept");
+    }
+
+    #[test]
+    fn a_mac_plane_shader_that_does_not_build_decodes_on_the_processor_and_is_named() {
+        // `gpu_probe` hands the plane shader's error to `mac_choice` when it has the renderer's
+        // device; that is the processor fallback the launch shows as its start notice, not the
+        // refused stream a probe without the device allowed.
+        let reason = "the plane shader cannot be created: its Metal pass does not compile";
+        assert_eq!(mac_choice(PyroWaveDecoder::Gpu, true, 26, || Err(reason.to_owned())),
+            MacChoice::Cpu(Some(reason.to_owned())), "a shader error is the processor's reason");
     }
 
     #[test]
