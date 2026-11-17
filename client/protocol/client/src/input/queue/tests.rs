@@ -350,8 +350,12 @@ fn arrival_sends_a_neutral_state_too() {
 }
 
 #[test]
-fn identities_and_the_c_button_go_only_to_a_host_that_takes_them() {
+fn identities_go_only_to_a_host_that_takes_them_and_the_grip_flag_is_kept() {
     use rubylight_protocol::controller_identity::ControllerIdentity;
+    // The C button's flag is also a Steam Controller's left grip touch. A host
+    // without ControllerIdentityVersion still needs the grip, so the queue
+    // never clears the bit (nightjar#125); the desktop sends its own C press
+    // only to a host that takes identities.
     let mut q = queue(&sunshine());
     q.send_controller_identity(1, 0x057E, 0x2069).unwrap();
     q.send_controller(1, 2, button::C | button::A, 0, 0, (0, 0), (0, 0))
@@ -361,9 +365,9 @@ fn identities_and_the_c_button_go_only_to_a_host_that_takes_them() {
     assert!(matches!(
         sent[0],
         Input::Controller {
-            buttons: button::A,
+            buttons,
             ..
-        }
+        } if buttons == button::C | button::A
     ));
 
     q.set_controller_identity(true);

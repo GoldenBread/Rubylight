@@ -347,9 +347,9 @@ Bytes 0-35 are Moonlight's pen packet (`0x55000003`) with this magic at offset 4
 
 `rubylight_protocol::controller_identity::ControllerIdentity`, sent on the controller's gamepad channel before its arrival (`0x55000004`), so the host knows which controller it is when it picks the virtual pad. After the big-endian length (12) and the magic: `controller u8` (0-15), a reserved byte (0), `vendor u16` and `product u16` (the USB ids the client's controller reports, little-endian) and two reserved bytes (0). A Switch 2 Pro Controller is `057E:2069`. Clients send it again when another controller takes the number.
 
-Controller packets carry the Switch 2 controllers' C button as button flag `0x400000` (in the upper 16 bits that Sunshine-family hosts take).
+Controller packets carry the Switch 2 controllers' C button as button flag `0x400000` (in the upper 16 bits that Sunshine-family hosts take). The flag is also a Steam Controller's left grip touch (`LEFT_GRIP_TOUCH_FLAG`), so a client keeps it in every controller packet; only the C press of a Switch 2 controller is dropped for a host without `ControllerIdentityVersion` (the desktop does that itself).
 
-The client sends both only when serverinfo has `ControllerIdentityVersion` (`1`), which the host offers while `controller` is on; Nightjar's capability is `controller_identity`. Any other host never sees the packet or the flag. The magic lies in the block reserved for controller extensions (`0x55000080`-`0x55000087`).
+The client sends the identity only when serverinfo has `ControllerIdentityVersion` (`1`), which the host offers while `controller` is on; Nightjar's capability is `controller_identity`. Any other host never sees the packet. The magic lies in the block reserved for controller extensions (`0x55000080`-`0x55000087`).
 
 ### Touchpad contacts (input packets `0x55000009` and `0x5500000A`)
 
