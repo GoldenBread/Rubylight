@@ -7,10 +7,8 @@ import android.media.MediaCodecList;
 import android.os.Build;
 import android.preference.PreferenceManager;
 
-import com.limelight.binding.video.DecoderBenchmark;
 import com.limelight.binding.video.DisplayFrameRatePolicy;
 import com.limelight.binding.video.HdrPolicy;
-import com.limelight.R;
 
 /**
  * The simple settings layer: what the stream should favour, how much picture quality it may spend, and
@@ -85,11 +83,11 @@ public final class SimpleProfile {
         boolean optIn = prefs.contains(VRR_OPT_IN) ? prefs.getBoolean(VRR_OPT_IN, false) : lastWritten;
         if (currentVrr != lastWritten) optIn = currentVrr;
         boolean vrr = offered && optIn;
-        Codecs codecs = codecs(context, width, height);
+        Codecs codecs = codecs();
         // The PCs' HDR and codec offers are settled when a stream negotiates; the settings screen does
         // not know them, and leaving them unknown never rules anything out.
         SimpleProfileModel.Capabilities capabilities = new SimpleProfileModel.Capabilities(width, height,
-                refresh, hdr, vrr, true, codecs.hevc, codecs.av1, codecs.hdr, codecs.maxFpsAtNative,
+                refresh, hdr, vrr, true, codecs.hevc, codecs.av1, codecs.hdr,
                 null, null, null);
         cachedCapabilities = capabilities;
         return capabilities;
@@ -103,17 +101,15 @@ public final class SimpleProfile {
 
     private static final class Codecs {
         boolean hevc, av1, hdr;
-        Integer maxFpsAtNative;
     }
 
     /**
-     * The hardware decoders this device has, from what Android lists, and the benchmark's fastest measured
-     * rate at the screen's size. No vendor or model is consulted; a codec counts only when a decoder that is
-     * not software supports it, and HDR only when that decoder's profile is a 10-bit HDR one.
+     * The hardware decoders this device has, from what Android lists. No vendor or model is consulted; a codec
+     * counts only when a decoder that is not software supports it, and HDR only when that decoder's profile is a
+     * 10-bit HDR one. The decoder benchmark is a decode time, not a sustained rate, so it does not cap the stream.
      */
-    private static Codecs codecs(Context context, int width, int height) {
+    private static Codecs codecs() {
         Codecs codecs = new Codecs();
-        long bestUs = 0;
         try {
             MediaCodecList list = new MediaCodecList(MediaCodecList.REGULAR_CODECS);
             for (MediaCodecInfo info : list.getCodecInfos()) {
@@ -127,42 +123,12 @@ public final class SimpleProfile {
                         codecs.av1 = true;
                         if (main10(info, type)) codecs.hdr = true;
                     }
-                    // The benchmark's clip is 1080p60. Scale its time by the screen's pixel count, so a
-                    // larger panel gets a lower cap instead of no measurement at all.
-                    long us = DecoderBenchmark.result(context, info, type);
-                    if (us > 0) {
-                        long scaled = benchmarkUsAtNative(width, height, us);
-                        if (bestUs == 0 || scaled < bestUs) bestUs = scaled;
-                    }
                 }
             }
         } catch (RuntimeException e) {
             com.limelight.LimeLog.warning("Simple settings: the decoder list could not be read: " + e);
         }
-        if (bestUs > 0) {
-            codecs.maxFpsAtNative = offeredFps(context, (int) Math.min(1000, 1_000_000L / bestUs));
-        }
         return codecs;
-    }
-
-    /** The 1080p60 benchmark's decode time at this screen's pixel count, so a larger panel gets a cap. */
-    static long benchmarkUsAtNative(int width, int height, long clipUs) {
-        long pixels = (long) width * height;
-        return Math.max(1, clipUs * pixels / (1920L * 1080));
-    }
-
-    /** The nearest frame rate the Frame rate row offers at or below {@code fps}; 30 when below it. */
-    static int offeredFps(Context context, int fps) {
-        int best = 30;
-        for (String value : context.getResources().getStringArray(R.array.fps_values)) {
-            try {
-                int offered = Integer.parseInt(value);
-                if (offered > best && offered <= fps) best = offered;
-            } catch (NumberFormatException ignored) {
-                // A value the row cannot parse is no choice here either.
-            }
-        }
-        return best;
     }
 
     private static boolean hardware(MediaCodecInfo info) {

@@ -1,7 +1,7 @@
 <script lang="ts">
   import Badge from '../Badge.svelte';
   import Button from '../Button.svelte';
-  import { CODEC_NAMES, type StreamSession } from '../../lib/api';
+  import { CODEC_NAMES, type StreamSession, type StutterStageId } from '../../lib/api';
   import { duration, ms } from '../../lib/format';
   import Sparkline from './Sparkline.svelte';
 
@@ -46,6 +46,16 @@
     amf: 'AMD AMF',
     nvenc: 'NVIDIA NVENC',
     pyrowave: 'PyroWave',
+  };
+  const stutter = $derived(stream.stutter ?? null);
+  // Null when no stage stands out: no stage's id is null.
+  const lostStage = $derived(stutter?.stages.find((stage) => stage.id === stutter?.dominant) ?? null);
+  const stageWords: Record<StutterStageId, string> = {
+    capture: 'capture',
+    convert: 'conversion',
+    encode: 'encoding',
+    packetize: 'packetizing',
+    send: 'sending',
   };
 </script>
 
@@ -143,6 +153,24 @@
         {/if}
       </dd>
     </div>
+    {#if stutter && stutter.pictures > 0}
+      <div class="whole">
+        <dt>Where pictures lost time</dt>
+        <dd class="value">{lostStage ? `${lostStage.percent}% in ${stageWords[lostStage.id]}` : '–'}</dd>
+        <dd class="sub">
+          {#if stutter.late_pictures > 0}
+            <span class="num">{stutter.late_pictures}</span> of
+            <span class="num">{stutter.pictures}</span> new pictures took longer than this stream's usual path and
+            lost <span class="num">{ms(stutter.lost_ms)}</span>{#if lostStage}, {lostStage.percent}% of it in {stageWords[lostStage.id]}{/if}.
+          {:else}
+            No new picture took longer than this stream's usual path from Windows' present to the host's last packet.
+          {/if}
+          The game's own intervals, the network and the device are outside this
+          measure{#if pipeline}; a late or missing game picture shows as fewer source frames and more repeats in
+          Pipeline frame rates{/if}.
+        </dd>
+      </div>
+    {/if}
     {#if pipeline}
       <div class="whole">
         <dt>Pipeline frame rates</dt>

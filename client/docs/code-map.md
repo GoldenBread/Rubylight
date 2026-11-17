@@ -4,7 +4,7 @@
 
 Where each part of Nightjar lives, which files change together and which test proves a change. It is written for people and coding agents changing the client.
 
-Nightjar is developed inside the [Rubylight](https://github.com/RamazanKara/Rubylight) repository, in its `client` folder, and mirrored from there. That repository's `tools/code_map.py` answers three questions from the tree and its history: `index <folder>` prints lines, tests and the header sentence of each file, `with <file>` lists the files that changed in the same commits, and `hot <folder>` lists fix commits per file. Its `check` verifies the paths and names on this page, so correct the page in the change that moves the code.
+Nightjar is developed inside the [Rubylight](https://github.com/RamazanKara/Rubylight) repository, in its `client` folder, and mirrored from there. That repository's code map tool (tools/code_map.py there) answers three questions from the tree and its history: `index <folder>` prints lines, tests and the header sentence of each file, `with <file>` lists the files that changed in the same commits, and `hot <folder>` lists fix commits per file. Its `check` verifies the paths and names on this page, so correct the page in the change that moves the code.
 
 ## Crates
 

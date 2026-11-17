@@ -4,6 +4,7 @@
 //! is loaded by full path from the component's folder, which the host names
 //! with [`set_component`], after every file there was checked
 //! ([`butterpollo_core::nvidia_component::verify`]).
+use crate::process::Hold;
 use anyhow::{Context, Result, bail};
 use butterpollo_core::nvidia_component::{self, ABI, ADAPTER};
 use butterpollo_core::nvidia_enhance::{RTX_HDR, RTX_VIDEO, ngx_adapter};
@@ -52,35 +53,6 @@ impl PartialEq for Component {
     }
 }
 impl Eq for Component {}
-
-/// Folders held open without sharing deletion. Windows refuses to rename or
-/// delete a folder whose open handle does not share deletion, so a folder held
-/// this way stays at its path while the hold lives; holding every folder from
-/// the component's up to the host's data root keeps the component's whole path
-/// fixed.
-#[derive(Clone, Debug, Default)]
-pub struct Hold {
-    /// Held for as long as this lives, never read: each handle keeps its
-    /// folder from being renamed or deleted while it is open.
-    _folders: std::sync::Arc<Vec<std::fs::File>>,
-}
-
-impl Hold {
-    /// `folders`, each held open: from the component's folder up to the host's
-    /// data root, since renaming any of them would leave the component's path
-    /// naming something else. Never follows a link.
-    pub fn new<'a>(
-        folders: impl IntoIterator<Item = &'a std::path::Path>,
-    ) -> std::io::Result<Self> {
-        let held = folders
-            .into_iter()
-            .map(|folder| crate::process::open_unfollowed(folder, true))
-            .collect::<std::io::Result<Vec<_>>>()?;
-        Ok(Self {
-            _folders: std::sync::Arc::new(held),
-        })
-    }
-}
 
 static COMPONENT: RwLock<Option<Component>> = RwLock::new(None);
 

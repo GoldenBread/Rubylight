@@ -192,9 +192,8 @@ pub(crate) fn simple_caps(display: &Display, hdr_display: bool, vrr: bool) -> si
             hdr: hdr_display,
             vrr,
         },
-        // The stream negotiates its codec and HDR with the PC; a desktop decoder has no benchmark
-        // here, so the screen's own rate leads.
-        decoder: simple::Decoder { h264: true, hevc: true, av1: true, hdr: true, max_fps_at_native: None },
+        // The stream negotiates its codec and HDR with the PC, and its rate is the screen's own.
+        decoder: simple::Decoder { h264: true, hevc: true, av1: true, hdr: true },
         host: simple::Host::default(),
     }
 }
@@ -1230,7 +1229,7 @@ impl Launcher {
             } else if let Some(reason) = fractional_vsync_display_reason(s, &display, &self.fullscreen_modes, cfg!(windows), crate::kms::active()) {
                 rows.note(reason, *TERTIARY);
             }
-            setting_row(ui, s, &mut rows, &["fractional_vsync"], "Fractional V-Sync", "On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Measured on Windows, it adds 1 to 2 ms of delay on most frames and 2.5 to 4 ms on the slowest ones; turn it on if motion judders with V-Sync.", |ui, s| toggle(ui, &mut s.fractional_vsync));
+            setting_row(ui, s, &mut rows, &["fractional_vsync"], "Fractional V-Sync", "On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Each frame waits for its turn, which adds delay; turn it on if motion judders with V-Sync.", |ui, s| toggle(ui, &mut s.fractional_vsync));
             rows.always();
             rows.group(en("Image"));
             setting_row(ui, s, &mut rows, &["upscaling"], "Upscaling", "How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; Temporal reuses earlier frames to rebuild detail, but in our tests looked softer than SGSR at three to four times its GPU work, so leave SGSR on unless you want to compare. HDR streams are enlarged without them.", |ui, s| {

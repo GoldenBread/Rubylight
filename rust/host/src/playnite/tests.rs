@@ -302,6 +302,44 @@ fn fullscreen_hands_off_to_the_game_when_playnite_exits() {
 }
 
 #[test]
+fn closing_playnite_fullscreen_after_a_menu_game_ends_the_stream() {
+    // Issue #127: the plugin never reports the stop of a game started from the
+    // fullscreen menu, so the phase is still Running when the user quits
+    // Playnite after closing that game.
+    let mut state = LaunchState {
+        fullscreen: true,
+        ..Default::default()
+    };
+    let at = Instant::now();
+    state.poll_fullscreen(true);
+    state.status("", status("gameStarted", "game"));
+    state.status("", status("playniteExiting", ""));
+    assert!(state.verifying());
+    state.poll(at, Some(false));
+    state.poll(at + EXIT_GRACE, Some(false));
+    // The menu may still be shutting down: it is not kept.
+    state.poll_fullscreen(true);
+    assert_eq!(state.phase, Phase::Exited);
+    // The user quit the menu: it is not started again.
+    assert!(!state.relaunch_menu(false));
+    assert_eq!(state.phase, Phase::Exited);
+}
+
+#[test]
+fn a_game_still_running_as_playnite_fullscreen_closes_keeps_the_stream() {
+    let mut state = LaunchState {
+        fullscreen: true,
+        ..Default::default()
+    };
+    let at = Instant::now();
+    state.status("", status("gameStarted", "game"));
+    state.status("", status("playniteExiting", ""));
+    state.poll(at, Some(true));
+    state.poll(at + EXIT_GRACE, Some(true));
+    assert_eq!(state.phase, Phase::Running);
+}
+
+#[test]
 fn closing_playnite_fullscreen_with_no_game_ends_the_stream() {
     let mut state = LaunchState {
         fullscreen: true,

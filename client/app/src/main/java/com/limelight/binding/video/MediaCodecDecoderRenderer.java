@@ -4166,6 +4166,10 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         }
         else {
             long releaseNs = System.nanoTime();
+            // Asked before the pacing: a frame the display-queue watch drops is released
+            // without being shown, and Balanced must not claim a refresh slot for it — the
+            // slot would stay claimed and hold the next frame back a whole refresh.
+            boolean displayQueueDrop = displayQueueDropDue(releaseNs);
             long displayAtNs;
             if (prefs.framePacing == PreferenceConfiguration.FRAME_PACING_MAX_SMOOTHNESS ||
                     prefs.framePacing == PreferenceConfiguration.FRAME_PACING_CAP_FPS) {
@@ -4185,7 +4189,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 // the older buffer. Released without a time, two outputs that come out inside one
                 // refresh both land on the same vsync, the compositor replaces one, and the screen
                 // keeps the frame before them for two refreshes.
-                displayAtNs = planRefreshSlot(releaseNs);
+                displayAtNs = displayQueueDrop ? 0 : planRefreshSlot(releaseNs);
             }
             else {
                 // Use a PTS that will cause this frame to be dropped if another comes in within
@@ -4195,7 +4199,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 // holds it for its turn instead (heldDisplayNs).
                 displayAtNs = heldDisplayNs(releaseNs);
             }
-            if (displayQueueDropDue(releaseNs)) {
+            if (displayQueueDrop) {
                 dropForDisplayQueue(lastIndex, releaseNs);
                 shown = false;
             } else {

@@ -1,6 +1,7 @@
 //! A session thread's teardown: the failure report, the session's end, and its workers,
 //! records and leases released in a fixed order.
 use super::*;
+use butterpollo_core::stutter_report::Stage;
 
 // The moved code still borrows `m`, `h`, `s` and the other values it now receives by
 // reference, as it did when it owned them.
@@ -37,6 +38,32 @@ impl SessionThread<'_> {
         if s.congestion_active() {
             let cc = s.congestion_snapshot();
             tracing::info!(client=%s.launch.client.name, shadow=cc["shadow"].as_bool().unwrap_or(false), reports=cc["reports"].as_u64(), packets=cc["packets"].as_u64(), lost=cc["lost"].as_u64(), late=cc["late"].as_u64(), unmatched=cc["unmatched"].as_u64(), overuse_cuts=cc["overuse_cuts"].as_u64(), loss_cuts=cc["loss_cuts"].as_u64(), queue_p50_ms=cc["queue_p50_ms"].as_f64(), queue_p95_ms=cc["queue_p95_ms"].as_f64(), recovery_p50_ms=cc["recovery_p50_ms"].as_u64(), recovery_max_ms=cc["recovery_max_ms"].as_u64(), feedback_bytes=cc["feedback_bytes"].as_u64(), "congestion summary");
+        }
+        // Where this stream's pictures lost time, from the stamps the send path
+        // took: one line for the log and the support bundle, naming the stage.
+        let period = s.stream_mode().period();
+        let stutter = s.stats.stutter_window().report(period);
+        if stutter.pictures() > 0 {
+            let ms = |us: u64| (us as f64 / 100.0).round() / 10.0;
+            let dominant = stutter.dominant();
+            let counts = s.pipeline_counts();
+            tracing::info!(
+                client = %s.launch.client.name,
+                windows = stutter.windows(),
+                pictures = stutter.pictures(),
+                late_pictures = stutter.late_pictures(),
+                lost_ms = ms(stutter.total_lost_us()),
+                dominant = dominant.map_or("none", Stage::name),
+                dominant_percent = dominant.map_or(0, |stage| stutter.share_percent(stage)),
+                capture_ms = ms(stutter.lost_us(Stage::Capture)),
+                convert_ms = ms(stutter.lost_us(Stage::Convert)),
+                encode_ms = ms(stutter.lost_us(Stage::Encode)),
+                packetize_ms = ms(stutter.lost_us(Stage::Packetize)),
+                send_ms = ms(stutter.lost_us(Stage::Send)),
+                source_frames = counts.source,
+                repeated_frames = counts.repeat,
+                "stream stutter report"
+            );
         }
         // A failed stream must not count as a healthy fast-rate probe.
         drop(keyframe_loss_memory);

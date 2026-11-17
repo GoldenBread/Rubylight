@@ -5,4 +5,5 @@
 - SteamGridDB covers and IGDB facts with your own keys.
 - New Rumble feel setting.
 - Android TV Home fixes.
+- New Temporal (SGSR 2) upscaling choice.
 - Steam Controller left grip works.

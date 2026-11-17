@@ -200,6 +200,8 @@ struct App {
     pointer: handheld::Pointer,
     /// The stream being started plays in SDR although HDR was asked for (gamescope without HDR): its start says so.
     hdr_note: bool,
+    /// The launcher keeps the screen awake for a while after controller input or a stream.
+    screen_awake: sdl::LauncherAwake,
     /// What the stream being started plays without, straight to the display without the GPU renderer
     /// (`kms::without_gpu`): its start says so.
     kms_notes: Vec<String>,
@@ -600,6 +602,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     // can otherwise hold the Cocoa thread before the launcher has drawn a window.
     #[cfg(not(target_os = "macos"))]
     let subsystems = subsystems | SDL_INIT_AUDIO;
+    sdl::screen_sleeps_outside_streams();
     // SAFETY: SDL initialisation on the main thread.
     unsafe {
         if !SDL_Init(subsystems) {
@@ -941,6 +944,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         nav_repeat: nav_repeat::NavRepeat::default(),
         pointer: handheld::Pointer::new(handheld::gamescope()),
         hdr_note: false,
+        screen_awake: sdl::LauncherAwake::default(),
         kms_notes: Vec::new(),
         packed_note: None,
         full_chroma_off: None,

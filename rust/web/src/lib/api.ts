@@ -610,6 +610,31 @@ export interface Performance {
   sample_frames: number;
   history: PerfSample[];
 }
+/** The host stages the stutter report can name. */
+export type StutterStageId = 'capture' | 'convert' | 'encode' | 'packetize' | 'send';
+/** One host stage's share of the time this stream's pictures lost against its own usual path. */
+export interface StutterStage {
+  id: StutterStageId;
+  lost_ms: number;
+  /** Of the report's `lost_ms`, in whole percent. */
+  percent: number;
+}
+/** Where this stream's pictures lost time, from the host's present to its last packet. */
+export interface StutterReport {
+  /** Five-second windows the report covers. */
+  windows: number;
+  /** New pictures measured; static repeats have no present and are not counted. */
+  pictures: number;
+  /** Pictures at least half a frame (or a millisecond) later than this stream's usual path. */
+  late_pictures: number;
+  lost_ms: number;
+  /** The stage with the most lost time, or null when none stands out. */
+  dominant: StutterStageId | null;
+  /** The stages that took time, most first. */
+  stages: StutterStage[];
+  /** Stages the host cannot see: the game's own intervals, the network and the device. */
+  not_measured: ('game' | 'network' | 'decode' | 'present')[];
+}
 export type Role = 'stream' | 'remote_monitor' | 'input_only';
 export interface StreamSession {
   /** The guest id when this stream joined another device's game as a guest (`/api/session-guests`). */
@@ -669,6 +694,8 @@ export interface StreamSession {
   bytes_sent: number;
   idr_requests: number;
   performance: Performance;
+  /** Where the stream's new pictures lost time so far, from the host's stage stamps. */
+  stutter?: StutterReport;
   uptime_seconds: number;
   role: Role;
 }

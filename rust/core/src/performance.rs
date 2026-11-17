@@ -1,4 +1,5 @@
 //! Bounded per-session measurements. No sampling thread or disk writes.
+use crate::stutter_report::{Picture, Report as StutterReport, Totals as StutterTotals};
 use serde_json::{Value, json};
 use std::{
     collections::VecDeque,
@@ -296,10 +297,19 @@ impl Claims {
 /// Stage samples are kept as long as the 5 s timing log apart, so each line
 /// covers the pictures since the last one.
 const STAGE_WINDOW: Duration = Duration::from_secs(5);
-/// Bounds the window to 400 new pictures a second.
-const STAGE_SAMPLES: usize = 2048;
+/// Samples stay a second longer than the window they report. The stutter
+/// report advances on a five-second mark that the housekeeping loop checks only
+/// every 250 ms, so its oldest pictures are up to that much older than the
+/// newest when they are counted, and must still be there.
+const STAGE_RETENTION: Duration = Duration::from_secs(6);
+/// Bounds the samples to 500 new pictures a second over the retained six
+/// seconds, the highest frame rate a stream may use.
+const STAGE_SAMPLES: usize = 3072;
 struct StageSample {
     at: Instant,
+    /// Assigned when the sample is recorded, so the stutter windows count each
+    /// picture once whatever order their send times arrived in.
+    seq: u64,
     /// `STAGES`, then the total, then Moonlight's host latency field for the
     /// same picture, then the capture's age when the pacer claimed it and when
     /// the encoder took it (from its acquire), in microseconds.
@@ -330,6 +340,13 @@ pub struct Performance {
     /// 0x5539 statistical FEC reports, which `fec_reports` (0x5502) doesn't count.
     fec_loss_reports: u64,
     fec_loss_refused_reports: u64,
+    /// The sequence number of the newest stage sample recorded.
+    stutter_seq: u64,
+    /// The sequence number of the newest sample a finished stutter window
+    /// counted. Later samples are the provisional window: the video thread
+    /// adds them after it has copied them out and released this lock, and the
+    /// console adds them to the totals it reads.
+    stutter_counted: u64,
 }
 /// The client's FEC report totals since the stream started.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -543,15 +560,60 @@ impl Performance {
             "picture"
         );
         let at = stamps.last_sent;
-        self.stages.push_back(StageSample { at, micros });
+        self.stutter_seq = self.stutter_seq.saturating_add(1);
+        self.stages.push_back(StageSample {
+            at,
+            seq: self.stutter_seq,
+            micros,
+        });
         while self.stages.len() > STAGE_SAMPLES
             || self
                 .stages
                 .front()
-                .is_some_and(|s| at.saturating_duration_since(s.at) > STAGE_WINDOW)
+                .is_some_and(|s| at.saturating_duration_since(s.at) > STAGE_RETENTION)
         {
             self.stages.pop_front();
         }
+    }
+    /// Takes the pictures recorded since the previous call out from under the
+    /// caller's lock, for one five-second window of the stream's stutter
+    /// report, and marks them counted; returns `None` and marks nothing when
+    /// there are fewer than [`crate::stutter_report::MIN_PICTURES`], so a short
+    /// window is not judged against itself and waits for the next call. Below
+    /// about two new pictures a second the samples age out before ten have
+    /// arrived, so `windows` stays 0 and only the provisional report shows
+    /// them; a game streams faster than that. The caller runs
+    /// [`StutterTotals::add`] after releasing the lock, as the timing log sorts
+    /// [`window`](Self::window) after it. Call every five seconds; each picture
+    /// counts once, and the reports also read what this has not counted yet.
+    pub fn advance_stutter(&mut self) -> Option<Vec<Picture>> {
+        let pictures: Vec<Picture> = self.uncounted_stutter().collect();
+        if pictures.len() < crate::stutter_report::MIN_PICTURES {
+            return None;
+        }
+        self.stutter_counted = self.stutter_seq;
+        Some(pictures)
+    }
+    /// Takes the pictures recorded since the previous call, for the window that
+    /// ends at a new stream size or rate; `None` when there are fewer than
+    /// [`crate::stutter_report::MIN_PICTURES`], as for
+    /// [`advance_stutter`](Self::advance_stutter). They are marked counted
+    /// either way: pictures recorded before the switch are not the new mode's
+    /// usual, and the caller forgets the usual path. The caller runs
+    /// [`StutterTotals::add`] after releasing the lock.
+    pub fn forget_stutter_usual(&mut self) -> Option<Vec<Picture>> {
+        let pictures: Vec<Picture> = self.uncounted_stutter().collect();
+        self.stutter_counted = self.stutter_seq;
+        (pictures.len() >= crate::stutter_report::MIN_PICTURES).then_some(pictures)
+    }
+    /// The pictures recorded since the last advance, copied under the caller's
+    /// lock: the report's provisional window. [`StutterWindow`] does the
+    /// medians and the JSON after the lock is released.
+    pub fn uncounted_stutter(&self) -> impl Iterator<Item = Picture> + '_ {
+        self.stages
+            .iter()
+            .filter(|sample| sample.seq > self.stutter_counted)
+            .map(|sample| Picture::of(&sample.micros))
     }
     /// Copies what `snapshot` reports. The send path records into this under
     /// the same lock, so callers take the window, release the lock, and sort
@@ -585,6 +647,27 @@ impl Performance {
     }
     pub fn snapshot(&self, now: Instant) -> Value {
         self.window(now).snapshot()
+    }
+}
+/// A stream's stutter totals and the pictures not yet counted, copied out of
+/// their locks.
+pub struct StutterWindow {
+    totals: StutterTotals,
+    pictures: Vec<Picture>,
+}
+impl StutterWindow {
+    /// `totals` as the video thread last published them, over the windows that
+    /// ended, and the pictures recorded since the last advance, copied under
+    /// the stage lock.
+    pub fn new(totals: StutterTotals, pictures: Vec<Picture>) -> Self {
+        Self { totals, pictures }
+    }
+    /// The report so far, including the pictures the five-second call has not
+    /// counted, which the console reads. The medians run here, after both
+    /// locks are released.
+    pub fn report(mut self, period: Duration) -> StutterReport {
+        self.totals.add(&self.pictures, period);
+        self.totals.report()
     }
 }
 /// The measurements a snapshot covers, copied out of `Performance`.

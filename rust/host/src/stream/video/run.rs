@@ -161,6 +161,11 @@ impl SessionThread<'_> {
         // Whether the game or desktop delivers the stream's rate, over the
         // same 5 s windows.
         let mut source_rate = butterpollo_core::pipeline_rates::SourceRate::default();
+        // The stream's stutter report over the windows that ended. This thread
+        // owns it: the stage samples are copied out under the send path's lock
+        // and the medians run after it is released, and the console reads the
+        // copy published after each window.
+        let mut stutter_totals = butterpollo_core::stutter_report::Totals::default();
         // Identity only: a weak reference releases the previous capture's
         // texture and ring slot once it is encoded, while the live `Weak`
         // still pins the allocation so its address can't be reused by a new
@@ -803,6 +808,15 @@ impl SessionThread<'_> {
                     if Instant::now() >= timing_due {
                         let now = Instant::now();
                         timing_due = now + Duration::from_secs(5);
+                        // The stage samples of these five seconds into the
+                        // stream's stutter report, whatever the log level. They
+                        // are copied out under the sender's lock and the
+                        // medians run after it is released.
+                        let pictures = s.stats.performance.lock().unwrap().advance_stutter();
+                        if let Some(pictures) = pictures {
+                            stutter_totals.add(&pictures, stream_period.get());
+                            s.stats.publish_stutter(&stutter_totals);
+                        }
                         // Pipeline frame rates since the last summary; the
                         // sampler was baselined at stream start. The
                         // source-rate warning is not a logging concern: it
@@ -849,7 +863,7 @@ impl SessionThread<'_> {
                                     // and nothing more.
                                     let message = if crate::stream::launch_app(&h, &s.launch).is_some() {
                                         format!(
-                                            "The game is rendering about {source_fps} fps, below the {limit_fps} fps this stream can show, so the picture cannot run smoother than that. Lower the game's resolution or graphics settings, or lower the stream's frame rate to match."
+                                            "The game is rendering about {source_fps} fps, below the {limit_fps} fps this stream can show, so the picture cannot run smoother than that. Raise the game's own frame-rate cap, lower its resolution or graphics settings, or lower the stream's frame rate to match."
                                         )
                                     } else {
                                         format!(
@@ -1735,6 +1749,16 @@ impl SessionThread<'_> {
                     }
                 };
                 if rebuilt && let Some((from, started)) = switching.take() {
+                    // The new size or rate has its own usual path; the old one
+                    // would report its first slower windows as a stutter. The
+                    // old mode's last window is copied out under the sender's
+                    // lock and added after it is released.
+                    let pictures = s.stats.performance.lock().unwrap().forget_stutter_usual();
+                    if let Some(pictures) = pictures {
+                        stutter_totals.add(&pictures, from.period());
+                    }
+                    stutter_totals.forget_usual();
+                    s.stats.publish_stutter(&stutter_totals);
                     s.rate_changes.lock().unwrap().switched(butterpollo_core::reconfigure::Mode::of(&stream), None);
                     tracing::info!(
                         client = %s.launch.client.name,

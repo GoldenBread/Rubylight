@@ -7,8 +7,12 @@ import static org.junit.Assert.assertTrue;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.media.MediaCodecInfo;
+import android.media.MediaCodecList;
+import android.media.MediaFormat;
 import android.preference.PreferenceManager;
 
+import com.limelight.binding.video.DecoderBenchmark;
 import com.limelight.console.HomeSettings;
 import com.limelight.console.OpenPlay;
 
@@ -21,6 +25,10 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
+import org.robolectric.shadows.MediaCodecInfoBuilder;
+import org.robolectric.shadows.ShadowMediaCodecList;
+
+import java.lang.reflect.Method;
 
 /**
  * The simple layer on Android: a choice writes the existing settings, a changed advanced setting reads as
@@ -47,6 +55,9 @@ public class SimpleProfileTest {
     @After
     public void tearDown() {
         prefs.edit().clear().commit();
+        context.getSharedPreferences("decoder_benchmark", Context.MODE_PRIVATE).edit().clear().commit();
+        ShadowMediaCodecList.reset();
+        SimpleProfile.forgetCapabilities();
         SimpleProfileModel.use(null);
     }
 
@@ -71,8 +82,16 @@ public class SimpleProfileTest {
             String smoothness = ask.optString("smoothness", "auto");
             String picture = ask.optString("picture", "auto");
             String hdr = ask.optString("hdr", "auto");
+            // The real mapping capped the stream at a measured benchmark below the screen's rate;
+            // the stand-in keeps that, so a seeded benchmark would show up as a lower rate.
+            JSONObject decoder = ask.optJSONObject("decoder");
+            JSONObject display = ask.optJSONObject("display");
+            Integer benchmark = decoder != null && decoder.has("max_fps_at_native")
+                    && !decoder.isNull("max_fps_at_native") ? decoder.getInt("max_fps_at_native") : null;
+            Object fps = benchmark != null && display != null && benchmark < display.getInt("refresh_hz")
+                    ? benchmark : JSONObject.NULL;
             JSONObject values = new JSONObject().put("native_resolution", true)
-                    .put("fps", JSONObject.NULL)
+                    .put("fps", fps)
                     .put("pacing", "smoothest".equals(smoothness) ? "smoothest" : "latency")
                     .put("vrr", "balanced".equals(smoothness) && ask.optJSONObject("display") != null
                             && ask.getJSONObject("display").getBoolean("vrr"))
@@ -216,13 +235,49 @@ public class SimpleProfileTest {
     }
 
     @Test
-    public void aMeasuredCapSnapsToAnOfferedFrameRate() {
-        assertEquals(90, SimpleProfile.offeredFps(context, 109));
-        assertEquals(60, SimpleProfile.offeredFps(context, 60));
-        assertEquals(30, SimpleProfile.offeredFps(context, 24));
-        assertEquals(16667, SimpleProfile.benchmarkUsAtNative(1920, 1080, 16667));
-        assertTrue("a 1440p screen decodes slower than the 1080p clip",
-                SimpleProfile.benchmarkUsAtNative(2560, 1440, 16667) > 16667);
+    public void theDecodeBenchmarkNeverCapsTheStreamRate() throws Exception {
+        // A measured benchmark far below the screen's rate (200 ms a frame, five fps) is still a
+        // decode time, not how many frames a second the decoder sustains, so it must not reach the
+        // mapping: the stream keeps the screen's own rate.
+        seedSlowDecodeBenchmark();
+        SimpleProfile.forgetCapabilities();
+        assertTrue(SimpleProfile.applyRecommended(context));
+        SimpleProfileModel.Capabilities caps = SimpleProfile.capabilities(context);
+        assertEquals(Integer.toString(caps.refreshHz),
+                prefs.getString(PreferenceConfiguration.FPS_PREF_STRING, null));
+        assertFalse("the benchmark is not part of the simple layer's capabilities",
+                caps.json().getJSONObject("decoder").has("max_fps_at_native"));
+    }
+
+    /** A measured decode time of 200 ms a frame for every codec this device lists, as a run leaves it. */
+    private void seedSlowDecodeBenchmark() throws Exception {
+        MediaFormat format = MediaFormat.createVideoFormat("video/hevc", 1920, 1080);
+        MediaCodecInfo codec = MediaCodecInfoBuilder.newBuilder()
+                .setName("OMX.rubylight.hevc.decoder")
+                .setIsEncoder(false)
+                .setIsHardwareAccelerated(true)
+                .setCapabilities(MediaCodecInfoBuilder.CodecCapabilitiesBuilder.newBuilder()
+                        .setMediaFormat(format)
+                        .setColorFormats(new int[] {MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface})
+                        .build())
+                .build();
+        ShadowMediaCodecList.addCodec(codec);
+        Method key = DecoderBenchmark.class.getDeclaredMethod("key", int.class);
+        key.setAccessible(true);
+        String benchmarkKey = (String) key.invoke(null,
+                PreferenceConfiguration.readHevcLowLatencyMode(prefs));
+        context.getSharedPreferences("decoder_benchmark", Context.MODE_PRIVATE).edit().clear()
+                .putString("key", benchmarkKey)
+                .putLong(codec.getName() + "|video/hevc", 200_000)
+                .commit();
+        assertEquals("the seeded benchmark is what a measured run reads back",
+                200_000, DecoderBenchmark.result(context, codec, "video/hevc"));
+        // The decoder list the simple layer scans reports it too, so the old capping read it.
+        boolean listed = false;
+        for (MediaCodecInfo info : new MediaCodecList(MediaCodecList.REGULAR_CODECS).getCodecInfos()) {
+            listed |= info.getName().equals(codec.getName());
+        }
+        assertTrue("the decoder list reports the seeded codec", listed);
     }
 
     @Test
