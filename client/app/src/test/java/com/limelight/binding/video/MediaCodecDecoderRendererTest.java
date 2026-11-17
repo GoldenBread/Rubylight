@@ -12,18 +12,6 @@ import static org.junit.Assert.*;
 
 public class MediaCodecDecoderRendererTest {
     @Test
-    public void aSizeChangeRebuildsTheUpscalerForTheNewSizesButNotForTheSameOnes() {
-        // A fold or a stream size change moved what the upscaler draws to or samples: it is built again.
-        assertTrue(MediaCodecDecoderRenderer.upscalerSizedDifferently(1920, 1080, 2560, 1440,
-                1080, 1920, 2560, 1440));
-        assertTrue(MediaCodecDecoderRenderer.upscalerSizedDifferently(1920, 1080, 2560, 1440,
-                1920, 1080, 1600, 900));
-        // The same sizes again: rebuilding it would fail the same way, so upscaling ends as before.
-        assertFalse(MediaCodecDecoderRenderer.upscalerSizedDifferently(1920, 1080, 2560, 1440,
-                1920, 1080, 2560, 1440));
-    }
-
-    @Test
     public void pyroWaveOverlayDistinguishesRecordLossAndMissingMeasurements() {
         java.util.Locale previous = java.util.Locale.getDefault();
         try {

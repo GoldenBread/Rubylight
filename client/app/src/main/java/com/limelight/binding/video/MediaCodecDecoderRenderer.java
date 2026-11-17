@@ -163,9 +163,6 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private int renderWidth, renderHeight;
     private volatile GlesUpscaler upscaler;
     private volatile UpscalingPolicy upscalingPolicy;
-    // The stream and render sizes the current upscaler was built for: one that failed with SIZE_CHANGED
-    // is rebuilt when either moved (a fold, a turn, a split screen or a stream size change).
-    private int upscalerStreamWidth, upscalerStreamHeight, upscalerRenderWidth, upscalerRenderHeight;
     // The native Vulkan renderer takes the GLES upscaler's place when selected: the decoder
     // renders into its surface, and it paces and presents frames on the render target itself.
     // It lives as long as this object, so a decoder restart renders into the same surface.
@@ -1128,11 +1125,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 restart = true;
             }
             if (upscaler != null && (width != initialWidth || height != initialHeight)) {
-                // The GLES upscaler is built for the stream size it started with: after the restart it is
-                // rebuilt for the new one, instead of upscaling ending for the rest of the stream.
+                // The GLES upscaler is built for the first size; continue on direct output.
                 upscalingPolicy.fail(UpscalingPolicy.Reason.SIZE_CHANGED);
-                initialWidth = width;
-                initialHeight = height;
                 restart = true;
             }
             if (restart) {
@@ -1295,7 +1289,6 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             }
             upscaler = new GlesUpscaler(context, renderTarget, UpscalingPolicy.Mode.BILINEAR, initialWidth,
                     initialHeight, prefs.stretchVideo, 0, upscalingPolicy, null, false, null, true);
-            rememberUpscalerSize();
             if (upscalingPolicy.getReason() != UpscalingPolicy.Reason.NONE) closeUpscaler();
             return;
         }
@@ -1303,7 +1296,6 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             upscaler = new GlesUpscaler(context, renderTarget, UpscalingPolicy.Mode.BILINEAR,
                     initialWidth, initialHeight, prefs.stretchVideo, 0, upscalingPolicy, packing,
                     (videoFormat & MoonBridge.VIDEO_FORMAT_MASK_10BIT) != 0, currentHdrMetadata);
-            rememberUpscalerSize();
             if (currentHdrMode != null) upscaler.setHdrMode(currentHdrMode, currentHdrMetadata);
             return;
         }
@@ -1326,32 +1318,10 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         if (reason == UpscalingPolicy.Reason.NONE) {
             upscaler = new GlesUpscaler(context, renderTarget, prefs.upscalingMode, initialWidth, initialHeight,
                     prefs.stretchVideo, prefs.upscalingSharpness, upscalingPolicy);
-            rememberUpscalerSize();
             if (upscalingPolicy.getReason() != UpscalingPolicy.Reason.NONE) closeUpscaler();
         } else {
             notifyUpscalingFallback();
         }
-    }
-
-    /** Remembers the sizes the upscaler that was just built draws for, so a size change rebuilds it. */
-    private void rememberUpscalerSize() {
-        upscalerStreamWidth = initialWidth;
-        upscalerStreamHeight = initialHeight;
-        upscalerRenderWidth = renderWidth;
-        upscalerRenderHeight = renderHeight;
-    }
-
-    /** Whether the failed upscaler was built for another stream or render size than the stream has now. */
-    private boolean upscalerBuiltForAnotherSize() {
-        return upscaler != null && upscalerSizedDifferently(upscalerStreamWidth, upscalerStreamHeight,
-                upscalerRenderWidth, upscalerRenderHeight, initialWidth, initialHeight, renderWidth, renderHeight);
-    }
-
-    static boolean upscalerSizedDifferently(int builtStreamWidth, int builtStreamHeight,
-                                            int builtRenderWidth, int builtRenderHeight,
-                                            int streamWidth, int streamHeight, int renderWidth, int renderHeight) {
-        return builtStreamWidth != streamWidth || builtStreamHeight != streamHeight
-                || builtRenderWidth != renderWidth || builtRenderHeight != renderHeight;
     }
 
     private String vulkanUnusedReason(VideoRendererChoice.Reason reason) {
@@ -3426,14 +3396,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         }
 
         @Override public void configure() {
-            if (upscalingPolicy.getReason() == UpscalingPolicy.Reason.SIZE_CHANGED && upscalerBuiltForAnotherSize()) {
-                // The upscaler is built for the stream it samples and the surface it draws to: a fold, a
-                // turn, a split screen or a stream size change builds it again for the new sizes, so
-                // upscaling continues instead of ending for the rest of the stream.
-                upscaler.close();
-                upscaler = null;
-                setupUpscaling();
-            } else if (packing != null && upscalingPolicy.getReason() == UpscalingPolicy.Reason.NONE) {
+            if (packing != null && upscalingPolicy.getReason() == UpscalingPolicy.Reason.NONE) {
                 closeUpscaler();
                 setupUpscaling();
             }
