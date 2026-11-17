@@ -73,10 +73,15 @@ pub struct Gamepads {
     feedback_failures: BTreeMap<u16, FeedbackFailure>,
     /// Feedback reports read from the driver since the thread last asked.
     feedback_drained: usize,
-    /// When feedback last found the driver's device removed: a driver that
-    /// stays gone is asked to create its pads again [`RECREATE_RETRY`] apart,
-    /// not at every poll.
-    recreated_at: Option<Instant>,
+    /// When each pad the driver's device lost was last created again: a driver
+    /// that stays gone is asked [`RECREATE_RETRY`] apart for that pad, from
+    /// the input path and the feedback poll, not at every state and poll.
+    recreated_at: BTreeMap<u16, Instant>,
+    /// Controllers the client removed but whose pad the driver would not
+    /// unplug. They stay in `active` and later states retry the unplug; a
+    /// feedback poll must never create one again, or a pad nobody has
+    /// reappears after sleep.
+    dropped: BTreeSet<u16>,
     /// `gamepad_driver_host_priority` while a VHF pad is plugged.
     driver_host: Option<Box<dyn driver_host::Held>>,
     /// How a hold on it is taken; tests count instead of raising.
@@ -231,7 +236,8 @@ impl Gamepads {
             last_feedback: BTreeMap::new(),
             feedback_failures: BTreeMap::new(),
             feedback_drained: 0,
-            recreated_at: None,
+            recreated_at: BTreeMap::new(),
+            dropped: BTreeSet::new(),
             driver_host: None,
             driver_host_acquire: driver_host::acquire,
             decks: BTreeMap::new(),
@@ -311,6 +317,8 @@ impl Gamepads {
         if let Some(global) = self.active.get(&id).copied() {
             self.backend.unplug(u32::from(global))?;
             self.active.remove(&id);
+            self.recreated_at.remove(&id);
+            self.dropped.remove(&id);
             self.profiles.remove(&id);
             self.states.remove(&id);
             self.last_feedback.remove(&id);
@@ -376,6 +384,8 @@ impl Gamepads {
         if let Some(global) = self.active.get(&id).copied() {
             self.backend.unplug(u32::from(global))?;
             self.active.remove(&id);
+            self.recreated_at.remove(&id);
+            self.dropped.remove(&id);
             self.profiles.remove(&id);
             self.states.remove(&id);
             self.last_feedback.remove(&id);
@@ -405,6 +415,8 @@ impl Gamepads {
             // Some clients send arrival capabilities after their first state.
             self.backend.unplug(u32::from(global))?;
             self.active.remove(&id);
+            self.recreated_at.remove(&id);
+            self.dropped.remove(&id);
             self.profiles.remove(&id);
             self.last_feedback.remove(&id);
             self.feedback_failures.remove(&id);
@@ -543,6 +555,8 @@ impl Gamepads {
         if let Some(global) = self.active.get(&id).copied() {
             self.backend.unplug(u32::from(global))?;
             self.active.remove(&id);
+            self.recreated_at.remove(&id);
+            self.dropped.remove(&id);
             SLOTS.lock().unwrap()[global as usize] = false;
             self.profiles.remove(&id);
             self.last_feedback.remove(&id);
@@ -583,10 +597,11 @@ impl Gamepads {
                 let gone = self.active.keys().fold(0u16, |mask, i| mask | (1 << i)) & !active;
                 for i in (0..16u16).filter(|i| gone & (1 << i) != 0) {
                     let global = self.active[&i];
-                    // A pad that would not unplug stays tracked and is
-                    // tried again with the next state; this state still
-                    // goes to the live pad.
                     if let Err(error) = self.backend.unplug(u32::from(global)) {
+                        // A pad that would not unplug stays tracked and is
+                        // tried again with the next state; this state still
+                        // goes to the live pad.
+                        self.dropped.insert(i);
                         tracing::debug!(
                             controller = i,
                             error = format!("{error:#}"),
@@ -594,15 +609,7 @@ impl Gamepads {
                         );
                         continue;
                     }
-                    self.active.remove(&i);
-                    self.profiles.remove(&i);
-                    self.arrivals.remove(&i);
-                    self.states.remove(&i);
-                    self.last_feedback.remove(&i);
-                    self.feedback_failures.remove(&i);
-                    self.pointers.retain(|(id, _), _| u16::from(*id) != i);
-                    self.unsupported_touchpads.remove(&(i as u8));
-                    SLOTS.lock().unwrap()[global as usize] = false;
+                    self.forget_pad(i, global);
                 }
                 if active & (1 << id) == 0 {
                     return Ok(());
@@ -646,21 +653,17 @@ impl Gamepads {
                 );
                 let submitted = self.submit(*id, buttons, left_trigger, right_trigger, sticks);
                 if let Err(error) = submitted {
-                    // The pads do not survive the machine's sleep: the driver
-                    // retires its HID children and refuses input until its
-                    // slot is created again.
+                    // The VHF driver's pads do not survive the machine's sleep:
+                    // it retires their HID children and refuses input until
+                    // the slot is created again (`recreate`).
                     if !device_removed(&error) {
                         return Err(error);
                     }
-                    // A driver that stays gone is asked once a second, not at
-                    // every controller state.
-                    if self
-                        .recreated_at
-                        .is_some_and(|at| at.elapsed() < RECREATE_RETRY)
-                    {
+                    // A driver that stays gone is asked once a second for each
+                    // pad, not at every controller state.
+                    if !self.recreate_due(*id, Instant::now()) {
                         return Err(error);
                     }
-                    self.recreated_at = Some(Instant::now());
                     self.recreate(*id)?;
                     self.submit(*id, buttons, left_trigger, right_trigger, sticks)?;
                 }
@@ -701,6 +704,9 @@ impl Gamepads {
                 // Switch 2 Pro Controller again.
                 self.deck_failed.remove(&id);
                 self.switch2_failed.remove(&id);
+                // The client says this controller is here, whatever a
+                // removal whose unplug failed left behind.
+                self.dropped.remove(&id);
                 if !self.ensure_switch2(id)? && !self.ensure_deck(id)? {
                     self.ensure(id)?;
                 }
@@ -898,7 +904,7 @@ impl Gamepads {
             |slot| {
                 let report = self.backend.feedback(slot);
                 drained += usize::from(matches!(report, Ok(Some(_))));
-                if report.as_ref().is_err_and(|error| device_removed(error)) {
+                if report.as_ref().is_err_and(device_removed) {
                     removed.push(slot);
                 }
                 report
@@ -908,20 +914,36 @@ impl Gamepads {
         // A poll that finds the pad's device gone is what the machine's sleep
         // leaves behind; create the slot again so a game's rumble works before
         // the player touches anything.
-        if !removed.is_empty()
-            && self
-                .recreated_at
-                .is_none_or(|at| at.elapsed() >= RECREATE_RETRY)
-        {
-            self.recreated_at = Some(Instant::now());
+        if !removed.is_empty() {
+            let now = Instant::now();
             for slot in removed {
                 let id = self
                     .active
                     .iter()
                     .find_map(|(&id, &global)| (u32::from(global) == slot).then_some(id));
-                if let Some(id) = id
-                    && let Err(error) = self.recreate(id)
-                {
+                let Some(id) = id else {
+                    continue;
+                };
+                let global = self.active[&id];
+                if self.dropped.contains(&id) {
+                    // The client removed this pad, but the driver refused its
+                    // unplug. The device a poll now finds gone may take the
+                    // unplug; creating the pad again would bring it back.
+                    if let Err(error) = self.backend.unplug(u32::from(global)) {
+                        tracing::debug!(
+                            controller = id,
+                            error = format!("{error:#}"),
+                            "a virtual controller the client removed still will not unplug"
+                        );
+                    } else {
+                        self.forget_pad(id, global);
+                    }
+                    continue;
+                }
+                if !self.recreate_due(id, now) {
+                    continue;
+                }
+                if let Err(error) = self.recreate(id) {
                     tracing::debug!(
                         controller = id,
                         error = format!("{error:#}"),
@@ -1046,11 +1068,50 @@ impl Gamepads {
         self.backend
             .submit(self.slot(id)?, buttons, left, right, sticks)
     }
-    /// Creates controller `id`'s pad again in the slot it owns. The driver
-    /// retires every HID child when Windows leaves D0 (sleep, hibernate) and
-    /// then refuses input for the slot until its owner creates it again
-    /// (`libvirtualgamepad` 0.1.0-beta.10's `protocol.h`), so a controller
-    /// that was plugged when the PC slept plays again without reconnecting.
+    /// Whether controller `id`'s pad may be created again at `now`: a driver
+    /// that stays gone is asked [`RECREATE_RETRY`] apart for that pad, from
+    /// the input path and the feedback poll alike.
+    fn recreate_due(&mut self, id: u16, now: Instant) -> bool {
+        if self
+            .recreated_at
+            .get(&id)
+            .is_some_and(|at| now.saturating_duration_since(*at) < RECREATE_RETRY)
+        {
+            return false;
+        }
+        self.recreated_at.insert(id, now);
+        true
+    }
+    /// Forgets a pad the driver no longer holds, freeing its slot for another
+    /// controller.
+    fn forget_pad(&mut self, id: u16, global: u16) {
+        self.active.remove(&id);
+        self.profiles.remove(&id);
+        self.arrivals.remove(&id);
+        self.states.remove(&id);
+        self.last_feedback.remove(&id);
+        self.feedback_failures.remove(&id);
+        self.recreated_at.remove(&id);
+        self.dropped.remove(&id);
+        self.pointers.retain(|(pad, _), _| u16::from(*pad) != id);
+        self.unsupported_touchpads.remove(&(id as u8));
+        SLOTS.lock().unwrap()[global as usize] = false;
+    }
+    /// Creates controller `id`'s pad again in the slot it owns. The VHF
+    /// driver retires every HID child when Windows leaves D0 (sleep,
+    /// hibernate) and then refuses input for the slot until its owner creates
+    /// it again (`libvirtualgamepad` 0.1.0-beta.10's `protocol.h`), so a
+    /// controller that was plugged when the PC slept plays again without
+    /// reconnecting.
+    ///
+    /// This is that driver's contract. A ViGEmBus pad goes through the same
+    /// `plug`, but was not seen to lose its target across resume: it is an
+    /// emulated device, not one of this driver's HID children, so
+    /// `ERROR_DEVICE_REMOVED` is not expected from it (a submit that carries
+    /// it would still be retried here). The USB/IP pads (Steam Deck,
+    /// DualSense, Switch 2 over usbip-win2) are real USB devices on the vhci
+    /// bus, which Windows re-enumerates itself: they hold no driver slot to
+    /// create again, so a lost attachment is outside this path.
     fn recreate(&mut self, id: u16) -> Result<()> {
         let Some(&global) = self.active.get(&id) else {
             return Ok(());
@@ -1153,9 +1214,9 @@ impl Gamepads {
 /// out one pending report per call, so a game writing faster than the poll
 /// left a backlog, and its rumble lagged or ran on after it stopped.
 pub(super) const FEEDBACK_DRAIN: usize = 8;
-/// How often a pad the driver's device lost is created again while the driver
-/// keeps refusing, so a sleep that leaves the driver gone is not asked at
-/// every 8 ms poll.
+/// How often each pad the driver's device lost is created again while the
+/// driver keeps refusing, so a sleep that leaves the driver gone is not asked
+/// at every controller state or 8 ms feedback poll.
 const RECREATE_RETRY: Duration = Duration::from_secs(1);
 /// What a feedback report sets, as bits: rumble 1, lights 2, trigger
 /// effects 4. A PlayStation report (kind 5) always carries rumble, and its
@@ -1288,9 +1349,12 @@ fn profile_button_word(profile: Option<u16>, buttons: u32) -> u32 {
         buttons & !butterpollo_core::switch2::BUTTON_C
     }
 }
-/// Whether an error is the driver saying its device is gone: what the virtual
-/// pads answer after Windows leaves D0 (sleep, hibernate), before the slot is
-/// created again (`libvirtualgamepad`'s `protocol.h`).
+/// Whether an error is the driver saying its device is gone: what the VHF
+/// virtual pads answer after Windows leaves D0 (sleep, hibernate), before the
+/// slot is created again (`libvirtualgamepad`'s `protocol.h`). No other
+/// backend has this signal: ViGEmBus pads are emulated devices, and the
+/// USB/IP pads are real USB devices on usbip-win2's vhci bus that Windows
+/// re-enumerates itself (see `recreate`).
 fn device_removed(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| {
         cause

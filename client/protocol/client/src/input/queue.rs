@@ -241,10 +241,12 @@ impl InputQueue {
         self.pen_barrel_roll = offered;
     }
 
-    /// Sends controller identities (0x55000080) and the C button: only for a host with
-    /// `ControllerIdentityVersion` (`Feature::ControllerIdentity`). Otherwise identities are
-    /// dropped, and an app that sends C keeps it from such a host (`InputQueue` never
-    /// clears the flag, which is also a Steam Controller's left grip touch).
+    /// Sends controller identities (0x55000080): only for a host with
+    /// `ControllerIdentityVersion` (`Feature::ControllerIdentity`). Otherwise
+    /// identities are dropped. The C button's flag (0x40_0000) is the caller's
+    /// to gate: it is also a Steam Controller's left grip touch, so
+    /// [`Self::send_controller`] never clears it (an app that sends C drops it
+    /// from a host without identities itself, as the desktop does).
     pub fn set_controller_identity(&mut self, offered: bool) {
         self.controller_identity = offered;
     }
