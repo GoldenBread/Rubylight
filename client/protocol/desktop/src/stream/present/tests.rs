@@ -1756,11 +1756,11 @@ fn a_stream_faster_than_the_hold_shows_one_picture_a_turn_in_the_renderers_order
         assert_eq!(pair[1] - pair[0], u64::from(HELD) * REFRESH_US, "one turn apart: {presents:?}");
     }
     assert!(presents[1..].iter().all(|present| (present + lead).is_multiple_of(REFRESH_US)), "at the present lead: {presents:?}");
-    // A picture was already waiting when the previous turn's present went out: the loop woke for it
-    // and took it, not a newer one that came during the hold (those wait for the next turn or are
-    // dropped, so a turn shows a picture up to a hold after it was the newest).
+    // A picture shown at a turn was waiting before the previous turn's present went out: the take
+    // after that present keeps the newest picture that came during the hold and drops the older ones,
+    // so a turn shows a picture up to a hold after it was the newest.
     for (at, ready) in shown.iter().enumerate().skip(2) {
-        assert!(*ready < presents[at - 1], "the oldest due picture took the turn: {shown:?} at {presents:?}");
+        assert!(*ready < presents[at - 1], "a picture waiting from before the previous present took the next turn: {shown:?} at {presents:?}");
     }
 }
 
