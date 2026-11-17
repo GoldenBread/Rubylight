@@ -602,7 +602,18 @@ pub(super) fn takes_rfi(backend: Hardware) -> bool {
 fn takes_rfi_when(backend: Hardware, vulkan: bool, videotoolbox: bool) -> bool {
     matches!(backend, Hardware::D3d11(_) | Hardware::Vaapi | Hardware::None)
         || vulkan && matches!(backend, Hardware::Vulkan(_))
-        || videotoolbox && matches!(backend, Hardware::VideoToolbox)
+        || videotoolbox && is_videotoolbox(backend)
+}
+
+/// VideoToolbox, which exists on macOS only.
+fn is_videotoolbox(backend: Hardware) -> bool {
+    #[cfg(target_os = "macos")]
+    return matches!(backend, Hardware::VideoToolbox);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = backend;
+        false
+    }
 }
 
 /// The decoder's `CAPABILITY_*` for the launch. Reference frame invalidation for HEVC and for AV1
@@ -1590,9 +1601,14 @@ mod capability_tests {
     #[test]
     fn videotoolbox_takes_rfi_only_when_switched_on() {
         assert!(!crate::config::Settings::default().videotoolbox_rfi);
-        assert!(!takes_rfi_when(Hardware::VideoToolbox, false, false));
-        assert!(!takes_rfi_when(Hardware::VideoToolbox, true, false), "the Vulkan setting is not VideoToolbox's");
-        assert!(takes_rfi_when(Hardware::VideoToolbox, false, true));
+        #[cfg(target_os = "macos")]
+        {
+            assert!(!takes_rfi_when(Hardware::VideoToolbox, false, false));
+            assert!(!takes_rfi_when(Hardware::VideoToolbox, true, false), "the Vulkan setting is not VideoToolbox's");
+            assert!(takes_rfi_when(Hardware::VideoToolbox, false, true));
+        }
+        // Elsewhere the setting asks nothing of another backend.
+        assert!(!takes_rfi_when(Hardware::V4l2m2m, false, true));
     }
 
     #[test]

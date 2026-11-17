@@ -191,7 +191,7 @@ impl Streaming {
         self.last_skipped = stats.frames_skipped;
         if fell_behind(&mut self.behind, skipped, received) {
             eprintln!("nightjar: PyroWave decoding fell behind: {skipped} of {received} frames skipped in the last second, for {BEHIND_SECONDS} seconds in a row");
-            self.show_toast(tr("PyroWave decoding can’t keep up on this device, so frames are being skipped. Lower the resolution, frame rate or bitrate, or choose HEVC."));
+            self.add_toast(tr("PyroWave decoding can’t keep up on this device, so frames are being skipped. Lower the resolution, frame rate or bitrate, or choose HEVC."));
         }
         let loss = if completed + drops > 0 {
             drops as f64 * 100.0 / (completed + drops) as f64

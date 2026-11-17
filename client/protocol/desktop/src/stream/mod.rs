@@ -1260,7 +1260,6 @@ impl Streaming {
 
     /// Shows `text` below the notice still showing, for as long again, so a notice that comes
     /// right after the start's (the video planes giving up at the first picture) loses neither.
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub fn add_toast(&mut self, text: impl Into<String>) {
         let text = text.into();
         let joined = joined_toast(self.toast.as_ref().map(|(shown, at)| (shown.as_str(), at.elapsed())), &text);
