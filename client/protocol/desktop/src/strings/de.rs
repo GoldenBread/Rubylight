@@ -1696,4 +1696,6 @@ sudo sysctl -w net.core.rmem_max={2}"),
     ("Opens straight into your games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open the list of PCs.", "Öffnet direkt deine Spiele im Vollbild, wo ein Controller oder eine Fernbedienung eines auswählen kann. Lass es für einen Fernseher oder ein Handheld an; schalte es aus, um die PC-Liste zu öffnen."),
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "Hellere Spitzenlichter und sattere Farben auf einem HDR-Bildschirm. Auto schaltet HDR nur ein, wenn Bildschirm, Decoder und PC es unterstützen; lass es auf Auto, außer HDR sieht verwaschen aus."),
     ("Recommended", "Empfohlen"),
+    ("Set up for this device and {}", "Eingerichtet für dieses Gerät und {}"),
+    ("codec chosen when the stream starts", "Codec wird beim Start des Streams gewählt"),
 ];

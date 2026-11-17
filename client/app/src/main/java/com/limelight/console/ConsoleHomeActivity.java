@@ -69,6 +69,8 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
     private HostFeed feed;
     private PairingWatch pairingWatch;
     private android.widget.Button pairingBanner;
+    /** What the automatic settings will use, after the first pairing ({@link SetupCard}); gone for nearly everyone. */
+    private View setupCard;
     private List<PairingWatch.Waiting> waitingToPair = java.util.Collections.emptyList();
     /** The phone's Home: one grid of headers and cards. Null on TV. */
     private ConsoleHomeListAdapter adapter;
@@ -187,6 +189,14 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
         feed = new HostFeed(this, this);
         pairingBanner = findViewById(R.id.home_pairing_banner);
         pairingBanner.setOnClickListener(v -> hostActions.approvePairing(waitingToPair));
+        setupCard = findViewById(R.id.home_setup_card);
+        findViewById(R.id.home_setup_dismiss).setOnClickListener(v -> {
+            boolean focused = v.isFocused();
+            SetupCard.dismiss(this);
+            showSetupCard();
+            // A pad or a remote was on the button that just went: focus goes back to the games.
+            if (focused) list.requestFocus();
+        });
         pairingWatch = new PairingWatch(hostActions.pairingReader(), HostMenu::mayApprovePairing,
                 task -> new Thread(task, "Devices waiting to pair").start(), handler::post, this::showWaitingToPair);
         ConsoleHomeAdapter.Listener listener = new ConsoleHomeAdapter.Listener() {
@@ -269,7 +279,9 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
         searchEnv = new ShelfAdapter.Env(this, covers, feed::host, listener);
         search = HomeSearch.of(this, searchEnv, () -> model, () -> {
             if (hints != null) hints.onFocus(null, null);
+            chrome.fitSetupCard();
         }, () -> {
+            chrome.fitSetupCard();
             if (chrome.form() == com.limelight.ui.GlassForm.PHONE) {
                 findViewById(R.id.home_bottom_row).setVisibility(View.VISIBLE);
                 findViewById(R.id.home_foot_fade).setVisibility(View.VISIBLE);
@@ -599,6 +611,8 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
     protected void onResume() {
         super.onResume();
         shown = true;
+        // Settings may have been changed since: the card speaks for Auto only.
+        showSetupCard();
         ShellBar.refresh(this);
         feed.prune();
         feed.resume();
@@ -668,15 +682,36 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
         if (drawn.changed(feed.hosts(), feed.waiting())) {
             scheduleReload();
         }
+        // The card waits for its PC to be among the hosts; once it shows, a poll has nothing to add.
+        if (setupCard.getVisibility() != View.VISIBLE && SetupCard.host(this) != null) {
+            showSetupCard();
+        }
         // The watch has no timer of its own: it counts on every report.
         if (shown) {
             pairingWatch.poll(feed.hosts());
         }
     }
 
+    /**
+     * The set-up card, while there is one: its PC is paired, the settings are Recommended's Auto, and nothing waits to
+     * pair (the banner stands in the same place and asks for an answer; the card only tells).
+     */
+    private void showSetupCard() {
+        String uuid = SetupCard.host(this);
+        ComputerDetails host = uuid == null ? null : feed.host(uuid);
+        SetupCard.Text text = host == null || !waitingToPair.isEmpty() ? null : SetupCard.text(this, host);
+        setupCard.setVisibility(text == null ? View.GONE : View.VISIBLE);
+        if (chrome != null) chrome.fitSetupCard();
+        if (text == null) return;
+        ((android.widget.TextView) setupCard.findViewById(R.id.home_setup_title)).setText(text.title);
+        ((android.widget.TextView) setupCard.findViewById(R.id.home_setup_values)).setText(text.values);
+        setupCard.findViewById(R.id.home_setup_text).setContentDescription(text.title + ". " + text.values);
+    }
+
     /** "TV wants to pair" while something waits. */
     protected void showWaitingToPair(List<PairingWatch.Waiting> waiting) {
         waitingToPair = waiting;
+        showSetupCard();
         pairingBanner.setVisibility(waiting.isEmpty() ? View.GONE : View.VISIBLE);
         if (waiting.size() == 1) {
             pairingBanner.setText(getString(R.string.pairing_wants_to_pair, waiting.get(0).shownName()));

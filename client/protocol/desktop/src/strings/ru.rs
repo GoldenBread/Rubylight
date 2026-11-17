@@ -1696,4 +1696,6 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приёма: система �
     ("Opens straight into your games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open the list of PCs.", "Сразу открывает ваши игры на весь экран, где контроллер или пульт может выбрать игру. Оставьте включённым для телевизора или портативного устройства; выключите, чтобы открыть список ПК."),
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "Яркие блики и насыщенные цвета на HDR-экране. Авто включает HDR, только если экран, декодер и ПК это поддерживают; оставьте Авто, если HDR выглядит блёклым."),
     ("Recommended", "Рекомендуется"),
+    ("Set up for this device and {}", "Настроено для этого устройства и {}"),
+    ("codec chosen when the stream starts", "кодек выбирается при запуске стрима"),
 ];

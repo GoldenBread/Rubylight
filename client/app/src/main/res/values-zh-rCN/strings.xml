@@ -568,4 +568,7 @@
     <string name="settings_section_simple">推荐</string>
     <string name="settings_section_simple_summary">大多数人都需要的选择；下方各节包含所有细节。</string>
     <string name="summary_simple_hdr">在 HDR 屏幕上呈现更亮的高光和更丰富的色彩。自动仅在屏幕、解码器和 PC 都支持时开启；在其他情况下开启会让画面发白。除非画面发白，否则保持自动。</string>
+    <string name="home_setup_title">已为此设备和 %1$s 设置好</string>
+    <string name="home_setup_codec_auto">编解码器在串流开始时选择</string>
+    <string name="home_setup_dismiss">关闭</string>
 </resources>

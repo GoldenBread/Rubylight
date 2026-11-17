@@ -1696,4 +1696,6 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer de recepção: o sistema concedeu 
     ("Opens straight into your games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open the list of PCs.", "Abre direto os seus jogos em tela cheia, onde um controle ou controle remoto pode escolher um. Deixe ligado para uma TV ou portátil; desligue para abrir a lista de PCs."),
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "Realces mais brilhantes e cores mais ricas em uma tela HDR. O modo Automático só o ativa quando a tela, o decodificador e o PC oferecem suporte; deixe em Automático a menos que o HDR pareça desbotado."),
     ("Recommended", "Recomendado"),
+    ("Set up for this device and {}", "Configurado para este dispositivo e {}"),
+    ("codec chosen when the stream starts", "codec escolhido ao iniciar a transmissão"),
 ];

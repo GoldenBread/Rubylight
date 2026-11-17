@@ -1696,4 +1696,6 @@ sudo sysctl -w net.core.rmem_max={}", "Búfer de recepción: el sistema concedi�
     ("Opens straight into your games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open the list of PCs.", "Abre directamente tus juegos a pantalla completa, donde un mando o un mando a distancia puede elegir uno. Déjalo activado para un televisor o una consola portátil; desactívalo para abrir la lista de PCs."),
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "Brillos más intensos y colores más ricos en una pantalla HDR. Auto solo lo activa cuando la pantalla, el decodificador y el PC lo admiten; déjalo en Auto salvo que el HDR se vea deslavado."),
     ("Recommended", "Recomendado"),
+    ("Set up for this device and {}", "Configurado para este dispositivo y {}"),
+    ("codec chosen when the stream starts", "el códec se elige al iniciar la transmisión"),
 ];

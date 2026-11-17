@@ -568,4 +568,7 @@
     <string name="settings_section_simple">Recomendado</string>
     <string name="settings_section_simple_summary">Las opciones que casi todos necesitan; las secciones de abajo guardan todos los detalles.</string>
     <string name="summary_simple_hdr">Brillos más intensos y colores más ricos en una pantalla HDR. Auto solo lo activa cuando la pantalla, el decodificador y el PC lo admiten; activarlo en otro caso hace que la imagen se vea deslavada. Déjalo en Auto salvo que la imagen se vea deslavada.</string>
+    <string name="home_setup_title">Configurado para este dispositivo y %1$s</string>
+    <string name="home_setup_codec_auto">el códec se elige al iniciar la transmisión</string>
+    <string name="home_setup_dismiss">Descartar</string>
 </resources>

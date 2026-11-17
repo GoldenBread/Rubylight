@@ -411,6 +411,8 @@ public final class HostActions {
         }
         LimeLog.info(paired ? "Pairing succeeded" : "Pairing failed");
         if (paired) {
+            // The first pairing this device makes: Home says what the automatic settings will use with this PC.
+            com.limelight.console.SetupCard.offer(activity, computer);
             callbacks.onPaired(computer);
         } else {
             callbacks.resumePolling();

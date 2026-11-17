@@ -612,4 +612,8 @@
     <string name="game_info_length_long">15 to 40 hours</string>
     <string name="game_info_length_very_long">Over 40 hours</string>
     <string name="game_info_credits">Artwork from SteamGridDB. Game facts from IGDB.com.</string>
+    <!-- Home, after the first pairing: what the automatic settings will use for this device and that PC. -->
+    <string name="home_setup_title">Set up for this device and %1$s</string>
+    <string name="home_setup_codec_auto">codec chosen when the stream starts</string>
+    <string name="home_setup_dismiss">Dismiss</string>
 </resources>

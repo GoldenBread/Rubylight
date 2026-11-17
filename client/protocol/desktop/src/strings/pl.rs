@@ -1696,4 +1696,6 @@ sudo sysctl -w net.core.rmem_max={}", "Bufor odbioru: system przydzielił {0} Ki
     ("Opens straight into your games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open the list of PCs.", "Otwiera od razu Twoje gry na pełnym ekranie, gdzie kontroler lub pilot może wybrać jedną. Zostaw włączony dla telewizora lub handhelda; wyłącz, aby otworzyć listę PC."),
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "Jaśniejsze światła i bogatsze kolory na ekranie HDR. Automatycznie włącza je tylko wtedy, gdy ekran, dekoder i PC to obsługują; zostaw Automatycznie, chyba że HDR wygląda wyblakle."),
     ("Recommended", "Zalecane"),
+    ("Set up for this device and {}", "Skonfigurowano dla tego urządzenia i {}"),
+    ("codec chosen when the stream starts", "kodek wybierany przy starcie strumienia"),
 ];

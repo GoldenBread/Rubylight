@@ -2910,6 +2910,120 @@ fn home_with_games(count: u32) -> Frames {
     f
 }
 
+/// The first pairing on an install offers Home's setup card for that PC; a later pairing, or an
+/// install that offered it before, does not. A PC whose last answer predates the pairing counts.
+#[test]
+fn the_first_pairing_offers_the_setup_card_once() {
+    let mut l = launcher(true, true);
+    assert!(!l.offer_setup_card(5, 2), "a second paired PC is no first pairing");
+    assert!(!l.settings.setup_card_seen && l.settings.setup_card_host.is_none());
+    assert!(l.offer_setup_card(5, 1), "the first pairing offers it, to be saved");
+    assert_eq!((l.settings.setup_card_host, l.settings.setup_card_seen), (Some(5), true));
+    l.settings.setup_card_host = None;
+    assert!(!l.offer_setup_card(6, 1), "offered once on an install, even after every PC is unpaired");
+    assert_eq!(l.settings.setup_card_host, None);
+    // The PC's last answer still says unpaired when the pairing lands: it counts all the same.
+    let f = Frames::with(record("Desk", true, true), Reach::Online, Some(answer(false, 0)), Vec::new());
+    let id = f.hosts.list[0].id;
+    assert!(!f.hosts.list[0].paired());
+    assert_eq!(f.hosts.paired_with(id), 1);
+}
+
+/// Home's setup card: its words while the settings are Auto, nothing with Custom settings (kept
+/// for later), the page's first content with the hero and the shelves beneath it, and a close button
+/// the arrow keys reach and Enter presses, which clears and saves it.
+#[test]
+fn the_setup_card_says_what_auto_chose_and_is_dismissed_from_the_keys() {
+    let mut f = home_with_games(3);
+    let id = f.hosts.list[0].id;
+    let top_of = |placed: &[(String, Rect, Rect)], text: &str| placed.iter().find(|(t, ..)| t == text).map(|p| p.1.top());
+    let (play_before, pcs_before) = (top_of(&f.placed, "Play"), top_of(&f.placed, "PCs"));
+    f.l.settings.setup_card_host = Some(id);
+    f.l.settings.setup_card_seen = true;
+    f.settle();
+    let line = home::setup_line(&f.l.settings, f.l.display);
+    assert!(line.ends_with(" · SDR · codec chosen when the stream starts"), "{line}");
+    assert!(shows(&f, "Set up for this device and Desk") && shows(&f, &line), "{:?}", f.drawn);
+    // It is part of the page: what follows starts beneath it, lower than without it by one amount.
+    let title = f.placed.iter().find(|(t, ..)| t == "Set up for this device and Desk").map(|p| p.1).expect("the card is drawn");
+    let line_bottom = f.placed.iter().find(|(t, ..)| t == &line).map(|p| p.1.bottom()).expect("its line");
+    let (play, pcs) = (top_of(&f.placed, "Play"), top_of(&f.placed, "PCs"));
+    let pushed = pcs.expect("the PCs shelf") - pcs_before.expect("the PCs shelf");
+    assert!(pushed > title.height() && pcs.unwrap() > line_bottom, "the shelves moved down: {pushed}");
+    if let (Some(before), Some(after)) = (play_before, play) {
+        assert!((after - before - pushed).abs() < 0.5 && after > line_bottom, "the hero moved down with them: {before} {after}");
+    }
+
+    // Custom settings: no card, and it waits.
+    f.l.settings.fps = 30;
+    f.settle();
+    assert!(!shows(&f, "Set up for this device and Desk") && f.l.settings.setup_card_host == Some(id));
+    f.l.settings.fps = Settings::default().fps;
+    f.settle();
+    assert!(shows(&f, "Set up for this device and Desk"));
+
+    // The arrow keys (a controller's D-pad) reach its close button; Enter dismisses it for good.
+    let mut reached = false;
+    for step in 0..36 {
+        f.press(if step < 6 { Key::ArrowUp } else { Key::ArrowDown });
+        let focused = f.ctx.memory(|m| m.focused()).and_then(|id| f.ctx.read_response(id)).map(|r| r.rect);
+        // The close button leads the card, left of its words.
+        if focused.is_some_and(|r| r.right() <= title.left() && (r.center().y - title.center().y).abs() < 30.0) {
+            reached = true;
+            break;
+        }
+    }
+    assert!(reached, "the arrow keys reach the card's Dismiss");
+    let commands = f.press(Key::Enter);
+    assert_eq!(f.l.settings.setup_card_host, None);
+    assert!(f.l.settings.setup_card_seen, "it never returns");
+    assert!(commands.iter().any(|c| matches!(c, Command::SaveSettings)), "and that is saved");
+    assert!(!shows(&f, "Set up for this device and Desk"));
+}
+
+/// Home with the setup card after the first pairing:
+/// `NIGHTJAR_SHOTS=<dir> cargo test -p nightjar-desktop setup_card_screenshot -- --ignored`.
+#[test]
+#[ignore = "writes PNGs; set NIGHTJAR_SHOTS"]
+fn setup_card_screenshot() {
+    let Some(dir) = std::env::var_os("NIGHTJAR_SHOTS").map(std::path::PathBuf::from) else { return };
+    std::fs::create_dir_all(&dir).expect("the folder for the screenshots");
+    let mut f = home_with_games(8);
+    f.l.settings.setup_card_host = Some(f.hosts.list[0].id);
+    f.settle();
+    f.shoot(&dir, "desktop-home-setup-card");
+}
+
+/// The card waits while a device asks to pair: that banner goes first.
+#[test]
+fn the_setup_card_yields_to_a_device_waiting_to_pair() {
+    let mut f = approving_frames(true);
+    let id = f.hosts.list[0].id;
+    f.l.screen = Screen::Home;
+    f.l.settings.setup_card_host = Some(id);
+    let name = format!("Set up for this device and {}", f.hosts.list[0].display_name());
+    f.settle();
+    assert!(shows(&f, &name), "{:?}", f.drawn);
+    f.hosts.list[0].native.pairing_requests = vec![tv_request("a1")];
+    f.settle();
+    assert!(shows(&f, "TV wants to pair") && !shows(&f, &name));
+}
+
+/// The card's line: the game page's resolution, rate and bitrate, then HDR or SDR as the start asks,
+/// then the codec: negotiated under Auto, named when forced.
+#[test]
+fn the_setup_cards_line_names_hdr_and_a_forced_codec() {
+    let display = Display { width: 1920, height: 1080, refresh_hz: 60.0, refresh_reported: true };
+    let (w, h, fps, kbps) = stream_mode(&Settings::default(), display);
+    let summary = console::stream_summary(w, h, fps, kbps);
+    assert_eq!(home::setup_line(&Settings::default(), display), format!("{summary} · SDR · codec chosen when the stream starts"));
+    assert_eq!(home::setup_line(&Settings { hdr: true, ..Settings::default() }, display), format!("{summary} · HDR · codec chosen when the stream starts"));
+    assert_eq!(home::setup_line(&Settings { codec: CodecPreference::Hevc, ..Settings::default() }, display), format!("{summary} · SDR · HEVC"));
+    crate::strings::tests::with_lang(crate::strings::Lang::De, || {
+        assert!(home::setup_line(&Settings::default(), display).ends_with(" · SDR · Codec wird beim Start des Streams gewählt"));
+    });
+}
+
 /// nightjar#51: the Home grid follows the focus down and back up when the arrow keys (or the
 /// D-pad, which sends the same keys) move it, as it already did for Tab.
 #[test]

@@ -83,6 +83,10 @@
         style="@style/Widget.Nightjar.Glass.Control" android:layout_width="wrap_content" android:layout_height="wrap_content"
         android:layout_gravity="center_horizontal" android:maxLines="1" android:ellipsize="end"
         android:visibility="gone" app:icon="@drawable/ic_add" />
+    <!-- What the automatic settings will use, after the first pairing: Home's first content, under the top row, where
+         HomeChrome places it and starts the list beneath it. It yields to the pairing banner. -->
+    <include layout="@layout/view_home_setup_card" android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_gravity="top|start" />
     <LinearLayout android:id="@+id/home_bottom_row" android:layout_width="match_parent" android:layout_height="wrap_content"
         android:layout_gravity="bottom" android:orientation="horizontal" android:gravity="center_vertical"
         android:clipChildren="false" android:clipToPadding="false">
