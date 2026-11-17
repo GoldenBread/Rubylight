@@ -101,7 +101,10 @@ jobs:
           persist-credentials: false
       - name: Install build tools
         run: |
-          brew install meson ninja cmake pkg-config nasm bison flex llvm libclc spirv-llvm-translator
+          brew install meson ninja cmake pkg-config nasm bison flex libclc spirv-llvm-translator
+          # LLVM 23, the major KosmicKrisp is built and tested with: Homebrew keeps it as llvm@23
+          # once its llvm moves on, and has no llvm@23 while llvm itself is 23.
+          brew install llvm@23 2>/dev/null || brew install llvm
           rustup toolchain install stable --profile minimal --no-self-update
       # Restored and saved apart, so a later failing step keeps the 30-minute Mesa build cached.
       - id: vulkan-cache

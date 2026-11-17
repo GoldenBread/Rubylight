@@ -670,10 +670,9 @@ jobs:
     # (macos-vulkan.sh), so PyroWave can decode on the GPU on macOS 26 when the user picks it;
     # KosmicKrisp builds against the macOS 26 SDK, hence that leg's runner. The Intel app has none.
     needs: preflight
-    # The Apple silicon app carries the bundled Vulkan driver and PyroWave SDK, so a failure there
-    # fails the release: a Mac download that silently ships without it is what this leg guards. The
-    # Intel app stays a warning, so a runner problem there does not hold the other downloads.
-    continue-on-error: ${{ matrix.arch == 'x86_64' }}
+    # A Mac failure shows as a failed leg, and the final job's check names the missing archive as a
+    # warning, so Windows, Linux and Android still ship.
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
@@ -721,7 +720,10 @@ jobs:
           persist-credentials: false
       - name: Install the KosmicKrisp and PyroWave SDK build tools
         if: matrix.gpu-pyrowave
-        run: brew install bison flex llvm libclc spirv-llvm-translator vulkan-headers
+        run: |
+          brew install bison flex libclc spirv-llvm-translator vulkan-headers
+          # LLVM 23, the major macos-vulkan.sh checks: llvm@23 once Homebrew's llvm moves past it.
+          brew install llvm@23 2>/dev/null || brew install llvm
       # As desktop-linux's: dry runs on main use and save these caches; a tag run rebuilds them, so
       # nothing a branch run cached ends up in a published package.
       - name: KosmicKrisp cache

@@ -7,9 +7,10 @@
 #
 # <prefix>/lib holds libvulkan.1.dylib (the loader, built for macOS 13 like the rest of the app, so
 # an older Mac loads it and finds no driver) and libvulkan_kosmickrisp.dylib (macOS 26). Needs
-# Xcode's command line tools and Homebrew's meson, ninja, cmake, pkg-config, bison, flex, llvm
-# (the major is checked below), libclc, spirv-llvm-translator and spirv-tools; the Python modules
-# come from a venv made here with the pinned hashes in macos-vulkan-requirements.txt.
+# Xcode's command line tools and Homebrew's meson, ninja, cmake, pkg-config, bison, flex, LLVM 23
+# (llvm@23, or llvm while it is 23; the major is checked below), libclc, spirv-llvm-translator and
+# spirv-tools; the Python modules come from a venv made here with the pinned hashes in
+# macos-vulkan-requirements.txt.
 # Apple silicon only: KosmicKrisp needs Metal 4, which Intel Macs do not have.
 set -euo pipefail
 cache=${1:?usage: macos-vulkan.sh <absolute build cache>}
@@ -68,19 +69,23 @@ cmake --install "$work/spirv-tools-build"
 # KosmicKrisp, as docs.mesa3d.org/drivers/kosmickrisp.html builds it, for Metal 4 (macOS 26).
 python3 -m venv "$work/venv"
 "$work/venv/bin/pip" install --quiet --require-hashes --requirement "$(cd "$(dirname "$0")" && pwd)/macos-vulkan-requirements.txt"
-export PATH="$work/venv/bin:$brew/opt/llvm/bin:$brew/opt/bison/bin:$brew/opt/flex/bin:$PATH"
-command -v llvm-config >/dev/null || { echo "Homebrew's llvm is required (llvm-config is not on the PATH)" >&2; exit 1; }
-# Mesa 26.2.7's KosmicKrisp build was tested with this Homebrew LLVM major (23.1.4 on the macOS 26
-# runner, 2026-11-17); another major may compile different code into the driver, so a release says
-# which one it found and stops instead of shipping an unmeasured driver.
+# LLVM 23, the major the build was tested with, from Homebrew's pinned keg once its main formula
+# moves on (`llvm@23`); while `llvm` is 23, that is the one.
+llvm_prefix="$brew/opt/llvm@23"
+[[ -d $llvm_prefix ]] || llvm_prefix="$brew/opt/llvm"
+export PATH="$work/venv/bin:$llvm_prefix/bin:$brew/opt/bison/bin:$brew/opt/flex/bin:$PATH"
+command -v llvm-config >/dev/null || { echo "Homebrew's LLVM 23 is required (llvm-config is not on the PATH): brew install llvm@23, or llvm while it is 23" >&2; exit 1; }
+# Mesa 26.2.7's KosmicKrisp build was tested with LLVM 23 (23.1.5 on the macOS 26 runner,
+# 2026-11-17); another major may compile different code into the driver, so a release says which
+# one it found and stops instead of shipping an unmeasured driver.
 llvm_version=$(llvm-config --version)
 llvm_major=${llvm_version%%.*}
 tested_llvm_major=23
 if [[ $llvm_major != "$tested_llvm_major" ]]; then
-  echo "error: Homebrew's LLVM is $llvm_version but KosmicKrisp is built and tested with LLVM $tested_llvm_major.x; install that major, or update tested_llvm_major in $0 after a full CI run" >&2
+  echo "error: LLVM is $llvm_version but KosmicKrisp is built and tested with LLVM $tested_llvm_major.x; install Homebrew's llvm@$tested_llvm_major (or llvm while it is $tested_llvm_major), or update tested_llvm_major in $0 after a full CI run" >&2
   exit 1
 fi
-export PKG_CONFIG_PATH="$work/spirv-install/lib/pkgconfig:$brew/opt/llvm/lib/pkgconfig:$brew/opt/libclc/share/pkgconfig:$brew/opt/spirv-llvm-translator/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+export PKG_CONFIG_PATH="$work/spirv-install/lib/pkgconfig:$llvm_prefix/lib/pkgconfig:$brew/opt/libclc/share/pkgconfig:$brew/opt/spirv-llvm-translator/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 (
   export MACOSX_DEPLOYMENT_TARGET=26.0
   meson setup "$work/mesa-build" "$work/mesa" --prefix "$work/mesa-install" --libdir lib \
