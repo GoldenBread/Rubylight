@@ -945,6 +945,20 @@ fn log_unavailable(backend: Hardware, error: &str) {
 }
 
 /// The SDK's decoder (on the renderer's adapter on Windows), with a plane set per picture that can be waiting.
+/// The name the CPU decoder takes on a Mac whose GPU decoder did not start for this stream.
+pub const MAC_CPU_INSTEAD: &str = "PyroWave (Rust, GPU wavelets; the GPU decoder did not start)";
+
+/// macOS: the CPU decoder in place of a GPU decoder that did not start (the bundled driver or the
+/// SDK refused this stream's picture), said in the log; elsewhere none, and the stream ends with
+/// the GPU decoder's error as before.
+fn mac_cpu_instead(error: &str, width: usize, height: usize, chroma444: bool) -> Option<(super::pyrowave::Pyrowave, &'static str)> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    eprintln!("nightjar: PyroWave GPU decoding did not start ({error}); the processor decodes this stream");
+    super::pyrowave::Pyrowave::cpu(width, height, chroma444).ok().map(|decoder| (decoder, MAC_CPU_INSTEAD))
+}
+
 fn gpu_pyrowave(device: GpuDevice, setup: &VideoSetup, slots: usize) -> Result<super::pyrowave::Pyrowave, String> {
     #[cfg(windows)]
     {
@@ -957,10 +971,15 @@ fn gpu_pyrowave(device: GpuDevice, setup: &VideoSetup, slots: usize) -> Result<s
         super::pyrowave::GpuStream::new(device, setup.width as usize, setup.height as usize, chroma444, ten_bit, slots)
             .map(|stream| super::pyrowave::Pyrowave::Gpu(Box::new(stream)))
     }
+    // The SDK decodes on a Vulkan device of its own on the bundled driver and reads its planes back
+    // for the Metal renderer (`GpuStream::new`); the renderer's device is not Vulkan.
     #[cfg(target_os = "macos")]
     {
-        let _ = (device, setup, slots);
-        Err("The PyroWave GPU SDK has no macOS backend.".into())
+        let _ = device;
+        let ten_bit = setup.format & nightjar_core::sdp::VIDEO_FORMAT_MASK_10BIT != 0;
+        let chroma444 = setup.format & VIDEO_FORMAT_MASK_YUV444 != 0;
+        super::pyrowave::GpuStream::new(setup.width as usize, setup.height as usize, chroma444, ten_bit, slots)
+            .map(|stream| super::pyrowave::Pyrowave::Gpu(Box::new(stream)))
     }
     #[cfg(target_os = "linux")]
     {
@@ -990,7 +1009,8 @@ impl VideoDecoder for Decoder {
                     #[cfg(not(windows))]
                     { self.shared.queue_limit + 2 }
                 })
-                    .map(|decoder| (decoder, "PyroWave (GPU decode, SDK)"))
+                    .map(|decoder| (decoder, if cfg!(target_os = "macos") { "PyroWave (GPU decode, SDK, KosmicKrisp, planes read back)" } else { "PyroWave (GPU decode, SDK)" }))
+                    .or_else(|error| mac_cpu_instead(&error, width, height, chroma444).ok_or(error))
                     .map_err(|error| pyrowave_gpu_failed(&error)),
                 None => super::pyrowave::Pyrowave::cpu(width, height, chroma444)
                     .map(|decoder| (decoder, "PyroWave (Rust, GPU wavelets)"))
@@ -1002,6 +1022,9 @@ impl VideoDecoder for Decoder {
                         if let Err(error) = decoder.set_beam_race(self.slices) { eprintln!("nightjar: beam race: {error}"); }
                     }
                     self.pyrowave = Some(decoder);
+                    if name == MAC_CPU_INSTEAD {
+                        self.shared.notify(Notice::DecoderFallback(crate::strings::tr("PyroWave GPU decoding did not start on this Mac, so the processor decodes this stream.").to_owned()));
+                    }
                     *lock(&self.shared.decoder_name) = name.into();
                     Ok(())
                 }

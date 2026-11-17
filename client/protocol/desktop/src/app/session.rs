@@ -154,8 +154,9 @@ impl App {
         #[cfg(not(target_os = "linux"))]
         let decoder_notes: Vec<String> = Vec::new();
         let packed_note = self.packed_note.take();
+        let pyrowave_note = self.pyrowave_note.take();
         let kms_notes = std::mem::take(&mut self.kms_notes);
-        let notices: Vec<&str> = hdr_note.into_iter().chain(kms_notes.iter().map(String::as_str)).chain(packed_note.as_deref()).chain(decoder_notes.iter().map(String::as_str)).chain(pyrowave.as_deref())
+        let notices: Vec<&str> = hdr_note.into_iter().chain(kms_notes.iter().map(String::as_str)).chain(packed_note.as_deref()).chain(pyrowave_note.as_deref()).chain(decoder_notes.iter().map(String::as_str)).chain(pyrowave.as_deref())
             .chain(streaming.facts.codec_fallback.as_deref()).chain(streaming.facts.color_notice.as_deref())
             .chain(streaming.facts.jumbo_fallback.as_deref()).chain(frame_warp.as_deref()).collect();
         let notices = notices.join("\n");

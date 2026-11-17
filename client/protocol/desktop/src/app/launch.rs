@@ -456,6 +456,17 @@ impl App {
             handheld::HdrStream::Hdr | handheld::HdrStream::Sdr => {}
         }
         let mut gpu_decoder = None;
+        self.pyrowave_note = None;
+        // A Mac decodes on the processor where the GPU decoder cannot run, and says why.
+        #[cfg(target_os = "macos")]
+        if settings.codec.is_pyrowave() && settings.pyrowave_decoder == config::PyroWaveDecoder::Gpu {
+            if let stream::pyrowave_mode::MacChoice::Cpu(reason) = stream::pyrowave_mode::this_mac(settings.pyrowave_decoder, settings.hdr) {
+                let reason = reason.unwrap_or_default();
+                eprintln!("nightjar: PyroWave decodes on the processor: {reason}");
+                self.pyrowave_note = Some(trf("PyroWave decodes on the processor: {}", &[&reason]));
+                settings.pyrowave_decoder = config::PyroWaveDecoder::Cpu;
+            }
+        }
         if settings.codec.is_pyrowave() {
             let gpu_device = self.gpu_device();
             let probed = stream::pyrowave_mode::availability(

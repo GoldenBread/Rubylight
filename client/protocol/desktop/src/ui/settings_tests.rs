@@ -539,7 +539,7 @@ fn the_developer_rows_and_diagnostics_are_in_debug() {
         .filter(|k| *k != "network_priority" || cfg!(any(target_os = "linux", windows)))
         .filter(|k| !matches!(*k, "vulkan_video_first" | "vulkan_rfi") || cfg!(target_os = "linux"))
         .filter(|k| *k != "videotoolbox_rfi" || cfg!(target_os = "macos"))
-        .filter(|k| *k != "pyrowave_async_compute" || Settings::default().pyrowave_decoder == crate::config::PyroWaveDecoder::Gpu)
+        .filter(|k| *k != "pyrowave_async_compute" || (Settings::default().pyrowave_decoder == crate::config::PyroWaveDecoder::Gpu && !cfg!(target_os = "macos")))
         .collect::<Vec<_>>();
     let mut f = settings_with(Settings::default());
     open_folds(&mut f);

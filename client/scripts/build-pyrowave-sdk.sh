@@ -93,6 +93,13 @@ for name in "${names[@]}"; do
 	git -C "$src" apply --check "$work/stage/$name.patch"
 	git -C "$src" apply "$work/stage/$name.patch"
 done
+# macOS: what Granite needs to build there (scripts/pyrowave-macos), applied to Granite only.
+if [[ $lib_name == *.dylib ]]; then
+	for patch in "$here"/pyrowave-macos/granite-*.patch; do
+		git -C "$src/Granite" apply --check "$patch"
+		git -C "$src/Granite" apply "$patch"
+	done
+fi
 
 build=$work/build
 extra=()

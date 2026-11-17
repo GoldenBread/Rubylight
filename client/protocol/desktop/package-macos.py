@@ -70,6 +70,20 @@ def bundle_libraries(binary, frameworks, prefix):
     return sorted(frameworks.iterdir())
 
 
+def add_library(source, frameworks):
+    """Copies a library the executable opens at run time into Frameworks, as @rpath/<name>."""
+    if not source.is_file():
+        raise RuntimeError(f"{source} is missing")
+    target = frameworks / source.name
+    shutil.copy2(source, target)
+    target.chmod(0o755)
+    subprocess.run(["install_name_tool", "-id", f"@rpath/{target.name}", target], check=True)
+    for name in dependencies(target):
+        if not name.startswith(("/usr/lib/", "/System/Library/")):
+            raise RuntimeError(f"{target.name} links {name}, outside the system")
+    return target
+
+
 def minimum_version(binary):
     text = output("vtool", "-show-build", binary)
     minimums = re.findall(r"^\s*minos\s+([0-9.]+)", text, re.MULTILINE)
@@ -84,9 +98,15 @@ def main():
     parser.add_argument("--debug", action="store_true", help="bundle a debug build")
     parser.add_argument("--arch", choices=RUST_TARGETS, help="build for this Mac architecture (default: native)")
     parser.add_argument("--zip", action="store_true", help="also write a ZIP you can copy to another Mac")
+    parser.add_argument("--vulkan", type=Path, metavar="PREFIX",
+                        help="Apple silicon: bundle the Vulkan loader and KosmicKrisp from macos-vulkan.sh's prefix")
+    parser.add_argument("--pyrowave-sdk", type=Path, metavar="FOLDER",
+                        help="bundle libpyrowave-shared.dylib from build-pyrowave-sdk.sh's output folder")
     args = parser.parse_args()
     if sys.platform != "darwin":
         parser.error("build the app on macOS with the Xcode Command Line Tools")
+    if args.vulkan and (args.arch or platform.machine()) != "arm64":
+        parser.error("KosmicKrisp runs on Apple silicon only: --vulkan needs an arm64 build")
     profile = "debug" if args.debug else "release"
     host = platform.machine()
     arch = args.arch or host
@@ -167,11 +187,32 @@ def main():
         shutil.copytree(prefix / "licenses", notices, dirs_exist_ok=True)
         shutil.copy2(DESKTOP / "macos-deps.sh", notices / "media-sources.sh")
         libs = bundle_libraries(binary, frameworks, prefix)
+        # Loaded at run time, not linked: the PyroWave SDK, the Vulkan loader (macOS 13, so an older
+        # Mac starts and decodes on the processor) and KosmicKrisp (macOS 26, Metal 4), which is the
+        # one library allowed a newer minimum than the app's: only the loader opens it, on a Mac
+        # that runs it.
+        newer_allowed = set()
+        if args.pyrowave_sdk:
+            libs.append(add_library(args.pyrowave_sdk / "libpyrowave-shared.dylib", frameworks))
+            for license_file in (args.pyrowave_sdk / "licenses").iterdir():
+                shutil.copy2(license_file, notices / f"PyroWave-SDK-{license_file.name}")
+        if args.vulkan:
+            libs.append(add_library(args.vulkan / "lib/libvulkan.1.dylib", frameworks))
+            driver = add_library(args.vulkan / "lib/libvulkan_kosmickrisp.dylib", frameworks)
+            libs.append(driver)
+            newer_allowed.add(driver)
+            icd = resources / "vulkan/icd.d"
+            icd.mkdir(parents=True)
+            # The path is relative to the manifest, so the bundle can move (LunarG's layout).
+            (icd / "kosmickrisp_icd.json").write_text(json.dumps({"file_format_version": "1.0.1", "ICD": {
+                "library_path": "../../../Frameworks/libvulkan_kosmickrisp.dylib", "api_version": "1.4.0",
+                "is_portability_driver": False}}, indent=2) + "\n")
+            shutil.copytree(args.vulkan / "licenses", notices, dirs_exist_ok=True)
         for item in [binary, *libs]:
             slices = output("lipo", "-archs", item).split()
             if slices != [arch]:
                 raise RuntimeError(f"{item.name} has architectures {slices}, expected {arch}")
-        minimum = max(minimum_version(item) for item in [binary, *libs])
+        minimum = max(minimum_version(item) for item in [binary, *libs] if item not in newer_allowed)
         if minimum > tuple(map(int, deploy.split("."))) + (0,):
             raise RuntimeError(f"A bundled binary requires macOS {minimum}, newer than the requested {deploy}")
         info = {

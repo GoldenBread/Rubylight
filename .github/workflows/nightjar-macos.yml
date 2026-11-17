@@ -85,7 +85,12 @@ jobs:
   kosmickrisp:
     name: KosmicKrisp on macos-26
     runs-on: macos-26
-    timeout-minutes: 120
+    timeout-minutes: 150
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
+      RUSTUP_TOOLCHAIN: stable
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
     defaults:
       run:
         working-directory: client/protocol
@@ -94,7 +99,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Install build tools
-        run: brew install meson ninja cmake pkg-config bison flex llvm libclc spirv-llvm-translator
+        run: |
+          brew install meson ninja cmake pkg-config nasm bison flex llvm libclc spirv-llvm-translator
+          rustup toolchain install stable --profile minimal --no-self-update
       # Restored and saved apart, so a later failing step keeps the 30-minute Mesa build cached.
       - id: vulkan-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -125,3 +132,26 @@ jobs:
           set -o pipefail
           brew install vulkan-headers
           VULKAN_HEADERS_DIR="$(brew --prefix vulkan-headers)/include"             ../scripts/build-pyrowave-sdk.sh -o "$PWD/target/pyrowave-sdk" -H "$GITHUB_WORKSPACE"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: client/protocol/target/macos-native/*/prefix
+          key: macos-media-${{ runner.arch }}-${{ hashFiles('client/protocol/desktop/macos-deps.sh') }}
+      - name: Package Nightjar.app with KosmicKrisp and the PyroWave SDK
+        run: |
+          python3 desktop/package-macos.py --debug --vulkan "$VULKAN_PREFIX" --pyrowave-sdk "$PWD/target/pyrowave-sdk"
+          python3 desktop/tests/verify_macos_bundle.py target/debug/Nightjar.app
+      # Exit 0: the GPU decoder started on KosmicKrisp. Exit 2: it did not, and the report names why
+      # the processor decodes instead (expected where the runner's virtual GPU does not take
+      # KosmicKrisp). Exit 1: the SDK library did not load, which fails the job.
+      - name: PyroWave GPU decoder smoke, or its named CPU fallback
+        run: |
+          set +e
+          VK_LOADER_DEBUG=error target/debug/Nightjar.app/Contents/MacOS/nightjar --check-pyrowave "$RUNNER_TEMP/pyrowave.txt"
+          code=$?
+          set -e
+          cat "$RUNNER_TEMP/pyrowave.txt"
+          case $code in
+            0) echo "::notice::PyroWave GPU decoding started on KosmicKrisp on this runner" ;;
+            2) grep -q "the processor decodes" "$RUNNER_TEMP/pyrowave.txt" && echo "::notice::PyroWave falls back to the processor on this runner, with its reason" ;;
+            *) exit 1 ;;
+          esac

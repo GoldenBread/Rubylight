@@ -1,0 +1,19 @@
+--- a/util/timer.cpp
++++ b/util/timer.cpp
+@@ -138,6 +138,16 @@
+ 		_mm_pause();
+ #endif
+ 	}
++#elif defined(__APPLE__)
++	// macOS has no clock_nanosleep: sleep the remaining time against the same clock.
++	int64_t d;
++	while ((d = timepoint - get_current_time_nsecs()) > 0)
++	{
++		struct timespec ts = {};
++		ts.tv_sec = d / 1000000000ll;
++		ts.tv_nsec = d % 1000000000ll;
++		nanosleep(&ts, nullptr);
++	}
+ #else
+ 	constexpr auto timebase = CLOCK_MONOTONIC;
+ 	struct timespec ts = {};

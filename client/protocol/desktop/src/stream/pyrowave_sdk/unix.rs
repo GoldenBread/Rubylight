@@ -51,6 +51,17 @@ pub struct GpuDecoder {
     queue: queue::DecodeQueue,
     /// When the last decode's submit returned (`submitted_at`), set on the wait thread.
     submitted: Arc<Mutex<Option<Instant>>>,
+    /// macOS: the Vulkan device made for the decoder on the bundled driver, and what the SDK was
+    /// told about it (`on_own_vulkan`).
+    #[cfg(target_os = "macos")]
+    own: Option<Own>,
+}
+
+/// The decoder's own Vulkan device on a Mac, which the SDK device points into; dropped after it.
+#[cfg(target_os = "macos")]
+struct Own {
+    info: Box<ShareInfo>,
+    _vulkan: super::own_vulkan::OwnVulkan,
 }
 
 /// The renderer's device as the SDK shares it.
@@ -280,7 +291,7 @@ impl GpuDecoder {
             let images = SharedImages::with_handoff(&sdl, get_instance_proc_addr, config, compute.map(|(_, slot)| slot.family), handoff)?;
             let info = ShareInfo::new(&sdl, get_instance_proc_addr, compute);
             let watchdog = Watchdog::new()?;
-            let mut s = Self { api, config, device: ptr::null_mut(), decoder: ptr::null_mut(), watchdog, timeout: crate::stream::pyrowave::GPU_DECODE_TIMEOUT, shared: None, decode_value: 0, queue: queue::DecodeQueue::Graphics(queue::SETTING_OFF.into()), submitted: Arc::default() };
+            let mut s = Self { api, config, device: ptr::null_mut(), decoder: ptr::null_mut(), watchdog, timeout: crate::stream::pyrowave::GPU_DECODE_TIMEOUT, shared: None, decode_value: 0, queue: queue::DecodeQueue::Graphics(queue::SETTING_OFF.into()), submitted: Arc::default(), #[cfg(target_os = "macos")] own: None };
             let result = create_shared(s.api.create_device, &info.create, &mut s.device);
             s.shared = Some(Shared { images, info });
             if result != SUCCESS {
@@ -328,7 +339,7 @@ impl GpuDecoder {
     pub fn with_queue(api: Arc<Api>, config: GpuConfig, async_compute: bool) -> Result<Self, String> {
         check_config(config)?;
         let watchdog = Watchdog::new()?;
-        let mut s = Self { api, config, device: ptr::null_mut(), decoder: ptr::null_mut(), watchdog, timeout: crate::stream::pyrowave::GPU_DECODE_TIMEOUT, shared: None, decode_value: 0, queue: queue::DecodeQueue::Graphics(queue::SETTING_OFF.into()), submitted: Arc::default() };
+        let mut s = Self { api, config, device: ptr::null_mut(), decoder: ptr::null_mut(), watchdog, timeout: crate::stream::pyrowave::GPU_DECODE_TIMEOUT, shared: None, decode_value: 0, queue: queue::DecodeQueue::Graphics(queue::SETTING_OFF.into()), submitted: Arc::default(), #[cfg(target_os = "macos")] own: None };
         // SAFETY: The out-pointers outlive each call, and `s` owns every handle made so Drop
         // releases them on any early return.
         unsafe {
@@ -347,6 +358,40 @@ impl GpuDecoder {
                 return Err(decoder_refused(result, &diagnose_vulkan()));
             }
         }
+        Ok(s)
+    }
+
+    /// macOS: the decoder on a Vulkan device of its own, made on the bundled KosmicKrisp driver
+    /// (`own_vulkan`) and handed to the SDK as a shared device, so the SDK never opens a Vulkan
+    /// loader by name. The planes are read back into the caller's buffers, as `with_queue`'s are;
+    /// the decodes run on the graphics queue. Errors name the step that failed.
+    #[cfg(target_os = "macos")]
+    pub fn on_own_vulkan(api: Arc<Api>, config: GpuConfig) -> Result<Self, String> {
+        check_config(config)?;
+        let vulkan = super::own_vulkan::OwnVulkan::new()?;
+        let driver = vulkan.driver();
+        let info = ShareInfo::new(&vulkan.as_sdl(), vulkan.get_instance_proc_addr(), None);
+        let watchdog = Watchdog::new()?;
+        let mut s = Self { api, config, device: ptr::null_mut(), decoder: ptr::null_mut(), watchdog, timeout: crate::stream::pyrowave::GPU_DECODE_TIMEOUT, shared: None, decode_value: 0, queue: queue::DecodeQueue::Graphics(queue::SETTING_OFF.into()), submitted: Arc::default(), own: None };
+        let name = vulkan.name.clone();
+        s.own = Some(Own { info, _vulkan: vulkan });
+        // SAFETY: The create info points into `s.own`, which outlives the SDK device; `s` owns every
+        // handle made, so Drop releases them on any early return, the SDK device before `own`.
+        unsafe {
+            let create = &s.own.as_ref().expect("set above").info.create;
+            let result = create_shared(s.api.create_device, create, &mut s.device);
+            if result != SUCCESS {
+                return Err(format!("the PyroWave SDK does not run on {name} ({driver}): PyroWave error {result}, {}", result_name(result)));
+            }
+            let result = (s.api.decoder_create)(
+                &DecoderCreateInfo { device: s.device, width: config.width as i32, height: config.height as i32, chroma: i32::from(config.chroma444), fragment_path: false },
+                &mut s.decoder,
+            );
+            if result != SUCCESS {
+                return Err(format!("the PyroWave decoder does not build on {name} ({driver}): PyroWave error {result}, {}", result_name(result)));
+            }
+        }
+        zero_copy::note(&format!("PyroWave GPU decoding runs on {name} ({driver}) through the bundled Vulkan driver and reads its planes back through the CPU"));
         Ok(s)
     }
 
@@ -458,12 +503,17 @@ impl Drop for GpuDecoder {
         // and the stuck call is still using it. Leak both, and what a shared device points into.
         if self.stalled() {
             std::mem::forget(self.shared.take());
+            #[cfg(target_os = "macos")]
+            std::mem::forget(self.own.take());
             return;
         }
         // SAFETY: Each non-null handle was made on `self.device`, which goes last; the SDK idles
-        // the GPU before destroying the decoder. A shared device's lock is SDL's, which outlives it.
+        // the GPU before destroying the decoder. A shared device's lock is SDL's, which outlives it;
+        // a Mac's own device and its lock go with `own`, after this.
         unsafe {
             let shared = self.shared.as_ref().map(|shared| &shared.info.create);
+            #[cfg(target_os = "macos")]
+            let shared = shared.or(self.own.as_ref().map(|own| &own.info.create));
             release(self.api.decoder_destroy, self.api.device_destroy, self.decoder, self.device, shared);
         }
     }
@@ -494,7 +544,11 @@ pub fn probe_in(path: &Path, ten_bit: bool) -> Result<(), String> {
 }
 
 fn probe_once(api: Arc<Api>, ten_bit: bool) -> Result<(), String> {
-    GpuDecoder::with_api(api, GpuConfig { width: 128, height: 128, chroma444: false, ten_bit, slots: 1 }).map(drop)
+    let config = GpuConfig { width: 128, height: 128, chroma444: false, ten_bit, slots: 1 };
+    #[cfg(target_os = "macos")]
+    return GpuDecoder::on_own_vulkan(api, config).map(drop);
+    #[cfg(not(target_os = "macos"))]
+    GpuDecoder::with_api(api, config).map(drop)
 }
 
 /// Why the SDK may have refused a Vulkan device, read from the driver directly: the Vulkan
@@ -502,6 +556,12 @@ fn probe_once(api: Arc<Api>, ten_bit: bool) -> Result<(), String> {
 pub fn diagnose_vulkan() -> String {
     // SAFETY: Plain Vulkan calls on handles made here; the instance is destroyed before returning.
     unsafe {
+        #[cfg(target_os = "macos")]
+        let entry = match super::own_vulkan::entry() {
+            Ok(entry) => entry,
+            Err(e) => return e,
+        };
+        #[cfg(not(target_os = "macos"))]
         let entry = match ash::Entry::load() {
             Ok(entry) => entry,
             Err(e) => return format!("libvulkan.so.1 cannot be loaded, so there is no Vulkan driver (install the Vulkan loader and your GPU's Vulkan driver, e.g. mesa-vulkan-drivers): {e}"),

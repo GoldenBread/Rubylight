@@ -1053,7 +1053,8 @@ impl Launcher {
                         for codec in [CodecPreference::Auto, CodecPreference::H264, CodecPreference::Hevc, CodecPreference::Av1] {
                             ui.selectable_value(&mut s.codec, codec, codec_name(codec));
                         }
-                        let menu_error = gpu_probe(ui);
+                        // A Mac decodes PyroWave on the processor where the GPU decoder cannot.
+                        let menu_error = if cfg!(target_os = "macos") { None } else { gpu_probe(ui) };
                         if menu_error.is_none() {
                             for codec in [CodecPreference::PyroWave, CodecPreference::PyroWave444] {
                                 ui.selectable_value(&mut s.codec, codec, codec_name(codec));
@@ -1917,7 +1918,7 @@ impl Launcher {
             if let Some(reason) = &gpu_decoder_error {
                 rows.note(trf("GPU decoding isn’t available here: {}", &[reason]), *TERTIARY);
             }
-            setting_row(ui, s, &mut rows, &["pyrowave_decoder"], "PyroWave decoder", "Decodes PyroWave on the GPU or the CPU. GPU measured lower latency; where it can’t run, PyroWave is not offered until you choose CPU.", |ui, s| {
+            setting_row(ui, s, &mut rows, &["pyrowave_decoder"], "PyroWave decoder", if cfg!(target_os = "macos") { en("Decodes PyroWave on the GPU or the CPU. On a Mac the GPU decoder needs Apple silicon and macOS 26 or later; where it can’t start, the CPU decodes and the stream says so.") } else { en("Decodes PyroWave on the GPU or the CPU. GPU measured lower latency; where it can’t run, PyroWave is not offered until you choose CPU.") }, |ui, s| {
                 Combo::from_id_salt("pyrowave-decoder")
                     .selected_text(tr(s.pyrowave_decoder.label()))
                     .show_ui(ui, |ui| {
@@ -1927,7 +1928,8 @@ impl Launcher {
                     })
                     .response
             });
-            rows.when(s.pyrowave_decoder == crate::config::PyroWaveDecoder::Gpu);
+            // A Mac's GPU decoder decodes on the graphics queue of a device of its own.
+            rows.when(s.pyrowave_decoder == crate::config::PyroWaveDecoder::Gpu && !cfg!(target_os = "macos"));
             setting_row(ui, s, &mut rows, &["pyrowave_async_compute"], "Decode PyroWave on a compute queue", "For comparing. Lets a PyroWave decode overlap the drawing of the previous frame on GPUs that can; it showed no clear gain on a Radeon 780M laptop. Leave it off.", |ui, s| {
                 toggle(ui, &mut s.pyrowave_async_compute)
             });
