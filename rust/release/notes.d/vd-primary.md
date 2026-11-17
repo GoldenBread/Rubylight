@@ -1,0 +1,3 @@
+# Virtual display stays the main screen
+- **The virtual display stays the main screen with "Extend — make virtual display primary".** When a game or Windows moved the main screen back to your monitor, every later stream from that device started that way and the setting looked ignored. The stream now puts the virtual display back as the main screen while it runs, and its card says so if Windows refuses. Devices that kept the wrong layout follow your setting again.
+- **The device page says when a stream set its layout.** Next to **Virtual display layout**, a learned layout reads "Learned from your last stream: …", and **Clear** makes the device follow the host setting again.
