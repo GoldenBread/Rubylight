@@ -504,7 +504,7 @@ fn file_transfer_given_by_a_test_build_is_taken_back_once() {
     s.clients[0].perm |= FILE_BITS;
     s.save(&p).unwrap();
     let saved = load_json(&p, Value::Null).unwrap();
-    assert_eq!(saved["root"]["rubylight_state_version"], 1);
+    assert_eq!(saved["root"]["rubylight_state_version"], 2);
     let reloaded = PairedState::load(&p).unwrap();
     assert_eq!(perm_of(&reloaded, "Tested"), 0x071f1f00);
     // A later version's file is left as it is.
@@ -514,6 +514,75 @@ fn file_transfer_given_by_a_test_build_is_taken_back_once() {
     let s = PairedState::load(&p).unwrap();
     assert_eq!(perm_of(&s, "Tested"), 0x071f1f00);
     assert_eq!(s.document["root"]["rubylight_state_version"], 7);
+}
+#[test]
+fn a_learned_demotion_from_extended_primary_is_dropped_once() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("state.json");
+    let cert = |name: &str| {
+        let identity = crypto::Identity::generate().unwrap();
+        (name.to_owned(), identity.certificate)
+    };
+    let (demoted, demoted_cert) = cert("Demoted");
+    let (only, only_cert) = cert("Only on 2");
+    let (picked, picked_cert) = cert("Picked");
+    let (host, host_cert) = cert("Host");
+    write_json(
+        &p,
+        &json!({"root":{"named_devices":[
+            {"name":demoted,"uuid":"a","cert":demoted_cert,
+             "virtual_display_layout":"extended",
+             "virtual_display_layout_learned_over":"extended_primary"},
+            {"name":only,"uuid":"b","cert":only_cert,
+             "virtual_display_layout":"exclusive",
+             "virtual_display_layout_learned_over":"extended_primary"},
+            {"name":picked,"uuid":"c","cert":picked_cert,
+             "virtual_display_layout":"extended",
+             "virtual_display_layout_learned_over":"extended_primary",
+             "virtual_display_layout_set_by_user":true},
+            {"name":host,"uuid":"d","cert":host_cert}
+        ]}}),
+    )
+    .unwrap();
+    let s = PairedState::load(&p).unwrap();
+    let extra = |name: &str| {
+        s.clients
+            .iter()
+            .find(|c| c.name == name)
+            .unwrap()
+            .extra
+            .clone()
+    };
+    // Issue #33: Windows moved the primary back during an extended_primary stream; that is
+    // not the user's layout, so the device follows the host setting again.
+    assert!(!extra(&demoted).contains_key("virtual_display_layout"));
+    assert!(!extra(&demoted).contains_key(LEARNED_OVER));
+    // The user's "Show only on 2" from the same stream is theirs and stays.
+    assert_eq!(extra(&only)["virtual_display_layout"], json!("exclusive"));
+    assert_eq!(extra(&only)[LEARNED_OVER], json!("extended_primary"));
+    // A layout picked in the console stays, and a device with none stays without one.
+    assert_eq!(extra(&picked)["virtual_display_layout"], json!("extended"));
+    assert!(!extra(&host).contains_key("virtual_display_layout"));
+    // The file is written with the version, and a later load leaves it alone.
+    s.save(&p).unwrap();
+    let reloaded = PairedState::load(&p).unwrap();
+    assert!(
+        reloaded
+            .clients
+            .iter()
+            .all(|c| c.name != demoted || !c.extra.contains_key("virtual_display_layout"))
+    );
+    // A later version's file is not migrated.
+    let mut later = load_json(&p, Value::Null).unwrap();
+    later["root"]["rubylight_state_version"] = json!(7);
+    later["root"]["named_devices"][0]["virtual_display_layout"] = json!("extended");
+    later["root"]["named_devices"][0][LEARNED_OVER] = json!("extended_primary");
+    write_json(&p, &later).unwrap();
+    let s = PairedState::load(&p).unwrap();
+    assert_eq!(
+        s.clients[0].extra["virtual_display_layout"],
+        json!("extended")
+    );
 }
 fn console_client(n: u8, username: &str) -> Client {
     let id = format!("{n:02x}").repeat(16);

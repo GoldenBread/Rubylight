@@ -441,12 +441,9 @@ pub(crate) fn launch_display_layout<'a>(
     layout
 }
 
-/// The device setting naming the app or host layout a learned device layout replaced.
-pub(crate) const LEARNED_OVER: &str = "virtual_display_layout_learned_over";
-/// Set in the device settings when the user picked the device's layout in the
-/// console. Only it protects a layout from being learned over: a layout saved
-/// before it existed, or by a stream, stays learnable.
-pub(crate) const SET_BY_USER: &str = "virtual_display_layout_set_by_user";
+/// The device setting naming the app or host layout a learned device layout replaced, and the
+/// one marking a layout the user picked (both in `butterpollo_core::state`).
+pub(crate) use butterpollo_core::state::{LEARNED_OVER, SET_BY_USER};
 /// Whether the device's own virtual display layout is one the user set rather
 /// than one learned from a stream.
 fn has_user_layout(client: &butterpollo_core::state::Client) -> bool {
