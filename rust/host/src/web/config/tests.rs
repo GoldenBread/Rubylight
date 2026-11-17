@@ -615,6 +615,32 @@ fn a_key_store_failure_after_a_saved_configuration_is_a_warning() {
     assert!(file.is_dir(), "the key was not stored");
 }
 
+/// An emptied key that cannot be removed from disk is still in use; say that
+/// rather than claim the settings did not save.
+#[test]
+fn a_key_removal_failure_says_the_key_is_still_in_use() {
+    let fixture = Fixture::new();
+    let host = &fixture.host;
+    let file = host
+        .directory
+        .join("credentials")
+        .join("steamgriddb_api_key");
+    std::fs::create_dir(&file).unwrap();
+    let saved = handle(
+        host,
+        "PATCH",
+        "/api/config",
+        &json!({"steamgriddb_api_key": "", "sunshine_name": "Den"}),
+    )
+    .unwrap();
+    assert_eq!(saved["status"], true);
+    let warning = saved["warning"].as_str().expect("a key warning");
+    assert!(warning.contains("could not be removed"), "{warning}");
+    assert!(warning.contains("still in use"), "{warning}");
+    assert_eq!(host.config.read().unwrap().get("sunshine_name", ""), "Den");
+    assert!(file.is_dir(), "the key file could not be removed");
+}
+
 #[test]
 fn any_save_moves_a_typed_steamgriddb_key_and_any_key_save_ends_a_refusal() {
     let fixture = Fixture::new();

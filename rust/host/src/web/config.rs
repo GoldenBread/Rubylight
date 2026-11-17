@@ -84,8 +84,11 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
             if let Some(key) = &steamgriddb_key {
                 match crate::steamgriddb::store_key(h, Some(key)) {
                     Ok(()) => crate::steamgriddb::key_changed(h),
+                    Err(error) if key.is_empty() => warnings.push(format!(
+                        "The settings were saved, but the SteamGridDB API key could not be removed ({error:#}); it is still in use."
+                    )),
                     Err(error) => warnings.push(format!(
-                        "The settings were saved, but the SteamGridDB API key was not ({error:#}). Enter it again."
+                        "The settings were saved, but the SteamGridDB API key was not stored ({error:#}). Enter it again."
                     )),
                 }
             }
