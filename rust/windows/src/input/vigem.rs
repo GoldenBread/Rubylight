@@ -666,10 +666,17 @@ impl Client {
         Ok((target, &self.submitted))
     }
     pub(super) fn plug(&mut self, slot: u32, profile: u16) -> Result<()> {
-        // One pad per slot: the old target leaves before the new one can take
-        // a player index beside it.
-        if let Some(mut previous) = self.targets.remove(&slot) {
-            previous.unplug()?;
+        // One pad per slot: try to take the old target out before the new one
+        // can take a player index beside it. A refused unplug is the driver's
+        // to answer later; replacing the pad must still go on.
+        if let Some(mut previous) = self.targets.remove(&slot)
+            && let Err(error) = previous.unplug()
+        {
+            tracing::warn!(
+                %error,
+                slot,
+                "could not unplug the previous ViGEm target; replacing it anyway"
+            );
         }
         let kind = if profile == VIGEM_DS4 {
             Kind::Ds4

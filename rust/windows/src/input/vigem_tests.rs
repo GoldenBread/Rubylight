@@ -54,8 +54,13 @@ fn a_slot_is_emptied_before_a_new_target_is_plugged() -> Result<()> {
             ds4: None,
         },
     );
-    // The detached bus refuses the plug, after the old target has gone.
-    assert!(client.plug(0, VIGEM_X360).is_err());
+    // The old target's unplug fails on the invalid handle, which must not stop
+    // the replacement: the detached bus then refuses the plug itself.
+    let error = client.plug(0, VIGEM_X360).unwrap_err();
+    assert!(
+        format!("{error:#}").contains("could not plug ViGEm target"),
+        "{error:#}"
+    );
     assert!(
         !client.targets.contains_key(&0),
         "the failed plug left the old target in the way"
