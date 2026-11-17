@@ -1,88 +1,148 @@
 # Rubylight documentation
 
-[Rubylight](../README.md) · [Download 4.8.0](https://github.com/RamazanKara/Rubylight/releases/tag/v4.8.0) · [Release notes](../rust/RELEASE_NOTES.md)
+[Rubylight](../README.md) · [Download](https://github.com/RamazanKara/Rubylight/releases/latest) · [Release notes](../rust/RELEASE_NOTES.md) · [Nightjar docs](../client/docs/index.md)
 
-Rubylight is a Moonlight-compatible game-streaming host for Windows 10 and 11 PCs with an AMD Radeon GPU that has a working AMF encoder or an NVIDIA GPU with NVENC ([NVENC](nvenc.md)). PCs with only Intel graphics use [Rubylight 2.6.x](https://github.com/RamazanKara/Rubylight/releases/tag/v2.6.0).
+Rubylight streams games from a Windows 10 or 11 PC to Moonlight-compatible devices: phones, tablets, TVs, handhelds, other PCs and browsers. It is built for AMD Radeon GPUs with a working AMF encoder and NVIDIA GPUs with NVENC. PCs with only Intel graphics use [Rubylight 2.6.x](https://github.com/RamazanKara/Rubylight/releases/tag/v2.6.0).
 
-## Start here
+Find your task below. Each guide starts with what to do and links to the [configuration reference](configuration.md) for every setting it names.
+
+<a id="start-here"></a>
+
+## Get started
 
 **First stream:** [install the host](getting-started.md#install-or-run-portable), [open the console](getting-started.md#open-the-console), [pair a device](getting-started.md#pair-a-device-and-start-desktop), then start **Desktop** at 1080p60 in SDR. Already running another host? Read [Coming from another host](getting-started.md#coming-from-another-host) first.
 
-| Guide | Contents |
+| I want to | Read |
 | --- | --- |
-| [Getting started](getting-started.md) | Requirements, the installer and the portable package, moving from another host, the console, pairing, choosing a stream format, importing a profile and upgrading. |
-| [Troubleshooting](troubleshooting.md) | Pairing, black pictures, HDR, audio, controllers, smoothness, updates, and what to include in a report. |
+| Install Rubylight, or run it without installing | [Install or run portable](getting-started.md#install-or-run-portable) |
+| Move from another Moonlight host, or keep it and try Rubylight beside it | [Coming from another host](getting-started.md#coming-from-another-host) · [Install alongside](getting-started.md#keep-another-host-and-install-alongside) · [Import a profile](getting-started.md#bring-an-existing-profile) |
+| Pair my first device | [Pair a device and start Desktop](getting-started.md#pair-a-device-and-start-desktop) |
+| Pick a client for my device | [Clients](features.md#clients) · [Nightjar](../client/docs/index.md) |
+| Update Rubylight | [Upgrading](getting-started.md#upgrading) · [Updates](configuration.md#updates) |
 
-## Guides
+## Everyday use
 
-| Guide | Contents |
+The console, the game library, your devices and the PC's power. Start with the [everyday use guide](everyday-use.md).
+
+| I want to | Read |
 | --- | --- |
-| [Configuration](configuration.md) | Every feature's settings by topic, then every configuration key with its default. |
-| [Features](features.md) | The complete feature set, by area. |
-| [Frame Warp](frame-warp.md) | Camera turns on the client's next refresh: what the host learns per game, the HUD it keeps in place, and the measurements. |
-| [Real VRR](../client/docs/real-vrr.md) | On a VRR screen, Nightjar shows each frame at the game's own present time: what the host stamps, how the client paces, and the measurements. |
-| [Co-op and background streaming](nucleus-coop.md) | Several players on one PC, each with their own picture, sound and controller, and play while someone else uses the PC. |
-| [WebRTC server](webrtc.md) | Streaming to browsers and Samsung TVs, paired with a PIN. |
-| [Guests in the browser](browser-guests.md) | Guest links for friends, with access controls. |
-| [Guests from other devices](multiclient.md) | A second paired device joins the game another device plays, with approval, permissions and kick. |
-| [USB forwarding](usb-forwarding.md) | Using a device's USB devices on the PC. |
-| [Microphone](microphone.md) | The client's microphone on the PC. |
-| [DualSense USB audio and haptics](dualsense-haptics.md) | DualSense and Steam Deck audio and haptics over USB. |
-| [Virtual mouse and touchpad](virtual-mouse.md) | A USB mouse games read like a real one, a device's touchpad as Windows' precision touchpad, and how they compare with injection. |
-| [Remote connection route](network-path.md) | Checking the route a remote client takes, such as Tailscale. |
-| [Play over the internet](internet-play.md) | Reaching the PC from outside without port forwarding: PCP, NAT-PMP, STUN and hole punching. |
+| Find my way around the console | [The console](everyday-use.md#the-console) · [How configuration works](configuration.md#how-configuration-works) |
+| Add games from Steam, Playnite or other launchers, or my own apps | [Games and apps](everyday-use.md#games-and-apps) · [Game library](features.md#game-library) |
+| Leave a game running, end a stream or close the game | [Start, leave and end a game](everyday-use.md#start-leave-and-end-a-game) · [Session actions](configuration.md#session-actions) |
+| Open a menu inside the stream from any client | [Couch menu](configuration.md#couch-menu) |
+| Decide what each device may do | [Devices and permissions](everyday-use.md#devices-and-permissions) · [Host control](configuration.md#host-control-for-a-device) |
+| Keep each device's own in-game settings, or add frame generation to a game | [Managed game files](configuration.md#managed-game-files) · [Neural Rendering](configuration.md#neural-rendering) |
+| Wake or sleep the PC from a device | [Sleep and wake](everyday-use.md#sleep-and-wake) |
+| Share the clipboard, files, folders or USB devices | [Sharing with a device](everyday-use.md#sharing-with-a-device) · [USB forwarding](usb-forwarding.md) |
+| Back up or move my settings | [Settings backup and restore](configuration.md#settings-backup-and-restore) |
+| Let Nightjar or a script control the PC | [Host control, session actions and Radeon settings](configuration.md#host-control-session-actions-and-radeon-settings) · [Webhooks](webhooks.md) |
 
-## By task
+## Play anywhere
 
-| Task | Read |
+Streaming from outside your home. Start with the [play anywhere guide](play-anywhere.md).
+
+| I want to | Read |
 | --- | --- |
-| Move from another host, try Rubylight beside it, or update the host | [Coming from another host](getting-started.md#coming-from-another-host) · [Import a profile](getting-started.md#bring-an-existing-profile) · [Install alongside](getting-started.md#keep-another-host-and-install-alongside) · [Upgrading](getting-started.md#upgrading) |
-| Use Frame Warp with Nightjar | [Frame Warp](frame-warp.md) |
-| Keep a VRR screen on the game's rhythm | [Real VRR](../client/docs/real-vrr.md) |
+| Play away from home with the least setup | [Tailscale or another VPN](play-anywhere.md#tailscale-or-another-vpn) |
+| Reach the PC without a VPN | [Automatic port forwarding](play-anywhere.md#automatic-port-forwarding) · [Play over the internet](play-anywhere.md#play-over-the-internet) |
+| Understand how a device finds the PC over the internet | [Play over the internet: how it works](internet-play.md) |
+| Keep a phone's stream when it leaves Wi-Fi | [Roaming](configuration.md#roaming) |
+| Fix a device that cannot connect from outside | [Clients outside your network cannot connect](troubleshooting.md#clients-outside-your-network-cannot-connect) |
+
+## Play together
+
+Friends on their own devices or in a browser, split-screen co-op, and playing while someone else uses the PC. Start with the [play together guide](play-together.md).
+
+| I want to | Read |
+| --- | --- |
+| Let a friend's paired device join the game I am playing | [Guests from other devices](multiclient.md) |
+| Invite a friend who has no app, through a link | [Guests in the browser](browser-guests.md) |
+| Give every player their own picture in a split-screen game | [Co-op with Nucleus Co-op](nucleus-coop.md) |
+| Play while someone else uses the PC | [Background streams](nucleus-coop.md#background-streams) · [Background streaming](configuration.md#background-streaming) |
+| Stream to a browser or a Samsung TV, or play from a TV browser | [WebRTC server](webrtc.md) · [Play in a TV browser](webrtc.md#play-in-a-tv-browser) |
+| Move my game to another of my devices, or stream a second screen | [Your own devices](play-together.md#your-own-devices) · [Displays](features.md#displays) |
+
+## Picture and smoothness
+
+Codecs, HDR, displays, frame pacing and an unsteady network. Start with the [picture and smoothness guide](picture-and-smoothness.md).
+
+| I want to | Read |
+| --- | --- |
 | Choose a codec, turn on HDR or use PyroWave | [Choose your stream format](getting-started.md#choose-your-stream-format) · [Capture and video](configuration.md#capture-and-video) |
-| Stream Dolby Vision, HDR10+ or HLG to a TV | [Capture and video](configuration.md#capture-and-video) |
-| Send PCM or Dolby Digital to a receiver, or use 7.1.4, night mode or headphone surround | [PCM and Dolby Digital audio](configuration.md#pcm-and-dolby-digital-audio) · [Surround, night mode and headphone surround](configuration.md#surround-night-mode-and-headphone-surround) |
-| Stream only the game's sound | [Game-only audio](configuration.md#game-only-audio) |
-| Give each device its own display, or cap a game's frame rate | [Displays and RTSS](configuration.md#displays-and-rtss) · [Settings for one app or device](configuration.md#settings-for-one-app-or-device) |
-| Keep each device's own in-game settings, or add Neural Rendering to a game | [Managed game files](configuration.md#managed-game-files) · [Neural Rendering](configuration.md#neural-rendering) |
-| Move a running game to another device, share it, or stream a second screen | [Displays](features.md#displays) · [Control from a client](features.md#control-from-a-client) |
-| Keep the stream steady on a slow or lossy link, or pick a latency or quality preset | [Link-rate adaptation](configuration.md#lower-bitrate-when-the-link-cannot-carry-it) · [Stream presets](configuration.md#stream-presets) |
-| Let a device play while someone else uses the PC, or play together on one PC | [Background streaming](configuration.md#background-streaming) · [Co-op and background streaming](nucleus-coop.md) · [Guests from other devices](multiclient.md) |
-| Stream from an NVIDIA GPU | [NVENC](nvenc.md) · [NVIDIA NVENC settings](configuration.md#nvidia-nvenc) |
-| Let a device close games or change Radeon or NVIDIA driver settings | [Host control](configuration.md#host-control-for-a-device) · [Session actions](configuration.md#session-actions) · [Radeon settings with restore](configuration.md#radeon-settings-with-restore) · [Radeon settings per game](configuration.md#radeon-settings-per-game) |
-| Set up a controller or use the client's microphone | [Controllers](configuration.md#controllers) · [DualSense USB audio and haptics](dualsense-haptics.md) · [Microphone](microphone.md) |
-| Open a menu inside the stream | [Couch menu](configuration.md#couch-menu) |
-| Share the clipboard, files, folders or USB devices with a device | [Clipboard, files and USB](configuration.md#clipboard-files-and-usb) · [USB forwarding](usb-forwarding.md) |
-| Stream to a browser or a Samsung TV, play from a TV or console browser, or invite friends | [WebRTC server](webrtc.md) · [Play in a TV browser](webrtc.md#play-in-a-tv-browser) · [Guests in the browser](browser-guests.md) |
+| Stream Dolby Vision, HDR10+ or HLG to a TV | [Codecs, full chroma and HDR](configuration.md#codecs-full-chroma-and-hdr) |
+| Pick a latency or quality preset | [Stream presets](configuration.md#stream-presets) |
+| Give each device its own display, or keep my monitors on | [Displays](picture-and-smoothness.md#displays) · [Displays and RTSS](configuration.md#displays-and-rtss) |
+| Keep a VRR screen on the game's rhythm | [Real VRR](../client/docs/real-vrr.md) |
+| See camera turns sooner with Nightjar | [Frame Warp](frame-warp.md) |
+| Cap a game's frame rate | [Displays and RTSS](configuration.md#displays-and-rtss) · [Settings for one app or device](configuration.md#settings-for-one-app-or-device) |
+| Keep the stream steady on a slow or lossy link | [An unsteady network](picture-and-smoothness.md#an-unsteady-network) · [Link-rate adaptation](configuration.md#lower-bitrate-when-the-link-cannot-carry-it) |
+| Send PCM or Dolby Digital to a receiver, use 7.1.4, or stream only the game's sound | [PCM and Dolby Digital audio](configuration.md#pcm-and-dolby-digital-audio) · [Surround, night mode and headphone surround](configuration.md#surround-night-mode-and-headphone-surround) · [Game-only audio](configuration.md#game-only-audio) |
+| Stream from an NVIDIA GPU, or use RTX HDR | [NVENC](nvenc.md) · [RTX HDR and RTX Video enhancement](configuration.md#rtx-hdr-and-rtx-video-enhancement) |
+| Change Radeon or NVIDIA driver settings for a game | [Radeon settings per game](configuration.md#radeon-settings-per-game) · [Radeon settings with restore](configuration.md#radeon-settings-with-restore) |
+
+## Controllers
+
+Controllers, haptics, keyboard, mouse, touch and the microphone. Start with the [controllers guide](controllers.md).
+
+| I want to | Read |
+| --- | --- |
+| Choose the controller games see | [Controller types](controllers.md#controller-types) · [Controllers](configuration.md#controllers) |
+| Get DualSense haptics, speaker and microphone, or Steam Deck trackpads and back grips | [DualSense USB audio and haptics](dualsense-haptics.md) |
+| Use a mouse games read like a real one, or a touchpad's gestures | [Virtual mouse and touchpad](virtual-mouse.md) |
+| Use a controller's motion in an emulator | [Motion server for emulators](configuration.md#motion-server-for-emulators-dsu) |
 | Launch Steam games from a Steam Deck with MoonDeck | [MoonDeck](configuration.md#moondeck) |
-| Check a remote Tailscale route | [Remote connection route](network-path.md) |
+| Talk through the device's microphone | [Microphone](microphone.md) |
+| Use a USB device plugged into my device | [USB forwarding](usb-forwarding.md) |
+
+## Troubleshooting
+
+[Troubleshooting](troubleshooting.md) lists symptoms with their cause and fix. The console's **Help** page reads the host log for you (**Log analysis**) and builds a support bundle.
+
+| Problem | Read |
+| --- | --- |
+| A device cannot find or pair with the PC | [Moonlight cannot find or pair with the PC](troubleshooting.md#moonlight-cannot-find-or-pair-with-the-pc) |
+| Black picture or no display | [Black picture, no display, or WGC fails](troubleshooting.md#black-picture-no-display-or-wgc-fails) |
+| The stream stutters, freezes or drops | [The stream breaks up, drops or times out on the network](troubleshooting.md#the-stream-breaks-up-drops-or-times-out-on-the-network) · [Low latency is reported, but motion still stutters](troubleshooting.md#low-latency-is-reported-but-motion-still-stutters) |
+| HDR looks wrong | [HDR troubleshooting](troubleshooting.md#hdr-looks-washed-out-too-bright-or-different-between-clients) |
+| A controller does nothing | [A controller or other input does nothing](troubleshooting.md#a-controller-or-other-input-does-nothing) |
+| Monitors stay off after a stream | [Monitors stay on, or the display layout does not return](troubleshooting.md#monitors-stay-on-or-the-display-layout-does-not-return) |
 | Report a problem | [Logs and a useful report](troubleshooting.md#logs-and-a-useful-report) |
 
-## Performance and hardware
+## Reference
 
-| Document | Contents |
+| Page | Contents |
 | --- | --- |
+| [Configuration](configuration.md) | Every feature's settings by topic, then every setting in the console with its configuration key and default. |
+| [Features](features.md) | Everything Rubylight does, by area, with a link to where each is set up. |
+| [NVENC](nvenc.md) | The NVIDIA encoder, feature by feature next to AMF. |
+| [Privacy](privacy.md) | Every connection the host makes, what it sends, and how to turn it off. |
 | [Performance](performance.md) | Measured results with their conditions, what each metric means, and how to measure your own setup. |
-| [Measurement record](../rust/PERFORMANCE.md) | Dated fixtures, raw results, reverted experiments and reproduction steps. |
 | [Hardware matrix](hardware-matrix.md) | What has been tested on each GPU generation, Windows version, feature and client, with the evidence. |
-| [NVENC](nvenc.md) | The NVIDIA encoder and how it compares with AMF, feature by feature. |
+| [Measurement record](../rust/PERFORMANCE.md) | Dated fixtures, raw results, reverted experiments and reproduction steps. |
+| [Release notes](../rust/RELEASE_NOTES.md) | Every release, with what was tested. |
 
-## Articles
+<a id="guides"></a><a id="by-task"></a><a id="performance-and-hardware"></a>
 
-- [Racing the beam with PyroWave](beam-racing-pyrowave.md): how Rubylight and Nightjar draw a frame before all of it has arrived, with our measurements.
+## For developers
 
-## Reference for integrators and client authors
+<a id="reference-for-integrators-and-client-authors"></a>
+
+**Integrations and clients**
 
 | Reference | Contents |
 | --- | --- |
 | [HTTP API](api.md) | The console API: authentication, CSRF, permissions and endpoints. |
-| [Native API v1](native-api.md) | The paired-client API used by Nightjar: capabilities, library, session actions, Radeon and NVIDIA driver settings, files and USB. |
+| [Native API v1](native-api.md) | The paired-client API Nightjar uses: capabilities, library, session actions, driver settings, files and USB. |
 | [Control messages](control-messages.md) | Rubylight's client-to-host control messages and how a client discovers them. |
 | [Hardware metrics](hardware-metrics.md) | CPU and GPU readings for client overlays. |
+| [Remote connection route](network-path.md) | The endpoint that tells a client whether its Tailscale route is direct or relayed. |
 | [Webhooks](webhooks.md) | Signed event notifications to your own services. |
 | [Timing record](timing-record.md) | The per-frame CSV record of capture, encode, send and client times. |
+| WebRTC, microphone and Frame Warp protocols | [WebRTC for client authors](webrtc.md#for-client-authors) · [Microphone for client developers](microphone.md#for-client-developers) · [Frame Warp wire formats](frame-warp.md#wire-formats) |
 
-## Building and internals
+<a id="building-and-internals"></a>
+
+**Building and internals**
 
 | Document | Contents |
 | --- | --- |
@@ -93,9 +153,15 @@ Rubylight is a Moonlight-compatible game-streaming host for Windows 10 and 11 PC
 | [Release signing](code-signing.md) | How the maintainer signs each release and what it signs. |
 | [Third-party components](../rust/THIRD_PARTY.md) | Codec SDKs, drivers and their licences. |
 
+<a id="articles"></a>
+
+**Articles**
+
+- [Racing the beam with PyroWave](beam-racing-pyrowave.md): how Rubylight and Nightjar draw a frame before all of it has arrived.
+
 ## Engineering notes
 
-Working documents from the project's development: plans, designs, investigations and audits. Each records the state on the date it was written and is not maintained as user documentation; where a note and a guide above disagree, the guide is current.
+Working documents from the project's development: plans, designs, investigations and audits. Each records the state on the date it was written and is not maintained as user documentation; where a note and a guide disagree, the guide is current.
 
 - Status: [the status table](status.md), the living record of each feature. History: [Rubylight 3.0 plan](rubylight-3.0-plan.md).
 - Designs: [couch menu](couch-menu-design.md), [encoder focus](encoder-focus-design.md), [Wake-on-LAN, sleep and couch audio](wake-and-audio-design.md), [WebRTC server](webrtc-design.md), [slice delivery](b2-slice-delivery.md).
@@ -108,6 +174,6 @@ Working documents from the project's development: plans, designs, investigations
 | --- | --- |
 | [Privacy](privacy.md) | Every connection the host makes, what it sends, and how to turn it off. |
 | [Code signing policy](code-signing-policy.md) | Who signs releases and what is signed. |
-| [Release notes](../rust/RELEASE_NOTES.md) | Every release, with what was tested. |
 | [Project history](butterpollo-cpp.md) | The C++ fork that preceded the Rust host, and the [archived C++ references](https://github.com/RamazanKara/Rubylight/blob/2.0.0-rc.23/docs/legacy/README.md). |
 | [Contributors](../CONTRIBUTORS.md) | Everyone who helped, with their GitHub names. |
+| [License](../LICENSE) and [credits](../NOTICE) | GPL-3.0-only, and the projects Rubylight builds on. |
