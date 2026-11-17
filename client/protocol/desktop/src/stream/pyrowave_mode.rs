@@ -162,10 +162,17 @@ pub fn gpu_probe(device: *mut std::ffi::c_void, ten_bit: bool) -> Result<(), Str
 
 /// The `gpu` mode's requirements on a Mac: the bundled Vulkan driver, a device of the decoder's own
 /// on it and the SDK decoder there (`pyrowave_sdk::probe`); the planes the decoder reads back are
-/// drawn with the Metal plane shader the processor's software pictures use already.
+/// drawn with the Metal plane shader the processor's software pictures use already, which is built
+/// here whenever the caller has the renderer's device.
 #[cfg(target_os = "macos")]
-pub fn gpu_probe(_device: *mut std::ffi::c_void, ten_bit: bool) -> Result<(), String> {
-    super::pyrowave_sdk::probe(ten_bit)
+pub fn gpu_probe(device: *mut std::ffi::c_void, ten_bit: bool) -> Result<(), String> {
+    super::pyrowave_sdk::probe(ten_bit)?;
+    if device.is_null() {
+        // `this_mac` checks before a renderer exists; the launch's own probe passes the device.
+        return Ok(());
+    }
+    // SAFETY: A live device pointer from the renderer; shader creation is thread-safe in SDL.
+    unsafe { super::planes_gpu::PlanesPass::compiles(device.cast(), ten_bit) }
 }
 
 /// The settings probes' results by format, None while one runs, and the threads that run them.
