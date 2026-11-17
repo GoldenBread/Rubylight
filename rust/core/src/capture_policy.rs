@@ -33,12 +33,16 @@ pub enum InFront {
     Covering,
 }
 
+/// The Capture method values that name a backend, and are therefore the user's
+/// own choice: every other value, unset or unrecognised, is Automatic.
+const EXPLICIT_METHODS: [&str; 6] = ["wgc", "wgcc", "ddx", "dxgi", "idd-push", "amd"];
+
 /// Whether the Capture method setting lets the host choose the backend: Automatic, which
 /// an unset or unrecognised value stands in for (as the frame limiter resolves them). An
 /// explicit method is the user's, including for the one-reconnect Windows Graphics
 /// Capture against Desktop Duplication comparison, and is never overridden.
 pub fn automatic_capture(capture: &str) -> bool {
-    matches!(capture.trim().to_ascii_lowercase().as_str(), "" | "auto")
+    !EXPLICIT_METHODS.contains(&capture.trim().to_ascii_lowercase().as_str())
 }
 
 /// Whether a display's stream should move from Windows Graphics Capture to Desktop

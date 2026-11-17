@@ -48,12 +48,23 @@ fn only_an_automatic_stream_moves_to_duplication_for_an_exclusive_fullscreen_app
             "{explicit}"
         );
     }
-    for automatic in ["", "auto", " AUTO ", "Auto"] {
+    for automatic in ["", "auto", " AUTO ", "Auto", "other", "WGCX"] {
         assert!(automatic_capture(automatic), "{automatic}");
     }
-    for explicit in ["wgc", "wgcc", "ddx", "dxgi", "idd-push", "amd", "other"] {
+    for explicit in ["wgc", "wgcc", "ddx", "dxgi", "idd-push", "amd"] {
         assert!(!automatic_capture(explicit), "{explicit}");
     }
+    // An unrecognised value is Automatic to the frame limiter, which opens the
+    // normal WGC path: the fullscreen fallback follows it rather than treating
+    // it as a method the user named.
+    assert!(switches(
+        "other",
+        "wgc",
+        true,
+        stalled,
+        InFront::Covering,
+        true
+    ));
     // A budget for a mode change, a busy GPU or a game leaving fullscreen.
     assert!(!switches(
         "auto",
