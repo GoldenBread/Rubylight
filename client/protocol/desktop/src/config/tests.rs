@@ -704,6 +704,18 @@ fn the_gpu_need_names_hdr_only_when_nothing_else_needs_the_renderer() {
 }
 
 #[test]
+fn temporal_upscaling_is_stored_as_sgsr2_and_takes_the_sharpness() {
+    let saved = serde_json::to_string(&Settings { upscaling: Upscaling::Sgsr2, ..Settings::default() }).unwrap();
+    assert!(saved.contains("\"upscaling\":\"Sgsr2\""), "{saved}");
+    let back: Settings = serde_json::from_str(&saved).unwrap();
+    assert_eq!(back.upscaling, Upscaling::Sgsr2);
+    assert!(Upscaling::Sgsr2.is_shader(), "the sharpness row and the shader path");
+    assert_eq!(Upscaling::Sgsr2.label(), "Temporal (SGSR 2)");
+    assert_ne!(Upscaling::default(), Upscaling::Sgsr2, "never the default");
+    assert_eq!(Settings { upscaling: Upscaling::Sgsr2, ..Settings::default() }.gpu_need(), Some("upscaling"));
+}
+
+#[test]
 fn files_round_trip() {
     let dir = std::env::temp_dir().join(format!("nightjar-config-{}", std::process::id()));
     let store = Store::at(dir.clone()).unwrap();

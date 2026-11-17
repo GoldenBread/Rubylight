@@ -815,6 +815,14 @@ impl Streaming {
         None
     }
 
+    /// Temporal upscaling was refused or failed: SGSR 1 stands in for the rest of the stream,
+    /// said in the log, once in a toast and in the stats line.
+    fn temporal_unavailable(&mut self, reason: &str) {
+        eprintln!("nightjar: temporal upscaling is unavailable: {reason}; the stream continues with SGSR 1");
+        self.temporal_failed = true;
+        self.show_toast(tr("Temporal upscaling is unavailable; using SGSR 1."));
+    }
+
     /// The stats line for the upscaling setting.
     pub(super) fn upscaling_line(&self) -> String {
         if self.settings.upscaling == config::Upscaling::Ai {
@@ -826,7 +834,7 @@ impl Streaming {
         }
         if self.upscale_failed { "Bilinear (GPU unavailable)".into() }
         else if self.texture.is_hdr() { "Bilinear (HDR)".into() }
-        else if self.upscaler.is_some() { self.settings.upscaling.label().into() }
+        else if self.upscaler.is_some() { upscale::running_label(self.settings.upscaling, self.temporal_failed).into() }
         else { "Bilinear (no upscale needed)".into() }
     }
 
@@ -922,7 +930,8 @@ impl Streaming {
         self.exit = Some(Exit::Ended(Some(tr("PyroWave pictures cannot be shown on this device. Choose another Video codec in Settings, then start the stream again.").to_owned())));
     }
 
-    /// Draws the texture and the overlay and presents. `probe` reads the beam around the present;
+    /// Draws the texture and the overlay and presents. `probe`, set for a newly decoded picture
+    /// and not for a redraw, reads the beam around the present and advances temporal upscaling;
     /// `due_us` is when the picture was due, for the wait's budget against the next one.
     fn render_flip(&mut self, renderer: *mut SDL_Renderer, draw_overlay: &mut impl FnMut(&mut Self, *mut SDL_Renderer), probe: bool, due_us: Option<u64>) -> Flipped {
         // SAFETY: drawing on a live renderer.
@@ -954,13 +963,36 @@ impl Streaming {
                 } else if use_upscaler {
                     // The upscalers read the picture as SDL would draw it.
                     texture = self.texture.sdl_texture(renderer);
-                    if !self.upscaler.as_ref().is_some_and(|u| u.matches(input, output, self.settings.upscaling)) {
-                        self.upscaler = upscale::Upscaler::new(renderer, input, output, self.settings.upscaling);
-                    }
                     // Frame Warp shifts the picture on its way into the upscaler, in the picture's own
                     // pixels; the upscaled picture is drawn as it is.
                     let warp = std::mem::take(&mut self.texture.warp);
-                    match self.upscaler.as_ref().and_then(|u| u.draw_warped(renderer, texture, self.settings.upscale_sharpness, &warp, &mut self.texture.warp_mesh)) {
+                    // Temporal upscaling that cannot be made or fails to draw gives way to SGSR 1
+                    // for the rest of the stream, and draws this picture with it.
+                    let upscaled = loop {
+                        let mode = upscale::effective_mode(self.settings.upscaling, self.temporal_failed);
+                        let mut refused = None;
+                        if !self.upscaler.as_ref().is_some_and(|u| u.matches(input, output, mode)) {
+                            self.upscaler = upscale::Upscaler::new(renderer, input, output, mode).map_err(|e| refused = Some(e)).ok();
+                        }
+                        let drawn = match self.upscaler.as_mut() {
+                            // `probe` is set exactly for a newly decoded picture (both callers); a repeat or
+                            // a Frame Warp redraw leaves temporal upscaling's history as it is.
+                            Some(u) => u.draw_warped(renderer, texture, self.settings.upscale_sharpness, &warp, &mut self.texture.warp_mesh, probe),
+                            None => Err(refused.unwrap_or_default()),
+                        };
+                        match drawn {
+                            Ok(upscaled) => break Some(upscaled),
+                            Err(reason) if mode == config::Upscaling::Sgsr2 => {
+                                self.upscaler = None;
+                                self.temporal_unavailable(&reason);
+                            }
+                            Err(reason) => {
+                                eprintln!("nightjar: GPU upscaling failed: {reason}; the stream continues with bilinear scaling");
+                                break None;
+                            }
+                        }
+                    };
+                    match upscaled {
                         Some(upscaled) => texture = upscaled,
                         None => {
                             self.texture.warp = warp;

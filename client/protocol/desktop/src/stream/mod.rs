@@ -36,6 +36,7 @@ mod touchpad;
 pub(crate) use present::macos_video_check::run as check_metal;
 
 mod shader;
+mod temporal;
 mod upscale;
 pub mod frame_warp;
 pub mod enhance;
@@ -497,6 +498,8 @@ pub struct Streaming {
     #[cfg(windows)]
     enhancer: Option<enhance::Enhancer>,
     upscale_failed: bool,
+    /// Temporal upscaling was refused or failed in this stream; SGSR 1 stands in for it.
+    temporal_failed: bool,
     phase: phase::Phase,
     /// Whether racing the display's beam can work here, once the beam race is on and a picture is
     /// shown; on a VRR stream that tears, whether the display refreshes on present (`sync_vrr`).
@@ -1011,6 +1014,7 @@ impl Streaming {
             #[cfg(windows)]
             enhancer: None,
             upscale_failed: false,
+            temporal_failed: false,
             phase: phase::Phase::default(),
             race_probe: None,
             // The sync interval as `App::begin_stream` set it.
