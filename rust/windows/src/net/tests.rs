@@ -43,7 +43,7 @@ fn a_loopback_connection_belongs_to_the_process_that_opened_it() {
 }
 
 #[test]
-fn a_refused_datagram_or_segmented_batch_retries_once_after_buffer_pressure() {
+fn a_refused_datagram_or_segmented_batch_retries_while_the_budget_allows() {
     // Both the audio/datagram path and WSASendMsg use this operation. A
     // refused batch has not been submitted, so retrying it cannot duplicate
     // any successful datagrams.
@@ -74,7 +74,7 @@ fn a_refused_datagram_or_segmented_batch_retries_once_after_buffer_pressure() {
 
 #[test]
 fn persistent_pressure_and_an_expired_budget_do_not_loop_or_hide_errors() {
-    for can_wait in [true, false] {
+    for max_waits in [0, 2] {
         let mut sends = 0;
         let mut waits = 0;
         let result: std::result::Result<usize, _> = send_with_retry(
@@ -84,12 +84,12 @@ fn persistent_pressure_and_an_expired_budget_do_not_loop_or_hide_errors() {
             },
             |_| {
                 waits += 1;
-                can_wait
+                waits <= max_waits
             },
         );
         assert_eq!(result, Err(WSAENOBUFS));
-        assert_eq!(sends, if can_wait { 2 } else { 1 });
-        assert_eq!(waits, 1);
+        assert_eq!(sends, max_waits + 1);
+        assert_eq!(waits, max_waits + 1);
     }
     for error in [WSAEHOSTUNREACH, WSAECONNRESET, WSAEINVAL, WSAENOTSOCK] {
         let result: std::result::Result<usize, _> = send_with_retry(
@@ -98,6 +98,25 @@ fn persistent_pressure_and_an_expired_budget_do_not_loop_or_hide_errors() {
         );
         assert_eq!(result, Err(error));
     }
+}
+
+#[test]
+fn one_frame_shares_a_single_wait_for_room_in_the_socket() {
+    let start = std::time::Instant::now();
+    // The frame's deadline, not a fresh WRITABLE_WAIT per batch: a busy CPU
+    // may keep the socket full for a whole picture period.
+    let mut budget = WaitBudget::for_frame(Some(start + std::time::Duration::from_millis(20)));
+    assert_eq!(budget.take(start), 20);
+    assert_eq!(budget.take(start + std::time::Duration::from_millis(12)), 8);
+    assert_eq!(budget.take(start + std::time::Duration::from_millis(20)), 0);
+    assert!(
+        budget
+            .backoff_at(start + std::time::Duration::from_millis(20))
+            .is_none()
+    );
+    // Outside a frame one batch gets the old short wait.
+    let mut batch = WaitBudget::default();
+    assert_eq!(batch.take(start), WRITABLE_WAIT.as_millis() as i32);
 }
 
 #[test]

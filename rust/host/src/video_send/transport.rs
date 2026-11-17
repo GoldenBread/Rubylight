@@ -236,6 +236,10 @@ impl Transport<'_> {
         s.stats
             .video_frame
             .store(u64::from(frame.wire_frame) + 1, Ordering::Release);
+        // A full socket is waited on for about one picture period, shared by
+        // every batch of this frame; then the rest of it is abandoned.
+        self.batch
+            .begin_frame(network_pacing::frame_send_wait(period));
         let waits = self.batch.waits.unwrap();
         Sending {
             dequeued,
@@ -495,6 +499,7 @@ impl Transport<'_> {
 
     /// The frame's last part is out: account for it.
     fn finish(&mut self, frame: &Prepared, cur: Sending) {
+        self.batch.end_frame();
         let (s, c) = (&self.s, &self.c);
         let period = s.stream_mode().period();
         let start = self.start;

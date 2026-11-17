@@ -42,6 +42,12 @@ pub(super) fn run(
             frame
         };
         let Some(mut frame) = frame else { continue };
+        // One frame's send may wait about a picture period for room in a full
+        // socket (a busy CPU keeps it full for tens of milliseconds); then the
+        // rest of this picture is abandoned rather than spreading its holes.
+        let frame_deadline = batch.begin_frame(network_pacing::frame_send_wait(
+            current.stream_mode().period(),
+        ));
         let report = route_check.due(Instant::now(), frame.peer);
         let route = link_watch.get(frame.peer);
         let client = client_path(&current);
@@ -74,6 +80,7 @@ pub(super) fn run(
             .video_frame
             .store(u64::from(frame.wire_frame) + 1, Ordering::Release);
         let mut handed = std::mem::take(&mut frame.blocks).into_iter();
+        let mut stalled = false;
         while let Some(packets) = handed
             .next()
             .or_else(|| frame.streamed.then(|| next_block(shared)).flatten())
@@ -96,6 +103,7 @@ pub(super) fn run(
                     return Ok(());
                 }
                 let count = Batch::count(remaining, batch_limit(bps, remaining[0].len(), ipv6));
+                let dropped = batch.dropped;
                 let bytes = batch.send(&socket, &remaining[..count], frame.peer)?;
                 if bytes > 0 {
                     current
@@ -115,14 +123,24 @@ pub(super) fn run(
                     .bytes
                     .fetch_add(bytes as u64, Ordering::Relaxed);
                 remaining = &remaining[count..];
+                // The socket stayed full for this whole frame's wait: give up
+                // the rest of this picture, not the later ones.
+                if bytes == 0 && batch.dropped > dropped && Instant::now() >= frame_deadline {
+                    stalled = true;
+                    break;
+                }
             }
             shared.pool.give(packets);
+            if stalled {
+                break;
+            }
         }
+        batch.end_frame();
         // The next frame's blocks may leave as they are built.
         let abandoned = {
             let mut ready = shared.ready.lock().unwrap();
             ready.sending = false;
-            std::mem::take(&mut ready.abandoned)
+            std::mem::take(&mut ready.abandoned) || stalled
         };
         if batch.dropped != packets_dropped {
             host_dropped(

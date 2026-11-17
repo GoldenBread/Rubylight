@@ -391,7 +391,9 @@ pub fn datagram_lost(error: &std::io::Error) -> bool {
 }
 /// How long one send, or all of one batch's sends together, wait for room in
 /// a full socket buffer before dropping. Per datagram, 64 refused datagrams
-/// would hold the sender for 256 ms.
+/// would hold the sender for 256 ms. A video frame shares one deadline over
+/// all its batches ([`Batch::begin_frame`]), about a frame period, at most
+/// 20 ms.
 pub const WRITABLE_WAIT: std::time::Duration = std::time::Duration::from_millis(4);
 const BUFFER_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(1);
 /// The writable wait left to one send call, started at its first full buffer.
@@ -401,6 +403,15 @@ struct WaitBudget {
     backoff_timer: Option<crate::timing::Timer>,
 }
 impl WaitBudget {
+    /// A budget shared by every batch of the frame in flight: the deadline is
+    /// the frame's, so a socket that stays full is not waited on again for
+    /// each batch, and the rest of that frame is abandoned instead.
+    fn for_frame(deadline: Option<std::time::Instant>) -> Self {
+        Self {
+            deadline,
+            ..Default::default()
+        }
+    }
     fn deadline_at(&mut self, now: std::time::Instant) -> std::time::Instant {
         *self.deadline.get_or_insert(now + WRITABLE_WAIT)
     }
@@ -496,16 +507,19 @@ fn buffer_available(
     finished < budget.deadline_at(started)
 }
 
-/// A successful UDP send must never be repeated. Retry only buffer pressure,
-/// once, after the caller's shared wait budget permits it; all other errors
-/// retain their existing drop/fatal handling.
+/// A successful UDP send must never be repeated. Retry buffer pressure for as
+/// long as the caller's budget allows, so a socket that is full for a moment
+/// (a busy CPU, a late transmit completion) carries the batch instead of
+/// losing it; all other errors retain their existing drop/fatal handling.
 fn send_with_retry<T>(
     mut send: impl FnMut() -> std::result::Result<T, WSA_ERROR>,
-    wait: impl FnOnce(WSA_ERROR) -> bool,
+    mut wait: impl FnMut(WSA_ERROR) -> bool,
 ) -> std::result::Result<T, WSA_ERROR> {
-    match send() {
-        Err(error) if [WSAEWOULDBLOCK, WSAENOBUFS].contains(&error) && wait(error) => send(),
-        result => result,
+    loop {
+        match send() {
+            Err(error) if [WSAEWOULDBLOCK, WSAENOBUFS].contains(&error) && wait(error) => continue,
+            result => return result,
+        }
     }
 }
 fn writable(
@@ -544,7 +558,15 @@ fn send_one(
     trace: Option<&mut WritableWaits>,
 ) -> Result<std::result::Result<(), WSA_ERROR>> {
     let send = || send_from(socket, packet, peer, source);
-    let result = send_with_retry(send, |error| buffer_available(socket, error, budget, trace));
+    let mut trace = trace;
+    let result = send_with_retry(send, |error| {
+        buffer_available(
+            socket,
+            error,
+            budget,
+            trace.as_mut().map(|trace| &mut **trace),
+        )
+    });
     Ok(match result {
         Ok(size) => {
             anyhow::ensure!(
@@ -890,6 +912,10 @@ pub struct Batch {
     pub dont_fragment: bool,
     /// Enabled by the sender only for pacing traces.
     pub waits: Option<WritableWaits>,
+    /// The deadline every batch of the frame in flight shares for a full
+    /// socket (see [`Batch::begin_frame`]); `None` outside a frame, where one
+    /// batch waits [`WRITABLE_WAIT`] on its own.
+    frame_deadline: Option<std::time::Instant>,
     unreported: u64,
     reported: Option<std::time::Instant>,
 }
@@ -902,12 +928,25 @@ impl Default for Batch {
             oversized: 0,
             dont_fragment: false,
             waits: None,
+            frame_deadline: None,
             unreported: 0,
             reported: None,
         }
     }
 }
 impl Batch {
+    /// Start one video frame: every batch of it shares this wait for room in
+    /// a full socket, and the frame's sender abandons the rest of it once the
+    /// deadline passes. Returns the deadline for the sender to compare.
+    pub fn begin_frame(&mut self, wait: std::time::Duration) -> std::time::Instant {
+        let deadline = std::time::Instant::now() + wait;
+        self.frame_deadline = Some(deadline);
+        deadline
+    }
+    /// The frame is over: a later batch outside a frame gets its own wait.
+    pub fn end_frame(&mut self) {
+        self.frame_deadline = None;
+    }
     /// How many of the leading `packets` one segmented send carries: equal
     /// sizes, then at most one shorter, at most 64 and 65507 bytes in all.
     /// The shorter tail rides along, as it would otherwise take a paced
@@ -1000,7 +1039,7 @@ impl Batch {
             return Ok(0);
         }
         let mut source = socket.source(peer);
-        let mut budget = WaitBudget::default();
+        let mut budget = WaitBudget::for_frame(self.frame_deadline);
         if self.offload
             && packets.len() > 1
             && packets.len() <= 64
