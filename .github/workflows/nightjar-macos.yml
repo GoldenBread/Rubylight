@@ -103,7 +103,9 @@ jobs:
           key: macos-vulkan-${{ runner.arch }}-${{ hashFiles('client/protocol/desktop/macos-vulkan.sh') }}
       - name: Build KosmicKrisp and the Vulkan loader
         run: |
-          prefix=$(desktop/macos-vulkan.sh "$PWD/target/macos-vulkan" | tail -n1)
+          set -o pipefail
+          desktop/macos-vulkan.sh "$PWD/target/macos-vulkan" | tee "$RUNNER_TEMP/macos-vulkan.log"
+          prefix=$(tail -n1 "$RUNNER_TEMP/macos-vulkan.log")
           echo "VULKAN_PREFIX=$prefix" >> "$GITHUB_ENV"
           cat "$prefix/build-info.txt"
       - if: steps.vulkan-cache.outputs.cache-hit != 'true'
@@ -118,3 +120,8 @@ jobs:
           sw_vers
           system_profiler SPDisplaysDataType | sed -n '1,20p'
           VK_LOADER_DEBUG=driver python3 desktop/tests/macos_vulkan_probe.py "$VULKAN_PREFIX/lib/libvulkan.1.dylib" "$icd"
+      - name: Build the PyroWave SDK for macOS
+        run: |
+          set -o pipefail
+          brew install vulkan-headers
+          VULKAN_HEADERS_DIR="$(brew --prefix vulkan-headers)/include"             ../scripts/build-pyrowave-sdk.sh -o "$PWD/target/pyrowave-sdk" -H "$GITHUB_WORKSPACE"
