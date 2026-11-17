@@ -1818,6 +1818,20 @@ impl Prepared {
         }
         result
     }
+    /// Whether a primary restore may be looked at now: the layout makes the stream's display
+    /// the primary one, and this lease is the stream whose display the layout made primary. A
+    /// second stream, another device's display or a device's second screen joins beside the
+    /// first owner's and only that one is primary, so laying this stream's displays out again
+    /// would change nothing.
+    fn primary_watch_applies(planned: Arrangement, lease_primary: bool, due: bool) -> bool {
+        planned.primary_beside_the_users() && lease_primary && due
+    }
+    /// Whether the layout put back for the primary did it: Windows shows the stream's display
+    /// as the primary now. A layout Windows accepted but left the primary where it was did
+    /// not, and counting it as restored kept the watch from telling the two apart.
+    fn primary_taken_back(shown: &Result<Option<bool>>) -> bool {
+        matches!(shown, Ok(Some(true)))
+    }
     /// Put the stream's display back as the primary one when Windows or a game moves the
     /// primary to a monitor. A primary layout promises games open on the stream, and the move
     /// is nobody's choice: Windows gets the layout watch's settle before the layout is put
@@ -1828,7 +1842,11 @@ impl Prepared {
         let Some(arrangement) = &self._arrangement else {
             return;
         };
-        if !arrangement.arrangement().primary_beside_the_users() || !self.primary_watch.due(now) {
+        if !Self::primary_watch_applies(
+            arrangement.arrangement(),
+            arrangement.makes_primary(),
+            self.primary_watch.due(now),
+        ) {
             return;
         }
         let shown = match butterpollo_windows::display::shown_primary(&self.output) {
@@ -1852,8 +1870,23 @@ impl Prepared {
         let retained = self.remote_monitors();
         match arrangement.reapply(&self.output, &retained) {
             Ok(()) => {
-                self.primary_watch.restored();
-                self.mode_report.primary_restored();
+                // Windows accepted the layout; whether it moved the primary is the look after
+                // it. A layout that changed nothing is a failure, not a restore.
+                let after = butterpollo_windows::display::shown_primary(&self.output);
+                if Self::primary_taken_back(&after) {
+                    self.primary_watch.restored();
+                    self.mode_report.primary_restored();
+                } else {
+                    let problem = match after {
+                        Ok(_) => {
+                            "the layout went through but the primary stayed where it was".to_owned()
+                        }
+                        Err(error) => format!("{error:#}"),
+                    };
+                    tracing::warn!(%problem, "the layout went through but the stream's display is still not the primary one");
+                    self.primary_watch.failed(now);
+                    self.mode_report.primary_refused(&problem);
+                }
             }
             Err(error) => {
                 tracing::warn!(error = %format!("{error:#}"), "Windows refused to make the stream's display the primary one again");

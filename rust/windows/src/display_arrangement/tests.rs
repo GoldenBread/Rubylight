@@ -1687,6 +1687,19 @@ fn a_display_that_could_not_be_laid_out_is_no_owner_and_saves_nothing() {
     assert_eq!(state.persists_for, ["a"]);
 }
 #[test]
+fn only_the_stream_the_layout_makes_primary_has_a_primary_to_watch() {
+    let applied = [node("a", true, true), node("b", true, false)];
+    assert!(applied_primary_for(&applied, "a"));
+    assert!(!applied_primary_for(&applied, "b"));
+    assert!(!applied_primary_for(&applied, "gone"));
+    // A display the layout switched off is nobody's primary.
+    let off = [node("a", false, false), node("b", true, true)];
+    assert!(!applied_primary_for(&off, "a"));
+    assert!(applied_primary_for(&off, "b"));
+    // Nothing applied, or a layout recorded for another owner: no primary of this stream's.
+    assert!(!applied_primary_for(&[], "a"));
+}
+#[test]
 fn a_display_leaving_a_layout_the_user_changed_lays_nothing_out_again() {
     let mut state = State {
         applied: vec![node("a", true, true), node("phys", true, false)],

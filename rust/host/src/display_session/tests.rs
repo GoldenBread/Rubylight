@@ -2649,6 +2649,15 @@ fn a_refused_primary_restore_stays_on_the_card_until_the_display_has_it_again() 
     report.primary_restored();
     assert!(codes(&resumed).is_empty());
 }
+#[test]
+fn a_layout_windows_accepted_but_that_left_the_primary_is_not_restored() {
+    assert!(Prepared::primary_taken_back(&Ok(Some(true))));
+    assert!(!Prepared::primary_taken_back(&Ok(Some(false))));
+    assert!(!Prepared::primary_taken_back(&Ok(None)));
+    assert!(!Prepared::primary_taken_back(&Err(anyhow::anyhow!(
+        "Windows refused the display layout"
+    ))));
+}
 
 #[test]
 fn a_shared_virtual_display_raised_by_a_joining_stream_is_no_finding() {
