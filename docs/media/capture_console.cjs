@@ -256,6 +256,12 @@ function answer(scene) {
     if (p === '/api/usb') return { status: true, devices: [] };
     if (p === '/api/coop/sessions') return { sessions: (scene.coop || { sessions: [] }).sessions };
     if (p === '/api/coop') return scene.coop || { ...coop, sessions: [] };
+    if (p === '/api/session-guests') {
+      return { policy: 'ask', default_permission: 'controller', owner: streams.length ? streams[0].uuid : null,
+        owner_name: streams.length ? streams[0].device_name : null, max_guests: 4, version: 1, keyboard_mouse: null,
+        guests: [], waiting: [], ...scene.guests };
+    }
+    if (p === '/api/guests') return { streaming: false, max_guests: 4, invites: [], guests: [], port: 47991 };
     if (p === '/api/steam/status' || p === '/api/playnite/status') return { status: true, enabled: false, available: false };
     if (p === '/api/logs/tail') return { offset: 0, text: '', reset: false };
     if (p === '/api/updates') {
@@ -275,9 +281,9 @@ function answer(scene) {
 }
 
 // The console shows the build version in two places; leave it out so the
-// pictures stay current across releases.
+// pictures stay current across releases. The PC's address goes with it.
 const HIDE_VERSION = `
-  aside .host > .muted { display: none !important; }
+  aside .host > .muted, aside .host > .address, aside .host > .version { display: none !important; }
   .facts dt:nth-last-of-type(1), .facts dd:nth-last-of-type(1) { display: none !important; }
 `;
 
@@ -344,8 +350,8 @@ async function shoot(browser, base, name, { width, height: frame, scale, file })
   return boxes;
 }
 
-(async () => {
-  fs.mkdirSync(path.join(out, 'console'), { recursive: true });
+/** The console from rust/web on a local port, and a browser to open it in. */
+async function serve() {
   const { createServer } = await import(pathToFileURL(fromWeb.resolve('vite')).href);
   const { svelte } = await import(pathToFileURL(fromWeb.resolve('@sveltejs/vite-plugin-svelte')).href);
   // configFile: false leaves out the dev proxy, so nothing can reach a host.
@@ -358,6 +364,12 @@ async function shoot(browser, base, name, { width, height: frame, scale, file })
   const browser = await chromium.launch({ headless: true,
     ...(process.env.CHROMIUM_EXECUTABLE ? { executablePath: process.env.CHROMIUM_EXECUTABLE } : {}),
   });
+  return { base, browser, close: async () => { await browser.close(); await server.close(); } };
+}
+
+async function main() {
+  fs.mkdirSync(path.join(out, 'console'), { recursive: true });
+  const { base, browser, close } = await serve();
   try {
     // Twice the pixels, so a zoom stays sharp at 1080p.
     const film = { width: 1440, height: 900, scale: 2 };
@@ -369,10 +381,17 @@ async function shoot(browser, base, name, { width, height: frame, scale, file })
     const json = JSON.stringify(boxes, null, 2).replace(/\[\s+([\d,\s]+?)\s+\]/g, (_, v) => `[${v.split(/,\s*/).join(', ')}]`);
     fs.writeFileSync(path.join(out, 'console', 'boxes.json'), `${json}\n`);
   } finally {
-    await browser.close();
-    await server.close();
+    await close();
   }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+}
+
+// capture_readme.cjs takes the made-up host from here.
+module.exports = { repo, covers, metadata, clients, library, discovery, radeon, coop, coopGame, coopStreams, streamOf,
+  playing, pairingCodes, answer, serve, HIDE_VERSION };
+
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
