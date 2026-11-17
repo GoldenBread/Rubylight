@@ -77,7 +77,7 @@ for lib in "$prefix"/lib/*.dylib; do
   echo "$lib:"
   otool -L "$lib" | tail -n +2
   vtool -show-build "$lib" | grep -E 'minos|platform' || true
-  if otool -L "$lib" | tail -n +3 | grep -vqE '^\s+(/usr/lib/|/System/Library/)'; then
+  if otool -L "$lib" | tail -n +3 | grep -vqE '^[[:space:]]+(/usr/lib/|/System/Library/)'; then
     echo "error: $lib links a library outside the system" >&2
     exit 1
   fi

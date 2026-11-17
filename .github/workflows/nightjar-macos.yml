@@ -95,7 +95,9 @@ jobs:
           persist-credentials: false
       - name: Install build tools
         run: brew install meson ninja cmake pkg-config bison flex llvm libclc spirv-llvm-translator spirv-tools
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # Restored and saved apart, so a later failing step keeps the 30-minute Mesa build cached.
+      - id: vulkan-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: client/protocol/target/macos-vulkan/*/prefix
           key: macos-vulkan-${{ runner.arch }}-${{ hashFiles('client/protocol/desktop/macos-vulkan.sh') }}
@@ -104,6 +106,11 @@ jobs:
           prefix=$(desktop/macos-vulkan.sh "$PWD/target/macos-vulkan" | tail -n1)
           echo "VULKAN_PREFIX=$prefix" >> "$GITHUB_ENV"
           cat "$prefix/build-info.txt"
+      - if: steps.vulkan-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: client/protocol/target/macos-vulkan/*/prefix
+          key: macos-vulkan-${{ runner.arch }}-${{ hashFiles('client/protocol/desktop/macos-vulkan.sh') }}
       - name: The loader finds KosmicKrisp through a bundle-style manifest
         run: |
           icd="$RUNNER_TEMP/kosmickrisp_icd.json"
