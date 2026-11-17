@@ -1967,16 +1967,25 @@ impl Prepared {
                         }
                         Err(error) => format!("{error:#}"),
                     };
-                    tracing::warn!(%problem, "the layout went through but the stream's display is still not the primary one");
-                    self.primary_watch.failed(now);
-                    self.mode_report.primary_refused(&problem);
+                    self.primary_failed(now, problem);
                 }
             }
             Err(error) => {
-                tracing::warn!(error = %format!("{error:#}"), "Windows refused to make the stream's display the primary one again");
-                self.primary_watch.failed(now);
-                self.mode_report.primary_refused(&format!("{error:#}"));
+                self.primary_failed(now, format!("{error:#}"));
             }
+        }
+    }
+    /// A restore that did not give the display the primary: Windows refused the layout, or
+    /// accepted it without moving the primary. The card says so, and the watch stops after
+    /// [`PrimaryWatch::RETURNS`] such refusals within its window, as a display that keeps
+    /// taking the primary back does.
+    fn primary_failed(&mut self, now: std::time::Instant, problem: String) {
+        tracing::warn!(%problem, "the layout did not make the stream's display the primary one");
+        let stopped = self.primary_watch.failed(now);
+        self.mode_report.primary_refused(&problem);
+        if stopped {
+            tracing::warn!(output = %self.output, "Windows keeps refusing the main screen; leaving the primary where Windows puts it for the rest of the stream");
+            self.mode_report.primary_gave_up();
         }
     }
     fn create(

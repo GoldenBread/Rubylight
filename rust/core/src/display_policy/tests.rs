@@ -270,6 +270,40 @@ fn a_watch_that_sees_the_display_still_primary_leaves_a_later_move_alone() {
 }
 
 #[test]
+fn refused_restores_stop_the_watch_like_restores_do() {
+    use super::{PrimaryAction, PrimaryWatch};
+    let start = std::time::Instant::now();
+    let settle = super::LayoutWatch::SETTLE;
+    let mut watch = PrimaryWatch::default();
+    let mut stopped = false;
+    for round in 0..PrimaryWatch::RETURNS as u64 {
+        let at = start + std::time::Duration::from_secs(round * 10);
+        watch.changed(at);
+        assert_eq!(watch.observe(true, at), PrimaryAction::Wait);
+        assert_eq!(watch.observe(true, at + settle), PrimaryAction::Restore);
+        stopped = watch.failed(at + settle);
+        assert_eq!(watch.stopped(), stopped);
+    }
+    assert!(stopped);
+    // A change Windows makes later leaves the primary where it is too.
+    let later = start + std::time::Duration::from_secs(120);
+    watch.changed(later);
+    assert_eq!(watch.observe(true, later), PrimaryAction::Wait);
+    // A refusal outside the window does not count towards the limit.
+    let mut watch = PrimaryWatch::default();
+    let mut stopped = false;
+    for round in 0..PrimaryWatch::RETURNS as u32 {
+        let at = start + PrimaryWatch::RETURN_WINDOW * (round + 1) * 2;
+        watch.changed(at);
+        assert_eq!(watch.observe(true, at), PrimaryAction::Wait);
+        assert_eq!(watch.observe(true, at + settle), PrimaryAction::Restore);
+        stopped = watch.failed(at + settle);
+    }
+    assert!(!stopped);
+    assert!(!watch.stopped());
+}
+
+#[test]
 fn a_primary_move_windows_made_is_put_back_but_a_plain_one_is_left_alone() {
     use super::{Arrangement, PrimaryAction, PrimaryWatch, primary_moved};
     // Only the layouts that keep the user's displays on and make the stream's display

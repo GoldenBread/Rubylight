@@ -1034,8 +1034,8 @@ pub enum PrimaryAction {
 /// hold for [`LayoutWatch::SETTLE`] before the layout is put back, a restore Windows refused
 /// or one that did not move the primary waits [`LayoutWatch::RETRY`], and a display that
 /// keeps taking the primary back stops the watch for the rest of the stream after
-/// [`PrimaryWatch::RETURNS`] restores within [`PrimaryWatch::RETURN_WINDOW`], as a monitor
-/// that keeps coming back on is left on ([`LayoutWatch`], issue #56).
+/// [`PrimaryWatch::RETURNS`] restores or refusals within [`PrimaryWatch::RETURN_WINDOW`], as
+/// a monitor that keeps coming back on is left on ([`LayoutWatch`], issue #56).
 #[derive(Debug, Default)]
 pub struct PrimaryWatch {
     since: Option<std::time::Instant>,
@@ -1051,7 +1051,8 @@ pub struct PrimaryWatch {
     stopped: bool,
 }
 impl PrimaryWatch {
-    /// Restores within [`Self::RETURN_WINDOW`] after which the watch stops for the stream.
+    /// Restores and refusals within [`Self::RETURN_WINDOW`] after which the watch stops for
+    /// the stream.
     pub const RETURNS: usize = LayoutWatch::RETURNS;
     pub const RETURN_WINDOW: std::time::Duration = LayoutWatch::RETURN_WINDOW;
     /// How long a display arriving or leaving, a session change or the stream's start still
@@ -1115,8 +1116,8 @@ impl PrimaryWatch {
         self.attempt = false;
     }
     /// The stream's display has the primary one again: the watch disarms, and true when the
-    /// restores reached [`Self::RETURNS`] within [`Self::RETURN_WINDOW`] and the watch stops
-    /// for the stream.
+    /// restores and refusals reached [`Self::RETURNS`] within [`Self::RETURN_WINDOW`] and the
+    /// watch stops for the stream.
     pub fn restored(&mut self, now: std::time::Instant) -> bool {
         self.since = None;
         // A look that found nothing to restore is not a restore: only a layout put back for
@@ -1125,6 +1126,19 @@ impl PrimaryWatch {
             return self.stopped;
         }
         self.armed_until = None;
+        self.count(now)
+    }
+    /// Windows did not take the layout back, or accepted it without moving the primary: wait
+    /// [`LayoutWatch::RETRY`] before asking again, and count the refusal like a restore: true
+    /// when the watch stops for the stream.
+    pub fn failed(&mut self, now: std::time::Instant) -> bool {
+        self.since = None;
+        self.attempt = false;
+        self.next_check = Some(now + LayoutWatch::RETRY);
+        self.count(now)
+    }
+    /// One restore or refusal for [`Self::RETURNS`]; true when the watch stops.
+    fn count(&mut self, now: std::time::Instant) -> bool {
         if self.stopped {
             return true;
         }
@@ -1133,13 +1147,6 @@ impl PrimaryWatch {
         self.restores.push(now);
         self.stopped = self.restores.len() >= Self::RETURNS;
         self.stopped
-    }
-    /// Windows did not take the layout back, or accepted it without moving the primary: wait
-    /// [`LayoutWatch::RETRY`] before asking again.
-    pub fn failed(&mut self, now: std::time::Instant) {
-        self.since = None;
-        self.attempt = false;
-        self.next_check = Some(now + LayoutWatch::RETRY);
     }
 }
 #[cfg(test)]
