@@ -2728,6 +2728,9 @@ fn the_console_shows_the_encoded_rate_beside_the_requested_one() {
         reconfigure.take_due(now + Duration::from_secs(1)),
         Some(switch)
     );
+    // The session loop marks the switch applied once the encoder runs at it;
+    // the console shows what is encoded.
+    reconfigure.applied_now(switch);
     drop(reconfigure);
     let info = session.info();
     assert_eq!(
