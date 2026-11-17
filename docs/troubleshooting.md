@@ -1,6 +1,6 @@
 # Troubleshooting
 
-[Documentation](README.md) · [Getting started](getting-started.md) · [Configuration](configuration.md)
+[Rubylight docs](README.md) › [Troubleshooting](README.md#troubleshooting) · [Getting started](getting-started.md) · [Configuration](configuration.md)
 
 Start with the stream card on **Home**, **Help → Log analysis** and the host log. Note the time of the failure before changing anything, then change one setting at a time. Capture and performance probes add GPU work, so compare them in an otherwise idle session.
 

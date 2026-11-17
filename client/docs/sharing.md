@@ -1,6 +1,6 @@
 # Clipboard, files, folders and USB devices
 
-[Documentation](index.md) · [All defaults](settings.md) · [Host feature support](PARITY-MATRIX.md)
+[Nightjar docs](index.md) › [Everyday use](index.md#everyday-use) · [All defaults](settings.md) · [Host feature support](PARITY-MATRIX.md)
 
 A PC whose host supports sharing ([Rubylight](https://github.com/RamazanKara/Rubylight) 3.0) can exchange more than the stream with this device: its clipboard, a file-transfer folder, the folders it shares, and USB devices plugged into this device. Each feature needs the host to offer it and to allow it for this device on the **Devices** page of its web UI. When a permission or setting is missing, Nightjar names what to change on the PC. Hosts without these features keep the classic clipboard transfer in the stream menu where they offer it.
 

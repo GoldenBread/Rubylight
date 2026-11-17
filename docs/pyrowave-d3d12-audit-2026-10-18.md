@@ -1,5 +1,7 @@
 # PyroWave and D3D12 audit follow-up — 18 October 2026
 
+[Rubylight docs](README.md) › [Engineering notes](README.md#engineering-notes)
+
 This follow-up addresses the later PyroWave and D3D12 audit. The separate
 [display, driver and scheduling work](stability-audit-2026-10-18.md) is preserved
 from `main` and is not attributed to this change.

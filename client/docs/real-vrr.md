@@ -1,5 +1,7 @@
 # Real VRR
 
+[Nightjar docs](index.md) › [Picture and smoothness](index.md#picture-and-smoothness)
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/real-vrr/chart-dark.png">

@@ -1,6 +1,6 @@
 # Code map
 
-[Documentation](README.md) · [Architecture](architecture.md) · [Build guide](building.md) · [Developer guide](../rust/README.md) · [Nightjar's map](../client/docs/code-map.md)
+[Rubylight docs](README.md) › [For developers](README.md#for-developers) · [Architecture](architecture.md) · [Build guide](building.md) · [Developer guide](../rust/README.md) · [Nightjar's map](../client/docs/code-map.md)
 
 [Architecture](architecture.md) explains how a stream works. This page says where each part lives, which files change together and which test proves a change. It is written for people and coding agents changing the host; Nightjar has [its own map](../client/docs/code-map.md).
 

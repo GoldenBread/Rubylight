@@ -1,6 +1,6 @@
 # WebRTC server
 
-[Documentation](README.md) · [Configuration](configuration.md) · [Features](features.md) · [Hardware matrix](hardware-matrix.md)
+[Rubylight docs](README.md) › [Play together](README.md#play-together) · [Configuration](configuration.md) · [Features](features.md) · [Hardware matrix](hardware-matrix.md)
 
 Rubylight can stream over WebRTC to a Samsung Tizen TV or a browser, alongside the Moonlight protocol. The server is off by default. It speaks the Moonlight WebRTC TV protocol, version 2, which [mlopezsegura](https://github.com/mlopezsegura) designed for the [Tizen TV app](https://github.com/mlopezsegura/Monlight-Tizen-WebRtc-Client) and the [browser client](https://github.com/mlopezsegura/moonlight-webrtc-web). While it is off, no WebRTC socket is open and the Moonlight path is unchanged.
 

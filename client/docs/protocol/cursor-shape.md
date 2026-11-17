@@ -1,6 +1,6 @@
 # Host cursor shapes
 
-[Documentation](../index.md) · [Host feature support](../PARITY-MATRIX.md) · [Controls](../controls.md#touch-modes)
+[Nightjar docs](../index.md) › [Engineering notes](../index.md#engineering-notes) · [Host feature support](../PARITY-MATRIX.md) · [Controls](../controls.md#touch-modes)
 
 Status: version 1. Nightjar implements the client side, and Rubylight 3.0 the host side. Any host can implement it; a client checks the advertisement, never the host name.
 

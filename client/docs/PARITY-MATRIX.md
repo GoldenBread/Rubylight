@@ -1,6 +1,6 @@
 # Host feature support
 
-[Documentation](index.md) · [Building](building.md)
+[Nightjar docs](index.md) › [Reference](index.md#reference) · [Building](building.md)
 
 What Nightjar does for each capability and which hosts provide it. **Any host** means any Moonlight-compatible host: Apollo, NVIDIA GameStream, Rubylight, Sunshine, Vibepollo and others. Named hosts are the ones known to provide a feature; forks that implement the same extension can work too.
 

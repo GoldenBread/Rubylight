@@ -1,6 +1,6 @@
 # Build Rubylight
 
-[Documentation](README.md) · [Getting started](getting-started.md) · [Configuration](configuration.md)
+[Rubylight docs](README.md) › [For developers](README.md#for-developers) · [Getting started](getting-started.md) · [Configuration](configuration.md)
 
 The Windows host, service, launcher and installer are written in Rust. [rust/build.ps1](../rust/build.ps1) performs the complete build and packaging; [.github/workflows/rust-windows.yml](../.github/workflows/rust-windows.yml) defines the CI environment. The [Rust developer guide](../rust/README.md) describes the workspace and its crates.
 

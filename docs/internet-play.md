@@ -1,6 +1,6 @@
 # Play over the internet
 
-[Documentation](README.md) · [Configuration](configuration.md#play-over-the-internet) · [Privacy](privacy.md#third-party-services)
+[Rubylight docs](README.md) › [Play anywhere](README.md#play-anywhere) · [Configuration](configuration.md#play-over-the-internet) · [Privacy](privacy.md#third-party-services)
 
 Devices reach your PC from outside your network without forwarding ports by hand, and without any server run by the Rubylight project: no relay carries your stream and no rendezvous server knows your devices. Two settings are involved:
 

@@ -1,6 +1,6 @@
 # Features
 
-[Documentation](README.md) · [Getting started](getting-started.md) · [Configuration](configuration.md) · [Performance](performance.md)
+[Rubylight docs](README.md) › [Reference](README.md#reference) · [Getting started](getting-started.md) · [Configuration](configuration.md) · [Performance](performance.md)
 
 Everything the current Rubylight release does, by area, with a link to where each feature is set up. Features that need client support, such as PyroWave, Dolby Vision or the clipboard, go only to a client that asks for them; every other Moonlight client streams as it would from Sunshine. Figures are our own measurements on an RX 7900 XT; [Performance](performance.md) explains them.
 

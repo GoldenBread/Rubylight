@@ -1,6 +1,6 @@
 # Stream health
 
-[Documentation](index.md)
+[Nightjar docs](index.md) › [Troubleshooting](index.md#troubleshooting)
 
 **Why did my stream stutter?** explains stutter from measurements Nightjar already collects. Open the stream menu, then **Diagnostics → Why did my stream stutter?** (on Windows and Linux, the stream menu's **Why did my stream stutter?**).
 

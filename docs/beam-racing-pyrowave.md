@@ -1,5 +1,7 @@
 # Racing the beam with PyroWave: how Rubylight and Nightjar draw a frame before it has arrived
 
+[Rubylight docs](README.md) › [For developers](README.md#for-developers)
+
 *Ramazan Kara, 2026-10-26. An opt-in feature, off by default; every number here is our own measurement on one PC.*
 
 PyroWave streams are big. At 400 Mbps a 1080p60 frame is about 830 KB, and on a 1 GbE link the

@@ -1,6 +1,6 @@
 # Controls
 
-[Documentation](index.md) · [All defaults](settings.md)
+[Nightjar docs](index.md) › [Controllers](index.md#controllers) · [All defaults](settings.md)
 
 This page describes the Android app; [Nightjar for Windows and Linux](#nightjar-for-windows-and-linux) has its own section at the end. On-screen and touch controls are specific to Android. The desktop client takes keyboard, mouse, touchpad, pen and controller input.
 

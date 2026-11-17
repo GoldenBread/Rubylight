@@ -1,6 +1,6 @@
 # Gamepad navigation
 
-[Documentation](index.md) · [Controls](controls.md)
+[Nightjar docs](index.md) › [Controllers](index.md#controllers) · [Controls](controls.md)
 
 Nightjar's menus and its on-screen PC keyboard work with a controller alone. This page covers USB and Bluetooth controllers on Android: the controls, and how Nightjar handles the different ways Android reports controller input. For in-game controls, see [controls](controls.md).
 

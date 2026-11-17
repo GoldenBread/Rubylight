@@ -1,6 +1,6 @@
 # Play away from home
 
-[Documentation](index.md) · [Pairing](pairing.md) · [Troubleshooting](TROUBLESHOOTING.md)
+[Nightjar docs](index.md) › [Play anywhere](index.md#play-anywhere) · [Pairing](pairing.md) · [Troubleshooting](TROUBLESHOOTING.md)
 
 Nightjar streams from outside the home network over a private VPN such as Tailscale, which connects this device and the PC without exposing the host to the Internet, or, with a PC that offers it, [without a VPN](#without-a-vpn). Nightjar does not install software, change router settings, open public ports or create accounts. The guide works with any paired Moonlight-compatible host.
 

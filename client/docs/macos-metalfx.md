@@ -1,5 +1,7 @@
 # MetalFX spatial scaling on macOS
 
+[Nightjar docs](index.md) › [Engineering notes](index.md#engineering-notes)
+
 MetalFX is an opt-in desktop upscaler on macOS 13 and later. The settings entry is
 shown only when `MTLFXSpatialScalerDescriptor.supportsDevice` accepts the default
 Metal device; creation checks the renderer's actual device again. Bilinear remains

@@ -1,6 +1,6 @@
 # Settings reference
 
-[Documentation](index.md)
+[Nightjar docs](index.md) › [Reference](index.md#reference)
 
 This page is the reference for every setting in Nightjar for Android, Android TV and Fire TV, followed by [Nightjar for Windows and Linux](#nightjar-for-windows-and-linux). Both clients use the same sections, **Video**, **Display & image**, **Controls**, **Audio**, **Streaming**, **App**, **Advanced** and **Debug** at the end for settings whose default is right for nearly everyone, and the same layers of values: the main settings, a [named profile](#named-profiles-and-game-settings), [this PC](#per-pc-stream-profiles) and this game.
 

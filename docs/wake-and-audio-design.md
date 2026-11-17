@@ -1,5 +1,7 @@
 # Wake-on-LAN, sleep after idle, and couch audio
 
+[Rubylight docs](README.md) › [Engineering notes](README.md#engineering-notes)
+
 Design, 2026-10-26. H0 and H1 (the host's wake and sleep) are built; H2, H3 and the clients are not yet. The briefs at the end run in the order they give: H0 first, then H1 and H2 in parallel, then H3, then N1a and N1b.
 
 ## Summary

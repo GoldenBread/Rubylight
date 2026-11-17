@@ -1,5 +1,7 @@
 # Mouse motion at the mouse's pace, input during the present (desktop)
 
+[Nightjar docs](index.md) › [Engineering notes](index.md#engineering-notes)
+
 A captured mouse (relative mode) sends its motion from SDL's raw input thread as each report
 arrives (`protocol/desktop/src/stream/direct_motion.rs`), and streams on Wi-Fi put the adapter in
 Windows' media streaming mode (`stream/wlan.rs`). Android already does both: it asks for unbuffered

@@ -1,6 +1,6 @@
 # Code map
 
-[Documentation](index.md) · [Building](building.md) · [Features](features.md)
+[Nightjar docs](index.md) › [For developers](index.md#for-developers) · [Building](building.md) · [Features](features.md)
 
 Where each part of Nightjar lives, which files change together and which test proves a change. It is written for people and coding agents changing the client.
 

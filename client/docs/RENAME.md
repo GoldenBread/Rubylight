@@ -1,6 +1,6 @@
 # Rename history
 
-[Documentation](index.md)
+[Nightjar docs](index.md) › [Engineering notes](index.md#engineering-notes)
 
 | When | Name | Why |
 | --- | --- | --- |

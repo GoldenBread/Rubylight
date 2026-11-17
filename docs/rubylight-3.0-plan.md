@@ -1,5 +1,7 @@
 # Rubylight 3.0 and Nightjar 3.0 plan
 
+[Rubylight docs](README.md) › [Engineering notes](README.md#engineering-notes)
+
 History: the plan for the 3.0 cycle, written 2026-10-21 (it replaced the "Definitive Master Engineering Specification" draft). Its goal, decisions and release train stay here for the documents that cite them. What each feature does now, and its evidence, is in the [status table](status.md).
 
 ## Goal

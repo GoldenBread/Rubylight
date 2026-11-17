@@ -1,6 +1,6 @@
 # Stream recovery and automatic quality
 
-[Documentation](index.md) · [Settings reference](settings.md) · [Video and latency](video-and-latency.md)
+[Nightjar docs](index.md) › [Picture and smoothness](index.md#picture-and-smoothness) · [Settings reference](settings.md) · [Video and latency](video-and-latency.md)
 
 Nightjar keeps a stream running through transient failures and adapts its quality to the link and the device. This page describes the rules: when a stream reconnects, when it lowers resolution or frame rate, and how the bitrate controller decides.
 

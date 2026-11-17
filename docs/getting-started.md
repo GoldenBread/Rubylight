@@ -1,6 +1,6 @@
 # Getting started
 
-[Documentation](README.md) · [Configuration](configuration.md) · [Troubleshooting](troubleshooting.md)
+[Rubylight docs](README.md) › [Get started](README.md#get-started) · [Configuration](configuration.md) · [Troubleshooting](troubleshooting.md)
 
 Rubylight runs on the Windows PC that has the games; a Moonlight-compatible client runs on the device you play from. This guide installs the host, pairs one device and starts a desktop stream. Get a 1080p60 SDR stream working first, then add HDR, higher frame rates or other devices.
 

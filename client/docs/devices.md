@@ -1,6 +1,6 @@
 # Device results
 
-[Documentation](index.md)
+[Nightjar docs](index.md) › [Reference](index.md#reference)
 
 Decode time varies widely between Android chipsets. Snapdragon devices are well measured; MediaTek Dimensity, Samsung Exynos, Google Tensor and the Amlogic, MediaTek and Pentonic chips in TV boxes and TVs much less so. This page describes how to measure a device with Nightjar's built-in tools, how to read the results and how to submit them. Per-chip decoder changes are made only on the basis of these measurements.
 

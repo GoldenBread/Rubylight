@@ -1,6 +1,6 @@
 # Launcher integrations
 
-[Documentation](index.md)
+[Nightjar docs](index.md) › [Everyday use](index.md#everyday-use)
 
 Nightjar can stream a game opened from Beacon, ES-DE, Daijisho, Pegasus or another Android launcher. Exported `.art` entries identify the paired PC and app; the launcher opens the entry with Nightjar. No PC-side export script or manually copied game IDs are needed. On Windows and Linux, launchers start Nightjar from the [command line](#windows-and-linux).
 

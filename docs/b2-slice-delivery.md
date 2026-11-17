@@ -1,5 +1,7 @@
 # B2 step 2: send each AMF slice as it arrives
 
+[Rubylight docs](README.md) › [Engineering notes](README.md#engineering-notes)
+
 Design for the host half of B2 step 2 in [rubylight-3.0-plan.md](rubylight-3.0-plan.md). Status: 2a (core) is implemented; the host half (2b to 2f) is not. Section 10 lists where the code differs from this design.
 Step 1 passed (`rust/release/fixtures/amf-unit-probe-7900xt.json`): at 4K60 on the RX 7900 XT, AMF returns 4 or 8
 HEVC or H.264 slices per frame, the first 3.6 to 4.5 ms before the whole frame would arrive in frame mode.

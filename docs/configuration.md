@@ -1,6 +1,6 @@
 # Configuration
 
-[Documentation](README.md) · [Getting started](getting-started.md) · [Troubleshooting](troubleshooting.md)
+[Rubylight docs](README.md) › [Reference](README.md#reference) · [Getting started](getting-started.md) · [Troubleshooting](troubleshooting.md)
 
 Rubylight is configured in its web console, at **https://localhost:47990** on the host PC. The client chooses the resolution, frame rate, bitrate, codec and HDR of each stream; the host's settings decide how it captures, encodes, paces and delivers what the client asks for. The defaults suit a typical setup, and upgrades keep the values you have saved.
 

@@ -1,6 +1,6 @@
 # Windows release signing
 
-[Documentation](README.md) · [Code signing policy](code-signing-policy.md) · [Building](building.md)
+[Rubylight docs](README.md) › [For developers](README.md#for-developers) · [Code signing policy](code-signing-policy.md) · [Building](building.md)
 
 Rubylight's Windows releases are signed by the release workflow with a Certum code signing certificate for open-source developers ("Open Source Developer Ramazan Kara"), whose key stays in Certum's cloud. Certum offers no unattended login, so [certum-login.ps1](../client/scripts/certum-login.ps1) installs SimplySign Desktop (pinned version and SHA-256) on the runner and types the account's e-mail and the current one-time code (TOTP, HMAC-SHA-256, made from the secret) into its login window, at most twice. The secrets `CERTUM_USERNAME` and `CERTUM_TOTP_SECRET` live in the `release-signing` environment of both `RamazanKara/Rubylight` and `RamazanKara/nightjar`, which only `main` and `v*` tags may use; the repository variable `CERTUM_SIGNING = true` turns signing on. The [release guide](../rust/release/README.md) describes the jobs; Nightjar's `release.yml` has the same `sign-windows` job. A new otpauth URI from Certum means setting `CERTUM_TOTP_SECRET` again in both repositories (`gh secret set CERTUM_TOTP_SECRET --env release-signing`, the `secret=` value only).
 

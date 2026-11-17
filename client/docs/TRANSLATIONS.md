@@ -1,6 +1,6 @@
 # Translations
 
-[Documentation](index.md)
+[Nightjar docs](index.md) › [For developers](index.md#for-developers)
 
 Nightjar ships in 15 languages on Android, Windows, Linux and macOS. English (`values`) is the source text. Lint treats a missing translation as an error.
 

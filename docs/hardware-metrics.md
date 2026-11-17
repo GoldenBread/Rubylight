@@ -1,6 +1,6 @@
 # Hardware metrics for clients
 
-[Documentation](README.md) · [Control messages](control-messages.md) · [HTTP API](api.md)
+[Rubylight docs](README.md) › [For developers](README.md#for-developers) · [Control messages](control-messages.md) · [HTTP API](api.md)
 
 Rubylight can send host CPU usage and AMD GPU readings to a streaming client for its own overlay. This page describes version 1 of the client protocol. The client draws the overlay; the host's video is unchanged. Use capability discovery rather than the host's version string to detect support.
 

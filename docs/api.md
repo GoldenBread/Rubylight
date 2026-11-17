@@ -1,6 +1,6 @@
 # HTTP API
 
-[Documentation](README.md) · [Getting started](getting-started.md) · [Configuration](configuration.md)
+[Rubylight docs](README.md) › [For developers](README.md#for-developers) · [Getting started](getting-started.md) · [Configuration](configuration.md)
 
 The host serves its administration API at `https://localhost:47990/api`; the web console is built on the same API. Changing the base `port` setting moves the console to `port + 1`.
 

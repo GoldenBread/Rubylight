@@ -1,6 +1,6 @@
 # Performance and validation
 
-[Documentation](README.md) · [How compute works](architecture.md) · [Troubleshooting](troubleshooting.md) · [Full measurement record](../rust/PERFORMANCE.md)
+[Rubylight docs](README.md) › [Reference](README.md#reference) · [How compute works](architecture.md) · [Troubleshooting](troubleshooting.md) · [Full measurement record](../rust/PERFORMANCE.md)
 
 Rubylight's performance work targets fresh pictures and low picture age, particularly while the GPU is busy with a game. This page summarises the measurements; the [measurement record](../rust/PERFORMANCE.md) holds every run in full. All figures were measured on an RX 7900 XT unless a row names another device. Each section is dated and names the build it measured; later builds can differ. The [3.0 results](#30-results) come first, followed by earlier full-stream and component tests that show where the time goes. The [matched October 8 comparison](#next-to-vibepollo-20) keeps its original builds and results.
 

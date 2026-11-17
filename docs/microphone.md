@@ -1,6 +1,6 @@
 # Microphone
 
-[Documentation](README.md) · [Configuration](configuration.md) · [Features](features.md)
+[Rubylight docs](README.md) › [Controllers](README.md#controllers) · [Configuration](configuration.md) · [Features](features.md)
 
 A streaming device can send its microphone to the PC. Games and chat applications on the PC receive it as **Microphone (Steam Streaming Microphone)**, a recording device that Steam provides. Rubylight implements the wire format of Apollo's microphone passthrough ([Apollo pull request #1428](https://github.com/ClassicOldSong/Apollo/pull/1428), client side in [ClassicOldSong/moonlight-common-c](https://github.com/ClassicOldSong/moonlight-common-c/blob/784fa1d0f501155ab01fea7cefe8a0e9c9628b77/src/MicrophoneStream.c)), so a client built for it works with Rubylight unchanged.
 

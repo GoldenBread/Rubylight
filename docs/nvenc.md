@@ -1,6 +1,6 @@
 # NVENC
 
-[Rubylight](../README.md) · [Docs](README.md) · [Architecture](architecture.md) · [Hardware matrix](hardware-matrix.md)
+[Rubylight docs](README.md) › [Reference](README.md#reference) · [Architecture](architecture.md) · [Hardware matrix](hardware-matrix.md)
 
 Rubylight encodes with AMF on an AMD GPU and with NVENC on an NVIDIA GPU. With `encoder = auto`, the host picks the encoder from the vendor of the GPU that captures. NVENC is called through NVIDIA's driver ABI (`rust/windows/src/nvenc.rs`), API 11 to 13, on the compute conversion's D3D12 device or the capture's D3D11 device. Its settings are the `nvenc_*` keys ([configuration](configuration.md)). Intel and software encoding stay removed; those PCs use [Rubylight 2.6.x](https://github.com/RamazanKara/Rubylight/releases/tag/v2.6.0).
 

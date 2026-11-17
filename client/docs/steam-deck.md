@@ -1,6 +1,6 @@
 # Steam Deck and Linux handhelds
 
-[Documentation](index.md) · [Everything Nightjar does](features.md) · [Android and desktop](CLIENT-PARITY.md)
+[Nightjar docs](index.md) › [Controllers](index.md#controllers) · [Everything Nightjar does](features.md) · [Android and desktop](CLIENT-PARITY.md)
 
 Nightjar for Linux runs on the Steam Deck and other Linux handhelds as a Flatpak. Added to Steam, it runs under gamescope in Game Mode, works with a controller alone, and shows HDR where gamescope offers it.
 

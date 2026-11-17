@@ -1,5 +1,7 @@
 # Encoder focus: design
 
+[Rubylight docs](README.md) › [Engineering notes](README.md#engineering-notes)
+
 Status: design, not implemented. Written 2026-10-26 against main `817e1469c`, AMF SDK 1.5.2.0 (`rust/windows/include/AMF/core/Version.h`).
 
 Encoder focus gives the AMF encoder's bits to the parts of the picture where they matter, through AMF's per-block importance map (ROI). The output is an ordinary H.264, HEVC or AV1 stream: every Moonlight client decodes it unchanged, and nothing changes on the wire. `PROTOCOL_VERSION` stays as it is.

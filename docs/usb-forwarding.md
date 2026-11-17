@@ -1,6 +1,6 @@
 # USB forwarding
 
-[Documentation](README.md) · [Clipboard, files and USB](configuration.md#clipboard-files-and-usb) · [DualSense haptics](dualsense-haptics.md)
+[Rubylight docs](README.md) › [Controllers](README.md#controllers) · [Clipboard, files and USB](configuration.md#clipboard-files-and-usb) · [DualSense haptics](dualsense-haptics.md)
 
 A USB device plugged into the client, such as a flash drive, a USB gamepad or a dongle, can be attached to the host PC during a stream and used as if it were plugged into the PC. The client serves the device over USB/IP inside a TLS tunnel on the stream's HTTPS port, and [usbip-win2](https://github.com/vadimgrn/usbip-win2) attaches it on the host. No USB/IP port is open to the network: the host relays the tunnel to the driver on 127.0.0.1. The protocol is specified in the [native API](native-api.md#usb-forwarding) and [control messages](control-messages.md#0x553a-usb-forwarding).
 

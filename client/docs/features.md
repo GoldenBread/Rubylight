@@ -1,6 +1,6 @@
 # Features
 
-[Documentation](index.md) · [Android and desktop](CLIENT-PARITY.md) · [Host feature support](PARITY-MATRIX.md)
+[Nightjar docs](index.md) › [Reference](index.md#reference) · [Android and desktop](CLIENT-PARITY.md) · [Host feature support](PARITY-MATRIX.md)
 
 Nightjar streams a PC to Android phones, handhelds, tablets, Android TV and Fire TV, and to Windows, Linux and macOS. All clients share one streaming engine, written in Rust; the Android app also keeps the classic moonlight-common-c engine as a setting.
 

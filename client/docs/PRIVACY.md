@@ -1,6 +1,6 @@
 # Nightjar privacy
 
-[Documentation](index.md)
+[Nightjar docs](index.md) › [Reference](index.md#reference)
 
 This policy covers Nightjar for Android, Android TV and Fire TV, and
 Nightjar for Windows, Linux and macOS. The sections up to

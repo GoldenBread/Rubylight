@@ -1,5 +1,7 @@
 # Timing record (3.0 A8, measure only)
 
+[Rubylight docs](README.md) › [For developers](README.md#for-developers)
+
 Design and implementer briefs for [plan](rubylight-3.0-plan.md) item A8. Nothing here changes how a frame is captured, encoded, sent, decoded or shown. No `PROTOCOL_VERSION` change; stock Moonlight sees no difference.
 
 Section 2 is the reference for the record's format, the join and the report (`rust/release/timing_report.py` and code comments cite it). Sections 1, 3 and 4 record the design as decided on 2026-10-22: what was missing then, the implementer briefs, and the decisions. [Performance](../rust/PERFORMANCE.md#october-23-per-frame-timing-record-baselines) has the measured baselines.

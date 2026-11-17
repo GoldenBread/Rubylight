@@ -1,6 +1,6 @@
 # Android audit — 13 October 2026
 
-[Documentation](index.md) · [Host feature matrix](PARITY-MATRIX.md) · [Building](building.md)
+[Nightjar docs](index.md) › [Engineering notes](index.md#engineering-notes) · [Host feature matrix](PARITY-MATRIX.md) · [Building](building.md)
 
 ## Scope
 

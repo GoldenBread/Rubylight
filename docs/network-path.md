@@ -1,6 +1,6 @@
 # Remote connection route
 
-[Documentation](README.md) · [HTTP API](api.md) · [Native API](native-api.md)
+[Rubylight docs](README.md) › [For developers](README.md#for-developers) · [HTTP API](api.md) · [Native API](native-api.md)
 
 Rubylight lets compatible clients show whether their current Tailscale connection is direct, relayed or unknown. Tailscale must already be installed and running on the host for a route to be identified; Rubylight does not install or configure it. An unknown result does not by itself mean that streaming is unavailable.
 

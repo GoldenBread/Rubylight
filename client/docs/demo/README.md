@@ -1,5 +1,7 @@
 # Nightjar debug demo
 
+[Nightjar docs](../index.md) › [Engineering notes](../index.md#engineering-notes)
+
 The non-root debug APK includes an offline marketing fixture mode. Package IDs stay
 `com.butterpollo.client` / `com.butterpollo.client.root`. All demo activities,
 fixtures, scripted metrics, PNG artwork and MP4 samples live in `app/src/debug`;

@@ -1,6 +1,6 @@
 # Pairing and host permissions
 
-[Documentation](index.md)
+[Nightjar docs](index.md) › [Get started](index.md#get-started)
 
 Each Nightjar installation pairs with a PC's host once. Pairing exchanges certificates; afterwards the host recognizes the installation by its client certificate, and Nightjar recognizes the PC by the host's certificate. The steps are the same on Android and on Nightjar for Windows and Linux unless a step names one of them.
 

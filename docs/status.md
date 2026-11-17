@@ -1,5 +1,7 @@
 # Rubylight and Nightjar status
 
+[Rubylight docs](README.md) › [Engineering notes](README.md#engineering-notes)
+
 The living record of each slice and feature: what it does, its state and the evidence (runs, measurements, commits). Keep a row current in the change that alters it, and record here why a feature is limited to a codec, GPU, OS, client or mode. Paths our devices cannot test are marked Experimental here and in the [hardware matrix](hardware-matrix.md), never in a UI or release notes. Search it by slice id or feature name; it is too long to read whole.
 
 The table began as the status section of the [3.0 plan](rubylight-3.0-plan.md), now history; its slice ids (A1, B9, ...) keep their meaning.

@@ -1,6 +1,6 @@
 # Quick start
 
-[Documentation](index.md)
+[Nightjar docs](index.md) › [Get started](index.md#get-started)
 
 This page takes you from installation to a running stream. The defaults are chosen for the device, so no tuning is needed for the first stream.
 

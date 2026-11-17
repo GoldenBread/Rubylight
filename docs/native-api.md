@@ -1,6 +1,6 @@
 # Native API v1
 
-[Documentation](README.md) · [HTTP API](api.md) · [Control messages](control-messages.md) · [Hardware metrics](hardware-metrics.md)
+[Rubylight docs](README.md) › [For developers](README.md#for-developers) · [HTTP API](api.md) · [Control messages](control-messages.md) · [Hardware metrics](hardware-metrics.md)
 
 The native API lets a paired client go beyond the Moonlight protocol: read the host's capabilities, game library and session state, run session actions, and, with the device's host control permission, read and change the graphics driver's settings (Radeon, or NVIDIA on a host that streams with an NVIDIA GPU). Further features (wake targets, audio processing, files, the image clipboard, shared folders and USB forwarding) are listed in the capabilities response when the host serves them. Version 1 shipped in Rubylight 3.0.0, and Nightjar is the reference client. This page is the contract between the host and Nightjar's `nightjar-core`; [HTTP API](api.md#native-api-v1-paired-clients) has a short summary. Fake-backend host tests and the compatibility matrix in `rust/host/src/nvhttp/native_tests/compat.rs` cover the contract, and the [hardware matrix](hardware-matrix.md) records the Radeon round trip and crash restore on real hardware.
 

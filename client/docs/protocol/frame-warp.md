@@ -1,6 +1,6 @@
 # Frame Warp
 
-[Documentation](../index.md) · [Host feature support](../PARITY-MATRIX.md) · [Video and latency](../video-and-latency.md)
+[Nightjar docs](../index.md) › [Engineering notes](../index.md#engineering-notes) · [Host feature support](../PARITY-MATRIX.md) · [Video and latency](../video-and-latency.md)
 
 Status: version 1. Nightjar implements the client side, and Rubylight the host side. Any host can implement it; a client checks the advertisement, never the host name.
 

@@ -1,6 +1,6 @@
 # Streaming stability audit, October 18, 2026
 
-[Architecture](architecture.md) · [Release notes](../rust/RELEASE_NOTES.md)
+[Rubylight docs](README.md) › [Engineering notes](README.md#engineering-notes) · [Architecture](architecture.md) · [Release notes](../rust/RELEASE_NOTES.md)
 
 This audit starts from `fa5b26cef28474cb114e4e7879057e030036fb95`
 (2.5.5). It investigates recurring AMD device resets and reviews the ownership,

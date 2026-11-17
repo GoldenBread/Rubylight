@@ -1,5 +1,7 @@
 # Guests from other devices
 
+[Rubylight docs](README.md) › [Play together](README.md#play-together)
+
 Several people can play one game on the PC from their own paired devices. While one device plays (the **owner**), a second paired device that joins the running game becomes its **guest**. The guest sees the same picture and hears the same sound, gets a controller of its own as the next player, and gets the keyboard and mouse only if the owner grants them. Nightjar on Android and desktop and stock Moonlight clients can all join; the owner answers on their own device, or anyone with access answers in the console.
 
 Guests are paired devices. To share a stream with someone in a browser without pairing, use [browser guests](browser-guests.md) instead.

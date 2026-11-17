@@ -1,6 +1,6 @@
 # FAQ
 
-[Documentation](index.md)
+[Nightjar docs](index.md) › [Troubleshooting](index.md#troubleshooting)
 
 ## What do I need?
 

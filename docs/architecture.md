@@ -1,6 +1,6 @@
 # How Rubylight works
 
-[Documentation](README.md) · [Configuration](configuration.md) · [Performance](performance.md) · [Developer guide](../rust/README.md)
+[Rubylight docs](README.md) › [For developers](README.md#for-developers) · [Configuration](configuration.md) · [Performance](performance.md) · [Developer guide](../rust/README.md)
 
 Rubylight turns a Windows display into a Moonlight stream. On Radeon and NVIDIA, captured pixels stay on the GPU, are prepared on D3D12 compute queues and go straight to the card's own encoder, AMF or NVENC. The host bounds outstanding work, so a busy encoder or network cannot turn into a growing queue of old pictures.
 

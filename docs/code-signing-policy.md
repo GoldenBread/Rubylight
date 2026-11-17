@@ -1,5 +1,7 @@
 # Code signing policy
 
+[Rubylight docs](README.md) › [Project](README.md#project)
+
 Rubylight's Windows releases are signed with the maintainer's code signing certificate for open-source developers, issued by Certum to **Open Source Developer Ramazan Kara**, starting with the first release after 4.7.1. Earlier releases are unsigned. The certificate's private key stays in Certum's cloud signing service (SimplySign). The release workflow signs in to it with the maintainer's Certum account and its one-time-code secret, stored as GitHub secrets that only the signing job of a run on `main` or a `v*` tag can read. Nightjar's Windows installers and `nightjar.exe` are signed with the same certificate in the same way.
 
 ## Team roles

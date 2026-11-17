@@ -1,6 +1,6 @@
 # HDR on Android displays
 
-[Documentation](index.md) · [Video and latency](video-and-latency.md#hdr-formats)
+[Nightjar docs](index.md) › [Engineering notes](index.md#engineering-notes) · [Video and latency](video-and-latency.md#hdr-formats)
 
 How Nightjar for Android decides when to ask the PC for HDR, how it configures the decoder, and how it reports a refusal. The decisions are covered by unit tests with synthetic display capabilities. On hardware, HDR streams have run on a TCL C6K TV (MediaTek, Android 14); the checks below for HDR phones have not run on our devices.
 

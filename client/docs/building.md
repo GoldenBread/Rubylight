@@ -1,6 +1,6 @@
 # Building Nightjar
 
-[Documentation](index.md)
+[Nightjar docs](index.md) › [For developers](index.md#for-developers)
 
 ## Install a published or development build
 

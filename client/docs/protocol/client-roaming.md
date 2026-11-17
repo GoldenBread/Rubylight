@@ -1,6 +1,6 @@
 # Client roaming: keeping a session when the client's address changes
 
-[Documentation](../index.md) · [Video and latency](../video-and-latency.md#network-drops) · [Host feature support](../PARITY-MATRIX.md)
+[Nightjar docs](../index.md) › [Engineering notes](../index.md#engineering-notes) · [Video and latency](../video-and-latency.md#network-drops) · [Host feature support](../PARITY-MATRIX.md)
 
 Status: version 1. The wire format is fixed (`rubylight_protocol::roaming`); Nightjar's Rust streaming engine implements the client rules below.
 

@@ -1,6 +1,6 @@
 # Privacy
 
-[Documentation](README.md) · [Code signing policy](code-signing-policy.md)
+[Rubylight docs](README.md) › [Reference](README.md#reference) · [Code signing policy](code-signing-policy.md)
 
 Rubylight runs on your PC and communicates with the devices you pair with it. It has no accounts, analytics, advertising, crash reporting or telemetry upload. It never sends your logs, settings, crash dumps, paired devices or usage to the Rubylight project or to anyone else, and no server operated by the project carries your streams.
 

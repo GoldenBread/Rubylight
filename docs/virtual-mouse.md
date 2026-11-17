@@ -1,6 +1,6 @@
 # Virtual mouse and touchpad
 
-[Documentation](README.md) · [Keyboard, touch, pen and cursor](configuration.md#keyboard-touch-pen-and-cursor) · [DualSense haptics](dualsense-haptics.md)
+[Rubylight docs](README.md) › [Controllers](README.md#controllers) · [Keyboard, touch, pen and cursor](configuration.md#keyboard-touch-pen-and-cursor) · [DualSense haptics](dualsense-haptics.md)
 
 Rubylight can move the PC's mouse in two ways. **Injection** hands each move and click to Windows (`SendInput`). The **virtual mouse** plugs in a USB mouse over usbip-win2, the signed USB/IP driver the setup installs with **USB audio and haptics**, and sends it HID reports, so Windows, games and anti-cheat read it as they read a real mouse. The same driver carries a virtual **precision touchpad** that replays a device's physical touchpad, so Windows' own touchpad gestures work.
 

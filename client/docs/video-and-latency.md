@@ -1,6 +1,6 @@
 # Video and latency
 
-[Documentation](index.md) · [Settings reference](settings.md)
+[Nightjar docs](index.md) › [Picture and smoothness](index.md#picture-and-smoothness) · [Settings reference](settings.md)
 
 This page explains the settings that trade picture quality against latency, and the measurements that show the effect of each. For troubleshooting, start from 720p at 60 fps, watch the [performance overlay](#performance-overlay), and change one setting at a time. Resolution determines detail and decode work, frame rate determines motion smoothness and work per second, and bitrate determines compression quality and network load.
 

@@ -1,6 +1,6 @@
 # Co-op and background streaming
 
-[Documentation](README.md) · [Background streaming](configuration.md#background-streaming) · [Features](features.md)
+[Rubylight docs](README.md) › [Play together](README.md#play-together) · [Background streaming](configuration.md#background-streaming) · [Features](features.md)
 
 Rubylight can run a game through [Nucleus Co-op](https://github.com/SplitScreen-Me/splitscreenme-nucleus),
 the split-screen launcher. Nucleus Co-op starts a separate instance of the

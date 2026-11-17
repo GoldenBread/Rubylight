@@ -1,6 +1,6 @@
 # Refresh rate switching on Android
 
-[Documentation](index.md) · [Video and latency](video-and-latency.md)
+[Nightjar docs](index.md) › [Engineering notes](index.md#engineering-notes) · [Video and latency](video-and-latency.md)
 
 How Nightjar for Android asks the screen for the stream's frame rate and explains when the screen does not follow. The votes, the withdrawal and the reasons are covered by unit tests with synthetic displays. Our Retroid Pocket 6 allows one rate at a time (`primaryRefreshRateRange` is [60 60] or pinned at 120), so seamless switching between several rates, as on a Pixel or a Samsung with Adaptive refresh rate, has not run on our devices.
 

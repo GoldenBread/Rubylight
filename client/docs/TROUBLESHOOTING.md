@@ -1,6 +1,6 @@
 # Troubleshooting
 
-[Documentation](index.md)
+[Nightjar docs](index.md) › [Troubleshooting](index.md#troubleshooting)
 
 Find the symptom, make one change and try again. For performance problems, first open the stream menu's **Diagnostics** tile, choose **Debug** and use **Copy stats**, so you can compare the numbers before and after the change. The first three tables describe the Android app; [Nightjar for Windows and Linux](#nightjar-for-windows-and-linux) has its own table.
 

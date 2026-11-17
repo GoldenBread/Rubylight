@@ -1,5 +1,7 @@
 # Nightjar demo shotlist
 
+[Nightjar docs](../index.md) › [Engineering notes](../index.md#engineering-notes)
+
 Offline fixture tour: **69 seconds at 60 fps**, including a 3-second intro, 61
 seconds of UI and a 5-second outro. It leads with what sets Nightjar apart: host-aware
 PC settings, the stream menu, host telemetry, PyroWave, adaptive refresh, upscaling,

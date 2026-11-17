@@ -1,6 +1,6 @@
 # Hardware matrix
 
-[Documentation](README.md) · [Performance](performance.md) · [Full measurement record](../rust/PERFORMANCE.md)
+[Rubylight docs](README.md) › [Reference](README.md#reference) · [Performance](performance.md) · [Full measurement record](../rust/PERFORMANCE.md)
 
 This matrix records the hardware Rubylight 3.x and 4.x have run on and what the code supports beyond it. Each cell carries one label. The label describes the project's evidence; it is not a prediction for a particular PC.
 

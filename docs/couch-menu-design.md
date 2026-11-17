@@ -1,5 +1,7 @@
 # Couch menu design
 
+[Rubylight docs](README.md) › [Engineering notes](README.md#engineering-notes)
+
 Status: design, 2026-10-26. Nothing is implemented. Some clients stay untested: we cannot test iOS, tvOS, Steam Deck, Android TV or webOS clients on our own devices.
 
 The couch menu is a host menu that Rubylight draws into the video stream. Any Moonlight client can open it with a controller, a keyboard or touch, with no client UI and no protocol change: stock Moonlight on every platform, Artemis and Nightjar. The menu reuses the host's existing logic for Radeon settings with restore, the stream preset, session actions and live GPU readings. It also has a slot for each sibling feature's toggle.

@@ -1,5 +1,7 @@
 # Frame Warp
 
+[Rubylight docs](README.md) › [Picture and smoothness](README.md#picture-and-smoothness)
+
 Frame Warp makes a camera turn show on the next refresh of the client's screen instead of a
 round trip and the game's own delay later. Nightjar shifts each picture by the turn that its
 own mouse or right-stick input has not reached the picture with yet. Rubylight learns, for the

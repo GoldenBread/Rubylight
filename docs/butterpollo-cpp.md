@@ -1,6 +1,6 @@
 # Butterpollo 1.x: the C++ fork (history)
 
-[Current documentation](README.md) · [Archived C++ references](https://github.com/RamazanKara/Rubylight/blob/2.0.0-rc.23/docs/legacy/README.md) · [Current architecture](architecture.md)
+[Rubylight docs](README.md) › [Project](README.md#project) · [Archived C++ references](https://github.com/RamazanKara/Rubylight/blob/2.0.0-rc.23/docs/legacy/README.md) · [Current architecture](architecture.md)
 
 These are the notes from Butterpollo's C++ releases (`2.0.0-beta.3-butter.1` to `butter.4`), a fork of Vibepollo 2.0.0-beta.3. Butterpollo 2.0 replaced that host with the Rust host in [`rust/`](../rust/README.md); see the [main README](../README.md) for the current release. The C++ sources were removed from `main` after 2.0.0-rc.23; [that tag](https://github.com/RamazanKara/Rubylight/tree/2.0.0-rc.23) keeps them. Some things below no longer apply: Butterpollo 2.0 brings back the Steam, Playnite and Lossless Scaling integrations, and installs with `butterpollo-setup-<version>.exe` instead of `VibepolloSetup.exe`.
 

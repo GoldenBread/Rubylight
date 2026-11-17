@@ -1,6 +1,6 @@
 # Android and desktop
 
-[Documentation](index.md) · [Everything Nightjar does](features.md) · [Host feature support](PARITY-MATRIX.md)
+[Nightjar docs](index.md) › [Reference](index.md#reference) · [Everything Nightjar does](features.md) · [Host feature support](PARITY-MATRIX.md)
 
 Which Nightjar features each client provides: Android (phones, handhelds, tablets, Android TV and Fire TV) and the [desktop client](../protocol/desktop/README.md) for Windows, Linux and macOS. Both clients run the same Rust streaming engine and share much of their behavior through the `nightjar-policy` crate. Host requirements are identical for both and are listed in [host feature support](PARITY-MATRIX.md).
 
