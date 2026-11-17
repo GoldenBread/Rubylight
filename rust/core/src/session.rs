@@ -92,12 +92,39 @@ pub struct Stats {
     /// Last frame offered to the video socket, plus one; zero means none yet.
     pub video_frame: AtomicU64,
     pub performance: std::sync::Mutex<crate::performance::Performance>,
+    /// The video thread's stutter totals over the windows that ended, published
+    /// after each one. The send path never takes this lock; the console and the
+    /// teardown read it, with the pictures recorded since in `performance`.
+    pub stutter: std::sync::Mutex<crate::stutter_report::Totals>,
     /// The stages `frames` doesn't count, for the pipeline frame rates.
     pub pipeline: crate::pipeline_rates::Counters,
     /// The console's pipeline frame rates, over `pipeline_rates::CONSOLE_WINDOW`.
     pub pipeline_console: std::sync::Mutex<crate::pipeline_rates::Sampler>,
     /// Socket read to injected for ENet input passes, for the `stream timings` line.
     pub input_latency: std::sync::Mutex<crate::input_latency::InputLatency>,
+}
+impl Stats {
+    /// The video thread publishes its stutter totals after each window, so a
+    /// reader never does the medians while holding the lock the send path
+    /// records under.
+    pub fn publish_stutter(&self, totals: &crate::stutter_report::Totals) {
+        *self.stutter.lock().unwrap() = totals.clone();
+    }
+    /// The stream's stutter report so far: the totals the video thread last
+    /// published, plus the pictures it has not counted yet, copied under the
+    /// stage lock. The medians and the JSON run after both locks are released,
+    /// as [`Performance::window`](crate::performance::Performance::window)
+    /// sorts after the same lock.
+    pub fn stutter_window(&self) -> crate::performance::StutterWindow {
+        let pictures = self
+            .performance
+            .lock()
+            .unwrap()
+            .uncounted_stutter()
+            .collect();
+        let totals = self.stutter.lock().unwrap().clone();
+        crate::performance::StutterWindow::new(totals, pictures)
+    }
 }
 /// The encoder's share of a video `budget` that also carries `fec` percent
 /// parity: budget × 100 / (100 + fec), at least 1 Kbps of a non-zero budget.
@@ -1616,13 +1643,16 @@ impl<P, A> Session<P, A> {
         } else {
             fps
         };
-        // Sorted after the lock the video sender records into is released.
-        let performance = self
-            .stats
-            .performance
-            .lock()
-            .unwrap()
-            .window(Instant::now());
-        serde_json::json!({"warnings":warnings,"encoder":*self.encoder.read().unwrap(),"uuid":self.launch.client.uuid,"device_name":self.launch.client.name,"width":width,"height":height,"display_width":requested.width,"display_height":requested.height,"fps":fps,"requested_fps":requested_fps,"video_format":self.config.codec,"hdr":self.config.hdr,"vrr":self.config.vrr_low_latency,"encoder_bitrate_kbps":self.bitrate.load(Ordering::Relaxed),"adaptive_bitrate":self.adaptive_bitrate.lock().unwrap().snapshot(),"link_rate":self.link_rate_snapshot(),"congestion":self.congestion_snapshot(),"packet_pacing":self.automatic_pacing.lock().unwrap().snapshot(),"fec_percent":self.fec_percent(),"pyrowave_minimum_kbps":(self.config.codec == 3).then(|| crate::pyrowave::minimum_kbps(self.config.width, self.config.height, self.config.fps_millihz())),"pyrowave_recommended_kbps":(self.config.codec == 3).then(|| crate::pyrowave::recommended_kbps(self.config.width, self.config.height, self.config.fps_millihz())),"audio_channels":self.config.audio_channels,"state":if self.stopping(){"STOPPING"}else{"RUNNING"},"frames_sent":self.stats.frames.load(Ordering::Relaxed),"frames_replaced":self.stats.frames_replaced.load(Ordering::Relaxed),"packets_sent":self.stats.packets.load(Ordering::Relaxed),"bytes_sent":self.stats.bytes.load(Ordering::Relaxed),"idr_requests":self.stats.idr_requests.load(Ordering::Relaxed),"reference_invalidations":self.stats.reference_invalidations.load(Ordering::Relaxed),"send_loss_recoveries":self.stats.send_loss_recoveries.load(Ordering::Relaxed),"frames_lost_on_send":self.stats.frames_lost_on_send.load(Ordering::Relaxed),"keyframes_past_fec":self.stats.keyframes_past_fec.load(Ordering::Relaxed),"slice_delivery_overflows":self.stats.slice_delivery_overflows.load(Ordering::Relaxed),"encode_latency_ms":self.stats.latency_us.load(Ordering::Relaxed) as f64/1000.,"performance":performance.snapshot(),"pipeline_rates":self.console_pipeline_rates(),"uptime_seconds":self.started.elapsed().as_secs_f64(),"role":self.launch.role,"guest":self.launch.guest()})
+        // Taken under the send path's lock and sorted after it is released. The
+        // stutter report adds the window the video thread has not advanced yet,
+        // from the totals it published and the pictures recorded since, so the
+        // console reads this stream to its latest picture.
+        let performance = {
+            let performance = self.stats.performance.lock().unwrap();
+            performance.window(Instant::now())
+        };
+        let performance = performance.snapshot();
+        let stutter = self.stats.stutter_window().report(mode.period()).snapshot();
+        serde_json::json!({"warnings":warnings,"encoder":*self.encoder.read().unwrap(),"uuid":self.launch.client.uuid,"device_name":self.launch.client.name,"width":width,"height":height,"display_width":requested.width,"display_height":requested.height,"fps":fps,"requested_fps":requested_fps,"video_format":self.config.codec,"hdr":self.config.hdr,"vrr":self.config.vrr_low_latency,"encoder_bitrate_kbps":self.bitrate.load(Ordering::Relaxed),"adaptive_bitrate":self.adaptive_bitrate.lock().unwrap().snapshot(),"link_rate":self.link_rate_snapshot(),"congestion":self.congestion_snapshot(),"packet_pacing":self.automatic_pacing.lock().unwrap().snapshot(),"fec_percent":self.fec_percent(),"pyrowave_minimum_kbps":(self.config.codec == 3).then(|| crate::pyrowave::minimum_kbps(self.config.width, self.config.height, self.config.fps_millihz())),"pyrowave_recommended_kbps":(self.config.codec == 3).then(|| crate::pyrowave::recommended_kbps(self.config.width, self.config.height, self.config.fps_millihz())),"audio_channels":self.config.audio_channels,"state":if self.stopping(){"STOPPING"}else{"RUNNING"},"frames_sent":self.stats.frames.load(Ordering::Relaxed),"frames_replaced":self.stats.frames_replaced.load(Ordering::Relaxed),"packets_sent":self.stats.packets.load(Ordering::Relaxed),"bytes_sent":self.stats.bytes.load(Ordering::Relaxed),"idr_requests":self.stats.idr_requests.load(Ordering::Relaxed),"reference_invalidations":self.stats.reference_invalidations.load(Ordering::Relaxed),"send_loss_recoveries":self.stats.send_loss_recoveries.load(Ordering::Relaxed),"frames_lost_on_send":self.stats.frames_lost_on_send.load(Ordering::Relaxed),"keyframes_past_fec":self.stats.keyframes_past_fec.load(Ordering::Relaxed),"slice_delivery_overflows":self.stats.slice_delivery_overflows.load(Ordering::Relaxed),"encode_latency_ms":self.stats.latency_us.load(Ordering::Relaxed) as f64/1000.,"performance":performance,"stutter":stutter,"pipeline_rates":self.console_pipeline_rates(),"uptime_seconds":self.started.elapsed().as_secs_f64(),"role":self.launch.role,"guest":self.launch.guest()})
     }
 }

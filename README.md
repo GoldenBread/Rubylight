@@ -32,7 +32,7 @@
 
 <table>
   <tr>
-    <td width="33%" valign="top"><img src="docs/media/showcase/console-home.png" alt="The Rubylight console's Home page: Ready to play, the last game played, the host name and paired devices, and the first games of the library with their covers."><br><sub><b>The console.</b> Home walks you through pairing and your first game.</sub></td>
+    <td width="33%" valign="top"><img src="docs/media/showcase/console-home.webp" alt="The Rubylight console's Home page: Ready to play, the last game played, the host name and paired devices, and the first games of the library with their covers."><br><sub><b>The console.</b> Home walks you through pairing and your first game.</sub></td>
     <td width="33%" valign="top"><img src="client/docs/assets/shots/tv-home.png" alt="Nightjar's Home on a TV: a game in the hero and a Recently played row of posters with store badges (demo library)."><br><sub><b>Your library on the TV.</b> Every launcher's games, with their covers.</sub></td>
     <td width="33%" valign="top"><img src="client/docs/assets/shots/stream-menu-radeon.png" alt="Nightjar's session menu over a running game: bitrate, the Wi-Fi link, and Radeon Anti-Lag, Radeon Chill and frame rate target changed during the stream (demo stream)."><br><sub><b>Tune it while you play.</b> Bitrate and Radeon settings without leaving the game.</sub></td>
   </tr>
@@ -105,6 +105,13 @@ Open **https://localhost:47990** on the PC and Home walks you through pairing, b
   <tr>
     <td><img src="docs/media/showcase/console-all-settings.png" alt="All settings: six tabs from This PC to Advanced, the Picture tab open with its topics, a search field and one line of explanation per setting."></td>
     <td><img src="docs/media/showcase/console-help.png" alt="Help: what a device needs to connect to this PC, the known problems found in the host log, and the support bundle."></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td><img src="docs/media/showcase/console-settings.webp" alt="Settings: the Stream preset set to Balanced, virtual display, stream resolution and what happens to your monitors, then audio, microphone and controllers, each with a plain explanation."></td>
+    <td><img src="docs/media/showcase/console-sessions.webp" alt="Sessions: the stream running now, then a history of earlier streams with the device, game, picture, frame rate, bitrate, loss, duration and how each ended."></td>
   </tr>
 </table>
 

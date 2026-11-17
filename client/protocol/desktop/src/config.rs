@@ -432,7 +432,8 @@ pub struct Settings {
     pub host_frame_times: bool,
     /// Fractional V-Sync (Android's `checkbox_fractional_vsync`): with V-Sync pacing on a display
     /// that refreshes at 2 to 4 times the stream's rate, each picture stays for exactly that many
-    /// refreshes (`nightjar_policy::vsync::refreshes_per_frame`, the sync interval on Windows).
+    /// refreshes (`nightjar_policy::vsync::refreshes_per_frame`). The client holds each picture until
+    /// the refresh that opens its turn and keeps the swap chain's sync interval at 1.
     pub fractional_vsync: bool,
     /// The performance overlay is on (Android's `checkbox_enable_perf_overlay`), showing
     /// `overlay_mode` in the `overlay_position` corner. The stream menu and its shortcut change

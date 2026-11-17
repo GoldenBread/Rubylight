@@ -92,6 +92,8 @@ Leave **All settings → Picture → Capture method** on **Automatic**. It uses 
 3. Set the client to **1920×1080 at 60 FPS** with HDR off. Use H.264, or HEVC if the device decodes it in hardware.
 4. Launch **Desktop**. Check that windows move smoothly, sound plays and input reaches the PC.
 
+![The Devices page: what a new device may do (Play games, Watch only or Everything) above the list of paired devices, each with its access level.](media/showcase/console-devices.webp)
+
 Once that works, raise the resolution and frame rate in the client, then turn on HDR if both the client and the streamed display support it. The stream card on **Home** shows what was negotiated. With Nightjar, turn on **Frame Warp** under its Video settings to see camera turns on the device's next screen refresh ([Frame Warp](frame-warp.md)).
 
 If the client does not find the host, see [discovery and pairing](troubleshooting.md#moonlight-cannot-find-or-pair-with-the-pc). If Desktop shows a black picture, see [capture and displays](troubleshooting.md#black-picture-no-display-or-wgc-fails). If pairing works but launching is refused, check that the device is enabled and has **List apps**, **View streams** and **Launch apps** under **Devices**.

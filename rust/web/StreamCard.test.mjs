@@ -114,6 +114,43 @@ test('a bitrate cut for a standing queue says so on the card', () => {
   assert.doesNotMatch(loss, /held back in a queue/);
 });
 
+const stutter = (changes = {}) => ({
+  windows: 4, pictures: 54_000, late_pictures: 12, lost_ms: 124.6, dominant: 'encode',
+  stages: [
+    { id: 'encode', lost_ms: 76.8, percent: 62 },
+    { id: 'send', lost_ms: 37.4, percent: 30 },
+    { id: 'capture', lost_ms: 10.4, percent: 8 },
+  ],
+  not_measured: ['game', 'network', 'decode', 'present'],
+  ...changes,
+});
+
+const pipelineRates = {
+  window_ms: 2004, source_mhz: 239_760, capture_mhz: 239_760,
+  submit_mhz: 120_000, output_mhz: 119_500, repeat_mhz: 120_000,
+};
+
+test('the card names the stage that took the time pictures lost against the stream\'s own path', () => {
+  const result = html({ stutter: stutter(), pipeline_rates: pipelineRates });
+  assert.match(result, /<dt[^>]*>Where pictures lost time<\/dt>/);
+  assert.match(result, /62% in encoding/);
+  assert.match(result, />12<\/span> of/);
+  assert.match(result, />54000<\/span> new pictures took longer than this stream's usual path/);
+  assert.match(result, /125 ms<\/span>/);
+  assert.match(result, /62% of it in encoding(?:<!--[^>]*-->)*\./);
+  // A clean host path is not a clean game: the sentence names the game and
+  // points at the source rate, so a game hitch is not read as no stutter.
+  assert.match(result, /The game's own intervals, the network and the device are outside this\s+measure/);
+  assert.match(result, /a late or missing game picture shows as fewer source frames and more repeats in\s+Pipeline frame rates/);
+  const clean = html({ stutter: stutter({ late_pictures: 0, lost_ms: 0, dominant: null, stages: [] }), pipeline_rates: pipelineRates });
+  assert.match(clean, /Where pictures lost time<\/dt>/);
+  assert.match(clean, /No new picture took longer than this stream's usual path from Windows' present to the host's last packet\./);
+  assert.match(clean, /a late or missing game picture shows as fewer source frames and more repeats in\s+Pipeline frame rates/);
+  assert.match(html({ stutter: stutter() }), /outside this\s+measure(?:<!--[^>]*-->)*\./);
+  assert.doesNotMatch(html(), /Where pictures lost time/);
+  assert.doesNotMatch(html({ stutter: stutter({ pictures: 0 }) }), /Where pictures lost time/);
+});
+
 test('pipeline frame rates show each host stage, a dash for one the host cannot count', () => {
   assert.doesNotMatch(html(), /Pipeline frame rates/);
   const result = html({ pipeline_rates: {
