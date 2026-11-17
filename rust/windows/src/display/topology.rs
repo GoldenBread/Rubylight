@@ -997,6 +997,76 @@ impl Topology {
 pub fn monitors() -> Result<Vec<Monitor>> {
     Ok(Topology::query()?.monitors())
 }
+/// Whether `hint` names the display Windows shows as the primary one: the primary's desktop
+/// sits at the origin, whichever display that is now. Read from the display configuration
+/// alone (no DXGI or colour query, which take nearly all of `monitors`' half a millisecond),
+/// so the display heartbeat can ask four times a second for a stream whose layout promised
+/// the primary. `None` when no active display matches `hint`: it is off, or Windows is still
+/// laying it out, and neither says where the primary went.
+pub fn shown_primary(hint: &str) -> Result<Option<bool>> {
+    let topology = Topology::query()?;
+    let mut named = false;
+    for path in &topology.paths {
+        // SAFETY: Both name structures have the matching header type and size and remain
+        // live through the query.
+        let mut source = DISPLAYCONFIG_SOURCE_DEVICE_NAME {
+            header: header(
+                DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
+                size_of::<DISPLAYCONFIG_SOURCE_DEVICE_NAME>(),
+                path.sourceInfo.adapterId,
+                path.sourceInfo.id,
+            ),
+            ..Default::default()
+        };
+        let mut target = DISPLAYCONFIG_TARGET_DEVICE_NAME {
+            header: header(
+                DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME,
+                size_of::<DISPLAYCONFIG_TARGET_DEVICE_NAME>(),
+                path.targetInfo.adapterId,
+                path.targetInfo.id,
+            ),
+            ..Default::default()
+        };
+        // SAFETY: The structures are live locals with matching headers for these synchronous
+        // queries, which only fill them in.
+        let read = unsafe {
+            DisplayConfigGetDeviceInfo(&mut source.header) == 0
+                && DisplayConfigGetDeviceInfo(&mut target.header) == 0
+        };
+        if !read {
+            continue;
+        }
+        let display_name = wide(&source.viewGdiDeviceName);
+        let monitor_device_path = wide(&target.monitorDevicePath);
+        let device_id = monitor_id(&monitor_device_path);
+        if ![
+            display_name.as_str(),
+            monitor_device_path.as_str(),
+            device_id.as_str(),
+        ]
+        .iter()
+        .any(|value| value.eq_ignore_ascii_case(hint))
+        {
+            continue;
+        }
+        named = true;
+        // SAFETY: The path was queried without virtual-mode awareness, so modeInfoIdx is
+        // the active union field.
+        let index = unsafe { path.sourceInfo.Anonymous.modeInfoIdx };
+        let Some(mode) = topology.modes.get(index as usize) else {
+            continue;
+        };
+        if mode.infoType != DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE {
+            continue;
+        }
+        // SAFETY: The mode type was checked as SOURCE before reading its sourceMode position.
+        let position = unsafe { mode.Anonymous.sourceMode.position };
+        if position.x == 0 && position.y == 0 {
+            return Ok(Some(true));
+        }
+    }
+    Ok(named.then_some(false))
+}
 impl Topology {
     /// The device ids `monitors` gives, from the source and target names alone, and whether
     /// every name could be read: `monitors` leaves out a path whose name it cannot read.

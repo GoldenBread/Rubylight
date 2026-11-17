@@ -531,6 +531,12 @@ impl Arrangement {
             Self::Primary | Self::Exclusive | Self::PrimaryIsolated
         )
     }
+    /// Whether the layout makes a stream's display the primary one while the user's own
+    /// displays stay on. A primary Windows moves back is then the stream's to put back;
+    /// exclusive keeps the primary itself by switching the other displays off.
+    pub const fn primary_beside_the_users(self) -> bool {
+        matches!(self, Self::Primary | Self::PrimaryIsolated)
+    }
     /// Whether the primary stays the one from before the stream.
     pub const fn keeps_primary(self) -> bool {
         matches!(self, Self::Extended | Self::Isolated)
@@ -982,6 +988,63 @@ impl LayoutWatch {
     }
     fn excused(&self, now: std::time::Instant) -> bool {
         self.excused_until.is_some_and(|until| now < until)
+    }
+}
+/// Whether a layout's promised primary is gone: one of the layouts that make a stream's
+/// display the primary while the user's displays stay on, and Windows shows that display
+/// on but not as the primary (`stream_primary` is false). Windows or a game moving the
+/// primary back to a monitor is not the user's choice, and the setting promises games
+/// open on the stream (issue #33: a stream that learned the move kept it for the device).
+/// None is the stream's display off or Windows still laying it out, which the display
+/// recovery and the layout watch handle; there is nothing to put back yet.
+pub fn primary_moved(planned: Arrangement, stream_primary: Option<bool>) -> bool {
+    stream_primary == Some(false) && planned.primary_beside_the_users()
+}
+
+/// What [`PrimaryWatch::observe`] decides.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PrimaryAction {
+    Wait,
+    Restore,
+}
+
+/// Watches the primary a primary layout made, as [`LayoutWatch`] watches the displays a
+/// layout switched off: a move of the primary must hold for [`LayoutWatch::SETTLE`] first,
+/// so a rearrange Windows is still doing passes, and a restore Windows refused waits
+/// [`LayoutWatch::RETRY`]. Unlike those displays it never gives up: the primary is what
+/// games open on, and a move that keeps returning is what the stream's card is for.
+#[derive(Debug, Default)]
+pub struct PrimaryWatch {
+    since: Option<std::time::Instant>,
+    next_check: Option<std::time::Instant>,
+}
+impl PrimaryWatch {
+    /// Whether to look at the displays now: a refused restore waits before its next try.
+    pub fn due(&self, now: std::time::Instant) -> bool {
+        self.next_check.is_none_or(|next| now >= next)
+    }
+    /// Record what this look found: the primary is `demoted` (gone from the stream's
+    /// display) or not.
+    pub fn observe(&mut self, demoted: bool, now: std::time::Instant) -> PrimaryAction {
+        if !demoted {
+            self.since = None;
+            return PrimaryAction::Wait;
+        }
+        let since = *self.since.get_or_insert(now);
+        if now.duration_since(since) < LayoutWatch::SETTLE {
+            return PrimaryAction::Wait;
+        }
+        self.since = None;
+        PrimaryAction::Restore
+    }
+    /// The stream's display is the primary one again.
+    pub fn restored(&mut self) {
+        self.since = None;
+    }
+    /// Windows did not take the layout back: wait [`LayoutWatch::RETRY`] before asking again.
+    pub fn failed(&mut self, now: std::time::Instant) {
+        self.since = None;
+        self.next_check = Some(now + LayoutWatch::RETRY);
     }
 }
 #[cfg(test)]

@@ -218,6 +218,62 @@ fn a_layout_chosen_during_the_stream_is_kept_for_the_device() {
 }
 
 #[test]
+fn a_primary_a_game_moved_is_put_back_but_a_rearrange_is_waited_out() {
+    use super::{Arrangement, PrimaryAction, PrimaryWatch, primary_moved};
+    // Only the layouts that keep the user's displays on and make the stream's display
+    // primary have a primary to put back.
+    for planned in [Arrangement::Primary, Arrangement::PrimaryIsolated] {
+        assert!(primary_moved(planned, Some(false)), "{planned:?}");
+        assert!(!primary_moved(planned, Some(true)), "{planned:?}");
+        // Off, or Windows still laying it out: the recovery and the layout watch own that.
+        assert!(!primary_moved(planned, None), "{planned:?}");
+    }
+    for planned in [
+        Arrangement::Extended,
+        Arrangement::Exclusive,
+        Arrangement::Isolated,
+    ] {
+        assert!(!primary_moved(planned, Some(false)), "{planned:?}");
+    }
+    // Windows or a game moving the primary must hold for the settle time first.
+    let start = std::time::Instant::now();
+    let mut watch = PrimaryWatch::default();
+    assert!(watch.due(start));
+    assert_eq!(watch.observe(false, start), PrimaryAction::Wait);
+    assert_eq!(
+        watch.observe(true, start),
+        PrimaryAction::Wait,
+        "the move has only just been seen"
+    );
+    assert_eq!(
+        watch.observe(true, start + super::LayoutWatch::SETTLE / 2),
+        PrimaryAction::Wait
+    );
+    assert_eq!(
+        watch.observe(true, start + super::LayoutWatch::SETTLE),
+        PrimaryAction::Restore
+    );
+    // A restore Windows refused waits before the next try.
+    watch.failed(start + super::LayoutWatch::SETTLE);
+    assert!(!watch.due(start + super::LayoutWatch::SETTLE));
+    let later = start + super::LayoutWatch::SETTLE + super::LayoutWatch::RETRY;
+    assert!(watch.due(later));
+    assert_eq!(
+        watch.observe(true, later),
+        PrimaryAction::Wait,
+        "the move is timed from the first look after the wait"
+    );
+    // Back as the primary: forgotten, and a later move is timed again.
+    watch.restored();
+    assert_eq!(watch.observe(false, later), PrimaryAction::Wait);
+    assert_eq!(watch.observe(true, later), PrimaryAction::Wait);
+    assert_eq!(
+        watch.observe(true, later + super::LayoutWatch::SETTLE),
+        PrimaryAction::Restore
+    );
+}
+
+#[test]
 fn virtual_opt_in_preserves_host_policy_and_device_force_overrides_physical_output() {
     use super::VirtualDisplayRequest;
     let host = VirtualDisplayRequest {

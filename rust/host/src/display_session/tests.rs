@@ -1343,6 +1343,7 @@ fn test_prepared(host: &Shared) -> Prepared {
         revision: 0,
         recovery: Recovery::new(),
         layout_watch: Default::default(),
+        primary_watch: Default::default(),
         departures: 0,
         wake_layouts: 0,
         console_session: None,
@@ -2441,6 +2442,7 @@ fn a_faster_stream_request_keeps_only_a_display_that_can_follow_it() {
         revision: 0,
         recovery: Recovery::new(),
         layout_watch: Default::default(),
+        primary_watch: Default::default(),
         departures: 0,
         wake_layouts: 0,
         console_session: None,
@@ -2629,6 +2631,23 @@ fn a_recovered_display_mode_is_reported_on_the_card_of_the_launch_using_it() {
     let third = Arc::new(Warnings::default());
     fresh.attach(third.clone());
     assert!(codes(&third).is_empty());
+}
+#[test]
+fn a_refused_primary_restore_stays_on_the_card_until_the_display_has_it_again() {
+    let warnings = Arc::new(Warnings::default());
+    let report = ModeReport::new(warnings.clone(), (None, None, None), 60_000);
+    assert!(codes(&warnings).is_empty());
+    report.primary_refused("Windows refused the display layout (with modes: 0)");
+    assert_eq!(codes(&warnings), ["display_primary"]);
+    let message = &warnings.snapshot()[0].message;
+    assert!(message.contains("main screen"), "{message}");
+    assert!(message.contains("refused"), "{message}");
+    // A resume reads the same finding on its own card, and clearing it is on that card.
+    let resumed = Arc::new(Warnings::default());
+    report.attach(resumed.clone());
+    assert_eq!(codes(&resumed), ["display_primary"]);
+    report.primary_restored();
+    assert!(codes(&resumed).is_empty());
 }
 
 #[test]

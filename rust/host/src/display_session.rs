@@ -551,6 +551,8 @@ struct ModeReportState {
     /// Why what Windows recalled when a display left could not be put back, until a repair
     /// after a later departure goes through.
     unrepaired: Option<String>,
+    /// Why the stream's display could not be made the primary one again, until it is.
+    primary_refused: Option<String>,
 }
 impl ModeReportState {
     fn report(&self) {
@@ -588,6 +590,10 @@ impl ModeReportState {
             Some(error) => self.warnings.set("display_repair", format!("Windows recalled a saved display layout over your displays and it could not be put back ({error}), so a monitor can stay off or at another refresh rate. Check Windows display settings and reconnect.")),
             None => self.warnings.clear("display_repair"),
         }
+        match &self.primary_refused {
+            Some(error) => self.warnings.set("display_primary", format!("Windows kept another display as the main screen and the virtual display could not be made the main one again ({error}), so games open on your monitor instead of the stream. Set the virtual display layout to Exclusive for this device, or make the virtual display the main screen in Windows display settings and reconnect.")),
+            None => self.warnings.clear("display_primary"),
+        }
     }
 }
 impl ModeReport {
@@ -602,6 +608,7 @@ impl ModeReport {
             kept_on: false,
             unrepaired_at_start: None,
             unrepaired: None,
+            primary_refused: None,
         })))
     }
     /// What Windows recalled when this stream's display arrived could not be put back.
@@ -609,6 +616,19 @@ impl ModeReport {
         let mut state = self.0.lock().unwrap();
         state.unrepaired_at_start = failure.map(str::to_owned);
         state.report();
+    }
+    /// How making the stream's display the primary one again went.
+    fn primary_refused(&self, error: &str) {
+        let mut state = self.0.lock().unwrap();
+        state.primary_refused = Some(error.to_owned());
+        state.report();
+    }
+    /// The stream's display is the primary one.
+    fn primary_restored(&self) {
+        let mut state = self.0.lock().unwrap();
+        if state.primary_refused.take().is_some() {
+            state.report();
+        }
     }
     /// How putting back what Windows recalled when a display left went.
     fn repaired(&self, failure: Option<String>) {
@@ -1339,6 +1359,9 @@ pub struct Prepared {
     revision: u64,
     recovery: Recovery,
     layout_watch: butterpollo_core::display_policy::LayoutWatch,
+    /// The primary a primary layout made, which Windows or a game can move back to a monitor
+    /// while the stream goes on.
+    primary_watch: butterpollo_core::display_policy::PrimaryWatch,
     /// [`display_arrangement::departures`] when this stream last looked.
     departures: u64,
     /// [`display_arrangement::wake_layouts`] when this stream last looked.
@@ -1540,6 +1563,7 @@ impl Prepared {
             revision: 0,
             recovery: Recovery::new(),
             layout_watch: Default::default(),
+            primary_watch: Default::default(),
             departures: display_arrangement::departures(),
             wake_layouts: display_arrangement::wake_layouts(),
             console_session: None,
@@ -1711,9 +1735,6 @@ impl Prepared {
         if self.recovery.pending || !self.layout_watch.due(now) {
             return Ok(());
         }
-        let Some(arrangement) = &self._arrangement else {
-            return Ok(());
-        };
         notice_departure(
             &mut self.departures,
             display_arrangement::departures(),
@@ -1721,6 +1742,9 @@ impl Prepared {
             now,
         );
         if self.layout_watch.departure_due(now) {
+            let Some(arrangement) = &self._arrangement else {
+                return Ok(());
+            };
             tracing::info!(output = %self.output, "another stream's display left; laying this stream's displays out again");
             let monitors = self.remote_monitors();
             lay_out_after_departure(
@@ -1738,6 +1762,10 @@ impl Prepared {
             }
             return Ok(());
         }
+        self.keep_primary(now);
+        let Some(arrangement) = &self._arrangement else {
+            return Ok(());
+        };
         // A monitor this stream's launch cut short: back, it gets the layout planned.
         match arrangement.follow_wake() {
             Ok(false) => {}
@@ -1792,6 +1820,50 @@ impl Prepared {
             Err(_) => self.layout_watch.failed(now),
         }
         result
+    }
+    /// Put the stream's display back as the primary one when Windows or a game moves the
+    /// primary to a monitor. A primary layout promises games open on the stream, and the move
+    /// is nobody's choice: Windows gets the layout watch's settle before the layout is put
+    /// back, and a refused restore goes on the stream's card. The recovery lays the whole
+    /// layout out itself while it runs, which includes the primary.
+    fn keep_primary(&mut self, now: std::time::Instant) {
+        use butterpollo_core::display_policy::PrimaryAction;
+        let Some(arrangement) = &self._arrangement else {
+            return;
+        };
+        if !arrangement.arrangement().primary_beside_the_users() || !self.primary_watch.due(now) {
+            return;
+        }
+        let shown = match butterpollo_windows::display::shown_primary(&self.output) {
+            Ok(shown) => shown,
+            Err(error) => {
+                tracing::debug!(error = %format!("{error:#}"), "the primary display could not be read");
+                return;
+            }
+        };
+        if !butterpollo_core::display_policy::primary_moved(arrangement.arrangement(), shown) {
+            if shown.is_some() {
+                self.primary_watch.restored();
+                self.mode_report.primary_restored();
+            }
+            return;
+        }
+        if self.primary_watch.observe(true, now) == PrimaryAction::Wait {
+            return;
+        }
+        tracing::info!(output = %self.output, "the stream's display lost the primary one; laying the display out as primary again");
+        let retained = self.remote_monitors();
+        match arrangement.reapply(&self.output, &retained) {
+            Ok(()) => {
+                self.primary_watch.restored();
+                self.mode_report.primary_restored();
+            }
+            Err(error) => {
+                tracing::warn!(error = %format!("{error:#}"), "Windows refused to make the stream's display the primary one again");
+                self.primary_watch.failed(now);
+                self.mode_report.primary_refused(&format!("{error:#}"));
+            }
+        }
     }
     fn create(
         h: &Shared,
@@ -2423,6 +2495,7 @@ impl Prepared {
                 revision,
                 recovery: Recovery::new(),
                 layout_watch: Default::default(),
+                primary_watch: Default::default(),
                 departures: display_arrangement::departures(),
                 wake_layouts: display_arrangement::wake_layouts(),
                 console_session: None,
