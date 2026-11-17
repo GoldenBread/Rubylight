@@ -192,6 +192,19 @@ fn a_scaled_plane_picture_goes_through_the_video_texture() {
     texture.texture = std::ptr::null_mut();
 }
 
+/// The Vulkan plane pass draws a Frame Warp shift in whole picture pixels, as the Windows pass
+/// does: a fractional one would filter the colour codes it converts afterwards.
+#[cfg(unix)]
+#[test]
+fn the_plane_pass_shifts_a_warped_picture_in_whole_pixels() {
+    use super::super::frame_warp::WarpDraw;
+    let warp = WarpDraw { shift: [3.4 / 1280.0, -0.6 / 720.0], ..WarpDraw::default() };
+    let drawn = direct_draw::unix_direct_warp(&warp, (1280, 720));
+    assert!((drawn.shift[0] - 3.0 / 1280.0).abs() < 1e-7 && (drawn.shift[1] + 1.0 / 720.0).abs() < 1e-7, "{:?}", drawn.shift);
+    assert_eq!(drawn.lens, warp.lens);
+    assert!(direct_draw::unix_direct_warp(&WarpDraw::default(), (1280, 720)).is_identity());
+}
+
 #[test]
 fn a_10_bit_sdr_stream_keeps_the_sdr_white_until_the_host_says_hdr() {
     // The bug: every 10-bit picture without the host's HDR mode took the display's SDR white

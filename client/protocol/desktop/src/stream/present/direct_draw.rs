@@ -112,9 +112,10 @@ impl VideoTexture {
         #[cfg(target_os = "linux")]
         let look = super::super::planes_gpu::SdlLook { pq_target: self.pq_target, ..look };
         let visible = self.size();
+        let warp = unix_direct_warp(&self.warp, visible);
         let Some(pass) = self.planes.as_mut() else { return false };
         // SAFETY: The pass copied the current picture's planes on this renderer, for `parameters`.
-        match unsafe { pass.draw_direct_warped(renderer, &parameters, destination, visible, look, &self.warp) } {
+        match unsafe { pass.draw_direct_warped(renderer, &parameters, destination, visible, look, &warp) } {
             Ok(()) => {
                 self.passes_drawn(step);
                 true
@@ -247,7 +248,7 @@ impl VideoTexture {
             // (`packed444.hlsl` rounds it the same way): a fractional one would filter the codes
             // this pass converts afterwards.
             let mut warp = self.warp.clone();
-            warp.shift = super::super::direct_planes::whole_pixel_shift(warp.shift, visible);
+            warp.shift = super::whole_pixel_shift(warp.shift, visible);
             constants.warp = pass.warp_row(&warp);
             constants.warp_lens = warp.lens_row();
         }
@@ -349,4 +350,16 @@ impl VideoTexture {
             }
         }
     }
+}
+
+/// Frame Warp for the plane pass's draw of a picture at its own size (`draw_direct`): its shift in
+/// whole pixels, as on Windows (`draw_planes_direct`), since a fractional one would filter the
+/// codes the pass converts afterwards.
+#[cfg(unix)]
+pub(super) fn unix_direct_warp(warp: &super::super::frame_warp::WarpDraw, visible: (i32, i32)) -> super::super::frame_warp::WarpDraw {
+    let mut warp = warp.clone();
+    if !warp.is_identity() {
+        warp.shift = super::whole_pixel_shift(warp.shift, visible);
+    }
+    warp
 }

@@ -51,14 +51,7 @@ pub fn goes_direct(conditions: Conditions) -> bool {
 
 pub use super::present::draws_one_to_one;
 
-/// The shift of a picture drawn one texel to one pixel, rounded to whole picture pixels:
-/// `packed444.hlsl` rounds it the same way at its own size. A fractional shift samples between
-/// texels, which the plane pass filters in the codes rather than in the converted picture.
-pub fn whole_pixel_shift(shift: [f32; 2], picture: (i32, i32)) -> [f32; 2] {
-    let (width, height) = (picture.0 as f32, picture.1 as f32);
-    if !(width > 0.0 && height > 0.0 && shift[0].is_finite() && shift[1].is_finite()) {
-        return [0.0; 2];
-    }
+pub use super::present::whole_pixel_shift;
     [(shift[0] * width).round() / width, (shift[1] * height).round() / height]
 }
 
