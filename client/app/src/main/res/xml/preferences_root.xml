@@ -12,8 +12,8 @@
         android:summary="@string/settings_section_input_summary" />
     <Preference android:key="audio" android:title="@string/settings_section_audio" />
     <Preference android:key="app" android:title="@string/settings_section_app" />
-    <!-- The fold: stores nothing, shows and hides the rows below it. -->
-    <Preference android:key="more_sections" android:title="@string/settings_more" android:persistent="false" />
+    <!-- The fold: stores nothing, shows and hides the rows below it, and tells a screen reader which. -->
+    <com.limelight.preferences.FoldPreference android:key="more_sections" android:title="@string/settings_more" />
     <com.limelight.preferences.PresetPreference android:key="stream_presets" android:title="@string/stream_presets" />
     <!-- Profiles span every section, so they sit with the presets; the summary names the one in use. -->
     <Preference android:key="stream_profiles" android:title="@string/profiles_title"

@@ -198,6 +198,44 @@ public class SettingsRailFoldTest {
         } finally { controller.pause().stop().destroy(); }
     }
 
+    /** TalkBack hears whether More settings is open: the row offers Expand while folded and Collapse while open, and both work. */
+    @Test @Config(qualifiers = WIDE)
+    public void aScreenReaderHearsAndChangesWhetherMoreSettingsIsOpen() {
+        ActivityController<StreamSettings> controller = open(null);
+        try {
+            StreamSettings screen = controller.get();
+            assertEquals(Arrays.asList(true, false), foldActions(screen));
+            assertFalse("collapsing a folded row does nothing", moreRow(screen).performAccessibilityAction(
+                    android.view.accessibility.AccessibilityNodeInfo.ACTION_COLLAPSE, null));
+            assertTrue(moreRow(screen).performAccessibilityAction(
+                    android.view.accessibility.AccessibilityNodeInfo.ACTION_EXPAND, null));
+            settle(screen);
+            assertEquals(ALL, rows(screen));
+            assertEquals(Arrays.asList(false, true), foldActions(screen));
+            assertTrue(moreRow(screen).performAccessibilityAction(
+                    android.view.accessibility.AccessibilityNodeInfo.ACTION_COLLAPSE, null));
+            settle(screen);
+            assertEquals(SIMPLE, rows(screen));
+            assertEquals(Arrays.asList(true, false), foldActions(screen));
+        } finally { controller.pause().stop().destroy(); }
+    }
+
+    private static View moreRow(StreamSettings screen) {
+        android.widget.ListView list = rail(screen).getView().findViewById(android.R.id.list);
+        int at = StreamSettings.RootFragment.positionOf(list, StreamSettings.RAIL_MORE_KEY);
+        View row = list.getChildAt(at - list.getFirstVisiblePosition());
+        assertNotNull("More settings is row " + at + " of " + list.getCount() + ", " + list.getChildCount() + " on screen", row);
+        return row;
+    }
+
+    /** Whether the row offers Expand, and whether it offers Collapse. */
+    private static List<Boolean> foldActions(StreamSettings screen) {
+        android.view.accessibility.AccessibilityNodeInfo info = moreRow(screen).createAccessibilityNodeInfo();
+        List<android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction> actions = info.getActionList();
+        return Arrays.asList(actions.contains(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_EXPAND),
+                actions.contains(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_COLLAPSE));
+    }
+
     @Test
     public void everySectionHasARowAndAPlaceInTheChips() {
         assertEquals(StreamSettings.SECTIONS.keySet(), new java.util.LinkedHashSet<>(sorted(StreamSettings.RAIL_SECTIONS)));

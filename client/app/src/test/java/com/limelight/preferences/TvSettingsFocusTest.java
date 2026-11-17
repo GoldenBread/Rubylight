@@ -140,6 +140,66 @@ public class TvSettingsFocusTest {
         }
     }
 
+    private static String shownSection(StreamSettings screen) {
+        return screen.getFragmentManager().findFragmentById(R.id.stream_settings).getArguments().getString("section");
+    }
+
+    /**
+     * The list a TV shows first, More settings folded: Down from App lands on More settings, the last row; Select
+     * unfolds the rest under it and focus stays, so Down walks into what it unfolded.
+     */
+    @Test
+    public void foldedDownFromAppReachesMoreSettingsAndSelectUnfoldsUnderIt() {
+        StreamSettings.rememberRail(RuntimeEnvironment.getApplication(), false);
+        StreamSettings screen = open();
+        ListView list = sections(screen);
+        assertEquals(5, list.getCount());
+        assertEquals("input", keyAt(list, list.getSelectedItemPosition()));
+        goToRow(screen, "app");
+        press(screen, KeyEvent.KEYCODE_DPAD_DOWN);
+        assertEquals(StreamSettings.RAIL_MORE_KEY, keyAt(list, list.getSelectedItemPosition()));
+        press(screen, KeyEvent.KEYCODE_DPAD_DOWN);
+        assertEquals("More settings is the last row while folded", StreamSettings.RAIL_MORE_KEY,
+                keyAt(list, list.getSelectedItemPosition()));
+        assertTrue(list.hasFocus());
+
+        press(screen, KeyEvent.KEYCODE_DPAD_CENTER);
+        assertEquals(12, list.getCount());
+        assertTrue("focus stays in the rail", list.hasFocus());
+        assertEquals("and on the row that was pressed", StreamSettings.RAIL_MORE_KEY, keyAt(list, list.getSelectedItemPosition()));
+        press(screen, KeyEvent.KEYCODE_DPAD_DOWN);
+        assertEquals("stream_presets", keyAt(list, list.getSelectedItemPosition()));
+        assertTrue(list.hasFocus());
+    }
+
+    /** Folding while a section behind the fold is shown: the pane goes back to Controls, a TV's start, and focus stays on More settings. */
+    @Test
+    public void foldingWhileVideoShowsReturnsToControlsWithFocusOnMoreSettings() {
+        StreamSettings.rememberRail(RuntimeEnvironment.getApplication(), false);
+        StreamSettings screen = open();
+        ListView list = sections(screen);
+        goToRow(screen, StreamSettings.RAIL_MORE_KEY);
+        press(screen, KeyEvent.KEYCODE_DPAD_CENTER);
+        goToRow(screen, "video");
+        // The pane follows the selected row after its pause.
+        ShadowLooper.idleMainLooper(1, TimeUnit.SECONDS);
+        settle(screen);
+        assertEquals("video", shownSection(screen));
+        goToRow(screen, StreamSettings.RAIL_MORE_KEY);
+        ShadowLooper.idleMainLooper(1, TimeUnit.SECONDS);
+        settle(screen);
+        assertEquals("More settings has no page: the pane keeps Video", "video", shownSection(screen));
+
+        press(screen, KeyEvent.KEYCODE_DPAD_CENTER);
+        ShadowLooper.idleMainLooper(1, TimeUnit.SECONDS);
+        settle(screen);
+        assertEquals(5, list.getCount());
+        assertEquals("input", shownSection(screen));
+        assertTrue("focus stays in the rail", list.hasFocus());
+        assertEquals(StreamSettings.RAIL_MORE_KEY, keyAt(list, list.getSelectedItemPosition()));
+        assertEquals("the pill is on the section shown", "input", keyAt(list, list.getCheckedItemPosition()));
+    }
+
     /** TV run on a TCL C6K: after a few presses a row sat half under the subtitle. No rail row is ever cut at the top. */
     @Test
     public void noRailRowIsLeftHalfScrolledUnderTheSubtitle() {

@@ -66,6 +66,47 @@ fn the_list_is_simple_first_and_more_settings_unfolds_the_rest() {
     }
 }
 
+/// More settings stays as the user left it across restarts, as on Android: choosing it saves the
+/// choice and a launcher started from the saved settings opens with it unfolded. A section behind
+/// the fold that a link or a search shows unfolds it for that visit and saves nothing.
+#[test]
+fn more_settings_is_remembered_but_a_link_or_search_unfold_is_not() {
+    let mut f = fresh_settings(1280.0);
+    let commands = click_text(&mut f, "More settings");
+    assert!(f.l.settings.settings_more_open, "the choice is kept in settings.json");
+    assert!(commands.iter().any(|c| matches!(c, Command::SaveSettings)), "and saved");
+    let saved = serde_json::to_string(&f.l.settings).unwrap();
+    let mut again = Frames::new(record("PC", true, false), Reach::Online);
+    again.size = vec2(1280.0, 4000.0);
+    again.l = launcher(false, false);
+    again.l.settings = serde_json::from_str(&saved).unwrap();
+    again.l.settings_view = crate::ui::settings::SettingsView::remembered(again.l.settings.settings_more_open);
+    again.l.go(Screen::Settings);
+    again.settle();
+    assert_eq!(rail_entries(&again), RAIL_ALL, "a new start opens with it unfolded");
+    assert!(Launcher::new(again.l.settings.clone(), Profiles::default(), crate::shortcuts::Shortcuts::default(), again.l.display).settings_view.rail_more, "Launcher::new reads it");
+    // Folding it again is remembered too.
+    click_text(&mut again, "More settings");
+    assert!(!again.l.settings.settings_more_open);
+    assert_eq!(rail_entries(&again), RAIL_SIMPLE);
+
+    // A link to a section behind the fold, and a search: shown for the visit, nothing saved.
+    let mut f = fresh_settings(1280.0);
+    f.l.settings_view.section = "Streaming";
+    let mut commands = f.settle();
+    assert_eq!(rail_entries(&f), RAIL_ALL);
+    f.l.settings_view.query = "bitrate".into();
+    commands.extend(f.settle());
+    f.l.settings_view.query.clear();
+    commands.extend(f.settle());
+    assert!(!f.l.settings.settings_more_open && !f.l.settings_view.rail_more, "an unfold for a visit is not the user's choice");
+    assert!(!commands.iter().any(|c| matches!(c, Command::SaveSettings)), "nothing is saved for it");
+    // Reset all leaves it as it is: it is no setting.
+    let kept = Settings { settings_more_open: true, setup_card_host: Some(7), setup_card_seen: true, fps: 120, ..Settings::default() };
+    let reset = crate::ui::settings::reset_to_defaults(&kept);
+    assert_eq!((reset.fps, reset.settings_more_open, reset.setup_card_host, reset.setup_card_seen), (Settings::default().fps, true, Some(7), true));
+}
+
 /// Nothing is out of reach behind the fold: a section opened from elsewhere shows with its entry,
 /// a search lists every section with its count, and a controller walks into the fold.
 #[test]

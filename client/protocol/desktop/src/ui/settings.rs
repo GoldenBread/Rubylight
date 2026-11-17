@@ -110,8 +110,10 @@ pub(super) struct SettingsView {
     pub(super) found: [usize; 9],
     /// Each section's fold is open (its "More … settings" chosen), until Nightjar closes.
     pub(super) more: [bool; 9],
-    /// The list's own fold is open ("More settings" chosen), until Nightjar closes: Profiles and
-    /// the sections of detail show under the simple ones.
+    /// The list's own fold is open ("More settings" chosen): Profiles and the sections of detail
+    /// show under the simple ones. Only the user's own choice sets it, and it is kept in
+    /// settings.json (`settings_more_open`) for the next start; a link or a search that shows a
+    /// section behind the fold opens it for that visit alone (`rail_open`).
     pub(super) rail_more: bool,
     /// The section the main settings last showed ("" before their first visit), and whether a
     /// PC's, game's or profile's settings showed since.
@@ -139,6 +141,11 @@ pub(super) struct SettingsView {
 }
 
 impl SettingsView {
+    /// The page's state at start: the fold as the user last left it.
+    pub(super) fn remembered(rail_more: bool) -> Self {
+        Self { rail_more, ..Self::default() }
+    }
+
     fn searching(&self) -> bool {
         !self.query.trim().is_empty()
     }
@@ -351,6 +358,14 @@ pub(crate) fn simple_state(s: &Settings, display: &Display, caps: &simple::Capab
 }
 
 impl Launcher {
+    /// "More settings" was chosen: the fold opens or closes, and the choice is saved for the next
+    /// start. Only this saves it; a link or a search result unfolds for its visit alone.
+    fn toggle_more_settings(&mut self, commands: &mut Vec<Command>) {
+        self.settings_view.toggle_rail();
+        self.settings.settings_more_open = self.settings_view.rail_more;
+        commands.push(Command::SaveSettings);
+    }
+
     /// Escape or B on a settings page: closes the search first (leaves its field, then clears
     /// it). True when it did, so the page stays.
     pub(super) fn escape_search(&mut self) -> bool {
@@ -442,7 +457,7 @@ impl Launcher {
             let mut side = ui.new_child(UiBuilder::new().id_salt("settings-sections").max_rect(list).layout(Layout::top_down(Align::Min)));
             self.search_field(&mut side);
             side.add_space(space::M);
-            (entries, profiles) = self.section_list(&mut side, sections, layered);
+            (entries, profiles) = self.section_list(&mut side, sections, layered, commands);
             let drawn = side.min_rect().height();
             ui.data_mut(|d| d.insert_temp(height_id, drawn));
             side_bottom = page.top() + drawn;
@@ -482,7 +497,7 @@ impl Launcher {
                     }
                 }
                 if toggled {
-                    self.settings_view.toggle_rail();
+                    self.toggle_more_settings(commands);
                 }
             });
             ui.add_space(space::S);
@@ -733,7 +748,7 @@ impl Launcher {
     /// Profiles, then the sections, the current one marked. While searching each that found rows
     /// says how many, and a click on any ends the search; on a PC's, game's or profile's settings
     /// each says how many it sets. Returns each section entry's id, and whether Profiles was chosen.
-    fn section_list(&mut self, ui: &mut Ui, sections: &[&'static str], layered: bool) -> (Vec<(&'static str, Id)>, bool) {
+    fn section_list(&mut self, ui: &mut Ui, sections: &[&'static str], layered: bool, commands: &mut Vec<Command>) -> (Vec<(&'static str, Id)>, bool) {
         let searching = self.settings_view.searching();
         let mut entries = Vec::new();
         let under = ui.painter().add(egui::Shape::Noop);
@@ -785,7 +800,7 @@ impl Launcher {
             }
         }
         if toggled {
-            self.settings_view.toggle_rail();
+            self.toggle_more_settings(commands);
         }
         ui.add_space(SIDE_INSET - ui.spacing().item_spacing.y);
         let list = Rect::from_min_max(Pos2::new(ui.max_rect().left(), top), Pos2::new(ui.max_rect().right(), ui.cursor().top()));
@@ -2359,7 +2374,7 @@ pub(super) fn error_correction_name(mode: ErrorCorrection) -> String {
     }
 }
 
-fn codec_name(codec: CodecPreference) -> &'static str {
+pub(super) fn codec_name(codec: CodecPreference) -> &'static str {
     match codec {
         CodecPreference::Auto => tr("Automatic"),
         CodecPreference::H264 => "H.264",

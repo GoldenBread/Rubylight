@@ -1411,7 +1411,7 @@ public class StreamSettings extends NightjarActivity {
                 else if (!open && listed) screen.removePreference(row);
             }
             Preference more = rows.get(RAIL_MORE_KEY);
-            if (more != null) more.setIcon(open ? R.drawable.ic_expand_less : R.drawable.ic_expand_more);
+            if (more instanceof FoldPreference) ((FoldPreference) more).setExpanded(open);
         }
 
         private void updateSummaries() {
