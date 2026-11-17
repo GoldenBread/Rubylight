@@ -1031,6 +1031,41 @@ fn loss_feedback_drains_pending_frames_and_only_confirms_successful_invalidation
     assert_clean();
     Ok(())
 }
+/// An API fallback must say what the older driver API costs the stream: the
+/// retry used to drop HDR10 metadata or split encoding with only a log line.
+#[test]
+fn an_api_fallback_says_which_features_the_older_api_loses() {
+    let hdr = Negotiated {
+        codec: 1,
+        hdr: true,
+        ..Default::default()
+    };
+    let tuning = Tuning::new(&butterpollo_core::config::Config::default(), &hdr).unwrap();
+    let warning = api_fallback_warning(
+        &["13.0: NV_ENC_ERR_UNSUPPORTED_PARAM".into()],
+        ApiVersion(12, 2),
+        &hdr,
+        &tuning,
+    );
+    assert!(warning.contains("HDR10"), "{warning}");
+    assert!(warning.contains("control channel"), "{warning}");
+    // API 13 keeps its in-bitstream metadata: nothing is lost there.
+    let mut split = tuning.clone();
+    split.split = 2;
+    let warning = api_fallback_warning(&["13.0: refused".into()], ApiVersion(13, 0), &hdr, &split);
+    assert!(!warning.contains("HDR10"), "{warning}");
+    // Pre-12.2 has no split-frame encoding.
+    let warning = api_fallback_warning(&["13.0: refused".into()], ApiVersion(12, 0), &hdr, &split);
+    assert!(warning.contains("split-frame encoding"), "{warning}");
+    // H.264 never splits, whatever the API.
+    let h264 = Negotiated {
+        codec: 0,
+        ..Default::default()
+    };
+    let warning = api_fallback_warning(&["13.0: refused".into()], ApiVersion(11, 0), &h264, &split);
+    assert!(!warning.contains("split-frame"), "{warning}");
+}
+
 #[test]
 fn failed_bitrate_reconfigure_keeps_the_config_and_a_rise_needs_no_keyframe() -> Result<()> {
     reset();

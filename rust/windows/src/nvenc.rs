@@ -207,6 +207,37 @@ fn retry_version(error: &anyhow::Error) -> bool {
         )
     })
 }
+/// What a stream loses when the driver rejected a newer API and an older one
+/// opened instead, for its session warning: the retry must not drop HDR10
+/// metadata or split encoding silently.
+fn api_fallback_warning(
+    failures: &[String],
+    api: ApiVersion,
+    stream: &Negotiated,
+    tuning: &Tuning,
+) -> String {
+    let mut lost = Vec::new();
+    if stream.hdr && api < ApiVersion(13, 0) {
+        lost.push("HDR10 mastering metadata is sent on the control channel only");
+    }
+    if stream.codec != 0
+        && tuning.split != butterpollo_core::nvenc::SPLIT_DISABLED
+        && !api.modern_depth()
+    {
+        lost.push("split-frame encoding is unavailable");
+    }
+    let lost = if lost.is_empty() {
+        "The stream continues, but without the newer API's encoder features.".to_owned()
+    } else {
+        format!("The stream continues, but {}.", lost.join(", and "))
+    };
+    format!(
+        "The NVIDIA driver rejected a newer NVENC API ({}) and Rubylight opened {}.{}. {lost} Update the NVIDIA driver if HDR looks wrong or encoding is slower than expected.",
+        failures.join("; "),
+        api.0,
+        api.1
+    )
+}
 fn validate(functions: &NV_ENCODE_API_FUNCTION_LIST) -> Result<()> {
     macro_rules! require { ($($entry:ident),+ $(,)?) => { $(
         if functions.$entry.is_none() { bail!(concat!("NVENC driver lacks ", stringify!($entry))); }
@@ -542,6 +573,9 @@ struct Session {
     raw: *mut c_void,
     functions: NV_ENCODE_API_FUNCTION_LIST,
     api: ApiVersion,
+    /// The driver APIs this session tried and the driver refused, when it
+    /// opened an older one; reported to the stream as a session warning.
+    api_fallbacks: Vec<String>,
     _runtime: Arc<Runtime>,
     cuda: Option<Rc<cuda::Context>>,
     /// A session on the D3D12 conversion's device ([`Session::open`]).
@@ -674,7 +708,10 @@ impl Session {
                 tuning,
                 api,
             ) {
-                Ok(session) => return Ok(session),
+                Ok(mut session) => {
+                    session.api_fallbacks = std::mem::take(&mut failures);
+                    return Ok(session);
+                }
                 Err(error) if retry_version(&error) => {
                     tracing::warn!(error = %format!("{error:#}"), major = api.0, minor = api.1, "NVENC rejected this driver API; retrying a reviewed older API. Update the NVIDIA driver if encoding remains unstable");
                     failures.push(format!("{}.{}: {error}", api.0, api.1))
@@ -715,6 +752,7 @@ impl Session {
             raw: ptr::null_mut(),
             functions,
             api,
+            api_fallbacks: Vec::new(),
             _runtime: runtime,
             cuda,
             d3d12: fence.map(|fence| D3d12 { fence, value: 0 }),
@@ -2800,6 +2838,8 @@ impl Encoder {
         // A stream turns the delta map on with focus (`enable_qp_map`).
         tuning.qp_map = false;
         let session = Session::open(runtime, device, kind, cuda, fence, &coded, &tuning)?;
+        let api_warning = (!session.api_fallbacks.is_empty())
+            .then(|| api_fallback_warning(&session.api_fallbacks, session.api, &coded, &tuning));
         let metadata = gpu.hdr_metadata();
         let mut encoder = Self {
             session,
@@ -2830,6 +2870,11 @@ impl Encoder {
                     tracing::warn!("NVENC output event unavailable ({error:#}); polling for output")
                 }
             }
+        }
+        if let Some(warning) = api_warning {
+            // The older API drops HDR10 metadata or split encoding; say so
+            // rather than leave it to a log line.
+            encoder.warnings.set("nvenc_api", warning);
         }
         encoder.dynamic = encoder.enable_dynamic(options);
         encoder.set_hdr_metadata(metadata);
