@@ -4,6 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import android.content.Context;
@@ -308,8 +309,19 @@ public class SimpleProfileTest {
     }
 
     @Test
-    public void theDecoderListIsReadOnceForTheAppRunNotEverySettingsVisit() {
-        MediaFormat format = MediaFormat.createVideoFormat("video/hevc", 1920, 1080);
+    public void aFailedDecoderListReadIsNotKeptForTheRun() {
+        SimpleProfile.forgetCodecs();
+        SimpleProfile.rememberCodecs(null);
+        assertNull("a failed read is tried again on the next visit",
+                org.robolectric.util.ReflectionHelpers.getStaticField(SimpleProfile.class, "cachedCodecs"));
+
+        SimpleProfile.Codecs read = new SimpleProfile.Codecs();
+        assertSame(read, SimpleProfile.rememberCodecs(read));
+        assertSame(read, org.robolectric.util.ReflectionHelpers.getStaticField(SimpleProfile.class, "cachedCodecs"));
+    }
+
+    @Test
+    public void theDecoderListIsReadOnceForTheAppRunNotEverySettingsVisit() {        MediaFormat format = MediaFormat.createVideoFormat("video/hevc", 1920, 1080);
         MediaCodecInfo codec = MediaCodecInfoBuilder.newBuilder()
                 .setName("OMX.rubylight.hevc.decoder")
                 .setIsEncoder(false)

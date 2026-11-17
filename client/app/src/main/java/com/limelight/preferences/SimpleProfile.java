@@ -117,7 +117,7 @@ public final class SimpleProfile {
         return display != null && HdrPolicy.hasHdr10(HdrPolicy.displayHdrTypes(display));
     }
 
-    private static final class Codecs {
+    static final class Codecs {
         boolean hevc, av1, hdr;
     }
 
@@ -130,11 +130,19 @@ public final class SimpleProfile {
         Codecs known = cachedCodecs;
         if (known != null) return known;
         synchronized (SimpleProfile.class) {
-            if (cachedCodecs == null) cachedCodecs = scanCodecs();
-            return cachedCodecs;
+            if (cachedCodecs == null) rememberCodecs(scanCodecs());
+            // A read that failed is not kept: the next visit asks Android again.
+            return cachedCodecs != null ? cachedCodecs : new Codecs();
         }
     }
 
+    /** Keeps a decoder list for the rest of the run; a failed read (null) is retried on the next visit. */
+    static Codecs rememberCodecs(Codecs scanned) {
+        if (scanned != null) cachedCodecs = scanned;
+        return scanned != null ? scanned : new Codecs();
+    }
+
+    /** The decoder list, or null when Android would not list it. */
     private static Codecs scanCodecs() {
         Codecs codecs = new Codecs();
         try {
@@ -154,6 +162,7 @@ public final class SimpleProfile {
             }
         } catch (RuntimeException e) {
             com.limelight.LimeLog.warning("Simple settings: the decoder list could not be read: " + e);
+            return null;
         }
         return codecs;
     }
