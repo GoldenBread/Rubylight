@@ -111,6 +111,7 @@ Design notes, measurements and audits for contributors. They describe internals 
 | --- | --- |
 | [Beam racing](beam-racing.md), [early decode](early-decode.md), [mouse pace](mouse-pace.md) | Desktop presentation timing, and input sent at the mouse's pace |
 | [PyroWave GPU decoding](pyrowave-decode.md), [PyroWave decode stages](pyrowave-decode-stages.md) | The desktop PyroWave decoder and its measured stages |
+| [Measurements](measurements.md) | The figures behind Real VRR, frame pacing and PyroWave decoding, with their conditions |
 | [MetalFX on macOS](macos-metalfx.md) | The macOS spatial upscaler and its verification |
 | [Refresh rate switching](expected-refresh-switch.md), [HDR on Android displays](expected-hdr10.md) | How the Android app requests refresh rates and HDR, and reports refusals |
 | [Client roaming](protocol/client-roaming.md), [host cursor shapes](protocol/cursor-shape.md), [Frame Warp](protocol/frame-warp.md) | Protocol extensions proposed for Moonlight-compatible hosts |

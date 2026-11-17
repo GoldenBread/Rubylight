@@ -1,0 +1,121 @@
+# Measurements
+
+[Nightjar docs](index.md) › [Engineering notes](index.md#engineering-notes) · [Real VRR](real-vrr.md) · [Video and latency](video-and-latency.md)
+
+The guides say what each feature does and what it costs; this note keeps the measurements behind
+them, with their conditions. Each records the build and the devices it was taken on, so a later
+build can differ. Measurements of the host and of both together are in Rubylight's
+[measurement record](https://github.com/RamazanKara/Rubylight/blob/main/rust/PERFORMANCE.md).
+
+## Real VRR
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/real-vrr/chart-dark.png">
+    <img src="assets/real-vrr/chart-light.png" width="900" alt="Chart: on the same PC, 2.5 to 3.1% of frames land more than 1 ms off the game's rhythm with Real VRR instead of 10.2 to 19.4% shown on arrival, for 1.3 to 1.5 ms of delay. Over Wi-Fi, 29 to 31% instead of 64 to 74%, for 2.6 to 4.2 ms.">
+  </picture>
+</p>
+
+A test animation runs at an uneven, game-like frame rate and is streamed at 1080p and 120 fps. A
+frame is counted as off the rhythm when the gap before it is more than 1 ms away from the
+animation's own timing, measured at the moment Nightjar presents it, which is when a VRR screen
+shows it. Each figure is two 45-second runs.
+
+**On the same PC** (no network in between, frame gaps of 8, 12, 8, 17 and 12 ms):
+
+| Frames more than 1 ms off the game's rhythm | Shown on arrival | Real VRR | Delay Real VRR adds (median) |
+|---|---|---|---|
+| PyroWave | 10.2% (one run) | 2.5% | 1.5 ms |
+| HEVC | 19.4% | 2.9% | 1.4 ms |
+| AV1 | 15.5% | 3.1% | 1.3 ms |
+
+The result is steadier than the PC's own capture timestamps, which vary by a millisecond or two. On
+a 240 Hz monitor with VRR turned on, Real VRR added the same 1.3 to 1.4 ms. (That run cannot judge
+the rhythm: the test animation and Nightjar share one screen there, and Nightjar's own presents set
+when that screen refreshes.)
+
+**Over Wi-Fi** (a laptop streams to the PC, frame gaps of 8, 17, 8, 25 and 17 ms):
+
+| Frames off the rhythm, delay added | Shown on arrival | Real VRR without the 2 ms bound | Real VRR |
+|---|---|---|---|
+| PyroWave | 64 to 73% | 25%, 10.0 ms | 31%, 4.2 ms |
+| HEVC | 68 to 69% | 20%, 8.0 ms | 29%, 2.6 ms |
+| AV1 | 74% | 22%, 8.2 ms | 30%, 3.0 ms |
+
+Part of the share left over Wi-Fi is the test laptop itself, whose capture timestamps are rough.
+
+The Real VRR column is the rule before this one, a fixed bound of 2 ms above the typical frame.
+With the delay following the link, the same recordings replayed through Nightjar's clock and
+judged against the frames' own timestamps (which leaves the laptop's capture out):
+
+| Frame gaps more than 1 ms off their timestamps, mean delay | 2 ms bound | Follows the link |
+|---|---|---|
+| Wi-Fi recordings above (24 runs) | 19.0%, 2.0 ms | 10.6%, 3.5 ms |
+| Laptop to the PC's 240 Hz VRR monitor, HEVC (16 runs) | 12.5%, 1.9 ms | 9.6%, 2.6 ms |
+| Same PC | 1.0 ms | 0.9 ms, the same rhythm |
+
+On the 240 Hz monitor the replay matched the share each run showed on screen within a point. A
+fixed bound with the same delay leaves 10.8% there and about 12% in the Wi-Fi recordings. For
+PyroWave on that monitor both rules showed the same share (10.7 and 10.9%).
+The method, the raw figures and the replays behind the 2 ms bound are in
+[PyroWave decoding: Real VRR](pyrowave-decode.md#real-vrr-measured-cadence-and-a-link-with-a-long-tail).
+
+**Whole frames on Windows** (a laptop streams HEVC over Wi-Fi to the PC's 240 Hz VRR monitor, whose
+drawing position is recorded every 40 µs for 12 seconds of each 35-second run):
+
+| Test animation | Frames torn: off | On | From frame ready to whole on screen, median / 19 of 20: off | On |
+|---|---|---|---|---|
+| Uneven, frame gaps of 8 to 25 ms | 34.3% | 0.2% | 2.3 / 9.6 ms | 1.4 / 8.2 ms |
+| 120 fps | 1.9% | 0.0% | 0.5 / 2.0 ms | 0.5 / 1.9 ms |
+| About 72 fps | 24.7% | 0.2% | 1.4 / 6.6 ms | 1.6 / 7.4 ms |
+| About 57 fps | 38.2% | 3.5% | 2.5 / 9.5 ms | 1.9 / 9.2 ms |
+
+A frame counts as torn when it was presented while the screen was drawing. Each figure is one run,
+and the share with the setting off varies from run to run (2 to 26% in three 120 fps runs). About
+a third of the frames waited, 1.7 to 2.0 ms each (3% of them at 120 fps). A whole frame is on
+screen no later for it, because a torn frame is whole only on the screen's next refresh. What the
+wait gives up is the part of a torn frame that would have appeared up to one refresh sooner.
+[Details](../protocol/desktop/README.md).
+
+The delay: about 1.3 to 1.5 ms on a clean link and 2.6 to 3.5 ms over Wi-Fi in the runs above (19
+of 20 frames within 5.6 to 7.1 ms). Over Wi-Fi about 10% of frame gaps stayed more than 1 ms off
+their timestamps.
+
+**Below the screen's range.** On a 240 Hz monitor whose range ends at 80 Hz, 23 to 39% of frames
+arrived while the driver repeated a picture, with test animations of 54 to 85 fps. Nightjar
+repeating the picture itself on Windows, timed from the frame rate and the screen's scan line,
+brought a 60 fps animation to 16% and changed nothing for a 40 fps and an uneven one, and the
+frames that then waited for a refresh to end were shown 1.1 to 1.5 ms late, so it is not on.
+
+## PyroWave records decoded while they arrive
+
+Measured on a Retroid Pocket 6 (1080p60, 400 Mbps, Lowest latency pacing, 50 s per arm in the order off, on, on, off): the median from the frame's last packet to its completed decode went from 3.5 and 3.8 ms to 3.0 ms (p95 from 6.0 to 3.4 ms), and the native submit per frame from 1.8 to 0.8 ms. The median picture age went from 29.2 and 30.2 ms to 28.2 and 28.8 ms (p95 from 33.6 and 35.8 ms to 33.0 and 33.2 ms). Every frame arrived early, and no frame was pushed whole.
+
+## A PyroWave decoder slower than the stream
+
+On a Radeon 780M laptop with a stream its decoder could not keep up with (7168x4032 at 120 fps), the median delay from the PC's frame to the present fell from 88 to 90 ms to 34 ms. Skipped frames count as **Decoder drops**.
+
+## Balanced on the next free refresh
+
+In the Android app, from a host that takes phase-lock reports and a stream within 2 % of the
+panel's rate, **Balanced** gives each frame the next free refresh: 0.10 % of display intervals off
+expected at 120 fps on a 120 Hz screen, against 7.73 % without it, for about one refresh more delay
+than **Lowest latency** (25 against 17 ms receive to present, medians).
+
+## A Shield's display queue
+
+On an NVIDIA Shield the display's own queue held one buffer too many, and input-to-output time rose
+by 10 to 12 ms for 45 seconds with nothing behind the held output. A stream a little faster than
+the panel filled the display's queue at 45-50 ppm, about 0.05 ms a second, on the Shield captures.
+Replayed with a frame of room per drop, which the replay assumes and cannot show, input-to-output above 2 ms lasted 12 to 18 seconds instead of 130, with the drop at about 3.4 ms instead of 8.7, and steady parts dropped nothing.
+
+## PC's frame times on a fixed-refresh panel
+
+Measured on a Retroid Pocket 6 (120 Hz panel), median time from receipt to SurfaceFlinger's present time, two 60-second runs per arm:
+
+| Stream | Off | On | Display jitter p99, off / on |
+| --- | --- | --- | --- |
+| 90 fps | 17.22 ms | 17.97 ms | 11.2 / 9.2 ms |
+| 60 fps | 20.03 ms | 17.97 ms | 8.7 / 8.6 ms |
+
+Present times come from `dumpsys SurfaceFlinger --latency`, not from the moment the client hands a frame over: a frame released at once waits in SurfaceFlinger's queue, while a frame released with a due time does not, so hand-over times would make the scheduler appear about 15 ms later than it is. Absolute values varied between sessions, so compare arms within one session.
