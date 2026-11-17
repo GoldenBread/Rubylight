@@ -182,6 +182,16 @@
       'What your monitors do while this device streams on a virtual display.',
   );
 
+  /** The layout a stream learned for this device, as the editor names it, while it is not the user's. */
+  const learnedLayout = $derived(
+    draft.virtual_display_layout_learned_over &&
+      draft.virtual_display_layout &&
+      !draft.virtual_display_layout_set_by_user
+      ? (VIRTUAL_DISPLAY_LAYOUTS.find((layout) => layout.value === draft.virtual_display_layout)?.label ??
+          draft.virtual_display_layout)
+      : '',
+  );
+
   const presetHint = $derived(
     presets.find((preset) => preset.id === draft.stream_preset)?.description ??
       'Fills in the encoder settings you have not set yourself, for this device’s streams. Leave it on Use the host setting, which follows the preset in Settings, unless this device needs its own.',
@@ -422,6 +432,13 @@
             <option value={layout.value}>{layout.label}</option>
           {/each}
         </select>
+        {#if learnedLayout}
+          <p class="learned">
+            Learned from your last stream: {learnedLayout}.
+            <button type="button" class="link" onclick={() => (draft.virtual_display_layout = '')}>Clear</button>
+            it to follow the host setting again.
+          </p>
+        {/if}
       </Field>
       <Field
         label="Rotate the display"
@@ -662,6 +679,26 @@
     font-size: var(--text-xs);
     color: var(--muted);
     line-height: 1.45;
+  }
+  .learned {
+    font-size: var(--text-xs);
+    color: var(--muted);
+    line-height: 1.45;
+  }
+  .learned .link {
+    border: 0;
+    padding: 0;
+    background: none;
+    color: var(--ink-2);
+    font-size: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+    min-width: 0;
+    min-height: 0;
+  }
+  .learned .link:hover {
+    color: var(--ink);
   }
   .error {
     font-size: var(--text-xs);

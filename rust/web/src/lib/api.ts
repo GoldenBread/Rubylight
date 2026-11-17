@@ -456,6 +456,8 @@ export interface Client {
   virtual_display_mode?: string | null;
   virtual_display_layout?: string | null;
   virtual_display_layout_set_by_user?: boolean | null;
+  /** The app or host layout a layout learned from a stream replaced, so the console can say it is learned. */
+  virtual_display_layout_learned_over?: string | null;
   prefer_10bit_sdr?: boolean | string | null;
   hdr_profile?: string | null;
   allow_client_commands?: boolean | string | null;

@@ -31,3 +31,23 @@ test('the display scale says a scale the device asks for comes first', () => {
   // Nightjar's PC display scaling (rlDisplayScale) wins over this override on the virtual display.
   assert.match(editor({}), /A scale the device asks for itself \(Nightjar(&#39;|')s PC display scaling\) comes first on its virtual display\./);
 });
+
+test('a layout a stream learned is named on the device page, with a way to clear it', () => {
+  // Issue #40: the host saved a layout a stream ended in; the page says so instead of showing it as the user's.
+  const learned = editor({
+    virtual_display_layout: 'extended_primary',
+    virtual_display_layout_learned_over: 'extended',
+  });
+  assert.match(learned, /Learned from your last stream: Extend — make virtual display primary\./);
+  assert.match(learned, /<button[^>]*>Clear<\/button>/);
+  // A layout the user picked, or none at all, has nothing learned to say.
+  assert.doesNotMatch(
+    editor({
+      virtual_display_layout: 'extended_primary',
+      virtual_display_layout_learned_over: 'extended',
+      virtual_display_layout_set_by_user: true,
+    }),
+    /Learned from your last stream/,
+  );
+  assert.doesNotMatch(editor({}), /Learned from your last stream/);
+});

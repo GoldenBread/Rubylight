@@ -37,3 +37,16 @@ test('choosing another layout sends the marker with it, and the host setting cle
     virtual_display_layout_set_by_user: null,
   });
 });
+
+test('a layout a stream learned carries what it replaced, and clearing it follows the host setting', () => {
+  const learned = toDraft(
+    client({ virtual_display_layout: 'extended_primary', virtual_display_layout_learned_over: 'extended' }),
+  );
+  assert.equal(learned.virtual_display_layout_learned_over, 'extended');
+  // Clearing sends only the layout: a learned one was never the user's, so its marker is null already.
+  assert.deepEqual(changes(learned, { ...learned, virtual_display_layout: '' }), {
+    virtual_display_layout: null,
+  });
+  // No marker: the layout is the user's own or the host's, not one a stream learned.
+  assert.equal(toDraft(client({ virtual_display_layout: 'extended' })).virtual_display_layout_learned_over, '');
+});

@@ -109,6 +109,8 @@ export interface Draft {
   virtual_display_layout: string;
   /** The layout field was picked in the editor, so the host never learns over it. */
   virtual_display_layout_set_by_user: boolean;
+  /** The app or host layout a layout learned from a stream replaced; empty for a layout the user picked or none. */
+  virtual_display_layout_learned_over: string;
   prefer_10bit_sdr: '' | 'on' | 'off';
   hdr_profile: string;
   allow_client_commands: boolean;
@@ -278,6 +280,7 @@ export function toDraft(client: Client): Draft {
     virtual_display_mode: choice(client.virtual_display_mode, VIRTUAL_DISPLAY_MODES),
     virtual_display_layout: choice(client.virtual_display_layout, VIRTUAL_DISPLAY_LAYOUTS),
     virtual_display_layout_set_by_user: flag(client.virtual_display_layout_set_by_user) === true,
+    virtual_display_layout_learned_over: text(client.virtual_display_layout_learned_over),
     prefer_10bit_sdr: sdr === null ? '' : sdr ? 'on' : 'off',
     hdr_profile: text(client.hdr_profile),
     allow_client_commands: flag(client.allow_client_commands) !== false,
