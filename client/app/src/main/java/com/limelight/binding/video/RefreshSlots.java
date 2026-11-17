@@ -16,42 +16,53 @@ package com.limelight.binding.video;
  *   shows a buffer queued that long before a vsync at it);</li>
  *   <li>or the refresh after the previous output's when both can make the same one: one frame per
  *   refresh;</li>
- *   <li>or nothing, when its own refresh is more than one refresh behind and the display already
- *   waits for the refresh after the next: a surplus output of a burst is dropped rather than held,
- *   so no frame waits more than one refresh past the first it could make, as the catch-up drain
- *   drops older outputs today.</li>
+ *   <li>or the refresh already claimed, when its own is more than one refresh behind: the newest
+ *   output of a burst is stamped with that refresh too, so the compositor replaces the older buffer
+ *   there and the freshest frame is the one that shows.</li>
  * </ul>
  *
  * The stamp is the refresh less half a refresh, as fractional V-Sync stamps a held frame
  * (FramePacingPolicy.heldTargetNs), so the compositor rounds it to that refresh while the phase
  * estimate is right to within half a refresh.
  *
- * A stream slower than the panel keeps a refresh of its own and gains nothing: its next output
- * already comes after the previous refresh, so each takes the first refresh it can make, which is
- * where releasing it "now" would land. (Balanced at a rate more than 5% below the panel does not
- * come through here at all: FramePacingPolicy.balancedPacesOnVsync keeps the vsync callback.)
+ * Only a stream within {@link #RATE_TOLERANCE_PERCENT}% of the panel's rate is planned: a faster
+ * stream has surplus frames at every refresh, where a claimed refresh only queues them a refresh or
+ * more behind. A slower stream is not planned either; Balanced below 95% of the panel keeps the
+ * vsync callback (FramePacingPolicy.balancedPacesOnVsync) and never reaches this class.
  */
 final class RefreshSlots {
+    /** How far the stream's frame interval may be from the refresh interval and still be planned. */
+    static final int RATE_TOLERANCE_PERCENT = 2;
+
     /** One output's place on the grid. */
     static final class Slot {
         /** The refresh the output is shown at; 0 when there is no grid to plan on. */
         long vsyncNs;
         /** The time to release it with, the refresh less half a refresh; 0 without a grid. */
         long targetNs;
-        /** The output is surplus: the display already waits for the two refreshes it could use. */
-        boolean drop;
+        /** The output takes a refresh already claimed: the compositor replaces the buffer there. */
+        boolean shared;
     }
 
     /** The last refresh claimed, 0 before the first; on the grid of {@link #intervalNs}. */
     private long lastVsyncNs;
     private long intervalNs;
     private long planned;
-    private long dropped;
+    private long shared;
 
     /** Forgets the grid, for a new display mode or stream. */
     synchronized void reset() {
         lastVsyncNs = 0;
         intervalNs = 0;
+    }
+
+    /**
+     * Whether the stream runs at the panel's rate, so that one output per refresh keeps up:
+     * frame and refresh intervals within {@link #RATE_TOLERANCE_PERCENT}%.
+     */
+    static boolean applies(long frameIntervalNs, long refreshIntervalNs) {
+        if (frameIntervalNs <= 0 || refreshIntervalNs <= 0) return false;
+        return Math.abs(frameIntervalNs - refreshIntervalNs) * 100 <= refreshIntervalNs * RATE_TOLERANCE_PERCENT;
     }
 
     /**
@@ -73,7 +84,7 @@ final class RefreshSlots {
     synchronized void plan(long releaseNs, long vsyncNs, long intervalNs, long leadNs, Slot out) {
         out.vsyncNs = 0;
         out.targetNs = 0;
-        out.drop = false;
+        out.shared = false;
         if (vsyncNs <= 0 || intervalNs <= 0) {
             reset();
             return;
@@ -85,9 +96,14 @@ final class RefreshSlots {
         }
         long earliestNs = firstVsyncNs(releaseNs, vsyncNs, intervalNs, leadNs);
         long vsync = lastVsyncNs == 0 ? earliestNs : Math.max(earliestNs, lastVsyncNs + intervalNs);
-        if (vsync - earliestNs >= 2 * intervalNs) {
-            dropped++;
-            out.drop = true;
+        if (lastVsyncNs != 0 && vsync - earliestNs >= 2 * intervalNs) {
+            // Two refreshes already claimed ahead of this output: stamp it with the refresh already
+            // claimed (the previous output's), where the compositor replaces that older buffer with
+            // this one, so the newest frame of the burst is what shows.
+            shared++;
+            out.vsyncNs = lastVsyncNs;
+            out.targetNs = lastVsyncNs - intervalNs / 2;
+            out.shared = true;
             return;
         }
         lastVsyncNs = vsync;
@@ -96,12 +112,12 @@ final class RefreshSlots {
         out.targetNs = vsync - intervalNs / 2;
     }
 
-    /** Outputs placed on the grid and surplus ones dropped, for the problem report's row. */
+    /** Outputs given a refresh of their own and outputs sharing the previous one, for the report row. */
     synchronized long planned() {
         return planned;
     }
 
-    synchronized long dropped() {
-        return dropped;
+    synchronized long shared() {
+        return shared;
     }
 }
