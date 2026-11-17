@@ -107,8 +107,7 @@ jobs:
       - name: The loader finds KosmicKrisp through a bundle-style manifest
         run: |
           icd="$RUNNER_TEMP/kosmickrisp_icd.json"
-          printf '{"file_format_version": "1.0.1", "ICD": {"library_path": "%s", "api_version": "1.4.0", "is_portability_driver": false}}
-'             "$VULKAN_PREFIX/lib/libvulkan_kosmickrisp.dylib" > "$icd"
+          printf '{"file_format_version": "1.0.1", "ICD": {"library_path": "%s", "api_version": "1.4.0", "is_portability_driver": false}}\n' "$VULKAN_PREFIX/lib/libvulkan_kosmickrisp.dylib" > "$icd"
           sw_vers
           system_profiler SPDisplaysDataType | sed -n '1,20p'
           VK_LOADER_DEBUG=driver python3 desktop/tests/macos_vulkan_probe.py "$VULKAN_PREFIX/lib/libvulkan.1.dylib" "$icd"
