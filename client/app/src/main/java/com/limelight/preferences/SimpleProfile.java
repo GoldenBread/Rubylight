@@ -57,16 +57,15 @@ public final class SimpleProfile {
     }
 
     private static SimpleProfileModel.Capabilities cachedCapabilities;
-    private static long cachedAt;
 
-    /** Drops the measured capabilities (JVM tests, or a display change read again). */
+    /** Drops the measured capabilities: Settings resumes, a stored preference changes, or a choice
+     *  is applied; the rows then share one fresh decoder scan for that visit. */
     static void forgetCapabilities() { cachedCapabilities = null; }
 
-    /** What this device and its paired PCs measured, for the mapping. Cached for a moment so the
-     *  rows of one Settings visit share one decoder scan; a choice invalidates it. */
+    /** What this device and its paired PCs measured, for the mapping. Cached until a stored
+     *  preference changes or Settings resumes, so one visit shares one decoder scan. */
     static SimpleProfileModel.Capabilities capabilities(Context context) {
-        long now = System.nanoTime() / 1_000_000L;
-        if (cachedCapabilities != null && now - cachedAt <= 750) return cachedCapabilities;
+        if (cachedCapabilities != null) return cachedCapabilities;
         android.view.Display display = PreferenceConfiguration.defaultDisplay(context);
         int refresh = display == null ? 60 : DisplayFrameRatePolicy.streamFrameRate(
                 DisplayFrameRatePolicy.maxRefreshRate(display));
@@ -93,7 +92,6 @@ public final class SimpleProfile {
                 refresh, hdr, vrr, true, codecs.hevc, codecs.av1, codecs.hdr, codecs.maxFpsAtNative,
                 null, null, null);
         cachedCapabilities = capabilities;
-        cachedAt = now;
         return capabilities;
     }
 
@@ -335,53 +333,24 @@ public final class SimpleProfile {
                 : "forceav1".equals(storedCodec) ? "av1" : "h264";
         String qualityMode = prefs.getString("adaptive_quality_mode", "off");
         String quality = "battery".equals(qualityMode) ? "save-power" : "off".equals(qualityMode) ? "off" : null;
-        // A PC, game or active profile that sets one of the values the simple layer writes means the
-        // stream will not run the simple layer's value; the rows say Custom rather than claim it.
-        boolean layered = anyLayerOverrides(context);
         boolean vrr = DisplayFrameRatePolicy.vrrOffered(context)
                 && prefs.getBoolean(PreferenceConfiguration.VRR_PREF_STRING, false);
-        return new SimpleProfileModel.Current(nativeSize, fps, layered ? null : pacing,
+        // The HDR switch left at the app's default is the layer's Auto on a screen and decoder that
+        // can show HDR; reading it as Off would call a fresh HDR install Off when nothing was chosen.
+        SimpleProfileModel.Capabilities caps = capabilities(context);
+        boolean hdr = prefs.getBoolean(PreferenceConfiguration.ENABLE_HDR_PREF_STRING, false)
+                || ("auto".equals(read(prefs, HDR)) && caps.displayHdr && caps.decoderHdr
+                    && !Boolean.FALSE.equals(caps.hostHdr));
+        return new SimpleProfileModel.Current(nativeSize, fps, pacing,
                 vrr, latencySwitches,
                 prefs.getBoolean(SettingRules.DROP_LATE_FRAMES, true),
                 prefs.getBoolean(PreferenceConfiguration.HOST_FRAME_TIMES_PREF_STRING, false),
                 prefs.getBoolean(PreferenceConfiguration.REAL_VRR_PREF_STRING, true),
                 prefs.getBoolean("checkbox_reduce_refresh_rate", false),
                 prefs.getBoolean(PreferenceConfiguration.CONTENT_RATE_FRAME_RATE_PREF_STRING, false),
-                bitrateMilli, codec,
-                prefs.getBoolean(PreferenceConfiguration.ENABLE_HDR_PREF_STRING, false),
+                bitrateMilli, codec, hdr,
                 prefs.getBoolean(AutoBitrateChoice.SETTINGS_KEY, false), quality,
                 read(prefs, SMOOTHNESS), read(prefs, PICTURE), read(prefs, HDR));
-    }
-
-    /** Whether any saved PC, game or active named profile sets a value the simple layer writes. */
-    static boolean anyLayerOverrides(Context context) {
-        for (Object raw : context.getSharedPreferences("HostStreamProfiles", Context.MODE_PRIVATE).getAll().values()) {
-            if (raw instanceof String && overridesSimple(parseProfile((String) raw))) return true;
-        }
-        for (Object raw : context.getSharedPreferences("AppStreamSettings", Context.MODE_PRIVATE).getAll().values()) {
-            if (raw instanceof String && overridesSimple(parseProfile((String) raw))) return true;
-        }
-        StreamProfiles.Snapshot profiles = StreamProfiles.load(context);
-        if (profiles.activeId != null) {
-            String values = profiles.values.get(profiles.activeId);
-            if (values != null && overridesSimple(parseProfile(values))) return true;
-        }
-        return false;
-    }
-
-    private static HostStreamProfile parseProfile(String raw) {
-        try {
-            return HostStreamProfile.deserialize(raw);
-        } catch (RuntimeException e) {
-            return null;
-        }
-    }
-
-    private static boolean overridesSimple(HostStreamProfile values) {
-        return values != null && (values.nativeResolution != null || values.width != null || values.height != null
-                || values.refreshRateX100 != null || values.bitrate != null || values.codec != null
-                || values.hdr != null || values.vrr != null || values.realVrr != null || values.pacing != null
-                || values.hostFrameTimes != null || values.dropLateFrames != null);
     }
 
     private static String pacing(String choice) {

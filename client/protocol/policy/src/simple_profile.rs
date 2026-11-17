@@ -415,32 +415,16 @@ pub fn matches(choices: Choices, capabilities: &Capabilities, current: &Current)
     wanted == expected
 }
 
-/// The choices a stream's settings are, or `None` for Custom. The choices the player last stored win
-/// when the settings still match them; then the recommended combination; each other choice is tried
-/// last, so a match is exactly what [`values`] would write.
+/// The choices a stream's settings are, or `None` for Custom. Only the choices the player last stored
+/// count: a hand change that happens to equal another profile still reads as Custom. A request from
+/// before the stored choices existed reads as the recommended combination when it matches exactly.
 pub fn chosen(current: &Current, capabilities: &Capabilities) -> Option<Choices> {
-    if let (Some(smoothness), Some(picture), Some(hdr)) =
-        (current.stored_smoothness, current.stored_picture, current.stored_hdr)
-    {
-        let stored = Choices { smoothness, picture, hdr };
-        if matches(stored, capabilities, current) {
-            return Some(stored);
-        }
-    }
-    if matches(recommended(capabilities), capabilities, current) {
-        return Some(recommended(capabilities));
-    }
-    for smoothness in Smoothness::ALL {
-        for picture in Picture::ALL {
-            for hdr in Hdr::ALL {
-                let choices = Choices { smoothness, picture, hdr };
-                if matches(choices, capabilities, current) {
-                    return Some(choices);
-                }
-            }
-        }
-    }
-    None
+    let stored = match (current.stored_smoothness, current.stored_picture, current.stored_hdr) {
+        (Some(smoothness), Some(picture), Some(hdr)) => Choices { smoothness, picture, hdr },
+        (None, None, None) => recommended(capabilities),
+        _ => return None,
+    };
+    matches(stored, capabilities, current).then_some(stored)
 }
 
 /// The JNI wire format: one JSON request in, one JSON answer out. Android's
@@ -471,7 +455,7 @@ pub mod json {
 
     fn choices(request: &Request) -> Choices {
         Choices::from_keys(
-            request.smoothness.as_deref().unwrap_or("balanced"),
+            request.smoothness.as_deref().unwrap_or("auto"),
             request.picture.as_deref().unwrap_or("auto"),
             request.hdr.as_deref().unwrap_or("auto"),
         )
@@ -758,6 +742,16 @@ mod tests {
         let mut adaptive = base;
         adaptive.adaptive_bitrate = true;
         assert_eq!(chosen(&adaptive, &capabilities), None);
+        // A hand change that lands on another profile's values is still Custom: the stored choice
+        // alone decides. Changing Auto's pacing to Balanced equals the Balanced profile exactly.
+        let mut other_profile = base;
+        other_profile.pacing = Some(Pacing::Balanced);
+        assert_eq!(chosen(&other_profile, &capabilities), None, "another profile's values are Custom");
+        // And the reverse: Balanced with Auto's pacing would once have read as Auto.
+        let balanced = Choices { smoothness: Smoothness::Balanced, ..Choices::default() };
+        let mut from_balanced = current_of(balanced, &capabilities);
+        from_balanced.pacing = Some(Pacing::Latency);
+        assert_eq!(chosen(&from_balanced, &capabilities), None, "Balanced with Auto's pacing is Custom");
     }
 
     #[test]
@@ -794,6 +788,10 @@ mod tests {
 
         let recommended = ask(&json!({"op": "recommended", "display": caps["display"], "decoder": caps["decoder"], "host": caps["host"]}).to_string());
         assert_eq!(recommended["ok"], json!({"smoothness": "auto", "picture": "auto", "hdr": "auto"}));
+        // A values request without a smoothness key reads as the recommended Auto, not the old Balanced.
+        let omitted = ask(&json!({"op": "values", "picture": "auto", "hdr": "auto",
+            "display": caps["display"], "decoder": caps["decoder"], "host": caps["host"]}).to_string());
+        assert_eq!(omitted["ok"]["pacing"], "latency");
 
         let current = json!({
             "native_resolution": true, "fps": null, "pacing": "balanced", "vrr": true,

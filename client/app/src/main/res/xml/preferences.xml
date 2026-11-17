@@ -36,7 +36,7 @@
             android:summary="@string/summary_simple_screen" android:persistent="false" />
         <com.limelight.preferences.SimpleProfilePreference
             android:key="simple_hdr"
-            android:title="@string/title_enable_hdr"
+            android:title="@string/title_simple_hdr"
             android:dialogMessage="@string/summary_simple_hdr"
             android:entries="@array/simple_hdr_names"
             android:entryValues="@array/simple_hdr_values" />

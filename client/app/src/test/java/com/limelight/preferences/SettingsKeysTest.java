@@ -102,6 +102,7 @@ public class SettingsKeysTest {
     private static final Set<String> READ_ELSEWHERE = new HashSet<>(Arrays.asList(
             "performance_overlay_mode", // Game and the overlay
             "simple_smoothness", "simple_picture", "simple_hdr", // the simple layer writes the values above (SimpleProfile)
+            "simple_vrr_opt_in", "simple_vrr_last", // SimpleProfile keeps the VRR opt-in across Smoothest
             "list_stream_menu_button_y", "list_stream_menu_button_x", "list_stream_menu_button_lb", "list_stream_menu_button_rb", // StreamMenu
             com.limelight.console.OpenPlay.SETTING, // the launch screen, before any stream
             com.limelight.ui.AppTheme.THEME, // AppTheme, including activities opened directly

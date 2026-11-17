@@ -236,12 +236,14 @@ public class SimpleProfileTest {
     }
 
     @Test
-    public void aPcOverrideReadsAsCustom() {
+    public void aPcOverrideDoesNotChangeTheGlobalRows() {
+        assertTrue(SimpleProfile.applyRecommended(context));
         HostStreamProfile profile = new HostStreamProfile();
         profile.hdr = true;
         context.getSharedPreferences("HostStreamProfiles", Context.MODE_PRIVATE).edit()
                 .putString("pc", profile.serialize()).commit();
-        assertNull("a PC's own value wins over the simple layer", SimpleProfile.chosen(context));
+        assertFalse("the rows describe the global settings, not one PC's overrides",
+                SimpleProfile.custom(context, SimpleProfile.SMOOTHNESS));
         context.getSharedPreferences("HostStreamProfiles", Context.MODE_PRIVATE).edit().clear().commit();
     }
 
@@ -270,5 +272,36 @@ public class SimpleProfileTest {
             assertEquals(screen, prefs.getString(OpenPlay.SETTING, null));
             assertTrue(prefs.getBoolean(HomeSettings.PREF_KEY, false));
         }
+    }
+
+    @Test
+    public void bindingConsoleModeInTheHomeStateWritesNothing() {
+        // Home with an unknown start value reads as Home, so a bind would persist the pair unless the
+        // guard stops it; "old" would become "pcs".
+        prefs.edit().putString(OpenPlay.SETTING, "old").putBoolean(HomeSettings.PREF_KEY, true).commit();
+        org.robolectric.android.controller.ActivityController<StreamSettings> controller =
+                org.robolectric.Robolectric.buildActivity(StreamSettings.class).setup().visible();
+        try {
+            settleConsole(controller.get());
+            android.app.Fragment root = controller.get().getFragmentManager().findFragmentById(com.limelight.R.id.settings_sections);
+            if (root == null) root = controller.get().getFragmentManager().findFragmentById(com.limelight.R.id.stream_settings);
+            assertTrue("the settings fragment owns the preference manager", root != null);
+            android.preference.PreferenceScreen screen =
+                    ((android.preference.PreferenceFragment) root).getPreferenceManager()
+                            .createPreferenceScreen(context);
+            ConsoleModePreference console = new ConsoleModePreference(context, null);
+            console.setKey(HomeSettings.PREF_KEY);
+            screen.addPreference(console);
+            assertEquals("old", prefs.getString(OpenPlay.SETTING, null));
+            assertTrue(prefs.getBoolean(HomeSettings.PREF_KEY, false));
+        } finally {
+            controller.pause().stop().destroy();
+        }
+    }
+
+    private static void settleConsole(StreamSettings screen) {
+        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        screen.getFragmentManager().executePendingTransactions();
+        org.robolectric.shadows.ShadowLooper.idleMainLooper();
     }
 }

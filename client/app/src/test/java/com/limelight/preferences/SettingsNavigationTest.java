@@ -42,10 +42,16 @@ public class SettingsNavigationTest {
             root.measure(android.view.View.MeasureSpec.makeMeasureSpec(1080, android.view.View.MeasureSpec.EXACTLY),
                     android.view.View.MeasureSpec.makeMeasureSpec(2400, android.view.View.MeasureSpec.EXACTLY));
             root.layout(0, 0, 1080, 2400);
-            android.view.View presetRow = list.getAdapter().getView(presets, null, list);
-            Object helpAction = presetRow.getTag(R.id.preference_help);
-            assertNotNull("the D-pad's help action survives binding", helpAction);
-            ((Runnable) helpAction).run();
+            list.measure(android.view.View.MeasureSpec.makeMeasureSpec(1080, android.view.View.MeasureSpec.EXACTLY),
+                    android.view.View.MeasureSpec.makeMeasureSpec(2400, android.view.View.MeasureSpec.EXACTLY));
+            list.layout(0, 0, 1080, 2400);
+            android.view.View presetRow = list.getSelectedView();
+            assertNotNull("the selected row is bound", presetRow);
+            assertNotNull("the D-pad's help action survives binding", presetRow.getTag(R.id.preference_help));
+            assertTrue(list.dispatchKeyEvent(new android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN,
+                    android.view.KeyEvent.KEYCODE_DPAD_RIGHT)));
+            assertTrue(list.dispatchKeyEvent(new android.view.KeyEvent(android.view.KeyEvent.ACTION_UP,
+                    android.view.KeyEvent.KEYCODE_DPAD_RIGHT)));
             androidx.appcompat.app.AlertDialog help = (androidx.appcompat.app.AlertDialog)
                     org.robolectric.shadows.ShadowDialog.getLatestDialog();
             assertNotNull(help);

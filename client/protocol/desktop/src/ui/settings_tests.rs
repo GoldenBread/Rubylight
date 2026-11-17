@@ -2037,30 +2037,36 @@ fn the_simple_layer_writes_and_reads_the_settings_it_stands_for() {
     let caps = simple_caps(&display, false, true);
     let mut s = Settings::default();
     let recommended = simple::recommended(&caps);
+    // Applying Auto after "Fastest" writes VRR's three keys together, so the Variable refresh rate
+    // row reads On rather than Custom next to these rows.
+    let mut from_fastest = Settings { present_at_host_times: false, vrr_tear_free: false, ..Settings::default() };
+    simple_apply(&mut from_fastest, &display, &caps, recommended);
+    assert_eq!((from_fastest.vrr, from_fastest.present_at_host_times, from_fastest.vrr_tear_free),
+        (true, true, true), "Auto leaves the VRR row On, not Custom");
     simple_apply(&mut s, &display, &caps, recommended);
     assert_eq!((s.width, s.height, s.fps), (0, 0, 0), "the screen's own size and rate");
     assert_eq!(s.frame_pacing, FramePacing::Latency);
     assert!(s.vrr && s.present_at_host_times);
     assert_eq!(s.bitrate_kbps, 0, "the bitrate for the size and rate");
     assert!(!s.hdr);
-    let (choices, custom) = simple_state(&s, &display, &caps, true, false);
+    let (choices, custom) = simple_state(&s, &display, &caps, true);
     assert!(!custom);
     assert_eq!(choices, recommended);
     // One changed advanced setting reads as Custom.
     s.frame_pacing = FramePacing::CapFps;
-    assert!(simple_state(&s, &display, &caps, true, false).1);
+    assert!(simple_state(&s, &display, &caps, true).1);
     // Save data lowers the bitrate and lets it fall when the link struggles.
     simple_apply(&mut s, &display, &caps, simple::Choices { picture: simple::Picture::SaveData, ..recommended });
     assert!(s.adaptive_bitrate && s.adaptive_quality == crate::config::QualityMode::Battery);
     assert!(s.bitrate_kbps > 0 && s.bitrate_kbps < stream_mode(&Settings::default(), display).3);
-    let (choices, custom) = simple_state(&s, &display, &caps, true, false);
+    let (choices, custom) = simple_state(&s, &display, &caps, true);
     assert!(!custom && choices.picture == simple::Picture::SaveData);
     // A saved PyroWave codec does not make Best store PyroWave's own bitrate.
     let mut pyro = Settings { codec: CodecPreference::PyroWave, ..Settings::default() };
     simple_apply(&mut pyro, &display, &caps, simple::Choices { picture: simple::Picture::Best, ..recommended });
     assert_eq!(pyro.codec, CodecPreference::Auto);
     assert!(pyro.bitrate_kbps < 100_000, "Best uses the conventional codec's bitrate, not PyroWave's {}", pyro.bitrate_kbps);
-    assert!(!simple_state(&pyro, &display, &caps, true, false).1);
+    assert!(!simple_state(&pyro, &display, &caps, true).1);
 }
 
 #[test]
@@ -2068,17 +2074,31 @@ fn a_non_vrr_first_launch_reads_auto_not_custom() {
     let display = Display { width: 1920, height: 1080, refresh_hz: 60.0, refresh_reported: true };
     let caps = simple_caps(&display, false, false);
     let s = Settings::default();
-    let (choices, custom) = simple_state(&s, &display, &caps, false, false);
+    let (choices, custom) = simple_state(&s, &display, &caps, false);
     assert!(!custom, "a saved VRR the swap chain cannot tear is not Custom");
     assert_eq!(choices.smoothness, simple::Smoothness::Auto);
 }
 
 #[test]
-fn a_pc_override_reads_as_custom_on_the_desktop() {
+fn a_fresh_hdr_screen_reads_hdr_auto_not_off() {
+    let display = Display { width: 1920, height: 1080, refresh_hz: 120.0, refresh_reported: true };
+    let caps = simple_caps(&display, true, true);
+    let s = Settings::default();
+    let (choices, custom) = simple_state(&s, &display, &caps, true);
+    assert!(!custom, "the HDR switch at its default is the layer's Auto");
+    assert_eq!(choices.hdr, simple::Hdr::Auto);
+}
+
+#[test]
+fn a_hand_change_that_equals_another_profile_reads_as_custom() {
     let display = Display { width: 1920, height: 1080, refresh_hz: 120.0, refresh_reported: true };
     let caps = simple_caps(&display, false, true);
-    let s = Settings::default();
-    assert!(simple_state(&s, &display, &caps, true, true).1, "a PC's own value wins over the simple layer");
+    let mut s = Settings::default();
+    simple_apply(&mut s, &display, &caps, simple::recommended(&caps));
+    // Auto writes the newest frame at Latency; Balanced's pacing now matches everything else Auto
+    // writes, but the stored choice is still Auto, so the rows must not claim Balanced.
+    s.frame_pacing = FramePacing::Balanced;
+    assert!(simple_state(&s, &display, &caps, true).1, "a hand change equal to another profile is Custom");
 }
 
 #[test]
@@ -2092,7 +2112,7 @@ fn the_setup_section_shows_the_simple_layer_and_back_applies_it() {
     }
     assert!(!row_words(&f, "Stream smoothness").contains(&"Custom"), "{:?}", row_words(&f, "Stream smoothness"));
     f.l.settings.frame_pacing = FramePacing::CapFps;
-    assert!(simple_state(&f.l.settings, &f.l.display, &simple_caps(&f.l.display, false, true), true, false).1);
+    assert!(simple_state(&f.l.settings, &f.l.display, &simple_caps(&f.l.display, false, true), true).1);
     f.settle();
     assert!(row_words(&f, "Stream smoothness").contains(&"Custom"), "{:?}", row_words(&f, "Stream smoothness"));
     // Picking the stored choice while Custom applies the profile (it is what the row shows).

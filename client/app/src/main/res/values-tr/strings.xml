@@ -521,7 +521,7 @@
     <string name="summary_jumbo_frames">PC ve her bağlantı 9000 baytlık jumbo çerçeveleri taşıdığında videoyu daha az sayıda daha büyük paketlerle gönderir. Nightjar ağı test ederken her yayın birkaç saniye geç başlar ve test başarısız olursa normal paketler kullanılır. Kablolu ağınız jumbo çerçeveler için ayarlanmadıysa kapalı bırakın.</string>
     <string name="jumbo_frames_fallback">Jumbo video paketleri bu ağdaki testi geçemedi, bu yüzden akış normal paketler kullanıyor.</string>
     <string name="title_simple_smoothness">Yayın akıcılığı</string>
-    <string name="summary_simple_smoothness">Otomatik ekranı ve kod çözücüyü izler: her yenilemede en yeni kare, ekran destekliyorsa değişken yenileme hızıyla. En akıcı, her kareyi tutarak sabit bir ritim sağlar ve gecikmeyi biraz artırır; En düşük gecikme asla beklemez. Bir oyun takılmıyor veya yavaş hissettirmiyorsa Otomatik olarak bırakın.</string>
+    <string name="summary_simple_smoothness">Otomatik ekranı ve kod çözücüyü izler: her yenilemede en yeni kare, değişken yenileme hızı yalnızca «Ekran ve görüntü» bölümünde açtıysanız kullanılır. En akıcı, her kareyi tutarak sabit bir ritim sağlar ve gecikmeyi biraz artırır; En düşük gecikme asla beklemez. Bir oyun takılmıyor veya yavaş hissettirmiyorsa Otomatik olarak bırakın.</string>
     <string name="simple_smoothest">En akıcı</string>
     <string name="simple_balanced">Dengeli</string>
     <string name="simple_lowest_delay">En düşük gecikme</string>
@@ -533,6 +533,7 @@
     <string name="title_simple_screen">Ekran</string>
     <string name="summary_simple_screen">Bu cihazın kendi çözünürlüğü ve yenileme hızı. Yayın takılırsa Video bölümünde düşürün.</string>
     <string name="simple_screen_value">%1$d×%2$d, %3$d Hz</string>
+    <string name="title_simple_hdr">HDR</string>
     <string name="simple_hdr_auto">Otomatik (önerilen)</string>
     <string name="title_simple_console">Konsol modu</string>
     <string name="summary_simple_console">Oyunlarınızı doğrudan tam ekran açar; bir kol veya kumanda birini seçebilir. Televizyon veya el konsolu için açık bırakın; PC listesini açmak için kapatın.</string>
@@ -540,6 +541,6 @@
     <string name="summary_simple_back_to_recommended">Yukarıdaki üç seçimi bu cihazın en iyi yaptığı değerlere döndürür; temsil ettikleri ayarlar da onlarla değişir.</string>
     <string name="simple_profile_failed">Önerilen ayarlar bu cihazda okunamadı</string>
     <string name="settings_section_simple">Önerilen</string>
-    <string name="settings_section_simple_summary">Üç basit seçim; tüm ayrıntılar aşağıdaki bölümlerde.</string>
-    <string name="summary_simple_hdr">HDR ekranda daha parlak vurgular ve daha zengin renkler. Otomatik, yalnızca ekran, kod çözücü ve PC desteklediğinde açar; HDR soluk görünüyorsa Otomatik olarak bırakın.</string>
+    <string name="settings_section_simple_summary">Çoğu kişinin ihtiyaç duyduğu seçimler; tüm ayrıntılar aşağıdaki bölümlerde.</string>
+    <string name="summary_simple_hdr">HDR ekranda daha parlak vurgular ve daha zengin renkler. Otomatik, yalnızca ekran, kod çözücü ve PC desteklediğinde açar; başka yerde açmak görüntüyü soluk gösterir. Görüntü soluk görünmüyorsa Otomatik olarak bırakın.</string>
 </resources>

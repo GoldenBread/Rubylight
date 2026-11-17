@@ -521,7 +521,7 @@
     <string name="summary_jumbo_frames">PC とすべての経路が 9000 バイトのジャンボフレームを運べるとき、より少ない大きなパケットで映像を送ります。Nightjar がネットワークをテストするため、各ストリームの開始が数秒遅くなり、テストに合格しない場合は通常のパケットを使います。有線ネットワークがジャンボフレーム用に設定されている場合以外はオフにしてください。</string>
     <string name="jumbo_frames_fallback">このネットワークではジャンボビデオパケットのテストに合格しなかったため、通常のパケットでストリームします。</string>
     <string name="title_simple_smoothness">ストリームの滑らかさ</string>
-    <string name="summary_simple_smoothness">自動は画面とデコーダーに従います。各リフレッシュで最新のフレームを表示し、画面が対応していれば可変リフレッシュレートを使います。最も滑らかは各フレームを保持して安定した周期にし、遅延が少し増えます。最小遅延は待ちません。ゲームがちらつくか遅く感じない限り、自動のままにしてください。</string>
+    <string name="summary_simple_smoothness">自動は画面とデコーダーに従います。各リフレッシュで最新のフレームを表示し、可変リフレッシュレートは「ディスプレイと画質」でオンにした場合だけ使います。最も滑らかは各フレームを保持して安定した周期にし、遅延が少し増えます。最小遅延は待ちません。ゲームがちらつくか遅く感じない限り、自動のままにしてください。</string>
     <string name="simple_smoothest">最も滑らか</string>
     <string name="simple_balanced">バランス</string>
     <string name="simple_lowest_delay">最小遅延</string>
@@ -533,6 +533,7 @@
     <string name="title_simple_screen">画面</string>
     <string name="summary_simple_screen">このデバイス自身の解像度とリフレッシュレートです。ストリームがちらつく場合は「ビデオ」で下げてください。</string>
     <string name="simple_screen_value">%1$d×%2$d、%3$d Hz</string>
+    <string name="title_simple_hdr">HDR</string>
     <string name="simple_hdr_auto">自動（おすすめ）</string>
     <string name="title_simple_console">コンソールモード</string>
     <string name="summary_simple_console">ゲームを全画面で直接開き、コントローラーやリモコンで選べます。テレビや携帯ゲーム機ではオンにしたままにし、PC一覧を開くにはオフにしてください。</string>
@@ -540,6 +541,6 @@
     <string name="summary_simple_back_to_recommended">上の3つの選択をこのデバイスに最適なものに戻します。それらが表す設定も一緒に変わります。</string>
     <string name="simple_profile_failed">このデバイスではおすすめ設定を読み取れませんでした</string>
     <string name="settings_section_simple">おすすめ</string>
-    <string name="settings_section_simple_summary">3つの簡単な選択。詳しい設定は下のセクションにあります。</string>
-    <string name="summary_simple_hdr">HDR 画面で明るいハイライトと豊かな色になります。自動は画面、デコーダー、PC が対応しているときだけオンにします。HDR が白っぽく見える場合はオフにしてください。</string>
+    <string name="settings_section_simple_summary">ほとんどの人に必要な選択です。詳しい設定は下のセクションにあります。</string>
+    <string name="summary_simple_hdr">HDR 画面で明るいハイライトと豊かな色になります。自動は画面、デコーダー、PC が対応しているときだけオンにします。それ以外でオンにすると映像が白っぽく見えます。映像が白っぽく見える場合を除き、自動のままにしてください。</string>
 </resources>

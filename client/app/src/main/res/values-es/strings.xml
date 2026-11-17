@@ -521,7 +521,7 @@
     <string name="summary_jumbo_frames">Envía el vídeo en menos paquetes y más grandes cuando el PC y cada tramo transportan tramas jumbo de 9000 bytes. Cada transmisión tarda unos segundos más en empezar mientras Nightjar prueba la red, y usa paquetes normales si la prueba falla. Déjalo desactivado salvo que tu red por cable esté configurada para tramas jumbo.</string>
     <string name="jumbo_frames_fallback">Los paquetes de vídeo jumbo no superaron la prueba en esta red, así que el stream usa paquetes normales.</string>
     <string name="title_simple_smoothness">Fluidez de la transmisión</string>
-    <string name="summary_simple_smoothness">Auto sigue la pantalla y el decodificador: la imagen más reciente en cada actualización, con frecuencia de actualización variable donde la pantalla la ofrece. Lo más suave mantiene cada fotograma para un ritmo constante con algo más de retraso; Mínimo retraso nunca espera. Déjalo en Auto salvo que un juego se entrecorte o se sienta lento.</string>
+    <string name="summary_simple_smoothness">Auto sigue la pantalla y el decodificador: la imagen más reciente en cada actualización, con frecuencia de actualización variable solo si la activaste en «Pantalla e imagen». Lo más suave mantiene cada fotograma para un ritmo constante con algo más de retraso; Mínimo retraso nunca espera. Déjalo en Auto salvo que un juego se entrecorte o se sienta lento.</string>
     <string name="simple_smoothest">Lo más suave</string>
     <string name="simple_balanced">Equilibrado</string>
     <string name="simple_lowest_delay">Mínimo retraso</string>
@@ -533,6 +533,7 @@
     <string name="title_simple_screen">Pantalla</string>
     <string name="summary_simple_screen">La resolución y la frecuencia de actualización de este dispositivo. Bájala en Vídeo si la transmisión se entrecorta.</string>
     <string name="simple_screen_value">%1$d×%2$d a %3$d Hz</string>
+    <string name="title_simple_hdr">HDR</string>
     <string name="simple_hdr_auto">Auto (recomendado)</string>
     <string name="title_simple_console">Modo consola</string>
     <string name="summary_simple_console">Abre directamente tus juegos a pantalla completa, donde un mando o un mando a distancia puede elegir uno. Déjalo activado para un televisor o una consola portátil; desactívalo para abrir la lista de PCs.</string>
@@ -540,6 +541,6 @@
     <string name="summary_simple_back_to_recommended">Devuelve las tres opciones de arriba a lo que mejor hace este dispositivo; los ajustes que representan cambian con ellas.</string>
     <string name="simple_profile_failed">No se pudieron leer los ajustes recomendados en este dispositivo</string>
     <string name="settings_section_simple">Recomendado</string>
-    <string name="settings_section_simple_summary">Tres opciones sencillas; las secciones de abajo guardan todos los detalles.</string>
-    <string name="summary_simple_hdr">Brillos más intensos y colores más ricos en una pantalla HDR. Auto solo lo activa cuando la pantalla, el decodificador y el PC lo admiten; déjalo en Auto salvo que el HDR se vea deslavado.</string>
+    <string name="settings_section_simple_summary">Las opciones que casi todos necesitan; las secciones de abajo guardan todos los detalles.</string>
+    <string name="summary_simple_hdr">Brillos más intensos y colores más ricos en una pantalla HDR. Auto solo lo activa cuando la pantalla, el decodificador y el PC lo admiten; activarlo en otro caso hace que la imagen se vea deslavada. Déjalo en Auto salvo que la imagen se vea deslavada.</string>
 </resources>

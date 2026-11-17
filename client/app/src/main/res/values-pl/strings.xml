@@ -521,7 +521,7 @@
     <string name="summary_jumbo_frames">Wysyła obraz w mniejszej liczbie większych pakietów, gdy PC i każde łącze przenoszą ramki jumbo 9000 bajtów. Każdy strumień startuje kilka sekund później, podczas gdy Nightjar testuje sieć, i używa zwykłych pakietów, jeśli test się nie powiedzie. Pozostaw wyłączone, chyba że twoja sieć przewodowa jest skonfigurowana dla ramek jumbo.</string>
     <string name="jumbo_frames_fallback">Pakiety wideo jumbo nie przeszły testu w tej sieci, więc strumień używa zwykłych pakietów.</string>
     <string name="title_simple_smoothness">Płynność transmisji</string>
-    <string name="summary_simple_smoothness">Automatycznie podąża za ekranem i dekoderem: najnowsza klatka przy każdym odświeżeniu, ze zmienną częstotliwością odświeżania, gdy ekran ją oferuje. Najpłynniej utrzymuje każdą klatkę dla równego rytmu z nieco większym opóźnieniem; Najmniejsze opóźnienie nigdy nie czeka. Zostaw Automatycznie, chyba że gra przycina lub wydaje się wolna.</string>
+    <string name="summary_simple_smoothness">Automatycznie podąża za ekranem i dekoderem: najnowsza klatka przy każdym odświeżeniu, ze zmienną częstotliwością odświeżania tylko wtedy, gdy włączysz ją w „Ekran i obraz”. Najpłynniej utrzymuje każdą klatkę dla równego rytmu z nieco większym opóźnieniem; Najmniejsze opóźnienie nigdy nie czeka. Zostaw Automatycznie, chyba że gra przycina lub wydaje się wolna.</string>
     <string name="simple_smoothest">Najpłynniej</string>
     <string name="simple_balanced">Zrównoważone</string>
     <string name="simple_lowest_delay">Najmniejsze opóźnienie</string>
@@ -533,6 +533,7 @@
     <string name="title_simple_screen">Ekran</string>
     <string name="summary_simple_screen">Rozdzielczość i częstotliwość odświeżania tego urządzenia. Obniż ją w sekcji Wideo, jeśli transmisja przycina.</string>
     <string name="simple_screen_value">%1$d×%2$d przy %3$d Hz</string>
+    <string name="title_simple_hdr">HDR</string>
     <string name="simple_hdr_auto">Automatycznie (zalecane)</string>
     <string name="title_simple_console">Tryb konsoli</string>
     <string name="summary_simple_console">Otwiera od razu Twoje gry na pełnym ekranie, gdzie kontroler lub pilot może wybrać jedną. Zostaw włączony dla telewizora lub handhelda; wyłącz, aby otworzyć listę PC.</string>
@@ -540,6 +541,6 @@
     <string name="summary_simple_back_to_recommended">Przywraca trzy powyższe wybory do tego, co to urządzenie robi najlepiej; ustawienia, które oznaczają, zmieniają się razem z nimi.</string>
     <string name="simple_profile_failed">Nie udało się odczytać zalecanych ustawień na tym urządzeniu</string>
     <string name="settings_section_simple">Zalecane</string>
-    <string name="settings_section_simple_summary">Trzy proste wybory; wszystkie szczegóły są w sekcjach poniżej.</string>
-    <string name="summary_simple_hdr">Jaśniejsze światła i bogatsze kolory na ekranie HDR. Automatycznie włącza je tylko wtedy, gdy ekran, dekoder i PC to obsługują; zostaw Automatycznie, chyba że HDR wygląda wyblakle.</string>
+    <string name="settings_section_simple_summary">Wybory, których potrzebuje większość; wszystkie szczegóły są w sekcjach poniżej.</string>
+    <string name="summary_simple_hdr">Jaśniejsze światła i bogatsze kolory na ekranie HDR. Automatycznie włącza je tylko wtedy, gdy ekran, dekoder i PC to obsługują; włączenie gdzie indziej daje wyblakły obraz. Zostaw Automatycznie, chyba że obraz wygląda wyblakle.</string>
 </resources>

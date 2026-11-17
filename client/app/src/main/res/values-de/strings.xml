@@ -521,7 +521,7 @@
     <string name="summary_jumbo_frames">Sendet Video in weniger, größeren Paketen, wenn der PC und jede Verbindung 9000-Byte-Jumbo-Frames tragen. Jeder Stream startet einige Sekunden später, während Nightjar das Netzwerk testet, und nutzt normale Pakete, wenn der Test fehlschlägt. Lass es aus, außer dein kabelgebundenes Netzwerk ist für Jumbo-Frames eingerichtet.</string>
     <string name="jumbo_frames_fallback">Jumbo-Videopakete haben den Test in diesem Netzwerk nicht bestanden, deshalb nutzt der Stream normale Pakete.</string>
     <string name="title_simple_smoothness">Stream-Flüssigkeit</string>
-    <string name="summary_simple_smoothness">Auto folgt dem Bildschirm und dem Decoder: das neueste Bild bei jeder Wiederholung, mit variablem Bildwiederholverhältnis, wo der Bildschirm es bietet. Am gleichmäßigsten hält jedes Bild für einen ruhigen Takt mit etwas mehr Verzögerung; Geringste Verzögerung wartet nie. Lass es auf Auto, außer ein Spiel ruckelt oder fühlt sich träge an.</string>
+    <string name="summary_simple_smoothness">Auto folgt dem Bildschirm und dem Decoder: das neueste Bild bei jeder Wiederholung, mit variablem Bildwiederholverhältnis nur, wenn du es unter „Display und Bild“ eingeschaltet hast. Am gleichmäßigsten hält jedes Bild für einen ruhigen Takt mit etwas mehr Verzögerung; Geringste Verzögerung wartet nie. Lass es auf Auto, außer ein Spiel ruckelt oder fühlt sich träge an.</string>
     <string name="simple_smoothest">Am gleichmäßigsten</string>
     <string name="simple_balanced">Ausgeglichen</string>
     <string name="simple_lowest_delay">Geringste Verzögerung</string>
@@ -533,6 +533,7 @@
     <string name="title_simple_screen">Bildschirm</string>
     <string name="summary_simple_screen">Die eigene Auflösung und Wiederholrate dieses Geräts. Verringere sie unter Video, wenn der Stream ruckelt.</string>
     <string name="simple_screen_value">%1$d×%2$d bei %3$d Hz</string>
+    <string name="title_simple_hdr">HDR</string>
     <string name="simple_hdr_auto">Auto (empfohlen)</string>
     <string name="title_simple_console">Konsolenmodus</string>
     <string name="summary_simple_console">Öffnet direkt deine Spiele im Vollbild, wo ein Controller oder eine Fernbedienung eines auswählen kann. Lass es für einen Fernseher oder ein Handheld an; schalte es aus, um die PC-Liste zu öffnen.</string>
@@ -540,6 +541,6 @@
     <string name="summary_simple_back_to_recommended">Setzt die drei Auswahlmöglichkeiten oben auf das, was dieses Gerät am besten kann; die Einstellungen dahinter ändern sich mit.</string>
     <string name="simple_profile_failed">Die empfohlenen Einstellungen konnten auf diesem Gerät nicht gelesen werden</string>
     <string name="settings_section_simple">Empfohlen</string>
-    <string name="settings_section_simple_summary">Drei einfache Auswahlmöglichkeiten; die Abschnitte darunter enthalten jedes Detail.</string>
-    <string name="summary_simple_hdr">Hellere Spitzenlichter und sattere Farben auf einem HDR-Bildschirm. Auto schaltet HDR nur ein, wenn Bildschirm, Decoder und PC es unterstützen; lass es auf Auto, außer HDR sieht verwaschen aus.</string>
+    <string name="settings_section_simple_summary">Die Auswahl, die die meisten brauchen; die Abschnitte darunter enthalten jedes Detail.</string>
+    <string name="summary_simple_hdr">Hellere Spitzenlichter und sattere Farben auf einem HDR-Bildschirm. Auto schaltet HDR nur ein, wenn Bildschirm, Decoder und PC es unterstützen; anderswo sieht das Bild verwaschen aus. Lass es auf Auto, außer das Bild sieht verwaschen aus.</string>
 </resources>

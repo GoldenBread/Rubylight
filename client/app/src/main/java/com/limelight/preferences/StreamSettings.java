@@ -1574,6 +1574,13 @@ public class StreamSettings extends NightjarActivity {
         private int codecSummaryGeneration;
         private final SharedPreferences.OnSharedPreferenceChangeListener summaryUpdater =
                 (prefs, key) -> {
+                    // Only the VRR keys change what the capability scan reads; a simple choice
+                    // clears the cache itself (SimpleProfile.apply).
+                    if (PreferenceConfiguration.VRR_PREF_STRING.equals(key)
+                            || PreferenceConfiguration.REAL_VRR_PREF_STRING.equals(key)
+                            || SimpleProfile.VRR_OPT_IN.equals(key) || SimpleProfile.VRR_LAST.equals(key)) {
+                        SimpleProfile.forgetCapabilities();
+                    }
                     refreshState();
                     if (PreferenceConfiguration.USB_FORWARDING_PREF_STRING.equals(key)) {
                         com.limelight.binding.usb.UsbForwarding.syncPersistentPermission(getActivity());
@@ -2053,6 +2060,7 @@ public class StreamSettings extends NightjarActivity {
         @Override
         public void onResume() {
             super.onResume();
+            SimpleProfile.forgetCapabilities();
             updateSimpleScreenSummary();
             // Microphone access can be withdrawn in Android settings; the switch follows it.
             SwitchPreference mic = (SwitchPreference) findPreference(PreferenceConfiguration.ENABLE_MIC_PREF_STRING);

@@ -201,7 +201,8 @@ pub(crate) fn simple_caps(display: &Display, hdr_display: bool, vrr: bool) -> si
 
 /// The stream's current settings, as the simple layer compares them. `vrr_offered` gates a saved VRR
 /// on a machine whose swap chain cannot tear, as the Variable refresh rate row does.
-pub(crate) fn simple_current(s: &Settings, display: &Display, vrr_offered: bool) -> simple::Current {
+pub(crate) fn simple_current(s: &Settings, display: &Display, caps: &simple::Capabilities, vrr_offered: bool)
+                             -> simple::Current {
     let (_, _, _, default_kbps) = stream_mode(&Settings { bitrate_kbps: 0, ..s.clone() }, *display);
     let fps = if s.fps == 0 || s.fps == display.refresh_hz.round() as u32 { None } else { Some(s.fps) };
     let pacing = match s.frame_pacing {
@@ -223,6 +224,9 @@ pub(crate) fn simple_current(s: &Settings, display: &Display, vrr_offered: bool)
         // PyroWave is no codec the simple layer offers, so these settings read as Custom.
         CodecPreference::PyroWave | CodecPreference::PyroWave444 => simple::Codec::H264,
     };
+    // The HDR switch left at its default is the layer's Auto, not a hand-picked Off: on a screen
+    // that shows HDR the row would otherwise read Off on a fresh install.
+    let auto_hdr = simple::values(simple::recommended(caps), caps).hdr;
     simple::Current {
         native_resolution: s.width == 0 && s.height == 0,
         fps,
@@ -236,7 +240,7 @@ pub(crate) fn simple_current(s: &Settings, display: &Display, vrr_offered: bool)
         content_rate: false,
         bitrate_milli,
         codec,
-        hdr: s.hdr,
+        hdr: s.hdr || (s.simple_hdr == simple::Hdr::Auto && auto_hdr),
         adaptive_bitrate: s.adaptive_bitrate || s.client_hint_bitrate,
         adaptive_quality: match s.adaptive_quality {
             crate::config::QualityMode::Off => Some(simple::AdaptiveQuality::Off),
@@ -263,7 +267,13 @@ pub(crate) fn simple_apply(s: &mut Settings, display: &Display, caps: &simple::C
     };
     s.drop_late_frames = values.drop_late_frames;
     s.host_frame_times = values.host_frame_times;
-    s.vrr = values.vrr;
+    // The Variable refresh rate row reads its three keys together: writing only vrr and the host's
+    // timing after "Fastest" would leave that row at Custom while these rows say Auto or Balanced.
+    if values.vrr {
+        set_vrr_choice(s, VrrChoice::On);
+    } else {
+        s.vrr = false;
+    }
     if let Some(real_vrr) = values.real_vrr {
         s.present_at_host_times = real_vrr;
     }
@@ -293,22 +303,11 @@ pub(crate) fn simple_apply(s: &mut Settings, display: &Display, caps: &simple::C
     s.hdr = values.hdr;
 }
 
-/// Whether these overrides set a value the simple layer writes.
-fn simple_overrides(overrides: &Overrides) -> bool {
-    overrides.has(&["width", "height", "fps", "bitrate_kbps", "codec", "hdr", "vrr", "present_at_host_times",
-        "frame_pacing", "drop_late_frames", "host_frame_times"])
-}
-
 /// The simple layer's choices from the current settings, or the stored ones while they are Custom.
-/// `layered` is set when a PC, game or active profile sets one of these values: the stream will not
-/// run the simple layer's value, so the rows say Custom rather than claim it.
-pub(crate) fn simple_state(s: &Settings, display: &Display, caps: &simple::Capabilities, vrr_offered: bool,
-                           layered: bool) -> (simple::Choices, bool) {
+pub(crate) fn simple_state(s: &Settings, display: &Display, caps: &simple::Capabilities, vrr_offered: bool)
+                           -> (simple::Choices, bool) {
     let stored = simple::Choices { smoothness: s.simple_smoothness, picture: s.simple_picture, hdr: s.simple_hdr };
-    if layered {
-        return (stored, true);
-    }
-    match simple::chosen(&simple_current(s, display, vrr_offered), caps) {
+    match simple::chosen(&simple_current(s, display, caps, vrr_offered), caps) {
         Some(choices) => (choices, false),
         None => (stored, true),
     }
@@ -717,7 +716,6 @@ impl Launcher {
         let open = self.settings_view.section;
         let mut links: Vec<(&str, Response)> = Vec::new();
         let inherited = self.inherited_settings.clone();
-        let active_simple_profile = self.active_profile().is_some_and(|profile| simple_overrides(&profile.settings));
         let overrides = &mut self.edit_overrides;
         let own = match self.screen {
             Screen::HostSettings(_) => en("For this PC"),
@@ -763,12 +761,6 @@ impl Launcher {
         // Variable refresh rate needs tearing on Windows: where the swap chain can't, the row is not
         // drawn and the rows that apply without VRR are.
         let vrr_offered = self.tearing_supported || cfg!(not(windows));
-        // A saved PC, game or active profile that sets one of the simple values wins over the main
-        // settings; the simple rows say Custom rather than promise a value the stream will not run.
-        let simple_layered = view.hosts.list.iter().any(|h| {
-            h.record.settings.as_ref().is_some_and(simple_overrides)
-                || h.record.app_settings.values().any(simple_overrides)
-        }) || active_simple_profile;
         // Bitrate on mobile data is the profiles' cap, for every stream: on the main settings, once
         // this device was on mobile data or a cap is set (Android's mobileBitrateShown).
         let mut mobile_limit = self.profiles.mobile_limit_kbps;
@@ -825,7 +817,7 @@ impl Launcher {
                 }
                 let caps = simple_caps(&display, self.hdr_display, vrr_offered);
                 // Stream smoothness
-                let (mut choices, custom) = simple_state(s, &display, &caps, vrr_offered, simple_layered);
+                let (mut choices, custom) = simple_state(s, &display, &caps, vrr_offered);
                 let mut smoothness = choices.smoothness;
                 let smoothness_text = if custom { tr("Custom") } else { tr(simple_smoothness_name(smoothness)) };
                 setting_row(ui, s, &mut rows, &["simple_smoothness"], "Stream smoothness",
@@ -846,7 +838,7 @@ impl Launcher {
                         response
                     });
                 // Picture quality
-                let (mut choices, custom) = simple_state(s, &display, &caps, vrr_offered, simple_layered);
+                let (mut choices, custom) = simple_state(s, &display, &caps, vrr_offered);
                 let mut picture = choices.picture;
                 let picture_text = if custom { tr("Custom") } else { tr(simple_picture_name(picture)) };
                 setting_row(ui, s, &mut rows, &["simple_picture"], "Picture quality",
@@ -872,7 +864,7 @@ impl Launcher {
                     "This device's own resolution and refresh rate. Lower it under Video if the stream stutters.",
                     |ui, _| ui.label(RichText::new(trf("{0}×{1} at {2} Hz", &[&display.width, &display.height, &(display.refresh_hz.round() as u32)])).color(*ON_SURFACE)));
                 // HDR
-                let (mut choices, custom) = simple_state(s, &display, &caps, vrr_offered, simple_layered);
+                let (mut choices, custom) = simple_state(s, &display, &caps, vrr_offered);
                 let mut hdr = choices.hdr;
                 let hdr_text = if custom { tr("Custom") } else { tr(simple_hdr_name(hdr)) };
                 setting_row(ui, s, &mut rows, &["simple_hdr"], "HDR",
