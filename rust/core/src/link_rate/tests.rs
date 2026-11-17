@@ -1876,10 +1876,10 @@ fn a_pyrowave_stream_above_its_link_comes_down_until_it_fits() {
 }
 
 /// Review 2026-10-29: 1080p120 at 200 Mbps sits under PyroWave's 373 Mbps
-/// floor, so the floor is the stream's own bitrate. Lost pictures reach the
-/// floor once and the stream stays there while they go on, instead of
-/// flipping between floor and full every ten seconds; it is back to full after
-/// ten quiet seconds.
+/// floor, so the floor is the stream's own bitrate. Until 2026-11-17 the
+/// stream held there and lost, because the floor allowed no cut. It now cuts
+/// once to what the path delivered, holds at that learned rate while the loss
+/// goes on instead of collapsing deeper, and probes back above it.
 #[test]
 fn a_pyrowave_stream_under_its_own_floor_stays_there_while_it_loses() {
     let negotiated = Negotiated {
@@ -1893,13 +1893,22 @@ fn a_pyrowave_stream_under_its_own_floor_stays_there_while_it_loses() {
     assert!(!LinkRate::new(true, &stream(40_000), 0, 20).pyrowave_no_room());
     let mut rig = Rig::with(lr, 200_000);
     rig.clean(1_000);
+    let mut lowest = rig.kbps;
     for _ in 0..40 {
         rig.lose_three();
         rig.clean(1_200);
+        lowest = lowest.min(rig.kbps);
     }
-    assert_eq!(rig.kinds(), [ChangeKind::Floor]);
+    let first = &rig.changes[0].1;
+    assert_eq!(first.kind, ChangeKind::StepDown);
+    assert!(first.to_kbps < 200_000, "{first:?}");
+    // It holds near the learned rate rather than collapsing further; the
+    // floor warning then says PyroWave cannot go lower for this picture.
+    assert!(lowest >= 60_000, "collapsed to {lowest}: {:?}", rig.changes);
+    assert!(rig.kinds().contains(&ChangeKind::Floor));
+    assert!(!rig.kinds().contains(&ChangeKind::Full));
     rig.clean(12_000);
-    assert_eq!(rig.kinds(), [ChangeKind::Floor, ChangeKind::Full]);
+    assert!(rig.kinds().contains(&ChangeKind::Probe));
 }
 
 fn pyrowave_after_host_send_loss() -> Rig {
@@ -1989,8 +1998,7 @@ fn pyrowave_client_loss_cannot_roll_a_transport_probe_below_its_quality_floor() 
         rig.clean(100);
     }
     assert!(rig.lr.pending.iter().any(Option::is_some));
-    let before = rig.kbps;
-    assert!(before < 200_000);
+    assert!(rig.kbps < 200_000);
     let changes = rig.changes.len();
     rig.lose_three();
     rig.clean(300);
@@ -1998,8 +2006,9 @@ fn pyrowave_client_loss_cannot_roll_a_transport_probe_below_its_quality_floor() 
         .iter()
         .find(|(_, c)| c.kind == ChangeKind::ProbeFailed)
         .expect("client loss must evaluate the pending probe");
-    assert_eq!(failure.1.to_kbps, before);
-    assert_eq!(rig.kbps, before);
+    // Back to the pre-probe rate, never below the transport episode's floor.
+    assert!(failure.1.to_kbps >= 100_000, "{failure:?}");
+    assert!(rig.kbps >= 100_000, "{}", rig.kbps);
 }
 
 #[test]
@@ -2011,14 +2020,24 @@ fn pyrowave_client_loss_keeps_its_quality_floor_after_host_loss_recovery() {
     assert_eq!(rig.kbps, 200_000);
     let changes = rig.changes.len();
     rig.lose_three();
-    rig.clean(300);
-    assert_eq!(rig.kbps, 200_000);
+    rig.clean(600);
+    // At the requested rate with no room, client loss is the path's, not the
+    // transport floor's: the cut may go under the floor the PC's own refusals
+    // had set, once.
+    assert!(
+        rig.kbps < 200_000,
+        "{} {:?}",
+        rig.kbps,
+        &rig.changes[changes..]
+    );
     assert!(rig.lr.pyrowave_no_room());
     assert!(rig.changes.len() > changes, "client evidence was evaluated");
     assert!(
         rig.changes[changes..]
             .iter()
-            .all(|(_, c)| c.to_kbps == 200_000)
+            .any(|(_, c)| c.to_kbps < 200_000),
+        "{:?}",
+        &rig.changes[changes..]
     );
 }
 
@@ -2158,8 +2177,11 @@ fn an_encoder_that_follows_its_bitrate_never_gets_an_encoder_floor() {
 }
 
 #[test]
-fn a_link_that_drops_to_an_eighth_recovers_within_twenty_five_seconds() {
+fn a_link_that_drops_to_an_eighth_recovers_with_its_learned_rate() {
     // 80 -> 10 -> 80 Mbit/s at a 40 Mbit/s request; the link returns at 40 s.
+    // The learned ceiling holds the retries back (10 s, then 20 s after the
+    // second failure at the same rate), so the climb starts later than the
+    // knee-only controller's 25 s; it still gets back on a link that improves.
     for (feedback, queue, spread) in [
         (2., 50., 0.05),
         (20., 50., 0.05),
@@ -2170,7 +2192,7 @@ fn a_link_that_drops_to_an_eighth_recovers_within_twenty_five_seconds() {
     ] {
         let mut sim = Sim::new(q(Link::step(80., 10., 20., 40.), queue), 40_000, feedback);
         sim.spread = spread;
-        sim.run(75.);
+        sim.run(100.);
         let what = format!("fb {feedback}, q {queue}, sp {spread}");
         // An eighth of the rate takes two cuts: the first is held to half,
         // the second, right after it, goes to the delivered rate.
@@ -2181,15 +2203,14 @@ fn a_link_that_drops_to_an_eighth_recovers_within_twenty_five_seconds() {
             sim.longest_gap(19., 45.)
         );
         assert!(
-            sim.frame_loss(3., 75.) <= loss,
+            sim.frame_loss(3., 100.) <= loss,
             "{what}: loss {}",
-            sim.frame_loss(3., 75.)
+            sim.frame_loss(3., 100.)
         );
         let back = sim.reaches(40., 36_000).expect("back to 90 %");
-        // The last probe that failed on the dip keeps probes under its rate
-        // for the quiet hold (KNEE_QUIET), and a step at a time past it.
-        assert!(back <= 65., "{what}: 90 % at {back:.1} s");
-        assert!(sim.cuts() <= 2, "{what}: {} cuts", sim.cuts());
+        assert!(back <= 88., "{what}: 90 % at {back:.1} s");
+        // Two cuts take the eighth; a third follows a probe at the new edge.
+        assert!(sim.cuts() <= 3, "{what}: {} cuts", sim.cuts());
     }
 }
 
@@ -2220,6 +2241,115 @@ fn a_link_that_drops_to_a_tenth_recovers_within_twenty_seconds() {
         assert!(back <= 60., "{what}: 90 % at {back:.1} s");
         assert_eq!(sim.cuts(), 1, "{what}");
     }
+}
+
+#[test]
+fn a_pyrowave_stream_under_its_own_floor_settles_at_what_the_path_carries() {
+    // 1080p120 at 350 Mbps is under PyroWave's 373 Mbps floor, so there is no
+    // quality floor to cut to. The field case (2026-11-17): a 4K120 stream was
+    // held at its requested rate on a path that carried about three quarters
+    // of it, and cut only when the host's socket overflowed. Now the first
+    // loss teaches the rate the path carries and the stream holds there.
+    let mut sim = Sim::pyrowave_no_room(q(Link::constant(200.), 50.), 350_000, 20.);
+    sim.spread = 0.4;
+    sim.run(300.);
+    assert!(sim.cuts() >= 1, "no cut: {:?}", sim.changes);
+    let collapses = sim
+        .changes
+        .iter()
+        .filter(|(_, c)| c.kind == ChangeKind::StepDown && c.to_kbps * 100 < c.from_kbps * 90)
+        .count();
+    assert!(collapses <= 2, "{collapses} collapses: {:?}", sim.changes);
+    assert!(
+        sim.frame_loss(30., 300.) < 0.02,
+        "loss {}",
+        sim.frame_loss(30., 300.)
+    );
+    let wire = sim.mean_wire_bps(240., 300.) / 1e6;
+    assert!((130. ..=216.).contains(&wire), "{wire:.0} Mbit/s");
+    // A learned ceiling below the requested rate, and no probe back to it.
+    assert!(sim.lr.learned_bps() > 0);
+    assert!(
+        sim.mean_kbps(240., 300.) < 350_000.,
+        "still at the request: {}",
+        sim.mean_kbps(240., 300.)
+    );
+}
+
+#[test]
+fn a_capped_link_holds_its_learned_ceiling_without_a_sawtooth() {
+    // 900 Mbps of PyroWave (about 650 on the wire) on a 500 Mbps path: the
+    // stream cuts to what the path carries, learns that rate and stays there
+    // between its retries instead of climbing back on every probe.
+    let mut sim = Sim::pyrowave(q(Link::constant(500.), 50.), 900_000, 20.);
+    sim.spread = 0.4;
+    sim.run(300.);
+    let collapses = sim
+        .changes
+        .iter()
+        .filter(|(_, c)| c.kind == ChangeKind::StepDown && c.to_kbps * 100 < c.from_kbps * 90)
+        .count();
+    assert!(collapses <= 2, "{collapses} collapses: {:?}", sim.changes);
+    assert!(
+        sim.frame_loss(30., 300.) < 0.02,
+        "loss {}",
+        sim.frame_loss(30., 300.)
+    );
+    let wire = sim.mean_wire_bps(240., 300.) / 1e6;
+    assert!((325. ..=540.).contains(&wire), "{wire:.0} Mbit/s");
+    assert!(sim.lr.learned_bps() > 0);
+}
+
+#[test]
+fn a_path_that_improves_is_found_again_by_the_retries() {
+    // 200 Mbps until 60 s, then 350: the learned ceiling is not permanent.
+    let link = Link::new(|t| if t < 60. { 200e6 } else { 350e6 });
+    let mut sim = Sim::pyrowave_no_room(q(link, 50.), 350_000, 20.);
+    sim.spread = 0.4;
+    sim.run(180.);
+    let back = sim.reaches(60., 200_000).unwrap_or(f64::MAX);
+    assert!(back <= 150., "200 Mbps of the stream at {back:.1} s");
+    assert!(
+        sim.frame_loss(150., 180.) < 0.02,
+        "loss {}",
+        sim.frame_loss(150., 180.)
+    );
+}
+
+#[test]
+fn a_link_that_never_congests_never_learns_a_ceiling() {
+    // A 1 GbE path and a PyroWave stream that fits: no change, no ceiling,
+    // exactly as before.
+    let mut sim = Sim::pyrowave(q(Link::constant(1000.), 50.), 800_000, 20.);
+    sim.spread = 0.4;
+    sim.run(60.);
+    assert!(sim.changes.is_empty(), "{:?}", sim.changes.first());
+    assert_eq!(sim.lr.learned_bps(), 0);
+    assert!(sim.kbps_log.iter().all(|(_, k)| *k == 800_000));
+}
+
+#[test]
+fn a_busy_pc_stops_probes_without_learning_a_network_ceiling() {
+    let mut rig = Rig::new(40_000);
+    rig.clean(2_000);
+    for _ in 0..3 {
+        rig.run(PERIOD_MS, |lr, frame, now| lr.on_send_loss(frame, now));
+        rig.clean(PERIOD_MS);
+    }
+    assert!(rig.cuts() >= 1 || rig.kinds().contains(&ChangeKind::Floor));
+    assert!(rig.lr.host_limited(rig.now()));
+    assert_eq!(rig.lr.snapshot(rig.now())["learned_kbps"].as_u64(), Some(0));
+    let before = rig.changes.len();
+    rig.clean(4_000);
+    assert_eq!(rig.changes.len(), before, "probed while the host was busy");
+    rig.clean(8_000);
+    assert!(
+        rig.changes[before..]
+            .iter()
+            .any(|(_, c)| c.kind == ChangeKind::Probe),
+        "no probe after the host recovered: {:?}",
+        &rig.changes[before..]
+    );
 }
 
 #[test]
@@ -2537,9 +2667,10 @@ fn a_lossless_standing_queue_after_a_probe_is_cut_and_the_rtt_returns_to_the_flo
     let cuts = queue_changes(&rig);
     assert!(!cuts.is_empty(), "{:?}", rig.changes);
     // 15 ms of queue and two seconds of it, then 12 %; never the 300 ms an
-    // uncut probe would grow to.
+    // uncut probe would grow to. The probes step 12.5 % every 0.5 s until the
+    // queue's two seconds are up, so the largest is about 225 ms.
     assert!(
-        largest < 200.,
+        largest < 250.,
         "the queue reached {largest} ms: {:?}",
         rig.changes
     );

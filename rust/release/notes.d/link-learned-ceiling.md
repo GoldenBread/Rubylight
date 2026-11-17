@@ -1,0 +1,6 @@
+# Steady bitrate on a capped network path
+
+- **The bitrate settles instead of swinging.** On a network that can carry only part of the bitrate Moonlight asks for, the host now remembers the highest rate that ran clean and keeps the stream there. It only tries a little above that rate after ten seconds without loss, and waits longer after each failure near the same limit, so a path that tops out below the request no longer drops the picture and climbs back every few seconds. A path that later gains capacity is found again by those retries.
+- **It helps a hidden hop.** A device wired to a mesh node or behind a Wi-Fi hop that the host cannot see reports a wired connection and no link rate, so the host had no way to know the path's real limit; it does now, from the stream's own losses.
+- **A busy PC is not a slow network.** When the PC is too busy to send, the host now waits about a frame for room to send and then drops the rest of that one picture, instead of dropping packets across the next pictures. The warning says the PC is too busy, and the bitrate comes down until the PC can send again.
+- A connection that never fills up is unchanged: no bitrate change and no pacing change, as before.

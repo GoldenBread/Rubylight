@@ -78,7 +78,19 @@ This is the dated measurement record. For a guided comparison, start with the [p
 | Reproduction and scope | [Probes](#reproduce-on-another-machine) · [Hardware covered](#hardware-covered) |
 | PyroWave encode overlap, send buffer, Nightjar receive path | [November 10, PyroWave at 1.4 Gbps](#november-10-pyrowave-at-14-gbps-to-a-780m-laptop) |
 | Temporal upscaler for Nightjar (SGSR 2 adaptation), not landed | [November 16, temporal upscaler](#november-16-a-temporal-upscaler-for-nightjar-measured-offline-not-landed) |
+| A capped path and a busy PC | [November 17, a capped path holds its learned rate](#november-17-a-capped-path-holds-its-learned-rate-and-a-busy-pc-is-not-the-network) |
 
+## November 17: a capped path holds its learned rate, and a busy PC is not the network
+
+Field host log of a 4K120 PyroWave stream to a client wired to a mesh node's wireless backhaul (the client reports wired and sends no link hint): 800 Mbps asked, path good for about 600 to 650. At 599 Mbps the control RTT was 8 ms; at 641 to 676 it was 116 to 279 ms and the unrecoverable frame count jumped by hundreds in 5 s. `LinkRate` cut, probed back to the request in 2 to 33 s and cut again: step-downs every 10 to 50 s for the whole session. The same log shows the host's own socket refusing sends (`WSAEWOULDBLOCK` 10035) at rates the path had carried, including at 399 Mbps.
+
+That refusal was measured separately (`D:/CodexArtifacts/xbox-pyrowave/probe/probe-summary.txt`, UDP probe on the same PC): while the CPU was fully loaded the socket stayed full 8 ms median, 16 ms p90 and 20 to 58 ms worst. A 950 Mbps pace without a client link hint cost at most 2.7 ms of jitter and no loss, so the 950 Mbps burst cap and the paced send buffer stay.
+
+What changed: `LinkRate` keeps the highest rate that ran clean; a failed step past it waits 10 s, then 20, 40 ... up to 300 s, and a PyroWave stream whose floor is above its own rate may cut once below that floor. The sender waits about a frame (at most 20 ms) for a full socket and then abandons the rest of that picture; refused sends stop probes for 5 s and do not move the learned network ceiling.
+
+Simulator (`link_rate/sim.rs`, 5 minutes, 1080p PyroWave, 20 % FEC, 50 ms queue, 20 ms feedback): a stream asking 350 Mbps on a 150 Mbps path held at 350 (233 Mbps of wire, 55 % over the path) with no cut before; now it cuts once, learns 263 Mbps and holds at 236 (157 Mbps of wire, 5 % over). 900 Mbps on a 500 Mbps path (1 against 2 cuts, 10 failed probes in both, no lost frames) and 800 Mbps on 1 GbE (no change at all) are unchanged. The simulator does not model the host's socket refusals, so the field sawtooth is not reproduced there.
+
+Not run: a real client on the capped path with this build, and an A/B of the 20 ms wait.
 ## November 16: a temporal upscaler for Nightjar, measured offline (not landed)
 
 The question: does a temporal upscaler adapted from Qualcomm's Snapdragon Game

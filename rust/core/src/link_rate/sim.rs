@@ -196,6 +196,25 @@ impl Sim {
         sim
     }
 
+    /// The same stream at 120 fps, where PyroWave's severe-detail floor (373
+    /// Mbps at 1080p120) is above its own requested rate: the controller has
+    /// no quality floor to cut to, which is the 2026-11-17 4K120 field case.
+    pub fn pyrowave_no_room(link: Link, negotiated_kbps: u32, feedback_ms: f64) -> Self {
+        let mut sim = Self::pyrowave(link, negotiated_kbps, feedback_ms);
+        let stream = Negotiated {
+            codec: 3,
+            pyrowave_records: true,
+            width: 1920,
+            height: 1080,
+            fps: 120,
+            bitrate_kbps: negotiated_kbps,
+            ..Default::default()
+        };
+        sim.lr = LinkRate::new(true, &stream, 0, FEC);
+        assert!(sim.lr.pyrowave_no_room());
+        sim
+    }
+
     /// Data and parity packets per block of a PyroWave picture of `bytes`:
     /// coarse records about 5 % of it, protected at [`FEC`] percent (at least
     /// two parity packets), detail without parity, as `DetailFec` leaves it

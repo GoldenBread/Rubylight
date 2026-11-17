@@ -27,6 +27,23 @@
 //! every picture is intra, so the session passes none of them on, and a
 //! PyroWave client is judged by its FEC status reports alone.
 //!
+//! A path that cannot carry the stream loses at a rate near its edge, and the
+//! plain "climb back to the requested rate" probe found that edge again and
+//! again: a mesh node's wireless backhaul, or any hop the host cannot see,
+//! repeated a cut every ten to fifty seconds (2026-11-17: a 4K120 PyroWave
+//! client on a path good for about 600 Mbps asked for 800 and collapsed from
+//! 641 to 676 Mbps into 116 to 279 ms of round trip). The controller now
+//! remembers the highest rate that ran clean: a cut probes again at the usual
+//! hold, a step past that ceiling that fails waits a long clean stretch, and
+//! each further failure near the same edge doubles that wait, up to
+//! [`RETRY_MAX`]. A path that improves is still found by those retries, and a
+//! link that never congests never learns a ceiling, so it takes exactly the
+//! path it took before.
+//!
+//! A PC too busy to send is a separate limit: its refused frames lower the
+//! rate and stop probes for [`HOST_LOSS_HOLD`], but they never move the
+//! learned network ceiling.
+//!
 //! Inactive (`State::Off`) when disabled in the configuration and once the
 //! client sets the bitrate itself.
 //!
@@ -192,6 +209,22 @@ pub const PIPELINE_FRAMES: u32 = 2;
 pub const ENCODER_OVERSHOOT_PERCENT: u64 = 120;
 /// Wait after a step down before the first probe.
 pub const HOLD: Duration = Duration::from_secs(2);
+/// A step past the learned ceiling (see [`LinkRate::learn`]) that failed waits
+/// this long clean before the next one, doubling after each failure near the
+/// same limit up to [`RETRY_MAX`]. A fixed edge then pays rarer and rarer
+/// small probes instead of a climb and a collapse every few seconds, while a
+/// path that improves is found again by the same probes. A cut re-probes at
+/// [`HOLD`], as before: one bad moment is not a fixed limit.
+pub const RETRY_FIRST: Duration = Duration::from_secs(10);
+/// Each failure near the same edge doubles the wait before the next retry, up
+/// to this: a link whose capacity stays put is still checked every five
+/// minutes, and one whose capacity rises is found within that time.
+pub const RETRY_MAX: Duration = Duration::from_secs(300);
+/// After a frame the host's socket refused, no probe goes up for this long:
+/// a busy PC keeps the socket full for tens of milliseconds at a time, and
+/// raising the bitrate into it only makes the next refusals worse. The rate
+/// still steps down on further refusals.
+pub const HOST_LOSS_HOLD: Duration = Duration::from_secs(5);
 /// A failed probe doubles the wait up to this. The link may have recovered
 /// since, and only a probe can tell, so the wait stays short; a repeat probe is
 /// cheap because it goes only [`NEAR_STEP_DIVISOR`] past the bad rate.
@@ -481,6 +514,21 @@ pub struct LinkRate {
     good: u64,
     /// The last rate that did not.
     bad: Option<u64>,
+    /// The highest total wire rate that has run clean since a rate above it
+    /// congested: the learned ceiling. Probes stop here; a retry goes a small
+    /// step past it only after [`RETRY_FIRST`] clean (see [`Self::learn`]).
+    learned: Option<u64>,
+    /// When a retry above `learned` may be made.
+    next_retry: Option<Instant>,
+    /// The clean wait before that retry; doubles after a failure near the
+    /// same edge.
+    retry_wait: Duration,
+    /// The rate a retry last failed at, for that doubling.
+    failed_at: Option<u64>,
+    /// When a frame the host could not send was last counted (E3): a
+    /// host-side limit, not the network's, so no probe goes up while it is
+    /// recent and no ceiling is learned from it.
+    host_loss_at: Option<Instant>,
     /// Total wire bits per second the encoder was seen to send after a cut
     /// asked for less (see [`ENCODER_OVERSHOOT_PERCENT`]); cuts stop here.
     encoder_floor: Option<u64>,
@@ -597,6 +645,11 @@ impl LinkRate {
             current: 0,
             good: 0,
             bad: None,
+            learned: None,
+            next_retry: None,
+            retry_wait: RETRY_FIRST,
+            failed_at: None,
+            host_loss_at: None,
             encoder_floor: None,
             overshoots: 0,
             pending: [None; PENDING_CAP],
@@ -747,6 +800,7 @@ impl LinkRate {
         self.events.clear();
         self.pending = [None; PENDING_CAP];
         self.confirmed = None;
+        self.forget_learned();
     }
 
     /// Record the video frame the host just sent: its wire frame number,
@@ -952,10 +1006,21 @@ impl LinkRate {
 
     /// A frame the host could not send whole. Feeds E3.
     pub fn on_send_loss(&mut self, frame: u32, now: Instant) {
+        if self.is_active() {
+            self.host_loss_at = Some(now);
+        }
         if self.is_active() && self.admits(Some(frame), now) {
             Events::distinct(&mut self.events.send_losses, now, frame);
             self.events.lost(frame);
         }
+    }
+
+    /// The host's socket refused video packets within [`HOST_LOSS_HOLD`]:
+    /// the PC, not the path, is the limit, and probes go nowhere until it has
+    /// been quiet that long.
+    pub fn host_limited(&self, now: Instant) -> bool {
+        self.host_loss_at
+            .is_some_and(|at| now.saturating_duration_since(at) < HOST_LOSS_HOLD)
     }
 
     /// A keyframe or RFI request. `network` is `KeyframeLoss`'s verdict that
@@ -1245,7 +1310,7 @@ impl LinkRate {
         let mut kbps = self
             .budget()
             .encoder_kbps(self.current, self.ceiling_kbps, fec, period)
-            .clamp(self.encoder_floor_kbps(), self.ceiling_kbps);
+            .clamp(self.encoder_floor_kbps(fec, period), self.ceiling_kbps);
         // Less FEC frees wire bits for video, but only a probe may spend them.
         if let Some(((current, was_fec, was_period), cached)) = self.cache
             && current == self.current
@@ -1261,11 +1326,88 @@ impl LinkRate {
     fn kbps_for(&self, total: u64, fec: usize, period: Duration) -> u32 {
         self.budget()
             .encoder_kbps(total, self.ceiling_kbps, fec, period)
-            .clamp(self.encoder_floor_kbps(), self.ceiling_kbps)
+            .clamp(self.encoder_floor_kbps(fec, period), self.ceiling_kbps)
     }
 
-    fn encoder_floor_kbps(&self) -> u32 {
-        self.transport_floor_kbps.unwrap_or(self.floor_kbps)
+    /// The lowest encoder bitrate anything here asks for. A learned ceiling
+    /// under the quality floor replaces it only for a PyroWave stream whose
+    /// floor is at or above its own bitrate (no room): the path has never
+    /// carried the floor, so holding the stream above what it carries only
+    /// loses video. A stream with room keeps its quality floor.
+    fn encoder_floor_kbps(&self, fec: usize, period: Duration) -> u32 {
+        let floor = self.transport_floor_kbps.unwrap_or(self.floor_kbps);
+        match self.learned {
+            Some(learned) if self.pyrowave_no_room => {
+                floor.min(
+                    self.budget()
+                        .encoder_kbps(learned, self.ceiling_kbps, fec, period),
+                )
+            }
+            _ => floor,
+        }
+    }
+
+    /// The learned ceiling in total wire bits per second, 0 while the path
+    /// has shown no edge; for the simulated-link tests.
+    #[cfg(test)]
+    pub fn learned_bps(&self) -> u64 {
+        self.learned.unwrap_or(0)
+    }
+
+    /// Remember `safe` as the highest rate the path is known to carry after a
+    /// failure (or a cut) at `failed`. A cut re-probes at [`HOLD`], as before;
+    /// a step past the learned ceiling that fails waits [`RETRY_FIRST`] clean,
+    /// and each further failure within [`KNEE_PERCENT`] of the last doubles
+    /// that wait up to [`RETRY_MAX`], so a fixed edge is paid a rarer and
+    /// rarer small probe instead of a climb and collapse.
+    fn learn(&mut self, safe: u64, failed: u64, now: Instant, retry: bool) {
+        let near = |a: u64, b: u64| {
+            a * 100 >= b * (100 - KNEE_PERCENT) && a * 100 <= b * (100 + KNEE_PERCENT)
+        };
+        if retry {
+            if self.failed_at.is_some_and(|at| near(failed, at))
+                || self.learned.is_some_and(|learned| near(failed, learned))
+            {
+                self.retry_wait = (self.retry_wait * 2).min(RETRY_MAX);
+            } else {
+                self.retry_wait = RETRY_FIRST;
+            }
+        } else {
+            // A cut is one moment at a new rate: look past it again at the
+            // usual hold, so a dip that passes costs no longer than before.
+            self.retry_wait = HOLD;
+        }
+        self.failed_at = Some(failed);
+        self.learned = Some(self.learned.map_or(safe, |learned| learned.min(safe)));
+        self.next_retry = Some(now + self.retry_wait);
+    }
+
+    fn forget_learned(&mut self) {
+        self.learned = None;
+        self.next_retry = None;
+        self.retry_wait = RETRY_FIRST;
+        self.failed_at = None;
+        self.host_loss_at = None;
+    }
+
+    /// The highest rate a probe may ask for: the learned ceiling, or a small
+    /// step past it once a retry is due. A normal stream whose learned
+    /// ceiling has fallen to its quality floor is held by the floor, not by
+    /// the path: it may probe above it, or it could never recover.
+    fn probe_limit(&self, now: Instant, fec: usize, period: Duration) -> u64 {
+        match self.learned {
+            Some(learned)
+                if self.pyrowave_no_room
+                    || learned > self.budget().total_bps(self.floor_kbps, fec, period) =>
+            {
+                if self.next_retry.is_some_and(|at| now >= at) {
+                    learned + (learned / PROBE_STEP_DIVISOR).max(1)
+                } else {
+                    learned
+                }
+            }
+            _ => u64::MAX,
+        }
     }
 
     fn budget(&self) -> WireBudget {
@@ -1355,7 +1497,8 @@ impl LinkRate {
     }
 
     fn floor_total(&self, fec: usize, period: Duration) -> u64 {
-        self.budget().total_bps(self.floor_kbps, fec, period)
+        self.budget()
+            .total_bps(self.encoder_floor_kbps(fec, period), fec, period)
     }
 
     /// The lowest total a cut may ask for: the configured minimum, or the rate
@@ -1368,7 +1511,7 @@ impl LinkRate {
     fn loss_floor(&self, why: &Trigger, fec: usize, period: Duration) -> u64 {
         if why.evidence.send_losses >= SEND_LOSS_FRAMES {
             self.budget()
-                .total_bps(self.encoder_floor_kbps(), fec, period)
+                .total_bps(self.encoder_floor_kbps(fec, period), fec, period)
                 .max(self.encoder_floor.unwrap_or(0))
         } else {
             self.cut_floor(fec, period)
@@ -1423,6 +1566,9 @@ impl LinkRate {
             self.good = self.current;
         }
         let evidence = why.evidence;
+        // A host that cannot send is not the path: it limits probes and the
+        // rate, but must not teach a network ceiling.
+        let host_loss = evidence.send_losses >= SEND_LOSS_FRAMES;
         // A probe is failing: go back to the last good rate, not below it.
         let recent = self
             .confirmed
@@ -1460,6 +1606,13 @@ impl LinkRate {
             };
             self.good = back_to;
             self.current = back_to;
+            // A failed step is the point where the path's edge was found:
+            // hold under it and only look past it after a longer clean wait.
+            // A step rolled back by the host's own refused sends says nothing
+            // about where the path's edge is.
+            if !host_loss {
+                self.learn(back_to, failed, now, true);
+            }
             self.hold = (self.hold * 2).min(MAX_HOLD);
             self.next_probe = Some(now + self.hold);
             self.knee_failed(now, knee);
@@ -1489,7 +1642,7 @@ impl LinkRate {
         // below it only lowers a target nothing follows. Two rounds, because a
         // keyframe among the few frames of one round looks the same.
         let overshoot = match estimate {
-            Some((sent, _)) if self.state != State::Full => {
+            Some((sent, _)) if self.state != State::Full && !host_loss => {
                 let offered = sent + budget.audio_bps;
                 (offered * 100 > cur * ENCODER_OVERSHOOT_PERCENT).then_some((sent, offered))
             }
@@ -1543,8 +1696,23 @@ impl LinkRate {
         let cur = self.current;
         let budget = self.budget();
         let mut evidence = why.evidence;
-        let floor = self.loss_floor(&why, fec, period).min(cur);
-        if cur <= floor {
+        let host_loss = evidence.send_losses >= SEND_LOSS_FRAMES;
+        // A PyroWave stream whose floor is at or above its own bitrate (no
+        // room) is already under the floor, so holding at the requested rate
+        // is what loses its video. Its first cut may go below that floor; the
+        // rate the path carries is learned from it and later evidence holds
+        // there (a cut below a rate that already loses only collapses the
+        // picture).
+        let no_room_cut =
+            self.pyrowave_no_room && self.transport_floor_kbps.is_none() && self.learned.is_none();
+        let floor = if no_room_cut {
+            REPEAT_CUT_FLOOR_BPS
+        } else {
+            self.loss_floor(&why, fec, period)
+        }
+        .min(cur);
+        let at_floor = self.encoder_kbps(fec, period) <= self.encoder_floor_kbps(fec, period);
+        if cur <= floor || (!no_room_cut && at_floor) {
             // Nothing left to cut. At the encoder's own minimum the stream is
             // already as low as it goes and has said so. Loss at the floor
             // restarts the wait for `Full`: where the floor is the ceiling
@@ -1615,8 +1783,23 @@ impl LinkRate {
         .clamp(
             lowest.min(cur * MAX_CUT_PERCENT / 100),
             cur * MAX_CUT_PERCENT / 100,
-        )
-        .max(floor);
+        );
+        // A cut never lands above a learned ceiling: the path's edge is below
+        // that, and holding over it only fills the queue again. A host-side
+        // cut is not the path's edge, and it must be free to go below it.
+        let target = match (self.learned, host_loss) {
+            (Some(learned), false) => target.min(learned),
+            _ => target,
+        };
+        let target = target.max(floor);
+        // Learn the rate the stream now holds, after the quality floor has had
+        // its say: a floor under the cut must not lower the learned ceiling.
+        if host_loss {
+            // Refused sends say nothing about a probe sent before them.
+            self.pending = [None; PENDING_CAP];
+        } else {
+            self.learn(target, cur, now, false);
+        }
         let knee = self
             .bad
             .is_some_and(|bad| cur * 100 >= bad * KNEE_CUT_PERCENT);
@@ -1673,7 +1856,17 @@ impl LinkRate {
             self.good = self.current;
         }
         let cur = self.current;
-        let floor = self.cut_floor(fec, period).min(cur);
+        // A standing queue at a no-room PyroWave stream's own rate is the
+        // path's edge: the quality floor is above it, so its first cut cannot
+        // hold here. Later evidence holds at the learned rate.
+        let no_room_cut =
+            self.pyrowave_no_room && self.transport_floor_kbps.is_none() && self.learned.is_none();
+        let floor = if no_room_cut {
+            REPEAT_CUT_FLOOR_BPS
+        } else {
+            self.cut_floor(fec, period)
+        }
+        .min(cur);
         let excess = self
             .rtt_floor()
             .map_or(Duration::ZERO, |low| self.rtt.saturating_sub(low));
@@ -1703,7 +1896,13 @@ impl LinkRate {
         if let Some(back_to) = back_to {
             target = target.min(back_to);
         }
+        // A queue above a learned ceiling is the ceiling's fault; never cut
+        // to a rate over what the path was last seen to carry.
+        if let Some(learned) = self.learned {
+            target = target.min(learned);
+        }
         let target = target.max(floor);
+        self.learn(target, cur, now, back_to.is_some());
         let knee = self
             .bad
             .is_some_and(|bad| cur * 100 >= bad * KNEE_CUT_PERCENT);
@@ -1781,6 +1980,7 @@ impl LinkRate {
                 step.at = now;
             }
         }
+        let host_limited = self.host_limited(now);
         for slot in &mut self.pending {
             if let Some(step) = slot
                 && now.saturating_duration_since(step.at) >= CONFIRM_AFTER
@@ -1795,6 +1995,15 @@ impl LinkRate {
                     });
                 }
                 self.good = self.good.max(step.rate);
+                // A step past the learned ceiling that stayed clean raises
+                // it: the path's edge is above where it was, so the next
+                // probe may follow at once. Not while the host itself is
+                // refusing sends: that limit is the PC's, not the path's.
+                if !host_limited && self.learned.is_some_and(|learned| step.rate > learned) {
+                    self.learned = Some(step.rate);
+                    self.retry_wait = RETRY_FIRST;
+                    self.next_retry = Some(now);
+                }
                 self.hold = HOLD;
                 if self.bad.is_none_or(|bad| step.rate > bad) {
                     self.bad = None;
@@ -1807,6 +2016,11 @@ impl LinkRate {
         self.pending.sort_by_key(|s| s.is_none());
         // Quiet video, stale pings or a queue in the path prove nothing.
         if !(busy && self.ping_fresh(now) && !self.rtt.is_zero() && !self.rtt_elevated()) {
+            return;
+        }
+        // A PC that cannot send is the limit: no probe goes up until its
+        // socket has been quiet for HOST_LOSS_HOLD.
+        if self.host_limited(now) {
             return;
         }
         let ceiling = self.ceiling_total(fec, period);
@@ -1848,18 +2062,38 @@ impl LinkRate {
         // changes nothing is no probe.
         let step = (self.current / divisor).max(1);
         let level = self.kbps_for(self.current, fec, period);
-        // On a known knee, probes stop just under it until the wait is over.
-        let limit = match (self.bad, self.knee_until) {
+        // On a known knee, probes stop just under it until the wait is over;
+        // past a learned ceiling only a due retry may go.
+        let knee_limit = match (self.bad, self.knee_until) {
             (Some(bad), Some(until)) if now < until => {
                 ceiling.min((bad * KNEE_CAP_PERCENT).div_ceil(100))
             }
             _ => ceiling,
         };
+        let learned_limit = self.probe_limit(now, fec, period);
+        let limit = ceiling.min(knee_limit).min(learned_limit);
         let mut next = self.current;
         while next < limit && self.kbps_for(next, fec, period) <= level {
             next += step;
         }
-        let next = next.min(limit);
+        let mut next = next.min(limit);
+        // A learned ceiling's 12.5 % step can fall between two encoder rates
+        // (packets per frame quantize it): the probe would change nothing and
+        // the stream would never climb again. Let this retry reach the next
+        // rate the encoder can represent, still under the knee and request.
+        if limit < ceiling && self.kbps_for(next, fec, period) <= level {
+            if learned_limit >= knee_limit {
+                return;
+            }
+            let mut beyond = next;
+            while beyond < knee_limit && self.kbps_for(beyond, fec, period) <= level {
+                beyond += step;
+            }
+            if self.kbps_for(beyond, fec, period) <= level {
+                return;
+            }
+            next = beyond;
+        }
         if next <= self.current || (limit < ceiling && self.kbps_for(next, fec, period) <= level) {
             return;
         }
@@ -1898,6 +2132,7 @@ impl LinkRate {
         self.state = State::Full;
         self.reason = "healthy";
         self.bad = None;
+        self.forget_learned();
         self.encoder_floor = None;
         self.overshoots = 0;
         self.hold = HOLD;
@@ -1932,6 +2167,8 @@ impl LinkRate {
             "current_kbps": current_kbps,
             "delivered_kbps": self.delivered_bps / 1000,
             "bad_kbps": self.bad.map_or(0, |bad| self.kbps_of(bad)),
+            "learned_kbps": self.learned.map_or(0, |learned| self.kbps_of(learned)),
+            "host_limited": self.host_limited(now),
             "encoder_floor_kbps": self.encoder_floor.map_or(0, |floor| self.kbps_of(floor)),
             "steps_down": self.steps_down,
             "probes": self.probes,

@@ -991,6 +991,7 @@ impl SessionThread<'_> {
                                 sent_mbps=ms("bitrate_mbps"),
                                 link_state=%link["state"].as_str().unwrap_or(""),
                                 link_ceiling_kbps=link["ceiling_kbps"].as_u64().unwrap_or(0),
+                                link_learned_kbps=link["learned_kbps"].as_u64().unwrap_or(0),
                                 link_current_kbps=link["current_kbps"].as_u64().unwrap_or(0),
                                 link_delivered_kbps=link["delivered_kbps"].as_u64().unwrap_or(0),
                                 link_steps_down=link["steps_down"].as_u64().unwrap_or(0),
