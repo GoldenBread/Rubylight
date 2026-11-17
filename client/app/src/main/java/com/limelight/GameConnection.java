@@ -1528,7 +1528,7 @@ final class GameConnection {
         shortcutHelper.reportComputerShortcutUsed(computer);
         if (game.appName != null) {
             // This may be null if launched from the "Resume Session" PC context menu item
-            shortcutHelper.reportGameLaunched(computer, game.app);
+            shortcutHelper.reportGameLaunched(computer, game.app, game.getIntent().getStringExtra(Game.EXTRA_APP_ART_KEY));
         }
     }
 

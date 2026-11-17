@@ -1,5 +1,6 @@
 package com.limelight;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
@@ -54,5 +55,34 @@ public class PosterContentProviderTest {
         assertThrows(FileNotFoundException.class, () -> provider.openBoxArtFile(grey, "r"));
         assertThrows(FileNotFoundException.class,
                 () -> provider.openBoxArtFile(PosterContentProvider.createBoxArtUri(PC, "13"), "r"));
+    }
+
+    // nightjar#130: a failed poster is an empty grey card on the TV home screen, so a game without
+    // a cover gets the poster with its title the channel wrote; its own cover still comes first.
+    @Test
+    public void aGameWithoutACoverGetsThePosterWithItsTitle() throws Exception {
+        android.content.Context context = RuntimeEnvironment.getApplication();
+        PosterContentProvider provider = Robolectric.buildContentProvider(PosterContentProvider.class).create().get();
+        Files.copy(new File("../protocol/client/tests/fixtures/box-placeholder.png").toPath(), cached("22").toPath(),
+                StandardCopyOption.REPLACE_EXISTING);
+        for (String appId : new String[] {"21", "22"}) {
+            Uri uri = PosterContentProvider.createBoxArtUri(PC, appId);
+            assertThrows("nothing written yet", FileNotFoundException.class, () -> provider.openBoxArtFile(uri, "r"));
+            PosterContentProvider.writeTitlePoster(context, PC, appId, "Hollow Knight");
+            File written = PosterContentProvider.titlePosterFile(context, PC, appId);
+            try (ParcelFileDescriptor poster = provider.openBoxArtFile(uri, "r")) {
+                assertNotNull(poster);
+                assertEquals(written.length(), poster.getStatSize());
+                assertTrue(poster.getStatSize() > 0);
+            }
+        }
+        // A cover cached later wins over the title poster.
+        Bitmap cover = Bitmap.createBitmap(60, 90, Bitmap.Config.ARGB_8888);
+        try (FileOutputStream out = new FileOutputStream(cached("21"))) {
+            cover.compress(Bitmap.CompressFormat.PNG, 100, out);
+        }
+        try (ParcelFileDescriptor poster = provider.openBoxArtFile(PosterContentProvider.createBoxArtUri(PC, "21"), "r")) {
+            assertEquals(cached("21").length(), poster.getStatSize());
+        }
     }
 }
