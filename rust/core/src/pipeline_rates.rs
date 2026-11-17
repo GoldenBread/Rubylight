@@ -9,9 +9,12 @@
 //! taken by the control loop, the console and the 5 s timing log, off the
 //! capture, encode and send paths.
 //!
-//! The same 5 s windows answer whether the game or desktop delivers the
-//! stream's rate ([`SourceRate`]): the session warns, and logs the line, when
-//! the source stays below it, because no host stage would show that.
+//! The same 5 s windows answer whether the game or desktop delivers what the
+//! stream can show ([`SourceRate`]): the session warns, and logs the line, when
+//! the source stays below it, because no host stage would show that. What the
+//! stream can show is the lower of its rate and the captured display's refresh:
+//! a 60 Hz monitor cannot present 120 frames a second, so a source at 60 is not
+//! the limit there.
 use rubylight_protocol::pipeline_rates::{
     PIPELINE_RATES_REPORT_BYTES, PipelineRatesReport, PipelineRatesRequest, UNKNOWN,
 };
@@ -241,15 +244,16 @@ pub fn millihertz(frames: u64, window_ms: u32) -> u32 {
     u32::try_from(rate).unwrap_or(UNKNOWN - 1).min(UNKNOWN - 1)
 }
 
-/// How many complete timing windows below 97% of the stream rate the source
-/// must stay before the host says so. Three 5 s windows (15 s) keep a hitch, a
-/// level load or a scene change from being reported as a limit.
+/// How many complete timing windows below 97% of what the stream can show the
+/// source must stay before the host says so. Three 5 s windows (15 s) keep a
+/// hitch, a level load or a scene change from being reported as a limit.
 pub const LOW_WINDOWS: u32 = 3;
-/// How many complete windows at the stream rate clear the warning: 30 s, so a
-/// rate that merely touches the threshold does not make it flicker.
+/// How many complete windows at that rate clear the warning: 30 s, so a rate
+/// that merely touches the threshold does not make it flicker. A still picture
+/// counts toward it, since an idle screen must not keep a warning up.
 pub const CLEAR_WINDOWS: u32 = 6;
-/// A source below this share of the stream rate counts as the limit: 116 of
-/// 120 fps is below it (the issue #124 game), a healthy 119.x is not.
+/// A source below this share of what the stream can show counts as the limit:
+/// 116 of 120 fps is below it (the issue #124 game), a healthy 119.x is not.
 const LOW_PERCENT: u32 = 97;
 /// Below two new pictures a second there is nothing to judge: the picture is
 /// static and the host repeats what it has, which is not a slow game.
@@ -260,20 +264,23 @@ pub const REWORD: Duration = Duration::from_secs(30);
 /// What a complete timing window says about the source rate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SourceRateWarning {
-    /// The game or desktop is the limit: its rate rounded to 5 fps, in
-    /// millihertz, to show.
-    Below { source_mhz: u32 },
+    /// The game or desktop is the limit: its rate, and the rate it was measured
+    /// against (the stream's, or the display's when that is lower), both rounded
+    /// to 5 fps, in millihertz, to show.
+    Below { source_mhz: u32, limit_mhz: u32 },
     /// The source keeps up with the stream again.
     Cleared,
 }
 
-/// Whether the game or desktop delivers the stream's frame rate, over the
-/// windows of the 5 s `stream timings` line. A source that is the limit makes
-/// the client's picture judder while every host stage looks healthy; without
-/// this the console and the log say nothing about it.
+/// Whether the game or desktop delivers what the stream can show, over the
+/// windows of the 5 s `stream timings` line: the lower of the stream's rate and
+/// the captured display's refresh, since a 60 Hz monitor streamed at 120 fps
+/// presents no more than 60 and its source is not the limit then. A source
+/// below that rate makes the client's picture judder while every host stage
+/// looks healthy; without this the console and the log say nothing about it.
 #[derive(Default)]
 pub struct SourceRate {
-    target_mhz: u32,
+    limit_mhz: u32,
     low_windows: u32,
     good_windows: u32,
     /// The rate last shown while the warning holds; `None` when it does not.
@@ -283,24 +290,31 @@ pub struct SourceRate {
 }
 
 impl SourceRate {
-    /// One complete window: the stream's rate and the source's, both in
-    /// millihertz (`None` when the host cannot count the source stage).
-    /// Returns a warning to show or clear, at most once a streak.
+    /// One complete window: the stream's rate, the captured display's refresh
+    /// (`None` when the host cannot read it) and the source's, all in
+    /// millihertz. Returns a warning to show or clear, at most once a streak.
     pub fn window(
         &mut self,
         now: Instant,
-        target_mhz: u32,
+        stream_mhz: u32,
+        display_mhz: Option<u32>,
         source_mhz: Option<u32>,
     ) -> Option<SourceRateWarning> {
-        if target_mhz == 0 {
+        // What the stream can show here: the source below either one is the
+        // limit. A display rate the host could not read is no limit.
+        let limit_mhz = display_mhz
+            .filter(|display| *display > 0)
+            .map_or(stream_mhz, |display| stream_mhz.min(display));
+        if limit_mhz == 0 {
             return None;
         }
-        if target_mhz != self.target_mhz {
-            // The stream changed rate: its old target no longer describes the
-            // warning, and the new one needs its own streaks. A standing
-            // warning is cleared; with none, this first complete window counts
-            // against the new target instead of being discarded.
-            self.target_mhz = target_mhz;
+        if limit_mhz != self.limit_mhz {
+            // The stream changed rate, or its display's: the old target no
+            // longer describes the warning, and the new one needs its own
+            // streaks. A standing warning is cleared; with none, this first
+            // complete window counts against the new target instead of being
+            // discarded.
+            self.limit_mhz = limit_mhz;
             self.low_windows = 0;
             self.good_windows = 0;
             self.told = None;
@@ -311,10 +325,24 @@ impl SourceRate {
         let source = source_mhz?;
         if source < STATIC_MHZ {
             // A still picture, a loading screen or the desktop with nothing
-            // moving presents no pictures to judge.
+            // moving presents no new pictures to judge, so it never warns and
+            // breaks any streak toward one. It is also what an idle screen
+            // shows after a warning, which must not then stand forever, so it
+            // counts toward clearing one.
+            self.low_windows = 0;
+            if self.warned.is_some() {
+                self.good_windows += 1;
+                if self.good_windows >= CLEAR_WINDOWS {
+                    self.warned = None;
+                    self.told = None;
+                    self.good_windows = 0;
+                    self.low_windows = 0;
+                    return Some(SourceRateWarning::Cleared);
+                }
+            }
             return None;
         }
-        let percent = u64::from(source) * 100 / u64::from(target_mhz);
+        let percent = u64::from(source) * 100 / u64::from(limit_mhz);
         if let Some(shown) = self.warned {
             if percent >= u64::from(LOW_PERCENT) {
                 self.low_windows = 0;
@@ -341,6 +369,7 @@ impl SourceRate {
                 self.told = Some(now);
                 return Some(SourceRateWarning::Below {
                     source_mhz: rounded,
+                    limit_mhz: rounded_fps(limit_mhz),
                 });
             }
             return None;
@@ -355,6 +384,7 @@ impl SourceRate {
                 self.good_windows = 0;
                 return Some(SourceRateWarning::Below {
                     source_mhz: rounded,
+                    limit_mhz: rounded_fps(limit_mhz),
                 });
             }
         } else {
@@ -544,10 +574,14 @@ mod tests {
     }
 
     const TARGET: u32 = 120_000;
+    /// A display whose refresh the host cannot read: the stream's rate is the
+    /// only limit.
+    const NO_DISPLAY: Option<u32> = None;
 
-    fn below(fps: u32) -> Option<SourceRateWarning> {
+    fn below(source_fps: u32, limit_fps: u32) -> Option<SourceRateWarning> {
         Some(SourceRateWarning::Below {
-            source_mhz: fps * 1000,
+            source_mhz: source_fps * 1000,
+            limit_mhz: limit_fps * 1000,
         })
     }
 
@@ -558,7 +592,25 @@ mod tests {
         target: u32,
         source: u32,
     ) -> Option<SourceRateWarning> {
-        watch.window(start + Duration::from_secs(5 * n), target, Some(source))
+        at_display(watch, start, n, target, NO_DISPLAY, source)
+    }
+
+    /// A window of a stream at `stream` on a display refreshing at `display`
+    /// (`None` when unreadable).
+    fn at_display(
+        watch: &mut SourceRate,
+        start: Instant,
+        n: u64,
+        stream: u32,
+        display: Option<u32>,
+        source: u32,
+    ) -> Option<SourceRateWarning> {
+        watch.window(
+            start + Duration::from_secs(5 * n),
+            stream,
+            display,
+            Some(source),
+        )
     }
 
     #[test]
@@ -571,7 +623,7 @@ mod tests {
         assert_eq!(at(&mut watch, t, 2, TARGET, 120_000), None);
         assert_eq!(at(&mut watch, t, 3, TARGET, 90_000), None);
         assert_eq!(at(&mut watch, t, 4, TARGET, 90_000), None);
-        assert_eq!(at(&mut watch, t, 5, TARGET, 90_000), below(90));
+        assert_eq!(at(&mut watch, t, 5, TARGET, 90_000), below(90, 120));
         // A source at exactly 97% of the stream is not below it.
         let mut watch = SourceRate::default();
         for n in 0..10 {
@@ -588,7 +640,7 @@ mod tests {
         let t = Instant::now();
         assert_eq!(at(&mut slow, t, 0, TARGET, 116_000), None);
         assert_eq!(at(&mut slow, t, 1, TARGET, 116_000), None);
-        assert_eq!(at(&mut slow, t, 2, TARGET, 116_000), below(115));
+        assert_eq!(at(&mut slow, t, 2, TARGET, 116_000), below(115, 120));
         // A game capped at 119.x of 120 fps (99.5%) is healthy: no warning,
         // however long it runs.
         let mut capped = SourceRate::default();
@@ -604,19 +656,72 @@ mod tests {
     }
 
     #[test]
+    fn a_slow_display_is_the_limit_and_its_source_does_not_warn() {
+        let t = Instant::now();
+        // A 60 Hz monitor streamed at 120 fps presents 60 pictures a second at
+        // best: a desktop or game at 60 is not the limit, however long it runs.
+        let mut watch = SourceRate::default();
+        for n in 0..20 {
+            assert_eq!(
+                at_display(&mut watch, t, n, TARGET, Some(60_000), 59_940),
+                None,
+                "{n}"
+            );
+        }
+        // Neither is one at the same rate on a display Windows reports below
+        // the stream's, such as a 99 Hz panel.
+        for n in 0..20 {
+            assert_eq!(
+                at_display(&mut watch, t, n, TARGET, Some(99_000), 99_000),
+                None,
+                "{n}"
+            );
+        }
+        // The same 60 fps source is the limit of a 120 Hz display's stream.
+        let mut watch = SourceRate::default();
+        assert_eq!(
+            at_display(&mut watch, t, 0, TARGET, Some(120_000), 60_000),
+            None
+        );
+        assert_eq!(
+            at_display(&mut watch, t, 1, TARGET, Some(120_000), 60_000),
+            None
+        );
+        assert_eq!(
+            at_display(&mut watch, t, 2, TARGET, Some(120_000), 60_000),
+            below(60, 120)
+        );
+        // The 1000 Hz display of a VRR stream leaves the stream's own rate as
+        // the limit: the issue #124 game warns there too.
+        let mut watch = SourceRate::default();
+        assert_eq!(
+            at_display(&mut watch, t, 0, TARGET, Some(1_000_000), 116_000),
+            None
+        );
+        assert_eq!(
+            at_display(&mut watch, t, 1, TARGET, Some(1_000_000), 116_000),
+            None
+        );
+        assert_eq!(
+            at_display(&mut watch, t, 2, TARGET, Some(1_000_000), 116_000),
+            below(115, 120)
+        );
+    }
+
+    #[test]
     fn a_sustained_slow_source_warns_after_three_windows_and_rewords_slowly() {
         let mut watch = SourceRate::default();
         let t = Instant::now();
         assert_eq!(at(&mut watch, t, 0, TARGET, 90_000), None);
         assert_eq!(at(&mut watch, t, 1, TARGET, 90_000), None);
-        assert_eq!(at(&mut watch, t, 2, TARGET, 90_000), below(90));
+        assert_eq!(at(&mut watch, t, 2, TARGET, 90_000), below(90, 120));
         // The number follows the rate, but not before `REWORD`.
         assert_eq!(at(&mut watch, t, 3, TARGET, 60_000), None);
         assert_eq!(at(&mut watch, t, 4, TARGET, 62_000), None);
-        assert_eq!(at(&mut watch, t, 8, TARGET, 60_000), below(60));
+        assert_eq!(at(&mut watch, t, 8, TARGET, 60_000), below(60, 120));
         // Once shown, a rate in the same 5 fps step says nothing new.
         assert_eq!(at(&mut watch, t, 15, TARGET, 59_000), None);
-        assert_eq!(at(&mut watch, t, 16, TARGET, 31_000), below(30));
+        assert_eq!(at(&mut watch, t, 16, TARGET, 31_000), below(30, 120));
     }
 
     #[test]
@@ -625,7 +730,7 @@ mod tests {
         let t = Instant::now();
         assert_eq!(at(&mut watch, t, 0, TARGET, 60_000), None);
         assert_eq!(at(&mut watch, t, 1, TARGET, 60_000), None);
-        assert_eq!(at(&mut watch, t, 2, TARGET, 60_000), below(60));
+        assert_eq!(at(&mut watch, t, 2, TARGET, 60_000), below(60, 120));
         // Five healthy windows do not clear it.
         for n in 3..8 {
             assert_eq!(at(&mut watch, t, n, TARGET, 120_000), None, "{n}");
@@ -638,7 +743,7 @@ mod tests {
         // A dip after the clear starts a new streak, not a warning.
         assert_eq!(at(&mut watch, t, 9, TARGET, 60_000), None);
         assert_eq!(at(&mut watch, t, 10, TARGET, 60_000), None);
-        assert_eq!(at(&mut watch, t, 11, TARGET, 60_000), below(60));
+        assert_eq!(at(&mut watch, t, 11, TARGET, 60_000), below(60, 120));
         // The new warning takes the full six healthy windows again.
         for n in 12..17 {
             assert_eq!(at(&mut watch, t, n, TARGET, 120_000), None, "{n}");
@@ -650,7 +755,7 @@ mod tests {
     }
 
     #[test]
-    fn a_static_scene_neither_warns_nor_clears_a_standing_warning() {
+    fn a_still_picture_never_warns_and_clears_a_standing_one() {
         let mut watch = SourceRate::default();
         let t = Instant::now();
         // A paused picture: no new frames are expected, however long it lasts.
@@ -659,13 +764,19 @@ mod tests {
         }
         assert_eq!(at(&mut watch, t, 20, TARGET, 60_000), None);
         assert_eq!(at(&mut watch, t, 21, TARGET, 60_000), None);
-        assert_eq!(at(&mut watch, t, 22, TARGET, 60_000), below(60));
-        // The warning holds through a still scene instead of clearing.
-        for n in 23..40 {
-            assert_eq!(at(&mut watch, t, n, TARGET, 0), None);
+        assert_eq!(at(&mut watch, t, 22, TARGET, 60_000), below(60, 120));
+        // A still screen after it is what the user sees once the game stops
+        // updating: it counts toward clearing the warning, over the same six
+        // windows, so the console does not keep a warning on an idle screen.
+        for n in 23..28 {
+            assert_eq!(at(&mut watch, t, n, TARGET, 0), None, "{n}");
         }
-        // And a slow picture after the still one is still the same warning.
-        assert_eq!(at(&mut watch, t, 40, TARGET, 60_000), None);
+        assert_eq!(
+            at(&mut watch, t, 28, TARGET, 0),
+            Some(SourceRateWarning::Cleared)
+        );
+        // A slow picture after the clear starts a new streak, not a warning.
+        assert_eq!(at(&mut watch, t, 29, TARGET, 60_000), None);
     }
 
     #[test]
@@ -674,14 +785,14 @@ mod tests {
         let t = Instant::now();
         for n in 0..10 {
             assert_eq!(
-                watch.window(t + Duration::from_secs(5 * n), TARGET, None),
+                watch.window(t + Duration::from_secs(5 * n), TARGET, NO_DISPLAY, None),
                 None
             );
         }
-        assert_eq!(watch.window(t, 0, Some(0)), None);
+        assert_eq!(watch.window(t, 0, NO_DISPLAY, Some(0)), None);
         assert_eq!(at(&mut watch, t, 0, TARGET, 60_000), None);
         assert_eq!(at(&mut watch, t, 1, TARGET, 60_000), None);
-        assert_eq!(at(&mut watch, t, 2, TARGET, 60_000), below(60));
+        assert_eq!(at(&mut watch, t, 2, TARGET, 60_000), below(60, 120));
         // The stream drops to 60: the old target no longer describes it.
         assert_eq!(
             at(&mut watch, t, 3, 60_000, 50_000),
@@ -689,6 +800,52 @@ mod tests {
         );
         assert_eq!(at(&mut watch, t, 4, 60_000, 50_000), None);
         assert_eq!(at(&mut watch, t, 5, 60_000, 50_000), None);
-        assert_eq!(at(&mut watch, t, 6, 60_000, 50_000), below(50));
+        assert_eq!(at(&mut watch, t, 6, 60_000, 50_000), below(50, 60));
+    }
+
+    #[test]
+    fn a_display_that_changes_its_refresh_starts_the_streak_over() {
+        let t = Instant::now();
+        let mut watch = SourceRate::default();
+        assert_eq!(
+            at_display(&mut watch, t, 0, TARGET, Some(120_000), 100_000),
+            None
+        );
+        assert_eq!(
+            at_display(&mut watch, t, 1, TARGET, Some(120_000), 100_000),
+            None
+        );
+        // The display drops to 100 Hz: 100 fps is its rate now, not a limit,
+        // and the two windows of the old one count for nothing.
+        assert_eq!(
+            at_display(&mut watch, t, 2, TARGET, Some(100_000), 100_000),
+            None
+        );
+        for n in 3..12 {
+            assert_eq!(
+                at_display(&mut watch, t, n, TARGET, Some(100_000), 100_000),
+                None,
+                "{n}"
+            );
+        }
+        // A standing warning is cleared when the limit moves, the same as a
+        // stream rate change.
+        let mut watch = SourceRate::default();
+        assert_eq!(
+            at_display(&mut watch, t, 0, TARGET, Some(120_000), 60_000),
+            None
+        );
+        assert_eq!(
+            at_display(&mut watch, t, 1, TARGET, Some(120_000), 60_000),
+            None
+        );
+        assert_eq!(
+            at_display(&mut watch, t, 2, TARGET, Some(120_000), 60_000),
+            below(60, 120)
+        );
+        assert_eq!(
+            at_display(&mut watch, t, 3, TARGET, Some(60_000), 60_000),
+            Some(SourceRateWarning::Cleared)
+        );
     }
 }

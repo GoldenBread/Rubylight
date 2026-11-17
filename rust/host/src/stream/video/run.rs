@@ -811,28 +811,52 @@ impl SessionThread<'_> {
                         let rates = pipeline_log.sample(now, s.pipeline_counts(), Duration::from_secs(5));
                         let pipeline = rates.as_ref().map(butterpollo_core::pipeline_rates::PipelineRates::from);
                         let source_mhz = pipeline.as_ref().and_then(|rates| rates.source_mhz);
-                        // The source rate against the stream's. A game below
-                        // it is the limit that every per-stage number hides.
-                        // A new warning or a re-word writes one WARN line;
-                        // `SourceRate` limits re-words to one per 30 s.
-                        if let Some(change) = source_rate.window(now, stream.fps_millihz(), source_mhz) {
+                        // What the stream can show: its own rate, or the
+                        // captured display's where that is lower. A 60 Hz
+                        // monitor streamed at 120 fps presents 60 frames a
+                        // second at best, so a source at 60 is not the limit.
+                        // The display's mode is read with each window: a
+                        // virtual display is retimed when the stream's is. A
+                        // window target names no display, so the display it is
+                        // laid over is asked instead.
+                        let shown = prepared.output();
+                        let display_mhz = butterpollo_windows::display::mode(&shown)
+                            .or_else(|_| butterpollo_windows::display::mode(&output))
+                            .ok()
+                            .map(|mode| mode.dmDisplayFrequency)
+                            .filter(|hz| *hz > 1)
+                            .map(|hz| hz.saturating_mul(1000));
+                        // The source rate against what the stream can show. A
+                        // game below it is the limit that every per-stage
+                        // number hides. A new warning or a re-word writes one
+                        // WARN line; `SourceRate` limits re-words to one per
+                        // 30 s.
+                        if let Some(change) = source_rate.window(now, stream.fps_millihz(), display_mhz, source_mhz) {
                             use butterpollo_core::pipeline_rates::SourceRateWarning;
                             match change {
-                                SourceRateWarning::Below { source_mhz } => {
+                                SourceRateWarning::Below { source_mhz, limit_mhz } => {
+                                    let source_fps = source_mhz / 1000;
+                                    let limit_fps = limit_mhz / 1000;
                                     tracing::warn!(
                                         client = %s.launch.client.name,
-                                        source_fps = source_mhz as f64 / 1000.,
+                                        source_fps,
                                         stream_fps = stream.fps_millihz() as f64 / 1000.,
+                                        display_fps = display_mhz.map(|mhz| mhz as f64 / 1000.),
                                         "the game or desktop is the frame-rate limit"
                                     );
-                                    s.launch.warnings.set(
-                                        "source_frame_rate",
+                                    // A desktop stream has no game to advise
+                                    // about, so it says what the screen does
+                                    // and nothing more.
+                                    let message = if crate::stream::launch_app(&h, &s.launch).is_some() {
                                         format!(
-                                            "The game or desktop is rendering about {} fps, below this stream's {} fps, so the picture cannot run smoother than that. Lower the game's resolution or graphics settings, or lower the stream's frame rate to match.",
-                                            source_mhz / 1000,
-                                            (stream.fps_millihz() + 500) / 1000,
-                                        ),
-                                    );
+                                            "The game is rendering about {source_fps} fps, below the {limit_fps} fps this stream can show, so the picture cannot run smoother than that. Lower the game's resolution or graphics settings, or lower the stream's frame rate to match."
+                                        )
+                                    } else {
+                                        format!(
+                                            "The PC's screen is updating about {source_fps} times a second, below the {limit_fps} fps this stream can show."
+                                        )
+                                    };
+                                    s.launch.warnings.set("source_frame_rate", message);
                                 }
                                 SourceRateWarning::Cleared => {
                                     s.launch.warnings.clear("source_frame_rate");
