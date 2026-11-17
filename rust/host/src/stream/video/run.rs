@@ -812,7 +812,7 @@ impl SessionThread<'_> {
                         // stream's stutter report, whatever the log level. They
                         // are copied out under the sender's lock and the
                         // medians run after it is released.
-                        let pictures = s.stats.performance.lock().unwrap().advance_stutter(now);
+                        let pictures = s.stats.performance.lock().unwrap().advance_stutter();
                         if let Some(pictures) = pictures {
                             stutter_totals.add(&pictures, stream_period.get());
                             s.stats.publish_stutter(&stutter_totals);
@@ -1753,12 +1753,7 @@ impl SessionThread<'_> {
                     // would report its first slower windows as a stutter. The
                     // old mode's last window is copied out under the sender's
                     // lock and added after it is released.
-                    let pictures = s
-                        .stats
-                        .performance
-                        .lock()
-                        .unwrap()
-                        .forget_stutter_usual(Instant::now());
+                    let pictures = s.stats.performance.lock().unwrap().forget_stutter_usual();
                     if let Some(pictures) = pictures {
                         stutter_totals.add(&pictures, from.period());
                     }

@@ -592,9 +592,9 @@ fn the_stutter_report_names_an_encode_stall_and_counts_each_picture_once() {
     assert_eq!(report.dominant(), Some(Stage::Encode));
     assert_eq!(report.total_lost_us(), 50_000);
     // Advancing moves the window into the stream's totals once.
-    advance(&mut p, &mut totals, period, start + Duration::from_secs(1));
+    advance(&mut p, &mut totals, period);
     assert_eq!(stutter(&p, &totals, period), report);
-    advance(&mut p, &mut totals, period, start + Duration::from_secs(2));
+    advance(&mut p, &mut totals, period);
     assert_eq!(stutter(&p, &totals, period), report);
     assert_eq!(
         report.snapshot()["stages"][0],
@@ -618,7 +618,7 @@ fn five_seconds_of_windows_name_the_overload_against_the_earlier_ones() {
             0,
         );
     }
-    advance(&mut p, &mut totals, period, start + Duration::from_secs(1));
+    advance(&mut p, &mut totals, period);
     assert_eq!(stutter(&p, &totals, period).pictures(), 60);
     for n in 0..60 {
         p.record_stages(
@@ -629,7 +629,7 @@ fn five_seconds_of_windows_name_the_overload_against_the_earlier_ones() {
             0,
         );
     }
-    advance(&mut p, &mut totals, period, start + Duration::from_secs(2));
+    advance(&mut p, &mut totals, period);
     let report = stutter(&p, &totals, period);
     assert_eq!((report.windows(), report.pictures()), (2, 120));
     assert_eq!(report.late_pictures(), 60);
@@ -652,7 +652,7 @@ fn a_window_with_too_few_pictures_waits_for_the_next_one() {
             0,
         );
     }
-    advance(&mut p, &mut totals, period, start + Duration::from_secs(1));
+    advance(&mut p, &mut totals, period);
     assert_eq!(
         stutter(&p, &totals, period).pictures(),
         5,
@@ -667,7 +667,7 @@ fn a_window_with_too_few_pictures_waits_for_the_next_one() {
             0,
         );
     }
-    advance(&mut p, &mut totals, period, start + Duration::from_secs(2));
+    advance(&mut p, &mut totals, period);
     assert_eq!(stutter(&p, &totals, period).pictures(), 10);
 }
 
@@ -689,14 +689,51 @@ fn a_late_five_second_mark_still_counts_every_picture_of_its_window() {
             0,
         );
     }
-    advance(
-        &mut p,
-        &mut totals,
-        period,
-        start + Duration::from_millis(5_250),
-    );
+    advance(&mut p, &mut totals, period);
     let report = stutter(&p, &totals, period);
     assert_eq!((report.windows(), report.pictures()), (1, 525));
+}
+
+#[test]
+fn a_picture_sent_before_an_advance_that_ran_after_it_is_counted_once() {
+    // A sender records a picture when its last packet is out, and the window
+    // advances on the video thread's own five-second mark. The window's old
+    // time cut-off dropped a picture whose send time was before the mark but
+    // which the sender recorded after it, from every later window too; the
+    // sequence number counts it once.
+    let period = Duration::from_micros(16_667);
+    let start = Instant::now();
+    let mut p = Performance::default();
+    let mut totals = StutterTotals::default();
+    for n in 0..60 {
+        p.record_stages(
+            &stamped(
+                start + Duration::from_millis(n),
+                [1_000, 20, 5, 300, 4_000, 10, 40, 50, 500],
+            ),
+            0,
+        );
+    }
+    advance(&mut p, &mut totals, period);
+    assert_eq!(stutter(&p, &totals, period).pictures(), 60);
+    for n in 0..12 {
+        p.record_stages(
+            &stamped(
+                start + Duration::from_millis(500 + n),
+                [1_000, 20, 5, 300, 4_000, 10, 40, 50, 500],
+            ),
+            0,
+        );
+    }
+    assert_eq!(stutter(&p, &totals, period).pictures(), 72);
+    advance(&mut p, &mut totals, period);
+    assert_eq!(stutter(&p, &totals, period).pictures(), 72);
+    advance(&mut p, &mut totals, period);
+    assert_eq!(
+        stutter(&p, &totals, period).pictures(),
+        72,
+        "a picture counted twice"
+    );
 }
 
 #[test]
@@ -734,15 +771,15 @@ fn stamped(start: Instant, stages: [u64; 9]) -> Stamps {
 
 /// The video thread's side of the stutter report: the window is copied out
 /// under the stage lock and [`StutterTotals::add`] runs after it is released.
-fn advance(p: &mut Performance, totals: &mut StutterTotals, period: Duration, now: Instant) {
-    if let Some(pictures) = p.advance_stutter(now) {
+fn advance(p: &mut Performance, totals: &mut StutterTotals, period: Duration) {
+    if let Some(pictures) = p.advance_stutter() {
         totals.add(&pictures, period);
     }
 }
 
 /// A mode switch: the old mode's last window, then a new usual path.
-fn forget_usual(p: &mut Performance, totals: &mut StutterTotals, old: Duration, now: Instant) {
-    if let Some(pictures) = p.forget_stutter_usual(now) {
+fn forget_usual(p: &mut Performance, totals: &mut StutterTotals, old: Duration) {
+    if let Some(pictures) = p.forget_stutter_usual() {
         totals.add(&pictures, old);
     }
     totals.forget_usual();
@@ -769,7 +806,7 @@ fn a_mode_switch_counts_the_old_window_then_judges_the_new_mode_by_itself() {
         }
         p.record_stages(&stamped(start + Duration::from_millis(n), stages), 0);
     }
-    forget_usual(&mut p, &mut totals, old, start + Duration::from_millis(500));
+    forget_usual(&mut p, &mut totals, old);
     let before = stutter(&p, &totals, old);
     assert_eq!((before.pictures(), before.late_pictures()), (60, 1));
     assert_eq!(before.dominant(), Some(Stage::Encode));

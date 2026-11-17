@@ -307,6 +307,9 @@ const STAGE_RETENTION: Duration = Duration::from_secs(6);
 const STAGE_SAMPLES: usize = 3072;
 struct StageSample {
     at: Instant,
+    /// Assigned when the sample is recorded, so the stutter windows count each
+    /// picture once whatever order their send times arrived in.
+    seq: u64,
     /// `STAGES`, then the total, then Moonlight's host latency field for the
     /// same picture, then the capture's age when the pacer claimed it and when
     /// the encoder took it (from its acquire), in microseconds.
@@ -337,11 +340,13 @@ pub struct Performance {
     /// 0x5539 statistical FEC reports, which `fec_reports` (0x5502) doesn't count.
     fec_loss_reports: u64,
     fec_loss_refused_reports: u64,
-    /// The send time of the newest picture the stream's stutter totals count.
-    /// Later pictures are the provisional window: the video thread adds them
-    /// after it has copied them out and released this lock, and the console
-    /// adds them to the totals it reads.
-    stutter_at: Option<Instant>,
+    /// The sequence number of the newest stage sample recorded.
+    stutter_seq: u64,
+    /// The sequence number of the newest sample a finished stutter window
+    /// counted. Later samples are the provisional window: the video thread
+    /// adds them after it has copied them out and released this lock, and the
+    /// console adds them to the totals it reads.
+    stutter_counted: u64,
 }
 /// The client's FEC report totals since the stream started.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -555,7 +560,12 @@ impl Performance {
             "picture"
         );
         let at = stamps.last_sent;
-        self.stages.push_back(StageSample { at, micros });
+        self.stutter_seq = self.stutter_seq.saturating_add(1);
+        self.stages.push_back(StageSample {
+            at,
+            seq: self.stutter_seq,
+            micros,
+        });
         while self.stages.len() > STAGE_SAMPLES
             || self
                 .stages
@@ -567,34 +577,33 @@ impl Performance {
     }
     /// Takes the pictures recorded since the previous call out from under the
     /// caller's lock, for one five-second window of the stream's stutter
-    /// report, and records `now` as the newest send time counted; returns
-    /// `None` and records nothing when there are fewer than
-    /// [`crate::stutter_report::MIN_PICTURES`], so a short window is not judged
-    /// against itself and waits for the next call. Below about two new pictures
-    /// a second the samples age out before ten have arrived, so `windows` stays
-    /// 0 and only the provisional report shows them; a game streams faster than
-    /// that. The caller runs [`StutterTotals::add`] after releasing the lock, as
-    /// the timing log sorts [`window`](Self::window) after it. Call every five
-    /// seconds; each picture counts once, and the reports also read what this
-    /// has not counted yet.
-    pub fn advance_stutter(&mut self, now: Instant) -> Option<Vec<Picture>> {
+    /// report, and marks them counted; returns `None` and marks nothing when
+    /// there are fewer than [`crate::stutter_report::MIN_PICTURES`], so a short
+    /// window is not judged against itself and waits for the next call. Below
+    /// about two new pictures a second the samples age out before ten have
+    /// arrived, so `windows` stays 0 and only the provisional report shows
+    /// them; a game streams faster than that. The caller runs
+    /// [`StutterTotals::add`] after releasing the lock, as the timing log sorts
+    /// [`window`](Self::window) after it. Call every five seconds; each picture
+    /// counts once, and the reports also read what this has not counted yet.
+    pub fn advance_stutter(&mut self) -> Option<Vec<Picture>> {
         let pictures: Vec<Picture> = self.uncounted_stutter().collect();
         if pictures.len() < crate::stutter_report::MIN_PICTURES {
             return None;
         }
-        self.stutter_at = Some(now);
+        self.stutter_counted = self.stutter_seq;
         Some(pictures)
     }
     /// Takes the pictures recorded since the previous call, for the window that
-    /// ends at a new stream size or rate, `now`; `None` when there are fewer
-    /// than [`crate::stutter_report::MIN_PICTURES`], as for
+    /// ends at a new stream size or rate; `None` when there are fewer than
+    /// [`crate::stutter_report::MIN_PICTURES`], as for
     /// [`advance_stutter`](Self::advance_stutter). They are marked counted
     /// either way: pictures recorded before the switch are not the new mode's
     /// usual, and the caller forgets the usual path. The caller runs
     /// [`StutterTotals::add`] after releasing the lock.
-    pub fn forget_stutter_usual(&mut self, now: Instant) -> Option<Vec<Picture>> {
+    pub fn forget_stutter_usual(&mut self) -> Option<Vec<Picture>> {
         let pictures: Vec<Picture> = self.uncounted_stutter().collect();
-        self.stutter_at = Some(now);
+        self.stutter_counted = self.stutter_seq;
         (pictures.len() >= crate::stutter_report::MIN_PICTURES).then_some(pictures)
     }
     /// The pictures recorded since the last advance, copied under the caller's
@@ -603,7 +612,7 @@ impl Performance {
     pub fn uncounted_stutter(&self) -> impl Iterator<Item = Picture> + '_ {
         self.stages
             .iter()
-            .filter(|sample| self.stutter_at.is_none_or(|at| sample.at > at))
+            .filter(|sample| sample.seq > self.stutter_counted)
             .map(|sample| Picture::of(&sample.micros))
     }
     /// Copies what `snapshot` reports. The send path records into this under
