@@ -54,6 +54,10 @@ public class SimpleProfileTest {
 
     @After
     public void tearDown() {
+        if (settingsController != null) {
+            settingsController.pause().stop().destroy();
+            settingsController = null;
+        }
         prefs.edit().clear().commit();
         context.getSharedPreferences("decoder_benchmark", Context.MODE_PRIVATE).edit().clear().commit();
         ShadowMediaCodecList.reset();
@@ -71,13 +75,18 @@ public class SimpleProfileTest {
             }
             if ("chosen".equals(op)) {
                 JSONObject current = ask.getJSONObject("current");
-                boolean balanced = "latency".equals(current.isNull("pacing") ? null : current.getString("pacing"))
-                        && !current.getBoolean("vrr")
+                String pacing = current.isNull("pacing") ? null : current.getString("pacing");
+                boolean restOfBalanced = !current.getBoolean("vrr")
                         && current.isNull("bitrate_milli") && "auto".equals(current.getString("codec"))
                         && current.getBoolean("hdr") && !current.getBoolean("adaptive_bitrate")
                         && "off".equals(current.isNull("adaptive_quality") ? null : current.getString("adaptive_quality"));
-                return balanced ? "{\"ok\":{\"choices\":{\"smoothness\":\"auto\",\"picture\":\"auto\",\"hdr\":\"auto\"}}}"
-                        : "{\"ok\":{\"choices\":null}}";
+                if ("latency".equals(pacing) && restOfBalanced) {
+                    return "{\"ok\":{\"choices\":{\"smoothness\":\"auto\",\"picture\":\"auto\",\"hdr\":\"auto\"}}}";
+                }
+                if ("smoothest".equals(pacing) && restOfBalanced) {
+                    return "{\"ok\":{\"choices\":{\"smoothness\":\"smoothest\",\"picture\":\"auto\",\"hdr\":\"auto\"}}}";
+                }
+                return "{\"ok\":{\"choices\":null}}";
             }
             String smoothness = ask.optString("smoothness", "auto");
             String picture = ask.optString("picture", "auto");
@@ -153,6 +162,45 @@ public class SimpleProfileTest {
         assertFalse(prefs.contains(PreferenceConfiguration.FRAME_PACING_PREF_STRING));
         assertFalse(prefs.contains(PreferenceConfiguration.VIDEO_FORMAT_PREF_STRING));
     }
+
+    @Test
+    public void aRowFollowsSettingsThatChangedUnderIt() {
+        assertTrue(SimpleProfile.apply(context, SimpleProfile.SMOOTHNESS, "smoothest"));
+        SimpleProfilePreference row = openSmoothnessRow();
+        assertEquals("Smoothest", row.getEntry().toString());
+
+        // Back to recommended, an advanced setting or a preset moves the settings under the row.
+        assertTrue(SimpleProfile.applyRecommended(context));
+        assertEquals("Auto (recommended)", row.getEntry().toString());
+    }
+
+    @Test
+    public void aPickAppliesEvenWhenTheRowRemembersTheSameChoice() {
+        assertTrue(SimpleProfile.applyRecommended(context));
+        SimpleProfilePreference row = openSmoothnessRow();
+        // The row remembers Auto; the settings changed to nothing the row names.
+        prefs.edit().putString(PreferenceConfiguration.FRAME_PACING_PREF_STRING, "cap-fps").commit();
+        assertTrue(SimpleProfile.custom(context, SimpleProfile.SMOOTHNESS));
+
+        assertTrue(row.callChangeListener("auto"));
+        row.setValue("auto");
+
+        // The framework skips persisting a value equal to the remembered one; the pick must apply anyway.
+        assertEquals("latency", prefs.getString(PreferenceConfiguration.FRAME_PACING_PREF_STRING, null));
+        assertFalse(SimpleProfile.custom(context, SimpleProfile.SMOOTHNESS));
+    }
+
+    /** The smoothness row of the open Recommended section, attached like any row of the screen. */
+    private SimpleProfilePreference openSmoothnessRow() {
+        // Opening Settings must not run the first-launch migration, which would reset the settings read.
+        prefs.edit().putInt(PreferenceConfiguration.PREFS_VERSION_PREF_STRING,
+                PreferenceConfiguration.FOLLOW_SCREEN_VERSION).commit();
+        settingsController = org.robolectric.Robolectric.buildActivity(StreamSettings.class).setup();
+        StreamSettings.SettingsFragment simple = SettingsStructureTest.open(settingsController.get(), "simple");
+        return (SimpleProfilePreference) simple.findPreference(SimpleProfile.SMOOTHNESS);
+    }
+
+    private org.robolectric.android.controller.ActivityController<StreamSettings> settingsController;
 
     @Test
     public void theCurrentSettingsReadAsTheChoicesTheyAre() {
