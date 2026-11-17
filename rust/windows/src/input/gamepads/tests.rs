@@ -747,6 +747,35 @@ fn refresh_updates_every_pad_and_returns_the_last_failure() {
     pads.active.clear();
 }
 
+/// The back-button update takes the same device-removed path as a controller
+/// state: the slot is created again and the update retried.
+#[test]
+fn refresh_recreates_a_pad_whose_driver_device_was_removed() {
+    let mut pads = scripted_pads();
+    pads.policy.back_button_timeout = Some(Duration::ZERO);
+    pads.active.insert(0, 2);
+    pads.profiles.insert(0, 4);
+    pads.apply(&Event::Controller {
+        id: 0,
+        active: 1,
+        buttons: 0x20,
+        left_trigger: 0,
+        right_trigger: 0,
+        sticks: [0; 4],
+    })
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(150));
+    script(&mut pads).calls.clear();
+    script(&mut pads).submits = VecDeque::from([Err(device_removed_error()), Ok(())]);
+    pads.refresh().unwrap();
+    assert_eq!(
+        script(&mut pads).calls,
+        ["submit 2", "plug 2", "submit 2"],
+        "the slot was created again and the update retried"
+    );
+    pads.active.clear();
+}
+
 /// A driver whose answers a test scripts, for the paths that only a real
 /// sleep can otherwise reach.
 fn scripted_pads() -> Gamepads {
