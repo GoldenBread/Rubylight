@@ -2828,7 +2828,7 @@ fn a_capped_streams_display_keeps_its_size_for_the_mode_matches_and_resumes() {
     prepared.mode = super::stream_mode(&stream);
     let limiter =
         limiter::Lease::acquire(&fixture.host.directory, &config, &prepared.framegen).unwrap();
-    let display = Ready::prepare((prepared, limiter)).unwrap().display;
+    let display = Ready::prepare((prepared, limiter)).unwrap().display.clone();
     // A display made at the request matches and resumes the capped stream...
     assert!(display.matches(&stream));
     assert!(display.resumes(&stream));
