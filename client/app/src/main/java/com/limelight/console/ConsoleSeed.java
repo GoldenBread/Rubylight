@@ -16,6 +16,7 @@ import java.util.Set;
  * next launch. The list of PCs calls it for each host it sees.
  */
 public final class ConsoleSeed {
+    /** Hosts this run has already handled, so a poll update costs no file read at all. */
     private static final Set<String> TRIED = new HashSet<>();
 
     private ConsoleSeed() {
@@ -36,14 +37,20 @@ public final class ConsoleSeed {
             return;
         }
         Context app = context.getApplicationContext();
+        // Claimed before any file work: the poll that calls this runs on the UI thread.
         synchronized (TRIED) {
-            if (ConsoleRepository.hasLibrary(app, computer.uuid) || !TRIED.add(computer.uuid)) {
+            if (!TRIED.add(computer.uuid)) {
                 return;
             }
         }
         ComputerDetails snapshot = new ComputerDetails(computer);
         Thread thread = new Thread(() -> {
             try {
+                // The library file can be large; it is read here, never on the caller's (UI) thread.
+                if (ConsoleRepository.hasLibrary(app, computer.uuid)) {
+                    if (onSeeded != null) onSeeded.run();
+                    return;
+                }
                 ConsoleRepository.create(app, uniqueId).refresh(Collections.singletonList(snapshot));
                 if (onSeeded != null && ConsoleRepository.hasAnyLibrary(app)) onSeeded.run();
             } catch (InterruptedException e) {
