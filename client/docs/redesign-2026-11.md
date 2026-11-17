@@ -2,7 +2,7 @@
 
 [Documentation](index.md) · [Home and the session menu](console.md) · [Design: moonlit glass](../design/README.md) · [Code map](code-map.md)
 
-This is the plan for making Nightjar simpler and more like a console, and the record of its first phase. It builds on the look the app already has ([moonlit glass](../design/README.md): the night sky, glass chrome, one amber thing per screen) and changes how much the app asks of a player, not how it is drawn. The numbers it names are the keys of `design/tokens.json`.
+This is the plan for making Nightjar simpler and more like a console, and the record of what Nightjar 6.0.0 builds of it. It builds on the look the app already has ([moonlit glass](../design/README.md): the night sky, glass chrome, one amber thing per screen) and changes how much the app asks of a player, not how it is drawn. The numbers it names are the keys of `design/tokens.json`.
 
 ## What players told us
 
@@ -10,7 +10,7 @@ From the survey threads (nightjar#61, nightjar#116, Rubylight#110) and the maint
 
 - Settings are too much, also for people who know streaming. The app listed eleven entries beside the settings, opened on Video and put its three plain choices (Recommended) among them.
 - A controller or a remote has to reach everything, with focus that is always visible and a list that follows it.
-- Home on a TV should show more than one row when the player wants that, with a choice of card size.
+- Home on a TV should show more than one row when the player wants that, with a choice of card size. (Home's **View** answers this on every form, a TV included: Grid, Rows or List, and three card sizes. See "TV Home as a grid" below.)
 - The stream menu must be quick with a controller: the tile someone uses most should be one press away.
 - Glass has to be steady: no late blur, no panel that turns transparent.
 
@@ -29,6 +29,7 @@ One sentence per step is the test: if a step needs a second sentence to explain 
 | Connecting | The cover with the orbit around it and one word | Nothing; Back cancels | Chooses codec, resolution, refresh rate, HDR and bitrate from this device, this PC and this network |
 | Playing | The game, nothing else | Holds Guide for the menu (Back on a remote, Ctrl+Alt+Shift+M on a keyboard) | Recovers an interrupted stream |
 | Stream menu | Tiles for what is done mid-game, bitrate, Disconnect and Quit game | One press per tile | Remembers the tiles' order and buttons |
+| Home, the first time | One card: what the automatic settings use for this device and this PC | Nothing; its close button puts it away for good | Works the values out from the screen, the decoders and the PC |
 | Settings | Recommended: three choices, each on Auto | Changes one, or nothing | Maps the choices onto this device; everything else is under More settings |
 
 ## Information architecture
@@ -54,14 +55,14 @@ Now, on both apps:
 Rules that keep it honest:
 
 - Settings open on Recommended. (A TV still opens on Controls, its second row: that choice predates this plan and has its own focus history; see Decisions.)
-- More settings is a row, not a page: it unfolds the entries under itself and folds them again. Android remembers the choice between visits, as it does each section's own "More … settings"; desktop keeps it until Nightjar closes, as it keeps those.
-- Nothing is out of reach. Search looks in every section whether the fold is open or not. A link into a folded section (a failed start that points at Resolution, a search result, the presets) opens the fold for that visit. Folding while such a section is shown goes back to Recommended, so the list never hides what the rows show.
+- More settings is a row, not a page: it unfolds the entries under itself and folds them again. Both apps remember the player's own choice, across restarts too (Android beside each section's own "More … settings"; desktop in `settings.json`, as a field that is no setting). A screen reader hears whether it is open: on Android the row offers Expand while folded and Collapse while open, which TalkBack speaks as "collapsed" and "expanded"; the desktop names the state.
+- Nothing is out of reach. Search looks in every section whether the fold is open or not. A link into a folded section (a failed start that points at Resolution, a search result, the presets) opens the fold for that visit. Folding while such a section is shown goes back to Recommended (on a TV to Controls, its start), with focus still on More settings, so the list never hides what the rows show.
 - A PC's, a game's and a profile's settings list every section they have, without a fold: someone who opens them is already in the detail.
 - No stored preference changes meaning, name or default. The fold is a view over the same sections, the same keys and the same per-section main rows and "More … settings" folds.
 
 ### What moves under Advanced, and what goes
 
-The second level already exists inside every section: its main rows show, "More … settings (N)" holds the rest (`settings_tiers.xml` on Android, `main_row` on desktop). This plan adds the level above it and does not move a single row between sections in phase 1. Moves proposed for phase 2, each needing the maintainer's yes because it changes where an experienced player looks:
+The second level already exists inside every section: its main rows show, "More … settings (N)" holds the rest (`settings_tiers.xml` on Android, `main_row` on desktop). This plan adds the level above it and moves no row between sections. Three moves were proposed and the maintainer declined them: each changes where an experienced player looks. They are kept here as the record of what was weighed:
 
 | Row | From | To | Why |
 | --- | --- | --- | --- |
@@ -69,7 +70,7 @@ The second level already exists inside every section: its main rows show, "More 
 | Recover interrupted streams | Streaming (main) | Streaming (fold) | Always right; the row exists for diagnosis |
 | Presets | Overview row | Video, as its first row | They set Video's three values; on desktop they already sit there |
 
-Removal: the client rule is that a setting goes only when it never has an effect. An audit of every row against the code that reads it is phase 3 work (see the plan); phase 1 removes none.
+Removal: the client rule is that a setting goes only when it never has an effect. An audit of every row against the code that reads it has not been made; 6.0.0 removes none.
 
 ## Visual language
 
@@ -87,7 +88,7 @@ The tokens stay. What the redesign adds is where each is used, so every screen r
 | Sub | `type.sub` | 14 / 19 | A row's value and hint |
 | Caption | `type.caption` | 12 / 16 | Chips, key hints, the stats overlay |
 
-One page uses at most three of these. Before phase 1, a game's page on a handheld used a 22 sp title under a 13 sp chip beside 16 sp buttons on a flat canvas; it now uses hero, body and caption, as Home does.
+One page uses at most three of these. Before, a game's page on a handheld used a 22 sp title under a 13 sp chip beside 16 sp buttons on a flat canvas; it now uses hero, body and caption, as Home does. On a phone held upright the sheet's title is `type.title`: the hero's 39 sp leaves a 360 dp screen two words a line.
 
 **Spacing**: `space.xs` 4, `s` 8, `m` 12, `l` 16, `xl` 24, `xxl` 32, `xxxl` 48. Inside a group `m`; between groups `xl`; a page's gutter `xl` on a handheld, `xxxl` on TV and desktop. Touch targets at least `size.touchMin` (48 dp).
 
@@ -146,34 +147,67 @@ Settings on a TV (TCL C6K), before and after.
 ![TV settings before](screenshots/redesign-2026-11/tv-settings-before.jpg)
 ![TV settings after](screenshots/redesign-2026-11/tv-settings-after.jpg)
 
+## The game page on a phone held upright
+
+The design gives a phone the game page as a sheet. Android draws it as a page: the game's ambient behind everything (the same picture Home was showing, so opening a game keeps the screen's light), the 2:3 cover on it, and under the cover a panel with the sheet's radius (`radius.sheet`) that holds the chips, the title, the PC, the moon Play across the width, Favourite and Quit game as glass capsules, and the stream settings. Play shows without scrolling, also with a long title and large text.
+
+It does not drag: no grabber is drawn, and Back, or Home in the bar, leaves, as on every other form. A sheet that drags between detents over Home, with the cover morphing from its card, is not built.
+
+![A game's page on a phone held upright](screenshots/redesign-2026-11/android-game-sheet.jpg)
+
+## TV Home as a grid
+
+Home's **View** (the grid button in the top row, reached with the remote) offers Grid, Rows and List and the card sizes Small, Medium and Large on a TV as on a phone; a TV keeps its shelves until the player chooses otherwise. This was in the apps before this redesign; the plan had listed it as missing. 6.0.0 adds nothing here; the picture is the TV layout with Grid and Large chosen.
+
+![TV Home as a grid](screenshots/redesign-2026-11/tv-home-grid.jpg)
+
+## The set-up card
+
+After the first pairing this device makes, Home shows one card: "Set up for this device and <PC>", and under it the values a stream to that PC starts with: resolution, frame rate, bitrate, HDR or SDR. It answers "is it set up right?" without opening Settings. There is nothing to press but its close button, which a remote, a pad and the keyboard reach; closed once, it never returns.
+
+- It speaks for Recommended's Auto only. While the stream's settings are the player's own (Custom, or a choice other than Auto) the card does not show, and it comes back if they return to Auto before it was closed.
+- The codec: Auto leaves it to the stream, which negotiates the best codec both ends decode when it starts (`simple_profile`), so before a stream ran there is none to name. The card says "codec chosen when the stream starts"; with a codec forced in Video it names that codec.
+- It is offered once per install, by the pairing that leaves exactly one paired PC. A pairing on a device that already has a PC is not the first and offers nothing, then or later.
+- It is part of the page, not a notice over it: Home's first content under the top row, with the games starting beneath it, and it scrolls away with them. On a TV it stands in the hero's band beside the game's name, which ends before it, so the shelves keep their height.
+- It yields to "… wants to pair", which asks for an answer.
+
+![Home with the set-up card](screenshots/redesign-2026-11/android-home-setup-card.jpg)
+
+## What each app does
+
+| | Android | Desktop |
+| --- | --- | --- |
+| Four sections, then More settings | Yes; a TV opens on Controls | Yes |
+| More settings remembered across restarts | Yes (app state, not a preference) | Yes (`settings.json`, not a setting) |
+| A screen reader hears the fold's state | Expand and Collapse actions on the row | The row's name says it |
+| Presets | Behind More settings, as a row of the list | In Video, where they always were |
+| A game's page on the game's ambient | Phone upright: the sheet under the cover. Sideways and handheld: Home's hero as a page. TV: its own layout with the same glass buttons | The page it already had: ambient, chips, hero title, Play |
+| Home as a grid, with card sizes | View, on every form | View |
+| The set-up card after the first pairing | Yes | Yes |
+
 ## Plan
 
-**Phase 1, done in this change** (both apps unless said):
+**Done in Nightjar 6.0.0** (both apps unless said):
 
-- The list of sections is simple first, with More settings; Settings open on Recommended.
-- A game's page on a handheld and a phone held sideways is Home's hero as a page: ambient, chips, hero title, the moon Play with glass capsules, the stream settings on a panel. The desktop already had this page; the TV keeps its layout and its Favourite and Quit buttons become the same glass capsules.
+- The list of sections is simple first, with More settings; Settings open on Recommended. The fold is remembered across restarts and says its state to a screen reader.
+- A game's page on Android sits on the game's ambient on every form: the sheet on a phone held upright, Home's hero as a page held sideways. The desktop already had this page; the TV keeps its layout and its Favourite and Quit buttons became the same glass capsules.
 - A glass button that cannot be pressed dims (Play while a game cannot start); before, glass buttons were never disabled.
+- The set-up card on Home after the first pairing.
 - No protocol change, no preference renamed, moved or reinterpreted.
 
-**Phase 2, navigation and flow** (needs the decisions below):
+**Weighed and not built:**
 
-- A phone held upright gets the game page as the sheet the design describes, on the same ambient.
-- The row moves in the table above (Overlay to App, Presets into Video).
-- TV Home: a grid view with the card sizes Home already has on a phone, for players who want more than one row (nightjar#61).
-- Recommended on the first run: after the first pairing, one card on Home says what Auto chose for this device and PC (resolution, refresh rate, HDR, codec), with nothing to press. It answers "is it set up right?" without opening Settings.
-- The stream menu: the first row holds the four tiles the player used most, by count, unless they arranged the tiles themselves.
+- The row moves in the table above (Overlay to App, Presets into Video, Recover interrupted streams into its fold): declined.
+- The stream menu's first row holding the four tiles the player used most.
+- A dragging sheet for the phone's game page (detents, the cover morphing from its card).
+- An audit of every setting against the code that reads it, with rows that never have an effect removed and their stored values cleared.
+- The desktop first run and pairing drawn as one scene with the launch scene.
 
-**Phase 3, depth**:
+## Decisions taken
 
-- An audit of every setting against the code that reads it; rows that never have an effect go, with their stored values cleared.
-- One wording pass over Recommended's help after the row moves.
-- The desktop first run and pairing drawn as one scene with the launch scene, so first launch to first frame is a single continuous picture.
-
-## Decisions for the maintainer
-
-1. **A TV opens Settings on Controls, every other form on Recommended.** Phase 1 keeps the TV's start (its tests and focus fixes assume it). One start everywhere would be simpler to explain.
-2. **Presets behind More settings on Android.** They overlap with Recommended's Picture quality. Keeping both visible would put two "pick a quality" controls on the first screen.
-3. **The fold's memory.** Android remembers More settings between visits; desktop until it closes, each following its own section folds. Persisting it on desktop needs a field in `settings.json` that is not a setting.
-4. **The row moves of phase 2**, each of which changes where an experienced player looks.
-5. **TalkBack hears "More settings" the same open or closed** on Android (the desktop says which). A row that says its state needs a custom row view; left for phase 2.
-6. **Tests cover the default TV list only on the device.** The TV focus tests run with More settings open; folded, Down to More settings, Center and the walk through what it unfolds were checked on the TCL C6K, not in Robolectric.
+1. **A TV opens Settings on Controls, every other form on Recommended.** Kept.
+2. **Presets behind More settings on Android.** Yes: they overlap with Recommended's Picture quality, and two "pick a quality" controls would share the first screen.
+3. **The fold's memory.** The desktop remembers it across restarts, as Android does; only the player's own choice is kept, not a fold a link or a search result opened.
+4. **The row moves.** Not made.
+5. **TalkBack and the fold.** The row says its state and takes Expand and Collapse.
+6. **The TV's default list in tests.** A Robolectric test with the TV's qualifiers and the fold closed walks it: Down from App lands on More settings, Select unfolds and Down reaches the presets; folding while Video is shown returns the pane to Controls with focus on More settings.

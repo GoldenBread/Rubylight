@@ -25,6 +25,8 @@ Nightjar opens on Home when a paired PC supports the native API. Home has four p
 
 Phones, tablets and TVs keep their usual look until you change it.
 
+**After the first pairing.** Once the first PC is paired, Home shows one card, **Set up for this device and** the PC's name, with what the automatic settings use for a stream to it: resolution, frame rate, bitrate, and HDR or SDR. The codec is chosen when the stream starts, so the card names one only when you forced it in Video. The card shows while the three choices under **Settings → Recommended** are on Auto; its close button puts it away for good.
+
 **Collections.** When a PC names collections (Steam collections, Playnite categories; Rubylight 3.7 or newer), **Group by** offers **Collection**: a row per collection by name, a game in several in each, then **No collection**. All games has a chip for each. Nothing needs setting up on the PC, and with no collections the option does not appear.
 
 **Hiding a game.** Open a game card's options (on Windows and Linux, right-click it or press **F2**) and choose **Hide game**. It leaves Home, All games and the PC's list on this device only; the PC and your other devices keep it. A running game stays under Continue playing. All games has a **Hidden** chip once a game is hidden, where the same menu has **Show game**.
