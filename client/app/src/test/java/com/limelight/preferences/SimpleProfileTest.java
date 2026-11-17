@@ -2,6 +2,7 @@ package com.limelight.preferences;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
@@ -247,6 +248,28 @@ public class SimpleProfileTest {
                     PreferenceConfiguration.ENABLE_HDR_PREF_STRING, OpenPlay.SETTING, HomeSettings.PREF_KEY}) {
                 assertEquals(key, before.get(key), prefs.getAll().get(key));
             }
+        } finally {
+            controller.pause().stop().destroy();
+        }
+    }
+
+    @Test
+    public void theConsoleModeSwitchFollowsTheStartScreenChosenOnTheSameScreen() {
+        org.robolectric.android.controller.ActivityController<StreamSettings> controller =
+                org.robolectric.Robolectric.buildActivity(StreamSettings.class).setup();
+        try {
+            StreamSettings.SettingsFragment simple = SettingsStructureTest.open(controller.get(), "simple");
+            android.preference.SwitchPreference console =
+                    (android.preference.SwitchPreference) simple.findPreference("checkbox_console_home");
+            assertNotNull(console);
+            assertTrue(console.isChecked());
+
+            // "When Nightjar opens" on the same screen picks Show my PCs.
+            SharedPreferences.Editor editor = prefs.edit();
+            StartScreenChoice.save(prefs, editor, StartScreenChoice.PCS);
+            assertTrue(editor.commit());
+
+            assertFalse("the switch follows the start screen", console.isChecked());
         } finally {
             controller.pause().stop().destroy();
         }
