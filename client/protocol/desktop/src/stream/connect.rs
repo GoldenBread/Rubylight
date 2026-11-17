@@ -833,6 +833,16 @@ pub(super) fn jumbo_fallback_text() -> String {
     tr("Jumbo video packets didn’t pass the test on this network, so the stream uses normal packets.").to_owned()
 }
 
+/// What the player is told before a PyroWave stream whose mode or rate this link cannot carry, as
+/// `LinkNotice`: the rate it asks for, and what the link is assumed to carry, in whole Mbps. The
+/// stream still starts; a lower resolution or frame rate, or HEVC/AV1, is the player's choice.
+pub(super) fn pyrowave_link_text(notice: &nightjar_policy::pyrowave::LinkNotice, width: u32, height: u32, fps: u32) -> String {
+    trf(
+        "PyroWave at {}×{}, {} fps asks for {} Mbps, more than this link is assumed to carry ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.",
+        &[&width, &height, &fps, &notice.asked_kbps.div_ceil(1000), &notice.cap_kbps.div_ceil(1000)],
+    )
+}
+
 /// The jumbo pre-flight and then the launch, in that order: the PC refuses a probe while a stream
 /// or a launch is pending, so a pre-flight sent after the launch was refused and every jumbo
 /// stream fell back to normal packets (#126). `preflight` decides the packet size and probes it;
@@ -1154,6 +1164,16 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
     if pyrowave && settings.bitrate_kbps == 0 {
         eprintln!("nightjar: PyroWave: starting at {bitrate} kbps, its default for {width}x{height} at {fps} fps and a {link_mbps} Mbps link");
     }
+    // A PyroWave mode whose rate this link cannot carry is not stopped, but the player hears it
+    // before the first picture: a lower resolution or frame rate, or HEVC/AV1, is their choice.
+    let pyrowave_link = pyrowave
+        .then(|| nightjar_policy::pyrowave::link_notice(width, height, fps, link_mbps, settings.bitrate_kbps))
+        .flatten()
+        .map(|notice| {
+            let text = pyrowave_link_text(&notice, width, height, fps);
+            eprintln!("nightjar: {text}");
+            text
+        });
     let bitrate = if probes_first_bitrate(settings, plan.resume, &plan.info) {
         match client.probe_link(&plan.info) {
             Ok(mbps) => {
@@ -1442,6 +1462,7 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
             outcome.pyrowave_records_enabled)),
         color_notice: color_notice(&offer, outcome.negotiated_video_format),
         pyrowave_fallback: None,
+        pyrowave_link,
         jumbo_fallback,
         codec_fallback: None,
         app_name: plan.app.name.clone(),

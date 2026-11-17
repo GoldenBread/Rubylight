@@ -420,7 +420,24 @@ pub fn chosen(current: &Current, capabilities: &Capabilities) -> Option<Choices>
         (None, None, None) => recommended(capabilities),
         _ => return None,
     };
-    matches(stored, capabilities, current).then_some(stored)
+    // The HDR row shows what the stream does, not what a choice was meant to do. A fresh install
+    // stores nothing (Android) or Auto (desktop), and the HDR switch it never set leaves the stream
+    // in SDR, so the row reads Off until the player chooses Auto or turns HDR on in the Video
+    // settings. A stream that asks for HDR reads Auto. On a chain that cannot show HDR at all both
+    // choices stream the same SDR picture, so the stored choice stands there.
+    let shown = Choices { hdr: shown_hdr(stored.hdr, capabilities, current), ..stored };
+    matches(shown, capabilities, current).then_some(shown)
+}
+
+/// The HDR choice the HDR row shows for a stream in `current`: Auto while it asks for HDR, Off while
+/// HDR could stream but is turned off, and the stored choice on a chain that cannot show HDR.
+fn shown_hdr(stored: Hdr, capabilities: &Capabilities, current: &Current) -> Hdr {
+    let could = values(Choices { hdr: Hdr::Auto, ..Choices::default() }, capabilities).hdr;
+    match (current.hdr, could) {
+        (true, _) => Hdr::Auto,
+        (false, true) => Hdr::Off,
+        (false, false) => stored,
+    }
 }
 
 /// The JNI wire format: one JSON request in, one JSON answer out. Android's
@@ -754,6 +771,25 @@ mod tests {
         // Best on the same screen still says HDR off.
         let best = Choices { picture: Picture::Best, ..Choices::default() };
         assert!(!values(best, &capabilities).hdr);
+    }
+
+    #[test]
+    fn a_fresh_hdr_screen_reads_hdr_off_until_the_switch_is_on() {
+        // A fresh install stores no choice (Android) or Auto (desktop), and the HDR switch it never
+        // set leaves the stream SDR: the row reads Off, not the recommended Auto.
+        let capabilities = hdr_device();
+        let mut current = current_of(Choices::default(), &capabilities);
+        current.hdr = false;
+        let fresh = Choices { hdr: Hdr::Off, ..Choices::default() };
+        assert_eq!(chosen(&current, &capabilities), Some(fresh));
+        (current.stored_smoothness, current.stored_picture, current.stored_hdr) = (None, None, None);
+        assert_eq!(chosen(&current, &capabilities), Some(fresh), "a fresh Android install stores nothing");
+        // A pick in another row carries the row's Off, so it never turns HDR on behind the player's back.
+        let picked = values(Choices { smoothness: Smoothness::Balanced, ..fresh }, &capabilities);
+        assert!(!picked.hdr);
+        // Turning the switch on in the Video settings streams HDR, and the row says Auto.
+        current.hdr = true;
+        assert_eq!(chosen(&current, &capabilities), Some(Choices::default()));
     }
 
     #[test]

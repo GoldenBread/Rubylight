@@ -2080,13 +2080,47 @@ fn a_non_vrr_first_launch_reads_auto_not_custom() {
 }
 
 #[test]
-fn a_fresh_hdr_screen_reads_hdr_auto_not_off() {
+fn a_fresh_hdr_screen_reads_hdr_off_like_the_stream() {
     let display = Display { width: 1920, height: 1080, refresh_hz: 120.0, refresh_reported: true };
     let caps = simple_caps(&display, true, true);
     let s = Settings::default();
+    assert!(!s.hdr, "the stream stays SDR: the HDR switch is at its app default");
     let (choices, custom) = simple_state(&s, &display, &caps, true);
-    assert!(!custom, "the HDR switch at its default is the layer's Auto");
+    assert!(!custom, "the row shows what the stream does, not Custom");
+    assert_eq!(choices.hdr, simple::Hdr::Off, "a fresh install streams SDR, so the row reads Off");
+    // A pick in another row keeps HDR off (it writes the whole profile from the rows).
+    let mut picked = s.clone();
+    simple_apply(&mut picked, &display, &caps, simple::Choices { smoothness: simple::Smoothness::Balanced, ..choices });
+    assert!(!picked.hdr, "a pick in another row must not turn HDR on");
+    assert_eq!(simple_state(&picked, &display, &caps, true).0.hdr, simple::Hdr::Off);
+    // The HDR row's own Auto turns it on, and a later pick elsewhere leaves it on.
+    simple_apply(&mut picked, &display, &caps, simple::Choices { hdr: simple::Hdr::Auto, ..choices });
+    assert!(picked.hdr);
+    let (after, custom) = simple_state(&picked, &display, &caps, true);
+    assert!(!custom);
+    assert_eq!(after.hdr, simple::Hdr::Auto);
+    simple_apply(&mut picked, &display, &caps, simple::Choices { picture: simple::Picture::Best, ..after });
+    assert!(picked.hdr, "a pick in another row must not turn HDR off");
+}
+
+#[test]
+fn a_custom_row_elsewhere_still_carries_the_streams_own_hdr() {
+    // The rest of the settings match no profile, so the rows read Custom; their choices still carry
+    // the stream's HDR state, so a pick in one row cannot flip it.
+    let display = Display { width: 1920, height: 1080, refresh_hz: 120.0, refresh_reported: true };
+    let caps = simple_caps(&display, true, true);
+    let mut off = Settings { frame_pacing: FramePacing::CapFps, ..Settings::default() };
+    let (choices, custom) = simple_state(&off, &display, &caps, true);
+    assert!(custom);
+    assert_eq!(choices.hdr, simple::Hdr::Off);
+    simple_apply(&mut off, &display, &caps, simple::Choices { picture: simple::Picture::Best, ..choices });
+    assert!(!off.hdr, "a pick in another row must not turn HDR on");
+    let mut on = Settings { frame_pacing: FramePacing::CapFps, hdr: true, ..Settings::default() };
+    let (choices, custom) = simple_state(&on, &display, &caps, true);
+    assert!(custom);
     assert_eq!(choices.hdr, simple::Hdr::Auto);
+    simple_apply(&mut on, &display, &caps, simple::Choices { picture: simple::Picture::Best, ..choices });
+    assert!(on.hdr, "a pick in another row must not turn HDR off");
 }
 
 #[test]

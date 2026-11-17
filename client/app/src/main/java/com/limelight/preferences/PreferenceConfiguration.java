@@ -277,7 +277,7 @@ public class PreferenceConfiguration {
     private static final boolean SHOW_GUIDE_BUTTON_DEFAULT = true;
     private static final boolean SHOW_TOUCHPAD_BUTTON_DEFAULT = false;
     private static final boolean OSC_STEAM_CONTROLS_DEFAULT = false;
-    private static final boolean DEFAULT_ENABLE_HDR = false;
+    static final boolean DEFAULT_ENABLE_HDR = false;
     private static final boolean DEFAULT_ENABLE_SDR10 = false;
     private static final boolean DEFAULT_ENABLE_PIP = false;
     private static final boolean DEFAULT_AUTO_RECONNECT = true;

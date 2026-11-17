@@ -1122,6 +1122,19 @@ public class NvConnection {
             LimeLog.info("PyroWave: starting at its default of " + context.startBitrateKbps + " kbps (link " +
                     context.linkHints.mbps + " Mbps)");
         }
+        // A PyroWave mode whose rate this link cannot carry still starts, but the player hears it
+        // before the first picture: a lower resolution or frame rate, or HEVC/AV1, is their choice.
+        PyroWaveBitrateFloor.LinkNotice pyrowaveLink = pyroWaveLinkNotice(context, context.linkHints.mbps);
+        if (pyrowaveLink != null) {
+            int askedMbps = (pyrowaveLink.askedKbps + 999) / 1000;
+            int capMbps = (pyrowaveLink.capKbps + 999) / 1000;
+            LimeLog.warning("PyroWave at " + context.negotiatedWidth + "x" + context.negotiatedHeight + " at " +
+                    context.streamConfig.getRefreshRate() + " fps asks for " + askedMbps +
+                    " Mbps, more than this link is assumed to carry (" + capMbps + " Mbps)");
+            context.connListener.displayTransientMessage(appContext.getString(R.string.pyrowave_link_notice,
+                    context.negotiatedWidth, context.negotiatedHeight, context.streamConfig.getRefreshRate(),
+                    askedMbps, capMbps));
+        }
 
         // We will perform some connection type detection if the caller asked for it
         if (context.streamConfig.getRemote() == StreamConfiguration.STREAM_CFG_AUTO) {
@@ -1324,6 +1337,20 @@ public class NvConnection {
                 context.negotiatedWidth, context.negotiatedHeight, config.getRefreshRate(), linkMbps);
         int limit = config.getBitrateLimitKbps();
         return limit > 0 ? Math.min(start, Math.max(limit, config.getBitrate())) : start;
+    }
+
+    /**
+     * The link notice for a stream that negotiated PyroWave ({@link PyroWaveBitrateFloor#linkNotice}),
+     * or {@code null} when this link can carry its rate or the stream is not PyroWave.
+     */
+    static PyroWaveBitrateFloor.LinkNotice pyroWaveLinkNotice(ConnectionContext context, int linkMbps) {
+        if ((context.negotiatedVideoFormats & MoonBridge.VIDEO_FORMAT_MASK_PYROWAVE) == 0) {
+            return null;
+        }
+        // Automatic means PyroWave's own default for this mode, not the conventional bitrate.
+        int configured = context.streamConfig.isAutomaticBitrate() ? 0 : context.streamConfig.getBitrate();
+        return PyroWaveBitrateFloor.linkNotice(context.negotiatedWidth, context.negotiatedHeight,
+                context.streamConfig.getRefreshRate(), linkMbps, configured);
     }
 
     /**

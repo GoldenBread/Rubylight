@@ -174,6 +174,14 @@ public final class SimpleProfile {
         return chosen(context) == null;
     }
 
+    /** The HDR choice the stream is using: Auto while its switch asks for HDR, Off while it does not. */
+    private static String effectiveHdr(SharedPreferences prefs) {
+        boolean streamed = prefs.getBoolean(PreferenceConfiguration.ENABLE_HDR_PREF_STRING,
+                PreferenceConfiguration.DEFAULT_ENABLE_HDR)
+                && !PreferenceConfiguration.isShieldAtvFirmwareWithBrokenHdr();
+        return streamed ? "auto" : "off";
+    }
+
     /** Applies {@code value} to {@code key}, keeping the other two choices. */
     static boolean apply(Context context, String key, String value) {
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
@@ -182,12 +190,17 @@ public final class SimpleProfile {
         String[] shown = chosen(context);
         String smoothness = shown != null ? shown[0] : read(prefs, SMOOTHNESS);
         String picture = shown != null ? shown[1] : read(prefs, PICTURE);
-        String hdr = shown != null ? shown[2] : read(prefs, HDR);
+        // A pick in one row keeps the stream's own HDR choice: only the HDR row may change it.
+        String hdr = shown != null ? shown[2] : effectiveHdr(prefs);
         if (SMOOTHNESS.equals(key)) smoothness = value;
         else if (PICTURE.equals(key)) picture = value;
         else if (HDR.equals(key)) hdr = value;
         else return false;
-        return apply(context, prefs, smoothness, picture, hdr);
+        // Writing the whole profile must not turn the HDR switch on (or off) behind the player's
+        // back: a pick in another row keeps it exactly as it is.
+        boolean hdrSwitch = prefs.getBoolean(PreferenceConfiguration.ENABLE_HDR_PREF_STRING,
+                PreferenceConfiguration.DEFAULT_ENABLE_HDR);
+        return apply(context, prefs, smoothness, picture, hdr, HDR.equals(key) ? null : hdrSwitch);
     }
 
     /** Writes the recommended profile: the one "Back to recommended" takes. */
@@ -196,11 +209,11 @@ public final class SimpleProfile {
         String[] recommended = SimpleProfileModel.recommended(caps);
         if (recommended == null) return false;
         return apply(context, PreferenceManager.getDefaultSharedPreferences(context),
-                recommended[0], recommended[1], recommended[2]);
+                recommended[0], recommended[1], recommended[2], null);
     }
 
     private static boolean apply(Context context, SharedPreferences prefs, String smoothness, String picture,
-                                 String hdr) {
+                                 String hdr, Boolean hdrSwitch) {
         SimpleProfileModel.Capabilities caps = capabilities(context);
         SimpleProfileModel.Values values = SimpleProfileModel.values(smoothness, picture, hdr, caps);
         String nativeResolution = PreferenceConfiguration.nativeResolution(context);
@@ -234,7 +247,8 @@ public final class SimpleProfile {
                 .putBoolean("checkbox_reduce_refresh_rate", values.reduceRefresh)
                 .putBoolean(PreferenceConfiguration.CONTENT_RATE_FRAME_RATE_PREF_STRING, values.contentRate)
                 .putString(PreferenceConfiguration.VIDEO_FORMAT_PREF_STRING, codec(values.codec))
-                .putBoolean(PreferenceConfiguration.ENABLE_HDR_PREF_STRING, values.hdr)
+                .putBoolean(PreferenceConfiguration.ENABLE_HDR_PREF_STRING,
+                        hdrSwitch != null ? hdrSwitch : values.hdr)
                 .putBoolean(AutoBitrateChoice.SETTINGS_KEY, values.adaptiveBitrate)
                 .putString("adaptive_quality_mode", "save-power".equals(values.adaptiveQuality) ? "battery" : "off");
         if (values.realVrr != null) editor.putBoolean(PreferenceConfiguration.REAL_VRR_PREF_STRING, values.realVrr);
@@ -301,12 +315,11 @@ public final class SimpleProfile {
         String quality = "battery".equals(qualityMode) ? "save-power" : "off".equals(qualityMode) ? "off" : null;
         boolean vrr = DisplayFrameRatePolicy.vrrOffered(context)
                 && prefs.getBoolean(PreferenceConfiguration.VRR_PREF_STRING, false);
-        // The HDR switch left at the app's default is the layer's Auto on a screen and decoder that
-        // can show HDR; reading it as Off would call a fresh HDR install Off when nothing was chosen.
-        SimpleProfileModel.Capabilities caps = capabilities(context);
-        boolean hdr = prefs.getBoolean(PreferenceConfiguration.ENABLE_HDR_PREF_STRING, false)
-                || ("auto".equals(read(prefs, HDR)) && caps.displayHdr && caps.decoderHdr
-                    && !Boolean.FALSE.equals(caps.hostHdr));
+        // The HDR row shows what the stream does: the HDR switch the stream reads, not an Auto the
+        // player never chose. A fresh install leaves that switch off, so the row reads Off.
+        boolean hdr = prefs.getBoolean(PreferenceConfiguration.ENABLE_HDR_PREF_STRING,
+                PreferenceConfiguration.DEFAULT_ENABLE_HDR)
+                && !PreferenceConfiguration.isShieldAtvFirmwareWithBrokenHdr();
         return new SimpleProfileModel.Current(nativeSize, fps, pacing,
                 vrr, latencySwitches,
                 prefs.getBoolean(SettingRules.DROP_LATE_FRAMES, true),

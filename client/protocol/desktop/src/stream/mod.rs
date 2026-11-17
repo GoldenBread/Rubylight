@@ -301,6 +301,9 @@ pub struct Facts {
     /// PyroWave was chosen and the stream runs another codec: what to tell the player, once per
     /// PC (`pyrowave_notice`).
     pub pyrowave_fallback: Option<String>,
+    /// PyroWave is about to start on a link this mode's rate cannot fit: what to tell the player
+    /// before the first picture, without stopping the stream (`pyrowave_link_notice`).
+    pub pyrowave_link: Option<String>,
     /// Jumbo video packets were asked for but did not pass the pre-flight or the PC's offer, so
     /// the stream uses normal packets: what to tell the player.
     pub jumbo_fallback: Option<String>,

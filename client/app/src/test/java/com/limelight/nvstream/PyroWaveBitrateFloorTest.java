@@ -3,6 +3,7 @@ package com.limelight.nvstream;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 public class PyroWaveBitrateFloorTest {
@@ -63,5 +64,24 @@ public class PyroWaveBitrateFloorTest {
         assertEquals(900000, PyroWaveBitrateFloor.startKbps(900000, false, 1920, 1080, 60, 0));
         assertEquals(1500000, PyroWaveBitrateFloor.startKbps(1500000, false, 3840, 2160, 60, 1000));
         assertEquals(20000, PyroWaveBitrateFloor.startKbps(20000, false, 3840, 2160, 240, 0));
+    }
+
+    // 4K120's floor alone is above the 900 Mbps an unknown (wireless) route is assumed to carry.
+    @Test
+    public void aLinkThatCannotCarryTheModeIsNamedBeforeTheStreamStarts() {
+        PyroWaveBitrateFloor.LinkNotice notice = PyroWaveBitrateFloor.linkNotice(3840, 2160, 120, 0, 0);
+        assertEquals(1492992, notice.askedKbps);
+        assertEquals(1492992, notice.minimumKbps);
+        assertEquals(900000, notice.capKbps);
+        assertNull("4K60 starts at the cap and fits", PyroWaveBitrateFloor.linkNotice(3840, 2160, 60, 0, 0));
+        assertNull("1440p120 starts at the cap and fits", PyroWaveBitrateFloor.linkNotice(2560, 1440, 120, 0, 0));
+        assertNull("1080p120 is under the cap", PyroWaveBitrateFloor.linkNotice(1920, 1080, 120, 0, 0));
+        // A chosen rate above the link is named, and the floor is named when the floor cannot fit.
+        assertEquals(1500000, PyroWaveBitrateFloor.linkNotice(1920, 1080, 60, 0, 1500000).askedKbps);
+        assertEquals(1492992, PyroWaveBitrateFloor.linkNotice(3840, 2160, 120, 0, 800000).askedKbps);
+        // A known wired link uses 90% of it: 2.5 GbE carries 4K120, gigabit and 100 Mbps do not.
+        assertNull(PyroWaveBitrateFloor.linkNotice(3840, 2160, 120, 2500, 0));
+        assertEquals(900000, PyroWaveBitrateFloor.linkNotice(3840, 2160, 120, 1000, 0).capKbps);
+        assertEquals(90000, PyroWaveBitrateFloor.linkNotice(1920, 1080, 60, 100, 0).capKbps);
     }
 }

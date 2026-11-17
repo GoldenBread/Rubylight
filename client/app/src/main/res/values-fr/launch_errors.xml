@@ -6,4 +6,5 @@
     <string name="startup_confirmation_rejected">La session du PC a changé ou la confirmation a expiré. Relancez la vignette.</string>
     <string name="decoder_setup_rejected">Le décodeur vidéo de cet appareil (%1$s) n’a pas pu démarrer %2$s en %3$dx%4$d à %5$d IPS : %6$s. Le PC n’est pas en cause. Dans les réglages, essayez H.264, une résolution plus basse ou une fréquence d’images plus basse. Si le problème persiste, utilisez « Signaler un problème ».</string>
     <string name="decoder_setup_none">Cet appareil n’a pas de décodeur vidéo pour %1$s. Choisissez un autre codec vidéo dans les réglages.</string>
+    <string name="pyrowave_link_notice">PyroWave en %1$dx%2$d à %3$d i/s demande %4$d Mbps, plus que ce lien ne peut porter (%5$d Mbps). Réduisez la résolution ou la fréquence d\'images, ou utilisez HEVC ou AV1.</string>
 </resources>

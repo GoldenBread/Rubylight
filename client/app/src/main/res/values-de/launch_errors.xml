@@ -6,4 +6,5 @@
     <string name="startup_confirmation_rejected">Die Sitzung auf dem PC hat sich geändert oder die Bestätigung ist abgelaufen. Starte die Kachel erneut.</string>
     <string name="decoder_setup_rejected">Der Video-Decoder dieses Geräts (%1$s) konnte %2$s mit %3$dx%4$d bei %5$d FPS nicht starten: %6$s. Der PC ist nicht die Ursache. Probiere in den Einstellungen H.264, eine niedrigere Auflösung oder eine niedrigere Bildrate. Wenn es weiter auftritt, nutze „Problem melden“.</string>
     <string name="decoder_setup_none">Dieses Gerät hat keinen Video-Decoder für %1$s. Wähle in den Einstellungen einen anderen Video-Codec.</string>
+    <string name="pyrowave_link_notice">PyroWave bei %1$dx%2$d mit %3$d fps verlangt %4$d Mbps, mehr als diese Verbindung tragen kann (%5$d Mbps). Senke die Auflösung oder Bildrate oder nutze HEVC oder AV1.</string>
 </resources>

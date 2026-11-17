@@ -6,4 +6,5 @@
     <string name="startup_confirmation_rejected">Bilgisayardaki oturum değişti veya onayın süresi doldu. Kutucuğu yeniden başlatın.</string>
     <string name="decoder_setup_rejected">Bu cihazın video kod çözücüsü (%1$s), %2$s biçimini %3$dx%4$d ve %5$d FPS ile başlatamadı: %6$s. Sorunun nedeni bilgisayar değil. Ayarlar’da H.264, daha düşük bir çözünürlük veya daha düşük bir kare hızı deneyin. Sorun sürerse “Sorun bildir” seçeneğini kullanın.</string>
     <string name="decoder_setup_none">Bu cihazda %1$s için video kod çözücü yok. Ayarlar’dan başka bir video kodeği seçin.</string>
+    <string name="pyrowave_link_notice">PyroWave %1$dx%2$d, %3$d fps için %4$d Mbps istiyor; bu bağlantının taşıyabileceğinden (%5$d Mbps) fazla. Çözünürlüğü veya kare hızını düşürün ya da HEVC veya AV1 kullanın.</string>
 </resources>

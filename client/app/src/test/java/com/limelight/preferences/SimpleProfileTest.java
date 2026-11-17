@@ -2,6 +2,7 @@ package com.limelight.preferences;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
@@ -166,6 +167,60 @@ public class SimpleProfileTest {
         assertEquals("auto", current.codec);
         assertFalse(current.adaptiveBitrate);
         assertEquals("off", current.adaptiveQuality);
+    }
+
+    /** An HDR10 screen, as the TCL TV or the Fold7 reports one. */
+    private void hdrDisplay() {
+        android.view.Display display = PreferenceConfiguration.defaultDisplay(context);
+        assertNotNull(display);
+        org.robolectric.Shadows.shadowOf(display).setDisplayHdrCapabilities(display.getDisplayId(),
+                1000f, 500f, 0.0001f, android.view.Display.HdrCapabilities.HDR_TYPE_HDR10);
+        SimpleProfile.forgetCapabilities();
+    }
+
+    @Test
+    public void aFreshHdrInstallShowsTheHdrRowOffBecauseTheStreamIsSdr() {
+        hdrDisplay();
+        assertTrue("the screen offers HDR10", SimpleProfile.hdrOffered(context));
+        assertFalse("a fresh install leaves the HDR switch off", SimpleProfile.current(context).hdr);
+        // The mapping answers Off for a stream in SDR (nightjar-policy's simple_profile; the Rust
+        // test and the shared contract hold that rule, this stand-in feeds its answer to the row).
+        SimpleProfileModel.use(SimpleProfileTest::policyForHdr);
+        // The HDR row renders SimpleProfile.chosen()'s HDR entry: it must be what the stream does.
+        assertFalse(SimpleProfile.custom(context, SimpleProfile.HDR));
+        String[] shown = SimpleProfile.chosen(context);
+        assertNotNull(shown);
+        assertEquals("off", shown[2]);
+        // A pick in another row keeps the HDR switch and the HDR choice Off.
+        assertTrue(SimpleProfile.apply(context, SimpleProfile.SMOOTHNESS, "balanced"));
+        assertFalse("a pick in another row must not turn HDR on",
+                prefs.getBoolean(PreferenceConfiguration.ENABLE_HDR_PREF_STRING, true));
+        assertEquals("off", prefs.getString(SimpleProfile.HDR, null));
+        assertNotNull(SimpleProfile.chosen(context));
+        assertEquals("off", SimpleProfile.chosen(context)[2]);
+        // The HDR row's own Auto choice turns it on, and a later pick elsewhere leaves it on.
+        assertTrue(SimpleProfile.apply(context, SimpleProfile.HDR, "auto"));
+        assertTrue(prefs.getBoolean(PreferenceConfiguration.ENABLE_HDR_PREF_STRING, false));
+        assertTrue(SimpleProfile.apply(context, SimpleProfile.PICTURE, "best"));
+        assertTrue("a pick in another row keeps HDR on",
+                prefs.getBoolean(PreferenceConfiguration.ENABLE_HDR_PREF_STRING, false));
+        assertNotNull(SimpleProfile.chosen(context));
+        assertEquals("auto", SimpleProfile.chosen(context)[2]);
+    }
+
+    /** The policy's HDR answer for the row: Auto while the stream asks for HDR, Off while it is SDR. */
+    private static String policyForHdr(String request) {
+        try {
+            JSONObject ask = new JSONObject(request);
+            if ("chosen".equals(ask.getString("op"))) {
+                String hdr = ask.getJSONObject("current").getBoolean("hdr") ? "auto" : "off";
+                return new JSONObject().put("ok", new JSONObject().put("choices", new JSONObject()
+                        .put("smoothness", "auto").put("picture", "auto").put("hdr", hdr))).toString();
+            }
+        } catch (JSONException e) {
+            throw new AssertionError(e);
+        }
+        return fake(request);
     }
 
     @Test

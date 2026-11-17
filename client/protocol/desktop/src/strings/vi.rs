@@ -1695,4 +1695,5 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("Opens straight into your games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open the list of PCs.", "Mở thẳng trò chơi của bạn ở toàn màn hình, nơi tay cầm hoặc điều khiển từ xa có thể chọn. Bật cho TV hoặc máy cầm tay; tắt để mở danh sách PC."),
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "Điểm sáng rực hơn và màu sắc phong phú hơn trên màn hình HDR. Tự động chỉ bật khi màn hình, bộ giải mã và PC hỗ trợ; hãy để Tự động trừ khi HDR trông nhạt."),
     ("Recommended", "Đề xuất"),
+    ("PyroWave at {}×{}, {} fps asks for {} Mbps, more than this link is assumed to carry ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave ở {0}×{1}, {2} fps cần {3} Mbps, nhiều hơn mức đường truyền này có thể tải ({4} Mbps). Hãy giảm độ phân giải hoặc tốc độ khung hình, hoặc dùng HEVC hay AV1."),
 ];

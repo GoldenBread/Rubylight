@@ -230,6 +230,112 @@
     }
   },
   {
+    "name": "a fresh HDR install with nothing stored reads Off like its SDR stream",
+    "request": {
+      "op": "chosen",
+      "current": {
+        "native_resolution": true,
+        "fps": null,
+        "pacing": "latency",
+        "vrr": true,
+        "latency_switches": true,
+        "drop_late_frames": true,
+        "host_frame_times": false,
+        "real_vrr": true,
+        "reduce_refresh": false,
+        "content_rate": false,
+        "bitrate_milli": null,
+        "codec": "auto",
+        "hdr": false,
+        "adaptive_bitrate": false,
+        "adaptive_quality": "off",
+        "stored_smoothness": null,
+        "stored_picture": null,
+        "stored_hdr": null
+      },
+      "display": {
+        "width": 1920,
+        "height": 1080,
+        "refresh_hz": 120,
+        "hdr": true,
+        "vrr": true
+      },
+      "decoder": {
+        "h264": true,
+        "hevc": true,
+        "av1": true,
+        "hdr": true
+      },
+      "host": {
+        "hdr": true,
+        "hevc": true,
+        "av1": true
+      }
+    },
+    "response": {
+      "ok": {
+        "choices": {
+          "smoothness": "auto",
+          "picture": "auto",
+          "hdr": "off"
+        }
+      }
+    }
+  },
+  {
+    "name": "a fresh desktop HDR install with Auto stored reads Off like its SDR stream",
+    "request": {
+      "op": "chosen",
+      "current": {
+        "native_resolution": true,
+        "fps": null,
+        "pacing": "latency",
+        "vrr": true,
+        "latency_switches": true,
+        "drop_late_frames": true,
+        "host_frame_times": false,
+        "real_vrr": true,
+        "reduce_refresh": false,
+        "content_rate": false,
+        "bitrate_milli": null,
+        "codec": "auto",
+        "hdr": false,
+        "adaptive_bitrate": false,
+        "adaptive_quality": "off",
+        "stored_smoothness": "auto",
+        "stored_picture": "auto",
+        "stored_hdr": "auto"
+      },
+      "display": {
+        "width": 1920,
+        "height": 1080,
+        "refresh_hz": 120,
+        "hdr": true,
+        "vrr": true
+      },
+      "decoder": {
+        "h264": true,
+        "hevc": true,
+        "av1": true,
+        "hdr": true
+      },
+      "host": {
+        "hdr": true,
+        "hevc": true,
+        "av1": true
+      }
+    },
+    "response": {
+      "ok": {
+        "choices": {
+          "smoothness": "auto",
+          "picture": "auto",
+          "hdr": "off"
+        }
+      }
+    }
+  },
+  {
     "name": "a changed advanced setting reads as Custom",
     "request": {
       "op": "chosen",

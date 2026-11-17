@@ -6,4 +6,5 @@
     <string name="startup_confirmation_rejected">A sessão do PC mudou ou a confirmação expirou. Toque no bloco novamente.</string>
     <string name="decoder_setup_rejected">O decodificador de vídeo deste dispositivo (%1$s) não conseguiu iniciar %2$s em %3$dx%4$d a %5$d FPS: %6$s. O PC não é a causa. Em Configurações, tente H.264, uma resolução menor ou uma taxa de quadros menor. Se continuar, use “Informar um problema”.</string>
     <string name="decoder_setup_none">Este dispositivo não tem um decodificador de vídeo para %1$s. Escolha outro codec de vídeo em Configurações.</string>
+    <string name="pyrowave_link_notice">PyroWave em %1$dx%2$d a %3$d fps pede %4$d Mbps, mais do que esta conexão consegue transportar (%5$d Mbps). Reduza a resolução ou a taxa de quadros, ou use HEVC ou AV1.</string>
 </resources>

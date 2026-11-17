@@ -200,6 +200,50 @@ pub fn start_kbps(
     }
 }
 
+/// A link that cannot carry the PyroWave rate its mode asks for: what the player is told before
+/// the stream starts, without blocking it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LinkNotice {
+    /// What the stream asks for: its chosen bitrate or the automatic default, raised to the mode's
+    /// floor, so the words name the rate the link really has to carry.
+    pub asked_kbps: u32,
+    /// The mode's severe-detail-loss floor.
+    pub minimum_kbps: u32,
+    /// What the link is assumed to carry: 90% of a known wired link, or
+    /// [`UNKNOWN_LINK_DEFAULT_CAP_KBPS`] when it is unknown (a wireless or unspecified route).
+    pub cap_kbps: u32,
+}
+
+/// The notice for a PyroWave stream on a link that cannot carry it, or `None` when it can. Call this
+/// only for a stream that will use PyroWave. `link_mbps` is this device's wired link toward the
+/// host, 0 when it is unknown (a wireless route, a VPN or a port that reports nothing): such a link
+/// is assumed to carry [`UNKNOWN_LINK_DEFAULT_CAP_KBPS`]. The stream still starts; lowering the
+/// resolution or frame rate, or HEVC/AV1, is the player's choice.
+pub fn link_notice(
+    width: u32,
+    height: u32,
+    fps: u32,
+    link_mbps: u32,
+    configured_kbps: u32,
+) -> Option<LinkNotice> {
+    let cap_kbps = if link_mbps > 0 {
+        link_mbps.saturating_mul(900)
+    } else {
+        UNKNOWN_LINK_DEFAULT_CAP_KBPS
+    };
+    let minimum_kbps = minimum_kbps(width, height, fps);
+    let start_kbps = if configured_kbps > 0 {
+        configured_kbps
+    } else {
+        default_kbps(width, height, fps, link_mbps)
+    };
+    (start_kbps > cap_kbps || minimum_kbps > cap_kbps).then_some(LinkNotice {
+        asked_kbps: start_kbps.max(minimum_kbps),
+        minimum_kbps,
+        cap_kbps,
+    })
+}
+
 // The host's arithmetic at a whole frame rate: tenths of a bit per pixel per frame, rounded up.
 fn bitrate_kbps(width: u32, height: u32, fps: u32, bpp_tenths: u32) -> u32 {
     (u128::from(width) * u128::from(height) * u128::from(fps) * u128::from(bpp_tenths))
@@ -384,6 +428,30 @@ mod tests {
         assert_eq!(start_kbps(900_000, false, 1920, 1080, 60, 0), 900_000);
         assert_eq!(start_kbps(1_500_000, false, 3840, 2160, 60, 1000), 1_500_000);
         assert_eq!(start_kbps(MAX_RUNTIME_KBPS, false, 3840, 2160, 60, 0), MAX_RUNTIME_KBPS);
+    }
+
+    #[test]
+    fn a_link_that_cannot_carry_the_mode_is_named_before_the_stream_starts() {
+        // 4K120's floor alone is above the 900 Mbps an unknown (wireless) route is assumed to
+        // carry: the automatic start does not fit, and lowering the bitrate cannot help.
+        let notice = link_notice(3840, 2160, 120, 0, 0).expect("4K120 on an unknown link");
+        assert_eq!((notice.asked_kbps, notice.minimum_kbps, notice.cap_kbps), (1_492_992, 1_492_992, 900_000));
+        // 4K60 and 1440p120 start at the cap and fit; 1080p120 is under it.
+        assert_eq!(link_notice(3840, 2160, 60, 0, 0), None);
+        assert_eq!(link_notice(2560, 1440, 120, 0, 0), None);
+        assert_eq!(link_notice(1920, 1080, 120, 0, 0), None);
+        // A chosen rate above the link is named even where the floor fits, and the message names
+        // the floor when the floor is what cannot fit.
+        let chosen = link_notice(1920, 1080, 60, 0, 1_500_000).expect("a chosen 1.5 Gbps");
+        assert_eq!(chosen.asked_kbps, 1_500_000);
+        let floor = link_notice(3840, 2160, 120, 0, 800_000).expect("a chosen 800 Mbps");
+        assert_eq!(floor.asked_kbps, 1_492_992, "the floor is what this mode needs");
+        assert_eq!(floor.cap_kbps, 900_000);
+        // A known wired link uses 90% of it: 2.5 GbE carries 4K120, gigabit and 100 Mbps do not
+        // carry what their modes start at.
+        assert_eq!(link_notice(3840, 2160, 120, 2_500, 0), None);
+        assert_eq!(link_notice(3840, 2160, 120, 1_000, 0).map(|n| n.cap_kbps), Some(900_000));
+        assert_eq!(link_notice(1920, 1080, 60, 100, 0).map(|n| n.cap_kbps), Some(90_000));
     }
 
     #[test]

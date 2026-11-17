@@ -1695,4 +1695,5 @@ sudo sysctl -w net.core.rmem_max={}", "接收缓冲区：系统只分配了所�
     ("Opens straight into your games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open the list of PCs.", "直接以全屏打开你的游戏，可用手柄或遥控器选择。电视或掌机请保持开启；关闭则打开 PC 列表。"),
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "在 HDR 屏幕上呈现更亮的高光和更丰富的色彩。自动仅在屏幕、解码器和 PC 都支持时开启；如果 HDR 看起来发白，请保持自动。"),
     ("Recommended", "推荐"),
+    ("PyroWave at {}×{}, {} fps asks for {} Mbps, more than this link is assumed to carry ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave 在 {0}×{1}、{2} fps 下需要 {3} Mbps，超过此链路可承载的 {4} Mbps。请降低分辨率或帧率，或改用 HEVC 或 AV1。"),
 ];

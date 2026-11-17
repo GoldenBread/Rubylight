@@ -1695,4 +1695,5 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приймання: систе
     ("Opens straight into your games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open the list of PCs.", "Одразу відкриває ваші ігри на весь екран, де контролер або пульт може вибрати гру. Залиште ввімкненим для телевізора або портативного пристрою; вимкніть, щоб відкрити список ПК."),
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "Яскравіші відблиски та насиченіші кольори на HDR-екрані. Авто вмикає HDR, лише якщо екран, декодер і ПК це підтримують; залиште Авто, якщо HDR здається бляклим."),
     ("Recommended", "Рекомендовано"),
+    ("PyroWave at {}×{}, {} fps asks for {} Mbps, more than this link is assumed to carry ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave за {0}×{1} і {2} кадрів/с потребує {3} Мбіт/с — більше, ніж може пропустити це з'єднання ({4} Мбіт/с). Зменште роздільну здатність або частоту кадрів чи використайте HEVC або AV1."),
 ];

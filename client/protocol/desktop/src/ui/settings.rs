@@ -200,7 +200,7 @@ pub(crate) fn simple_caps(display: &Display, hdr_display: bool, vrr: bool) -> si
 
 /// The stream's current settings, as the simple layer compares them. `vrr_offered` gates a saved VRR
 /// on a machine whose swap chain cannot tear, as the Variable refresh rate row does.
-pub(crate) fn simple_current(s: &Settings, display: &Display, caps: &simple::Capabilities, vrr_offered: bool)
+pub(crate) fn simple_current(s: &Settings, display: &Display, _caps: &simple::Capabilities, vrr_offered: bool)
                              -> simple::Current {
     let (_, _, _, default_kbps) = stream_mode(&Settings { bitrate_kbps: 0, ..s.clone() }, *display);
     let fps = if s.fps == 0 || s.fps == display.refresh_hz.round() as u32 { None } else { Some(s.fps) };
@@ -223,9 +223,9 @@ pub(crate) fn simple_current(s: &Settings, display: &Display, caps: &simple::Cap
         // PyroWave is no codec the simple layer offers, so these settings read as Custom.
         CodecPreference::PyroWave | CodecPreference::PyroWave444 => simple::Codec::H264,
     };
-    // The HDR switch left at its default is the layer's Auto, not a hand-picked Off: on a screen
-    // that shows HDR the row would otherwise read Off on a fresh install.
-    let auto_hdr = simple::values(simple::recommended(caps), caps).hdr;
+    // The HDR row shows what the stream does. A fresh install stores Auto, but the HDR switch it
+    // never set leaves the stream SDR, so the row reads Off through the mapping (simple_hdr's
+    // Auto is only a choice once HDR is actually asked for).
     simple::Current {
         native_resolution: s.width == 0 && s.height == 0,
         fps,
@@ -239,7 +239,7 @@ pub(crate) fn simple_current(s: &Settings, display: &Display, caps: &simple::Cap
         content_rate: false,
         bitrate_milli,
         codec,
-        hdr: s.hdr || (s.simple_hdr == simple::Hdr::Auto && auto_hdr),
+        hdr: s.hdr,
         adaptive_bitrate: s.adaptive_bitrate || s.client_hint_bitrate,
         adaptive_quality: match s.adaptive_quality {
             crate::config::QualityMode::Off => Some(simple::AdaptiveQuality::Off),
@@ -299,16 +299,28 @@ pub(crate) fn simple_apply(s: &mut Settings, display: &Display, caps: &simple::C
         simple::AdaptiveQuality::Off => crate::config::QualityMode::Off,
         simple::AdaptiveQuality::SavePower => crate::config::QualityMode::Battery,
     };
-    s.hdr = values.hdr;
+    // A pick in another row leaves an HDR switch the chain cannot turn into HDR as it is; Off and
+    // Auto where the chain supports it are the stream's own states (simple_effective_hdr above).
+    if values.hdr || choices.hdr == simple::Hdr::Off {
+        s.hdr = values.hdr;
+    }
+}
+
+/// The HDR choice the stream is using, for a pick in another Recommended row: Auto while the HDR
+/// switch is on (the stream asks for HDR), Off while it is off. A pick in one row carries this so it
+/// never turns HDR back on after the player turned it off under Video.
+pub(crate) fn simple_effective_hdr(s: &Settings) -> simple::Hdr {
+    if s.hdr { simple::Hdr::Auto } else { simple::Hdr::Off }
 }
 
 /// The simple layer's choices from the current settings, or the stored ones while they are Custom.
+/// A Custom HDR choice still reads the stream's own switch, so picking another row keeps HDR as it is.
 pub(crate) fn simple_state(s: &Settings, display: &Display, caps: &simple::Capabilities, vrr_offered: bool)
                            -> (simple::Choices, bool) {
     let stored = simple::Choices { smoothness: s.simple_smoothness, picture: s.simple_picture, hdr: s.simple_hdr };
     match simple::chosen(&simple_current(s, display, caps, vrr_offered), caps) {
         Some(choices) => (choices, false),
-        None => (stored, true),
+        None => (simple::Choices { hdr: simple_effective_hdr(s), ..stored }, true),
     }
 }
 

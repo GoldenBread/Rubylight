@@ -51,6 +51,40 @@ public final class PyroWaveBitrateFloor {
         return automatic ? defaultKbps(width, height, fps, linkMbps) : configured;
     }
 
+    /**
+     * The notice for a PyroWave stream on a link that cannot carry it, or {@code null} when it can.
+     * Call this only for a stream that will use PyroWave. {@code linkMbps} is this device's wired link
+     * toward the host, 0 when it is unknown (a wireless route, a VPN or a port that reports nothing):
+     * such a link is assumed to carry {@link #UNKNOWN_LINK_DEFAULT_CAP_KBPS}. The stream still
+     * starts; lowering the resolution or frame rate, or HEVC/AV1, is the player's choice.
+     */
+    public static LinkNotice linkNotice(int width, int height, int fps, int linkMbps, int configuredKbps) {
+        int capKbps = linkMbps > 0 ? (int) Math.min(linkMbps * 900L, Integer.MAX_VALUE)
+                : UNKNOWN_LINK_DEFAULT_CAP_KBPS;
+        int minimumKbps = minimumKbps(width, height, fps);
+        int startKbps = configuredKbps > 0 ? configuredKbps : defaultKbps(width, height, fps, linkMbps);
+        if (startKbps <= capKbps && minimumKbps <= capKbps) {
+            return null;
+        }
+        return new LinkNotice(Math.max(startKbps, minimumKbps), minimumKbps, capKbps);
+    }
+
+    /** A link that cannot carry the PyroWave rate its mode asks for, for the player's notice. */
+    public static final class LinkNotice {
+        /** What the stream asks for: its chosen bitrate or the automatic default, raised to the floor. */
+        public final int askedKbps;
+        /** The mode's severe-detail-loss floor. */
+        public final int minimumKbps;
+        /** What the link is assumed to carry: 90% of a known wired link, or the unknown-link cap. */
+        public final int capKbps;
+
+        LinkNotice(int askedKbps, int minimumKbps, int capKbps) {
+            this.askedKbps = askedKbps;
+            this.minimumKbps = minimumKbps;
+            this.capKbps = capKbps;
+        }
+    }
+
     // The host's arithmetic at a whole frame rate: tenths of a bit per pixel per frame, rounded up.
     private static int bitrateKbps(int width, int height, int fps, int bppTenths) {
         long bits = (long) Math.max(width, 0) * Math.max(height, 0) * Math.max(fps, 0) * bppTenths;

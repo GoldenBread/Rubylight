@@ -623,6 +623,23 @@ fn a_chosen_bitrate_below_pyrowaves_minimum_is_warned_in_the_settings() {
     assert!(pyrowave_bitrate_warning(&Settings { codec: CodecPreference::PyroWave444, ..low }, 1920, 1080, 60).is_some());
 }
 
+// The player hears before the first picture when a PyroWave mode asks for more than the link
+// carries; the stream still starts, so the words name the numbers and the way out.
+#[test]
+fn a_pyrowave_link_notice_names_the_mode_the_rate_and_the_link() {
+    let notice = nightjar_policy::pyrowave::link_notice(3840, 2160, 120, 0, 0)
+        .expect("4K120 on an unknown (wireless) link");
+    let text = connect::pyrowave_link_text(&notice, 3840, 2160, 120);
+    assert_eq!(text, "PyroWave at 3840×2160, 120 fps asks for 1493 Mbps, more than this link is assumed to carry (900 Mbps). Lower the resolution or frame rate, or use HEVC or AV1.");
+    let german = crate::strings::tests::with_lang(crate::strings::Lang::De,
+        || connect::pyrowave_link_text(&notice, 3840, 2160, 120));
+    assert_eq!(german, "PyroWave bei 3840×2160 mit 120 fps verlangt 1493 Mbps, mehr als diese Verbindung tragen kann (900 Mbps). Senke die Auflösung oder Bildrate oder nutze HEVC oder AV1.");
+    // 1080p60 is far under the unknown link's cap, and a chosen rate above it is named too.
+    assert_eq!(nightjar_policy::pyrowave::link_notice(1920, 1080, 60, 0, 0), None);
+    let chosen = nightjar_policy::pyrowave::link_notice(1920, 1080, 60, 0, 1_500_000).expect("a chosen 1.5 Gbps");
+    assert!(connect::pyrowave_link_text(&chosen, 1920, 1080, 60).contains("1500 Mbps"));
+}
+
 #[test]
 fn formats_respect_the_host() {
     let all = SCM_H264 | SCM_HEVC | SCM_HEVC_MAIN10 | SCM_AV1_MAIN8 | SCM_AV1_MAIN10;
