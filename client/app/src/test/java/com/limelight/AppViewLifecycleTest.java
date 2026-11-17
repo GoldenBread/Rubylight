@@ -96,6 +96,42 @@ public class AppViewLifecycleTest {
     }
 
     @Test
+    public void theCachedListIsReadOffTheUiThreadAndPaintedWhenItArrives() throws Exception {
+        String uuid = "cache-host";
+        Intent intent = new Intent(RuntimeEnvironment.getApplication(), Library.class)
+                .putExtra(AppView.UUID_EXTRA, uuid).putExtra(AppView.NAME_EXTRA, "PC");
+        ActivityController<Library> controller = Robolectric.buildActivity(Library.class, intent).setup();
+        try {
+            Library screen = controller.get();
+            try (java.io.OutputStream out =
+                         com.limelight.utils.CacheHelper.openCacheFileForOutput(screen.getCacheDir(), "applist", uuid)) {
+                out.write(LIBRARY.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            ComputerDetails computer = new ComputerDetails();
+            computer.uuid = uuid;
+            computer.name = "PC";
+            ReflectionHelpers.setField(screen, "computer", computer);
+            AppGridAdapter adapter = new AppGridAdapter(screen, new PreferenceConfiguration(), computer, "test", false);
+            ReflectionHelpers.setField(screen, "appGridAdapter", adapter);
+            ReflectionHelpers.setField(screen, "managerServiceBound", true);
+
+            ReflectionHelpers.callInstanceMethod(screen, "populateAppGridWithCache");
+            // The list is read on a worker: nothing reached the grid yet, so no caller waited for the file.
+            assertEquals(0, adapter.getCount());
+
+            long deadline = System.currentTimeMillis() + 5000;
+            while (adapter.getCount() == 0 && System.currentTimeMillis() < deadline) {
+                Shadows.shadowOf(Looper.getMainLooper()).idle();
+                Thread.sleep(10);
+            }
+            assertEquals(3, adapter.getCount());
+            assertEquals(LIBRARY, ReflectionHelpers.getField(screen, "lastRawApplist"));
+        } finally {
+            controller.pause().stop().destroy();
+        }
+    }
+
+    @Test
     public void validEmptyAppListExplainsItsStateAndStopsInlineLoading() {
         Intent intent = new Intent(RuntimeEnvironment.getApplication(), Library.class)
                 .putExtra(AppView.UUID_EXTRA, "empty-host").putExtra(AppView.NAME_EXTRA, "PC");
