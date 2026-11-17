@@ -1423,18 +1423,13 @@ fn wgc_interval_is_unrestricted_by_default_and_preserves_overrides() {
     }
     assert!(!default.values.contains_key("wgc_high_rate_capture"));
 }
-/// The video socket lives for the process. A jumbo session sets its
-/// don't-fragment flag, a stock session neither sets nor clears it, and only
-/// the last jumbo session clears it.
+/// A stream's shared video socket never refuses fragmentation: the flag would
+/// govern every stream on the process-wide socket, and a stock client behind a
+/// 1280-byte tunnel would lose its video. The PyroWave probe keeps the flag on
+/// its own socket for the jumbo path check.
 #[test]
-fn the_video_sockets_fragmentation_flag_follows_the_live_jumbo_sessions() {
-    let mut sessions = super::JumboSessions::default();
-    assert!(sessions.enter(), "the first jumbo session sets the flag");
-    assert!(!sessions.enter(), "a second one leaves it set");
-    assert!(!sessions.leave(), "the last jumbo session has not gone yet");
-    assert!(sessions.leave(), "the last one clears the flag");
-    // A stock session never calls in, so a later jumbo session sets it again.
-    assert!(sessions.enter());
+fn streams_never_set_dont_fragment_on_the_shared_video_socket() {
+    assert!(!super::video_refuses_fragmentation());
 }
 
 #[test]

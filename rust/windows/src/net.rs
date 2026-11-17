@@ -330,13 +330,13 @@ pub fn configure_udp(socket: &UdpSocket) -> Result<()> {
     Ok(())
 }
 /// Set whether this socket refuses to fragment its later datagrams:
-/// `IP_DONTFRAGMENT` and `IPV6_DONTFRAG`, so an oversized jumbo packet fails
+/// `IP_DONTFRAGMENT` and `IPV6_DONTFRAG`, so an oversized probe packet fails
 /// with WSAEMSGSIZE at the sender instead of being fragmented and lost whole
 /// on a hop that cannot reassemble it. Both options are tried because a
 /// dual-stack socket carries both families; the one the socket does not carry
-/// refuses its option harmlessly. A stock stream clears them, since the socket
-/// lives for the process and a jumbo session must not leave a later stock
-/// session refusing its own datagrams.
+/// refuses its option harmlessly. The PyroWave probe sets it on its own socket
+/// and clears it again; the shared video socket never sets it, since the flag
+/// would govern every stream using that process-wide socket.
 pub fn set_dont_fragment(socket: &UdpSocket, enabled: bool) -> Result<()> {
     let raw = SOCKET(socket.as_raw_socket() as usize);
     let value = u32::from(enabled).to_ne_bytes();
@@ -934,9 +934,9 @@ pub struct Batch {
     /// Datagrams the path refused because they are larger than its MTU with
     /// `IP_DONTFRAGMENT`/`IPV6_DONTFRAG` set; also counted in `dropped`.
     pub oversized: u64,
-    /// The sender set the socket to refuse fragmentation ([`set_dont_fragment`]),
-    /// so an oversized jumbo datagram is a lost packet to report, not a send
-    /// error that ends the stream.
+    /// The sender's socket refuses fragmentation ([`set_dont_fragment`]), as
+    /// the PyroWave probe's does for a jumbo path, so an oversized datagram is
+    /// a lost packet to report, not a send error that ends the stream.
     pub dont_fragment: bool,
     /// Enabled by the sender only for pacing traces.
     pub waits: Option<WritableWaits>,
@@ -1146,9 +1146,10 @@ impl Batch {
             })?;
             match result {
                 Ok(()) => sent += packet.len(),
-                // The video socket is process-wide: another session may have set DF even when
-                // this batch did not, so a stock-size datagram can hit the path's limit too.
-                // Drop it like a path-MTU refusal; ending a stock stream is worse.
+                // A socket that refuses fragmentation reports a datagram larger than the
+                // path's MTU this way, as the PyroWave probe does on a jumbo path. Drop
+                // it like a path-MTU refusal; ending the probe's or a stream's send is
+                // worse than losing that datagram.
                 Err(error) if error == WSAEMSGSIZE => {
                     self.too_large(1, error);
                 }

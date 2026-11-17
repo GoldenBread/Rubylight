@@ -625,9 +625,6 @@ struct Workers {
     pyrowave_sender: Option<crate::pyrowave_send::Sender>,
     audio: Option<thread::JoinHandle<()>>,
     client_commands: Option<crate::process::ClientCommands>,
-    /// This stream sends jumbo video packets and holds the shared socket's
-    /// don't-fragment flag until it ends.
-    jumbo: bool,
 }
 
 impl Workers {
@@ -642,7 +639,6 @@ impl Workers {
             pyrowave_sender: None,
             audio: None,
             client_commands: None,
-            jumbo: false,
         }
     }
 }

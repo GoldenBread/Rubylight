@@ -196,8 +196,7 @@ impl SessionThread<'_> {
         let mut first_seen: Option<(usize, Instant, Option<Duration>, Option<Instant>)> = None;
         let mut video_qos = Tagged::default();
         let mut batch = butterpollo_windows::net::Batch::default();
-        batch.dont_fragment = packetizer.packet_size
-            > usize::from(butterpollo_core::video_packet::STOCK_MAX_VIDEO_PACKET);
+        batch.dont_fragment = crate::stream::video_refuses_fragmentation();
         let mut packets = Vec::new();
         let trace_send = tracing::enabled!(target: "pacing", tracing::Level::TRACE);
         let mut admission_trace = trace_send.then(AdmissionTrace::default);

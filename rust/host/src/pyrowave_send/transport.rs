@@ -17,8 +17,7 @@ pub(super) fn run(
         crate::video_send::send_priority(config.boolean("video_send_mmcss_only", false));
     let timer = Timer::new()?;
     let mut batch = Batch::default();
-    batch.dont_fragment = current.config.packet_size
-        > usize::from(butterpollo_core::video_packet::STOCK_MAX_VIDEO_PACKET);
+    batch.dont_fragment = crate::stream::video_refuses_fragmentation();
     let mut pacer = Pacer::new(Instant::now());
     let mut route_check = RouteCheck::new(Instant::now());
     let mut send_buffer = SendBuffer::default();

@@ -707,8 +707,7 @@ pub(super) fn run_with(
 ) -> Result<()> {
     let mut batch = Batch::default();
     batch.waits = Some(Default::default());
-    batch.dont_fragment =
-        s.config.packet_size > usize::from(butterpollo_core::video_packet::STOCK_MAX_VIDEO_PACKET);
+    batch.dont_fragment = crate::stream::video_refuses_fragmentation();
     let batch_kb = match c.integer("video_max_batch_size_kb", 64) {
         16 => 16,
         32 => 32,

@@ -1,2 +1,2 @@
 # Video after jumbo streams
-- **A stock Moonlight client gets video after a jumbo-packet client has streamed.** The video socket's don't-fragment setting now follows the live jumbo sessions: it is set when the first one starts and cleared when the last one ends, instead of whichever stream started last deciding it for every stream.
+- **A stock Moonlight client keeps its video while a jumbo-packet client streams.** The shared video socket no longer has its don't-fragment setting turned on by a jumbo stream, so a stock client behind a WireGuard or Tailscale tunnel is never refused for the size of its packets; the jumbo path is still checked by the route's MTU offer and by the PyroWave probe on its own socket.
