@@ -198,6 +198,40 @@ pub fn keep_screen_awake(streaming: bool) {
     }
 }
 
+/// How long the launcher keeps the screen awake after the last controller input or the end of a
+/// stream: the desktop counts no controller input as activity, so a couch player browsing games
+/// with a controller would see the screen dim and blank.
+pub const LAUNCHER_AWAKE: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+/// The launcher's hold on the screen: awake for [`LAUNCHER_AWAKE`] after controller input or a
+/// stream, then free to sleep.
+#[derive(Default)]
+pub struct LauncherAwake {
+    until: Option<std::time::Instant>,
+}
+
+impl LauncherAwake {
+    /// Controller input arrived, or a stream ended.
+    pub fn active(&mut self, now: std::time::Instant) {
+        self.until = Some(now + LAUNCHER_AWAKE);
+    }
+
+    /// Whether the launcher holds the screen awake at `now`.
+    pub fn wants(&self, now: std::time::Instant) -> bool {
+        self.until.is_some_and(|until| now < until)
+    }
+
+    /// Sets SDL's screen saver to [`Self::wants`], on each launcher frame (never during a stream,
+    /// which holds the screen itself).
+    pub fn apply(&self, now: std::time::Instant) {
+        let want = self.wants(now);
+        // SAFETY: a plain SDL query.
+        if want == unsafe { SDL_ScreenSaverEnabled() } {
+            keep_screen_awake(want);
+        }
+    }
+}
+
 /// The system's preferred languages, most preferred first, as lower-case codes with the country
 /// when the system names one ("de", "pt-br", "zh-tw").
 pub fn preferred_languages() -> Vec<String> {
@@ -1565,6 +1599,18 @@ mod tests {
             assert!(!SDL_ScreenSaverEnabled(), "a stream keeps it awake");
             keep_screen_awake(false);
             assert!(SDL_ScreenSaverEnabled(), "and lets it go when it ends");
+            // In the launcher, controller input holds it for a while: the desktop does not see it.
+            let mut launcher = LauncherAwake::default();
+            let now = std::time::Instant::now();
+            launcher.apply(now);
+            assert!(SDL_ScreenSaverEnabled(), "no controller input yet");
+            launcher.active(now);
+            launcher.apply(now);
+            assert!(!SDL_ScreenSaverEnabled(), "a controller was used");
+            launcher.apply(now + LAUNCHER_AWAKE - std::time::Duration::from_secs(1));
+            assert!(!SDL_ScreenSaverEnabled());
+            launcher.apply(now + LAUNCHER_AWAKE);
+            assert!(SDL_ScreenSaverEnabled(), "free to sleep once it has been idle");
             SDL_QuitSubSystem(SDL_INIT_VIDEO);
             SDL_ResetHint(SDL_HINT_VIDEO_DRIVER);
             SDL_ResetHint(SDL_HINT_VIDEO_ALLOW_SCREENSAVER);

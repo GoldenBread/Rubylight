@@ -374,6 +374,8 @@ impl App {
         // Kept for the next stream, which turns the PC's automatic bitrate on only after it is off.
         let stopped_host = streaming.host_id;
         let stop = streaming.finish(self.window, &mut self.pads);
+        // A player who just left a stream, maybe with a controller, is still there.
+        self.screen_awake.active(Instant::now());
         // The ones that reached their PC are done with; another PC's stays beside this one.
         self.abr_stops.retain(|(_, stop)| !stop.finished());
         self.abr_stops.extend(stop.map(|stop| (stopped_host, stop)));
