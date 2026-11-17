@@ -966,7 +966,7 @@ impl Media {
                                     Err(_) if worker_stop.load(Ordering::Acquire) => return Ok(()),
                                     Err(error) => return Err(error),
                                 };
-                                if switched_to_duplication {
+                                if switched_to_duplication && capture.backend() == "ddx" {
                                     capture_warnings.set("capture_backend", DUPLICATION_WARNING);
                                 }
                                 opened_display = prepared.display_target();
@@ -1158,7 +1158,7 @@ impl Media {
                                     Err(_) if worker_stop.load(Ordering::Acquire) => return Ok(()),
                                     Err(error) => return Err(error),
                                 };
-                                if switched_to_duplication {
+                                if switched_to_duplication && capture.backend() == "ddx" {
                                     capture_warnings.set("capture_backend", DUPLICATION_WARNING);
                                 }
                                 opened_display = prepared.display_target();
