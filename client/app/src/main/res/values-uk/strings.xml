@@ -543,4 +543,27 @@
     <string name="game_info_length_long">Від 15 до 40 годин</string>
     <string name="game_info_length_very_long">Понад 40 годин</string>
     <string name="game_info_credits">Обкладинки — SteamGridDB. Відомості про ігри — IGDB.com.</string>
+    <string name="title_simple_smoothness">Плавність трансляції</string>
+    <string name="summary_simple_smoothness">Авто слідує за екраном і декодером: найновіший кадр на кожному оновленні, зі змінною частотою оновлення, лише якщо ви ввімкнули її в розділі «Дисплей і зображення». Максимально плавно утримує кожен кадр для рівного ритму з трохи більшою затримкою; Мінімальна затримка ніколи не чекає. Залиште Авто, якщо гра не смикається і не здається повільною.</string>
+    <string name="simple_smoothest">Максимально плавно</string>
+    <string name="simple_balanced">Збалансовано</string>
+    <string name="simple_lowest_delay">Мінімальна затримка</string>
+    <string name="title_simple_picture">Якість зображення</string>
+    <string name="summary_simple_picture">Задає бітрейт: Найкраще витрачає більше мережі для чіткішої картинки, Економія даних витрачає менше і знижує якість, коли з\'єднання слабке. Залиште Авто, якщо вам не потрібна додаткова чіткість або менші витрати даних.</string>
+    <string name="simple_picture_auto">Авто (рекомендовано)</string>
+    <string name="simple_picture_best">Найкраще</string>
+    <string name="simple_picture_save_data">Економія даних</string>
+    <string name="title_simple_screen">Екран</string>
+    <string name="summary_simple_screen">Власна роздільна здатність і частота оновлення цього пристрою. Зменште їх у розділі Відео, якщо трансляція смикається.</string>
+    <string name="simple_screen_value">%1$d×%2$d при %3$d Гц</string>
+    <string name="title_simple_hdr">HDR</string>
+    <string name="simple_hdr_auto">Авто (рекомендовано)</string>
+    <string name="title_simple_console">Режим консолі</string>
+    <string name="summary_simple_console">Одразу відкриває ваші ігри на весь екран, де контролер або пульт може вибрати гру. Залиште ввімкненим для телевізора або портативного пристрою; вимкніть, щоб відкрити список ПК.</string>
+    <string name="simple_back_to_recommended">Повернутися до рекомендованого</string>
+    <string name="summary_simple_back_to_recommended">Повертає три вибори вище до того, що цей пристрій робить найкраще; налаштування, які вони означають, змінюються разом із ними.</string>
+    <string name="simple_profile_failed">Не вдалося прочитати рекомендовані налаштування на цьому пристрої</string>
+    <string name="settings_section_simple">Рекомендовано</string>
+    <string name="settings_section_simple_summary">Вибір, потрібний більшості; усі подробиці — у розділах нижче.</string>
+    <string name="summary_simple_hdr">Яскравіші відблиски та насиченіші кольори на HDR-екрані. Авто вмикає HDR, лише якщо екран, декодер і ПК це підтримують; ввімкнення в інших випадках дає бляклу картинку. Залиште Авто, якщо картинка не здається бляклою.</string>
 </resources>

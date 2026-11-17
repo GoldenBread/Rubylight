@@ -127,7 +127,9 @@ public class StreamSettings extends NightjarActivity {
     static final Map<String, String[]> SECTIONS = new LinkedHashMap<>();
     static {
         // Each section: its main rows (untitled), its More row, then the folded rows in their groups. Desktop
-        // Nightjar draws the same sections, groups and order.
+        // Nightjar draws the same sections, groups and order. "simple" is the simple layer (SimpleProfile): its
+        // six rows are all main, and the settings screen shows them before the sections that hold the detail.
+        SECTIONS.put("simple", new String[] {"category_simple_main"});
         SECTIONS.put("video", new String[] {"category_video_main", "category_more_video", "category_basic_settings"});
         SECTIONS.put("display", new String[] {"category_display_main", "category_more_display", "category_display_refresh",
                 "category_upscaling", "category_host_display"});
@@ -155,6 +157,7 @@ public class StreamSettings extends NightjarActivity {
     static List<String> mainKeys(Context context, String section) {
         int tier;
         switch (section) {
+            case "simple": tier = R.array.settings_tier_simple; break;
             case "video": tier = R.array.settings_tier_video; break;
             case "display": tier = R.array.settings_tier_display; break;
             case "input": tier = R.array.settings_tier_input; break;
@@ -738,6 +741,7 @@ public class StreamSettings extends NightjarActivity {
 
     static int sectionTitle(String section) {
         switch (section) {
+            case "simple": return R.string.settings_section_simple;
             case "video": return R.string.settings_section_video;
             case "display": return R.string.settings_section_display;
             case "input": return R.string.settings_section_input;
@@ -1570,6 +1574,13 @@ public class StreamSettings extends NightjarActivity {
         private int codecSummaryGeneration;
         private final SharedPreferences.OnSharedPreferenceChangeListener summaryUpdater =
                 (prefs, key) -> {
+                    // Only the VRR keys change what the capability scan reads; a simple choice
+                    // clears the cache itself (SimpleProfile.apply).
+                    if (PreferenceConfiguration.VRR_PREF_STRING.equals(key)
+                            || PreferenceConfiguration.REAL_VRR_PREF_STRING.equals(key)
+                            || SimpleProfile.VRR_OPT_IN.equals(key) || SimpleProfile.VRR_LAST.equals(key)) {
+                        SimpleProfile.forgetCapabilities();
+                    }
                     refreshState();
                     if (PreferenceConfiguration.USB_FORWARDING_PREF_STRING.equals(key)) {
                         com.limelight.binding.usb.UsbForwarding.syncPersistentPermission(getActivity());
@@ -2036,9 +2047,23 @@ public class StreamSettings extends NightjarActivity {
             }
         }
 
+        /** The Screen row: the size and rate the simple layer streams at, read when the page opens. */
+        private void updateSimpleScreenSummary() {
+            Preference row = findPreference("simple_screen");
+            String nativeResolution = PreferenceConfiguration.nativeResolution(getActivity());
+            if (row == null || nativeResolution == null) return;
+            int refresh = DisplayFrameRatePolicy.streamFrameRate(DisplayFrameRatePolicy.maxRefreshRate(
+                    PreferenceConfiguration.defaultDisplay(getActivity())));
+            row.setSummary(getString(R.string.simple_screen_value,
+                    PreferenceConfiguration.getWidthFromResolutionString(nativeResolution),
+                    PreferenceConfiguration.getHeightFromResolutionString(nativeResolution), refresh));
+        }
+
         @Override
         public void onResume() {
             super.onResume();
+            SimpleProfile.forgetCapabilities();
+            updateSimpleScreenSummary();
             // Microphone access can be withdrawn in Android settings; the switch follows it.
             SwitchPreference mic = (SwitchPreference) findPreference(PreferenceConfiguration.ENABLE_MIC_PREF_STRING);
             if (mic != null && mic.isChecked() && !hasMicPermission()) {
@@ -2608,6 +2633,26 @@ public class StreamSettings extends NightjarActivity {
                 texture.setEnabled(!hdr.isChecked() && !(Boolean) value && !"forcepyrowave".equals(codec.getValue()));
                 return true;
             });
+            // The simple layer: a read-only line for the screen it streams at, and the one-tap way back.
+            Preference simpleScreen = findPreference("simple_screen");
+            if (simpleScreen != null) {
+                simpleScreen.setOnPreferenceClickListener(preference -> {
+                    ((StreamSettings) getActivity()).showSection("display");
+                    return true;
+                });
+            }
+            Preference recommended = findPreference("simple_back_to_recommended");
+            if (recommended != null) {
+                recommended.setOnPreferenceClickListener(preference -> {
+                    if (!SimpleProfile.applyRecommended(getActivity())) {
+                        Toast.makeText(getActivity(), R.string.simple_profile_failed, Toast.LENGTH_LONG).show();
+                    }
+                    updateSimpleScreenSummary();
+                    return true;
+                });
+            }
+            Preference simpleHdr = findPreference("simple_hdr");
+            if (simpleHdr != null && !SimpleProfile.hdrOffered(getActivity())) removeSetting("simple_hdr");
             findPreference(SHARP_COLOR_KEY).setOnPreferenceClickListener(preference -> {
                 SharedPreferences prefs = getPreferenceManager().getSharedPreferences();
                 showChoices(R.string.title_sharp_color, R.array.sharp_color_names, PreferenceConfiguration.sharpColor(prefs) ? 1 : 0,
@@ -2782,7 +2827,9 @@ public class StreamSettings extends NightjarActivity {
                 return true;
             });
             for (String moreSection : SECTIONS.keySet()) {
-                findPreference(MORE_PREFIX + moreSection).setOnPreferenceClickListener(preference -> {
+                Preference more = findPreference(MORE_PREFIX + moreSection);
+                if (more == null) continue;
+                more.setOnPreferenceClickListener(preference -> {
                     toggleMore(moreSection);
                     return true;
                 });

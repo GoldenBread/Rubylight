@@ -543,4 +543,27 @@
     <string name="game_info_length_long">15-40 saat</string>
     <string name="game_info_length_very_long">40 saatten uzun</string>
     <string name="game_info_credits">Kapaklar SteamGridDB\'den. Oyun bilgileri IGDB.com\'dan.</string>
+    <string name="title_simple_smoothness">Yayın akıcılığı</string>
+    <string name="summary_simple_smoothness">Otomatik ekranı ve kod çözücüyü izler: her yenilemede en yeni kare, değişken yenileme hızı yalnızca «Ekran ve görüntü» bölümünde açtıysanız kullanılır. En akıcı, her kareyi tutarak sabit bir ritim sağlar ve gecikmeyi biraz artırır; En düşük gecikme asla beklemez. Bir oyun takılmıyor veya yavaş hissettirmiyorsa Otomatik olarak bırakın.</string>
+    <string name="simple_smoothest">En akıcı</string>
+    <string name="simple_balanced">Dengeli</string>
+    <string name="simple_lowest_delay">En düşük gecikme</string>
+    <string name="title_simple_picture">Görüntü kalitesi</string>
+    <string name="summary_simple_picture">Bit hızını ayarlar: En iyi, daha keskin görüntü için daha fazla ağ kullanır, Veri tasarrufu daha az kullanır ve bağlantı zorlandığında kaliteyi düşürür. Ekstra keskinliğe veya daha az veriye ihtiyacınız yoksa Otomatik olarak bırakın.</string>
+    <string name="simple_picture_auto">Otomatik (önerilen)</string>
+    <string name="simple_picture_best">En iyi</string>
+    <string name="simple_picture_save_data">Veri tasarrufu</string>
+    <string name="title_simple_screen">Ekran</string>
+    <string name="summary_simple_screen">Bu cihazın kendi çözünürlüğü ve yenileme hızı. Yayın takılırsa Video bölümünde düşürün.</string>
+    <string name="simple_screen_value">%1$d×%2$d, %3$d Hz</string>
+    <string name="title_simple_hdr">HDR</string>
+    <string name="simple_hdr_auto">Otomatik (önerilen)</string>
+    <string name="title_simple_console">Konsol modu</string>
+    <string name="summary_simple_console">Oyunlarınızı doğrudan tam ekran açar; bir kol veya kumanda birini seçebilir. Televizyon veya el konsolu için açık bırakın; PC listesini açmak için kapatın.</string>
+    <string name="simple_back_to_recommended">Önerilene dön</string>
+    <string name="summary_simple_back_to_recommended">Yukarıdaki üç seçimi bu cihazın en iyi yaptığı değerlere döndürür; temsil ettikleri ayarlar da onlarla değişir.</string>
+    <string name="simple_profile_failed">Önerilen ayarlar bu cihazda okunamadı</string>
+    <string name="settings_section_simple">Önerilen</string>
+    <string name="settings_section_simple_summary">Çoğu kişinin ihtiyaç duyduğu seçimler; tüm ayrıntılar aşağıdaki bölümlerde.</string>
+    <string name="summary_simple_hdr">HDR ekranda daha parlak vurgular ve daha zengin renkler. Otomatik, yalnızca ekran, kod çözücü ve PC desteklediğinde açar; başka yerde açmak görüntüyü soluk gösterir. Görüntü soluk görünmüyorsa Otomatik olarak bırakın.</string>
 </resources>

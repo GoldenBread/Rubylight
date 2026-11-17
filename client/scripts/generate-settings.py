@@ -13,6 +13,12 @@ SEEKBAR = "{http://schemas.moonlight-stream.com/apk/res/seekbar}"
 
 # Usage advice is editorial; labels, options, ranges, dependencies, sections and preset writes come from source.
 ADVICE = {
+    "simple_smoothness": "Auto follows the screen and decoder: the newest picture at each refresh, with Variable refresh rate only if it was turned on in Display & image; Smoothest holds every frame for a steady cadence with a little more delay; Lowest delay never waits; Balanced sits between them with VRR. Changing it writes the frame pacing, V-Sync flags and latency switches together (SimpleProfile, nightjar-policy's simple_profile), so the sections below show the same values. Stored as `simple_smoothness` (auto, smoothest, balanced or lowest-delay).",
+    "simple_picture": "Auto uses the bitrate for the resolution, frame rate and Automatic codec; Best spends 1.5 times that for a sharper picture; Save data uses 0.6 times and lets the bitrate and quality fall when the link struggles. Changing it writes the bitrate, the codec (Automatic), Lower bitrate and Automatic quality together (SimpleProfile). Stored as `simple_picture` (auto, best or save-data).",
+    "simple_screen": "This device's own resolution and refresh rate, which the simple layer always streams at. Lower the resolution under Video if the stream stutters; the row then shows Custom. Read-only.",
+    "simple_hdr": "Auto is the default and turns HDR on only where the screen, the decoder and the PC support it; Off always streams SDR. It writes the HDR switch under Video and reads it there. Stored as `simple_hdr` (auto or off).",
+    "checkbox_console_home": "Opens straight into Home, the full-screen library of your games a controller or remote can navigate, instead of the list of PCs. On by default; needs a paired PC that shares its game library for Home to have something to show. Stored as `checkbox_console_home`, and turning it on sets `list_open_on_start` to pcs so a game countdown does not win (StartScreenChoice).",
+    "simple_back_to_recommended": "Sets the three choices above back to Auto, which writes the settings the device measured as best. Your other settings keep their values until then. Opens nothing; the values show in the sections below.",
     "theme": "Choose System to follow the system theme, Light for the day palette even when the system is dark, Dark for the dark grey theme on app screens, menus and dialogs even when the system uses a light theme (as most TVs do), or OLED black for pure black backgrounds. A TV keeps the night palette with System and with Light. Applies immediately and stays separate from stream profiles. Stored as `theme` (system, light, dark or oled_black); the two switches older versions used, `checkbox_always_dark` and `checkbox_oled_black`, move there on the first read. High contrast keeps the app black whatever is chosen here.",
     "list_ui_scale": "Raise for large, readable menus on a TV or a small phone; lower to fit more on screen. Scales the whole app layout, not the stream, and the system font size still applies on top. Applies immediately and stays separate from stream profiles.",
     "list_ui_mode": "Automatic follows the device. Choose TV on a handheld or phone that is connected to a TV (a Retroid Pocket docked over HDMI, for example) to get the TV layouts with focus, a remote or gamepad and larger rows; choose Handheld to get the touch layouts on a TV. The stream is not changed. Applies immediately and stays separate from stream profiles.",
@@ -345,7 +351,7 @@ def generate():
                 choices += f"; buttons {display_value(key, key_step)}"
             if node.get(SEEKBAR + "presets"):
                 choices += "; presets " + ", ".join(display_value(key, item) for item in array(node.get(SEEKBAR + "presets")))
-        elif "SwitchPreference" in node.tag or "CheckboxPreference" in node.tag:
+        elif "SwitchPreference" in node.tag or "CheckboxPreference" in node.tag or "ConsoleModePreference" in node.tag:
             choices = "On; Off"
         if key == "list_resolution":
             default = "This screen's native resolution; follows the screen used for each stream"
@@ -377,6 +383,11 @@ def generate():
         elif key == "checkbox_enable_perf_overlay":
             default = array("@array/overlay_choice_names")[0]
             choices = "; ".join(array("@array/overlay_choice_names"))
+        elif key in ("simple_smoothness", "simple_picture", "simple_hdr"):
+            names = {"simple_smoothness": "simple_smoothness_names", "simple_picture": "simple_picture_names",
+                     "simple_hdr": "simple_hdr_names"}[key]
+            default = array("@array/" + names)[0]
+            choices = "; ".join(array("@array/" + names))
         elif key == "low_latency_customize" or key.startswith("more_"):
             default = "Closed"
         else:

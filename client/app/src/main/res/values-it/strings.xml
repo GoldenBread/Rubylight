@@ -543,4 +543,27 @@
     <string name="game_info_length_long">Da 15 a 40 ore</string>
     <string name="game_info_length_very_long">Oltre 40 ore</string>
     <string name="game_info_credits">Copertine da SteamGridDB. Dati dei giochi da IGDB.com.</string>
+    <string name="title_simple_smoothness">Fluidità dello streaming</string>
+    <string name="summary_simple_smoothness">Auto segue lo schermo e il decoder: l\'immagine più recente a ogni aggiornamento, con frequenza di aggiornamento variabile solo se l\'hai attivata in «Display e immagine». Il più fluido trattiene ogni fotogramma per un ritmo costante con un po\' più di ritardo; Ritardo minimo non aspetta mai. Lascia su Auto a meno che un gioco non scatti o sembri lento.</string>
+    <string name="simple_smoothest">Il più fluido</string>
+    <string name="simple_balanced">Bilanciato</string>
+    <string name="simple_lowest_delay">Ritardo minimo</string>
+    <string name="title_simple_picture">Qualità dell\'immagine</string>
+    <string name="summary_simple_picture">Imposta il bitrate: Migliore spende più rete per un\'immagine più nitida, Risparmia dati ne usa meno e abbassa la qualità quando la connessione fatica. Lascia su Auto a meno che tu non voglia la nitidezza extra o meno dati.</string>
+    <string name="simple_picture_auto">Auto (consigliato)</string>
+    <string name="simple_picture_best">Migliore</string>
+    <string name="simple_picture_save_data">Risparmia dati</string>
+    <string name="title_simple_screen">Schermo</string>
+    <string name="summary_simple_screen">La risoluzione e la frequenza di aggiornamento di questo dispositivo. Abbassala in Video se lo streaming scatta.</string>
+    <string name="simple_screen_value">%1$d×%2$d a %3$d Hz</string>
+    <string name="title_simple_hdr">HDR</string>
+    <string name="simple_hdr_auto">Auto (consigliato)</string>
+    <string name="title_simple_console">Modalità console</string>
+    <string name="summary_simple_console">Apre direttamente i tuoi giochi a schermo intero, dove un controller o un telecomando può sceglierne uno. Lasciala attiva per un televisore o un handheld; disattivala per aprire l\'elenco dei PC.</string>
+    <string name="simple_back_to_recommended">Torna a consigliato</string>
+    <string name="summary_simple_back_to_recommended">Riporta le tre scelte sopra a ciò che questo dispositivo fa meglio; le impostazioni che rappresentano cambiano con esse.</string>
+    <string name="simple_profile_failed">Impossibile leggere le impostazioni consigliate su questo dispositivo</string>
+    <string name="settings_section_simple">Consigliato</string>
+    <string name="settings_section_simple_summary">Le scelte che servono ai più; le sezioni sotto contengono ogni dettaglio.</string>
+    <string name="summary_simple_hdr">Luci più brillanti e colori più ricchi su uno schermo HDR. Auto lo attiva solo se schermo, decoder e PC lo supportano; attivarlo altrove rende l\'immagine slavata. Lascia su Auto a meno che l\'immagine non appaia slavata.</string>
 </resources>

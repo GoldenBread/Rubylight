@@ -706,13 +706,13 @@ fn settings_sections_follow_androids_order() {
     f.settle();
     // The list beside the rows names the sections in order, then the open one heads the rows.
     let titles: Vec<&str> = f.drawn.iter().map(String::as_str).filter(|t| SETTINGS_SECTIONS.contains(t)).collect();
-    assert_eq!(titles[..8], SETTINGS_SECTIONS, "the list names the sections in order");
-    assert_eq!(titles[8..], ["Video"], "and the first is open");
+    assert_eq!(titles[..9], SETTINGS_SECTIONS, "the list names the sections in order");
+    assert_eq!(titles[9..], ["Video"], "and the first is open");
     // A narrow window lists them as chips above the rows, in the same order.
     f.size = vec2(800.0, 12000.0);
     f.settle();
     let titles: Vec<&str> = f.drawn.iter().map(String::as_str).filter(|t| SETTINGS_SECTIONS.contains(t)).collect();
-    assert_eq!(titles[..8], SETTINGS_SECTIONS, "the chips name the sections in order");
+    assert_eq!(titles[..9], SETTINGS_SECTIONS, "the chips name the sections in order");
 }
 
 /// The widgets a screen reader can press or change that have no name to say, with their role and place.
@@ -738,7 +738,7 @@ fn screen_readers_hear_a_name_for_everything_on_the_main_screens() {
     f.ctx.enable_accesskit();
     f.size = vec2(1280.0, 12000.0);
     // Every row of the settings, each section's fold open.
-    f.l.settings_view.more = [true; 8];
+    f.l.settings_view.more = [true; 9];
     let id = f.hosts.list[0].id;
     let mut screens = vec![("PCs", Screen::Hosts), ("Home", Screen::Home), ("library", Screen::Apps(id)), ("details", Screen::HostDetails(id)), ("PC settings", Screen::HostSettings(id))];
     screens.push(("settings", Screen::Settings));
@@ -824,9 +824,9 @@ fn settings_show_a_sections_main_rows_then_a_counted_fold() {
     for screen in [Screen::Settings, Screen::HostSettings(id)] {
         f.l.go(screen);
         for section in SETTINGS_SECTIONS {
-            if screen != Screen::Settings && section == "App" { continue; }
+            if screen != Screen::Settings && (section == "App" || section == "Recommended") { continue; }
             f.l.settings_view.section = section;
-            f.l.settings_view.more = [false; 8];
+            f.l.settings_view.more = [false; 9];
             f.settle();
             let closed = f.l.settings_view.drawn.clone();
             assert!(!closed.is_empty(), "{section} draws rows");
@@ -834,7 +834,7 @@ fn settings_show_a_sections_main_rows_then_a_counted_fold() {
             assert!(!any_main || closed.iter().all(|(key, folded)| main_row(key) && !folded),
                 "{screen:?} {section}: only main rows while closed: {closed:?}");
             let more = fold(&f);
-            f.l.settings_view.more = [true; 8];
+            f.l.settings_view.more = [true; 9];
             f.settle();
             let open = f.l.settings_view.drawn.clone();
             let folded = open.iter().filter(|(_, folded)| *folded).count();
@@ -915,7 +915,7 @@ fn the_pc_render_resolution_is_named_and_ranged_as_on_android() {
     let mut f = Frames::new(record("PC", true, false), Reach::Online);
     f.size = vec2(1280.0, 12000.0);
     f.l.settings_view.section = "Display & image";
-    f.l.settings_view.more = [true; 8];
+    f.l.settings_view.more = [true; 9];
     f.l.go(Screen::Settings);
     f.settle();
     assert!(!shows(&f, "PC render resolution"), "with the virtual display off it has nothing to set: {:?}", f.drawn);
@@ -958,7 +958,7 @@ fn a_pcs_own_display_scaling_is_offered_only_by_hosts_that_read_it() {
         let mut f = Frames::with(record("PC", true, false), Reach::Online, Some(info(&extra)), Vec::new());
         f.size = vec2(1280.0, 12000.0);
         f.l.settings_view.section = "Display & image";
-        f.l.settings_view.more = [true; 8];
+        f.l.settings_view.more = [true; 9];
         let id = f.hosts.list[0].id;
         f.l.go(Screen::HostSettings(id));
         f.settle();
@@ -1337,7 +1337,7 @@ fn at_150_percent_in_german_every_settings_page_fits_the_width() {
     let mut f = Frames::new(record("PC", true, false), Reach::Online);
     fit_150(&mut f);
     // Every row of every section.
-    f.l.settings_view.more = [true; 8];
+    f.l.settings_view.more = [true; 9];
     let id = f.hosts.list[0].id;
     for screen in [Screen::Home, Screen::Settings, Screen::HostSettings(id), Screen::Profiles, Screen::Controllers, Screen::Shortcuts] {
         f.l.go(screen);
@@ -1345,6 +1345,7 @@ fn at_150_percent_in_german_every_settings_page_fits_the_width() {
         assert_fits(&f, &format!("{screen:?}"), false);
         if matches!(screen, Screen::Settings | Screen::HostSettings(_)) {
             for section in SETTINGS_SECTIONS {
+                if screen != Screen::Settings && (section == "App" || section == "Recommended") { continue; }
                 f.l.settings_view.section = section;
                 f.settle();
                 assert_fits(&f, &format!("{screen:?} {section}"), false);
@@ -1382,7 +1383,7 @@ fn at_150_percent_in_german_the_roaming_row_fits_with_each_choice() {
     // without scrolling to them.
     f.size.y = 8000.0;
     f.l.settings_view.section = "Streaming";
-    f.l.settings_view.more = [true; 8];
+    f.l.settings_view.more = [true; 9];
     let shown = |f: &Frames, text: &str| f.placed.iter().any(|(t, _, _)| t.contains(text));
     let id = f.hosts.list[0].id;
     for screen in [Screen::Settings, Screen::HostSettings(id)] {
@@ -3039,7 +3040,7 @@ fn dialogs_put_the_primary_action_right_and_cancel_left_and_escape_cancels() {
 fn settings_scroll_beside_their_column_on_a_wide_window() {
     let mut f = Frames::new(record("Desk", true, true), Reach::Online);
     f.size = vec2(1920.0, 640.0);
-    f.l.settings_view.more = [true; 8];
+    f.l.settings_view.more = [true; 9];
     f.l.go(Screen::Settings);
     f.settle();
     let top = |f: &Frames| f.placed.iter().find(|(t, ..)| t == "Video codec").map(|p| p.1.top()).expect("the Video codec row");
@@ -5902,7 +5903,7 @@ fn the_side_list_stays_below_the_chrome_while_the_rows_scroll() {
     use super::demo::Page;
     let mut f = demo_frames(vec2(1600.0, 700.0));
     // Every row: a section long enough to scroll.
-    f.l.settings_view.more = [true; 8];
+    f.l.settings_view.more = [true; 9];
     let top_of = |f: &Frames, text: &str| f.placed.iter().find(|(t, ..)| t == text).map(|p| p.1.top()).unwrap_or_else(|| panic!("{text} is drawn"));
     demo_page(&mut f, Page::Settings);
     let (entry, row) = (top_of(&f, "Audio"), top_of(&f, "Video codec"));
@@ -8226,7 +8227,7 @@ fn the_pin_page_moon_stands_clear_of_its_rows() {
 /// first brings it back, clear; and back on the long one it steps back again.
 #[test]
 fn the_moon_comes_back_where_the_page_makes_room_again() {
-    let sections = ["Video", "Display & image", "Controls", "Audio", "Streaming", "App", "Advanced", "Debug"];
+    let sections = ["Recommended", "Video", "Display & image", "Controls", "Audio", "Streaming", "App", "Advanced", "Debug"];
     let mut back = 0;
     for (window, zoom) in [(vec2(1280.0, 800.0), 150), (vec2(1280.0, 800.0), 100), (vec2(1100.0, 650.0), 100), (vec2(1920.0, 1080.0), 100)] {
         let open = |section: &'static str| {
@@ -8234,7 +8235,7 @@ fn the_moon_comes_back_where_the_page_makes_room_again() {
             f.l.settings.ui_zoom = zoom;
             f.size = window;
             // Every row, so some sections are long.
-            f.l.settings_view.more = [true; 8];
+            f.l.settings_view.more = [true; 9];
             f.l.settings_view.section = section;
             f.l.go(Screen::Settings);
             f.settle();

@@ -543,4 +543,27 @@
     <string name="game_info_length_long">15〜40時間</string>
     <string name="game_info_length_very_long">40時間以上</string>
     <string name="game_info_credits">カバー画像は SteamGridDB より。ゲーム情報は IGDB.com より。</string>
+    <string name="title_simple_smoothness">ストリームの滑らかさ</string>
+    <string name="summary_simple_smoothness">自動は画面とデコーダーに従います。各リフレッシュで最新のフレームを表示し、可変リフレッシュレートは「ディスプレイと画質」でオンにした場合だけ使います。最も滑らかは各フレームを保持して安定した周期にし、遅延が少し増えます。最小遅延は待ちません。ゲームがちらつくか遅く感じない限り、自動のままにしてください。</string>
+    <string name="simple_smoothest">最も滑らか</string>
+    <string name="simple_balanced">バランス</string>
+    <string name="simple_lowest_delay">最小遅延</string>
+    <string name="title_simple_picture">画質</string>
+    <string name="summary_simple_picture">ビットレートを設定します。最高はより多くのネットワークを使って映像を鮮明にし、データ節約は使用量を減らし、回線が苦しいときは画質を下げます。特別な鮮明さや少ないデータ量が必要でなければ、自動のままにしてください。</string>
+    <string name="simple_picture_auto">自動（おすすめ）</string>
+    <string name="simple_picture_best">最高</string>
+    <string name="simple_picture_save_data">データ節約</string>
+    <string name="title_simple_screen">画面</string>
+    <string name="summary_simple_screen">このデバイス自身の解像度とリフレッシュレートです。ストリームがちらつく場合は「ビデオ」で下げてください。</string>
+    <string name="simple_screen_value">%1$d×%2$d、%3$d Hz</string>
+    <string name="title_simple_hdr">HDR</string>
+    <string name="simple_hdr_auto">自動（おすすめ）</string>
+    <string name="title_simple_console">コンソールモード</string>
+    <string name="summary_simple_console">ゲームを全画面で直接開き、コントローラーやリモコンで選べます。テレビや携帯ゲーム機ではオンにしたままにし、PC一覧を開くにはオフにしてください。</string>
+    <string name="simple_back_to_recommended">おすすめに戻す</string>
+    <string name="summary_simple_back_to_recommended">上の3つの選択をこのデバイスに最適なものに戻します。それらが表す設定も一緒に変わります。</string>
+    <string name="simple_profile_failed">このデバイスではおすすめ設定を読み取れませんでした</string>
+    <string name="settings_section_simple">おすすめ</string>
+    <string name="settings_section_simple_summary">ほとんどの人に必要な選択です。詳しい設定は下のセクションにあります。</string>
+    <string name="summary_simple_hdr">HDR 画面で明るいハイライトと豊かな色になります。自動は画面、デコーダー、PC が対応しているときだけオンにします。それ以外でオンにすると映像が白っぽく見えます。映像が白っぽく見える場合を除き、自動のままにしてください。</string>
 </resources>

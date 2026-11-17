@@ -75,6 +75,8 @@ public class SettingsKeysTest {
             StreamSettings.SHARP_COLOR_KEY, StreamSettings.CONTROLLERS_KEY,
             // The merged switch writes the three decoder switches and stores nothing itself.
             StreamSettings.LOW_LATENCY_DECODING_KEY, StreamSettings.LOW_LATENCY_CUSTOMIZE_KEY,
+            // The simple layer's screen line and Back to recommended open nothing and store nothing.
+            "simple_screen", "simple_back_to_recommended",
             // Automatic bitrate shows and sets bitrate_user_set and the bitrate; it stores nothing itself.
             StreamSettings.AUTOMATIC_BITRATE_KEY,
             // Back button writes the two Back switches and stores nothing itself (SwitchPairChoice).
@@ -101,6 +103,8 @@ public class SettingsKeysTest {
     // Stored settings that are read outside PreferenceConfiguration.
     private static final Set<String> READ_ELSEWHERE = new HashSet<>(Arrays.asList(
             "performance_overlay_mode", // Game and the overlay
+            "simple_smoothness", "simple_picture", "simple_hdr", // the simple layer writes the values above (SimpleProfile)
+            "simple_vrr_opt_in", "simple_vrr_last", // SimpleProfile keeps the VRR opt-in across Smoothest
             "list_stream_menu_button_y", "list_stream_menu_button_x", "list_stream_menu_button_lb", "list_stream_menu_button_rb", // StreamMenu
             com.limelight.console.OpenPlay.SETTING, // the launch screen, before any stream
             com.limelight.ui.AppTheme.THEME, // AppTheme, including activities opened directly

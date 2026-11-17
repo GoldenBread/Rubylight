@@ -23,6 +23,7 @@ pub mod quality;
 pub mod recovery;
 pub mod rumble;
 pub mod shortcuts;
+pub mod simple_profile;
 pub mod stats;
 pub mod stick;
 pub mod stream_menu;

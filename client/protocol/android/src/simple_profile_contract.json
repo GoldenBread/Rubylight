@@ -1,0 +1,287 @@
+[
+  {
+    "name": "recommended on a plain screen",
+    "request": {
+      "op": "recommended",
+      "display": {
+        "width": 1280,
+        "height": 720,
+        "refresh_hz": 60,
+        "hdr": false,
+        "vrr": false
+      },
+      "decoder": {
+        "h264": true,
+        "hevc": false,
+        "av1": false,
+        "hdr": false,
+        "max_fps_at_native": null
+      },
+      "host": {
+        "hdr": null,
+        "hevc": null,
+        "av1": null
+      }
+    },
+    "response": {
+      "ok": {
+        "smoothness": "auto",
+        "picture": "auto",
+        "hdr": "auto"
+      }
+    }
+  },
+  {
+    "name": "auto on an HDR VRR screen with every codec",
+    "request": {
+      "op": "values",
+      "smoothness": "auto",
+      "picture": "auto",
+      "hdr": "auto",
+      "display": {
+        "width": 1920,
+        "height": 1080,
+        "refresh_hz": 120,
+        "hdr": true,
+        "vrr": true
+      },
+      "decoder": {
+        "h264": true,
+        "hevc": true,
+        "av1": true,
+        "hdr": true,
+        "max_fps_at_native": null
+      },
+      "host": {
+        "hdr": true,
+        "hevc": true,
+        "av1": true
+      }
+    },
+    "response": {
+      "ok": {
+        "native_resolution": true,
+        "fps": null,
+        "pacing": "latency",
+        "vrr": true,
+        "latency_switches": true,
+        "drop_late_frames": true,
+        "host_frame_times": false,
+        "real_vrr": true,
+        "reduce_refresh": false,
+        "content_rate": false,
+        "bitrate": {
+          "mode": "default"
+        },
+        "codec": "auto",
+        "hdr": true,
+        "adaptive_bitrate": false,
+        "adaptive_quality": "off"
+      }
+    }
+  },
+  {
+    "name": "smoothest and best turn VRR off and spend 1.5x the bitrate",
+    "request": {
+      "op": "values",
+      "smoothness": "smoothest",
+      "picture": "best",
+      "hdr": "auto",
+      "display": {
+        "width": 1920,
+        "height": 1080,
+        "refresh_hz": 120,
+        "hdr": true,
+        "vrr": true
+      },
+      "decoder": {
+        "h264": true,
+        "hevc": true,
+        "av1": true,
+        "hdr": true,
+        "max_fps_at_native": null
+      },
+      "host": {
+        "hdr": true,
+        "hevc": true,
+        "av1": true
+      }
+    },
+    "response": {
+      "ok": {
+        "native_resolution": true,
+        "fps": null,
+        "pacing": "smoothest",
+        "vrr": false,
+        "latency_switches": true,
+        "drop_late_frames": true,
+        "host_frame_times": false,
+        "real_vrr": null,
+        "reduce_refresh": false,
+        "content_rate": false,
+        "bitrate": {
+          "mode": "factor",
+          "milli": 1500
+        },
+        "codec": "auto",
+        "hdr": true,
+        "adaptive_bitrate": false,
+        "adaptive_quality": "off"
+      }
+    }
+  },
+  {
+    "name": "save data with HDR off lowers the bitrate and the quality",
+    "request": {
+      "op": "values",
+      "smoothness": "lowest-delay",
+      "picture": "save-data",
+      "hdr": "off",
+      "display": {
+        "width": 1920,
+        "height": 1080,
+        "refresh_hz": 90,
+        "hdr": true,
+        "vrr": true
+      },
+      "decoder": {
+        "h264": true,
+        "hevc": true,
+        "av1": true,
+        "hdr": true,
+        "max_fps_at_native": 60
+      },
+      "host": {
+        "hdr": true,
+        "hevc": true,
+        "av1": true
+      }
+    },
+    "response": {
+      "ok": {
+        "native_resolution": true,
+        "fps": 60,
+        "pacing": "latency",
+        "vrr": false,
+        "latency_switches": true,
+        "drop_late_frames": true,
+        "host_frame_times": false,
+        "real_vrr": null,
+        "reduce_refresh": false,
+        "content_rate": false,
+        "bitrate": {
+          "mode": "factor",
+          "milli": 600
+        },
+        "codec": "auto",
+        "hdr": false,
+        "adaptive_bitrate": true,
+        "adaptive_quality": "save-power"
+      }
+    }
+  },
+  {
+    "name": "the stored profile reads back from its values",
+    "request": {
+      "op": "chosen",
+      "current": {
+        "native_resolution": true,
+        "fps": null,
+        "pacing": "balanced",
+        "vrr": true,
+        "latency_switches": true,
+        "drop_late_frames": true,
+        "host_frame_times": false,
+        "real_vrr": true,
+        "reduce_refresh": false,
+        "content_rate": false,
+        "bitrate_milli": null,
+        "codec": "auto",
+        "hdr": true,
+        "adaptive_bitrate": false,
+        "adaptive_quality": "off",
+        "stored_smoothness": "balanced",
+        "stored_picture": "auto",
+        "stored_hdr": "auto"
+      },
+      "display": {
+        "width": 1920,
+        "height": 1080,
+        "refresh_hz": 120,
+        "hdr": true,
+        "vrr": true
+      },
+      "decoder": {
+        "h264": true,
+        "hevc": true,
+        "av1": true,
+        "hdr": true,
+        "max_fps_at_native": null
+      },
+      "host": {
+        "hdr": true,
+        "hevc": true,
+        "av1": true
+      }
+    },
+    "response": {
+      "ok": {
+        "choices": {
+          "smoothness": "balanced",
+          "picture": "auto",
+          "hdr": "auto"
+        }
+      }
+    }
+  },
+  {
+    "name": "a changed advanced setting reads as Custom",
+    "request": {
+      "op": "chosen",
+      "current": {
+        "native_resolution": true,
+        "fps": 60,
+        "pacing": "balanced",
+        "vrr": true,
+        "latency_switches": true,
+        "drop_late_frames": true,
+        "host_frame_times": false,
+        "real_vrr": true,
+        "reduce_refresh": false,
+        "content_rate": false,
+        "bitrate_milli": null,
+        "codec": "auto",
+        "hdr": true,
+        "adaptive_bitrate": false,
+        "adaptive_quality": "off",
+        "stored_smoothness": "auto",
+        "stored_picture": "auto",
+        "stored_hdr": "auto"
+      },
+      "display": {
+        "width": 1920,
+        "height": 1080,
+        "refresh_hz": 120,
+        "hdr": true,
+        "vrr": true
+      },
+      "decoder": {
+        "h264": true,
+        "hevc": true,
+        "av1": true,
+        "hdr": true,
+        "max_fps_at_native": null
+      },
+      "host": {
+        "hdr": true,
+        "hevc": true,
+        "av1": true
+      }
+    },
+    "response": {
+      "ok": {
+        "choices": null
+      }
+    }
+  }
+]

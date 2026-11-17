@@ -132,7 +132,7 @@ public class SettingsStructureTest {
             StreamSettings screen = controller.get();
             settle(screen);
             PreferenceScreen root = ((StreamSettings.RootFragment) shown(screen)).getPreferenceScreen();
-            assertEquals(Arrays.asList("stream_presets", "stream_profiles", "video", "display", "input", "audio", "streaming",
+            assertEquals(Arrays.asList("simple", "stream_presets", "stream_profiles", "video", "display", "input", "audio", "streaming",
                     "app", "advanced", "debug"), keys(root));
             assertEquals(screen.getString(R.string.settings_section_display), root.findPreference("display").getTitle());
             assertNotNull(root.findPreference("display").getSummary());
