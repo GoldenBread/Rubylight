@@ -385,9 +385,13 @@ def generate():
         elif key == "checkbox_enable_perf_overlay":
             default = array("@array/overlay_choice_names")[0]
             choices = "; ".join(array("@array/overlay_choice_names"))
-        elif key in ("simple_smoothness", "simple_picture", "simple_hdr"):
-            names = {"simple_smoothness": "simple_smoothness_names", "simple_picture": "simple_picture_names",
-                     "simple_hdr": "simple_hdr_names"}[key]
+        elif key == "simple_hdr":
+            # The stream is SDR until the HDR switch is on; a fresh install leaves it off, so the
+            # row reads Off even though Auto is its stored choice.
+            default = "Off on a fresh install"
+            choices = "; ".join(array("@array/simple_hdr_names"))
+        elif key in ("simple_smoothness", "simple_picture"):
+            names = {"simple_smoothness": "simple_smoothness_names", "simple_picture": "simple_picture_names"}[key]
             default = array("@array/" + names)[0]
             choices = "; ".join(array("@array/" + names))
         elif key == "low_latency_customize" or key.startswith("more_"):

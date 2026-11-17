@@ -2084,8 +2084,20 @@ fn a_non_vrr_first_launch_reads_auto_not_custom() {
 }
 
 #[test]
-fn a_fresh_hdr_screen_reads_hdr_off_like_the_stream() {
+fn the_hdr_row_value_reads_off_until_the_switch_is_on() {
     let display = Display { width: 1920, height: 1080, refresh_hz: 120.0, refresh_reported: true };
+    let value = |s: &Settings| value_text("simple_hdr", s, &display, crate::glyphs::Style::Xbox);
+    assert_eq!(value(&Settings::default()), "Off", "a fresh install streams SDR");
+    assert_eq!(value(&Settings { hdr: true, ..Settings::default() }), "Auto (recommended)");
+    assert_eq!(
+        value(&Settings { simple_hdr: simple::Hdr::Auto, ..Settings::default() }),
+        "Off",
+        "the stored Auto does not make the row claim HDR while the switch is off"
+    );
+}
+
+#[test]
+fn a_fresh_hdr_screen_reads_hdr_off_like_the_stream() {    let display = Display { width: 1920, height: 1080, refresh_hz: 120.0, refresh_reported: true };
     let caps = simple_caps(&display, true, true);
     let s = Settings::default();
     assert!(!s.hdr, "the stream stays SDR: the HDR switch is at its app default");

@@ -2751,7 +2751,7 @@ pub(super) fn value_text(key: &str, s: &Settings, display: &Display, style: crat
         "open_on_start" | "console_home" => start_screen_name(start_screen(s), None),
         "simple_smoothness" => tr(simple_smoothness_name(s.simple_smoothness)).to_owned(),
         "simple_picture" => tr(simple_picture_name(s.simple_picture)).to_owned(),
-        "simple_hdr" => tr(simple_hdr_name(s.simple_hdr)).to_owned(),
+        "simple_hdr" => tr(simple_hdr_name(simple_effective_hdr(s))).to_owned(),
         "controllers" | "multi_controller" => tr(controllers_name(Controllers::from_saved(s.controllers, s.multi_controller))).to_owned(),
         "adaptive_bitrate" | "client_hint_bitrate" => tr(lower_bitrate_name(LowerBitrate::from_saved(s.adaptive_bitrate, s.client_hint_bitrate))).to_owned(),
         "back_opens_menu" | "back_as_guide" => tr(back_button_name(BackButton::from_saved(s.back_opens_menu, s.back_as_guide))).to_owned(),
