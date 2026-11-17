@@ -2658,6 +2658,45 @@ fn a_cache_is_used_only_as_this_host_keeps_it() {
     assert!(!serves(&package, &pin));
 }
 
+/// The cache is held where it was checked: a launch's [`launch_cache`] and an
+/// install's [`Using`] keep it from being renamed away until their copy from
+/// it is done, and let go when they end.
+#[test]
+fn the_cache_cannot_be_moved_while_a_launch_or_an_install_holds_it() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    let root = cache_root(h);
+    std::fs::create_dir_all(&root).unwrap();
+    let folder = release(&root, "Alpha0.3.5.8", b"OptiScaler proxy");
+    pin_to(h, &folder);
+    let moved = root.with_file_name("neural-anr-moved");
+    // A launch finishes an update cut short from this cache: the hold it gets
+    // back keeps the root the trust check approved.
+    let (cached, held) = launch_cache(h).unwrap().expect("the pinned release");
+    assert_eq!(cached.folder, folder);
+    assert!(
+        std::fs::rename(&root, &moved).is_err(),
+        "renamed while a launch holds it"
+    );
+    assert!(root.is_dir(), "the held cache stays where it is");
+    drop(held);
+    std::fs::rename(&root, &moved).unwrap();
+    std::fs::rename(&moved, &root).unwrap();
+    // An install keeps the same hold in its Using until the last file is placed.
+    let held = Hold::new([root.as_path(), data_root(h).as_path()]).unwrap();
+    let using = Using {
+        h: h.clone(),
+        folder: folder.clone(),
+        held: Some(held),
+    };
+    assert!(
+        std::fs::rename(&root, &moved).is_err(),
+        "renamed while an install copies it"
+    );
+    drop(using);
+    std::fs::rename(&root, &moved).unwrap();
+}
+
 /// GitHub as [`fetch`] sees it, on this PC: the pinned release by its tag
 /// and each file, a part of one by range; every request logged in order.
 struct Server {
