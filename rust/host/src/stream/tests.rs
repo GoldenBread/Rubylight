@@ -1057,6 +1057,29 @@ fn a_secure_desktops_duplication_returns_to_wgc_but_the_fullscreen_fallback_keep
     assert!(!returns_to_wgc(false, false, "ddx", "wgc", false));
     assert!(!returns_to_wgc(true, false, "wgc", "wgc", false));
 }
+#[test]
+fn the_fullscreen_probe_asks_the_shell_twice_a_second_at_most() {
+    // A still picture polls capture continuously, so the shell's answer must not
+    // run on every idle poll; the first probe goes through at once.
+    let start = Instant::now();
+    let mut next = start;
+    assert!(fullscreen_probe_due(start, &mut next));
+    for step in 1..25 {
+        assert!(
+            !fullscreen_probe_due(start + Duration::from_millis(step * 20), &mut next),
+            "{step}"
+        );
+    }
+    // Half a second after it ran, the answer may be asked again, whether it
+    // found a fullscreen app or not.
+    let second = start + FULLSCREEN_PROBE;
+    assert!(fullscreen_probe_due(second, &mut next));
+    assert!(!fullscreen_probe_due(
+        second + Duration::from_millis(499),
+        &mut next
+    ));
+    assert!(fullscreen_probe_due(second + FULLSCREEN_PROBE, &mut next));
+}
 /// #56: a Nucleus Co-op game replaced its splash window, or resized its
 /// window, as the stream's first capture opened, and the stream ended; the
 /// client's reconnect seconds later worked.

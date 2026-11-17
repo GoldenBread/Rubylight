@@ -110,6 +110,10 @@ const DUPLICATION_WARNING: &str = "Windows Graphics Capture sent no picture whil
 /// shows another one. Switching a virtual display back on takes about a
 /// second; recreating it takes up to the driver's 10 s arrival deadline.
 const DISPLAY_RETURN_WAIT: Duration = Duration::from_secs(15);
+/// How often a still picture may ask Windows whether an exclusive-fullscreen
+/// app is in front. Capture polls continuously, so the shell's answer runs
+/// twice a second rather than on every idle poll.
+const FULLSCREEN_PROBE: Duration = Duration::from_millis(500);
 /// Which display a capture reopen uses.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum ReopenOn {
@@ -170,6 +174,18 @@ fn returns_to_wgc(
         && !switched_to_duplication
         && capture_backend == "ddx"
         && kind != "ddx"
+}
+/// Whether the fullscreen probe may ask the shell now: at most every
+/// [`FULLSCREEN_PROBE`], however fast a still picture polls capture. The next
+/// time is advanced before the answer is used, so a probe that finds nothing
+/// waits as long as one that switches. `next` starts at the stream's first
+/// frame, which lets the first probe through at once.
+fn fullscreen_probe_due(now: Instant, next: &mut Instant) -> bool {
+    if now < *next {
+        return false;
+    }
+    *next = now + FULLSCREEN_PROBE;
+    true
 }
 /// How long a stream waits for its capture to start: past
 /// [`SAME_WINDOW_WAIT`] only for the try of a window the game opened after a
@@ -994,18 +1010,18 @@ impl Media {
                                 let now = Instant::now();
                                 let idle = now.saturating_duration_since(last_frame);
                                 let display = butterpollo_windows::capture::WindowTarget::parse(&target.0).ok().flatten().is_none();
-                                // The shell's own answer first: enumerating the windows and
-                                // the displays behind it is the expensive part of the probe,
-                                // and most still pictures have no exclusive-fullscreen app.
+                                // The shell's own answer first, at most twice a second: enumerating
+                                // the windows and the displays behind it is the expensive part of
+                                // the probe, and most still pictures have no exclusive-fullscreen
+                                // app.
                                 if automatic
                                     && !duplication_tried
                                     && capture.backend() == "wgc"
                                     && display
                                     && idle >= butterpollo_core::capture_policy::FULLSCREEN_STALL
-                                    && now >= stall_check
+                                    && fullscreen_probe_due(now, &mut stall_check)
                                     && butterpollo_windows::foreground::exclusive_fullscreen()
                                 {
-                                    stall_check = now + Duration::from_millis(500);
                                     // The capture knows the display it reads: no need to
                                     // enumerate the displays to find its bounds.
                                     let in_front = match capture.display_rect() {
