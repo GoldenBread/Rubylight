@@ -319,7 +319,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("10-bit SDR isn’t used, so the stream is 8-bit: {}", "La SDR 10 bits n’est pas utilisée, le flux est donc en 8 bits : {}"),
     ("This PC didn’t accept 10-bit, so the stream is 8-bit.", "Ce PC n’a pas accepté le 10 bits, le flux est donc en 8 bits."),
     ("This PC doesn’t offer PyroWave, so Nightjar uses {}.", "Ce PC ne propose pas PyroWave, Nightjar utilise donc {}."),
-    ("Below PyroWave’s minimum of {} Mbps at {}x{}, {} fps: the picture will break up.", "Sous le minimum de PyroWave de {0} Mbit/s en {1}x{2}, {3} fps : l’image va se désagréger."),
+    ("Below the level where the project's test scenes kept detail for PyroWave: {} Mbps or more at {}x{}, {} fps. Text and textures may lose detail; raise the bitrate or use HEVC or AV1.", "Sous le niveau auquel les scènes de test du projet ont conservé le détail pour PyroWave : {0} Mbps ou plus en {1}x{2}, {3} i/s. Le texte et les textures peuvent perdre du détail ; augmentez le débit ou utilisez HEVC ou AV1."),
     ("sharper colored text is on and has its own 4:4:4 and 10-bit handling.", "le texte en couleur plus net est activé et gère lui-même le 4:4:4 et le 10 bits."),
     ("PyroWave is chosen, and it has its own 4:4:4 and 10-bit modes.", "PyroWave est choisi et a ses propres modes 4:4:4 et 10 bits."),
     ("this device can’t decode or draw it ({}).", "cet appareil ne peut pas le décoder ni l’afficher ({})."),
@@ -1702,5 +1702,5 @@ sudo sysctl -w net.core.rmem_max={}", "Tampon de réception : le système a acco
     ("Opens straight into your games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open the list of PCs.", "Ouvre directement vos jeux en plein écran, où une manette ou une télécommande peut en choisir un. Laissez-le activé pour un téléviseur ou une console portable ; désactivez-le pour ouvrir la liste des PC."),
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "Des hautes lumières plus vives et des couleurs plus riches sur un écran HDR. Auto ne l'active que si l'écran, le décodeur et le PC le prennent en charge ; laissez sur Auto sauf si le HDR paraît délavé."),
     ("Recommended", "Recommandé"),
-    ("PyroWave at {}×{}, {} fps asks for {} Mbps, more than this link is assumed to carry ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave en {0}×{1} à {2} i/s demande {3} Mbps, plus que ce lien ne peut porter ({4} Mbps). Réduisez la résolution ou la fréquence d'images, ou utilisez HEVC ou AV1."),
+    ("PyroWave at {}×{}, {} fps asks for {} Mbps; that may be more than this link carries ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave en {0}×{1} à {2} i/s demande {3} Mbps ; cela peut être plus que ce lien ne porte ({4} Mbps). Réduisez la résolution ou la fréquence d’images, ou utilisez HEVC ou AV1."),
 ];

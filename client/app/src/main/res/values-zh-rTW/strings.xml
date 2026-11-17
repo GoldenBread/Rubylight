@@ -361,7 +361,7 @@
     <string name="stream_bitrate_help">為這個工作階段設定 Mbps。\n這會關閉「網路忙碌時降低位元速率」。</string>
     <string name="stream_bitrate_invalid">請輸入 0.5 到 2000 Mbps 之間的位元速率</string>
     <string name="stream_bitrate_applied">電腦已套用 %1$.1f Mbps</string>
-    <string name="summary_bitrate_pyrowave_below_minimum">低於 PyroWave 在 %2$d×%3$d、%4$d FPS 下的最低 %1$d Mbps：畫面會破碎。</string>
+    <string name="summary_bitrate_pyrowave_below_minimum">低於專案測試場景為 PyroWave 保留細節的水準：%2$d×%3$d、%4$d fps 下至少需要 %1$d Mbps。文字與材質可能失去細節；請提高位元率，或改用 HEVC 或 AV1。</string>
     <string name="stream_enabled">開啟</string>
     <string name="stream_disabled">關閉</string>
     <string name="stream_limiter_status">電腦影格限制：%1$s\n自動顯示限制：%2$s\n目標：%3$s</string>

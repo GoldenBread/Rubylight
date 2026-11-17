@@ -74,13 +74,13 @@ pub(super) fn offers_pyrowave(offered: u32, scm: u32) -> bool {
         .any(|&(host, client)| scm & host != 0 && offered & client != 0)
 }
 
-/// The bitrate setting's warning when PyroWave is chosen and the chosen bitrate is below its
-/// minimum for the stream's `w`x`h` at `fps`, naming the minimum. The bitrate is kept as chosen;
-/// the automatic one never goes below the minimum.
+/// The bitrate setting's warning when PyroWave is chosen and the chosen bitrate is below the level
+/// where the project's test scenes kept detail for the stream's `w`x`h` at `fps`, naming it. The
+/// bitrate is kept as chosen; the automatic one never goes below that level.
 pub fn pyrowave_bitrate_warning(settings: &Settings, w: u32, h: u32, fps: u32) -> Option<String> {
     let minimum = nightjar_policy::pyrowave::minimum_kbps(w, h, fps);
     (settings.codec.is_pyrowave() && settings.bitrate_kbps != 0 && settings.bitrate_kbps < minimum).then(|| {
-        trf("Below PyroWave’s minimum of {} Mbps at {}x{}, {} fps: the picture will break up.", &[&minimum.div_ceil(1000), &w, &h, &fps])
+        trf("Below the level where the project's test scenes kept detail for PyroWave: {} Mbps or more at {}x{}, {} fps. Text and textures may lose detail; raise the bitrate or use HEVC or AV1.", &[&minimum.div_ceil(1000), &w, &h, &fps])
     })
 }
 

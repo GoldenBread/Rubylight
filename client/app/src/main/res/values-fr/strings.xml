@@ -361,7 +361,7 @@
     <string name="stream_bitrate_help">Définissez les Mbit/s pour cette session.\nCela désactive « Baisser le débit si le réseau est chargé ».</string>
     <string name="stream_bitrate_invalid">Saisissez un débit de 0,5 à 2000 Mbit/s</string>
     <string name="stream_bitrate_applied">Débit appliqué par le PC : %1$.1f Mbit/s</string>
-    <string name="summary_bitrate_pyrowave_below_minimum">Sous le minimum de PyroWave de %1$d Mbit/s en %2$d×%3$d, %4$d FPS : l’image va se dégrader en blocs.</string>
+    <string name="summary_bitrate_pyrowave_below_minimum">Sous le niveau auquel les scènes de test du projet ont conservé le détail pour PyroWave : %1$d Mbps ou plus en %2$d×%3$d, %4$d i/s. Le texte et les textures peuvent perdre du détail ; augmentez le débit ou utilisez HEVC ou AV1.</string>
     <string name="stream_enabled">Activé</string>
     <string name="stream_disabled">Désactivé</string>
     <string name="stream_limiter_status">Limite d’images du PC : %1$s\nLimite d’affichage auto : %2$s\nCible : %3$s</string>

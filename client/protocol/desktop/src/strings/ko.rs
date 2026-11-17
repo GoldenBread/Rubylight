@@ -319,7 +319,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("10-bit SDR isn’t used, so the stream is 8-bit: {}", "10비트 SDR을 사용하지 않아 스트림은 8비트입니다: {}"),
     ("This PC didn’t accept 10-bit, so the stream is 8-bit.", "이 PC가 10비트를 받아들이지 않아 스트림은 8비트입니다."),
     ("This PC doesn’t offer PyroWave, so Nightjar uses {}.", "이 PC는 PyroWave를 제공하지 않아 Nightjar가 {}을(를) 사용합니다."),
-    ("Below PyroWave’s minimum of {} Mbps at {}x{}, {} fps: the picture will break up.", "{1}x{2}, {3} fps에서 PyroWave 최솟값 {0} Mbps보다 낮습니다. 화면이 깨집니다."),
+    ("Below the level where the project's test scenes kept detail for PyroWave: {} Mbps or more at {}x{}, {} fps. Text and textures may lose detail; raise the bitrate or use HEVC or AV1.", "프로젝트 테스트 장면에서 디테일이 유지된 수준보다 낮습니다(PyroWave, {1}x{2}, {3} fps에서 {0} Mbps 이상). 텍스트와 텍스처의 디테일이 손실될 수 있습니다. 비트레이트를 높이거나 HEVC 또는 AV1을 사용하세요."),
     ("sharper colored text is on and has its own 4:4:4 and 10-bit handling.", "더 선명한 컬러 텍스트가 켜져 있으며 자체적으로 4:4:4와 10비트를 처리합니다."),
     ("PyroWave is chosen, and it has its own 4:4:4 and 10-bit modes.", "PyroWave가 선택되어 있으며 자체 4:4:4 및 10비트 모드가 있습니다."),
     ("this device can’t decode or draw it ({}).", "이 기기에서 디코딩하거나 그릴 수 없습니다({})."),
@@ -1702,5 +1702,5 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("Opens straight into your games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open the list of PCs.", "게임을 전체 화면으로 바로 열어 컨트롤러나 리모컨으로 선택할 수 있습니다. TV나 휴대용 기기에서는 켜 두고, PC 목록을 열려면 끄세요."),
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "HDR 화면에서 더 밝은 하이라이트와 풍부한 색을 보여 줍니다. 자동은 화면, 디코더, PC가 모두 지원할 때만 켭니다. HDR이 흐릿하게 보이면 끄세요."),
     ("Recommended", "추천"),
-    ("PyroWave at {}×{}, {} fps asks for {} Mbps, more than this link is assumed to carry ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave {0}×{1}, {2} fps는 {3} Mbps를 요구하며, 이 연결이 전달할 수 있는 양({4} Mbps)을 넘습니다. 해상도나 프레임 속도를 낮추거나 HEVC 또는 AV1을 사용하세요."),
+    ("PyroWave at {}×{}, {} fps asks for {} Mbps; that may be more than this link carries ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave {0}×{1}, {2} fps는 {3} Mbps를 요구하며, 이 연결이 전달할 수 있는 양({4} Mbps)보다 많을 수 있습니다. 해상도나 프레임 속도를 낮추거나 HEVC 또는 AV1을 사용하세요."),
 ];

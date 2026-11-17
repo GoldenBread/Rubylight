@@ -1122,18 +1122,35 @@ public class NvConnection {
             LimeLog.info("PyroWave: starting at its default of " + context.startBitrateKbps + " kbps (link " +
                     context.linkHints.mbps + " Mbps)");
         }
-        // A PyroWave mode whose rate this link cannot carry still starts, but the player hears it
-        // before the first picture: a lower resolution or frame rate, or HEVC/AV1, is their choice.
+        // PyroWave's mode, rate and detail level are things the player hears before the first
+        // picture: a lower resolution or frame rate, a higher bitrate, or HEVC/AV1 is their choice.
+        StringBuilder pyrowaveNotices = new StringBuilder();
         PyroWaveBitrateFloor.LinkNotice pyrowaveLink = pyroWaveLinkNotice(context, context.linkHints.mbps);
         if (pyrowaveLink != null) {
             int askedMbps = (pyrowaveLink.askedKbps + 999) / 1000;
             int capMbps = (pyrowaveLink.capKbps + 999) / 1000;
             LimeLog.warning("PyroWave at " + context.negotiatedWidth + "x" + context.negotiatedHeight + " at " +
                     context.streamConfig.getRefreshRate() + " fps asks for " + askedMbps +
-                    " Mbps, more than this link is assumed to carry (" + capMbps + " Mbps)");
-            context.connListener.displayTransientMessage(appContext.getString(R.string.pyrowave_link_notice,
+                    " Mbps, which may be more than this link carries (" + capMbps + " Mbps)");
+            pyrowaveNotices.append(appContext.getString(R.string.pyrowave_link_notice,
                     context.negotiatedWidth, context.negotiatedHeight, context.streamConfig.getRefreshRate(),
                     askedMbps, capMbps));
+        }
+        if ((context.negotiatedVideoFormats & MoonBridge.VIDEO_FORMAT_MASK_PYROWAVE) != 0) {
+            int minimum = PyroWaveBitrateFloor.minimumKbps(context.negotiatedWidth, context.negotiatedHeight,
+                    context.streamConfig.getRefreshRate());
+            if (context.startBitrateKbps < minimum) {
+                LimeLog.warning("PyroWave at " + context.negotiatedWidth + "x" + context.negotiatedHeight + " at " +
+                        context.streamConfig.getRefreshRate() + " fps starts at " + context.startBitrateKbps +
+                        " kbps, below the level where the project's test scenes kept detail (" + minimum + " kbps)");
+                if (pyrowaveNotices.length() > 0) pyrowaveNotices.append('\n');
+                pyrowaveNotices.append(appContext.getString(R.string.summary_bitrate_pyrowave_below_minimum,
+                        (minimum + 999) / 1000, context.negotiatedWidth, context.negotiatedHeight,
+                        context.streamConfig.getRefreshRate()));
+            }
+        }
+        if (pyrowaveNotices.length() > 0) {
+            context.connListener.displayTransientMessage(pyrowaveNotices.toString());
         }
 
         // We will perform some connection type detection if the caller asked for it

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="startup_host_message">The PC could not start this stream: %1$s (error %2$d)</string>
-    <string name="pyrowave_link_notice">PyroWave at %1$dx%2$d, %3$d fps asks for %4$d Mbps, more than this link can carry (%5$d Mbps). Lower the resolution or frame rate, or use HEVC or AV1.</string>
+    <string name="pyrowave_link_notice">PyroWave at %1$dx%2$d, %3$d fps asks for %4$d Mbps; that may be more than this link carries (%5$d Mbps). Lower the resolution or frame rate, or use HEVC or AV1.</string>
     <string name="startup_launch_cancelled">Launch cancelled.</string>
     <string name="startup_confirmation_timed_out">Confirmation timed out. Start the tile again to retry.</string>
     <string name="startup_confirmation_rejected">The PC’s session changed or confirmation expired. Start the tile again.</string>

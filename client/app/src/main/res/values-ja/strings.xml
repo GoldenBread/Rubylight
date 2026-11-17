@@ -361,7 +361,7 @@
     <string name="stream_bitrate_help">このセッションの Mbps を設定します。\n「ネットワーク混雑時にビットレートを下げる」はオフになります。</string>
     <string name="stream_bitrate_invalid">0.5～2000 Mbps のビットレートを入力してください</string>
     <string name="stream_bitrate_applied">PC が %1$.1f Mbps を適用しました</string>
-    <string name="summary_bitrate_pyrowave_below_minimum">%2$d×%3$d、%4$d FPS での PyroWave の最低値 %1$d Mbps を下回っています。映像が崩れます。</string>
+    <string name="summary_bitrate_pyrowave_below_minimum">プロジェクトのテスト映像でディテールが保たれたレベルを下回っています（PyroWave、%2$d×%3$d、%4$d fps で %1$d Mbps 以上）。テキストやテクスチャのディテールが失われることがあります。ビットレートを上げるか、HEVC か AV1 を使ってください。</string>
     <string name="stream_enabled">オン</string>
     <string name="stream_disabled">オフ</string>
     <string name="stream_limiter_status">PC のフレーム制限: %1$s\n自動表示制限: %2$s\n目標: %3$s</string>

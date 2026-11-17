@@ -312,6 +312,9 @@ pub struct Facts {
     /// PyroWave is about to start on a link this mode's rate cannot fit: what to tell the player
     /// before the first picture, without stopping the stream (`pyrowave_link_notice`).
     pub pyrowave_link: Option<String>,
+    /// PyroWave's bitrate is below the level where the project's test scenes kept detail: what to
+    /// tell the player at the start, as the host's own warning does.
+    pub pyrowave_minimum: Option<String>,
     /// Jumbo video packets were asked for but did not pass the pre-flight or the PC's offer, so
     /// the stream uses normal packets: what to tell the player.
     pub jumbo_fallback: Option<String>,

@@ -361,7 +361,7 @@
     <string name="stream_bitrate_help">Imposta i Mbps per questa sessione.\n«Riduci il bitrate se la rete è congestionata» verrà disattivato.</string>
     <string name="stream_bitrate_invalid">Inserisci un bitrate da 0,5 a 2000 Mbps</string>
     <string name="stream_bitrate_applied">Il PC ha applicato %1$.1f Mbps</string>
-    <string name="summary_bitrate_pyrowave_below_minimum">Sotto il minimo di PyroWave di %1$d Mbps a %2$d×%3$d, %4$d FPS: l’immagine si romperà.</string>
+    <string name="summary_bitrate_pyrowave_below_minimum">Sotto il livello in cui le scene di prova del progetto hanno mantenuto il dettaglio per PyroWave: %1$d Mbps o più a %2$d×%3$d, %4$d fps. Testo e texture possono perdere dettaglio; aumenta il bitrate o usa HEVC o AV1.</string>
     <string name="stream_enabled">Attivo</string>
     <string name="stream_disabled">Disattivato</string>
     <string name="stream_limiter_status">Limite di frame del PC: %1$s\nLimite automatico del display: %2$s\nObiettivo: %3$s</string>

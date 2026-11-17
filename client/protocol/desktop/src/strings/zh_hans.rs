@@ -319,7 +319,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("10-bit SDR isn’t used, so the stream is 8-bit: {}", "未使用 10 位 SDR，因此串流为 8 位：{}"),
     ("This PC didn’t accept 10-bit, so the stream is 8-bit.", "此电脑不接受 10 位，因此串流为 8 位。"),
     ("This PC doesn’t offer PyroWave, so Nightjar uses {}.", "此电脑不提供 PyroWave，因此 Nightjar 使用 {}。"),
-    ("Below PyroWave’s minimum of {} Mbps at {}x{}, {} fps: the picture will break up.", "低于 PyroWave 在 {1}x{2}、{3} fps 下 {0} Mbps 的最低值：画面会破碎。"),
+    ("Below the level where the project's test scenes kept detail for PyroWave: {} Mbps or more at {}x{}, {} fps. Text and textures may lose detail; raise the bitrate or use HEVC or AV1.", "低于项目测试场景为 PyroWave 保留细节的水平：{1}x{2}、{3} fps 下至少需要 {0} Mbps。文字和纹理可能丢失细节；请提高码率，或改用 HEVC 或 AV1。"),
     ("sharper colored text is on and has its own 4:4:4 and 10-bit handling.", "已开启更清晰的彩色文字，它有自己的 4:4:4 和 10 位处理。"),
     ("PyroWave is chosen, and it has its own 4:4:4 and 10-bit modes.", "已选择 PyroWave，它有自己的 4:4:4 和 10 位模式。"),
     ("this device can’t decode or draw it ({}).", "此设备无法解码或绘制它（{}）。"),
@@ -1702,5 +1702,5 @@ sudo sysctl -w net.core.rmem_max={}", "接收缓冲区：系统只分配了所�
     ("Opens straight into your games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open the list of PCs.", "直接以全屏打开你的游戏，可用手柄或遥控器选择。电视或掌机请保持开启；关闭则打开 PC 列表。"),
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "在 HDR 屏幕上呈现更亮的高光和更丰富的色彩。自动仅在屏幕、解码器和 PC 都支持时开启；如果 HDR 看起来发白，请保持自动。"),
     ("Recommended", "推荐"),
-    ("PyroWave at {}×{}, {} fps asks for {} Mbps, more than this link is assumed to carry ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave 在 {0}×{1}、{2} fps 下需要 {3} Mbps，超过此链路可承载的 {4} Mbps。请降低分辨率或帧率，或改用 HEVC 或 AV1。"),
+    ("PyroWave at {}×{}, {} fps asks for {} Mbps; that may be more than this link carries ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave 在 {0}×{1}、{2} fps 下需要 {3} Mbps；这可能超过此链路可承载的 {4} Mbps。请降低分辨率或帧率，或改用 HEVC 或 AV1。"),
 ];

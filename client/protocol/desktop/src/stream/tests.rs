@@ -614,9 +614,9 @@ fn the_launch_starts_pyrowave_bitrates_only_when_the_offer_streams_pyrowave() {
 fn a_chosen_bitrate_below_pyrowaves_minimum_is_warned_in_the_settings() {
     let low = Settings { codec: CodecPreference::PyroWave, bitrate_kbps: 20_000, ..Default::default() };
     assert_eq!(pyrowave_bitrate_warning(&low, 1920, 1080, 60).as_deref(),
-        Some("Below PyroWave’s minimum of 187 Mbps at 1920x1080, 60 fps: the picture will break up."));
+        Some("Below the level where the project's test scenes kept detail for PyroWave: 187 Mbps or more at 1920x1080, 60 fps. Text and textures may lose detail; raise the bitrate or use HEVC or AV1."));
     let german = crate::strings::tests::with_lang(crate::strings::Lang::De, || pyrowave_bitrate_warning(&low, 1920, 1080, 60));
-    assert_eq!(german.as_deref(), Some("Unter dem PyroWave-Minimum von 187 Mbit/s bei 1920x1080, 60 fps: Das Bild wird zerfallen."));
+    assert_eq!(german.as_deref(), Some("Unter dem Niveau, auf dem die Testbilder des Projekts Details behielten, liegt PyroWave bei 187 Mbit/s oder mehr bei 1920x1080, 60 fps. Text und Texturen können Details verlieren; erhöhe die Bitrate oder nutze HEVC oder AV1."));
     assert_eq!(pyrowave_bitrate_warning(&Settings { bitrate_kbps: 186_624, ..low.clone() }, 1920, 1080, 60), None);
     assert_eq!(pyrowave_bitrate_warning(&Settings { bitrate_kbps: 0, ..low.clone() }, 1920, 1080, 60), None, "automatic");
     assert_eq!(pyrowave_bitrate_warning(&Settings { codec: CodecPreference::Hevc, ..low.clone() }, 1920, 1080, 60), None);
@@ -630,10 +630,10 @@ fn a_pyrowave_link_notice_names_the_mode_the_rate_and_the_link() {
     let notice = nightjar_policy::pyrowave::link_notice(3840, 2160, 120, 0, 0)
         .expect("4K120 on an unknown (wireless) link");
     let text = connect::pyrowave_link_text(&notice, 3840, 2160, 120);
-    assert_eq!(text, "PyroWave at 3840×2160, 120 fps asks for 1493 Mbps, more than this link is assumed to carry (900 Mbps). Lower the resolution or frame rate, or use HEVC or AV1.");
+    assert_eq!(text, "PyroWave at 3840×2160, 120 fps asks for 1493 Mbps; that may be more than this link carries (900 Mbps). Lower the resolution or frame rate, or use HEVC or AV1.");
     let german = crate::strings::tests::with_lang(crate::strings::Lang::De,
         || connect::pyrowave_link_text(&notice, 3840, 2160, 120));
-    assert_eq!(german, "PyroWave bei 3840×2160 mit 120 fps verlangt 1493 Mbps, mehr als diese Verbindung tragen kann (900 Mbps). Senke die Auflösung oder Bildrate oder nutze HEVC oder AV1.");
+    assert_eq!(german, "PyroWave bei 3840×2160 mit 120 fps verlangt 1493 Mbps; das kann mehr sein, als diese Verbindung trägt (900 Mbps). Senke die Auflösung oder Bildrate oder nutze HEVC oder AV1.");
     // 1080p60 is far under the unknown link's cap, and a chosen rate above it is named too.
     assert_eq!(nightjar_policy::pyrowave::link_notice(1920, 1080, 60, 0, 0), None);
     let chosen = nightjar_policy::pyrowave::link_notice(1920, 1080, 60, 0, 1_500_000).expect("a chosen 1.5 Gbps");

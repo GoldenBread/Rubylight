@@ -3,11 +3,11 @@ package com.limelight.nvstream;
 /**
  * PyroWave's bitrates, equal to nightjar-policy's pyrowave module through the shared traces.
  *
- * The floor is the host's severe-detail-loss floor (pyrowave::minimum_kbps in Rubylight's
- * rust/core/src/pyrowave.rs): 2.5 bits per pixel per frame below 1080 lines and 1.5 from 1080 up,
- * the same for SDR and HDR, 4:2:0 and 4:4:4, measured on representative pictures. The host lowers
- * PyroWave no further and warns below it. PyroWave is intra-only, so below this every frame
- * visibly falls apart instead of just softening.
+ * The floor is the level where the project's test scenes kept detail (pyrowave::minimum_kbps in
+ * Rubylight's rust/core/src/pyrowave.rs): 2.5 bits per pixel per frame below 1080 lines and 1.5
+ * from 1080 up, the same for SDR and HDR, 4:2:0 and 4:4:4, measured on representative pictures.
+ * The host lowers a PyroWave stream no further and warns below it; text and textures may lose
+ * detail there.
  */
 public final class PyroWaveBitrateFloor {
     /** The highest bitrate a stream may ask for (StreamConfiguration.MAX_BITRATE_KBPS). */
@@ -73,7 +73,7 @@ public final class PyroWaveBitrateFloor {
     public static final class LinkNotice {
         /** What the stream asks for: its chosen bitrate or the automatic default, raised to the floor. */
         public final int askedKbps;
-        /** The mode's severe-detail-loss floor. */
+        /** The mode's test-scene detail level. */
         public final int minimumKbps;
         /** What the link is assumed to carry: 90% of a known wired link, or the unknown-link cap. */
         public final int capKbps;

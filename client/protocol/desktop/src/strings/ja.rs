@@ -319,7 +319,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("10-bit SDR isn’t used, so the stream is 8-bit: {}", "10 ビット SDR は使用されず、ストリームは 8 ビットです: {}"),
     ("This PC didn’t accept 10-bit, so the stream is 8-bit.", "この PC は 10 ビットを受け付けなかったため、ストリームは 8 ビットです。"),
     ("This PC doesn’t offer PyroWave, so Nightjar uses {}.", "このPCはPyroWaveに対応していないため、Nightjarは{}を使います。"),
-    ("Below PyroWave’s minimum of {} Mbps at {}x{}, {} fps: the picture will break up.", "{1}x{2}、{3} fpsでのPyroWaveの最小値{0} Mbpsを下回っています：映像が崩れます。"),
+    ("Below the level where the project's test scenes kept detail for PyroWave: {} Mbps or more at {}x{}, {} fps. Text and textures may lose detail; raise the bitrate or use HEVC or AV1.", "プロジェクトのテスト映像でディテールが保たれたレベルを下回っています（PyroWave、{1}x{2}、{3} fps で {0} Mbps 以上）。テキストやテクスチャのディテールが失われることがあります。ビットレートを上げるか、HEVC か AV1 を使ってください。"),
     ("sharper colored text is on and has its own 4:4:4 and 10-bit handling.", "「色付き文字をくっきり表示」が有効で、独自に4:4:4と10ビットを処理します。"),
     ("PyroWave is chosen, and it has its own 4:4:4 and 10-bit modes.", "PyroWaveが選択されており、独自の4:4:4と10ビットのモードがあります。"),
     ("this device can’t decode or draw it ({}).", "このデバイスではデコードまたは描画できません（{}）。"),
@@ -1702,5 +1702,5 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("Opens straight into your games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open the list of PCs.", "ゲームを全画面で直接開き、コントローラーやリモコンで選べます。テレビや携帯ゲーム機ではオンにしたままにし、PC一覧を開くにはオフにしてください。"),
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "HDR 画面で明るいハイライトと豊かな色になります。自動は画面、デコーダー、PC が対応しているときだけオンにします。HDR が白っぽく見える場合はオフにしてください。"),
     ("Recommended", "おすすめ"),
-    ("PyroWave at {}×{}, {} fps asks for {} Mbps, more than this link is assumed to carry ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave の {0}×{1}、{2} fps は {3} Mbps を要求しますが、この回線が運べる量（{4} Mbps）を超えています。解像度かフレームレートを下げるか、HEVC か AV1 を使ってください。"),
+    ("PyroWave at {}×{}, {} fps asks for {} Mbps; that may be more than this link carries ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave の {0}×{1}、{2} fps は {3} Mbps を要求しますが、この回線が運べる量（{4} Mbps）を超えている可能性があります。解像度かフレームレートを下げるか、HEVC か AV1 を使ってください。"),
 ];

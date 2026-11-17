@@ -319,7 +319,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("10-bit SDR isn’t used, so the stream is 8-bit: {}", "SDR 10 bit không được dùng nên luồng là 8 bit: {}"),
     ("This PC didn’t accept 10-bit, so the stream is 8-bit.", "PC này không chấp nhận 10 bit nên luồng là 8 bit."),
     ("This PC doesn’t offer PyroWave, so Nightjar uses {}.", "PC này không cung cấp PyroWave nên Nightjar dùng {}."),
-    ("Below PyroWave’s minimum of {} Mbps at {}x{}, {} fps: the picture will break up.", "Dưới mức tối thiểu {0} Mbps của PyroWave ở {1}x{2}, {3} fps: hình ảnh sẽ bị vỡ."),
+    ("Below the level where the project's test scenes kept detail for PyroWave: {} Mbps or more at {}x{}, {} fps. Text and textures may lose detail; raise the bitrate or use HEVC or AV1.", "Dưới mức mà các cảnh thử của dự án giữ được chi tiết cho PyroWave: từ {0} Mbps trở lên ở {1}x{2}, {3} fps. Chữ và họa tiết có thể mất chi tiết; hãy tăng bitrate hoặc dùng HEVC hay AV1."),
     ("sharper colored text is on and has its own 4:4:4 and 10-bit handling.", "chữ màu sắc nét hơn đang bật và có cách xử lý 4:4:4 và 10 bit riêng."),
     ("PyroWave is chosen, and it has its own 4:4:4 and 10-bit modes.", "PyroWave đang được chọn và có chế độ 4:4:4 và 10 bit riêng."),
     ("this device can’t decode or draw it ({}).", "thiết bị này không giải mã hoặc vẽ được ({})."),
@@ -1702,5 +1702,5 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("Opens straight into your games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open the list of PCs.", "Mở thẳng trò chơi của bạn ở toàn màn hình, nơi tay cầm hoặc điều khiển từ xa có thể chọn. Bật cho TV hoặc máy cầm tay; tắt để mở danh sách PC."),
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "Điểm sáng rực hơn và màu sắc phong phú hơn trên màn hình HDR. Tự động chỉ bật khi màn hình, bộ giải mã và PC hỗ trợ; hãy để Tự động trừ khi HDR trông nhạt."),
     ("Recommended", "Đề xuất"),
-    ("PyroWave at {}×{}, {} fps asks for {} Mbps, more than this link is assumed to carry ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave ở {0}×{1}, {2} fps cần {3} Mbps, nhiều hơn mức đường truyền này có thể tải ({4} Mbps). Hãy giảm độ phân giải hoặc tốc độ khung hình, hoặc dùng HEVC hay AV1."),
+    ("PyroWave at {}×{}, {} fps asks for {} Mbps; that may be more than this link carries ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave ở {0}×{1}, {2} fps cần {3} Mbps; mức này có thể nhiều hơn mức đường truyền này tải ({4} Mbps). Hãy giảm độ phân giải hoặc tốc độ khung hình, hoặc dùng HEVC hay AV1."),
 ];

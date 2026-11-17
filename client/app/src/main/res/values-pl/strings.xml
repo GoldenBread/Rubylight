@@ -361,7 +361,7 @@
     <string name="stream_bitrate_help">Ustaw Mbps dla tej sesji.\nTo wyłącza „Obniżaj szybkość transmisji przy obciążonej sieci”.</string>
     <string name="stream_bitrate_invalid">Wpisz szybkość transmisji od 0,5 do 2000 Mbps</string>
     <string name="stream_bitrate_applied">Komputer zastosował %1$.1f Mbps</string>
-    <string name="summary_bitrate_pyrowave_below_minimum">Poniżej minimum PyroWave %1$d Mbps przy %2$d×%3$d, %4$d FPS: obraz będzie się rozpadał.</string>
+    <string name="summary_bitrate_pyrowave_below_minimum">Poniżej poziomu, na którym sceny testowe projektu zachowały szczegóły dla PyroWave: %1$d Mbps lub więcej przy %2$d×%3$d, %4$d fps. Tekst i tekstury mogą tracić szczegóły; zwiększ bitrate lub użyj HEVC lub AV1.</string>
     <string name="stream_enabled">Wł.</string>
     <string name="stream_disabled">Wył.</string>
     <string name="stream_limiter_status">Limit klatek komputera: %1$s\nAutomatyczny limit ekranu: %2$s\nCel: %3$s</string>

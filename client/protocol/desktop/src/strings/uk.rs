@@ -319,7 +319,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("10-bit SDR isn’t used, so the stream is 8-bit: {}", "10-бітний SDR не використовується, тому потік 8-бітний: {}"),
     ("This PC didn’t accept 10-bit, so the stream is 8-bit.", "Цей ПК не прийняв 10 біт, тому потік 8-бітний."),
     ("This PC doesn’t offer PyroWave, so Nightjar uses {}.", "Цей ПК не пропонує PyroWave, тому Nightjar використовує {}."),
-    ("Below PyroWave’s minimum of {} Mbps at {}x{}, {} fps: the picture will break up.", "Нижче мінімуму PyroWave {0} Мбіт/с за {1}x{2}, {3} к/с: зображення розсипатиметься."),
+    ("Below the level where the project's test scenes kept detail for PyroWave: {} Mbps or more at {}x{}, {} fps. Text and textures may lose detail; raise the bitrate or use HEVC or AV1.", "Нижче рівня, на якому тестові сцени проєкту зберігали деталізацію для PyroWave: {0} Мбіт/с або більше при {1}x{2}, {3} кадрах/с. Текст і текстури можуть втрачати деталізацію; підвищте бітрейт або використовуйте HEVC або AV1."),
     ("sharper colored text is on and has its own 4:4:4 and 10-bit handling.", "увімкнено чіткіший кольоровий текст, він сам обробляє 4:4:4 і 10 біт."),
     ("PyroWave is chosen, and it has its own 4:4:4 and 10-bit modes.", "вибрано PyroWave, у нього власні режими 4:4:4 і 10 біт."),
     ("this device can’t decode or draw it ({}).", "цей пристрій не може це декодувати або відобразити ({})."),
@@ -1702,5 +1702,5 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приймання: систе
     ("Opens straight into your games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open the list of PCs.", "Одразу відкриває ваші ігри на весь екран, де контролер або пульт може вибрати гру. Залиште ввімкненим для телевізора або портативного пристрою; вимкніть, щоб відкрити список ПК."),
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "Яскравіші відблиски та насиченіші кольори на HDR-екрані. Авто вмикає HDR, лише якщо екран, декодер і ПК це підтримують; залиште Авто, якщо HDR здається бляклим."),
     ("Recommended", "Рекомендовано"),
-    ("PyroWave at {}×{}, {} fps asks for {} Mbps, more than this link is assumed to carry ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave за {0}×{1} і {2} кадрів/с потребує {3} Мбіт/с — більше, ніж може пропустити це з'єднання ({4} Мбіт/с). Зменште роздільну здатність або частоту кадрів чи використайте HEVC або AV1."),
+    ("PyroWave at {}×{}, {} fps asks for {} Mbps; that may be more than this link carries ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave за {0}×{1} і {2} кадрів/с потребує {3} Мбіт/с; це може бути більше, ніж пропускає це з’єднання ({4} Мбіт/с). Зменште роздільну здатність або частоту кадрів чи використайте HEVC або AV1."),
 ];

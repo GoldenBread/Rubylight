@@ -148,12 +148,11 @@ impl BitrateController {
     }
 }
 
-/// The lowest bitrate PyroWave still holds together at, in Kbps: the host's severe-detail-loss
-/// floor (`pyrowave::minimum_kbps` in rust/core/src/pyrowave.rs), 2.5 bits per pixel per frame
-/// below 1080 lines and 1.5 from 1080 up, the same for SDR and HDR, 4:2:0 and 4:4:4 (measured on
-/// representative pictures, rust/PERFORMANCE.md). The host lowers PyroWave no further and warns
-/// below it. PyroWave is intra-only, so below this every frame visibly falls apart instead of
-/// just softening.
+/// The level where the project's test scenes kept detail, in Kbps: the host's
+/// `pyrowave::minimum_kbps` (rust/core/src/pyrowave.rs), 2.5 bits per pixel per frame below 1080
+/// lines and 1.5 from 1080 up, the same for SDR and HDR, 4:2:0 and 4:4:4 (measured on
+/// representative pictures, rust/PERFORMANCE.md). The host lowers a PyroWave stream no further and
+/// warns below it; text and textures may lose detail there.
 pub fn minimum_kbps(width: u32, height: u32, fps: u32) -> u32 {
     bitrate_kbps(width, height, fps, if height < 1080 { 25 } else { 15 })
 }
@@ -207,9 +206,9 @@ pub struct LinkNotice {
     /// What the stream asks for: its chosen bitrate or the automatic default, raised to the mode's
     /// floor, so the words name the rate the link really has to carry.
     pub asked_kbps: u32,
-    /// The mode's severe-detail-loss floor.
+    /// The mode's test-scene detail level.
     pub minimum_kbps: u32,
-    /// What the link is assumed to carry: 90% of a known wired link, or
+    /// What the link may carry: 90% of a known wired link, or
     /// [`UNKNOWN_LINK_DEFAULT_CAP_KBPS`] when it is unknown (a wireless or unspecified route).
     pub cap_kbps: u32,
 }

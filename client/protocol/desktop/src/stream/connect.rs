@@ -858,7 +858,7 @@ pub(super) fn jumbo_fallback_text() -> String {
 /// stream still starts; a lower resolution or frame rate, or HEVC/AV1, is the player's choice.
 pub(super) fn pyrowave_link_text(notice: &nightjar_policy::pyrowave::LinkNotice, width: u32, height: u32, fps: u32) -> String {
     trf(
-        "PyroWave at {}×{}, {} fps asks for {} Mbps, more than this link is assumed to carry ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.",
+        "PyroWave at {}×{}, {} fps asks for {} Mbps; that may be more than this link carries ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.",
         &[&width, &height, &fps, &notice.asked_kbps.div_ceil(1000), &notice.cap_kbps.div_ceil(1000)],
     )
 }
@@ -1194,6 +1194,15 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
             eprintln!("nightjar: {text}");
             text
         });
+    // The host warns a PyroWave stream below the level where the project's test scenes kept
+    // detail; the player hears the same in the stream's start notices, before the host's card.
+    let pyrowave_minimum = pyrowave
+        .then(|| pyrowave_bitrate_warning(settings, width, height, fps))
+        .flatten()
+        .map(|text| {
+            eprintln!("nightjar: {text}");
+            text
+        });
     let bitrate = if probes_first_bitrate(settings, plan.resume, &plan.info) {
         match client.probe_link(&plan.info) {
             Ok(mbps) => {
@@ -1483,6 +1492,7 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
         color_notice: color_notice(&offer, outcome.negotiated_video_format),
         pyrowave_fallback: None,
         pyrowave_link,
+        pyrowave_minimum,
         jumbo_fallback,
         codec_fallback: None,
         app_name: plan.app.name.clone(),

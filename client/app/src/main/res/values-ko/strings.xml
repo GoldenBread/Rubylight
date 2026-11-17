@@ -361,7 +361,7 @@
     <string name="stream_bitrate_help">이 세션의 Mbps를 설정합니다.\n‘네트워크 혼잡 시 비트레이트 낮추기’가 꺼집니다.</string>
     <string name="stream_bitrate_invalid">0.5~2000 Mbps 사이의 비트레이트를 입력하세요</string>
     <string name="stream_bitrate_applied">PC가 %1$.1f Mbps를 적용했습니다</string>
-    <string name="summary_bitrate_pyrowave_below_minimum">%2$d×%3$d, %4$d FPS에서 PyroWave 최솟값 %1$d Mbps보다 낮습니다. 화면이 깨집니다.</string>
+    <string name="summary_bitrate_pyrowave_below_minimum">프로젝트 테스트 장면에서 디테일이 유지된 수준보다 낮습니다(PyroWave, %2$d×%3$d, %4$d fps에서 %1$d Mbps 이상). 텍스트와 텍스처의 디테일이 손실될 수 있습니다. 비트레이트를 높이거나 HEVC 또는 AV1을 사용하세요.</string>
     <string name="stream_enabled">사용</string>
     <string name="stream_disabled">사용 안함</string>
     <string name="stream_limiter_status">PC 프레임 제한: %1$s\n자동 디스플레이 제한: %2$s\n목표: %3$s</string>

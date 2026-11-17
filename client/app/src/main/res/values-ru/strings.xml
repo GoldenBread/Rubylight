@@ -361,7 +361,7 @@
     <string name="stream_bitrate_help">Задайте Мбит/с для этого сеанса.\nЭто отключит «Снижать битрейт при загруженной сети».</string>
     <string name="stream_bitrate_invalid">Введите битрейт от 0,5 до 2000 Мбит/с</string>
     <string name="stream_bitrate_applied">ПК применил %1$.1f Мбит/с</string>
-    <string name="summary_bitrate_pyrowave_below_minimum">Ниже минимума PyroWave %1$d Мбит/с для %2$d×%3$d, %4$d FPS: изображение будет рассыпаться.</string>
+    <string name="summary_bitrate_pyrowave_below_minimum">Ниже уровня, на котором тестовые сцены проекта сохраняли детализацию для PyroWave: %1$d Мбит/с или больше при %2$d×%3$d, %4$d кадрах/с. Текст и текстуры могут терять детализацию; повысьте битрейт или используйте HEVC или AV1.</string>
     <string name="stream_enabled">Вкл.</string>
     <string name="stream_disabled">Выкл.</string>
     <string name="stream_limiter_status">Ограничение кадров на ПК: %1$s\nАвтоограничение дисплея: %2$s\nЦель: %3$s</string>

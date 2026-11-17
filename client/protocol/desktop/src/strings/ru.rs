@@ -319,7 +319,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("10-bit SDR isn’t used, so the stream is 8-bit: {}", "10-битный SDR не используется, поэтому поток 8-битный: {}"),
     ("This PC didn’t accept 10-bit, so the stream is 8-bit.", "Этот ПК не принял 10 бит, поэтому поток 8-битный."),
     ("This PC doesn’t offer PyroWave, so Nightjar uses {}.", "Этот ПК не предлагает PyroWave, поэтому Nightjar использует {}."),
-    ("Below PyroWave’s minimum of {} Mbps at {}x{}, {} fps: the picture will break up.", "Ниже минимума PyroWave {0} Мбит/с при {1}x{2}, {3} к/с: изображение будет рассыпаться."),
+    ("Below the level where the project's test scenes kept detail for PyroWave: {} Mbps or more at {}x{}, {} fps. Text and textures may lose detail; raise the bitrate or use HEVC or AV1.", "Ниже уровня, на котором тестовые сцены проекта сохраняли детализацию для PyroWave: {0} Мбит/с или больше при {1}x{2}, {3} кадрах/с. Текст и текстуры могут терять детализацию; повысьте битрейт или используйте HEVC или AV1."),
     ("sharper colored text is on and has its own 4:4:4 and 10-bit handling.", "включён более чёткий цветной текст, он сам обрабатывает 4:4:4 и 10 бит."),
     ("PyroWave is chosen, and it has its own 4:4:4 and 10-bit modes.", "выбран PyroWave, у него свои режимы 4:4:4 и 10 бит."),
     ("this device can’t decode or draw it ({}).", "это устройство не может это декодировать или отрисовать ({})."),
@@ -1702,5 +1702,5 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приёма: система �
     ("Opens straight into your games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open the list of PCs.", "Сразу открывает ваши игры на весь экран, где контроллер или пульт может выбрать игру. Оставьте включённым для телевизора или портативного устройства; выключите, чтобы открыть список ПК."),
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "Яркие блики и насыщенные цвета на HDR-экране. Авто включает HDR, только если экран, декодер и ПК это поддерживают; оставьте Авто, если HDR выглядит блёклым."),
     ("Recommended", "Рекомендуется"),
-    ("PyroWave at {}×{}, {} fps asks for {} Mbps, more than this link is assumed to carry ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave при {0}×{1} и {2} кадрах/с требует {3} Мбит/с — больше, чем может пропустить этот канал ({4} Мбит/с). Снизьте разрешение или частоту кадров либо используйте HEVC или AV1."),
+    ("PyroWave at {}×{}, {} fps asks for {} Mbps; that may be more than this link carries ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave при {0}×{1} и {2} кадрах/с требует {3} Мбит/с; это может быть больше, чем пропускает этот канал ({4} Мбит/с). Снизьте разрешение или частоту кадров либо используйте HEVC или AV1."),
 ];
