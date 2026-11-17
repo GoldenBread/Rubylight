@@ -2328,16 +2328,14 @@ impl Session {
         Ok(())
     }
     fn bitrate(&mut self, bitrate: u32) -> Result<()> {
-        if bitrate == self.stream.bitrate_kbps {
-            return Ok(());
-        }
         if bitrate == 0 {
             bail!("NVENC bitrate out of range");
         }
+        // Cap before comparing: a request above the ceiling that the stream
+        // already runs at needs no reconfiguration. nvEncodeAPI.h 13.0 takes
+        // `averageBitRate` and `maxBitRate` as 32-bit bits per second, and
+        // 2 Gbit/s stays inside them.
         let requested = bitrate;
-        // The same ceiling the stream negotiated under: a stream that opened
-        // above the old reconfigure limit must keep changing its rate instead
-        // of failing.
         let bitrate = bitrate.min(butterpollo_core::rtsp::MAX_BITRATE_KBPS);
         if bitrate != requested {
             tracing::warn!(
@@ -2345,6 +2343,9 @@ impl Session {
                 bitrate,
                 "NVENC bitrate above the stream's maximum; using the maximum"
             );
+        }
+        if bitrate == self.stream.bitrate_kbps {
+            return Ok(());
         }
         if self.functions.nvEncReconfigureEncoder.is_none() {
             bail!("NVENC driver cannot change bitrate in this session");

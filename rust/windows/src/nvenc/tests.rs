@@ -1120,6 +1120,11 @@ fn failed_bitrate_reconfigure_keeps_the_config_and_a_rise_needs_no_keyframe() ->
         butterpollo_core::rtsp::MAX_BITRATE_KBPS
     );
     assert_eq!(encoder.config.rcParams.averageBitRate, 2_000_000_000);
+    // The cap is applied before the stored rate is compared: a request above
+    // the ceiling at the stream's current rate changes nothing.
+    state(|d| d.reconfigured = None);
+    encoder.bitrate(butterpollo_core::rtsp::MAX_BITRATE_KBPS + 500_000)?;
+    assert!(state(|d| d.reconfigured.is_none()));
     drop(encoder);
     assert_clean();
     Ok(())
