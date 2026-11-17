@@ -119,18 +119,28 @@ const stutter = (changes = {}) => ({
   ...changes,
 });
 
+const pipelineRates = {
+  window_ms: 2004, source_mhz: 239_760, capture_mhz: 239_760,
+  submit_mhz: 120_000, output_mhz: 119_500, repeat_mhz: 120_000,
+};
+
 test('the card names the stage that took the time pictures lost against the stream\'s own path', () => {
-  const result = html({ stutter: stutter() });
+  const result = html({ stutter: stutter(), pipeline_rates: pipelineRates });
   assert.match(result, /<dt[^>]*>Where pictures lost time<\/dt>/);
   assert.match(result, /62% in encoding/);
   assert.match(result, />12<\/span> of/);
   assert.match(result, />54000<\/span> new pictures took longer than this stream's usual path/);
   assert.match(result, /125 ms<\/span>/);
-  assert.match(result, /62% of it in encoding\./);
-  assert.match(result, /The network and the device come after the host's last packet\./);
-  const clean = html({ stutter: stutter({ late_pictures: 0, lost_ms: 0, dominant: null, stages: [] }) });
+  assert.match(result, /62% of it in encoding(?:<!--[^>]*-->)*\./);
+  // A clean host path is not a clean game: the sentence names the game and
+  // points at the source rate, so a game hitch is not read as no stutter.
+  assert.match(result, /The game's own intervals, the network and the device are outside this\s+measure/);
+  assert.match(result, /a late or missing game picture shows as fewer source frames and more repeats in\s+Pipeline frame rates/);
+  const clean = html({ stutter: stutter({ late_pictures: 0, lost_ms: 0, dominant: null, stages: [] }), pipeline_rates: pipelineRates });
   assert.match(clean, /Where pictures lost time<\/dt>/);
-  assert.match(clean, /No new picture took longer than this stream's usual path\./);
+  assert.match(clean, /No new picture took longer than this stream's usual path from Windows' present to the host's last packet\./);
+  assert.match(clean, /a late or missing game picture shows as fewer source frames and more repeats in\s+Pipeline frame rates/);
+  assert.match(html({ stutter: stutter() }), /outside this\s+measure(?:<!--[^>]*-->)*\./);
   assert.doesNotMatch(html(), /Where pictures lost time/);
   assert.doesNotMatch(html({ stutter: stutter({ pictures: 0 }) }), /Where pictures lost time/);
 });

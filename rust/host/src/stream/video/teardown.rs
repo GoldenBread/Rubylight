@@ -44,8 +44,9 @@ impl SessionThread<'_> {
         let period = s.stream_mode().period();
         let stutter = {
             let performance = s.stats.performance.lock().unwrap();
-            performance.stutter_report(period)
-        };
+            performance.stutter_window()
+        }
+        .report(period);
         if stutter.pictures() > 0 {
             let ms = |us: u64| (us as f64 / 100.0).round() / 10.0;
             let dominant = stutter.dominant();

@@ -297,8 +297,14 @@ impl Claims {
 /// Stage samples are kept as long as the 5 s timing log apart, so each line
 /// covers the pictures since the last one.
 const STAGE_WINDOW: Duration = Duration::from_secs(5);
-/// Bounds the window to 400 new pictures a second.
-const STAGE_SAMPLES: usize = 2048;
+/// Samples stay a second longer than the window they report. The stutter
+/// report advances on a five-second mark that the housekeeping loop checks only
+/// every 250 ms, so its oldest pictures are up to that much older than the
+/// newest when they are counted, and must still be there.
+const STAGE_RETENTION: Duration = Duration::from_secs(6);
+/// Bounds the samples to 500 new pictures a second over the retained six
+/// seconds, the highest frame rate a stream may use.
+const STAGE_SAMPLES: usize = 3072;
 struct StageSample {
     at: Instant,
     /// `STAGES`, then the total, then Moonlight's host latency field for the
@@ -531,7 +537,7 @@ impl Performance {
             || self
                 .stages
                 .front()
-                .is_some_and(|s| at.saturating_duration_since(s.at) > STAGE_WINDOW)
+                .is_some_and(|s| at.saturating_duration_since(s.at) > STAGE_RETENTION)
         {
             self.stages.pop_front();
         }
@@ -539,9 +545,11 @@ impl Performance {
     /// Adds every picture recorded since the previous call to the stream's
     /// stutter report: one five-second window. Fewer pictures than
     /// [`crate::stutter_report::MIN_PICTURES`] wait for the next call, so a
-    /// short window is not judged against itself. Call every five seconds;
-    /// each picture counts once, and the report also reads what this has not
-    /// counted yet.
+    /// short window is not judged against itself; below about two new pictures
+    /// a second the samples age out before ten have arrived, so `windows` stays
+    /// 0 and only the provisional report shows them. A game streams faster than
+    /// that. Call every five seconds; each picture counts once, and the report
+    /// also reads what this has not counted yet.
     pub fn advance_stutter(&mut self, now: Instant, period: Duration) {
         let pictures: Vec<Picture> = self.uncounted_stutter().collect();
         if pictures.len() < crate::stutter_report::MIN_PICTURES {
@@ -550,14 +558,16 @@ impl Performance {
         self.stutter.add(&pictures, period);
         self.stutter_at = Some(now);
     }
-    /// The stream's stutter report so far, including the pictures recorded
-    /// since the last [`advance_stutter`](Self::advance_stutter), which the
-    /// report for the console needs and the five-second call has not counted.
-    pub fn stutter_report(&self, period: Duration) -> StutterReport {
-        let mut totals = self.stutter.clone();
-        let pictures: Vec<Picture> = self.uncounted_stutter().collect();
-        totals.add(&pictures, period);
-        totals.report()
+    /// The stutter totals and the pictures recorded since the last
+    /// [`advance_stutter`](Self::advance_stutter), copied under the caller's
+    /// lock. [`StutterWindow::report`] does the medians and the JSON after the
+    /// lock is released, as [`window`](Self::window) does for the stage
+    /// snapshot.
+    pub fn stutter_window(&self) -> StutterWindow {
+        StutterWindow {
+            totals: self.stutter.clone(),
+            pictures: self.uncounted_stutter().collect(),
+        }
     }
     /// A new stream size or rate has its own usual path: `now` is when the
     /// switch happened and `period` the mode before it, whose last window is
@@ -612,6 +622,21 @@ impl Performance {
     }
     pub fn snapshot(&self, now: Instant) -> Value {
         self.window(now).snapshot()
+    }
+}
+/// A stream's stutter totals and the pictures not yet counted, copied out of
+/// `Performance`.
+pub struct StutterWindow {
+    totals: StutterTotals,
+    pictures: Vec<Picture>,
+}
+impl StutterWindow {
+    /// The report so far, including the pictures recorded since the last
+    /// [`Performance::advance_stutter`], which the console reads and the
+    /// five-second call has not counted.
+    pub fn report(mut self, period: Duration) -> StutterReport {
+        self.totals.add(&self.pictures, period);
+        self.totals.report()
     }
 }
 /// The measurements a snapshot covers, copied out of `Performance`.

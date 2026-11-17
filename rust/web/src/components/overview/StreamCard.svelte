@@ -160,9 +160,11 @@
             <span class="num">{stutter.pictures}</span> new pictures took longer than this stream's usual path and
             lost <span class="num">{ms(stutter.lost_ms)}</span>{#if lostStage}, {lostStage.percent}% of it in {stageWords[lostStage.id]}{/if}.
           {:else}
-            No new picture took longer than this stream's usual path.
+            No new picture took longer than this stream's usual path from Windows' present to the host's last packet.
           {/if}
-          The network and the device come after the host's last packet.
+          The game's own intervals, the network and the device are outside this
+          measure{#if pipeline}; a late or missing game picture shows as fewer source frames and more repeats in
+          Pipeline frame rates{/if}.
         </dd>
       </div>
     {/if}

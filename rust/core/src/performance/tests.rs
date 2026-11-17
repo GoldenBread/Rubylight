@@ -519,7 +519,7 @@ fn claims_match_encoded_frames_by_presentation_and_drop_frames_never_returned() 
 fn stage_samples_are_bounded_and_saturate_instead_of_wrapping() {
     let start = Instant::now();
     let mut p = Performance::default();
-    for i in 0..3000u64 {
+    for i in 0..STAGE_SAMPLES as u64 + 64 {
         p.record_stages(&stamps(start + Duration::from_micros(i), [0; 9]), u64::MAX);
     }
     assert_eq!(p.stages.len(), STAGE_SAMPLES);
@@ -586,15 +586,15 @@ fn the_stutter_report_names_an_encode_stall_and_counts_each_picture_once() {
         p.record_stages(&stamped(start + Duration::from_millis(n), stages), 0);
     }
     // The console reads the window that has not been advanced yet.
-    let report = p.stutter_report(period);
+    let report = p.stutter_window().report(period);
     assert_eq!((report.pictures(), report.late_pictures()), (60, 1));
     assert_eq!(report.dominant(), Some(Stage::Encode));
     assert_eq!(report.total_lost_us(), 50_000);
     // Advancing moves the window into the stream's totals once.
     p.advance_stutter(start + Duration::from_secs(1), period);
-    assert_eq!(p.stutter_report(period), report);
+    assert_eq!(p.stutter_window().report(period), report);
     p.advance_stutter(start + Duration::from_secs(2), period);
-    assert_eq!(p.stutter_report(period), report);
+    assert_eq!(p.stutter_window().report(period), report);
     assert_eq!(
         report.snapshot()["stages"][0],
         serde_json::json!({ "id": "encode", "lost_ms": 50.0, "percent": 100 })
@@ -617,7 +617,7 @@ fn five_seconds_of_windows_name_the_overload_against_the_earlier_ones() {
         );
     }
     p.advance_stutter(start + Duration::from_secs(1), period);
-    assert_eq!(p.stutter_report(period).pictures(), 60);
+    assert_eq!(p.stutter_window().report(period).pictures(), 60);
     for n in 0..60 {
         p.record_stages(
             &stamped(
@@ -628,7 +628,7 @@ fn five_seconds_of_windows_name_the_overload_against_the_earlier_ones() {
         );
     }
     p.advance_stutter(start + Duration::from_secs(2), period);
-    let report = p.stutter_report(period);
+    let report = p.stutter_window().report(period);
     assert_eq!((report.windows(), report.pictures()), (2, 120));
     assert_eq!(report.late_pictures(), 60);
     assert_eq!(report.dominant(), Some(Stage::Encode));
@@ -650,7 +650,11 @@ fn a_window_with_too_few_pictures_waits_for_the_next_one() {
         );
     }
     p.advance_stutter(start + Duration::from_secs(1), period);
-    assert_eq!(p.stutter_report(period).pictures(), 5, "nothing is dropped");
+    assert_eq!(
+        p.stutter_window().report(period).pictures(),
+        5,
+        "nothing is dropped"
+    );
     for n in 5..10 {
         p.record_stages(
             &stamped(
@@ -661,12 +665,36 @@ fn a_window_with_too_few_pictures_waits_for_the_next_one() {
         );
     }
     p.advance_stutter(start + Duration::from_secs(2), period);
-    assert_eq!(p.stutter_report(period).pictures(), 10);
+    assert_eq!(p.stutter_window().report(period).pictures(), 10);
+}
+
+#[test]
+fn a_late_five_second_mark_still_counts_every_picture_of_its_window() {
+    // The housekeeping loop checks the five-second mark only every 250 ms, so
+    // the window is up to that much longer than the stage samples it needs.
+    // No picture may be evicted before it has been counted.
+    let period = Duration::from_micros(16_667);
+    let start = Instant::now();
+    let mut p = Performance::default();
+    for n in 0..525 {
+        p.record_stages(
+            &stamped(
+                start + Duration::from_millis(n * 10),
+                [1_000, 20, 5, 300, 4_000, 10, 40, 50, 500],
+            ),
+            0,
+        );
+    }
+    p.advance_stutter(start + Duration::from_millis(5_250), period);
+    let report = p.stutter_window().report(period);
+    assert_eq!((report.windows(), report.pictures()), (1, 525));
 }
 
 #[test]
 fn a_stream_without_a_picture_has_no_stutter_report() {
-    let report = Performance::default().stutter_report(Duration::from_micros(16_667));
+    let report = Performance::default()
+        .stutter_window()
+        .report(Duration::from_micros(16_667));
     assert_eq!((report.windows(), report.pictures()), (0, 0));
     assert_eq!(report.dominant(), None);
     assert_eq!(report.snapshot()["stages"], serde_json::json!([]));
@@ -708,7 +736,7 @@ fn a_mode_switch_counts_the_old_window_then_judges_the_new_mode_by_itself() {
         p.record_stages(&stamped(start + Duration::from_millis(n), stages), 0);
     }
     p.forget_stutter_usual(start + Duration::from_millis(500), old);
-    let before = p.stutter_report(old);
+    let before = p.stutter_window().report(old);
     assert_eq!((before.pictures(), before.late_pictures()), (60, 1));
     assert_eq!(before.dominant(), Some(Stage::Encode));
     // A heavier mode right after a resolution or rate change: its first window
@@ -722,7 +750,7 @@ fn a_mode_switch_counts_the_old_window_then_judges_the_new_mode_by_itself() {
             0,
         );
     }
-    let after = p.stutter_report(Duration::from_micros(8_333));
+    let after = p.stutter_window().report(Duration::from_micros(8_333));
     assert_eq!((after.pictures(), after.late_pictures()), (120, 1));
     assert_eq!(after.dominant(), Some(Stage::Encode));
 }

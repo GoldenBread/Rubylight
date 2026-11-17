@@ -88,7 +88,10 @@ fn a_slow_stage_is_judged_against_its_own_usual_not_the_biggest_one() {
     let mut pictures = steady(60, picture(1_000, 500, 8_000, 100, 500));
     pictures[20] = picture(1_000, 3_500, 8_000, 100, 500);
     let mut totals = Totals::default();
-    add(&mut totals, &pictures);
+    // 2 ms frames: half a frame is the one-millisecond floor, which the 3 ms
+    // conversion spike clears. A 60 fps stream's 8.3 ms half frame would hide
+    // this spike, so the floor is what keeps it reportable.
+    totals.add(&pictures, Duration::from_micros(2_000));
     let report = totals.report();
     assert_eq!(report.dominant(), Some(Stage::Convert));
     assert_eq!(report.lost_us(Stage::Convert), 3_000);
@@ -231,7 +234,7 @@ fn a_remainder_goes_to_the_stage_with_the_most_excess() {
     // up to the time the picture lost.
     let normal = picture(1_000, 1_000, 1_000, 1_000, 1_000);
     let mut pictures = steady(60, normal);
-    pictures[3] = picture(1_001, 1_001, 2_001, 1_000, 1_000);
+    pictures[3] = picture(1_001, 1_001, 2_002, 1_000, 1_000);
     let mut totals = Totals::default();
     // 2 ms frames: half a frame is under a millisecond, so the floor decides.
     totals.add(&pictures, Duration::from_micros(2_000));
@@ -268,11 +271,11 @@ fn a_picture_groups_the_nine_stage_samples_the_video_thread_takes() {
     // capture, hold, claim, convert, encode, queue, packetize, send_queue, send,
     // then the total and the two capture ages, which are not stages.
     let samples = [100, 20, 5, 300, 4_000, 10, 40, 50, 500, 0, 0, 0, 0];
-    let picture = Picture::of(&samples);
-    assert_eq!(picture, picture(125, 300, 4_000, 50, 550));
-    assert_eq!(picture.total(), 5_025);
+    let grouped = Picture::of(&samples);
+    assert_eq!(grouped, picture(125, 300, 4_000, 50, 550));
+    assert_eq!(grouped.total(), 5_025);
     assert_eq!(
-        Stage::ALL.map(|stage| picture.get(stage)),
+        Stage::ALL.map(|stage| grouped.get(stage)),
         [125, 300, 4_000, 50, 550]
     );
     assert_eq!(Picture::of(&[]), Picture::default());
