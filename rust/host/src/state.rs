@@ -14,9 +14,9 @@ use std::{
     time::{Duration, Instant},
 };
 pub type Shared = Arc<Host>;
-/// How long a game at shutdown keeps its audio route while it closes. Past
-/// this the route goes back even if the game ignores close.
-const AUDIO_RELEASE_GRACE: Duration = Duration::from_millis(250);
+/// How long a shutdown waits for a game's processes to stop before releasing
+/// its audio route anyway: a bound on a driver or process that never reports.
+const AUDIO_RELEASE_BOUND: Duration = Duration::from_secs(30);
 type FileStamp = (std::time::SystemTime, u64);
 /// When a file was last written and its size; None while it is missing.
 fn file_stamp(path: &std::path::Path) -> Option<FileStamp> {
@@ -627,38 +627,60 @@ impl Host {
         let teardown = self.session_teardown(crate::session_control::Scope::Game);
         // Stopping the app waits for it to exit, up to its exit timeout and
         // undo commands: never under the lock every serverinfo request takes.
-        let app = self.current_app.lock().unwrap().take();
+        let mut app = self.current_app.lock().unwrap().take();
         // At shutdown the wait runs under a budget. The display layout goes
-        // back before the game is asked to close; its audio route stays while
-        // it closes, and a game that ignores close loses the route after a
-        // short grace rather than holding it until the next host start.
+        // back before the game is asked to close; its audio route stays until
+        // its processes have stopped (before its undo commands), with a bound
+        // for a process or driver that never reports.
         if matches!(why, AppStop::Shutdown) {
             let displays = std::mem::take(&mut *self.app_display.lock().unwrap());
             drop(displays);
-            let done = std::sync::atomic::AtomicBool::new(false);
-            std::thread::scope(|scope| {
-                scope.spawn(|| {
-                    let deadline = std::time::Instant::now() + AUDIO_RELEASE_GRACE;
-                    while !done.load(std::sync::atomic::Ordering::Acquire)
-                        && std::time::Instant::now() < deadline
-                    {
-                        std::thread::sleep(std::time::Duration::from_millis(10));
-                    }
-                    if !done.load(std::sync::atomic::Ordering::Acquire) {
-                        let audio = self.app_audio.lock().unwrap().take();
-                        if audio.is_some() {
-                            tracing::warn!(
-                                "the game had not closed when its audio route's grace ran out; releasing it"
-                            );
+            if let Some(mut running) = app.take() {
+                let (stopped, stopped_rx) = std::sync::mpsc::channel();
+                running.notify_when_processes_stop(stopped);
+                let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let worker_done = done.clone();
+                std::thread::scope(|scope| {
+                    scope.spawn(move || {
+                        let deadline = std::time::Instant::now() + AUDIO_RELEASE_BOUND;
+                        loop {
+                            match stopped_rx
+                                .recv_timeout(std::time::Duration::from_millis(10))
+                            {
+                                Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                                    drop(self.app_audio.lock().unwrap().take());
+                                    return;
+                                }
+                                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                                    if worker_done.load(std::sync::atomic::Ordering::Acquire) =>
+                                {
+                                    return;
+                                }
+                                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                                    if std::time::Instant::now() >= deadline =>
+                                {
+                                    let audio = self.app_audio.lock().unwrap().take();
+                                    if audio.is_some() {
+                                        tracing::warn!(
+                                            "the game's processes had not stopped when the shutdown's audio bound ran out; releasing its audio route"
+                                        );
+                                    }
+                                    drop(audio);
+                                    return;
+                                }
+                                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                            }
                         }
-                        drop(audio);
-                    }
+                    });
+                    self.end_app(Some(running), why);
+                    done.store(true, std::sync::atomic::Ordering::Release);
+                    drop(self.app_audio.lock().unwrap().take());
+                    drop(std::mem::take(&mut *self.app_display.lock().unwrap()));
                 });
-                self.end_app(app, why);
-                done.store(true, std::sync::atomic::Ordering::Release);
+            } else {
                 drop(self.app_audio.lock().unwrap().take());
-                drop(std::mem::take(&mut *self.app_display.lock().unwrap()));
-            });
+                self.end_app(None, why);
+            }
             drop(teardown);
             return;
         }

@@ -281,6 +281,8 @@ pub struct RunningApp {
     /// The launching device's game settings files, swapped in; they go back once the app's
     /// processes are closed.
     settings_swap: Option<crate::game_settings::Swap>,
+    /// Told once the app's processes have stopped, before its undo commands.
+    processes_stopped: Option<std::sync::mpsc::Sender<()>>,
     /// When the game's programs were last recorded for [`Self::settings_swap`].
     settings_watch: std::time::Instant,
     /// An app launched before anyone signed in, started once a user does.
@@ -499,6 +501,7 @@ impl RunningApp {
             exit_timeout: exit_timeout(app, &butterpollo_core::config::Config::default()),
             settings_swap: None,
             settings_watch: std::time::Instant::now(),
+            processes_stopped: None,
         };
         let commands: Vec<PrepCommand> = serde_json::from_value(
             app.extra
@@ -735,6 +738,12 @@ impl RunningApp {
             swap.watch(processes);
         }
     }
+    /// Tell `stopped` once this app's processes have stopped, before its undo
+    /// commands run. Used at shutdown to release the game's audio route right
+    /// after it closes without waiting for slow undos.
+    pub fn notify_when_processes_stop(&mut self, stopped: std::sync::mpsc::Sender<()>) {
+        self.processes_stopped = Some(stopped);
+    }
     pub fn stop(&mut self) {
         // What runs now is what the files wait for, should it outlive the stop below.
         self.watch_game();
@@ -760,6 +769,9 @@ impl RunningApp {
         {
             tracing::warn!(%error, "application could not exit gracefully");
             let _ = child.stop();
+        }
+        if let Some(stopped) = self.processes_stopped.take() {
+            let _ = stopped.send(());
         }
         // Menu commands ran after the preparation, so they are undone before it.
         for index in self.menu_undo.take() {
