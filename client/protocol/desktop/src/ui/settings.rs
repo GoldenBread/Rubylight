@@ -192,9 +192,8 @@ pub(crate) fn simple_caps(display: &Display, hdr_display: bool, vrr: bool) -> si
             hdr: hdr_display,
             vrr,
         },
-        // The stream negotiates its codec and HDR with the PC; a desktop decoder has no benchmark
-        // here, so the screen's own rate leads.
-        decoder: simple::Decoder { h264: true, hevc: true, av1: true, hdr: true, max_fps_at_native: None },
+        // The stream negotiates its codec and HDR with the PC, and its rate is the screen's own.
+        decoder: simple::Decoder { h264: true, hevc: true, av1: true, hdr: true },
         host: simple::Host::default(),
     }
 }

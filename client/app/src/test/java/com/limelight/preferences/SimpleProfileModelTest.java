@@ -31,7 +31,7 @@ public class SimpleProfileModelTest {
 
     private static SimpleProfileModel.Capabilities hdrCapabilities() {
         return new SimpleProfileModel.Capabilities(1920, 1080, 120, true, true,
-                true, true, true, true, null, true, true, true);
+                true, true, true, true, null, true, true);
     }
 
     @Before
@@ -186,7 +186,7 @@ public class SimpleProfileModelTest {
         return new SimpleProfileModel.Capabilities(display.getInt("width"), display.getInt("height"),
                 display.getInt("refresh_hz"), display.getBoolean("hdr"), display.getBoolean("vrr"),
                 decoder.getBoolean("h264"), decoder.getBoolean("hevc"), decoder.getBoolean("av1"),
-                decoder.getBoolean("hdr"), decoder.isNull("max_fps_at_native") ? null : decoder.getInt("max_fps_at_native"),
+                decoder.getBoolean("hdr"),
                 host.isNull("hdr") ? null : host.getBoolean("hdr"),
                 host.isNull("hevc") ? null : host.getBoolean("hevc"),
                 host.isNull("av1") ? null : host.getBoolean("av1"));

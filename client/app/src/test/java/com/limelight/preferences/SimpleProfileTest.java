@@ -216,13 +216,12 @@ public class SimpleProfileTest {
     }
 
     @Test
-    public void aMeasuredCapSnapsToAnOfferedFrameRate() {
-        assertEquals(90, SimpleProfile.offeredFps(context, 109));
-        assertEquals(60, SimpleProfile.offeredFps(context, 60));
-        assertEquals(30, SimpleProfile.offeredFps(context, 24));
-        assertEquals(16667, SimpleProfile.benchmarkUsAtNative(1920, 1080, 16667));
-        assertTrue("a 1440p screen decodes slower than the 1080p clip",
-                SimpleProfile.benchmarkUsAtNative(2560, 1440, 16667) > 16667);
+    public void theDecodeBenchmarkNeverCapsTheStreamRate() {
+        // The benchmark measures one frame's decode time, not how many frames a second a decoder
+        // sustains, so it is not part of the simple layer's capabilities at all.
+        assertTrue(SimpleProfile.applyRecommended(context));
+        assertEquals(Integer.toString(SimpleProfile.capabilities(context).refreshHz),
+                prefs.getString(PreferenceConfiguration.FPS_PREF_STRING, null));
     }
 
     @Test
