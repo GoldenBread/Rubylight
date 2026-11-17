@@ -133,6 +133,10 @@ public class DualScreenTest {
             game.stageComplete("launch");
             Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
 
+            // DualScreen.start sets both before launch() declines a finishing activity, so the test
+            // fails without the guard in Game.stageComplete, not just without the launch guard.
+            assertNull("no second-screen link is kept", game.dualScreenLink);
+            assertFalse("no second stream was started", game.dualScreenStarted);
             assertNull("a stream that is ending starts no second one",
                     Shadows.shadowOf(game).getNextStartedActivity());
         } finally {
