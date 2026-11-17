@@ -364,14 +364,14 @@ impl Gui {
                 }
                 SDL_EVENT_MOUSE_WHEEL => {
                     let w = event.wheel;
-                    let flip = if w.direction == SDL_MOUSEWHEEL_FLIPPED { -1.0 } else { 1.0 };
+                    let (x, y) = crate::sdl::wheel_turn(&w);
                     // egui scrolls what is under the pointer it last heard of: a turn with no
                     // motion before it (the window just opened, a stream just ended, a touchpad's
                     // two fingers that move no pointer) scrolled nothing until the pointer moved.
                     self.events.push(Event::PointerMoved(point(w.mouse_x, w.mouse_y)));
                     self.events.push(Event::MouseWheel {
                         unit: egui::MouseWheelUnit::Line,
-                        delta: Vec2::new(w.x * flip, w.y * flip),
+                        delta: Vec2::new(x, y),
                         phase: egui::TouchPhase::Move,
                         source: egui::MouseWheelSource::Unknown,
                         modifiers: self.modifiers,

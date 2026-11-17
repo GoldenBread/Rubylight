@@ -102,6 +102,28 @@ fn a_wheel_turn_scrolls_without_a_motion_first() {
     assert!(page_offset(&mut gui) > 0.0, "the turn scrolls the page under the pointer");
 }
 
+/// macOS's natural scrolling (SDL_MOUSEWHEEL_FLIPPED) scrolls the launcher the way the system
+/// setting says: SDL's values already carry it. Elsewhere the flag still turns the turn back.
+#[test]
+fn a_natural_scrolling_turn_scrolls_like_the_system_says() {
+    let scale = Scale { pixels_per_point: 1.0, density: 1.0 };
+    // SAFETY: an all-zero SDL_Event is a valid value of the C union.
+    let mut event: SDL_Event = unsafe { std::mem::zeroed() };
+    event.r#type = SDL_EVENT_MOUSE_WHEEL.0;
+    event.wheel.y = -3.0;
+    event.wheel.direction = SDL_MOUSEWHEEL_FLIPPED;
+    event.wheel.mouse_x = 200.0;
+    event.wheel.mouse_y = 150.0;
+    let mut gui = Gui::new();
+    gui.handle(&event, scale);
+    let offset = page_offset(&mut gui);
+    if cfg!(target_os = "macos") {
+        assert!(offset > 0.0, "a turn toward the user moves down the page, flipped or not");
+    } else {
+        assert_eq!(offset, 0.0, "turned back, the turn scrolls up a page already at its top");
+    }
+}
+
 #[test]
 fn egui_does_not_zoom_on_its_own_ctrl_keys() {
     // The default context would, which is why `Gui::new` turns it off.
