@@ -925,7 +925,7 @@ impl Launcher {
             rows.when(!vrr);
             // A main row beside Variable refresh rate, as on Android. One choice over its three keys (`FramePacingChoice`, Android's own): Balanced's newest
             // frame or every frame, and the PC's frame times, which take over from the pacing.
-            setting_row(ui, s, &mut rows, &["frame_pacing", "drop_late_frames", "host_frame_times"], "Frame pacing", "Lowest latency shows frames at once; the other choices wait for the screen’s refresh for steadier motion at more delay, keeping every frame adds more, and PC’s frame times shows each frame when the game drew it, a few milliseconds later. With V-Sync on, frames are timed to your screen where the PC supports it, sent to arrive just before each refresh; leave Lowest latency unless motion judders.", |ui, s| {
+            setting_row(ui, s, &mut rows, &["frame_pacing", "drop_late_frames", "host_frame_times"], "Frame pacing", "Lowest latency shows frames at once; the other choices wait for the screen’s refresh for steadier motion at more delay, keeping every frame adds more, and PC’s frame times shows each frame when the game drew it, a few milliseconds later. With V-Sync on and a PC that times frames to your screen, Balanced keeps one frame per refresh and an even picture when the stream matches the screen, for about one refresh more delay than Lowest latency (25 against 17 ms at 120 Hz); choose it when motion judders at the screen’s own rate, and Lowest latency for the least delay.", |ui, s| {
                 let current = frame_pacing_choice(s);
                 let mut choice = current;
                 let response = Combo::from_id_salt("frame-pacing").selected_text(frame_pacing_choice_name(current)).show_ui(ui, |ui| {
