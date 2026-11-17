@@ -997,6 +997,14 @@ impl Topology {
 pub fn monitors() -> Result<Vec<Monitor>> {
     Ok(Topology::query()?.monitors())
 }
+/// How many displays Windows shows now, from the display configuration alone (no DXGI or
+/// colour query, which take nearly all of `monitors`' half a millisecond). A display that
+/// arrived or left changes it, which is when Windows rearranges the desktop and can move the
+/// primary by itself; the display heartbeat asks for a stream whose layout promised the
+/// primary.
+pub fn active_displays() -> Result<usize> {
+    Ok(Topology::query()?.paths.len())
+}
 /// Whether `hint` names the display Windows shows as the primary one: the primary's desktop
 /// sits at the origin, whichever display that is now. Read from the display configuration
 /// alone (no DXGI or colour query, which take nearly all of `monitors`' half a millisecond),

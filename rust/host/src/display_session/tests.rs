@@ -1347,6 +1347,8 @@ fn test_prepared(host: &Shared) -> Prepared {
         departures: 0,
         wake_layouts: 0,
         console_session: None,
+        secure_desktop: false,
+        displays_seen: None,
         hold_layout_while_paused: false,
         mode_report: ModeReport::new(Arc::new(Warnings::default()), (None, None, None), 60_000),
         recovery_scale: 0,
@@ -2446,6 +2448,8 @@ fn a_faster_stream_request_keeps_only_a_display_that_can_follow_it() {
         departures: 0,
         wake_layouts: 0,
         console_session: None,
+        secure_desktop: false,
+        displays_seen: None,
         hold_layout_while_paused: false,
         mode_report: ModeReport::new(Arc::new(Warnings::default()), (None, None, None), 60_000),
         recovery_scale: 0,
@@ -2657,6 +2661,19 @@ fn a_layout_windows_accepted_but_that_left_the_primary_is_not_restored() {
     assert!(!Prepared::primary_taken_back(&Err(anyhow::anyhow!(
         "Windows refused the display layout"
     ))));
+}
+#[test]
+fn a_primary_windows_keeps_taking_back_stays_on_the_card() {
+    let warnings = Arc::new(Warnings::default());
+    let report = ModeReport::new(warnings.clone(), (None, None, None), 60_000);
+    report.primary_gave_up();
+    assert_eq!(codes(&warnings), ["display_primary_kept"]);
+    let message = &warnings.snapshot()[0].message;
+    assert!(message.contains("main screen"), "{message}");
+    assert!(message.contains("Exclusive"), "{message}");
+    // It is not a refusal to retry: clearing the refusal leaves the stream's last word.
+    report.primary_restored();
+    assert_eq!(codes(&warnings), ["display_primary_kept"]);
 }
 
 #[test]
