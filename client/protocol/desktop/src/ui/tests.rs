@@ -2936,9 +2936,7 @@ fn the_first_pairing_offers_the_setup_card_once() {
 fn the_setup_card_says_what_auto_chose_and_is_dismissed_from_the_keys() {
     let mut f = home_with_games(3);
     let id = f.hosts.list[0].id;
-    // The lowest of a text: the top bar says "PCs" as well, above the shelf of that name.
-    let top_of = |placed: &[(String, Rect, Rect)], text: &str| placed.iter().filter(|(t, ..)| t == text).map(|p| p.1.top()).reduce(f32::max);
-    let (play_before, pcs_before) = (top_of(&f.placed, "Play"), top_of(&f.placed, "PCs"));
+    let before: Vec<(String, Rect)> = f.placed.iter().map(|(t, r, _)| (t.clone(), *r)).collect();
     f.l.settings.setup_card_host = Some(id);
     f.l.settings.setup_card_seen = true;
     f.settle();
@@ -2948,11 +2946,20 @@ fn the_setup_card_says_what_auto_chose_and_is_dismissed_from_the_keys() {
     // It is part of the page: what follows starts beneath it, lower than without it by one amount.
     let title = f.placed.iter().find(|(t, ..)| t == "Set up for this device and Desk").map(|p| p.1).expect("the card is drawn");
     let line_bottom = f.placed.iter().find(|(t, ..)| t == &line).map(|p| p.1.bottom()).expect("its line");
-    let (play, pcs) = (top_of(&f.placed, "Play"), top_of(&f.placed, "PCs"));
-    let pushed = pcs.expect("the PCs shelf") - pcs_before.expect("the PCs shelf");
-    assert!(pushed > title.height() && pcs.unwrap() > line_bottom, "the shelves moved down: {pushed}");
-    if let (Some(before), Some(after)) = (play_before, play) {
-        assert!((after - before - pushed).abs() < 0.5 && after > line_bottom, "the hero moved down with them: {before} {after}");
+    // Every text drawn once both times either kept its place (the chrome) or moved down by the card's height and gap.
+    let once = |placed: &[(String, Rect)], text: &str| {
+        let mut all = placed.iter().filter(|(t, _)| t == text);
+        all.next().filter(|_| all.next().is_none()).map(|p| p.1)
+    };
+    let after: Vec<(String, Rect)> = f.placed.iter().map(|(t, r, _)| (t.clone(), *r)).collect();
+    let moved: Vec<(String, f32, f32)> = before.iter()
+        .filter_map(|(text, _)| Some((text.clone(), once(&before, text)?.top(), once(&after, text)?.top())))
+        .filter(|(_, was, now)| (now - was).abs() > 0.5)
+        .collect();
+    let pushed = moved.first().map(|m| m.2 - m.1).expect("the page's content moved");
+    assert!(pushed > title.height(), "down by the card: {moved:?}");
+    for (text, was, now) in &moved {
+        assert!((now - was - pushed).abs() < 0.5 && *now > line_bottom, "{text} starts beneath the card, as far down as the rest: {was} {now}");
     }
 
     // Custom settings: no card, and it waits.
