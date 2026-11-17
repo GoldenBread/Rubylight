@@ -987,21 +987,31 @@ impl Media {
                                 let now = Instant::now();
                                 let idle = now.saturating_duration_since(last_frame);
                                 let display = butterpollo_windows::capture::WindowTarget::parse(&target.0).ok().flatten().is_none();
+                                // The shell's own answer first: enumerating the windows and
+                                // the displays behind it is the expensive part of the probe,
+                                // and most still pictures have no exclusive-fullscreen app.
                                 if automatic
                                     && !duplication_tried
                                     && capture.backend() == "wgc"
                                     && display
                                     && idle >= butterpollo_core::capture_policy::FULLSCREEN_STALL
                                     && now >= stall_check
+                                    && butterpollo_windows::foreground::exclusive_fullscreen()
                                 {
                                     stall_check = now + Duration::from_millis(500);
+                                    // The capture knows the display it reads: no need to
+                                    // enumerate the displays to find its bounds.
+                                    let in_front = match capture.display_rect() {
+                                        Some(rect) => butterpollo_windows::foreground::in_front_rect(rect),
+                                        None => butterpollo_windows::foreground::in_front(&target.0),
+                                    };
                                     if butterpollo_core::capture_policy::duplication_for_fullscreen(
                                         automatic,
                                         capture.backend(),
                                         display,
                                         idle,
-                                        butterpollo_windows::foreground::in_front(&target.0),
-                                        butterpollo_windows::foreground::exclusive_fullscreen(),
+                                        in_front,
+                                        true,
                                     ) {
                                         duplication_tried = true;
                                         tracing::info!(idle_ms = idle.as_millis(), output = %target.0, "an exclusive-fullscreen app is in front and no picture came; capturing the display with Desktop Duplication");

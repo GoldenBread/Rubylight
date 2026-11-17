@@ -1651,6 +1651,25 @@ impl Capture {
             Self::Closed => "closed",
         }
     }
+    /// The desktop rectangle of the display this capture reads, as the capture
+    /// was opened on it: the bounds a window probe needs without asking DXGI
+    /// for the display again. None for a placed holder.
+    pub fn display_rect(&self) -> Option<[i32; 4]> {
+        let display = match self {
+            Self::Wgc(wgc) => &wgc.gpu.display,
+            Self::WgcWorker(worker) => &worker.gpu.display,
+            Self::Dxgi(duplication) => &duplication.gpu.display,
+            Self::IddPush(push) => &push.gpu.display,
+            Self::AmdDirect(amd) => &amd.gpu.display,
+            Self::Closed => return None,
+        };
+        Some([
+            display.x,
+            display.y,
+            display.x.saturating_add(display.width as i32),
+            display.y.saturating_add(display.height as i32),
+        ])
+    }
     pub fn set_claim_grid(
         &mut self,
         grid: std::sync::Arc<std::sync::Mutex<ClaimGrid>>,
