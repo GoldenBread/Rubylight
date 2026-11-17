@@ -127,7 +127,31 @@ impl Firewall {
             leases: Vec::new(),
         })
     }
+    /// This PC's global address the pinholes are for.
+    pub(super) fn local(&self) -> Ipv6Addr {
+        self.local
+    }
     pub(super) async fn renew(&mut self, mappings: &[Mapping]) -> Result<()> {
+        // Pinholes no longer wanted (the browser guests' once their links are gone) close now
+        // rather than at the end of their lease.
+        let now = Instant::now();
+        let mut kept = Vec::new();
+        for (mapping, id, deadline) in std::mem::take(&mut self.leases) {
+            if mappings.contains(&mapping) {
+                kept.push((mapping, id, deadline));
+            } else if deadline > now
+                && let Err(error) = soap(
+                    &self.client,
+                    &self.url,
+                    "DeletePinhole",
+                    &[("UniqueID", id.to_string())],
+                )
+                .await
+            {
+                tracing::debug!(%error, port = mapping.port, "an IPv6 pinhole no longer wanted closes with its lease");
+            }
+        }
+        self.leases = kept;
         for &mapping in mappings {
             // Re-adding the tuple renews its lease and returns its current ID;
             // this also recovers safely after a router reboot or lease expiry.
@@ -385,8 +409,13 @@ mod tests {
         }];
         firewall.renew(&mappings).await.unwrap();
         firewall.renew(&mappings).await.unwrap();
+        // No longer wanted (a guest link is gone): its pinhole closes now, and close has
+        // nothing left to delete.
+        firewall.renew(&[]).await.unwrap();
+        assert!(firewall.leases.is_empty());
         firewall.close().await.unwrap();
         assert_eq!(calls.lock().unwrap().len(), 4);
+        assert!(calls.lock().unwrap()[3].contains("DeletePinhole"));
         server.abort();
         let foreign = format!(
             "<root><service><serviceType>{SERVICE}</serviceType><controlURL>http://example.invalid/control</controlURL></service></root>"

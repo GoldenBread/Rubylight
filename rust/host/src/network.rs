@@ -494,23 +494,64 @@ fn mappings(config: &Config, ports: Ports) -> Vec<Mapping> {
             port: ports.web,
         });
     }
-    // Browser guests: the guest page on its own port, and one media port per guest seat.
-    if config.webrtc_server() {
-        mappings.push(Mapping {
-            protocol: Protocol::TCP,
-            port: ports.guest,
-        });
-        let media = config.webrtc_media_port();
-        mappings.extend(
-            (0..crate::webrtc::guests::MAX_GUESTS)
-                .filter_map(|slot| media.checked_add(1 + slot))
-                .map(|port| Mapping {
-                    protocol: Protocol::UDP,
-                    port,
-                }),
-        );
-    }
     mappings
+}
+/// Browser guests' ports (docs/browser-guests.md): the guest page on its own port, and one media
+/// port per guest seat. Never the console's port, the WebRTC signalling port or the owner's own
+/// media port.
+fn guest_mappings(config: &Config, ports: Ports) -> Vec<Mapping> {
+    if !config.webrtc_server() {
+        return Vec::new();
+    }
+    let media = config.webrtc_media_port();
+    // A media port moved next to one of these (`webrtc_media_port = 7999` would reach UDP 8000
+    // and 8001) leaves that seat unforwarded rather than open what must stay closed.
+    let never = [
+        ports.web,
+        config.webrtc_port(),
+        media,
+        WEBRTC_DISCOVERY_PORT,
+        WEBRTC_DISCOVERY_PORT + 1,
+    ];
+    std::iter::once(Mapping {
+        protocol: Protocol::TCP,
+        port: ports.guest,
+    })
+    .chain(
+        (0..crate::webrtc::guests::MAX_GUESTS)
+            .filter_map(|slot| media.checked_add(1 + slot))
+            .map(|port| Mapping {
+                protocol: Protocol::UDP,
+                port,
+            }),
+    )
+    .filter(|mapping| !never.contains(&mapping.port))
+    .collect()
+}
+/// The WebRTC TV protocol's discovery port, UDP 8000 whatever the settings say; the owner's own
+/// stream's media port defaults to the next one.
+const WEBRTC_DISCOVERY_PORT: u16 = 8000;
+/// The ports to map now: the streaming ports while `upnp` is on, and the browser guests' only
+/// while a link needs them: a link made for the internet (whatever `upnp` says), or with `upnp`
+/// on any link that works or guest who watches (`guests_open`).
+fn wanted_now(
+    config: &Config,
+    ports: Ports,
+    upnp: bool,
+    guests_open: bool,
+    guests_internet: bool,
+) -> (Vec<Mapping>, Vec<Mapping>) {
+    let stream = if upnp {
+        mappings(config, ports)
+    } else {
+        Vec::new()
+    };
+    let guest = if guests_internet || (upnp && guests_open) {
+        guest_mappings(config, ports)
+    } else {
+        Vec::new()
+    };
+    (stream, guest)
 }
 /// The router's mapping table, and whether it was read to the end. Routers
 /// answer the index past the end with 713, but some hide their table (606),
@@ -556,14 +597,17 @@ fn forwards_here(entry: &igd_next::PortMappingEntry, local: IpAddr) -> bool {
 }
 /// `reported` holds the ports already warned about: the router is asked
 /// again every minute, but a continuing conflict is only warned once.
+/// `previous` is what the last round left mapped: a router that hides its table still gets the
+/// ones no longer wanted removed.
 async fn apply<P: Provider>(
     gateway: &Gateway<P>,
     local: IpAddr,
     wanted: &[Mapping],
     description: &str,
     reported: &mut Vec<Mapping>,
+    previous: &[Mapping],
 ) -> Result<Vec<Mapping>> {
-    let (entries, _) = entries(gateway).await;
+    let (entries, complete) = entries(gateway).await;
     // The stable host description lets a restarted host reclaim its own
     // permanent leases, including ports removed from a later configuration.
     let mut applied: Vec<_> = entries
@@ -574,6 +618,15 @@ async fn apply<P: Provider>(
             port: entry.external_port,
         })
         .collect();
+    // A table read to the end shows which of them are still this host's; an unreadable one
+    // can't, so they stay this host's, as `remove` takes them at shutdown.
+    if !complete {
+        for mapping in previous {
+            if !applied.contains(mapping) {
+                applied.push(*mapping);
+            }
+        }
+    }
     for mapping in wanted {
         if let Some(entry) = entries.iter().find(|entry| {
             entry.protocol == mapping.protocol
@@ -634,6 +687,33 @@ async fn apply<P: Provider>(
             }
             Ok(Err(error)) => tracing::warn!(%error,port=mapping.port,"UPnP mapping failed"),
             Err(error) => tracing::warn!(%error,port=mapping.port,"UPnP mapping timed out"),
+        }
+    }
+    // This host's mappings that are no longer wanted (the guests' once their links are gone, or
+    // a port a later configuration dropped) go now; one the router keeps is tried at shutdown.
+    let unwanted: Vec<Mapping> = applied
+        .iter()
+        .filter(|mapping| !wanted.contains(mapping))
+        .copied()
+        .collect();
+    for mapping in unwanted {
+        match tokio::time::timeout(
+            Duration::from_secs(3),
+            gateway.remove_port(mapping.protocol, mapping.port),
+        )
+        .await
+        {
+            Ok(Ok(())) => applied.retain(|held| *held != mapping),
+            Ok(Err(error)) => {
+                tracing::debug!(%error, port = mapping.port, "UPnP mapping no longer wanted could not be removed");
+            }
+            Err(_) => {
+                tracing::debug!(
+                    port = mapping.port,
+                    "UPnP router timed out removing a mapping"
+                );
+                break;
+            }
         }
     }
     Ok(applied)
@@ -769,241 +849,344 @@ fn ipv6_gateways() -> Vec<std::net::Ipv6Addr> {
         })
         .collect()
 }
+/// What the port mapping task holds on the routers: the UPnP gateway and what it mapped there,
+/// the PCP or NAT-PMP mapper, and the IPv6 pinholes.
+#[derive(Default)]
+struct Held {
+    upnp: Option<(Gateway<upnp::Bounded>, IpAddr, Vec<Mapping>)>,
+    mapper: Option<portmap::PortMapper>,
+    firewall: Option<ipv6::Firewall>,
+    pinholes: Vec<portmap::PortMapper>,
+}
+impl Held {
+    fn any(&self) -> bool {
+        self.upnp.is_some()
+            || self.mapper.is_some()
+            || self.firewall.is_some()
+            || !self.pinholes.is_empty()
+    }
+    /// Takes every mapping and pinhole down: nothing is wanted any more, or the host stops.
+    async fn release(&mut self, description: &str) {
+        if let Some(mut firewall) = self.firewall.take()
+            && let Err(error) = firewall.close().await
+        {
+            tracing::debug!(%error, "IPv6 pinholes will expire after their finite lease");
+        }
+        for mut mapper in self.pinholes.drain(..) {
+            mapper.close().await;
+        }
+        if let Some(mut mapper) = self.mapper.take() {
+            mapper.close().await;
+        }
+        if let Some((gateway, local, applied)) = self.upnp.take()
+            && let Err(error) = remove(&gateway, local, &applied, description).await
+        {
+            tracing::warn!(%error, "UPnP cleanup failed; permanent mappings remain reclaimable by this host");
+        }
+    }
+}
+/// Writes one mapping attempt to the console's status: the streaming ports and the guests' apart,
+/// so a guest port the router refuses never makes the streaming ports look unusable.
+fn report(
+    status: &mut crate::internet_play::MappingStatus,
+    stream: &[Mapping],
+    guest: &[Mapping],
+    mapped: &[(Mapping, u16)],
+    refused: &[(Mapping, String)],
+) {
+    (status.mapped, status.failed) = port_states(stream, mapped, refused);
+    (status.guest_mapped, status.guest_failed) = port_states(guest, mapped, refused);
+}
+/// Maps the ports [`wanted_now`] names, renews them every minute and takes them down when they
+/// are no longer wanted or the host stops. Runs with `upnp` on, and with the WebRTC server on for
+/// browser guests' links made for the internet, which map only the guest ports.
 pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
-    let enabled = h.config.read().unwrap().boolean("upnp", false) && !bind.is_loopback();
+    let config = h.config.read().unwrap().clone();
+    let upnp = config.boolean("upnp", false) && !bind.is_loopback();
+    let runs = !bind.is_loopback() && (upnp || config.webrtc_server());
     crate::internet_play::update_mapping(|status| {
         *status = crate::internet_play::MappingStatus {
-            enabled,
+            enabled: upnp,
+            runs,
             ..Default::default()
         };
     });
-    if !enabled {
+    if !runs {
         return None;
     }
     let stop = std::sync::Arc::new(tokio::sync::Notify::new());
     let stopped = stop.clone();
     let task = tokio::spawn(async move {
-        let config = h.config.read().unwrap().clone();
-        let wanted = mappings(&config, config.ports().unwrap());
+        let ports = config.ports().unwrap();
         let description = format!("Butterpollo Rust {}", h.paired.read().unwrap().unique_id);
         // Makes the PCP mapping nonce, which must survive new mappers and restarts.
         let nonce_secret = h.identity.private_pem.clone();
         let mut next_search = Instant::now();
-        let mut current = None;
-        let mut firewall = None;
-        // Routers without UPnP IGD: PCP, else NAT-PMP, at the default gateway.
-        let mut mapper: Option<portmap::PortMapper> = None;
-        // IPv6 routers without an IGDv2 firewall service: PCP pinholes.
-        let mut pinholes: Vec<portmap::PortMapper> = Vec::new();
+        let mut held = Held::default();
         let mut reported = Vec::new();
         while !h.stop.load(Ordering::Acquire) {
             if Instant::now() >= next_search {
                 next_search = Instant::now() + Duration::from_secs(60);
-                let mut upnp_error = None;
-                if current.is_none() {
-                    let options = igd_next::SearchOptions {
-                        timeout: Some(Duration::from_secs(3)),
-                        bind_addr: if bind.is_ipv4() {
-                            (bind, 0).into()
-                        } else {
-                            (IpAddr::from([0, 0, 0, 0]), 0).into()
-                        },
-                        ..Default::default()
-                    };
-                    match upnp::discover(options).await {
-                        Ok(gateway) => {
-                            let local = (|| -> Result<IpAddr> {
-                                let socket = UdpSocket::bind((IpAddr::from([0, 0, 0, 0]), 0))?;
-                                socket.connect(gateway.addr)?;
-                                Ok(if bind.is_unspecified() || bind.is_ipv6() {
-                                    socket.local_addr()?.ip()
-                                } else {
-                                    bind
-                                })
-                            })();
-                            if let Ok(local) = local {
-                                current = Some((gateway, local, Vec::new()));
-                            }
-                        }
-                        Err(error) => {
-                            tracing::debug!(%error, "UPnP gateway unavailable; retrying");
-                            upnp_error = Some(format!("{error:#}"));
-                        }
+                // Read before the guests are asked: a request made during this round is
+                // served by the next one.
+                let round = h.guests.internet_round();
+                let (stream, guest) = wanted_now(
+                    &config,
+                    ports,
+                    upnp,
+                    h.guests.open(),
+                    h.guests.internet_wanted(),
+                );
+                let wanted: Vec<Mapping> = stream.iter().chain(&guest).copied().collect();
+                if wanted.is_empty() {
+                    if held.any() {
+                        held.release(&description).await;
+                        reported.clear();
                     }
-                }
-                if let Some((gateway, local, applied)) = current.as_mut() {
-                    match apply(gateway, *local, &wanted, &description, &mut reported).await {
-                        Ok(mappings) => *applied = mappings,
-                        Err(error) => tracing::warn!(%error, "UPnP mapping could not be renewed"),
-                    }
-                    let external =
-                        tokio::time::timeout(Duration::from_secs(3), gateway.get_external_ip())
-                            .await
-                            .ok()
-                            .and_then(|result| result.ok());
-                    let mapped: Vec<(Mapping, u16)> = applied
-                        .iter()
-                        .map(|mapping| (*mapping, mapping.port))
-                        .collect();
-                    let refused: Vec<(Mapping, String)> = reported
-                        .iter()
-                        .map(|mapping| {
-                            (
-                                *mapping,
-                                "another mapping on the router already uses this port".to_owned(),
-                            )
-                        })
-                        .collect();
-                    let (ok, failed) = port_states(&wanted, &mapped, &refused);
                     crate::internet_play::update_mapping(|status| {
-                        status.method = Some("UPnP".into());
-                        status.external_ipv4 = external;
-                        status.mapped = ok;
-                        status.failed = failed;
-                        status.error = None;
+                        *status = crate::internet_play::MappingStatus {
+                            enabled: upnp,
+                            runs,
+                            guest_round: round,
+                            ..Default::default()
+                        };
                     });
                 } else {
-                    let route = default_gateways()
-                        .ok()
-                        .and_then(|gateways| portmap::ipv4_route(&gateways, bind));
-                    if let Some((gateway, local)) = route {
-                        // Another router or address: dropping the old mapper asks its router
-                        // to delete the leases, without waiting on a router that may be gone.
-                        if mapper
-                            .as_ref()
-                            .is_some_and(|mapper| !mapper.serves(gateway, local))
-                        {
-                            mapper = None;
-                        }
-                        if mapper.is_none() {
-                            let secret = nonce_secret.as_bytes();
-                            mapper = portmap::PortMapper::ipv4(gateway, local, secret).await.ok();
-                        }
-                    }
-                    let result = match mapper.as_mut() {
-                        Some(mapper) => mapper.renew(&wanted).await,
-                        None => Err(anyhow::anyhow!("no default gateway")),
-                    };
-                    match result {
-                        Ok(outcome) => {
-                            for (mapping, reason) in &outcome.failed {
-                                if !reported.contains(mapping) {
-                                    reported.push(*mapping);
-                                    tracing::warn!(port = mapping.port, protocol = ?mapping.protocol, %reason, "port mapping refused");
-                                }
-                            }
-                            let (ok, failed) =
-                                port_states(&wanted, &outcome.mapped, &outcome.failed);
-                            let method = mapper
-                                .as_ref()
-                                .and_then(portmap::PortMapper::method)
-                                .map(|method| method.name().to_owned());
-                            let external = mapper.as_ref().and_then(|mapper| mapper.external);
-                            crate::internet_play::update_mapping(|status| {
-                                status.method = method;
-                                status.external_ipv4 = external;
-                                status.mapped = ok;
-                                status.failed = failed;
-                                status.error = None;
-                            });
-                        }
-                        Err(error) => {
-                            // The mapper and its leases stay for next time: the router may
-                            // answer then, and the same nonce renews what it mapped.
-                            let message = format!(
-                                "the router answers none of UPnP, PCP and NAT-PMP: turn UPnP on in the router, or forward the ports by hand ({})",
-                                upnp_error.as_deref().unwrap_or("no UPnP router found")
-                            );
-                            tracing::debug!(error = %format!("{error:#}"), "PCP and NAT-PMP unavailable; retrying");
-                            let (ok, failed) = port_states(&wanted, &[], &[]);
-                            crate::internet_play::update_mapping(|status| {
-                                status.method = None;
-                                status.mapped = ok;
-                                status.failed = failed;
-                                status.error = Some(message);
-                            });
-                        }
-                    }
-                }
-                if bind.is_ipv6() {
-                    if firewall.is_none() {
-                        firewall = ipv6::discover(bind).await.ok();
-                    }
-                    if let Some(firewall) = firewall.as_mut() {
-                        let result = firewall.renew(&wanted).await;
-                        if let Err(error) = &result {
-                            tracing::debug!(%error, "IPv6 firewall pinholes could not be renewed");
-                        }
-                        let pinholes = if result.is_ok() { wanted.len() } else { 0 };
-                        let error = result.err().map(|error| format!("{error:#}"));
-                        crate::internet_play::update_mapping(|status| {
-                            status.ipv6_method = Some("UPnP".into());
-                            status.ipv6_pinholes = pinholes;
-                            status.ipv6_error = error;
-                        });
-                    } else {
-                        if pinholes.is_empty() {
-                            let gateways = ipv6_gateways();
-                            for (local, index) in portmap::ipv6_locals(bind) {
-                                for gateway in &gateways {
-                                    if let Ok(mapper) = portmap::PortMapper::ipv6(
-                                        *gateway,
-                                        local,
-                                        index,
-                                        nonce_secret.as_bytes(),
-                                    )
-                                    .await
-                                    {
-                                        pinholes.push(mapper);
-                                    }
-                                }
-                            }
-                        }
-                        let mut opened = 0;
-                        let mut last_error = None;
-                        for mapper in &mut pinholes {
-                            match mapper.renew(&wanted).await {
-                                Ok(outcome) => opened += outcome.mapped.len(),
-                                Err(error) => last_error = Some(format!("{error:#}")),
-                            }
-                        }
-                        if opened == 0 {
-                            // Search again next time: the router may answer later.
-                            pinholes.clear();
-                        }
-                        crate::internet_play::update_mapping(|status| {
-                            status.ipv6_method = (opened > 0).then(|| "PCP".into());
-                            status.ipv6_pinholes = opened;
-                            status.ipv6_error = (opened == 0).then(|| {
-                                last_error.unwrap_or_else(|| {
-                                    "the router opens no IPv6 pinholes (neither UPnP IGDv2 nor PCP)"
-                                        .to_owned()
-                                })
-                            });
-                        });
-                    }
+                    renew(
+                        &mut held,
+                        bind,
+                        &stream,
+                        &guest,
+                        &wanted,
+                        &description,
+                        nonce_secret.as_bytes(),
+                        &mut reported,
+                    )
+                    .await;
+                    crate::internet_play::update_mapping(|status| status.guest_round = round);
                 }
             }
-            until_renewal_or_stop(&stopped, next_search).await;
+            tokio::select! {
+                () = until_renewal_or_stop(&stopped, next_search) => {}
+                // A link made or revoked for the internet: map or unmap the guest ports now.
+                () = h.guests.mapping_changed() => next_search = Instant::now(),
+            }
         }
-        if let Some(mut firewall) = firewall
-            && let Err(error) = firewall.close().await
-        {
-            tracing::debug!(%error, "IPv6 pinholes will expire after their finite lease");
-        }
-        for mut mapper in pinholes {
-            mapper.close().await;
-        }
-        if let Some(mut mapper) = mapper {
-            mapper.close().await;
-        }
-        if let Some((gateway, local, applied)) = current
-            && let Err(error) = remove(&gateway, local, &applied, &description).await
-        {
-            tracing::warn!(%error, "UPnP cleanup failed; permanent mappings remain reclaimable by this host");
-        }
+        held.release(&description).await;
     });
     Some(PortForward { task, stop })
+}
+/// One round of mapping `wanted` (the streaming ports `stream` and the guests' `guest`): UPnP
+/// IGD, else PCP or NAT-PMP, for IPv4, and IPv6 pinholes on a host that listens on IPv6.
+#[allow(clippy::too_many_arguments)]
+async fn renew(
+    held: &mut Held,
+    bind: IpAddr,
+    stream: &[Mapping],
+    guest: &[Mapping],
+    wanted: &[Mapping],
+    description: &str,
+    nonce_secret: &[u8],
+    reported: &mut Vec<Mapping>,
+) {
+    let mut upnp_error = None;
+    if held.upnp.is_none() {
+        let options = igd_next::SearchOptions {
+            timeout: Some(Duration::from_secs(3)),
+            bind_addr: if bind.is_ipv4() {
+                (bind, 0).into()
+            } else {
+                (IpAddr::from([0, 0, 0, 0]), 0).into()
+            },
+            ..Default::default()
+        };
+        match upnp::discover(options).await {
+            Ok(gateway) => {
+                let local = (|| -> Result<IpAddr> {
+                    let socket = UdpSocket::bind((IpAddr::from([0, 0, 0, 0]), 0))?;
+                    socket.connect(gateway.addr)?;
+                    Ok(if bind.is_unspecified() || bind.is_ipv6() {
+                        socket.local_addr()?.ip()
+                    } else {
+                        bind
+                    })
+                })();
+                if let Ok(local) = local {
+                    held.upnp = Some((gateway, local, Vec::new()));
+                }
+            }
+            Err(error) => {
+                tracing::debug!(%error, "UPnP gateway unavailable; retrying");
+                upnp_error = Some(format!("{error:#}"));
+            }
+        }
+    }
+    if let Some((gateway, local, applied)) = held.upnp.as_mut() {
+        match apply(gateway, *local, wanted, description, reported, applied).await {
+            Ok(mappings) => *applied = mappings,
+            Err(error) => tracing::warn!(%error, "UPnP mapping could not be renewed"),
+        }
+        let external = tokio::time::timeout(Duration::from_secs(3), gateway.get_external_ip())
+            .await
+            .ok()
+            .and_then(|result| result.ok());
+        let mapped: Vec<(Mapping, u16)> = applied
+            .iter()
+            .map(|mapping| (*mapping, mapping.port))
+            .collect();
+        let refused: Vec<(Mapping, String)> = reported
+            .iter()
+            .map(|mapping| {
+                (
+                    *mapping,
+                    "another mapping on the router already uses this port".to_owned(),
+                )
+            })
+            .collect();
+        crate::internet_play::update_mapping(|status| {
+            status.method = Some("UPnP".into());
+            status.external_ipv4 = external;
+            report(status, stream, guest, &mapped, &refused);
+            status.error = None;
+        });
+    } else {
+        let route = default_gateways()
+            .ok()
+            .and_then(|gateways| portmap::ipv4_route(&gateways, bind));
+        if let Some((gateway, local)) = route {
+            // Another router or address: dropping the old mapper asks its router to delete the
+            // leases, without waiting on a router that may be gone.
+            if held
+                .mapper
+                .as_ref()
+                .is_some_and(|mapper| !mapper.serves(gateway, local))
+            {
+                held.mapper = None;
+            }
+            if held.mapper.is_none() {
+                held.mapper = portmap::PortMapper::ipv4(gateway, local, nonce_secret)
+                    .await
+                    .ok();
+            }
+        }
+        let result = match held.mapper.as_mut() {
+            Some(mapper) => mapper.renew(wanted).await,
+            None => Err(anyhow::anyhow!("no default gateway")),
+        };
+        match result {
+            Ok(outcome) => {
+                for (mapping, reason) in &outcome.failed {
+                    if !reported.contains(mapping) {
+                        reported.push(*mapping);
+                        tracing::warn!(port = mapping.port, protocol = ?mapping.protocol, %reason, "port mapping refused");
+                    }
+                }
+                let method = held
+                    .mapper
+                    .as_ref()
+                    .and_then(portmap::PortMapper::method)
+                    .map(|method| method.name().to_owned());
+                let external = held.mapper.as_ref().and_then(|mapper| mapper.external);
+                crate::internet_play::update_mapping(|status| {
+                    status.method = method;
+                    status.external_ipv4 = external;
+                    report(status, stream, guest, &outcome.mapped, &outcome.failed);
+                    status.error = None;
+                });
+            }
+            Err(error) => {
+                // The mapper and its leases stay for next time: the router may answer then, and
+                // the same nonce renews what it mapped.
+                let message = format!(
+                    "the router answers none of UPnP, PCP and NAT-PMP: turn UPnP on in the router, or forward the ports by hand ({})",
+                    upnp_error.as_deref().unwrap_or("no UPnP router found")
+                );
+                tracing::debug!(error = %format!("{error:#}"), "PCP and NAT-PMP unavailable; retrying");
+                crate::internet_play::update_mapping(|status| {
+                    status.method = None;
+                    report(status, stream, guest, &[], &[]);
+                    status.error = Some(message);
+                });
+            }
+        }
+    }
+    if bind.is_ipv6() {
+        renew_pinholes(held, bind, guest, wanted, nonce_secret).await;
+    }
+}
+/// IPv6 pinholes for `wanted` through the router's UPnP IGDv2 firewall, else PCP.
+async fn renew_pinholes(
+    held: &mut Held,
+    bind: IpAddr,
+    guest: &[Mapping],
+    wanted: &[Mapping],
+    nonce_secret: &[u8],
+) {
+    if held.firewall.is_none() {
+        held.firewall = ipv6::discover(bind).await.ok();
+    }
+    if let Some(firewall) = held.firewall.as_mut() {
+        let result = firewall.renew(wanted).await;
+        if let Err(error) = &result {
+            tracing::debug!(%error, "IPv6 firewall pinholes could not be renewed");
+        }
+        let pinholes = if result.is_ok() { wanted.len() } else { 0 };
+        let guest_ipv6 = (result.is_ok() && !guest.is_empty()).then(|| firewall.local());
+        let error = result.err().map(|error| format!("{error:#}"));
+        crate::internet_play::update_mapping(|status| {
+            status.ipv6_method = Some("UPnP".into());
+            status.ipv6_pinholes = pinholes;
+            status.ipv6_error = error;
+            status.guest_ipv6 = guest_ipv6;
+        });
+        return;
+    }
+    if held.pinholes.is_empty() {
+        let gateways = ipv6_gateways();
+        for (local, index) in portmap::ipv6_locals(bind) {
+            for gateway in &gateways {
+                if let Ok(mapper) =
+                    portmap::PortMapper::ipv6(*gateway, local, index, nonce_secret).await
+                {
+                    held.pinholes.push(mapper);
+                }
+            }
+        }
+    }
+    let mut opened = 0;
+    let mut last_error = None;
+    let mut guest_ipv6 = None;
+    for mapper in &mut held.pinholes {
+        match mapper.renew(wanted).await {
+            Ok(outcome) => {
+                opened += outcome.mapped.len();
+                let all_guests = guest
+                    .iter()
+                    .all(|port| outcome.mapped.iter().any(|(done, _)| done == port));
+                if !guest.is_empty()
+                    && all_guests
+                    && let IpAddr::V6(local) = mapper.local()
+                {
+                    guest_ipv6.get_or_insert(local);
+                }
+            }
+            Err(error) => last_error = Some(format!("{error:#}")),
+        }
+    }
+    if opened == 0 {
+        // Search again next time: the router may answer later.
+        held.pinholes.clear();
+    }
+    crate::internet_play::update_mapping(|status| {
+        status.ipv6_method = (opened > 0).then(|| "PCP".into());
+        status.ipv6_pinholes = opened;
+        status.ipv6_error = (opened == 0).then(|| {
+            last_error.unwrap_or_else(|| {
+                "the router opens no IPv6 pinholes (neither UPnP IGDv2 nor PCP)".to_owned()
+            })
+        });
+        status.guest_ipv6 = guest_ipv6;
+    });
 }
 #[cfg(test)]
 mod port_state_tests {

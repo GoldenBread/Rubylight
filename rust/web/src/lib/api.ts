@@ -950,6 +950,40 @@ export interface GuestInvite {
   permission: GuestPermission;
   created: number;
   expires: number;
+  /** Made for guests on the internet: the guest ports stay mapped on the router while it works. */
+  internet?: boolean;
+}
+
+/** One guest port and what the router did with it. */
+export interface GuestPort {
+  protocol: string;
+  port: number;
+  /** The router's port for it; null when not mapped. */
+  external: number | null;
+  reason: string | null;
+}
+
+/** `GET`/`POST /api/guests/internet`: what a link for guests on the internet can use. */
+export interface GuestReach {
+  /** The router has not been asked yet since the dialog asked for the ports. */
+  checking: boolean;
+  /** Whether the host maps ports at all (not when it listens on this PC only). */
+  runs: boolean;
+  /** UPnP, PCP or NAT-PMP. */
+  method: string | null;
+  /** Why nothing could be mapped. */
+  error: string | null;
+  ports: GuestPort[];
+  publicIpv4: string | null;
+  routerIpv4: string | null;
+  ipv6: string | null;
+  /** The address and port the link carries; null when nothing on the internet reaches the guest ports. */
+  address: string | null;
+  notes: string[];
+  /** Play over the internet runs: paired Nightjar devices reach the PC without forwarded ports. */
+  internetPlay: boolean;
+  /** The host listens on IPv6, so the router can open the guest ports to IPv6 guests. */
+  ipv6Listening: boolean;
 }
 
 export interface GuestEntry {
@@ -1004,6 +1038,8 @@ export interface GuestsStatus {
   guests: GuestEntry[];
   /** The guest page's own TCP port; null when the host's base port is unreadable. */
   port: number | null;
+  /** Each guest seat's UDP media port. */
+  media_ports?: number[];
 }
 
 /** `POST /api/guests/invite`: the new link's token, shown once. */
@@ -1068,6 +1104,9 @@ export interface InternetPlayStatus {
     ipv6Method: string | null;
     ipv6Pinholes: number;
     ipv6Error: string | null;
+    /** Browser guests' ports, mapped only while a link made for the internet needs them. */
+    guestMapped?: InternetPort[];
+    guestFailed?: InternetPort[];
   };
   externalIp: string | null;
   rendezvous: {
@@ -1449,9 +1488,14 @@ export const api = {
     status: () => get<GuestsStatus>('/api/guests'),
     /** This PC's LAN addresses, for a console opened on the PC itself. */
     addresses: () => get<{ addresses: string[] }>('/api/guests/addresses'),
-    /** A link lasting `seconds` (five minutes to seven days) at `address`, which guests' media is offered at too. */
-    invite: (permission: GuestPermission, seconds: number, address: string) =>
-      post<CreatedInvite>('/api/guests/invite', { permission, seconds, address }),
+    /** A link lasting `seconds` (five minutes to seven days) at `address`, which guests' media is offered at too;
+     * `internet` keeps the guest ports mapped on the router while it works. */
+    invite: (permission: GuestPermission, seconds: number, address: string, internet = false) =>
+      post<CreatedInvite>('/api/guests/invite', { permission, seconds, address, internet }),
+    /** What the router did with the guest ports, and the address a link for the internet carries. */
+    internet: () => get<GuestReach>('/api/guests/internet'),
+    /** Asks the router for the guest ports now, for two minutes or until a link holds them. */
+    prepareInternet: () => post<GuestReach>('/api/guests/internet', {}),
     /** The link opens nothing any more; whoever joined with it is disconnected. */
     revoke: (id: string) => post<Record<string, never>>('/api/guests/revoke', { id }),
     /** Disconnects the guest; its link still works. */

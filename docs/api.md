@@ -130,7 +130,7 @@ These routes back console pages. They take Basic or web-session authentication l
 
 | Area | Read | Change |
 | --- | --- | --- |
-| Stream guests ([guests](browser-guests.md#for-developers)) | `GET /api/guests`, `GET /api/guests/addresses` | `POST /api/guests/invite`, `POST /api/guests/revoke`, `POST /api/guests/kick` |
+| Stream guests ([guests](browser-guests.md#for-developers)) | `GET /api/guests`, `GET /api/guests/addresses`, `GET /api/guests/internet` | `POST /api/guests/invite`, `POST /api/guests/internet`, `POST /api/guests/revoke`, `POST /api/guests/kick` |
 | Co-op ([Nucleus Co-op](nucleus-coop.md)) | `GET /api/coop`, `GET /api/coop/sessions` | `POST /api/coop/folder`, `POST /api/coop/open`, `POST /api/coop/close`, `POST /api/coop/kick`, `POST /api/coop/end` |
 | Neural Rendering ([setting](configuration.md#neural-rendering)) | `GET /api/neural?uuid=...` | `POST /api/neural/accept`, `POST /api/neural/enable`, `POST /api/neural/disable` |
 | Managed game files ([files](configuration.md#managed-game-files)) | `GET /api/game-settings?uuid=...` | `POST /api/game-settings/release` |

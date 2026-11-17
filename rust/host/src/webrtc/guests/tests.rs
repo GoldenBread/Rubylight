@@ -361,3 +361,79 @@ fn a_hosts_name_is_its_address_without_the_port() {
     assert_eq!(host_name("[2001:db8::1]:47990"), "2001:db8::1");
     assert_eq!(host_name("home.example.org"), "home.example.org");
 }
+
+#[tokio::test]
+async fn an_internet_link_keeps_the_guest_ports_wanted_while_it_works_or_its_guest_watches() {
+    let guests = Guests::default();
+    guests.owner_started(owner());
+    assert!(!guests.internet_wanted());
+    // A link for the local network never asks for them, though it wakes the task, which maps
+    // them with automatic port forwarding on.
+    guests.create(Permission::View, MIN_LIFETIME, None).unwrap();
+    assert!(!guests.internet_wanted());
+    assert_eq!(guests.internet_round(), 0);
+    tokio::time::timeout(Duration::from_secs(1), guests.mapping_changed())
+        .await
+        .unwrap();
+    // The dialog's "On the internet" asks before any link exists, for a while, and wakes the
+    // port mapping task.
+    assert_eq!(guests.prepare_internet(), 1);
+    assert!(guests.internet_wanted());
+    tokio::time::timeout(Duration::from_secs(1), guests.mapping_changed())
+        .await
+        .unwrap();
+    let past = Instant::now() + INTERNET_PREPARE + Duration::from_secs(1);
+    assert!(
+        !guests
+            .inner
+            .lock()
+            .unwrap()
+            .internet_wanted(unix_now(), past)
+    );
+    assert!(!guests.internet_wanted());
+    // An internet link holds them and is listed as one.
+    let (invite, token) = guests
+        .create_for(
+            Permission::Controller,
+            MIN_LIFETIME,
+            Some("203.0.113.5:47991".into()),
+            true,
+        )
+        .unwrap();
+    assert_eq!(guests.internet_round(), 2);
+    tokio::time::timeout(Duration::from_secs(1), guests.mapping_changed())
+        .await
+        .unwrap();
+    assert!(guests.internet_wanted());
+    assert!(
+        guests
+            .status()
+            .invites
+            .iter()
+            .any(|i| i.id == invite.id && i.internet)
+    );
+    // A guest who joined with it keeps them past the link's expiry...
+    let admitted = join(&guests, v4(9), &token, Instant::now()).unwrap();
+    assert_eq!(admitted.address.as_deref(), Some("203.0.113.5:47991"));
+    let later = unix_now() + MIN_LIFETIME.as_secs() + 1;
+    assert!(
+        guests
+            .inner
+            .lock()
+            .unwrap()
+            .internet_wanted(later, Instant::now())
+    );
+    // ...and past a revoke, until it has left.
+    assert!(guests.revoke(&invite.id));
+    assert!(guests.internet_wanted());
+    guests.left(admitted.id);
+    assert!(!guests.internet_wanted());
+
+    // Revoking an internet link nobody watches with lets go of the ports at once.
+    let (other, _) = guests
+        .create_for(Permission::View, MIN_LIFETIME, None, true)
+        .unwrap();
+    assert!(guests.internet_wanted());
+    assert!(guests.revoke(&other.id));
+    assert!(!guests.internet_wanted());
+}

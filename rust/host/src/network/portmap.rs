@@ -128,6 +128,11 @@ impl PortMapper {
         self.method
     }
 
+    /// This PC's address the mappings are for.
+    pub(super) fn local(&self) -> IpAddr {
+        self.local
+    }
+
     /// Sends `request` until a datagram `matches` comes back: RFC 6886's schedule from 250 ms,
     /// doubling, four tries.
     async fn exchange(&self, request: &[u8], matches: impl Fn(&[u8]) -> bool) -> Option<Vec<u8>> {

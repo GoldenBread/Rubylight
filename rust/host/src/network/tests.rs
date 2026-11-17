@@ -440,14 +440,9 @@ fn lan_defaults_and_explicit_binding_keep_legacy_semantics() {
 }
 #[test]
 fn browser_guest_ports_are_mapped_only_with_the_webrtc_server_on() {
-    let guest_ports = |config: &Config| {
-        mappings(config, Ports::from_base(48123))
-            .into_iter()
-            .filter(|m| m.port == 48125 || (9000..9010).contains(&m.port))
-            .collect::<Vec<_>>()
-    };
+    let ports = Ports::from_base(48123);
     let off = Config::parse("webrtc_media_port=9001\n").unwrap();
-    assert!(guest_ports(&off).is_empty());
+    assert!(guest_mappings(&off, ports).is_empty());
     let on = Config::parse("webrtc_server=true\nwebrtc_media_port=9001\n").unwrap();
     let mut expected = vec![Mapping {
         protocol: Protocol::TCP,
@@ -457,13 +452,69 @@ fn browser_guest_ports_are_mapped_only_with_the_webrtc_server_on() {
         protocol: Protocol::UDP,
         port,
     }));
-    assert_eq!(guest_ports(&on), expected);
-    // The signalling and own-stream media ports stay closed.
+    assert_eq!(guest_mappings(&on, ports), expected);
+    // The streaming ports never include them: they follow the guests' links.
     assert!(
-        !mappings(&on, Ports::from_base(48123))
+        !mappings(&on, ports)
             .iter()
-            .any(|m| m.port == 9001 || m.port == 8000)
+            .any(|m| m.port == 48125 || (9000..9010).contains(&m.port))
     );
+}
+#[test]
+fn a_moved_media_port_never_forwards_the_tv_protocol_or_the_console() {
+    let ports = Ports::from_base(47989);
+    let near_discovery = Config::parse("webrtc_server=true\nwebrtc_media_port=7999\n").unwrap();
+    let forwarded: Vec<u16> = guest_mappings(&near_discovery, ports)
+        .iter()
+        .map(|m| m.port)
+        .collect();
+    assert_eq!(forwarded, [47991, 8002, 8003]);
+    let near_console = Config::parse("webrtc_server=true\nwebrtc_media_port=47988\n").unwrap();
+    let forwarded: Vec<u16> = guest_mappings(&near_console, ports)
+        .iter()
+        .map(|m| m.port)
+        .collect();
+    assert!(!forwarded.contains(&47990), "{forwarded:?}");
+}
+#[test]
+fn guest_ports_are_wanted_only_while_a_link_needs_them() {
+    let ports = Ports::from_base(48123);
+    // The console reachable from the internet, so its port is among the streaming ports.
+    let config =
+        Config::parse("webrtc_server=true\nwebrtc_media_port=9001\norigin_web_ui_allowed=wan\n")
+            .unwrap();
+    let guest = guest_mappings(&config, ports);
+    // Nothing at all with `upnp` off and no internet link, even with a link open.
+    assert_eq!(
+        wanted_now(&config, ports, false, true, false),
+        (vec![], vec![])
+    );
+    // A link made for the internet maps only the guest ports, whatever `upnp` says.
+    let (stream, wanted) = wanted_now(&config, ports, false, true, true);
+    assert!(stream.is_empty());
+    assert_eq!(wanted, guest);
+    // With `upnp` on, the guest ports only while a link works or a guest watches.
+    let (stream, wanted) = wanted_now(&config, ports, true, false, false);
+    assert_eq!(stream, mappings(&config, ports));
+    assert!(wanted.is_empty());
+    assert_eq!(wanted_now(&config, ports, true, true, false).1, guest);
+    // Never the console's port, the WebRTC signalling port or the owner's own media ports
+    // (UDP 8000 and 8001 by default, 9001 here) for a guest link.
+    for config in [
+        config.clone(),
+        Config::parse("webrtc_server=true\n").unwrap(),
+    ] {
+        let (_, wanted) = wanted_now(&config, ports, false, true, true);
+        assert!(!wanted.is_empty());
+        assert!(
+            !wanted.iter().any(|m| m.port == ports.web
+                || m.port == config.webrtc_port()
+                || m.port == config.webrtc_media_port()
+                || m.port == 8000
+                || m.port == 8001),
+            "{wanted:?}"
+        );
+    }
 }
 #[test]
 fn a_mapping_left_by_another_host_on_this_pc_is_not_a_conflict() {

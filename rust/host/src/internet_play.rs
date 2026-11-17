@@ -58,6 +58,17 @@ pub struct MappingStatus {
     pub ipv6_method: Option<String>,
     pub ipv6_pinholes: usize,
     pub ipv6_error: Option<String>,
+    /// Whether the port mapping task runs: `upnp` is on, or the WebRTC server is, for browser
+    /// guests' links made for the internet. Not on a host that listens on this PC only.
+    pub runs: bool,
+    /// The browser guests' ports (docs/browser-guests.md), mapped only while a link needs them.
+    pub guest_mapped: Vec<PortState>,
+    pub guest_failed: Vec<PortState>,
+    /// This PC's IPv6 address whose firewall pinholes let every guest port in.
+    pub guest_ipv6: Option<std::net::Ipv6Addr>,
+    /// The last request for the guest ports the task has asked the router about
+    /// (`Guests::internet_round`).
+    pub guest_round: u64,
 }
 
 static MAPPING: LazyLock<Mutex<MappingStatus>> =
@@ -177,6 +188,135 @@ pub fn console_status(h: &Shared) -> Result<Value> {
         })),
         "notes": notes,
     }))
+}
+
+/// What a browser guest link made for the internet can use (docs/browser-guests.md), for the
+/// console's invite dialog: what the router did with the guest ports, the public addresses, and
+/// the address the link should carry.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GuestReach {
+    /// The router has not been asked yet since the dialog asked for the ports.
+    pub checking: bool,
+    /// Whether the port mapping task runs at all.
+    pub runs: bool,
+    /// UPnP, PCP or NAT-PMP: whichever the router answered.
+    pub method: Option<String>,
+    /// Why nothing could be mapped.
+    pub error: Option<String>,
+    /// Each guest port, mapped (with its external port) or refused with the reason.
+    pub ports: Vec<PortState>,
+    /// The public IPv4 address: the router's own when public, else what STUN servers see.
+    pub public_ipv4: Option<IpAddr>,
+    /// The router's own internet address, public or not.
+    pub router_ipv4: Option<IpAddr>,
+    /// This PC's IPv6 address whose pinholes let every guest port in.
+    pub ipv6: Option<std::net::Ipv6Addr>,
+    /// The address and guest port the link carries; none when nothing on the internet reaches
+    /// this PC's guest ports.
+    pub address: Option<String>,
+    /// Plain-English findings: carrier-grade NAT, another NAT in front, changed port numbers.
+    pub notes: Vec<String>,
+    /// Whether Play over the internet runs, which lets paired Nightjar devices in too.
+    pub internet_play: bool,
+    /// Whether the host listens on IPv6, so the router can open the guest ports to it.
+    pub ipv6_listening: bool,
+}
+
+/// What [`guest_reach_of`] knows about this host besides the mapping.
+struct GuestHost {
+    /// The last request for the guest ports.
+    requested: u64,
+    /// The public IPv4 address shown (the router's own when public, else STUN's).
+    public_ipv4: Option<IpAddr>,
+    guest_port: u16,
+    /// What STUN servers see, with Play over the internet on.
+    stun: Vec<SocketAddr>,
+    internet_play: bool,
+    ipv6_listening: bool,
+}
+
+/// [`GuestReach`] from the mapping status and the host. A link takes the IPv4 address only when
+/// the router that forwarded the ports holds it: its own address is public, and STUN servers,
+/// when asked, see the PC there too. Behind carrier-grade NAT or another router the forwarded
+/// ports are out of reach whatever STUN sees.
+fn guest_reach_of(mapping: &MappingStatus, host: &GuestHost) -> GuestReach {
+    let GuestHost {
+        requested,
+        public_ipv4: shown_ipv4,
+        guest_port,
+        ref stun,
+        internet_play,
+        ipv6_listening,
+    } = *host;
+    let mut notes = Vec::new();
+    // A guest's browser opens the link's port and offers media to the guest ports by number: a
+    // router that maps them to other numbers cannot be used.
+    let renumbered = mapping
+        .guest_mapped
+        .iter()
+        .any(|port| port.external != Some(port.port));
+    let ipv4_mapped = !mapping.guest_mapped.is_empty() && mapping.guest_failed.is_empty();
+    if renumbered {
+        notes.push("The router mapped the guest ports to other port numbers, which guests' browsers can't use. Forward them by hand under their own numbers.".to_owned());
+    }
+    let mut holder = None;
+    if let Some(router) = mapping.external_ipv4 {
+        if !public_ipv4(router) {
+            notes.push(format!("The router's own internet address ({router}) is not public: your internet provider shares one address among its customers (carrier-grade NAT), so nothing on the internet can open a port on it."));
+        } else if let Some(seen) = stun.iter().map(SocketAddr::ip).find(IpAddr::is_ipv4)
+            && seen != router
+        {
+            notes.push(format!("STUN servers see this PC at {seen}, but the router reports {router}: another router or NAT is in front of it, so the forwarded ports are out of reach."));
+        } else {
+            holder = Some(router);
+        }
+    } else if ipv4_mapped {
+        notes.push("The router forwarded the ports but did not say its internet address, so Rubylight can't tell whether guests reach it. Type your public address if you know it works.".to_owned());
+    }
+    let address = match (holder, mapping.guest_ipv6) {
+        (Some(ip), _) if ipv4_mapped && !renumbered => Some(format!("{ip}:{guest_port}")),
+        (_, Some(ip)) => Some(format!("[{ip}]:{guest_port}")),
+        _ => None,
+    };
+    let mut ports = mapping.guest_mapped.clone();
+    ports.extend(mapping.guest_failed.iter().cloned());
+    GuestReach {
+        checking: mapping.runs && mapping.guest_round < requested,
+        runs: mapping.runs,
+        method: mapping.method.clone(),
+        error: mapping.error.clone(),
+        ports,
+        public_ipv4: shown_ipv4,
+        router_ipv4: mapping.external_ipv4,
+        ipv6: mapping.guest_ipv6,
+        address,
+        notes,
+        internet_play,
+        ipv6_listening,
+    }
+}
+
+/// `GET /api/guests/internet`: [`GuestReach`] now.
+pub fn guest_reach(h: &Shared) -> Result<GuestReach> {
+    let config = h.config_snapshot();
+    let guest_port = config.ports()?.guest;
+    let stun = service()
+        .map(|service| service.status().public)
+        .unwrap_or_default();
+    let ipv6_listening = crate::network::bind_address(&config, None)
+        .is_ok_and(|bind| bind.is_ipv6() && !bind.is_loopback());
+    Ok(guest_reach_of(
+        &mapping(),
+        &GuestHost {
+            requested: h.guests.internet_round(),
+            public_ipv4: external_ipv4(),
+            guest_port,
+            stun,
+            internet_play: enabled(&config) && service().is_some(),
+            ipv6_listening,
+        },
+    ))
 }
 
 fn ports(config: &Config) -> Result<Ports> {
@@ -450,6 +590,144 @@ mod tests {
         assert!(found[1].contains("symmetric NAT"));
 
         assert!(notes(&double, &["203.0.113.5:40000".parse().unwrap()], Nat::Cone).is_empty());
+    }
+
+    fn guest_ports(external: impl Fn(u16) -> u16) -> Vec<PortState> {
+        [
+            ("TCP", 47991),
+            ("UDP", 8002),
+            ("UDP", 8003),
+            ("UDP", 8004),
+            ("UDP", 8005),
+        ]
+        .into_iter()
+        .map(|(protocol, port)| PortState {
+            protocol: protocol.into(),
+            port,
+            external: Some(external(port)),
+            reason: None,
+        })
+        .collect()
+    }
+
+    fn host(requested: u64, public: Option<&str>, stun: &[&str]) -> GuestHost {
+        GuestHost {
+            requested,
+            public_ipv4: public.map(|ip| ip.parse().unwrap()),
+            guest_port: 47991,
+            stun: stun.iter().map(|ip| ip.parse().unwrap()).collect(),
+            internet_play: !stun.is_empty(),
+            ipv6_listening: false,
+        }
+    }
+
+    #[test]
+    fn a_guest_link_takes_the_public_address_only_when_every_guest_port_is_mapped() {
+        let public: IpAddr = "203.0.113.5".parse().unwrap();
+        let mapped = MappingStatus {
+            runs: true,
+            method: Some("UPnP".into()),
+            external_ipv4: Some(public),
+            guest_mapped: guest_ports(|port| port),
+            guest_round: 3,
+            ..Default::default()
+        };
+        let reach = guest_reach_of(&mapped, &host(3, Some("203.0.113.5"), &[]));
+        assert_eq!(reach.address.as_deref(), Some("203.0.113.5:47991"));
+        assert!(!reach.checking);
+        assert_eq!(reach.ports.len(), 5);
+        assert!(reach.notes.is_empty(), "{:?}", reach.notes);
+        // STUN agreeing with the router changes nothing.
+        let agreed = guest_reach_of(
+            &mapped,
+            &host(3, Some("203.0.113.5"), &["203.0.113.5:40000"]),
+        );
+        assert_eq!(agreed.address, reach.address);
+        assert!(agreed.internet_play);
+        // Until the task has asked the router for the latest request, the dialog waits.
+        assert!(guest_reach_of(&mapped, &host(4, Some("203.0.113.5"), &[])).checking);
+        // A task that does not run never answers: no waiting for it.
+        let idle = MappingStatus {
+            runs: false,
+            ..Default::default()
+        };
+        assert!(!guest_reach_of(&idle, &host(4, None, &[])).checking);
+
+        // One media port refused: no link at the public address.
+        let mut partly = mapped.clone();
+        let refused = partly.guest_mapped.pop().unwrap();
+        partly.guest_failed.push(PortState {
+            external: None,
+            reason: Some("the router is out of mappings".into()),
+            ..refused
+        });
+        let reach = guest_reach_of(&partly, &host(3, Some("203.0.113.5"), &[]));
+        assert_eq!(reach.address, None);
+        assert_eq!(reach.ports.len(), 5);
+
+        // Other port numbers can't be used, and say so.
+        let renumbered = MappingStatus {
+            guest_mapped: guest_ports(|port| port + 10_000),
+            ..mapped.clone()
+        };
+        let reach = guest_reach_of(&renumbered, &host(3, Some("203.0.113.5"), &[]));
+        assert_eq!(reach.address, None);
+        assert!(reach.notes[0].contains("other port numbers"));
+
+        // A router that does not say its address: no guess from STUN.
+        let silent = MappingStatus {
+            external_ipv4: None,
+            ..mapped
+        };
+        let reach = guest_reach_of(&silent, &host(3, Some("198.51.100.7"), &["198.51.100.7:1"]));
+        assert_eq!(reach.address, None);
+        assert!(reach.notes[0].contains("did not say its internet address"));
+    }
+
+    #[test]
+    fn a_guest_link_behind_carrier_grade_nat_falls_back_to_ipv6_or_nothing() {
+        let cgnat = MappingStatus {
+            runs: true,
+            method: Some("UPnP".into()),
+            external_ipv4: Some("100.72.0.1".parse().unwrap()),
+            guest_mapped: guest_ports(|port| port),
+            ..Default::default()
+        };
+        // With Play over the internet on, STUN sees the provider's public address: the
+        // forwarded ports on the home router are still out of reach.
+        let reach = guest_reach_of(
+            &cgnat,
+            &host(0, Some("198.51.100.7"), &["198.51.100.7:40000"]),
+        );
+        assert_eq!(reach.address, None);
+        assert!(
+            reach.notes[0].contains("carrier-grade NAT"),
+            "{:?}",
+            reach.notes
+        );
+        assert_eq!(reach.public_ipv4, Some("198.51.100.7".parse().unwrap()));
+
+        let with_ipv6 = MappingStatus {
+            guest_ipv6: Some("2001:db8::7".parse().unwrap()),
+            ..cgnat
+        };
+        let reach = guest_reach_of(&with_ipv6, &host(0, None, &[]));
+        assert_eq!(reach.address.as_deref(), Some("[2001:db8::7]:47991"));
+
+        // Another NAT in front of a router with a public address: nothing at IPv4.
+        let double = MappingStatus {
+            runs: true,
+            external_ipv4: Some("203.0.113.5".parse().unwrap()),
+            guest_mapped: guest_ports(|port| port),
+            ..Default::default()
+        };
+        let reach = guest_reach_of(
+            &double,
+            &host(0, Some("203.0.113.5"), &["198.51.100.7:40000"]),
+        );
+        assert_eq!(reach.address, None);
+        assert!(reach.notes[0].contains("another router or NAT"));
+        assert!(reach.internet_play);
     }
 
     #[test]
