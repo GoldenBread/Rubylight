@@ -163,9 +163,9 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private int renderWidth, renderHeight;
     private volatile GlesUpscaler upscaler;
     private volatile UpscalingPolicy upscalingPolicy;
-    // The stream and render sizes the current upscaler was built for: one that failed with SIZE_CHANGED
-    // is rebuilt when either moved (a fold, a turn, a split screen or a stream size change).
-    private int upscalerStreamWidth, upscalerStreamHeight, upscalerRenderWidth, upscalerRenderHeight;
+    // The stream and window-surface sizes the current upscaler was built for: one that failed with
+    // SIZE_CHANGED is rebuilt when either moved (a fold, a turn, a split screen or a stream size change).
+    private int upscalerStreamWidth, upscalerStreamHeight, upscalerSurfaceWidth, upscalerSurfaceHeight;
     // The native Vulkan renderer takes the GLES upscaler's place when selected: the decoder
     // renders into its surface, and it paces and presents frames on the render target itself.
     // It lives as long as this object, so a decoder restart renders into the same surface.
@@ -1245,6 +1245,14 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     }
 
     private void setupUpscaling() {
+        setupUpscaling(null);
+    }
+
+    /**
+     * Builds the upscaler. {@code surfaceSize} is the window surface a rebuild must fit, as the failed
+     * upscaler measured it; null for a stream's first setup, which uses the render target's size.
+     */
+    private void setupUpscaling(int[] surfaceSize) {
         Display display = outputDisplay;
         float panelHz = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ?
                 display.getMode().getRefreshRate() : display.getRefreshRate();
@@ -1311,7 +1319,10 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             upscalingPolicy.fail(UpscalingPolicy.Reason.PYROWAVE);
             return;
         }
-        int[] viewport = UpscalingPolicy.viewport(initialWidth, initialHeight, renderWidth, renderHeight, prefs.stretchVideo);
+        int renderSurfaceWidth = surfaceSize != null ? surfaceSize[0] : renderWidth;
+        int renderSurfaceHeight = surfaceSize != null ? surfaceSize[1] : renderHeight;
+        int[] viewport = UpscalingPolicy.viewport(initialWidth, initialHeight, renderSurfaceWidth,
+                renderSurfaceHeight, prefs.stretchVideo);
         boolean hostHdr = Boolean.TRUE.equals(currentHdrMode);
         boolean hdrOrTenBit = hostHdr || (videoFormat & MoonBridge.VIDEO_FORMAT_MASK_10BIT) != 0;
         UpscalingPolicy.Reason reason = UpscalingPolicy.colorReason(UpscalingPolicy.unavailableReason(
@@ -1328,25 +1339,32 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         }
     }
 
-    /** Remembers the sizes the upscaler that was just built draws for, so a size change rebuilds it. */
+    /** Remembers the stream and surface sizes the upscaler that was just built draws for. */
     private void rememberUpscalerSize() {
         upscalerStreamWidth = initialWidth;
         upscalerStreamHeight = initialHeight;
-        upscalerRenderWidth = renderWidth;
-        upscalerRenderHeight = renderHeight;
+        int[] surface = upscaler != null ? upscaler.measuredSurfaceSize() : new int[] {renderWidth, renderHeight};
+        upscalerSurfaceWidth = surface[0];
+        upscalerSurfaceHeight = surface[1];
     }
 
-    /** Whether the failed upscaler was built for another stream or render size than the stream has now. */
+    /**
+     * Whether the failed upscaler was built for another stream size or another window surface than
+     * the stream has now: a fold, a turn or a split screen resizes the surface behind its back, and
+     * only the upscaler measures that.
+     */
     private boolean upscalerBuiltForAnotherSize() {
-        return upscaler != null && upscalerSizedDifferently(upscalerStreamWidth, upscalerStreamHeight,
-                upscalerRenderWidth, upscalerRenderHeight, initialWidth, initialHeight, renderWidth, renderHeight);
+        if (upscaler == null) return false;
+        int[] surface = upscaler.measuredSurfaceSize();
+        return upscalerSizedDifferently(upscalerStreamWidth, upscalerStreamHeight, upscalerSurfaceWidth,
+                upscalerSurfaceHeight, initialWidth, initialHeight, surface[0], surface[1]);
     }
 
     static boolean upscalerSizedDifferently(int builtStreamWidth, int builtStreamHeight,
-                                            int builtRenderWidth, int builtRenderHeight,
-                                            int streamWidth, int streamHeight, int renderWidth, int renderHeight) {
+                                            int builtSurfaceWidth, int builtSurfaceHeight,
+                                            int streamWidth, int streamHeight, int surfaceWidth, int surfaceHeight) {
         return builtStreamWidth != streamWidth || builtStreamHeight != streamHeight
-                || builtRenderWidth != renderWidth || builtRenderHeight != renderHeight;
+                || builtSurfaceWidth != surfaceWidth || builtSurfaceHeight != surfaceHeight;
     }
 
     private String vulkanUnusedReason(VideoRendererChoice.Reason reason) {
@@ -1652,14 +1670,6 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         }
     }
 
-    public MediaCodecDecoderRenderer(Activity activity, PreferenceConfiguration prefs,
-                                     CrashListener crashListener, int consecutiveCrashCount,
-                                     boolean meteredData, boolean requestedHdr,
-                                     String glRenderer, PerfOverlayListener perfListener) {
-        this(activity, prefs, crashListener, consecutiveCrashCount, meteredData, requestedHdr,
-                glRenderer, perfListener, activity.getWindowManager().getDefaultDisplay());
-    }
-
     /** The visible picture the decoder's output format reports, or null when it does not report a size. */
     private int[] decodedVisibleSize() {
         try {
@@ -1686,6 +1696,14 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                                         int expectedHeight, int currentWidth, int currentHeight) {
         int[] shown = StreamResizePolicy.shownSize(visibleWidth, visibleHeight, expectedWidth, expectedHeight);
         return shown[0] == currentWidth && shown[1] == currentHeight ? null : shown;
+    }
+
+    public MediaCodecDecoderRenderer(Activity activity, PreferenceConfiguration prefs,
+                                     CrashListener crashListener, int consecutiveCrashCount,
+                                     boolean meteredData, boolean requestedHdr,
+                                     String glRenderer, PerfOverlayListener perfListener) {
+        this(activity, prefs, crashListener, consecutiveCrashCount, meteredData, requestedHdr,
+                glRenderer, perfListener, activity.getWindowManager().getDefaultDisplay());
     }
 
     public MediaCodecDecoderRenderer(Activity activity, PreferenceConfiguration prefs,
@@ -3466,12 +3484,13 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
         @Override public void configure() {
             if (upscalingPolicy.getReason() == UpscalingPolicy.Reason.SIZE_CHANGED && upscalerBuiltForAnotherSize()) {
-                // The upscaler is built for the stream it samples and the surface it draws to: a fold, a
-                // turn, a split screen or a stream size change builds it again for the new sizes, so
-                // upscaling continues instead of ending for the rest of the stream.
+                // The upscaler is built for the stream it samples and the window surface it draws to:
+                // a fold, a turn, a split screen or a stream size change builds it again for the sizes
+                // that were measured, so upscaling continues instead of ending for the stream.
+                int[] surface = upscaler.measuredSurfaceSize();
                 upscaler.close();
                 upscaler = null;
-                setupUpscaling();
+                setupUpscaling(surface);
             } else if (packing != null && upscalingPolicy.getReason() == UpscalingPolicy.Reason.NONE) {
                 closeUpscaler();
                 setupUpscaling();
