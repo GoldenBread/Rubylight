@@ -331,6 +331,17 @@ pub struct Performance {
     fec_loss_reports: u64,
     fec_loss_refused_reports: u64,
 }
+/// The client's FEC report totals since the stream started.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FecTotals {
+    /// Valid block reports received; 0 when the client reports nothing (WebRTC,
+    /// or a client without the FEC-status feature).
+    pub reports: u64,
+    /// Packets the client reported missing, from gaps before each highest.
+    pub missing_packets: u64,
+    pub recovered_frames: u64,
+    pub unrecoverable_frames: u64,
+}
 impl Performance {
     /// Counts one 0x5539 statistical FEC report: taken (also when only logged),
     /// or refused as malformed or out of sequence.
@@ -341,6 +352,17 @@ impl Performance {
             &mut self.fec_loss_refused_reports
         };
         *counter = counter.saturating_add(1);
+    }
+    /// The client's FEC report totals since the stream started. The session
+    /// history reports the missing share as the stream's loss, and `reports`
+    /// tells "no loss" from "the client did not report".
+    pub fn fec_totals(&self) -> FecTotals {
+        FecTotals {
+            reports: self.fec_reports,
+            missing_packets: self.fec_missing_packets,
+            recovered_frames: self.fec_recovered_frames,
+            unrecoverable_frames: self.fec_unrecoverable_frames,
+        }
     }
     /// Counts one block report and returns what it says, or `None` for an
     /// invalid, unsent, stale or duplicate report.

@@ -728,14 +728,18 @@ fn journal() -> impl Strategy<Value = Journal> {
         proptest::option::of("\\PC{0,16}"),
         app,
         any::<u64>(),
+        any::<u64>(),
     )
-        .prop_map(|(version, state, owner, app, since_unix_ms)| Journal {
-            version,
-            state,
-            owner,
-            app,
-            since_unix_ms,
-        })
+        .prop_map(
+            |(version, state, owner, app, since_unix_ms, last_seen_unix_ms)| Journal {
+                version,
+                state,
+                owner,
+                app,
+                since_unix_ms,
+                last_seen_unix_ms,
+            },
+        )
 }
 
 proptest! {
