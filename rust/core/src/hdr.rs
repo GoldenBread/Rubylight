@@ -45,6 +45,17 @@ impl Metadata {
         metadata.max_fall = metadata.full_frame_nits;
         metadata
     }
+    /// The metadata for a picture an enhancement generated at `peak` nits
+    /// (RTX HDR): its own peak takes the source panel's place, and the
+    /// content's light levels stay unknown (0, as CTA-861.3 reads them),
+    /// because nothing reports them for the generated picture.
+    pub fn generated(mut self, peak: u16) -> Self {
+        self.maximum_nits = peak.max(1);
+        self.full_frame_nits = 0;
+        self.max_cll = 0;
+        self.max_fall = 0;
+        self
+    }
     pub fn wire(self, enabled: bool) -> [u8; 27] {
         let mut bytes = [0; 27];
         bytes[0] = u8::from(enabled);
@@ -127,5 +138,30 @@ mod tests {
         );
         // A full-frame figure above the peak is a driver error: cap it.
         assert_eq!(Metadata::display(600., 0.05, 900.).full_frame_nits, 600);
+    }
+
+    /// RTX HDR generates its own HDR picture: the stream describes the peak
+    /// it was made for, not the SDR panel's 300 nits, and the content light
+    /// levels it cannot know stay 0 (unknown).
+    #[test]
+    fn generated_hdr_describes_its_own_peak_not_the_sdr_panel() {
+        let panel = Metadata::display(300., 0.1, 200.);
+        let generated = panel.generated(1000);
+        assert_eq!(generated.maximum_nits, 1000);
+        assert_eq!((generated.max_cll, generated.max_fall), (0, 0));
+        assert_eq!(generated.full_frame_nits, 0);
+        // The panel's colour primaries and floor still describe the output.
+        assert_eq!(
+            (generated.primaries, generated.minimum),
+            (panel.primaries, 1000)
+        );
+        let wire = generated.wire(true);
+        let fields: Vec<_> = wire[1..]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|v| u16::from_le_bytes(*v))
+            .collect();
+        assert_eq!(&fields[8..], [1000, 1000, 0, 0, 0]);
     }
 }

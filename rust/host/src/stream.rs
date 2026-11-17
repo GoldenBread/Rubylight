@@ -1353,8 +1353,14 @@ impl Media {
                 "PyroWave bitrate is below recommended: text and textures may lose detail. Quality depends on the picture; raise the bitrate in Moonlight with network headroom, or use HEVC or AV1"
             );
         }
-        // HDR metadata describes the captured source, independent of receiver brightness.
-        let metadata = self.set_display_hdr_metadata(s, first.gpu.hdr_metadata());
+        // HDR metadata describes the captured source, independent of receiver
+        // brightness. RTX HDR's picture is generated at its own peak, not the
+        // SDR monitor's; its enhancer reports the same from its first frame.
+        let mut display_metadata = first.gpu.hdr_metadata();
+        if let Some(peak) = crate::nvidia_enhance::generated_peak(c, s.config.hdr, first.pixel) {
+            display_metadata = display_metadata.generated(peak);
+        }
+        let metadata = self.set_display_hdr_metadata(s, display_metadata);
         if let Some(encoder) = encoder.as_mut() {
             encoder.set_hdr_metadata(metadata);
             encoder.set_hdr_target(s.hdr_target_nits());

@@ -1571,7 +1571,12 @@ impl SessionThread<'_> {
                 }
                 if Instant::now() >= metadata_due {
                     let checks_started = Instant::now();
-                    let display_metadata = image.gpu.hdr_metadata();
+                    let mut display_metadata = image.gpu.hdr_metadata();
+                    if let Some(peak) = enhancer.hdr_peak(&runtime_config) {
+                        // RTX HDR generated this picture at its own peak; the
+                        // SDR monitor's peak does not describe it.
+                        display_metadata = display_metadata.generated(peak);
+                    }
                     frame_checks += checks_started.elapsed();
                     let metadata = m.set_display_hdr_metadata(&s, display_metadata);
                     active.set_hdr_metadata(metadata);
