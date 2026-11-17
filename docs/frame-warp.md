@@ -10,9 +10,9 @@ game takes to show an input and, for a game drawn through a perspective camera, 
 view, and tags every frame with how much input it reflects. What stays put on screen while the
 camera turns (crosshair, health, minimap, the weapon) is found by the host and left unshifted.
 
-On a test game with 50 ms of delay it removed 96% of the picture's trail behind the mouse, and at
-a 90 degree field of view 91% at the picture's edge; the host's GPU passes take 0.14 to 0.16 ms a
-frame from 1080p to 4K on the RX 7900 XT ([Measuring](#measuring)).
+On a test game it removed nearly all of the picture's trail behind the mouse, also at the edges
+of a wide field of view, for a fraction of a millisecond of the host's GPU time a frame
+([Measuring](#measuring)).
 
 ## Turning it on
 
@@ -206,18 +206,10 @@ With `--fov DEGREES` the probe draws its world through a perspective camera, and
 also reports the learned field of view and what is left at the centre, over the whole picture
 and at its edge (a 7 by 7 grid of points, each compared with where the turned camera shows it).
 
-The results, from [Performance](../rust/PERFORMANCE.md#november-12-frame-warp) and
-[the lens's](../rust/PERFORMANCE.md#november-12-frame-warp-lens) runs (2560x1440, 60 fps):
-
-| Run | Without Frame Warp | Left with Frame Warp | Removed |
-|---|---|---|---|
-| Flat picture, 50 ms of game delay (median distance while turning) | 64.9 px | 1.4 to 2.2 px | 95.8 to 96.4% |
-| 90 degree field of view, centre (median) | 67.7 px | 2.2 px | 96.0% |
-| 90 degree field of view, whole picture | 91.9 px | 8.0 px | 91.8% |
-| 90 degree field of view, edge | 105.0 px | 10.2 px | 90.8% |
-| 90 degree field of view, edge, a host and client without the lens (Rubylight 4.0, Nightjar 5.0) | 104.2 px | 36.5 px | 65.4% |
-
-The field of view was learned as 88.9 degrees of 90, 67.8 of 70 and 107.6 of 110.
+The results of these runs, how much of the displacement Frame Warp removed at the centre and the
+edge, the learned fields of view and the GPU cost, are in the measurement record:
+[Frame Warp](../rust/PERFORMANCE.md#november-12-frame-warp) and
+[the lens](../rust/PERFORMANCE.md#november-12-frame-warp-lens).
 
 ## Wire formats
 

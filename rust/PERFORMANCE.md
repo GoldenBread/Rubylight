@@ -9537,6 +9537,10 @@ HEVC repairs only within 128 frames of the last one shown; the skipped-frame his
 per IDR; the size estimate is linear; the rewriters have mutation tests (3000 per codec), not a fuzz
 harness. Android MediaCodec checked in the rc.4 hardware pass.
 
+## November 13: virtual mouse against injection
+
+Measured with the probe in [Virtual mouse and touchpad](../docs/virtual-mouse.md#measuring-it) on an RX 7900 XT PC: three virtual-mouse and three injection legs, alternating, with a 250 Hz stream of moves. From a move reaching the host's injector to the game's `WM_INPUT`, the virtual mouse took about 0.25 ms at p50 (246-253 µs) against injection's 0.19 ms (189-190 µs), and about the same at p95 (4641-4662 µs against 4630-4638 µs). Automatic stays the default: the 0.06 ms costs less than input a game ignores or flags. (Moved here from the virtual mouse guide on 2026-11-17.)
+
 ## November 12: Frame Warp
 
 How much of a camera turn's input-to-picture delay [Frame Warp](../docs/frame-warp.md) takes off
