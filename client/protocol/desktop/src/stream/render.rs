@@ -959,7 +959,8 @@ impl Streaming {
             // The video texture's picture goes into the window's target as it is, by the plane
             // pass or SDL, not through an upscaler or AI enhancement.
             let unscaled = !self.texture.texture.is_null() && !use_upscaler && !ai;
-            self.clear_window(renderer, unscaled);
+            // The plane pass draws only a picture the display places one texel to one pixel.
+            self.clear_window(renderer, unscaled && present::draws_one_to_one(&dst, input));
             #[cfg(windows)]
             if !unscaled { self.texture.release_back_buffers(); }
             if !self.texture.texture.is_null() {

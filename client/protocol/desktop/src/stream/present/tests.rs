@@ -174,6 +174,24 @@ fn plane_pictures_go_straight_to_the_back_buffer_until_that_fails() {
     texture.texture = std::ptr::null_mut();
 }
 
+/// Issue 120 on the Vulkan plane pass: a picture the display scales is not drawn by the pass,
+/// whose taps would filter its colour codes; its planes stay for the video texture, which SDL
+/// scales in linear light. The check comes before anything reads the renderer.
+#[cfg(unix)]
+#[test]
+fn a_scaled_plane_picture_goes_through_the_video_texture() {
+    let mut texture = VideoTexture { width: 1280, height: 720, ..VideoTexture::default() };
+    let fake = std::ptr::NonNull::<SDL_Texture>::dangling().as_ptr();
+    texture.texture = fake;
+    texture.planes_pending = Some([7; 8]);
+    let scaled = viewport((1280, 720), (1920, 1080), crate::config::VideoScaling::Fit, false);
+    assert!(!texture.draw_direct(std::ptr::null_mut(), &scaled, fake));
+    assert_eq!(texture.planes_pending, Some([7; 8]), "the planes wait for the texture's draw");
+    assert!(texture.direct_planes_scaled_said);
+    assert!(!texture.direct_planes_failed, "scaling is no failure: an unscaled picture is drawn directly again");
+    texture.texture = std::ptr::null_mut();
+}
+
 #[test]
 fn a_10_bit_sdr_stream_keeps_the_sdr_white_until_the_host_says_hdr() {
     // The bug: every 10-bit picture without the host's HDR mode took the display's SDR white
@@ -370,6 +388,17 @@ fn scaling_matches_android_fit_fill_stretch_native_and_top_alignment() {
     }
     let r = viewport((0, 0), (1280, 1024), Native, true);
     assert_eq!([r.x, r.y, r.w, r.h], [0.0, 0.0, 1280.0, 1024.0]);
+}
+
+// Issue 120 on every platform's plane pass (the Vulkan `planesDirect` too): only a picture the
+// display shows at its own size skips the video texture.
+#[test]
+fn only_a_picture_at_the_displays_own_size_skips_the_video_texture() {
+    let fit = |picture, area| viewport(picture, area, crate::config::VideoScaling::Fit, false);
+    assert!(draws_one_to_one(&fit((1920, 1080), (1920, 1080)), (1920, 1080)));
+    assert!(draws_one_to_one(&fit((1920, 1080), (1920, 1200)), (1920, 1080)), "letterboxed at its own size");
+    assert!(!draws_one_to_one(&fit((1280, 720), (1920, 1080)), (1280, 720)), "upscaled");
+    assert!(!draws_one_to_one(&fit((2560, 1440), (1920, 1080)), (2560, 1440)), "downscaled");
 }
 
 #[test]

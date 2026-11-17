@@ -49,23 +49,7 @@ pub fn goes_direct(conditions: Conditions) -> bool {
     conditions.switch && !conditions.failed && conditions.swap_chain && !conditions.partial
 }
 
-/// Whether `picture` lands on `destination` one texel to one pixel, the only scale at which the
-/// plane pass shows what SDL's draw of the video texture shows.
-///
-/// The texture SDL draws holds the picture converted to linear light (`pyrowave.hlsl`'s
-/// `linearRgb`, `planes_direct.hlsl`'s `directFinish`), so SDL's bilinear taps when it scales are
-/// in linear light. The plane pass samples the picture's Y'CbCr codes and converts afterwards, so
-/// its taps are in the codes: filtering there and then converting darkens detail on an upscaled
-/// picture and brightens it on a downscaled one, where converting first and then filtering in
-/// linear light leaves the levels alone (issue 120: a PyroWave stream at another resolution than
-/// the display came out dark or bright). Only an unscaled picture is drawn here; anything else
-/// goes through the texture.
-pub fn draws_one_to_one(destination: &SDL_FRect, picture: (i32, i32)) -> bool {
-    destination.w == picture.0 as f32
-        && destination.h == picture.1 as f32
-        && destination.x.fract() == 0.0
-        && destination.y.fract() == 0.0
-}
+pub use super::present::draws_one_to_one;
 
 /// The shift of a picture drawn one texel to one pixel, rounded to whole picture pixels:
 /// `packed444.hlsl` rounds it the same way at its own size. A fractional shift samples between

@@ -98,6 +98,14 @@ impl VideoTexture {
     #[cfg(unix)]
     pub fn draw_direct(&mut self, renderer: *mut SDL_Renderer, destination: &SDL_FRect, texture: *mut SDL_Texture) -> bool {
         let Some(parameters) = self.planes_pending.filter(|_| texture == self.texture && !texture.is_null()) else { return false };
+        // As on Windows (issue 120): a scaled picture is converted into the texture first and
+        // SDL scales it in linear light; the pass would filter its colour codes.
+        if !super::draws_one_to_one(destination, self.size()) {
+            if !std::mem::replace(&mut self.direct_planes_scaled_said, true) {
+                eprintln!("nightjar: the stream's pictures are drawn through the video texture: the display does not place them one texel to one pixel, the only way the plane pass draws them exactly (scaling their colour codes instead of the converted picture shifts the levels)");
+            }
+            return false;
+        }
         let step = std::time::Instant::now();
         // SAFETY: The live renderer and texture of the presenting thread.
         let look = unsafe { super::super::planes_gpu::SdlLook::of(renderer, texture) };
