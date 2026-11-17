@@ -496,6 +496,66 @@ fn a_link_above_the_data_root_is_refused() {
     std::fs::remove_dir(&linked).unwrap();
 }
 
+/// A folder held open cannot be renamed out from under the files that were
+/// checked in it: Windows refuses the rename while the handle does not share
+/// deletion, and allows it once the hold goes.
+#[test]
+fn a_held_folder_cannot_be_renamed_away() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    let folder = h.directory.join("held");
+    std::fs::create_dir(&folder).unwrap();
+    let moved = h.directory.join("moved");
+    let hold = Hold::new([folder.as_path()]).unwrap();
+    assert!(
+        std::fs::rename(&folder, &moved).is_err(),
+        "a held folder moved"
+    );
+    assert!(folder.is_dir(), "the held folder stays where it is");
+    assert!(!moved.exists());
+    // Released, the same folder moves: it is the hold that kept it.
+    drop(hold);
+    std::fs::rename(&folder, &moved).unwrap();
+}
+
+/// The component's folder and the folders between it and the host's data root
+/// are held from the check on, so a swap of the path cannot reach the load;
+/// renaming either of them fails while the component is in use.
+#[test]
+fn a_checked_component_holds_its_folders_in_place() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    let root = root(h);
+    let name = "4.5.0-0123456789abcdef";
+    let folder = root.join(name);
+    std::fs::create_dir_all(&folder).unwrap();
+    Record {
+        version: VERSION.into(),
+        folder: name.into(),
+        adapter_sha256: "0".repeat(64),
+    }
+    .write(&root)
+    .unwrap();
+    let component = component_for(&h.directory).unwrap();
+    for (held, moved) in [
+        (folder.clone(), h.directory.join("elsewhere-component")),
+        (root.clone(), h.directory.join("elsewhere-root")),
+    ] {
+        assert!(
+            std::fs::rename(&held, &moved).is_err(),
+            "{} moved while the component is in use",
+            held.display()
+        );
+        assert!(held.is_dir());
+    }
+    // The data root itself too, as the folder above it may let another account
+    // move folders in `C:\ProgramData`.
+    let elsewhere = h.directory.parent().unwrap().join("moved-data-root");
+    assert!(std::fs::rename(&h.directory, &elsewhere).is_err());
+    drop(component);
+    std::fs::rename(&root, h.directory.join("elsewhere-root")).unwrap();
+}
+
 /// A folder an earlier install left with a file still in use is passed over
 /// for the next free name, so a download after a removal still installs.
 #[tokio::test(flavor = "multi_thread")]

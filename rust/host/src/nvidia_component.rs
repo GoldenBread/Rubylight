@@ -20,7 +20,7 @@
 use crate::state::Shared;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use butterpollo_core::nvidia_component::{self as pins, ADAPTER, NGX_DATA, Pinned, RECORD, Record};
-use butterpollo_windows::nvidia_enhance::{self as loader, Component};
+use butterpollo_windows::nvidia_enhance::{self as loader, Component, Hold};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -80,7 +80,9 @@ fn elevated() -> bool {
 /// The host's own folder above the component root: `%ProgramData%\Butterpollo`
 /// for the installed host, the profile otherwise. Setup locks it down for the
 /// installed host, so it is where [`trusted`]'s check of who may change
-/// folders ends.
+/// folders ends; [`component_for`] holds it open from that check through the
+/// load, which is what keeps a folder above it that others may move from
+/// swapping this one.
 fn data_root(root: &Path) -> Result<&Path> {
     root.parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -90,9 +92,12 @@ fn data_root(root: &Path) -> Result<&Path> {
 /// Refuse a folder that is not this host's own: a link on the way to it, or
 /// for an elevated host ([`elevated`]), a folder from it up to the host's
 /// data root that anyone but administrators may change, or one they don't
-/// own. Above the data root only the link check applies: that folder's own
-/// permissions already stop anyone else from moving it away and putting a
-/// link in its place.
+/// own. Above the data root only the link check applies, and not because those
+/// folders are safe: `C:\ProgramData` itself lets other accounts move folders
+/// on a PC where it was opened up (issue #115), so a check there would refuse
+/// every install. [`component_for`] instead holds its own folder and every
+/// folder down to the components open, which is what keeps the paths it
+/// checked naming the files it loads.
 fn trusted(folder: &Path, data_root: &Path, elevated: bool) -> Result<()> {
     trusted_with(
         folder,
@@ -161,6 +166,11 @@ fn ensure_root(root: &Path) -> Result<()> {
 
 /// The installed component of the host whose profile is `profile`, after
 /// checking its folder; the `--nvidia-probe` process finds it this way too.
+/// The folders from the component's up to the host's data root are held open
+/// until the returned component goes, so none of them can be renamed or
+/// deleted while it is in use: another account with delete rights on
+/// `C:\ProgramData` can move the folders in it (issue #115), and moving any of
+/// these would leave the paths naming other files than the ones checked.
 pub fn component_for(profile: &Path) -> Result<Component> {
     let root = pins::root(profile);
     let data_root = data_root(&root)?;
@@ -169,10 +179,12 @@ pub fn component_for(profile: &Path) -> Result<Component> {
     trusted(&root, data_root, elevated)?;
     let folder = record.files(&root);
     trusted(&folder, data_root, elevated)?;
+    let hold = Hold::new([folder.as_path(), root.as_path(), data_root])?;
     Ok(Component {
         folder,
         adapter_sha256: record.adapter_sha256,
         data: root.join(NGX_DATA),
+        hold,
     })
 }
 
