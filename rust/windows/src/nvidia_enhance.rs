@@ -4,6 +4,7 @@
 //! is loaded by full path from the component's folder, which the host names
 //! with [`set_component`], after every file there was checked
 //! ([`butterpollo_core::nvidia_component::verify`]).
+use crate::process::Hold;
 use anyhow::{Context, Result, bail};
 use butterpollo_core::nvidia_component::{self, ABI, ADAPTER};
 use butterpollo_core::nvidia_enhance::{RTX_HDR, RTX_VIDEO, ngx_adapter};
@@ -31,12 +32,27 @@ const SEARCH: u32 = 0x0000_0100 | 0x0000_0800;
 
 /// The installed component: its folder, the adapter's SHA-256 and NGX's data
 /// folder.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct Component {
     pub folder: PathBuf,
     pub adapter_sha256: String,
     pub data: PathBuf,
+    /// The folders the component is checked and loaded in, held open so that none
+    /// of them can be renamed or deleted while it is the installed one
+    /// ([`Hold`]). A hold is not part of what a component is.
+    pub hold: Hold,
 }
+
+/// Two components are the same when they name the same files: the holds are
+/// what keeps those files there, not what the component is.
+impl PartialEq for Component {
+    fn eq(&self, other: &Self) -> bool {
+        self.folder == other.folder
+            && self.adapter_sha256 == other.adapter_sha256
+            && self.data == other.data
+    }
+}
+impl Eq for Component {}
 
 static COMPONENT: RwLock<Option<Component>> = RwLock::new(None);
 
@@ -75,9 +91,11 @@ pub(crate) fn load() -> Result<libloading::Library> {
         .chain(Some(0))
         .collect();
     // SAFETY: The file was just checked against the SHA-256 recorded when it
-    // was installed into a folder only administrators may change; its ABI
-    // function takes nothing and returns a u32 and is checked before any other
-    // symbol is used, and ABI 3's configure takes a NUL-terminated wide path.
+    // was installed into a folder only administrators may change, and the
+    // component's folders are held open ([`Hold`]), so the path still names the
+    // file that was checked; its ABI function takes nothing and returns a u32
+    // and is checked before any other symbol is used, and ABI 3's configure
+    // takes a NUL-terminated wide path.
     unsafe {
         let library: libloading::Library =
             libloading::os::windows::Library::load_with_flags(&path, SEARCH)

@@ -572,3 +572,28 @@ fn stopping_an_app_undoes_its_menu_commands_once_last_run_first() {
     running.stop();
     assert_eq!(std::fs::read_to_string(&trace).unwrap(), log);
 }
+
+#[test]
+fn connection_commands_report_the_display_size_not_the_capped_picture() {
+    // A 4K request under a 1440p host cap: the device's display runs at 3840x2160
+    // while the encoder codes 2560x1440.
+    let mut stream = butterpollo_core::rtsp::Negotiated {
+        width: 2560,
+        height: 1440,
+        hdr: true,
+        ..Default::default()
+    };
+    stream.set_display_size((3840, 2160), Some((2560, 1440)));
+    assert!(stream.capped());
+    let environment = client_stream_environment(&stream, "60".into());
+    assert_eq!(environment["SUNSHINE_CLIENT_WIDTH"], "3840");
+    assert_eq!(environment["SUNSHINE_CLIENT_HEIGHT"], "2160");
+    assert_eq!(environment["SUNSHINE_CLIENT_FPS"], "60");
+    assert_eq!(environment["SUNSHINE_CLIENT_HDR"], "true");
+    // Without a cap the request is the display size, as before.
+    let mut plain = stream.clone();
+    plain.set_display_size((3840, 2160), None);
+    let environment = client_stream_environment(&plain, "60".into());
+    assert_eq!(environment["SUNSHINE_CLIENT_WIDTH"], "3840");
+    assert_eq!(environment["SUNSHINE_CLIENT_HEIGHT"], "2160");
+}

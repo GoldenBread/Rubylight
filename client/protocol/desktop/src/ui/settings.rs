@@ -11,18 +11,21 @@ use nightjar_policy::choices::{BackButton, LowerBitrate, Roaming, SystemKeys};
 use nightjar_policy::controllers::Controllers;
 use nightjar_policy::open_play::StartScreen;
 use nightjar_policy::presets::{self, Preset};
+use nightjar_policy::simple_profile as simple;
 use crate::config::FramePacing;
 use nightjar_policy::stream_menu::{Hotkey, NO_TILE};
 
-/// The settings sections in the order Android lists them (App only on the main settings).
-pub(super) const SETTINGS_SECTIONS: [&str; 8] = [en("Video"), en("Display & image"), en("Controls"), en("Audio"), en("Streaming"), en("App"), en("Advanced"), en("Debug")];
+/// The settings sections in the order Android lists them (App only on the main settings). Recommended is
+/// the simple layer (SimpleProfile): three plain choices over the settings the other sections hold.
+pub(super) const SETTINGS_SECTIONS: [&str; 9] = [en("Recommended"), en("Video"), en("Display & image"), en("Controls"), en("Audio"), en("Streaming"), en("App"), en("Advanced"), en("Debug")];
 
 /// Every setting row's keys, by section, in the order the page draws them with every fold open;
 /// the first key names the row. Rows that show only with another setting (Custom resolution,
 /// Bitrate, the controller mouse's options) share their keys or are listed where they show. Action
 /// rows (a page, a test) store nothing and are not listed. A test keeps this equal to what the
 /// page draws.
-pub(super) const SECTION_KEYS: [&[&[&str]]; 8] = [
+pub(super) const SECTION_KEYS: [&[&[&str]]; 9] = [
+    &[&["simple_smoothness"], &["simple_picture"], &["simple_hdr"]],
     &[&["width", "height"], &["fps"], &["bitrate_kbps"], &["adaptive_bitrate", "client_hint_bitrate"], &["codec"], &["hdr"],
         &["prefer_yuv444", "experimental_packed_444"], &["sdr_10bit"], &["frame_warp"], &["adaptive_quality"], &["quality_min_short_edge"], &["quality_min_fps"],
         &["hdr_desktop_brightness"], &["rtx_hdr"], &["rtx_video"]],
@@ -94,9 +97,9 @@ pub(super) struct SettingsView {
     /// The search the rows showed last frame: another one starts its results at the top.
     shown_query: String,
     /// The rows the search found last frame, per section.
-    pub(super) found: [usize; 8],
+    pub(super) found: [usize; 9],
     /// Each section's fold is open (its "More … settings" chosen), until Nightjar closes.
-    pub(super) more: [bool; 8],
+    pub(super) more: [bool; 9],
     /// Another section was opened: its rows start at the top.
     pub(super) to_top: bool,
     /// Reset all (or Clear all on a PC's, game's or profile's settings) waits for its confirmation.
@@ -114,6 +117,8 @@ pub(super) struct SettingsView {
     /// The PC chosen for the main settings' Connection test and PyroWave frame pace, until
     /// Nightjar closes.
     pub(super) test_pc: Option<u64>,
+    /// The display's HDR state was read for this visit to the Recommended section.
+    pub(super) hdr_probed: bool,
 }
 
 impl SettingsView {
@@ -124,6 +129,9 @@ impl SettingsView {
     fn open(&mut self, section: &'static str) {
         if self.section != section || self.searching() {
             self.to_top = true;
+        }
+        if section == en("Recommended") {
+            self.hdr_probed = false;
         }
         self.section = section;
         self.query.clear();
@@ -148,6 +156,160 @@ fn found(words: &[String], texts: &[&str]) -> bool {
 
 fn section_index(name: &str) -> usize {
     SETTINGS_SECTIONS.iter().position(|s| *s == name).unwrap_or(0)
+}
+
+fn simple_smoothness_name(value: simple::Smoothness) -> &'static str {
+    match value {
+        simple::Smoothness::Auto => en("Auto (recommended)"),
+        simple::Smoothness::Smoothest => en("Smoothest"),
+        simple::Smoothness::Balanced => en("Balanced"),
+        simple::Smoothness::LowestDelay => en("Lowest delay"),
+    }
+}
+
+fn simple_picture_name(value: simple::Picture) -> &'static str {
+    match value {
+        simple::Picture::Auto => en("Auto (recommended)"),
+        simple::Picture::Best => en("Best"),
+        simple::Picture::SaveData => en("Save data"),
+    }
+}
+
+fn simple_hdr_name(value: simple::Hdr) -> &'static str {
+    match value {
+        simple::Hdr::Auto => en("Auto (recommended)"),
+        simple::Hdr::Off => en("Off"),
+    }
+}
+
+/// What the simple layer measured about this computer and screen (SimpleProfile).
+pub(crate) fn simple_caps(display: &Display, hdr_display: bool, vrr: bool) -> simple::Capabilities {
+    simple::Capabilities {
+        display: simple::Display {
+            width: display.width,
+            height: display.height,
+            refresh_hz: display.refresh_hz.round().max(0.0) as u32,
+            hdr: hdr_display,
+            vrr,
+        },
+        // The stream negotiates its codec and HDR with the PC, and its rate is the screen's own.
+        decoder: simple::Decoder { h264: true, hevc: true, av1: true, hdr: true },
+        host: simple::Host::default(),
+    }
+}
+
+/// The stream's current settings, as the simple layer compares them. `vrr_offered` gates a saved VRR
+/// on a machine whose swap chain cannot tear, as the Variable refresh rate row does.
+pub(crate) fn simple_current(s: &Settings, display: &Display, caps: &simple::Capabilities, vrr_offered: bool)
+                             -> simple::Current {
+    let (_, _, _, default_kbps) = stream_mode(&Settings { bitrate_kbps: 0, ..s.clone() }, *display);
+    let fps = if s.fps == 0 || s.fps == display.refresh_hz.round() as u32 { None } else { Some(s.fps) };
+    let pacing = match s.frame_pacing {
+        FramePacing::Latency => Some(simple::Pacing::Latency),
+        FramePacing::Balanced => Some(simple::Pacing::Balanced),
+        FramePacing::Smoothness => Some(simple::Pacing::Smoothest),
+        FramePacing::CapFps => None,
+    };
+    let bitrate_milli = match (s.bitrate_kbps, default_kbps) {
+        (0, _) => None,
+        (chosen, 0) => Some(chosen),
+        (chosen, default) => Some((f64::from(chosen) * 1000.0 / f64::from(default)).round() as u32),
+    };
+    let codec = match s.codec {
+        CodecPreference::Auto => simple::Codec::Auto,
+        CodecPreference::H264 => simple::Codec::H264,
+        CodecPreference::Hevc => simple::Codec::Hevc,
+        CodecPreference::Av1 => simple::Codec::Av1,
+        // PyroWave is no codec the simple layer offers, so these settings read as Custom.
+        CodecPreference::PyroWave | CodecPreference::PyroWave444 => simple::Codec::H264,
+    };
+    // The HDR switch left at its default is the layer's Auto, not a hand-picked Off: on a screen
+    // that shows HDR the row would otherwise read Off on a fresh install.
+    let auto_hdr = simple::values(simple::recommended(caps), caps).hdr;
+    simple::Current {
+        native_resolution: s.width == 0 && s.height == 0,
+        fps,
+        pacing,
+        vrr: s.vrr && vrr_offered,
+        latency_switches: s.unbatched_input && s.network_priority,
+        drop_late_frames: s.drop_late_frames,
+        host_frame_times: s.host_frame_times,
+        real_vrr: s.present_at_host_times,
+        reduce_refresh: false,
+        content_rate: false,
+        bitrate_milli,
+        codec,
+        hdr: s.hdr || (s.simple_hdr == simple::Hdr::Auto && auto_hdr),
+        adaptive_bitrate: s.adaptive_bitrate || s.client_hint_bitrate,
+        adaptive_quality: match s.adaptive_quality {
+            crate::config::QualityMode::Off => Some(simple::AdaptiveQuality::Off),
+            crate::config::QualityMode::Battery => Some(simple::AdaptiveQuality::SavePower),
+            crate::config::QualityMode::Motion | crate::config::QualityMode::Detail => None,
+        },
+        stored_smoothness: Some(s.simple_smoothness),
+        stored_picture: Some(s.simple_picture),
+        stored_hdr: Some(s.simple_hdr),
+    }
+}
+
+/// Writes a simple profile's values into this computer's settings.
+pub(crate) fn simple_apply(s: &mut Settings, display: &Display, caps: &simple::Capabilities, choices: simple::Choices) {
+    let values = simple::values(choices, caps);
+    (s.simple_smoothness, s.simple_picture, s.simple_hdr) = (choices.smoothness, choices.picture, choices.hdr);
+    // The simple layer streams at this screen's own size and refresh rate.
+    (s.width, s.height) = (0, 0);
+    s.fps = values.fps.unwrap_or(0);
+    s.frame_pacing = match values.pacing {
+        simple::Pacing::Latency => FramePacing::Latency,
+        simple::Pacing::Balanced => FramePacing::Balanced,
+        simple::Pacing::Smoothest => FramePacing::Smoothness,
+    };
+    s.drop_late_frames = values.drop_late_frames;
+    s.host_frame_times = values.host_frame_times;
+    // The Variable refresh rate row reads its three keys together: writing only vrr and the host's
+    // timing after "Fastest" would leave that row at Custom while these rows say Auto or Balanced.
+    if values.vrr {
+        set_vrr_choice(s, VrrChoice::On);
+    } else {
+        s.vrr = false;
+    }
+    if let Some(real_vrr) = values.real_vrr {
+        s.present_at_host_times = real_vrr;
+    }
+    if values.latency_switches {
+        s.unbatched_input = true;
+        s.network_priority = true;
+    }
+    // Set the codec first: PyroWave's own bitrate is not the conventional codec's, and "Best" would
+    // otherwise store hundreds of Mbps before switching to Auto.
+    s.codec = match values.codec {
+        simple::Codec::Auto => CodecPreference::Auto,
+        simple::Codec::H264 => CodecPreference::H264,
+        simple::Codec::Hevc => CodecPreference::Hevc,
+        simple::Codec::Av1 => CodecPreference::Av1,
+    };
+    let (_, _, _, default_kbps) = stream_mode(&Settings { bitrate_kbps: 0, ..s.clone() }, *display);
+    s.bitrate_kbps = match values.bitrate {
+        simple::Bitrate::Default => 0,
+        simple::Bitrate::Factor(milli) => (u64::from(default_kbps) * u64::from(milli) / 1000) as u32,
+    };
+    s.adaptive_bitrate = values.adaptive_bitrate;
+    s.client_hint_bitrate = false;
+    s.adaptive_quality = match values.adaptive_quality {
+        simple::AdaptiveQuality::Off => crate::config::QualityMode::Off,
+        simple::AdaptiveQuality::SavePower => crate::config::QualityMode::Battery,
+    };
+    s.hdr = values.hdr;
+}
+
+/// The simple layer's choices from the current settings, or the stored ones while they are Custom.
+pub(crate) fn simple_state(s: &Settings, display: &Display, caps: &simple::Capabilities, vrr_offered: bool)
+                           -> (simple::Choices, bool) {
+    let stored = simple::Choices { smoothness: s.simple_smoothness, picture: s.simple_picture, hdr: s.simple_hdr };
+    match simple::chosen(&simple_current(s, display, caps, vrr_offered), caps) {
+        Some(choices) => (choices, false),
+        None => (stored, true),
+    }
 }
 
 impl Launcher {
@@ -175,15 +337,18 @@ impl Launcher {
 
     pub(super) fn settings_page(&mut self, ui: &mut Ui, view: &View<'_>, commands: &mut Vec<Command>) {
         let layered = self.screen != Screen::Settings;
-        let sections: Vec<&'static str> = SETTINGS_SECTIONS.into_iter().filter(|s| !(layered && *s == "App")).collect();
+        let sections: Vec<&'static str> = SETTINGS_SECTIONS.into_iter().filter(|s| !(layered && (*s == "App" || *s == "Recommended"))).collect();
         if !sections.contains(&self.settings_view.section) {
-            self.settings_view.section = sections[0];
+            // A page opened anew keeps Video, as it did before Recommended led the list; Recommended is the first
+            // entry in the rail, and a search or a link can still open it.
+            self.settings_view.section = if self.settings_view.section.is_empty() { en("Video") } else { sections[0] };
         }
         // A page opened anew starts without the last visit's search; the section stays.
         if self.focus_screen && self.restore_key.is_none() {
             let view = &mut self.settings_view;
             view.query.clear();
             (view.confirm_reset, view.to_top) = (false, true);
+            view.hdr_probed = false;
         }
         // Not under a dialog, which keeps the focus as long as it is open.
         if matches!(self.dialog, Dialog::None) && ui.input(|i| i.modifiers.command && i.key_pressed(Key::F)) {
@@ -572,7 +737,7 @@ impl Launcher {
             section: "",
             group: "",
             heading: None,
-            found: [0; 8],
+            found: [0; 9],
             shown: true,
             more: self.settings_view.more,
             mains: 0,
@@ -610,6 +775,7 @@ impl Launcher {
         let (custom_size_on, custom_fps_on) = (&mut self.custom_size, &mut self.custom_fps);
         let confirm_reset = &mut self.settings_view.confirm_reset;
         let test_pc = &mut self.settings_view.test_pc;
+        let game_info_keys = &mut self.game_info_keys;
         let s = if layered { &mut self.edit_settings } else { &mut self.settings };
         let before = s.clone();
         let (mut reset_all, mut clear_search) = (false, false);
@@ -640,6 +806,111 @@ impl Launcher {
                 probe.and_then(Result::err)
             };
             let gpu_decoder_error = if s.codec.is_pyrowave() { gpu_probe(ui) } else { None };
+
+            if open == en("Recommended") {
+                rows.section(ui, en("Recommended"));
+                if !self.settings_view.hdr_probed {
+                    if let Some(probe) = self.hdr_display_probe {
+                        self.hdr_display = probe();
+                    }
+                    self.settings_view.hdr_probed = true;
+                }
+                let caps = simple_caps(&display, self.hdr_display, vrr_offered);
+                // Stream smoothness
+                let (mut choices, custom) = simple_state(s, &display, &caps, vrr_offered);
+                let mut smoothness = choices.smoothness;
+                let smoothness_text = if custom { tr("Custom") } else { tr(simple_smoothness_name(smoothness)) };
+                setting_row(ui, s, &mut rows, &["simple_smoothness"], "Stream smoothness",
+                    "Auto follows the screen and decoder: the newest picture at each refresh, with variable refresh rate where the screen offers it. Smoothest holds every frame for a steady cadence with a little more delay; Lowest delay never waits. Leave it on Auto unless a game judders or feels slow.",
+                    |ui, s| {
+                        let mut picked = None;
+                        let response = Combo::from_id_salt("simple-smoothness").selected_text(smoothness_text).show_ui(ui, |ui| {
+                            for each in simple::Smoothness::ALL {
+                                if ui.selectable_value(&mut smoothness, each, tr(simple_smoothness_name(each))).clicked() {
+                                    picked = Some(each);
+                                }
+                            }
+                        }).response;
+                        if let Some(value) = picked {
+                            choices.smoothness = value;
+                            simple_apply(s, &display, &caps, choices);
+                        }
+                        response
+                    });
+                // Picture quality
+                let (mut choices, custom) = simple_state(s, &display, &caps, vrr_offered);
+                let mut picture = choices.picture;
+                let picture_text = if custom { tr("Custom") } else { tr(simple_picture_name(picture)) };
+                setting_row(ui, s, &mut rows, &["simple_picture"], "Picture quality",
+                    "Sets the bitrate: Best spends more network for a sharper picture, Save data uses less and lowers quality when the link struggles. Leave it on Auto unless you need the extra sharpness or the lower data use.",
+                    |ui, s| {
+                        let mut picked = None;
+                        let response = Combo::from_id_salt("simple-picture").selected_text(picture_text).show_ui(ui, |ui| {
+                            for each in simple::Picture::ALL {
+                                if ui.selectable_value(&mut picture, each, tr(simple_picture_name(each))).clicked() {
+                                    picked = Some(each);
+                                }
+                            }
+                        }).response;
+                        if let Some(value) = picked {
+                            choices.picture = value;
+                            simple_apply(s, &display, &caps, choices);
+                        }
+                        response
+                    });
+                // The screen the simple layer streams at: this one, read-only.
+                rows.action("simple_screen");
+                setting_row(ui, s, &mut rows, &[], "Screen",
+                    "This device's own resolution and refresh rate. Lower it under Video if the stream stutters.",
+                    |ui, _| ui.label(RichText::new(trf("{0}×{1} at {2} Hz", &[&display.width, &display.height, &(display.refresh_hz.round() as u32)])).color(*ON_SURFACE)));
+                // HDR
+                let (mut choices, custom) = simple_state(s, &display, &caps, vrr_offered);
+                let mut hdr = choices.hdr;
+                let hdr_text = if custom { tr("Custom") } else { tr(simple_hdr_name(hdr)) };
+                setting_row(ui, s, &mut rows, &["simple_hdr"], "HDR",
+                    "Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.",
+                    |ui, s| {
+                        let mut picked = None;
+                        let response = Combo::from_id_salt("simple-hdr").selected_text(hdr_text).show_ui(ui, |ui| {
+                            for each in simple::Hdr::ALL {
+                                if ui.selectable_value(&mut hdr, each, tr(simple_hdr_name(each))).clicked() {
+                                    picked = Some(each);
+                                }
+                            }
+                        }).response;
+                        if let Some(value) = picked {
+                            choices.hdr = value;
+                            simple_apply(s, &display, &caps, choices);
+                        }
+                        response
+                    });
+                // Console mode: the existing Home start screen, not a second launcher.
+                rows.action("simple_console");
+                let mut console = start_screen(s) == StartScreen::Home;
+                setting_row(ui, s, &mut rows, &[], "Console mode",
+                    "Opens straight into your games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open the list of PCs.",
+                    |ui, s| {
+                        let response = toggle(ui, &mut console);
+                        if response.changed() {
+                            set_start_screen(s, if console { StartScreen::Home } else { StartScreen::Pcs });
+                        }
+                        response
+                    });
+                // Back to recommended
+                rows.action("simple_back");
+                let mut back = false;
+                setting_row(ui, s, &mut rows, &[], "Back to recommended",
+                    "Returns the three choices above to what this device does best; the settings they stand for change with them.",
+                    |ui, _| {
+                        let response = text_button(ui, "Back to recommended");
+                        back = response.clicked();
+                        response
+                    });
+                if back {
+                    let recommended = simple::recommended(&caps);
+                    simple_apply(s, &display, &caps, recommended);
+                }
+            }
 
             rows.section(ui, en("Video"));
             let native = trf("Native ({}x{})", &[&display.width, &display.height]);
@@ -901,7 +1172,7 @@ impl Launcher {
             // Tear-free VRR's wait for the scan line is Windows'; Variable refresh rate's On asks for it.
             if cfg!(windows) {
                 rows.when(s.vrr && s.vrr_tear_free && vrr_offered);
-                setting_row(ui, s, &mut rows, &["vrr_wait"], "Whole frames under VRR", "Automatic shows each picture whole by waiting for the display’s scan line, and switches to Windows V-Sync on a display that does not refresh on present; Nightjar’s wait keeps the scan line’s wait, which can tear there. Windows V-Sync can add up to one refresh of delay, so leave Automatic unless frames still tear.", |ui, s| {
+                setting_row(ui, s, &mut rows, &["vrr_wait"], "Whole frames under VRR", "Automatic shows each picture whole by waiting for the display’s scan line, and switches to Windows V-Sync on a display that does not refresh on present; Nightjar’s wait keeps the scan line’s wait, which can tear there, and presents with sync interval 1 when that wait would cost the next picture its turn, so the display shows it whole at the next refresh. Windows V-Sync can add up to one refresh of delay, so leave Automatic unless frames still tear.", |ui, s| {
                     let before = s.vrr_wait;
                     let response = Combo::from_id_salt("vrr-wait")
                         .selected_text(tr(s.vrr_wait.label()))
@@ -911,8 +1182,9 @@ impl Launcher {
                             }
                         })
                         .response;
-                    // Nightjar's wait never turns to Windows V-Sync, so the choice forgets every
-                    // display Automatic found not refreshing on present (`scan_untrusted.json`).
+                    // Nightjar's wait does not take the display check's switch to Windows V-Sync,
+                    // so the choice forgets every display Automatic found not refreshing on
+                    // present (`scan_untrusted.json`).
                     if before != crate::config::VrrWait::Scan && s.vrr_wait == crate::config::VrrWait::Scan {
                         crate::stream::scan_sync::clear_all();
                     }
@@ -960,7 +1232,7 @@ impl Launcher {
             setting_row(ui, s, &mut rows, &["fractional_vsync"], "Fractional V-Sync", "On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Each frame waits for its turn, which adds delay; turn it on if motion judders with V-Sync.", |ui, s| toggle(ui, &mut s.fractional_vsync));
             rows.always();
             rows.group(en("Image"));
-            setting_row(ui, s, &mut rows, &["upscaling"], "Upscaling", "How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; HDR streams are enlarged without them.", |ui, s| {
+            setting_row(ui, s, &mut rows, &["upscaling"], "Upscaling", "How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; Temporal reuses earlier frames to rebuild detail, but in our tests looked softer than SGSR at three to four times its GPU work, so leave SGSR on unless you want to compare. HDR streams are enlarged without them.", |ui, s| {
                 Combo::from_id_salt("upscaling").selected_text(tr(s.upscaling.label())).show_ui(ui, |ui| {
                     // AI enhancement is offered only where the GPU's probe finds the vendor's super
                     // resolution or RTX Video HDR. It loads the AMF runtime, so it runs once per
@@ -968,7 +1240,7 @@ impl Launcher {
                     let probe = crate::stream::enhance::settings_probe(probe_device);
                     if probe.is_none() { ui.ctx().request_repaint_after(std::time::Duration::from_millis(200)); }
                     let ai_offered = probe.flatten().is_some();
-                    for mode in [crate::config::Upscaling::Bilinear, crate::config::Upscaling::Fsr1, crate::config::Upscaling::Sgsr1, crate::config::Upscaling::Ai] {
+                    for mode in [crate::config::Upscaling::Bilinear, crate::config::Upscaling::Fsr1, crate::config::Upscaling::Sgsr1, crate::config::Upscaling::Sgsr2, crate::config::Upscaling::Ai] {
                         if mode == crate::config::Upscaling::Ai && !ai_offered && s.upscaling != mode { continue; }
                         ui.selectable_value(&mut s.upscaling, mode, tr(mode.label()));
                     }
@@ -1580,6 +1852,37 @@ impl Launcher {
                     }
                 }).response
             });
+            // The player's own keys for SteamGridDB and IGDB, for the whole app: kept apart from the
+            // settings (`crate::game_info`), taken in when a field is left.
+            if !layered {
+                rows.group(en("Artwork and game info"));
+                let mut left = false;
+                let mut key_field = |ui: &mut Ui, value: &mut String| {
+                    let response = ui.add(egui::TextEdit::singleline(value).desired_width(280.0).char_limit(200).font(regular(text::BODY)));
+                    left |= response.lost_focus();
+                    response
+                };
+                rows.action("steamgriddb_key");
+                setting_row(ui, s, &mut rows, &[], "SteamGridDB API key", "Covers from SteamGridDB for games your PC has none for. Your game names go to SteamGridDB; leave it empty to keep only your PC’s covers.", |ui, _| {
+                    key_field(ui, &mut game_info_keys.steamgriddb)
+                });
+                rows.action("igdb_client_id");
+                setting_row(ui, s, &mut rows, &[], "IGDB client ID", "Genres, themes and time to beat for each game, and library filters by genre and length, from IGDB. Your game names go to IGDB; leave it empty unless you have a Twitch developer app.", |ui, _| {
+                    key_field(ui, &mut game_info_keys.igdb_client_id)
+                });
+                rows.action("igdb_client_secret");
+                setting_row(ui, s, &mut rows, &[], "IGDB client secret", "The client secret of the same Twitch developer app. Game facts need both.", |ui, _| {
+                    key_field(ui, &mut game_info_keys.igdb_client_secret)
+                });
+                if left {
+                    let trimmed = nightjar_policy::game_info::job::Keys {
+                        steamgriddb: game_info_keys.steamgriddb.trim().to_owned(),
+                        igdb_client_id: game_info_keys.igdb_client_id.trim().to_owned(),
+                        igdb_client_secret: game_info_keys.igdb_client_secret.trim().to_owned(),
+                    };
+                    commands.push(Command::SetGameInfoKeys(trimmed));
+                }
+            }
             rows.section(ui, en("Debug"));
             // Android's main rows first, in its order.
             setting_row(ui, s, &mut rows, &["error_correction"], "Error correction", "FEC: extra data the PC adds to repair lost packets, taken from the picture’s bitrate. Leave it on PC’s setting; try Automatic if the picture breaks up often.", |ui, s| {
@@ -2422,6 +2725,9 @@ fn reduce_motion_name(mode: ReduceMotion) -> &'static str {
 pub(super) fn value_text(key: &str, s: &Settings, display: &Display, style: crate::glyphs::Style) -> String {
     match key {
         "open_on_start" | "console_home" => start_screen_name(start_screen(s), None),
+        "simple_smoothness" => tr(simple_smoothness_name(s.simple_smoothness)).to_owned(),
+        "simple_picture" => tr(simple_picture_name(s.simple_picture)).to_owned(),
+        "simple_hdr" => tr(simple_hdr_name(s.simple_hdr)).to_owned(),
         "controllers" | "multi_controller" => tr(controllers_name(Controllers::from_saved(s.controllers, s.multi_controller))).to_owned(),
         "adaptive_bitrate" | "client_hint_bitrate" => tr(lower_bitrate_name(LowerBitrate::from_saved(s.adaptive_bitrate, s.client_hint_bitrate))).to_owned(),
         "back_opens_menu" | "back_as_guide" => tr(back_button_name(BackButton::from_saved(s.back_opens_menu, s.back_as_guide))).to_owned(),
@@ -2493,7 +2799,8 @@ pub(super) fn value_text(key: &str, s: &Settings, display: &Display, style: crat
 
 /// The main rows of each section, as `client/app/src/main/res/values/settings_tiers.xml` lists them
 /// by Android preference key, in `SETTINGS_SECTIONS` order. A test keeps the two equal.
-pub(super) const MAIN_KEYS: [(&str, &[&str]); 8] = [
+pub(super) const MAIN_KEYS: [(&str, &[&str]); 9] = [
+    ("simple", &["simple_smoothness", "simple_picture", "simple_screen", "simple_hdr", "checkbox_console_home", "simple_back_to_recommended"]),
     ("video", &["list_resolution", "list_fps", "automatic_bitrate", "seekbar_bitrate_kbps", "adaptive_bitrate", "list_mobile_bitrate_kbps", "video_format", "checkbox_enable_hdr"]),
     ("display", &["video_scaling", "stream_orientation", "checkbox_vrr", "frame_pacing"]),
     ("input", &["touch_mode", "checkbox_absolute_mouse_mode", "controllers", "controller_button_mapping", "controller_test", "checkbox_show_onscreen_controls", "checkbox_keyboard_follows_text_fields", "checkbox_clipboard_sync"]),
@@ -2509,6 +2816,9 @@ pub(super) const MAIN_KEYS: [(&str, &[&str]); 8] = [
 /// `present_at_host_times` matches Android's `checkbox_real_vrr`; on the desktop it is a key of
 /// the Variable refresh rate row, as the desktop-only `vrr_tear_free` is.
 pub(super) const ANDROID_KEYS: &[(&str, &str)] = &[
+    // Recommended (the simple layer)
+    ("simple_smoothness", "simple_smoothness"), ("simple_picture", "simple_picture"), ("simple_hdr", "simple_hdr"),
+    ("simple_console", "checkbox_console_home"), ("simple_screen", "simple_screen"), ("simple_back", "simple_back_to_recommended"),
     // Video
     ("width", "list_resolution"), ("fps", "list_fps"), ("bitrate_kbps", "seekbar_bitrate_kbps"),
     ("adaptive_bitrate", "adaptive_bitrate"), ("mobile_bitrate", "list_mobile_bitrate_kbps"), ("codec", "video_format"),
@@ -2571,9 +2881,10 @@ pub(super) const DESKTOP_MAIN: [&str; 3] = ["window_mode", "graphics_card", "ren
 
 /// The action rows: they open a page or run a test and store nothing, so no setting key names them.
 #[cfg_attr(not(test), allow(dead_code))]
-pub(super) const ACTION_ROWS: [&str; 17] = ["mobile_bitrate", "controller_buttons", "controller_test", "keyboard_shortcuts", "stream_hotkeys",
+pub(super) const ACTION_ROWS: [&str; 23] = ["mobile_bitrate", "controller_buttons", "controller_test", "keyboard_shortcuts", "stream_hotkeys",
     "connection_test", "pin_lock", "help", "report_problem", "check_updates_now", "sign_in", "about_app", "logs", "reset_all", "pyrowave_pace",
-    "latency_benchmark", "export_latency_csv"];
+    "latency_benchmark", "export_latency_csv", "steamgriddb_key", "igdb_client_id", "igdb_client_secret",
+    "simple_console", "simple_screen", "simple_back"];
 
 /// Whether the row `id` (a setting's first key, an action's name) is one of its section's main rows.
 pub(super) fn main_row(id: &str) -> bool {
@@ -2599,12 +2910,12 @@ pub(super) struct Rows<'a> {
     /// (true), a group's title (empty: a gap only).
     heading: Option<(bool, &'static str)>,
     /// Rows drawn, per section.
-    found: [usize; 8],
+    found: [usize; 9],
     /// Whether the rows that follow are drawn: a setting they depend on or this device can rule
     /// them out (`when`).
     shown: bool,
     /// Each section's fold is open.
-    more: [bool; 8],
+    more: [bool; 9],
     /// The section's main rows and folded rows its gates show so far, and whether its first
     /// folded row came.
     mains: usize,

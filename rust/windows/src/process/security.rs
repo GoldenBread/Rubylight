@@ -70,6 +70,30 @@ pub fn open_unfollowed(path: &Path, folder: bool) -> std::io::Result<std::fs::Fi
     }
     options.open(path)
 }
+/// Folders held open without sharing deletion. Windows refuses to rename or
+/// delete a folder whose open handle does not share deletion, so a folder held
+/// this way stays at its path while the hold lives; holding every folder from
+/// a file's up to the host's data root keeps that file's whole path fixed.
+#[derive(Clone, Debug, Default)]
+pub struct Hold {
+    /// Held for as long as this lives, never read: each handle keeps its
+    /// folder from being renamed or deleted while it is open.
+    _folders: std::sync::Arc<Vec<std::fs::File>>,
+}
+impl Hold {
+    /// `folders`, each held open: from the folder a file is read or loaded
+    /// from up to the host's data root, since renaming any of them would leave
+    /// its path naming something else. Never follows a link.
+    pub fn new<'a>(folders: impl IntoIterator<Item = &'a Path>) -> std::io::Result<Self> {
+        let held = folders
+            .into_iter()
+            .map(|folder| open_unfollowed(folder, true))
+            .collect::<std::io::Result<Vec<_>>>()?;
+        Ok(Self {
+            _folders: std::sync::Arc::new(held),
+        })
+    }
+}
 fn owner_of(
     handle: HANDLE,
     kind: windows::Win32::Security::Authorization::SE_OBJECT_TYPE,

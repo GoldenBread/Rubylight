@@ -2,11 +2,20 @@
 <!--
     The main rows of each Settings section (StreamSettings.SECTIONS), at most eight, in the order
     preferences.xml shows them in the section's untitled first group. Every other row of the
-    section folds behind its "More … settings (n)" row; search still finds it. Desktop Nightjar
+    section folds behind its "More … settings (n)" row; search still finds it. The simple layer
+    (simple) has no More row: all six of its rows are main. Desktop Nightjar
     mirrors this list (MAIN_KEYS, mapped through ANDROID_KEYS), and scripts/generate-settings.py
     writes the Tier column of docs/settings.md from it.
 -->
 <resources>
+    <string-array name="settings_tier_simple" translatable="false">
+        <item>simple_smoothness</item>
+        <item>simple_picture</item>
+        <item>simple_screen</item>
+        <item>simple_hdr</item>
+        <item>checkbox_console_home</item>
+        <item>simple_back_to_recommended</item>
+    </string-array>
     <string-array name="settings_tier_video" translatable="false">
         <item>list_resolution</item>
         <item>list_fps</item>

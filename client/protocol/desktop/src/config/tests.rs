@@ -499,6 +499,28 @@ fn home_is_on_unless_the_file_says_otherwise() {
     assert!(!off.console_home);
 }
 
+/// The simple layer's choices are stored beside the settings they write; a file from before them
+/// reads as the recommendation, and reading or saving it changes none of the values above.
+#[test]
+fn the_simple_choices_default_to_the_recommendation_and_read_back() {
+    use nightjar_policy::simple_profile::{Hdr, Picture, Smoothness};
+    let s = Settings::default();
+    assert_eq!((s.simple_smoothness, s.simple_picture, s.simple_hdr), (Smoothness::Auto, Picture::Auto, Hdr::Auto));
+    let old: Settings = serde_json::from_str("{\"frame_pacing\":\"Latency\",\"bitrate_kbps\":40000}").unwrap();
+    assert_eq!((old.simple_smoothness, old.simple_picture, old.simple_hdr), (Smoothness::Auto, Picture::Auto, Hdr::Auto));
+    assert_eq!((old.frame_pacing, old.bitrate_kbps), (crate::config::FramePacing::Latency, 40_000), "nothing above changed");
+    let saved = Settings {
+        simple_smoothness: Smoothness::Smoothest,
+        simple_picture: Picture::SaveData,
+        simple_hdr: Hdr::Off,
+        ..Settings::default()
+    };
+    let json = serde_json::to_string(&saved).unwrap();
+    let read: Settings = serde_json::from_str(&json).unwrap();
+    assert_eq!((read.simple_smoothness, read.simple_picture, read.simple_hdr), (Smoothness::Smoothest, Picture::SaveData, Hdr::Off));
+    assert!(json.contains("\"simple_smoothness\":\"smoothest\""), "{json}");
+}
+
 #[test]
 fn the_theme_choice_keeps_the_stored_values_of_the_older_choices() {
     // Names, not positions: the file keeps reading after Light was added last.
@@ -679,6 +701,18 @@ fn the_gpu_need_names_hdr_only_when_nothing_else_needs_the_renderer() {
     assert_eq!(settings.gpu_need(), Some("upscaling"), "a stream that needs the renderer even in SDR");
     settings.codec = CodecPreference::PyroWave;
     assert_eq!(settings.gpu_need(), Some("PyroWave"));
+}
+
+#[test]
+fn temporal_upscaling_is_stored_as_sgsr2_and_takes_the_sharpness() {
+    let saved = serde_json::to_string(&Settings { upscaling: Upscaling::Sgsr2, ..Settings::default() }).unwrap();
+    assert!(saved.contains("\"upscaling\":\"Sgsr2\""), "{saved}");
+    let back: Settings = serde_json::from_str(&saved).unwrap();
+    assert_eq!(back.upscaling, Upscaling::Sgsr2);
+    assert!(Upscaling::Sgsr2.is_shader(), "the sharpness row and the shader path");
+    assert_eq!(Upscaling::Sgsr2.label(), "Temporal (SGSR 2)");
+    assert_ne!(Upscaling::default(), Upscaling::Sgsr2, "never the default");
+    assert_eq!(Settings { upscaling: Upscaling::Sgsr2, ..Settings::default() }.gpu_need(), Some("upscaling"));
 }
 
 #[test]

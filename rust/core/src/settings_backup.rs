@@ -111,12 +111,13 @@ pub struct Summary {
     pub changes: Vec<Change>,
 }
 
-/// A `sunshine.conf` key that holds a secret. The host keeps none there
-/// itself; an imported file may (a legacy `password`).
+/// A `sunshine.conf` key that holds a secret: the SteamGridDB API key
+/// (`steamgriddb_api_key`), or what an imported file may hold (a legacy `password`).
 pub fn secret_key(key: &str) -> bool {
     key == "password"
         || key.ends_with("_password")
         || key == "api_token"
+        || key.ends_with("_api_key")
         || key.ends_with("_secret")
 }
 

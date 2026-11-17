@@ -756,4 +756,27 @@ export const settings: Setting[] = [
     default: '1920x1080x60',
     advanced: true,
   },
+  {
+    key: 'max_stream_resolution',
+    label: 'Maximum stream resolution',
+    description:
+      'Caps the picture every stream is encoded at, and the device scales it up, so fine detail softens. Leave it at Native unless your network needs a smaller picture.',
+    details:
+      'Native encodes what each device asks for. A cap fits the picture inside it, keeping its shape, with black bars where the shapes differ, while the PC\'s display still runs at the size the device asked for: games and text are still rendered at that size, only the coded picture is smaller, the device upscales it and fine detail softens, and each coded pixel gets more of the bitrate. It applies to Moonlight and browser streams, and a saved value applies from the next connection; the stream card, its warning and the log name the coded and display sizes. A Nightjar device that changes its size mid-stream (a fold, a resized window) can keep the smaller coded size as its next request, and the PC\'s display then starts at that size until the resolution is chosen again; a fixed resolution in the device\'s display settings keeps the display at that size whatever the device asks.',
+    category: 'display',
+    group: 'Resolution and refresh rate',
+    control: {
+      kind: 'text',
+      placeholder: 'native',
+      mono: true,
+      presets: [
+        { value: 'native', label: 'Native (what each device asks for)' },
+        { value: '1920x1080', label: '1920 × 1080' },
+        { value: '2560x1440', label: '2560 × 1440' },
+        { value: '3840x2160', label: '3840 × 2160' },
+      ],
+    },
+    default: 'native',
+    advanced: true,
+  },
 ];

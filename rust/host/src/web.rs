@@ -231,6 +231,7 @@ fn token_catalog() -> Vec<auth::Scope> {
         ("/api/usb/detach", &["POST"][..]),
         ("/api/session/status", &["GET"][..]),
         ("/api/session/console", &["GET", "POST"][..]),
+        ("/api/sessions/history", &["GET"][..]),
         ("/api/rtsp/sessions", &["GET"][..]),
         ("/api/display-devices", &["GET"][..]),
         ("/api/framegen/edid-refresh", &["GET"][..]),
@@ -1320,6 +1321,7 @@ pub(crate) async fn api(
             ("GET", "/api/rtss/status" | "/api/frame-limiter/status") => {
                 session::handle(&h, method.as_str(), path)?
             }
+            ("GET", "/api/sessions/history") => session::handle(&h, method.as_str(), path)?,
             ("GET", "/api/health/vulkan-hdr-layer")
             | ("POST", "/api/health/vulkan-hdr-layer/register") => {
                 displays::handle(&h, method.as_str(), &uri, &data)?

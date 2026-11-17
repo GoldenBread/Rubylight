@@ -6,8 +6,10 @@
 //! [`ControllerIdentity`] on the controller's gamepad channel just before its arrival packet,
 //! so the host reads both in order and can give a Switch 2 Pro Controller a matching virtual
 //! one. Such a client also sends the Switch 2 controllers' C button as [`BUTTON_C`] in its
-//! controller packets. It does either only when the host's serverinfo has
-//! [`SERVERINFO_FIELD`]; other hosts never see the packet or the bit.
+//! controller packets. It sends the identity only when the host's serverinfo has
+//! [`SERVERINFO_FIELD`]; other hosts never see the packet. [`BUTTON_C`] is also a Steam
+//! Controller's left grip touch, so a client keeps the flag for every host and drops only
+//! its own C press from a host without the field.
 //!
 //! Layout (16 bytes): the big-endian length after the length field (12), the magic
 //! (little-endian), then `controller u8`, `reserved u8` (0), `vendor u16 LE`, `product u16 LE`

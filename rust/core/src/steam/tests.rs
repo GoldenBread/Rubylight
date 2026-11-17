@@ -1418,3 +1418,23 @@ fn the_library_stamp_moves_for_installs_and_collections_but_not_for_a_download()
     assert_ne!(library_stamp(&roots), edited, "an uninstall");
     assert_eq!(library_stamp(&[]), library_stamp(&[]), "no Steam at all");
 }
+
+#[test]
+fn steams_own_cover_drops_a_steamgriddb_mark() {
+    let ours = "C:/profile/covers/sgdb_x.png";
+    let mut app =
+        json!({"name": "Fixture", "image-path": ours, crate::steamgriddb::COVER_FIELD: ours});
+    let game = Game {
+        appid: 570,
+        name: "Fixture".into(),
+        ..Default::default()
+    };
+    update(
+        &mut app,
+        &game,
+        "auto",
+        Some(Path::new("C:/profile/covers/steam_570.png")),
+    );
+    assert_eq!(app["image-path"], "C:/profile/covers/steam_570.png");
+    assert!(app.get(crate::steamgriddb::COVER_FIELD).is_none());
+}

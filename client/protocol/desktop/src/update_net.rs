@@ -113,6 +113,112 @@ impl Transport for Native {
     }
 }
 
+/// What [`Native::exchange`] got back: the status, `Retry-After` in seconds when the answer had a
+/// number there, and the body.
+pub struct Exchanged {
+    pub status: u16,
+    pub retry_after: Option<u64>,
+    pub body: Vec<u8>,
+}
+
+/// The most of a body [`Native::exchange`] reads: SteamGridDB's largest covers are a few MB.
+const EXCHANGE_LIMIT: u64 = 24 << 20;
+
+impl Native {
+    /// One request with its own method, headers and body, read whole (up to 24 MB), for
+    /// SteamGridDB and IGDB (`crate::game_info`). Redirects are followed only when `follow`
+    /// (image files); requests carrying keys never go elsewhere. Errors name no address.
+    pub fn exchange(&self, method: &str, url: &Url, headers: &[(String, String)], body: Option<&[u8]>, follow: bool) -> Result<Exchanged, String> {
+        self.exchange_native(method, url, headers, body, follow)
+    }
+
+    #[cfg(windows)]
+    fn exchange_native(&self, method: &str, url: &Url, headers: &[(String, String)], body: Option<&[u8]>, follow: bool) -> Result<Exchanged, String> {
+        use windows::core::{HSTRING, PCWSTR};
+        use windows::Win32::Networking::WinHttp::*;
+
+        fn open(handle: *mut core::ffi::c_void, what: &str) -> Result<Handle, String> {
+            if handle.is_null() { Err(format!("{what}: {}", windows::core::Error::from_thread())) } else { Ok(Handle(handle)) }
+        }
+
+        // SAFETY: WinHTTP calls on handles owned here; strings and buffers outlive the calls.
+        unsafe {
+            let session = open(WinHttpOpen(&HSTRING::from(self.agent.as_str()), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, PCWSTR::null(), PCWSTR::null(), 0), "WinHttpOpen")?;
+            WinHttpSetTimeouts(session.0, 10_000, 10_000, 15_000, self.read_timeout.as_millis() as i32).map_err(|e| format!("timeouts: {e}"))?;
+            let connection = open(WinHttpConnect(session.0, &HSTRING::from(url.host.as_str()), url.port, 0), "connect")?;
+            let flags = if url.secure { WINHTTP_FLAG_SECURE } else { WINHTTP_OPEN_REQUEST_FLAGS(0) };
+            let request = open(WinHttpOpenRequest(connection.0, &HSTRING::from(method), &HSTRING::from(url.path.as_str()), PCWSTR::null(), PCWSTR::null(), std::ptr::null(), flags), "request")?;
+            let policy = if follow { WINHTTP_OPTION_REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP } else { WINHTTP_OPTION_REDIRECT_POLICY_NEVER }.to_ne_bytes();
+            WinHttpSetOption(Some(request.0), WINHTTP_OPTION_REDIRECT_POLICY, Some(&policy)).map_err(|e| format!("redirect policy: {e}"))?;
+            let mut lines = String::new();
+            for (name, value) in headers {
+                lines.push_str(&format!("{name}: {value}\r\n"));
+            }
+            if body.is_some() && !headers.iter().any(|(name, _)| name.eq_ignore_ascii_case("content-type")) {
+                lines.push_str("Content-Type: text/plain\r\n");
+            }
+            let lines: Vec<u16> = lines.encode_utf16().collect();
+            let data = body.unwrap_or_default();
+            let sent = WinHttpSendRequest(
+                request.0,
+                if lines.is_empty() { None } else { Some(&lines) },
+                if data.is_empty() { None } else { Some(data.as_ptr().cast()) },
+                data.len() as u32,
+                data.len() as u32,
+                0,
+            );
+            // The error text, not the request: its headers hold keys.
+            sent.map_err(|e| format!("send: {}", e.code()))?;
+            WinHttpReceiveResponse(request.0, std::ptr::null_mut()).map_err(|e| format!("response: {}", e.code()))?;
+            let number = |query: u32| -> Option<u32> {
+                let mut value = 0u32;
+                let mut size = std::mem::size_of::<u32>() as u32;
+                WinHttpQueryHeaders(request.0, query | WINHTTP_QUERY_FLAG_NUMBER, PCWSTR::null(), Some((&mut value as *mut u32).cast()), &mut size, std::ptr::null_mut()).ok()?;
+                Some(value)
+            };
+            let status = number(WINHTTP_QUERY_STATUS_CODE).ok_or("no status")? as u16;
+            let retry_after = number(WINHTTP_QUERY_RETRY_AFTER).map(u64::from);
+            let mut body = Vec::new();
+            Body { request, _connection: connection, _session: session }.take(EXCHANGE_LIMIT).read_to_end(&mut body).map_err(|e| format!("read: {}", e.kind()))?;
+            Ok(Exchanged { status, retry_after, body })
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn exchange_native(&self, method: &str, url: &Url, headers: &[(String, String)], body: Option<&[u8]>, follow: bool) -> Result<Exchanged, String> {
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .max_redirects(if follow { 5 } else { 0 })
+            .max_redirects_will_error(false)
+            .http_status_as_error(false)
+            .user_agent(self.agent.as_str())
+            .timeout_connect(Some(Duration::from_secs(10)))
+            .timeout_recv_response(Some(Duration::from_secs(15)))
+            .timeout_per_read(Some(self.read_timeout))
+            .build()
+            .into();
+        let address = format!("{}://{}:{}{}", if url.secure { "https" } else { "http" }, url.host, url.port, url.path);
+        let mut builder = ureq::http::Request::builder().method(method).uri(address.as_str());
+        for (name, value) in headers {
+            builder = builder.header(name.as_str(), value.as_str());
+        }
+        if body.is_some() && !headers.iter().any(|(name, _)| name.eq_ignore_ascii_case("content-type")) {
+            builder = builder.header("Content-Type", "text/plain");
+        }
+        // ureq's errors can quote the address, whose query may hold a secret: only their kind.
+        let request = builder.body(body.unwrap_or_default().to_vec()).map_err(|_| "request".to_owned())?;
+        let response = agent.run(request).map_err(|e| match e {
+            ureq::Error::Timeout(_) => "timeout".to_owned(),
+            ureq::Error::Io(e) => format!("io: {}", e.kind()),
+            _ => "transport".to_owned(),
+        })?;
+        let status = response.status().as_u16();
+        let retry_after = response.headers().get("retry-after").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse().ok());
+        let mut body = Vec::new();
+        response.into_body().into_reader().take(EXCHANGE_LIMIT).read_to_end(&mut body).map_err(|e| format!("read: {}", e.kind()))?;
+        Ok(Exchanged { status, retry_after, body })
+    }
+}
+
 #[cfg(windows)]
 struct Handle(*mut core::ffi::c_void);
 

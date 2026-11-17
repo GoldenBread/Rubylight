@@ -42,6 +42,7 @@ const plural = (count: number, one: string, many: string) => `${count} ${count =
 const CAPTURE: Record<string, string> = {
   'idd-push': 'Direct driver push',
   wgc: 'Windows Graphics Capture',
+  wgcc: 'Windows Graphics Capture, constant rate',
   dxgi: 'Desktop Duplication',
   ddx: 'Desktop Duplication',
   amd: 'AMD Direct Capture',
@@ -165,7 +166,7 @@ function capture(meta: Metadata): Check {
   const status = meta.capture_status;
   const backend = status.configured_backend || 'auto';
   const method = backend === 'auto'
-    ? 'Uses direct driver push on Rubylight virtual displays and Windows Graphics Capture on other displays.'
+    ? 'Uses direct driver push on Rubylight virtual displays and Windows Graphics Capture on other displays, with Desktop Duplication when Windows Graphics Capture cannot see a fullscreen app.'
     : backend === 'idd-push'
       ? `Prefers ${CAPTURE[backend]} on Rubylight virtual displays, with Windows capture as fallback.`
       : `Uses ${CAPTURE[backend] ?? 'the configured capture method'}.`;

@@ -29,6 +29,12 @@ test('stream card renders the backend and actionable warnings as escaped text', 
   assert.doesNotMatch(result, /<script>alert/);
 });
 
+test('a stream whose picture the host caps shows the display size beside it', () => {
+  const capped = html({ width: 2560, height: 1440, display_width: 3840, display_height: 2160 });
+  assert.match(capped, /2560×1440 at 116 fps[\s\S]{0,40}\(display 3840×2160\)/);
+  assert.doesNotMatch(html(), /\(display /);
+});
+
 test('recovered warnings disappear without invented timing measurements', () => {
   const result = html();
   assert.doesNotMatch(result, /role="status"/);

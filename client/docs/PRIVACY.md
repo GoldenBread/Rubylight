@@ -119,6 +119,19 @@ Nightjar project is involved. Turn the setting off to never contact them.
 Opening a help or source link contacts the website you choose to visit. The
 site and your browser apply their own privacy practices.
 
+**Artwork and game info** (Settings → Advanced, off until you enter a key).
+With a SteamGridDB API key, Nightjar sends the names (or Steam app ids) of
+games your PC has no cover for to `www.steamgriddb.com` and downloads the cover
+it finds. With an IGDB client ID and secret (a Twitch developer app), it asks
+`id.twitch.tv` for an access token and sends your games' names or Steam app ids
+to `api.igdb.com` for their genres, themes and time to beat. The keys stay on
+this device, in a file of their own (`game_info_keys.json` beside the desktop
+settings; a preferences file of its own on Android), never in shared settings,
+profiles or logs, and the token only in memory. What came back is kept in the
+app's cache folder (`game-info`) for up to 30 days. Those services see your
+public IP address and the game names; their own terms and privacy policies
+apply. Clear the fields to stop it.
+
 ## Sharing a problem or crash report
 
 Nightjar does not automatically send problem or crash reports. A report is

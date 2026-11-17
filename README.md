@@ -21,7 +21,7 @@
 
 <div align="center">
 
-**[Download 4.7.1](https://github.com/RamazanKara/Rubylight/releases/tag/v4.7.1)** · [Getting started](docs/getting-started.md) · [Documentation](docs/README.md) · [Release notes](rust/RELEASE_NOTES.md) · [Website](https://ramazankara.github.io/Rubylight/)
+**[Download 4.8.0](https://github.com/RamazanKara/Rubylight/releases/tag/v4.8.0)** · [Getting started](docs/getting-started.md) · [Documentation](docs/README.md) · [Release notes](rust/RELEASE_NOTES.md) · [Website](https://ramazankara.github.io/Rubylight/)
 
 </div>
 
@@ -183,7 +183,7 @@ Rubylight speaks the Moonlight protocol and keeps its protocol version, so unmod
 
 ## Get started
 
-1. Download and run `rubylight-setup-4.7.1.exe` from the [release](https://github.com/RamazanKara/Rubylight/releases/tag/v4.7.1). It sets up the Windows service, the virtual display driver and controller support. To try Rubylight without installing, extract `rubylight-4.7.1-windows-x64.zip` and run **Start Rubylight.exe**.
+1. Download and run `rubylight-setup-4.8.0.exe` from the [release](https://github.com/RamazanKara/Rubylight/releases/tag/v4.8.0). It sets up the Windows service, the virtual display driver and controller support. To try Rubylight without installing, extract `rubylight-4.8.0-windows-x64.zip` and run **Start Rubylight.exe**.
 2. Open **https://localhost:47990** on the PC and create the console account.
 3. Pair a device: Nightjar scans the QR code on **Home**; for Moonlight, enter the PIN it shows on the console's **Devices** page.
 4. Start **Desktop** at 1080p60, then raise the resolution, frame rate and bitrate and turn on HDR.
@@ -273,6 +273,7 @@ Rubylight is licensed under **GPL-3.0**. Everyone who helped, with their GitHub 
 - The DSU motion server speaks the protocol of **Jays2Kings', Ryochan7's and schmaldeo's** DS4Windows, with the settings and port of **the Foundation Sunshine authors'** server.
 - Clipboard sync uses the control message frame of **qiin2333's** Moonlight V+ (GPL-3.0).
 - Nightjar desktop predicts the display mode of Windows' Fullscreen by the rule of **SDL's** `SDL_GetClosestFullscreenDisplayMode`, by **Sam Lantinga and the SDL contributors** (zlib).
+- Nightjar's temporal upscaler adapts the upscale pass of **Qualcomm's** [Snapdragon Game Super Resolution 2](https://github.com/SnapdragonStudios/snapdragon-gsr) (BSD-3-Clause), and its SGSR 1 upscaler is Qualcomm's SGSR 1 (BSD-3-Clause).
 - Nightjar's per-controller gyroscope mapping and motion readings are ported from **jvanderv42's** [Nightjar fork](https://github.com/jvanderv42/nightjar) (GPL-3.0).
 - The virtual mouse and its Automatic / Virtual mouse / Injection choice follow **the Foundation Sunshine authors'** virtual mouse, and device touchpads use their touchpad packets; the virtual precision touchpad's reports follow **Bingxing Wang's (imbushuo)** [mac-precision-touchpad](https://github.com/imbushuo/mac-precision-touchpad) (MIT).
 - Rubylight's virtual display driver is based on **Enrico Bühler's (unom)** pf-vdisplay driver from [punktfunk](https://github.com/unom/punktfunk) (MIT OR Apache-2.0).

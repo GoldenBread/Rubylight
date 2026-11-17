@@ -33,7 +33,7 @@
   import { api, type Config, type ConfigValue } from '../lib/api';
   import { confirm, failed, notify } from '../lib/feedback.svelte';
   import { guardNavigation, link, navigate, route } from '../lib/router.svelte';
-  import { MAIN_SECTIONS, UPDATE_KEYS, onHome } from '../lib/schema/main';
+  import { MAIN_SECTIONS, UPDATE_KEYS, onHome, presetOutcome } from '../lib/schema/main';
   import { categoriesOf, groupAnchor, schema, settingGroups, settingsGroup } from '../lib/settings-schema';
   import { session as host } from '../lib/session.svelte';
   import type { Setting } from '../lib/settings-types';
@@ -100,7 +100,7 @@
       settings: section.keys
         .map((key) => defaults.get(key))
         .filter((setting): setting is Setting => !!setting && applies(setting.key))
-        .map((setting) => onHome(setting, normalise(setting, effective(setting, edits, config)))),
+        .map((setting) => onHome(setting, normalise(setting, effective(setting, edits, config)), values, host.metadata?.virtual_display)),
     })),
   );
 
@@ -266,7 +266,14 @@
     {#if presetProblem}
       <p class="note error" role="alert"><strong>Not a preset.</strong> {presetProblem}</p>
     {/if}
-    <p class="note">{preset.description}</p>
+    {@const outcome = presetOutcome(preset.id)}
+    {#if outcome}<p class="note">{outcome}</p>{/if}
+  {/if}
+  {#if setting.key === 'dd_resolution_option'}
+    <p class="note">
+      A fixed resolution or refresh rate is under
+      <a href={inAllSettings('picture', 'Resolution and refresh rate')} use:link>Resolution and refresh rate</a>.
+    </p>
   {/if}
 {/snippet}
 
@@ -313,7 +320,13 @@
         {#if results.length === 0}
           <p class="empty" role="status">No setting matches “{query.trim()}”. Search looks at names, config keys, descriptions and menu choices.</p>
         {:else}
-          <p class="count" role="status">{results.length} {results.length === 1 ? 'setting' : 'settings'}</p>
+          <p class="count" role="status">
+            {#if results.length > RESULTS}
+              Showing {RESULTS} of {results.length} settings
+            {:else}
+              {results.length} {results.length === 1 ? 'setting' : 'settings'}
+            {/if}
+          </p>
           <ul>
             {#each results.slice(0, RESULTS) as setting (setting.key)}
               <li>

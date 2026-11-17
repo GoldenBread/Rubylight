@@ -33,6 +33,7 @@ mod controller_audio;
 mod controller_mouse;
 mod dmabuf;
 mod gamepad;
+mod game_info;
 mod glyphs;
 #[cfg(windows)]
 mod gpu_adapters;
@@ -140,8 +141,15 @@ struct App {
     hosts: Hosts,
     launcher: Launcher,
     pads: Gamepads,
-    connecting: Option<Connecting>,
-    cancelled: bool,
+    /// The starts connecting and those just cancelled or timed out, whose workers may still run.
+    attempts: stream::Attempts,
+    /// A start's decoder checks, on a worker thread (`LaunchProbe`); the start waits for them.
+    probe: Option<LaunchProbe>,
+    /// The packed full-chroma check's answer per decoder and renderer device, as `color_probed`
+    /// keeps its own; None until the first launch that needs it.
+    packed_probed: Option<(Hardware, Result<u8, String>)>,
+    /// Decoder checks let go of (cancelled, timed out, or their device was lost) whose workers run on.
+    ending_probes: Vec<LaunchProbe>,
     /// The PC being woken and the clock of its resends ("Waking <PC>…").
     waking: wol::Wakes,
     streaming: Option<(Streaming, TimerResolution)>,
@@ -220,6 +228,12 @@ struct App {
     /// The Graphics card setting last applied: a change is applied once, with nothing streaming.
     #[cfg(windows)]
     graphics_card: config::GraphicsCard,
+    /// A Graphics card change a start that is still ending blocks, said once.
+    #[cfg(windows)]
+    graphics_card_blocked: Option<config::GraphicsCard>,
+    /// A Renderer change a start that is still ending blocks, said once.
+    #[cfg(target_os = "linux")]
+    renderer_choice_blocked: Option<config::Renderer>,
     /// The stream start that waits for the PIN screen.
     pin_pending: Option<PinPending>,
     /// Selecting a game waits for the PC to say who plays it.
@@ -727,6 +741,8 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     gui.set_refresh(display.refresh_hz);
     shortcuts::set_hotkeys(store.hotkeys());
     let mut launcher = Launcher::new(settings.clone(), profiles, store.shortcuts(), display);
+    launcher.hdr_display = sdl::any_display_hdr();
+    launcher.hdr_display_probe = Some(sdl::any_display_hdr);
     // SAFETY: a live window.
     launcher.fullscreen_modes = fullscreen_modes(unsafe { SDL_GetDisplayForWindow(window) });
     // The System theme's light or dark; SDL tells of a change (SDL_EVENT_SYSTEM_THEME_CHANGED).
@@ -825,6 +841,13 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         None => None,
     };
     hosts.load_cached_libraries(&store);
+    // SteamGridDB and IGDB with the player's keys; the demo and the second screen stay offline.
+    if !cfg!(feature = "demo-library") && !second_screen::this_process() {
+        let agent = format!("Nightjar/{} ({})", VERSION, std::env::consts::OS);
+        let keys = game_info::load_keys(store.dir());
+        hosts.set_game_info(std::sync::Arc::new(game_info::GameInfo::new(store.dir(), keys, Box::new(game_info::Https(update_net::Native::new(agent))))));
+    }
+    launcher.game_info_keys = hosts.game_info_keys();
     {
         // Open on Home when it is on and some PC has a library to show.
         let sources: Vec<console::Source> = hosts.list.iter().map(console::Source::of).collect();
@@ -884,8 +907,10 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         hosts,
         launcher,
         pads,
-        connecting: None,
-        cancelled: false,
+        attempts: stream::Attempts::default(),
+        probe: None,
+        packed_probed: None,
+        ending_probes: Vec::new(),
         waking: wol::Wakes::default(),
         streaming: None,
         abr_stops: Vec::new(),
@@ -937,6 +962,10 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         gpu_failure: None,
         #[cfg(windows)]
         graphics_card: settings.graphics_card,
+        #[cfg(windows)]
+        graphics_card_blocked: None,
+        #[cfg(target_os = "linux")]
+        renderer_choice_blocked: None,
         pin_pending: None,
         select_read: false,
         move_watch: Default::default(),
@@ -962,7 +991,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     }
 
     while app.running {
-        app.updates.hold(app.streaming.is_some() || app.connecting.is_some() || app.network_launch.is_some());
+        app.updates.hold(app.streaming.is_some() || app.attempts.is_connecting() || app.network_launch.is_some() || app.probe.is_some());
         if app.streaming.is_some() {
             // The stream watches the network itself (`RoamWatch`), and the launcher's pages are
             // not on screen to show it.

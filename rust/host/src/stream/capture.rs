@@ -66,8 +66,17 @@ pub(super) struct Consumer {
     released: AtomicU64,
     session: Weak<crate::state::Session>,
     recovery_pending: AtomicBool,
+    /// The stream's frame period in nanoseconds, for a constant-rate capture:
+    /// one shared capture publishes for the fastest stream using it. 0 until
+    /// the stream declares one.
+    period: AtomicU64,
 }
 impl Consumer {
+    /// Ask a constant-rate capture to publish at `period`, one stream frame.
+    pub(super) fn set_period(&self, period: std::time::Duration) {
+        let nanos = period.as_nanos().min(u128::from(u64::MAX)) as u64;
+        self.period.store(nanos.max(1), Ordering::Release);
+    }
     pub(super) fn wake_on_recovery<P, A>(
         self: &Arc<Self>,
         session: &butterpollo_core::session::Session<P, A>,
@@ -149,6 +158,7 @@ impl<T> Latest<T> {
             released: AtomicU64::new(state.generation),
             session,
             recovery_pending: AtomicBool::new(false),
+            period: AtomicU64::new(0),
         });
         let mut waiters = self.changed.lock().unwrap();
         waiters.retain(|waiter| waiter.strong_count() > 0);
@@ -270,23 +280,44 @@ impl<T> Latest<T> {
         captured: Instant,
         focus: Option<bool>,
     ) -> Result<()> {
+        self.publish(image, captured, focus, false).map(|_| ())
+    }
+    /// Publish the newest picture again because nothing was composed for the
+    /// stream's slot (`capture = wgcc`). Pacing sees a picture of its own at
+    /// the stream period; the source's picture count does not grow, since the
+    /// game presented nothing. Whether it was published: a capture restart
+    /// refuses it, and the caller then leaves the slot for the next try.
+    pub(super) fn publish_repeat(&self, image: Arc<T>, captured: Instant) -> Result<bool> {
+        self.publish(image, captured, None, true)
+    }
+    fn publish(
+        &self,
+        image: Arc<T>,
+        captured: Instant,
+        focus: Option<bool>,
+        repeat: bool,
+    ) -> Result<bool> {
         let now = Instant::now();
         let nanos =
             |duration: std::time::Duration| duration.as_nanos().min(u128::from(u64::MAX)) as u64;
         let mut state = self.state.lock().unwrap();
         state.check()?;
         if state.recovery.restart {
-            return Ok(());
+            return Ok(false);
         }
         state.recovery.captured = true;
         let picture = state.cadence.picture_start();
-        state.cadence.observe_focus(
+        let (captured_ns, delay_ns) = (
             nanos(captured.saturating_duration_since(self.origin)),
             nanos(now.saturating_duration_since(captured)),
-            focus,
         );
+        if repeat {
+            state.cadence.observe_repeat(captured_ns, delay_ns);
+        } else {
+            state.cadence.observe_focus(captured_ns, delay_ns, focus);
+        }
         self.captures.fetch_add(1, Ordering::Relaxed);
-        if state.cadence.picture_start() != picture {
+        if !repeat && state.cadence.picture_start() != picture {
             self.pictures.fetch_add(1, Ordering::Relaxed);
         }
         if tracing::enabled!(target: "pacing", tracing::Level::TRACE) {
@@ -295,10 +326,11 @@ impl<T> Latest<T> {
                 target: "pacing",
                 capture_id,
                 generation = state.generation,
-                captured_ns = nanos(captured.saturating_duration_since(self.origin)),
+                captured_ns,
                 published_ns = nanos(now.saturating_duration_since(self.origin)),
-                age_ns = nanos(now.saturating_duration_since(captured)),
+                age_ns = delay_ns,
                 source_id = self.trace_source_id,
+                repeat,
                 "publish"
             );
         }
@@ -309,7 +341,8 @@ impl<T> Latest<T> {
         // new image first, while both images still have their own resource ownership.
         let notified = self.notify();
         drop(previous);
-        notified
+        notified?;
+        Ok(true)
     }
     /// Match a claimed frame and the latest publication in one diagnostic snapshot.
     /// Do not clone images here: a diagnostic clone could become the last GPU owner
@@ -397,6 +430,22 @@ impl<T> Latest<T> {
                 .cadence
                 .poll_wait(nanos(captured.elapsed()), nanos(normal)),
         )
+    }
+    /// The period a constant-rate capture publishes for: the fastest stream
+    /// using this capture (`Consumer::set_period`), so a 120 fps client
+    /// sharing a capture with a 60 fps one is not held to 60, or `fallback`
+    /// before any stream declared one.
+    pub(super) fn repeat_period(&self, fallback: std::time::Duration) -> std::time::Duration {
+        self.changed
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(Weak::upgrade)
+            .map(|consumer| consumer.period.load(Ordering::Acquire))
+            .filter(|nanos| *nanos > 0)
+            .map(std::time::Duration::from_nanos)
+            .min()
+            .unwrap_or(fallback)
     }
     pub(super) fn fail(&self, error: String) -> Result<()> {
         let mut state = self.state.lock().unwrap();

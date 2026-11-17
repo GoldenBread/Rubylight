@@ -13,31 +13,37 @@ use super::gpu_planes::{Lease, Pin, Planes};
 use super::pyrowave_sdk::fence_ready_within;
 
 pub struct Filter {
+    device: ID3D11Device,
     context: ID3D11DeviceContext,
     deferred: ID3D11DeviceContext,
-    input: [Option<ID3D11ShaderResourceView>; 1],
-    target: [Option<ID3D11RenderTargetView>; 1],
     vertex: ID3D11VertexShader,
     fragment: ID3D11PixelShader,
     constants: [Option<ID3D11Buffer>; 1],
     sampler: [Option<ID3D11SamplerState>; 1],
+    bindings: Vec<Binding>,
+}
+
+/// The textures one draw of a [`Filter`] reads (slots t0 and on) and the one it renders to.
+struct Binding {
+    inputs: Vec<Option<ID3D11ShaderResourceView>>,
+    target: [Option<ID3D11RenderTargetView>; 1],
     size: (u32, u32),
 }
 
 impl Filter {
     pub unsafe fn new(input: *mut c_void, target: *mut c_void, source: &[u8]) -> windows::core::Result<Self> {
-        let input = ID3D11Texture2D::from_raw_borrowed(&input).unwrap();
-        let target = ID3D11Texture2D::from_raw_borrowed(&target).unwrap();
-        let mut desc = D3D11_TEXTURE2D_DESC::default();
-        target.GetDesc(&mut desc);
-        let device = target.GetDevice()?;
+        let mut filter = Self::compiled(target, source)?;
+        filter.bind(&[input], target)?;
+        Ok(filter)
+    }
+
+    /// The filter's shaders on the device of `texture`, without textures yet (`bind`).
+    pub unsafe fn compiled(texture: *mut c_void, source: &[u8]) -> windows::core::Result<Self> {
+        let texture = ID3D11Texture2D::from_raw_borrowed(&texture).unwrap();
+        let device = texture.GetDevice()?;
         let context = device.GetImmediateContext()?;
         let mut deferred = None;
         device.CreateDeferredContext(0, Some(&mut deferred))?;
-        let mut view = None;
-        device.CreateShaderResourceView(input, None, Some(&mut view))?;
-        let mut target_view = None;
-        device.CreateRenderTargetView(target, None, Some(&mut target_view))?;
         let code = compile(source, s!("vertex"), s!("vs_5_0"))?;
         let mut vertex = None;
         device.CreateVertexShader(std::slice::from_raw_parts(code.GetBufferPointer().cast(), code.GetBufferSize()), None, Some(&mut vertex))?;
@@ -51,23 +57,46 @@ impl Filter {
         device.CreateSamplerState(&D3D11_SAMPLER_DESC { Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
             AddressU: D3D11_TEXTURE_ADDRESS_CLAMP, AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
             AddressW: D3D11_TEXTURE_ADDRESS_CLAMP, MaxLOD: f32::MAX, ..Default::default() }, Some(&mut sampler))?;
-        Ok(Self { context, deferred: deferred.unwrap(), input: [view], target: [target_view],
-            vertex: vertex.unwrap(), fragment: fragment.unwrap(), constants: [constants], sampler: [sampler], size: (desc.Width, desc.Height) })
+        Ok(Self { device, context, deferred: deferred.unwrap(), vertex: vertex.unwrap(), fragment: fragment.unwrap(),
+            constants: [constants], sampler: [sampler], bindings: Vec::new() })
+    }
+
+    /// Adds a draw reading `inputs` in slots t0 and on into `target` (textures on the filter's
+    /// device), drawn by its index in the order bound (`draw_binding`).
+    pub unsafe fn bind(&mut self, inputs: &[*mut c_void], target: *mut c_void) -> windows::core::Result<()> {
+        let target = ID3D11Texture2D::from_raw_borrowed(&target).unwrap();
+        let mut desc = D3D11_TEXTURE2D_DESC::default();
+        target.GetDesc(&mut desc);
+        let mut views = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            let mut view = None;
+            self.device.CreateShaderResourceView(ID3D11Texture2D::from_raw_borrowed(input).unwrap(), None, Some(&mut view))?;
+            views.push(view);
+        }
+        let mut target_view = None;
+        self.device.CreateRenderTargetView(target, None, Some(&mut target_view))?;
+        self.bindings.push(Binding { inputs: views, target: [target_view], size: (desc.Width, desc.Height) });
+        Ok(())
     }
 
     pub fn draw(&self, parameters: &[u32; 8], area: Option<(u32, u32)>) -> bool {
+        self.draw_binding(0, parameters, area)
+    }
+
+    pub fn draw_binding(&self, binding: usize, parameters: &[u32; 8], area: Option<(u32, u32)>) -> bool {
+        let Some(binding) = self.bindings.get(binding) else { return false };
         unsafe {
-            let size = area.unwrap_or(self.size);
+            let size = area.unwrap_or(binding.size);
             let c = &self.deferred;
             c.ClearState();
             c.UpdateSubresource(self.constants[0].as_ref().unwrap(), 0, None, parameters.as_ptr().cast(), 0, 0);
-            c.OMSetRenderTargets(Some(&self.target), None);
+            c.OMSetRenderTargets(Some(&binding.target), None);
             c.RSSetViewports(Some(&[D3D11_VIEWPORT { Width: size.0 as f32, Height: size.1 as f32,
                 MinDepth: 0.0, MaxDepth: 1.0, ..Default::default() }]));
             c.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             c.VSSetShader(&self.vertex, None);
             c.PSSetShader(&self.fragment, None);
-            c.PSSetShaderResources(0, Some(&self.input));
+            c.PSSetShaderResources(0, Some(&binding.inputs));
             c.PSSetSamplers(0, Some(&self.sampler));
             c.PSSetConstantBuffers(0, Some(&self.constants));
             c.Draw(3, 0);
@@ -77,6 +106,25 @@ impl Filter {
             true
         }
     }
+}
+
+/// A texture on the device of `like` that the temporal upscaler renders into and reads: R16F
+/// (`vector` false) or RGBA16F, cleared to zero.
+pub unsafe fn half_float_target(like: *mut c_void, size: (u32, u32), vector: bool) -> windows::core::Result<ID3D11Texture2D> {
+    let like = ID3D11Texture2D::from_raw_borrowed(&like).unwrap();
+    let device = like.GetDevice()?;
+    let mut texture = None;
+    device.CreateTexture2D(&D3D11_TEXTURE2D_DESC {
+        Width: size.0, Height: size.1, MipLevels: 1, ArraySize: 1,
+        Format: if vector { DXGI_FORMAT_R16G16B16A16_FLOAT } else { DXGI_FORMAT_R16_FLOAT },
+        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_DEFAULT,
+        BindFlags: (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32, ..Default::default()
+    }, None, Some(&mut texture))?;
+    let texture = texture.unwrap();
+    let mut view = None;
+    device.CreateRenderTargetView(&texture, None, Some(&mut view))?;
+    device.GetImmediateContext()?.ClearRenderTargetView(view.as_ref().unwrap(), &[0.0; 4]);
+    Ok(texture)
 }
 
 /// Converts the GPU PyroWave decoder's planes to linear RGB in the renderer's target texture.

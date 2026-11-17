@@ -61,6 +61,10 @@ pub enum Command {
     OpenOnStart(Option<crate::config::OpenGame>),
     /// "Start Nightjar when I sign in".
     SetSignIn(bool),
+    /// The SteamGridDB and IGDB keys of Settings → Advanced, to keep and use.
+    SetGameInfoKeys(nightjar_policy::game_info::job::Keys),
+    /// Look up the facts of these games (only the ones not asked for yet are).
+    WantFacts(Vec<nightjar_policy::game_info::job::Game>),
     Launch { host: u64, app: i32, resume: bool },
     /// A launch with nobody to ask: without [`Command::Launch`]'s read of who plays.
     LaunchUnasked { host: u64, app: i32, resume: bool },
@@ -469,6 +473,11 @@ pub struct Launcher {
     menu_anchor: Anchor,
     /// The All games page's filter.
     library_filter: console::LibraryFilter,
+    /// All games' genre and length filters, from IGDB's facts; None shows every game.
+    genre_filter: Option<String>,
+    length_filter: Option<nightjar_policy::game_info::library::Length>,
+    /// The SteamGridDB and IGDB keys as Settings → Advanced edits them; taken in when a field is left.
+    pub game_info_keys: nightjar_policy::game_info::job::Keys,
     /// The item to focus when the screen is drawn again after Back.
     restore_key: Option<String>,
     /// The cards a menu's Hide can take off this frame's screen, in the order drawn, with their game.
@@ -516,6 +525,11 @@ pub struct Launcher {
     back_slot: Option<f32>,
     /// The display's tearing support, for the VRR setting's note.
     pub tearing_supported: bool,
+    /// A display of this computer shows HDR, read once when SDL starts (`sdl::any_display_hdr`).
+    /// The simple layer's HDR Auto turns HDR on only when this is true; a test's launcher has none.
+    pub(crate) hdr_display: bool,
+    /// Re-reads `hdr_display` when the settings page opens (SDL is live; a test leaves this None).
+    pub(crate) hdr_display_probe: Option<fn() -> bool>,
     /// The renderer's Direct3D 11 device, which the PyroWave GPU decoder's settings probe runs on.
     pub gpu_device: Option<crate::stream::pipeline::GpuDevice>,
     pub display: Display,
@@ -613,6 +627,9 @@ impl Launcher {
             focused_key: None,
             menu_anchor: Anchor::Center,
             library_filter: console::LibraryFilter::All,
+            genre_filter: None,
+            length_filter: None,
+            game_info_keys: Default::default(),
             restore_key: None,
             cards: Vec::new(),
             home_ready: false,
@@ -638,6 +655,8 @@ impl Launcher {
             pending_play: None,
             back_slot: None,
             tearing_supported: false,
+            hdr_display: false,
+            hdr_display_probe: None,
             gpu_device: None,
             display,
             fullscreen_modes: Vec::new(),

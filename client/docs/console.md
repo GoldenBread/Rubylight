@@ -47,6 +47,27 @@ On a TV the page keeps the backdrop that Home showed for the game. A row of chip
   <img src="assets/shots/tv-game-page.png" width="720" alt="A game's page on a TV: chips for Running, Steam and Installed, the PC name Living-room PC under the title, the Resume, Add to favourites and Quit game buttons, the stream settings 1920 x 1080, 60 FPS, 20 Mbps from the main settings, and the Quit the game when I leave the stream switch (demo library)">
 </p>
 
+### Artwork and game info
+
+With your own keys in Settings → Advanced → Artwork and game info, Nightjar
+fills in what a PC leaves out, for any host:
+
+- **Covers from SteamGridDB** for games the PC has no cover for, or only the
+  host's grey placeholder. A cover the PC or its launcher set always wins.
+  Games are found by their Steam app id when the PC gives one, else by their
+  name without trademark signs, editions and platform tags. Get a key in your
+  SteamGridDB profile's preferences.
+- **Genres, themes and time to beat from IGDB** on a game's page, and **Genre**
+  and **Length** filters in All games (under 5 hours, 5 to 15, 15 to 40, over
+  40, by the usual time to finish). IGDB needs a Twitch developer app's client
+  ID and client secret (dev.twitch.tv, with two-factor sign-in on).
+
+Lookups run in the background, one at a time and at most four requests a
+second, and are kept for 30 days (7 when nothing was found, an hour after a
+failure). Without keys nothing is asked and nothing changes. Artwork is
+provided by SteamGridDB and game facts by IGDB.com; IGDB's API is free for
+non-commercial use under the Twitch Developer Services Agreement.
+
 ## On a TV
 
 Home and the PC list have dedicated TV layouts, chosen by Android's television mode. **Interface layout** in the settings selects the TV layout on other devices too.

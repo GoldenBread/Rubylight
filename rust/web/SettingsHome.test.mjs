@@ -4,12 +4,14 @@ import { test } from 'node:test';
 import { createTestServer } from './test-server.mjs';
 
 const server = await createTestServer({ configFile: false });
-const { schema, categoriesOf, settingsGroup } = await server.ssrLoadModule('/src/lib/settings-schema.ts');
+const { schema, categoriesOf, settingsGroup, groupAnchor } = await server.ssrLoadModule('/src/lib/settings-schema.ts');
 const main = await server.ssrLoadModule('/src/lib/schema/main.ts');
 const { searchSettings } = await server.ssrLoadModule('/src/components/settings/search.ts');
 const { settings: extensions } = await server.ssrLoadModule('/src/lib/schema/extensions.ts');
 const { describeDefault } = await server.ssrLoadModule('/src/components/settings/values.ts');
-const { MAIN_SECTIONS, MAIN_KEYS, MAIN_BUDGET, ALWAYS_ON, DIAGNOSTICS, EXPERT_GROUPS, DEBUG_GROUP, onHome } = main;
+const { presets } = await server.ssrLoadModule('/src/lib/stream-presets.ts');
+const { MAIN_SECTIONS, MAIN_KEYS, MAIN_BUDGET, ALWAYS_ON, DIAGNOSTICS, EXPERT_GROUPS, DEBUG_GROUP, onHome, presetOutcome } = main;
+const { VIRTUAL_DISPLAY_OS } = await server.ssrLoadModule('/src/lib/settings-types.ts');
 const settings = new Map(schema.settings.map(setting => [setting.key, setting]));
 const source = name => readFile(new URL(`./src/${name}`, import.meta.url), 'utf8');
 
@@ -55,6 +57,73 @@ test('the monitor layout reads as an outcome and never rewrites another layout',
   // Every value the home offers is one the host reads.
   for (const option of isolated.control.options) assert.ok(layout.control.options.some(item => item.value === option.value));
   assert.equal(layout.default, 'exclusive');
+});
+
+test('the home offers the resolution choices that need no other field, and names a stored fixed one', async () => {
+  const resolution = settings.get('dd_resolution_option');
+  const plain = onHome(resolution, 'auto', {});
+  assert.equal(plain.label, 'Stream resolution');
+  assert.deepEqual(plain.control.options.map(option => [option.value, option.label]), [
+    ['auto', 'Match the device'],
+    ['disabled', 'Keep the current resolution'],
+  ]);
+  // A stored fixed resolution shows what it is; the home cannot create an empty one.
+  const manual = onHome(resolution, 'manual', { dd_manual_resolution: '2560x1440' });
+  assert.deepEqual(manual.control.options.at(-1), { value: 'manual', label: 'Fixed: 2560 × 1440' });
+  const unnamed = onHome(resolution, 'manual', {});
+  assert.deepEqual(unnamed.control.options.at(-1), { value: 'manual', label: 'Fixed resolution: set it in All settings' });
+  // Every value the home offers is one the host reads.
+  for (const option of manual.control.options) assert.ok(resolution.control.options.some(item => item.value === option.value));
+  assert.equal(onHome(resolution, 'something-else', {}).control.options.length, 2);
+  // The note's target is a real Picture group, so the link opens the field it names.
+  assert.equal(groupAnchor('Resolution and refresh rate'), 'resolution-and-refresh-rate');
+  const group = schema.settings.find(setting => setting.group === 'Resolution and refresh rate');
+  assert.equal(settingsGroup(group.category), 'picture');
+  const home = await source('pages/SettingsHome.svelte');
+  assert.match(home, /inAllSettings\('picture', 'Resolution and refresh rate'\)/);
+});
+
+test('the stream preset reads as a trade-off on the home, with plain outcomes', async () => {
+  const preset = onHome(settings.get('stream_preset'), 'balanced');
+  assert.match(preset.description, /delay and picture quality/);
+  assert.doesNotMatch(preset.description, /encoder settings|\bbelow\b/);
+  assert.deepEqual(preset.control.options.map(option => option.label), ['Lowest latency', 'Balanced (recommended)', 'Reference quality']);
+  assert.equal(presetOutcome('balanced'), 'Rubylight’s defaults: the safest choice for almost every game.');
+  assert.equal(presetOutcome('lowest_latency'), 'Handles each frame as fast as it can. Some picture quality is lost.');
+  assert.equal(presetOutcome('reference'),
+    'Removes the size limit on recovery frames, so a loss costs more bandwidth; no picture-quality gain from it has been measured. Use it only on a fast, steady link.');
+  // A preset added to the shared table without its own sentence fails here
+  // instead of being labelled as Balanced on the home.
+  for (const entry of presets) assert.ok(presetOutcome(entry.id), entry.id);
+  const home = await source('pages/SettingsHome.svelte');
+  assert.match(home, /\{@const outcome = presetOutcome\(preset\.id\)\}/);
+  assert.match(home, /\{#if outcome\}<p class="note">\{outcome\}<\/p>\{\/if\}/);
+  assert.doesNotMatch(home, /\{preset\.description\}/);
+});
+
+test('the home says what Default virtual display does on this PC', async () => {
+  const mode = settings.get('virtual_display_mode');
+  const able = onHome(mode, '', { [VIRTUAL_DISPLAY_OS]: true }, { capable: true, ready: true });
+  assert.match(able.description, /makes one for each device/);
+  // A device or app can still choose its own mode.
+  assert.match(able.description, /a device’s or app’s choice wins/);
+  // A host that does not say counts as able, as its own virtual display gate does.
+  assert.match(onHome(mode, '', {}).description, /makes one for each device/);
+  assert.match(onHome(mode, '', { [VIRTUAL_DISPLAY_OS]: false }).description, /cannot run Rubylight’s virtual display driver/);
+  // The driver decides too: installed but not ready, and missing, promise no screen.
+  assert.match(onHome(mode, '', {}, { capable: true, ready: false }).description, /once the driver is ready/);
+  assert.match(onHome(mode, '', {}, { capable: false, ready: false }).description, /is not available on this PC/);
+  // A chosen mode keeps the setting's own words.
+  assert.equal(onHome(mode, 'shared', { [VIRTUAL_DISPLAY_OS]: true }).description, mode.description);
+  // The home gives the transform the driver the host reported, not only the OS gate.
+  const home = await source('pages/SettingsHome.svelte');
+  assert.match(home, /host\.metadata\?\.virtual_display/);
+});
+
+test('the Settings home search says when it lists only the first matches', async () => {
+  const home = await source('pages/SettingsHome.svelte');
+  assert.match(home, /Showing \{RESULTS\} of \{results\.length\} settings/);
+  assert.match(home, /const RESULTS = 8;/);
 });
 
 test('every schema key is reachable from search, and opens its own category', () => {

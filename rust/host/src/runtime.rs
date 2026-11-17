@@ -444,6 +444,7 @@ pub async fn maintain(
     let mut wake_at = Instant::now();
     let waking = Arc::new(AtomicBool::new(false));
     let library_ticking = Arc::new(AtomicBool::new(false));
+    let covers_fetching = Arc::new(AtomicBool::new(false));
     let updating = Arc::new(AtomicBool::new(false));
     let mut library_tick_watch = LibraryTickWatch::default();
     let mut hotkey = RestoreHotkey::default();
@@ -500,6 +501,10 @@ pub async fn maintain(
         }
         if Instant::now() >= steam_at {
             steam_at = Instant::now() + Duration::from_secs(30);
+            // SteamGridDB covers on a thread of their own: a slow answer never holds the library
+            // checks.
+            let covers = h.clone();
+            spawn_exclusive(&covers_fetching, move || crate::steamgriddb::watch(&covers));
             let started = spawn_library_tick(&h, &library_ticking);
             if let Some(running) = library_tick_watch.note(started, Instant::now()) {
                 tracing::warn!(

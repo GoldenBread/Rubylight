@@ -127,7 +127,9 @@ public class StreamSettings extends NightjarActivity {
     static final Map<String, String[]> SECTIONS = new LinkedHashMap<>();
     static {
         // Each section: its main rows (untitled), its More row, then the folded rows in their groups. Desktop
-        // Nightjar draws the same sections, groups and order.
+        // Nightjar draws the same sections, groups and order. "simple" is the simple layer (SimpleProfile): its
+        // six rows are all main, and the settings screen shows them before the sections that hold the detail.
+        SECTIONS.put("simple", new String[] {"category_simple_main"});
         SECTIONS.put("video", new String[] {"category_video_main", "category_more_video", "category_basic_settings"});
         SECTIONS.put("display", new String[] {"category_display_main", "category_more_display", "category_display_refresh",
                 "category_upscaling", "category_host_display"});
@@ -140,7 +142,7 @@ public class StreamSettings extends NightjarActivity {
         SECTIONS.put("app", new String[] {"category_app_main", "category_more_app", "category_ui_settings",
                 "category_accessibility"});
         SECTIONS.put("advanced", new String[] {"category_advanced_settings", "category_more_advanced",
-                "category_advanced_compatibility"});
+                "category_advanced_compatibility", "category_game_info"});
         // Settings whose default is right for nearly everyone, kept for troubleshooting.
         SECTIONS.put("debug", new String[] {"category_debug", "category_more_debug", "category_debug_pyrowave",
                 "category_debug_decoder", "category_debug_diagnostics"});
@@ -155,6 +157,7 @@ public class StreamSettings extends NightjarActivity {
     static List<String> mainKeys(Context context, String section) {
         int tier;
         switch (section) {
+            case "simple": tier = R.array.settings_tier_simple; break;
             case "video": tier = R.array.settings_tier_video; break;
             case "display": tier = R.array.settings_tier_display; break;
             case "input": tier = R.array.settings_tier_input; break;
@@ -738,6 +741,7 @@ public class StreamSettings extends NightjarActivity {
 
     static int sectionTitle(String section) {
         switch (section) {
+            case "simple": return R.string.settings_section_simple;
             case "video": return R.string.settings_section_video;
             case "display": return R.string.settings_section_display;
             case "input": return R.string.settings_section_input;
@@ -1570,6 +1574,13 @@ public class StreamSettings extends NightjarActivity {
         private int codecSummaryGeneration;
         private final SharedPreferences.OnSharedPreferenceChangeListener summaryUpdater =
                 (prefs, key) -> {
+                    // Only the VRR keys change what the capability scan reads; a simple choice
+                    // clears the cache itself (SimpleProfile.apply).
+                    if (PreferenceConfiguration.VRR_PREF_STRING.equals(key)
+                            || PreferenceConfiguration.REAL_VRR_PREF_STRING.equals(key)
+                            || SimpleProfile.VRR_OPT_IN.equals(key) || SimpleProfile.VRR_LAST.equals(key)) {
+                        SimpleProfile.forgetCapabilities();
+                    }
                     refreshState();
                     if (PreferenceConfiguration.USB_FORWARDING_PREF_STRING.equals(key)) {
                         com.limelight.binding.usb.UsbForwarding.syncPersistentPermission(getActivity());
@@ -1749,7 +1760,9 @@ public class StreamSettings extends NightjarActivity {
             setShown("seekbar_vibrate_fallback_strength", prefs.getBoolean("checkbox_vibrate_fallback", false));
             setShown("checkbox_usb_bind_all", prefs.getBoolean("checkbox_usb_driver", true));
             setShown("checkbox_usb_dualsense_haptics", prefs.getBoolean("checkbox_usb_dualsense", false));
-            setShown("list_trackpad_acceleration_curve", prefs.getBoolean("checkbox_trackpad_acceleration", false));
+            setShown("list_trackpad_acceleration_curve", prefs.getBoolean(
+                    PreferenceConfiguration.TRACKPAD_ACCELERATION_PREF_STRING,
+                    PreferenceConfiguration.DEFAULT_TRACKPAD_ACCELERATION));
             setShown("list_trackpad_momentum_glide", prefs.getBoolean("checkbox_trackpad_momentum", false));
             boolean onScreen = SettingRules.onScreenControlsOn(prefs);
             for (String key : SettingRules.ON_SCREEN_ROWS) setShown(key, onScreen);
@@ -2034,9 +2047,23 @@ public class StreamSettings extends NightjarActivity {
             }
         }
 
+        /** The Screen row: the size and rate the simple layer streams at, read when the page opens. */
+        private void updateSimpleScreenSummary() {
+            Preference row = findPreference("simple_screen");
+            String nativeResolution = PreferenceConfiguration.nativeResolution(getActivity());
+            if (row == null || nativeResolution == null) return;
+            int refresh = DisplayFrameRatePolicy.streamFrameRate(DisplayFrameRatePolicy.maxRefreshRate(
+                    PreferenceConfiguration.defaultDisplay(getActivity())));
+            row.setSummary(getString(R.string.simple_screen_value,
+                    PreferenceConfiguration.getWidthFromResolutionString(nativeResolution),
+                    PreferenceConfiguration.getHeightFromResolutionString(nativeResolution), refresh));
+        }
+
         @Override
         public void onResume() {
             super.onResume();
+            SimpleProfile.forgetCapabilities();
+            updateSimpleScreenSummary();
             // Microphone access can be withdrawn in Android settings; the switch follows it.
             SwitchPreference mic = (SwitchPreference) findPreference(PreferenceConfiguration.ENABLE_MIC_PREF_STRING);
             if (mic != null && mic.isChecked() && !hasMicPermission()) {
@@ -2400,9 +2427,35 @@ public class StreamSettings extends NightjarActivity {
                     .setMessage(message).setPositiveButton(android.R.string.ok, null).create());
         }
 
+        /**
+         * A key row of Artwork and game info: opens a text box holding the key. The key is kept in the game_info_keys
+         * file, never in the default preferences, and never shown in the row, whose summary is its help.
+         */
+        private void bindGameInfoKey(String row, String storedAs, int title) {
+            findPreference(row).setOnPreferenceClickListener(preference -> {
+                android.content.SharedPreferences keys = com.limelight.console.GameInfo.keyPrefs(getActivity());
+                android.widget.EditText input = new android.widget.EditText(getActivity());
+                input.setSingleLine(true);
+                input.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                        | android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
+                input.setText(keys.getString(storedAs, ""));
+                input.setSelection(input.getText().length());
+                AlertDialog dialog = new NavigationDialogBuilder(getActivity()).setTitle(title).setView(input)
+                        .setPositiveButton(android.R.string.ok, (d, which) -> {
+                            String value = input.getText().toString().trim();
+                            if (value.isEmpty()) keys.edit().remove(storedAs).apply();
+                            else keys.edit().putString(storedAs, value).apply();
+                        })
+                        .setNegativeButton(android.R.string.cancel, null).create();
+                UiHelper.showDialog(getActivity(), dialog);
+                return true;
+            });
+        }
+
         private void showAbout() {
             AlertDialog about = new NavigationDialogBuilder(getActivity()).setTitle(R.string.title_about)
-                    .setMessage(getString(R.string.summary_about, BuildConfig.VERSION_NAME))
+                    .setMessage(getString(R.string.summary_about, BuildConfig.VERSION_NAME) + "\n\n"
+                            + getString(R.string.game_info_credits))
                     .setPositiveButton(android.R.string.ok, null)
                     .setNeutralButton(R.string.settings_source, (dialog, which) ->
                             HelpLauncher.launchUrl(getActivity(), "https://github.com/RamazanKara/nightjar"))
@@ -2580,6 +2633,26 @@ public class StreamSettings extends NightjarActivity {
                 texture.setEnabled(!hdr.isChecked() && !(Boolean) value && !"forcepyrowave".equals(codec.getValue()));
                 return true;
             });
+            // The simple layer: a read-only line for the screen it streams at, and the one-tap way back.
+            Preference simpleScreen = findPreference("simple_screen");
+            if (simpleScreen != null) {
+                simpleScreen.setOnPreferenceClickListener(preference -> {
+                    ((StreamSettings) getActivity()).showSection("display");
+                    return true;
+                });
+            }
+            Preference recommended = findPreference("simple_back_to_recommended");
+            if (recommended != null) {
+                recommended.setOnPreferenceClickListener(preference -> {
+                    if (!SimpleProfile.applyRecommended(getActivity())) {
+                        Toast.makeText(getActivity(), R.string.simple_profile_failed, Toast.LENGTH_LONG).show();
+                    }
+                    updateSimpleScreenSummary();
+                    return true;
+                });
+            }
+            Preference simpleHdr = findPreference("simple_hdr");
+            if (simpleHdr != null && !SimpleProfile.hdrOffered(getActivity())) removeSetting("simple_hdr");
             findPreference(SHARP_COLOR_KEY).setOnPreferenceClickListener(preference -> {
                 SharedPreferences prefs = getPreferenceManager().getSharedPreferences();
                 showChoices(R.string.title_sharp_color, R.array.sharp_color_names, PreferenceConfiguration.sharpColor(prefs) ? 1 : 0,
@@ -2639,6 +2712,9 @@ public class StreamSettings extends NightjarActivity {
                 showAbout();
                 return true;
             });
+            bindGameInfoKey("game_info_steamgriddb", com.limelight.console.GameInfo.KEY_STEAMGRIDDB, R.string.game_info_sgdb_title);
+            bindGameInfoKey("game_info_igdb_client_id", com.limelight.console.GameInfo.KEY_IGDB_ID, R.string.game_info_igdb_id_title);
+            bindGameInfoKey("game_info_igdb_client_secret", com.limelight.console.GameInfo.KEY_IGDB_SECRET, R.string.game_info_igdb_secret_title);
             findPreference("pin_lock").setOnPreferenceClickListener(preference -> {
                 com.limelight.pin.PinLockSettingsActivity.open(getActivity());
                 return true;
@@ -2751,7 +2827,9 @@ public class StreamSettings extends NightjarActivity {
                 return true;
             });
             for (String moreSection : SECTIONS.keySet()) {
-                findPreference(MORE_PREFIX + moreSection).setOnPreferenceClickListener(preference -> {
+                Preference more = findPreference(MORE_PREFIX + moreSection);
+                if (more == null) continue;
+                more.setOnPreferenceClickListener(preference -> {
                     toggleMore(moreSection);
                     return true;
                 });

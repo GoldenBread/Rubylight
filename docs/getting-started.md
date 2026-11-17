@@ -19,12 +19,12 @@ Upgrading an existing host: see [Upgrading](#upgrading). Moving a portable Apoll
 
 ## Install or run portable
 
-Download a package from the [release](https://github.com/RamazanKara/Rubylight/releases/tag/v4.7.1):
+Download a package from the [release](https://github.com/RamazanKara/Rubylight/releases/tag/v4.8.0):
 
 | Package | How to start | Use |
 | --- | --- | --- |
-| `rubylight-setup-4.7.1.exe` | Run the installer, then open **Rubylight** from the Start menu. | Normal use: the Windows service, start with Windows, virtual displays and virtual controllers. |
-| `rubylight-4.7.1-windows-x64.zip` | Extract the whole archive and open **Start Rubylight.exe**. | Trying the host on a physical display without installing anything. |
+| `rubylight-setup-4.8.0.exe` | Run the installer, then open **Rubylight** from the Start menu. | Normal use: the Windows service, start with Windows, virtual displays and virtual controllers. |
+| `rubylight-4.8.0-windows-x64.zip` | Extract the whole archive and open **Start Rubylight.exe**. | Trying the host on a physical display without installing anything. |
 
 The installer sets up the host, the Windows service, Rubylight's virtual display driver and, unless you clear its box, the virtual gamepad driver for controllers. Two optional pages follow: **Install USB audio and haptics support** adds DualSense and Steam Deck USB audio and haptics through usbip-win2 (it can reconnect USB devices and may need a restart; see [DualSense USB audio and haptics](dualsense-haptics.md)), and **Turn on Wake-on-LAN** sets up the wired network adapters so a client can wake the PC. Both are off by default and keep their choice for updates. If setup finds Vibepollo, Apollo or Sunshine, it asks: **replace** it, which imports its settings and paired devices and uninstalls it (the default), or [**keep it and install alongside**](#keep-another-host-and-install-alongside).
 
@@ -75,9 +75,9 @@ Create the administrator account when asked; the first account must be created o
 
 Use a password of at least 8 characters. Browsers that are signed in must sign in again. A host upgraded from Butterpollo keeps its original install folder.
 
-**Home** starts with pairing: until a device is paired it shows the QR code and the PIN entry side by side, with **Connection help**. After that it shows whether the PC is ready to play, the current stream and your games. **PC details** opens the checks of the video encoder, virtual display, audio, screen capture and wake from a device; a check that fails shows without it. An encoder and an active monitor are enough for a first desktop stream; a virtual display showing **Off** is normal when you stream a monitor.
+**Home** starts with pairing: until a device is paired it shows the QR code and the PIN entry side by side, with **Connection help**. After that it shows whether the PC is ready to play, where to start a game (open Nightjar or Moonlight on the device and choose this PC), the current stream and your games. **PC details** opens the checks of the video encoder, virtual display, audio, screen capture and wake from a device; a check that fails shows without it. An encoder and an active monitor are enough for a first desktop stream; a virtual display showing **Off** is normal when you stream a monitor.
 
-A new installation gives each device its own virtual display on Windows 11 23H2 and later. To stream a monitor instead, set **Settings → Picture → Virtual display** to **Off, stream a monitor**. With a virtual display, **While streaming, your monitors** decides whether the other monitors turn off (the default) or stay on.
+A new installation gives each device its own virtual display on Windows 11 23H2 and later; **Settings → Picture** says which one this PC does. To stream a monitor instead, set **Settings → Picture → Virtual display** to **Off, stream a monitor**. With a virtual display, **While streaming, your monitors** decides whether the other monitors turn off (the default) or stay on. **Stream resolution** matches the device; **Keep the current resolution** applies to a streamed monitor only, and a virtual display follows the device unless a fixed resolution is set. A fixed resolution or refresh rate is under **All settings → Picture → Resolution and refresh rate**.
 
 Leave **All settings → Picture → Capture method** on **Automatic**. It uses direct driver push on Rubylight's virtual displays and Windows Graphics Capture on other displays, and falls back to Desktop Duplication where needed. A capture method imported from another host is kept as it was.
 

@@ -364,7 +364,8 @@ pub struct Pad {
     /// identity before its arrival.
     usb_id: (u16, u16),
     /// The Switch 2 controllers' C button (SDL's Misc 2) is down. It sits outside the button
-    /// mapping and goes as `button::C`, which the queue clears for a host without it.
+    /// mapping and goes as `button::C`, which only a host that takes controller identities
+    /// gets (its flag is a Steam Controller's left grip touch, nightjar#125).
     c_down: bool,
     mouse: crate::controller_mouse::Mouse,
     touchpad: crate::controller_mouse::Touchpad,
@@ -1163,12 +1164,24 @@ fn send_trigger_effect(pad: &Pad, flags: u8, type_left: u8, type_right: u8, left
     }
 }
 
+/// A pad's own button word for the host. The C button is a Switch 2 Pro
+/// Controller's, and its flag (0x40_0000) is also a Steam Controller's left
+/// grip touch, so a host that takes no controller identities gets neither
+/// (nightjar#125).
+fn host_buttons(buttons: u32, controller_identity: bool) -> u32 {
+    if controller_identity {
+        buttons
+    } else {
+        buttons & !button::C
+    }
+}
+
 fn send_state(pad: &Pad, mask: u16, queue: &mut InputQueue) {
     let report = if pad.mouse.active { Report::default() } else { pad.report() };
     let _ = queue.send_controller(
         u16::from(pad.sent_as),
         mask,
-        report.buttons,
+        host_buttons(report.buttons, queue.controller_identity()),
         report.lt,
         report.rt,
         report.ls,

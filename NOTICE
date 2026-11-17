@@ -405,3 +405,28 @@ WebRTC's AEC3 through sonora 0.2.0 (https://github.com/dignifiedquire/sonora), a
 of WebRTC audio processing. Copyright (c) 2011, The WebRTC Project Authors; Copyright (c)
 2016, Arun Raghavan and contributors; Copyright (c) 2026, dignifiedquire. BSD 3-Clause; the
 full notice ships in the app as client/app/src/main/assets/NOTICE-SONORA.txt.
+
+Snapdragon Game Super Resolution 2 (Nightjar's temporal upscaler)
+
+Nightjar's temporal upscaler (the "Temporal" value of the upscaling setting) adapts the upscale
+pass of Qualcomm's Snapdragon Game Super Resolution 2
+(https://github.com/SnapdragonStudios/snapdragon-gsr, commit d926f074,
+sgsr/v2/include/glsl_2_pass_fs/sgsr2_upscale.fs): its sample weights, neighbourhood box and
+history blend. Copyright (c) 2024, Qualcomm Innovation Center, Inc. BSD-3-Clause. It ships in:
+- Android MediaCodec path: client/app/src/main/assets/shaders/temporal_accumulate.frag (the
+  adapted pass) and temporal_detail.frag (SGSR 1's edge detail on top), driven by
+  client/app/src/main/java/com/limelight/binding/video/GlesTemporalUpscaler.java;
+- Android PyroWave renderer: client/app/src/main/jni/pyrowave-renderer/shaders/temporal_*.frag
+  and their SPIR-V in shaders_spv.h;
+- desktop: client/protocol/desktop/src/temporal.hlsl, src/temporal-*.spv and
+  src/metal/temporal-*.metal.
+The full notice ships in the app as client/app/src/main/assets/NOTICE-SGSR2.txt. The other
+temporal passes (prep, down, motion, cut) are Nightjar's own.
+
+The offline evaluation harness that measured it (client/tools/temporal_upscaler/upscalers.py,
+TemporalUpscaler._upscale and fast_lanczos_sgsr2) carries the same adaptation in NumPy, with the
+notice in client/tools/temporal_upscaler/LICENSE-SGSR2.txt. The same file's _sgsr1_gl is a
+NumPy port of Nightjar's SGSR 1 shader (client/app/src/main/assets/shaders/sgsr.frag), from
+Snapdragon Game Super Resolution 1, Copyright (c) 2025, Qualcomm Innovation Center, Inc.,
+BSD-3-Clause (client/app/src/main/assets/NOTICE-SGSR1.txt). The harness itself ships in neither
+app.

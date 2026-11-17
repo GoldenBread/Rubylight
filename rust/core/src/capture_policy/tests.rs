@@ -1,4 +1,134 @@
 use super::*;
+/// The decision as the capture worker makes it: the Capture method setting, the open
+/// backend, whether the target is the display, the time without a picture, what is in
+/// front of that display and whether Windows reports an exclusive-fullscreen app.
+fn switches(
+    capture: &str,
+    backend: &str,
+    display: bool,
+    idle: Duration,
+    in_front: InFront,
+    exclusive_fullscreen: bool,
+) -> bool {
+    duplication_for_fullscreen(
+        automatic_capture(capture),
+        backend,
+        display,
+        idle,
+        in_front,
+        exclusive_fullscreen,
+    )
+}
+#[test]
+fn only_an_automatic_stream_moves_to_duplication_for_an_exclusive_fullscreen_app() {
+    let stalled = FULLSCREEN_STALL;
+    // The reported case: Automatic, WGC of the display, an exclusive-fullscreen emulator
+    // covering it and no picture for 2 s.
+    assert!(switches(
+        "auto",
+        "wgc",
+        true,
+        stalled,
+        InFront::Covering,
+        true
+    ));
+    assert!(switches(
+        "",
+        "wgc",
+        true,
+        stalled + Duration::from_secs(30),
+        InFront::Covering,
+        true
+    ));
+    // An explicit method is the user's choice, including for the one-reconnect
+    // Windows Graphics Capture against Desktop Duplication comparison.
+    for explicit in ["wgc", "wgcc", "ddx", "dxgi", "idd-push", "amd"] {
+        assert!(
+            !switches(explicit, "wgc", true, stalled, InFront::Covering, true),
+            "{explicit}"
+        );
+    }
+    for automatic in ["", "auto", " AUTO ", "Auto", "other", "WGCX"] {
+        assert!(automatic_capture(automatic), "{automatic}");
+    }
+    for explicit in ["wgc", "wgcc", "ddx", "dxgi", "idd-push", "amd"] {
+        assert!(!automatic_capture(explicit), "{explicit}");
+    }
+    // An unrecognised value is Automatic to the frame limiter, which opens the
+    // normal WGC path: the fullscreen fallback follows it rather than treating
+    // it as a method the user named.
+    assert!(switches(
+        "other",
+        "wgc",
+        true,
+        stalled,
+        InFront::Covering,
+        true
+    ));
+    // A budget for a mode change, a busy GPU or a game leaving fullscreen.
+    assert!(!switches(
+        "auto",
+        "wgc",
+        true,
+        stalled - Duration::from_millis(1),
+        InFront::Covering,
+        true
+    ));
+}
+#[test]
+fn a_static_desktop_a_paused_borderless_game_and_a_window_never_qualify() {
+    let stalled = FULLSCREEN_STALL;
+    // An idle desktop: Windows reports the shell window (Progman) as the foreground
+    // window, and WGC sends nothing for a desktop that does not change.
+    assert!(!switches(
+        "auto",
+        "wgc",
+        true,
+        stalled,
+        InFront::Nothing,
+        true
+    ));
+    // A paused or loading borderless game keeps its picture without presenting, and
+    // Windows reports no exclusive-fullscreen app for a borderless window.
+    assert!(!switches(
+        "auto",
+        "wgc",
+        true,
+        stalled,
+        InFront::Covering,
+        false
+    ));
+    // Another program's window beside the streamed display, while some other app is in
+    // exclusive fullscreen.
+    assert!(!switches(
+        "auto",
+        "wgc",
+        true,
+        stalled,
+        InFront::Partial,
+        true
+    ));
+    // One app's window is captured by WGC whatever runs, and only a display can be
+    // duplicated; the display driver's push and Desktop Duplication read it already.
+    assert!(!switches(
+        "auto",
+        "wgc",
+        false,
+        stalled,
+        InFront::Covering,
+        true
+    ));
+    for backend in ["ddx", "idd-push", "amd", "closed"] {
+        assert!(!switches(
+            "auto",
+            backend,
+            true,
+            stalled,
+            InFront::Covering,
+            true
+        ));
+    }
+}
 #[test]
 fn compositions_tell_a_focus_change_only_by_dirty_rectangles_inside_it() {
     // A game window at (100, 50)-(1380, 770) on the second display of a
@@ -99,6 +229,75 @@ fn learned(interval: u64) -> Freshness {
         cadence.observe(frame * interval, 500_000);
     }
     cadence
+}
+#[test]
+fn constant_rate_fills_each_slot_once_and_never_holds_a_new_composition() {
+    // 180 fps.
+    let period = Duration::from_micros(5_555);
+    let start = Instant::now();
+    let mut rate = ConstantRate::default();
+    // Nothing has been captured: no picture to publish again, no slot yet.
+    assert_eq!(rate.due(period), None);
+    assert_eq!(rate.decide(start, period, false), None);
+    // A new composition goes out at once, before its slot.
+    assert_eq!(rate.decide(start, period, true), Some(Publish::Fresh));
+    rate.published(start);
+    // Only from the slot on is the last picture published again.
+    assert_eq!(rate.due(period), Some(start + period));
+    assert_eq!(
+        rate.decide(start + period / 2, period, false),
+        Some(Publish::Wait(start + period))
+    );
+    assert_eq!(
+        rate.decide(start + period, period, false),
+        Some(Publish::Repeat)
+    );
+    // A repeat starts the next period where it happened: a publisher back
+    // from a stall publishes one picture, not the slots it missed.
+    let late = start + period * 3;
+    rate.published(late);
+    assert_eq!(
+        rate.decide(late + period / 4, period, false),
+        Some(Publish::Wait(late + period))
+    );
+    // The slot follows a new stream rate.
+    assert_eq!(
+        rate.decide(start + period * 4, period / 2, false),
+        Some(Publish::Repeat)
+    );
+}
+#[test]
+fn a_constant_rate_repeat_is_a_picture_of_its_own() {
+    let ms = 1_000_000;
+    let mut cadence = Freshness::default();
+    // A 90 fps game on a 180 fps stream: every second picture is a repeat.
+    cadence.observe_focus(0, ms, Some(true));
+    for at in 1..=4u64 {
+        cadence.observe_repeat(at * 5_555_000, ms);
+    }
+    assert_eq!(cadence.picture_interval(), Some(5_555_000));
+    assert!(!cadence.extends_picture());
+    // Even beside an animating focus window a repeat is a publication of its
+    // own, not that window extending the game's picture.
+    cadence.observe_focus(30 * ms, ms, Some(true));
+    cadence.observe_focus(35 * ms, ms, Some(true));
+    cadence.observe_repeat(40 * ms, ms);
+    assert_eq!(cadence.picture_start(), Some(40 * ms));
+    assert!(!cadence.extends_picture());
+}
+#[test]
+fn a_real_frame_right_after_a_repeat_is_a_picture_of_its_own() {
+    let ms = 1_000_000;
+    let mut cadence = Freshness::default();
+    cadence.observe_focus(0, ms, None);
+    cadence.observe_repeat(5 * ms, ms);
+    // The game's next frame 1 ms after the repeat: captures less than 2 ms
+    // apart are one picture otherwise, and the capture cannot tell either.
+    cadence.observe_focus(6 * ms, ms, None);
+    assert_eq!(cadence.picture_start(), Some(6 * ms));
+    // Without a repeat the 2 ms rule still merges these.
+    cadence.observe_focus(7 * ms, ms, None);
+    assert_eq!(cadence.picture_start(), Some(6 * ms));
 }
 #[test]
 fn cached_statistics_match_the_original_policy_across_cadence_changes_and_resets() {

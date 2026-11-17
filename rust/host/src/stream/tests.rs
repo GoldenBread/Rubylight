@@ -1029,6 +1029,57 @@ fn a_game_window_target_reopens_on_itself_never_the_primary_display() {
         assert_eq!(missing, None, "{target}");
     }
 }
+#[test]
+fn a_capture_reopens_on_its_own_backend_unless_the_fullscreen_fallback_moved_it() {
+    // An ordinary reopen such as the secure desktop's tries the stream's own
+    // backend again: Rubylight's display push and AMD Direct Capture, which
+    // fell back while they were unavailable, get their next try.
+    assert_eq!(reopen_backend("wgc", false), "wgc");
+    assert_eq!(reopen_backend("idd-push", false), "idd-push");
+    assert_eq!(reopen_backend("amd", false), "amd");
+    // The fullscreen fallback's Desktop Duplication shows the game a frozen
+    // WGC picture could not, so it keeps it for the session.
+    assert_eq!(reopen_backend("wgc", true), "ddx");
+    assert_eq!(reopen_backend("idd-push", true), "ddx");
+}
+#[test]
+fn a_secure_desktops_duplication_returns_to_wgc_but_the_fullscreen_fallback_keeps_it() {
+    // A UAC prompt or the lock screen left a WGC stream on Desktop Duplication;
+    // with the desktop visible again it reopens on WGC.
+    assert!(returns_to_wgc(true, false, "ddx", "wgc", false));
+    // The fullscreen fallback keeps the source that shows the game.
+    assert!(!returns_to_wgc(true, false, "ddx", "wgc", true));
+    // A stream that asked for Desktop Duplication itself stays there, and a
+    // desktop already usable or still unusable is no reason to reopen.
+    assert!(!returns_to_wgc(true, false, "ddx", "ddx", false));
+    assert!(!returns_to_wgc(true, true, "ddx", "wgc", false));
+    assert!(!returns_to_wgc(false, true, "ddx", "wgc", false));
+    assert!(!returns_to_wgc(false, false, "ddx", "wgc", false));
+    assert!(!returns_to_wgc(true, false, "wgc", "wgc", false));
+}
+#[test]
+fn the_fullscreen_probe_asks_the_shell_twice_a_second_at_most() {
+    // A still picture polls capture continuously, so the shell's answer must not
+    // run on every idle poll; the first probe goes through at once.
+    let start = Instant::now();
+    let mut next = start;
+    assert!(fullscreen_probe_due(start, &mut next));
+    for step in 1..25 {
+        assert!(
+            !fullscreen_probe_due(start + Duration::from_millis(step * 20), &mut next),
+            "{step}"
+        );
+    }
+    // Half a second after it ran, the answer may be asked again, whether it
+    // found a fullscreen app or not.
+    let second = start + FULLSCREEN_PROBE;
+    assert!(fullscreen_probe_due(second, &mut next));
+    assert!(!fullscreen_probe_due(
+        second + Duration::from_millis(499),
+        &mut next
+    ));
+    assert!(fullscreen_probe_due(second + FULLSCREEN_PROBE, &mut next));
+}
 /// #56: a Nucleus Co-op game replaced its splash window, or resized its
 /// window, as the stream's first capture opened, and the stream ended; the
 /// client's reconnect seconds later worked.
@@ -1163,8 +1214,8 @@ fn background_capture_never_recovers_onto_the_primary_display() {
     butterpollo_core::background::apply(&mut background);
     for capture in ["auto", "wgc", "ddx"] {
         assert_ne!(
-            CaptureKey::new(capture, "display", false, &plain, ""),
-            CaptureKey::new(capture, "display", false, &background, "")
+            CaptureKey::new(capture, "display", false, &plain, "", false),
+            CaptureKey::new(capture, "display", false, &background, "", false)
         );
     }
 }
@@ -1192,6 +1243,32 @@ fn pad_feedback_forwards_rumble_and_each_family_extra() {
     );
     // Reports of no known kind send nothing.
     assert!(feedback_packets(2, 3, &[255; 8]).is_empty());
+}
+#[test]
+fn trigger_rumble_alone_still_reaches_the_client() {
+    // The reporter's test (nightjar#124): impulse triggers on, ordinary
+    // vibration off, so an Xbox pad's report has zero body magnitudes and only
+    // its two trigger magnets running.
+    let packets = feedback_packets(1, 4, &[0, 0, 0, 0, 0x40, 0x00, 0x20, 0x00]);
+    assert_eq!(packets.len(), 2);
+    assert_eq!(packets[0].0, RUMBLE_DATA);
+    assert_eq!(
+        &packets[0].1[4..],
+        &[1, 0, 0, 0, 0, 0],
+        "the body motors' stop"
+    );
+    assert_eq!(
+        packets[1],
+        (RUMBLE_TRIGGER_DATA, vec![1, 0, 0x40, 0, 0x20, 0]),
+        "left trigger 0x0040, right 0x0020"
+    );
+    // Both go out while rumble is on.
+    let mut rumble = RumbleForwarded::default();
+    assert!(
+        packets
+            .iter()
+            .all(|(kind, payload)| rumble.forward(true, *kind, payload))
+    );
 }
 #[test]
 fn vhf_rumble_and_stop_keep_the_strengths_in_moonlight_packets() {
@@ -1335,6 +1412,7 @@ fn shared_capture_separates_explicit_wgc_intervals_without_splitting_ddx() {
             false,
             &capture_config(&Config::parse(setting).unwrap()),
             "",
+            false,
         )
     };
     for kind in ["wgc", "auto"] {
@@ -1349,12 +1427,22 @@ fn shared_capture_separates_explicit_wgc_intervals_without_splitting_ddx() {
         assert_eq!(key(kind, ""), key(kind, "wgc_drain_to_newest=true"));
         assert_eq!(key(kind, ""), key(kind, "wgc_helper_streaming_scope=true"));
     }
+    // Constant rate publishes between frames, so a stream with it never
+    // shares a capture opened for variable-rate WGC. Streams of the same
+    // method still share, and the capture publishes for the fastest of them
+    // (`Latest::repeat_period`).
+    let config = Config::default();
+    assert_ne!(
+        CaptureKey::new("wgc", "display", false, &config, "", false),
+        CaptureKey::new("wgc", "display", false, &config, "", true)
+    );
 }
 #[test]
 fn shared_capture_respects_compute_overrides_and_independent_frame_phases() {
     let config = Config::default();
-    let key =
-        |config: &Config, phase: &str| CaptureKey::new("wgc", "display", false, config, phase);
+    let key = |config: &Config, phase: &str| {
+        CaptureKey::new("wgc", "display", false, config, phase, false)
+    };
     let default = key(&config, "first");
     assert_eq!(default, key(&config, "second"));
     let mut helper = config.clone();

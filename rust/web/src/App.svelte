@@ -24,6 +24,7 @@
   import Settings from './pages/Settings.svelte';
   import SettingsHome from './pages/SettingsHome.svelte';
   import Logs from './pages/Logs.svelte';
+  import Sessions from './pages/Sessions.svelte';
   import Help from './pages/Help.svelte';
   import Troubleshoot from './pages/Troubleshoot.svelte';
   import Tokens from './pages/Tokens.svelte';
@@ -68,6 +69,7 @@
     if (route.path === '/logs') return Logs;
     if (route.path === '/help') return Help;
     if (route.path === '/troubleshoot') return Troubleshoot;
+    if (route.path === '/sessions') return Sessions;
     if (route.path === '/tokens') return Tokens;
     if (route.path === '/webhooks') return Webhooks;
     return NotFound;

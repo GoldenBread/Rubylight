@@ -44,6 +44,15 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str) -> anyhow::Result<Val
         ("GET", "/api/rtsp/sessions") => {
             json!({"status":true,"sessions":h.sessions.lock().unwrap().active.values().map(|s|s.info()).collect::<Vec<_>>()})
         }
+        ("GET", "/api/sessions/history") => {
+            json!({
+                "status": true,
+                "sessions": h.session_history.entries(),
+                "limit": butterpollo_core::session_history::MAX_ENTRIES,
+                "days": butterpollo_core::session_history::MAX_AGE_MS / 86_400_000,
+                "bytes": butterpollo_core::session_history::MAX_BYTES,
+            })
+        }
         ("GET", "/api/session/status") => {
             let current = h.current_app.lock().unwrap();
             let sessions = h.sessions.lock().unwrap();

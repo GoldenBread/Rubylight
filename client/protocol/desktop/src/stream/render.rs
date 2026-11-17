@@ -447,8 +447,10 @@ impl Streaming {
     /// that on the same display, and says so once (`present::VrrPacing::distrust_scan`).
     fn distrust_scan_line(vrr: &mut present::VrrPacing, probe: &race_probe::RaceProbe, wait: crate::config::VrrWait) {
         let display = probe.display_id();
-        // Nightjar's wait never turns to Windows V-Sync, so choosing it forgets a display an
-        // earlier stream found not refreshing on present: Automatic starts afresh there.
+        // Nightjar's wait does not take the display check's switch to Windows V-Sync, so choosing
+        // it forgets a display an earlier stream found not refreshing on present: Automatic starts
+        // afresh there. (A wait that would cost the next picture its turn still presents with sync
+        // interval 1, `scan_sync::scan_wait`; that is the wait's own budget, not this verdict.)
         if wait == crate::config::VrrWait::Scan {
             if let Some(display) = display { scan_sync::clear_untrusted(display); }
         }
@@ -471,24 +473,26 @@ impl Streaming {
     /// beam is in the picture's rows the present waits for it to leave the last one, so the picture
     /// is shown whole. That wait is for `VrrSync::Scan` and for Real VRR on a display the keeper
     /// repeats pictures for, where a scan under way is rare; a stream that shows pictures as they
-    /// come tears instead, as it asked to. Returns how long it waited (ns).
+    /// come tears instead, as it asked to. Returns whether the present goes out with sync interval 1
+    /// instead (`scan_sync::scan_wait`): waiting for the scan and its landing would have run past
+    /// the next picture's due time, and sync interval 1 shows this one whole at the next refresh.
     ///
     /// The beam alone says too little (`scan_sync`): `VrrSync::Scan` also waits for the present
     /// before this one to start its scan while that one is still on its way, and has the GPU
     /// finish the drawing of a picture that waits, so that its present is all that is left.
-    fn wait_out_scan(&mut self, renderer: *mut SDL_Renderer) -> u64 {
+    fn wait_out_scan(&mut self, renderer: *mut SDL_Renderer, due_us: Option<u64>) -> bool {
         // The tearing modes that present whole pictures; the beam race times its own presents.
-        if !matches!(self.pacer.mode, PacingMode::Immediate | PacingMode::HostTimes) { return 0; }
+        if !matches!(self.pacer.mode, PacingMode::Immediate | PacingMode::HostTimes) { return false; }
         let keeping = self.keeper_on && self.keeper.is_some();
         let syncs = self.vrr.sync == present::VrrSync::Scan;
-        if !syncs && !keeping { return 0; }
-        let Some(beam) = self.race_probe.as_ref().and_then(race_probe::RaceProbe::beam) else { return 0 };
-        let Some(mut sample) = self.race_probe.as_ref().and_then(race_probe::RaceProbe::before) else { return 0 };
+        if !syncs && !keeping { return false; }
+        let Some(beam) = self.race_probe.as_ref().and_then(race_probe::RaceProbe::beam) else { return false };
+        let Some(mut sample) = self.race_probe.as_ref().and_then(race_probe::RaceProbe::before) else { return false };
         if let Some(keeper) = self.keeper.as_mut().filter(|_| keeping) {
             let seen = keeper.observe(session::now_us(), beam.since_scan_ns(&sample) / 1000, beam.row_of(&sample).is_some(), true);
             if let Some(floor) = seen.floor_us { eprintln!("nightjar: VRR low frame rate: the panel refreshes by itself after {:.1} ms", floor as f64 / 1e3); }
         }
-        if !syncs && (self.pacer.mode != PacingMode::HostTimes || !self.keeper_repeats) { return 0; }
+        if !syncs && (self.pacer.mode != PacingMode::HostTimes || !self.keeper_repeats) { return false; }
         // A picture that has to wait has its drawing finished meanwhile, so that its present is
         // all that is left when it goes out. One that meets an idle display goes out at once:
         // finished first, it reached a 240 Hz display 1.5 ms later at the median on uneven content.
@@ -500,21 +504,34 @@ impl Streaming {
             }
             match self.race_probe.as_ref().and_then(race_probe::RaceProbe::before) {
                 Some(reading) => sample = reading,
-                None => return 0,
+                None => return false,
             }
         }
         if syncs { sample = self.wait_for_landing(&beam, sample); }
+        // The next picture is taken to be due one frame after this one's. A wait whose landing
+        // would pass that time would show this picture after the next one is due, which can then
+        // replace it before it is shown; at a stream rate equal to the display's each picture
+        // starts a scan a landing after the last one ends (`scan_sync::scan_wait`). Sync interval
+        // 1 shows this picture whole at the next refresh instead, and the present returns there,
+        // without a landing after it.
+        if syncs {
+            if let (Some(left), Some(due)) = (beam.scan_left_ns(&sample), due_us) {
+                let budget_ns = scan_sync::wait_budget_ns(due, self.pacer.frame_us(), session::now_us());
+                let landing_ns = self.scan_tally.landing.median_ns().unwrap_or(scan_sync::TEAR_LANDING_NS);
+                if scan_sync::scan_wait(left, budget_ns, landing_ns) == scan_sync::ScanWait::Latch { return true; }
+            }
+        }
         // Until the beam leaves the last row, reading it again after each sleep: at most one scan
         // plus `SCAN_WAIT_SLACK_NS`, since a reading can be wrong (`scan_sync::wait_out`).
         let begun = Instant::now();
         let probe = self.race_probe.as_ref();
         let Some(waited) = scan_sync::wait_out(&beam, sample, || probe.and_then(race_probe::RaceProbe::before),
-            |ns| std::thread::sleep(Duration::from_nanos(ns)), || begun.elapsed().as_nanos() as u64) else { return 0 };
+            |ns| std::thread::sleep(Duration::from_nanos(ns)), || begun.elapsed().as_nanos() as u64) else { return false };
         if waited.cut_short { self.scan_tally.cut_short += 1; }
         if waited.wrapped { self.scan_tally.wrapped += 1; }
         self.scan_waits.0 += 1;
         self.scan_waits.1 += waited.ns;
-        waited.ns
+        false
     }
 
     /// How long ago the present before this one was issued (ns), while it is still on its way to a
@@ -534,10 +551,12 @@ impl Streaming {
     /// the last one of a wait that saw none begin within `scan_sync::LANDING_LIMIT_NS` of that
     /// present.
     fn wait_for_landing(&mut self, beam: &scanline::Beam, sample: scanline::Sample) -> scanline::Sample {
+        let latched_before = self.flip_guard.last_flip_latched;
         let Some(since_present_ns) = self.flip_on_its_way(beam, &sample) else {
             if let Some(last_us) = self.flip_guard.last_flip_us {
                 let since_present_ns = session::now_us().saturating_sub(last_us) * 1000;
-                if let Some(took) = scan_sync::landing_ns(beam.since_scan_ns(&sample), since_present_ns) { self.scan_tally.landing.push(took); }
+                let took = scan_sync::landing_ns(beam.since_scan_ns(&sample), since_present_ns);
+                self.scan_tally.landing_measured(took, latched_before);
             }
             self.scan_tally.found_landed();
             return sample;
@@ -559,7 +578,8 @@ impl Streaming {
         };
         let waited = begun.elapsed().as_nanos() as u64;
         if landed {
-            if let Some(took) = scan_sync::landing_ns(beam.since_scan_ns(&last), since_present_ns + waited) { self.scan_tally.landing.push(took); }
+            let took = scan_sync::landing_ns(beam.since_scan_ns(&last), since_present_ns + waited);
+            self.scan_tally.landing_measured(took, latched_before);
         }
         if self.scan_tally.waited_for(waited, landed) {
             eprintln!("nightjar: VRR: {} presents in a row started no scan within {} ms, the next {} do not wait for the one before",
@@ -647,7 +667,7 @@ impl Streaming {
         }
         // One shift for all of a frame's slices and its own present (`Presenter::draw`).
         if let Some(warp) = self.frame_warp.as_mut() { self.texture.warp = warp.draw(Some(self.racer.seq())); }
-        let flipped = self.render_flip(renderer, draw_overlay, true);
+        let flipped = self.render_flip(renderer, draw_overlay, true, false, None);
         self.needs_redraw = false;
         self.racer.presented(flipped.issued_us, &scan);
         for (band, _) in &batch {
@@ -804,6 +824,14 @@ impl Streaming {
         None
     }
 
+    /// Temporal upscaling was refused or failed: SGSR 1 stands in for the rest of the stream,
+    /// said in the log, once in a toast and in the stats line.
+    fn temporal_unavailable(&mut self, reason: &str) {
+        eprintln!("nightjar: temporal upscaling is unavailable: {reason}; the stream continues with SGSR 1");
+        self.temporal_failed = true;
+        self.show_toast(tr("Temporal upscaling is unavailable; using SGSR 1."));
+    }
+
     /// The stats line for the upscaling setting.
     pub(super) fn upscaling_line(&self) -> String {
         if self.settings.upscaling == config::Upscaling::Ai {
@@ -815,7 +843,7 @@ impl Streaming {
         }
         if self.upscale_failed { "Bilinear (GPU unavailable)".into() }
         else if self.texture.is_hdr() { "Bilinear (HDR)".into() }
-        else if self.upscaler.is_some() { self.settings.upscaling.label().into() }
+        else if self.upscaler.is_some() { upscale::running_label(self.settings.upscaling, self.temporal_failed, self.frame_warp.is_some()).into() }
         else { "Bilinear (no upscale needed)".into() }
     }
 
@@ -911,8 +939,10 @@ impl Streaming {
         self.exit = Some(Exit::Ended(Some(tr("PyroWave pictures cannot be shown on this device. Choose another Video codec in Settings, then start the stream again.").to_owned())));
     }
 
-    /// Draws the texture and the overlay and presents. `probe` reads the beam around the present.
-    fn render_flip(&mut self, renderer: *mut SDL_Renderer, draw_overlay: &mut impl FnMut(&mut Self, *mut SDL_Renderer), probe: bool) -> Flipped {
+    /// Draws the texture and the overlay and presents. `fresh` is a whole newly decoded picture,
+    /// which advances temporal upscaling. `probe` reads the beam around the present;
+    /// `due_us` is when the picture was due, for the wait's budget against the next one.
+    fn render_flip(&mut self, renderer: *mut SDL_Renderer, draw_overlay: &mut impl FnMut(&mut Self, *mut SDL_Renderer), probe: bool, fresh: bool, due_us: Option<u64>) -> Flipped {
         // SAFETY: drawing on a live renderer.
         unsafe {
             let (mut w, mut h) = (0, 0);
@@ -942,13 +972,44 @@ impl Streaming {
                 } else if use_upscaler {
                     // The upscalers read the picture as SDL would draw it.
                     texture = self.texture.sdl_texture(renderer);
-                    if !self.upscaler.as_ref().is_some_and(|u| u.matches(input, output, self.settings.upscaling)) {
-                        self.upscaler = upscale::Upscaler::new(renderer, input, output, self.settings.upscaling);
-                    }
                     // Frame Warp shifts the picture on its way into the upscaler, in the picture's own
                     // pixels; the upscaled picture is drawn as it is.
                     let warp = std::mem::take(&mut self.texture.warp);
-                    match self.upscaler.as_ref().and_then(|u| u.draw_warped(renderer, texture, self.settings.upscale_sharpness, &warp, &mut self.texture.warp_mesh)) {
+                    // Temporal upscaling that cannot be made or fails to draw gives way to SGSR 1
+                    // for the rest of the stream, and draws this picture with it.
+                    // Frame Warp shifts each redraw between pictures, which temporal upscaling
+                    // cannot show without feeding a picture into its history twice: SGSR 1 draws
+                    // while Frame Warp is on, said in the log and the stats line.
+                    let warp_on = self.frame_warp.is_some();
+                    if warp_on && self.settings.upscaling == config::Upscaling::Sgsr2 && !self.temporal_warp_logged {
+                        eprintln!("nightjar: temporal upscaling does not run with Frame Warp; the stream uses SGSR 1");
+                        self.temporal_warp_logged = true;
+                    }
+                    let upscaled = loop {
+                        let mode = upscale::effective_mode(self.settings.upscaling, self.temporal_failed || warp_on);
+                        let mut refused = None;
+                        if !self.upscaler.as_ref().is_some_and(|u| u.matches(input, output, mode)) {
+                            self.upscaler = upscale::Upscaler::new(renderer, input, output, mode).map_err(|e| refused = Some(e)).ok();
+                        }
+                        let drawn = match self.upscaler.as_mut() {
+                            // Only a whole newly decoded picture (`fresh`) moves temporal upscaling's
+                            // history on; a repeat or a beam race's slice present shows its last output.
+                            Some(u) => u.draw_warped(renderer, texture, self.settings.upscale_sharpness, &warp, &mut self.texture.warp_mesh, fresh),
+                            None => Err(refused.unwrap_or_default()),
+                        };
+                        match drawn {
+                            Ok(upscaled) => break Some(upscaled),
+                            Err(reason) if mode == config::Upscaling::Sgsr2 => {
+                                self.upscaler = None;
+                                self.temporal_unavailable(&reason);
+                            }
+                            Err(reason) => {
+                                eprintln!("nightjar: GPU upscaling failed: {reason}; the stream continues with bilinear scaling");
+                                break None;
+                            }
+                        }
+                    };
+                    match upscaled {
                         Some(upscaled) => texture = upscaled,
                         None => {
                             self.texture.warp = warp;
@@ -978,14 +1039,15 @@ impl Streaming {
         // Keys, clicks and controllers leave from their own threads while V-Sync holds the present,
         // and while a VRR present waits for the picture's drawing and the scan under way: nearly
         // every present of a stream at the display's top rate does, for most of a scan. So does a
-        // VRR present with sync interval 1 once Tear-free VRR turned to it, in the swap chain.
+        // VRR present with sync interval 1 once Tear-free VRR turned to it, or when the wait would
+        // cost the next picture its turn (`scan_sync::ScanWait::Latch`), in the swap chain.
         let mode_tears = self.pacer.mode != PacingMode::Vsync;
         let holds = !mode_tears || (probe && self.vrr.sync == present::VrrSync::Scan && self.scan_settles) || self.vrr.distrusted;
         if holds {
             // SAFETY: a live renderer.
             self.direct_motion.presenting(Some(self.direct_rules(unsafe { SDL_GetRenderWindow(renderer) })));
         }
-        if probe { self.wait_out_scan(renderer); }
+        let latch = if probe { self.wait_out_scan(renderer, due_us) } else { false };
         let beam_before = self.race_probe.as_ref().filter(|_| probe).and_then(race_probe::RaceProbe::before);
         let skips = probe && self.skip_over_waiting && !self.skipped.must_wait() && self.vrr.sync != present::VrrSync::Blank
             && self.pacer.skips_instead_of_waiting(self.plan.display.refresh_hz);
@@ -1018,13 +1080,22 @@ impl Streaming {
         let issued_us = session::now_us();
         let blank = self.blank_present(renderer, probe);
         // SAFETY: a live renderer.
+        let mut latched = false;
         let refused = unsafe {
             let done = if skips { present::present_without_waiting(renderer, self.skipped.hold()) } else { present::NoWait::Failed };
             if skips { self.no_wait_present = done != present::NoWait::Failed; }
-            if done == present::NoWait::Failed && !blank { SDL_RenderPresent(renderer); }
+            if done == present::NoWait::Failed && !blank {
+                // Sync interval 1 shows the picture whole at the next refresh when the wait for
+                // the scan would have cost the next picture its turn (`scan_sync::scan_wait`).
+                // SDL's own present tears, so only a successful adaptive present is a latch.
+                latched = latch && present::present_adaptive(renderer, true);
+                if !latched { SDL_RenderPresent(renderer); }
+            }
             done == present::NoWait::Refused
         };
         self.flip_guard.last_flip_us = Some(issued_us);
+        self.flip_guard.last_flip_latched = latched;
+        if latched { self.scan_tally.latched += 1; }
         let returned_us = session::now_us();
         if let Some(warp) = self.frame_warp.as_mut() { warp.presented(returned_us); }
         #[cfg(target_os = "linux")]
@@ -1197,7 +1268,7 @@ impl Streaming {
         }
         let (flipped, by_kms) = match self.kms_flip(window, &mut draw_overlay, has_picture) {
             Some(flipped) => (flipped, true),
-            None => (self.render_flip(renderer, &mut draw_overlay, has_picture), false),
+            None => (self.render_flip(renderer, &mut draw_overlay, has_picture, has_picture, picture.as_ref().map(|p| p.present_us)), false),
         };
         self.needs_redraw = false;
         // The draw after the hold, which the hold's margin has to leave time for.

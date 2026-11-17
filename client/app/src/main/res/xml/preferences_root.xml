@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The settings overview. Under the presets, Profiles opens the named profiles (StreamProfilesActivity); each
-     other row opens the section of the same key in StreamSettings.SECTIONS. -->
+<!-- The settings overview. The first row opens the simple layer: three plain choices that write the settings
+     the sections hold, the screen it streams at, HDR, console mode and Back to recommended (SimpleProfile,
+     nightjar-policy's simple_profile). Under it, Profiles opens the named profiles (StreamProfilesActivity);
+     each other row opens the section of the same key in StreamSettings.SECTIONS. A choice changed in a
+     section shows in the simple layer as Custom. -->
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+    <Preference android:key="simple" android:title="@string/settings_section_simple"
+        android:summary="@string/settings_section_simple_summary" />
     <com.limelight.preferences.PresetPreference android:key="stream_presets" android:title="@string/stream_presets" />
     <!-- Profiles span every section, so they sit with the presets; the summary names the one in use. -->
     <Preference android:key="stream_profiles" android:title="@string/profiles_title"

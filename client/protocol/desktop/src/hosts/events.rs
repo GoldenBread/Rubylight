@@ -155,10 +155,14 @@ impl Hosts {
                     self.art_used.insert(texture.id(), frame);
                     self.art_landed = true;
                 }
+                Event::GameInfo(record) => self.game_info_landed(*record),
                 Event::Art { id, app, version, image, ambient, sized } => {
                     let frame = self.art_frame;
                     let mut landed = None;
-                    if let Some(host) = self.get_mut(id).filter(|h| h.art_versions.get(&app) == Some(&version)) {
+                    // No cover never replaces one of the same version that landed first (a
+                    // SteamGridDB cover for a gap the PC left).
+                    let keeps = |h: &Host| image.is_none() && matches!(h.art.get(&app), Some(Art::Ready(_)));
+                    if let Some(host) = self.get_mut(id).filter(|h| h.art_versions.get(&app) == Some(&version) && !keeps(h)) {
                         match ambient {
                             Some(ambient) => {
                                 host.ambient_glow.insert(app, crate::ambient::glow_of(&ambient));

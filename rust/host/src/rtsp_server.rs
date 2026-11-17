@@ -331,6 +331,14 @@ async fn connection(
                         negotiated.audio_quality = !host.contains("0.0.0.0");
                     }
                     let config = crate::stream::effective_config(&h, &launch)?;
+                    // A host-wide cap (`max_stream_resolution`) codes a smaller
+                    // picture than the client asked for; the stream's display
+                    // keeps the size it asked for. The device and console say why.
+                    crate::stream::cap_stream_resolution(
+                        &mut negotiated,
+                        &config,
+                        &launch.warnings,
+                    );
                     // The client's own picks, before host policy turns HDR off.
                     crate::extensions::stream_offered(&h, &config, dolby, &launch)
                         .check_announce(&negotiated)?;

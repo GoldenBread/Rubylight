@@ -224,6 +224,57 @@ final class ConsoleHomeListAdapter extends RecyclerView.Adapter<RecyclerView.Vie
     }
 
     /**
+     * The heading of the section {@code position} belongs to, or {@code position} itself for a heading. A TV brings a
+     * card in from its section's start, so the title above it stays on screen (nightjar#7).
+     */
+    int sectionStart(int position) {
+        if (rows.isEmpty()) return position;
+        int at = Math.max(0, Math.min(position, rows.size() - 1));
+        for (int i = at; i >= 0; i--) {
+            if (rows.get(i).type == HEADER) {
+                return i;
+            }
+        }
+        return at;
+    }
+
+    /** A place to bring a card in: the position the list starts at, and its top offset in pixels. */
+    static final class Reveal {
+        final int position;
+        final int offset;
+
+        Reveal(int position, int offset) {
+            this.position = position;
+            this.offset = offset;
+        }
+    }
+
+    /**
+     * Whether a card {@code rowsBelowHeading} rows under its section's heading stays on screen when the list starts at
+     * the heading, in a viewport this tall: the heading takes its own height and every row above the card one card
+     * row's. A height or viewport that is not measured yet answers no, so the card is brought in itself rather than
+     * left past the screen where it cannot take focus.
+     */
+    static boolean titleKeepsCardOnScreen(int rowsBelowHeading, int headingHeight, int rowHeight, int viewport) {
+        if (headingHeight <= 0 || rowHeight <= 0 || viewport <= 0) return false;
+        return headingHeight + (long) rowsBelowHeading * rowHeight <= viewport;
+    }
+
+    /**
+     * Where bringing {@code position} in starts the list: a phone goes to the card itself; a TV to its section's
+     * heading while the card stays on screen under it (nightjar#7), else to the card under an empty heading's height,
+     * where it can take focus. {@code rowsBelowHeading} is the card's row distance from the heading's row.
+     */
+    Reveal reveal(int position, int rowsBelowHeading, int headingHeight, int rowHeight, int viewport,
+            boolean television) {
+        if (!television) return new Reveal(position, 0);
+        if (titleKeepsCardOnScreen(rowsBelowHeading, headingHeight, rowHeight, viewport)) {
+            return new Reveal(sectionStart(position), 0);
+        }
+        return new Reveal(position, headingHeight);
+    }
+
+    /**
      * Where focus starts: the game that runs now (in Continue playing, else anywhere), otherwise the first card.
      * The Favourites row stays first on screen either way.
      */

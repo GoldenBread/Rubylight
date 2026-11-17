@@ -1,0 +1,57 @@
+[
+  {
+    "name": "a cleaned name and the key of a game with a Steam id",
+    "request": {"op": "clean", "name": "DOOM Eternal™ (PC)", "game_id": "steam:782330"},
+    "response": {"ok": {"clean": "DOOM Eternal", "key": "steam:782330", "steam": 782330}}
+  },
+  {
+    "name": "a cleaned name and the key of a game known by name only",
+    "request": {"op": "clean", "name": "Mafia: Definitive Edition", "game_id": null},
+    "response": {"ok": {"clean": "Mafia", "key": "name:mafia", "steam": null}}
+  },
+  {
+    "name": "a Steam store entry names the app id when the game id does not",
+    "request": {"op": "clean", "name": "Hades", "game_id": "custom:7", "store": {"source": "steam", "id": "1145360"}},
+    "response": {"ok": {"clean": "Hades", "key": "steam:1145360", "steam": 1145360}}
+  },
+  {
+    "name": "a record still holds while no new key was added",
+    "request": {"op": "fresh", "record": {"key": "steam:1", "fetched_at": 1000, "art": "found", "info": "skipped"}, "now_secs": 2000, "keys": {"steamgriddb": "k"}},
+    "response": {"ok": {"fresh": true}}
+  },
+  {
+    "name": "an IGDB key added since makes the record stale",
+    "request": {"op": "fresh", "record": {"key": "steam:1", "fetched_at": 1000, "art": "found", "info": "skipped"}, "now_secs": 2000, "keys": {"steamgriddb": "k", "igdb_client_id": "i", "igdb_client_secret": "s"}},
+    "response": {"ok": {"fresh": false}}
+  },
+  {
+    "name": "a facts-only record keeps the art found before, with its own time",
+    "request": {"op": "merge", "record": {"key": "steam:1", "fetched_at": 2000, "art": "skipped", "info": "found", "facts": {"name": "A", "genres": ["RPG"], "themes": [], "hastily": null, "normally": null, "completely": null}}, "older": {"key": "steam:1", "fetched_at": 1000, "art": "found", "info": "skipped", "cover": "https://cdn2.steamgriddb.com/grid/a.png"}},
+    "response": {"ok": {"record": {"key": "steam:1", "fetched_at": 2000, "cover": "https://cdn2.steamgriddb.com/grid/a.png", "hero": null, "logo": null, "facts": {"name": "A", "genres": ["RPG"], "themes": [], "hastily": null, "normally": null, "completely": null}, "art": "found", "info": "found", "art_at": 1000}}}
+  },
+  {
+    "name": "the library's genres and lengths, and the games under a genre",
+    "request": {"op": "library", "games": [{"genres": ["Shooter"], "normally": 36000}, null, {"genres": ["Puzzle"], "normally": 7200}], "genre": "Shooter", "length": null},
+    "response": {"ok": {"genres": [{"value": "Puzzle", "count": 1}, {"value": "Shooter", "count": 1}], "lengths": [{"value": "short", "count": 1}, {"value": "medium", "count": 1}], "shown": [0]}}
+  },
+  {
+    "name": "the games of a length",
+    "request": {"op": "library", "games": [{"genres": ["Shooter"], "normally": 36000}, null, {"genres": ["Puzzle"], "normally": 7200}], "genre": null, "length": "short"},
+    "response": {"ok": {"genres": [{"value": "Puzzle", "count": 1}, {"value": "Shooter", "count": 1}], "lengths": [{"value": "short", "count": 1}, {"value": "medium", "count": 1}], "shown": [2]}}
+  },
+  {
+    "name": "a game's time to beat in hours and its length",
+    "request": {"op": "facts", "facts": {"hastily": 5400, "normally": 36000}},
+    "response": {"ok": {"length": "medium", "hastily": "1.5", "normally": "10", "completely": null}}
+  },
+  {
+    "name": "the file names of a record and an image",
+    "request": {"op": "files", "key": "steam:1", "url": "https://cdn2.steamgriddb.com/grid/a.png"},
+    "response": {"ok": {"record": "20134e0ee372376e.json", "image": "148fdc164de6e06e.png"}}
+  },
+  {
+    "name": "a log line without secrets",
+    "request": {"op": "redact", "text": "Bearer abcd1234 and key5678x", "secrets": ["key5678x"]},
+    "response": {"ok": {"text": "Bearer [redacted] and [redacted]"}}
+  }
+]

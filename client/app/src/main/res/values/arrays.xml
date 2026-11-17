@@ -188,12 +188,14 @@
         <item>@string/upscaling_bilinear</item>
         <item>@string/upscaling_fsr1</item>
         <item>@string/upscaling_sgsr1</item>
+        <item>@string/upscaling_sgsr2</item>
     </string-array>
     <string-array name="upscaling_values" translatable="false">
         <item>off</item>
         <item>bilinear</item>
         <item>fsr1</item>
         <item>sgsr1</item>
+        <item>sgsr2</item>
     </string-array>
     <string-array name="hevc_low_latency_mode_names">
         <item>@string/hevc_low_latency_auto</item>

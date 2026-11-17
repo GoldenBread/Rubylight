@@ -6,7 +6,7 @@ Nightjar and its two streaming engines (Rust and the classic C engine) share one
 
 ## Rules
 
-- A vendor key goes only to the decoder it belongs to, matched by codec-name prefix (`c2.qti`, `c2.mtk`, `OMX.Nvidia`, ...). On Android 12 and newer a decoder that lists its vendor parameters gets the keys it declares, plus the Snapdragon, Tegra and MediaTek sets, which those decoders take by name.
+- A vendor key goes only to the decoder it belongs to, matched by codec-name prefix (`c2.qti`, `c2.mtk`, `OMX.Nvidia`, ...). On Android 12 and newer a decoder that lists its vendor parameters gets the keys it declares that belong to its vendor, plus the Snapdragon, Tegra and MediaTek sets, which those decoders take by name. Snapdragon's `vendor.qti-ext-*` keys, the output fence included, reach only `omx.qcom`, `c2.qti` and `c2.qcom` decoders: another vendor's decoder that declares them does not implement them.
 - A decoder that rejects `configure()` gets the next try of the fallback ladder with fewer keys, down to a plain format. The format of every try is built fresh, so nothing carries over. The Snapdragon extras and the performance keys leave after the first tries, so a decoder that dislikes them still ends up with the plain low-latency keys.
 - The applied keys and the keys dropped by rejected configures are logged once per stream (`Decoder <name> tuning keys applied: ...; dropped after rejected configures: ...`) and appear in the problem report as "Tuning keys applied" and "Tuning keys dropped after rejected configures". The overlay is unchanged.
 
@@ -17,7 +17,7 @@ SoC names are the ones the source or its comments name.
 | Setting | What Nightjar sends |
 | --- | --- |
 | `low-latency` | Every Android version, try 0. Decoders that do not know the key ignore it. |
-| Qualcomm keys on `c2.qti`, `c2.qcom`, `OMX.qcom` | Low-latency, picture order 1, SW fence, output fence and fence type, then `frame-drop.enable` = 1 on tries 0 to 2. `info-misr.disable`, `instant-decode.enable` and `error-correction.conceal` = 1 only to decoders that declare them (Android 12 and newer), on try 0 only, so a rejected one leaves the confirmed keys on the next tries. `picture-order.enable` = 0 is not sent (see the Retroid section). |
+| Qualcomm keys on `c2.qti`, `c2.qcom`, `OMX.qcom` | Low-latency, picture order 1, SW fence, output fence and fence type, then `frame-drop.enable` = 1 on tries 0 to 2 only with `debug.nightjar.qti_frame_drop=1` (off by default since 2026-11-17: it let the decoder drop a picture the screen never saw, and the pacing rig could not tell it from the setting off). `info-misr.disable`, `instant-decode.enable` and `error-correction.conceal` = 1 only to decoders that declare them (Android 12 and newer), on try 0 only, so a rejected one leaves the confirmed keys on the next tries. `picture-order.enable` = 0 is not sent (see the Retroid section). |
 | `OMX.qcom` only | `dpb-output-delay.enable` = 0 and `picture-type.enable` = 0, tries 0 to 2. |
 | Operating rate and priority on Snapdragon | Operating rate except on the Adreno 620, priority 0 elsewhere (see "Not sent"). |
 | MediaTek preset (`c2.mtk`, `OMX.MTK`) | 18 `vendor.mtk` keys with boost and DVFS level 2 and `vendor.mtk.vdec.pq` = 0, by name on Android 8 and newer, tries 0 and 1 (the plain vendor switches get try 2). AV1 gets only the eight low-latency, boost, DVFS, idle and vsync switches, without queue, wait, preload or skip keys, on both tries: a MediaTek AV1 decoder on a Fire TV showed wrong colours for whole streams with either queue setting. Try 0 asks for queue depth 2, fetch timeout and guard interval 2 ms and no preload; try 1 relaxes to the full preset (depth 3, 4 ms, 1 frame) without `KEY_LOW_LATENCY`. Each fallback sends the keys of the try before or fewer, with values only relaxing toward the full preset. `cpu.boost.mode` = 2 reaches every MediaTek decoder that declares the key, not only the preset's. No vendor keys at all while "Render through Vulkan" draws the frames: with them the TCL C6K's decoder took no input after one to four frames. |
@@ -27,7 +27,7 @@ SoC names are the ones the source or its comments name.
 | Google Codec2 (`c2.google`, Pixel/Tensor) | Operating rate, priority 0, and `vendor.google.frame-rate.value` on Android 16 (API 36) and newer, tries 0 and 1 (the frame rate key on try 0), behind the vendor low-latency setting and the performance hints. The rate is the decoder's own maximum for the stream size (at most 960), never above what it declares; the 120 floor applies only to a decoder that declares at least 120 or reports nothing. Not measured: no Tensor device here. |
 | RFI (reference frame invalidation) | Exynos, Qualcomm, NVIDIA, Amlogic and Fire OS lists, plus `c2.mtk` and `omx.mtk` for AVC and HEVC and `c2.qcom` for HEVC, the last behind the same GLES 3 check as the other Qualcomm entries. Never for HEVC on a Fire TV's Amlogic decoders (see below). |
 | RFI detection by declared vendor switch | The known low-latency switches, and five MediaTek ones (`low-latency.strict.enable`, `early.output.enable`, `no.reorder.enable`, `disable.reorder`, `no.clock.adjust`), for HEVC RFI only, detected and never set. The delay and timeout knobs (`output.delay.frames`, `dpb.output.delay.frames`, `buffer.fetch.timeout.ms`) are no evidence of low latency and are left out; the AV1 whitelist is unchanged. |
-| Declared vendor parameters (Android 12 and newer) | The declared keys, reasserted after `start()`, with the exact applied and dropped keys in the log and the problem report. |
+| Declared vendor parameters (Android 12 and newer) | The declared keys of the decoder's own vendor, reasserted after `start()`, with the exact applied and dropped keys in the log and the problem report. |
 
 ### Per-device exceptions
 
@@ -61,7 +61,7 @@ One combined check on 2026-10-24 for the Snapdragon part: the 1080p60 HEVC fixtu
 | All keys | 1.43 (2.08) | 2.27 (3.44) | 7.53 (10.73) |
 
 - The "Vendor lists" build sends the same key set on `c2.qti` as before, and measures the same, within the run-to-run spread of about 0.1 ms.
-- The Snapdragon extra on `c2.qti` is one key: `frame-drop.enable` = 1 (applied, no rejected configure, nothing dropped). The "All keys" run is not worse; with one run, its 0.4 ms lower end to end is within what a second run could change, so it is not claimed as a gain.
+- The Snapdragon extra on `c2.qti` is one key: `frame-drop.enable` = 1, sent only with `debug.nightjar.qti_frame_drop=1` since 2026-11-17 (it was on by default in this table's runs: applied, no rejected configure, nothing dropped; the 2026-11-17 pacing rig measured it against off and found no difference in display holds, so it is off). The "All keys" run is not worse; with one run, its 0.4 ms lower end to end is within what a second run could change, so it is not claimed as a gain.
 - **`picture-order.enable` = 0 is not sent.** With it, `c2.qti.hevc.decoder.low_latency` accepted the configure and then produced no output at all (28 frames in, none out, `DecoderHungException` after 5 s). The fallback ladder cannot catch that, since the configure succeeded. Without the key the same build streams normally.
 - Not measured: the other Snapdragon generations, MediaTek, NVIDIA and Amlogic (see below), and AV1 on this device.
 
@@ -74,7 +74,7 @@ Nightjar's own Android devices are a Retroid Pocket 6 and a Galaxy Z Fold7 (both
 - **`low-latency` before Android 11** on every decoder. Decoders that do not know the key ignore it, and a decoder that rejects the format loses it on the next try.
 - **`c2.qcom` prefix** for Snapdragon decoders under that name, including RFI for HEVC.
 - **`OMX.qcom` extras** (`dpb-output-delay`, `picture-type`): old Snapdragons only.
-- **`frame-drop.enable` on Snapdragons other than the 8 Gen 2.** Only the Retroid's 8 Gen 2 was run; the key is sent to every Qualcomm decoder on tries 0 to 2.
+- **`frame-drop.enable` on Snapdragons other than the 8 Gen 2.** Only the Retroid's 8 Gen 2 was run; with `debug.nightjar.qti_frame_drop=1` the key goes to every Qualcomm decoder on tries 0 to 2 (off by default).
 
 Each is covered by a test per decoder name, and by one for the fallback ladder (the keys drop out of later tries), the vendor switch (off means none sent) and the Android 12 declared-parameter path.
 

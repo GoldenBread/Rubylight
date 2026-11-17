@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The simple settings layer (SimpleProfile): what the stream should favour, how much picture quality it may
+    spend, the screen it uses, HDR, console mode and Back to recommended. The choices are mapped onto the
+    existing settings by nightjar-policy's simple_profile, so they change the same values the sections below do;
+    a value changed there shows here as Custom (settings_custom). "Screen" is a read-only line: the profile
+    always streams at this device's own size and refresh rate.
+-->
+<resources>
+    <string name="settings_section_simple">Recommended</string>
+    <string name="settings_section_simple_summary">The choices most people need; the sections below hold every detail.</string>
+    <string name="title_simple_smoothness">Stream smoothness</string>
+    <string name="summary_simple_smoothness">Auto follows the screen and decoder: the newest picture at each refresh, with variable refresh rate only if you turned it on in Display &amp; image. Smoothest holds every frame for a steady cadence with a little more delay; Lowest delay never waits. Leave it on Auto unless a game judders or feels slow.</string>
+    <string name="simple_smoothest">Smoothest</string>
+    <string name="simple_balanced">Balanced</string>
+    <string name="simple_lowest_delay">Lowest delay</string>
+    <string name="title_simple_picture">Picture quality</string>
+    <string name="summary_simple_picture">Sets the bitrate: Best spends more network for a sharper picture, Save data uses less and lowers quality when the link struggles. Leave it on Auto unless you need the extra sharpness or the lower data use.</string>
+    <string name="simple_picture_auto">Auto (recommended)</string>
+    <string name="simple_picture_best">Best</string>
+    <string name="simple_picture_save_data">Save data</string>
+    <string name="title_simple_screen">Screen</string>
+    <string name="summary_simple_screen">This device\'s own resolution and refresh rate. Lower it under Video if the stream stutters.</string>
+    <string name="simple_screen_value">%1$d×%2$d at %3$d Hz</string>
+    <string name="title_simple_hdr">HDR</string>
+    <string name="simple_hdr_auto">Auto (recommended)</string>
+    <string name="summary_simple_hdr">Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; turning it on elsewhere looks washed out. Leave it on Auto unless the picture looks washed out.</string>
+    <string name="title_simple_console">Console mode</string>
+    <string name="summary_simple_console">Opens straight into your games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open the list of PCs.</string>
+    <string name="simple_back_to_recommended">Back to recommended</string>
+    <string name="summary_simple_back_to_recommended">Returns the three choices above to what this device does best; the settings they stand for change with them.</string>
+    <string name="simple_profile_failed">The recommended settings could not be read on this device</string>
+
+    <string-array name="simple_smoothness_names">
+        <item>@string/simple_picture_auto</item>
+        <item>@string/simple_smoothest</item>
+        <item>@string/simple_balanced</item>
+        <item>@string/simple_lowest_delay</item>
+    </string-array>
+    <string-array name="simple_smoothness_values" translatable="false">
+        <item>auto</item>
+        <item>smoothest</item>
+        <item>balanced</item>
+        <item>lowest-delay</item>
+    </string-array>
+    <string-array name="simple_picture_names">
+        <item>@string/simple_picture_auto</item>
+        <item>@string/simple_picture_best</item>
+        <item>@string/simple_picture_save_data</item>
+    </string-array>
+    <string-array name="simple_picture_values" translatable="false">
+        <item>auto</item>
+        <item>best</item>
+        <item>save-data</item>
+    </string-array>
+    <string-array name="simple_hdr_names">
+        <item>@string/simple_hdr_auto</item>
+        <item>@string/settings_choice_off</item>
+    </string-array>
+    <string-array name="simple_hdr_values" translatable="false">
+        <item>auto</item>
+        <item>off</item>
+    </string-array>
+</resources>
