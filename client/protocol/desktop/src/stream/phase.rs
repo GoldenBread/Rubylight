@@ -740,13 +740,14 @@ mod tests {
     /// delivered after the present target and the hold clamped to nothing.
     #[test]
     fn a_steering_lock_delivers_at_the_present_lead_and_the_hold_waits() {
+        use rubylight_protocol::phase_lock::PhaseLock;
         // 120 Hz: refresh 100 at 833_300 (the last picture's), 101 at 841_633, the turn 102 at
         // 849_966; the deadline 5_000 before a refresh, the report's period 2 refreshes.
         let (period, guard, margin, laps) = (8_333u64, HELD_LATCH_GUARD_US, 5_000u64, 16_666u64);
         let lead = held_present_lead_us(period, guard);
         assert_eq!(lead, period - guard);
-        // The lock puts the early edge `DEFAULT_MARGIN_NS` past the reported aim.
-        let lock_us = 1_500i64;
+        // The lock puts the early edge `DEFAULT_MARGIN_NS` past the reported aim, µs.
+        let lock_us = PhaseLock::DEFAULT_MARGIN_NS / 1_000;
         let (turn, latch) = (849_966i64, 833_300i64);
         let ready = turn - lead as i64 - lock_us;
         let (aimed_latch, report_period_ns) = aimed(Some((latch, (laps * 1_000) as i64)), lead as i64).unwrap();

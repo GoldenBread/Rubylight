@@ -1659,12 +1659,13 @@ fn fractional_v_sync_holds_v_sync_pictures_only_and_follows_the_rates() {
 #[test]
 fn a_steered_stream_meets_its_hold_at_the_present_lead() {
     use crate::stream::phase;
+    use rubylight_protocol::phase_lock::PhaseLock;
     const REFRESH_US: u64 = 8_333;
     const HELD: u32 = 2;
     const MARGIN_US: u64 = 5_000;
     const GUARD_US: u64 = phase::HELD_LATCH_GUARD_US;
-    // `PhaseLock::DEFAULT_MARGIN_NS`: where a steering host puts the early edge past the aim.
-    const LOCK_US: i64 = 1_500;
+    // Where a steering host puts the early edge past the aim (`PhaseLock::DEFAULT_MARGIN_NS`).
+    const LOCK_US: i64 = PhaseLock::DEFAULT_MARGIN_NS / 1_000;
     let lead = phase::held_present_lead_us(REFRESH_US, GUARD_US);
     assert_eq!(lead, REFRESH_US - GUARD_US);
     let mut pacer = Pacer::new(PacingMode::Vsync, i64::from(HELD) * REFRESH_US as i64).with_frame_pacing(FramePacing::Latency, 60);
