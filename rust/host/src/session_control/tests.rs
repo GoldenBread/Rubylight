@@ -649,6 +649,50 @@ fn when_the_grace_period_runs_out_the_session_ends_as_end_session_does() {
     assert_eq!(setup.displays(), 1);
 }
 
+/// A game that ignores close outlasts the shutdown budget: its undo command
+/// runs for seconds before `end_app` returns. The kept display layout and
+/// audio route go back before that, so they do not wait behind it.
+#[test]
+fn shutdown_releases_the_kept_display_and_audio_before_a_game_that_ignores_close() {
+    let setup = Setup::new("");
+    let host = setup.host();
+    let mut app = setup.game();
+    app.cmd.clear();
+    app.prep = vec![butterpollo_core::state::PrepCommand {
+        r#do: String::new(),
+        undo: "ping -n 3 127.0.0.1 >nul".into(),
+        elevated: false,
+        extra: Default::default(),
+    }];
+    let mut running = crate::process::RunningApp::with_environment(&app, Default::default())
+        .expect("the test game starts");
+    running.owner = setup.uuid().to_owned();
+    *host.current_app.lock().unwrap() = Some(running);
+    setup.retain_display();
+    *host.app_audio.lock().unwrap() = Some(Arc::new(
+        butterpollo_windows::audio_route::Route::detached(&host.directory),
+    ));
+    let stopping = setup.fixture.host.clone();
+    let began = Instant::now();
+    let stopped = std::thread::spawn(move || stopping.stop_app(crate::state::AppStop::Shutdown));
+    let released = (0..30).any(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        host.app_audio.lock().unwrap().is_none() && host.app_display.lock().unwrap().is_empty()
+    });
+    assert!(
+        released,
+        "the display and audio route were still held while the game's undo command ran"
+    );
+    stopped.join().unwrap();
+    assert!(
+        began.elapsed() >= std::time::Duration::from_secs(1),
+        "the test's undo command finished too quickly to prove the order"
+    );
+    assert!(!setup.game_running());
+    assert!(host.app_audio.lock().unwrap().is_none());
+    assert_eq!(setup.displays(), 0);
+}
+
 #[test]
 fn hold_sink_while_paused_keeps_the_audio_route_while_the_game_runs() {
     use butterpollo_windows::audio_route::Route;

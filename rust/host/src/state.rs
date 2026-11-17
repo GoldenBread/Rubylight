@@ -625,6 +625,14 @@ impl Host {
         // Stopping the app waits for it to exit, up to its exit timeout and
         // undo commands: never under the lock every serverinfo request takes.
         let app = self.current_app.lock().unwrap().take();
+        // At shutdown the wait runs under a budget: a game that ignores close
+        // must not leave the host's display layout and audio route behind, so
+        // they go back before the game is asked to.
+        if matches!(why, AppStop::Shutdown) {
+            let audio = self.app_audio.lock().unwrap().take();
+            let displays = std::mem::take(&mut *self.app_display.lock().unwrap());
+            drop((audio, displays));
+        }
         self.end_app(app, why);
         let audio = self.app_audio.lock().unwrap().take();
         let displays = std::mem::take(&mut *self.app_display.lock().unwrap());
