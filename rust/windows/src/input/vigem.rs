@@ -666,6 +666,11 @@ impl Client {
         Ok((target, &self.submitted))
     }
     pub(super) fn plug(&mut self, slot: u32, profile: u16) -> Result<()> {
+        // One pad per slot: the old target leaves before the new one can take
+        // a player index beside it.
+        if let Some(mut previous) = self.targets.remove(&slot) {
+            previous.unplug()?;
+        }
         let kind = if profile == VIGEM_DS4 {
             Kind::Ds4
         } else {
