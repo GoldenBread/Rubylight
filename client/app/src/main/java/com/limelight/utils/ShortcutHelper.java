@@ -101,9 +101,10 @@ public class ShortcutHelper {
         }
     }
 
-    public void reportGameLaunched(ComputerDetails computer, NvApp app) {
+    /** {@code artKey}: the launch's cover key ({@code Game.EXTRA_APP_ART_KEY}), or null. */
+    public void reportGameLaunched(ComputerDetails computer, NvApp app, String artKey) {
         tvChannelHelper.createTvChannel(computer);
-        tvChannelHelper.addGameToChannel(computer, app);
+        tvChannelHelper.addGameToChannel(computer, app, artKey);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1 && app.getRole() == NvApp.Role.STREAM) {
             // A convenience: the system's shortcut service failing must not stop the stream being started.
             try {
