@@ -413,6 +413,48 @@ public class ComputerManagerLifecycleTest {
         }
     }
 
+    @Test
+    public void aNetworkCallbackDoesNotOverwriteAStateAPollConfirmedMeanwhile() throws Exception {
+        ServiceController<Manager> controller = Robolectric.buildService(Manager.class).create();
+        ComputerManagerService service = controller.get();
+        try {
+            ComputerDetails computer = new ComputerDetails();
+            computer.uuid = "network-host";
+            computer.state = ComputerDetails.State.ONLINE;
+            addTuple(service, computer);
+            List<PollingTuple> tuples = ReflectionHelpers.getField(service, "pollingTuples");
+            PollingTuple tuple = tuples.get(tuples.size() - 1);
+            android.net.ConnectivityManager.NetworkCallback callback =
+                    ReflectionHelpers.getField(service, "networkCallback");
+
+            CountDownLatch pollRunning = new CountDownLatch(1);
+            Thread poll = new Thread(() -> {
+                synchronized (tuple.networkLock) {
+                    pollRunning.countDown();
+                    try {
+                        Thread.sleep(300);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                    // The poll that the callback waits for answers, after the network change arrived.
+                    tuple.lastSuccessfulPollMs = android.os.SystemClock.elapsedRealtime();
+                }
+            });
+            poll.start();
+            assertTrue(pollRunning.await(5, TimeUnit.SECONDS));
+
+            Thread network = new Thread(() -> callback.onLost(null));
+            network.start();
+            poll.join(5000);
+            network.join(5000);
+            assertFalse(network.isAlive());
+            assertEquals("the poll that answered meanwhile keeps the PC online",
+                    ComputerDetails.State.ONLINE, tuple.computer.state);
+        } finally {
+            controller.destroy();
+        }
+    }
+
     private static ComputerDetails savedWithCertificate(android.content.Context context, String uuid) {
         ComputerDetails stored = new ComputerDetails();
         stored.uuid = uuid;

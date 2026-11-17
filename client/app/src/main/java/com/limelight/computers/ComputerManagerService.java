@@ -1179,34 +1179,45 @@ public class ComputerManagerService extends Service {
                 @Override
                 public void onAvailable(Network network) {
                     LimeLog.info("Resetting PC state for new available network");
-                    synchronized (pollingTuples) {
-                        for (PollingTuple tuple : pollingTuples) {
-                            tuple.computer.state = ComputerDetails.State.UNKNOWN;
-                            ComputerManagerListener currentListener = listener;
-                            if (currentListener != null) {
-                                currentListener.notifyComputerUpdated(tuple.computer);
-                            }
-                        }
-                    }
+                    resetStateForNetworkChange(true);
                 }
 
                 @Override
                 public void onLost(Network network) {
                     LimeLog.info("Offlining PCs due to network loss");
-                    synchronized (pollingTuples) {
-                        for (PollingTuple tuple : pollingTuples) {
-                            tuple.computer.state = ComputerDetails.State.OFFLINE;
-                            ComputerManagerListener currentListener = listener;
-                            if (currentListener != null) {
-                                currentListener.notifyComputerUpdated(tuple.computer);
-                            }
-                        }
-                    }
+                    resetStateForNetworkChange(false);
                 }
             };
 
             ConnectivityManager connMgr = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
             connMgr.registerDefaultNetworkCallback(networkCallback);
+        }
+    }
+
+    /**
+     * A change of the default network resets what the pollers last found, since a PC's addresses may
+     * have moved. Each PC's state is written under the lock its poll holds; a poll that answered after
+     * this change began keeps its state, so a callback dispatched late cannot show it offline.
+     */
+    void resetStateForNetworkChange(boolean available) {
+        long startedMs = SystemClock.elapsedRealtime();
+        List<PollingTuple> tuples;
+        synchronized (pollingTuples) {
+            tuples = new ArrayList<>(pollingTuples);
+        }
+        List<PollingTuple> updated = new ArrayList<>();
+        for (PollingTuple tuple : tuples) {
+            synchronized (tuple.networkLock) {
+                if (destroyed || tuple.removed) continue;
+                if (tuple.lastSuccessfulPollMs >= startedMs) continue;
+                tuple.computer.state = available ? ComputerDetails.State.UNKNOWN : ComputerDetails.State.OFFLINE;
+            }
+            updated.add(tuple);
+        }
+        ComputerManagerListener currentListener = listener;
+        if (currentListener == null || destroyed) return;
+        for (PollingTuple tuple : updated) {
+            currentListener.notifyComputerUpdated(tuple.computer);
         }
     }
 
