@@ -26,6 +26,7 @@ use butterpollo_core::{
     neural::{self, Download, Gpu, Placed, Release},
     state::App,
 };
+use butterpollo_windows::process::Hold;
 use folder::{PACKAGE, Package, Request, Response, Writer};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -202,9 +203,18 @@ pub enum GameCheck {
 struct Using {
     h: Shared,
     folder: PathBuf,
+    /// Open until the install's copy is done: the cache and its data root were
+    /// checked before the release was read, and this keeps them where they
+    /// were checked. Taken before the release is removed: Windows refuses to
+    /// delete a folder whose open handle does not share deletion.
+    held: Option<Hold>,
 }
 impl Drop for Using {
     fn drop(&mut self) {
+        // Released before the release may be removed: a held folder cannot be
+        // deleted, and taking the value here drops it now rather than at the
+        // end of this call.
+        self.held = None;
         let last = {
             let mut state = self.h.neural.lock();
             let Some(count) = state.using.get_mut(&self.folder) else {
@@ -1006,9 +1016,11 @@ fn ensure_root(root: &Path) -> Result<()> {
 /// it, a cache anyone but administrators may change, or a folder from it up
 /// to the host's data root they don't own or whose folders they may move
 /// away and replace. A release planted there would reach every game. Above
-/// the data root only the link check applies: that folder's own permissions
-/// already stop anyone else from moving it away and putting a link in its
-/// place.
+/// the data root only the link check applies, and not because those folders are
+/// safe: `C:\ProgramData` itself lets other accounts move folders on a PC where
+/// it was opened up, so a check there would refuse every user. The callers hold
+/// the cache and its data root open instead ([`Hold`]), which is what keeps the
+/// paths this check passed naming what is later read.
 fn trusted_root(root: &Path, data_root: &Path, system: bool) -> Result<()> {
     trusted_root_with(root, data_root, system, folder::administrators_hold)
 }
@@ -1089,21 +1101,23 @@ fn verify_cache(h: &Shared, folder: &Path, package: &Package) -> Result<()> {
 /// The pinned release for a launch to finish an update cut short with,
 /// from a cache this host trusts. None when it is not cached. Not rehashed:
 /// an update copies each file checked against the release as it goes, and
-/// most launches copy nothing.
-fn launch_cache(h: &Shared) -> Result<Option<folder::Cached>> {
+/// most launches copy nothing. The [`Hold`] comes back with it, so the cache
+/// stays where it was checked until the caller's copy is done.
+fn launch_cache(h: &Shared) -> Result<Option<(folder::Cached, Hold)>> {
     let root = cache_root(h);
     if !root.exists() {
         return Ok(None);
     }
-    trusted_root(
-        &root,
-        &data_root(h),
-        butterpollo_windows::process::is_system(),
-    )?;
+    let data_root = data_root(h);
+    // Held before the check, as the NVIDIA components' folders are: what the
+    // check approves is what is read after it, not a same-named replacement.
+    let held = Hold::new([root.as_path(), data_root.as_path()])
+        .context("cannot open the Neural Rendering cache")?;
+    trusted_root(&root, &data_root, butterpollo_windows::process::is_system())?;
     let pin = pinned(h);
     Ok(cached(&root)
         .filter(|(_, package)| serves(package, &pin))
-        .map(|(folder, package)| package.with(folder)))
+        .map(|(folder, package)| (package.with(folder), held)))
 }
 
 /// Where GitHub's release list and the release files are: GitHub, or a
@@ -1155,12 +1169,13 @@ async fn fetch_using(h: &Shared, progress: &(dyn Fn(u64, u64) + Sync)) -> Result
     // Older releases go only under this lock: the release is kept before
     // another fetch may clear it.
     let _one = h.neural.fetching.lock().await;
-    let (folder, package) = fetch_locked(h, progress).await?;
+    let (folder, package, held) = fetch_locked(h, progress).await?;
     *h.neural.lock().using.entry(folder.clone()).or_default() += 1;
     Ok((
         Using {
             h: h.clone(),
             folder,
+            held: Some(held),
         },
         package,
     ))
@@ -1169,14 +1184,16 @@ async fn fetch_using(h: &Shared, progress: &(dyn Fn(u64, u64) + Sync)) -> Result
 async fn fetch_locked(
     h: &Shared,
     progress: &(dyn Fn(u64, u64) + Sync),
-) -> Result<(PathBuf, Package)> {
+) -> Result<(PathBuf, Package, Hold)> {
     let root = cache_root(h);
     ensure_root(&root)?;
-    trusted_root(
-        &root,
-        &data_root(h),
-        butterpollo_windows::process::is_system(),
-    )?;
+    let data_root = data_root(h);
+    // Held before the check, as the NVIDIA components' folders are: the cache
+    // that was checked cannot be renamed away and replaced while it is read,
+    // verified or downloaded into.
+    let held = Hold::new([root.as_path(), data_root.as_path()])
+        .context("cannot open the Neural Rendering cache")?;
+    trusted_root(&root, &data_root, butterpollo_windows::process::is_system())?;
     let pin = pinned(h);
     // Its files as checked when they came, or it goes and comes again.
     if let Some(have) = cached(&root).filter(|(_, package)| serves(package, &pin)) {
@@ -1187,7 +1204,7 @@ async fn fetch_locked(
         })
         .await?;
         match checked {
-            Ok(have) => return Ok(have),
+            Ok((folder, package)) => return Ok((folder, package, held)),
             Err(error) => {
                 tracing::warn!(error = %format!("{error:#}"), "Neural Rendering: the cached release is damaged; it is downloaded again")
             }
@@ -1266,7 +1283,7 @@ async fn fetch_locked(
     .inspect_err(|_| discard())?;
     discard();
     tracing::info!(release = %release.tag, folder = %folder.display(), "Neural Rendering: downloaded and checked the frame generation release");
-    Ok((folder, package))
+    Ok((folder, package, held))
 }
 
 async fn download(
@@ -2484,12 +2501,17 @@ pub fn before_launch(h: &Shared, app: &App) -> Result<()> {
 
 fn launch_check(h: &Shared, app: &App, uuid: &str, exe: PathBuf, legacy: bool) -> Result<()> {
     let _reading = h.neural.reading();
-    let package = if legacy {
-        None
+    // The hold lives until this check returns: the helper copies from the
+    // cached release while it runs.
+    let (package, _held) = if legacy {
+        (None, None)
     } else {
-        launch_cache(h).context(
+        match launch_cache(h).context(
             "Neural Rendering's download can't be used; turn frame generation off and on again",
-        )?
+        )? {
+            Some((package, held)) => (Some(package), Some(held)),
+            None => (None, None),
+        }
     };
     let paths = reached_by(app, None, &exe);
     let response = match steam_refusal(app, &paths, &steam_roots(h)) {

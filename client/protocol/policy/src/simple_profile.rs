@@ -3,9 +3,9 @@
 //! already have. The screen stays this device's own resolution and refresh rate.
 //!
 //! Everything here is pure: the caller passes what it measured at run time (display size and
-//! refresh rate, HDR output, decoder benchmark and codec support, and what the PC offers), so the
-//! mapping follows this device and this PC and never a vendor or model name. A stream keeps its
-//! values as concrete settings, so a user who never opens Settings is not touched by this module.
+//! refresh rate, HDR output, codec support, and what the PC offers), so the mapping follows this
+//! device and this PC and never a vendor or model name. A stream keeps its values as concrete
+//! settings, so a user who never opens Settings is not touched by this module.
 //!
 //! The choices are stored by each app (`simple_smoothness`, `simple_picture`, `simple_hdr` on
 //! Android, the same fields in desktop Nightjar's `settings.json`). The rows show "Custom" when
@@ -194,14 +194,11 @@ pub struct Decoder {
     pub av1: bool,
     /// It decodes 10-bit HDR at all.
     pub hdr: bool,
-    /// The highest frame rate the decoder benchmark sustained at the screen's own size, when it
-    /// measured one. `None` means the benchmark has not run; the screen's rate is then used.
-    pub max_fps_at_native: Option<u32>,
 }
 
 impl Default for Decoder {
     fn default() -> Self {
-        Self { h264: true, hevc: false, av1: false, hdr: false, max_fps_at_native: None }
+        Self { h264: true, hevc: false, av1: false, hdr: false }
     }
 }
 
@@ -264,7 +261,9 @@ pub enum AdaptiveQuality {
 pub struct Values {
     /// The stream uses this screen's own size and rate (the apps' native resolution).
     pub native_resolution: bool,
-    /// `None` is the screen's refresh rate; `Some(rate)` is a measured lower cap.
+    /// `None` is the screen's own rate, which the simple layer always asks for: a decode time is
+    /// not a sustained rate, so nothing measured caps it. `Some(rate)` is a lower rate the player
+    /// set by hand, which reads as Custom.
     pub fps: Option<u32>,
     pub pacing: Pacing,
     /// Variable refresh rate where the screen offers it.
@@ -342,13 +341,10 @@ pub fn values(choices: Choices, capabilities: &Capabilities) -> Values {
         Picture::Best => Bitrate::Factor(1500),
         Picture::SaveData => Bitrate::Factor(600),
     };
-    // A benchmark below the screen's rate caps the stream there; without one, or when it meets the
-    // screen's rate, the screen leads.
-    let fps = decoder
-        .max_fps_at_native
-        .filter(|&fps| fps > 0)
-        .map(|fps| fps.min(display.frame_rate()))
-        .filter(|&fps| fps < display.frame_rate());
+    // The screen's own rate: a decoder's benchmark time measures how long one frame takes to
+    // decode, which says nothing about how many frames a second it sustains, so it never caps the
+    // stream. A lower rate is the player's own choice and reads as Custom.
+    let fps = None;
     let hdr = choices.hdr == Hdr::Auto
         && display.hdr
         && decoder.hdr
@@ -523,7 +519,7 @@ mod tests {
     fn hdr_device() -> Capabilities {
         Capabilities {
             display: Display { width: 1920, height: 1080, refresh_hz: 120, hdr: true, vrr: true },
-            decoder: Decoder { h264: true, hevc: true, av1: true, hdr: true, max_fps_at_native: None },
+            decoder: Decoder { h264: true, hevc: true, av1: true, hdr: true },
             host: Host { hdr: Some(true), hevc: Some(true), av1: Some(true) },
         }
     }
@@ -531,7 +527,7 @@ mod tests {
     fn plain_device() -> Capabilities {
         Capabilities {
             display: Display { width: 1280, height: 720, refresh_hz: 60, hdr: false, vrr: false },
-            decoder: Decoder { h264: true, hevc: false, av1: false, hdr: false, max_fps_at_native: None },
+            decoder: Decoder { h264: true, hevc: false, av1: false, hdr: false },
             ..Capabilities::default()
         }
     }
@@ -548,20 +544,14 @@ mod tests {
 
     #[test]
     fn every_screen_keeps_its_own_size_and_rate() {
-        let auto = values(Choices::default(), &hdr_device());
-        assert!(auto.native_resolution);
-        assert_eq!(auto.fps, None, "no benchmark: the screen's 120 Hz");
+        // A decode time is not a sustained rate: nothing in the device's capabilities caps the
+        // frame rate, so the layer always leaves the screen's own rate in charge.
+        for capabilities in [plain_device(), hdr_device()] {
+            let auto = values(Choices::default(), &capabilities);
+            assert!(auto.native_resolution);
+            assert_eq!(auto.fps, None, "the screen's own rate");
+        }
         assert_eq!(hdr_device().display.frame_rate(), 120);
-        let benchmarked = Capabilities {
-            decoder: Decoder { max_fps_at_native: Some(60), ..hdr_device().decoder },
-            ..hdr_device()
-        };
-        assert_eq!(values(Choices::default(), &benchmarked).fps, Some(60), "the measured cap wins");
-        let higher = Capabilities {
-            decoder: Decoder { max_fps_at_native: Some(240), ..hdr_device().decoder },
-            ..hdr_device()
-        };
-        assert_eq!(values(Choices::default(), &higher).fps, None, "a cap at or above the screen's rate leaves the screen in charge");
     }
 
     #[test]
@@ -771,7 +761,7 @@ mod tests {
         let ask = |request: &str| -> Value { serde_json::from_str(&json::call(request)).unwrap() };
         let caps = json!({
             "display": {"width": 1920, "height": 1080, "refresh_hz": 120, "hdr": true, "vrr": true},
-            "decoder": {"h264": true, "hevc": true, "av1": true, "hdr": true, "max_fps_at_native": null},
+            "decoder": {"h264": true, "hevc": true, "av1": true, "hdr": true},
             "host": {"hdr": true, "hevc": true, "av1": true}
         });
         let request = json!({

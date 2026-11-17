@@ -85,7 +85,11 @@ The question: does a temporal upscaler adapted from Qualcomm's Snapdragon Game
 Super Resolution 2, fed only what a decoded stream has, beat SGSR 1 at an
 acceptable GPU cost and without an added frame of delay? It does not, so no
 app gets it. Everything below is offline, on this PC's CPU; nothing ran on a
-GPU, so there are no GPU times.
+GPU, so there are no GPU times. (On 2026-11-17 the `t_detail` variant shipped
+anyway as an opt-in value of the upscaling setting, never the default; see the
+status table. Counted from its shipped shaders, all six passes read about 43
+texels per output pixel at 0.5x and 52 at 0.67x, against SGSR 1's 13 at an
+edge: the motion search alone is about 45 reads per stream pixel.)
 
 **Setup.** `client/tools/temporal_upscaler/` (README there; reports and
 JSON in its `results/`). Ten self-generated 1280x720 60 fps clips (sub-pixel,
