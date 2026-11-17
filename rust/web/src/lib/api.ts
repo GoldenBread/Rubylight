@@ -620,6 +620,9 @@ export interface StreamSession {
   device_name: string;
   width: number;
   height: number;
+  /** The size the PC's display keeps; differs from `width`/`height` when Maximum stream resolution caps the coded picture. */
+  display_width?: number;
+  display_height?: number;
   /** The rate the stream is encoded at. */
   fps: number;
   /** The rate in the device's stream request; differs when Use the launch frame rate applies. */

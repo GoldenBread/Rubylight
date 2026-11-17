@@ -16,8 +16,41 @@ mod descriptors;
 use descriptors::*;
 
 pub const REPORT_PERIOD: Duration = Duration::from_millis(4);
+/// `dualsense_haptics_gain`: how strongly a game's own waveform haptics drive
+/// the composite DualSense's two actuators, as a multiple of what the game
+/// sent (0 to 4, 1 by default). Ordinary rumble and adaptive triggers are
+/// never scaled.
+pub const HAPTICS_GAIN: &str = "dualsense_haptics_gain";
+pub const HAPTICS_GAIN_DEFAULT: u16 = 100;
+pub const HAPTICS_GAIN_MAX: f64 = 4.;
 static SEQUENCES: [AtomicU32; 16] = [const { AtomicU32::new(0) }; 16];
 static SPEAKER_SEQUENCES: [AtomicU32; 16] = [const { AtomicU32::new(0) }; 16];
+
+/// `value` of [`HAPTICS_GAIN`] as percent of what the game sent, or `None`
+/// when it is not a multiple between 0 and 4.
+pub fn parse_haptics_gain(value: &str) -> Option<u16> {
+    let gain: f64 = crate::config::number_text(value).parse().ok()?;
+    (gain.is_finite() && (0.0..=HAPTICS_GAIN_MAX).contains(&gain))
+        .then_some((gain * 100.).round() as u16)
+}
+
+/// [`HAPTICS_GAIN`] as the host reads it; a value the console would refuse is
+/// reported and leaves the game's own strength.
+pub fn haptics_gain(config: &crate::config::Config) -> u16 {
+    let value = config.get(HAPTICS_GAIN, "1");
+    parse_haptics_gain(value).unwrap_or_else(|| {
+        crate::config::invalid(HAPTICS_GAIN, value);
+        HAPTICS_GAIN_DEFAULT
+    })
+}
+
+/// Refuses a [`HAPTICS_GAIN`] value the host would not use.
+pub fn check_haptics_gain(value: &str) -> anyhow::Result<()> {
+    match parse_haptics_gain(value) {
+        Some(_) => Ok(()),
+        None => anyhow::bail!("{HAPTICS_GAIN} must be a multiple between 0 and {HAPTICS_GAIN_MAX}"),
+    }
+}
 
 pub struct DualSense {
     slot: u8,
@@ -39,6 +72,8 @@ pub struct DualSense {
     triggers: [Option<[u8; 11]>; 2],
     pending: u8,
     waveform: bool,
+    /// `dualsense_haptics_gain` in percent of what the game sent.
+    haptics_gain: u16,
     packetizer: haptics::Packetizer,
     pcm: haptics::Queue,
     speaker_packetizer: haptics::Packetizer,
@@ -81,6 +116,7 @@ impl DualSense {
             triggers: [None; 2],
             pending: 0,
             waveform: false,
+            haptics_gain: HAPTICS_GAIN_DEFAULT,
             packetizer: Default::default(),
             pcm: Default::default(),
             speaker_packetizer: Default::default(),
@@ -102,6 +138,12 @@ impl DualSense {
             | (u8::from(self.triggers[0].is_some()) << 3)
             | (u8::from(self.triggers[1].is_some()) << 2);
         self.audio_pending = true;
+    }
+    /// `dualsense_haptics_gain`, in percent of what the game sent: applied
+    /// where the game's actuator channels become 0x5601 frames. Ordinary
+    /// rumble, lights and adaptive triggers keep the game's values.
+    pub fn set_haptics_gain(&mut self, percent: u16) {
+        self.haptics_gain = percent;
     }
     pub fn enumerated(&self) -> bool {
         self.hid_seen && self.audio_seen
@@ -623,12 +665,13 @@ impl Device for DualSense {
         if self.waveform {
             // Windows/game audio already applies volume. Preserve only the two
             // actuator channels byte-for-byte; speaker sound travels separately.
-            let stereo: Vec<_> = data
+            let mut stereo: Vec<_> = data
                 .as_chunks::<8>()
                 .0
                 .iter()
                 .flat_map(|frame| frame[4..8].iter().copied())
                 .collect();
+            actuator_gain(&mut stereo, self.haptics_gain);
             let now = Instant::now();
             for samples in self.packetizer.push(&stereo, now) {
                 self.pcm.push(
@@ -662,6 +705,19 @@ fn audio_volume(samples: &mut [u8], volume: &[i16; 5], muted: bool) {
             let scaled = (f32::from(sample) * gain).round().clamp(-32768., 32767.) as i16;
             frame[at..at + 2].copy_from_slice(&scaled.to_le_bytes());
         }
+    }
+}
+/// Scales stereo S16LE actuator samples by `percent` of what the game sent,
+/// clipping at full scale. 100 leaves them untouched.
+fn actuator_gain(samples: &mut [u8], percent: u16) {
+    if percent == HAPTICS_GAIN_DEFAULT {
+        return;
+    }
+    for sample in samples.as_chunks_mut::<2>().0 {
+        let value = i16::from_le_bytes([sample[0], sample[1]]);
+        let scaled = (i32::from(value) * i32::from(percent) / 100)
+            .clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+        *sample = scaled.to_le_bytes();
     }
 }
 fn usb_string(s: &str) -> Vec<u8> {

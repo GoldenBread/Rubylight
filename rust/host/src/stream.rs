@@ -29,7 +29,10 @@ use audio_sink::{AudioPace, AudioSink, GameStreamAudio, WebRtcAudio};
 use butterpollo_core::audio_passthrough::Codec;
 #[cfg(test)]
 use config::{apply_overrides, sets_peak};
-pub(crate) use config::{device_config, effective_config, launch_app};
+pub(crate) use config::{
+    cap_stream_resolution, device_config, effective_config, launch_app,
+    report_stream_resolution_cap,
+};
 #[cfg(test)]
 use control::{
     CONTROL_EVENT_LIMIT, ControlPeer, ControlSocket, FEEDBACK_CHANNEL, INPUT_OVERFLOW, INPUT_QUEUE,
@@ -470,7 +473,8 @@ fn restart_on_new_path(s: &Session, c: &Config) {
     s.new_network_path();
     s.request_host_keyframe();
     let mut stream = s.config.clone();
-    s.stream_mode().apply_to(&mut stream);
+    s.requested_mode()
+        .apply_to(&mut stream, c.max_stream_resolution());
     s.rebuild_link_rate(&stream, c.link_rate_adaptation(), max_bitrate_kbps(s, c));
     rebuild_congestion(s, &stream, c);
 }
@@ -1194,7 +1198,7 @@ impl Media {
             .ok()
             .map(|mode| mode.dmDisplayFrequency);
         let (requested_capture, constant_rate) = prepared.capture_method();
-        tracing::info!(width=s.config.width,height=s.config.height,fps=f64::from(s.config.fps_millihz())/1000.,requested_fps=s.config.fps,bitrate_kbps=s.bitrate.load(Ordering::Relaxed),configured_bitrate_kbps=s.config.configured_bitrate_kbps,codec=s.config.codec,hdr=s.config.hdr,ten_bit=s.config.ten_bit(),full_range=s.config.full_range(),color_matrix=s.config.color_matrix(),vrr=s.config.vrr_low_latency,packet_size=s.config.packet_size,pyrowave_records=s.config.pyrowave_records,pyrowave_row_order=s.config.pyrowave_row_order,requested_capture=%requested_capture,constant_rate=constant_rate,requested_encoder=c.get("encoder","auto"),encoder=encoder.as_ref().unwrap().backend(),adapter=%first.gpu.display.adapter,source_width=first.width,source_height=first.height,source_refresh_hz,source_pixel=?first.pixel,"stream configured");
+        tracing::info!(width=s.config.width,height=s.config.height,display_width=s.config.display_size().0,display_height=s.config.display_size().1,capped=s.config.capped(),fps=f64::from(s.config.fps_millihz())/1000.,requested_fps=s.config.fps,bitrate_kbps=s.bitrate.load(Ordering::Relaxed),configured_bitrate_kbps=s.config.configured_bitrate_kbps,codec=s.config.codec,hdr=s.config.hdr,ten_bit=s.config.ten_bit(),full_range=s.config.full_range(),color_matrix=s.config.color_matrix(),vrr=s.config.vrr_low_latency,packet_size=s.config.packet_size,pyrowave_records=s.config.pyrowave_records,pyrowave_row_order=s.config.pyrowave_row_order,requested_capture=%requested_capture,constant_rate=constant_rate,requested_encoder=c.get("encoder","auto"),encoder=encoder.as_ref().unwrap().backend(),adapter=%first.gpu.display.adapter,source_width=first.width,source_height=first.height,source_refresh_hz,source_pixel=?first.pixel,"stream configured");
         if s.config.chroma_packing != 0 {
             let (coded_width, coded_height) = s.config.coded_size();
             tracing::info!(

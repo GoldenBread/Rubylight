@@ -347,6 +347,20 @@ impl Config {
             if windows_11 { "per_client" } else { "disabled" },
         )
     }
+    /// `max_stream_resolution`: the host-wide cap on the picture every stream
+    /// is encoded at, `None` for `native` (the default), which codes what each
+    /// device asks for. A value the console would refuse is reported and
+    /// behaves as native.
+    pub fn max_stream_resolution(&self) -> Option<(u32, u32)> {
+        let value = self.get(
+            crate::display_policy::MAX_STREAM_RESOLUTION,
+            crate::display_policy::MAX_STREAM_RESOLUTION_NATIVE,
+        );
+        crate::display_policy::parse_max_stream_resolution(value)
+            .inspect_err(|_| invalid(crate::display_policy::MAX_STREAM_RESOLUTION, value))
+            .ok()
+            .flatten()
+    }
     pub fn log_level(&self) -> &'static str {
         match self
             .get("min_log_level", "info")
@@ -762,6 +776,14 @@ impl Config {
         if changed(crate::nucleus::mode::KEY) {
             crate::nucleus::mode::parse(&next.values[crate::nucleus::mode::KEY])
                 .map_err(anyhow::Error::msg)?;
+        }
+        if changed(crate::display_policy::MAX_STREAM_RESOLUTION) {
+            crate::display_policy::parse_max_stream_resolution(
+                &next.values[crate::display_policy::MAX_STREAM_RESOLUTION],
+            )?;
+        }
+        if changed(crate::dualsense::HAPTICS_GAIN) {
+            crate::dualsense::check_haptics_gain(&next.values[crate::dualsense::HAPTICS_GAIN])?;
         }
         if changed("hardware_metrics_interval")
             && next.values.contains_key("hardware_metrics_interval")

@@ -923,6 +923,35 @@ fn the_cursor_maps_onto_the_stream_bars_included() {
 }
 
 #[test]
+fn a_capped_stream_maps_absolute_input_onto_the_whole_display() {
+    let at = |stream: (u32, u32)| {
+        let mut injector = recording();
+        injector.lookup = None;
+        injector.rect = Some(RECT {
+            left: 0,
+            top: 0,
+            right: 3840,
+            bottom: 2160,
+        });
+        injector.set_stream_size(stream.0, stream.1);
+        injector
+            .apply(&Event::Absolute {
+                x: 50,
+                y: 50,
+                width: 100,
+                height: 100,
+            })
+            .unwrap();
+        calls().into_iter().flatten().collect::<Vec<_>>()
+    };
+    // A 4K display coded at 1440p keeps its shape, so the picture fills the
+    // coded frame: the same stream point is the same display point as at native
+    // 4K, never a point of the 2560x1440 frame taken as the display itself.
+    assert_eq!(at((2560, 1440)), at((3840, 2160)));
+    assert_eq!(at((2560, 1440)).len(), 1, "one absolute move");
+}
+
+#[test]
 fn a_turned_portrait_display_maps_the_stream_upright() {
     // A 2560x1440 monitor turned to portrait left of the primary one: Windows
     // gives its desktop the turned size, and capture streams it upright.

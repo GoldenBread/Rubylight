@@ -80,6 +80,7 @@ pub const GLOBAL: &[Setting] = settings! {
         "vulkan_hdr_layer", "Vulkan virtual HDR support", Bool;
         "virtual_display_hdr_calibration", "Windows HDR Calibration on virtual displays", Bool;
         "fallback_mode", "Default launch mode (WIDTHxHEIGHTxFPS)", Text;
+        "max_stream_resolution", "Maximum stream resolution (native or WIDTHxHEIGHT)", Text;
     ]
     "Frame generation and limiting" => [
         "frame_limiter_enable", "Enable frame limiter", Bool;
@@ -178,6 +179,7 @@ pub const GLOBAL: &[Setting] = settings! {
         "audio_haptics_strength", "Audio haptics strength (percent, 0-200)", Number;
         "audio_haptics_curve", "Audio haptics response", Choice(&["linear", "soft", "punchy"]);
         "audio_haptics_gate", "Audio haptics noise gate (dBFS, -80 to -10)", Number;
+        "dualsense_haptics_gain", "DualSense haptics strength (0 to 4 times, 1 default)", Number;
         "motion_as_ds4", "Use PlayStation profile for motion input", Bool;
         "touchpad_as_ds4", "Use PlayStation profile for touchpad input", Bool;
         "ds4_back_as_touchpad_click", "Back also clicks the touchpad (DualShock 4 on ViGEmBus)", Bool;
