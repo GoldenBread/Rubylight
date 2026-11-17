@@ -22,13 +22,13 @@ fn a_shrunken_route_mtu_only_warns_when_a_jumbo_packet_does_not_fit() {
     let f = crate::state::test_support::Fixture::new();
     let client = f.client(u32::MAX);
     let s = f.session(client, butterpollo_core::session::Role::Stream);
-    check_route_mtu_with(&s, peer(), 8192, |_| Some(1280));
+    check_route_mtu(&s, 8192, Some(1280));
     let warnings = s.launch.warnings.snapshot();
     assert_eq!(warnings.len(), 1);
     assert_eq!(warnings[0].code, "network_mtu");
     assert!(warnings[0].message.contains("1280"));
     s.launch.warnings.clear("network_mtu");
-    check_route_mtu_with(&s, peer(), 1400, |_| Some(1280));
+    check_route_mtu(&s, 1400, Some(1280));
     assert!(s.launch.warnings.snapshot().is_empty());
 }
 fn frame(index: u8) -> Encoded {

@@ -214,7 +214,7 @@ impl Transport<'_> {
         let safe = network_pacing::rate_bps(0, bitrate, route.bps, true, needed);
         let bps = s.keyframe_loss_bps(bps, safe, frame.wire_frame, frame.idr);
         if Instant::now() >= self.link_due {
-            crate::video_send::check_route_mtu(s, peer, s.config.packet_size);
+            crate::video_send::check_route_mtu(s, s.config.packet_size, self.watch.mtu(peer));
             network_pacing::report_rate(
                 &s.launch.warnings,
                 bps,

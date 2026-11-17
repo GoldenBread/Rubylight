@@ -69,32 +69,25 @@ fn mtu_carries(mtu: u32, packet_size: usize) -> bool {
     u64::from(mtu) >= packet_size as u64 + 64
 }
 
-/// The `network_mtu` warning for a jumbo stream whose path shrank after its
+/// The `network_mtu` warning for a jumbo stream whose route shrank after its
 /// offer: packets now fragment or drop silently, since the shared socket does
-/// not refuse fragmentation.
+/// not refuse fragmentation. The MTU is this PC's interface on the route to
+/// the client, all the host can see.
 fn mtu_warning(mtu: u32, packet_size: usize) -> String {
     format!(
-        "The network path's MTU is now {mtu} bytes; this stream's {packet_size}-byte video packets plus 64 bytes of headers do not fit. Lower the device's video packet size, or make every hop's MTU carry the packet size plus 64 bytes of headers."
+        "The MTU of this PC's network interface on the route to the client is now {mtu} bytes; this stream's {packet_size}-byte video packets plus 64 bytes of headers do not fit. Lower the device's video packet size, or use an interface on this PC whose MTU carries the packet size plus 64 bytes of headers."
     )
 }
 
-/// The 2 s route check's MTU check for a session. Only this stream is warned;
-/// the shared video socket stays untouched. A stock packet size fits every
-/// path the stream offered, so only jumbo sizes are checked.
-pub(crate) fn check_route_mtu(s: &Session, peer: SocketAddr, packet_size: usize) {
-    check_route_mtu_with(s, peer, packet_size, butterpollo_windows::net::routed_mtu);
-}
-
-fn check_route_mtu_with(
-    s: &Session,
-    peer: SocketAddr,
-    packet_size: usize,
-    mtu_of: impl FnOnce(SocketAddr) -> Option<u32>,
-) {
+/// The 2 s route check's MTU check for a session, from the watcher's cached
+/// interface MTU: the paced sender makes no network lookup. Only this stream
+/// is warned; the shared video socket stays untouched. A stock packet size
+/// fits every path the stream offered, so only jumbo sizes are checked.
+pub(crate) fn check_route_mtu(s: &Session, packet_size: usize, mtu: Option<u32>) {
     if packet_size <= usize::from(butterpollo_core::video_packet::STOCK_MAX_VIDEO_PACKET) {
         return;
     }
-    let Some(mtu) = mtu_of(peer) else {
+    let Some(mtu) = mtu else {
         return;
     };
     if !mtu_carries(mtu, packet_size) {
