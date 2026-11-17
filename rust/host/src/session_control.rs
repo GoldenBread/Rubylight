@@ -262,6 +262,9 @@ impl Host {
         let facts = self.session_facts();
         let now = now_ms();
         control.machine.observe(&facts, now);
+        // Once a minute, the journal says the host is alive: a crash's duration
+        // then ends at that beat, not at the next start.
+        control.machine.heartbeat(now);
         let result = f(&mut control.machine, &facts, now);
         control.persist();
         // Whatever moved the machine (End session, Close game, the grace period running out,
@@ -341,6 +344,21 @@ impl Host {
     /// tick.
     pub fn session_tick(&self) {
         self.with_session(|_, _, _| ());
+        // Each running stream's frame rate, for the Sessions page's p95 figure.
+        let now = std::time::Instant::now();
+        let sessions = locked(&self.sessions);
+        for session in sessions.active.values() {
+            if session.launch.role == Role::Stream {
+                self.session_history.sample(
+                    &session.launch.id,
+                    session
+                        .stats
+                        .frames
+                        .load(std::sync::atomic::Ordering::Relaxed),
+                    now,
+                );
+            }
+        }
     }
 
     /// Disconnect: drop the owner's stream now instead of waiting for a
@@ -646,6 +664,9 @@ impl Host {
             .app
             .as_ref()
             .map_or_else(String::new, |app| format!(" of {}", app.title));
+        // The Sessions page shows the stream the crash cut short; it has no
+        // statistics, only what the journal kept.
+        self.record_interrupted_session(&journal);
         self.warnings.event(
             "session_interrupted",
             format!(
@@ -660,6 +681,8 @@ impl Host {
     pub fn session_shutdown(&self) {
         self.with_session(|machine, _, now| machine.reset(now));
         self.session_flush();
+        // The last stream's entry, written on the saver thread.
+        self.session_history.flush();
     }
     /// Wait until the journal writer has applied everything it was told, up
     /// to five seconds. For a clean shutdown and for tests.

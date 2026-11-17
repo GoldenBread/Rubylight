@@ -1,7 +1,7 @@
 //! Host configuration and metadata API handlers.
 
 use crate::state::Shared;
-use butterpollo_core::state;
+use butterpollo_core::{state, steamgriddb as sgdb};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 
@@ -17,6 +17,11 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
             // The Webhooks page manages them, and their secrets never come back.
             if let Some(values) = v.as_object_mut() {
                 values.remove("webhooks");
+                // The SteamGridDB key never comes back either: a saved one shows as the mask.
+                values.remove(sgdb::KEY_SETTING);
+                if crate::steamgriddb::has_key(h) {
+                    values.insert(sgdb::KEY_SETTING.into(), json!(sgdb::MASK));
+                }
             }
             v["status"] = json!(true);
             v["platform"] = json!("windows");
@@ -30,6 +35,22 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
                 .clone();
             for key in ["status", "platform", "version"] {
                 object.remove(key);
+            }
+            // The SteamGridDB key is kept in the administrators-only credentials folder, never in
+            // sunshine.conf, which every local user can read. The mask GET showed keeps it.
+            let steamgriddb_key = match object.remove(sgdb::KEY_SETTING) {
+                None => None,
+                Some(Value::String(text)) if text.trim() == sgdb::MASK => None,
+                Some(Value::Null) => Some(String::new()),
+                Some(Value::String(text)) => {
+                    sgdb::check_key(&text).map_err(|message| anyhow::anyhow!(message))?;
+                    Some(text.trim().to_owned())
+                }
+                Some(_) => anyhow::bail!("{} must be text", sgdb::KEY_SETTING),
+            };
+            if steamgriddb_key.is_some() {
+                // A copy written into sunshine.conf by hand goes.
+                object.insert(sgdb::KEY_SETTING.into(), Value::Null);
             }
             if object.contains_key("webhooks") {
                 anyhow::bail!(
@@ -47,6 +68,18 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
             };
             next.update(&object)?;
             next.check_saved(object.keys())?;
+            // A key typed into sunshine.conf by hand moves out at any save.
+            // A failed move keeps the key there and still saves the other settings.
+            if let Err(error) = crate::steamgriddb::take_conf_key(h, &mut next) {
+                tracing::warn!(
+                    error = %format!("{error:#}"),
+                    "the SteamGridDB API key could not be moved out of sunshine.conf"
+                );
+            }
+            if let Some(key) = &steamgriddb_key {
+                crate::steamgriddb::store_key(h, Some(key))?;
+                crate::steamgriddb::key_changed(h);
+            }
             state::atomic_write(&h.config_path, next.text().as_bytes())?;
             let warning =
                 butterpollo_windows::vulkan::reconcile(next.boolean("vulkan_hdr_layer", true))

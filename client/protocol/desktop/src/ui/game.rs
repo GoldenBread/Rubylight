@@ -243,6 +243,28 @@ fn paint_switch(ui: &Ui, out: &mut Vec<Shape>, rect: Rect, id: Id, on: bool, ena
 }
 
 /// The large title: up to two lines, then cut, as large as the column lets a name be.
+/// A game's facts as the game page writes them, one line each: its genres, its themes and its
+/// time to beat ("Story 20 h · Story + extras 24 h · Everything 90 h"); a line without anything
+/// to say is left out.
+pub(super) fn facts_lines(facts: &nightjar_policy::game_info::cache::Facts) -> Vec<String> {
+    use nightjar_policy::game_info::library::hours;
+    let mut lines = Vec::new();
+    if !facts.genres.is_empty() {
+        lines.push(format!("{}: {}", tr("Genres"), facts.genres.join(" · ")));
+    }
+    if !facts.themes.is_empty() {
+        lines.push(format!("{}: {}", tr("Themes"), facts.themes.join(" · ")));
+    }
+    let times: Vec<String> = [(en("Story"), facts.hastily), (en("Story + extras"), facts.normally), (en("Everything"), facts.completely)]
+        .into_iter()
+        .filter_map(|(label, seconds)| Some(format!("{} {}", tr(label), trf("{} h", &[&hours(seconds)?]))))
+        .collect();
+    if !times.is_empty() {
+        lines.push(format!("{}: {}", tr("Time to beat"), times.join(" · ")));
+    }
+    lines
+}
+
 fn title_galley(ui: &Ui, title: &str, width: f32) -> std::sync::Arc<egui::Galley> {
     let size = (width * TITLE_PER_WIDTH).clamp(TITLE_LEAST, t::TYPE_HERO_SIZE);
     let format = egui::TextFormat {
@@ -385,6 +407,21 @@ impl Launcher {
             let _ = cover_response.clone().on_hover_text(game.title.clone());
         }
         y += title_h + 8.0;
+        // What IGDB says of the game, with the player's keys: its genres, themes and time to beat.
+        // By the game id alone, as All games keys the same game's facts.
+        let looked_up = crate::game_info::game_of(&game.title, game.game_id.as_deref(), None);
+        let facts_key = nightjar_policy::game_info::names::key(&looked_up.name, looked_up.steam);
+        if view.hosts.facts_offered() && !view.hosts.facts_asked(&facts_key) {
+            commands.push(Command::WantFacts(vec![looked_up]));
+        }
+        if let Some(facts) = view.hosts.facts(&facts_key) {
+            for line in facts_lines(facts) {
+                let galley = ui.painter().layout(line, regular(t::TYPE_SUB_SIZE), *ON_SURFACE_VARIANT, room);
+                ui.painter().galley(pos2(left, y), galley.clone(), *ON_SURFACE_VARIANT);
+                y += galley.size().y + 4.0;
+            }
+            y += 6.0;
+        }
         y = self.pc_words(ui, host, &state, source.name, left, y, room) + 22.0;
 
         // One line, only when there is something to know.

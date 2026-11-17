@@ -1015,6 +1015,34 @@ public class HomeShellTest {
         }
     }
 
+    /** nightjar#7 comment 78: at rest the canvas scrim covered the first row and read as a black strip under the hero. */
+    @Test
+    @Config(qualifiers = "w960dp-h540dp-land-television-xhdpi")
+    public void onTelevisionTheScrimOverTheTopRowPaintsNothingAtRest() throws Exception {
+        ActivityController<Home> controller = home();
+        try {
+            Home home = controller.get();
+            View fade = home.findViewById(R.id.home_top_fade);
+            View root = home.getWindow().getDecorView();
+            root.measure(View.MeasureSpec.makeMeasureSpec(1920, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY));
+            root.layout(0, 0, 1920, 1080);
+            RecyclerView list = showHosts(home, 14, NativeApiFixtures.nativeHost("tower", "Tower", true));
+            // A TV is wider than tall: the shelves run past the foot and the list can scroll.
+            list.measure(View.MeasureSpec.makeMeasureSpec(1920, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY));
+            list.layout(0, 0, 1920, 1080);
+            shadowOf(Looper.getMainLooper()).idle();
+            assertTrue("the scrim has a height", fade.getHeight() > 0);
+            assertEquals("the first row starts at the edge, so nothing is cut or dimmed", 0f, fade.getAlpha(), 0f);
+            list.scrollBy(0, 200);
+            shadowOf(Looper.getMainLooper()).idle();
+            assertTrue("content passing the edge dissolves", fade.getAlpha() > 0f);
+        } finally {
+            controller.pause().stop().destroy();
+        }
+    }
+
     /** Lets Home's worker and the main looper run until the condition holds. */
     private static void await(java.util.function.BooleanSupplier done) throws Exception {
         long end = System.currentTimeMillis() + 5000;

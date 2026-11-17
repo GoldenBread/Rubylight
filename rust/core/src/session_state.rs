@@ -29,6 +29,10 @@ use serde::{Deserialize, Serialize};
 use crate::native::SessionSnapshot;
 use crate::native_api::session::{SessionApp, State};
 
+/// How often a running session tells its journal it is still alive. A crash then
+/// loses at most this much of the session's duration, not the host's downtime.
+pub const HEARTBEAT_MS: u64 = 60_000;
+
 /// What the host observes right now.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Facts {
@@ -78,6 +82,8 @@ pub struct Machine {
     owner: Option<String>,
     app: Option<SessionApp>,
     since_ms: u64,
+    /// When the journal last confirmed the host is alive ([`HEARTBEAT_MS`]).
+    last_seen_ms: u64,
     suspended_at_ms: Option<u64>,
     revision: u64,
     /// A launch call is running, and owns the transitions until `launched`.
@@ -94,6 +100,7 @@ impl Default for Machine {
             owner: None,
             app: None,
             since_ms: 0,
+            last_seen_ms: 0,
             suspended_at_ms: None,
             revision: 1,
             launching: false,
@@ -124,6 +131,7 @@ impl Machine {
         if self.state != state {
             self.state = state;
             self.since_ms = now;
+            self.last_seen_ms = now;
             self.revision += 1;
         }
         self.suspended_at_ms = match state {
@@ -197,6 +205,17 @@ impl Machine {
         } else {
             self.settle(facts, now);
         }
+    }
+    /// Notes that the host is alive at `now`, at most once per [`HEARTBEAT_MS`]:
+    /// a journal left by a crash then ends its duration at the last beat rather
+    /// than at the next start, so the host's downtime is not counted. Returns
+    /// whether the journal changed and has to be written.
+    pub fn heartbeat(&mut self, now: u64) -> bool {
+        if self.state == State::Idle || now.saturating_sub(self.last_seen_ms) < HEARTBEAT_MS {
+            return false;
+        }
+        self.last_seen_ms = now;
+        true
     }
     /// Follow the facts between transitions: a stream starts or ends, the
     /// client never connects, the grace period runs out, the game exits.
@@ -336,6 +355,7 @@ impl Machine {
             owner: self.owner.clone(),
             app: self.app.clone(),
             since_unix_ms: self.since_ms,
+            last_seen_unix_ms: self.last_seen_ms,
         })
     }
 }
@@ -350,6 +370,10 @@ pub struct Journal {
     pub owner: Option<String>,
     pub app: Option<SessionApp>,
     pub since_unix_ms: u64,
+    /// When the host last confirmed it was alive, up to [`HEARTBEAT_MS`] before
+    /// it stopped. 0 in a journal from a host before the heartbeat existed.
+    #[serde(default)]
+    pub last_seen_unix_ms: u64,
 }
 impl Journal {
     pub fn parse(bytes: &[u8]) -> Option<Self> {

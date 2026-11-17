@@ -757,14 +757,19 @@ pub fn reconcile_at(
             continue;
         };
         let id = app["launcher-id"].as_str().unwrap_or("");
+        // A cover from SteamGridDB stands in only until the launcher has one.
         if app["image-path"]
             .as_str()
             .is_some_and(|path| !path.is_empty())
+            && !crate::steamgriddb::fetched_cover(app)
         {
             continue;
         }
         if let Some(cover) = covers.get(&(source, id)) {
             app["image-path"] = json!(cover.to_string_lossy().replace('\\', "/"));
+            if let Some(fields) = app.as_object_mut() {
+                fields.remove(crate::steamgriddb::COVER_FIELD);
+            }
             change.covered += 1;
         }
     }

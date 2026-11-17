@@ -27,9 +27,10 @@ use scale::*;
 use turn::*;
 
 fn stream_mode(stream: &Negotiated) -> (u32, u32, u32, bool, bool) {
+    let (width, height) = stream.display_size();
     (
-        stream.width,
-        stream.height,
+        width,
+        height,
         stream.fps_millihz(),
         stream.hdr,
         stream.vrr_low_latency,
@@ -1151,10 +1152,11 @@ impl Ready {
     /// be made under the game that runs on this one.
     pub fn resumes(&self, stream: &Negotiated) -> bool {
         let (width, height, _, hdr, vrr) = self.mode;
+        let (stream_width, stream_height) = stream.display_size();
         (width, height, hdr, vrr)
             == (
-                stream.width,
-                stream.height,
+                stream_width,
+                stream_height,
                 stream.hdr,
                 stream.vrr_low_latency,
             )
@@ -1196,6 +1198,14 @@ impl Ready {
     }
     pub fn capture(&self) -> String {
         self.framegen.lock().unwrap().capture.clone()
+    }
+    /// The capture method this stream opens and whether it publishes its last
+    /// picture again every stream period (`capture = wgcc`), from one read of
+    /// the stream's policy: a change between two reads could open a capture
+    /// keyed under one and built as the other.
+    pub fn capture_method(&self) -> (String, bool) {
+        let framegen = self.framegen.lock().unwrap();
+        (framegen.capture.clone(), framegen.constant_rate)
     }
     /// The stream turned between portrait and landscape (0x5532): its display
     /// follows on the heartbeat, off the stream loop, when the device's
@@ -1967,9 +1977,10 @@ impl Prepared {
             .get("scaleFactor")
             .and_then(|value| value.parse().ok())
             .unwrap_or(100);
+        let (display_width, display_height) = stream.display_size();
         let (render_width, render_height) = butterpollo_core::display_policy::render_dimensions(
-            stream.width,
-            stream.height,
+            display_width,
+            display_height,
             client_scale,
             app_scale,
         );
@@ -2014,10 +2025,10 @@ impl Prepared {
             virtual_display_size(
                 config,
                 request.resolution.unwrap_or((render_width, render_height)),
-                (stream.width, stream.height),
+                (display_width, display_height),
             )
         } else {
-            (stream.width, stream.height)
+            (display_width, display_height)
         };
         let own_rate = if virtual_mode {
             Rate(request.refresh.unwrap_or(framegen.display_rate.0))
@@ -2061,7 +2072,7 @@ impl Prepared {
         let turn = if physical {
             plan_physical_turn(
                 config,
-                (stream.width, stream.height),
+                (display_width, display_height),
                 request.resolution,
                 || butterpollo_windows::display::stream_display_rotation(output),
             )?

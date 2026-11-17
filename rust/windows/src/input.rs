@@ -822,6 +822,9 @@ impl Injector {
         {
             // Relative movement and scrolling are measured in stream pixels; the stream sets
             // its size before input, so 1080p stands in only for a touch that comes earlier.
+            // Under a host resolution cap those are the coded picture's pixels, not the
+            // larger display's, so tap slop and scroll distance feel slightly finer (absolute
+            // positions still map onto the whole display).
             let size = self.stream.or_else(|| {
                 let rect = self.rect?;
                 Some((

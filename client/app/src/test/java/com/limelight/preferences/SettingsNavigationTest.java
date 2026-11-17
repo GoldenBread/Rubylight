@@ -30,12 +30,24 @@ public class SettingsNavigationTest {
                     android.view.View.MeasureSpec.makeMeasureSpec(2400, android.view.View.MeasureSpec.EXACTLY));
             root.layout(0, 0, 1080, 2400);
             root.getViewTreeObserver().dispatchOnGlobalLayout();
-            android.widget.ListView list = screen.findViewById(android.R.id.list);
+            android.app.Fragment rootFragment = screen.getFragmentManager().findFragmentById(R.id.settings_sections);
+            if (rootFragment == null) rootFragment = screen.getFragmentManager().findFragmentById(R.id.stream_settings);
+            android.widget.ListView list = (android.widget.ListView) rootFragment.getView()
+                    .findViewById(android.R.id.list);
+            int presets = StreamSettings.RootFragment.positionOf(list, "stream_presets");
+            assertTrue(presets >= 0);
+            list.setSelection(presets);
             list.requestFocusFromTouch();
-            list.setSelection(0);
+            assertEquals(presets, list.getSelectedItemPosition());
             root.measure(android.view.View.MeasureSpec.makeMeasureSpec(1080, android.view.View.MeasureSpec.EXACTLY),
                     android.view.View.MeasureSpec.makeMeasureSpec(2400, android.view.View.MeasureSpec.EXACTLY));
             root.layout(0, 0, 1080, 2400);
+            list.measure(android.view.View.MeasureSpec.makeMeasureSpec(1080, android.view.View.MeasureSpec.EXACTLY),
+                    android.view.View.MeasureSpec.makeMeasureSpec(2400, android.view.View.MeasureSpec.EXACTLY));
+            list.layout(0, 0, 1080, 2400);
+            android.view.View presetRow = list.getSelectedView();
+            assertNotNull("the selected row is bound", presetRow);
+            assertNotNull("the D-pad's help action survives binding", presetRow.getTag(R.id.preference_help));
             assertTrue(list.dispatchKeyEvent(new android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN,
                     android.view.KeyEvent.KEYCODE_DPAD_RIGHT)));
             assertTrue(list.dispatchKeyEvent(new android.view.KeyEvent(android.view.KeyEvent.ACTION_UP,
@@ -60,11 +72,13 @@ public class SettingsNavigationTest {
                     android.view.View.MeasureSpec.makeMeasureSpec(2400, android.view.View.MeasureSpec.EXACTLY));
             root.layout(0, 0, 1080, 2400);
             android.widget.ListView list = screen.findViewById(android.R.id.list);
-            android.view.View preset = list.getChildAt(0);
+            android.view.View preset = list.getChildAt(StreamSettings.RootFragment.positionOf(list, "stream_presets")
+                    - list.getFirstVisiblePosition());
             assertFalse("Preset chips/help must not steal focus from the preference list", preset.hasFocusable());
             assertNotNull("Preset help stays available with D-pad right", preset.getTag(R.id.preference_help));
             assertTrue(list.requestFocusFromTouch());
-            list.setSelection(4); // Controls after Presets, Profiles, Video, Display.
+            int input = StreamSettings.RootFragment.positionOf(list, "input");
+            list.setSelection(input);
             root.layout(0, 0, 1080, 2400);
             assertFalse(screen.findViewById(R.id.preset_help).hasFocus());
             assertFalse(preset.findViewById(R.id.preset_help).requestFocus());

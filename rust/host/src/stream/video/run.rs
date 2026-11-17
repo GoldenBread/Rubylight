@@ -40,8 +40,13 @@ impl SessionThread<'_> {
         } = media;
         // The stream's size and rate. A client whose display changes can ask
         // for others mid-stream (0x5532); the encoder is rebuilt from this copy.
+        // The host's `max_stream_resolution` cap shrinks only the coded picture.
         let mut stream = s.config.clone();
+        let resolution_cap = c.max_stream_resolution();
         let mut rates = butterpollo_core::reconfigure::Rates::new(&stream, c.get("minimum_fps_target", "20"));
+        // A constant-rate capture publishes for its fastest stream: this one's
+        // stream rate, shared with any other stream on the same capture.
+        capture_wake.set_period(rates.period);
         // The rate pacing follows, and the period the send path reads.
         let mut paced_rate = stream.fps_millihz();
         let stream_period = std::cell::Cell::new(rates.period);
@@ -144,6 +149,18 @@ impl SessionThread<'_> {
         // has taken, and the 5 s timing log's own window.
         let mut pipeline_follow = butterpollo_core::pipeline_rates::Follow::default();
         let mut pipeline_log = butterpollo_core::pipeline_rates::Sampler::default();
+        // Baseline the rate sampler at the instant the first window starts,
+        // so the first timing window is the stream's first five seconds
+        // instead of a start-up grace window; a slow game then warns after
+        // three complete windows (15 s).
+        let _ = pipeline_log.sample(
+            timing_due - Duration::from_secs(5),
+            s.pipeline_counts(),
+            Duration::from_secs(5),
+        );
+        // Whether the game or desktop delivers the stream's rate, over the
+        // same 5 s windows.
+        let mut source_rate = butterpollo_core::pipeline_rates::SourceRate::default();
         // Identity only: a weak reference releases the previous capture's
         // texture and ring slot once it is encoded, while the live `Weak`
         // still pins the allocation so its address can't be reused by a new
@@ -784,7 +801,72 @@ impl SessionThread<'_> {
                     }
                     *s.output.write().unwrap() = prepared.output();
                     if Instant::now() >= timing_due {
-                        timing_due = Instant::now() + Duration::from_secs(5);
+                        let now = Instant::now();
+                        timing_due = now + Duration::from_secs(5);
+                        // Pipeline frame rates since the last summary; the
+                        // sampler was baselined at stream start. The
+                        // source-rate warning is not a logging concern: it
+                        // feeds the console at every `min_log_level`, so it
+                        // samples and runs before the INFO-only timing line.
+                        let rates = pipeline_log.sample(now, s.pipeline_counts(), Duration::from_secs(5));
+                        let pipeline = rates.as_ref().map(butterpollo_core::pipeline_rates::PipelineRates::from);
+                        let source_mhz = pipeline.as_ref().and_then(|rates| rates.source_mhz);
+                        // What the stream can show: its own rate, or the
+                        // captured display's where that is lower. A 60 Hz
+                        // monitor streamed at 120 fps presents 60 frames a
+                        // second at best, so a source at 60 is not the limit.
+                        // The display's mode is read with each window: a
+                        // virtual display is retimed when the stream's is. A
+                        // window target names no display, so the display it is
+                        // laid over is asked instead.
+                        let shown = prepared.output();
+                        let display_mhz = butterpollo_windows::display::mode(&shown)
+                            .or_else(|_| butterpollo_windows::display::mode(&output))
+                            .ok()
+                            .map(|mode| mode.dmDisplayFrequency)
+                            .filter(|hz| *hz > 1)
+                            .map(|hz| hz.saturating_mul(1000));
+                        // The source rate against what the stream can show. A
+                        // game below it is the limit that every per-stage
+                        // number hides. A new warning or a re-word writes one
+                        // WARN line; `SourceRate` limits re-words to one per
+                        // 30 s.
+                        if let Some(change) = source_rate.window(now, stream.fps_millihz(), display_mhz, source_mhz) {
+                            use butterpollo_core::pipeline_rates::SourceRateWarning;
+                            match change {
+                                SourceRateWarning::Below { source_mhz, limit_mhz } => {
+                                    let source_fps = source_mhz / 1000;
+                                    let limit_fps = limit_mhz / 1000;
+                                    tracing::warn!(
+                                        client = %s.launch.client.name,
+                                        source_fps,
+                                        stream_fps = stream.fps_millihz() as f64 / 1000.,
+                                        display_fps = display_mhz.map(|mhz| mhz as f64 / 1000.),
+                                        "the game or desktop is the frame-rate limit"
+                                    );
+                                    // A desktop stream has no game to advise
+                                    // about, so it says what the screen does
+                                    // and nothing more.
+                                    let message = if crate::stream::launch_app(&h, &s.launch).is_some() {
+                                        format!(
+                                            "The game is rendering about {source_fps} fps, below the {limit_fps} fps this stream can show, so the picture cannot run smoother than that. Lower the game's resolution or graphics settings, or lower the stream's frame rate to match."
+                                        )
+                                    } else {
+                                        format!(
+                                            "The PC's screen is updating about {source_fps} times a second, below the {limit_fps} fps this stream can show."
+                                        )
+                                    };
+                                    s.launch.warnings.set("source_frame_rate", message);
+                                }
+                                SourceRateWarning::Cleared => {
+                                    s.launch.warnings.clear("source_frame_rate");
+                                    tracing::info!(
+                                        client = %s.launch.client.name,
+                                        "the game or desktop keeps up with the stream's frame rate again"
+                                    );
+                                }
+                            }
+                        }
                         if timings_logged {
                             // Sorted after the lock the sender records into is released.
                             let window = s.stats.performance.lock().unwrap().window(Instant::now());
@@ -797,10 +879,8 @@ impl SessionThread<'_> {
                             let cc_u64 = |key: &str| cc[key].as_u64();
                             let ms = |key: &str| timing[key].as_f64().unwrap_or(0.);
                             let input = s.stats.input_latency.lock().unwrap().take();
-                            // Pipeline frame rates since the last summary; none in the first.
-                            let rates = pipeline_log.sample(Instant::now(), s.pipeline_counts(), Duration::from_secs(5));
                             let fps_of = |pick: fn(&butterpollo_core::pipeline_rates::PipelineRates) -> Option<u32>| {
-                                rates.as_ref().map(butterpollo_core::pipeline_rates::PipelineRates::from).as_ref().and_then(pick).map(|mhz| f64::from(mhz) / 1000.)
+                                pipeline.as_ref().and_then(pick).map(|mhz| f64::from(mhz) / 1000.)
                             };
                             let split = |pick: fn(&(u64, u64)) -> u64| {
                                 let mut values: Vec<u64> = claim_ages.iter().map(pick).collect();
@@ -969,17 +1049,22 @@ impl SessionThread<'_> {
                     let enabled = runtime_config.boolean("stream_reconfigure", true);
                     match butterpollo_core::reconfigure::refusal(&stream, enabled) {
                         Some(reason) => {
-                            refuse_switch(&s, from, butterpollo_core::rate_change::refusal_reason(enabled));
+                            refuse_switch(&s, from, butterpollo_core::reconfigure::Mode::applied(&stream), butterpollo_core::rate_change::refusal_reason(enabled));
                             tracing::info!(client = %s.launch.client.name, from = %from, to = %to, reason, "reconfigure refused");
                         }
                         None => {
                             tracing::info!(client = %s.launch.client.name, from = %from, to = %to, "reconfigure requested");
-                            to.apply_to(&mut stream);
+                            to.apply_to(&mut stream, resolution_cap);
+                            report_stream_resolution_cap(&stream, resolution_cap, &s.launch.warnings);
                             if (to.width, to.height) != (from.width, from.height) {
-                                self.follow_size(&prepared, (stream.width, stream.height));
+                                self.follow_size(&prepared, stream.display_size());
                             }
                             s.rebuild_link_rate(&stream, c.link_rate_adaptation(), max_bitrate_kbps(&s, &c));
                             rebuild_congestion(&s, &stream, &c);
+                            s.reconfigure
+                                .lock()
+                                .unwrap()
+                                .applied_now(butterpollo_core::reconfigure::Mode::applied(&stream));
                             switching.get_or_insert((from, Instant::now()));
                             rebuild_encoder = true;
                         }
@@ -990,6 +1075,7 @@ impl SessionThread<'_> {
                 if stream.fps_millihz() != paced_rate {
                     paced_rate = stream.fps_millihz();
                     rates = butterpollo_core::reconfigure::Rates::new(&stream, c.get("minimum_fps_target", "20"));
+                    capture_wake.set_period(rates.period);
                     stream_period.set(rates.period);
                     progress.set_period(rates.period);
                     cadence = butterpollo_core::stream_policy::Cadence::new(Instant::now(), rates.period, c.boolean("wgc_pacing_smoothing", true));
@@ -1336,15 +1422,16 @@ impl SessionThread<'_> {
                             // asked for: the stream goes back to the mode it had.
                             if let Some((from, _)) = switching.take() {
                                 let to = butterpollo_core::reconfigure::Mode::of(&stream);
-                                from.apply_to(&mut stream);
+                                from.apply_to(&mut stream, resolution_cap);
+                                report_stream_resolution_cap(&stream, resolution_cap, &s.launch.warnings);
                                 // The link rate, and the display or co-op window, were
                                 // already set for the refused mode.
                                 s.rebuild_link_rate(&stream, c.link_rate_adaptation(), max_bitrate_kbps(&s, &c));
                                 rebuild_congestion(&s, &stream, &c);
                                 if (to.width, to.height) != (from.width, from.height) {
-                                    self.follow_size(&prepared, (stream.width, stream.height));
+                                    self.follow_size(&prepared, stream.display_size());
                                 }
-                                refuse_switch(&s, from, butterpollo_core::rate_change::Reason::EncoderFailed);
+                                refuse_switch(&s, from, butterpollo_core::reconfigure::Mode::applied(&stream), butterpollo_core::rate_change::Reason::EncoderFailed);
                                 tracing::info!(client = %s.launch.client.name, from = %from, to = %to, error = %format!("{error:#}"), "reconfigure refused: the encoder cannot make this mode; keeping the previous one");
                                 continue;
                             }
@@ -1423,7 +1510,8 @@ impl SessionThread<'_> {
                         source_id = latest.trace_source_id(),
                         stream_id = %s.launch.id,
                         fresh,
-                        choice = if fresh { "fresh" } else if recovering { "recovery_repeat" } else { "static_repeat" },
+                        repeat = image.repeat,
+                        choice = if image.repeat { "capture_repeat" } else if fresh { "fresh" } else if recovering { "recovery_repeat" } else { "static_repeat" },
                         selected_is_latest,
                         latest_capture_id,
                         encoder_pending = encoding,
@@ -1445,7 +1533,7 @@ impl SessionThread<'_> {
                     );
                     *admission = AdmissionTrace::default();
                 }
-                if timings_logged && fresh && claim_ages.len() < 4096 {
+                if timings_logged && fresh && !image.repeat && claim_ages.len() < 4096 {
                     let micros = |d: Duration| d.as_micros().min(u128::from(u64::MAX)) as u64;
                     claim_ages.push((
                         micros(image.acquired.saturating_duration_since(image.captured)),
@@ -1621,13 +1709,14 @@ impl SessionThread<'_> {
                         // cannot be created at it.
                         if let Some((from, _)) = switching.take() {
                             let to = butterpollo_core::reconfigure::Mode::of(&stream);
-                            from.apply_to(&mut stream);
+                            from.apply_to(&mut stream, resolution_cap);
+                            report_stream_resolution_cap(&stream, resolution_cap, &s.launch.warnings);
                             s.rebuild_link_rate(&stream, c.link_rate_adaptation(), max_bitrate_kbps(&s, &c));
                             rebuild_congestion(&s, &stream, &c);
                             if (to.width, to.height) != (from.width, from.height) {
-                                self.follow_size(&prepared, (stream.width, stream.height));
+                                self.follow_size(&prepared, stream.display_size());
                             }
-                            refuse_switch(&s, from, butterpollo_core::rate_change::Reason::EncoderFailed);
+                            refuse_switch(&s, from, butterpollo_core::reconfigure::Mode::applied(&stream), butterpollo_core::rate_change::Reason::EncoderFailed);
                             tracing::info!(client = %s.launch.client.name, from = %from, to = %to, error = %format!("{error:#}"), "reconfigure refused: the encoder failed at this mode; keeping the previous one");
                             rebuild_encoder = true;
                             continue;
@@ -1661,8 +1750,10 @@ impl SessionThread<'_> {
                 let (slot, pictures, captures) = latest.frame_counts();
                 let (pictures, captures) = pipeline_follow.advance(slot, pictures, captures);
                 s.stats.pipeline.captured(pictures, captures);
-                s.stats.pipeline.submitted(!fresh);
-                if fresh {
+                // A constant-rate repeat has no new content, so the pipeline
+                // reads it as the repeat it is (`capture = wgcc`).
+                s.stats.pipeline.submitted(!fresh || image.repeat);
+                if fresh && !image.repeat {
                     claims.borrow_mut().push(butterpollo_core::performance::Claim {
                         key: presented_image.captured,
                         presented: image.captured,
@@ -1733,7 +1824,8 @@ impl SessionThread<'_> {
                 first_seen = None;
                 send_frames(output, peer, call_latency, latest, capture_tick)?;
                 // After the frame went out, off its path: Frame Warp's passes.
-                frame_warp.frame(h, s, &image, fresh, (stream.width, stream.height));
+                // A constant-rate repeat carries no new content to warp.
+                frame_warp.frame(h, s, &image, fresh && !image.repeat, (stream.width, stream.height));
             }
             Ok(())
         })()

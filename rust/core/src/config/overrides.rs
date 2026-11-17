@@ -39,6 +39,7 @@ pub fn override_allowed(key: &str) -> bool {
         "audio_haptics_strength",
         "audio_haptics_curve",
         "audio_haptics_gate",
+        "dualsense_haptics_gain",
         // Audio, video and display automation
         "audio_sink",
         "audio_capture_mode",

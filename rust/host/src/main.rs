@@ -38,6 +38,7 @@ mod rtsp_server;
 mod runtime;
 mod service_tasks;
 mod session_control;
+mod session_history;
 mod session_notes;
 mod settings_backup;
 #[cfg(any(debug_assertions, test))]
@@ -45,6 +46,7 @@ mod soak_fault;
 mod stall_watch;
 mod state;
 mod steam;
+mod steamgriddb;
 mod stream;
 mod stream_focus;
 mod stream_notice;
@@ -492,6 +494,8 @@ async fn run(args: Args, assets: PathBuf) -> Result<()> {
     {
         tracing::warn!(%error, "the credentials folder permissions could not be repaired");
     }
+    // A SteamGridDB key typed into sunshine.conf, which every local user reads, moves there too.
+    steamgriddb::migrate_key(&h);
     let ports = h.config.read().unwrap().ports()?;
     if let Err(error) = butterpollo_windows::vulkan::reconcile(
         h.config.read().unwrap().boolean("vulkan_hdr_layer", true),

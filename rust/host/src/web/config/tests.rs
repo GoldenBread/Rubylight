@@ -455,3 +455,166 @@ fn saving_configuration_does_not_persist_the_command_line_port() {
     );
     assert_eq!(host.config.read().unwrap().port().unwrap(), 48518);
 }
+
+#[test]
+fn the_steamgriddb_key_is_saved_for_administrators_only_never_shown_and_the_mask_keeps_it() {
+    let fixture = Fixture::new();
+    let host = &fixture.host;
+    let key = "0123456789abcdef0123456789abcdef";
+    let file = host
+        .directory
+        .join("credentials")
+        .join("steamgriddb_api_key");
+    let in_conf = || {
+        Config::load(&host.config_path)
+            .unwrap()
+            .values
+            .contains_key("steamgriddb_api_key")
+    };
+    let shown = handle(host, "GET", "/api/config", &Value::Null).unwrap();
+    assert!(shown.get("steamgriddb_api_key").is_none(), "unset");
+    handle(
+        host,
+        "PATCH",
+        "/api/config",
+        &json!({"steamgriddb_api_key": key}),
+    )
+    .unwrap();
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), key);
+    assert!(
+        !in_conf(),
+        "never in sunshine.conf, which every local user reads"
+    );
+    assert!(
+        !std::fs::read_to_string(&host.config_path)
+            .unwrap()
+            .contains(key)
+    );
+    let shown = handle(host, "GET", "/api/config", &Value::Null).unwrap();
+    assert_eq!(shown["steamgriddb_api_key"], "********");
+    assert!(!shown.to_string().contains(key), "{shown}");
+    assert_eq!(crate::steamgriddb::api_key(host).as_deref(), Some(key));
+    // The console sends the mask back with other settings: the key stays.
+    handle(
+        host,
+        "PATCH",
+        "/api/config",
+        &json!({"steamgriddb_api_key": "********", "sunshine_name": "Den"}),
+    )
+    .unwrap();
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), key);
+    // A key that is not one is refused without repeating it.
+    let error = handle(
+        host,
+        "PATCH",
+        "/api/config",
+        &json!({"steamgriddb_api_key": "not a key; X 1"}),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!error.contains("not a key"), "{error}");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), key);
+    // A key written into sunshine.conf by hand is read and masked, and a save moves it.
+    std::fs::remove_file(&file).unwrap();
+    host.config
+        .write()
+        .unwrap()
+        .values
+        .insert("steamgriddb_api_key".into(), "fedcba9876543210".into());
+    let shown = handle(host, "GET", "/api/config", &Value::Null).unwrap();
+    assert_eq!(shown["steamgriddb_api_key"], "********");
+    assert_eq!(
+        crate::steamgriddb::api_key(host).as_deref(),
+        Some("fedcba9876543210")
+    );
+    handle(
+        host,
+        "PATCH",
+        "/api/config",
+        &json!({"steamgriddb_api_key": key}),
+    )
+    .unwrap();
+    assert!(
+        !host
+            .config
+            .read()
+            .unwrap()
+            .values
+            .contains_key("steamgriddb_api_key")
+    );
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), key);
+    // Emptied, it is gone.
+    handle(
+        host,
+        "PATCH",
+        "/api/config",
+        &json!({"steamgriddb_api_key": ""}),
+    )
+    .unwrap();
+    assert!(!file.exists());
+    assert!(!in_conf());
+    let shown = handle(host, "GET", "/api/config", &Value::Null).unwrap();
+    assert!(shown.get("steamgriddb_api_key").is_none());
+}
+
+#[test]
+fn any_save_moves_a_typed_steamgriddb_key_and_any_key_save_ends_a_refusal() {
+    let fixture = Fixture::new();
+    let host = &fixture.host;
+    let key = "0123456789abcdef0123456789abcdef";
+    let file = host
+        .directory
+        .join("credentials")
+        .join("steamgriddb_api_key");
+    host.config
+        .write()
+        .unwrap()
+        .values
+        .insert("steamgriddb_api_key".into(), key.into());
+    crate::steamgriddb::AS_SYSTEM.with(|system| system.set(true));
+    // A save of another setting, or of the mask, moves the typed key out of sunshine.conf.
+    handle(
+        host,
+        "PATCH",
+        "/api/config",
+        &json!({"steamgriddb_api_key": "********", "sunshine_name": "Den"}),
+    )
+    .unwrap();
+    crate::steamgriddb::AS_SYSTEM.with(|system| system.set(false));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), key);
+    assert!(
+        !Config::load(&host.config_path)
+            .unwrap()
+            .values
+            .contains_key("steamgriddb_api_key")
+    );
+    assert!(
+        !host
+            .config
+            .read()
+            .unwrap()
+            .values
+            .contains_key("steamgriddb_api_key")
+    );
+
+    // Saving the same key again ends a refusal and takes its warning back, as emptying does.
+    for value in [key, ""] {
+        crate::steamgriddb::refuse(host, key);
+        handle(
+            host,
+            "PATCH",
+            "/api/config",
+            &json!({"steamgriddb_api_key": value}),
+        )
+        .unwrap();
+        assert!(!crate::steamgriddb::refused(host), "{value:?}");
+        assert!(
+            !host
+                .warnings
+                .snapshot()
+                .iter()
+                .any(|warning| warning.code == crate::steamgriddb::REFUSED_WARNING),
+            "{value:?}"
+        );
+    }
+}

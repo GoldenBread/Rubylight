@@ -217,7 +217,7 @@ pub fn prepare(
         .nucleus
         .instance(seat.session)
         .ok_or_else(|| Refusal::unavailable("The Nucleus Co-op session ended: launch it again"))?;
-    instance.resize(seat.slot, (stream.width, stream.height))?;
+    instance.resize(seat.slot, stream.display_size())?;
     // The display only picks the GPU the window is captured on.
     let display = butterpollo_windows::capture::primary_display()
         .context("no display is on the desktop to capture the game window on")?;

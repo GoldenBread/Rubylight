@@ -224,9 +224,10 @@ pub fn activate(
     config: &Negotiated,
     warnings: &Warnings,
 ) -> Result<Arc<Retained>> {
+    let (display_width, display_height) = config.display_size();
     let mode = (
-        config.width,
-        config.height,
+        display_width,
+        display_height,
         config.fps_millihz(),
         config.hdr,
     );
@@ -267,8 +268,8 @@ pub fn activate(
     let host = Arc::downgrade(h);
     let lease = Arc::new(Retained::create_options(
         client,
-        config.width,
-        config.height,
+        display_width,
+        display_height,
         butterpollo_core::framegen::Rate(config.fps_millihz()),
         config.hdr,
         &options,

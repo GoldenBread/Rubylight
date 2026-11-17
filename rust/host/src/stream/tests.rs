@@ -1163,8 +1163,8 @@ fn background_capture_never_recovers_onto_the_primary_display() {
     butterpollo_core::background::apply(&mut background);
     for capture in ["auto", "wgc", "ddx"] {
         assert_ne!(
-            CaptureKey::new(capture, "display", false, &plain, ""),
-            CaptureKey::new(capture, "display", false, &background, "")
+            CaptureKey::new(capture, "display", false, &plain, "", false),
+            CaptureKey::new(capture, "display", false, &background, "", false)
         );
     }
 }
@@ -1192,6 +1192,32 @@ fn pad_feedback_forwards_rumble_and_each_family_extra() {
     );
     // Reports of no known kind send nothing.
     assert!(feedback_packets(2, 3, &[255; 8]).is_empty());
+}
+#[test]
+fn trigger_rumble_alone_still_reaches_the_client() {
+    // The reporter's test (nightjar#124): impulse triggers on, ordinary
+    // vibration off, so an Xbox pad's report has zero body magnitudes and only
+    // its two trigger magnets running.
+    let packets = feedback_packets(1, 4, &[0, 0, 0, 0, 0x40, 0x00, 0x20, 0x00]);
+    assert_eq!(packets.len(), 2);
+    assert_eq!(packets[0].0, RUMBLE_DATA);
+    assert_eq!(
+        &packets[0].1[4..],
+        &[1, 0, 0, 0, 0, 0],
+        "the body motors' stop"
+    );
+    assert_eq!(
+        packets[1],
+        (RUMBLE_TRIGGER_DATA, vec![1, 0, 0x40, 0, 0x20, 0]),
+        "left trigger 0x0040, right 0x0020"
+    );
+    // Both go out while rumble is on.
+    let mut rumble = RumbleForwarded::default();
+    assert!(
+        packets
+            .iter()
+            .all(|(kind, payload)| rumble.forward(true, *kind, payload))
+    );
 }
 #[test]
 fn vhf_rumble_and_stop_keep_the_strengths_in_moonlight_packets() {
@@ -1335,6 +1361,7 @@ fn shared_capture_separates_explicit_wgc_intervals_without_splitting_ddx() {
             false,
             &capture_config(&Config::parse(setting).unwrap()),
             "",
+            false,
         )
     };
     for kind in ["wgc", "auto"] {
@@ -1349,12 +1376,22 @@ fn shared_capture_separates_explicit_wgc_intervals_without_splitting_ddx() {
         assert_eq!(key(kind, ""), key(kind, "wgc_drain_to_newest=true"));
         assert_eq!(key(kind, ""), key(kind, "wgc_helper_streaming_scope=true"));
     }
+    // Constant rate publishes between frames, so a stream with it never
+    // shares a capture opened for variable-rate WGC. Streams of the same
+    // method still share, and the capture publishes for the fastest of them
+    // (`Latest::repeat_period`).
+    let config = Config::default();
+    assert_ne!(
+        CaptureKey::new("wgc", "display", false, &config, "", false),
+        CaptureKey::new("wgc", "display", false, &config, "", true)
+    );
 }
 #[test]
 fn shared_capture_respects_compute_overrides_and_independent_frame_phases() {
     let config = Config::default();
-    let key =
-        |config: &Config, phase: &str| CaptureKey::new("wgc", "display", false, config, phase);
+    let key = |config: &Config, phase: &str| {
+        CaptureKey::new("wgc", "display", false, config, phase, false)
+    };
     let default = key(&config, "first");
     assert_eq!(default, key(&config, "second"));
     let mut helper = config.clone();

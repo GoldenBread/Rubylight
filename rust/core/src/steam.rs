@@ -1246,6 +1246,8 @@ fn update(app: &mut Value, game: &Game, source: &str, cover: Option<&Path>) {
             fields.insert("steam-artwork-client-path".into(), json!(cover));
             fields.insert("steam-artwork-client-compatible".into(), json!(true));
             fields.insert("image-path".into(), json!(cover));
+            // Steam's own cover replaces one from SteamGridDB, and its mark goes with it.
+            fields.remove(crate::steamgriddb::COVER_FIELD);
         }
         None => {
             // Keep a cover the user chose; replace only the one this sync set.
@@ -1315,9 +1317,13 @@ pub fn reconcile(
                 if image.is_empty()
                     || image == FALLBACK_IMAGE
                     || (!previous.is_empty() && image == previous)
+                    || crate::steamgriddb::fetched_cover(app)
                 {
                     let before = app.clone();
                     let cover = generic(cover);
+                    if let Some(fields) = app.as_object_mut() {
+                        fields.remove(crate::steamgriddb::COVER_FIELD);
+                    }
                     app["image-path"] = json!(cover);
                     app["steam-artwork-client-path"] = json!(cover);
                     app["steam-artwork-client-compatible"] = json!(true);

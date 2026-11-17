@@ -40,6 +40,8 @@ public final class ConsoleSnapshot {
         /** The store's key ("steam", ...) and display name; null for an app no store owns and for classic apps. */
         public final String storeSource;
         public final String storeName;
+        /** The game's id in its store, or null; set by the library reader beside {@link #storeSource}. */
+        public String storeId;
         /** False for a game the host found in a store but has not added; it has no app id to launch. */
         public final boolean added;
         /** Seconds since the epoch it last ran on the host, or null when the host does not say. */

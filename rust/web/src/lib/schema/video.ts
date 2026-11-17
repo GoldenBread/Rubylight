@@ -110,7 +110,7 @@ const video: Setting[] = [
     key: SETTING,
     label: 'Stream preset',
     description:
-      'One choice that fills in the AMD and NVIDIA encoder settings you have not set yourself. Balanced suits almost everyone; settings you change below always win.',
+      'One choice for encoder speed against picture quality. Balanced suits almost everyone; settings you change below always win.',
     details:
       'Balanced is Rubylight\'s defaults. Lowest latency limits every frame, recovery keyframes (full pictures the stream restarts from after loss) included, to one frame\'s share of the bitrate, and asks NVENC to split HEVC and AV1 frames across its engines where supported. Reference quality leaves recovery keyframes unlimited, which suits a fast, steady link. No preset changes the rate control. Most values come from our own measurements; the NVIDIA split mode follows NVIDIA\'s documentation and other hosts\' defaults. A device or an app can choose its own preset.',
     category: 'video',
@@ -126,9 +126,9 @@ const video: Setting[] = [
     key: 'capture',
     label: 'Capture method',
     description:
-      'Automatic suits almost everyone: direct driver push on Rubylight virtual displays, Windows Graphics Capture on other displays. Choose another method only to troubleshoot.',
+      'Automatic suits almost everyone, with Desktop Duplication when needed. Constant rate keeps a slow game at its full rate, spending bitrate.',
     details:
-      'Direct driver push receives frames from Rubylight\'s own virtual display driver, with no capture copy. If unavailable, it falls back to Windows Graphics Capture, then Desktop Duplication if needed. Choosing Windows Graphics Capture or Desktop Duplication bypasses driver push. AMD Direct Capture reads the Radeon driver\'s presented picture on a display connected to a Radeon; without it, capture falls back to Windows Graphics Capture with a warning. Automatic never selects it. No method streams frame generation\'s extra frames, such as AMD Fluid Motion Frames.',
+      'Direct driver push receives frames from Rubylight\'s own virtual display driver, with no capture copy. If unavailable, it falls back to Windows Graphics Capture, then Desktop Duplication if needed. Choosing Windows Graphics Capture or Desktop Duplication bypasses driver push. On Automatic only, a streamed display whose Windows Graphics Capture sends no picture for 2 seconds while an exclusive-fullscreen app is in front switches to Desktop Duplication for the rest of that session: timing and HDR can differ, and a turned monitor or a display another GPU drives stays on Windows Graphics Capture. A named method is never changed, so choosing Windows Graphics Capture is how you compare the two across reconnects. Constant rate captures with Windows Graphics Capture and publishes a picture every stream frame: a 90 fps game on a 180 fps stream keeps a full 180 frames a second instead of the encoder repeating a still picture between the game’s frames, and a new game frame is never held back for its slot. Every repeat is encoded like any frame, so the stream spends its bitrate between the game’s frames too, and the still-picture resend rate no longer decides those frames; on a mostly still picture leave it off. Use it when a game is capped below the stream’s frame rate. It also applies to the launched app’s window, which Windows Graphics Capture streams and which never falls back to Desktop Duplication; on a display, Desktop Duplication takes over when Windows Graphics Capture is unavailable and keeps the same rate. Automatic and Windows Graphics Capture stay variable-rate, and a configuration that already says `capture = wgcc` selects this mode. AMD Direct Capture reads the Radeon driver\'s presented picture on a display connected to a Radeon; without it, capture falls back to Windows Graphics Capture with a warning. Automatic never selects it. No method streams frame generation\'s extra frames, such as AMD Fluid Motion Frames.',
     category: 'video',
     group: 'Capture',
     control: {
@@ -138,11 +138,12 @@ const video: Setting[] = [
         { value: 'idd-push', label: 'Direct driver push' },
         { value: 'ddx', label: 'Desktop Duplication' },
         { value: 'wgc', label: 'Windows Graphics Capture' },
+        { value: 'wgcc', label: 'Windows Graphics Capture, constant rate' },
         { value: 'amd', label: 'AMD Direct Capture' },
       ],
     },
-    // framegen.rs: any case; Vibepollo's wgcc, and dxgi, which the fallback console writes.
-    aliases: { match: 'case', spellings: { wgcc: 'wgc', dxgi: 'ddx' } },
+    // framegen.rs: any case; dxgi is a spelling the fallback console writes.
+    aliases: { match: 'case', spellings: { dxgi: 'ddx' } },
     default: 'auto',
   },
   {

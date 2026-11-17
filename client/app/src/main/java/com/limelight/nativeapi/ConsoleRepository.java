@@ -383,10 +383,12 @@ public final class ConsoleRepository {
         Set<Integer> away = hidden.following(computer.uuid, listed.games());
         List<ConsoleSnapshot.Source> sources = new ArrayList<>();
         for (NativeLibrary.Game game : library.games) {
-            sources.add(new ConsoleSnapshot.Source(computer.uuid, computer.displayName(), game.appId,
+            ConsoleSnapshot.Source source = new ConsoleSnapshot.Source(computer.uuid, computer.displayName(), game.appId,
                     game.installId == null ? "" : game.installId, game.title, game.gameId, game.running,
                     game.coverPath, game.coverVersion, game.installed, "", false, game.storeSource, game.storeName,
-                    game.added, game.lastPlayed, game.launchable, game.collections, game.added && away.contains(game.appId)));
+                    game.added, game.lastPlayed, game.launchable, game.collections, game.added && away.contains(game.appId));
+            source.storeId = game.storeId;
+            sources.add(source);
         }
         return sources;
     }

@@ -119,6 +119,50 @@ const replies = {
 const home = process.env.SHOT_HOME || '';
 const HOMES = ['fresh', 'fresh-off', 'warning', 'ready', 'streaming', 'paired-now'];
 if (home && !HOMES.includes(home)) throw new Error(`SHOT_HOME is one of ${HOMES.join(', ')}, not ${home}`);
+// SHOT_SESSIONS: the Sessions page's state: full (history, nothing live), live (a stream
+// running) or empty.
+const sessionsState = process.env.SHOT_SESSIONS || 'full';
+if (!['full', 'live', 'empty'].includes(sessionsState)) throw new Error(`SHOT_SESSIONS is full, live or empty, not ${sessionsState}`);
+/** One running stream, as `/api/rtsp/sessions` reports it. */
+function liveStream() {
+  const history = Array.from({ length: 90 }, (_, second) => ({ fps: 119 + (second % 3 === 0 ? 1 : 0),
+    bitrate_mbps: 44 + 6 * Math.sin(second / 7) + (second % 11 === 0 ? 5 : 0), encode_mean_ms: 2.9, encode_max_ms: 4.1,
+    host_processing_mean_ms: 3.2, host_processing_max_ms: 4.4, frame_age_mean_ms: 0.8 }));
+  return {
+    uuid: 'phone', device_name: 'Pixel 9', role: 'stream', state: 'RUNNING', width: 2400, height: 1080, fps: 120,
+    video_format: 1, hdr: false, vrr: false, encoder: 'amf', encoder_bitrate_kbps: 50_000, pyrowave_minimum_kbps: null,
+    pyrowave_recommended_kbps: null, audio_channels: 2, frames_sent: 10_800, bytes_sent: 0, idr_requests: 1,
+    uptime_seconds: 754, warnings: [],
+    performance: { fps: 120, bitrate_mbps: 47.6, encode_mean_ms: 2.9, encode_p95_ms: 3.4, encode_p99_ms: 3.8,
+      host_processing_mean_ms: 3.2, host_processing_p95_ms: 3.7, host_processing_p99_ms: 4.1, host_processing_max_ms: 4.4,
+      frame_age_mean_ms: 0.8, frame_age_p95_ms: 1.2, present_to_send_mean_ms: 4.1, send_interval_p99_ms: 9, sample_frames: 240, history },
+  };
+}
+/** The ended sessions `/api/sessions/history` lists, newest first. */
+const ended = (seconds) => Math.floor(Date.now() / 1000) - seconds;
+const sessionHistory = [
+  { id: 'stream-1', device: 'phone', device_name: 'Pixel 9', app_id: 3, app: 'Portal 2', role: 'stream', transport: 'moonlight',
+    codec: 'hevc', width: 2400, height: 1080, fps: 120, hdr: false, bitrate_kbps: 50_000, mean_bitrate_kbps: 47_600,
+    mean_fps: 119.4, p95_fps: 117.8, loss_percent: 0.04, end_reason: 'ended', end_detail: '', end_category: null,
+    started_unix_ms: (ended(120) - 3_720) * 1000, ended_unix_ms: ended(120) * 1000, duration_ms: 3_720_000 },
+  { id: 'stream-2', device: 'tv', device_name: 'Living room TV', app_id: 7, app: 'Forza Horizon 5', role: 'stream', transport: 'moonlight',
+    codec: 'av1', width: 3840, height: 2160, fps: 60, hdr: true, bitrate_kbps: 80_000, mean_bitrate_kbps: 76_900,
+    mean_fps: 59.8, p95_fps: 58.1, loss_percent: 1.84, end_reason: 'failed', end_category: 'encoder',
+    end_detail: 'Stream ended: AMF error AMF_ENCODER_NOT_PRESENT (24)', started_unix_ms: (ended(14_400) - 2_640) * 1000,
+    ended_unix_ms: ended(14_400) * 1000, duration_ms: 2_640_000 },
+  { id: 'stream-3', device: 'deck', device_name: 'Steam Deck', app_id: 12, app: 'Hades II', role: 'stream', transport: 'moonlight',
+    codec: 'h264', width: 0, height: 0, fps: 0, hdr: false, bitrate_kbps: 0, mean_bitrate_kbps: 0,
+    mean_fps: 0, p95_fps: 0, loss_percent: null, end_reason: 'start_failed', end_category: null,
+    end_detail: 'the stream could not start: the app exited before its first frame', started_unix_ms: ended(90_000) * 1000,
+    ended_unix_ms: ended(90_000) * 1000, duration_ms: 0 },
+  { id: 'stream-4', device: 'phone', device_name: 'Pixel 9', app_id: 3, app: 'Portal 2', role: 'stream', transport: 'webrtc',
+    codec: 'pyrowave', width: 2560, height: 1440, fps: 90, hdr: false, bitrate_kbps: 60_000, mean_bitrate_kbps: 58_200,
+    mean_fps: 89.1, p95_fps: 86.4, loss_percent: null, end_reason: 'interrupted', end_category: null,
+    end_detail: 'The host stopped during the session; its duration ends at the host\'s last minute, so the last part is not counted.',
+    started_unix_ms: (ended(259_200) - 1_500) * 1000, ended_unix_ms: ended(259_200) * 1000, duration_ms: 1_500_000 },
+];
+replies['/api/sessions/history'] = { status: true, limit: 200, days: 90, bytes: 262_144, sessions: sessionsState === 'empty' ? [] : sessionHistory };
+if (sessionsState === 'live') replies['/api/rtsp/sessions'] = { status: true, sessions: [liveStream()] };
 /** Requests for the device list so far: paired-now pairs Pixel 9 after the first. */
 let clientLists = 0;
 const pixel = { uuid: 'phone', name: 'Pixel 9', enabled: true, connected: false, perm: 0x071f1f00 };
@@ -137,18 +181,7 @@ if (['ready', 'streaming', 'paired-now'].includes(home)) {
 if (home === 'streaming') {
   replies['/api/session/status'] = { activeSessions: 1, appRunning: true, appName: 'Portal 2', paused: false, running: true,
     app: { name: 'Portal 2', id: 3, uuid: 'steam-620' } };
-  const history = Array.from({ length: 90 }, (_, second) => ({ fps: 119 + (second % 3 === 0 ? 1 : 0),
-    bitrate_mbps: 44 + 6 * Math.sin(second / 7) + (second % 11 === 0 ? 5 : 0), encode_mean_ms: 2.9, encode_max_ms: 4.1,
-    host_processing_mean_ms: 3.2, host_processing_max_ms: 4.4, frame_age_mean_ms: 0.8 }));
-  replies['/api/rtsp/sessions'] = { status: true, sessions: [{
-    uuid: 'phone', device_name: 'Pixel 9', role: 'stream', state: 'RUNNING', width: 2400, height: 1080, fps: 120,
-    video_format: 1, hdr: false, vrr: false, encoder: 'amf', encoder_bitrate_kbps: 50_000, pyrowave_minimum_kbps: null,
-    pyrowave_recommended_kbps: null, audio_channels: 2, frames_sent: 10_800, bytes_sent: 0, idr_requests: 1,
-    uptime_seconds: 754, warnings: [],
-    performance: { fps: 120, bitrate_mbps: 47.6, encode_mean_ms: 2.9, encode_p95_ms: 3.4, encode_p99_ms: 3.8,
-      host_processing_mean_ms: 3.2, host_processing_p95_ms: 3.7, host_processing_p99_ms: 4.1, host_processing_max_ms: 4.4,
-      frame_age_mean_ms: 0.8, frame_age_p95_ms: 1.2, present_to_send_mean_ms: 4.1, send_interval_p99_ms: 9, sample_frames: 240, history },
-  }] };
+  replies['/api/rtsp/sessions'] = { status: true, sessions: [liveStream()] };
 }
 /** Answers that change while a page is open. */
 // Home polls the co-op sessions alone.

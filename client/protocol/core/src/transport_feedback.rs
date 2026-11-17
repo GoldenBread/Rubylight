@@ -411,7 +411,16 @@ mod tests {
 
     #[test]
     fn the_largest_report_stays_below_one_enet_fragment() {
-        assert!(HEADER_BYTES + 2 * MAX_ENTRIES <= 1000);
+        // A full report must fit one ENet fragment, which the sender sizes at
+        // 1000 bytes: the header plus two bytes per entry.
+        let full = TransportFeedback {
+            stride: 1,
+            entries: vec![0; MAX_ENTRIES],
+            ..Default::default()
+        };
+        let bytes = full.encode().expect("a full report encodes");
+        assert_eq!(bytes.len(), HEADER_BYTES + 2 * MAX_ENTRIES);
+        assert!(bytes.len() <= 1000);
     }
 
     #[test]

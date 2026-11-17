@@ -2,8 +2,8 @@
 <resources>
     <string name="stream_touch_off_help">Cảm ứng đang tắt. Vuốt quay lại hoặc nhấn Quay lại để mở menu stream.</string>
     <string name="title_local_cursor_speed">Tốc độ con trỏ cục bộ</string>
-    <string name="title_trackpad_acceleration">Gia tốc con trỏ</string>
-    <string name="summary_trackpad_acceleration">Di ngón tay chậm thì con trỏ đi ít hơn, để ngắm chính xác, còn vuốt nhanh đưa nó đi xa hơn. Dùng cho chế độ cảm ứng “Bàn di chuột” và “Con trỏ cục bộ”; áp dụng từ stream kế tiếp.</string>
+    <string name="title_trackpad_acceleration">Gia tốc bàn di chuột</string>
+    <string name="summary_trackpad_acceleration">Di ngón tay chậm để ngắm chính xác, vuốt nhanh đưa con trỏ đi xa hơn. Hãy để bật trừ khi bạn muốn con trỏ bám sát ngón tay theo tỉ lệ 1:1; chế độ “Bàn di chuột” và “Con trỏ cục bộ” áp dụng từ stream kế tiếp.</string>
     <string name="title_trackpad_acceleration_curve">Mức gia tốc</string>
     <string-array name="trackpad_acceleration_curve_names">
         <item>Nhẹ</item>

@@ -2802,3 +2802,44 @@ fn an_app_window_is_laid_over_the_display_target_which_the_heartbeat_keeps_publi
     assert!(target.show_window(None));
     assert_eq!(target.current(), (r"\.\DISPLAY10".into(), 4));
 }
+#[test]
+fn a_capped_streams_display_keeps_its_size_for_the_mode_matches_and_resumes() {
+    use crate::state::test_support::Fixture;
+    let mut stream = Negotiated {
+        width: 2560,
+        height: 1440,
+        fps: 60,
+        rate_millihz: 60_000,
+        ..Default::default()
+    };
+    stream.set_display_size((3840, 2160), Some((2560, 1440)));
+    assert_eq!(stream.width, 2560);
+    // The session mode the display reports is the size the client asked for,
+    // never the smaller picture the encoder codes.
+    assert_eq!(
+        super::stream_mode(&stream),
+        (3840, 2160, 60_000, false, false)
+    );
+
+    let fixture = Fixture::new();
+    let config = Config::parse("dd_config_revert_delay=0").unwrap();
+    *fixture.host.config.write().unwrap() = config.clone();
+    let mut prepared = test_prepared(&fixture.host);
+    prepared.mode = super::stream_mode(&stream);
+    let limiter =
+        limiter::Lease::acquire(&fixture.host.directory, &config, &prepared.framegen).unwrap();
+    let display = Ready::prepare((prepared, limiter)).unwrap().display.clone();
+    // A display made at the request matches and resumes the capped stream...
+    assert!(display.matches(&stream));
+    assert!(display.resumes(&stream));
+    // ...whereas the coded size (what a regression would compare) does not.
+    let coded_only = Negotiated {
+        width: 2560,
+        height: 1440,
+        fps: 60,
+        rate_millihz: 60_000,
+        ..Default::default()
+    };
+    assert!(!display.matches(&coded_only));
+    assert!(!display.resumes(&coded_only));
+}

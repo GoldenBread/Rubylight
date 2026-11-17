@@ -1,0 +1,121 @@
+use super::*;
+
+/// Answers from fixtures by the request's URL and body, counting what it was asked; never a network.
+struct Fixtures {
+    asked: Mutex<Vec<String>>,
+    answer: Box<dyn Fn(&Request) -> Answer + Send + Sync>,
+}
+
+impl Http for Arc<Fixtures> {
+    fn send(&self, request: &Request) -> Answer {
+        self.asked.lock().unwrap().push(format!("{} {}", request.url, request.body.clone().unwrap_or_default()));
+        (self.answer)(request)
+    }
+}
+
+fn ok(body: &str) -> Answer {
+    Answer { status: 200, retry_after: None, body: body.as_bytes().to_vec() }
+}
+
+fn services(request: &Request) -> Answer {
+    let what = format!("{} {}", request.url, request.body.clone().unwrap_or_default());
+    match request.service {
+        Service::SteamGridDb if what.contains("/games/steam/1145360") => ok(r#"{"success":true,"data":{"id":42}}"#),
+        Service::SteamGridDb if what.contains("/grids/game/42") => ok(r#"{"success":true,"data":[{"score":1,"url":"https://cdn2.steamgriddb.com/grid/hades.png"}]}"#),
+        Service::Image if request.url == "https://cdn2.steamgriddb.com/grid/hades.png" => ok("PNG-BYTES"),
+        Service::Twitch => ok(r#"{"access_token":"tok-1","expires_in":5000000}"#),
+        Service::Igdb if what.contains("external_games") => ok(r#"[{"game":7,"external_game_source":1}]"#),
+        Service::Igdb if what.contains("game_time_to_beats") => ok(r#"[{"game_id":7,"hastily":72000,"normally":86400,"completely":324000}]"#),
+        Service::Igdb if what.contains("/games") => ok(r#"[{"id":7,"name":"Hades","genres":[{"name":"Roguelike"}],"themes":[{"name":"Action"}]}]"#),
+        _ => Answer { status: 404, retry_after: None, body: Vec::new() },
+    }
+}
+
+fn keys() -> Keys {
+    Keys { steamgriddb: "sgdb-key-1234".into(), igdb_client_id: "client-5678".into(), igdb_client_secret: "secret-9012".into() }
+}
+
+fn fixture(answer: impl Fn(&Request) -> Answer + Send + Sync + 'static) -> Arc<Fixtures> {
+    Arc::new(Fixtures { asked: Mutex::new(Vec::new()), answer: Box::new(answer) })
+}
+
+fn dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("nightjar-game-info-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
+const HADES: fn() -> Game = || game_of("Hades™", Some("steam:1145360"), None);
+
+#[test]
+fn without_keys_nothing_is_asked_and_nothing_is_kept() {
+    let http = fixture(|_| panic!("asked without keys"));
+    let info = GameInfo::new(&dir("none"), Keys::default(), Box::new(http.clone()));
+    assert_eq!(info.record(&HADES(), true), None);
+    assert_eq!(info.cover(&HADES()), None);
+    assert!(http.asked.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_cover_and_facts_are_looked_up_once_and_then_read_from_disk() {
+    let root = dir("cover");
+    let http = fixture(services);
+    let info = GameInfo::new(&root, keys(), Box::new(http.clone()));
+    assert_eq!(info.cover(&HADES()).as_deref(), Some(&b"PNG-BYTES"[..]));
+    let record = info.kept("steam:1145360").unwrap();
+    assert_eq!(record.facts.as_ref().unwrap().genres, ["Roguelike"]);
+    let asked = http.asked.lock().unwrap().len();
+    assert_eq!(asked, 7, "game, cover, token, external, game, time to beat, image: {:?}", http.asked.lock().unwrap());
+
+    // A new run reads the record and the image from disk: no request at all.
+    let again = fixture(|_| panic!("asked again"));
+    let info = GameInfo::new(&root, keys(), Box::new(again.clone()));
+    assert_eq!(info.cover(&HADES()).as_deref(), Some(&b"PNG-BYTES"[..]));
+    assert_eq!(info.record(&HADES(), false).unwrap().facts.unwrap().normally, Some(86400));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_facts_only_lookup_keeps_the_cover_found_before() {
+    let root = dir("merge");
+    let info = GameInfo::new(&root, keys(), Box::new(fixture(services)));
+    // Facts first (the library's pass), then the cover (a placeholder on the PC): the record
+    // ends with both, and the facts are not asked twice.
+    let facts = info.record(&HADES(), false).unwrap();
+    assert_eq!(facts.cover, None);
+    let both = info.record(&HADES(), true).unwrap();
+    assert_eq!(both.cover.as_deref(), Some("https://cdn2.steamgriddb.com/grid/hades.png"));
+    assert!(both.facts.is_some());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_failing_service_is_quiet_and_its_log_holds_no_key() {
+    let root = dir("fail");
+    let info = GameInfo::new(&root, keys(), Box::new(fixture(|_| Answer { status: 400, retry_after: None, body: b"sgdb-key-1234".to_vec() })));
+    // Refused everywhere: no cover, no facts, no panic, and a record that is tried again later.
+    assert_eq!(info.cover(&Game { name: "Hades".into(), steam: None }), None);
+    let record = info.kept("name:hades").unwrap();
+    assert_eq!(record.art, nightjar_policy::game_info::cache::Outcome::Failed);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn keys_are_kept_apart_from_the_settings_and_removed_when_cleared() {
+    let root = dir("keys");
+    save_keys(&root, &keys()).unwrap();
+    assert_eq!(load_keys(&root), keys());
+    assert!(root.join(KEYS_FILE).is_file());
+    save_keys(&root, &Keys::default()).unwrap();
+    assert!(!root.join(KEYS_FILE).exists());
+    assert_eq!(load_keys(&root), Keys::default());
+    save_keys(&root, &Keys::default()).unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_hosts_game_names_its_steam_id_from_either_field() {
+    assert_eq!(game_of("A", Some("steam:10"), None).steam, Some(10));
+    assert_eq!(game_of("A", None, Some(("steam", "20"))).steam, Some(20));
+    assert_eq!(game_of("A", Some("epic:x"), Some(("epic", "x"))).steam, None);
+}

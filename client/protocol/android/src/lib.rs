@@ -10,6 +10,7 @@
 
 mod bridge;
 pub mod collections;
+pub mod game_info;
 pub mod echo;
 mod engine;
 pub mod extras;
@@ -24,6 +25,7 @@ mod renderers;
 mod touchpad;
 pub mod open_play;
 pub mod sharp_color;
+pub mod simple_profile;
 pub mod stream_menu;
 mod usb;
 

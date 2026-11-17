@@ -152,7 +152,7 @@ const GROUP_ORDER: Record<TabId, readonly string[]> = {
   games: [
     'App behavior', 'Steam options', 'Epic Games options', 'Battle.net options', 'Microsoft Store and Xbox options',
     'EA app options', 'Ubisoft Connect options', 'GOG options', 'Playnite', 'Playnite launch focus', 'Game folders',
-    'Play together', 'Lossless Scaling', 'Commands around every app', 'Commands from devices',
+    'Covers', 'Play together', 'Lossless Scaling', 'Commands around every app', 'Commands from devices',
   ],
   network: ['Pairing', 'Discovery and internet', 'Streams', 'WebRTC', 'File transfer', 'Shared folders', 'Clipboard'],
   advanced: ['Logging', 'Compatibility'],

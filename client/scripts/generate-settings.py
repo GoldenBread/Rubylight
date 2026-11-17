@@ -13,6 +13,12 @@ SEEKBAR = "{http://schemas.moonlight-stream.com/apk/res/seekbar}"
 
 # Usage advice is editorial; labels, options, ranges, dependencies, sections and preset writes come from source.
 ADVICE = {
+    "simple_smoothness": "Auto follows the screen and decoder: the newest picture at each refresh, with Variable refresh rate only if it was turned on in Display & image; Smoothest holds every frame for a steady cadence with a little more delay; Lowest delay never waits; Balanced sits between them with VRR. Changing it writes the frame pacing, V-Sync flags and latency switches together (SimpleProfile, nightjar-policy's simple_profile), so the sections below show the same values. Stored as `simple_smoothness` (auto, smoothest, balanced or lowest-delay).",
+    "simple_picture": "Auto uses the bitrate for the resolution, frame rate and Automatic codec; Best spends 1.5 times that for a sharper picture; Save data uses 0.6 times and lets the bitrate and quality fall when the link struggles. Changing it writes the bitrate, the codec (Automatic), Lower bitrate and Automatic quality together (SimpleProfile). Stored as `simple_picture` (auto, best or save-data).",
+    "simple_screen": "This device's own resolution and refresh rate, which the simple layer always streams at. Lower the resolution under Video if the stream stutters; the row then shows Custom. Read-only.",
+    "simple_hdr": "Auto is the default and turns HDR on only where the screen, the decoder and the PC support it; Off always streams SDR. It writes the HDR switch under Video and reads it there. Stored as `simple_hdr` (auto or off).",
+    "checkbox_console_home": "Opens straight into Home, the full-screen library of your games a controller or remote can navigate, instead of the list of PCs. On by default; needs a paired PC that shares its game library for Home to have something to show. Stored as `checkbox_console_home`, and turning it on sets `list_open_on_start` to pcs so a game countdown does not win (StartScreenChoice).",
+    "simple_back_to_recommended": "Sets the three choices above back to Auto, which writes the settings the device measured as best. Your other settings keep their values until then. Opens nothing; the values show in the sections below.",
     "theme": "Choose System to follow the system theme, Light for the day palette even when the system is dark, Dark for the dark grey theme on app screens, menus and dialogs even when the system uses a light theme (as most TVs do), or OLED black for pure black backgrounds. A TV keeps the night palette with System and with Light. Applies immediately and stays separate from stream profiles. Stored as `theme` (system, light, dark or oled_black); the two switches older versions used, `checkbox_always_dark` and `checkbox_oled_black`, move there on the first read. High contrast keeps the app black whatever is chosen here.",
     "list_ui_scale": "Raise for large, readable menus on a TV or a small phone; lower to fit more on screen. Scales the whole app layout, not the stream, and the system font size still applies on top. Applies immediately and stays separate from stream profiles.",
     "list_ui_mode": "Automatic follows the device. Choose TV on a handheld or phone that is connected to a TV (a Retroid Pocket docked over HDMI, for example) to get the TV layouts with focus, a remote or gamepad and larger rows; choose Handheld to get the touch layouts on a TV. The stream is not changed. Applies immediately and stays separate from stream profiles.",
@@ -63,8 +69,8 @@ ADVICE = {
     "checkbox_mouse_emulation_fixed_step": "Enable for precise pointing in controller mouse mode: hold X while moving the stick to move a fixed step; Y doubles the step from 1 to 128 pixels, then wraps to 1.",
     "touch_mode": "Use Trackpad for relative cursor movement, Trackpad (touchpad gestures) for the same with a physical touchpad’s gestures (tap-and-a-half drag, flick momentum), Direct mouse to point at a screen location, Multi-touch for host touch input, Local cursor for a pointer drawn on this device with no round trip, or Touch off to ignore fingers while playing with a controller (Back still opens the stream menu). Unsupported native touch falls back to Direct mouse. The picker's Help explains each mode. See [touch modes](controls.md#touch-modes).",
     "seekbar_trackpad_speed": "Adjust Trackpad movement; 100% is normal speed.",
-    "seekbar_local_cursor_speed": "Adjust Local cursor movement; at 100% the drawn pointer moves as far as your finger.",
-    "checkbox_trackpad_acceleration": "Enable so slow finger movement aims precisely and fast swipes cover more distance. Trackpad and Local cursor; applies from the next stream.",
+    "seekbar_local_cursor_speed": "Adjust Local cursor movement; with Trackpad acceleration off, 100% moves the drawn pointer as far as your finger.",
+    "checkbox_trackpad_acceleration_v2": "Slow finger movement aims precisely and fast swipes cover more distance. Leave it on unless you prefer the pointer to follow your finger one to one; Trackpad and Local cursor apply it from the next stream.",
     "list_trackpad_acceleration_curve": "Choose how strongly fast swipes are sped up.",
     "checkbox_trackpad_momentum": "Enable so the pointer keeps gliding after a quick flick. A new touch, a mode change, the stream menu, picture-in-picture and disconnecting stop it at once. Trackpad and Local cursor.",
     "list_trackpad_momentum_glide": "Choose how far the pointer glides.",
@@ -196,6 +202,9 @@ ADVICE = {
     "list_fec_choice": "PC's setting by default: the PC adds the recovery data its own settings call for. Automatic asks it to follow the losses this device reports; 10, 20, 30 or 50 % fixes the share. Rubylight PCs and Sunshine-based PCs that accept it take this choice; other PCs use their own setting either way.",
     "checkbox_link_probe": "Off by default. A new stream at the automatic bitrate first times a short download from a Rubylight PC that offers it and starts at no more than 80 % of the result (never below 2 Mbit/s). Resumes, a bitrate you set and PyroWave are not tested. Off because it started streams lower, with more loss and freezes, in our measurement.",
     "checkbox_show_gyro_diagnostics": "Off by default. Shows the motion values each controller sends while streaming, after its gyroscope mapping, with buttons to record them to a CSV file and share it, list the connected controllers and try the Flydigi preset until the stream ends. Covers the top left of the picture. Turn it on only to check a controller's motion.",
+    "game_info_steamgriddb": "Optional; empty by default, and then Nightjar sends nothing. Shows SteamGridDB's cover for a game your PC has none for; your PC's own cover always wins. Your game names go to SteamGridDB. Stored in its own file, not in presets, profiles or backups.",
+    "game_info_igdb_client_id": "Optional; empty by default, and then Nightjar sends nothing. With the client secret, shows genres, themes and time to beat on a game's page and adds Genre and Length filters to All games. Your game names go to IGDB. Needs a Twitch developer app. Stored in its own file, not in presets, profiles or backups.",
+    "game_info_igdb_client_secret": "The client secret of the same Twitch developer app as the IGDB client ID; game facts need both. Stored in its own file, not in presets, profiles or backups.",
     "pin_lock": "Off until a PIN is set. Asks for a PIN to open Nightjar or to start a stream. A forgotten PIN can only be reset by clearing Nightjar's app data in Android's settings, which also removes paired PCs.",
 }
 
@@ -212,7 +221,7 @@ SHOWN_WHILE = {
     "seekbar_vibrate_fallback_strength": ("checkbox_vibrate_fallback", True),
     "checkbox_usb_bind_all": ("checkbox_usb_driver", True),
     "checkbox_usb_dualsense_haptics": ("checkbox_usb_dualsense", True),
-    "list_trackpad_acceleration_curve": ("checkbox_trackpad_acceleration", True),
+    "list_trackpad_acceleration_curve": ("checkbox_trackpad_acceleration_v2", True),
     "list_trackpad_momentum_glide": ("checkbox_trackpad_momentum", True),
     "list_osc_style": ("checkbox_show_onscreen_controls", True),
     "list_osc_stick_mode": ("checkbox_show_onscreen_controls", True),
@@ -344,7 +353,7 @@ def generate():
                 choices += f"; buttons {display_value(key, key_step)}"
             if node.get(SEEKBAR + "presets"):
                 choices += "; presets " + ", ".join(display_value(key, item) for item in array(node.get(SEEKBAR + "presets")))
-        elif "SwitchPreference" in node.tag or "CheckboxPreference" in node.tag:
+        elif "SwitchPreference" in node.tag or "CheckboxPreference" in node.tag or "ConsoleModePreference" in node.tag:
             choices = "On; Off"
         if key == "list_resolution":
             default = "This screen's native resolution; follows the screen used for each stream"
@@ -376,6 +385,11 @@ def generate():
         elif key == "checkbox_enable_perf_overlay":
             default = array("@array/overlay_choice_names")[0]
             choices = "; ".join(array("@array/overlay_choice_names"))
+        elif key in ("simple_smoothness", "simple_picture", "simple_hdr"):
+            names = {"simple_smoothness": "simple_smoothness_names", "simple_picture": "simple_picture_names",
+                     "simple_hdr": "simple_hdr_names"}[key]
+            default = array("@array/" + names)[0]
+            choices = "; ".join(array("@array/" + names))
         elif key == "low_latency_customize" or key.startswith("more_"):
             default = "Closed"
         else:

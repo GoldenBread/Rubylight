@@ -149,6 +149,18 @@ fn component_files() -> Vec<String> {
     names
 }
 
+/// A junction at `link` to `target`, as another account sharing a folder
+/// could plant one.
+fn junction(link: &Path, target: &Path) {
+    // cmd takes a `/` in a path for an option.
+    let made = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .args([link, target].map(|path| path.to_string_lossy().replace('/', "\\")))
+        .output()
+        .unwrap();
+    assert!(made.status.success(), "{made:?}");
+}
+
 fn release_assets(adapter: &[u8]) -> BTreeMap<String, Vec<u8>> {
     BTreeMap::from([(pins::asset(VERSION), component_archive(adapter, &NVIDIA))])
 }
@@ -403,6 +415,145 @@ async fn a_component_folder_that_is_a_link_is_never_cleared() {
         ["4.0.0-0123456789abcdef", RECORD, "precious.txt"]
     );
     std::fs::remove_dir(&root).unwrap();
+}
+
+/// An elevated host holds the component's folder and everything from there up
+/// to the host's data root; a folder above it is the user's own and is never
+/// asked about.
+#[test]
+fn only_the_component_folders_up_to_the_data_root_are_held() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    let data_root = h.directory.clone();
+    let root = root(h);
+    let folder = root.join("4.5.0-0123456789abcdef");
+    std::fs::create_dir_all(&folder).unwrap();
+    let asked = Mutex::new(Vec::new());
+    trusted_with(&folder, &data_root, true, |path, whole| {
+        assert!(path.starts_with(&data_root), "held {}", path.display());
+        asked.lock().unwrap().push((path.to_path_buf(), whole));
+        Ok(())
+    })
+    .unwrap();
+    // A folder outside the host's own is never taken for one of its own.
+    let error = trusted_with(&std::env::temp_dir(), &data_root, true, |_, _| Ok(())).unwrap_err();
+    assert!(
+        format!("{error:#}").contains("is not in this host's own folder"),
+        "{error:#}"
+    );
+    assert_eq!(
+        asked.into_inner().unwrap(),
+        [(folder, true), (root, false), (data_root, false)]
+    );
+}
+
+/// A folder from the component up to the data root that anyone but
+/// administrators may change still refuses to hold the components.
+#[test]
+fn a_writer_from_the_component_up_to_the_data_root_is_refused() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    let data_root = h.directory.clone();
+    let root = root(h);
+    let folder = root.join("4.5.0-0123456789abcdef");
+    std::fs::create_dir_all(&folder).unwrap();
+    for held in [&folder, &root, &data_root] {
+        let error = trusted_with(&folder, &data_root, true, |path, _| {
+            if path == held.as_path() {
+                Err(format!(
+                    "{} can be changed by another account",
+                    path.display()
+                ))
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("nobody but administrators"), "{error}");
+        assert!(error.contains(&held.display().to_string()), "{error}");
+    }
+}
+
+/// A link above the host's data root is still refused, though nothing in the
+/// data root itself is one.
+#[test]
+fn a_link_above_the_data_root_is_refused() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    let elsewhere = h.directory.join("elsewhere");
+    std::fs::create_dir_all(elsewhere.join("Butterpollo/nvidia/4.5.0-0123456789abcdef")).unwrap();
+    let linked = h.directory.join("linked");
+    junction(&linked, &elsewhere);
+    let data_root = linked.join("Butterpollo");
+    let folder = data_root.join("nvidia/4.5.0-0123456789abcdef");
+    let error = trusted_with(&folder, &data_root, true, |path, _| {
+        assert!(path.starts_with(&data_root), "held {}", path.display());
+        Ok(())
+    })
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("is a link"), "{error:#}");
+    std::fs::remove_dir(&linked).unwrap();
+}
+
+/// A folder held open cannot be renamed out from under the files that were
+/// checked in it: Windows refuses the rename while the handle does not share
+/// deletion, and allows it once the hold goes.
+#[test]
+fn a_held_folder_cannot_be_renamed_away() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    let folder = h.directory.join("held");
+    std::fs::create_dir(&folder).unwrap();
+    let moved = h.directory.join("moved");
+    let hold = Hold::new([folder.as_path()]).unwrap();
+    assert!(
+        std::fs::rename(&folder, &moved).is_err(),
+        "a held folder moved"
+    );
+    assert!(folder.is_dir(), "the held folder stays where it is");
+    assert!(!moved.exists());
+    // Released, the same folder moves: it is the hold that kept it.
+    drop(hold);
+    std::fs::rename(&folder, &moved).unwrap();
+}
+
+/// The component's folder and the folders between it and the host's data root
+/// are held from the check on, so a swap of the path cannot reach the load;
+/// renaming either of them fails while the component is in use.
+#[test]
+fn a_checked_component_holds_its_folders_in_place() {
+    let f = crate::state::test_support::Fixture::new();
+    let h = &f.host;
+    let root = root(h);
+    let name = "4.5.0-0123456789abcdef";
+    let folder = root.join(name);
+    std::fs::create_dir_all(&folder).unwrap();
+    Record {
+        version: VERSION.into(),
+        folder: name.into(),
+        adapter_sha256: "0".repeat(64),
+    }
+    .write(&root)
+    .unwrap();
+    let component = component_for(&h.directory).unwrap();
+    for (held, moved) in [
+        (folder.clone(), h.directory.join("elsewhere-component")),
+        (root.clone(), h.directory.join("elsewhere-root")),
+    ] {
+        assert!(
+            std::fs::rename(&held, &moved).is_err(),
+            "{} moved while the component is in use",
+            held.display()
+        );
+        assert!(held.is_dir());
+    }
+    // The data root itself too, as the folder above it may let another account
+    // move folders in `C:\ProgramData`.
+    let elsewhere = h.directory.parent().unwrap().join("moved-data-root");
+    assert!(std::fs::rename(&h.directory, &elsewhere).is_err());
+    drop(component);
+    std::fs::rename(&root, h.directory.join("elsewhere-root")).unwrap();
 }
 
 /// A folder an earlier install left with a file still in use is passed over

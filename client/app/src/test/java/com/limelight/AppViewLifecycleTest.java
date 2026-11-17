@@ -3,20 +3,24 @@ package com.limelight;
 import android.app.Application;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.os.Looper;
 import android.view.View;
 import android.widget.TextView;
 import com.limelight.grid.AppGridAdapter;
 import com.limelight.computers.ComputerManagerListener;
 import com.limelight.computers.ComputerManagerService;
 import com.limelight.nvstream.http.ComputerDetails;
+import com.limelight.nvstream.http.NvApp;
 import com.limelight.preferences.PreferenceConfiguration;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
 import org.robolectric.RuntimeEnvironment;
+import org.robolectric.Shadows;
 import org.robolectric.android.controller.ActivityController;
 import org.robolectric.annotation.Config;
 import org.robolectric.util.ReflectionHelpers;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import static org.junit.Assert.*;
@@ -191,6 +195,97 @@ public class AppViewLifecycleTest {
             assertEquals(View.VISIBLE, screen.findViewById(R.id.library_retry).getVisibility());
             assertEquals(screen.getString(R.string.library_offline),
                     ((TextView) screen.findViewById(R.id.app_list_status)).getText().toString());
+        } finally {
+            controller.pause().stop().destroy();
+        }
+    }
+
+    /** Offline, with the games a saved list still holds. */
+    private static void savedLibraryOffline(Library screen, int apps) {
+        ComputerDetails computer = new ComputerDetails();
+        computer.uuid = "offline-host";
+        computer.state = ComputerDetails.State.OFFLINE;
+        ReflectionHelpers.setField(screen, "computer", computer);
+        ReflectionHelpers.setField(screen, "appGridAdapter",
+                new AppGridAdapter(screen, new PreferenceConfiguration(), computer, "test", false));
+        NvApp[] list = new NvApp[apps];
+        for (int i = 0; i < apps; i++) list[i] = new NvApp("Game " + i, i + 1, false);
+        ReflectionHelpers.callInstanceMethod(screen, "updateUiWithAppList",
+                ReflectionHelpers.ClassParameter.from(List.class, Arrays.asList(list)));
+        ReflectionHelpers.callInstanceMethod(screen, "showAppListStatus",
+                ReflectionHelpers.ClassParameter.from(int.class, R.string.library_offline));
+        Shadows.shadowOf(Looper.getMainLooper()).idle();
+    }
+
+    /** nightjar#7: the offline line and Retry painted over the saved tiles; a TV gets the line above the grid instead. */
+    @Test
+    @Config(qualifiers = "w960dp-h540dp-land-television-xhdpi")
+    public void aTvOfflineWithSavedGamesShowsTheStatusAboveTheGrid() {
+        Intent intent = new Intent(RuntimeEnvironment.getApplication(), Library.class)
+                .putExtra(AppView.UUID_EXTRA, "offline-host").putExtra(AppView.NAME_EXTRA, "PC");
+        ActivityController<Library> controller = Robolectric.buildActivity(Library.class, intent).setup();
+        try {
+            Library screen = controller.get();
+            savedLibraryOffline(screen, 4);
+            assertEquals(View.VISIBLE, screen.findViewById(R.id.library_status_banner).getVisibility());
+            assertEquals(View.GONE, screen.findViewById(R.id.library_status_panel).getVisibility());
+            assertEquals(View.VISIBLE, screen.findViewById(R.id.library_retry_banner).getVisibility());
+            assertEquals(screen.getString(R.string.library_offline),
+                    ((TextView) screen.findViewById(R.id.app_list_status_banner)).getText().toString());
+            // It stands in the chrome, which the grid is placed under, not over the games.
+            assertSame(screen.findViewById(R.id.library_chrome),
+                    screen.findViewById(R.id.library_status_banner).getParent());
+            // Laid out, the line ends above where the grid's container starts.
+            android.view.ViewGroup container = screen.findViewById(R.id.appFragmentContainer);
+            View grid = new View(screen);
+            grid.setId(R.id.fragmentView);
+            container.addView(grid, new android.widget.FrameLayout.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT));
+            View root = screen.getWindow().getDecorView();
+            for (int pass = 0; pass < 2; pass++) {
+                root.measure(View.MeasureSpec.makeMeasureSpec(1920, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY));
+                root.layout(0, 0, 1920, 1080);
+                Shadows.shadowOf(Looper.getMainLooper()).idle();
+            }
+            View banner = screen.findViewById(R.id.library_status_banner);
+            assertTrue("the line ends above the grid: " + banner.getBottom() + " against " + container.getTop(),
+                    banner.getBottom() <= container.getTop());
+        } finally {
+            controller.pause().stop().destroy();
+        }
+    }
+
+    /** A phone keeps the centred panel it had, over its grid: only a TV takes the line. */
+    @Test
+    public void aPhoneStillShowsTheOfflinePanelOverItsGrid() {
+        Intent intent = new Intent(RuntimeEnvironment.getApplication(), Library.class)
+                .putExtra(AppView.UUID_EXTRA, "offline-host").putExtra(AppView.NAME_EXTRA, "PC");
+        ActivityController<Library> controller = Robolectric.buildActivity(Library.class, intent).setup();
+        try {
+            Library screen = controller.get();
+            savedLibraryOffline(screen, 4);
+            assertEquals(View.GONE, screen.findViewById(R.id.library_status_banner).getVisibility());
+            assertEquals(View.VISIBLE, screen.findViewById(R.id.library_status_panel).getVisibility());
+            assertEquals(View.VISIBLE, screen.findViewById(R.id.library_retry).getVisibility());
+        } finally {
+            controller.pause().stop().destroy();
+        }
+    }
+
+    /** An empty TV grid keeps the centred panel: nothing is behind it to cover. */
+    @Test
+    @Config(qualifiers = "w960dp-h540dp-land-television-xhdpi")
+    public void anEmptyTvGridKeepsTheCentredStatusPanel() {
+        Intent intent = new Intent(RuntimeEnvironment.getApplication(), Library.class)
+                .putExtra(AppView.UUID_EXTRA, "offline-host").putExtra(AppView.NAME_EXTRA, "PC");
+        ActivityController<Library> controller = Robolectric.buildActivity(Library.class, intent).setup();
+        try {
+            Library screen = controller.get();
+            savedLibraryOffline(screen, 0);
+            assertEquals(View.GONE, screen.findViewById(R.id.library_status_banner).getVisibility());
+            assertEquals(View.VISIBLE, screen.findViewById(R.id.library_status_panel).getVisibility());
+            assertEquals(View.VISIBLE, screen.findViewById(R.id.library_retry).getVisibility());
         } finally {
             controller.pause().stop().destroy();
         }

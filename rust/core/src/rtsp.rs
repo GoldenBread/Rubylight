@@ -141,8 +141,16 @@ pub fn response(
 pub const FEC_STATUS_FEATURE: u32 = 0x01;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Negotiated {
+    /// The size the encoder codes and the client decodes, after the host's
+    /// `max_stream_resolution` cap.
     pub width: u32,
     pub height: u32,
+    /// The size the stream's display keeps while the cap shrinks the coded
+    /// picture; 0 when the display is coded as it is (no cap applied).
+    #[serde(default)]
+    pub display_width: u32,
+    #[serde(default)]
+    pub display_height: u32,
     pub fps: u32,
     #[serde(default)]
     pub rate_millihz: u32,
@@ -225,6 +233,8 @@ impl Default for Negotiated {
         Self {
             width: 1920,
             height: 1080,
+            display_width: 0,
+            display_height: 0,
             fps: 60,
             rate_millihz: 0,
             bitrate_kbps: 20000,
@@ -325,6 +335,44 @@ impl Negotiated {
         } else {
             (self.width, self.height)
         }
+    }
+    /// The size the stream's display keeps: the coded size unless a host cap
+    /// (`max_stream_resolution`) shrank the picture.
+    pub fn display_size(&self) -> (u32, u32) {
+        if self.display_width == 0 || self.display_height == 0 {
+            (self.width, self.height)
+        } else {
+            (self.display_width, self.display_height)
+        }
+    }
+    /// Sets the size the client asked for, which the display keeps, and codes
+    /// the picture no larger than the host's `cap`
+    /// ([`crate::display_policy::capped_encode_size`]). A request the cap
+    /// allows is coded as it is.
+    pub fn set_display_size(&mut self, requested: (u32, u32), cap: Option<(u32, u32)>) {
+        let mut coded = crate::display_policy::capped_encode_size(requested, cap);
+        // AMD packed HEVC refuses a coded width below 192 (`validate`): a very
+        // tall picture under a cap is widened, never refused for the cap's doing.
+        if self.chroma_packing != 0
+            && coded != requested
+            && let Some((cap_width, _)) = cap
+        {
+            coded.0 = coded.0.max(192.min(requested.0).min(cap_width));
+        }
+        self.width = coded.0;
+        self.height = coded.1;
+        if coded == requested {
+            self.display_width = 0;
+            self.display_height = 0;
+        } else {
+            self.display_width = requested.0;
+            self.display_height = requested.1;
+        }
+    }
+    /// Whether a host cap makes this stream's coded picture smaller than the
+    /// size its display keeps.
+    pub fn capped(&self) -> bool {
+        self.display_size() != (self.width, self.height)
     }
     pub fn ten_bit(&self) -> bool {
         self.hdr || self.sdr_10bit

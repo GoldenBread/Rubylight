@@ -122,8 +122,10 @@ pub mod button {
     pub const PADDLE4: u32 = 0x08_0000;
     pub const TOUCHPAD: u32 = 0x10_0000;
     pub const MISC: u32 = 0x20_0000;
-    /// The Switch 2 Pro Controller's C button. Only for a host with
-    /// `ControllerIdentityVersion`: any other drops the packet's upper bits or misreads them.
+    /// The Switch 2 Pro Controller's C button. Only a host with
+    /// `ControllerIdentityVersion` knows it, so its caller drops its own C
+    /// press from other hosts (the desktop does); the flag is also a Steam
+    /// Controller's left grip touch, which those hosts still get.
     pub const C: u32 = rubylight_protocol::controller_identity::BUTTON_C;
 }
 

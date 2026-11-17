@@ -921,6 +921,14 @@ fn the_ambient_lands_with_its_cover_and_goes_with_it() {
     hosts.drain(&ctx);
     assert!(hosts.list[0].ambient.contains_key(&7), "an answer for an older cover changes nothing");
 
+    // The PC's empty answer landing after a SteamGridDB cover of the same version leaves it.
+    hosts.sender.send(art("v1", None)).expect("the channel");
+    hosts.drain(&ctx);
+    assert!(matches!(hosts.list[0].art.get(&7), Some(Art::Ready(_))), "no cover never replaces one that landed");
+    assert!(hosts.list[0].ambient.contains_key(&7));
+
+    // Loaded again (given up for room) and found gone.
+    hosts.list[0].art.insert(7, Art::Loading);
     hosts.sender.send(art("v1", None)).expect("the channel");
     hosts.drain(&ctx);
     assert!(!hosts.list[0].ambient.contains_key(&7), "no cover any more, no ambient of it");

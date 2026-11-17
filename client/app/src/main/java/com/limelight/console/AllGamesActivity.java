@@ -94,6 +94,15 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
     private CoverLoaders covers;
     private HomeModel model = HomeModel.empty();
     private String filter = HomeModel.FILTER_ALL;
+    // Genre and Length (IGDB facts): the chips show only while a game has facts, and only with IGDB keys set.
+    private static final String TAG_GENRE = "game_info:genre";
+    private static final String TAG_LENGTH = "game_info:length";
+    private final java.util.Map<String, org.json.JSONObject> facts = new java.util.HashMap<>();
+    private GameInfoModel.Library factsLibrary;
+    private String genreChoice;
+    private String lengthChoice;
+    private String factsLoadedFor;
+    private boolean factsReloadPending;
     private String filterSignature;
     private String refreshedSignature;
     /** What the last reload drew the PCs from; a poll that brings nothing else does not reload. */
@@ -634,7 +643,170 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
             capsule.show(next);
             bindFilters();
             bindGrid(false);
+            if (done) loadFacts();
         });
+    }
+
+    /** Reads the facts kept for the library's games, then asks for the missing ones in the background. */
+    private void loadFacts() {
+        if (!GameInfo.factsWanted(this)) return;
+        List<HomeModel.GameCard> cards = cardsOf(model, HomeModel.FILTER_ALL);
+        // The keys are part of it: corrected keys ask again for the games a refused key found nothing for.
+        StringBuilder signature = new StringBuilder(GameInfo.keys(this).json(true, true).toString()).append('|');
+        for (HomeModel.GameCard card : cards) signature.append(card.key).append(';');
+        if (signature.toString().equals(factsLoadedFor)) return;
+        factsLoadedFor = signature.toString();
+        List<String> keys = new ArrayList<>();
+        List<GameInfo.Game> games = new ArrayList<>();
+        for (HomeModel.GameCard card : cards) {
+            keys.add(card.key);
+            games.add(new GameInfo.Game(card.title, card.source == null ? null : card.source.gameId,
+                    card.source == null ? null : card.source.storeSource, card.source == null ? null : card.source.storeId));
+        }
+        GameInfo info = GameInfo.get(this);
+        Thread thread = new Thread(() -> {
+            java.util.Map<String, org.json.JSONObject> found = new java.util.HashMap<>();
+            List<GameInfo.Game> missing = new ArrayList<>();
+            for (int i = 0; i < games.size(); i++) {
+                org.json.JSONObject kept = info.cachedFacts(games.get(i));
+                if (kept != null) found.put(keys.get(i), kept);
+                else missing.add(games.get(i));
+            }
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed() || found.isEmpty()) return;
+                facts.putAll(found);
+                bindGrid(false);
+            });
+            info.prefetchFacts(missing, this::factsArrived);
+        }, "game-info-library");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    /** A lookup found facts: read them again once things settle, not after each game. */
+    private void factsArrived() {
+        if (factsReloadPending || isFinishing() || isDestroyed()) return;
+        factsReloadPending = true;
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            factsReloadPending = false;
+            if (isFinishing() || isDestroyed()) return;
+            factsLoadedFor = null;
+            loadFacts();
+        }, 2000);
+    }
+
+    /** The cards the Genre and Length choices leave; every card when no game has facts. Draws the chips. */
+    private List<HomeModel.GameCard> withFacts(List<HomeModel.GameCard> cards) {
+        factsLibrary = null;
+        if (facts.isEmpty() || !GameInfo.factsWanted(this)) {
+            bindFactChips();
+            return cards;
+        }
+        List<HomeModel.GameCard> sourceCards = cardsOf(model, filter);
+        GameInfoFilter.Result<HomeModel.GameCard> result = GameInfoFilter.apply(GameInfoModel.library(), sourceCards,
+                card -> facts.get(card.key), genreChoice, lengthChoice);
+        if (result == null) {
+            bindFactChips();
+            return cards;
+        }
+        // A choice the library no longer has (the last game of a genre went) falls back to Any.
+        boolean stale = false;
+        if (genreChoice != null && !hasValue(result.library.genres, genreChoice)) {
+            genreChoice = null;
+            stale = true;
+        }
+        if (lengthChoice != null && !hasValue(result.library.lengths, lengthChoice)) {
+            lengthChoice = null;
+            stale = true;
+        }
+        if (stale) {
+            result = GameInfoFilter.apply(GameInfoModel.library(), sourceCards, card -> facts.get(card.key), genreChoice, lengthChoice);
+            if (result == null) {
+                bindFactChips();
+                return cards;
+            }
+        }
+        factsLibrary = result.library;
+        bindFactChips();
+        if (genreChoice == null && lengthChoice == null) return cards;
+        Set<String> keep = new HashSet<>();
+        for (HomeModel.GameCard card : result.shown) keep.add(card.key);
+        List<HomeModel.GameCard> out = new ArrayList<>();
+        for (HomeModel.GameCard card : cards) {
+            if (keep.contains(card.key)) out.add(card);
+        }
+        return out;
+    }
+
+    private static boolean hasValue(List<GameInfoModel.Count> counts, String value) {
+        for (GameInfoModel.Count count : counts) {
+            if (count.value.equals(value)) return true;
+        }
+        return false;
+    }
+
+    /** The Genre and Length chips after the source chips, present while some game has facts. */
+    private void bindFactChips() {
+        View genre = filterRow.findViewWithTag(TAG_GENRE);
+        View length = filterRow.findViewWithTag(TAG_LENGTH);
+        boolean show = factsLibrary != null && factsLibrary.any();
+        if (!show) {
+            if (genre != null) filterRow.removeView(genre);
+            if (length != null) filterRow.removeView(length);
+            return;
+        }
+        if (genre == null) genre = addFactChip(TAG_GENRE, this::chooseGenre);
+        if (length == null) length = addFactChip(TAG_LENGTH, this::chooseLength);
+        ((MaterialButton) genre).setText(genreChoice == null ? getString(R.string.game_info_genre) : genreChoice);
+        genre.setSelected(genreChoice != null);
+        ((MaterialButton) length).setText(lengthChoice == null ? getString(R.string.game_info_length)
+                : getString(GameInfoFilter.lengthLabel(lengthChoice)));
+        length.setSelected(lengthChoice != null);
+    }
+
+    private View addFactChip(String tag, Runnable open) {
+        MaterialButton chip = (MaterialButton) LayoutInflater.from(this).inflate(R.layout.view_filter_chip, filterRow, false);
+        chip.setTag(tag);
+        chip.setOnClickListener(v -> open.run());
+        filterRow.addView(chip);
+        return chip;
+    }
+
+    private void chooseGenre() {
+        if (factsLibrary == null) return;
+        List<GameInfoModel.Count> counts = factsLibrary.genres;
+        CharSequence[] names = new CharSequence[counts.size() + 1];
+        names[0] = getString(R.string.game_info_any_genre);
+        int checked = 0;
+        for (int i = 0; i < counts.size(); i++) {
+            names[i + 1] = counts.get(i).value + "  " + counts.get(i).count;
+            if (counts.get(i).value.equals(genreChoice)) checked = i + 1;
+        }
+        showFactChoices(R.string.game_info_genre, names, checked, which -> genreChoice = which == 0 ? null : counts.get(which - 1).value);
+    }
+
+    private void chooseLength() {
+        if (factsLibrary == null) return;
+        List<GameInfoModel.Count> counts = factsLibrary.lengths;
+        CharSequence[] names = new CharSequence[counts.size() + 1];
+        names[0] = getString(R.string.game_info_any_length);
+        int checked = 0;
+        for (int i = 0; i < counts.size(); i++) {
+            names[i + 1] = getString(GameInfoFilter.lengthLabel(counts.get(i).value)) + "  " + counts.get(i).count;
+            if (counts.get(i).value.equals(lengthChoice)) checked = i + 1;
+        }
+        showFactChoices(R.string.game_info_length, names, checked, which -> lengthChoice = which == 0 ? null : counts.get(which - 1).value);
+    }
+
+    /** A list dialog a controller or the D-pad reaches; the choice combines with the source filter. */
+    private void showFactChoices(int title, CharSequence[] names, int checked, java.util.function.IntConsumer pick) {
+        androidx.appcompat.app.AlertDialog dialog = new com.limelight.ui.NavigationDialogBuilder(this).setTitle(title)
+                .setSingleChoiceItems(names, checked, (d, which) -> {
+                    pick.accept(which);
+                    d.dismiss();
+                    bindGrid(true);
+                }).setNegativeButton(android.R.string.cancel, null).create();
+        UiHelper.showDialog(this, dialog);
     }
 
     static HomeModel.Filter filterOf(HomeModel model, String key) {
@@ -713,6 +885,7 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
             View chip = filterRow.getChildAt(i);
             chip.setSelected(filter.equals(chip.getTag()));
         }
+        bindFactChips();
     }
 
     /** The name, then the count a shade lighter. */
@@ -743,7 +916,7 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
         String before = list.hasFocus() ? focusedKey : null;
         int at = focusedAt;
         List<ShelfAdapter.Item> items = new ArrayList<>();
-        for (HomeModel.GameCard card : cardsOf(model, filter, query)) items.add(new ShelfAdapter.Item(card.key, card, null));
+        for (HomeModel.GameCard card : withFacts(cardsOf(model, filter, query))) items.add(new ShelfAdapter.Item(card.key, card, null));
         adapter.setItems(SHELF, items);
         boolean none = items.isEmpty();
         ((TextView) empty).setText(query.trim().isEmpty() ? R.string.console_all_games_empty : R.string.library_no_matches);
