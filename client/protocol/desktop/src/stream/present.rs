@@ -166,7 +166,7 @@ pub struct VideoTexture {
     direct_planes_said: bool,
     /// The display does not place the stream's pictures one texel to one pixel, so they go through
     /// the video texture, which was logged.
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     direct_planes_scaled_said: bool,
     /// The current picture came from D3D11VA, and its HDR10+ peak in nits.
     #[cfg(windows)]
@@ -263,7 +263,7 @@ impl Default for VideoTexture {
             direct_planes_failed: false,
             #[cfg(windows)]
             direct_planes_said: false,
-            #[cfg(windows)]
+            #[cfg(any(windows, unix))]
             direct_planes_scaled_said: false,
             #[cfg(windows)]
             d3d11_picture: false,
@@ -780,7 +780,7 @@ impl VideoTexture {
             direct_planes_failed: self.direct_planes_failed,
             #[cfg(windows)]
             direct_planes_said: self.direct_planes_said,
-            #[cfg(windows)]
+            #[cfg(any(windows, unix))]
             direct_planes_scaled_said: self.direct_planes_scaled_said,
             ..Self::default()
         };
@@ -903,6 +903,36 @@ fn visible_part(visible: (i32, i32), texture: (i32, i32)) -> Option<(i32, i32)> 
     (visible != texture && visible.0 <= texture.0 && visible.1 <= texture.1).then_some(visible)
 }
 
+/// Whether `picture` lands on `destination` one texel to one pixel, the only scale at which the
+/// plane pass shows what SDL's draw of the video texture shows.
+///
+/// The texture SDL draws holds the picture converted to linear light (`pyrowave.hlsl`'s
+/// `linearRgb`, `planes_direct.hlsl`'s `directFinish`), so SDL's bilinear taps when it scales are
+/// in linear light. The plane pass samples the picture's Y'CbCr codes and converts afterwards, so
+/// its taps are in the codes: filtering there and then converting darkens detail on an upscaled
+/// picture and brightens it on a downscaled one, where converting first and then filtering in
+/// linear light leaves the levels alone (issue 120: a PyroWave stream at another resolution than
+/// the display came out dark or bright). Only an unscaled picture is drawn by the plane pass
+/// (`direct_planes` on Windows, `planes_gpu`'s `planesDirect` elsewhere); anything else goes
+/// through the texture.
+pub fn draws_one_to_one(destination: &SDL_FRect, picture: (i32, i32)) -> bool {
+    destination.w == picture.0 as f32
+        && destination.h == picture.1 as f32
+        && destination.x.fract() == 0.0
+        && destination.y.fract() == 0.0
+}
+
+/// The shift of a picture drawn one texel to one pixel, rounded to whole picture pixels:
+/// `packed444.hlsl` rounds it the same way at its own size. A fractional shift samples between
+/// texels, which the plane pass filters in the codes rather than in the converted picture.
+pub fn whole_pixel_shift(shift: [f32; 2], picture: (i32, i32)) -> [f32; 2] {
+    let (width, height) = (picture.0 as f32, picture.1 as f32);
+    if !(width > 0.0 && height > 0.0 && shift[0].is_finite() && shift[1].is_finite()) {
+        return [0.0; 2];
+    }
+    [(shift[0] * width).round() / width, (shift[1] * height).round() / height]
+}
+
 /// The largest rectangle of the picture's aspect ratio inside `area`, centred.
 #[cfg(test)]
 pub fn letterbox(picture: (i32, i32), area: (i32, i32)) -> SDL_FRect {
@@ -938,3 +968,14 @@ pub(super) mod macos_video_check;
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+#[cfg(target_os = "macos")]
+impl VideoTexture {
+    pub(super) fn metalfx_source(&self) -> Option<(*mut c_void, media::FrameInfo)> {
+        let frame = self.held.as_ref()?;
+        let info = frame.info();
+        if info.kind != media::FRAME_VIDEOTOOLBOX || self.is_hdr() { return None; }
+        let buffer: *mut c_void = unsafe { frame.raw.as_ref().data[3].cast() };
+        (!buffer.is_null()).then_some((buffer, info))
+    }
+}

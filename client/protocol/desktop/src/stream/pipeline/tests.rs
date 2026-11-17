@@ -396,6 +396,14 @@ fn gpu_mode_without_a_device_never_builds_a_cpu_decoder() {
     let (mut decoder, shared) = decoder();
     decoder = decoder.with_gpu_decoder(Some(GpuDevice(std::ptr::null_mut())));
     let setup = VideoSetup { format: nightjar_core::sdp::VIDEO_FORMAT_PYROWAVE, width: 128, height: 128, fps: 60, chroma_packing: 0, logical_width: 128, logical_height: 128, color_space: 1, color_range: 0 };
+    if cfg!(target_os = "macos") {
+        // A Mac decodes on the processor instead and says so (no bundled driver beside the tests).
+        assert!(decoder.setup(&setup).is_ok());
+        assert!(decoder.pyrowave.is_some());
+        assert_eq!(*lock(&shared.decoder_name), MAC_CPU_INSTEAD);
+        assert!(matches!(notices(&shared).as_slice(), [Notice::DecoderFallback(_)]));
+        return;
+    }
     assert!(decoder.setup(&setup).is_err());
     assert!(decoder.pyrowave.is_none());
     let notices = notices(&shared);

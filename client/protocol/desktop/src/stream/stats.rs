@@ -158,7 +158,9 @@ impl Streaming {
         }
         let secs = elapsed.as_secs_f64();
         let stats = self.session.stats();
-        let c = &self.shared.counters;
+        // Its own handle: the counters are read on after a toast below borrows the stream.
+        let shared = Arc::clone(&self.shared);
+        let c = &shared.counters;
         let now = (
             // The frames that arrived for the decoder: the ones it skipped for a newer frame too.
             stats.frames_submitted + stats.frames_skipped,
@@ -184,6 +186,13 @@ impl Streaming {
         let (completed, drops) = (video.0 - self.last_video.0, video.1 - self.last_video.1);
         let decoder_drops = video.2 - self.last_video.2;
         self.last_video = video;
+        // Only PyroWave's decoder passes over frames for newer ones, when it falls behind.
+        let skipped = stats.frames_skipped - self.last_skipped;
+        self.last_skipped = stats.frames_skipped;
+        if fell_behind(&mut self.behind, skipped, received) {
+            eprintln!("nightjar: PyroWave decoding fell behind: {skipped} of {received} frames skipped in the last second, for {BEHIND_SECONDS} seconds in a row");
+            self.add_toast(tr("PyroWave decoding can’t keep up on this device, so frames are being skipped. Lower the resolution, frame rate or bitrate, or choose HEVC."));
+        }
         let loss = if completed + drops > 0 {
             drops as f64 * 100.0 / (completed + drops) as f64
         } else {
@@ -511,6 +520,55 @@ impl Streaming {
         }
         self.window.started = Some(Instant::now());
         true
+    }
+}
+
+/// Seconds in a row in which PyroWave's decoder must pass over at least one in ten of the frames
+/// that arrived (and three or more) before the stream says it can't keep up. A skip now and then
+/// is the decoder catching up after a slow frame; this is a decoder that stays behind, which the
+/// overlay otherwise shows only as dropped frames.
+pub(super) const BEHIND_SECONDS: u32 = 5;
+
+/// The seconds in a row PyroWave's decoder has been behind, and whether the stream said so.
+#[derive(Default)]
+pub(super) struct Behind {
+    seconds: u32,
+    said: bool,
+}
+
+/// Counts one second's skipped and arrived frames; true once a stream, when the decoder has been
+/// behind for [`BEHIND_SECONDS`] in a row.
+pub(super) fn fell_behind(behind: &mut Behind, skipped: u64, received: u64) -> bool {
+    behind.seconds = if skipped >= 3 && skipped * 10 >= received { behind.seconds + 1 } else { 0 };
+    if behind.seconds >= BEHIND_SECONDS && !behind.said {
+        behind.said = true;
+        return true;
+    }
+    false
+}
+
+#[cfg(test)]
+mod behind_tests {
+    use super::*;
+
+    #[test]
+    fn a_decoder_that_stays_behind_is_named_once_and_a_catch_up_now_and_then_never() {
+        let mut behind = Behind::default();
+        // 12 of 120 frames skipped each second: said on the fifth second, then never again.
+        let said: Vec<bool> = (0..12).map(|_| fell_behind(&mut behind, 12, 120)).collect();
+        assert_eq!(said.iter().filter(|s| **s).count(), 1);
+        assert!(said[BEHIND_SECONDS as usize - 1]);
+        // Skips under one in ten, or fewer than three, or a good second between, never add up.
+        let mut catching_up = Behind::default();
+        for second in 0..60 {
+            let (skipped, received) = match second % 3 { 0 => (11, 120), 1 => (2, 10), _ => (12, 120) };
+            assert!(!fell_behind(&mut catching_up, skipped, received), "second {second}");
+        }
+        let mut gap = Behind::default();
+        for second in 0..20 {
+            let skipped = if second % BEHIND_SECONDS == BEHIND_SECONDS - 1 { 0 } else { 30 };
+            assert!(!fell_behind(&mut gap, skipped, 120), "second {second}");
+        }
     }
 }
 

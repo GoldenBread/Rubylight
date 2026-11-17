@@ -151,7 +151,8 @@ pub fn start_failure(error: &str, connected: Option<usize>) -> String {
 pub fn without_gpu(settings: &mut crate::config::Settings, planes: impl Fn(&crate::config::Settings) -> bool) -> Vec<&'static str> {
     use crate::config::Upscaling;
     let mut off = Vec::new();
-    if settings.upscaling != Upscaling::Bilinear {
+    // MetalFX (macOS) never runs here and needs no shader pass: it stays chosen, as Bilinear.
+    if !matches!(settings.upscaling, Upscaling::Bilinear | Upscaling::MetalFx) {
         settings.upscaling = Upscaling::Bilinear;
         off.push("upscaling");
     }
@@ -276,6 +277,10 @@ mod tests {
         assert!(without_gpu(&mut planes, |s| s.upscaling == Upscaling::Bilinear).is_empty());
         assert!(planes.sdr_10bit);
         assert!(without_gpu(&mut Settings::default(), |_| false).is_empty());
+        // MetalFX needs no shader pass, so nothing is reported off and the choice stays.
+        let mut metalfx = Settings { upscaling: Upscaling::MetalFx, ..Settings::default() };
+        assert!(without_gpu(&mut metalfx, |_| false).is_empty());
+        assert_eq!(metalfx.upscaling, Upscaling::MetalFx);
     }
 
     #[test]

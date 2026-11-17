@@ -39,6 +39,7 @@ const entry = (changes = {}) => ({
   fps: 120,
   hdr: false,
   bitrate_kbps: 50_000,
+  requested_bitrate_kbps: 50_000,
   mean_bitrate_kbps: 47_600,
   mean_fps: 119.4,
   p95_fps: 117.8,
@@ -87,7 +88,25 @@ test('bitrate, loss and duration read as measured, not as the request', () => {
   assert.equal(bitrateText(entry()), '47.6 Mbps');
   // A start that never sent a byte has no rate, not the negotiated one.
   assert.equal(bitrateText(entry({ mean_bitrate_kbps: 0, bitrate_kbps: 0 })), '–');
-  assert.equal(bitrateText(entry({ mean_bitrate_kbps: 0, bitrate_kbps: 20_000 })), '20.0 Mbps');
+  assert.equal(
+    bitrateText(entry({ mean_bitrate_kbps: 0, bitrate_kbps: 20_000 })),
+    '20.0 Mbps of 50.0 Mbps'
+  );
+  // The network held the encoder below the rate the stream asked for: both
+  // figures are shown, and an entry saved before the request was recorded
+  // still reads as its single rate.
+  assert.equal(
+    bitrateText(entry({ bitrate_kbps: 40_000, requested_bitrate_kbps: 80_000 })),
+    '47.6 Mbps of 80.0 Mbps'
+  );
+  assert.equal(
+    bitrateText(entry({ mean_bitrate_kbps: 0, bitrate_kbps: 40_000, requested_bitrate_kbps: 80_000 })),
+    '40.0 Mbps of 80.0 Mbps'
+  );
+  assert.equal(
+    bitrateText(entry({ bitrate_kbps: 40_000, requested_bitrate_kbps: 0 })),
+    '47.6 Mbps'
+  );
   assert.equal(lossText(entry()), '0.04%');
   assert.equal(lossText(entry({ loss_percent: 1.84 })), '1.8%');
   assert.equal(lossText(entry({ loss_percent: 0 })), '0.0%');

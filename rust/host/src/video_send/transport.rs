@@ -236,6 +236,10 @@ impl Transport<'_> {
         s.stats
             .video_frame
             .store(u64::from(frame.wire_frame) + 1, Ordering::Release);
+        // A full socket is waited on for about one picture period, shared by
+        // every batch of this frame; then the rest of it is abandoned.
+        self.batch
+            .begin_frame(network_pacing::frame_send_wait(period));
         let waits = self.batch.waits.unwrap();
         Sending {
             dequeued,
@@ -495,6 +499,7 @@ impl Transport<'_> {
 
     /// The frame's last part is out: account for it.
     fn finish(&mut self, frame: &Prepared, cur: Sending) {
+        self.batch.end_frame();
         let (s, c) = (&self.s, &self.c);
         let period = s.stream_mode().period();
         let start = self.start;
@@ -524,8 +529,10 @@ impl Transport<'_> {
         let (link_packets, link_bytes) =
             super::reached_socket(sent_packets, self.batch.dropped - dropped, sent_bytes, ipv6);
         s.record_link_sent(frame.wire_frame, link_packets, link_bytes);
+        let refused = self.batch.dropped.saturating_sub(self.batch.oversized)
+            != dropped.saturating_sub(oversized);
         if lost.unrecoverable() {
-            s.keyframe_abandoned(frame.wire_frame);
+            s.keyframe_abandoned_as(frame.wire_frame, refused);
             tracing::debug!(
                 frame = frame.wire_frame,
                 idr = frame.idr,
@@ -535,10 +542,8 @@ impl Transport<'_> {
         } else {
             self.send_loss.delivered(frame.idr);
         }
-        if self.batch.dropped.saturating_sub(self.batch.oversized)
-            != dropped.saturating_sub(oversized)
-        {
-            s.launch.warnings.event("network_send", "Video packets were dropped by the host after transient socket send failures. You may see stutter or recovery frames; lower bitrate and check the network adapter. The log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
+        if refused {
+            s.launch.warnings.event("network_send", "The PC could not send the video fast enough (its CPU or network adapter fell behind), so video packets were dropped. You may see stutter or recovery frames; close other work on the PC, or lower the bitrate, resolution or frame rate. The log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
         }
         super::report_oversized(s, &self.batch, oversized);
         s.stats.latency_us.store(frame.latency, Ordering::Relaxed);

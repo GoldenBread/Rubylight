@@ -665,6 +665,10 @@ export interface StreamSession {
     delivered_kbps: number;
     /** The rate that last failed, or 0 when none is known. */
     bad_kbps: number;
+    /** The highest rate that ran clean, or 0 while the path has shown no edge; probes stay under it. */
+    learned_kbps: number;
+    /** The PC's own socket refused video within the last 5 s: probes stop and this is not a network limit. */
+    host_limited: boolean;
     /** What the encoder was seen to send after a cut asked for less, or 0. The host does not cut below it. */
     encoder_floor_kbps: number;
     steps_down: number;
@@ -726,6 +730,8 @@ export interface SessionHistoryEntry {
   hdr: boolean;
   /** The encoder's bitrate when the stream ended; 0 when it never started. */
   bitrate_kbps: number;
+  /** The bitrate the stream asked for; 0 when it never started or for an entry saved by an older host. */
+  requested_bitrate_kbps: number;
   /** What the video actually sent on average; audio is not counted. */
   mean_bitrate_kbps: number;
   mean_fps: number;

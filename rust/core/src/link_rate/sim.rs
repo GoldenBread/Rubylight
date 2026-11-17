@@ -8,6 +8,12 @@
 //! the frame period), every 120th frame is three times the usual size, and the
 //! RTT the controller sees is the base RTT plus the time the queue takes to
 //! drain, sampled with the 100 ms pings.
+//!
+//! [`Sim::report`] sums a run the way the 2026-11-17 review asked: cuts,
+//! failed probes, time the stream offered more than the link carries, the
+//! p95 queue delay and the mean rate delivered. It reads only the change log,
+//! the frames and the queue samples, so the same file runs against an older
+//! controller for a before-and-after table (`field_report`, ignored).
 use std::time::{Duration, Instant};
 
 use super::*;
@@ -113,6 +119,21 @@ pub struct Frame {
     pub complete: bool,
     pub arrival: f64,
     pub packets: u32,
+    /// Packets that reached the client.
+    pub arrived: u32,
+}
+
+/// What one window of a run did; see [`Sim::report`].
+#[derive(Clone, Copy, Debug)]
+pub struct Report {
+    pub cuts: usize,
+    pub failed_probes: usize,
+    /// Share of the window's seconds whose offered wire rate was over the
+    /// link's rate.
+    pub over_link: f64,
+    pub p95_queue_ms: f64,
+    pub delivered_mbps: f64,
+    pub frame_loss: f64,
 }
 
 enum Feedback {
@@ -140,6 +161,15 @@ pub struct Sim {
     pub encoder_min_kbps: u32,
     /// PyroWave pictures (see [`Sim::pyrowave`]) instead of H.26x frames.
     pub pyrowave: bool,
+    /// A PyroWave picture fills this share of its frame budget, plus up to
+    /// the second figure at random (a game scene: 0.5 and 0.2).
+    pub fill: (f64, f64),
+    /// The frame period the source sends at and the controller is told.
+    pub period: Duration,
+    /// The host's socket refuses a whole frame while the link's queue is
+    /// over this many ms (a switch or mesh node pausing the host's adapter
+    /// when its own uplink is full); the frame is lost on send (E3).
+    pub refuse_above_ms: Option<f64>,
     encoder_kbps: u32,
     applied: [u32; 2],
     noise: Rng,
@@ -167,6 +197,9 @@ impl Sim {
             client_pings: true,
             encoder_min_kbps: 0,
             pyrowave: false,
+            fill: (0.5, 0.2),
+            period: PERIOD,
+            refuse_above_ms: None,
             encoder_kbps: negotiated_kbps,
             applied: [negotiated_kbps; 2],
             noise: Rng::new(99),
@@ -196,6 +229,48 @@ impl Sim {
         sim
     }
 
+    /// The same stream at 120 fps, where PyroWave's severe-detail floor (373
+    /// Mbps at 1080p120) is above its own requested rate: the controller has
+    /// no quality floor to cut to, which is the 2026-11-17 4K120 field case.
+    pub fn pyrowave_no_room(link: Link, negotiated_kbps: u32, feedback_ms: f64) -> Self {
+        let mut sim = Self::pyrowave(link, negotiated_kbps, feedback_ms);
+        let stream = Negotiated {
+            codec: 3,
+            pyrowave_records: true,
+            width: 1920,
+            height: 1080,
+            fps: 120,
+            bitrate_kbps: negotiated_kbps,
+            ..Default::default()
+        };
+        sim.lr = LinkRate::new(true, &stream, 0, FEC);
+        assert!(sim.lr.pyrowave_no_room());
+        sim.period = Duration::from_micros(8_333);
+        sim
+    }
+
+    /// The 2026-11-17 field stream: 4K120 PyroWave, whose floor (about 1490
+    /// Mbps) is far above its own 800 Mbps, so it has no room either. The
+    /// pictures fill about 77 % of their budget, so 800 Mbps asked puts about
+    /// 680 Mbps on the wire, as the field log showed (641 to 676).
+    pub fn pyrowave_4k120(link: Link, negotiated_kbps: u32, feedback_ms: f64) -> Self {
+        let mut sim = Self::pyrowave(link, negotiated_kbps, feedback_ms);
+        let stream = Negotiated {
+            codec: 3,
+            pyrowave_records: true,
+            width: 3840,
+            height: 2160,
+            fps: 120,
+            bitrate_kbps: negotiated_kbps,
+            ..Default::default()
+        };
+        sim.lr = LinkRate::new(true, &stream, 0, FEC);
+        assert!(sim.lr.pyrowave_no_room());
+        sim.period = Duration::from_micros(8_333);
+        sim.fill = (0.68, 0.18);
+        sim
+    }
+
     /// Data and parity packets per block of a PyroWave picture of `bytes`:
     /// coarse records about 5 % of it, protected at [`FEC`] percent (at least
     /// two parity packets), detail without parity, as `DetailFec` leaves it
@@ -218,9 +293,9 @@ impl Sim {
         let kbps = self.applied[0].max(self.encoder_min_kbps);
         self.applied.rotate_left(1);
         self.applied[1] = self.encoder_kbps;
-        let average = f64::from(kbps) * 125. / 60.;
+        let average = f64::from(kbps) * 125. * self.period.as_secs_f64();
         let layout = if self.pyrowave {
-            Self::pyrowave_layout(average * (0.5 + 0.2 * self.noise.next()))
+            Self::pyrowave_layout(average * (self.fill.0 + self.fill.1 * self.noise.next()))
         } else {
             let scale = match index {
                 0 => 2.,
@@ -239,6 +314,23 @@ impl Sim {
             packetizer.block_layout((average * (0.9 + 0.2 * self.noise.next()) * scale) as usize)
         };
         let packets: usize = layout.iter().map(|(d, p)| d + p).sum();
+        if self
+            .refuse_above_ms
+            .is_some_and(|ms| self.link.queue_delay(t) * 1000. > ms)
+        {
+            // Nothing left the host: no packets on the link, no report.
+            self.lr.on_sent(index, 0, 0, self.at(t));
+            self.lr.on_send_loss(index, self.at(t));
+            self.frames.push(Frame {
+                at: t,
+                kbps,
+                complete: false,
+                arrival: t,
+                packets: 0,
+                arrived: 0,
+            });
+            return;
+        }
         self.lr.on_sent(
             index,
             packets as u32,
@@ -246,6 +338,7 @@ impl Sim {
             self.at(t),
         );
         let (mut n, mut last_arrival, mut complete) = (0usize, t, true);
+        let mut arrived = 0u32;
         let blocks = layout.len() as u8;
         for (block, &(data, parity)) in layout.iter().enumerate() {
             let (mut got_data, mut got_parity) = (0u16, 0u16);
@@ -262,6 +355,7 @@ impl Sim {
                 }
             }
             let received = got_data + got_parity;
+            arrived += u32::from(received);
             // A PyroWave picture shows without a detail block (blurred there).
             if usize::from(received) < data && (!self.pyrowave || block == 0) {
                 complete = false;
@@ -293,6 +387,7 @@ impl Sim {
             complete,
             arrival: last_arrival,
             packets: packets as u32,
+            arrived,
         });
     }
 
@@ -327,7 +422,7 @@ impl Sim {
             if t >= next_frame {
                 self.send_frame(t, index);
                 index += 1;
-                next_frame += PERIOD.as_secs_f64();
+                next_frame += self.period.as_secs_f64();
             }
             self.deliver(t);
             if k % 100 == 0 {
@@ -338,7 +433,10 @@ impl Sim {
                 self.lr.on_ping(now, &[4, 0, 0, 0, 0, 0, 0, 0]);
             }
             if k % 8 == 0 {
-                if let Some(kbps) = self.lr.tick(now, rtt, FEC, PERIOD, self.encoder_kbps, true) {
+                if let Some(kbps) =
+                    self.lr
+                        .tick(now, rtt, FEC, self.period, self.encoder_kbps, true)
+                {
                     self.encoder_kbps = kbps;
                 }
                 if let Some(change) = self.lr.take_change() {
@@ -394,6 +492,47 @@ impl Sim {
             .filter(|(_, c)| c.kind == ChangeKind::StepDown)
             .count()
     }
+    /// Cuts, failed probes, time over the link, p95 queue delay, delivered
+    /// rate and lost frames in `[from, to)` seconds.
+    pub fn report(&self, from: f64, to: f64) -> Report {
+        let count = |kind| {
+            self.changes
+                .iter()
+                .filter(|(t, c)| (from..to).contains(t) && c.kind == kind)
+                .count()
+        };
+        let seconds = (to - from).floor().max(1.) as usize;
+        let over = (0..seconds)
+            .filter(|i| {
+                let at = from + *i as f64;
+                self.mean_wire_bps(at, at + 1.) > (self.link.rate)(at + 0.5)
+            })
+            .count();
+        let mut queue: Vec<f64> = self
+            .queue_log
+            .iter()
+            .filter(|(t, _)| (from..to).contains(t))
+            .map(|(_, ms)| *ms)
+            .collect();
+        queue.sort_by(f64::total_cmp);
+        let p95 = queue
+            .get((queue.len() * 95 / 100).min(queue.len().saturating_sub(1)))
+            .copied()
+            .unwrap_or(0.);
+        let arrived: f64 = self
+            .window(from, to)
+            .iter()
+            .map(|f| f64::from(f.arrived))
+            .sum();
+        Report {
+            cuts: count(ChangeKind::StepDown),
+            failed_probes: count(ChangeKind::ProbeFailed),
+            over_link: over as f64 / seconds as f64,
+            p95_queue_ms: p95,
+            delivered_mbps: arrived * DATAGRAM as f64 * 8. / (to - from) / 1e6,
+            frame_loss: self.frame_loss(from, to),
+        }
+    }
     /// First time at or after `from` that the encoder runs at `kbps` or more.
     pub fn reaches(&self, from: f64, kbps: u32) -> Option<f64> {
         self.frames
@@ -401,4 +540,138 @@ impl Sim {
             .find(|f| f.at >= from && f.kbps >= kbps)
             .map(|f| f.at)
     }
+}
+
+/// One row of [`field_report`]: a named run and what it did in 5 minutes.
+fn report_row(name: &str, mut sim: Sim, seconds: f64) {
+    sim.run(seconds);
+    let r = sim.report(0., seconds);
+    println!(
+        "| {name} | {} | {} | {:.0} % | {:.0} | {:.0} | {:.2} % |",
+        r.cuts,
+        r.failed_probes,
+        r.over_link * 100.,
+        r.p95_queue_ms,
+        r.delivered_mbps,
+        r.frame_loss * 100.
+    );
+}
+
+fn queued(mut link: Link, ms: f64, delay: f64) -> Link {
+    link.queue_ms = ms;
+    link.delay = delay;
+    link
+}
+
+/// The before-and-after table of the 2026-11-17 review, 5 minutes a run:
+/// `cargo test -p butterpollo-core --release --lib field_report -- --ignored
+/// --nocapture`. Only `report`, `changes`, `frames` and `queue_log` are read,
+/// so the file also runs against an older controller.
+#[test]
+#[ignore]
+fn field_report() {
+    const RUN: f64 = 300.;
+    println!(
+        "| run | cuts | failed probes | over link | p95 queue ms | delivered Mbps | lost frames |"
+    );
+    println!("| --- | --- | --- | --- | --- | --- | --- |");
+    // The field: 4K120 PyroWave asking 800 Mbps (about 680 on the wire) on a
+    // path good for 640, behind a deep buffer (8 ms clean, 270 ms full), with
+    // a 1 ms report delay.
+    let field = || Sim::pyrowave_4k120(queued(Link::constant(640.), 270., 0.003), 800_000, 1.);
+    report_row("4K120 PyroWave 800 on 640, 270 ms buffer", field(), RUN);
+    let mut refusing = field();
+    refusing.refuse_above_ms = Some(100.);
+    report_row(
+        "same, host socket refuses while the queue is over 100 ms",
+        refusing,
+        RUN,
+    );
+    let mut small = Sim::pyrowave_no_room(queued(Link::constant(200.), 50., 0.002), 350_000, 20.);
+    small.spread = 0.4;
+    report_row("1080p120 PyroWave 350 on 200 (no room), 50 ms", small, RUN);
+    let mut room = Sim::pyrowave(queued(Link::constant(500.), 50., 0.002), 900_000, 20.);
+    room.spread = 0.4;
+    report_row("1080p60 PyroWave 900 on 500, 50 ms", room, RUN);
+    report_row(
+        "H.26x 75 on 50, 50 ms",
+        Sim::new(queued(Link::constant(50.), 50., 0.002), 75_000, 20.),
+        RUN,
+    );
+    report_row(
+        "H.26x 75 on 50, 400 ms buffer",
+        Sim::new(queued(Link::constant(50.), 400., 0.002), 75_000, 20.),
+        RUN,
+    );
+    let mut clean = Sim::pyrowave(queued(Link::constant(1000.), 50., 0.002), 800_000, 20.);
+    clean.spread = 0.4;
+    report_row("1 GbE, PyroWave 800", clean, RUN);
+    report_row(
+        "1 GbE, H.26x 80",
+        Sim::new(queued(Link::constant(1000.), 50., 0.002), 80_000, 2.),
+        RUN,
+    );
+    let mut blip = Sim::new(
+        queued(Link::step(80., 10., 20., 40.), 50., 0.002),
+        40_000,
+        20.,
+    );
+    blip.run(RUN);
+    let back = blip.reaches(40., 36_000).map_or(-1., |t| t - 40.);
+    let r = blip.report(0., RUN);
+    println!(
+        "| Wi-Fi blip, H.26x 40 on 80 -> 10 -> 80 Mbps (20-40 s), back to 90 % {back:.1} s after | {} | {} | {:.0} % | {:.0} | {:.0} | {:.2} % |",
+        r.cuts,
+        r.failed_probes,
+        r.over_link * 100.,
+        r.p95_queue_ms,
+        r.delivered_mbps,
+        r.frame_loss * 100.
+    );
+    let mut twice = Sim::new(
+        queued(
+            Link::new(|t| {
+                if (20. ..40.).contains(&t) || (120. ..140.).contains(&t) {
+                    10e6
+                } else {
+                    80e6
+                }
+            }),
+            50.,
+            0.002,
+        ),
+        40_000,
+        20.,
+    );
+    twice.run(RUN);
+    let first = twice.reaches(40., 36_000).map_or(-1., |t| t - 40.);
+    let second = twice.reaches(140., 36_000).map_or(-1., |t| t - 140.);
+    let r = twice.report(0., RUN);
+    println!(
+        "| Two Wi-Fi blips, H.26x 40 on 80 -> 10 -> 80 Mbps (20-40 s, 120-140 s), back to 90 % {first:.1} s and {second:.1} s after | {} | {} | {:.0} % | {:.0} | {:.0} | {:.2} % |",
+        r.cuts,
+        r.failed_probes,
+        r.over_link * 100.,
+        r.p95_queue_ms,
+        r.delivered_mbps,
+        r.frame_loss * 100.
+    );
+    let mut blip = Sim::pyrowave(
+        queued(Link::step(1000., 150., 60., 90.), 50., 0.002),
+        400_000,
+        20.,
+    );
+    blip.spread = 0.4;
+    blip.run(RUN);
+    let back = blip.reaches(90., 360_000).map_or(-1., |t| t - 90.);
+    let r = blip.report(0., RUN);
+    println!(
+        "| Wi-Fi blip, PyroWave 400 on 1000 -> 150 -> 1000 Mbps (60-90 s), back to 90 % {back:.1} s after | {} | {} | {:.0} % | {:.0} | {:.0} | {:.2} % |",
+        r.cuts,
+        r.failed_probes,
+        r.over_link * 100.,
+        r.p95_queue_ms,
+        r.delivered_mbps,
+        r.frame_loss * 100.
+    );
 }

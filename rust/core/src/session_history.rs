@@ -58,6 +58,12 @@ pub struct Entry {
     pub hdr: bool,
     /// The encoder's bitrate when the stream ended, in kbps.
     pub bitrate_kbps: u32,
+    /// The bitrate the stream was asked for (the negotiated rate), in kbps;
+    /// `bitrate_kbps` is what the encoder ran at when it ended. They differ when
+    /// something held the encoder below the request: the network, the client
+    /// setting the bitrate, or the host's own limit. 0 for a stream that
+    /// never started, and for an entry saved before this field existed.
+    pub requested_bitrate_kbps: u32,
     /// What the video actually sent on average: its bytes over the stream's
     /// duration. Audio is not counted.
     pub mean_bitrate_kbps: f64,
@@ -288,5 +294,6 @@ mod tests {
         assert_eq!(entry.end_reason, "");
         assert_eq!(entry.loss_percent, None);
         assert_eq!(entry.p95_fps, 0.);
+        assert_eq!(entry.requested_bitrate_kbps, 0);
     }
 }

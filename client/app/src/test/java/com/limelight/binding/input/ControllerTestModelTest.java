@@ -106,4 +106,15 @@ public class ControllerTestModelTest {
         assertEquals(-1, layout.rightStickX);
         assertEquals(-1, layout.leftTrigger);
     }
+
+    // nightjar#131: a handheld's built-in controls have no motion sensors of their own; the test
+    // showed "no gyro" although a stream gives player 1 the device's.
+    @Test
+    public void aPadWithoutMotionShowsTheDevicesAsTheStreamDoes() {
+        assertTrue(ControllerTestModel.usesDeviceMotion(false, true, false, true));
+        assertFalse("the pad's own come first", ControllerTestModel.usesDeviceMotion(true, true, false, true));
+        assertFalse("Use device motion sensors off", ControllerTestModel.usesDeviceMotion(false, false, false, true));
+        assertFalse("pinned as Xbox leaves out motion", ControllerTestModel.usesDeviceMotion(false, true, true, true));
+        assertFalse("no device sensors", ControllerTestModel.usesDeviceMotion(false, true, false, false));
+    }
 }

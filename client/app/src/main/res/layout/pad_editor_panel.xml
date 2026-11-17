@@ -100,14 +100,61 @@
         android:textAppearance="@style/TextAppearance.Nightjar.Body"
         android:textColor="@color/night_on_surface" />
 
-    <!-- Shown while the layout leaves the WASD stick out. -->
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/pad_editor_add_wasd"
-        style="@style/Widget.Nightjar.Button.Text"
-        android:layout_width="wrap_content"
+    <!-- Shown while the layout leaves one of the optional controls out. -->
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/pad_edit_add_wasd"
-        app:icon="@drawable/ic_add" />
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/pad_editor_add_wasd"
+            style="@style/Widget.Nightjar.Button.Text"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/pad_edit_add_wasd"
+            app:icon="@drawable/ic_add" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/pad_editor_add_touchpad"
+            style="@style/Widget.Nightjar.Button.Text"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/pad_edit_add_touchpad"
+            app:icon="@drawable/ic_add" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/pad_editor_preset"
+            style="@style/Widget.Nightjar.Button.Text"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/pad_edit_preset" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/pad_editor_glyphs"
+            style="@style/Widget.Nightjar.Button.Text"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/pad_glyph_xbox" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/pad_editor_pointer_mode"
+            style="@style/Widget.Nightjar.Button.Text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/pad_touchpad_mouse" />
+    </LinearLayout>
 
     <LinearLayout
         android:layout_width="match_parent"

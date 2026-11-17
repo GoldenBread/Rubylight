@@ -174,6 +174,37 @@ fn plane_pictures_go_straight_to_the_back_buffer_until_that_fails() {
     texture.texture = std::ptr::null_mut();
 }
 
+/// Issue 120 on the Vulkan plane pass: a picture the display scales is not drawn by the pass,
+/// whose taps would filter its colour codes; its planes stay for the video texture, which SDL
+/// scales in linear light. The check comes before anything reads the renderer.
+#[cfg(unix)]
+#[test]
+fn a_scaled_plane_picture_goes_through_the_video_texture() {
+    let mut texture = VideoTexture { width: 1280, height: 720, ..VideoTexture::default() };
+    let fake = std::ptr::NonNull::<SDL_Texture>::dangling().as_ptr();
+    texture.texture = fake;
+    texture.planes_pending = Some([7; 8]);
+    let scaled = viewport((1280, 720), (1920, 1080), crate::config::VideoScaling::Fit, false);
+    assert!(!texture.draw_direct(std::ptr::null_mut(), &scaled, fake));
+    assert_eq!(texture.planes_pending, Some([7; 8]), "the planes wait for the texture's draw");
+    assert!(texture.direct_planes_scaled_said);
+    assert!(!texture.direct_planes_failed, "scaling is no failure: an unscaled picture is drawn directly again");
+    texture.texture = std::ptr::null_mut();
+}
+
+/// The Vulkan plane pass draws a Frame Warp shift in whole picture pixels, as the Windows pass
+/// does: a fractional one would filter the colour codes it converts afterwards.
+#[cfg(unix)]
+#[test]
+fn the_plane_pass_shifts_a_warped_picture_in_whole_pixels() {
+    use super::super::frame_warp::WarpDraw;
+    let warp = WarpDraw { shift: [3.4 / 1280.0, -0.6 / 720.0], ..WarpDraw::default() };
+    let drawn = direct_draw::unix_direct_warp(&warp, (1280, 720));
+    assert!((drawn.shift[0] - 3.0 / 1280.0).abs() < 1e-7 && (drawn.shift[1] + 1.0 / 720.0).abs() < 1e-7, "{:?}", drawn.shift);
+    assert_eq!(drawn.lens, warp.lens);
+    assert!(direct_draw::unix_direct_warp(&WarpDraw::default(), (1280, 720)).is_identity());
+}
+
 #[test]
 fn a_10_bit_sdr_stream_keeps_the_sdr_white_until_the_host_says_hdr() {
     // The bug: every 10-bit picture without the host's HDR mode took the display's SDR white
@@ -370,6 +401,17 @@ fn scaling_matches_android_fit_fill_stretch_native_and_top_alignment() {
     }
     let r = viewport((0, 0), (1280, 1024), Native, true);
     assert_eq!([r.x, r.y, r.w, r.h], [0.0, 0.0, 1280.0, 1024.0]);
+}
+
+// Issue 120 on every platform's plane pass (the Vulkan `planesDirect` too): only a picture the
+// display shows at its own size skips the video texture.
+#[test]
+fn only_a_picture_at_the_displays_own_size_skips_the_video_texture() {
+    let fit = |picture, area| viewport(picture, area, crate::config::VideoScaling::Fit, false);
+    assert!(draws_one_to_one(&fit((1920, 1080), (1920, 1080)), (1920, 1080)));
+    assert!(draws_one_to_one(&fit((1920, 1080), (1920, 1200)), (1920, 1080)), "letterboxed at its own size");
+    assert!(!draws_one_to_one(&fit((1280, 720), (1920, 1080)), (1280, 720)), "upscaled");
+    assert!(!draws_one_to_one(&fit((2560, 1440), (1920, 1080)), (2560, 1440)), "downscaled");
 }
 
 #[test]
@@ -1648,6 +1690,121 @@ fn fractional_v_sync_holds_v_sync_pictures_only_and_follows_the_rates() {
     let mut mode = PacingMode::Vsync;
     let mut vrr = VrrPacing::new(false, PacingMode::Vsync, VrrSync::Off, PacingMode::Vsync).with_refreshes(2);
     assert_eq!(vrr.step(&mut mode, None, 0), None);
+}
+
+/// The phase report, the lock and the hold, end to end with the stream loop: the report aims at the
+/// present lead (`held_present_lead_us`), the lock puts the picture `DEFAULT_MARGIN_NS` past that
+/// aim, the loop takes it (`Pacer::take_due`) and holds it until the refresh that opens its turn.
+/// Every present then goes out just after that refresh, one hold apart, and the hold really waits;
+/// aimed at the deadline the turn must make, the lock delivered after the present target and the
+/// hold never waited.
+#[test]
+fn a_steered_stream_meets_its_hold_at_the_present_lead() {
+    use crate::stream::phase;
+    use rubylight_protocol::phase_lock::PhaseLock;
+    const REFRESH_US: u64 = 8_333;
+    const HELD: u32 = 2;
+    const MARGIN_US: u64 = 5_000;
+    const GUARD_US: u64 = phase::HELD_LATCH_GUARD_US;
+    // Where a steering host puts the early edge past the aim (`PhaseLock::DEFAULT_MARGIN_NS`).
+    const LOCK_US: i64 = PhaseLock::DEFAULT_MARGIN_NS / 1_000;
+    let lead = phase::held_present_lead_us(REFRESH_US, GUARD_US);
+    assert_eq!(lead, REFRESH_US - GUARD_US);
+    let mut pacer = Pacer::new(PacingMode::Vsync, i64::from(HELD) * REFRESH_US as i64).with_frame_pacing(FramePacing::Latency, 60);
+    let mut anchor = phase::HeldAnchor::default();
+    // The last picture was shown at refresh 100 (t = 833_300): the next turn is refresh 102.
+    let mut shown = Some(100u32);
+    let mut presents = Vec::new();
+    for turn in (102..=108).step_by(HELD as usize) {
+        let turn_us = u64::from(turn) * REFRESH_US;
+        let ready_us = turn_us - lead - LOCK_US as u64;
+        pacer.accept(decoded(ready_us));
+        let (picture, replaced) = pacer.take_due(ready_us);
+        assert!(picture.is_some() && replaced == 0, "the lock delivers the picture when its turn is due");
+        // The report latches on the latest grid refresh at the delivery, and the lock reads its own
+        // margin one report period on from the aim.
+        let latest = (ready_us / REFRESH_US) as u32;
+        let (latch_us, report_period_us) = phase::held_latch(latest as u64 * REFRESH_US, latest, shown, HELD, REFRESH_US);
+        let (aimed_latch, report_period_ns) = phase::aimed(Some((latch_us as i64, (report_period_us * 1_000) as i64)), lead as i64).unwrap();
+        assert_eq!(report_period_ns / 1_000, (u64::from(HELD) * REFRESH_US) as i64, "the report's period is the hold");
+        assert_eq!(aimed_latch - ready_us as i64 + report_period_ns / 1_000, LOCK_US, "the lock's margin, one period on");
+        let wait = anchor.hold(ready_us, latest as u64 * REFRESH_US, latest, shown, HELD, REFRESH_US, MARGIN_US, GUARD_US,
+            phase::EARLY_SPARE_US, phase::EARLY_FOR_US);
+        assert_eq!(wait as i64, LOCK_US, "the picture is ready before its hold: the hold waits the lock's margin");
+        let present = ready_us + wait;
+        assert_eq!(present, turn_us - lead, "the present goes out just after the refresh that opens the turn");
+        presents.push(present);
+        anchor.presented(turn - 100);
+        // The display shows it at that turn's refresh, where the next grid counts from.
+        shown = Some(present.div_ceil(REFRESH_US) as u32);
+        assert_eq!(shown, Some(turn));
+    }
+    assert!(presents.windows(2).all(|pair| pair[1] - pair[0] == u64::from(HELD) * REFRESH_US), "one hold apart: {presents:?}");
+}
+
+/// A stream faster than the held rate, in the renderer's order: the loop sleeps until the oldest
+/// waiting picture is due (`Pacer::next_due`), takes the due pictures (`Pacer::take_due`), and holds
+/// the one it keeps until the refresh that opens its turn (`HeldAnchor::hold`). One picture a turn,
+/// a whole hold apart; the pictures that come during a hold wait for the next turn, where the take
+/// drops the ones it replaces. Taking all four at once would show the newest of them; the loop
+/// cannot, the hold blocks it, so a turn shows the picture that was newest when the last present
+/// went out, up to a hold after it was.
+#[test]
+fn a_stream_faster_than_the_hold_shows_one_picture_a_turn_in_the_renderers_order() {
+    use crate::stream::phase;
+    const REFRESH_US: u64 = 8_333;
+    const HELD: u32 = 2;
+    const MARGIN_US: u64 = 5_000;
+    const GUARD_US: u64 = phase::HELD_LATCH_GUARD_US;
+    // 240 fps: a picture every 4 167 µs, four to a turn of 16 666.
+    const PICTURE_US: u64 = 4_167;
+    let lead = phase::held_present_lead_us(REFRESH_US, GUARD_US);
+    let mut pacer = Pacer::new(PacingMode::Vsync, i64::from(HELD) * REFRESH_US as i64).with_frame_pacing(FramePacing::Latency, 60);
+    let mut anchor = phase::HeldAnchor::default();
+    let (mut next_ready, mut now) = (100_000u64, 100_000u64);
+    let mut last: Option<u32> = None;
+    let (mut accepted, mut count, mut shown, mut dropped, mut presents) = (0u32, 0u32, Vec::new(), 0u32, Vec::new());
+    for _ in 0..12 {
+        // The receive side delivers the pictures whose time has come; the loop then waits for the
+        // oldest one it has, or for the next picture when nothing waits.
+        while next_ready <= now {
+            pacer.accept(decoded(next_ready));
+            accepted += 1;
+            next_ready += PICTURE_US;
+        }
+        let Some(due) = pacer.next_due() else { now = next_ready; continue };
+        if due > now { now = due; continue; }
+        let (picture, replaced) = pacer.take_due(now);
+        dropped += replaced;
+        let Some(picture) = picture else { continue };
+        let latest = (now / REFRESH_US) as u32;
+        let wait = anchor.hold(now, u64::from(latest) * REFRESH_US, latest, last, HELD, REFRESH_US, MARGIN_US, GUARD_US,
+            phase::EARLY_SPARE_US, phase::EARLY_FOR_US);
+        now += wait;
+        count += 1;
+        anchor.presented(count);
+        shown.push(picture.decoded.ready_us);
+        presents.push(now);
+        // The swap chain shows it at the next refresh, where the next turn counts from.
+        last = Some(now.div_ceil(REFRESH_US) as u32);
+        // The draw and the present call take a moment; the next picture is due after this one.
+        now += 1;
+    }
+    assert!(shown.len() >= 6, "a few turns: {shown:?}");
+    assert_eq!(accepted as usize, shown.len() + dropped as usize, "every picture shown or dropped: {shown:?} dropped {dropped}");
+    assert!(dropped > 0, "the pictures a hold replaces are dropped");
+    // Every present after the first startup one goes out just after the refresh that opens a turn,
+    // a whole hold after the one before.
+    for pair in presents[1..].windows(2) {
+        assert_eq!(pair[1] - pair[0], u64::from(HELD) * REFRESH_US, "one turn apart: {presents:?}");
+    }
+    assert!(presents[1..].iter().all(|present| (present + lead).is_multiple_of(REFRESH_US)), "at the present lead: {presents:?}");
+    // A picture shown at a turn was waiting before the previous turn's present went out: the take
+    // after that present keeps the newest picture that came during the hold and drops the older ones,
+    // so a turn shows a picture up to a hold after it was the newest.
+    for (at, ready) in shown.iter().enumerate().skip(2) {
+        assert!(*ready < presents[at - 1], "a picture waiting from before the previous present took the next turn: {shown:?} at {presents:?}");
+    }
 }
 
 #[test]

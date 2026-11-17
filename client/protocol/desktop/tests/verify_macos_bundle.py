@@ -1,5 +1,6 @@
 """Smoke-test a built Nightjar.app using only the system libraries and its own Frameworks."""
 import argparse
+import json
 from pathlib import Path
 import platform
 import plistlib
@@ -27,6 +28,8 @@ def main():
     parser.add_argument("app", type=Path)
     parser.add_argument("--arch", choices=["arm64", "x86_64"], default=platform.machine(),
                         help="architecture expected in the executable and every bundled dylib")
+    parser.add_argument("--kosmickrisp", action="store_true",
+                        help="the app was packaged with --vulkan: the driver, its manifest and the loader must be there")
     parser.add_argument("--inspect-only", action="store_true",
                         help="check a cross build on a Mac that cannot execute it")
     args = parser.parse_args()
@@ -43,6 +46,33 @@ def main():
             if slices != [args.arch]:
                 raise ValueError(f"{item.name}: expected {args.arch}, found {slices}")
             check_links(item, frameworks, executable=item == binary)
+        # The executable opens Vulkan and the PyroWave SDK at run time only, so a Mac without them
+        # (Intel, macOS before 26) starts.
+        linked = subprocess.check_output(["otool", "-L", binary], text=True)
+        for name in ("libvulkan", "libpyrowave"):
+            if name in linked:
+                raise ValueError(f"{binary.name} links {name}; it must open it at run time")
+        icd = contents / "Resources/vulkan/icd.d/kosmickrisp_icd.json"
+        if args.kosmickrisp and not icd.exists():
+            raise ValueError(f"KosmicKrisp was asked for but {icd} is missing")
+        if args.kosmickrisp:
+            # macos-vulkan.sh copies these from the sources it builds; the app must carry them.
+            missing = [name for name in (
+                "Mesa/MIT", "Mesa/KosmicKrisp-copyright.txt", "SPIRV-Tools/LICENSE",
+                "SPIRV-Headers/LICENSE", "Vulkan-Loader/LICENSE.txt",
+            ) if not (contents / "Resources/Licenses" / name).is_file()]
+            if missing:
+                raise ValueError(f"KosmicKrisp is bundled without license texts: {', '.join(missing)}")
+        if icd.exists():
+            if args.arch != "arm64":
+                raise ValueError("KosmicKrisp is bundled in a build for Intel Macs")
+            manifest = json.loads(icd.read_text())
+            driver = (icd.parent / manifest["ICD"]["library_path"]).resolve()
+            if not driver.is_file() or driver.parent != frameworks.resolve():
+                raise ValueError(f"the KosmicKrisp manifest points to {driver}, not a bundled library")
+            if not (frameworks / "libvulkan.1.dylib").is_file():
+                raise ValueError("KosmicKrisp is bundled without the Vulkan loader")
+            print(f"KosmicKrisp bundled: {manifest['ICD']['library_path']}")
         if args.inspect_only:
             print(f"Inspected relocated, signed {args.arch} app for macOS {info['LSMinimumSystemVersion']} or later")
             return

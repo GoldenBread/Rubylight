@@ -386,7 +386,8 @@ final class SettingRules {
             "checkbox_gamepad_touchpad_as_mouse", "list_guide_menu_hold", "back_button",
             "list_stream_menu_button_y", "list_stream_menu_button_x", "list_stream_menu_button_lb", "list_stream_menu_button_rb"};
     /** Rows hidden while the on-screen controls are not shown. */
-    static final String[] ON_SCREEN_ROWS = {"list_osc_style", "checkbox_vibrate_osc", "checkbox_only_show_L3R3",
+    static final String[] ON_SCREEN_ROWS = {"list_osc_style", "checkbox_vibrate_osc", PreferenceConfiguration.OSC_AUTO_HIDE_PREF_STRING,
+            "checkbox_only_show_L3R3",
             "checkbox_onscreen_own_player", "checkbox_show_guide_button", "checkbox_show_touchpad_button",
             PreferenceConfiguration.OSC_STEAM_CONTROLS_PREF_STRING, "seekbar_osc_opacity", "reset_osc"};
     /** Rows hidden while the microphone is not sent. */

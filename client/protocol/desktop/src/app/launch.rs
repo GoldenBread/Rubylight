@@ -456,8 +456,22 @@ impl App {
             handheld::HdrStream::Hdr | handheld::HdrStream::Sdr => {}
         }
         let mut gpu_decoder = None;
+        self.pyrowave_note = None;
+        // The renderer's device, when a PyroWave decoder needs it: the Mac check below probes the
+        // plane shader on it too, so a shader that does not build falls back before the stream.
+        let gpu_device = if settings.codec.is_pyrowave() { self.gpu_device() } else { None };
+        // A Mac decodes on the processor where the GPU decoder cannot run, and says why.
+        #[cfg(target_os = "macos")]
+        if settings.codec.is_pyrowave() && settings.pyrowave_decoder == config::PyroWaveDecoder::Gpu {
+            let device = gpu_device.map_or(std::ptr::null_mut(), |device| device.0);
+            if let stream::pyrowave_mode::MacChoice::Cpu(reason) = stream::pyrowave_mode::this_mac(settings.pyrowave_decoder, settings.hdr, device) {
+                let reason = reason.unwrap_or_default();
+                eprintln!("nightjar: PyroWave decodes on the processor: {reason}");
+                self.pyrowave_note = Some(trf("PyroWave decodes on the processor: {}", &[&reason]));
+                settings.pyrowave_decoder = config::PyroWaveDecoder::Cpu;
+            }
+        }
         if settings.codec.is_pyrowave() {
-            let gpu_device = self.gpu_device();
             let probed = stream::pyrowave_mode::availability(
                 settings.pyrowave_decoder,
                 || stream::pyrowave_gpu::probe(self.renderer, settings.hdr),
@@ -487,6 +501,7 @@ impl App {
         }
         // Before any decoder probe: the Vulkan video Debug settings change the backend order.
         media::use_vulkan_video_settings(settings.vulkan_video_first, settings.vulkan_rfi);
+        media::use_videotoolbox_rfi_setting(settings.videotoolbox_rfi);
         // Before the launch: a stream that cannot have sharper colored text starts without it,
         // instead of launching the game and being refused in the handshake.
         let refused_now = self.full_chroma_off == Some(host_id);

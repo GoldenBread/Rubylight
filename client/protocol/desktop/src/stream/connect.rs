@@ -584,16 +584,36 @@ pub(crate) fn env_flag(name: &str) -> Option<bool> {
 
 /// Whether a backend recovers from a lost frame with reference frame invalidation: D3D11VA, VAAPI
 /// and software, as moonlight-qt asks, and Vulkan video with the Debug setting "Vulkan video
-/// recovery" (off until measured; `NIGHTJAR_VULKAN_RFI` wins over it). V4L2 M2M and NVDEC do not ask.
+/// recovery" (off until measured; `NIGHTJAR_VULKAN_RFI` wins over it), and VideoToolbox with the
+/// Debug setting "VideoToolbox recovery" (off until measured on a Mac; `NIGHTJAR_VIDEOTOOLBOX_RFI`
+/// wins over it). V4L2 M2M and NVDEC do not ask.
 pub(super) fn takes_rfi(backend: Hardware) -> bool {
     static VULKAN_RFI: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
-    takes_rfi_when(backend, VULKAN_RFI.get_or_init(|| env_flag("NIGHTJAR_VULKAN_RFI"))
-        .unwrap_or_else(crate::media::vulkan_rfi_setting))
+    static VIDEOTOOLBOX_RFI: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
+    takes_rfi_when(
+        backend,
+        VULKAN_RFI.get_or_init(|| env_flag("NIGHTJAR_VULKAN_RFI")).unwrap_or_else(crate::media::vulkan_rfi_setting),
+        VIDEOTOOLBOX_RFI.get_or_init(|| env_flag("NIGHTJAR_VIDEOTOOLBOX_RFI")).unwrap_or_else(crate::media::videotoolbox_rfi_setting),
+    )
 }
 
-/// `takes_rfi`, with Vulkan video taking it when `vulkan` says so.
-fn takes_rfi_when(backend: Hardware, vulkan: bool) -> bool {
-    matches!(backend, Hardware::D3d11(_) | Hardware::Vaapi | Hardware::None) || vulkan && matches!(backend, Hardware::Vulkan(_))
+/// `takes_rfi`, with Vulkan video taking it when `vulkan` says so and VideoToolbox when
+/// `videotoolbox` does.
+fn takes_rfi_when(backend: Hardware, vulkan: bool, videotoolbox: bool) -> bool {
+    matches!(backend, Hardware::D3d11(_) | Hardware::Vaapi | Hardware::None)
+        || vulkan && matches!(backend, Hardware::Vulkan(_))
+        || videotoolbox && is_videotoolbox(backend)
+}
+
+/// VideoToolbox, which exists on macOS only.
+fn is_videotoolbox(backend: Hardware) -> bool {
+    #[cfg(target_os = "macos")]
+    return matches!(backend, Hardware::VideoToolbox);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = backend;
+        false
+    }
 }
 
 /// The decoder's `CAPABILITY_*` for the launch. Reference frame invalidation for HEVC and for AV1
@@ -1587,14 +1607,29 @@ mod capability_tests {
     fn vulkan_video_takes_rfi_only_when_switched_on() {
         assert!(!crate::config::Settings::default().vulkan_rfi);
         let device = std::ptr::dangling_mut::<std::ffi::c_void>();
-        assert!(!takes_rfi_when(Hardware::Vulkan(device), false));
-        assert!(takes_rfi_when(Hardware::Vulkan(device), true));
+        assert!(!takes_rfi_when(Hardware::Vulkan(device), false, true));
+        assert!(takes_rfi_when(Hardware::Vulkan(device), true, false));
         for backend in [Hardware::V4l2m2m, Hardware::Cuda] {
-            assert!(!takes_rfi_when(backend, true), "{}", backend.label());
+            assert!(!takes_rfi_when(backend, true, true), "{}", backend.label());
         }
         for backend in [Hardware::D3d11(device), Hardware::Vaapi, Hardware::None] {
-            assert!(takes_rfi_when(backend, false), "{}", backend.label());
+            assert!(takes_rfi_when(backend, false, false), "{}", backend.label());
         }
+    }
+
+    /// VideoToolbox's reference frame invalidation is a Debug setting, off by default: a Mac asks
+    /// for a keyframe after a lost frame unless it is on.
+    #[test]
+    fn videotoolbox_takes_rfi_only_when_switched_on() {
+        assert!(!crate::config::Settings::default().videotoolbox_rfi);
+        #[cfg(target_os = "macos")]
+        {
+            assert!(!takes_rfi_when(Hardware::VideoToolbox, false, false));
+            assert!(!takes_rfi_when(Hardware::VideoToolbox, true, false), "the Vulkan setting is not VideoToolbox's");
+            assert!(takes_rfi_when(Hardware::VideoToolbox, false, true));
+        }
+        // Elsewhere the setting asks nothing of another backend.
+        assert!(!takes_rfi_when(Hardware::V4l2m2m, false, true));
     }
 
     #[test]

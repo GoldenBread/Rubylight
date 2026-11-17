@@ -81,6 +81,7 @@ public class PreferenceConfiguration {
     public static final String OSC_STYLE_PREF_STRING = "list_osc_style";
     public static final String OSC_STICK_MODE_PREF_STRING = "list_osc_stick_mode";
     public static final String OSC_STICK_DEADZONE_PREF_STRING = "seekbar_osc_stick_deadzone";
+    public static final String OSC_AUTO_HIDE_PREF_STRING = "checkbox_osc_auto_hide";
     public static final String OSC_STYLE_CLASSIC = "classic", OSC_STYLE_MODERN = "modern";
     public static final String OSC_STICK_FLOATING = "floating", OSC_STICK_FIXED = "fixed";
     public static final int DEFAULT_OSC_STICK_DEADZONE = 8, MAX_OSC_STICK_DEADZONE = 30;
@@ -274,6 +275,7 @@ public class PreferenceConfiguration {
     private static final boolean ONSCREEN_CONTROLLER_DEFAULT = false;
     private static final boolean ONLY_L3_R3_DEFAULT = false;
     private static final boolean ONSCREEN_OWN_PLAYER_DEFAULT = false;
+    private static final boolean OSC_AUTO_HIDE_DEFAULT = true;
     private static final boolean SHOW_GUIDE_BUTTON_DEFAULT = true;
     private static final boolean SHOW_TOUCHPAD_BUTTON_DEFAULT = false;
     private static final boolean OSC_STEAM_CONTROLS_DEFAULT = false;
@@ -358,6 +360,8 @@ public class PreferenceConfiguration {
     // Forward USB devices to a host that offers it during a stream (Rust engine only).
     public boolean usbForwarding;
     public boolean onscreenController;
+    /** Hide the on-screen controls while an external gamepad is connected, and bring them back when it leaves. */
+    public boolean oscAutoHideOnController = true;
     public boolean onlyL3R3;
     public boolean onscreenOwnPlayer;
     public boolean showGuideButton;
@@ -1749,6 +1753,7 @@ public class PreferenceConfiguration {
         config.usbSwitchPro = prefs.getBoolean(USB_SWITCH_PRO_PREF_STRING, false);
         config.usbForwarding = prefs.getBoolean(USB_FORWARDING_PREF_STRING, false);
         config.onscreenController = prefs.getBoolean(ONSCREEN_CONTROLLER_PREF_STRING, ONSCREEN_CONTROLLER_DEFAULT);
+        config.oscAutoHideOnController = prefs.getBoolean(OSC_AUTO_HIDE_PREF_STRING, OSC_AUTO_HIDE_DEFAULT);
         config.onlyL3R3 = prefs.getBoolean(ONLY_L3_R3_PREF_STRING, ONLY_L3_R3_DEFAULT);
         config.onscreenOwnPlayer = prefs.getBoolean(ONSCREEN_OWN_PLAYER_PREF_STRING, ONSCREEN_OWN_PLAYER_DEFAULT);
         config.showGuideButton = prefs.getBoolean(SHOW_GUIDE_BUTTON_PREF_STRING, SHOW_GUIDE_BUTTON_DEFAULT);
