@@ -128,7 +128,20 @@ fn start_deferred(h: &Shared) {
             return;
         }
         tracing::info!(app = %app.name, "user signed in; starting the deferred application");
+        // As for the console and a device, a launch that a host stop reaches
+        // while it prepares is cancelled and its undo commands run.
+        let _started = h.launch_started("console");
         match crate::process::launch(&h, &app, &args) {
+            Ok(started)
+                if h.launch_stopped() || h.stop.load(std::sync::atomic::Ordering::Acquire) =>
+            {
+                // The game this launch started is closed again, and nothing of
+                // it is kept; the placeholder the deferred app left goes too.
+                drop(started);
+                let canceled = h.sessions.lock().unwrap().stop_role(Role::Stream, None);
+                drop(canceled);
+                h.stop_app(AppStop::LaunchFailed);
+            }
             Ok(mut started) => {
                 let mut current = h.current_app.lock().unwrap();
                 if let Some(placeholder) = current
