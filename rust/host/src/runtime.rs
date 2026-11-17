@@ -130,7 +130,7 @@ fn start_deferred(h: &Shared) {
         tracing::info!(app = %app.name, "user signed in; starting the deferred application");
         // As for the console and a device, a launch that a host stop reaches
         // while it prepares is cancelled and its undo commands run.
-        let _started = h.launch_started("console");
+        let _started = h.launch_started(&owner);
         match crate::process::launch(&h, &app, &args) {
             Ok(started)
                 if h.launch_stopped() || h.stop.load(std::sync::atomic::Ordering::Acquire) =>
