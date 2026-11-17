@@ -1,0 +1,3 @@
+# NVIDIA components
+
+- **The NVIDIA components install and remove on PCs where another account may change the drive or `C:\ProgramData`.** Before **Download** or **Remove**, Rubylight checked every folder above its own, up to the drive, and refused when Windows lets any other account change one; the installer never needed that, so the console showed "can be changed by another account" even when Rubylight ran as administrator (issue #115). It now checks only its own folder, `%ProgramData%\Butterpollo`, and what is inside it, while still refusing a link anywhere on the way and any of its own folders another account may change. Neural Rendering's download gets the same fix.
