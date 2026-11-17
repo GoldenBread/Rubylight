@@ -110,6 +110,8 @@ public class SettingsBatchTest {
         assertTrue(SettingRules.upscalingUsesSharpness(p));
         p.edit().putString("upscaling_mode", "sgsr1").commit();
         assertTrue(SettingRules.upscalingUsesSharpness(p));
+        p.edit().putString("upscaling_mode", "sgsr2").commit();
+        assertTrue(SettingRules.upscalingUsesSharpness(p));
         assertFalse(SettingRules.qualityLimitsApply(p));
         p.edit().putString("adaptive_quality_mode", "balanced").commit();
         assertTrue(SettingRules.qualityLimitsApply(p));
@@ -403,6 +405,8 @@ public class SettingsBatchTest {
             assertNotNull(display.findPreference("upscaling_sharpness"));
             prefs().edit().putString("upscaling_mode", "sgsr1").commit();
             assertNotNull(display.findPreference("upscaling_sharpness"));
+            prefs().edit().putString("upscaling_mode", "sgsr2").commit();
+            assertNotNull(display.findPreference("upscaling_sharpness"));
             prefs().edit().putString("upscaling_mode", "off").commit();
             assertNull(display.findPreference("upscaling_sharpness"));
         }
@@ -417,8 +421,9 @@ public class SettingsBatchTest {
             for (CharSequence name : mode.getEntries()) names.add(name.toString());
             java.util.List<String> values = new java.util.ArrayList<>();
             for (CharSequence value : mode.getEntryValues()) values.add(value.toString());
-            assertEquals(java.util.Arrays.asList("Off", "Smooth", "Sharp (FSR)", "Sharp, Snapdragon (SGSR)"), names);
-            assertEquals(java.util.Arrays.asList("off", "bilinear", "fsr1", "sgsr1"), values);
+            assertEquals(java.util.Arrays.asList("Off", "Smooth", "Sharp (FSR)", "Sharp, Snapdragon (SGSR)",
+                    "Temporal, Snapdragon (SGSR 2)"), names);
+            assertEquals(java.util.Arrays.asList("off", "bilinear", "fsr1", "sgsr1", "sgsr2"), values);
         }
     }
 

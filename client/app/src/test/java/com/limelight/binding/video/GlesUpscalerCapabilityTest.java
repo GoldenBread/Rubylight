@@ -15,6 +15,34 @@ public class GlesUpscalerCapabilityTest {
     }
 
     @Test
+    public void temporalUpscalingNeedsHalfFloatRenderTargets() {
+        String adreno30 = "OpenGL ES 3.0 V@415.0 (GIT@663be55, I724753c5e3)";
+        assertNull(GlesTemporalUpscaler.probe(adreno30, "GL_OES_EGL_image_external_essl3 GL_EXT_color_buffer_half_float"));
+        assertNull(GlesTemporalUpscaler.probe(adreno30, "GL_EXT_color_buffer_float GL_OES_texture_float"));
+        assertNotNull(GlesTemporalUpscaler.probe(adreno30, "GL_OES_EGL_image_external_essl3"));
+        assertNotNull("a longer name is not the extension",
+                GlesTemporalUpscaler.probe(adreno30, "GL_EXT_color_buffer_half_float_rgb"));
+        assertNotNull(GlesTemporalUpscaler.probe(adreno30, null));
+        assertNotNull(GlesTemporalUpscaler.probe("OpenGL ES 3.1 Mali-G78", ""));
+        assertNull(GlesTemporalUpscaler.probe("OpenGL ES 3.1 Mali-G78", "GL_EXT_color_buffer_float"));
+        assertNull("GLES 3.2 renders to half float in core", GlesTemporalUpscaler.probe("OpenGL ES 3.2 V@0502.0", ""));
+        assertNull(GlesTemporalUpscaler.probe("OpenGL ES 3.2 V@0502.0", null));
+        assertNotNull(GlesTemporalUpscaler.probe("OpenGL ES 2.0", "GL_EXT_color_buffer_half_float"));
+        assertNotNull(GlesTemporalUpscaler.probe(null, "GL_EXT_color_buffer_half_float"));
+        assertNotNull(GlesTemporalUpscaler.probe("garbage", "GL_EXT_color_buffer_half_float"));
+        assertArrayEquals(new int[] {3, 2}, GlesTemporalUpscaler.glesVersion("OpenGL ES 3.2 V@0502.0"));
+        assertNull(GlesTemporalUpscaler.glesVersion("OpenGL 4.6"));
+    }
+
+    @Test
+    public void temporalBoxGrowsWithTheCubeOfTheAreaRatioUpToTwenty() {
+        assertEquals(1f, GlesTemporalUpscaler.boxStatic(1920, 1080, 1920, 1080), 1e-6f);
+        // 720p to 1080p: (2.25)^3
+        assertEquals(11.390625f, GlesTemporalUpscaler.boxStatic(1280, 720, 1920, 1080), 1e-4f);
+        assertEquals(20f, GlesTemporalUpscaler.boxStatic(1280, 720, 2560, 1440), 0f);
+    }
+
+    @Test
     public void frameWarpDrawsThePictureAgainOnceItsShiftMovedAQuarterPixel() {
         assertFalse(GlesUpscaler.needsRedraw(10f, -4f, 10f, -4f));
         assertFalse(GlesUpscaler.needsRedraw(10f, -4f, 10.1f, -4.1f));

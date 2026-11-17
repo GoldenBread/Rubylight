@@ -1,3 +1,0 @@
-# SteamGridDB covers
-
-- **Covers for apps without one.** Paste your SteamGridDB API key under Settings → Games → Covers and every app without a cover gets SteamGridDB's best-voted 600x900 grid, found by its Steam app ID or else by its name, in Moonlight, Nightjar and the console alike. Covers you chose and launcher covers are never replaced, a launcher's cover found later takes over, and a cover you clear stays cleared. The lookups run in the background, a few apps at a time, and wait whenever SteamGridDB asks for fewer requests. The key is kept where only administrators can read it, is sent only to SteamGridDB, is never shown again or logged, and a settings backup holds it only with secrets.

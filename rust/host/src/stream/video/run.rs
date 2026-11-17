@@ -852,7 +852,7 @@ impl SessionThread<'_> {
                                     // and nothing more.
                                     let message = if crate::stream::launch_app(&h, &s.launch).is_some() {
                                         format!(
-                                            "The game is rendering about {source_fps} fps, below the {limit_fps} fps this stream can show, so the picture cannot run smoother than that. Lower the game's resolution or graphics settings, or lower the stream's frame rate to match."
+                                            "The game is rendering about {source_fps} fps, below the {limit_fps} fps this stream can show, so the picture cannot run smoother than that. Raise the game's own frame-rate cap, lower its resolution or graphics settings, or lower the stream's frame rate to match."
                                         )
                                     } else {
                                         format!(

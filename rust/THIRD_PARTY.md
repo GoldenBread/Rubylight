@@ -405,3 +405,7 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Nightjar's temporal upscaler from Qualcomm SGSR 2
+
+Nightjar's opt-in temporal upscaler (the upscaling value "Temporal, Snapdragon (SGSR 2)") adapts the upscale pass of Qualcomm's Snapdragon Game Super Resolution 2 ([SnapdragonStudios/snapdragon-gsr](https://github.com/SnapdragonStudios/snapdragon-gsr) commit d926f074, `sgsr/v2/include/glsl_2_pass_fs/sgsr2_upscale.fs`; BSD-3-Clause, Copyright (c) 2024, Qualcomm Innovation Center, Inc.): its 5-tap sample weight, neighbourhood box and history blend, in `client/app/src/main/assets/shaders/temporal_accumulate.frag` and its ports in the PyroWave renderer and Nightjar desktop. The motion search, scene-cut reset and the substitutes for depth and jitter are Nightjar's own. Its last pass reuses Nightjar's SGSR 1 port (Qualcomm SGSR 1, BSD-3-Clause). The notice ships as `client/app/src/main/assets/NOTICE-SGSR2.txt`; the offline harness's copy is `client/tools/temporal_upscaler/LICENSE-SGSR2.txt`.

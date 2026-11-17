@@ -1,0 +1,9 @@
+- Balanced frame pacing shows one frame per refresh when the stream matches your screen.
+- New Recommended settings section and Console mode.
+- Trackpad acceleration is on by default.
+- Dolby Vision no longer turns into white lines with chipset low-latency mode.
+- SteamGridDB covers and IGDB facts with your own keys.
+- New Rumble feel setting.
+- Android TV Home fixes.
+- New Temporal (SGSR 2) upscaling choice.
+- Steam Controller left grip works.
