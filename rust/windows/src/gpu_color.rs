@@ -13,10 +13,11 @@ use windows::{
 };
 
 // Resize scRGB in linear light, convert Rec.709 to Rec.2020, apply absolute
-// ST.2084 (1.0 scRGB = 80 nits), then subsample nonlinear RGB into limited YUV.
+// ST.2084 (1.0 scRGB = 80 nits), then convert into limited YUV.
 // R16/R16G16 render views address the two P010 planes; stored codes occupy the
 // upper ten bits. Standard chroma is filtered at the left luma sample's
-// horizontal position, vertically centred, including during scaling.
+// horizontal position, vertically centred, including during scaling; PQ
+// chroma is filtered in light and then coded (`leftChroma`).
 const SHADER: &str = include_str!("shaders/color.hlsl");
 include!(concat!(env!("OUT_DIR"), "/shader_bytecode.rs"));
 

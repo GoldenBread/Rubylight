@@ -107,7 +107,7 @@ fn an_sdr_slice_of_a_decoder_array_draws_as_sdl_draws_it() {
     // BT.709 limited-range white, black and red bands in a 96x32 picture of a 128x48 surface.
     let bands = [[235, 128, 128], [16, 128, 128], [63, 102, 240]];
     let texture = picture_array(&device, (128, 48), (96, 32), 3, false, |x, _| bands[(x / 32) as usize]);
-    let picture = Picture { texture: texture.as_raw(), slice: 2, size: (96, 32), ten_bit: false, full_range: false, matrix: 1, transfer: Transfer::Sdr };
+    let picture = Picture { texture: texture.as_raw(), slice: 2, size: (96, 32), ten_bit: false, full_range: false, matrix: 1, transfer: Transfer::Sdr, centred_chroma: false };
     // SAFETY: The test's device, on this thread.
     let mut pass = unsafe { Direct::new(&device) }.unwrap();
     let output = Output { linear: false, color_scale: 1.0, headroom: 1.0 };
@@ -131,7 +131,7 @@ fn a_ten_bit_sdr_picture_converts_as_gamma_not_pq() {
     let (device, context) = device();
     // BT.2020 limited-range 10-bit white and half grey (luma 940 and 502).
     let texture = picture_array(&device, (64, 32), (64, 32), 1, true, |x, _| if x < 32 { [940, 512, 512] } else { [502, 512, 512] });
-    let picture = Picture { texture: texture.as_raw(), slice: 0, size: (64, 32), ten_bit: true, full_range: false, matrix: 2, transfer: Transfer::Sdr };
+    let picture = Picture { texture: texture.as_raw(), slice: 0, size: (64, 32), ten_bit: true, full_range: false, matrix: 2, transfer: Transfer::Sdr, centred_chroma: false };
     // SAFETY: The test's device, on this thread.
     let mut pass = unsafe { Direct::new(&device) }.unwrap();
     // What `convert` draws for SDL: gamma-coded, unscaled.
@@ -149,7 +149,7 @@ fn hdr_pictures_follow_the_frames_peak_and_measure_it_without_hdr10_plus() {
     // A grey 100-nit picture with a 1000-nit block: 10% of the pixels.
     let (grey, bright) = (pq_code(100.0), pq_code(1000.0));
     let texture = picture_array(&device, (64, 64), (64, 64), 1, true, |x, y| if x < 20 && y < 20 { [bright, 512, 512] } else { [grey, 512, 512] });
-    let picture = Picture { texture: texture.as_raw(), slice: 0, size: (64, 64), ten_bit: true, full_range: false, matrix: 2, transfer: Transfer::Pq };
+    let picture = Picture { texture: texture.as_raw(), slice: 0, size: (64, 64), ten_bit: true, full_range: false, matrix: 2, transfer: Transfer::Pq, centred_chroma: false };
     // SAFETY: The test's device, on this thread.
     let mut pass = unsafe { Direct::new(&device) }.unwrap();
     // SDR white 200 nits (2.5 x 80), a 400-nit display: headroom 2.
@@ -188,7 +188,7 @@ fn hlg_pictures_are_drawn_for_the_display_never_as_pq() {
     let (device, context) = device();
     // BT.2020 limited-range 10-bit HLG grey: 75% (reference white) and 50% (luma 721 and 502).
     let texture = picture_array(&device, (64, 32), (64, 32), 1, true, |x, _| if x < 32 { [721, 512, 512] } else { [502, 512, 512] });
-    let picture = Picture { texture: texture.as_raw(), slice: 0, size: (64, 32), ten_bit: true, full_range: false, matrix: 2, transfer: Transfer::Hlg };
+    let picture = Picture { texture: texture.as_raw(), slice: 0, size: (64, 32), ten_bit: true, full_range: false, matrix: 2, transfer: Transfer::Hlg, centred_chroma: false };
     // SAFETY: The test's device, on this thread.
     let mut pass = unsafe { Direct::new(&device) }.unwrap();
     let code = |luma: u16| f64::from(luma - 64) / 876.0;
@@ -250,4 +250,29 @@ fn read_half(device: &ID3D11Device, context: &ID3D11DeviceContext, target: &ID3D
         context.Unmap(&staging, 0);
         pixels
     }
+}
+
+#[test]
+#[ignore = "needs a GPU"]
+fn chroma_is_drawn_on_the_left_luma_sample_of_its_pair() {
+    let (device, context) = device();
+    // Grey, with one reddish chroma sample: the third, which hosts take at luma column 4
+    // (chroma_sample_loc_type 0). Drawn in the middle of its pair, columns 4 and 5 were equally
+    // red (Rubylight #130).
+    let texture = picture_array(&device, (16, 8), (16, 8), 1, false, |x, _| [126, 128, if x / 2 == 2 { 168 } else { 128 }]);
+    let picture = Picture { texture: texture.as_raw(), slice: 0, size: (16, 8), ten_bit: false, full_range: false, matrix: 1, transfer: Transfer::Sdr, centred_chroma: false };
+    // SAFETY: The test's device, on this thread.
+    let mut pass = unsafe { Direct::new(&device) }.unwrap();
+    let output = Output { linear: false, color_scale: 1.0, headroom: 1.0 };
+    let pixels = render(&device, &context, &mut pass, &picture, (16, 8), DXGI_FORMAT_R8G8B8A8_UNORM, output, Tone::default());
+    let red: Vec<f32> = (0..16).map(|x| pixels[4 * 16 + x][0] - pixels[4 * 16 + x][1]).collect();
+    assert!(red[4] > 0.3, "the sample's own column is not fully red: {red:?}");
+    assert!((red[3] - red[4] / 2.).abs() < 0.03 && (red[5] - red[4] / 2.).abs() < 0.03, "neighbours not half red: {red:?}");
+    assert!(red[2].abs() < 0.03 && red[6].abs() < 0.03, "red beyond the neighbours: {red:?}");
+    // A stream that says its chroma is centred (AVCHROMA_LOC_CENTER) gets it between columns 4
+    // and 5, which are then equally red.
+    let centred = Picture { centred_chroma: true, ..picture };
+    let pixels = render(&device, &context, &mut pass, &centred, (16, 8), DXGI_FORMAT_R8G8B8A8_UNORM, output, Tone::default());
+    let red: Vec<f32> = (0..16).map(|x| pixels[4 * 16 + x][0] - pixels[4 * 16 + x][1]).collect();
+    assert!((red[4] - red[5]).abs() < 0.03 && red[4] > red[3] + 0.1, "centred chroma: {red:?}");
 }

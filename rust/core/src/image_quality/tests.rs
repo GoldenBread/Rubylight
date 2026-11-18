@@ -186,14 +186,22 @@ fn the_reference_chroma_is_left_sited_and_vertically_centred() {
         (Transfer::Pq, Source::Pq10),
     ] {
         let s = spec(transfer, source, 64, 32);
+        // HDR chroma is filtered in light, and the light of a ramp even in PQ or HLG codes
+        // curves, so its filtered code lands a few hundredths of a luma sample off the code at
+        // the filter's centre (0.012 for PQ). A misplaced filter is off by 0.5.
+        let tolerance = if transfer == Transfer::Sdr {
+            1e-3
+        } else {
+            0.03
+        };
         let across = reference(&ramp(&s, true), &s);
         let row: Vec<f64> = across.cr[..32].to_vec();
         let h = siting(&row, |x| ramp_chroma(&s, true, x).1).unwrap();
-        assert!(close(h, 0., 1e-3), "{transfer:?} horizontal {h}");
+        assert!(close(h, 0., tolerance), "{transfer:?} horizontal {h}");
         let down = reference(&ramp(&s, false), &s);
         let column: Vec<f64> = (0..16).map(|j| down.cr[j * 32]).collect();
         let v = siting(&column, |y| ramp_chroma(&s, false, y).1).unwrap();
-        assert!(close(v, 0.5, 1e-3), "{transfer:?} vertical {v}");
+        assert!(close(v, 0.5, tolerance), "{transfer:?} vertical {v}");
     }
 }
 
@@ -217,4 +225,64 @@ fn summary_reports_mean_p99_and_worst() {
     assert_eq!(p99, 99.);
     assert_eq!(worst, 100.);
     assert!(summarize(&mut []).iter().all(|v| v.is_nan()));
+}
+
+#[test]
+fn hdr_chroma_keeps_cleartype_text_neutral() {
+    // Rubylight #130: a row of Segoe UI's "ill" as Windows' ClearType draws it, black on white,
+    // shown on an HDR desktop with SDR content at 200 nits. Averaging the PQ codes of its
+    // coloured fringes made the decoded text magenta (mean light R 155, G 121, B 141 nits for
+    // the source's 126, 134, 126; ΔE ITP 24), HLG's codes too (ΔE ITP 17); averaging their
+    // light keeps it near neutral.
+    let (w, y, m, c) = (
+        [255.; 3],
+        [255., 255., 182.],
+        [102., 0., 58.],
+        [144., 219., 255.],
+    );
+    let row = [w, y, m, c, y, m, c, w, y, m, c, w];
+    for transfer in [Transfer::Pq, Transfer::Hlg] {
+        let s = spec(transfer, Source::ScRgbF16, row.len(), 2);
+        let source = Picture {
+            width: row.len(),
+            height: 2,
+            rgb: [row, row]
+                .concat()
+                .iter()
+                .map(|p| p.map(|v| srgb_decode(v / 255.) * 200. / 80.))
+                .collect(),
+        };
+        let planes = reference(&source, &s);
+        // Decoded as chroma_sample_loc_type 0 says: chroma i at luma 2i, halfway for 2i + 1.
+        let half = row.len() / 2;
+        let chroma =
+            |plane: &[f64], x: usize| (plane[x / 2] + plane[x.div_ceil(2).min(half - 1)]) / 2.;
+        let mut shown = [0.; 3];
+        let mut wanted = [0.; 3];
+        for (x, rgb) in nonlinear(&source, &s)[..row.len()].iter().enumerate() {
+            let decoded = decode(
+                &s,
+                rgb_from_codes(
+                    &s,
+                    planes.y[x],
+                    chroma(&planes.cb, x),
+                    chroma(&planes.cr, x),
+                ),
+            );
+            let light = decode(&s, *rgb);
+            for i in 0..3 {
+                shown[i] += decoded[i] / row.len() as f64;
+                wanted[i] += light[i] / row.len() as f64;
+            }
+        }
+        let tint = delta_e_itp(ictcp(shown), ictcp(wanted));
+        assert!(
+            tint < 4.,
+            "{transfer:?} ΔE ITP {tint}: shown {shown:?}, source {wanted:?}"
+        );
+        assert!(
+            shown[1] > shown[0].max(shown[2]) - 2.,
+            "{transfer:?} green fell behind: {shown:?}"
+        );
+    }
 }

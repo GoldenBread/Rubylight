@@ -30,6 +30,24 @@ pub(crate) fn hlg(light: [f64; 3]) -> [f64; 3] {
         }
     })
 }
+/// The inverse of [`hlg`], color.hlsl's `hlgLight`: scRGB display light for
+/// an HLG signal (inverse OETF, then the reference OOTF for 1000 nits).
+#[cfg(test)]
+pub(crate) fn hlg_light(signal: [f64; 3]) -> [f64; 3] {
+    let scene = signal.map(|v| {
+        let v = v.max(0.);
+        if v <= 0.5 {
+            v * v / 3.
+        } else {
+            (((v - 0.55991073) / 0.17883277).exp() + 0.28466892) / 12.
+        }
+    });
+    let y = 0.2627 * scene[0] + 0.6780 * scene[1] + 0.0593 * scene[2];
+    if y <= 0. {
+        return [0.; 3];
+    }
+    scene.map(|v| v * y.powf(0.2) * 1000. / 80.)
+}
 pub(crate) fn pointer_linear(value: u8) -> f32 {
     srgb_table()[value as usize] * 1.25
 }
@@ -283,6 +301,21 @@ mod tests {
         let red = hlg([12.5, 0., 0.]);
         assert!((red[0] - 1.0407).abs() < 0.0001, "{red:?}");
         assert_eq!(&red[1..], &[0., 0.]);
+        // `hlg_light` undoes it, saturated colours and the headroom above the grading too.
+        for light in [
+            [2.5, 2.5, 2.5],
+            [12.5, 0., 0.],
+            [0.3, 5., 1.],
+            [25., 20., 30.],
+        ] {
+            let back = hlg_light(hlg(light));
+            assert!(
+                back.iter()
+                    .zip(light)
+                    .all(|(b, l)| (b - l).abs() <= 1e-6 * l.max(1.)),
+                "{light:?}: {back:?}"
+            );
+        }
     }
     #[test]
     fn half_lookup_preserves_finite_values_and_sanitizes_nonfinite() {

@@ -34,6 +34,13 @@ pub struct FrameInfo {
     pub color_trc: c_int,
 }
 
+/// Whether chroma at `location` sits midway between two luma columns. Unspecified counts as
+/// left: chroma_sample_loc_type 0, which H.264, HEVC and the Moonlight hosts use and AV1
+/// streams signal (CSP_VERTICAL).
+pub fn centred_chroma(location: AVChromaLocation) -> bool {
+    matches!(location, AVCHROMA_LOC_CENTER | AVCHROMA_LOC_TOP | AVCHROMA_LOC_BOTTOM)
+}
+
 pub const FRAME_NV12: c_int = 0;
 pub const FRAME_P010: c_int = 1;
 pub const FRAME_YUV420P: c_int = 2;
@@ -1697,6 +1704,13 @@ pub struct D3d11Surface {
 
 #[cfg(windows)]
 impl Frame {
+    /// Whether the picture's 4:2:0 chroma sits midway between its luma columns, as the stream
+    /// says (`AVFrame::chroma_location`), rather than on the left one.
+    pub fn centred_chroma(&self) -> bool {
+        // SAFETY: A plain field of the live AVFrame.
+        centred_chroma(unsafe { self.raw.as_ref() }.chroma_location)
+    }
+
     pub fn d3d11_surface(&self) -> Option<D3d11Surface> {
         // SAFETY: The fields of the live AVFrame and its frames context.
         unsafe {

@@ -6,6 +6,7 @@ This is the dated measurement record. For a guided comparison, start with the [p
 
 | Find a result | Recorded evidence |
 | --- | --- |
+| HDR 4:2:0 chroma filtered in light instead of on PQ or HLG codes (#130, ClearType text tinted magenta): GPU cost of the host conversion at 1080p, 1440p and 4K, SDR and HDR, P010 and PyroWave, compute and graphics paths, release build (no change measured) | [November 18, HDR chroma filtered in light (#130), conversion cost](#november-18-hdr-chroma-filtered-in-light-130-conversion-cost) |
 | AMF slice output taking its frame buffers from the frame pool instead of the heap: encode, encoded to first packet, send spread and page faults at 4K60 HEVC with 20 recovery keyframes (no change measured, kept as the smaller allocation) | [November 15, AMF slice output through the frame pool](#november-15-amf-slice-output-through-the-frame-pool) |
 | Frame Warp: how much of a turn's input-to-picture gap it removes on a test game with known response, the learned gain and lag, lock time, a real game (Black Flag Resynced), GPU pass cost at 1080p to 4K, host processing on and off | [November 12, Frame Warp](#november-12-frame-warp) |
 | Frame Warp's lens: what a turn leaves at the picture's centre, over the whole picture and at its edge at 70, 90 and 110 degrees against 4.0.0, the learned field of view and how soon it settles, Nightjar 5.0 with the new host, what the pitch roll leaves, the host's measurement cost | [November 12, Frame Warp lens](#november-12-frame-warp-lens) |
@@ -79,6 +80,27 @@ This is the dated measurement record. For a guided comparison, start with the [p
 | PyroWave encode overlap, send buffer, Nightjar receive path | [November 10, PyroWave at 1.4 Gbps](#november-10-pyrowave-at-14-gbps-to-a-780m-laptop) |
 | Temporal upscaler for Nightjar (SGSR 2 adaptation), not landed | [November 16, temporal upscaler](#november-16-a-temporal-upscaler-for-nightjar-measured-offline-not-landed) |
 | A capped path and a busy PC | [November 17, a capped path holds its learned rate](#november-17-a-capped-path-holds-its-learned-rate-and-a-busy-pc-is-not-the-network) |
+
+## November 18: HDR chroma filtered in light (#130), conversion cost
+
+Issue #130: with HDR on, ClearType text (File Explorer) looked magenta on the device. The host's 4:2:0 chroma filter (`leftChroma` in `rust/windows/src/shaders/color.hlsl`, and PyroWave's 2x2 mean `pyroBlock`) averaged PQ or HLG codes; it now turns each sample back into display light (`chromaLight`: `depq`, or HLG's inverse OETF and the 1000-nit reference OOTF), averages, and codes the mean again (`chromaCodes`). SDR streams take a uniform branch past both curves.
+
+Quality, from the float reference (`image_quality::planes_from_rgb`, decoded with left-sited bilinear chroma), on a row of Segoe UI 9 pt "ill" as Windows ClearType draws it (black on white, SDR content at 200 nits on an HDR desktop): mean light over the row R 155, G 121, B 141 nits against the source's 126, 134, 126 (ΔE ITP 24) when PQ codes were averaged, 1.6 when light is; HLG 16.9 and 1.9 (NumPy model of the same pipeline). Over whole lines of real ClearType text in PQ (light and dark theme, blurred over 5x5 pixels as small text is seen, chroma decoded on the left column), the mean ΔE ITP fell from 12.0 and 13.7 to 3.0 and 4.8; ClearType off measures 0.9 either way, the same text in SDR 4.5 and 7.9. These are offline numbers, not measured on a stream.
+
+Cost: `gpu_color::tests::gpu_420_single_pass_timing` (3840x2160 FP16 and BGRA8 sources, 128 GPU timestamps per run, compute and graphics paths), release build, RX 7900 XT, Adrenalin as installed on 2026-11-18. Blocks A (this change) and B (`color.hlsl` from `origin/main` at `f7728f6c0`) in the order A B A B, two test runs each, so four p50 values a cell; median of the p50s in ms:
+
+| Output | Path | P010 SDR A / B | P010 HDR A / B | PyroWave SDR A / B | PyroWave HDR A / B |
+| --- | --- | --- | --- | --- | --- |
+| 1920x1080 | compute | 0.260 / 0.259 | 0.261 / 0.260 | 0.076 / 0.076 | 0.093 / 0.091 |
+| 1920x1080 | graphics | 0.282 / 0.283 | 0.284 / 0.282 | 0.241 / 0.235 | 0.281 / 0.272 |
+| 2560x1440 | compute | 0.347 / 0.346 | 0.403 / 0.412 | 0.197 / 0.199 | 0.241 / 0.237 |
+| 2560x1440 | graphics | 0.715 / 0.723 | 0.806 / 0.813 | 0.706 / 0.729 | 0.823 / 0.885 |
+| 3840x2160 | compute | 0.192 / 0.196 | 0.307 / 0.310 | 0.105 / 0.111 | 0.186 / 0.184 |
+| 3840x2160 | graphics | 0.340 / 0.341 | 0.512 / 0.514 | 0.361 / 0.373 | 0.553 / 0.564 |
+
+Every difference is within the spread of its own runs (up to 0.1 ms on the graphics paths, 0.03 ms on compute): no change measured. A debug-build run earlier the same day had swung by 30 % on shaders this change does not touch (identical bytecode), so only the release ABAB is recorded. Logs: `D:/CodexArtifacts/rl130/logs/r6-*.json`.
+
+Not measured: the 780M laptop, the AMF video converter (`amd_vpe`, which subsamples in hardware and is unchanged), a real stream.
 
 ## November 17: a capped path holds its learned rate, and a busy PC is not the network
 

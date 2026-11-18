@@ -16,7 +16,8 @@
 //!   range;
 //! - chroma horizontally co-sited with the left luma sample and vertically
 //!   centred (chroma_sample_loc_type 0, which decoders assume), filtered
-//!   [1 2 1] across and [1 1] down.
+//!   [1 2 1] across and [1 1] down: in display light for PQ and HLG, whose
+//!   codes averaged tint ClearType text magenta (#130), on the codes for SDR.
 use crate::amf_vpe::{Source, Transfer};
 
 /// The stream a reference is made for.
@@ -404,7 +405,26 @@ pub fn reference(source: &Picture, spec: &Spec) -> Planes {
     let rgb = nonlinear(source, spec);
     planes_from_rgb(&rgb, spec)
 }
-/// 4:2:0 codes for target-sized R'G'B', with the left-sited chroma filter.
+/// Display light for HDR R'G'B', and SDR's codes as they are, for the chroma
+/// filter (`chromaLight` in color.hlsl): PQ in fractions of 10000 nits, HLG
+/// of its 1000-nit display.
+fn chroma_light(spec: &Spec, rgb: [f64; 3]) -> [f64; 3] {
+    match spec.transfer {
+        Transfer::Sdr => rgb,
+        Transfer::Pq => each(rgb, depq),
+        Transfer::Hlg => hlg_display(each(rgb, hlg_inverse_oetf)),
+    }
+}
+/// The inverse of [`chroma_light`] (`chromaCodes`).
+fn chroma_rgb(spec: &Spec, light: [f64; 3]) -> [f64; 3] {
+    match spec.transfer {
+        Transfer::Sdr => light,
+        Transfer::Pq => each(light, pq),
+        Transfer::Hlg => each(hlg_scene(light), hlg_oetf),
+    }
+}
+/// 4:2:0 codes for target-sized R'G'B', with the left-sited chroma filter,
+/// which averages light for HDR (`leftChroma` in color.hlsl).
 pub fn planes_from_rgb(rgb: &[[f64; 3]], spec: &Spec) -> Planes {
     let (w, h) = (spec.width, spec.height);
     let y = rgb.iter().map(|&p| luma_code(spec, p)).collect();
@@ -418,13 +438,13 @@ pub fn planes_from_rgb(rgb: &[[f64; 3]], spec: &Spec) -> Planes {
             for (dx, weight) in [(-1i64, 1.), (0, 2.), (1, 1.)] {
                 let column = (x as i64 + dx).clamp(0, w as i64 - 1) as usize;
                 for row in [y0, (y0 + 1).min(h - 1)] {
-                    let p = rgb[row * w + column];
+                    let p = chroma_light(spec, rgb[row * w + column]);
                     for c in 0..3 {
                         sum[c] += p[c] * weight;
                     }
                 }
             }
-            let (u, v) = chroma_codes(spec, sum.map(|s| s / 8.));
+            let (u, v) = chroma_codes(spec, chroma_rgb(spec, sum.map(|s| s / 8.)));
             cb.push(u);
             cr.push(v);
         }
