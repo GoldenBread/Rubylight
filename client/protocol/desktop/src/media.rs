@@ -1693,6 +1693,15 @@ impl Frame {
     }
 }
 
+impl Frame {
+    /// Whether the picture's 4:2:0 chroma sits midway between its luma columns, as the stream
+    /// says (`AVFrame::chroma_location`), rather than on the left one.
+    pub fn centred_chroma(&self) -> bool {
+        // SAFETY: A plain field of the live AVFrame.
+        centred_chroma(unsafe { self.raw.as_ref() }.chroma_location)
+    }
+}
+
 /// A D3D11VA picture: the decoder's texture array and the picture's slice in it.
 #[cfg(windows)]
 pub struct D3d11Surface {
@@ -1704,13 +1713,6 @@ pub struct D3d11Surface {
 
 #[cfg(windows)]
 impl Frame {
-    /// Whether the picture's 4:2:0 chroma sits midway between its luma columns, as the stream
-    /// says (`AVFrame::chroma_location`), rather than on the left one.
-    pub fn centred_chroma(&self) -> bool {
-        // SAFETY: A plain field of the live AVFrame.
-        centred_chroma(unsafe { self.raw.as_ref() }.chroma_location)
-    }
-
     pub fn d3d11_surface(&self) -> Option<D3d11Surface> {
         // SAFETY: The fields of the live AVFrame and its frames context.
         unsafe {
