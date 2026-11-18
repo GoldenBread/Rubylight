@@ -35,6 +35,13 @@ __attribute__((visibility("default"))) void init_gsl(void *alloc, void *alloc64,
     gsl_memory_free_pure_sym = reinterpret_cast<gsl_memory_free_pure_t>(free);
 }
 
+// Nightjar: keeps why the custom driver did not load, for the app's notice.
+static void record_custom_driver_error(const char *error) {
+    if ((hook_params->featureFlags & ADRENOTOOLS_DRIVER_CUSTOM) && hook_params->customDriverError &&
+        hook_params->customDriverErrorSize)
+        snprintf(hook_params->customDriverError, hook_params->customDriverErrorSize, "%s", error ? error : "unknown error");
+}
+
 __attribute__((visibility("default"))) void *hook_android_dlopen_ext(const char *filename, int flags, const android_dlextinfo *extinfo) {
     auto fallback{[&]() {
         LOGI("hook_android_dlopen_ext: falling back!");
@@ -49,6 +56,7 @@ __attribute__((visibility("default"))) void *hook_android_dlopen_ext(const char 
 
     if (extinfo->library_namespace == nullptr || !(extinfo->flags & ANDROID_DLEXT_USE_NAMESPACE)) {
         LOGI("hook_android_dlopen_ext: hook failed: namespace not supplied!");
+        record_custom_driver_error("the system loader gave no driver namespace");
         return fallback();
     }
 
@@ -58,6 +66,7 @@ __attribute__((visibility("default"))) void *hook_android_dlopen_ext(const char 
                                            nullptr, extinfo->library_namespace)};
     if (!driverNs) {
         LOGI("hook_android_dlopen_ext: hook failed: namespace not supplied!");
+        record_custom_driver_error("the driver namespace could not be created");
         return fallback();
     }
 
@@ -128,7 +137,9 @@ __attribute__((visibility("default"))) void *hook_android_dlopen_ext(const char 
         LOGI("hook_android_dlopen_ext: loading custom driver: %s%s", hook_params->customDriverDir.c_str(), hook_params->customDriverName.c_str());
         void *handle{android_dlopen_ext(hook_params->customDriverName.c_str(), flags, &newExtinfo)};
         if (!handle) {
-            LOGI("hook_android_dlopen_ext: hook failed: failed to load custom driver: %s!", dlerror());
+            const char *error{dlerror()};
+            LOGI("hook_android_dlopen_ext: hook failed: failed to load custom driver: %s!", error);
+            record_custom_driver_error(error);
             return fallback();
         }
 

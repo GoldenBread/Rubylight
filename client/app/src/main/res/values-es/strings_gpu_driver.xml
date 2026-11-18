@@ -12,4 +12,10 @@
     <string name="gpu_driver_imported">Importado y seleccionado: %1$s</string>
     <string name="gpu_driver_working">Comprobando el controlador…</string>
     <string name="gpu_driver_error">Error en la operación del controlador: %1$s</string>
+    <string name="gpu_driver_failed_open">Falló el controlador personalizado: Android no permitió que Nightjar lo cargara. Usando el controlador de GPU del sistema.</string>
+    <string name="gpu_driver_failed_load">Falló el controlador personalizado: su biblioteca no se cargó en este teléfono, a menudo porque necesita una biblioteca que falta en esta versión de Android. Usando el controlador de GPU del sistema.</string>
+    <string name="gpu_driver_failed_start">Falló el controlador personalizado: se cargó, pero no inició Vulkan en este teléfono. Usando el controlador de GPU del sistema.</string>
+    <string name="gpu_driver_failed_no_gpu">Falló el controlador personalizado: se cargó, pero no encontró en este teléfono ninguna GPU compatible. Usando el controlador de GPU del sistema.</string>
+    <string name="gpu_driver_failed_features">Falló el controlador personalizado: funciona en esta GPU, pero le faltan funciones que PyroWave necesita. Usando el controlador de GPU del sistema.</string>
+    <string name="gpu_driver_failed_stream">Falló el controlador personalizado: superó su comprobación, pero no inició la transmisión. Usando el controlador de GPU del sistema.</string>
 </resources>

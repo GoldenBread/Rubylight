@@ -12,4 +12,10 @@
     <string name="gpu_driver_imported">Importado e selecionado: %1$s</string>
     <string name="gpu_driver_working">Verificando o driver…</string>
     <string name="gpu_driver_error">Falha na operação do driver: %1$s</string>
+    <string name="gpu_driver_failed_open">Falha no driver personalizado: o Android não deixou o Nightjar carregá-lo. Usando o driver de GPU do sistema.</string>
+    <string name="gpu_driver_failed_load">Falha no driver personalizado: a biblioteca dele não carregou neste celular, geralmente porque precisa de uma biblioteca que falta nesta versão do Android. Usando o driver de GPU do sistema.</string>
+    <string name="gpu_driver_failed_start">Falha no driver personalizado: ele carregou, mas não iniciou o Vulkan neste celular. Usando o driver de GPU do sistema.</string>
+    <string name="gpu_driver_failed_no_gpu">Falha no driver personalizado: ele carregou, mas não encontrou neste celular nenhuma GPU compatível. Usando o driver de GPU do sistema.</string>
+    <string name="gpu_driver_failed_features">Falha no driver personalizado: ele roda nesta GPU, mas faltam recursos de que o PyroWave precisa. Usando o driver de GPU do sistema.</string>
+    <string name="gpu_driver_failed_stream">Falha no driver personalizado: ele passou na verificação, mas não iniciou a transmissão. Usando o driver de GPU do sistema.</string>
 </resources>

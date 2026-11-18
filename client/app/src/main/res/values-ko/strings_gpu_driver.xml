@@ -12,4 +12,10 @@
     <string name="gpu_driver_imported">가져와서 선택함: %1$s</string>
     <string name="gpu_driver_working">드라이버 확인 중…</string>
     <string name="gpu_driver_error">드라이버 작업 실패: %1$s</string>
+    <string name="gpu_driver_failed_open">사용자 지정 드라이버 실패: Android에서 Nightjar가 드라이버를 불러오도록 허용하지 않았습니다. 시스템 GPU 드라이버를 사용합니다.</string>
+    <string name="gpu_driver_failed_load">사용자 지정 드라이버 실패: 이 휴대폰에서 라이브러리를 불러오지 못했습니다. 이 Android 버전에 없는 라이브러리가 필요한 경우가 많습니다. 시스템 GPU 드라이버를 사용합니다.</string>
+    <string name="gpu_driver_failed_start">사용자 지정 드라이버 실패: 불러오기는 되었지만 이 휴대폰에서 Vulkan을 시작하지 못했습니다. 시스템 GPU 드라이버를 사용합니다.</string>
+    <string name="gpu_driver_failed_no_gpu">사용자 지정 드라이버 실패: 불러오기는 되었지만 이 휴대폰에서 지원하는 GPU를 찾지 못했습니다. 시스템 GPU 드라이버를 사용합니다.</string>
+    <string name="gpu_driver_failed_features">사용자 지정 드라이버 실패: 이 GPU에서 실행되지만 PyroWave에 필요한 기능이 없습니다. 시스템 GPU 드라이버를 사용합니다.</string>
+    <string name="gpu_driver_failed_stream">사용자 지정 드라이버 실패: 검사는 통과했지만 스트림을 시작하지 못했습니다. 시스템 GPU 드라이버를 사용합니다.</string>
 </resources>

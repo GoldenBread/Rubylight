@@ -12,4 +12,10 @@
     <string name="gpu_driver_imported">Импортирован и выбран: %1$s</string>
     <string name="gpu_driver_working">Проверка драйвера…</string>
     <string name="gpu_driver_error">Ошибка операции с драйвером: %1$s</string>
+    <string name="gpu_driver_failed_open">Свой драйвер не сработал: Android не дал Nightjar его загрузить. Используется системный драйвер GPU.</string>
+    <string name="gpu_driver_failed_load">Свой драйвер не сработал: его библиотека не загрузилась на этом телефоне, часто потому, что ей нужна библиотека, которой нет в этой версии Android. Используется системный драйвер GPU.</string>
+    <string name="gpu_driver_failed_start">Свой драйвер не сработал: он загрузился, но не запустил Vulkan на этом телефоне. Используется системный драйвер GPU.</string>
+    <string name="gpu_driver_failed_no_gpu">Свой драйвер не сработал: он загрузился, но не нашёл на этом телефоне поддерживаемый GPU. Используется системный драйвер GPU.</string>
+    <string name="gpu_driver_failed_features">Свой драйвер не сработал: он работает на этом GPU, но в нём нет функций, нужных PyroWave. Используется системный драйвер GPU.</string>
+    <string name="gpu_driver_failed_stream">Свой драйвер не сработал: он прошёл проверку, но не запустил трансляцию. Используется системный драйвер GPU.</string>
 </resources>

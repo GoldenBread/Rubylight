@@ -164,7 +164,9 @@ public final class GpuDriverStore {
         String selected = prefs.getString("selected", "");
         String interrupted = prefs.getString("active", "");
         if (!interrupted.isEmpty() && !active.containsKey(interrupted)) {
-            SharedPreferences.Editor edit = prefs.edit().remove("active").putBoolean("fallback", true);
+            // A crash names no reason: the notice says only that the custom driver failed.
+            SharedPreferences.Editor edit = prefs.edit().remove("active").putBoolean("fallback", true)
+                    .remove("fallbackReason");
             if (selected.equals(interrupted)) {
                 edit.remove("selected");
                 selected = "";
@@ -180,16 +182,22 @@ public final class GpuDriverStore {
     @SuppressLint("ApplySharedPref")
     public static synchronized void select(Context context, Driver driver) {
         preferences(context).edit().putString("selected", driver == null ? "" : driver.id)
-                .putBoolean("fallback", false).commit();
+                .putBoolean("fallback", false).remove("fallbackReason").commit();
     }
 
     public static boolean usedFallback(Context context) {
         return preferences(context).getBoolean("fallback", false);
     }
 
+    /** The notice for the last custom-driver failure, which names its reason when one is known. */
+    public static int fallbackSummary(Context context) {
+        return PyroWaveDecoderRenderer.customDriverFailureSummary(preferences(context).getInt("fallbackReason", 0));
+    }
+
     @SuppressLint("ApplySharedPref")
     static synchronized boolean beginUse(Context context, Driver driver) {
-        if (!preferences(context).edit().putString("active", driver.id).putBoolean("fallback", false).commit()) {
+        if (!preferences(context).edit().putString("active", driver.id).putBoolean("fallback", false)
+                .remove("fallbackReason").commit()) {
             return false;
         }
         active.put(driver.id, active.getOrDefault(driver.id, 0) + 1);
@@ -197,7 +205,8 @@ public final class GpuDriverStore {
     }
 
     @SuppressLint("ApplySharedPref")
-    static synchronized void endUse(Context context, Driver driver, boolean failed) {
+    /** failure is 0 when the driver worked, else why it failed (PyroWaveDecoderRenderer.customDriverFailureSummary). */
+    static synchronized void endUse(Context context, Driver driver, int failure) {
         int remaining = active.getOrDefault(driver.id, 1) - 1;
         SharedPreferences.Editor edit = preferences(context).edit();
         if (remaining == 0) {
@@ -206,7 +215,7 @@ public final class GpuDriverStore {
         } else {
             active.put(driver.id, remaining);
         }
-        if (failed) edit.putBoolean("fallback", true);
+        if (failure != 0) edit.putBoolean("fallback", true).putInt("fallbackReason", failure);
         edit.commit();
     }
 

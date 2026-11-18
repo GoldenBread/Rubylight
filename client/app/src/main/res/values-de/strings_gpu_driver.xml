@@ -11,4 +11,10 @@
     <string name="gpu_driver_imported">Importiert und ausgewählt: %1$s</string>
     <string name="gpu_driver_working">Treiber wird geprüft…</string>
     <string name="gpu_driver_error">Treiberaktion fehlgeschlagen: %1$s</string>
+    <string name="gpu_driver_failed_open">Eigener Treiber fehlgeschlagen: Android hat Nightjar das Laden nicht erlaubt. Der System-GPU-Treiber wird verwendet.</string>
+    <string name="gpu_driver_failed_load">Eigener Treiber fehlgeschlagen: Seine Bibliothek ließ sich auf diesem Gerät nicht laden, oft weil sie eine Bibliothek braucht, die dieser Android-Version fehlt. Der System-GPU-Treiber wird verwendet.</string>
+    <string name="gpu_driver_failed_start">Eigener Treiber fehlgeschlagen: Er wurde geladen, hat Vulkan auf diesem Gerät aber nicht gestartet. Der System-GPU-Treiber wird verwendet.</string>
+    <string name="gpu_driver_failed_no_gpu">Eigener Treiber fehlgeschlagen: Er wurde geladen, fand auf diesem Gerät aber keine GPU, die er unterstützt. Der System-GPU-Treiber wird verwendet.</string>
+    <string name="gpu_driver_failed_features">Eigener Treiber fehlgeschlagen: Er läuft auf dieser GPU, aber ihm fehlen Funktionen, die PyroWave braucht. Der System-GPU-Treiber wird verwendet.</string>
+    <string name="gpu_driver_failed_stream">Eigener Treiber fehlgeschlagen: Er hat die Prüfung bestanden, den Stream aber nicht gestartet. Der System-GPU-Treiber wird verwendet.</string>
 </resources>

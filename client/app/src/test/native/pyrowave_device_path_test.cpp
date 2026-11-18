@@ -84,7 +84,24 @@ static void adrenoAndMaliNeedTheirDriverIdBelowVulkan12() {
     assert(pyroDriverIdKnown(PYRO_VULKAN_1_1, 0x1010, false));
 }
 
+// A custom driver's failure names the stage it stopped at (nightjar#116: a Turnip build that
+// imported and then fell back with no reason), and a device check it reached keeps its own reason.
+static void customDriverFailuresNameTheirStage() {
+    for (PyroProbeStage stage : {PYRO_STAGE_LOADER, PYRO_STAGE_DEVICES, PYRO_STAGE_CHECKED}) {
+        assert(pyroCustomDriverReadiness(false, false, stage, 0) == PYRO_DRIVER_NOT_OPENED);
+        // The hook fell back to the system driver: even a passing probe ran on the wrong driver.
+        assert(pyroCustomDriverReadiness(true, false, stage, 0) == PYRO_DRIVER_NOT_LOADED);
+    }
+    assert(pyroCustomDriverReadiness(true, true, PYRO_STAGE_LOADER, 9) == PYRO_DRIVER_NOT_STARTED);
+    assert(pyroCustomDriverReadiness(true, true, PYRO_STAGE_LOADER, 1) == PYRO_DRIVER_NOT_STARTED);
+    assert(pyroCustomDriverReadiness(true, true, PYRO_STAGE_DEVICES, 9) == PYRO_DRIVER_NO_GPU);
+    for (int reason = 0; reason <= 9; ++reason) {
+        assert(pyroCustomDriverReadiness(true, true, PYRO_STAGE_CHECKED, reason) == reason);
+    }
+}
+
 int main() {
+    customDriverFailuresNameTheirStage();
     adrenoAndMaliNeedTheirDriverIdBelowVulkan12();
     vulkan13DevicesKeepTheirPath();
     theLowerOfLoaderAndDeviceDecides();

@@ -19,15 +19,18 @@ struct HookImplParams {
     std::string fileRedirectDir;
     adrenotools_gpu_mapping *nextGpuMapping;
     uint32_t *customDriverLoaded;
+    char *customDriverError; //!< Nightjar: why the custom driver did not load, for the app's notice
+    size_t customDriverErrorSize;
 
     HookImplParams(int featureFlags, const char *tmpLibDir, const char *hookLibDir, const char *customDriverDir,
                   const char *customDriverName, const char *fileRedirectDir, adrenotools_gpu_mapping *nextGpuMapping,
-                  uint32_t *customDriverLoaded)
+                  uint32_t *customDriverLoaded, char *customDriverError, size_t customDriverErrorSize)
         : featureFlags(featureFlags),
           tmpLibDir(tmpLibDir ? tmpLibDir : ""),
           hookLibDir(hookLibDir),
           customDriverDir(customDriverDir ? customDriverDir : ""),
           customDriverName(customDriverName ? customDriverName : ""),
           fileRedirectDir(fileRedirectDir ? fileRedirectDir : ""),
-          nextGpuMapping(nextGpuMapping), customDriverLoaded(customDriverLoaded) {}
+          nextGpuMapping(nextGpuMapping), customDriverLoaded(customDriverLoaded),
+          customDriverError(customDriverError), customDriverErrorSize(customDriverErrorSize) {}
 };
