@@ -188,4 +188,34 @@ public class GameDetailLayoutTest {
             controller.pause().stop().destroy();
         }
     }
+
+    /**
+     * The page handles a turn itself (the manifest says so), and its two layouts differ: turned on its side, a phone's page
+     * is laid out again as the sideways page, not left as the sheet.
+     */
+    @Test
+    @Config(qualifiers = "w320dp-h560dp-port-xhdpi")
+    public void turnedOnItsSideThePageIsLaidOutAgain() throws Exception {
+        android.content.pm.ActivityInfo info = new android.content.pm.ActivityInfo();
+        info.name = GameDetailShellTest.Detail.class.getName();
+        info.packageName = context.getPackageName();
+        info.configChanges = android.content.pm.ActivityInfo.CONFIG_ORIENTATION | android.content.pm.ActivityInfo.CONFIG_SCREEN_SIZE
+                | android.content.pm.ActivityInfo.CONFIG_SMALLEST_SCREEN_SIZE | android.content.pm.ActivityInfo.CONFIG_SCREEN_LAYOUT;
+        org.robolectric.Shadows.shadowOf(context.getPackageManager()).addOrUpdateActivity(info);
+        ActivityController<GameDetailShellTest.Detail> controller = open(1f);
+        try {
+            GameDetailShellTest.Detail page = page(controller, 1f);
+            assertNotNull("upright: the sheet", page.findViewById(R.id.detail_sheet));
+            assertEquals(android.content.res.Configuration.ORIENTATION_PORTRAIT,
+                    (int) org.robolectric.util.ReflectionHelpers.getField(page, "laidOutFor"));
+            // Under 600 dp wide it is a phone's form on its side as well: no change of form lays it out again.
+            RuntimeEnvironment.setQualifiers("+w560dp-h320dp-land");
+            assertEquals(com.limelight.ui.GlassForm.PHONE, com.limelight.ui.GlassForm.of(RuntimeEnvironment.getApplication()));
+            controller.configurationChange(RuntimeEnvironment.getApplication().getResources().getConfiguration());
+            assertEquals("it asked to be laid out for the side", android.content.res.Configuration.ORIENTATION_LANDSCAPE,
+                    (int) org.robolectric.util.ReflectionHelpers.getField(page, "laidOutFor"));
+        } finally {
+            controller.pause().stop().destroy();
+        }
+    }
 }

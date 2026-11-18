@@ -98,6 +98,10 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
     private HostWaker waker;
     private boolean playWhenReady;
     private Auto auto = Auto.OFF;
+    /** The way the device was held when the page was laid out: upright it is the sheet, sideways the hero grown to a page. */
+    private int laidOutFor;
+    /** The way it is held now, as the system last said: this screen's resources keep the configuration they were made with. */
+    private int heldNow;
     private AlertDialog countdown;
     private long countdownEnd;
     private long networkLimit;
@@ -196,6 +200,8 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
             finish();
             return;
         }
+        laidOutFor = getResources().getConfiguration().orientation;
+        heldNow = laidOutFor;
         setContentView(R.layout.activity_game_detail);
         UiHelper.notifyNewRootView(this);
 
@@ -548,6 +554,25 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
         }
         handler.removeCallbacks(reload);
         super.onPause();
+    }
+
+    @Override
+    public void onConfigurationChanged(android.content.res.Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        heldNow = newConfig.orientation;
+        followTurn();
+    }
+
+    /**
+     * The page has a layout for each way of holding the device and handles the turn itself, so it is laid out again for
+     * the new one. A turn that changes the form did that already; this is the turn that does not, a window under 600 dp
+     * wide on its side, which is a phone's form either way.
+     */
+    private void followTurn() {
+        int now = heldNow;
+        if (now == android.content.res.Configuration.ORIENTATION_UNDEFINED || now == laidOutFor || isFinishing() || isDestroyed() || recreatingForForm()) return;
+        laidOutFor = now;
+        recreate();
     }
 
     @Override
