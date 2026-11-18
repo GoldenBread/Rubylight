@@ -61,9 +61,11 @@ inline uint32_t pyroQueueCount(uint32_t familyQueues, bool legacySync) {
     return familyQueues >= 2 && !legacySync ? 2 : 1;
 }
 
-// Vulkan 1.3 devices keep their requirement of 8-bit storage.
-inline bool pyroPayloadReadable(uint32_t coreVersion, bool storage8, uint32_t maxTexelBufferElements) {
-    return storage8 || (coreVersion < PYRO_VULKAN_1_3 && maxTexelBufferElements >= PYRO_TEXEL_BUFFER_ELEMENTS);
+// Without 8-bit storage PyroWave reads its payload through texel buffers on any Vulkan version
+// (pyrowave_common.cpp picks them from the enabled feature, the texel buffer limit and the vendor),
+// so a Vulkan 1.3 device needs only one of the two: Turnip on Adreno 6xx has no 8-bit storage.
+inline bool pyroPayloadReadable(bool storage8, uint32_t maxTexelBufferElements) {
+    return storage8 || maxTexelBufferElements >= PYRO_TEXEL_BUFFER_ELEMENTS;
 }
 
 inline bool pyroSyncUsable(uint32_t coreVersion, bool timelineSemaphore, bool synchronization2) {

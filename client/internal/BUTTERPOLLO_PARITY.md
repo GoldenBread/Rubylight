@@ -109,10 +109,10 @@ renderer and common-c integration remain GPL-3.0.
 - Android API 29+, a 64-bit library and Vulkan **1.1** are necessary. Runtime checks include
   subgroup basic/vote/ballot/arithmetic/shuffle/shuffle-relative operations, compute stage and size
   control (4–128), full subgroups, shaderInt16, storageBuffer16BitAccess and
-  shaderStorageImageWriteWithoutFormat. On Vulkan 1.3 they also require storageBuffer8BitAccess,
-  timelineSemaphore and synchronization2. Below 1.3 the features come from extensions
-  (`jni/pyrowave-renderer/device_path.h`): 8-bit storage may be missing when
-  `maxTexelBufferElements` is at least 16M, decode and presentation share one queue, and decode
+  shaderStorageImageWriteWithoutFormat. On Vulkan 1.3 they also require timelineSemaphore and
+  synchronization2. On every version 8-bit storage may be missing when `maxTexelBufferElements` is
+  at least 16M (Turnip on Adreno 6xx, `jni/pyrowave-renderer/device_path.h`). Below 1.3 the
+  features come from extensions, decode and presentation share one queue, and decode
   completion is a fence. `adb shell setprop debug.nightjar.pyro_vk11 1` puts a newer device on that
   path for testing; the next stream's log says so. Float16 arithmetic
   is optional. Checks also cover graphics+compute+present queue support, scratch image formats,

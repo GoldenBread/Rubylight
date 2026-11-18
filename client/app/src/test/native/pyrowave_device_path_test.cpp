@@ -22,8 +22,7 @@ static void vulkan13DevicesKeepTheirPath() {
         assert(!pyroSyncUsable(core, false, true));
         assert(!pyroSyncUsable(core, true, false));
         assert(pyroSyncUsable(core, true, true));
-        assert(!pyroPayloadReadable(core, false, PYRO_TEXEL_BUFFER_ELEMENTS));
-        assert(pyroPayloadReadable(core, true, 0));
+        assert(pyroPayloadReadable(true, 0));
         assert(!pyroNeedsRenderPass2(core));
     }
 }
@@ -51,9 +50,18 @@ static void olderDevicesShareOneQueueAndMayLackStorage8() {
     assert(pyroQueueCount(1, false) == 1);
     assert(pyroSyncUsable(PYRO_VULKAN_1_1, false, false));
     assert(pyroSyncUsable(PYRO_VULKAN_1_2, false, false));
-    assert(pyroPayloadReadable(PYRO_VULKAN_1_1, false, PYRO_TEXEL_BUFFER_ELEMENTS));
-    assert(!pyroPayloadReadable(PYRO_VULKAN_1_1, false, PYRO_TEXEL_BUFFER_ELEMENTS - 1));
-    assert(pyroPayloadReadable(PYRO_VULKAN_1_2, true, 0));
+    assert(pyroPayloadReadable(false, PYRO_TEXEL_BUFFER_ELEMENTS));
+    assert(!pyroPayloadReadable(false, PYRO_TEXEL_BUFFER_ELEMENTS - 1));
+}
+
+static void turnipOnAdreno6xxReadsThePayloadThroughTexelBuffers() {
+    // Turnip on Adreno 6xx: Vulkan 1.3, timeline and synchronization2, no 8-bit storage.
+    const uint32_t core = pyroCoreVersion(PYRO_VULKAN_1_3, pyroInstanceApiVersion(PYRO_VULKAN_1_3, false));
+    assert(core == PYRO_VULKAN_1_3 && !pyroLegacySync(core));
+    assert(pyroSyncUsable(core, true, true));
+    assert(pyroPayloadReadable(false, PYRO_TEXEL_BUFFER_ELEMENTS));
+    assert(!pyroPayloadReadable(false, PYRO_TEXEL_BUFFER_ELEMENTS - 1));
+    assert(pyroPathExtensions(core, false, true, true).empty());
 }
 
 static void pathExtensions() {
@@ -109,5 +117,6 @@ int main() {
     theLowerOfLoaderAndDeviceDecides();
     theTestSwitchTakesTheVulkan11Path();
     olderDevicesShareOneQueueAndMayLackStorage8();
+    turnipOnAdreno6xxReadsThePayloadThroughTexelBuffers();
     pathExtensions();
 }
