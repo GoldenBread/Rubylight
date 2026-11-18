@@ -372,6 +372,7 @@ test('the dialog says whether the internet reaches the PC before the link is sen
     /allow TCP 47991 in to this PC in your router's IPv6 firewall/,
   );
   assert.match(guests.reachAlternatives(reachFixture({ address: null, internetPlay: true }), '')[3], /Nightjar .* Play over the internet/);
+  assert.match(guests.reachAlternatives(reachFixture({ address: null, internetPlay: true }), '')[3], /When another device joins the running game set to Ask the player/);
 });
 
 test('the reach panel shows each port, the public address and the carrier-grade NAT note', () => {
