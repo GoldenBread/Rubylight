@@ -267,6 +267,69 @@ fn constant_rate_fills_each_slot_once_and_never_holds_a_new_composition() {
     );
 }
 #[test]
+fn late_wakeups_do_not_slow_repeats_below_the_configured_rate() {
+    // 180 fps; every slot is noticed 0.3 ms late.
+    let period = Duration::from_micros(5_555);
+    let late = Duration::from_micros(300);
+    let start = Instant::now();
+    let mut rate = ConstantRate::default();
+    rate.published(start);
+    let mut last = start;
+    for _ in 0..1000 {
+        let due = rate.due(period).unwrap();
+        let now = due + late;
+        assert_eq!(rate.decide(now, period, false), Some(Publish::Repeat));
+        rate.repeated(now, period);
+        last = now;
+    }
+    let average = (last - start - late).as_secs_f64() / 1000.0;
+    assert!((average / period.as_secs_f64() - 1.0).abs() < 0.001);
+    assert_eq!(rate.due(period), Some(start + period * 1001));
+}
+#[test]
+fn a_stall_gives_one_repeat_and_a_new_frame_reanchors() {
+    let period = Duration::from_micros(5_555);
+    let start = Instant::now();
+    let mut rate = ConstantRate::default();
+    rate.published(start);
+    // Back from a stall of many periods: one picture, the grid restarts.
+    let now = start + period * 10;
+    assert_eq!(rate.decide(now, period, false), Some(Publish::Repeat));
+    rate.repeated(now, period);
+    assert_eq!(
+        rate.decide(now + period / 2, period, false),
+        Some(Publish::Wait(now + period))
+    );
+    // Exactly one period late is a stall, not a grid slot.
+    let at = now + period * 2;
+    rate.repeated(at, period);
+    assert_eq!(rate.due(period), Some(at + period));
+    // A new frame re-anchors at its arrival.
+    let fresh = at + period / 3;
+    rate.published(fresh);
+    assert_eq!(rate.due(period), Some(fresh + period));
+}
+#[test]
+fn grid_next_stays_on_the_grid_only_for_a_fill_less_than_a_period_late() {
+    let period = Duration::from_millis(5);
+    let due = Instant::now();
+    assert_eq!(grid_next(due, due, period), due);
+    assert_eq!(grid_next(due, due + period / 2, period), due);
+    assert_eq!(grid_next(due, due + period, period), due + period);
+    // Filled before it was due (nothing waited): counts from now.
+    assert_eq!(grid_next(due + period, due, period), due);
+    // The resend loop's 0.3 ms latency per slot keeps the average period.
+    let mut at = due;
+    for _ in 0..1000 {
+        at = grid_next(
+            at + period,
+            at + period + Duration::from_micros(300),
+            period,
+        );
+    }
+    assert_eq!(at, due + period * 1000);
+}
+#[test]
 fn a_constant_rate_repeat_is_a_picture_of_its_own() {
     let ms = 1_000_000;
     let mut cadence = Freshness::default();

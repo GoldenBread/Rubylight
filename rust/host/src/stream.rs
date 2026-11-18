@@ -1105,7 +1105,7 @@ impl Media {
                                                 // restart) leaves the slot for the
                                                 // next try.
                                                 if worker.publish_repeat(Arc::new(repeat), now)? {
-                                                    rate.published(now);
+                                                    rate.repeated(now, period);
                                                 }
                                             }
                                             // No picture to repeat (the capture is

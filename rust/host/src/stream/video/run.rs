@@ -1803,7 +1803,18 @@ impl SessionThread<'_> {
                 }
                 // Repeat deadlines start at submission, so encoder work
                 // does not extend the interval between static frames.
-                encoded_at = begin;
+                // A static resend on the plain timer stays on its grid, or
+                // the wake-up latency of every resend adds up to a slower
+                // stream; arrival pacing keeps counting from the submission.
+                encoded_at = if !arrival_pacing && !fresh && !recovering {
+                    butterpollo_core::capture_policy::grid_next(
+                        encoded_at + rates.static_period,
+                        begin,
+                        rates.static_period,
+                    )
+                } else {
+                    begin
+                };
                 if arrival_pacing {
                     // New pictures and static repeats count toward the
                     // stream rate: a repeat that spent nothing let the
