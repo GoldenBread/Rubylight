@@ -154,6 +154,23 @@ impl App {
         stream::prune_teardowns(&mut self.teardowns)
     }
 
+    /// Waits up to `wait` for the sessions still stopping to end. False says one is still using the
+    /// renderer's device; its handle is kept for the next wait or the exit, never dropped.
+    #[cfg(unix)]
+    pub(crate) fn join_teardowns(&mut self, wait: std::time::Duration) -> bool {
+        let deadline = Instant::now() + wait;
+        let mut still = Vec::new();
+        let mut stopped = true;
+        for mut teardown in std::mem::take(&mut self.teardowns) {
+            if !teardown.join_until(deadline) {
+                stopped = false;
+                still.push(teardown);
+            }
+        }
+        self.teardowns = still;
+        stopped
+    }
+
     /// Adds the PC a pairing link names and pairs with its one-time PIN and certificate.
     pub(crate) fn pair_link(&mut self, link: rubylight_protocol::pairing_uri::PairingUri) {
         let id = self.hosts.add_manual(&link.host, Some(link.port));

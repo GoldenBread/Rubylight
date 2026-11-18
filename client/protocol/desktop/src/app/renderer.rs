@@ -163,6 +163,13 @@ pub(crate) fn any_async_compute_asked<'a>(settings: &config::Settings, overrides
     settings.pyrowave_async_compute || overrides.into_iter().any(|own| own.apply(settings).pyrowave_async_compute)
 }
 
+/// What a start says when a session that has ended is still using the graphics card: a renderer
+/// switch cannot be made while its decoder and audio threads run.
+#[cfg(unix)]
+pub(crate) fn teardown_switch_text() -> &'static str {
+    tr("A start that has ended is still using the graphics card, so it cannot be switched yet. The change is kept and applied when that start stops; if it does not stop, restart Nightjar.")
+}
+
 impl App {
     /// Why the GPU renderer `need` asks for is missing, when a failed switch or the Renderer setting
     /// at OpenGL is why; None otherwise (Windows, or the GPU renderer is there).
@@ -216,6 +223,15 @@ impl App {
                 .then_some("Vulkan video")
         });
         let display_hdr = settings.hdr && handheld::hdr_display(handheld::gamescope(), sdl::any_display_hdr());
+        // A stream that still stops on the old device: wait for it before a switch this stream
+        // needs, and refuse the start when it does not end in time instead of skipping the switch
+        // silently. A switch the stream does not need waits for nothing.
+        let teardowns_busy = self.teardowns_busy();
+        let wanted = handheld::renderer_switch(state.choice, now, need, settings.hdr && !planes, display_hdr && !planes, false);
+        if teardowns_busy && wanted.is_some() && !self.join_teardowns(stream::LEAVE_WAIT) {
+            self.gpu_failure = Some(teardown_switch_text().to_owned());
+            return;
+        }
         // The quit-and-start prompt's plan holds the renderer's device, and a launch's checks may
         // still decode on it.
         let busy = self.streaming.is_some() || self.attempts.is_busy() || self.probe.is_some() || !self.ending_probes.is_empty()
@@ -230,16 +246,22 @@ impl App {
     #[cfg(target_os = "macos")]
     pub(crate) fn switch_for_stream(&mut self, settings: &config::Settings) {
         if self.streaming.is_some() || self.attempts.is_busy() || self.probe.is_some() || !self.ending_probes.is_empty()
-            || self.pending_replace.is_some() || self.teardowns_busy()
+            || self.pending_replace.is_some()
         {
             return;
         }
         let shaders = settings.codec.is_pyrowave() || settings.experimental_packed_444
             || settings.prefer_yuv444 || settings.upscaling != config::Upscaling::Bilinear
             || (settings.decoder == DecoderPreference::Software && (settings.hdr || settings.sdr_10bit));
-        if (sdl::renderer_name(self.renderer) == "gpu") != shaders
-            || sdl::swapchain_takes_hdr(self.renderer) != settings.hdr
-        {
+        let wanted = (sdl::renderer_name(self.renderer) == "gpu") != shaders
+            || sdl::swapchain_takes_hdr(self.renderer) != settings.hdr;
+        if wanted {
+            // As on Linux: wait for the session still stopping, and refuse the start when it does
+            // not end in time rather than skip the switch silently.
+            if !self.join_teardowns(stream::LEAVE_WAIT) {
+                self.gpu_failure = Some(teardown_switch_text().to_owned());
+                return;
+            }
             self.gpu_failure = self.rebuild_renderer(shaders, settings.hdr, true, false, "the stream format").err();
         }
     }
