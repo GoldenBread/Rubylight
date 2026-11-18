@@ -159,8 +159,11 @@ stage never leaves one taken. The dev check also ends its builds when it is
 killed, so none keeps building in a slot it no longer holds. The Gradle lane is
 a `BUILD-LOCK`-style file, shared with manual Gradle runs: a crashed owner
 leaves it behind, the next app stage names it, and exclusive owners stop
-waiting for it once its owner is gone; remove it after checking for surviving
-Gradle processes.
+waiting for it once its owner is gone (its `pid=` has exited, its `start=`
+differs, or, in a lock without `start=`, its pid's process started after the
+file was written); remove it after checking for surviving Gradle processes.
+`rust\build.ps1` and the release checks wait for a live stage as long as it
+runs, naming it every 10 minutes, rather than failing the gate.
 
 `BUILD-LOCK` stays exclusive. `rust\build.ps1`, the release checks and
 `tools/build_lock.py` without `--lane` take it before SDK setup, tests or

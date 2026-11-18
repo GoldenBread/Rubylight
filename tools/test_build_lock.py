@@ -360,25 +360,61 @@ class Lanes(unittest.TestCase):
         self.assertFalse(build_lock.HandleSlot(pool / '1.lock').busy())
 
     @unittest.skipUnless(shutil.which('pwsh'), 'PowerShell 7')
-    def test_build_ps1_lease_waits_for_the_stages(self):
+    def test_build_ps1_lease_waits_for_the_stages_and_names_them_instead_of_failing(self):
         driver = self.root / 'lease.ps1'
         driver.write_text("""param([string]$Locks)
 $ErrorActionPreference = 'Stop'
 . $env:CHECK_STREAMS
 Initialize-CheckLocks $Locks
 $CheckBuildDeadline = 1
+$CheckStageWarning = 1
 $held = Enter-CheckBuildLock -RespectPriority
 try { 'acquired' } finally { Exit-CheckLocks $held -NoPause }
 """)
         env = dict(os.environ, CHECK_STREAMS=str(pathlib.Path(__file__).resolve().parents[1] / 'rust/release/check_streams.ps1'))
-        self.hold('cargo', 'stage')
+        stage = self.hold('cargo', 'stage', seconds=4)
         child = subprocess.run(['pwsh', '-NoProfile', '-File', str(driver), '-Locks', str(self.root)],
-                               capture_output=True, text=True, env=env, timeout=30)
-        self.assertEqual(child.returncode, 1, child.stdout + child.stderr)
-        self.assertIn('stages did not finish', child.stdout + child.stderr)
-        self.assertNotIn('acquired', child.stdout)
+                               capture_output=True, text=True, env=env, timeout=60)
+        self.assertEqual(child.returncode, 0, child.stdout + child.stderr)
+        self.assertIn('still waiting for the dev check', child.stdout)
+        self.assertIn('acquired', child.stdout)
+        self.assertEqual(stage.wait(timeout=15), 0)  # the stage finished first
         self.assertFalse((self.root / 'BUILD-LOCK').exists())
 
+    def test_a_manual_gradle_lock_of_a_reused_pid_does_not_count(self):
+        # A crashed `build_lock.py --lock-directory <gradle lane>` from before start= was written:
+        # its pid now belongs to a process (this one) that started after the file was written.
+        lane = self.root / 'gradle-lane'
+        lane.mkdir()
+        lock = lane / 'BUILD-LOCK'
+        lock.write_text(f'build 2026-11-18 pid={os.getpid()} token=t')
+        os.utime(lock, (1, 1))
+        self.assertFalse(build_lock.FileSlot(lane).busy())
+        os.utime(lock, None)
+        self.assertTrue(build_lock.FileSlot(lane).busy())
+
+    def test_the_exclusive_lock_names_its_owners_start_as_powershell_does(self):
+        with build_lock.BuildLock(self.root):
+            text = (self.root / 'BUILD-LOCK').read_text()
+        if os.name == 'nt':
+            self.assertRegex(text, r' start=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{7}Z ')
+            self.assertTrue(build_lock.priority_alive(text))
+
+    def test_an_interrupted_stage_gives_back_what_it_took(self):
+        def interrupt():
+            raise KeyboardInterrupt
+        groups = build_lock.LANE_GROUPS['cargo'](self.root) + [('broken', interrupt)]
+        with self.assertRaises(KeyboardInterrupt):
+            with build_lock.StageLease(groups, self.root, 'test', 1, poll=.05, say=lambda *a, **k: None):
+                pass
+        self.assertFalse(build_lock.HandleSlot(self.root / 'lanes/cargo-1.lock').busy())
+        with self.lease('cargo'):
+            pass
+
+    def test_a_stage_lists_the_gradle_lane_as_held_by_its_tree(self):
+        with self.lease('gradle'):
+            self.assertIn(str(self.root.resolve() / 'gradle-lane' / 'BUILD-LOCK'), os.environ[build_lock.LANES_ENV])
+        self.assertNotIn(build_lock.LANES_ENV, os.environ)
 
 if __name__ == '__main__':
     unittest.main()

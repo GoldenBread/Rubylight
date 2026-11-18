@@ -102,8 +102,10 @@ def cargo_slots(cpus=None, memory_gb=None):
     return max(1, min(by_cpu, by_memory))
 
 
-def priority_alive(text):
-    """Unknown ownership fails closed; PID reuse cannot prolong a known ticket."""
+def priority_alive(text, written=None):
+    """Unknown ownership fails closed; PID reuse cannot prolong a known ticket.
+    written: when the lock file was last written. Without start= in the text, a process
+    that started after that is not the owner (its pid was reused)."""
     match = re.search(r'\bpid=(\d+)', text)
     if not match:
         return bool(text)
@@ -129,14 +131,14 @@ def priority_alive(text):
         times = [wintypes.FILETIME() for _ in range(4)]
         if not kernel.GetProcessTimes(handle, *(ctypes.byref(t) for t in times)):
             return True
+        actual = ((times[0].dwHighDateTime << 32) + times[0].dwLowDateTime) / 10_000_000 - 11644473600
         start = re.search(r'\bstart=(\S+)', text)
         if not start:
-            return True
+            return written is None or actual <= written + 1
         try:
             expected = datetime.datetime.fromisoformat(start[1].replace('Z', '+00:00')).timestamp()
         except ValueError:
             return True
-        actual = ((times[0].dwHighDateTime << 32) + times[0].dwLowDateTime) / 10_000_000 - 11644473600
         return abs(actual - expected) < .001
     finally:
         kernel.CloseHandle(handle)
@@ -172,7 +174,8 @@ def now():
 
 
 def process_start():
-    """This process's start time as priority_alive reads it (start=), so a reused pid does not count."""
+    """This process's start time as priority_alive reads it (start=), so a reused pid does not
+    count. In .NET's round-trip form, as check_streams.ps1 writes and compares it (Test-LockOurs)."""
     if os.name != 'nt':
         return None
     from ctypes import wintypes
@@ -182,8 +185,9 @@ def process_start():
     times = [wintypes.FILETIME() for _ in range(4)]
     if not kernel.GetProcessTimes(kernel.GetCurrentProcess(), *(ctypes.byref(t) for t in times)):
         return None
-    seconds = ((times[0].dwHighDateTime << 32) + times[0].dwLowDateTime) / 10_000_000 - 11644473600
-    return datetime.datetime.fromtimestamp(seconds, datetime.timezone.utc).isoformat()
+    ticks = (times[0].dwHighDateTime << 32) + times[0].dwLowDateTime  # 100 ns since 1601
+    whole = datetime.datetime(1601, 1, 1) + datetime.timedelta(seconds=ticks // 10_000_000)
+    return whole.strftime('%Y-%m-%dT%H:%M:%S') + f'.{ticks % 10_000_000:07d}Z'
 
 
 def end_children_with_me():
@@ -367,11 +371,18 @@ class FileSlot:
         BUILD-LOCK, but an exclusive owner does not wait for it (holder() names it)."""
         text = peek(self.path)
         return self.guard is None and text is not None and not own_exclusive(self.path) \
-            and str(self.path) not in held_lanes() and priority_alive(text)
+            and str(self.path) not in held_lanes() and self.owner_alive(text)
+
+    def owner_alive(self, text):
+        try:
+            written = self.path.stat().st_mtime
+        except OSError:
+            written = None
+        return priority_alive(text, written)
 
     def holder(self):
         text = peek(self.path)
-        if text and not priority_alive(text):
+        if text and not self.owner_alive(text):
             return f'{text} (its owner is gone: check for surviving Gradle processes, then remove {self.path})'
         return text or str(self.path)
 
@@ -448,6 +459,13 @@ class StageLease:
         self.taken = {}
 
     def __enter__(self):
+        try:
+            return self._enter()
+        except BaseException:
+            self._release()  # Ctrl+C or an error between taking a lane and checking BUILD-LOCK
+            raise
+
+    def _enter(self):
         start = time.monotonic()
         deadline, last = start + self.timeout, None
         while True:
@@ -479,8 +497,8 @@ class StageLease:
             time.sleep(self.poll)
         self.waited = time.monotonic() - start
         self.previous = os.environ.get(LANES_ENV)
-        handles = [str(s.path) for s in self.taken.values() if isinstance(s, HandleSlot)]
-        os.environ[LANES_ENV] = os.pathsep.join(filter(None, [self.previous, *handles]))
+        held = [str(s.path) for s in self.taken.values()]
+        os.environ[LANES_ENV] = os.pathsep.join(filter(None, [self.previous, *held]))
         return self
 
     def __exit__(self, *_):
@@ -514,7 +532,9 @@ class BuildLock:
             if holder is None:
                 try:
                     with self.path.open('x', encoding='utf-8') as out:
-                        self.text = f'{self.label} {now()} pid={os.getpid()} token={uuid.uuid4().hex}'
+                        started = process_start()
+                        self.text = f'{self.label} {now()} pid={os.getpid()}' + \
+                            (f' start={started}' if started else '') + f' token={uuid.uuid4().hex}'
                         out.write(self.text)
                     # Python's Windows read handle denies deletion. Older age-based
                     # waiters cannot remove this lease during a long live build.

@@ -351,7 +351,7 @@ def claim_target(target, root=ROOT, previous_owner=None, owner_since=None):
     target = pathlib.Path(target)
     stamp = target / STAMP
     last = build_lock.read(stamp)
-    mine = str(pathlib.Path(root).resolve())
+    mine = os.path.normpath(str(pathlib.Path(root).resolve()))
     others = [o for o in (last, previous_owner) if o and o.strip() and not same_path(o, mine)]
     if owner_since is not None and stamp.exists() and owner_since > stamp.stat().st_mtime + 1:
         others.append('another run since the last claim')
@@ -401,19 +401,24 @@ def stage_target(check, taken, root, target_dir=None):
     if check.kind not in ('host', 'service', 'client', 'interop'):
         return None
     slot = taken.get('host target') or taken.get('client target')
-    previous = None
     if slot is not None:
-        owner_file = slot.path.with_suffix('.owner')
-        previous = build_lock.read(owner_file) if owner_file.exists() else None
-        since = owner_file.stat().st_mtime if owner_file.exists() else None
-        target = slot.path.with_suffix('')
-        # C:\src\rl-quick.ps1's Enter-RlSlot reads and writes the same owner file.
-        owner_file.write_text(str(pathlib.Path(root).resolve()), encoding='utf-8')
-    else:
-        target = pathlib.Path(target_dir)
-        if check.kind in ('client', 'interop'):
-            target = pathlib.Path(f'{target}-client')
-        since = None
+        return claim_slot(slot.path, root)
+    target = pathlib.Path(target_dir)
+    if check.kind in ('client', 'interop'):
+        target = pathlib.Path(f'{target}-client')
+    claim_target(target, root)
+    return target
+
+
+def claim_slot(lock, root=ROOT):
+    """Claim the pool slot of lock (<pool>\\<n>.lock, held by the caller) for this checkout and
+    return its folder. C:\\src\\rl-env.ps1's Enter-RlSlot calls this too (`dev.py claim-slot`)."""
+    lock = pathlib.Path(lock)
+    owner_file = lock.with_suffix('.owner')
+    previous = build_lock.read(owner_file) if owner_file.exists() else None
+    since = owner_file.stat().st_mtime if owner_file.exists() else None
+    target = lock.with_suffix('')
+    owner_file.write_text(os.path.normpath(str(pathlib.Path(root).resolve())), encoding='utf-8')
     claim_target(target, root, previous, since)
     return target
 
@@ -578,7 +583,8 @@ def execute(check, root, log, target, fresh_dependencies=False):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
-    parser.add_argument('command', choices=['check'])
+    parser.add_argument('command', choices=['check', 'claim-slot'])
+    parser.add_argument('--slot', type=pathlib.Path, help="claim-slot: the slot's lock file, which the caller holds")
     parser.add_argument('--base', default='origin/main', help='compare against the merge base with this ref')
     parser.add_argument('--dry-run', action='store_true', help='print the plan only')
     parser.add_argument('--log-dir', type=pathlib.Path)
@@ -594,6 +600,11 @@ def main(argv=None):
     if args.lock_timeout < 0:
         parser.error('--lock-timeout must be nonnegative')
     root = ROOT
+    if args.command == 'claim-slot':
+        if not args.slot:
+            parser.error('claim-slot needs --slot <pool>\\<n>.lock')
+        print(claim_slot(args.slot, root))
+        return 0
     if not args.dry_run:
         build_lock.end_children_with_me()
     if args.paths is None:

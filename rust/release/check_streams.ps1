@@ -36,6 +36,8 @@ function Initialize-CheckLocks([string] $Directory, [switch] $GpuLockHeld) {
     # GPU-LOCK is never broken as stale: a holder past this ends the check.
     $script:CheckGpuDeadline = 1800
     $script:CheckBuildDeadline = 1800
+    # Past the build deadline, stages still running are named this often (Wait-CheckStages).
+    $script:CheckStageWarning = 600
     $script:CheckGpuWarning = 60
     # Locks this run wrote that another session removed or took over.
     $script:CheckLockLost = [Collections.Generic.List[string]]::new()
@@ -167,14 +169,24 @@ function Enter-CheckRunLock {
 # BUILD-LOCK is exclusive: its owner then waits until the dev check's stage
 # lanes (Cargo slots, warm target slots, the Gradle and web lanes;
 # tools/build_lock.py) are given back. A stage that sees BUILD-LOCK gives its
-# lanes back and waits, so no new stage starts meanwhile.
+# lanes back and waits, so no new stage starts meanwhile. A live stage that takes
+# longer (a long manual Gradle run in the Gradle lane) is waited for, with its
+# holder named every $CheckStageWarning seconds, rather than failing the gate;
+# a lane whose owner is gone is not waited for.
 function Wait-CheckStages([double] $Seconds) {
     $lockTool = Join-Path $PSScriptRoot '..\..\tools\build_lock.py'
     if (-not (Test-Path -LiteralPath $lockTool)) { return }
     $py = if ($python) { $python } elseif ($env:BUTTERPOLLO_TEST_PYTHON) { $env:BUTTERPOLLO_TEST_PYTHON } else { 'python' }
     $directory = Split-Path -Parent $script:CheckBuildLock
-    & $py $lockTool --drain --lock-directory $directory --timeout ([int] [math]::Ceiling($Seconds)) | Write-Host
-    if ($LASTEXITCODE) { throw "BUILD-LOCK held but the dev check's stages did not finish within $([int] $Seconds) s; no lock removed." }
+    $chunk = [math]::Max(1, [int] [math]::Ceiling($Seconds))
+    $waited = 0
+    while ($true) {
+        & $py $lockTool --drain --lock-directory $directory --timeout $chunk | Write-Host
+        if (-not $LASTEXITCODE) { return }
+        $waited += $chunk
+        Write-Host "BUILD-LOCK held; still waiting for the dev check's stages after $waited s (named above). No lock removed." -ForegroundColor Yellow
+        $chunk = $script:CheckStageWarning
+    }
 }
 
 # For the fixture builds: BUILD-LOCK, waiting like Enter-BuildLock, then the stages.
