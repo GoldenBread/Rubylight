@@ -182,3 +182,48 @@ fn recovers_two_lost_packets_per_block() {
     assert_eq!(rx2.stats().packet_count_fec_recovered, 2);
     assert_eq!(played[4].as_deref(), Some(&packets[(8 / 4) * 6][12..]));
 }
+
+// One odd packet from a modern host is loss, not a host this FEC cannot serve: the rest of the
+// stream keeps its recovery.
+#[test]
+fn one_odd_packet_does_not_take_fec_from_the_stream() {
+    let mut packets = stream(64, 60);
+    let odd = packets.iter_mut().find(|p| p[1] == 127).expect("a parity packet");
+    let base = u16::from_be_bytes([odd[14], odd[15]]);
+    odd[14..16].copy_from_slice(&(base + 1).to_be_bytes());
+    let lost = [20u16, 22];
+    packets.retain(|p| p[1] != 97 || !lost.contains(&u16::from_be_bytes([p[2], p[3]])));
+    let mut rx = AudioReceiver::new(config());
+    rx.packets_to_drop = 0;
+    let _ = run(&mut rx, &packets);
+    assert!(rx.stats().packet_count_fec_recovered >= 2, "one odd packet cost the stream its FEC: {:?}", rx.stats());
+}
+
+// A host that keeps misaligning its blocks loses FEC for a while; after enough audio it is tried
+// again, so a transient cannot cost the whole stream.
+#[test]
+fn fec_is_tried_again_after_a_host_was_incompatible() {
+    let mut packets = stream(1600, 60);
+    for p in packets.iter_mut().filter(|p| p[1] == 127).take(3) {
+        let base = u16::from_be_bytes([p[14], p[15]]);
+        p[14..16].copy_from_slice(&(base + 1).to_be_bytes());
+    }
+    let lost = [1500u16, 1502];
+    packets.retain(|p| p[1] != 97 || !lost.contains(&u16::from_be_bytes([p[2], p[3]])));
+    let mut rx = AudioReceiver::new(config());
+    rx.packets_to_drop = 0;
+    let _ = run(&mut rx, &packets);
+    assert!(rx.stats().packet_count_fec_recovered >= 2, "FEC never came back after the retry: {:?}", rx.stats());
+}
+
+// Parity packets for blocks nothing claims must not grow the queue without bound.
+#[test]
+fn blocks_nothing_claims_cannot_grow_the_audio_queue() {
+    let packets = stream(120, 60);
+    let mut rx = AudioReceiver::new(config());
+    rx.packets_to_drop = 0;
+    for packet in packets.into_iter().filter(|p| p[1] == 127) {
+        rx.receive(&packet, 0, &mut |_| {});
+    }
+    assert!(rx.queue.queued_blocks() <= 16, "{} blocks wait", rx.queue.queued_blocks());
+}
