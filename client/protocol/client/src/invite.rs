@@ -135,6 +135,25 @@ pub fn redeem(
     if !internet::enabled() {
         return Err(INTERNET_OFF.to_owned());
     }
+    // A tunnel this device already has to that PC is the PC's own, and stays. One this redeem
+    // starts is made from the link's details, which anyone can write, and is kept under the ID
+    // the link names: unless the invite works, it must not stay there, where a PC of the list
+    // with that ID would be looked for through it until Nightjar restarts.
+    let own_tunnel = internet::active(&link.unique_id);
+    let redeemed = redeem_over(link, identity, device_name);
+    if redeemed.is_err() && !own_tunnel {
+        internet::stop(&link.unique_id);
+    }
+    redeemed
+}
+
+/// [`redeem`] once the link may be tried: reaches the PC, pairs and fetches this device's own
+/// internet play details.
+fn redeem_over(
+    link: &InviteUri,
+    identity: Arc<ClientIdentity>,
+    device_name: &str,
+) -> Result<Redeemed, String> {
     let info = InternetPlay::parse(&reply_of(link)).map_err(|e| e.to_string())?;
     let mut answered = None;
     let (path, address) = internet::reach(&link.unique_id, &[], Some(&info), true, |at| {
@@ -310,6 +329,14 @@ mod tests {
             let error = redeem(&link(), identity, "Phone", 1_000).unwrap_err();
             assert_eq!(error, INTERNET_OFF);
         }
+    }
+
+    #[test]
+    fn a_pc_without_a_tunnel_has_none_to_keep() {
+        // What decides whether a failed redeem ends the tunnel under the link's ID.
+        assert!(!internet::active("HOST-1"));
+        internet::stop("HOST-1");
+        assert!(!internet::active("HOST-1"));
     }
 
     #[test]

@@ -98,6 +98,16 @@ pub fn tunnel(host_id: &str, info: &InternetPlay) -> Result<ClientTunnel, String
     Ok(tunnel)
 }
 
+/// Whether a tunnel to `host_id` is up or on its way: [`tunnel`] hands that one out instead of
+/// starting another.
+pub fn active(host_id: &str) -> bool {
+    TUNNELS
+        .lock()
+        .unwrap()
+        .get(host_id)
+        .is_some_and(|entry| entry.tunnel.is_active())
+}
+
 /// Waits up to `wait` for `tunnel` to come through: the loopback address that reaches the host.
 pub fn wait(tunnel: &ClientTunnel, wait: Duration) -> Result<IpAddr, String> {
     let deadline = Instant::now() + wait;
