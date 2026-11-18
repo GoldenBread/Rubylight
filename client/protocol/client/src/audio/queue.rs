@@ -14,19 +14,6 @@ const DATA_SHARDS: usize = 4;
 const FEC_SHARDS: usize = 2;
 const TOTAL_SHARDS: usize = DATA_SHARDS + FEC_SHARDS;
 const CACHED_FEC_BLOCK_LIMIT: usize = 4;
-/// Blocks kept waiting for their packets: 16 blocks are half a second of 32 ms frames, more than
-/// the queue's wait (10 ms after a block's turn) can make useful. A host or path that keeps a
-/// block unclaimed cannot grow the queue without bound.
-const MAX_BLOCKS: usize = 16;
-/// Odd packets in a row before the queue gives up on the host's FEC: a modern host with one odd
-/// packet lost that packet, it did not become a host this FEC scheme cannot serve.
-const INCOMPATIBLE_STRIKES: u8 = 3;
-/// Audio packets after which one strike is forgotten.
-const STRIKE_DECAY_PACKETS: u32 = 64;
-/// Audio packets after which a host once found incompatible is tried again with FEC. A host that
-/// is still incompatible gives up again after three odd packets; a stream whose oddity passed
-/// keeps its recovery for the rest of it.
-const INCOMPATIBLE_RETRY_PACKETS: u32 = 1_000;
 const RTP_HEADER: usize = 12;
 const FEC_HEADER: usize = 12;
 
@@ -139,11 +126,6 @@ pub(super) struct AudioQueue {
     received_oos_data: bool,
     synchronizing: bool,
     incompatible_server: bool,
-    /// Odd packets toward giving up on FEC, and audio packets since the last one counted.
-    incompatible_strikes: u8,
-    packets_since_strike: u32,
-    /// Audio packets since FEC was given up, toward trying it again.
-    packets_fec_off: u32,
     packet_duration: u32,
     /// AC3 and E-AC3 streams: a frame's chunks go out together, not one per packet duration.
     chunked: bool,
@@ -166,9 +148,6 @@ impl AudioQueue {
             received_oos_data: false,
             synchronizing: true,
             incompatible_server: !modern,
-            incompatible_strikes: 0,
-            packets_since_strike: 0,
-            packets_fec_off: 0,
             packet_duration: packet_duration_ms,
             chunked: false,
             stats: AudioStats::default(),
@@ -214,54 +193,6 @@ impl AudioQueue {
         if self.free_blocks.len() < CACHED_FEC_BLOCK_LIMIT {
             self.free_blocks.push(head);
         }
-    }
-
-    /// One packet that does not fit this FEC scheme. A modern host with a corrupt packet gets a
-    /// strike that a run of good packets forgets; a host that keeps sending them loses FEC for a
-    /// while, after which the queue tries again.
-    fn incompatible(&mut self) {
-        self.incompatible_strikes = self.incompatible_strikes.saturating_add(1);
-        if self.incompatible_strikes >= INCOMPATIBLE_STRIKES {
-            self.incompatible_server = true;
-            self.packets_fec_off = 0;
-        }
-    }
-
-    /// Counts an audio packet for the strikes' and FEC's decay; true when FEC is off now.
-    fn fec_off(&mut self) -> bool {
-        if self.incompatible_server {
-            self.packets_fec_off = self.packets_fec_off.saturating_add(1);
-            if self.packets_fec_off >= INCOMPATIBLE_RETRY_PACKETS {
-                self.incompatible_server = false;
-                self.incompatible_strikes = 0;
-                self.packets_since_strike = 0;
-                self.packets_fec_off = 0;
-                // Start again at the next block boundary, as at a stream's start: the blocks
-                // tracked before FEC was given up are stale.
-                self.synchronizing = true;
-                self.oldest_rtp_base_seq = 0;
-                while let Some(block) = self.blocks.pop_front() {
-                    if self.free_blocks.len() < CACHED_FEC_BLOCK_LIMIT {
-                        self.free_blocks.push(block);
-                    }
-                }
-            }
-            return self.incompatible_server;
-        }
-        if self.incompatible_strikes > 0 {
-            self.packets_since_strike = self.packets_since_strike.saturating_add(1);
-            if self.packets_since_strike >= STRIKE_DECAY_PACKETS {
-                self.incompatible_strikes -= 1;
-                self.packets_since_strike = 0;
-            }
-        }
-        false
-    }
-
-    /// Blocks waiting for their packets.
-    #[cfg(test)]
-    pub(super) fn queued_blocks(&self) -> usize {
-        self.blocks.len()
     }
 
     /// Finds or creates the block a packet belongs to; `None` rejects the packet.
@@ -319,7 +250,7 @@ impl AudioQueue {
             if base_seq % DATA_SHARDS as u16 != 0 {
                 // Blocks must start on a 4-packet boundary (not so on GFE 3.13).
                 self.stats.packet_count_fec_invalid += 1;
-                self.incompatible();
+                self.incompatible_server = true;
                 return None;
             }
             block_size = (length - RTP_HEADER - FEC_HEADER) as u16;
@@ -344,7 +275,7 @@ impl AudioQueue {
                 if block.block_size != block_size {
                     // Hosts with variable packet sizes cannot use this FEC scheme.
                     self.stats.packet_count_fec_invalid += 1;
-                    self.incompatible();
+                    self.incompatible_server = true;
                     return None;
                 }
                 return if block.fully_reassembled {
@@ -356,18 +287,6 @@ impl AudioQueue {
                 position = index;
                 break;
             }
-        }
-
-        // Keep the queue bounded: a block nothing ever claims must not grow it frame after frame.
-        // The oldest waiting block is the one whose turn has passed; giving it up also advances
-        // the sequence the rest is released from.
-        if self.blocks.len() >= MAX_BLOCKS {
-            if position == 0 {
-                return None;
-            }
-            self.stats.packet_count_fec_failed += 1;
-            self.free_block_head();
-            position -= 1;
         }
 
         let mut block = self.allocate_block(block_size);
@@ -472,12 +391,12 @@ impl AudioQueue {
         packet: &[u8],
         now_us: u64,
     ) -> AddResult {
-        if header.packet_type == RTP_PAYLOAD_TYPE_AUDIO {
-            if self.fec_off() {
-                return AddResult::HandleNow;
-            }
-        } else if self.incompatible_server {
-            return AddResult::Queued;
+        if self.incompatible_server {
+            return if header.packet_type == RTP_PAYLOAD_TYPE_AUDIO {
+                AddResult::HandleNow
+            } else {
+                AddResult::Queued
+            };
         }
 
         let Some(index) = self.block_for_packet(header, packet, now_us) else {
