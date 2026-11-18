@@ -212,6 +212,10 @@ pub fn translate(lang: Lang, text: &str) -> &str {
     }
 }
 
+/// The first-run line of an identity file that cannot be read; `main.rs` adds the error in
+/// parentheses.
+pub const PAIRING_KEY_UNREADABLE: &str = en("This device’s pairing key cannot be read. Restore or remove identity.json, then start Nightjar again.");
+
 /// `text` in the language in use.
 pub fn tr(text: &str) -> &str {
     translate(current(), text)

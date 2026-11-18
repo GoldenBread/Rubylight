@@ -461,6 +461,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Could not import shortcuts", "Impossibile importare le scorciatoie"),
     ("File dialog unavailable", "Finestra dei file non disponibile"),
     ("No pairing key", "Nessuna chiave di accoppiamento"),
+    ("This device’s pairing key cannot be read. Restore or remove identity.json, then start Nightjar again.", "Non è possibile leggere la chiave di associazione di questo dispositivo. Ripristina o elimina identity.json, poi avvia di nuovo Nightjar."),
     ("Waking {}…", "Riattivazione di {}…"),
     ("Sending Wake-on-LAN until the PC answers.", "Invio di Wake-on-LAN finché il PC non risponde."),
     ("The PC did not wake up", "Il PC non si è riattivato"),

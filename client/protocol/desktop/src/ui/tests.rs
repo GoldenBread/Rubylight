@@ -8940,3 +8940,18 @@ fn game_info_screenshots() {
     f.settle();
     f.shoot(&dir, "settings-advanced-game-info-desktop");
 }
+
+/// A pairing key that cannot be read never arrives: the first-run page says why instead of the
+/// creating line, and offers no search that cannot start.
+#[test]
+fn the_first_run_says_why_a_pairing_key_cannot_be_read() {
+    let reason = format!("{} (identity.json: is a directory)", crate::strings::PAIRING_KEY_UNREADABLE);
+    let mut f = first_run_frames(Vec::new());
+    f.l.identity_ready = false;
+    f.l.identity_error = Some(reason.clone());
+    f.l.go(Screen::Hosts);
+    f.settle();
+    assert!(shows(&f, &reason), "{:?}", f.drawn);
+    assert!(!f.drawn.iter().any(|t| t.starts_with("Creating this device")), "{:?}", f.drawn);
+    assert!(!shows(&f, "Search again"), "no search can start without a key: {:?}", f.drawn);
+}

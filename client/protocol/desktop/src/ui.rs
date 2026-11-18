@@ -536,6 +536,9 @@ pub struct Launcher {
     /// The display's fullscreen modes in SDL's order, for fractional V-Sync's note (Windows' Fullscreen takes one); empty when unknown.
     pub fullscreen_modes: Vec<settings::FullscreenMode>,
     pub identity_ready: bool,
+    /// Why this device's pairing key could not be read, when it could not: the first-run page says
+    /// it instead of waiting for a key that will not come.
+    pub identity_error: Option<String>,
     /// What this PC's power allows (`power::probe`): the Close Nightjar question offers these.
     /// Empty until known.
     pub power: Vec<crate::power::Offer>,
@@ -661,6 +664,7 @@ impl Launcher {
             display,
             fullscreen_modes: Vec::new(),
             identity_ready: false,
+            identity_error: None,
             power: Vec::new(),
             system_languages: Vec::new(),
             look: None,

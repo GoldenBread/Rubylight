@@ -880,9 +880,9 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
                 }
                 Err(e) => {
                     eprintln!("nightjar: stored identity unusable ({e}); not creating a new one over it");
-                    launcher.notify(crate::strings::tr("No pairing key"), format!(
-                        "identity.json cannot be read ({e}). Pairing stays unavailable until it is restored or removed; Nightjar does not replace it."
-                    ));
+                    let reason = format!("{} ({e})", crate::strings::tr(crate::strings::PAIRING_KEY_UNREADABLE));
+                    launcher.notify(crate::strings::tr("No pairing key"), reason.clone());
+                    launcher.identity_error = Some(reason);
                     identity_unreadable = true;
                     None
                 }
@@ -890,9 +890,9 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
             Ok(None) => None,
             Err(e) => {
                 eprintln!("nightjar: {e}; not creating a new pairing key");
-                launcher.notify(crate::strings::tr("No pairing key"), format!(
-                    "{e}. Pairing stays unavailable until the file is restored or removed; a copy was kept beside it where one could be made."
-                ));
+                let reason = format!("{} ({e})", crate::strings::tr(crate::strings::PAIRING_KEY_UNREADABLE));
+                launcher.notify(crate::strings::tr("No pairing key"), reason.clone());
+                launcher.identity_error = Some(reason);
                 identity_unreadable = true;
                 None
             }
