@@ -594,6 +594,12 @@ public class StreamMenuTest {
             menu.show();
             MenuRow bitrate = (MenuRow) menu.row(BITRATE);
             assertEquals(BitrateSlider.text(activity, 80000), bitrate.value().toString());
+            // Moving the slider moves the row's value with it.
+            long now = android.os.SystemClock.uptimeMillis();
+            assertTrue(menu.bitrateSlider().onKeyDown(android.view.KeyEvent.KEYCODE_DPAD_LEFT,
+                    new android.view.KeyEvent(now, now, android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_DPAD_LEFT, 0)));
+            org.robolectric.shadows.ShadowLooper.idleMainLooper();
+            assertNotEquals(BitrateSlider.text(activity, 80000), bitrate.value().toString());
             menu.sheet().dismiss();
 
             state.rateChange = true;

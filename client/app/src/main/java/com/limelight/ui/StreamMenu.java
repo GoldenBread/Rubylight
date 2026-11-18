@@ -733,6 +733,8 @@ public final class StreamMenu {
             java.util.function.IntUnaryOperator change = o.bitrateChange;
             bitrateSlider = BitrateSlider.inline(activity, o.bitrateKbps, text -> {
                 if (shown[0] != null) shown[0].setText(text);
+                // The bitrate row below shows the same rate: keep it in step with the slider.
+                if (rows.get(Item.BITRATE) instanceof MenuRow bitrateRow) bitrateRow.setValue(text);
             }, change);
             shown[0] = sheet.addSliderRow(sliders, activity.getString(R.string.stream_bitrate), BitrateSlider.text(activity, o.bitrateKbps), bitrateSlider);
         }
