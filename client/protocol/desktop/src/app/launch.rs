@@ -597,6 +597,7 @@ impl App {
             app,
             listed,
             resume,
+            negotiated_packet_size: 0,
             join: kind == LaunchKind::JoinRunning,
             small_stream_input_only: small,
             mic_only,

@@ -766,8 +766,9 @@ pub(super) enum JumboPreflight {
 pub(super) enum JumboSkip {
     /// Nothing asked for jumbo packets.
     NotAsked,
-    /// A resume of a running session: the stream keeps the packets its launch asked for, and the
-    /// PC refuses a probe while that session runs (#126).
+    /// A resume of a session that may still be running (an automatic reconnect): the stream
+    /// keeps the packets its launch negotiated, and the PC refuses a probe while that session
+    /// runs (#126). A manual resume of a running game still probes.
     Resume,
     /// A remote, public or tunnelled route: jumbo is only for the local network.
     Remote,
@@ -792,8 +793,9 @@ impl JumboSkip {
 /// Whether to probe for jumbo packets this stream: only a new stream, when the run or the setting
 /// asks, the PC offers more than stock, the PC can probe, and the route is local (`Local`, or
 /// `Auto` to a private address). A public `Auto` address becomes remote only later, in the
-/// session, so it must be refused here too. A resume probes nothing: the PC refuses a probe while
-/// the session it resumes runs, and the launch keeps the packet size that session started with.
+/// session, so it must be refused here too. An automatic reconnect probes nothing: the PC refuses
+/// a probe while the session it resumes runs, and the launch keeps the packet size that session
+/// negotiated. A manual resume of a running game is not that case and probes as before.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn jumbo_preflight(
     location: Location,
@@ -802,12 +804,12 @@ pub(super) fn jumbo_preflight(
     burst_probe: bool,
     packet_size: u32,
     jumbo_frames: bool,
-    resume: bool,
+    auto_reconnect: bool,
 ) -> JumboPreflight {
     if !asks_for_jumbo(packet_size, jumbo_frames) {
         return JumboPreflight::Skip(JumboSkip::NotAsked);
     }
-    if resume {
+    if auto_reconnect {
         return JumboPreflight::Skip(JumboSkip::Resume);
     }
     let local = match location {
@@ -835,6 +837,16 @@ pub(super) fn reset_packet_size(route: i32, requested: u32) -> i32 {
         requested as i32
     } else {
         route
+    }
+}
+
+/// The packet size a resume asks for: the size the running session negotiated when it is known
+/// (an automatic reconnect carries it into its ANNOUNCE), else the route's or the run's stock size.
+pub(super) fn resume_packet_size(negotiated: u32, route: i32, requested: u32) -> i32 {
+    if negotiated > 0 {
+        negotiated as i32
+    } else {
+        reset_packet_size(route, requested)
     }
 }
 
@@ -1195,6 +1207,9 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
         packet_size = settings.packet_size as i32;
         eprintln!("nightjar: --packet-size {packet_size}");
     }
+    // A reconnect of a session that may still be live keeps its negotiated packet size and probes
+    // nothing; a manual resume of a running game probes as a new stream does.
+    let auto_reconnect = plan.resume && plan.recovery.is_some();
     let preflight = jumbo_preflight(
         location,
         plan.record.address.parse::<std::net::IpAddr>().ok(),
@@ -1202,7 +1217,7 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
         plan.info.pyrowave_burst_probe,
         settings.packet_size,
         settings.jumbo_frames,
-        plan.resume,
+        auto_reconnect,
     );
     // Before the launch: the PC refuses a probe while a stream or a launch is pending (#126).
     let launched = preflight_then_launch(
@@ -1243,7 +1258,11 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
             JumboPreflight::Skip(JumboSkip::NotAsked) => {}
             JumboPreflight::Skip(reason) => {
                 eprintln!("nightjar: jumbo video packets {}; streaming normal packets", reason.reason());
-                packet_size = reset_packet_size(route_packet_size, settings.packet_size);
+                packet_size = if auto_reconnect && reason == JumboSkip::Resume {
+                    resume_packet_size(plan.negotiated_packet_size, route_packet_size, settings.packet_size)
+                } else {
+                    reset_packet_size(route_packet_size, settings.packet_size)
+                };
             }
         },
         || {
@@ -1410,6 +1429,7 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
         height: outcome.config.height,
         fps: outcome.config.fps,
         bitrate_kbps: outcome.config.bitrate_kbps,
+        packet_size: outcome.config.packet_size,
         format: outcome.negotiated_video_format,
         host_timing: outcome.host_control_messages.contains(&HOST_TIMING_MESSAGE_TYPE),
         link_notice: outcome.host_control_messages.contains(&LINK_NOTICE_MESSAGE_TYPE),

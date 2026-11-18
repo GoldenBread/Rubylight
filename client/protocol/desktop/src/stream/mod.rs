@@ -193,6 +193,9 @@ pub struct LaunchPlan {
     /// Whether `app` is an entry of the PC's list; a resume of a game it does not list is not.
     pub listed: bool,
     pub resume: bool,
+    /// The video packet size the session being resumed negotiated (0 when none is known): a
+    /// reconnect carries it into the resume, which probes nothing while the old session may run.
+    pub negotiated_packet_size: u32,
     /// This resume joins the game the PC runs although the PC reports no game of this device's: the
     /// user chose Stream here too. `/resume` starts nothing, so a closed game stays closed.
     /// Only that start: a reconnect of it checks as any other (`rejoin`).
@@ -275,6 +278,8 @@ pub struct Facts {
     pub height: i32,
     pub fps: i32,
     pub bitrate_kbps: i32,
+    /// The video packet size the host set for this session, encryption header included.
+    pub packet_size: i32,
     pub format: u32,
     pub host_timing: bool,
     /// The host says when it lowers the video bitrate because of the network (0x5538).
@@ -1334,6 +1339,9 @@ impl Streaming {
             plan
         };
         plan.microphone_muted = self.microphone_muted;
+        // The packets the running session negotiated: a resume of it asks for the same size and
+        // probes nothing while the old one may still be live.
+        plan.negotiated_packet_size = self.facts.packet_size.max(0) as u32;
         // Automatic bitrate and the client-hint controller never run together; whichever owned the
         // rate leaves its cut. A Foundation PC's own controller cannot be told where to start
         // (`AbrRequest` has no starting rate), so its cut is not carried.

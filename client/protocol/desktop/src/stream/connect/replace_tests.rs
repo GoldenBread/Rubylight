@@ -20,6 +20,7 @@ pub(super) fn launch_plan() -> LaunchPlan {
             monitor_resume: false,
         },
         resume: false,
+        negotiated_packet_size: 0,
         join: false,
         small_stream_input_only: false,
         mic_only: false,
@@ -137,10 +138,17 @@ fn jumbo_is_probed_only_on_a_local_route_and_only_when_the_pc_offers_it() {
     assert_eq!(jumbo_preflight(Location::Local, None, 8192, false, 0, true, false), JumboPreflight::Skip(JumboSkip::NoProbe));
     // A forced size is capped at the PC's offer, not probed above it.
     assert_eq!(jumbo_preflight(Location::Local, None, 4096, true, 8192, false, false), JumboPreflight::Probe { candidate: 4096 });
-    // A resume keeps the packets the running session was launched with: the PC refuses a probe
-    // while it runs (#126), so a probe there only delayed the reconnect and fell back.
+    // An automatic reconnect keeps the packets the running session negotiated: the PC refuses a
+    // probe while it runs (#126), so a probe there only delayed the reconnect and fell back.
     assert_eq!(jumbo_preflight(Location::Local, None, 8192, true, 0, true, true), JumboPreflight::Skip(JumboSkip::Resume));
     assert_eq!(jumbo_preflight(Location::Local, None, 8192, true, 8192, false, true), JumboPreflight::Skip(JumboSkip::Resume));
+    // A manual resume of a running game is not an automatic reconnect and probes as before.
+    assert_eq!(jumbo_preflight(Location::Local, None, 8192, true, 0, true, false), JumboPreflight::Probe { candidate: 8192 });
+    // The resume's ANNOUNCE carries the negotiated size; an unknown one falls back to the route.
+    assert_eq!(resume_packet_size(8160, 1392, 0), 8160);
+    assert_eq!(resume_packet_size(8160, 1392, 1024), 8160);
+    assert_eq!(resume_packet_size(0, 1392, 8192), 1392);
+    assert_eq!(resume_packet_size(0, 1392, 1024), 1024);
     // A failed pre-flight hands a forced jumbo size back to the route, but keeps a stock run.
     assert_eq!(reset_packet_size(1024, 8192), 1024);
     assert_eq!(reset_packet_size(1392, 8192), 1392);
