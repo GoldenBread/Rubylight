@@ -187,6 +187,21 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
         return true;
     }
 
+    /**
+     * An automatic start (its wait for the network, its countdown), a press of Play that waits for the PC and a wake run
+     * on this page, and laying it out again would end them: a pause cancels each, and none is saved. The turn waits.
+     */
+    @Override
+    protected boolean holdsForm() {
+        return auto != Auto.OFF || playWhenReady || (waker != null && waker.isWaiting());
+    }
+
+    /** That work is over, or may be: the page asks again whether it was turned meanwhile. */
+    private void followTurnSoon() {
+        followFormSoon();
+        handler.post(this::followTurn);
+    }
+
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -460,6 +475,7 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
     private void endAuto() {
         auto = Auto.OFF;
         stopAutoLimit();
+        followTurnSoon();
     }
 
     /** An automatic start failed and says so: the player lands on Home, and the guard stays armed. */
@@ -524,6 +540,7 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
     protected void onResume() {
         super.onResume();
         shown = true;
+        followTurn();
         feed.resume();
         // The game may have started or ended while the stream was in front.
         loadedSignature = null;
@@ -566,11 +583,12 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
     /**
      * The page has a layout for each way of holding the device and handles the turn itself, so it is laid out again for
      * the new one. A turn that changes the form did that already; this is the turn that does not, a window under 600 dp
-     * wide on its side, which is a phone's form either way.
+     * wide on its side, which is a phone's form either way. A start or a wake under way keeps the page as it is
+     * ({@link #holdsForm}); it asks again when that ends, with each drawing of the page and on a resume.
      */
     private void followTurn() {
         int now = heldNow;
-        if (now == android.content.res.Configuration.ORIENTATION_UNDEFINED || now == laidOutFor || isFinishing() || isDestroyed() || recreatingForForm()) return;
+        if (now == android.content.res.Configuration.ORIENTATION_UNDEFINED || now == laidOutFor || isFinishing() || isDestroyed() || recreatingForForm() || holdsForm()) return;
         laidOutFor = now;
         recreate();
     }
@@ -743,6 +761,8 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
 
     @VisibleForTesting
     void render(GameDetailModel m, ComputerDetails computer) {
+        // A wake or a start that ended is drawn here: a turn it kept waiting is followed now.
+        if (heldNow != laidOutFor) followTurnSoon();
         title.setText(m.title);
         host.setText(m.hostName);
         setTitle(m.title);
@@ -959,6 +979,7 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
         if (waker != null) {
             waker.cancel();
         }
+        followTurnSoon();
     }
 
     /** Play on a PC that is away: send the wake packets, wait for it, and let {@link #show} carry on with the game. */

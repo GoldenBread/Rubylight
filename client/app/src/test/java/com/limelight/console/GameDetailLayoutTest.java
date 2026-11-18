@@ -211,7 +211,15 @@ public class GameDetailLayoutTest {
             // Under 600 dp wide it is a phone's form on its side as well: no change of form lays it out again.
             RuntimeEnvironment.setQualifiers("+w560dp-h320dp-land");
             assertEquals(com.limelight.ui.GlassForm.PHONE, com.limelight.ui.GlassForm.of(RuntimeEnvironment.getApplication()));
+            // Play waits for the PC to wake: laying the page out again would end that, so the turn waits for it.
+            org.robolectric.util.ReflectionHelpers.setField(page, "playWhenReady", true);
             controller.configurationChange(RuntimeEnvironment.getApplication().getResources().getConfiguration());
+            ShadowLooper.idleMainLooper(300, TimeUnit.MILLISECONDS);
+            assertEquals("the wait holds the page as it is", android.content.res.Configuration.ORIENTATION_PORTRAIT,
+                    (int) org.robolectric.util.ReflectionHelpers.getField(page, "laidOutFor"));
+            assertTrue("and still runs", (boolean) org.robolectric.util.ReflectionHelpers.getField(page, "playWhenReady"));
+            org.robolectric.util.ReflectionHelpers.callInstanceMethod(page, "cancelWake");
+            ShadowLooper.idleMainLooper(300, TimeUnit.MILLISECONDS);
             assertEquals("it asked to be laid out for the side", android.content.res.Configuration.ORIENTATION_LANDSCAPE,
                     (int) org.robolectric.util.ReflectionHelpers.getField(page, "laidOutFor"));
         } finally {
