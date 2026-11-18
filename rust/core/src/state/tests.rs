@@ -504,7 +504,7 @@ fn file_transfer_given_by_a_test_build_is_taken_back_once() {
     s.clients[0].perm |= FILE_BITS;
     s.save(&p).unwrap();
     let saved = load_json(&p, Value::Null).unwrap();
-    assert_eq!(saved["root"]["rubylight_state_version"], 2);
+    assert_eq!(saved["root"]["rubylight_state_version"], 3);
     let reloaded = PairedState::load(&p).unwrap();
     assert_eq!(perm_of(&reloaded, "Tested"), 0x071f1f00);
     // A later version's file is left as it is.
@@ -583,6 +583,47 @@ fn a_learned_demotion_from_extended_primary_is_dropped_once() {
         s.clients[0].extra["virtual_display_layout"],
         json!("extended")
     );
+}
+#[test]
+fn an_unmarked_extended_layout_learned_before_the_marker_yields_to_extended_primary() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("state.json");
+    let learned = crypto::Identity::generate().unwrap();
+    let picked = crypto::Identity::generate().unwrap();
+    let marked = crypto::Identity::generate().unwrap();
+    write_json(
+        &p,
+        &json!({"root":{"named_devices":[
+            {"name":"Learned","uuid":"a","cert":learned.certificate,
+             "virtual_display_layout":"extended"},
+            {"name":"Picked","uuid":"b","cert":picked.certificate,
+             "virtual_display_layout":"extended",
+             "virtual_display_layout_set_by_user":true},
+            {"name":"Marked","uuid":"c","cert":marked.certificate,
+             "virtual_display_layout":"extended",
+             "virtual_display_layout_learned_over":"exclusive"}
+        ]}}),
+    )
+    .unwrap();
+    let s = PairedState::load(&p).unwrap();
+    let extra = |name: &str| {
+        s.clients
+            .iter()
+            .find(|c| c.name == name)
+            .unwrap()
+            .extra
+            .clone()
+    };
+    // 2.4.1 to 2.5.1 learned this "extended" before the marker existed: marking it learned
+    // over "extended" lets a host or app that asks for "extended_primary" win again.
+    assert_eq!(extra("Learned")[LEARNED_OVER], json!("extended"));
+    assert_eq!(
+        extra("Learned")["virtual_display_layout"],
+        json!("extended")
+    );
+    // A layout the user picked, and one already marked, are left as they are.
+    assert!(!extra("Picked").contains_key(LEARNED_OVER));
+    assert_eq!(extra("Marked")[LEARNED_OVER], json!("exclusive"));
 }
 fn console_client(n: u8, username: &str) -> Client {
     let id = format!("{n:02x}").repeat(16);
