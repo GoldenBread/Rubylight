@@ -2415,9 +2415,23 @@ impl Streaming {
                 guard.tearing, guard.planned, guard.protected);
         }
         lock(&self.shared.roam_watch).take();
-        self.session.stop();
+        // `Session::stop` joins the receive, decode and audio threads, which can wait on a socket
+        // timeout or a decoder call: a reaper thread stops it while the launcher comes back.
+        let session = self.session;
+        spawn_background(move || session.stop());
         self.host_abr_stop.take()
     }
+}
+
+/// Runs `work` on a thread of its own, for teardown that may block on a socket, a decoder or an
+/// audio device. The UI thread never waits for it.
+fn spawn_background(work: impl FnOnce() + Send + 'static) {
+    let _ = std::thread::Builder::new().name("nightjar teardown".into()).spawn(work);
+}
+
+/// Stops a stream on a reaper thread (`spawn_background`), for a session that is not `finish`ed.
+pub(crate) fn reap_session(session: Session) {
+    spawn_background(move || session.stop());
 }
 
 /// The file Settings → Advanced → Export latency CSV saves, in the statistics folder.

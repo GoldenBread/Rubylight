@@ -1096,3 +1096,14 @@ fn a_reconfigured_rate_is_confirmed_by_the_hosts_frame_timestamps() {
     assert!(!shows_rate(0, 60_000));
     assert!(!shows_rate(1500, 0), "no rate to confirm");
 }
+
+#[test]
+fn teardown_runs_off_the_calling_thread() {
+    let caller = std::thread::current().id();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    crate::stream::spawn_background(move || {
+        let _ = sender.send(std::thread::current().id());
+    });
+    let ran_on = receiver.recv_timeout(std::time::Duration::from_secs(10)).expect("teardown runs");
+    assert_ne!(ran_on, caller, "a session's stop joins its threads, never on the UI thread");
+}

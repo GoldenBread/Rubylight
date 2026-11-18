@@ -217,7 +217,7 @@ impl Connecting {
         match self.result.recv_timeout(wait) {
             Ok(Ok((session, _, _))) => {
                 lock(&self.shared.roam_watch).take();
-                session.stop();
+                super::reap_session(session);
             }
             Ok(Err(_)) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => return false,
@@ -274,7 +274,7 @@ impl Connecting {
             Ok(Ok((session, facts, plan))) => {
                 if expired {
                     lock(&self.shared.roam_watch).take();
-                    session.stop();
+                    super::reap_session(session);
                     Err(ConnectFailed::Message(recovery_gave_up(lock(&self.shared.last_failure).as_deref())))
                 } else {
                     self.plan = plan;
