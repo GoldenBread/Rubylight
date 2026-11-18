@@ -415,6 +415,17 @@ pub enum Publish {
     Wait(Instant),
 }
 
+/// Where the slot that was due at `due` counts from when it was filled at
+/// `now`: `due` itself while the fill was less than a period late (the next
+/// slot stays on the grid), `now` otherwise, or when filled before `due`.
+pub fn grid_next(due: Instant, now: Instant, period: Duration) -> Instant {
+    if now >= due && now - due < period {
+        due
+    } else {
+        now
+    }
+}
+
 impl ConstantRate {
     /// The next slot: one period after the last publication. `None` before the
     /// first picture, so nothing is repeated that was never captured.
@@ -427,6 +438,17 @@ impl ConstantRate {
     /// the slots it missed.
     pub fn published(&mut self, at: Instant) {
         self.last = Some(at);
+    }
+
+    /// A repeat was published at `now`. The next slot follows the grid of the
+    /// slot it filled, so the loop's wake-up latency does not add up to a
+    /// slower stream; a repeat a period or more late (a stall) starts the grid
+    /// over at `now`, still one picture and never a burst.
+    pub fn repeated(&mut self, now: Instant, period: Duration) {
+        self.last = Some(match self.due(period) {
+            Some(due) => grid_next(due, now, period),
+            None => now,
+        });
     }
 
     /// What to do with a picture at `now`. A new composition is never held
