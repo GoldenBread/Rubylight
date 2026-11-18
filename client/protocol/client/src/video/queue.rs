@@ -17,18 +17,40 @@ pub const FEC_STATUS_TYPE: u16 = 0x5502;
 /// No speculative RFI for 5 minutes after out-of-order data or a wrong loss prediction.
 const SPECULATIVE_RFI_COOLDOWN_PERIOD_US: u64 = 300_000_000;
 
-/// Frames a host may skip while streaming before the frame number is a discontinuity: 240 frames
-/// is 4 s at 60 fps, longer than any loss the queue recovers from.
+/// Frames a host may skip while streaming before the frame number is a jump: 240 frames is 4 s at
+/// 60 fps, longer than any loss or reordering the queue rides out.
 const MAX_FRAME_JUMP: u32 = 240;
-/// Packets a host may skip while streaming before the sequence number is a discontinuity: more
-/// than the 3,632 packets of the largest FEC block.
+/// Packets a host may skip while streaming before the sequence number is a jump: more than the
+/// 3,632 packets of the largest FEC block.
 const MAX_SEQ_JUMP: u32 = 4096;
+/// Packets the largest frame can carry: four blocks of at most 3,632 packets.
+const MAX_FRAME_PACKETS: u32 = 4 * 3632;
+/// Datagrams that must agree on a far-behind position before the queue follows it: a straggler
+/// is one datagram, a replay repeats itself, a host whose counters restarted keeps sending from
+/// there.
+const REWIND_CONFIRM: u8 = 3;
 
-/// Whether `x` is more than `limit` away from `y` in either direction of the 16-bit wrapping
-/// order that hosts count frame and RTP sequence numbers in.
-fn jumps16(x: u32, y: u32, limit: u32) -> bool {
+/// How far `x` is ahead of `y` in the 16-bit wrapping order that hosts count frame and RTP
+/// sequence numbers in: 0 when `x` is not ahead.
+fn ahead16(x: u32, y: u32) -> u32 {
     let ahead = x.wrapping_sub(y) & 0xFFFF;
-    ahead > limit && ahead < 0x1_0000 - limit
+    if ahead < 0x8000 {
+        ahead
+    } else {
+        0
+    }
+}
+
+/// A position far behind the queue's that its datagrams kept coming from: a host whose frame
+/// counters restarted (a new stream in place), or an old position played again. Followed only
+/// once datagrams agree on it (`REWIND_CONFIRM`); until then the queue stays where it is and the
+/// datagrams are dropped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Rewind {
+    frame: u32,
+    seq: u16,
+    /// Datagrams seen agreeing with it, this one included.
+    count: u8,
 }
 
 pub(super) struct RtpQueue {
@@ -56,6 +78,8 @@ pub(super) struct RtpQueue {
     current_frame: u32,
     /// A block started: from here on the frame and sequence numbers have a position to jump from.
     started: bool,
+    /// A far-behind position its datagrams kept coming from, while it is not followed yet.
+    rewind: Option<Rewind>,
 
     multi_fec_capable: bool,
     current_block: u8,
@@ -106,6 +130,7 @@ impl RtpQueue {
             reported_lost_frame: false,
             current_frame: 1,
             started: false,
+            rewind: None,
             multi_fec_capable: config.at_least(7, 1, 431),
             current_block: 0,
             last_block: 0,
@@ -128,23 +153,55 @@ impl RtpQueue {
         self.current_frame
     }
 
-    /// Whether this datagram's frame or sequence number is farther from the queue's position than
-    /// a host that keeps streaming jumps. Such a counter is corrupt, stale or a new stream's, not
-    /// loss: a host wraps its frame and RTP sequence numbers, so only their low 16 bits say how
-    /// far apart two of them are. PyroWave records keep their own recovery (and full 32-bit frame
-    /// numbers), so they are left as they were.
-    fn is_discontinuity(&self, frame: u32, seq: u16) -> bool {
-        self.frame_is_a_jump(frame)
-            || (self.started
-                && !self.records
-                && jumps16(seq.into(), self.next_contiguous_seq.into(), MAX_SEQ_JUMP))
+    /// Whether `frame` is more than `MAX_FRAME_JUMP` frames behind the queue's position: the
+    /// counters went back, they did not slip. A straggler from the last seconds of a stream, or
+    /// a packet replayed from them, is within a handful of frames; a host whose counters
+    /// restarted starts a position far behind. The encrypted path checks it before decrypting,
+    /// so an old frame it lets through is decided on after decryption.
+    pub(super) fn is_rewind(&self, frame: u32) -> bool {
+        self.started && !self.records && ahead16(self.current_frame, frame) > MAX_FRAME_JUMP
     }
 
-    /// [`is_discontinuity`](Self::is_discontinuity) on the frame number alone, for the encrypted
-    /// path's early drop of a frame already reassembled, which runs before the queue sees
-    /// anything but the clear frame number.
-    pub(super) fn frame_is_a_jump(&self, frame: u32) -> bool {
-        self.started && !self.records && jumps16(frame, self.current_frame, MAX_FRAME_JUMP)
+    /// Whether this datagram continues the far-behind position being seen: it advances it by at
+    /// most a frame and a frame's packets. A datagram replayed, repeated or gone back does not.
+    fn continues_rewind(&self, frame: u32, seq: u16) -> bool {
+        let Some(rewind) = self.rewind else { return false };
+        let frames = ahead16(frame, rewind.frame);
+        let packets = ahead16(seq.into(), rewind.seq.into());
+        (frames > 0 || packets > 0) && frames <= 1 && packets <= MAX_SEQ_JUMP
+    }
+
+    /// Notes a datagram at a far-behind position and returns whether enough datagrams have agreed
+    /// on it to follow it. A single straggler or a replay never lasts long enough.
+    fn confirm_rewind(&mut self, frame: u32, seq: u16) -> bool {
+        let count = if self.continues_rewind(frame, seq) {
+            self.rewind.map_or(1, |rewind| rewind.count.saturating_add(1))
+        } else {
+            1
+        };
+        self.rewind = Some(Rewind { frame, seq, count });
+        if count < REWIND_CONFIRM {
+            return false;
+        }
+        self.rewind = None;
+        true
+    }
+
+    /// Whether a forward jump is a counter no streaming host produces rather than loss: the frame
+    /// and sequence numbers disagree about how far the stream went. A burst of loss advances both
+    /// together, since each lost frame carries one to four blocks of at most 3,632 packets, so
+    /// only a jump past both bounds is looked at. False for a frame or sequence number that went
+    /// backwards (a straggler) and for PyroWave records, which keep their own recovery.
+    fn forward_jump_disagrees(&self, frame: u32, seq: u16) -> bool {
+        if !self.started || self.records || is_before16(frame, self.current_frame) {
+            return false;
+        }
+        let frames = ahead16(frame, self.current_frame);
+        let packets = ahead16(seq.into(), self.next_contiguous_seq.into());
+        if frames <= MAX_FRAME_JUMP && packets <= MAX_SEQ_JUMP {
+            return false;
+        }
+        packets > (frames + 1) * MAX_FRAME_PACKETS || frames > packets + 1
     }
 
     /// Starts the block this datagram begins: the queue's position moves to `frame`, and the
@@ -621,14 +678,15 @@ impl RtpQueue {
         } else {
             0
         };
-        let starts_block =
-            self.pending.is_empty() || self.current_frame != frame || self.current_block != block;
-        // A counter jump past the bounds is a discontinuity that `add_packet` resyncs the queue
-        // on, so it is not dropped here with the duplicates and finished blocks.
-        if starts_block && self.is_discontinuity(frame, seq) {
+        // A far-behind position reaches `add_packet`, which counts it: a straggler or a replay is
+        // dropped there unless its datagrams keep agreeing on the position.
+        if self.is_rewind(frame) {
             return false;
         }
-        is_before16(seq.into(), self.next_contiguous_seq.into())
+        // A new frame resets the block window from its own sequence number, so one behind the
+        // last is no duplicate; the frame being assembled keeps the check.
+        let fresh_frame = frame != self.current_frame && !is_before16(frame, self.current_frame);
+        (!fresh_frame && is_before16(seq.into(), self.next_contiguous_seq.into()))
             || is_before16(frame, self.current_frame)
             || (frame == self.current_frame && block < self.current_block)
     }
@@ -650,15 +708,6 @@ impl RtpQueue {
         } else {
             0
         };
-        let starts_block =
-            self.pending.is_empty() || self.current_frame != frame || self.current_block != block;
-        // A counter jump no streaming host makes is a discontinuity, not loss: resync on it
-        // rather than rejecting every packet that follows, which would freeze the picture until
-        // the counter catches up.
-        let discontinuity = starts_block && self.is_discontinuity(frame, packet.seq);
-        if is_before16(packet.seq.into(), self.next_contiguous_seq.into()) && !discontinuity {
-            return Err(packet);
-        }
         if !self.multi_fec_capable {
             packet.buf[offset + 10] = 0x10;
             packet.buf[offset + 11] = 0;
@@ -666,72 +715,100 @@ impl RtpQueue {
         let fec_info = le32(&packet.buf, offset + 12);
         let blocks = packet.buf[offset + 11];
 
-        if is_before16(frame, self.current_frame) && !discontinuity {
-            return Err(packet);
-        }
-
-        if frame == self.current_frame && block < self.current_block && !discontinuity {
-            return Err(packet);
-        }
-
-        // Start a new block when the queue is empty after a delivery or when the next frame or
-        // block begins before this one completed.
-        if discontinuity {
-            // Drop what was in flight: the counters say it belongs to another stream or another
-            // stretch of frames and cannot be joined to this datagram. Nothing is counted lost,
-            // and the key frame asked for recovers the picture.
+        if self.is_rewind(frame) {
+            // The counters went back instead of slipping: a straggler or a replay is dropped
+            // unless datagrams keep coming from the position, as after a host reset they do.
+            if !self.confirm_rewind(frame, packet.seq) {
+                return Err(packet);
+            }
             self.purge_pending(io);
             self.purge_completed(depacketizer, io);
             depacketizer.resync(frame, io);
             self.start_block(frame, block, blocks, fec_info, packet.seq, io);
-        } else if starts_block {
-            if !self.pending.is_empty() {
-                self.report_fec_status(io);
-                self.finish_fec_block(io, true);
-                // Losing one block loses the rest of its frame.
-                if self.last_block != 0 && self.current_frame == frame {
+        } else {
+            self.rewind = None;
+            let starts_block =
+                self.pending.is_empty() || self.current_frame != frame || self.current_block != block;
+            // A jump past both bounds that only a burst of loss explains is loss, counted and
+            // invalidated by the block start below; one the counters disagree on is a
+            // discontinuity. Resyncing on it stops every real packet after it looking "before".
+            let discontinuity = starts_block && self.forward_jump_disagrees(frame, packet.seq);
+            // A new frame resets the block window from its own sequence number, so one behind the
+            // last is no duplicate of the frame being assembled.
+            let fresh_frame =
+                frame != self.current_frame && !is_before16(frame, self.current_frame);
+            if is_before16(packet.seq.into(), self.next_contiguous_seq.into())
+                && !discontinuity
+                && !fresh_frame
+            {
+                return Err(packet);
+            }
+            if is_before16(frame, self.current_frame) && !discontinuity {
+                return Err(packet);
+            }
+            if frame == self.current_frame && block < self.current_block && !discontinuity {
+                return Err(packet);
+            }
+
+            // Start a new block when the queue is empty after a delivery or when the next frame or
+            // block begins before this one completed.
+            if discontinuity {
+                // Drop what was in flight: the counters say it belongs to another stream or
+                // another stretch of frames and cannot be joined to this datagram. Nothing is
+                // counted lost, and the key frame asked for recovers the picture.
+                self.purge_pending(io);
+                self.purge_completed(depacketizer, io);
+                depacketizer.resync(frame, io);
+                self.start_block(frame, block, blocks, fec_info, packet.seq, io);
+            } else if starts_block {
+                if !self.pending.is_empty() {
+                    self.report_fec_status(io);
+                    self.finish_fec_block(io, true);
+                    // Losing one block loses the rest of its frame.
+                    if self.last_block != 0 && self.current_frame == frame {
+                        self.purge_pending(io);
+                        self.purge_completed(depacketizer, io);
+                        if !self.reported_lost_frame {
+                            self.notify_frame_lost(depacketizer, io, self.current_frame, false);
+                        }
+                        self.current_frame = self.current_frame.wrapping_add(1);
+                        self.current_block = 0;
+                        self.reported_lost_frame = false;
+                        return Err(packet);
+                    }
+                }
+
+                // A block must continue the current frame or start the next frame at block 0.
+                let expected = if self.current_frame == frame {
+                    self.current_block
+                } else {
+                    0
+                };
+                if block != expected {
+                    self.report_fec_status(io);
                     self.purge_pending(io);
                     self.purge_completed(depacketizer, io);
                     if !self.reported_lost_frame {
-                        self.notify_frame_lost(depacketizer, io, self.current_frame, false);
+                        self.notify_frame_lost(depacketizer, io, frame, false);
                     }
-                    self.current_frame = self.current_frame.wrapping_add(1);
+                    self.current_frame = frame.wrapping_add(1);
                     self.current_block = 0;
                     self.reported_lost_frame = false;
                     return Err(packet);
                 }
-            }
 
-            // A block must continue the current frame or start the next frame at block 0.
-            let expected = if self.current_frame == frame {
-                self.current_block
-            } else {
-                0
-            };
-            if block != expected {
-                self.report_fec_status(io);
                 self.purge_pending(io);
-                self.purge_completed(depacketizer, io);
-                if !self.reported_lost_frame {
-                    self.notify_frame_lost(depacketizer, io, frame, false);
+                if self.current_frame != frame {
+                    self.purge_completed(depacketizer, io);
+                    // A whole frame went missing. The frame before this one may already have been
+                    // reported by the speculative RFI logic.
+                    if self.current_frame.wrapping_add(1) != frame || !self.reported_lost_frame {
+                        self.notify_frame_lost(depacketizer, io, frame.wrapping_sub(1), false);
+                    }
                 }
-                self.current_frame = frame.wrapping_add(1);
-                self.current_block = 0;
-                self.reported_lost_frame = false;
-                return Err(packet);
-            }
 
-            self.purge_pending(io);
-            if self.current_frame != frame {
-                self.purge_completed(depacketizer, io);
-                // A whole frame went missing. The frame before this one may already have been
-                // reported by the speculative RFI logic.
-                if self.current_frame.wrapping_add(1) != frame || !self.reported_lost_frame {
-                    self.notify_frame_lost(depacketizer, io, frame.wrapping_sub(1), false);
-                }
+                self.start_block(frame, block, blocks, fec_info, packet.seq, io);
             }
-
-            self.start_block(frame, block, blocks, fec_info, packet.seq, io);
         }
 
         if is_before16(self.buffer_highest_seq.into(), packet.seq.into()) {
@@ -827,21 +904,35 @@ mod tests {
         }
     }
 
-    /// A lost frame or a damaged packet is not a jump; a counter tens of thousands away is, in
-    /// either direction, and a host whose counters wrapped stays adjacent.
+    /// The 16-bit order hosts count in: a wrapped counter is adjacent, and only the half-range
+    /// ahead of a position counts as ahead of it.
     #[test]
-    fn a_counter_jump_is_a_discontinuity_only_past_its_bound() {
-        assert!(!jumps16(2, 1, MAX_FRAME_JUMP), "one frame lost");
-        assert!(!jumps16(1 + MAX_FRAME_JUMP, 1, MAX_FRAME_JUMP), "at the bound");
-        assert!(jumps16(2 + MAX_FRAME_JUMP, 1, MAX_FRAME_JUMP), "past the bound");
-        assert!(jumps16(10_002, 2, MAX_FRAME_JUMP), "a wrong frame number ahead");
-        assert!(jumps16(2, 10_002, MAX_FRAME_JUMP), "a stale frame number behind");
-        assert!(!jumps16(65_536, 65_535, MAX_FRAME_JUMP), "the 16-bit frame wrap");
-        assert!(!jumps16(3, 65_535, MAX_FRAME_JUMP), "across the wrap");
-        assert!(!jumps16(2, 1, MAX_SEQ_JUMP), "one packet lost");
-        assert!(jumps16(5_000, 1, MAX_SEQ_JUMP), "a wrong sequence number ahead");
-        assert!(jumps16(1, 5_000, MAX_SEQ_JUMP), "a stale sequence number behind");
-        assert!(!jumps16(65_539, 65_535, MAX_SEQ_JUMP), "the 16-bit sequence wrap");
+    fn a_counter_is_ahead_only_within_half_the_16_bit_order() {
+        assert_eq!(ahead16(2, 1), 1, "one frame on");
+        assert_eq!(ahead16(1, 2), 0, "behind is not ahead");
+        assert_eq!(ahead16(0x1_0000, 0xFFFF), 1, "a host's counter wraps");
+        assert_eq!(ahead16(3, 0xFFFF), 4, "across the wrap");
+        assert_eq!(ahead16(0x7FFF, 0), 0x7FFF, "just within half the range");
+        assert_eq!(ahead16(0x8000, 0), 0, "half the range away is not ahead");
+    }
+
+    /// A burst of loss advances the frame and sequence counters together; only a jump that one
+    /// counter cannot explain is a discontinuity.
+    #[test]
+    fn a_jump_agrees_only_as_far_as_frames_can_carry_packets() {
+        let mut queue = queue_at(0);
+        queue.seek(100);
+        queue.next_contiguous_seq = 1_000;
+        // Six frames and 6,250 packets: a 100 ms burst at 500 Mbps, which those frames carry.
+        assert!(!queue.forward_jump_disagrees(106, 7_250));
+        // A frame counter that jumped with no packets behind it is no burst.
+        assert!(queue.forward_jump_disagrees(10_000, 1_001));
+        // Nor is a sequence counter that outran what the frames can carry.
+        assert!(queue.forward_jump_disagrees(101, 31_000));
+        // Below both bounds it is ordinary loss.
+        assert!(!queue.forward_jump_disagrees(101, 2_000));
+        // A frame that went backwards is a straggler, not a forward jump.
+        assert!(!queue.forward_jump_disagrees(99, 5_000));
     }
 
     /// A duplicate after a reordered packet is rejected, inside the contiguous run or behind it.
