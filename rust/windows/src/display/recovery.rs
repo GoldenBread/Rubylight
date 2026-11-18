@@ -247,6 +247,11 @@ impl Snapshot {
             let Some(m) = monitors.iter().find(|m| m.device_id == n.device_id) else {
                 continue;
             };
+            // Issue #129: apps open before an exclusive stream came back oversized.
+            // Read the scale Windows gave the display as it came back on, and again
+            // after its mode, so a log shows whether the scale moved on the way back.
+            let saved_scale = self.scale.get(&n.device_id).copied();
+            let switched_on = saved_scale.map(|_| dpi_scale(m).ok());
             let mut step = |what: &str, result: Result<()>| {
                 if let Err(error) = result {
                     failures.push(format!(
@@ -270,8 +275,19 @@ impl Snapshot {
             if let Some(enabled) = self.hdr.get(&n.device_id) {
                 step(&format!("HDR {enabled}"), set_hdr(m, *enabled));
             }
-            if let Some(percent) = self.scale.get(&n.device_id) {
-                step(&format!("scale {percent}%"), set_dpi_scale(m, *percent));
+            if let Some(percent) = saved_scale {
+                let after_mode = dpi_scale(m).ok();
+                if scale_moved(percent, switched_on.flatten(), after_mode) {
+                    tracing::info!(
+                        display = %n.label,
+                        output = %m.display_name,
+                        saved = percent,
+                        switched_on = ?switched_on.flatten(),
+                        after_mode = ?after_mode,
+                        "a display came back at another Windows scale; putting the saved one back"
+                    );
+                }
+                step(&format!("scale {percent}%"), set_dpi_scale(m, percent));
             }
         }
         // set_active gave every display its own desktop source. Join clone
@@ -329,6 +345,16 @@ impl Snapshot {
         }
         Ok(())
     }
+}
+
+/// Whether a restored display showed a scale other than the `saved` one on its way
+/// back: as it came back on, or after its mode. A scale that could not be read is
+/// no evidence either way.
+fn scale_moved(saved: u32, switched_on: Option<u32>, after_mode: Option<u32>) -> bool {
+    [switched_on, after_mode]
+        .into_iter()
+        .flatten()
+        .any(|seen| seen != saved)
 }
 
 const RESTORED_EXCEPT: &str = "display layout restored except";
