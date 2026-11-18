@@ -483,21 +483,23 @@ pub(crate) fn legacy_host_layout(config: &Config) -> &str {
     config.get("virtual_display_layout", "exclusive")
 }
 
+/// Both primary layouts make the stream's display the main screen.
+fn primary_layout(layout: &str) -> bool {
+    matches!(layout, "extended_primary" | "extended_primary_isolated")
+}
+
 /// Give a device's unmarked "extended" layout from before the marker existed its meaning back.
 /// [`LEARNED_OVER`] records what a stream's learned layout replaced, and [`SET_BY_USER`] a
 /// pick made in Devices; neither existed for a layout learned on 2.4.1 to 2.5.9, nor for a
 /// pick made before 3.0.0, so the two cannot be told apart. A host that asks for a primary
 /// layout wins over it: the stream was after the main screen and the learned value is the
 /// likely source (issue #33). Otherwise the layout stays, learned over the host's layout, so it
-/// follows the host until that layout changes, and an app that asks for the primary still gets
-/// it while the others keep "extended". Returns the devices whose layout changed.
+/// follows that layout until it changes, and an app that asks for the primary still gets it
+/// while the others keep "extended". Returns the devices whose layout changed.
 pub(crate) fn migrate_legacy_extended_layouts(
     clients: &mut [butterpollo_core::state::Client],
     host_layout: &str,
 ) -> Vec<String> {
-    // Both primary layouts make the stream's display the main screen.
-    let asks_primary =
-        |layout: &str| matches!(layout, "extended_primary" | "extended_primary_isolated");
     let mut changed = Vec::new();
     for client in clients {
         let layout = client
@@ -512,7 +514,7 @@ pub(crate) fn migrate_legacy_extended_layouts(
         if layout != Some("extended") || client.extra.contains_key(LEARNED_OVER) || chosen {
             continue;
         }
-        if asks_primary(host_layout) {
+        if primary_layout(host_layout) {
             tracing::info!(
                 device = %client.name,
                 "the \"extended\" layout learned before the marker existed was Windows moving the primary; the device follows the host layout again"
@@ -534,12 +536,16 @@ pub(crate) fn migrate_legacy_extended_layouts(
 }
 
 /// The one-time console notice for the devices [`migrate_legacy_extended_layouts`] changed: the
-/// user can pick a device's layout again under Devices to keep it whatever the host uses.
-pub(crate) fn legacy_layout_notice(devices: &[String]) -> String {
-    format!(
-        "Older display layouts were updated for {}. They now follow the host's display layout; pick one again under Devices if you want it kept.",
-        devices.join(", ")
-    )
+/// host layout is the same for all of them, so one branch says what happened to every device.
+pub(crate) fn legacy_layout_notice(devices: &[String], host_layout: &str) -> String {
+    let devices = devices.join(", ");
+    if primary_layout(host_layout) {
+        format!("{devices} follow the host's display layout again.")
+    } else {
+        format!(
+            "{devices} keep Extend, now marked as learned: an app's own layout or a later change of the host's layout replaces it. Pick it again under Devices to keep it everywhere."
+        )
+    }
 }
 
 /// What the client asked the PC's displays to do for this stream (the
@@ -615,8 +621,17 @@ struct ModeReportState {
     unrepaired: Option<String>,
     /// Why the stream's display could not be made the primary one again, until it is.
     primary_refused: Option<String>,
-    /// Windows kept taking the primary back: this stream leaves it where Windows puts it.
-    primary_stopped: bool,
+    /// Why this stream leaves the primary where Windows puts it: Windows refused the layout,
+    /// or kept taking the primary back.
+    primary_stopped: Option<PrimaryStop>,
+}
+/// Why the primary watch stopped for the stream, for the card that says so.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PrimaryStop {
+    /// Windows refused the layout, or accepted it without moving the primary.
+    Refused,
+    /// Windows kept taking the primary back after restores.
+    KeptTaking,
 }
 impl ModeReportState {
     fn report(&self) {
@@ -658,8 +673,14 @@ impl ModeReportState {
             Some(error) => self.warnings.set("display_primary", format!("Windows kept another display as the main screen and the virtual display could not be made the main one again ({error}), so games open on your monitor instead of the stream. Set the virtual display layout to Exclusive for this device, or make the virtual display the main screen in Windows display settings and reconnect.")),
             None => self.warnings.clear("display_primary"),
         }
-        if self.primary_stopped {
-            self.warnings.set("display_primary_kept", "Windows kept taking the main screen back, so Rubylight leaves it where Windows puts it for the rest of the stream. Games open on your monitor instead of the stream; choose Exclusive for this device, or keep the virtual display as the main screen in Windows display settings.");
+        if let Some(stop) = self.primary_stopped {
+            let what = match stop {
+                PrimaryStop::Refused => {
+                    "Windows refused to make the virtual display the main screen again"
+                }
+                PrimaryStop::KeptTaking => "Windows kept taking the main screen back",
+            };
+            self.warnings.set("display_primary_kept", format!("{what}, so Rubylight leaves it where Windows puts it for the rest of the stream. Games open on your monitor instead of the stream; choose Exclusive for this device, or keep the virtual display as the main screen in Windows display settings."));
         } else {
             self.warnings.clear("display_primary_kept");
         }
@@ -678,7 +699,7 @@ impl ModeReport {
             unrepaired_at_start: None,
             unrepaired: None,
             primary_refused: None,
-            primary_stopped: false,
+            primary_stopped: None,
         })))
     }
     /// What Windows recalled when this stream's display arrived could not be put back.
@@ -705,10 +726,11 @@ impl ModeReport {
     fn start_layout_restored(&self) {
         self.0.lock().unwrap().warnings.clear("display_layout");
     }
-    /// Windows kept taking the primary back: this stream leaves it where Windows puts it.
-    fn primary_gave_up(&self) {
+    /// The primary watch stopped: this stream leaves the primary where Windows puts it, and
+    /// the card says whether Windows refused the layout or kept taking the primary back.
+    fn primary_gave_up(&self, why: PrimaryStop) {
         let mut state = self.0.lock().unwrap();
-        state.primary_stopped = true;
+        state.primary_stopped = Some(why);
         state.report();
     }
     /// How putting back what Windows recalled when a display left went.
@@ -2100,7 +2122,7 @@ impl Prepared {
                     self.clear_start_primary_warning();
                     if stopped {
                         tracing::warn!(output = %self.output, "Windows keeps taking the main screen back; leaving the primary where Windows moves it for the rest of the stream");
-                        self.mode_report.primary_gave_up();
+                        self.mode_report.primary_gave_up(PrimaryStop::KeptTaking);
                     }
                 } else {
                     let problem = match after {
@@ -2134,7 +2156,7 @@ impl Prepared {
         self.mode_report.primary_refused(&problem);
         if stopped {
             tracing::warn!(output = %self.output, "Windows keeps refusing the main screen; leaving the primary where Windows puts it for the rest of the stream");
-            self.mode_report.primary_gave_up();
+            self.mode_report.primary_gave_up(PrimaryStop::Refused);
         }
     }
     fn create(

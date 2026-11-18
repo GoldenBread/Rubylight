@@ -813,13 +813,14 @@ impl Host {
         // a stream's layout replaced is either one a stream learned (2.4.1 to 2.5.9) or a
         // pick made in Devices before 3.0.0, which look the same. A host that asks for the
         // primary wins over it, as the stream was after the main screen (issue #33);
-        // otherwise it stays learned over the host's layout, so the host follows it until
-        // that layout changes and an app that asks for the primary still gets it. The
+        // otherwise it stays, learned over the host's layout, so the device follows that
+        // layout until you change it and an app that asks for the primary still gets it. The
         // console names the devices that changed.
         if paired.document["root"]["legacy_extended_layout_migrated"].as_bool() != Some(true) {
+            let host_layout = crate::display_session::legacy_host_layout(&config);
             let changed = crate::display_session::migrate_legacy_extended_layouts(
                 &mut paired.clients,
-                crate::display_session::legacy_host_layout(&config),
+                host_layout,
             );
             paired.document["root"]["legacy_extended_layout_migrated"] = true.into();
             if !changed.is_empty() {
@@ -827,7 +828,7 @@ impl Host {
                     &directory,
                     &warnings,
                     "display_layout_learned",
-                    &crate::display_session::legacy_layout_notice(&changed),
+                    &crate::display_session::legacy_layout_notice(&changed, host_layout),
                 );
             }
         }

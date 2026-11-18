@@ -774,6 +774,7 @@ fn an_older_device_layout_becomes_learned_once_with_a_notice() {
         "{}",
         notice.message
     );
+    assert!(notice.message.contains("keep Extend"), "{}", notice.message);
     assert!(
         notice.message.contains("under Devices"),
         "{}",

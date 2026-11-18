@@ -2327,10 +2327,18 @@ fn a_picked_or_already_marked_legacy_layout_is_left_alone() {
 }
 
 #[test]
-fn the_legacy_layout_notice_names_every_changed_device() {
-    let notice = legacy_layout_notice(&["Steam Deck".into(), "Phone".into()]);
-    assert!(notice.contains("Steam Deck, Phone"), "{notice}");
-    assert!(notice.contains("under Devices"), "{notice}");
+fn the_legacy_layout_notice_says_which_branch_happened() {
+    let devices = ["Steam Deck".to_owned(), "Phone".to_owned()];
+    // Kept: the host does not ask for the primary, so the device keeps Extend as learned.
+    let kept = legacy_layout_notice(&devices, "exclusive");
+    assert!(kept.starts_with("Steam Deck, Phone keep Extend"), "{kept}");
+    assert!(kept.contains("marked as learned"), "{kept}");
+    assert!(kept.contains("under Devices"), "{kept}");
+    // Removed: the host asks for the primary, so the device follows the host layout.
+    assert_eq!(
+        legacy_layout_notice(&devices, "extended_primary"),
+        "Steam Deck, Phone follow the host's display layout again."
+    );
 }
 
 #[test]
@@ -2808,14 +2816,22 @@ fn a_layout_windows_accepted_but_that_left_the_primary_is_not_restored() {
 fn a_primary_windows_keeps_taking_back_stays_on_the_card() {
     let warnings = Arc::new(Warnings::default());
     let report = ModeReport::new(warnings.clone(), (None, None, None), 60_000);
-    report.primary_gave_up();
+    report.primary_gave_up(PrimaryStop::KeptTaking);
     assert_eq!(codes(&warnings), ["display_primary_kept"]);
     let message = &warnings.snapshot()[0].message;
-    assert!(message.contains("main screen"), "{message}");
+    assert!(
+        message.contains("kept taking the main screen back"),
+        "{message}"
+    );
     assert!(message.contains("Exclusive"), "{message}");
     // It is not a refusal to retry: clearing the refusal leaves the stream's last word.
     report.primary_restored();
     assert_eq!(codes(&warnings), ["display_primary_kept"]);
+    // A restore Windows refused says so instead: it never had the main screen.
+    report.primary_gave_up(PrimaryStop::Refused);
+    let message = &warnings.snapshot()[0].message;
+    assert!(message.contains("refused"), "{message}");
+    assert!(!message.contains("kept taking"), "{message}");
 }
 #[test]
 fn only_a_primary_the_layout_makes_for_this_stream_is_watched() {

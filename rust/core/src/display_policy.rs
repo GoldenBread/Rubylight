@@ -1212,9 +1212,10 @@ impl PrimaryWatch {
     }
     /// Windows did not take the layout back, or accepted it without moving the primary: wait
     /// [`LayoutWatch::RETRY`] before asking again, and count the refusal the way a restore is
-    /// counted: true when the watch stops for the stream. This arm's window is extended once
-    /// so a retry has its settle, and the arm stops after [`Self::ATTEMPTS`] restores whatever
-    /// [`Self::RETURNS`] would say, as a start or session change never reaches it.
+    /// counted: true when the watch stops for the rest of the stream. This arm's window is
+    /// extended once so a retry has its settle, and the arm stops after [`Self::ATTEMPTS`]
+    /// restores whatever [`Self::RETURNS`] would say, as a start or session change never
+    /// reaches it.
     pub fn failed(&mut self, now: std::time::Instant) -> bool {
         self.since = None;
         self.attempt = false;
