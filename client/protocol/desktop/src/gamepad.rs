@@ -351,6 +351,7 @@ pub struct Pad {
     pub id: SDL_JoystickID,
     pub handle: *mut SDL_Gamepad,
     /// Host controller slot: which controller this is, in the stream menu and the buttons page.
+    /// A refused controller takes a free slot when another is unplugged ([`Gamepads::assign_slots`]).
     pub index: u8,
     /// The gamepad number the PC knows it as: `index`, or 0 for every controller with
     /// "Controllers" One player ([`sent_index`]).
@@ -608,7 +609,8 @@ impl Gamepads {
     }
 
     /// Closes a removed gamepad; returns the gamepad number the PC knew it as, or None when the
-    /// host had no slot for it.
+    /// host had no slot for it. A controller the host had refused takes the slot it leaves
+    /// ([`Self::assign_slots`]).
     pub fn removed(&mut self, id: SDL_JoystickID) -> Option<u8> {
         let position = self.pads.iter().position(|p| p.id == id)?;
         let pad = self.pads.remove(position);
@@ -617,6 +619,7 @@ impl Gamepads {
         drop(pad.audio);
         // SAFETY: a gamepad we opened.
         unsafe { SDL_CloseGamepad(pad.handle) };
+        self.assign_slots();
         slot
     }
 
@@ -626,15 +629,37 @@ impl Gamepads {
     }
 
     /// Numbers each pad's slot for the PC: its own index, or 0 with One player, and whether the
-    /// host has no slot for it.
+    /// host has no slot for it. A refused pad moves into the first slot an in-limit controller
+    /// leaves, so unplugging one starts a controller the host refused for the rest of the stream.
     fn assign_slots(&mut self) {
         let limit = u16::from(self.controller_limit());
-        for pad in &mut self.pads {
-            pad.sent_as = sent_index(self.one_player, pad.index);
-            pad.refused = u16::from(pad.sent_as) >= limit;
-            if pad.refused {
-                pad.announced = false;
+        if self.one_player {
+            // Every controller is player 1: none is refused and every index stays.
+            for pad in &mut self.pads {
+                pad.sent_as = 0;
+                pad.refused = false;
             }
+            return;
+        }
+        // The slots in-limit controllers already hold; the rest are free for a refused pad.
+        let mut taken = [false; MAX_PADS];
+        for pad in &self.pads {
+            if u16::from(pad.index) < limit {
+                taken[usize::from(pad.index)] = true;
+            }
+        }
+        for pad in &mut self.pads {
+            if u16::from(pad.index) >= limit {
+                let Some(slot) = (0..usize::from(limit)).find(|&slot| !taken[slot]) else {
+                    pad.refused = true;
+                    pad.announced = false;
+                    continue;
+                };
+                pad.index = slot as u8;
+                taken[slot] = true;
+            }
+            pad.sent_as = pad.index;
+            pad.refused = false;
         }
     }
 

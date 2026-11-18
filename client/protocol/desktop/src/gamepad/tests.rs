@@ -949,3 +949,58 @@ fn a_host_that_takes_four_controllers_gets_four() {
 fn pad_slots(pads: &Gamepads) -> Vec<Option<u8>> {
     pads.pads.iter().map(Pad::slot).collect()
 }
+
+/// A controller the host refused takes the slot of one that is unplugged, and the PC hears its
+/// arrival: GFE with five pads, unplug the second, and the fifth becomes player 2.
+#[test]
+fn a_refused_controller_takes_a_freed_slot() {
+    let _sdl = crate::sdl::TEST_LOCK.lock().unwrap();
+    use nightjar_core::control::HostCapabilities;
+    // SAFETY: SDL calls on this test's thread; the descriptor outlives the attaches.
+    unsafe {
+        assert!(SDL_Init(SDL_INIT_GAMEPAD), "{}", crate::sdl::error());
+        let mut desc: SDL_VirtualJoystickDesc = std::mem::zeroed();
+        desc.version = std::mem::size_of::<SDL_VirtualJoystickDesc>() as u32;
+        desc.r#type = SDL_JOYSTICK_TYPE_GAMEPAD.0 as u16;
+        desc.naxes = SDL_GAMEPAD_AXIS_COUNT.0 as u16;
+        desc.nbuttons = SDL_GAMEPAD_BUTTON_COUNT.0 as u16;
+        desc.button_mask = (1u32 << SDL_GAMEPAD_BUTTON_COUNT.0) - 1;
+        desc.axis_mask = (1u32 << SDL_GAMEPAD_AXIS_COUNT.0) - 1;
+        desc.name = c"Nightjar test pad".as_ptr();
+        let ids: Vec<_> = (0..5).map(|_| SDL_AttachVirtualJoystick(&desc)).collect();
+        assert!(ids.iter().all(|id| id.0 != 0), "{}", crate::sdl::error());
+
+        let mut queue = InputQueue::new(&HostCapabilities { app_version: [7, 1, 431, 0], ..Default::default() });
+        let mut pads = Gamepads::default();
+        for id in &ids {
+            pads.added(*id).unwrap();
+        }
+        pads.set_limit(queue.max_controllers());
+        pads.announce_all(&mut queue);
+        assert_eq!(pad_slots(&pads), [Some(0), Some(1), Some(2), Some(3), None]);
+
+        assert_eq!(pads.removed(ids[1]), Some(1), "the PC knew the unplugged one as player 2");
+        assert_eq!(pad_slots(&pads), [Some(0), Some(2), Some(3), Some(1)], "the fifth took the freed slot");
+        let promoted = pads.pads.iter().find(|pad| pad.id == ids[4]).unwrap();
+        assert_eq!(promoted.index, 1);
+        assert!(!promoted.announced, "the PC has not heard of it yet");
+        assert_eq!(pads.active_mask(), 0x0F, "all four slots are players again");
+        assert!(pads.refused_notice().is_none(), "no controller is left without a slot");
+
+        // The slot's old controller is neutralised, then the new one arrives in it.
+        let mut out = Vec::new();
+        queue.poll(std::time::Instant::now(), false, &mut out);
+        out.clear();
+        pads.send_removed(1, &mut queue);
+        pads.announce_new(&mut queue);
+        assert!(pads.pads.iter().find(|pad| pad.id == ids[4]).unwrap().announced, "the PC heard its arrival");
+        queue.poll(std::time::Instant::now(), false, &mut out);
+        assert!(!out.is_empty(), "the freed slot's controller reaches the PC");
+
+        pads.close_all();
+        for id in ids {
+            SDL_DetachVirtualJoystick(id);
+        }
+        SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
+    }
+}

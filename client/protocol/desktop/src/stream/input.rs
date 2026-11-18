@@ -236,7 +236,12 @@ impl Streaming {
                     self.session.input(|q| pads.release_mouse(event.gdevice.which, q));
                     if let Some(index) = pads.removed(event.gdevice.which) {
                         if self.sends_controllers() {
-                            self.session.input(|q| pads.send_removed(index, q));
+                            // A controller the host had refused may have taken the freed slot:
+                            // its neutral state and arrival follow the removed one's.
+                            self.session.input(|q| {
+                                pads.send_removed(index, q);
+                                pads.announce_new(q);
+                            });
                         }
                     }
                 }
