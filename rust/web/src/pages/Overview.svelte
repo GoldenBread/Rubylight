@@ -230,10 +230,11 @@
       deviceGuests = null;
     }
     try {
-      invites = await api.sessionGuests.invites();
+      // Asked after the status's await, past the poll's own mark: unmarked, it would count as someone using the
+      // console every two seconds and keep the PC from sleeping while this page is open.
+      invites = await marked(() => api.sessionGuests.invites());
     } catch {
-      // A host without invites answers nothing to show.
-      invites = null;
+      // A missed answer keeps the last one: taking the card away would lose a link it shows only once.
     }
   }
 

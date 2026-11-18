@@ -27,11 +27,18 @@
     running = 'create';
     try {
       made = await api.sessionGuests.invite(permission, inviteSeconds(lifetime));
-      onchange?.(await api.sessionGuests.invites());
     } catch (error) {
       failed('Couldn’t make an invite', error);
+      return;
     } finally {
       running = null;
+    }
+    // The link is made and shown. A list that cannot be read now is the page's next poll's to bring: saying the
+    // invite failed here would have the owner make a second one while the first still works.
+    try {
+      onchange?.(await api.sessionGuests.invites());
+    } catch {
+      // The poll reads it again.
     }
   }
 

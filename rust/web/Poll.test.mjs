@@ -57,4 +57,7 @@ test('no page polls the host from a bare timer: requests go through poll() or ma
   // The co-op card's device list is fetched after the status's await, past the poll's own mark.
   const overview = readFileSync(new URL('./src/pages/Overview.svelte', import.meta.url), 'utf8');
   assert.match(overview, /await marked\(\(\) => api\.clients\.list\(\)\)/);
+  // So are the invites, after the device guests' await: unmarked, an open Home kept the PC awake.
+  assert.match(overview, /await marked\(\(\) => api\.sessionGuests\.invites\(\)\)/);
+  assert.doesNotMatch(overview, /await api\.sessionGuests\.invites\(\)/);
 });
