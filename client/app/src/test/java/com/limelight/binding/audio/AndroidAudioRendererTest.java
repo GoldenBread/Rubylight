@@ -50,6 +50,17 @@ public class AndroidAudioRendererTest {
         }
     }
 
+    @Test public void headsetMixKeepsBothRearChannelsOfAFourChannelStream() {
+        // Quad is FL FR RL RR: the left rear belongs to the left ear and the right rear to the right one.
+        short[] frontLeftRearLeft = {1000, 0, 1000, 0};
+        short[] frontRightRearRight = {0, 1000, 0, 1000};
+        short[] stereo = new short[2];
+        AndroidAudioRenderer.downmixStereo(frontLeftRearLeft, 4, 4, stereo);
+        assertArrayEquals(new short[] {1707, 0}, stereo);
+        AndroidAudioRenderer.downmixStereo(frontRightRearRight, 4, 4, stereo);
+        assertArrayEquals(new short[] {0, 1707}, stereo);
+    }
+
     @Test public void headsetMixKeepsTheHeightsOfSevenOneFourOnTheirSides() {
         // TFL TFR TBL TBR follow the 7.1 bed.
         short[][] heights = {{707, 0}, {0, 707}, {707, 0}, {0, 707}};

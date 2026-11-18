@@ -1082,3 +1082,63 @@ fn a_profile_with_earlier_setting_names_loads_under_the_current_ones() {
     assert!(saved["apps"][0].get("frame-gen-limiter-fix").is_none());
     std::fs::remove_dir_all(&directory).ok();
 }
+
+/// The shutdown audio wait: a game that ignores close loses the route at the
+/// deadline, while a fast close releases it by its notice without a warning.
+mod shutdown_audio {
+    use super::super::{AUDIO_RELEASE_WAIT, test_support::Fixture};
+    use butterpollo_windows::audio_route::Route;
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant},
+    };
+
+    fn route(f: &Fixture) {
+        *f.host.app_audio.lock().unwrap() = Some(Arc::new(Route::detached(&f.host.directory)));
+    }
+
+    /// What `run` logged at WARN, to this fixture's own file.
+    fn warnings(f: &Fixture, run: impl FnOnce()) -> String {
+        let path = f.host.directory.join("shutdown-audio.log");
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .without_time()
+            .with_ansi(false)
+            .with_target(false)
+            .with_writer(std::sync::Mutex::new(std::fs::File::create(&path).unwrap()))
+            .finish();
+        crate::test_log::capture_during(subscriber, run);
+        std::fs::read_to_string(path).unwrap()
+    }
+
+    /// The deadline is inside main's 8 s `stop_app` wait: past it the route
+    /// must be back on the PC's default device, whatever the game does.
+    #[test]
+    fn a_game_that_ignores_close_loses_its_audio_route_at_the_deadline() {
+        let f = Fixture::new();
+        route(&f);
+        // The game keeps the sender: its processes never report that they stopped.
+        let (_game, stopped) = std::sync::mpsc::channel();
+        let log = warnings(&f, || {
+            f.host
+                .release_audio_by(stopped, Instant::now() + Duration::from_millis(50));
+        });
+        assert!(f.host.app_audio.lock().unwrap().is_none());
+        assert!(log.contains("had not stopped"), "{log}");
+        assert!(AUDIO_RELEASE_WAIT < Duration::from_secs(8));
+    }
+
+    #[test]
+    fn a_fast_close_releases_the_audio_route_without_a_warning() {
+        let f = Fixture::new();
+        route(&f);
+        let (game, stopped) = std::sync::mpsc::channel();
+        game.send(()).unwrap();
+        let log = warnings(&f, || {
+            f.host
+                .release_audio_by(stopped, Instant::now() + Duration::from_secs(5));
+        });
+        assert!(f.host.app_audio.lock().unwrap().is_none());
+        assert!(!log.contains("had not stopped"), "{log}");
+    }
+}

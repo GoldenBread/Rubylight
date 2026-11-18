@@ -141,7 +141,10 @@ impl SessionThread<'_> {
         } else {
             None
         };
-        let mut metadata_due = Instant::now() + Duration::from_secs(1);
+        // The first picture updates HDR metadata after the enhancer has chosen
+        // its conversion: RTX HDR's peak comes from that selection, not only
+        // from the configuration the encoder was made with.
+        let mut metadata_due = Instant::now();
         // A keyframe a while after an AMF reference-invalidation recovery.
         let mut confirm_keyframe: Option<Instant> = None;
         let mut timing_due = Instant::now() + Duration::from_secs(5);
@@ -196,8 +199,7 @@ impl SessionThread<'_> {
         let mut first_seen: Option<(usize, Instant, Option<Duration>, Option<Instant>)> = None;
         let mut video_qos = Tagged::default();
         let mut batch = butterpollo_windows::net::Batch::default();
-        batch.dont_fragment = packetizer.packet_size
-            > usize::from(butterpollo_core::video_packet::STOCK_MAX_VIDEO_PACKET);
+        batch.dont_fragment = crate::stream::video_refuses_fragmentation();
         let mut packets = Vec::new();
         let trace_send = tracing::enabled!(target: "pacing", tracing::Level::TRACE);
         let mut admission_trace = trace_send.then(AdmissionTrace::default);
@@ -1571,7 +1573,12 @@ impl SessionThread<'_> {
                 }
                 if Instant::now() >= metadata_due {
                     let checks_started = Instant::now();
-                    let display_metadata = image.gpu.hdr_metadata();
+                    let mut display_metadata = image.gpu.hdr_metadata();
+                    if let Some(peak) = enhancer.hdr_peak(&runtime_config) {
+                        // RTX HDR generated this picture at its own peak; the
+                        // SDR monitor's peak does not describe it.
+                        display_metadata = display_metadata.generated(peak);
+                    }
                     frame_checks += checks_started.elapsed();
                     let metadata = m.set_display_hdr_metadata(&s, display_metadata);
                     active.set_hdr_metadata(metadata);

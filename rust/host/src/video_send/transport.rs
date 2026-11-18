@@ -214,6 +214,7 @@ impl Transport<'_> {
         let safe = network_pacing::rate_bps(0, bitrate, route.bps, true, needed);
         let bps = s.keyframe_loss_bps(bps, safe, frame.wire_frame, frame.idr);
         if Instant::now() >= self.link_due {
+            crate::video_send::check_route_mtu(s, s.config.packet_size, self.watch.mtu(peer));
             network_pacing::report_rate(
                 &s.launch.warnings,
                 bps,
@@ -707,8 +708,7 @@ pub(super) fn run_with(
 ) -> Result<()> {
     let mut batch = Batch::default();
     batch.waits = Some(Default::default());
-    batch.dont_fragment =
-        s.config.packet_size > usize::from(butterpollo_core::video_packet::STOCK_MAX_VIDEO_PACKET);
+    batch.dont_fragment = crate::stream::video_refuses_fragmentation();
     let batch_kb = match c.integer("video_max_batch_size_kb", 64) {
         16 => 16,
         32 => 32,

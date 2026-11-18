@@ -1219,6 +1219,26 @@ fn background_capture_never_recovers_onto_the_primary_display() {
         );
     }
 }
+/// An explicit Capture method is the user's and must never be moved to
+/// Desktop Duplication by the fullscreen fallback of an Automatic stream
+/// sharing its capture. The two therefore never share one.
+#[test]
+fn an_explicit_capture_method_never_shares_an_automatic_streams_capture() {
+    let key = |setting: &str| {
+        CaptureKey::new(
+            "wgc",
+            "display",
+            false,
+            &Config::parse(setting).unwrap(),
+            "",
+            false,
+        )
+    };
+    assert_ne!(key("capture = auto"), key("capture = wgc"));
+    assert_eq!(key("capture = auto"), key("capture = "));
+    assert_eq!(key("capture = wgc"), key("capture = WGC"));
+}
+
 #[test]
 fn pad_feedback_forwards_rumble_and_each_family_extra() {
     let rumble = (
@@ -1403,6 +1423,15 @@ fn wgc_interval_is_unrestricted_by_default_and_preserves_overrides() {
     }
     assert!(!default.values.contains_key("wgc_high_rate_capture"));
 }
+/// A stream's shared video socket never refuses fragmentation: the flag would
+/// govern every stream on the process-wide socket, and a stock client behind a
+/// 1280-byte tunnel would lose its video. The PyroWave probe keeps the flag on
+/// its own socket for the jumbo path check.
+#[test]
+fn streams_never_set_dont_fragment_on_the_shared_video_socket() {
+    assert!(!super::video_refuses_fragmentation());
+}
+
 #[test]
 fn shared_capture_separates_explicit_wgc_intervals_without_splitting_ddx() {
     let key = |kind, setting: &str| {

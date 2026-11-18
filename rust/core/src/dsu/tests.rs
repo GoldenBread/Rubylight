@@ -364,3 +364,38 @@ fn clients_get_what_they_asked_for_until_they_stop_asking() {
     clients.prune(later + CLIENT_TIMEOUT);
     assert!(clients.is_empty());
 }
+
+/// A spoofed request flood must not grow the client map, and a client cannot
+/// register more addresses than a DSU server has slots.
+#[test]
+fn clients_and_their_addresses_are_capped() {
+    let mut clients = Clients::default();
+    let t0 = Instant::now();
+    for port in 1..=(MAX_CLIENTS as u16 + 4) {
+        clients.register(address(port), 0, 0, [0; 6], t0);
+    }
+    let subscribed = clients.subscribers(0, t0);
+    assert_eq!(subscribed.len(), MAX_CLIENTS);
+    assert!(subscribed.contains(&address(1)));
+    assert!(
+        !subscribed.contains(&address(MAX_CLIENTS as u16 + 1)),
+        "a client over the cap gets no pad data"
+    );
+    // The cap is on live clients: once those stop asking, a new one fits.
+    clients.prune(t0 + CLIENT_TIMEOUT);
+    clients.register(address(999), 0, 0, [0; 6], t0 + CLIENT_TIMEOUT);
+    assert_eq!(
+        clients.subscribers(0, t0 + CLIENT_TIMEOUT),
+        vec![address(999)]
+    );
+    // An existing client still updates at the cap, but only four MACs stick.
+    let mut clients = Clients::default();
+    clients.register(address(1), 0b10, 0, mac(0), t0);
+    for slot in 1..(MAX_MACS as u8 + 3) {
+        clients.register(address(1), 0b10, 0, mac(slot), t0);
+    }
+    assert_eq!(clients.clients[&address(1)].macs.len(), MAX_MACS);
+    for slot in 0..SLOTS as u8 {
+        assert_eq!(clients.subscribers(slot, t0), vec![address(1)]);
+    }
+}

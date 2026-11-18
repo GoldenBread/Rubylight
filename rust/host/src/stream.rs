@@ -461,6 +461,10 @@ pub struct Media {
 struct CaptureKey {
     kind: String,
     output: String,
+    /// The user's Capture method was Automatic, which the fullscreen fallback
+    /// may move to Desktop Duplication. An explicit method never shares its
+    /// capture, or the fallback would move it behind the user's back.
+    automatic: bool,
     hdr: bool,
     adapter: String,
     adapter_id: String,
@@ -487,6 +491,9 @@ impl CaptureKey {
         Self {
             kind: kind.into(),
             output: output.into(),
+            automatic: butterpollo_core::capture_policy::automatic_capture(
+                config.get("capture", ""),
+            ),
             hdr,
             adapter: config.get("adapter_name", "").into(),
             adapter_id: config.get("adapter_pnp_id", "").into(),
@@ -596,6 +603,17 @@ fn capture_config(config: &Config) -> Config {
     );
     capture
 }
+/// Whether a stream's video socket refuses to fragment its datagrams: never.
+/// The video socket is process-wide, so a flag set for one jumbo stream would
+/// govern every stream, including a stock client behind a WireGuard or
+/// Tailscale tunnel whose 1280-byte path would refuse every 1400-byte
+/// datagram. The jumbo offer checks the route's MTU, and the PyroWave UDP
+/// probe sets the flag on its own socket to test the path with the stream's
+/// packet size before a stream starts.
+pub(crate) fn video_refuses_fragmentation() -> bool {
+    false
+}
+
 impl Media {
     /// The address the host listens on: unspecified unless it was bound to one.
     pub fn bind(&self) -> IpAddr {
@@ -1287,8 +1305,14 @@ impl Media {
                 "PyroWave bitrate is below recommended: text and textures may lose detail. Quality depends on the picture; raise the bitrate in Moonlight with network headroom, or use HEVC or AV1"
             );
         }
-        // HDR metadata describes the captured source, independent of receiver brightness.
-        let metadata = self.set_display_hdr_metadata(s, first.gpu.hdr_metadata());
+        // HDR metadata describes the captured source, independent of receiver
+        // brightness. RTX HDR's picture is generated at its own peak, not the
+        // SDR monitor's; its enhancer reports the same from its first frame.
+        let mut display_metadata = first.gpu.hdr_metadata();
+        if let Some(peak) = crate::nvidia_enhance::generated_peak(c, s.config.hdr, first.pixel) {
+            display_metadata = display_metadata.generated(peak);
+        }
+        let metadata = self.set_display_hdr_metadata(s, display_metadata);
         if let Some(encoder) = encoder.as_mut() {
             encoder.set_hdr_metadata(metadata);
             encoder.set_hdr_target(s.hdr_target_nits());

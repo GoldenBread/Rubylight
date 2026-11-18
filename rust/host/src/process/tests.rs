@@ -241,6 +241,34 @@ fn app_with_a_child() -> RunningApp {
     RunningApp::with_environment(&app, BTreeMap::new()).unwrap()
 }
 
+/// At shutdown the audio route is released after the processes stop, not
+/// after the undo commands, which can take much longer.
+#[test]
+fn the_process_stopped_notice_arrives_before_undo_commands() {
+    let mut app = app_with_a_child();
+    app.undo.push(PrepCommand {
+        r#do: String::new(),
+        undo: "ping -n 3 127.0.0.1 >nul".into(),
+        elevated: false,
+        extra: Default::default(),
+    });
+    let (stopped, stopped_rx) = std::sync::mpsc::channel();
+    app.notify_when_processes_stop(stopped);
+    let began = std::time::Instant::now();
+    let watch = std::thread::spawn(move || {
+        stopped_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .map(|()| began.elapsed())
+    });
+    app.stop();
+    let signalled = watch.join().unwrap().expect("the stop notice");
+    assert!(
+        signalled < std::time::Duration::from_secs(1),
+        "the audio route waited for the undo command: {signalled:?}"
+    );
+    assert!(began.elapsed() >= std::time::Duration::from_secs(1));
+}
+
 #[test]
 fn a_process_of_the_apps_own_job_is_the_game_and_an_unrelated_one_is_not() {
     let mut app = app_with_a_child();

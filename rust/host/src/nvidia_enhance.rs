@@ -143,6 +143,14 @@ pub(crate) fn source(pixel: Pixel) -> Source {
     }
 }
 
+/// The peak nits RTX HDR will generate for a stream whose first picture is
+/// `pixel`, before its enhancer has run: an SDR picture for an HDR stream,
+/// with the component and the user's opt-in present.
+pub(crate) fn generated_peak(config: &Config, stream_hdr: bool, pixel: Pixel) -> Option<u16> {
+    (stream_hdr && pixel == Pixel::Bgra8 && nvidia_enhance::rtx_hdr_runs(config))
+        .then(|| nvidia_enhance::peak_nits(config) as u16)
+}
+
 /// What a capture on the GPU with PCI vendor `vendor` and name `adapter` can
 /// run: the enhancements the NVIDIA card offers (`offered`) on an NVIDIA
 /// capture, none on another GPU, which is then described for the warning.
@@ -216,6 +224,13 @@ impl Enhancer {
     /// picture; `None` leaves the encoder's own values.
     pub(crate) fn luminance(&self, config: &Config) -> Option<(f32, f32)> {
         (self.inner.selected == Enhancement::RtxHdr).then(|| nvidia_enhance::rtx_luminance(config))
+    }
+
+    /// The peak of the HDR signal RTX HDR generates, when it runs: the stream
+    /// describes that peak, not the SDR panel's.
+    pub(crate) fn hdr_peak(&self, config: &Config) -> Option<u16> {
+        (self.inner.selected == Enhancement::RtxHdr)
+            .then(|| nvidia_enhance::peak_nits(config) as u16)
     }
 
     /// RTX HDR's values from the NVIDIA driver profile of the game in front,
@@ -493,6 +508,46 @@ capture = {method}
             elsewhere.unwrap().gpu,
             "a graphics card that is not NVIDIA's"
         );
+    }
+
+    #[test]
+    fn the_enhancer_reports_the_generated_peak_only_while_rtx_hdr_runs() {
+        let config = Config::parse("hdr_peak_brightness = 900\n").unwrap();
+        let mut enhancer = Enhancer::default();
+        assert_eq!(enhancer.hdr_peak(&config), None);
+        enhancer.inner.selected = Enhancement::RtxHdr;
+        assert_eq!(enhancer.hdr_peak(&config), Some(900));
+    }
+
+    /// RTX HDR converts an SDR picture for an HDR stream. The stream then
+    /// describes the peak RTX HDR makes, not the SDR monitor's.
+    #[test]
+    fn rtx_hdr_describes_the_peak_it_generates() {
+        let mut config = Config::parse("rtx_hdr = true\nhdr_peak_brightness = 1200\n").unwrap();
+        config
+            .values
+            .insert(nvidia_enhance::marker("rtx_hdr"), "true".into());
+        config.values.insert(
+            nvidia_enhance::OFFERED_KEY.into(),
+            nvidia_enhance::ALL.to_string(),
+        );
+        assert_eq!(
+            generated_peak(&config, true, Pixel::Bgra8),
+            Some(1200),
+            "an SDR picture for an HDR stream is generated at the chosen peak"
+        );
+        assert_eq!(
+            generated_peak(&config, false, Pixel::Bgra8),
+            None,
+            "an SDR stream runs no RTX HDR"
+        );
+        assert_eq!(
+            generated_peak(&config, true, Pixel::Rgba10Pq),
+            None,
+            "a 10-bit HDR picture is not converted"
+        );
+        let unasked = Config::parse("rtx_hdr = true\n").unwrap();
+        assert_eq!(generated_peak(&unasked, true, Pixel::Bgra8), None);
     }
 
     #[test]

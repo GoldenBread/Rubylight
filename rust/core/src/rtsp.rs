@@ -5,6 +5,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub const MAX_MESSAGE: usize = 65536;
+/// The largest stream bitrate, in kbit/s, that a client may negotiate and an
+/// encoder may be asked for. NVENC's `averageBitRate` and `maxBitRate` are
+/// 32-bit counts of bits per second (the vendored nvEncodeAPI.h 13.0), so
+/// 2 Gbit/s stays inside them; the negotiation and NVENC's bitrate changes
+/// use this one ceiling.
+pub const MAX_BITRATE_KBPS: u32 = 2_000_000;
 #[derive(Debug)]
 pub struct Request {
     pub method: String,
@@ -522,7 +528,7 @@ impl Negotiated {
         if !(1..=4000).contains(&self.fps)
             || (self.rate_millihz != 0 && self.rate_millihz < 1000)
             || self.rate_millihz > 4_000_000
-            || !(1..=2_000_000).contains(&self.bitrate_kbps)
+            || !(1..=MAX_BITRATE_KBPS).contains(&self.bitrate_kbps)
             || self.configured_bitrate_kbps > i32::MAX as u32
             || self.csc_mode > 5
             || self.codec > 3

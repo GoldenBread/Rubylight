@@ -1718,6 +1718,10 @@ fn the_dsu_server_is_off_by_default_and_takes_foundations_port() {
     assert_eq!(invalid.dsu_server_port(), Some(26760));
     let off = super::Config::parse("enable_dsu_server = false\ndsu_server_port = 26761\n").unwrap();
     assert_eq!(off.dsu_server_port(), None);
+    // The server is this PC's unless LAN access is asked for.
+    assert!(!on.dsu_server_lan());
+    let lan = super::Config::parse("enable_dsu_server = true\ndsu_server_lan = true\n").unwrap();
+    assert!(lan.dsu_server_lan());
 }
 /// A Vibepollo or earlier Rubylight file that holds the renamed settings: the
 /// host reads them under their current names (`virtual_display_refresh`,

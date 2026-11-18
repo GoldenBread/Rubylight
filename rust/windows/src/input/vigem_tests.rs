@@ -40,6 +40,34 @@ fn failed_unplug_retains_the_targets_feedback() -> Result<()> {
     Ok(())
 }
 
+/// A slot holds one pad: an old target is unplugged and removed before the
+/// new one is created, never left plugged beside it.
+#[test]
+fn a_slot_is_emptied_before_a_new_target_is_plugged() -> Result<()> {
+    let mut client = Client::detached()?;
+    client.targets.insert(
+        0,
+        Target {
+            bus: INVALID_HANDLE_VALUE,
+            serial: 1,
+            notification: None,
+            ds4: None,
+        },
+    );
+    // The old target's unplug fails on the invalid handle, which must not stop
+    // the replacement: the detached bus then refuses the plug itself.
+    let error = client.plug(0, VIGEM_X360).unwrap_err();
+    assert!(
+        format!("{error:#}").contains("could not plug ViGEm target"),
+        "{error:#}"
+    );
+    assert!(
+        !client.targets.contains_key(&0),
+        "the failed plug left the old target in the way"
+    );
+    Ok(())
+}
+
 #[test]
 fn wire_headers_match_bus_shared_h() {
     assert_eq!(PLUGIN, 0x2aa004);

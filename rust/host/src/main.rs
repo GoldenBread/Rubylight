@@ -511,7 +511,11 @@ async fn run(args: Args, assets: PathBuf) -> Result<()> {
         }
     };
     // Off unless `enable_dsu_server` is set; a taken port is a console warning.
-    dsu::start(h.config.read().unwrap().dsu_server_port(), &h.warnings);
+    let (dsu_port, dsu_lan) = {
+        let config = h.config.read().unwrap();
+        (config.dsu_server_port(), config.dsu_server_lan())
+    };
+    dsu::start(dsu_port, dsu_lan, &h.warnings);
     let port_forward = network::port_forward(h.clone(), bind);
     let internet_play = internet_play::start(h.clone(), bind);
     let (tray, actions) = if args.no_tray || !h.config.read().unwrap().boolean("system_tray", true)
