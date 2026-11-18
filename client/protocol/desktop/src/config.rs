@@ -720,8 +720,8 @@ pub struct Settings {
     pub post_stream_decode_time: bool,
 }
 
-/// The launcher's sizes in percent, smallest first (the same steps as Nightjar Android).
-pub const UI_ZOOM_STEPS: [u32; 5] = [85, 100, 115, 130, 150];
+/// The launcher's sizes in percent, smallest first (Nightjar Android's steps, plus 200 and 250 for a 4K TV whose system reports no display scale).
+pub const UI_ZOOM_STEPS: [u32; 7] = [85, 100, 115, 130, 150, 200, 250];
 
 /// The step to use for a stored size: the nearest one, so a hand-edited file still works.
 pub fn nearest_zoom(percent: u32) -> u32 {
