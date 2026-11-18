@@ -1528,7 +1528,12 @@ impl Overrides {
     pub fn apply(&self, base: &Settings) -> Settings {
         let mut values = serde_json::to_value(base).expect("settings serialize");
         values.as_object_mut().unwrap().extend(self.0.clone());
-        serde_json::from_value(values).expect("validated settings overrides")
+        // A value this version cannot read is left out with the base's own, not a panic on the
+        // UI thread: a file from a newer Nightjar, or a hand edit, costs its entry alone.
+        serde_json::from_value(values).unwrap_or_else(|e| {
+            eprintln!("nightjar: ignoring settings overrides this version cannot read: {e}");
+            base.clone()
+        })
     }
 
     #[cfg(any(not(target_os = "macos"), test))]

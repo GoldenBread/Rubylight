@@ -1223,6 +1223,13 @@ fn files_are_replaced_whole_and_only_the_user_reads_them() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+#[test]
+fn an_override_this_version_cannot_read_keeps_the_base_setting() {
+    let base = Settings { fps: 60, ..Default::default() };
+    let overrides = Overrides(serde_json::Map::from_iter([("fps".to_owned(), serde_json::json!(-1))]));
+    assert_eq!(overrides.apply(&base), base, "a bad override costs its entry, not the UI");
+}
+
 /// Settings saved before "Sharper colored text", the shared value lists and the merged
 /// Controllers choice read on, in every layer, and a second load changes nothing.
 #[test]
