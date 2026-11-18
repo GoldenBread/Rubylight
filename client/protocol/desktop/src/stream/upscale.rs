@@ -63,6 +63,15 @@ impl Drop for Pass {
     }
 }
 
+/// What one draw does to temporal upscaling's history: `advance` a whole newly decoded picture
+/// moves it on, and `reset` drops it because the picture does not follow the last one drawn (a
+/// key frame, a lost frame's gap: `temporal::history_stale`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct History {
+    pub advance: bool,
+    pub reset: bool,
+}
+
 pub struct Upscaler {
     passes: Vec<Pass>,
     /// Temporal upscaling's passes, which replace `passes` (`Upscaling::Sgsr2`).
@@ -106,18 +115,19 @@ impl Upscaler {
     /// its alignment padding, which stays out).
     #[cfg(any(test, all(target_os = "macos", feature = "demo-library")))]
     pub fn draw(&mut self, renderer: *mut SDL_Renderer, source: *mut SDL_Texture, sharpness: u32) -> Result<*mut SDL_Texture, String> {
-        self.draw_warped(renderer, source, sharpness, &super::frame_warp::WarpDraw::default(), &mut super::frame_warp::Mesh::default(), true)
+        self.draw_warped(renderer, source, sharpness, &super::frame_warp::WarpDraw::default(), &mut super::frame_warp::Mesh::default(),
+            History { advance: true, reset: false })
     }
 
     /// `draw` with Frame Warp's `warp` applied as the picture is copied in, at its own size, so
     /// the upscaler works on the shifted picture (its triangles built in `mesh`).
-    /// Temporal upscaling advances its history only with a `fresh` (whole, newly decoded)
-    /// picture: a repeat, or a beam race's present of a picture's first slices, shows its last
-    /// output again, so no picture enters the history twice or in part.
+    /// Temporal upscaling advances its history only with a whole, newly decoded picture
+    /// (`History::advance`): a repeat, or a beam race's present of a picture's first slices,
+    /// shows its last output again, so no picture enters the history twice or in part.
     pub fn draw_warped(&mut self, renderer: *mut SDL_Renderer, source: *mut SDL_Texture, sharpness: u32, warp: &super::frame_warp::WarpDraw,
-        mesh: &mut super::frame_warp::Mesh, fresh: bool) -> Result<*mut SDL_Texture, String> {
+        mesh: &mut super::frame_warp::Mesh, history: History) -> Result<*mut SDL_Texture, String> {
         let failed = |what: &str| format!("{what}: {}", crate::sdl::error());
-        if self.temporal.as_ref().is_some_and(|t| !fresh && t.has_output()) { return Ok(self.textures[1]); }
+        if self.temporal.as_ref().is_some_and(|t| !history.advance && t.has_output()) { return Ok(self.textures[1]); }
         unsafe {
             let previous = SDL_GetRenderTarget(renderer);
             if !SDL_SetRenderTarget(renderer, self.textures[0]) { return Err(failed("the picture cannot be copied in")); }
@@ -131,6 +141,7 @@ impl Upscaler {
             SDL_SetRenderTarget(renderer, previous);
             if !ok { return Err(failed("the picture cannot be copied in")); }
             if let Some(temporal) = &mut self.temporal {
+                if history.advance && history.reset { temporal.reset(); }
                 temporal.draw(renderer, sharpness)?;
                 return Ok(self.textures[1]);
             }
@@ -213,7 +224,7 @@ pub(super) fn check_scalers() {
                     // A repeat of the same picture shows the last output and leaves the history.
                     let parity = temporal.parity();
                     let warp = super::frame_warp::WarpDraw::default();
-                    let repeated = upscaler.draw_warped(renderer, input, 50, &warp, &mut super::frame_warp::Mesh::default(), false);
+                    let repeated = upscaler.draw_warped(renderer, input, 50, &warp, &mut super::frame_warp::Mesh::default(), History::default());
                     assert_eq!(repeated, Ok(output));
                     assert_eq!(upscaler.temporal.as_ref().map(|t| t.parity()), Some(parity), "a repeat advanced the history");
                 }

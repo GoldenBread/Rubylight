@@ -145,6 +145,16 @@ fn uniforms(stage: Stage, input: (u32, u32), output: (u32, u32), reset: bool, sh
     values.map(f32::to_bits)
 }
 
+/// Whether temporal upscaling's history belongs to another picture than this one: the picture
+/// does not follow the one before it, or the decode side's breaks count
+/// (`Decoded::history_breaks`) is newer than the last picture drawn, so a key frame or a gap
+/// happened since, in this picture or in one the pacer dropped. Pictures that only skip a turn
+/// leave the count alone, so a stream shown at fewer presents than it decodes keeps its history.
+/// The accumulate pass starts the history afresh instead of blending another scene.
+pub(super) fn history_stale(last_drawn: u64, follows: bool, breaks: u64) -> bool {
+    !follows || breaks != last_drawn
+}
+
 /// One pass's shader and its draws, every binding of parity 0 then of parity 1.
 enum Pass {
     #[cfg(windows)]
@@ -328,6 +338,13 @@ impl Temporal {
         !self.reset
     }
 
+    /// Makes the next [`draw`](Self::draw)'s accumulate pass ignore the history: the picture it
+    /// would blend with is from another scene, before a key frame or across a lost frame's gap
+    /// (`history_stale`).
+    pub fn reset(&mut self) {
+        self.reset = true;
+    }
+
     /// Which half of the ping-pong state the next frame writes.
     #[cfg(any(test, all(target_os = "macos", feature = "demo-library")))]
     pub fn parity(&self) -> usize {
@@ -407,6 +424,30 @@ mod tests {
             assert_eq!(bindings(Stage::Detail, parity)[0], (vec![FRAME, history(cur)], OUTPUT));
         }
         assert!(linear(FRAME) && linear(motion(1)) && linear(history(0)) && !linear(luma(2, 0)) && !linear(CUT));
+    }
+
+    /// The history is kept across pictures the pacer drops, and starts afresh only for a real
+    /// gap or a key frame, even when the picture carrying that break was the one dropped.
+    #[test]
+    fn the_history_keeps_across_pacer_skips_and_resets_on_a_break() {
+        // A stream whose only break is its first picture (there was no history before it), every
+        // other picture dropped as on a 60 Hz display showing a 120 fps stream.
+        let mut drawn = 0;
+        let mut resets = Vec::new();
+        for (i, breaks) in [1u64, 1, 1, 1, 1, 1].into_iter().enumerate() {
+            if i % 2 == 0 {
+                if history_stale(drawn, true, breaks) {
+                    resets.push(i);
+                }
+                drawn = breaks;
+            }
+        }
+        assert_eq!(resets, [0], "the first picture starts the history; skips keep it");
+        assert!(!history_stale(1, true, 1), "a picture that follows keeps it");
+        assert!(history_stale(1, false, 1), "one that does not follow resets it");
+        assert!(history_stale(1, true, 2), "a lost frame's gap resets the next picture drawn");
+        assert!(!history_stale(2, true, 2), "and the pictures after it keep the new history");
+        assert!(history_stale(2, true, 3), "even when the picture that broke it was dropped");
     }
 
     #[test]

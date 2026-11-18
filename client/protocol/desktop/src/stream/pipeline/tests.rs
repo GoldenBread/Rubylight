@@ -580,7 +580,7 @@ fn a_synchronous_frame_without_a_picture_or_with_a_damaged_one_asks_for_recovery
 
 #[test]
 fn a_picture_takes_the_times_of_its_own_frame_and_drops_those_of_frames_without_one() {
-    let times = |number: u32| InFlight { number, receive_us: u64::from(number) * 10, enqueue_us: 0, input_us: 0, host_latency: 0 };
+    let times = |number: u32| InFlight { number, key: false, receive_us: u64::from(number) * 10, enqueue_us: 0, input_us: 0, host_latency: 0 };
     let mut in_flight: VecDeque<_> = [7, 8, 9].map(times).into();
     assert_eq!(take_in_flight(&mut in_flight, 8), Some(times(8)));
     assert_eq!(in_flight, [times(9)], "frame 7 made no picture and its times are dropped");
@@ -590,6 +590,23 @@ fn a_picture_takes_the_times_of_its_own_frame_and_drops_those_of_frames_without_
     let mut in_flight: VecDeque<_> = [u32::MAX - 1, u32::MAX, 0, 1].map(times).into();
     assert_eq!(take_in_flight(&mut in_flight, 0), Some(times(0)));
     assert_eq!(in_flight, [times(1)]);
+}
+
+/// The decode side decides temporal upscaling's continuity: consecutive frames of one scene
+/// follow each other, a lost frame and a key frame break it, and the count is cumulative so a
+/// picture the pacer drops cannot hide its break.
+#[test]
+fn a_picture_follows_the_last_decoded_and_a_lost_frame_or_key_frame_breaks_the_history() {
+    let mut history = DecodedHistory::default();
+    assert_eq!(history.step(1, false), (false, 1), "the first picture has no history");
+    assert_eq!(history.step(2, false), (true, 1));
+    assert_eq!(history.step(4, false), (false, 2), "a lost frame");
+    assert_eq!(history.step(5, false), (true, 2));
+    assert_eq!(history.step(6, true), (false, 3), "a key frame");
+    assert_eq!(history.step(7, false), (true, 3));
+    // The host's frame numbers wrap.
+    let mut history = DecodedHistory { last: Some(u32::MAX), breaks: 3 };
+    assert_eq!(history.step(0, false), (true, 3));
 }
 
 #[test]
