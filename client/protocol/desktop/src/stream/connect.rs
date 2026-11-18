@@ -883,7 +883,8 @@ pub(super) fn reset_packet_size(route: i32, requested: u32) -> i32 {
 /// The whole video packet size a launch asked the PC for, before the SDP takes the encryption
 /// header off: what the session's facts keep, so an automatic reconnect carries the same request
 /// and does not lose another 32 bytes per reconnect.
-pub(super) fn facts_packet_size(requested: i32) -> i32 {
+pub(super) fn facts_packet_size(requested: i32, announced: i32) -> i32 {
+    let _ = announced;
     requested.max(0)
 }
 
@@ -1477,7 +1478,7 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
         height: outcome.config.height,
         fps: outcome.config.fps,
         bitrate_kbps: outcome.config.bitrate_kbps,
-        packet_size: facts_packet_size(packet_size),
+        packet_size: facts_packet_size(packet_size, outcome.config.packet_size),
         format: outcome.negotiated_video_format,
         host_timing: outcome.host_control_messages.contains(&HOST_TIMING_MESSAGE_TYPE),
         link_notice: outcome.host_control_messages.contains(&LINK_NOTICE_MESSAGE_TYPE),

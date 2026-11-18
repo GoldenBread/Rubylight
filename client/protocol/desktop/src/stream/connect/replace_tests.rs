@@ -517,7 +517,7 @@ fn three_encrypted_reconnects_keep_the_requested_packet_size() {
             let announced_now = nightjar_core::sdp::announced_packet_size(requested, 8192, true);
             assert_eq!(announced_now, announced, "the ANNOUNCE's size for {whole}");
             // The session's facts keep the whole request, and the next reconnect carries it.
-            let next = resume_packet_size(facts_packet_size(requested) as u32, 1392, 0);
+            let next = resume_packet_size(facts_packet_size(requested, announced_now) as u32, 1392, 0);
             assert_eq!(next, whole, "the reconnect after {requested} asks for {next}");
             requested = next;
         }

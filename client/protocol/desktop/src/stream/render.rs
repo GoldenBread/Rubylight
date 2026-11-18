@@ -89,6 +89,25 @@ impl StreamSizes {
     }
 }
 
+/// What a picture whose size applies a reconfigure asks for: a confirmation only moves the rate
+/// (the size and settings were set when it was asked), while a late apply after the timeout must
+/// set the whole mode, which the timeout had put back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ModeApply {
+    Rate(Reconfigure),
+    Whole(Reconfigure),
+}
+
+fn mode_to_apply(confirmed: bool, late: bool, pending: Option<Reconfigure>, late_mode: Option<Reconfigure>) -> Option<ModeApply> {
+    if confirmed {
+        pending.map(ModeApply::Rate)
+    } else if late {
+        late_mode.map(ModeApply::Whole)
+    } else {
+        None
+    }
+}
+
 /// The end of a stream whose packed 4:4:4 ("Sharper colored text") pictures cannot be shown.
 const PACKED_UNSHOWN: &str = en("This device cannot show Sharper colored text for this stream. Turn off Sharper colored text in Settings, then start the stream again.");
 
@@ -187,14 +206,23 @@ impl Streaming {
                 decoded.visible = Some((width, height));
                 self.facts.width = width;
                 self.facts.height = height;
-                if confirmed {
+                if confirmed || late {
                     self.fps_evidence = 0;
                     self.mode_before = None;
-                    if let Some((mode, _)) = self.pending_mode.take() { self.stream_rate_changed(mode.fps_millihz.div_ceil(1000)); }
-                } else if late {
-                    // The PC applied a request whose timeout already put the old mode back: apply
-                    // the asked mode now, as a confirmation would, with its size.
-                    if let Some(mode) = self.late_mode.take() { self.apply_mode(mode); }
+                    let pending = self.pending_mode.map(|(mode, _)| mode);
+                    match mode_to_apply(confirmed, late, pending, self.late_mode) {
+                        Some(ModeApply::Rate(mode)) => {
+                            self.pending_mode = None;
+                            self.late_mode = None;
+                            self.stream_rate_changed(mode.fps_millihz.div_ceil(1000));
+                        }
+                        // The timeout already put the old mode back: apply the whole asked mode.
+                        Some(ModeApply::Whole(mode)) => {
+                            self.late_mode = None;
+                            self.apply_mode(mode);
+                        }
+                        None => {}
+                    }
                 }
             } else if decoded.setup.chroma_packing != 0 || decoded.setup.format & VIDEO_FORMAT_MASK_PYROWAVE != 0 {
                 // The menu's header and the session page name the stream's size: PyroWave and packed
@@ -1605,6 +1633,16 @@ mod tests {
     }
 
 
+
+    #[test]
+    fn a_late_size_applies_the_whole_mode_and_a_confirmation_only_the_rate() {
+        let asked = Reconfigure { width: 2184, height: 1968, fps_millihz: 90_000 };
+        let old = Reconfigure { width: 1920, height: 1080, fps_millihz: 60_000 };
+        assert_eq!(mode_to_apply(true, false, Some(asked), Some(old)), Some(ModeApply::Rate(asked)));
+        assert_eq!(mode_to_apply(false, true, None, Some(asked)), Some(ModeApply::Whole(asked)), "the timeout put the whole mode back");
+        assert_eq!(mode_to_apply(false, false, Some(asked), Some(old)), None);
+        assert_eq!(mode_to_apply(false, true, None, None), None);
+    }
     #[test]
     fn a_size_applied_after_the_timeout_reports_itself_for_its_mode() {
         let t0 = Instant::now();
