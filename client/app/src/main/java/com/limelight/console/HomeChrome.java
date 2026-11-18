@@ -49,6 +49,12 @@ final class HomeChrome {
     private final View bottomRow;
     private final View pc;
     private final int listInset;
+    /** Home's set-up card, and what the list and a TV's hero keep free without it; -1 until they are known. */
+    private final View card;
+    private int listTop = -1;
+    private int heroEnd = -1;
+    /** The room the list's first row leaves above itself for the card; 0 without it. */
+    private int cardRoom;
     private GlassProbe probe;
     private HomeSearch search;
 
@@ -74,6 +80,24 @@ final class HomeChrome {
         placeTabs();
         fadeFoot();
         fadeTop();
+        card = activity.findViewById(R.id.home_setup_card);
+        // Its size is known a layout after it shows; the list's padding cannot change inside that layout.
+        card.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+            if (b - t != ob - ot || r - l != or - ol) card.post(this::fitSetupCard);
+        });
+        // The card's room belongs to the first row, not to the list's padding: the list's top fade and the rows' own
+        // places under the top row stay where they are, and the room scrolls away with that row.
+        list.addItemDecoration(new RecyclerView.ItemDecoration() {
+            @Override public void getItemOffsets(android.graphics.Rect out, View view, RecyclerView parent, RecyclerView.State state) {
+                if (cardRoom > 0 && inFirstRow(parent, parent.getChildAdapterPosition(view))) out.top = cardRoom;
+            }
+        });
+        list.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override public void onScrolled(RecyclerView view, int dx, int dy) {
+                followList();
+            }
+        });
+        list.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> followList());
         host.setSafeAreaListener(this::onSafeArea);
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
             probe = GlassProbe.start(activity, tier, this::stepDown);
@@ -115,14 +139,19 @@ final class HomeChrome {
 
     /** The ambient's look on this form factor, and the glass tinted from it. */
     static void setUpBackdrop(Activity activity, com.limelight.ui.GlassHost host, GlassForm form, BackdropView backdrop, int canvas) {
+        setUpBackdrop(activity, form, backdrop, canvas);
+        int fadeMs = com.limelight.ui.Motion.reduced(activity) ? 0
+                : activity.getResources().getInteger(R.integer.nj_motion_ambient_ms);
+        backdrop.setAmbientListener((bitmap, animate) -> host.setAmbient(bitmap, animate, fadeMs));
+    }
+
+    /** The ambient's look on this form factor, for a page without glass chrome of its own (a game's page). */
+    static void setUpBackdrop(Activity activity, GlassForm form, BackdropView backdrop, int canvas) {
         AppTheme.Look look = AppTheme.look(activity);
         backdrop.setBake(look == AppTheme.Look.DAY, form == GlassForm.PHONE);
         float[] stops = form == GlassForm.PHONE ? PHONE_STOPS : form == GlassForm.HANDHELD ? HANDHELD_STOPS : TV_STOPS;
         float[] alphas = form == GlassForm.PHONE ? PHONE_ALPHAS : form == GlassForm.HANDHELD ? HANDHELD_ALPHAS : TV_ALPHAS;
         backdrop.setFade(canvas, stops, look == AppTheme.Look.HIGH_CONTRAST ? SOLID_ALPHAS : alphas);
-        int fadeMs = com.limelight.ui.Motion.reduced(activity) ? 0
-                : activity.getResources().getInteger(R.integer.nj_motion_ambient_ms);
-        backdrop.setAmbientListener((bitmap, animate) -> host.setAmbient(bitmap, animate, fadeMs));
     }
 
     /** The PC capsule: its host's name and whether it answers; hidden until there is a host to name. */
@@ -245,6 +274,74 @@ final class HomeChrome {
         return colors;
     }
 
+    /** The room the first row leaves for the set-up card now; 0 without the card. */
+    int setupCardRoom() {
+        return cardRoom;
+    }
+
+    /** A grid's first row is every cell of it; a list's is its first item. */
+    private static boolean inFirstRow(RecyclerView list, int position) {
+        if (position < 0) return false;
+        if (list.getLayoutManager() instanceof androidx.recyclerview.widget.GridLayoutManager) {
+            androidx.recyclerview.widget.GridLayoutManager grid = (androidx.recyclerview.widget.GridLayoutManager) list.getLayoutManager();
+            return grid.getSpanSizeLookup().getSpanGroupIndex(position, grid.getSpanCount()) == 0;
+        }
+        return position == 0;
+    }
+
+    /**
+     * The set-up card came, went or changed its size. It is part of the page, not a notice over it: the list starts
+     * beneath it and it leaves with the first row. On a TV it stands in the hero's band, and the hero's words end
+     * before it.
+     */
+    void fitSetupCard() {
+        if (form == GlassForm.TELEVISION) {
+            View hero = activity.findViewById(R.id.home_hero);
+            if (hero == null) return;
+            if (heroEnd < 0) heroEnd = hero.getPaddingEnd();
+            boolean shows = card.getVisibility() == View.VISIBLE && card.getWidth() > 0;
+            int end = shows ? heroEnd + card.getWidth() + activity.getResources().getDimensionPixelSize(R.dimen.space_l) : heroEnd;
+            if (hero.getPaddingEnd() != end) {
+                hero.setPaddingRelative(hero.getPaddingStart(), hero.getPaddingTop(), end, hero.getPaddingBottom());
+            }
+            return;
+        }
+        if (listTop < 0) return;
+        int room = card.getVisibility() != View.VISIBLE || card.getHeight() == 0 ? 0
+                : card.getHeight() + activity.getResources().getDimensionPixelSize(R.dimen.space_s);
+        if (room != cardRoom) {
+            // A list at its start stays there: its first row moves down with the room instead of keeping its place.
+            boolean atStart = !list.canScrollVertically(-1);
+            cardRoom = room;
+            list.invalidateItemDecorations();
+            if (atStart) list.scrollToPosition(0);
+        }
+        followList();
+    }
+
+    /** The card leaves with the list's first row and is gone once that has passed it, or while the search covers Home. */
+    private void followList() {
+        if (form == GlassForm.TELEVISION || card.getVisibility() != View.VISIBLE) return;
+        int height = card.getHeight();
+        float away = cardAway(search != null && search.isOpen(), list.getChildCount(),
+                list.getLayoutManager() == null ? null : list.getLayoutManager().findViewByPosition(0), list.getPaddingTop() + cardRoom, height);
+        card.setTranslationY(-away);
+        // It leaves under the top row's edge, as the rows do, and never draws over the tabs.
+        card.setClipBounds(away > 0 ? new android.graphics.Rect(0, Math.round(away), card.getWidth(), height) : null);
+        card.setAlpha(height == 0 ? 1f : 1f - away / height);
+        // A remote does not land on a button that is not there.
+        View close = card.findViewById(R.id.home_setup_dismiss);
+        boolean reach = height == 0 || away < height / 2f;
+        if (close.isFocusable() != reach) close.setFocusable(reach);
+    }
+
+    /** How far the card has left: as far as the first row has risen from its place at rest, and all the way without that row. */
+    static float cardAway(boolean searching, int rows, View first, int rest, int height) {
+        if (searching) return height;
+        if (first == null) return rows == 0 ? 0 : height;
+        return Math.max(0, Math.min(height, rest - first.getTop()));
+    }
+
     /** The TV list's top: a scrim of the canvas so shelves scrolled under the hero fade out instead of being cut. */
     private void fadeTop() {
         View fade = activity.findViewById(R.id.home_top_fade);
@@ -301,6 +398,7 @@ final class HomeChrome {
             list.setPadding(left + listInset, list.getPaddingTop(), right + listInset, list.getPaddingBottom());
             ViewGroup.MarginLayoutParams row = (ViewGroup.MarginLayoutParams) topRow.getLayoutParams();
             placeSearch(left, right, top + row.topMargin, capsule, gap, bottom + res.getDimensionPixelSize(R.dimen.space_xl), row.getMarginStart());
+            fitSetupCard();
             return;
         }
         boolean handheld = form == GlassForm.HANDHELD;
@@ -318,11 +416,20 @@ final class HomeChrome {
             banner.bottomMargin = bottom + res.getDimensionPixelSize(R.dimen.nj_size_tab_bar_height) + 2 * gap;
             restBannerOnHints(gap);
         }
+        // The set-up card is the page's first content: under the top row, at its edge, with the list starting beneath it.
+        listTop = rowTop + capsule + gap;
+        android.widget.FrameLayout.LayoutParams cardParams = (android.widget.FrameLayout.LayoutParams) card.getLayoutParams();
+        cardParams.gravity = android.view.Gravity.TOP | android.view.Gravity.START;
+        cardParams.topMargin = listTop;
+        cardParams.leftMargin = topRow.getPaddingLeft();
+        cardParams.rightMargin = topRow.getPaddingRight();
+        card.setLayoutParams(cardParams);
         bottomRow.setPadding(left + res.getDimensionPixelSize(R.dimen.space_m), 0, right + res.getDimensionPixelSize(R.dimen.space_m),
                 bottom + res.getDimensionPixelSize(R.dimen.space_s));
         int foot = handheld ? bottom + res.getDimensionPixelSize(R.dimen.space_xl)
                 : bottom + res.getDimensionPixelSize(R.dimen.nj_size_tab_bar_height) + 3 * res.getDimensionPixelSize(R.dimen.space_m);
-        list.setPadding(left + listInset, rowTop + capsule + gap, right + listInset, foot);
+        list.setPadding(left + listInset, listTop, right + listInset, foot);
+        fitSetupCard();
         // Scrolled, the list fades out under the top row: a bright button never slides whole under the PC capsule.
         if (list instanceof HomeList) {
             list.setVerticalFadingEdgeEnabled(true);

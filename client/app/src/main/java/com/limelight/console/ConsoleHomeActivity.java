@@ -69,6 +69,12 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
     private HostFeed feed;
     private PairingWatch pairingWatch;
     private android.widget.Button pairingBanner;
+    /** What the automatic settings will use, after the first pairing ({@link SetupCard}); gone for nearly everyone. */
+    private View setupCard;
+    /** Whether the card's PC was among the hosts when the card was last worked out: a poll asks again only when that changed. */
+    private boolean setupCardHostThere;
+    /** The game Up left for the card's close button; Down from the button returns to it. */
+    private java.lang.ref.WeakReference<View> setupCardCameFrom;
     private List<PairingWatch.Waiting> waitingToPair = java.util.Collections.emptyList();
     /** The phone's Home: one grid of headers and cards. Null on TV. */
     private ConsoleHomeListAdapter adapter;
@@ -187,6 +193,14 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
         feed = new HostFeed(this, this);
         pairingBanner = findViewById(R.id.home_pairing_banner);
         pairingBanner.setOnClickListener(v -> hostActions.approvePairing(waitingToPair));
+        setupCard = findViewById(R.id.home_setup_card);
+        findViewById(R.id.home_setup_dismiss).setOnClickListener(v -> {
+            boolean focused = v.isFocused();
+            SetupCard.dismiss(this);
+            showSetupCard();
+            // A pad or a remote was on the button that just went: focus goes back to the games.
+            if (focused) list.requestFocus();
+        });
         pairingWatch = new PairingWatch(hostActions.pairingReader(), HostMenu::mayApprovePairing,
                 task -> new Thread(task, "Devices waiting to pair").start(), handler::post, this::showWaitingToPair);
         ConsoleHomeAdapter.Listener listener = new ConsoleHomeAdapter.Listener() {
@@ -269,7 +283,9 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
         searchEnv = new ShelfAdapter.Env(this, covers, feed::host, listener);
         search = HomeSearch.of(this, searchEnv, () -> model, () -> {
             if (hints != null) hints.onFocus(null, null);
+            chrome.fitSetupCard();
         }, () -> {
+            chrome.fitSetupCard();
             if (chrome.form() == com.limelight.ui.GlassForm.PHONE) {
                 findViewById(R.id.home_bottom_row).setVisibility(View.VISIBLE);
                 findViewById(R.id.home_foot_fade).setVisibility(View.VISIBLE);
@@ -584,6 +600,7 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
             if (com.limelight.ui.InputSource.isDpad(event.getKeyCode())) focusPending = false;
             onInput(InputSource.of(event), InputSource.vendorOf(event));
         }
+        if (upToSetupCard(event)) return true;
         // Up from the top of the list goes to the current tab of the shell bar, whatever the focus search would pick
         // (View, at the bar's end, included).
         // On a phone the tabs are at the foot: Up from the top card stays in the top row.
@@ -595,10 +612,52 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
         return super.dispatchKeyEvent(event);
     }
 
+    /**
+     * Up from the list's first row stops on the set-up card's close button: the card stands between that row and the top
+     * row, and the button is at its far end, where a focus search from the left columns never looks. Up from the button
+     * goes on to the current tab, as it does from the list without the card, and Down from it back to where Up came from.
+     */
+    private boolean upToSetupCard(android.view.KeyEvent event) {
+        if (event.getAction() != android.view.KeyEvent.ACTION_DOWN || !event.hasNoModifiers()
+                || setupCard == null || setupCard.getVisibility() != View.VISIBLE) {
+            return false;
+        }
+        View close = setupCard.findViewById(R.id.home_setup_dismiss);
+        if (event.getKeyCode() == android.view.KeyEvent.KEYCODE_DPAD_DOWN) {
+            if (!close.isFocused()) return false;
+            View back = setupCardCameFrom == null ? null : setupCardCameFrom.get();
+            setupCardCameFrom = null;
+            // The card it left may be gone since (a reload, a scroll): then the list finds its own.
+            return (back != null && back.isAttachedToWindow() && inList(back) && back.requestFocus()) || list.requestFocus();
+        }
+        if (event.getKeyCode() != android.view.KeyEvent.KEYCODE_DPAD_UP) return false;
+        if (close.isFocused()) {
+            // On a phone the tabs are at the foot: Up from the button stays where the focus search leaves it.
+            return chrome != null && chrome.form() != com.limelight.ui.GlassForm.PHONE
+                    && com.limelight.ui.ShellFocus.upToCurrentTab(this, event, setupCard, findViewById(R.id.home_top_row));
+        }
+        View focused = list.findFocus();
+        if (focused == null || !close.isFocusable()) return false;
+        // Still inside the list: this press moves among the rows.
+        if (inList(focused.focusSearch(View.FOCUS_UP))) return false;
+        if (!close.requestFocus()) return false;
+        setupCardCameFrom = new java.lang.ref.WeakReference<>(focused);
+        return true;
+    }
+
+    private boolean inList(View view) {
+        for (View at = view; at != null; at = at.getParent() instanceof View ? (View) at.getParent() : null) {
+            if (at == list) return true;
+        }
+        return false;
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
         shown = true;
+        // Settings may have been changed since: the card speaks for Auto only.
+        showSetupCard();
         ShellBar.refresh(this);
         feed.prune();
         feed.resume();
@@ -668,15 +727,39 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
         if (drawn.changed(feed.hosts(), feed.waiting())) {
             scheduleReload();
         }
+        // The card waits for its PC to be among the hosts and goes when that PC is unpaired or removed. A poll works it
+        // out again only then: the settings it speaks for change on other screens, and a resume reads them.
+        String cardFor = SetupCard.host(this);
+        if (cardFor != null && (feed.host(cardFor) != null) != setupCardHostThere) {
+            showSetupCard();
+        }
         // The watch has no timer of its own: it counts on every report.
         if (shown) {
             pairingWatch.poll(feed.hosts());
         }
     }
 
+    /**
+     * The set-up card, while there is one: its PC is paired, the settings are Recommended's Auto, and nothing waits to
+     * pair (the banner stands in the same place and asks for an answer; the card only tells).
+     */
+    private void showSetupCard() {
+        String uuid = SetupCard.host(this);
+        ComputerDetails host = uuid == null ? null : feed.host(uuid);
+        setupCardHostThere = host != null;
+        SetupCard.Text text = host == null || !waitingToPair.isEmpty() ? null : SetupCard.text(this, host);
+        setupCard.setVisibility(text == null ? View.GONE : View.VISIBLE);
+        if (chrome != null) chrome.fitSetupCard();
+        if (text == null) return;
+        ((android.widget.TextView) setupCard.findViewById(R.id.home_setup_title)).setText(text.title);
+        ((android.widget.TextView) setupCard.findViewById(R.id.home_setup_values)).setText(text.values);
+        setupCard.findViewById(R.id.home_setup_text).setContentDescription(text.title + ". " + text.values);
+    }
+
     /** "TV wants to pair" while something waits. */
     protected void showWaitingToPair(List<PairingWatch.Waiting> waiting) {
         waitingToPair = waiting;
+        showSetupCard();
         pairingBanner.setVisibility(waiting.isEmpty() ? View.GONE : View.VISIBLE);
         if (waiting.size() == 1) {
             pairingBanner.setText(getString(R.string.pairing_wants_to_pair, waiting.get(0).shownName()));

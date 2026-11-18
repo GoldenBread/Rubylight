@@ -167,6 +167,32 @@ public class UiModeTest {
         }
     }
 
+    /** A screen recreates itself in the window it had: leaving the forced TV layout gives that window its bars back. */
+    @Test
+    public void leavingTheForcedTvLayoutShowsTheBarsItHid() {
+        mode("tv");
+        try (var screen = Robolectric.buildActivity(MotionTest.Screen.class).setup()) {
+            assertTrue(barsHidden(screen.get()));
+            PreferenceManager.getDefaultSharedPreferences(context).unregisterOnSharedPreferenceChangeListener(
+                    org.robolectric.util.ReflectionHelpers.getField(screen.get(), "appearanceListener"));
+            mode("auto");
+            screen.get().onWindowFocusChanged(true);
+            assertFalse(barsHidden(screen.get()));
+        }
+    }
+
+    /** Bars something else hid are not shown: only the forced TV layout's own. */
+    @Test
+    public void barsThisSettingDidNotHideStayAsTheyAre() {
+        mode("auto");
+        try (var screen = Robolectric.buildActivity(MotionTest.Screen.class).setup()) {
+            int hidden = android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | android.view.View.SYSTEM_UI_FLAG_FULLSCREEN;
+            screen.get().getWindow().getDecorView().setSystemUiVisibility(hidden);
+            screen.get().onWindowFocusChanged(true);
+            assertTrue(barsHidden(screen.get()));
+        }
+    }
+
     @Test
     public void automaticAndHandheldKeepTheSystemBars() {
         for (String value : new String[] {"auto", "handheld"}) {

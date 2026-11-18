@@ -1306,6 +1306,7 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("GPU decoding isn’t available here: {}", "此處 GPU 解碼不可用：{}"),
     ("Fewer {} settings", "收起{}設定"),
     ("More {} settings ({})", "更多{0}設定（{1}）"),
+    ("More settings", "更多設定"),
     ("Different settings for different networks.", "為不同網路保留不同設定。"),
     ("Refresh rate", "更新頻率"),
     ("Image", "畫面"),
@@ -1703,4 +1704,6 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "在 HDR 螢幕上呈現更亮的高光和更豐富的色彩。自動僅在螢幕、解碼器和 PC 都支援時開啟；如果 HDR 看起來泛白，請保持自動。"),
     ("Recommended", "推薦"),
     ("PyroWave at {}×{}, {} fps asks for {} Mbps; that may be more than this link carries ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave 在 {0}×{1}、{2} fps 下需要 {3} Mbps；這可能超過此連線可承載的 {4} Mbps。請降低解析度或影格率，或改用 HEVC 或 AV1。"),
+    ("Set up for this device and {}", "已為此裝置和 {} 設定完成"),
+    ("codec chosen when the stream starts", "編解碼器在串流開始時選擇"),
 ];

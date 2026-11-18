@@ -568,4 +568,7 @@
     <string name="settings_section_simple">Рекомендовано</string>
     <string name="settings_section_simple_summary">Вибір, потрібний більшості; усі подробиці — у розділах нижче.</string>
     <string name="summary_simple_hdr">Яскравіші відблиски та насиченіші кольори на HDR-екрані. Авто вмикає HDR, лише якщо екран, декодер і ПК це підтримують; ввімкнення в інших випадках дає бляклу картинку. Залиште Авто, якщо картинка не здається бляклою.</string>
+    <string name="home_setup_title">Налаштовано для цього пристрою та %1$s</string>
+    <string name="home_setup_codec_auto">кодек обирається під час запуску стриму</string>
+    <string name="home_setup_dismiss">Сховати</string>
 </resources>

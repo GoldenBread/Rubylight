@@ -1306,6 +1306,7 @@ sudo sysctl -w net.core.rmem_max={}", "Tampon de réception : le système a acco
     ("GPU decoding isn’t available here: {}", "Le décodage GPU est indisponible ici : {}"),
     ("Fewer {} settings", "Moins de paramètres {}"),
     ("More {} settings ({})", "Plus de paramètres {0} ({1})"),
+    ("More settings", "Plus de paramètres"),
     ("Different settings for different networks.", "Des paramètres différents pour différents réseaux."),
     ("Refresh rate", "Fréquence de rafraîchissement"),
     ("Image", "Image"),
@@ -1703,4 +1704,6 @@ sudo sysctl -w net.core.rmem_max={}", "Tampon de réception : le système a acco
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "Des hautes lumières plus vives et des couleurs plus riches sur un écran HDR. Auto ne l'active que si l'écran, le décodeur et le PC le prennent en charge ; laissez sur Auto sauf si le HDR paraît délavé."),
     ("Recommended", "Recommandé"),
     ("PyroWave at {}×{}, {} fps asks for {} Mbps; that may be more than this link carries ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave en {0}×{1} à {2} i/s demande {3} Mbps ; cela peut être plus que ce lien ne porte ({4} Mbps). Réduisez la résolution ou la fréquence d’images, ou utilisez HEVC ou AV1."),
+    ("Set up for this device and {}", "Configuré pour cet appareil et {}"),
+    ("codec chosen when the stream starts", "codec choisi au démarrage du stream"),
 ];

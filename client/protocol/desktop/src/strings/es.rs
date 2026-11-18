@@ -1306,6 +1306,7 @@ sudo sysctl -w net.core.rmem_max={}", "Búfer de recepción: el sistema concedi�
     ("GPU decoding isn’t available here: {}", "La decodificación por GPU no está disponible aquí: {}"),
     ("Fewer {} settings", "Menos ajustes de {}"),
     ("More {} settings ({})", "Más ajustes de {0} ({1})"),
+    ("More settings", "Más ajustes"),
     ("Different settings for different networks.", "Ajustes distintos para redes distintas."),
     ("Refresh rate", "Frecuencia de actualización"),
     ("Image", "Imagen"),
@@ -1703,4 +1704,6 @@ sudo sysctl -w net.core.rmem_max={}", "Búfer de recepción: el sistema concedi�
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "Brillos más intensos y colores más ricos en una pantalla HDR. Auto solo lo activa cuando la pantalla, el decodificador y el PC lo admiten; déjalo en Auto salvo que el HDR se vea deslavado."),
     ("Recommended", "Recomendado"),
     ("PyroWave at {}×{}, {} fps asks for {} Mbps; that may be more than this link carries ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave a {0}×{1} y {2} fps pide {3} Mbps; puede ser más de lo que este enlace soporta ({4} Mbps). Baja la resolución o la frecuencia de imágenes, o usa HEVC o AV1."),
+    ("Set up for this device and {}", "Configurado para este dispositivo y {}"),
+    ("codec chosen when the stream starts", "el códec se elige al iniciar la transmisión"),
 ];

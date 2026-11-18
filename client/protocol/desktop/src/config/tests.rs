@@ -1183,6 +1183,23 @@ fn home_view_keeps_the_rows_per_store_until_chosen_and_reads_back() {
     assert!(CardSize::Small.scale() < CardSize::Medium.scale() && CardSize::Medium.scale() < CardSize::Large.scale());
 }
 
+/// "More settings" and Home's setup card keep their state in settings.json without being settings:
+/// an older file reads them folded and unoffered, and they read back as saved.
+#[test]
+fn ui_state_beside_the_settings_reads_back_and_defaults_closed() {
+    let old: Settings = serde_json::from_str(r#"{"fps":60}"#).unwrap();
+    assert!(!old.settings_more_open && old.setup_card_host.is_none() && !old.setup_card_seen);
+    let set = Settings { settings_more_open: true, setup_card_host: Some(42), setup_card_seen: true, ..Default::default() };
+    let json = serde_json::to_value(&set).unwrap();
+    assert_eq!((&json["settings_more_open"], &json["setup_card_host"], &json["setup_card_seen"]), (&serde_json::json!(true), &serde_json::json!(42), &serde_json::json!(true)));
+    assert_eq!(serde_json::from_value::<Settings>(json).unwrap(), set);
+    // A PC's, game's or profile's values never carry them: they apply over the main settings' own.
+    let mut own = Overrides::default();
+    own.capture(&Settings { fps: 120, ..Settings::default() }, &["fps"]);
+    let applied = own.apply(&set);
+    assert_eq!((applied.fps, applied.settings_more_open, applied.setup_card_host, applied.setup_card_seen), (120, true, Some(42), true));
+}
+
 #[test]
 fn quit_on_leave_is_kept_per_game_and_a_known_uuid_decides_alone() {
     let mut record = HostRecord::default();

@@ -19,6 +19,16 @@ use nightjar_policy::stream_menu::{Hotkey, NO_TILE};
 /// the simple layer (SimpleProfile): three plain choices over the settings the other sections hold.
 pub(super) const SETTINGS_SECTIONS: [&str; 9] = [en("Recommended"), en("Video"), en("Display & image"), en("Controls"), en("Audio"), en("Streaming"), en("App"), en("Advanced"), en("Debug")];
 
+/// The sections the list always shows, simple first; "More settings" unfolds Profiles and the
+/// other sections under them, as Android's overview does (`StreamSettings.RAIL_FOLDED`). A PC's,
+/// game's or profile's settings list every section they have: they are the detail already.
+pub(super) const RAIL_MAIN: [&str; 4] = [en("Recommended"), en("Controls"), en("Audio"), en("App")];
+
+/// Whether this section's entry sits behind "More settings" on the main settings.
+pub(super) fn rail_folded(section: &str) -> bool {
+    !RAIL_MAIN.contains(&section)
+}
+
 /// Every setting row's keys, by section, in the order the page draws them with every fold open;
 /// the first key names the row. Rows that show only with another setting (Custom resolution,
 /// Bitrate, the controller mouse's options) share their keys or are listed where they show. Action
@@ -100,6 +110,15 @@ pub(super) struct SettingsView {
     pub(super) found: [usize; 9],
     /// Each section's fold is open (its "More … settings" chosen), until Nightjar closes.
     pub(super) more: [bool; 9],
+    /// The list's own fold is open ("More settings" chosen): Profiles and the sections of detail
+    /// show under the simple ones. Only the user's own choice sets it, and it is kept in
+    /// settings.json (`settings_more_open`) for the next start; a link or a search that shows a
+    /// section behind the fold opens it for that visit alone (`rail_open`).
+    pub(super) rail_more: bool,
+    /// The section the main settings last showed ("" before their first visit), and whether a
+    /// PC's, game's or profile's settings showed since.
+    main_section: &'static str,
+    from_layered: bool,
     /// Another section was opened: its rows start at the top.
     pub(super) to_top: bool,
     /// Reset all (or Clear all on a PC's, game's or profile's settings) waits for its confirmation.
@@ -122,6 +141,11 @@ pub(super) struct SettingsView {
 }
 
 impl SettingsView {
+    /// The page's state at start: the fold as the user last left it.
+    pub(super) fn remembered(rail_more: bool) -> Self {
+        Self { rail_more, ..Self::default() }
+    }
+
     fn searching(&self) -> bool {
         !self.query.trim().is_empty()
     }
@@ -152,6 +176,27 @@ fn search_words(query: &str) -> Vec<String> {
 fn found(words: &[String], texts: &[&str]) -> bool {
     let texts: Vec<String> = texts.iter().map(|t| t.to_lowercase()).collect();
     words.iter().all(|w| texts.iter().any(|t| t.contains(w.as_str())))
+}
+
+impl SettingsView {
+    /// Whether the main settings' list shows what is behind "More settings": it was chosen, a
+    /// search looks everywhere, or the open section is one of them (a link or a result led there).
+    pub(super) fn rail_open(&self) -> bool {
+        self.rail_more || self.searching() || rail_folded(self.section)
+    }
+
+    /// "More settings" was chosen. Closing it while a section behind it is open goes back to the
+    /// first section, so the list never hides what the rows show.
+    fn toggle_rail(&mut self) {
+        if self.rail_open() {
+            self.rail_more = false;
+            if rail_folded(self.section) {
+                self.open(RAIL_MAIN[0]);
+            }
+        } else {
+            self.rail_more = true;
+        }
+    }
 }
 
 fn section_index(name: &str) -> usize {
@@ -325,6 +370,14 @@ pub(crate) fn simple_state(s: &Settings, display: &Display, caps: &simple::Capab
 }
 
 impl Launcher {
+    /// "More settings" was chosen: the fold opens or closes, and the choice is saved for the next
+    /// start. Only this saves it; a link or a search result unfolds for its visit alone.
+    fn toggle_more_settings(&mut self, commands: &mut Vec<Command>) {
+        self.settings_view.toggle_rail();
+        self.settings.settings_more_open = self.settings_view.rail_more;
+        commands.push(Command::SaveSettings);
+    }
+
     /// Escape or B on a settings page: closes the search first (leaves its field, then clears
     /// it). True when it did, so the page stays.
     pub(super) fn escape_search(&mut self) -> bool {
@@ -350,10 +403,20 @@ impl Launcher {
     pub(super) fn settings_page(&mut self, ui: &mut Ui, view: &View<'_>, commands: &mut Vec<Command>) {
         let layered = self.screen != Screen::Settings;
         let sections: Vec<&'static str> = SETTINGS_SECTIONS.into_iter().filter(|s| !(layered && (*s == "App" || *s == "Recommended"))).collect();
+        // The main settings keep their own section: a PC's, game's or profile's settings, which share
+        // the view and open on Video, would otherwise leave it there with the list unfolded.
+        if layered {
+            self.settings_view.from_layered = true;
+        } else if std::mem::take(&mut self.settings_view.from_layered) {
+            self.settings_view.section = self.settings_view.main_section;
+        }
         if !sections.contains(&self.settings_view.section) {
-            // A page opened anew keeps Video, as it did before Recommended led the list; Recommended is the first
-            // entry in the rail, and a search or a link can still open it.
-            self.settings_view.section = if self.settings_view.section.is_empty() { en("Video") } else { sections[0] };
+            // A page opened anew starts on its first section: Recommended on the main settings, the
+            // few choices most people need, and Video on a PC's, game's or profile's.
+            self.settings_view.section = sections[0];
+        }
+        if !layered {
+            self.settings_view.main_section = self.settings_view.section;
         }
         // A page opened anew starts without the last visit's search; the section stays.
         if self.focus_screen && self.restore_key.is_none() {
@@ -406,7 +469,7 @@ impl Launcher {
             let mut side = ui.new_child(UiBuilder::new().id_salt("settings-sections").max_rect(list).layout(Layout::top_down(Align::Min)));
             self.search_field(&mut side);
             side.add_space(space::M);
-            (entries, profiles) = self.section_list(&mut side, sections, layered);
+            (entries, profiles) = self.section_list(&mut side, sections, layered, commands);
             let drawn = side.min_rect().height();
             ui.data_mut(|d| d.insert_temp(height_id, drawn));
             side_bottom = page.top() + drawn;
@@ -415,19 +478,38 @@ impl Launcher {
             self.search_field(ui);
             ui.add_space(space::S);
             ui.horizontal_wrapped(|ui| {
-                // Profiles first, as above the list on a wide window: a page of its own, not a section.
-                if !layered {
-                    let chip = chip(ui, "Profiles");
-                    self.focus_item(&chip, "profiles-link", false);
-                    profiles = chip.clicked();
-                }
-                for name in sections {
-                    let current = !self.settings_view.searching() && self.settings_view.section == *name;
-                    let chip = section_chip(ui, name, current);
-                    entries.push((*name, chip.id));
-                    if chip.clicked() {
-                        self.settings_view.open(name);
+                // The list's order on a wide window: the simple sections, More settings, then
+                // Profiles (a page of its own, not a section) and the sections of detail.
+                let open = layered || self.settings_view.rail_open();
+                let mut toggled = false;
+                for folded in [false, true] {
+                    if folded && !layered {
+                        if !self.settings_view.searching() {
+                            let more = section_chip(ui, en("More settings"), false);
+                            more.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, open, tr("More settings")));
+                            self.focus_item(&more, "rail-more", false);
+                            toggled = more.clicked();
+                        }
+                        if open {
+                            let chip = chip(ui, "Profiles");
+                            self.focus_item(&chip, "profiles-link", false);
+                            profiles = chip.clicked();
+                        }
                     }
+                    for name in sections.iter().filter(|s| if layered { !folded } else { rail_folded(s) == folded }) {
+                        if folded && !open {
+                            break;
+                        }
+                        let current = !self.settings_view.searching() && self.settings_view.section == *name;
+                        let chip = section_chip(ui, name, current);
+                        entries.push((*name, chip.id));
+                        if chip.clicked() {
+                            self.settings_view.open(name);
+                        }
+                    }
+                }
+                if toggled {
+                    self.toggle_more_settings(commands);
                 }
             });
             ui.add_space(space::S);
@@ -678,21 +760,41 @@ impl Launcher {
     /// Profiles, then the sections, the current one marked. While searching each that found rows
     /// says how many, and a click on any ends the search; on a PC's, game's or profile's settings
     /// each says how many it sets. Returns each section entry's id, and whether Profiles was chosen.
-    fn section_list(&mut self, ui: &mut Ui, sections: &[&'static str], layered: bool) -> (Vec<(&'static str, Id)>, bool) {
+    fn section_list(&mut self, ui: &mut Ui, sections: &[&'static str], layered: bool, commands: &mut Vec<Command>) -> (Vec<(&'static str, Id)>, bool) {
         let searching = self.settings_view.searching();
         let mut entries = Vec::new();
         let under = ui.painter().add(egui::Shape::Noop);
         let top = ui.cursor().top();
         ui.add_space(SIDE_INSET);
-        // Profiles is a page of its own above the sections, as on Android.
+        // Simple first: the sections most people need, then More settings, which unfolds Profiles
+        // (a page of its own, as on Android) and the sections of detail under it.
         let mut profiles = false;
-        if !layered {
-            let item = section_item(ui, en("Profiles"), false, Badge::None, egui::Role::Link);
-            name_for_readers(ui, &item, en("Profiles"), en("Different settings for different networks."));
-            self.focus_item(&item, "profiles-link", false);
-            profiles = item.clicked();
-        }
-        for name in sections {
+        let open = layered || self.settings_view.rail_open();
+        let mut toggled = false;
+        let ordered: Vec<&'static str> = if layered {
+            sections.to_vec()
+        } else {
+            sections.iter().copied().filter(|s| !rail_folded(s)).chain(sections.iter().copied().filter(|s| rail_folded(s))).collect()
+        };
+        let mut fold_drawn = layered;
+        for name in &ordered {
+            if !fold_drawn && rail_folded(name) {
+                fold_drawn = true;
+                if !searching {
+                    let more = rail_fold_item(ui, open);
+                    self.focus_item(&more, "rail-more", false);
+                    toggled = more.clicked();
+                }
+                if open {
+                    let item = section_item(ui, en("Profiles"), false, Badge::None, egui::Role::Link);
+                    name_for_readers(ui, &item, en("Profiles"), en("Different settings for different networks."));
+                    self.focus_item(&item, "profiles-link", false);
+                    profiles = item.clicked();
+                }
+            }
+            if !open && rail_folded(name) {
+                continue;
+            }
             let at = section_index(name);
             let badge = if searching {
                 Badge::Found(self.settings_view.found[at])
@@ -708,6 +810,9 @@ impl Launcher {
             if item.clicked() {
                 self.settings_view.open(name);
             }
+        }
+        if toggled {
+            self.toggle_more_settings(commands);
         }
         ui.add_space(SIDE_INSET - ui.spacing().item_spacing.y);
         let list = Rect::from_min_max(Pos2::new(ui.max_rect().left(), top), Pos2::new(ui.max_rect().right(), ui.cursor().top()));
@@ -2293,7 +2398,7 @@ pub(super) fn error_correction_name(mode: ErrorCorrection) -> String {
     }
 }
 
-fn codec_name(codec: CodecPreference) -> &'static str {
+pub(super) fn codec_name(codec: CodecPreference) -> &'static str {
     match codec {
         CodecPreference::Auto => tr("Automatic"),
         CodecPreference::H264 => "H.264",
@@ -3450,6 +3555,7 @@ enum Badge {
 fn section_icon(name: &str) -> Icon {
     match name {
         n if n == en("Profiles") => Icon::Folder,
+        n if n == en("Recommended") => Icon::Star,
         n if n == en("Video") => Icon::Video,
         n if n == en("Display & image") => Icon::Monitor,
         n if n == en("Controls") => Icon::Gamepad,
@@ -3513,6 +3619,31 @@ fn section_item(ui: &mut Ui, name: &str, current: bool, badge: Badge, role: egui
         }
         painter.galley(spot.center() - galley.size() / 2.0, galley, color);
     }
+    focus_ring(ui, rect, &response, radius::CONTROL);
+    response
+}
+
+/// "More settings" in the list beside the rows: an entry without a page, with a chevron where a
+/// section has its icon, down to unfold Profiles and the sections of detail and up to fold them.
+fn rail_fold_item(ui: &mut Ui, open: bool) -> Response {
+    let width = ui.max_rect().width() - 2.0 * SIDE_INSET;
+    let (_, slot) = ui.allocate_space(vec2(ui.available_width(), SIDE_ITEM_H));
+    let rect = Rect::from_min_size(Pos2::new(ui.max_rect().left() + SIDE_INSET, slot.top()), vec2(width, SIDE_ITEM_H));
+    let response = ui.interact(rect, ui.next_auto_id(), Sense::click());
+    ui.skip_ahead_auto_ids(1);
+    let words = tr("More settings");
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, open, words));
+    let round = f32::from(radius::CONTROL);
+    let mut shapes = Vec::new();
+    lift_shapes(&mut shapes, ui.ctx(), rect, round, response.hovered(), response.is_pointer_button_down_on());
+    let painter = ui.painter();
+    painter.extend(shapes);
+    let color = *ON_SURFACE_VARIANT;
+    let c = Pos2::new(rect.left() + 22.0, rect.center().y);
+    let (tip, wing) = if open { (-3.5, 3.5) } else { (3.5, -3.5) };
+    painter.add(egui::Shape::line(vec![c + vec2(-6.0, wing), c + vec2(0.0, tip), c + vec2(6.0, wing)], Stroke::new(2.0, color)));
+    let galley = painter.layout_no_wrap(words.to_owned(), regular(text::BODY), color);
+    painter.galley(Pos2::new(rect.left() + 44.0, rect.center().y - galley.size().y / 2.0), galley, color);
     focus_ring(ui, rect, &response, radius::CONTROL);
     response
 }

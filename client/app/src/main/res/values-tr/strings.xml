@@ -568,4 +568,7 @@
     <string name="settings_section_simple">Önerilen</string>
     <string name="settings_section_simple_summary">Çoğu kişinin ihtiyaç duyduğu seçimler; tüm ayrıntılar aşağıdaki bölümlerde.</string>
     <string name="summary_simple_hdr">HDR ekranda daha parlak vurgular ve daha zengin renkler. Otomatik, yalnızca ekran, kod çözücü ve PC desteklediğinde açar; başka yerde açmak görüntüyü soluk gösterir. Görüntü soluk görünmüyorsa Otomatik olarak bırakın.</string>
+    <string name="home_setup_title">Bu cihaz ve %1$s için ayarlandı</string>
+    <string name="home_setup_codec_auto">codec yayın başlarken seçilir</string>
+    <string name="home_setup_dismiss">Kapat</string>
 </resources>

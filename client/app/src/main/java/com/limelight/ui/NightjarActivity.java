@@ -140,9 +140,13 @@ public abstract class NightjarActivity extends AppCompatActivity {
         if (!(this instanceof PairLinkActivity)) LinkGate.showWaiting(this);
     }
 
-    /** A TV has no system bars; the forced TV layout on a handheld fills the screen the same way. */
+    /**
+     * A TV has no system bars; the forced TV layout on a handheld fills the screen the same way. Back on Automatic or
+     * Handheld the bars this hid return: the screen recreates itself in its own window, which kept them hidden.
+     */
     private void hideBarsOnForcedTelevision() {
         if (AppTheme.forcedTelevision(this)) AppTheme.hideSystemBars(this);
+        else AppTheme.showSystemBars(this);
     }
 
     @Override

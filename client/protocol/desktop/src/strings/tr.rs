@@ -1306,6 +1306,7 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("GPU decoding isn’t available here: {}", "GPU ile kod çözme burada kullanılamıyor: {}"),
     ("Fewer {} settings", "Daha az ayar: {}"),
     ("More {} settings ({})", "Daha fazla ayar: {0} ({1})"),
+    ("More settings", "Diğer ayarlar"),
     ("Different settings for different networks.", "Farklı ağlar için farklı ayarlar."),
     ("Refresh rate", "Yenileme hızı"),
     ("Image", "Görüntü"),
@@ -1703,4 +1704,6 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "HDR ekranda daha parlak vurgular ve daha zengin renkler. Otomatik, yalnızca ekran, kod çözücü ve PC desteklediğinde açar; HDR soluk görünüyorsa Otomatik olarak bırakın."),
     ("Recommended", "Önerilen"),
     ("PyroWave at {}×{}, {} fps asks for {} Mbps; that may be more than this link carries ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave {0}×{1}, {2} fps için {3} Mbps istiyor; bu, bu bağlantının taşıdığından ({4} Mbps) fazla olabilir. Çözünürlüğü veya kare hızını düşürün ya da HEVC veya AV1 kullanın."),
+    ("Set up for this device and {}", "Bu cihaz ve {} için ayarlandı"),
+    ("codec chosen when the stream starts", "codec yayın başlarken seçilir"),
 ];

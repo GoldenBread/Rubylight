@@ -568,4 +568,7 @@
     <string name="settings_section_simple">Zalecane</string>
     <string name="settings_section_simple_summary">Wybory, których potrzebuje większość; wszystkie szczegóły są w sekcjach poniżej.</string>
     <string name="summary_simple_hdr">Jaśniejsze światła i bogatsze kolory na ekranie HDR. Automatycznie włącza je tylko wtedy, gdy ekran, dekoder i PC to obsługują; włączenie gdzie indziej daje wyblakły obraz. Zostaw Automatycznie, chyba że obraz wygląda wyblakle.</string>
+    <string name="home_setup_title">Skonfigurowano dla tego urządzenia i %1$s</string>
+    <string name="home_setup_codec_auto">kodek wybierany przy starcie strumienia</string>
+    <string name="home_setup_dismiss">Odrzuć</string>
 </resources>

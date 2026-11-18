@@ -1306,6 +1306,7 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приймання: систе
     ("GPU decoding isn’t available here: {}", "Декодування на GPU тут недоступне: {}"),
     ("Fewer {} settings", "Менше налаштувань: {}"),
     ("More {} settings ({})", "Більше налаштувань: {0} ({1})"),
+    ("More settings", "Інші налаштування"),
     ("Different settings for different networks.", "Різні налаштування для різних мереж."),
     ("Refresh rate", "Частота оновлення"),
     ("Image", "Зображення"),
@@ -1703,4 +1704,6 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приймання: систе
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "Яскравіші відблиски та насиченіші кольори на HDR-екрані. Авто вмикає HDR, лише якщо екран, декодер і ПК це підтримують; залиште Авто, якщо HDR здається бляклим."),
     ("Recommended", "Рекомендовано"),
     ("PyroWave at {}×{}, {} fps asks for {} Mbps; that may be more than this link carries ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave за {0}×{1} і {2} кадрів/с потребує {3} Мбіт/с; це може бути більше, ніж пропускає це з’єднання ({4} Мбіт/с). Зменште роздільну здатність або частоту кадрів чи використайте HEVC або AV1."),
+    ("Set up for this device and {}", "Налаштовано для цього пристрою та {}"),
+    ("codec chosen when the stream starts", "кодек обирається під час запуску стриму"),
 ];

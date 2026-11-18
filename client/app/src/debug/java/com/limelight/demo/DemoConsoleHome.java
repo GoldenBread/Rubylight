@@ -80,6 +80,13 @@ public final class DemoConsoleHome extends ConsoleHomeActivity {
     }
 
     @Override protected void onResume() {
+        // "--ez setupcard true": the card the first pairing leaves on Home, for the first PC. Once: closed, it stays closed.
+        // The card speaks for Recommended's Auto, which a new install is on and the demo's settings are not.
+        if (getIntent().getBooleanExtra("setupcard", false)) {
+            getIntent().removeExtra("setupcard");
+            com.limelight.preferences.SimpleProfile.applyRecommended(this);
+            com.limelight.console.SetupCard.show(this, DemoFixtures.PC_UUID);
+        }
         if (getIntent().getBooleanExtra("pairwait", false)) {
             com.limelight.nvstream.http.ComputerDetails pc = new com.limelight.nvstream.http.ComputerDetails();
             pc.name = "Living-room PC";

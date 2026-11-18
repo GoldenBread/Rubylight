@@ -568,4 +568,7 @@
     <string name="settings_section_simple">おすすめ</string>
     <string name="settings_section_simple_summary">ほとんどの人に必要な選択です。詳しい設定は下のセクションにあります。</string>
     <string name="summary_simple_hdr">HDR 画面で明るいハイライトと豊かな色になります。自動は画面、デコーダー、PC が対応しているときだけオンにします。それ以外でオンにすると映像が白っぽく見えます。映像が白っぽく見える場合を除き、自動のままにしてください。</string>
+    <string name="home_setup_title">このデバイスと %1$s に合わせて設定しました</string>
+    <string name="home_setup_codec_auto">コーデックはストリーム開始時に選択</string>
+    <string name="home_setup_dismiss">閉じる</string>
 </resources>

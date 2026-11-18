@@ -568,4 +568,7 @@
     <string name="settings_section_simple">Consigliato</string>
     <string name="settings_section_simple_summary">Le scelte che servono ai più; le sezioni sotto contengono ogni dettaglio.</string>
     <string name="summary_simple_hdr">Luci più brillanti e colori più ricchi su uno schermo HDR. Auto lo attiva solo se schermo, decoder e PC lo supportano; attivarlo altrove rende l\'immagine slavata. Lascia su Auto a meno che l\'immagine non appaia slavata.</string>
+    <string name="home_setup_title">Configurato per questo dispositivo e %1$s</string>
+    <string name="home_setup_codec_auto">codec scelto all\'avvio dello streaming</string>
+    <string name="home_setup_dismiss">Ignora</string>
 </resources>

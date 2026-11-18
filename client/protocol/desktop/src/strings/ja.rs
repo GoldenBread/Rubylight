@@ -1306,6 +1306,7 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("GPU decoding isn’t available here: {}", "ここではGPUデコードを利用できません: {}"),
     ("Fewer {} settings", "{}の設定の表示を減らす"),
     ("More {} settings ({})", "{0}の設定をさらに表示（{1}）"),
+    ("More settings", "その他の設定"),
     ("Different settings for different networks.", "ネットワークごとに異なる設定を使います。"),
     ("Refresh rate", "リフレッシュレート"),
     ("Image", "画質"),
@@ -1703,4 +1704,6 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "HDR 画面で明るいハイライトと豊かな色になります。自動は画面、デコーダー、PC が対応しているときだけオンにします。HDR が白っぽく見える場合はオフにしてください。"),
     ("Recommended", "おすすめ"),
     ("PyroWave at {}×{}, {} fps asks for {} Mbps; that may be more than this link carries ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave の {0}×{1}、{2} fps は {3} Mbps を要求しますが、この回線が運べる量（{4} Mbps）を超えている可能性があります。解像度かフレームレートを下げるか、HEVC か AV1 を使ってください。"),
+    ("Set up for this device and {}", "このデバイスと {} に合わせて設定しました"),
+    ("codec chosen when the stream starts", "コーデックはストリーム開始時に選択"),
 ];

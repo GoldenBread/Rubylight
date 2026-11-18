@@ -205,6 +205,19 @@ public final class SimpleProfile {
         return SimpleProfileModel.chosen(capabilities(context), current(context));
     }
 
+    /**
+     * Whether the stream's settings are what Recommended writes with its three choices on Auto: none of them is the
+     * player's own. False as well when the model cannot answer.
+     */
+    public static boolean allAuto(Context context) {
+        String[] chosen = chosen(context);
+        if (chosen == null) return false;
+        for (String choice : chosen) {
+            if (!"auto".equals(choice)) return false;
+        }
+        return true;
+    }
+
     /** {@code key} is Custom when the settings match no choice of the row. */
     static boolean custom(Context context, String key) {
         return chosen(context) == null;
@@ -240,7 +253,7 @@ public final class SimpleProfile {
     }
 
     /** Writes the recommended profile: the one "Back to recommended" takes. */
-    static boolean applyRecommended(Context context) {
+    public static boolean applyRecommended(Context context) {
         SimpleProfileModel.Capabilities caps = capabilities(context);
         String[] recommended = SimpleProfileModel.recommended(caps);
         if (recommended == null) return false;

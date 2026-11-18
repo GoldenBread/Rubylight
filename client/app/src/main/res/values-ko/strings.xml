@@ -568,4 +568,7 @@
     <string name="settings_section_simple">추천</string>
     <string name="settings_section_simple_summary">대부분에게 필요한 선택입니다. 자세한 설정은 아래 섹션에 있습니다.</string>
     <string name="summary_simple_hdr">HDR 화면에서 더 밝은 하이라이트와 풍부한 색을 보여 줍니다. 자동은 화면, 디코더, PC가 모두 지원할 때만 켭니다. 그렇지 않은 곳에서 켜면 화면이 흐릿하게 보입니다. 화면이 흐릿하게 보이지 않으면 자동을 유지하세요.</string>
+    <string name="home_setup_title">이 기기와 %1$s에 맞게 설정됨</string>
+    <string name="home_setup_codec_auto">코덱은 스트림 시작 시 선택</string>
+    <string name="home_setup_dismiss">닫기</string>
 </resources>

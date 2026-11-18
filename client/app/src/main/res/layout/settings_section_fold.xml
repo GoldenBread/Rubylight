@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The More settings row in a phone's list of sections: a section's row without the chevron, since it unfolds the
+     rows below it instead of opening a page. Its icon points down, or up once it is open. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="@dimen/settings_section_min_height"
+    android:gravity="center_vertical" android:paddingStart="@dimen/settings_row_inset" android:paddingEnd="@dimen/space_m"
+    android:paddingTop="@dimen/settings_section_padding" android:paddingBottom="@dimen/settings_section_padding"
+    android:descendantFocusability="blocksDescendants" android:background="@drawable/settings_row_press">
+    <ImageView android:id="@android:id/icon" android:layout_width="22dp" android:layout_height="22dp"
+        android:layout_marginEnd="@dimen/space_m" app:tint="?attr/colorOnSurface" android:importantForAccessibility="no" />
+    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+        android:orientation="vertical">
+        <TextView android:id="@android:id/title" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:fontFamily="?attr/nightjarFaceStrong"
+            android:textAppearance="@style/TextAppearance.Nightjar.Body" android:textColor="?attr/colorOnSurface" />
+        <com.limelight.preferences.ExpandingSummaryView android:id="@android:id/summary" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="2dp" android:maxLines="@integer/settings_section_summary_lines" android:ellipsize="end"
+            android:textAppearance="@style/TextAppearance.Nightjar.Supporting" android:textColor="?attr/colorOnSurfaceVariant" />
+    </LinearLayout>
+</LinearLayout>

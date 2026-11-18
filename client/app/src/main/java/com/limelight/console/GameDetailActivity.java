@@ -98,6 +98,10 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
     private HostWaker waker;
     private boolean playWhenReady;
     private Auto auto = Auto.OFF;
+    /** The way the device was held when the page was laid out: upright it is the sheet, sideways the hero grown to a page. */
+    private int laidOutFor;
+    /** The way it is held now, as the system last said: this screen's resources keep the configuration they were made with. */
+    private int heldNow;
     private AlertDialog countdown;
     private long countdownEnd;
     private long networkLimit;
@@ -138,7 +142,7 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
     private TextView quitOnLeaveNote;
     private GameDetailModel quitOnLeaveGame;
     private ComputerDetails quitOnLeaveComputer;
-    /** TV only (null on a phone): the backdrop, and the chip line with the installed and HDR chips. */
+    /** The backdrop, and the chip line with the installed and HDR chips. A layout without them (none today) leaves these null and shows the state chip alone. */
     private BackdropView backdrop;
     private View chips;
     private TextView installed;
@@ -183,6 +187,21 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
         return true;
     }
 
+    /**
+     * An automatic start (its wait for the network, its countdown), a press of Play that waits for the PC and a wake run
+     * on this page, and laying it out again would end them: a pause cancels each, and none is saved. The turn waits.
+     */
+    @Override
+    protected boolean holdsForm() {
+        return auto != Auto.OFF || playWhenReady || (waker != null && waker.isWaiting());
+    }
+
+    /** That work is over, or may be: the page asks again whether it was turned meanwhile. */
+    private void followTurnSoon() {
+        followFormSoon();
+        handler.post(this::followTurn);
+    }
+
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -196,6 +215,8 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
             finish();
             return;
         }
+        laidOutFor = getResources().getConfiguration().orientation;
+        heldNow = laidOutFor;
         setContentView(R.layout.activity_game_detail);
         UiHelper.notifyNewRootView(this);
 
@@ -454,6 +475,7 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
     private void endAuto() {
         auto = Auto.OFF;
         stopAutoLimit();
+        followTurnSoon();
     }
 
     /** An automatic start failed and says so: the player lands on Home, and the guard stays armed. */
@@ -473,13 +495,31 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
     }
 
     /**
-     * The TV page sits on the game's backdrop. Opened from Home, it is the picture Home was showing for the game,
+     * The page sits on the game's backdrop on every form. Opened from Home, it is the picture Home was showing for the game,
      * shown at once, so the page change keeps the screen's light; otherwise it fades in when the cover is loaded.
      */
     private void setUpAmbience() {
-        int canvas = AppTheme.tvCanvas(this);
+        com.limelight.ui.GlassForm form = com.limelight.ui.GlassForm.of(this);
+        boolean tv = form == com.limelight.ui.GlassForm.TELEVISION;
+        int canvas = tv ? AppTheme.tvCanvas(this)
+                : com.google.android.material.color.MaterialColors.getColor(backdrop, R.attr.glassCanvas);
+        // Held sideways the page is Home's hero grown to a page: the ambient bakes for the theme and fades as Home's does.
+        // That layout is the sideways one whatever the device, so a phone turned on its side bakes as a handheld does.
+        // Held upright the page is the sheet: the ambient is a phone Home's, the art at the top where the cover is.
+        boolean sideways = getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+        if (!tv) HomeChrome.setUpBackdrop(this, sideways ? com.limelight.ui.GlassForm.HANDHELD : com.limelight.ui.GlassForm.PHONE, backdrop, canvas);
         getWindow().setBackgroundDrawable(new ColorDrawable(canvas));
         ((ViewGroup) findViewById(android.R.id.content)).setClipChildren(false);
+        // The system bars' padding sits on the content view as well: the backdrop reaches under the status bar, as Home's does.
+        if (!tv) ((ViewGroup) findViewById(android.R.id.content)).setClipToPadding(false);
+        // Nothing on the page clips its children, so a focus halo and the sheet's foot can draw past their views. Scrolled,
+        // the page would then run over the bar above it: the scrolling part is cut at its own top edge, and only there.
+        View scroll = findViewById(R.id.detail_scroll);
+        if (scroll != null) {
+            int far = getResources().getDisplayMetrics().heightPixels;
+            scroll.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) ->
+                    v.setClipBounds(new android.graphics.Rect(-far, 0, r - l + far, b - t + far)));
+        }
         backdrop.setCanvasColor(canvas);
         backdrop.setDim(AppTheme.isHighContrast(this) ? 0.85f : 1f);
         backdrop.setOnCovered(() -> getWindow().setBackgroundDrawable(null));
@@ -500,6 +540,7 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
     protected void onResume() {
         super.onResume();
         shown = true;
+        followTurn();
         feed.resume();
         // The game may have started or ended while the stream was in front.
         loadedSignature = null;
@@ -530,6 +571,26 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
         }
         handler.removeCallbacks(reload);
         super.onPause();
+    }
+
+    @Override
+    public void onConfigurationChanged(android.content.res.Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        heldNow = newConfig.orientation;
+        followTurn();
+    }
+
+    /**
+     * The page has a layout for each way of holding the device and handles the turn itself, so it is laid out again for
+     * the new one. A turn that changes the form did that already; this is the turn that does not, a window under 600 dp
+     * wide on its side, which is a phone's form either way. A start or a wake under way keeps the page as it is
+     * ({@link #holdsForm}); it asks again when that ends, with each drawing of the page and on a resume.
+     */
+    private void followTurn() {
+        int now = heldNow;
+        if (now == android.content.res.Configuration.ORIENTATION_UNDEFINED || now == laidOutFor || isFinishing() || isDestroyed() || recreatingForForm() || holdsForm()) return;
+        laidOutFor = now;
+        recreate();
     }
 
     @Override
@@ -575,8 +636,11 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
         }
         if (repository == null) {
             repository = createRepository(uniqueId);
-            covers = new CoverLoaders(this, uniqueId, Math.round(
-                    getResources().getDimension(R.dimen.detail_cover_width) / getResources().getDisplayMetrics().density));
+            // As wide as the cover is laid out: the sideways page's is larger than the portrait page's.
+            View cover = findViewById(R.id.detail_poster);
+            float coverWidth = cover != null && cover.getLayoutParams().width > 0 ? cover.getLayoutParams().width
+                    : getResources().getDimension(R.dimen.detail_cover_width);
+            covers = new CoverLoaders(this, uniqueId, Math.round(coverWidth / getResources().getDisplayMetrics().density));
             if (backdrop != null) {
                 covers.setArtListener(app -> {
                     if (app.getAppId() == appId) askBackdrop();
@@ -697,6 +761,8 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
 
     @VisibleForTesting
     void render(GameDetailModel m, ComputerDetails computer) {
+        // A wake or a start that ended is drawn here: a turn it kept waiting is followed now.
+        if (heldNow != laidOutFor) followTurnSoon();
         title.setText(m.title);
         host.setText(m.hostName);
         setTitle(m.title);
@@ -913,6 +979,7 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
         if (waker != null) {
             waker.cancel();
         }
+        followTurnSoon();
     }
 
     /** Play on a PC that is away: send the wake packets, wait for it, and let {@link #show} carry on with the game. */
