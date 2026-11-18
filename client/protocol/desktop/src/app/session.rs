@@ -127,6 +127,7 @@ impl App {
         streaming.display_changed(self.renderer);
         if !manual_bitrate && (settings.adaptive_bitrate || streaming.quality_mode != config::QualityMode::Off) { streaming.enable_adaptive_bitrate(true); }
         if settings.controllers && streaming.facts.role != nightjar_core::http::AppRole::RemoteMonitor {
+            self.pads.set_limit(streaming.facts.controller_limit);
             streaming.session.input(|q| self.pads.announce_all(q));
         }
         // SAFETY: a live window.
@@ -174,6 +175,10 @@ impl App {
         } else { None };
         let toast = start_toast(warning, (!notices.is_empty()).then_some(notices.as_str()), handheld::gamescope());
         streaming.show_toast(toast);
+        // Controllers this PC has no player slot for: said below the start's own notice.
+        if let Some(refused) = self.pads.refused_notice() {
+            streaming.add_toast(refused);
+        }
         // Straight to the display, the pictures go on a display plane from the first one.
         #[cfg(target_os = "linux")]
         {
@@ -527,6 +532,9 @@ impl App {
             s.overlay_position = corner.unwrap_or(s.overlay_position);
             if let Err(e) = self.store.save_settings(s) {
                 eprintln!("nightjar: saving settings failed: {e}");
+                if first_save_failure(&mut self.save_failed_told) {
+                    streaming.show_toast(save_failed_text(self.store.dir()));
+                }
             }
         }
         // A device ticked or unticked for automatic USB forwarding in the stream controls.
@@ -534,6 +542,9 @@ impl App {
             self.launcher.settings.usb_auto = auto;
             if let Err(e) = self.store.save_settings(&self.launcher.settings) {
                 eprintln!("nightjar: saving settings failed: {e}");
+                if first_save_failure(&mut self.save_failed_told) {
+                    streaming.show_toast(save_failed_text(self.store.dir()));
+                }
             }
         }
         if let Some((_, at)) = &streaming.toast {

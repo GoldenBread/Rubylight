@@ -1728,4 +1728,7 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("Set up for this device and {}", "이 기기와 {}에 맞게 설정됨"),
     ("codec chosen when the stream starts", "코덱은 스트림 시작 시 선택"),
     ("Another PC or program answers at this PC’s address. If this PC was set up again, remove it and add it again.", "이 PC의 주소에서 다른 PC나 프로그램이 응답하고 있습니다. 이 PC를 다시 설정했다면 제거한 뒤 다시 추가하세요."),
+    ("This PC takes {} controllers", "이 PC는 컨트롤러 {}개를 지원합니다"),
+    ("Changes could not be saved", "변경 사항을 저장할 수 없습니다"),
+    ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar가 {}에 쓸 수 없습니다. 변경 사항은 Nightjar를 종료할 때까지 적용되고 그 후에는 원래대로 돌아갑니다. 폴더에 쓸 수 있는지 확인하세요."),
 ];

@@ -1728,4 +1728,7 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("Set up for this device and {}", "Đã thiết lập cho thiết bị này và {}"),
     ("codec chosen when the stream starts", "codec được chọn khi bắt đầu truyền"),
     ("Another PC or program answers at this PC’s address. If this PC was set up again, remove it and add it again.", "Một PC hoặc chương trình khác đang trả lời tại địa chỉ của PC này. Nếu PC này đã được cài đặt lại, hãy gỡ nó rồi thêm lại."),
+    ("This PC takes {} controllers", "PC này nhận {} tay cầm"),
+    ("Changes could not be saved", "Không thể lưu thay đổi"),
+    ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar không ghi được vào {}. Các thay đổi chỉ có hiệu lực đến khi Nightjar đóng, sau đó trở lại như cũ; hãy kiểm tra thư mục có ghi được không."),
 ];

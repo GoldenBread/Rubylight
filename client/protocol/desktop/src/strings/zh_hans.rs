@@ -1728,4 +1728,7 @@ sudo sysctl -w net.core.rmem_max={}", "接收缓冲区：系统只分配了所�
     ("Set up for this device and {}", "已为此设备和 {} 设置好"),
     ("codec chosen when the stream starts", "编解码器在串流开始时选择"),
     ("Another PC or program answers at this PC’s address. If this PC was set up again, remove it and add it again.", "另一台电脑或另一个程序在这台电脑的地址上应答。如果这台电脑重新安装过，请移除它，然后重新添加。"),
+    ("This PC takes {} controllers", "此 PC 支持 {} 个手柄"),
+    ("Changes could not be saved", "无法保存更改"),
+    ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar 无法写入 {}。更改在 Nightjar 关闭前有效，之后会恢复原样；请检查该文件夹是否可写。"),
 ];

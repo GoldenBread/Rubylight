@@ -524,6 +524,7 @@ impl crate::App {
         self.launcher.open_game = game;
         if let Err(e) = self.store.save_settings(&self.launcher.settings) {
             eprintln!("nightjar: saving settings failed: {e}");
+            self.save_failed();
         }
     }
 

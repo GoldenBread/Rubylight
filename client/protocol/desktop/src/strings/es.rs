@@ -1728,4 +1728,7 @@ sudo sysctl -w net.core.rmem_max={}", "Búfer de recepción: el sistema concedi�
     ("Set up for this device and {}", "Configurado para este dispositivo y {}"),
     ("codec chosen when the stream starts", "el códec se elige al iniciar la transmisión"),
     ("Another PC or program answers at this PC’s address. If this PC was set up again, remove it and add it again.", "Otro PC u otro programa responde en la dirección de este PC. Si este PC se configuró de nuevo, quítalo y vuelve a añadirlo."),
+    ("This PC takes {} controllers", "Este PC admite {} mandos"),
+    ("Changes could not be saved", "No se pudieron guardar los cambios"),
+    ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar no pudo escribir en {}. Los cambios se aplican hasta que se cierre Nightjar y luego vuelven a como estaban; comprueba que se pueda escribir en la carpeta."),
 ];

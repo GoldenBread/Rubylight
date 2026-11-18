@@ -1540,6 +1540,7 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
         text_input: plan.info.capabilities.has(Feature::TextInput)
             && outcome.host_control_messages.contains(&rubylight_protocol::text_input::TEXT_INPUT_MESSAGE_TYPE)
             && role != AppRole::RemoteMonitor,
+        controller_limit: session.input(|q| q.max_controllers()),
         keyboard_layout: plan.info.capabilities.has(Feature::ClientKeyboardLayout)
             && outcome.host_control_messages.contains(&rubylight_protocol::keyboard_layout::KEYBOARD_LAYOUT_MESSAGE_TYPE)
             && role != AppRole::RemoteMonitor,

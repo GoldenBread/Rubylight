@@ -1728,4 +1728,7 @@ sudo sysctl -w net.core.rmem_max={2}"),
     ("Set up for this device and {}", "Eingerichtet für dieses Gerät und {}"),
     ("codec chosen when the stream starts", "Codec wird beim Start des Streams gewählt"),
     ("Another PC or program answers at this PC’s address. If this PC was set up again, remove it and add it again.", "An der Adresse dieses PCs antwortet ein anderer PC oder ein anderes Programm. Wurde dieser PC neu eingerichtet, entferne ihn und füge ihn erneut hinzu."),
+    ("This PC takes {} controllers", "Dieser PC nimmt {} Controller"),
+    ("Changes could not be saved", "Änderungen konnten nicht gespeichert werden"),
+    ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar konnte nicht nach {} schreiben. Änderungen gelten bis zum Beenden von Nightjar und sind danach wieder wie zuvor; prüfe, ob der Ordner beschreibbar ist."),
 ];

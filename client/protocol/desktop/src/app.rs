@@ -41,8 +41,8 @@ impl App {
         if let Some(command) = self.launcher.screen.save_command() { self.command(command); }
     }
 
-    fn save_hosts_and_place(&self) {
-        if let Err(e) = self.store.save_hosts(&self.hosts.records()) { eprintln!("nightjar: PCs not saved: {e}"); }
+    fn save_hosts_and_place(&mut self) {
+        self.save_hosts();
         // Under gamescope, or straight to the display, the window was never placed from the saved
         // place, so the desktop's stays.
         if handheld::start_window(handheld::fills_screen()).restore_place {
@@ -137,8 +137,20 @@ impl App {
         }
     }
 
-    pub(crate) fn save_hosts(&self) {
-        save_hosts(&self.store, &self.hosts);
+    pub(crate) fn save_hosts(&mut self) {
+        if save_hosts(&self.store, &self.hosts).is_err() {
+            self.save_failed();
+        }
+    }
+
+    /// Says once a run that a save failed, with the folder Nightjar could not write to: without
+    /// it a read-only config folder drops every change at the next start without a word. The
+    /// change itself stays for this run. The log keeps every failure.
+    pub(crate) fn save_failed(&mut self) {
+        if !first_save_failure(&mut self.save_failed_told) {
+            return;
+        }
+        self.launcher.notify(tr("Changes could not be saved"), save_failed_text(self.store.dir()));
     }
 
     /// Keeps a session's teardown for the joins before a renderer switch or the exit, dropping the
@@ -235,17 +247,33 @@ impl App {
     }
 }
 
-pub(crate) fn save_hosts(store: &config::Store, hosts: &Hosts) {
-    if let Err(e) = store.save_hosts(&hosts.records()) {
+/// Saves the PC list, logging a failure (the caller tells the player once: [`App::save_failed`]).
+pub(crate) fn save_hosts(store: &config::Store, hosts: &Hosts) -> std::io::Result<()> {
+    let saved = store.save_hosts(&hosts.records());
+    if let Err(e) = &saved {
         eprintln!("nightjar: saving hosts failed: {e}");
     }
+    saved
+}
+
+/// The words of a failed save: what happened, that the change lasts only this run, and what to
+/// check. The folder is the config folder Nightjar could not write to.
+pub(crate) fn save_failed_text(dir: &std::path::Path) -> String {
+    trf("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", &[&dir.display()])
+}
+
+/// Whether this is the run's first failed save, the one the player is told: `told` then stays
+/// true, so a read-only folder is said once instead of at every change.
+pub(crate) fn first_save_failure(told: &mut bool) -> bool {
+    !std::mem::replace(told, true)
 }
 
 /// Keeps the name chosen for a PC on this device, and saves it.
-pub(crate) fn rename_host(hosts: &mut Hosts, store: &config::Store, id: u64, alias: &str) {
+pub(crate) fn rename_host(hosts: &mut Hosts, store: &config::Store, id: u64, alias: &str) -> std::io::Result<()> {
     if hosts.rename(id, alias) {
-        save_hosts(store, hosts);
+        save_hosts(store, hosts)?;
     }
+    Ok(())
 }
 
 /// Forgets a PC: its saved library, covers, recent games and favourites go with it.
@@ -256,11 +284,11 @@ pub(crate) fn remove_host(
     favourites: &mut Vec<config::Favourite>,
     open_game: &mut Option<config::OpenGame>,
     id: u64,
-) {
+) -> std::io::Result<()> {
     if let Some(unique_id) = hosts.get(id).map(|h| h.record.unique_id.clone()).filter(|id| !id.is_empty()) {
         (*recents, *favourites) = store.forget_host(&unique_id, recents, favourites);
         *open_game = store.open_play().game;
     }
     hosts.remove(id);
-    save_hosts(store, hosts);
+    save_hosts(store, hosts)
 }

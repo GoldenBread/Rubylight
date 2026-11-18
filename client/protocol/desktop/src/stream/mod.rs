@@ -328,6 +328,10 @@ pub struct Facts {
     pub cursor_shapes: bool,
     /// The host says when one of its text fields takes or loses focus (0x553B), once asked.
     pub text_input: bool,
+    /// The controller slots this host takes: four on GFE's GameStream, 16 on Sunshine and its
+    /// forks ([`nightjar_core::input::InputQueue::max_controllers`]). Controllers past it are not
+    /// announced and say so once (`Gamepads::set_limit`).
+    pub controller_limit: u8,
     /// The host takes this device's keyboard layout (0x553E).
     pub keyboard_layout: bool,
     pub clipboard: bool,
@@ -1671,8 +1675,10 @@ impl Streaming {
             }
         }
         for pad in &mut pads.pads {
-            // The gamepad number the PC knows the controller as (player 1 for each with One player).
-            let sent_as = u16::from(pad.sent_as());
+            // The gamepad number the PC knows the controller as (player 1 for each with One
+            // player), and none for a controller this host has no slot for.
+            let Some(sent_as) = pad.slot() else { continue; };
+            let sent_as = u16::from(sent_as);
             let Some(audio) = &mut pad.audio else { continue; };
             while let Some(packet) = audio.microphone_packet(sent_as) {
                 if let Err(error) = self.session.send(ClientMessage::ControllerMicrophone(packet)) {

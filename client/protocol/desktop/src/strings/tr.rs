@@ -1728,4 +1728,7 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("Set up for this device and {}", "Bu cihaz ve {} için ayarlandı"),
     ("codec chosen when the stream starts", "codec yayın başlarken seçilir"),
     ("Another PC or program answers at this PC’s address. If this PC was set up again, remove it and add it again.", "Bu bilgisayarın adresinde başka bir bilgisayar veya program yanıt veriyor. Bu bilgisayar yeniden kurulduysa onu kaldırıp yeniden ekleyin."),
+    ("This PC takes {} controllers", "Bu PC {} kumanda kabul ediyor"),
+    ("Changes could not be saved", "Değişiklikler kaydedilemedi"),
+    ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar {} konumuna yazamadı. Değişiklikler Nightjar kapanana kadar geçerli, sonra eski hâline döner; klasöre yazılabildiğini denetleyin."),
 ];

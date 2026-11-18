@@ -1728,4 +1728,7 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("Set up for this device and {}", "このデバイスと {} に合わせて設定しました"),
     ("codec chosen when the stream starts", "コーデックはストリーム開始時に選択"),
     ("Another PC or program answers at this PC’s address. If this PC was set up again, remove it and add it again.", "この PC のアドレスで別の PC またはプログラムが応答しています。この PC をセットアップし直した場合は、削除してから追加し直してください。"),
+    ("This PC takes {} controllers", "この PC は {} 台のコントローラーに対応しています"),
+    ("Changes could not be saved", "変更を保存できませんでした"),
+    ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar は {} に書き込めませんでした。変更は Nightjar を終了するまで有効で、その後は元に戻ります。フォルダーに書き込めるか確認してください。"),
 ];

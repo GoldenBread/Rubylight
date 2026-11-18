@@ -1728,4 +1728,7 @@ sudo sysctl -w net.core.rmem_max={}", "Bufor odbioru: system przydzielił {0} Ki
     ("Set up for this device and {}", "Skonfigurowano dla tego urządzenia i {}"),
     ("codec chosen when the stream starts", "kodek wybierany przy starcie strumienia"),
     ("Another PC or program answers at this PC’s address. If this PC was set up again, remove it and add it again.", "Pod adresem tego komputera odpowiada inny komputer lub program. Jeśli ten komputer został skonfigurowany od nowa, usuń go i dodaj ponownie."),
+    ("This PC takes {} controllers", "Ten PC obsługuje {} kontrolerów"),
+    ("Changes could not be saved", "Nie udało się zapisać zmian"),
+    ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar nie mógł zapisać w {}. Zmiany obowiązują do zamknięcia Nightjara, a potem wracają do poprzedniego stanu; sprawdź, czy można zapisywać w folderze."),
 ];

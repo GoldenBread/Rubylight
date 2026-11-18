@@ -202,7 +202,9 @@ impl Streaming {
         let mut status = [0u8; 16];
         if self.controller_audio_available() {
             for pad in &pads.pads {
-                if let Some(audio) = &pad.audio { status[usize::from(pad.sent_as())] = audio.status(self.settings.microphone, self.microphone_muted); }
+                if let (Some(slot), Some(audio)) = (pad.slot(), &pad.audio) {
+                    status[usize::from(slot)] = audio.status(self.settings.microphone, self.microphone_muted);
+                }
             }
         }
         if status != self.audio_status.0 || self.audio_status.1.elapsed() >= Duration::from_secs(1) {

@@ -1728,4 +1728,7 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer di ricezione: il sistema ha conces
     ("Set up for this device and {}", "Configurato per questo dispositivo e {}"),
     ("codec chosen when the stream starts", "codec scelto all'avvio dello streaming"),
     ("Another PC or program answers at this PC’s address. If this PC was set up again, remove it and add it again.", "Un altro PC o programma risponde all’indirizzo di questo PC. Se questo PC è stato configurato di nuovo, rimuovilo e aggiungilo di nuovo."),
+    ("This PC takes {} controllers", "Questo PC accetta {} controller"),
+    ("Changes could not be saved", "Impossibile salvare le modifiche"),
+    ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar non ha potuto scrivere in {}. Le modifiche valgono fino alla chiusura di Nightjar, poi tornano com’erano; verifica che sia possibile scrivere nella cartella."),
 ];

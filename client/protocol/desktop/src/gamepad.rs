@@ -351,6 +351,7 @@ pub struct Pad {
     pub id: SDL_JoystickID,
     pub handle: *mut SDL_Gamepad,
     /// Host controller slot: which controller this is, in the stream menu and the buttons page.
+    /// A refused controller takes a free slot when another is unplugged ([`Gamepads::assign_slots`]).
     pub index: u8,
     /// The gamepad number the PC knows it as: `index`, or 0 for every controller with
     /// "Controllers" One player ([`sent_index`]).
@@ -375,6 +376,9 @@ pub struct Pad {
     ls: (i16, i16),
     rs: (i16, i16),
     announced: bool,
+    /// This host has no gamepad slot for it ([`Gamepads::set_limit`]): it still drives the
+    /// launcher and Nightjar's own menu, but its state, touch, motion and battery are not sent.
+    refused: bool,
     /// SDL reports a PlayStation pad or a touchpad click button: no Select+LB stand-in.
     has_touchpad_click: bool,
     clickpad_swallowed: u32,
@@ -422,9 +426,10 @@ impl Pad {
         }
     }
 
-    /// The gamepad number the PC knows this controller as (`index`, or 0 with One player).
-    pub fn sent_as(&self) -> u8 {
-        self.sent_as
+    /// The gamepad number the PC knows this controller as, or None when the host has no slot
+    /// for it ([`Gamepads::set_limit`]).
+    pub fn slot(&self) -> Option<u8> {
+        (!self.refused).then_some(self.sent_as)
     }
 
     fn update(&mut self, settings: PadSettings) {
@@ -480,6 +485,11 @@ pub struct Gamepads {
     dead_zones: DeadZones,
     /// "Controllers" One player: every controller is sent as gamepad 0 ([`one_player`]).
     one_player: bool,
+    /// The gamepad slots this stream's host takes ([`InputQueue::max_controllers`]), set when a
+    /// stream starts. None before one, which takes every slot.
+    limit: Option<u8>,
+    /// The stream's one notice for controllers past [`Self::limit`] has been shown.
+    refused_notice_shown: bool,
 }
 
 /// The physical buttons of a quit combo, as bits of `1 << SDL_GamepadButton`. Face buttons are
@@ -519,9 +529,7 @@ impl Gamepads {
         let pad_settings = PadSettings::from(settings);
         (self.back_as_guide, self.dead_zones) = (pad_settings.back_as_guide, pad_settings.dead_zones);
         self.one_player = one_player(settings);
-        for pad in &mut self.pads {
-            pad.sent_as = sent_index(self.one_player, pad.index);
-        }
+        self.assign_slots();
         self.guide_hold = (settings.guide_hold_ms > 0).then(|| std::time::Duration::from_millis(u64::from(settings.guide_hold_ms)));
         if self.guide_hold.is_none() {
             // Turned off mid-press: the held Guide is forgotten (the PC never had it), a tap still goes up on the tick.
@@ -589,31 +597,98 @@ impl Gamepads {
             ls: (0, 0),
             rs: (0, 0),
             announced: false,
+            refused: false,
             has_touchpad_click,
             clickpad_swallowed: 0,
             back_waiting: false,
             guide: Guide::Up,
             guide_bit: 1 << SDL_GAMEPAD_BUTTON_GUIDE.0,
         });
+        self.assign_slots();
         Ok(())
     }
 
-    /// Closes a removed gamepad; returns the gamepad number the PC knew it as.
+    /// Closes a removed gamepad; returns the gamepad number the PC knew it as, or None when the
+    /// host had no slot for it. A controller the host had refused takes the slot it leaves
+    /// ([`Self::assign_slots`]).
     pub fn removed(&mut self, id: SDL_JoystickID) -> Option<u8> {
         let position = self.pads.iter().position(|p| p.id == id)?;
         let pad = self.pads.remove(position);
+        let slot = pad.slot();
         if let Some(audio) = &pad.audio { audio.reset(pad.handle); }
         drop(pad.audio);
         // SAFETY: a gamepad we opened.
         unsafe { SDL_CloseGamepad(pad.handle) };
-        Some(pad.sent_as)
+        self.assign_slots();
+        slot
+    }
+
+    /// The gamepad slots this host takes: [`Self::limit`], or every one before a stream.
+    pub fn controller_limit(&self) -> u8 {
+        self.limit.unwrap_or(MAX_PADS as u8)
+    }
+
+    /// Numbers each pad's slot for the PC: its own index, or 0 with One player, and whether the
+    /// host has no slot for it. A refused pad moves into the first slot an in-limit controller
+    /// leaves, so unplugging one starts a controller the host refused for the rest of the stream.
+    fn assign_slots(&mut self) {
+        let limit = u16::from(self.controller_limit());
+        if self.one_player {
+            // Every controller is player 1: none is refused and every index stays.
+            for pad in &mut self.pads {
+                pad.sent_as = 0;
+                pad.refused = false;
+            }
+            return;
+        }
+        // The slots in-limit controllers already hold; the rest are free for a refused pad.
+        let mut taken = [false; MAX_PADS];
+        for pad in &self.pads {
+            if u16::from(pad.index) < limit {
+                taken[usize::from(pad.index)] = true;
+            }
+        }
+        for pad in &mut self.pads {
+            if u16::from(pad.index) >= limit {
+                let Some(slot) = (0..usize::from(limit)).find(|&slot| !taken[slot]) else {
+                    pad.refused = true;
+                    pad.announced = false;
+                    continue;
+                };
+                pad.index = slot as u8;
+                taken[slot] = true;
+            }
+            pad.sent_as = pad.index;
+            pad.refused = false;
+        }
+    }
+
+    /// Sets the controller slots this stream's host takes at its start
+    /// ([`InputQueue::max_controllers`]); returns how many pads are past them. Those still drive
+    /// Nightjar's own menu, but nothing of theirs is sent, and [`Self::refused_notice`] says why
+    /// once.
+    pub fn set_limit(&mut self, limit: u8) -> usize {
+        self.limit = Some(limit.clamp(1, MAX_PADS as u8));
+        self.refused_notice_shown = false;
+        self.assign_slots();
+        self.pads.iter().filter(|pad| pad.refused).count()
+    }
+
+    /// The once-a-stream notice for the controllers this host has no slot for, if one is past the
+    /// limit: "This PC takes 4 controllers".
+    pub fn refused_notice(&mut self) -> Option<String> {
+        if self.refused_notice_shown || !self.pads.iter().any(|pad| pad.refused) {
+            return None;
+        }
+        self.refused_notice_shown = true;
+        Some(trf("This PC takes {} controllers", &[&self.controller_limit()]))
     }
 
     /// The gamepads the PC has during the stream: player 1 alone with "Controllers" One player
     /// (also without a controller, as Android keeps it for games that miss one added later), else
     /// one for each controller.
     pub fn active_mask(&self) -> u16 {
-        if self.one_player { 1 } else { self.pads.iter().fold(0, |m, p| m | (1 << p.sent_as)) }
+        if self.one_player { 1 } else { self.pads.iter().filter(|p| !p.refused).fold(0, |m, p| m | (1 << p.sent_as)) }
     }
 
     /// The gamepad mask a launch with `settings` tells the PC: none with "Controllers" Off, player 1
@@ -678,14 +753,14 @@ impl Gamepads {
     /// Tells the host about every controller (at stream start).
     pub fn announce_all(&mut self, queue: &mut InputQueue) {
         let mask = self.active_mask();
-        for pad in &mut self.pads {
+        for pad in self.pads.iter_mut().filter(|pad| !pad.refused) {
             announce(pad, mask, self.motion, queue);
         }
     }
 
     pub fn announce_new(&mut self, queue: &mut InputQueue) {
         let mask = self.active_mask();
-        for pad in self.pads.iter_mut().filter(|p| !p.announced) {
+        for pad in self.pads.iter_mut().filter(|pad| !pad.announced && !pad.refused) {
             announce(pad, mask, self.motion, queue);
         }
     }
@@ -694,6 +769,10 @@ impl Gamepads {
     /// mask. With One player another controller still sent as it sends its own state instead, and
     /// player 1 stays in the mask.
     pub fn send_removed(&self, index: u8, queue: &mut InputQueue) {
+        // A controller the host had no slot for was never announced: there is nothing to forget.
+        if u16::from(index) >= u16::from(self.controller_limit()) {
+            return;
+        }
         let mask = self.active_mask();
         if let Some(pad) = self.sent_as(u16::from(index)).find(|pad| pad.announced) {
             send_state(pad, mask, queue);
@@ -854,7 +933,7 @@ impl Gamepads {
                     let pad = self.find(t.which)?;
                     if touchpad_as_mouse { pad.touchpad.touch(&t, queue); return None; }
                     // A pad pinned as Xbox told the host it has no touchpad.
-                    if pad.mapping.drops_motion_and_touchpad() { return None; }
+                    if pad.refused || pad.mapping.drops_motion_and_touchpad() { return None; }
                     let phase = match kind {
                         SDL_EVENT_GAMEPAD_TOUCHPAD_DOWN => touch_event::DOWN,
                         SDL_EVENT_GAMEPAD_TOUCHPAD_UP => touch_event::UP,
@@ -873,7 +952,7 @@ impl Gamepads {
                 SDL_EVENT_GAMEPAD_SENSOR_UPDATE if motion => {
                     let s = event.gsensor;
                     let pad = self.find(s.which)?;
-                    if pad.mapping.drops_motion_and_touchpad() { return None; }
+                    if pad.refused || pad.mapping.drops_motion_and_touchpad() { return None; }
                     let [x, y, z] = s.data;
                     match SDL_SensorType(s.sensor) {
                         SDL_SENSOR_ACCEL => {
@@ -974,6 +1053,10 @@ impl Gamepads {
             pad.mouse = crate::controller_mouse::Mouse::default();
             pad.touchpad = crate::controller_mouse::Touchpad::default();
         }
+        // The next stream sets its host's ([`Self::set_limit`]).
+        self.limit = None;
+        self.refused_notice_shown = false;
+        self.assign_slots();
     }
 
     pub fn close_all(&mut self) {
@@ -1177,6 +1260,9 @@ fn host_buttons(buttons: u32, controller_identity: bool) -> u32 {
 }
 
 fn send_state(pad: &Pad, mask: u16, queue: &mut InputQueue) {
+    if pad.refused {
+        return;
+    }
     let report = if pad.mouse.active { Report::default() } else { pad.report() };
     let _ = queue.send_controller(
         u16::from(pad.sent_as),
@@ -1247,6 +1333,9 @@ fn describe(pad: &Pad) -> (u8, u32, u16) {
 }
 
 fn announce(pad: &mut Pad, mask: u16, motion: bool, queue: &mut InputQueue) {
+    if pad.refused {
+        return;
+    }
     let (kind, supported, mut caps) = describe(pad);
     if !motion { caps &= !(capability::ACCEL | capability::GYRO); }
     // Which controller it is goes first, so the host can choose its virtual pad on arrival
@@ -1264,6 +1353,9 @@ fn announce(pad: &mut Pad, mask: u16, motion: bool, queue: &mut InputQueue) {
 }
 
 fn send_battery(pad: &Pad, state: SDL_PowerState, percent: i32, queue: &mut InputQueue) {
+    if pad.refused {
+        return;
+    }
     let state_code = match state {
         SDL_POWERSTATE_ON_BATTERY => BATTERY_DISCHARGING,
         SDL_POWERSTATE_CHARGING => BATTERY_CHARGING,

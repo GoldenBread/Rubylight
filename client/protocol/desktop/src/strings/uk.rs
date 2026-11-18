@@ -1728,4 +1728,7 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приймання: систе
     ("Set up for this device and {}", "Налаштовано для цього пристрою та {}"),
     ("codec chosen when the stream starts", "кодек обирається під час запуску стриму"),
     ("Another PC or program answers at this PC’s address. If this PC was set up again, remove it and add it again.", "За адресою цього ПК відповідає інший ПК або інша програма. Якщо цей ПК налаштували заново, приберіть його й додайте знову."),
+    ("This PC takes {} controllers", "Цей ПК приймає {} контролерів"),
+    ("Changes could not be saved", "Не вдалося зберегти зміни"),
+    ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar не вдалося записати в {}. Зміни діють до закриття Nightjar, а потім повертаються до попередніх; перевірте, чи можна записувати в папку."),
 ];

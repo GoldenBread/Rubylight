@@ -1728,4 +1728,7 @@ sudo sysctl -w net.core.rmem_max={}", "Tampon de réception : le système a acco
     ("Set up for this device and {}", "Configuré pour cet appareil et {}"),
     ("codec chosen when the stream starts", "codec choisi au démarrage du stream"),
     ("Another PC or program answers at this PC’s address. If this PC was set up again, remove it and add it again.", "Un autre PC ou programme répond à l’adresse de ce PC. Si ce PC a été réinstallé, retirez-le puis ajoutez-le à nouveau."),
+    ("This PC takes {} controllers", "Ce PC accepte {} manettes"),
+    ("Changes could not be saved", "Impossible d’enregistrer les modifications"),
+    ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar n’a pas pu écrire dans {}. Les modifications s’appliquent jusqu’à la fermeture de Nightjar, puis reviennent à leur état précédent ; vérifiez que le dossier est accessible en écriture."),
 ];
