@@ -26,7 +26,9 @@ class RemoteCheck(unittest.TestCase):
         shell = 'powershell' if 'powershell' in SHELLS else 'pwsh'
         return subprocess.run([shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(REMOTE[0]),
                                '-Branch', 'wip/x', '-Name', 'wip-x', '-Locks', str(locks), '-Pool', str(pool),
-                               '-Work', str(locks / 'work'), '-User', 'nobody-here'],
+                               '-Work', str(locks / 'work'), '-User', 'nobody-here',
+                               # Not this machine's real tasks: this test may itself run in a remote check.
+                               '-Tasks', 'rl-test-no-such-task-*'],
                               capture_output=True, text=True, timeout=60)
 
     def test_a_busy_machine_is_refused_before_any_task_exists(self):

@@ -11,7 +11,9 @@ param(
     [string]$Locks = 'C:\src\butterpollo-release',
     [string]$Pool = 'C:\src\rl-target-pool',
     [string]$User = 'ramaz',
-    [int]$Hours = 3
+    [int]$Hours = 3,
+    # Other checks' tasks: lap-gate.ps1's and this tool's.
+    [string[]]$Tasks = @('rl-gate-*', 'rl-remote-check-*')
 )
 $ErrorActionPreference = 'Stop'
 
@@ -36,7 +38,7 @@ foreach ($dir in (Join-Path $Locks 'lanes'), $Pool) {
         }
     }
 }
-foreach ($task in Get-ScheduledTask -TaskName 'rl-gate-*', 'rl-remote-check-*' -ErrorAction SilentlyContinue) {
+foreach ($task in Get-ScheduledTask -TaskName $Tasks -ErrorAction SilentlyContinue) {
     if ($task.State -eq 'Running') { $busy += "task $($task.TaskName) is running" }
 }
 if ($busy.Count) {
