@@ -1725,4 +1725,5 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("Join my game with Nightjar: open this link in Nightjar, or copy it and paste it under Add PC.\n{}", "Nightjar で私のゲームに参加して: このリンクを Nightjar で開くか、コピーして「PC を追加」に貼り付けてね。\n{}"),
     ("Set up for this device and {}", "このデバイスと {} に合わせて設定しました"),
     ("codec chosen when the stream starts", "コーデックはストリーム開始時に選択"),
+    ("Another PC or program answers at this PC’s address. If this PC was set up again, remove it and add it again.", "この PC のアドレスで別の PC またはプログラムが応答しています。この PC をセットアップし直した場合は、削除してから追加し直してください。"),
 ];

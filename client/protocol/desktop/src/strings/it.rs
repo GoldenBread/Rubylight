@@ -1725,4 +1725,5 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer di ricezione: il sistema ha conces
     ("Join my game with Nightjar: open this link in Nightjar, or copy it and paste it under Add PC.\n{}", "Unisciti alla mia partita con Nightjar: apri questo link in Nightjar, oppure copialo e incollalo in «Aggiungi PC».\n{}"),
     ("Set up for this device and {}", "Configurato per questo dispositivo e {}"),
     ("codec chosen when the stream starts", "codec scelto all'avvio dello streaming"),
+    ("Another PC or program answers at this PC’s address. If this PC was set up again, remove it and add it again.", "Un altro PC o programma risponde all’indirizzo di questo PC. Se questo PC è stato configurato di nuovo, rimuovilo e aggiungilo di nuovo."),
 ];

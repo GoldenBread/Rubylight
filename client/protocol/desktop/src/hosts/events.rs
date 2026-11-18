@@ -14,6 +14,7 @@ impl Hosts {
                     id,
                     seq,
                     address,
+                    path,
                     result,
                 } => {
                     let again = self.poll_landed(id, seq);
@@ -29,7 +30,7 @@ impl Hosts {
                         None => Some(false),
                     };
                     if let Some(newest) = newest {
-                        changed |= self.apply_info(id, address, result);
+                        changed |= self.apply_info(id, address, path, result);
                         if let Some(host) = self.get_mut(id).filter(|_| newest) {
                             host.polling = false;
                             host.checking = false;
@@ -424,7 +425,7 @@ impl Hosts {
         });
     }
 
-    pub(super) fn apply_info(&mut self, id: u64, address: String, result: Result<Box<ServerInfo>, String>) -> bool {
+    pub(super) fn apply_info(&mut self, id: u64, address: String, path: InfoPath, result: Result<Box<ServerInfo>, String>) -> bool {
         let mut changed = false;
         let Some(index) = self.list.iter().position(|h| h.id == id) else {
             return false;
@@ -495,17 +496,30 @@ impl Hosts {
                 self.drop_workers(gone);
                 changed = true;
                 let index = self.list.iter().position(|h| h.id == keep_id).unwrap_or(0);
-                return self.store_info(index, address, result) || changed;
+                return self.store_info(index, address, path, result) || changed;
             }
         }
-        changed |= self.store_info(index, address, result);
+        changed |= self.store_info(index, address, path, result);
         changed
     }
 
-    fn store_info(&mut self, index: usize, address: String, result: Result<Box<ServerInfo>, String>) -> bool {
+    fn store_info(&mut self, index: usize, address: String, path: InfoPath, result: Result<Box<ServerInfo>, String>) -> bool {
         let host = &mut self.list[index];
         let mut changed = false;
         match result {
+            // A plain HTTP answer for a paired PC: a sighting at a new address (a new DHCP lease, new
+            // IPv6 addresses after a reboot) merged into it, or a poll that left before the pairing
+            // ended. Hosts say "not paired" over HTTP whatever they hold, so that is not the PC
+            // forgetting this device: only the address is taken, and the PC is asked again over
+            // pinned HTTPS for the rest.
+            Ok(_) if path == InfoPath::Plain && host.record.server_certificate.is_some() => {
+                let id = host.id;
+                if !away_address(&host.record, &address) {
+                    changed |= move_to(&mut host.record, &address);
+                }
+                self.poll_one(id);
+                return changed;
+            }
             Ok(info) => {
                 host.reach = Reach::Online;
                 host.error = None;
@@ -515,16 +529,8 @@ impl Hosts {
                 let remote = away_address(&host.record, &address);
                 host.via_remote = (remote && host.record.address != address && host.record.pinned_address.is_none())
                     .then(|| address.clone());
-                // A pinned PC keeps its address: an answer from another one was still in flight
-                // when the user pinned it.
-                if !remote && host.record.address != address && host.record.pinned_address.is_none() {
-                    let old = std::mem::replace(&mut host.record.address, address.clone());
-                    host.record.other_addresses.retain(|a| *a != address);
-                    // An older build kept the remote address as the PC's own: it stays the remote one.
-                    if !host.record.other_addresses.contains(&old) && host.record.remote_address.as_ref() != Some(&old) {
-                        host.record.other_addresses.push(old);
-                    }
-                    changed = true;
+                if !remote {
+                    changed |= move_to(&mut host.record, &address);
                 }
                 if host.record.unique_id != info.unique_id {
                     // Another PC answers at this address: what the old one said and allowed is not its.
@@ -558,8 +564,9 @@ impl Hosts {
                         changed = true;
                     }
                 }
-                // The host forgot this client: drop the pin so the user can pair again.
-                if !info.paired && host.record.server_certificate.is_some() {
+                // The host forgot this client: drop the pin so the user can pair again. Only the
+                // pinned host's own word counts (its HTTPS answer, or its refusal of this client).
+                if !info.paired && host.record.server_certificate.is_some() && path != InfoPath::Plain {
                     host.record.server_certificate = None;
                     host.apps = Apps::NotLoaded;
                     // Its grants (folders, files, USB, co-op) went with the pairing; a read in flight is dropped.
@@ -644,4 +651,20 @@ impl Hosts {
         crate::logfile::add_secrets(&host.record);
         true
     }
+}
+
+/// Makes `address` the PC's own, keeping the old one among its others. A pinned PC keeps its
+/// address: an answer from another one was still in flight when the user pinned it. True when the
+/// record changed.
+fn move_to(record: &mut HostRecord, address: &str) -> bool {
+    if record.address == address || record.pinned_address.is_some() {
+        return false;
+    }
+    let old = std::mem::replace(&mut record.address, address.to_owned());
+    record.other_addresses.retain(|a| a != address);
+    // An older build kept the remote address as the PC's own: it stays the remote one.
+    if !record.other_addresses.contains(&old) && record.remote_address.as_ref() != Some(&old) {
+        record.other_addresses.push(old);
+    }
+    true
 }

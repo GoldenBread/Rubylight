@@ -1725,4 +1725,5 @@ sudo sysctl -w net.core.rmem_max={}", "接收缓冲区：系统只分配了所�
     ("Join my game with Nightjar: open this link in Nightjar, or copy it and paste it under Add PC.\n{}", "用 Nightjar 加入我的游戏：在 Nightjar 中打开此链接，或复制后粘贴到“添加电脑”中。\n{}"),
     ("Set up for this device and {}", "已为此设备和 {} 设置好"),
     ("codec chosen when the stream starts", "编解码器在串流开始时选择"),
+    ("Another PC or program answers at this PC’s address. If this PC was set up again, remove it and add it again.", "另一台电脑或另一个程序在这台电脑的地址上应答。如果这台电脑重新安装过，请移除它，然后重新添加。"),
 ];

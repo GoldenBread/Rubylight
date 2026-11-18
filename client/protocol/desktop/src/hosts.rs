@@ -13,7 +13,7 @@ use nightjar_core::http::native_api::feature;
 use nightjar_core::http::native_api::library::Library;
 use nightjar_core::http::native_api::session::{ActionId, Session};
 use nightjar_core::http::{
-    App, AppControl, Availability, ClientIdentity, Feature, HostClient, HostUpdate, LateRefusal, NativeCapabilities, NativeLibrary, PairResult, PairingRequest,
+    App, AppControl, Availability, ClientIdentity, Feature, HostClient, HostUpdate, InfoPath, LateRefusal, NativeCapabilities, NativeLibrary, PairResult, PairingRequest,
     StreamMove,
     PcPower, PcPowerOffer, PowerError, PowerReply, Reason, ServerInfo, DEFAULT_HTTP_PORT,
 };
@@ -533,11 +533,16 @@ pub const PC_POWER_BUSY: &str = en("The PC cannot do this right now. Close games
 // Approving a new device, without the permission for it. The console's own names, in every language.
 pub const PAIRING_NOT_ALLOWED: &str = en("Needs Approve new devices on the PC’s Devices page.");
 
+// A poll met another certificate at the PC's address.
+pub const ANOTHER_PC_ANSWERS: &str = en("Another PC or program answers at this PC’s address. If this PC was set up again, remove it and add it again.");
+
 pub enum Event {
     Info {
         id: u64,
         seq: u64,
         address: String,
+        /// How the answer was reached: what its pairing status is worth.
+        path: InfoPath,
         result: Result<Box<ServerInfo>, String>,
     },
     Discovered {
@@ -851,6 +856,16 @@ pub fn parse_invite(text: &str) -> Result<Box<InviteUri>, &'static str> {
     InviteUri::parse(text.trim())
         .map(Box::new)
         .ok_or(INVITE_INVALID)
+}
+
+/// A poll's failure at one address. Another certificate there is another PC or program
+/// answering in this one's place (a new DHCP lease, a second streaming app on the same ports):
+/// the pairing is kept, and the PC reads as away until it answers again.
+fn poll_error(error: &nightjar_core::http::Error) -> String {
+    match error {
+        nightjar_core::http::Error::CertificateMismatch => ANOTHER_PC_ANSWERS.into(),
+        other => describe(other),
+    }
 }
 
 pub(crate) fn describe(error: &nightjar_core::http::Error) -> String {
@@ -1377,13 +1392,14 @@ impl Hosts {
             let mut tried = Vec::new();
             for address in poll_addresses(&record) {
                 let result = client_for(&identity, &record, &address)
-                    .and_then(|c| c.server_info(likely_online).map_err(|e| describe(&e)));
+                    .and_then(|c| c.server_info_checked(likely_online).map_err(|e| poll_error(&e)));
                 match result {
-                    Ok(info) => {
+                    Ok((info, path)) => {
                         return Some(Event::Info {
                             id,
                             seq,
                             address,
+                            path,
                             result: Ok(Box::new(info)),
                         })
                     }
@@ -1406,13 +1422,13 @@ impl Hosts {
                 let punched = nightjar_core::internet::punch(&record.unique_id, &reply, tried).and_then(|at| {
                     let address = at.ip().to_string();
                     client_for(&identity, &record, &address)
-                        .and_then(|c| c.server_info(true).map_err(|e| describe(&e)))
+                        .and_then(|c| c.server_info_checked(true).map_err(|e| poll_error(&e)))
                         .map(|info| (address, info))
                         .map_err(|e| nightjar_core::internet::unreachable(&reply, tried, Some(e)))
                 });
                 match punched {
-                    Ok((address, info)) => {
-                        return Some(Event::Info { id, seq, address, result: Ok(Box::new(info)) })
+                    Ok((address, (info, path))) => {
+                        return Some(Event::Info { id, seq, address, path, result: Ok(Box::new(info)) })
                     }
                     Err(words) => last_error = words,
                 }
@@ -1421,6 +1437,7 @@ impl Hosts {
                 id,
                 seq,
                 address: record.address.clone(),
+                path: InfoPath::Plain,
                 result: Err(last_error),
             })
         };

@@ -5,7 +5,7 @@
 
 use butterpollo_core::{crypto, mic, pairing::Pairing, rtsp as host_rtsp};
 use nightjar_core::http::{
-    AppControl, ClientIdentity, Error as HttpError, HostClient, LaunchRequest, PairResult,
+    AppControl, ClientIdentity, Error as HttpError, HostClient, InfoPath, LaunchRequest, PairResult,
 };
 use nightjar_core::rtsp::{self, DescribeInfo, HandshakeParams, MicrophoneState};
 use nightjar_core::sdp::*;
@@ -1050,6 +1050,8 @@ fn pairing_https_launch_and_cancel_against_the_hosts_pairing() {
         .with_server_certificate_pem(&server_certificate_pem)
         .unwrap();
     assert!(reloaded.server_info_https().unwrap().paired);
+    let (info_again, path) = reloaded.server_info_checked(true).unwrap();
+    assert!(info_again.paired && path == InfoPath::Pinned);
 
     // Another host certificate is refused over HTTPS; serverinfo falls back to HTTP.
     let other = crypto::Identity::generate().unwrap();
@@ -1062,6 +1064,11 @@ fn pairing_https_launch_and_cancel_against_the_hosts_pairing() {
         Err(HttpError::CertificateMismatch)
     ));
     assert!(!mismatched.server_info(true).unwrap().paired);
+    // A poll asks without that fallback: another certificate's answer is not this host's.
+    assert!(matches!(
+        mismatched.server_info_checked(true),
+        Err(HttpError::CertificateMismatch)
+    ));
 
     // A different client identity is not paired and gets 401 for everything else.
     let stranger = HostClient::new(
@@ -1073,6 +1080,9 @@ fn pairing_https_launch_and_cancel_against_the_hosts_pairing() {
     .with_server_certificate_pem(&server_certificate_pem)
     .unwrap();
     assert!(!stranger.server_info(true).unwrap().paired);
+    // The pinned host itself says it does not know this client: that pairing is gone.
+    let (forgotten, path) = stranger.server_info_checked(true).unwrap();
+    assert!(!forgotten.paired && path != InfoPath::Plain, "{path:?}");
     assert!(matches!(
         stranger.app_list(&info.capabilities),
         Err(HttpError::Status { code: 401, .. })

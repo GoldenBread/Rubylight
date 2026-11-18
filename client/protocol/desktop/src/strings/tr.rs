@@ -1725,4 +1725,5 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("Join my game with Nightjar: open this link in Nightjar, or copy it and paste it under Add PC.\n{}", "Nightjar ile oyunuma katıl: bu bağlantıyı Nightjar’da aç ya da kopyalayıp “Bilgisayar ekle”ye yapıştır.\n{}"),
     ("Set up for this device and {}", "Bu cihaz ve {} için ayarlandı"),
     ("codec chosen when the stream starts", "codec yayın başlarken seçilir"),
+    ("Another PC or program answers at this PC’s address. If this PC was set up again, remove it and add it again.", "Bu bilgisayarın adresinde başka bir bilgisayar veya program yanıt veriyor. Bu bilgisayar yeniden kurulduysa onu kaldırıp yeniden ekleyin."),
 ];
