@@ -398,14 +398,28 @@ fn report_user_lookup(session: u32, outcome: std::result::Result<(), String>) {
     match change {
         Some(UserLookup::Missing(error)) => {
             let console = console_session();
-            tracing::warn!(
-                session_id = session,
-                console_session_id = console,
-                state = session_connection(session).ok().map(|(state, _)| state.0),
-                user_name = session_has_user(session).ok(),
-                %error,
-                "Windows gives no signed-in user for the host's session; the tray icon, the Microsoft Store scan and the 4:4:4 and PyroWave probes wait for one"
-            );
+            let state = session_connection(session).ok().map(|(state, _)| state.0);
+            let user_name = session_has_user(session).ok();
+            // At the sign-in screen no user is the normal state; a refusal while a user is there is not.
+            if user_name == Some(true) {
+                tracing::warn!(
+                    session_id = session,
+                    console_session_id = console,
+                    state,
+                    user_name,
+                    %error,
+                    "Windows gives no signed-in user for the host's session although one is there; the tray icon, the Microsoft Store scan and the 4:4:4 and PyroWave probes wait for one"
+                );
+            } else {
+                tracing::info!(
+                    session_id = session,
+                    console_session_id = console,
+                    state,
+                    user_name,
+                    %error,
+                    "no user is signed in to the host's session yet; the tray icon, the Microsoft Store scan and the 4:4:4 and PyroWave probes wait for one"
+                );
+            }
         }
         Some(UserLookup::Found) => {
             tracing::info!(

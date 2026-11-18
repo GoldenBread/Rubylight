@@ -104,17 +104,28 @@ unsafe fn add_icon(state: &mut State) -> bool {
     // SAFETY: both strings are static and NUL-terminated.
     let taskbar = unsafe { FindWindowW(w!("Shell_TrayWnd"), PCWSTR::null()) }.is_ok();
     match report {
+        // Without a taskbar (the sign-in screen, Explorer starting) a refusal is expected.
+        Some(AddReport::Refused) if !taskbar => tracing::info!(
+            error = ?error,
+            session_id = session,
+            "no taskbar yet for the tray icon; adding it when the taskbar starts"
+        ),
         Some(AddReport::Refused) => tracing::warn!(
             error = ?error,
             session_id = session,
             taskbar,
             "Windows refused the tray icon; adding it again every 3 s and when the taskbar starts"
         ),
+        Some(AddReport::StillRefused) if !taskbar => tracing::info!(
+            error = ?error,
+            session_id = session,
+            "still no taskbar for the tray icon after a minute; it shows only on the taskbar of a user signed in to this session"
+        ),
         Some(AddReport::StillRefused) => tracing::warn!(
             error = ?error,
             session_id = session,
             taskbar,
-            "Windows still refuses the tray icon after a minute; it shows only on the taskbar of a user signed in to this session"
+            "Windows still refuses the tray icon after a minute although the taskbar is there"
         ),
         Some(AddReport::Added(refused)) => tracing::info!(
             session_id = session,
