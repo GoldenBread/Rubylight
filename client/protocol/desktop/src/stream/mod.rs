@@ -218,8 +218,10 @@ pub struct LaunchPlan {
     /// Whether `app` is an entry of the PC's list; a resume of a game it does not list is not.
     pub listed: bool,
     pub resume: bool,
-    /// The video packet size the session being resumed negotiated (0 when none is known): a
-    /// reconnect carries it into the resume, which probes nothing while the old session may run.
+    /// The whole video packet size the session being resumed asked the PC for, encryption header
+    /// included (0 when none is known): a reconnect carries it into the resume, which probes
+    /// nothing while the old session may run. It is the launch's request, never the ANNOUNCE's
+    /// reduced size, so three reconnects keep the same packets.
     pub negotiated_packet_size: u32,
     /// This resume joins the game the PC runs although the PC reports no game of this device's: the
     /// user chose Stream here too. `/resume` starts nothing, so a closed game stays closed.
@@ -303,7 +305,9 @@ pub struct Facts {
     pub height: i32,
     pub fps: i32,
     pub bitrate_kbps: i32,
-    /// The video packet size the host set for this session, encryption header included.
+    /// The whole video packet size this launch asked the PC for, encryption header included: what
+    /// an automatic reconnect carries. Not the ANNOUNCE's size, which has the 32-byte header taken
+    /// off already and would lose another 32 on every reconnect.
     pub packet_size: i32,
     pub format: u32,
     pub host_timing: bool,

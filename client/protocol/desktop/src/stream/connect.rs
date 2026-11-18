@@ -833,9 +833,8 @@ pub(super) fn jumbo_preflight(
     if !asks_for_jumbo(packet_size, jumbo_frames) {
         return JumboPreflight::Skip(JumboSkip::NotAsked);
     }
-    if auto_reconnect {
-        return JumboPreflight::Skip(JumboSkip::Resume);
-    }
+    // The route decides first: a remote, VPN or tunnelled path never carries jumbo packets, not
+    // even the size a reconnect would otherwise keep, and uses the route's own stock size.
     let local = match location {
         Location::Local => true,
         Location::Remote => false,
@@ -843,6 +842,9 @@ pub(super) fn jumbo_preflight(
     };
     if !local {
         return JumboPreflight::Skip(JumboSkip::Remote);
+    }
+    if auto_reconnect {
+        return JumboPreflight::Skip(JumboSkip::Resume);
     }
     let Some(candidate) = jumbo_config_size(offered, packet_size) else {
         return JumboPreflight::Skip(JumboSkip::NotOffered);
@@ -864,8 +866,16 @@ pub(super) fn reset_packet_size(route: i32, requested: u32) -> i32 {
     }
 }
 
-/// The packet size a resume asks for: the size the running session negotiated when it is known
-/// (an automatic reconnect carries it into its ANNOUNCE), else the route's or the run's stock size.
+/// The whole video packet size a launch asked the PC for, before the SDP takes the encryption
+/// header off: what the session's facts keep, so an automatic reconnect carries the same request
+/// and does not lose another 32 bytes per reconnect.
+pub(super) fn facts_packet_size(requested: i32) -> i32 {
+    requested.max(0)
+}
+
+/// The packet size a resume asks for: the whole size the running session asked for when it is
+/// known (an automatic reconnect carries it into its ANNOUNCE), else the route's or the run's stock
+/// size.
 pub(super) fn resume_packet_size(negotiated: u32, route: i32, requested: u32) -> i32 {
     if negotiated > 0 {
         negotiated as i32
@@ -1453,7 +1463,7 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
         height: outcome.config.height,
         fps: outcome.config.fps,
         bitrate_kbps: outcome.config.bitrate_kbps,
-        packet_size: outcome.config.packet_size,
+        packet_size: facts_packet_size(packet_size),
         format: outcome.negotiated_video_format,
         host_timing: outcome.host_control_messages.contains(&HOST_TIMING_MESSAGE_TYPE),
         link_notice: outcome.host_control_messages.contains(&LINK_NOTICE_MESSAGE_TYPE),

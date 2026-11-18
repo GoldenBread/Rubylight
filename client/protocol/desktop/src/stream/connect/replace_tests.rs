@@ -495,3 +495,31 @@ fn a_launch_that_failed_on_its_decoder_says_why() {
     sender.send(Err(ConnectError { message: "Could not start the stream".into(), retryable: false, asks_replace: false, moved_to: None, packed_refused: false, cause: None })).unwrap();
     assert!(matches!(plain.poll(), Err(ConnectFailed::Message(message)) if message == "Could not start the stream"));
 }
+
+// An automatic reconnect still tests the route first: a remote, VPN or tunnelled path uses the
+// route's stock size and never the size a local session negotiated.
+#[test]
+fn a_remote_route_keeps_only_stock_packets_even_on_a_reconnect() {
+    use std::net::IpAddr;
+    let public: IpAddr = "203.0.113.5".parse().unwrap();
+    assert_eq!(jumbo_preflight(Location::Remote, None, 8192, true, 0, true, true), JumboPreflight::Skip(JumboSkip::Remote));
+    assert_eq!(jumbo_preflight(Location::Auto, Some(public), 8192, true, 0, true, true), JumboPreflight::Skip(JumboSkip::Remote));
+    assert_eq!(jumbo_preflight(Location::Local, None, 8192, true, 0, true, true), JumboPreflight::Skip(JumboSkip::Resume));
+}
+
+// Three encrypted reconnects ask for the same whole packet size: the ANNOUNCE takes its 32-byte
+// header off each time, and the session's facts keep what was asked, not the reduced size.
+#[test]
+fn three_encrypted_reconnects_keep_the_requested_packet_size() {
+    for (whole, announced) in [(8192i32, 8160i32), (1424, 1392)] {
+        let mut requested = whole;
+        for _ in 0..3 {
+            let announced_now = nightjar_core::sdp::announced_packet_size(requested, 8192, true);
+            assert_eq!(announced_now, announced, "the ANNOUNCE's size for {whole}");
+            // The session's facts keep the whole request, and the next reconnect carries it.
+            let next = resume_packet_size(facts_packet_size(requested) as u32, 1392, 0);
+            assert_eq!(next, whole, "the reconnect after {requested} asks for {next}");
+            requested = next;
+        }
+    }
+}

@@ -307,7 +307,7 @@ fn jumbo_packet_size(requested: i32, offered: u16) -> i32 {
 /// the encrypted video header's 32 bytes when the stream is encrypted. A smaller ask than that
 /// header (a hand-written setting, a host's tiny offer) is clamped to it: a negative size would
 /// reach the PC as an unsigned field and mean a packet larger than any datagram.
-fn video_packet_size(requested: i32, offered: u16, encrypted: bool) -> i32 {
+pub fn announced_packet_size(requested: i32, offered: u16, encrypted: bool) -> i32 {
     let whole = jumbo_packet_size(requested, offered);
     if encrypted { (whole - ENC_VIDEO_HEADER_SIZE).max(ENC_VIDEO_HEADER_SIZE) } else { whole }
 }
@@ -416,7 +416,7 @@ pub fn generate(p: &SdpParams<'_>) -> Sdp {
     a.add("x-nv-video[0].clientViewportHt", c.height);
     a.add("x-nv-video[0].maxFPS", c.fps);
     let video_enabled = enabled & SS_ENC_VIDEO != 0;
-    let packet_size = video_packet_size(c.packet_size, p.max_video_packet, video_enabled);
+    let packet_size = announced_packet_size(c.packet_size, p.max_video_packet, video_enabled);
     a.add("x-nv-video[0].packetSize", packet_size);
     // Foundation Sunshine's client FEC control, where V+'s SdpGenerator.c puts it.
     if let Some(percentage) = p.video_fec_percentage {
