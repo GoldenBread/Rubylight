@@ -696,10 +696,15 @@ async fn run(args: Args, assets: PathBuf) -> Result<()> {
     // Closing the game waits for it and runs its undo commands: for what is left of the
     // shutdown's time, after which the host goes on and the rest ends with it.
     let stopping = h.clone();
+    let stop_deadline = shutdown_deadline - SHUTDOWN_MARGIN;
     if !within(
         left(Duration::from_secs(8)),
         "application stop at shutdown",
-        move || stopping.stop_app(state::AppStop::Shutdown),
+        move || {
+            stopping.stop_app(state::AppStop::Shutdown {
+                deadline: stop_deadline,
+            })
+        },
     )
     .await
     {
@@ -753,6 +758,9 @@ async fn run(args: Args, assets: PathBuf) -> Result<()> {
 /// What the host's own waits at a service stop take together, at most: under the 20 s after
 /// which the service ends it, with room for the steps that do not wait.
 const SHUTDOWN_WAITS: Duration = Duration::from_secs(17);
+/// Kept free at the end of the shutdown deadline for the audio route to go
+/// back and the rest of the stop to finish.
+const SHUTDOWN_MARGIN: Duration = Duration::from_secs(1);
 /// Runs `work` on a thread of its own and waits for it, at most `wait`. A thread still running
 /// then ends with the host, and does not hold up the runtime's shutdown as a blocking task
 /// would. True when it finished.
