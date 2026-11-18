@@ -259,6 +259,9 @@ pub struct GuestReach {
     pub internet_play: bool,
     /// Whether the host listens on IPv6, so the router can open the guest ports to it.
     pub ipv6_listening: bool,
+    /// When another device joins the running game: only `off` keeps a paired friend from
+    /// joining as a guest (`ask` or `allow` lets one in).
+    pub guest_join: String,
 }
 
 /// What [`guest_reach_of`] knows about this host besides the mapping.
@@ -272,6 +275,7 @@ struct GuestHost {
     stun: Vec<SocketAddr>,
     internet_play: bool,
     ipv6_listening: bool,
+    guest_join: String,
 }
 
 /// [`GuestReach`] from the mapping status and the host. A link takes the IPv4 address only when
@@ -286,6 +290,7 @@ fn guest_reach_of(mapping: &MappingStatus, host: &GuestHost) -> GuestReach {
         ref stun,
         internet_play,
         ipv6_listening,
+        ref guest_join,
     } = *host;
     let mut notes = Vec::new();
     // A guest's browser opens the link's port and offers media to the guest ports by number: a
@@ -322,6 +327,10 @@ fn guest_reach_of(mapping: &MappingStatus, host: &GuestHost) -> GuestReach {
     };
     let mut ports = mapping.guest_mapped.clone();
     ports.extend(mapping.guest_failed.iter().cloned());
+    let guest_join = match guest_join.as_str() {
+        "ask" | "allow" => guest_join.clone(),
+        _ => "off".to_owned(),
+    };
     GuestReach {
         checking: mapping.runs && mapping.guest_round < requested,
         runs: mapping.runs,
@@ -335,6 +344,7 @@ fn guest_reach_of(mapping: &MappingStatus, host: &GuestHost) -> GuestReach {
         notes,
         internet_play,
         ipv6_listening,
+        guest_join,
     }
 }
 
@@ -356,6 +366,7 @@ pub fn guest_reach(h: &Shared) -> Result<GuestReach> {
             stun,
             internet_play: enabled(&config) && service().is_some(),
             ipv6_listening,
+            guest_join: config.get("guest_join", "off").to_owned(),
         },
     ))
 }
@@ -710,6 +721,7 @@ mod tests {
             stun: stun.iter().map(|ip| ip.parse().unwrap()).collect(),
             internet_play: !stun.is_empty(),
             ipv6_listening: false,
+            guest_join: "off".to_owned(),
         }
     }
 
@@ -729,6 +741,13 @@ mod tests {
         assert!(!reach.checking);
         assert_eq!(reach.ports.len(), 5);
         assert!(reach.notes.is_empty(), "{:?}", reach.notes);
+        // A paired friend joins as a guest unless When another device joins the running game
+        // is off; another value reads as off.
+        let mut letting = host(3, Some("203.0.113.5"), &[]);
+        letting.guest_join = "allow".to_owned();
+        assert_eq!(guest_reach_of(&mapped, &letting).guest_join, "allow");
+        letting.guest_join = "sometimes".to_owned();
+        assert_eq!(guest_reach_of(&mapped, &letting).guest_join, "off");
         // STUN agreeing with the router changes nothing.
         let agreed = guest_reach_of(
             &mapped,

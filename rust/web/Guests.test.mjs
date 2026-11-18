@@ -327,6 +327,7 @@ const reachFixture = (over = {}) => ({
   notes: [],
   internetPlay: false,
   ipv6Listening: false,
+  guestJoin: 'ask',
   ...over,
 });
 
@@ -371,8 +372,14 @@ test('the dialog says whether the internet reaches the PC before the link is sen
     guests.reachAlternatives(reachFixture({ address: null, ipv6Listening: true }), 'TCP 47991')[1],
     /allow TCP 47991 in to this PC in your router's IPv6 firewall/,
   );
-  assert.match(guests.reachAlternatives(reachFixture({ address: null, internetPlay: true }), '')[3], /Nightjar .* Play over the internet/);
-  assert.match(guests.reachAlternatives(reachFixture({ address: null, internetPlay: true }), '')[3], /When another device joins the running game set to Ask the player/);
+  const nightjar = guests.reachAlternatives(reachFixture({ address: null, internetPlay: true }), '')[3];
+  assert.match(nightjar, /Nightjar .* Play over the internet/);
+  // Ask the player or Let in without asking already let a guest in: no setting to name.
+  assert.doesNotMatch(nightjar, /When another device joins/);
+  assert.match(
+    guests.reachAlternatives(reachFixture({ address: null, internetPlay: true, guestJoin: 'off' }), '')[3],
+    /When another device joins the running game set to Ask the player or Let in without asking/,
+  );
 });
 
 test('the reach panel shows each port, the public address and the carrier-grade NAT note', () => {

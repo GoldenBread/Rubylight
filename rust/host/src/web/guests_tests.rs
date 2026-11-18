@@ -1204,9 +1204,11 @@ async fn an_internet_invite_asks_for_the_guest_ports_and_says_what_the_router_di
         "address",
         "notes",
         "internetPlay",
+        "guestJoin",
     ] {
         assert!(reach.get(key).is_some(), "{key}: {reach}");
     }
+    assert_eq!(reach["guestJoin"], "off");
     let read = call(&f, LAN, "GET", "/api/guests/internet", &headers, None).await;
     assert_eq!(read.status, StatusCode::OK, "{}", read.text());
     assert_eq!(f.host.guests.internet_round(), before + 1);

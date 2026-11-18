@@ -121,7 +121,15 @@ export function reachAlternatives(reach: GuestReach, ports: string): string[] {
       : 'Over IPv6, if you both have it: set IP versions to IPv4 and IPv6 (All settings, Network) and restart Rubylight, so the router can open the guest ports to IPv6 guests.',
     `Or forward ${ports} on your router by hand, then type your public address or a DNS name for it below.`,
   ];
-  if (reach.internetPlay) lines.push('A friend with Nightjar paired to this PC can join your game through Play over the internet instead, with When another device joins the running game set to Ask the player.');
+  if (reach.internetPlay) {
+    // A paired friend joins as a guest only when When another device joins the running game
+    // lets a guest in; name the two values then, and keep the line short when it already does.
+    const setting =
+      reach.guestJoin === 'off'
+        ? ' with When another device joins the running game set to Ask the player or Let in without asking'
+        : '';
+    lines.push(`A friend with Nightjar paired to this PC can join your game through Play over the internet instead${setting}.`);
+  }
   return lines;
 }
 

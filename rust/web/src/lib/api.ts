@@ -984,6 +984,8 @@ export interface GuestReach {
   internetPlay: boolean;
   /** The host listens on IPv6, so the router can open the guest ports to IPv6 guests. */
   ipv6Listening: boolean;
+  /** When another device joins the running game: off keeps a paired friend from joining as a guest. */
+  guestJoin: 'off' | 'ask' | 'allow';
 }
 
 export interface GuestEntry {
