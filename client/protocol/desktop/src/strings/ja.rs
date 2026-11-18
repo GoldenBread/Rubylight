@@ -1448,7 +1448,7 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("For comparing. The PC splits each frame into slices that the CPU decodes in parallel; in our measurements it was worse than off. Leave it off.", "比較用です。PCが各フレームをスライスに分割し、CPUがそれらを並列にデコードします。測定では結果が悪化しました。オフのままにしてください。"),
     ("Tries Vulkan video decoding before VAAPI. Leave it off: VAAPI avoids a copy too and recovers from a lost frame without a keyframe (a full new picture).", "VAAPIより先にVulkan Videoでのデコードを試します。オフのままにしてください。VAAPIもコピーを避けられ、キーフレーム（新しい完全な画像）なしで、失われたフレームから回復できます。"),
     ("For comparing. With Vulkan video decoding, repairs a lost frame without waiting for a keyframe (a full new picture). Leave it off.", "比較用です。Vulkan Videoでのデコード時に、キーフレーム（新しい完全な画像）を待たずに、失われたフレームを修復します。オフのままにしてください。"),
-    ("For comparing. With VideoToolbox decoding, repairs a lost frame without waiting for a keyframe (a full new picture, about four times larger). Not yet measured on a Mac; leave it off unless you are comparing.", "比較用です。VideoToolboxでのデコード時に、キーフレーム（新しい完全な画像で、約4倍の大きさ）を待たずに、失われたフレームを修復します。Macではまだ測定していません。比較するとき以外はオフのままにしてください。"),
+    ("For comparing. With VideoToolbox decoding, repairs a lost frame without waiting for a keyframe (a full new picture, about four times larger). Leave it off unless you are comparing.", "比較用です。VideoToolboxでのデコード時に、キーフレーム（新しい完全な画像で、約4倍の大きさ）を待たずに、失われたフレームを修復します。比較するとき以外はオフのままにしてください。"),
     ("Draws the PC’s cursor here in Desktop pointer mode, without video delay.", "デスクトップポインターモードで、PCのカーソルを映像の遅延なしでここに描画します。"),
     ("1:1 pixels", "1:1ピクセル"),
     // Android features on the desktop: Presets, Theme, Check for updates now, About, small box art,

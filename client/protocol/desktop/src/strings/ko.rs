@@ -1448,7 +1448,7 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("For comparing. The PC splits each frame into slices that the CPU decodes in parallel; in our measurements it was worse than off. Leave it off.", "비교용입니다. PC가 각 프레임을 슬라이스로 나누고 CPU가 이를 병렬로 디코딩합니다. 측정 결과는 더 나빴습니다. 꺼 두세요."),
     ("Tries Vulkan video decoding before VAAPI. Leave it off: VAAPI avoids a copy too and recovers from a lost frame without a keyframe (a full new picture).", "VAAPI보다 먼저 Vulkan Video 디코딩을 시도합니다. 꺼 두세요. VAAPI도 복사를 피하며, 키프레임(완전한 새 화면) 없이도 손실된 프레임에서 복구합니다."),
     ("For comparing. With Vulkan video decoding, repairs a lost frame without waiting for a keyframe (a full new picture). Leave it off.", "비교용입니다. Vulkan Video로 디코딩할 때 키프레임(완전한 새 화면)을 기다리지 않고 손실된 프레임을 복구합니다. 꺼 두세요."),
-    ("For comparing. With VideoToolbox decoding, repairs a lost frame without waiting for a keyframe (a full new picture, about four times larger). Not yet measured on a Mac; leave it off unless you are comparing.", "비교용입니다. VideoToolbox로 디코딩할 때 키프레임(약 4배 큰 완전한 새 화면)을 기다리지 않고 손실된 프레임을 복구합니다. Mac에서는 아직 측정하지 않았으니, 비교할 때가 아니면 꺼 두세요."),
+    ("For comparing. With VideoToolbox decoding, repairs a lost frame without waiting for a keyframe (a full new picture, about four times larger). Leave it off unless you are comparing.", "비교용입니다. VideoToolbox로 디코딩할 때 키프레임(약 4배 큰 완전한 새 화면)을 기다리지 않고 손실된 프레임을 복구합니다. 비교할 때가 아니면 꺼 두세요."),
     ("Draws the PC’s cursor here in Desktop pointer mode, without video delay.", "데스크톱 포인터 모드에서 PC 커서를 비디오 지연 없이 여기에 그립니다."),
     ("1:1 pixels", "1:1 픽셀"),
     // Android features on the desktop: Presets, Theme, Check for updates now, About, small box art,

@@ -2087,7 +2087,7 @@ impl Launcher {
                 if s.decoder == DecoderPreference::Software {
                     unused_with(&mut rows, decoder_name(s.decoder));
                 }
-                setting_row(ui, s, &mut rows, &["videotoolbox_rfi"], "VideoToolbox recovery", "For comparing. With VideoToolbox decoding, repairs a lost frame without waiting for a keyframe (a full new picture, about four times larger). Not yet measured on a Mac; leave it off unless you are comparing.", |ui, s| {
+                setting_row(ui, s, &mut rows, &["videotoolbox_rfi"], "VideoToolbox recovery", "For comparing. With VideoToolbox decoding, repairs a lost frame without waiting for a keyframe (a full new picture, about four times larger). Leave it off unless you are comparing.", |ui, s| {
                     toggle(ui, &mut s.videotoolbox_rfi)
                 });
             }

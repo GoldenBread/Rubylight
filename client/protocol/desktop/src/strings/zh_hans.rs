@@ -1448,7 +1448,7 @@ sudo sysctl -w net.core.rmem_max={}", "接收缓冲区：系统只分配了所�
     ("For comparing. The PC splits each frame into slices that the CPU decodes in parallel; in our measurements it was worse than off. Leave it off.", "用于对比。电脑将每帧分成多个切片，由 CPU 并行解码；实测结果更差。请保持关闭。"),
     ("Tries Vulkan video decoding before VAAPI. Leave it off: VAAPI avoids a copy too and recovers from a lost frame without a keyframe (a full new picture).", "先尝试 Vulkan 视频解码，再用 VAAPI。请保持关闭：VAAPI 同样能省去一次复制，并且丢帧后无需关键帧（一幅完整的新画面）即可恢复。"),
     ("For comparing. With Vulkan video decoding, repairs a lost frame without waiting for a keyframe (a full new picture). Leave it off.", "用于对比。使用 Vulkan 视频解码时，无需等待关键帧（一幅完整的新画面）即可修复丢失的帧。请保持关闭。"),
-    ("For comparing. With VideoToolbox decoding, repairs a lost frame without waiting for a keyframe (a full new picture, about four times larger). Not yet measured on a Mac; leave it off unless you are comparing.", "用于对比。使用 VideoToolbox 解码时，无需等待关键帧（一幅完整的新画面，大约大四倍）即可修复丢失的帧。尚未在 Mac 上测量；除非要对比，否则请保持关闭。"),
+    ("For comparing. With VideoToolbox decoding, repairs a lost frame without waiting for a keyframe (a full new picture, about four times larger). Leave it off unless you are comparing.", "用于对比。使用 VideoToolbox 解码时，无需等待关键帧（一幅完整的新画面，大约大四倍）即可修复丢失的帧。除非要对比，否则请保持关闭。"),
     ("Draws the PC’s cursor here in Desktop pointer mode, without video delay.", "在“桌面指针”模式下于此处绘制电脑的光标，没有视频延迟。"),
     ("1:1 pixels", "1:1 像素"),
     // Android features on the desktop: Presets, Theme, Check for updates now, About, small box art,
