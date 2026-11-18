@@ -97,6 +97,7 @@ Rubylight encodes H.264, HEVC and AV1 with AMF on Radeon and NVENC on NVIDIA, co
 - **PyroWave,** a wavelet codec for wired and fast Wi-Fi networks that spends bitrate to cut delay, with 4:4:4 and HDR, for Nightjar and other PyroWave clients.
 - **Frame Warp,** with Nightjar: a mouse or right-stick camera turn shows on your screen's next refresh, and the game's HUD stays in place. [How it works](docs/frame-warp.md)
 - **Real VRR,** with Nightjar: on a G-Sync, FreeSync or HDMI VRR screen, frames are shown on the game's own rhythm instead of the network's. [How it works](client/docs/real-vrr.md)
+- **A still desktop keeps its frame rate.** With constant-rate Windows Graphics Capture, a desktop where nothing moves holds the stream's full frame rate.
 - **Know where a stutter came from.** A running stream shows its frame rate, encoding time and frame age, and says which stage lost time: capture, conversion, encoding, packetizing or sending. **Sessions** keeps the same facts for the streams that ended.
 
 <p align="center">
@@ -189,7 +190,7 @@ The [feature reference](docs/features.md) lists everything else, from streaming 
   <sub><b>Nightjar with a controller:</b> Home, a game's page, the stream menu and the on-screen controls. <a href="client/docs/assets/readme/nightjar-tour.mp4">Watch it as a video</a></sub>
 </p>
 
-[Nightjar](https://github.com/RamazanKara/nightjar) runs on Android phones and handhelds, Android TV, Fire TV, Windows, Linux and macOS, and streams from any Moonlight host. With Rubylight it adds Frame Warp and Real VRR, QR pairing, the whole library with covers, PyroWave and packed 4:4:4, Dolby Vision, HDR10+ and HLG, Radeon and NVIDIA driver settings during the stream, frame generation, clipboard, files, USB forwarding, guests and co-op. It is free and open source, with no accounts, ads or tracking.
+[Nightjar](https://github.com/RamazanKara/nightjar) keeps its pairing when the PC comes back at a new address, and says why a decoder or GPU driver failed. It runs on Android phones and handhelds, Android TV, Fire TV, Windows, Linux and macOS, and streams from any Moonlight host. With Rubylight it adds Frame Warp and Real VRR, QR pairing, the whole library with covers, PyroWave and packed 4:4:4, Dolby Vision, HDR10+ and HLG, Radeon and NVIDIA driver settings during the stream, frame generation, clipboard, files, USB forwarding, guests and co-op. It is free and open source, with no accounts, ads or tracking.
 
 <table>
   <tr>
