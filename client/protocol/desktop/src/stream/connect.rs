@@ -139,14 +139,25 @@ pub fn end_before(connecting: Option<Connecting>, wait: Duration, teardown: impl
     end_all_before(connecting.into_iter().collect(), wait, teardown)
 }
 
-/// Waits for a previous session's teardown before this attempt's first request: a reconnect that
-/// launched while the old control connection was open made the PC see two of this device. A
-/// teardown still running after the wait is handed to `shared` for the app to join, never dropped.
-pub(super) fn wait_for_previous(previous: Option<super::Teardown>, shared: &Shared) {
-    let Some(mut previous) = previous else { return };
-    if !previous.join_until(Instant::now() + super::LEAVE_WAIT) {
-        eprintln!("nightjar: the previous session was still stopping after {} ms; reconnecting while it ends", super::LEAVE_WAIT.as_millis());
-        lock(&shared.teardowns).push(previous);
+/// Waits for the sessions still stopping before this attempt's first request: a reconnect, or a
+/// launch right after a stream, that started while the old control connection was open made the
+/// PC see two of this device (and refuse the jumbo test, #126). They share one wait. A teardown
+/// still running after it, or when this start is left meanwhile, is handed to `shared` for the app
+/// to join, never dropped.
+pub(super) fn wait_for_previous(previous: Vec<super::Teardown>, shared: &Shared, interrupt: &Interrupt) {
+    let deadline = Instant::now() + super::LEAVE_WAIT;
+    for mut ended in previous {
+        // In short steps, so that leaving this start ends the wait as well.
+        let mut stopped = ended.join_until(Instant::now());
+        while !stopped && !interrupt.is_interrupted() && Instant::now() < deadline {
+            stopped = ended.join_until((Instant::now() + Duration::from_millis(20)).min(deadline));
+        }
+        if !stopped {
+            if !interrupt.is_interrupted() {
+                eprintln!("nightjar: the previous session was still stopping after {} ms; starting while it ends", super::LEAVE_WAIT.as_millis());
+            }
+            lock(&shared.teardowns).push(ended);
+        }
     }
 }
 
@@ -168,7 +179,7 @@ impl Connecting {
         recent_game(&self.plan)
     }
 
-    pub fn start(mut plan: LaunchPlan, waker: Waker, previous: Option<super::Teardown>) -> Self {
+    pub fn start(mut plan: LaunchPlan, waker: Waker, previous: Vec<super::Teardown>) -> Self {
         // All connection attempts enter here on the main thread, before the audio
         // worker starts. A missing output already allows streaming without sound.
         #[cfg(target_os = "macos")]
@@ -194,9 +205,9 @@ impl Connecting {
         let worker = std::thread::Builder::new()
             .name("connect".into())
             .spawn(move || {
-                // A reconnect of a session still stopping must not launch while its control
-                // connection and decoder are open: the PC would see two of this device.
-                wait_for_previous(previous, &worker_shared);
+                // A start must not launch while a session still stopping has its control
+                // connection and decoder open: the PC would see two of this device.
+                wait_for_previous(previous, &worker_shared, &worker_interrupt);
                 let result: Result<(Session, Facts, LaunchPlan), ConnectError> = match connect_with_recovery(&mut worker_plan, worker_shared, &worker_interrupt) {
                     // The screen left this start before it made a stream: nobody waits for its
                     // pictures, and a session nobody holds would stream unseen.

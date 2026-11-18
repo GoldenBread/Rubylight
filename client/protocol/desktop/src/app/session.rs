@@ -406,7 +406,7 @@ impl App {
             // The old session's threads join before the next launch's HTTP request (the connect
             // thread joins this handle first): its control connection must be closed first, or
             // the PC sees two of this device.
-            self.attempts.begin(Connecting::start(plan, self.waker.clone(), Some(teardown)));
+            self.attempts.begin(Connecting::start(plan, self.waker.clone(), vec![teardown]));
         } else {
             self.push_teardown(teardown);
         // A failure the PC ended the stream on: the message waits for the poll just started,

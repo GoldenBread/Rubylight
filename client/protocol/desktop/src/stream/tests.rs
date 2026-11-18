@@ -1251,8 +1251,46 @@ fn a_reconnect_joins_the_old_session_before_its_first_request() {
         flag.store(true, Ordering::Release);
     });
     let shared = pipeline::Shared::new(std::sync::Arc::new(|| {}), 2);
-    super::connect::wait_for_previous(Some(previous), &shared);
+    super::connect::wait_for_previous(vec![previous], &shared, &Interrupt::default());
     assert!(ended.load(Ordering::Acquire), "the old session ended before the launch");
+    assert!(lock(&shared.teardowns).is_empty(), "a teardown that ended is not handed on");
+}
+
+/// A launch right after a stream waits for every session still stopping, as a reconnect does for
+/// the one it replaces. Leaving the start ends the wait: what still runs goes to the app to join,
+/// never dropped.
+#[test]
+fn a_launch_joins_every_stopping_session_and_hands_on_what_it_leaves() {
+    let ended = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let stopping: Vec<Teardown> = (0..2)
+        .map(|_| {
+            let count = ended.clone();
+            spawn_background(move || {
+                std::thread::sleep(Duration::from_millis(20));
+                count.fetch_add(1, Ordering::AcqRel);
+            })
+        })
+        .collect();
+    let shared = pipeline::Shared::new(std::sync::Arc::new(|| {}), 2);
+    super::connect::wait_for_previous(stopping, &shared, &Interrupt::default());
+    assert_eq!(ended.load(Ordering::Acquire), 2, "both sessions ended before the launch");
+    assert!(lock(&shared.teardowns).is_empty());
+
+    // A session that does not stop, and a start the player left: no five-second wait, and the
+    // handle is kept for the app.
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let stuck = spawn_background(move || {
+        let _ = released.recv();
+    });
+    let left = Interrupt::default();
+    left.interrupt();
+    let began = Instant::now();
+    super::connect::wait_for_previous(vec![stuck], &shared, &left);
+    assert!(began.elapsed() < LEAVE_WAIT, "leaving the start ends the wait");
+    let mut kept = std::mem::take(&mut *lock(&shared.teardowns));
+    assert_eq!(kept.len(), 1, "the session still stopping is handed to the app");
+    release.send(()).expect("release the teardown");
+    assert!(kept[0].join_until(Instant::now() + Duration::from_secs(10)));
 }
 
 /// A renderer switch and the exit prune the teardowns that ended and are busy only while one is

@@ -645,7 +645,9 @@ impl App {
             resume_bitrate_kbps: None,
             resume_quality: None,
         };
-        self.attempts.begin(Connecting::start(plan, self.waker.clone(), None));
+        // A stream that just ended may still be stopping: this launch's first request waits for it.
+        let stopping = self.take_stopping();
+        self.attempts.begin(Connecting::start(plan, self.waker.clone(), stopping));
     }
 }
 

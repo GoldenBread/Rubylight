@@ -160,6 +160,15 @@ impl App {
         self.teardowns.push(teardown);
     }
 
+    /// The sessions still stopping, for a launch to wait on: its connect thread joins them before
+    /// its first request, as a reconnect joins the session it replaces, and hands back the ones
+    /// still running after its wait (`Attempts::drain_teardowns`). While it holds them the attempt
+    /// itself is what keeps a renderer switch and the exit waiting.
+    pub(crate) fn take_stopping(&mut self) -> Vec<stream::Teardown> {
+        self.teardowns.retain(|kept| !kept.finished());
+        std::mem::take(&mut self.teardowns)
+    }
+
     /// Whether a session is still stopping on the renderer's GPU device: finished teardowns are
     /// dropped, and the rest block a renderer switch or the exit as a start that has ended does.
     pub(crate) fn teardowns_busy(&mut self) -> bool {

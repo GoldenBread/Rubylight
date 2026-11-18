@@ -98,7 +98,8 @@ impl App {
                     eprintln!("nightjar: launching app {} again, closing the running app as confirmed", plan.app.id);
                     plan.confirm_replace = true;
                     self.refresh_plan(&mut plan);
-                    self.attempts.begin(Connecting::start(*plan, self.waker.clone(), None));
+                    let stopping = self.take_stopping();
+                    self.attempts.begin(Connecting::start(*plan, self.waker.clone(), stopping));
                 }
             }
             Command::Pair(host) => {
