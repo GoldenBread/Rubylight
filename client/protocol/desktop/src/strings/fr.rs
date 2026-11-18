@@ -1306,6 +1306,7 @@ sudo sysctl -w net.core.rmem_max={}", "Tampon de réception : le système a acco
     ("GPU decoding isn’t available here: {}", "Le décodage GPU est indisponible ici : {}"),
     ("Fewer {} settings", "Moins de paramètres {}"),
     ("More {} settings ({})", "Plus de paramètres {0} ({1})"),
+    ("More settings", "Plus de paramètres"),
     ("Different settings for different networks.", "Des paramètres différents pour différents réseaux."),
     ("Refresh rate", "Fréquence de rafraîchissement"),
     ("Image", "Image"),
@@ -1722,4 +1723,6 @@ sudo sysctl -w net.core.rmem_max={}", "Tampon de réception : le système a acco
     ("Invite copied", "Invitation copiée"),
     ("New invite", "Nouvelle invitation"),
     ("Join my game with Nightjar: open this link in Nightjar, or copy it and paste it under Add PC.\n{}", "Rejoins ma partie avec Nightjar : ouvre ce lien dans Nightjar, ou copie-le et colle-le dans « Ajouter un PC ».\n{}"),
+    ("Set up for this device and {}", "Configuré pour cet appareil et {}"),
+    ("codec chosen when the stream starts", "codec choisi au démarrage du stream"),
 ];

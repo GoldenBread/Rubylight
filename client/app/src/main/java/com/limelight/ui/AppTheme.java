@@ -110,6 +110,24 @@ public final class AppTheme {
         controller.setSystemBarsBehavior(
                 androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
         controller.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars());
+        HIDDEN_BARS.add(activity.getWindow().getDecorView());
+    }
+
+    /**
+     * The windows {@link #hideSystemBars} hid the bars of, by their decor view: a screen that recreates itself gets a new
+     * Window around the decor view it had, bars still hidden.
+     */
+    private static final java.util.Set<android.view.View> HIDDEN_BARS =
+            java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+
+    /**
+     * Shows the bars again on a window whose bars {@link #hideSystemBars} hid: the layout is no longer the forced TV
+     * one. Bars something else hid are not this method's to show.
+     */
+    public static void showSystemBars(Activity activity) {
+        if (!HIDDEN_BARS.remove(activity.getWindow().getDecorView())) return;
+        androidx.core.view.WindowCompat.getInsetsController(activity.getWindow(), activity.getWindow().getDecorView())
+                .show(androidx.core.view.WindowInsetsCompat.Type.systemBars());
     }
 
     static String parseUiMode(String value) {

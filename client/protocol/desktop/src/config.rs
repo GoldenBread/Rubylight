@@ -694,6 +694,15 @@ pub struct Settings {
     pub home_layout: HomeLayout,
     pub home_group: HomeGroup,
     pub home_card_size: CardSize,
+    /// Settings' "More settings" fold, as the user last chose it (Android keeps it the same way): no
+    /// setting, so no row, reset, profile or per-PC or per-game value has it. A search or a link
+    /// that opens the fold for a section behind it does not change it.
+    pub settings_more_open: bool,
+    /// The PC Home's "Set up for this device and …" card is about, offered once after the first
+    /// pairing and cleared when dismissed. No setting, as `settings_more_open`.
+    pub setup_card_host: Option<u64>,
+    /// The card was offered on this install: it never comes back, even after every PC is unpaired.
+    pub setup_card_seen: bool,
     /// The launcher's size in percent: one of [`UI_ZOOM_STEPS`]. Not a per-PC or per-game override.
     pub ui_zoom: u32,
     /// Brighter text, black surfaces and thicker outlines and focus rings.
@@ -1273,6 +1282,9 @@ impl Default for Settings {
             home_layout: HomeLayout::Rows,
             home_group: HomeGroup::Store,
             home_card_size: CardSize::Medium,
+            settings_more_open: false,
+            setup_card_host: None,
+            setup_card_seen: false,
             ui_zoom: 100,
             high_contrast: false,
             theme: Theme::Dark,

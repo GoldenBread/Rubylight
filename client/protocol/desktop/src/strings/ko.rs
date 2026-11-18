@@ -1306,6 +1306,7 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("GPU decoding isn’t available here: {}", "여기서는 GPU 디코딩을 사용할 수 없습니다: {}"),
     ("Fewer {} settings", "{} 설정 접기"),
     ("More {} settings ({})", "{0} 설정 더 보기({1})"),
+    ("More settings", "추가 설정"),
     ("Different settings for different networks.", "네트워크마다 다른 설정을 사용합니다."),
     ("Refresh rate", "주사율"),
     ("Image", "화질"),
@@ -1722,4 +1723,6 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("Invite copied", "초대를 복사했습니다"),
     ("New invite", "새 초대"),
     ("Join my game with Nightjar: open this link in Nightjar, or copy it and paste it under Add PC.\n{}", "Nightjar로 내 게임에 참가해 줘: 이 링크를 Nightjar에서 열거나, 복사해서 'PC 추가'에 붙여 넣어.\n{}"),
+    ("Set up for this device and {}", "이 기기와 {}에 맞게 설정됨"),
+    ("codec chosen when the stream starts", "코덱은 스트림 시작 시 선택"),
 ];

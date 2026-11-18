@@ -702,17 +702,27 @@ fn profiles_and_shortcuts_pop_back_to_settings() {
 fn settings_sections_follow_androids_order() {
     let mut f = Frames::new(record("PC", true, false), Reach::Online);
     f.size = vec2(1280.0, 12000.0);
-    f.l.go(Screen::Settings);
-    f.settle();
-    // The list beside the rows names the sections in order, then the open one heads the rows.
+    video_settings(&mut f);
+    // The list beside the rows names the sections as Android's does, the simple ones first and the
+    // rest in Android's order, then the open one heads the rows.
+    let listed: [&str; 9] = ["Recommended", "Controls", "Audio", "App", "Video", "Display & image", "Streaming", "Advanced", "Debug"];
     let titles: Vec<&str> = f.drawn.iter().map(String::as_str).filter(|t| SETTINGS_SECTIONS.contains(t)).collect();
-    assert_eq!(titles[..9], SETTINGS_SECTIONS, "the list names the sections in order");
-    assert_eq!(titles[9..], ["Video"], "and the first is open");
+    assert_eq!(titles[..9], listed, "the list names the sections in order");
+    assert_eq!(titles[9..], ["Video"], "and the chosen one is open");
     // A narrow window lists them as chips above the rows, in the same order.
     f.size = vec2(800.0, 12000.0);
     f.settle();
     let titles: Vec<&str> = f.drawn.iter().map(String::as_str).filter(|t| SETTINGS_SECTIONS.contains(t)).collect();
-    assert_eq!(titles[..9], SETTINGS_SECTIONS, "the chips name the sections in order");
+    assert_eq!(titles[..9], listed, "the chips name the sections in order");
+}
+
+/// The main settings on Video with the whole list of sections, as after "More settings" and Video
+/// were chosen: a first visit opens Recommended with the sections of detail folded.
+fn video_settings(f: &mut Frames) {
+    f.l.go(Screen::Settings);
+    f.l.settings_view.rail_more = true;
+    f.l.settings_view.section = "Video";
+    f.settle();
 }
 
 /// The widgets a screen reader can press or change that have no name to say, with their role and place.
@@ -815,11 +825,10 @@ fn settings_main_rows_are_androids_tiers() {
 fn settings_show_a_sections_main_rows_then_a_counted_fold() {
     let mut f = Frames::new(record("PC", true, false), Reach::Online);
     f.size = vec2(1280.0, 12000.0);
-    f.l.go(Screen::Settings);
-    f.settle();
+    video_settings(&mut f);
     assert!(shows(&f, "Lower bitrate") && !shows(&f, "Automatic quality"), "{:?}", f.drawn);
     assert!(!shows(&f, "Recover interrupted streams") && !shows(&f, "Fine-tuning"), "one section at a time, no catch-all group");
-    let fold = |f: &Frames| f.drawn.iter().find(|t| t.starts_with("More ") || t.starts_with("Fewer ")).cloned();
+    let fold = |f: &Frames| f.drawn.iter().find(|t| (t.starts_with("More ") || t.starts_with("Fewer ")) && *t != "More settings").cloned();
     let id = f.hosts.list[0].id;
     for screen in [Screen::Settings, Screen::HostSettings(id)] {
         f.l.go(screen);
@@ -861,8 +870,7 @@ fn settings_show_a_sections_main_rows_then_a_counted_fold() {
 fn resolution_and_frame_rate_offer_presets_and_custom_with_its_row() {
     let mut f = Frames::new(record("PC", true, false), Reach::Online);
     f.size = vec2(1280.0, 12000.0);
-    f.l.go(Screen::Settings);
-    f.settle();
+    video_settings(&mut f);
     assert!(!shows(&f, "Custom resolution") && !shows(&f, "Custom frame rate"), "Native and Display need no rows");
     // The open menu, under its button, scrolls when it is taller than the space it gets.
     let wheel_over = |f: &mut Frames, button: &str| {
@@ -2902,6 +2910,138 @@ fn home_with_games(count: u32) -> Frames {
     f
 }
 
+/// The first pairing on an install offers Home's setup card for that PC; a later pairing, or an
+/// install that offered it before, does not. A PC whose last answer predates the pairing counts.
+#[test]
+fn the_first_pairing_offers_the_setup_card_once() {
+    let mut l = launcher(true, true);
+    assert!(l.offer_setup_card(5, 2), "a second paired PC is no first pairing, but a pairing seen, to be saved");
+    assert!(l.settings.setup_card_seen && l.settings.setup_card_host.is_none());
+    assert!(!l.offer_setup_card(6, 1), "and no later pairing offers it");
+    assert_eq!(l.settings.setup_card_host, None);
+    // An install from before the card starts with its PC paired: pairing it again offers nothing.
+    let mut l = launcher(true, true);
+    assert!(l.paired_before_setup_card(), "to be saved");
+    assert!(!l.paired_before_setup_card());
+    assert!(!l.offer_setup_card(5, 1) && l.settings.setup_card_host.is_none());
+    let mut l = launcher(true, true);
+    assert!(l.offer_setup_card(5, 1), "the first pairing offers it, to be saved");
+    assert_eq!((l.settings.setup_card_host, l.settings.setup_card_seen), (Some(5), true));
+    l.settings.setup_card_host = None;
+    assert!(!l.offer_setup_card(6, 1), "offered once on an install, even after every PC is unpaired");
+    assert_eq!(l.settings.setup_card_host, None);
+    // The PC's last answer still says unpaired when the pairing lands: it counts all the same.
+    let f = Frames::with(record("Desk", true, true), Reach::Online, Some(answer(false, 0)), Vec::new());
+    let id = f.hosts.list[0].id;
+    assert!(!f.hosts.list[0].paired());
+    assert_eq!(f.hosts.paired_with(id), 1);
+}
+
+/// Home's setup card: its words while the settings are Auto, nothing with Custom settings (kept
+/// for later), the page's first content with the hero and the shelves beneath it, and a close button
+/// the arrow keys reach and Enter presses, which clears and saves it.
+#[test]
+fn the_setup_card_says_what_auto_chose_and_is_dismissed_from_the_keys() {
+    let mut f = home_with_games(3);
+    let id = f.hosts.list[0].id;
+    let before: Vec<(String, Rect)> = f.placed.iter().map(|(t, r, _)| (t.clone(), *r)).collect();
+    f.l.settings.setup_card_host = Some(id);
+    f.l.settings.setup_card_seen = true;
+    f.settle();
+    let line = home::setup_line(&f.l.settings, f.l.display);
+    assert!(line.ends_with(" · SDR · codec chosen when the stream starts"), "{line}");
+    assert!(shows(&f, "Set up for this device and Desk") && shows(&f, &line), "{:?}", f.drawn);
+    // It is part of the page: what follows starts beneath it, lower than without it by one amount.
+    let title = f.placed.iter().find(|(t, ..)| t == "Set up for this device and Desk").map(|p| p.1).expect("the card is drawn");
+    let line_bottom = f.placed.iter().find(|(t, ..)| t == &line).map(|p| p.1.bottom()).expect("its line");
+    // Every text drawn once both times either kept its place (the chrome) or moved down by the card's height and gap.
+    let once = |placed: &[(String, Rect)], text: &str| {
+        let mut all = placed.iter().filter(|(t, _)| t == text);
+        all.next().filter(|_| all.next().is_none()).map(|p| p.1)
+    };
+    let after: Vec<(String, Rect)> = f.placed.iter().map(|(t, r, _)| (t.clone(), *r)).collect();
+    let moved: Vec<(String, f32, f32)> = before.iter()
+        .filter_map(|(text, _)| Some((text.clone(), once(&before, text)?.top(), once(&after, text)?.top())))
+        .filter(|(_, was, now)| (now - was).abs() > 0.5)
+        .collect();
+    let pushed = moved.first().map(|m| m.2 - m.1).expect("the page's content moved");
+    assert!(pushed > title.height(), "down by the card: {moved:?}");
+    for (text, was, now) in &moved {
+        assert!((now - was - pushed).abs() < 0.5 && *now > line_bottom, "{text} starts beneath the card, as far down as the rest: {was} {now}");
+    }
+
+    // Custom settings: no card, and it waits.
+    f.l.settings.fps = 30;
+    f.settle();
+    assert!(!shows(&f, "Set up for this device and Desk") && f.l.settings.setup_card_host == Some(id));
+    f.l.settings.fps = Settings::default().fps;
+    f.settle();
+    assert!(shows(&f, "Set up for this device and Desk"));
+
+    // The arrow keys (a controller's D-pad) reach its close button; Enter dismisses it for good.
+    let mut reached = false;
+    let mut walked = Vec::new();
+    for step in 0..36 {
+        f.press(if step < 6 { Key::ArrowUp } else { Key::ArrowDown });
+        let focused = f.ctx.memory(|m| m.focused()).and_then(|id| f.ctx.read_response(id)).map(|r| r.rect);
+        walked.push(focused);
+        // The close button ends the card, right of its words' start and on their line.
+        if focused.is_some_and(|r| r.width() < 50.0 && r.left() > title.left() && (r.center().y - title.center().y).abs() < 30.0) {
+            reached = true;
+            break;
+        }
+    }
+    assert!(reached, "the arrow keys reach the card's Dismiss: title {title:?}, focus went {walked:?}");
+    let commands = f.press(Key::Enter);
+    assert_eq!(f.l.settings.setup_card_host, None);
+    assert!(f.l.settings.setup_card_seen, "it never returns");
+    assert!(commands.iter().any(|c| matches!(c, Command::SaveSettings)), "and that is saved");
+    assert!(!shows(&f, "Set up for this device and Desk"));
+}
+
+/// Home with the setup card after the first pairing:
+/// `NIGHTJAR_SHOTS=<dir> cargo test -p nightjar-desktop setup_card_screenshot -- --ignored`.
+#[test]
+#[ignore = "writes PNGs; set NIGHTJAR_SHOTS"]
+fn setup_card_screenshot() {
+    let Some(dir) = std::env::var_os("NIGHTJAR_SHOTS").map(std::path::PathBuf::from) else { return };
+    std::fs::create_dir_all(&dir).expect("the folder for the screenshots");
+    let mut f = home_with_games(8);
+    f.l.settings.setup_card_host = Some(f.hosts.list[0].id);
+    f.settle();
+    f.shoot(&dir, "desktop-home-setup-card");
+}
+
+/// The card waits while a device asks to pair: that banner goes first.
+#[test]
+fn the_setup_card_yields_to_a_device_waiting_to_pair() {
+    let mut f = approving_frames(true);
+    let id = f.hosts.list[0].id;
+    f.l.screen = Screen::Home;
+    f.l.settings.setup_card_host = Some(id);
+    let name = format!("Set up for this device and {}", f.hosts.list[0].display_name());
+    f.settle();
+    assert!(shows(&f, &name), "{:?}", f.drawn);
+    f.hosts.list[0].native.pairing_requests = vec![tv_request("a1")];
+    f.settle();
+    assert!(shows(&f, "TV wants to pair") && !shows(&f, &name));
+}
+
+/// The card's line: the game page's resolution, rate and bitrate, then HDR or SDR as the start asks,
+/// then the codec: negotiated under Auto, named when forced.
+#[test]
+fn the_setup_cards_line_names_hdr_and_a_forced_codec() {
+    let display = Display { width: 1920, height: 1080, refresh_hz: 60.0, refresh_reported: true };
+    let (w, h, fps, kbps) = stream_mode(&Settings::default(), display);
+    let summary = console::stream_summary(w, h, fps, kbps);
+    assert_eq!(home::setup_line(&Settings::default(), display), format!("{summary} · SDR · codec chosen when the stream starts"));
+    assert_eq!(home::setup_line(&Settings { hdr: true, ..Settings::default() }, display), format!("{summary} · HDR · codec chosen when the stream starts"));
+    assert_eq!(home::setup_line(&Settings { codec: CodecPreference::Hevc, ..Settings::default() }, display), format!("{summary} · SDR · HEVC"));
+    crate::strings::tests::with_lang(crate::strings::Lang::De, || {
+        assert!(home::setup_line(&Settings::default(), display).ends_with(" · SDR · Codec wird beim Start des Streams gewählt"));
+    });
+}
+
 /// nightjar#51: the Home grid follows the focus down and back up when the arrow keys (or the
 /// D-pad, which sends the same keys) move it, as it already did for Tab.
 #[test]
@@ -3041,8 +3181,7 @@ fn settings_scroll_beside_their_column_on_a_wide_window() {
     let mut f = Frames::new(record("Desk", true, true), Reach::Online);
     f.size = vec2(1920.0, 640.0);
     f.l.settings_view.more = [true; 9];
-    f.l.go(Screen::Settings);
-    f.settle();
+    video_settings(&mut f);
     let top = |f: &Frames| f.placed.iter().find(|(t, ..)| t == "Video codec").map(|p| p.1.top()).expect("the Video codec row");
     let before = top(&f);
     let beside = Pos2::new(1500.0, 600.0);
@@ -5859,6 +5998,8 @@ fn the_arrow_keys_keep_the_focus_clear_of_the_chrome_on_every_long_page() {
     let size = vec2(1280.0, 480.0);
     for (name, page) in [("all-games", Page::AllGames), ("apps", Page::Apps), ("settings", Page::Settings), ("pc-settings", Page::PcSettings)] {
         let mut f = demo_frames(size);
+        // Recommended, where Settings open, fits this window: Video is long enough to walk.
+        (f.l.settings_view.rail_more, f.l.settings_view.section) = (true, "Video");
         demo_page(&mut f, page);
         let focused = |f: &Frames| {
             let id = f.ctx.memory(|m| m.focused()).expect("something is focused");
@@ -5901,11 +6042,14 @@ fn the_arrow_keys_keep_the_focus_clear_of_the_chrome_on_every_long_page() {
 #[test]
 fn the_side_list_stays_below_the_chrome_while_the_rows_scroll() {
     use super::demo::Page;
-    let mut f = demo_frames(vec2(1600.0, 700.0));
+    // Tall enough for the whole list, More settings open: a shorter window's list goes with the page.
+    let mut f = demo_frames(vec2(1600.0, 860.0));
     // Every row: a section long enough to scroll.
     f.l.settings_view.more = [true; 9];
     let top_of = |f: &Frames, text: &str| f.placed.iter().find(|(t, ..)| t == text).map(|p| p.1.top()).unwrap_or_else(|| panic!("{text} is drawn"));
     demo_page(&mut f, Page::Settings);
+    f.l.settings_view.section = "Video";
+    f.settle();
     let (entry, row) = (top_of(&f, "Audio"), top_of(&f, "Video codec"));
     wheel(&mut f, Pos2::new(1500.0, 600.0), -200.0);
     assert!(top_of(&f, "Video codec") < row - 50.0, "the rows move");

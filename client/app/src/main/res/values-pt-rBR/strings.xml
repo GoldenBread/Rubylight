@@ -568,4 +568,7 @@
     <string name="settings_section_simple">Recomendado</string>
     <string name="settings_section_simple_summary">As escolhas que a maioria precisa; as seções abaixo guardam todos os detalhes.</string>
     <string name="summary_simple_hdr">Realces mais brilhantes e cores mais ricas em uma tela HDR. O modo Automático só o ativa quando a tela, o decodificador e o PC oferecem suporte; ativá-lo em outro caso deixa a imagem desbotada. Deixe em Automático a menos que a imagem pareça desbotada.</string>
+    <string name="home_setup_title">Configurado para este dispositivo e %1$s</string>
+    <string name="home_setup_codec_auto">codec escolhido ao iniciar a transmissão</string>
+    <string name="home_setup_dismiss">Dispensar</string>
 </resources>

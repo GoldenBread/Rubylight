@@ -1306,6 +1306,7 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer di ricezione: il sistema ha conces
     ("GPU decoding isn’t available here: {}", "La decodifica GPU non è disponibile qui: {}"),
     ("Fewer {} settings", "Meno impostazioni: {}"),
     ("More {} settings ({})", "Altre impostazioni: {0} ({1})"),
+    ("More settings", "Altre impostazioni"),
     ("Different settings for different networks.", "Impostazioni diverse per reti diverse."),
     ("Refresh rate", "Frequenza di aggiornamento"),
     ("Image", "Immagine"),
@@ -1722,4 +1723,6 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer di ricezione: il sistema ha conces
     ("Invite copied", "Invito copiato"),
     ("New invite", "Nuovo invito"),
     ("Join my game with Nightjar: open this link in Nightjar, or copy it and paste it under Add PC.\n{}", "Unisciti alla mia partita con Nightjar: apri questo link in Nightjar, oppure copialo e incollalo in «Aggiungi PC».\n{}"),
+    ("Set up for this device and {}", "Configurato per questo dispositivo e {}"),
+    ("codec chosen when the stream starts", "codec scelto all'avvio dello streaming"),
 ];

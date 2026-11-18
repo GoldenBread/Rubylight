@@ -975,6 +975,12 @@ impl Hosts {
         self.list.iter().find(|h| h.id == id)
     }
 
+    /// How many PCs are paired now that `id` has just paired: its last answer may still be the one
+    /// from before the pairing, which said it was not.
+    pub fn paired_with(&self, id: u64) -> usize {
+        self.list.iter().filter(|h| h.id == id || h.paired()).count()
+    }
+
     /// The poll of the PC in flight, if one is.
     pub fn polling_seq(&self, id: u64) -> Option<u64> {
         self.get(id).filter(|host| host.polling).map(|host| host.poll_seq)

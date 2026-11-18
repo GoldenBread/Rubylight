@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- A game's page on TV: Home's backdrop of the game carries over behind it (BackdropView.adopt), the 2:3 poster on the
-     left, and on the right its chips, title and host, Play (focused on entry), Favourite and Close game in a row, and the
+     left, and on the right its chips, title and host, the moon Play (focused on entry) with Favourite and Quit game as glass capsules, Home's buttons, and the
      stream settings it will use on a panel. The ids are the phone layout's, so GameDetailActivity fills both. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -72,24 +72,21 @@
                         android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:layout_marginTop="@dimen/space_xl"
                         android:clipChildren="false" android:clipToPadding="false">
-                        <com.google.android.material.button.MaterialButton android:id="@+id/detail_play"
+                        <com.limelight.ui.GlassButton android:id="@+id/detail_play" style="@style/Widget.Nightjar.Glass.Play"
                             android:layout_width="wrap_content" android:layout_height="wrap_content"
                             android:minWidth="160dp" android:minHeight="56dp"
-                            android:paddingStart="@dimen/space_xl" android:paddingEnd="@dimen/space_xl"
-                            android:text="@string/library_play" app:icon="@drawable/ic_play"
+                            android:text="@string/library_play"
                             android:nextFocusRight="@+id/detail_favourite" />
                         <!-- No nextFocusRight to detail_end: it is gone unless the game runs, and Android 7.1 and older stop on a gone target. -->
-                        <com.google.android.material.button.MaterialButton android:id="@+id/detail_favourite"
-                            style="@style/Widget.Nightjar.Button.Tonal" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        <com.limelight.ui.GlassButton android:id="@+id/detail_favourite" style="@style/Widget.Nightjar.Glass.Control"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
                             android:layout_marginStart="@dimen/space_m" android:minHeight="56dp"
-                            android:paddingStart="@dimen/space_l" android:paddingEnd="@dimen/space_xl"
                             android:text="@string/console_favourite_add" app:icon="@drawable/ic_star"
                             android:nextFocusLeft="@id/detail_play" />
-                        <com.google.android.material.button.MaterialButton android:id="@+id/detail_end"
-                            style="@style/Widget.Nightjar.Button.Tonal" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        <com.limelight.ui.GlassButton android:id="@+id/detail_end" style="@style/Widget.Nightjar.Glass.Control"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
                             android:layout_marginStart="@dimen/space_m" android:minHeight="56dp"
-                            android:paddingStart="@dimen/space_l" android:paddingEnd="@dimen/space_xl"
-                            android:text="@string/stream_close_game" app:icon="@drawable/ic_stop" android:visibility="gone"
+                            android:text="@string/applist_menu_quit" app:icon="@drawable/ic_glass_power" android:visibility="gone"
                             android:nextFocusLeft="@id/detail_favourite" />
                     </com.limelight.ui.WrapRow>
                     <LinearLayout android:id="@+id/detail_profile" android:layout_width="match_parent" android:layout_height="wrap_content"

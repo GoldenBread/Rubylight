@@ -1306,6 +1306,7 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("GPU decoding isn’t available here: {}", "此處 GPU 解碼不可用：{}"),
     ("Fewer {} settings", "收起{}設定"),
     ("More {} settings ({})", "更多{0}設定（{1}）"),
+    ("More settings", "更多設定"),
     ("Different settings for different networks.", "為不同網路保留不同設定。"),
     ("Refresh rate", "更新頻率"),
     ("Image", "畫面"),
@@ -1722,4 +1723,6 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("Invite copied", "已複製邀請"),
     ("New invite", "新邀請"),
     ("Join my game with Nightjar: open this link in Nightjar, or copy it and paste it under Add PC.\n{}", "用 Nightjar 加入我的遊戲：在 Nightjar 中開啟此連結，或複製後貼到「新增電腦」中。\n{}"),
+    ("Set up for this device and {}", "已為此裝置和 {} 設定完成"),
+    ("codec chosen when the stream starts", "編解碼器在串流開始時選擇"),
 ];

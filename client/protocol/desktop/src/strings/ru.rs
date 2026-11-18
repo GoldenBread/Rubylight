@@ -1306,6 +1306,7 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приёма: система �
     ("GPU decoding isn’t available here: {}", "Декодирование на GPU здесь недоступно: {}"),
     ("Fewer {} settings", "Меньше настроек: {}"),
     ("More {} settings ({})", "Больше настроек: {0} ({1})"),
+    ("More settings", "Другие настройки"),
     ("Different settings for different networks.", "Разные настройки для разных сетей."),
     ("Refresh rate", "Частота обновления"),
     ("Image", "Изображение"),
@@ -1722,4 +1723,6 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приёма: система �
     ("Invite copied", "Приглашение скопировано"),
     ("New invite", "Новое приглашение"),
     ("Join my game with Nightjar: open this link in Nightjar, or copy it and paste it under Add PC.\n{}", "Присоединяйся к моей игре в Nightjar: открой эту ссылку в Nightjar или скопируй её и вставь в «Добавить ПК».\n{}"),
+    ("Set up for this device and {}", "Настроено для этого устройства и {}"),
+    ("codec chosen when the stream starts", "кодек выбирается при запуске стрима"),
 ];

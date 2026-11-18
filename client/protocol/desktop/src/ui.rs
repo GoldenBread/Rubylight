@@ -554,6 +554,11 @@ pub struct Launcher {
     pub(crate) hdr_display: bool,
     /// Re-reads `hdr_display` when the settings page opens (SDL is live; a test leaves this None).
     pub(crate) hdr_display_probe: Option<fn() -> bool>,
+    /// `hdr_display` was read again for Home's setup card, once a run.
+    setup_card_probed: bool,
+    /// Where focus was when Up or Down was last pressed with the setup card on Home: a move from
+    /// there across the card stops on its close button.
+    setup_card_from: Option<Rect>,
     /// The renderer's Direct3D 11 device, which the PyroWave GPU decoder's settings probe runs on.
     pub gpu_device: Option<crate::stream::pipeline::GpuDevice>,
     pub display: Display,
@@ -611,6 +616,7 @@ pub(crate) const SETTINGS_W: f32 = 1300.0;
 
 impl Launcher {
     pub fn new(settings: Settings, profiles: Profiles, shortcuts: crate::shortcuts::Shortcuts, display: Display) -> Self {
+        let more_settings = settings.settings_more_open;
         Self {
             screen: Screen::Hosts,
             dialog: Dialog::None,
@@ -626,7 +632,7 @@ impl Launcher {
             editing_app: None,
             edit_name: String::new(),
             settings_dirty: false,
-            settings_view: Default::default(),
+            settings_view: settings::SettingsView::remembered(more_settings),
             custom_size: None,
             custom_fps: None,
             controller_key: String::new(),
@@ -681,6 +687,8 @@ impl Launcher {
             tearing_supported: false,
             hdr_display: false,
             hdr_display_probe: None,
+            setup_card_probed: false,
+            setup_card_from: None,
             gpu_device: None,
             display,
             fullscreen_modes: Vec::new(),

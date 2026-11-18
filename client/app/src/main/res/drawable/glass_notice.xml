@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A notice lying over art (Home's set-up card): the fill of a glass control over art, a panel's corners and a lit edge. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <corners android:radius="18dp" />
+    <solid android:color="?attr/glassControlOverArt" />
+    <stroke android:width="0.75dp" android:color="?attr/glassControlRim" />
+</shape>

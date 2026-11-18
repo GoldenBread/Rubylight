@@ -433,6 +433,12 @@ impl App {
                     }
                 }
                 HostEvent::Paired { id, result, .. } => {
+                    // The first pairing on this install: Home says what Auto set up for this PC.
+                    if result.is_ok() && self.launcher.offer_setup_card(id, self.hosts.paired_with(id)) {
+                        if let Err(e) = self.store.save_settings(&self.launcher.settings) {
+                            eprintln!("nightjar: saving settings failed: {e}");
+                        }
+                    }
                     if self.launcher.pairing_finished(id, result.map(|_| ())) {
                         self.save_hosts();
                         self.hosts.load_apps(id);

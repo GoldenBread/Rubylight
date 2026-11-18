@@ -1306,6 +1306,7 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("GPU decoding isn’t available here: {}", "Giải mã bằng GPU không khả dụng ở đây: {}"),
     ("Fewer {} settings", "Ẩn bớt cài đặt {}"),
     ("More {} settings ({})", "Xem thêm cài đặt {0} ({1})"),
+    ("More settings", "Cài đặt khác"),
     ("Different settings for different networks.", "Cài đặt khác nhau cho từng mạng."),
     ("Refresh rate", "Tần số quét"),
     ("Image", "Hình ảnh"),
@@ -1722,4 +1723,6 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("Invite copied", "Đã sao chép lời mời"),
     ("New invite", "Lời mời mới"),
     ("Join my game with Nightjar: open this link in Nightjar, or copy it and paste it under Add PC.\n{}", "Tham gia trò chơi của mình bằng Nightjar: mở liên kết này trong Nightjar, hoặc sao chép rồi dán vào “Thêm PC”.\n{}"),
+    ("Set up for this device and {}", "Đã thiết lập cho thiết bị này và {}"),
+    ("codec chosen when the stream starts", "codec được chọn khi bắt đầu truyền"),
 ];

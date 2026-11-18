@@ -152,6 +152,48 @@ public class StreamSettings extends NightjarActivity {
      * list as main. Folded rows keep their key and group, and search, deep links and resets still find them.
      */
     static final String MORE_PREFIX = "more_";
+    /**
+     * The overview's "More settings" row. The list of sections is simple first: Recommended, Controls, Audio and App
+     * show, and this row unfolds {@link #RAIL_FOLDED} in place. It stores no setting.
+     */
+    static final String RAIL_MORE_KEY = "more_sections";
+    /** {@link #RAIL_MORE_KEY}'s name in {@link #moreOpen}; no section has it. */
+    static final String RAIL = "rail";
+    /** The overview's rows behind {@link #RAIL_MORE_KEY}, in their order: the presets, Profiles and the sections of detail. */
+    static final List<String> RAIL_FOLDED = Arrays.asList(
+            "stream_presets", "stream_profiles", "video", "display", "streaming", "advanced", "debug");
+    /** The sections in the overview's order, which the phone's chips follow: the ones that always show, then the folded ones. */
+    static final List<String> RAIL_SECTIONS = Arrays.asList(
+            "simple", "input", "audio", "app", "video", "display", "streaming", "advanced", "debug");
+
+    /** Whether the overview shows the rows behind More settings: the user opened it, or this visit landed on one of them. */
+    boolean railOpen() {
+        return moreOpen.contains(RAIL);
+    }
+
+    /** A section or overview row behind More settings is about to show (a link, a search result): the fold opens for this visit. */
+    private void unfoldRailFor(String row) {
+        if (row != null && RAIL_FOLDED.contains(row)) moreOpen.add(RAIL);
+    }
+
+    /** More settings was chosen: the rows below it show or go, and the choice is kept for the next visit. */
+    void toggleRail() {
+        boolean open = !moreOpen.remove(RAIL);
+        if (open) moreOpen.add(RAIL);
+        rememberMore(RAIL, open);
+        // The pane cannot keep showing a section whose row just went: it goes back to the first one.
+        if (!open && twoPane && searchQuery.isEmpty() && section != null && RAIL_FOLDED.contains(section)) {
+            showSection(defaultSection());
+            return;
+        }
+        applyRailFold();
+        markSection();
+    }
+
+    private void applyRailFold() {
+        android.app.Fragment fragment = getFragmentManager().findFragmentById(twoPane ? R.id.settings_sections : R.id.stream_settings);
+        if (fragment instanceof RootFragment) ((RootFragment) fragment).applyFold();
+    }
 
     /** The main rows of a section (settings_tiers.xml); every other row of it folds. */
     static List<String> mainKeys(Context context, String section) {
@@ -281,9 +323,9 @@ public class StreamSettings extends NightjarActivity {
                 == Configuration.UI_MODE_TYPE_TELEVISION;
     }
 
-    /** The section the right pane shows before one is picked: the first row of the list. */
+    /** The section the right pane shows before one is picked: Recommended, the first row of the list; a TV opens on Controls in its place. */
     private String defaultSection() {
-        return isTelevision(this) ? "input" : "video";
+        return isTelevision(this) ? "input" : "simple";
     }
 
     /** Whether custom GPU drivers can load here. The debug build's demo mode shows their screen anyway. */
@@ -311,6 +353,10 @@ public class StreamSettings extends NightjarActivity {
             section = defaultSection();
             sectionDefaulted = true;
         }
+        // A section behind More settings shows with its row: the fold is open while it does, and on a phone when Back
+        // returns from it to the list.
+        if (searchQuery.isEmpty()) unfoldRailFor(section);
+        applyRailFold();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             Display.Mode mode = getWindowManager().getDefaultDisplay().getMode();
             previousDisplayPixelCount = mode.getPhysicalWidth() * mode.getPhysicalHeight();
@@ -325,6 +371,10 @@ public class StreamSettings extends NightjarActivity {
                 new RootFragment() : SettingsFragment.forSection(section)).commit();
         updateHeader();
         markSection();
+        // Rows More settings just unfolded reach the list with its next pass (PreferenceGroupAdapter queues it): the
+        // section's row is marked once it is there.
+        ListView sections = listOf(R.id.settings_sections);
+        if (twoPane && sections != null) sections.post(() -> { if (!isFinishing() && !isDestroyed()) markRail(); });
     }
 
     /** The preference list of the fragment in a pane, or null while it has no view. */
@@ -354,6 +404,11 @@ public class StreamSettings extends NightjarActivity {
     /** Marks the section the right pane shows in the list of sections. */
     private void markSection() {
         placeFirstFocus();
+        markRail();
+    }
+
+    /** Marks the shown section's row in the list beside it, and moves TV's bar to it. */
+    private void markRail() {
         String row = markedRow();
         android.app.Fragment fragment = getFragmentManager().findFragmentById(R.id.settings_sections);
         if (twoPane && fragment instanceof RootFragment) ((RootFragment) fragment).mark(row);
@@ -539,7 +594,7 @@ public class StreamSettings extends NightjarActivity {
 
     /** The sections a chip stands for, as the list of sections has them. */
     private List<String> visibleSections() {
-        return new ArrayList<>(SECTIONS.keySet());
+        return new ArrayList<>(RAIL_SECTIONS);
     }
 
     /** The chrome's search takes the place of the bar's menu item; the toolbar only carries the back arrow and a title. */
@@ -706,6 +761,8 @@ public class StreamSettings extends NightjarActivity {
         searchResultKey = key;
         if (LOW_LATENCY_CUSTOMIZED.contains(key)) customizeOpen = true;
         unfoldFor(targetSection, key);
+        // A result that is a row of the overview itself (the presets) shows there.
+        if (targetSection == null) unfoldRailFor(key);
         enterPane = focusRow = twoPane && inContentPane(focusOwner());
         setSearchQuery("");
     }
@@ -717,10 +774,21 @@ public class StreamSettings extends NightjarActivity {
 
     /** Only the user's own choice is kept: a search result or link unfolding a section lasts for this visit. */
     private void rememberMore(String section, boolean open) {
-        Set<String> remembered = new HashSet<>(rememberedMore());
+        rememberMore(this, section, open);
+    }
+
+    private static void rememberMore(Context context, String section, boolean open) {
+        SharedPreferences state = context.getSharedPreferences(MORE_STATE_PREFS, MODE_PRIVATE);
+        Set<String> remembered = new HashSet<>(state.getStringSet(MORE_STATE_OPEN, new HashSet<>()));
         if (open) remembered.add(section);
         else remembered.remove(section);
-        getSharedPreferences(MORE_STATE_PREFS, MODE_PRIVATE).edit().putStringSet(MORE_STATE_OPEN, remembered).apply();
+        state.edit().putStringSet(MORE_STATE_OPEN, remembered).apply();
+    }
+
+    /** Leaves the overview's More settings open or closed for the next visit, as choosing it does. */
+    @androidx.annotation.VisibleForTesting
+    static void rememberRail(Context context, boolean open) {
+        rememberMore(context, RAIL, open);
     }
 
     /** A search result or a link that lands on a folded row opens its section's More row first. */
@@ -1322,6 +1390,31 @@ public class StreamSettings extends NightjarActivity {
 
     public static class RootFragment extends PreferenceFragment {
         private final SharedPreferences.OnSharedPreferenceChangeListener summaryUpdater = (prefs, key) -> updateSummaries();
+        /** Every row of the overview by key, in the list or folded away. */
+        private final Map<String, Preference> rows = new HashMap<>();
+
+        @Override
+        public Preference findPreference(CharSequence key) {
+            Preference row = super.findPreference(key);
+            return row != null ? row : rows.get(String.valueOf(key));
+        }
+
+        /** Shows or removes the rows behind More settings, as the activity has it, and points the row's icon. */
+        void applyFold() {
+            PreferenceScreen screen = getPreferenceScreen();
+            StreamSettings activity = (StreamSettings) getActivity();
+            if (screen == null || activity == null) return;
+            boolean open = activity.railOpen();
+            for (String key : RAIL_FOLDED) {
+                Preference row = rows.get(key);
+                if (row == null) continue;
+                boolean listed = screen.findPreference(key) != null;
+                if (open && !listed) screen.addPreference(row);
+                else if (!open && listed) screen.removePreference(row);
+            }
+            Preference more = rows.get(RAIL_MORE_KEY);
+            if (more instanceof FoldPreference) ((FoldPreference) more).setExpanded(open);
+        }
 
         private void updateSummaries() {
             Context context = getActivity();
@@ -1355,6 +1448,19 @@ public class StreamSettings extends NightjarActivity {
             // One order on every screen: a TV opens on Controls in its place, not with Controls moved to the rail's top.
             addPreferencesFromResource(R.xml.preferences_root);
             stylePreferences(getPreferenceScreen(), getActivity());
+            for (int i = 0; i < getPreferenceScreen().getPreferenceCount(); i++) {
+                Preference row = getPreferenceScreen().getPreference(i);
+                // A row taken out keeps its place for when it comes back.
+                row.setOrder(i);
+                rows.put(row.getKey(), row);
+            }
+            Preference more = findPreference(RAIL_MORE_KEY);
+            more.setLayoutResource(GlassForm.of(getActivity()) == GlassForm.TELEVISION ? R.layout.settings_section_tv_fold : R.layout.settings_section_fold);
+            more.setOnPreferenceClickListener(preference -> {
+                ((StreamSettings) getActivity()).toggleRail();
+                return true;
+            });
+            applyFold();
             for (String key : SECTIONS.keySet()) {
                 Preference row = findPreference(key);
                 if (row == null) continue;

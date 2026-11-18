@@ -112,6 +112,12 @@ public class AdvancedOptionsTest {
         }
     }
 
+    /** Advanced and Debug sit behind More settings: these tests read their rows, as for a user who chose it. */
+    @org.junit.Before
+    public void openMoreSettings() {
+        StreamSettings.rememberRail(org.robolectric.RuntimeEnvironment.getApplication(), true);
+    }
+
     private static PreferenceScreen root(StreamSettings screen) {
         screen.showSection(null);
         settle(screen);

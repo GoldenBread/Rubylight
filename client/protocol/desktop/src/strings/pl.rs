@@ -1306,6 +1306,7 @@ sudo sysctl -w net.core.rmem_max={}", "Bufor odbioru: system przydzielił {0} Ki
     ("GPU decoding isn’t available here: {}", "Dekodowanie GPU jest tu niedostępne: {}"),
     ("Fewer {} settings", "Mniej ustawień: {}"),
     ("More {} settings ({})", "Więcej ustawień: {0} ({1})"),
+    ("More settings", "Więcej ustawień"),
     ("Different settings for different networks.", "Różne ustawienia dla różnych sieci."),
     ("Refresh rate", "Częstotliwość odświeżania"),
     ("Image", "Obraz"),
@@ -1722,4 +1723,6 @@ sudo sysctl -w net.core.rmem_max={}", "Bufor odbioru: system przydzielił {0} Ki
     ("Invite copied", "Zaproszenie skopiowane"),
     ("New invite", "Nowe zaproszenie"),
     ("Join my game with Nightjar: open this link in Nightjar, or copy it and paste it under Add PC.\n{}", "Dołącz do mojej gry w Nightjar: otwórz ten link w Nightjar albo skopiuj go i wklej w „Dodaj komputer”.\n{}"),
+    ("Set up for this device and {}", "Skonfigurowano dla tego urządzenia i {}"),
+    ("codec chosen when the stream starts", "kodek wybierany przy starcie strumienia"),
 ];

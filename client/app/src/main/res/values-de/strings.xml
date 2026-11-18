@@ -568,4 +568,7 @@
     <string name="settings_section_simple">Empfohlen</string>
     <string name="settings_section_simple_summary">Die Auswahl, die die meisten brauchen; die Abschnitte darunter enthalten jedes Detail.</string>
     <string name="summary_simple_hdr">Hellere Spitzenlichter und sattere Farben auf einem HDR-Bildschirm. Auto schaltet HDR nur ein, wenn Bildschirm, Decoder und PC es unterstützen; anderswo sieht das Bild verwaschen aus. Lass es auf Auto, außer das Bild sieht verwaschen aus.</string>
+    <string name="home_setup_title">Eingerichtet für dieses Gerät und %1$s</string>
+    <string name="home_setup_codec_auto">Codec wird beim Start des Streams gewählt</string>
+    <string name="home_setup_dismiss">Ausblenden</string>
 </resources>

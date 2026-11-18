@@ -1306,6 +1306,7 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("GPU decoding isn’t available here: {}", "GPU ile kod çözme burada kullanılamıyor: {}"),
     ("Fewer {} settings", "Daha az ayar: {}"),
     ("More {} settings ({})", "Daha fazla ayar: {0} ({1})"),
+    ("More settings", "Diğer ayarlar"),
     ("Different settings for different networks.", "Farklı ağlar için farklı ayarlar."),
     ("Refresh rate", "Yenileme hızı"),
     ("Image", "Görüntü"),
@@ -1722,4 +1723,6 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("Invite copied", "Davet kopyalandı"),
     ("New invite", "Yeni davet"),
     ("Join my game with Nightjar: open this link in Nightjar, or copy it and paste it under Add PC.\n{}", "Nightjar ile oyunuma katıl: bu bağlantıyı Nightjar’da aç ya da kopyalayıp “Bilgisayar ekle”ye yapıştır.\n{}"),
+    ("Set up for this device and {}", "Bu cihaz ve {} için ayarlandı"),
+    ("codec chosen when the stream starts", "codec yayın başlarken seçilir"),
 ];

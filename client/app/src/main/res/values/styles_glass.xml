@@ -53,6 +53,11 @@
         <item name="lineHeight">42sp</item>
         <item name="android:letterSpacing">-0.02</item>
     </style>
+    <!-- A game's name on the sheet of a phone held upright: the hero's face at the title's size. -->
+    <style name="TextAppearance.Nightjar.Glass.SheetTitle" parent="TextAppearance.Nightjar.Glass.Hero">
+        <item name="android:textSize">@dimen/nj_type_title_size</item>
+        <item name="lineHeight">@dimen/nj_type_title_line</item>
+    </style>
     <style name="Widget.Nightjar.Glass.Play" parent="Widget.Material3.Button">
         <item name="android:minHeight">@dimen/nj_size_play_height</item>
         <item name="android:insetTop">0dp</item>

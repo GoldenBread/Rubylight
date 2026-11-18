@@ -149,6 +149,7 @@ public final class DemoLauncherActivity extends Activity {
                 .putExtra("dlg", getIntent().getStringExtra("dlg"))
                 .putExtra("align", getIntent().getStringExtra("align"))
                 .putExtra("pairwait", getIntent().getBooleanExtra("pairwait", false))
+                .putExtra("setupcard", getIntent().getBooleanExtra("setupcard", false))
                 .putExtra("orientation", getIntent().getStringExtra("orientation"))
                 .putExtra("hint", getIntent().getBooleanExtra("hint", false))
                 .putExtra("touch", getIntent().getStringExtra("touch"))

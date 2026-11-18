@@ -568,4 +568,7 @@
     <string name="settings_section_simple">Đề xuất</string>
     <string name="settings_section_simple_summary">Những lựa chọn hầu hết mọi người cần; mọi chi tiết nằm trong các mục bên dưới.</string>
     <string name="summary_simple_hdr">Điểm sáng rực hơn và màu sắc phong phú hơn trên màn hình HDR. Tự động chỉ bật khi màn hình, bộ giải mã và PC hỗ trợ; bật ở nơi khác sẽ khiến hình ảnh trông nhạt. Hãy để Tự động trừ khi hình ảnh trông nhạt.</string>
+    <string name="home_setup_title">Đã thiết lập cho thiết bị này và %1$s</string>
+    <string name="home_setup_codec_auto">codec được chọn khi bắt đầu truyền</string>
+    <string name="home_setup_dismiss">Bỏ qua</string>
 </resources>

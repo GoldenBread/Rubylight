@@ -325,6 +325,11 @@ public final class HostActions {
                             stored.serverCert = pairing.getPairedCert();
                             binder.invalidateStateForComputer(computer.uuid);
                             success = true;
+                            // The first pairing this device makes: Home says what the automatic settings will use with
+                            // this PC. Noted now, not when the result shows: that waits for the screen to be in front,
+                            // and a process ended meanwhile would start again with a PC paired and no card. A PC that
+                            // answered "already paired" (a link scanned again) was paired before, and offers nothing.
+                            com.limelight.console.SetupCard.offer(activity.getApplicationContext(), stored);
                         } else {
                             message = activity.getString(R.string.pair_fail);
                         }

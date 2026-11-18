@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The sheet a game's page is on a phone held upright: a panel over the game's ambient with the sheet's radius at its
+     top corners and a lit edge. It reaches past the view's foot, under the navigation bar, so no strip of the ambient
+     shows below it. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:insetBottom="-96dp" android:insetLeft="-1dp" android:insetRight="-1dp">
+    <shape>
+        <corners android:topLeftRadius="@dimen/nj_radius_sheet" android:topRightRadius="@dimen/nj_radius_sheet" />
+        <solid android:color="?attr/glassGroupOnArt" />
+        <stroke android:width="0.75dp" android:color="?attr/glassGroupRim" />
+    </shape>
+</inset>

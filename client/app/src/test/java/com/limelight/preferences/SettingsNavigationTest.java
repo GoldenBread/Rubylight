@@ -19,6 +19,12 @@ import static org.junit.Assert.*;
         shadows = com.limelight.PcViewLifecycleTest.NoNativeMoonBridge.class,
         instrumentedPackages = "com.limelight.nvstream.jni")
 public class SettingsNavigationTest {
+    /** These tests walk the whole list of sections: More settings is open, as for a user who chose it. */
+    @org.junit.Before
+    public void openMoreSettings() {
+        StreamSettings.rememberRail(org.robolectric.RuntimeEnvironment.getApplication(), true);
+    }
+
     @Test
     public void preferenceHelpKeysSurviveTheFrameworksInitialListBinding() {
         ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup().visible();

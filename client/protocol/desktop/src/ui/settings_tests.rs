@@ -7,14 +7,165 @@ use nightjar_policy::simple_profile as simple;
 use crate::config::FramePacing;
 use nightjar_policy::presets::{self, Preset};
 
-/// Main settings at their defaults but `changed`, on a tall window where a section never scrolls.
+/// Main settings at their defaults but `changed`, on a tall window where a section never scrolls,
+/// with "More settings" chosen and Video open: the whole list of sections and the rows most of
+/// these tests are about. `fresh_settings` is the page as a first visit finds it.
 fn settings_with(changed: Settings) -> Frames {
     let mut f = Frames::new(record("PC", true, false), Reach::Online);
     f.size = vec2(1280.0, 4000.0);
     f.l.settings = changed;
+    f.l.settings_view.rail_more = true;
+    f.l.settings_view.section = "Video";
     f.l.go(Screen::Settings);
     f.settle();
     f
+}
+
+/// Main settings as a first visit finds them, at `width`.
+fn fresh_settings(width: f32) -> Frames {
+    let mut f = Frames::new(record("PC", true, false), Reach::Online);
+    f.size = vec2(width, 4000.0);
+    f.l.go(Screen::Settings);
+    f.settle();
+    f
+}
+
+/// The entries of the list beside the rows (chips on a narrow window), top to bottom and left to
+/// right: the sections, Profiles and "More settings". The page's own title is not one of them.
+fn rail_entries(f: &Frames) -> Vec<&str> {
+    let named = |t: &str| SETTINGS_SECTIONS.contains(&t) || t == "Profiles" || t == "More settings";
+    let small = f.placed.iter().filter(|(t, ..)| named(t)).map(|p| p.1.height()).fold(f32::MAX, f32::min);
+    // The title is the open section's name again, in the page title's size.
+    let mut entries: Vec<(&str, Rect)> = f.placed.iter().filter(|(t, r, _)| named(t) && r.height() < small * 1.3).map(|(t, r, _)| (t.as_str(), *r)).collect();
+    entries.sort_by(|a, b| (a.1.top(), a.1.left()).partial_cmp(&(b.1.top(), b.1.left())).unwrap());
+    entries.dedup_by(|a, b| a.0 == b.0);
+    entries.into_iter().map(|e| e.0).collect()
+}
+
+const RAIL_SIMPLE: [&str; 5] = ["Recommended", "Controls", "Audio", "App", "More settings"];
+const RAIL_ALL: [&str; 11] = ["Recommended", "Controls", "Audio", "App", "More settings", "Profiles", "Video", "Display & image", "Streaming", "Advanced", "Debug"];
+
+/// Simple first: a first visit opens Recommended and lists the four sections most people need;
+/// More settings unfolds Profiles and the sections of detail under them, and folds them again.
+#[test]
+fn the_list_is_simple_first_and_more_settings_unfolds_the_rest() {
+    for width in [1280.0, 800.0] {
+        let mut f = fresh_settings(width);
+        assert_eq!(f.l.settings_view.section, "Recommended", "at {width}");
+        assert!(shows(&f, "Stream smoothness"), "{:?}", f.drawn);
+        assert_eq!(rail_entries(&f), RAIL_SIMPLE, "at {width}");
+        click_text(&mut f, "More settings");
+        assert_eq!(rail_entries(&f), RAIL_ALL, "at {width}");
+        click_text(&mut f, "Display & image");
+        assert!(f.l.settings_view.section == "Display & image" && !shows(&f, "Stream smoothness"), "{:?}", f.drawn);
+        // Folding while a section behind the fold is open goes back to the first section: the list
+        // never hides what the rows show.
+        click_text(&mut f, "More settings");
+        assert_eq!(rail_entries(&f), RAIL_SIMPLE, "at {width}");
+        assert_eq!(f.l.settings_view.section, "Recommended", "at {width}");
+    }
+}
+
+/// More settings stays as the user left it across restarts, as on Android: choosing it saves the
+/// choice and a launcher started from the saved settings opens with it unfolded. A section behind
+/// the fold that a link or a search shows unfolds it for that visit and saves nothing.
+#[test]
+fn more_settings_is_remembered_but_a_link_or_search_unfold_is_not() {
+    let mut f = fresh_settings(1280.0);
+    let commands = click_text(&mut f, "More settings");
+    assert!(f.l.settings.settings_more_open, "the choice is kept in settings.json");
+    assert!(commands.iter().any(|c| matches!(c, Command::SaveSettings)), "and saved");
+    let saved = serde_json::to_string(&f.l.settings).unwrap();
+    let mut again = Frames::new(record("PC", true, false), Reach::Online);
+    again.size = vec2(1280.0, 4000.0);
+    again.l = launcher(false, false);
+    again.l.settings = serde_json::from_str(&saved).unwrap();
+    again.l.settings_view = crate::ui::settings::SettingsView::remembered(again.l.settings.settings_more_open);
+    again.l.go(Screen::Settings);
+    again.settle();
+    assert_eq!(rail_entries(&again), RAIL_ALL, "a new start opens with it unfolded");
+    assert!(Launcher::new(again.l.settings.clone(), Profiles::default(), crate::shortcuts::Shortcuts::default(), again.l.display).settings_view.rail_more, "Launcher::new reads it");
+    // Folding it again is remembered too.
+    click_text(&mut again, "More settings");
+    assert!(!again.l.settings.settings_more_open);
+    assert_eq!(rail_entries(&again), RAIL_SIMPLE);
+
+    // A link to a section behind the fold, and a search: shown for the visit, nothing saved.
+    let mut f = fresh_settings(1280.0);
+    f.l.settings_view.section = "Streaming";
+    let mut commands = f.settle();
+    assert_eq!(rail_entries(&f), RAIL_ALL);
+    f.l.settings_view.query = "bitrate".into();
+    commands.extend(f.settle());
+    f.l.settings_view.query.clear();
+    commands.extend(f.settle());
+    assert!(!f.l.settings.settings_more_open && !f.l.settings_view.rail_more, "an unfold for a visit is not the user's choice");
+    assert!(!commands.iter().any(|c| matches!(c, Command::SaveSettings)), "nothing is saved for it");
+    // Reset all leaves it as it is: it is no setting.
+    let kept = Settings { settings_more_open: true, setup_card_host: Some(7), setup_card_seen: true, fps: 120, ..Settings::default() };
+    let reset = crate::ui::settings::reset_to_defaults(&kept);
+    assert_eq!((reset.fps, reset.settings_more_open, reset.setup_card_host, reset.setup_card_seen), (Settings::default().fps, true, Some(7), true));
+}
+
+/// Nothing is out of reach behind the fold: a section opened from elsewhere shows with its entry,
+/// a search lists every section with its count, and a controller walks into the fold.
+#[test]
+fn a_section_behind_more_settings_shows_with_its_entry() {
+    let mut f = fresh_settings(1280.0);
+    f.l.settings_view.section = "Streaming";
+    f.settle();
+    assert_eq!(rail_entries(&f), RAIL_ALL);
+    let mut f = fresh_settings(1280.0);
+    f.l.settings_view.query = "bitrate".into();
+    f.settle();
+    let listed = rail_entries(&f);
+    assert!(listed.contains(&"Video") && !listed.contains(&"More settings"), "a search looks in every section: {listed:?}");
+    f.l.settings_view.query.clear();
+    f.settle();
+    assert_eq!(rail_entries(&f), RAIL_SIMPLE, "the search over, the list is as it was");
+    // The D-pad: from the rows left to the list, down to More settings, A unfolds it, down again
+    // reaches Profiles.
+    let mut f = fresh_settings(1280.0);
+    f.press(Key::ArrowLeft);
+    assert!(focus_to(&mut f, Key::ArrowDown, "More settings"), "Down reaches More settings");
+    f.press(Key::Enter);
+    assert_eq!(rail_entries(&f), RAIL_ALL);
+    assert!(focus_to(&mut f, Key::ArrowDown, "Profiles"), "Down walks into what it unfolded");
+}
+
+/// A PC's settings open on Video; the main settings, opened after them, are simple again.
+#[test]
+fn a_pcs_settings_do_not_unfold_the_main_list() {
+    let mut f = Frames::new(record("PC", true, false), Reach::Online);
+    f.size = vec2(1280.0, 4000.0);
+    let id = f.hosts.list[0].id;
+    f.l.open_host_settings(id, &f.hosts.list[0]);
+    f.settle();
+    assert_eq!(f.l.settings_view.section, "Video");
+    f.l.go(Screen::Settings);
+    f.settle();
+    assert_eq!(f.l.settings_view.section, "Recommended");
+    assert_eq!(rail_entries(&f), RAIL_SIMPLE);
+    // The user's own choice stays: More settings and Video, away and back.
+    click_text(&mut f, "More settings");
+    click_text(&mut f, "Video");
+    f.l.go(Screen::Home);
+    f.settle();
+    f.l.go(Screen::Settings);
+    f.settle();
+    assert_eq!(f.l.settings_view.section, "Video");
+    assert_eq!(rail_entries(&f), RAIL_ALL);
+}
+
+/// A PC's, game's or profile's settings are the detail already: every section they have, no fold.
+#[test]
+fn a_pcs_settings_list_every_section_without_a_fold() {
+    let mut f = Frames::new(record("PC", true, false), Reach::Online);
+    f.size = vec2(1280.0, 4000.0);
+    let id = f.hosts.list[0].id;
+    f.l.open_host_settings(id, &f.hosts.list[0]);
+    f.settle();
+    assert_eq!(rail_entries(&f), ["Video", "Display & image", "Controls", "Audio", "Streaming", "Advanced", "Debug"]);
 }
 
 /// Opens every section's fold, as its "More … settings" row does.
@@ -39,7 +190,7 @@ fn an_open_sections_fold_row_is_its_last_line() {
 
 /// The open section's fold row as the last frame wrote it, if it has one.
 fn fold_words(f: &Frames) -> Option<String> {
-    f.drawn.iter().find(|t| (t.starts_with("More ") || t.starts_with("Fewer ")) && t.contains(" settings")).cloned()
+    f.drawn.iter().find(|t| (t.starts_with("More ") || t.starts_with("Fewer ")) && t.contains(" settings") && *t != "More settings").cloned()
 }
 
 /// The rows the last frame drew that hold a setting, by their first key (action rows left out).
@@ -92,6 +243,8 @@ fn the_d_pad_scrolls_each_row_it_reaches_into_view() {
     let id = f.hosts.list[0].id;
     for page in [Screen::Settings, Screen::HostSettings(id)] {
         if page == Screen::Settings { f.l.go(page) } else { f.l.open_host_settings(id, &f.hosts.list[0]) }
+        // Video is behind More settings on the main settings; a PC's own open on it.
+        (f.l.settings_view.rail_more, f.l.settings_view.section) = (true, "Video");
         f.settle();
         let first = f.ctx.memory(|m| m.focused()).expect("the first row has focus");
         let top = f.ctx.read_response(first).expect("laid out").rect.top();
@@ -371,8 +524,8 @@ fn a_section_without_matches_shows_no_count_and_opens_from_its_entry() {
 #[test]
 fn profiles_sit_above_the_sections_and_open_their_page() {
     let mut f = settings_with(Settings::default());
-    let top = |f: &Frames, text: &str| f.placed.iter().find(|(t, ..)| t == text).map(|p| p.1.top());
-    assert!(top(&f, "Profiles").zip(top(&f, "Video")).is_some_and(|(p, v)| p < v), "{:?}", f.drawn);
+    // Above the sections of detail, under More settings.
+    assert_eq!(rail_entries(&f)[4..7], ["More settings", "Profiles", "Video"], "{:?}", f.drawn);
     let commands = click_text(&mut f, "Profiles");
     assert_eq!(f.l.screen, Screen::Profiles);
     assert!(commands.iter().any(|c| matches!(c, Command::SaveSettings)), "{} commands", commands.len());
@@ -380,8 +533,7 @@ fn profiles_sit_above_the_sections_and_open_their_page() {
     f.l.go(Screen::Settings);
     f.size = vec2(800.0, 4000.0);
     f.settle();
-    let chips: Vec<&str> = f.drawn.iter().map(String::as_str).filter(|t| *t == "Profiles" || SETTINGS_SECTIONS.contains(t)).collect();
-    assert_eq!(chips[..3], ["Profiles", "Recommended", "Video"], "{:?}", f.drawn);
+    assert_eq!(rail_entries(&f), RAIL_ALL, "{:?}", f.drawn);
 }
 
 /// A PC's row box: unticked and ticked as a checkbox for readers, named for its row, and a click
@@ -971,6 +1123,12 @@ fn settings_screenshots() {
             let mut f = fresh();
             f.l.go(Screen::Settings);
             shoot(&mut f, "settings");
+            // More settings chosen: Profiles and the sections of detail under the simple ones.
+            f.l.settings_view.rail_more = true;
+            shoot(&mut f, "settings-more");
+            f.l.settings_view.section = "Video";
+            f.l.settings_view.to_top = true;
+            f.settle();
             // A row's hint, under the pointer.
             let rate = f.placed.iter().find(|(t, ..)| t == "Frame rate").expect("the row").1.center();
             f.frame(vec![egui::Event::PointerMoved(rate)]);

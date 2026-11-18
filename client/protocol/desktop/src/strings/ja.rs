@@ -1306,6 +1306,7 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("GPU decoding isn’t available here: {}", "ここではGPUデコードを利用できません: {}"),
     ("Fewer {} settings", "{}の設定の表示を減らす"),
     ("More {} settings ({})", "{0}の設定をさらに表示（{1}）"),
+    ("More settings", "その他の設定"),
     ("Different settings for different networks.", "ネットワークごとに異なる設定を使います。"),
     ("Refresh rate", "リフレッシュレート"),
     ("Image", "画質"),
@@ -1722,4 +1723,6 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("Invite copied", "招待をコピーしました"),
     ("New invite", "新しい招待"),
     ("Join my game with Nightjar: open this link in Nightjar, or copy it and paste it under Add PC.\n{}", "Nightjar で私のゲームに参加して: このリンクを Nightjar で開くか、コピーして「PC を追加」に貼り付けてね。\n{}"),
+    ("Set up for this device and {}", "このデバイスと {} に合わせて設定しました"),
+    ("codec chosen when the stream starts", "コーデックはストリーム開始時に選択"),
 ];
