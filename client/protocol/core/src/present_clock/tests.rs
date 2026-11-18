@@ -557,3 +557,18 @@ fn a_vsync_grid_keeps_the_percentile_rule() {
     }
     assert_eq!(on_grid.delay_us(), plain.delay_us());
 }
+
+// A spacing floor is the display's shortest refresh interval. A display that reported no refresh
+// rate leaves it 0 (no floor); a value that is not an interval at all (a bad conversion, a
+// hand-written settings file) must not overflow the present time it is added to.
+#[test]
+fn a_spacing_floor_that_is_not_an_interval_spaces_nothing() {
+    let mut clock = PresentClock::new(Settings { min_interval_us: i64::MAX, ..Settings::default() });
+    let first = clock.schedule(rtp(0), 1_000_000);
+    let second = clock.schedule(rtp(16_667), 1_020_000);
+    assert!(second.present_us >= first.present_us);
+    let mut clock = PresentClock::new(Settings { min_interval_us: -1_000, ..Settings::default() });
+    let first = clock.schedule(rtp(0), 1_000_000);
+    let second = clock.schedule(rtp(1_111), 1_000_500);
+    assert!(second.present_us >= first.present_us, "a negative floor spaces nothing and never goes back in time");
+}

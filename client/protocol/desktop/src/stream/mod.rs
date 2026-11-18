@@ -153,7 +153,15 @@ pub struct Display {
 impl Display {
     /// The refresh rate the overlay judges frames against: only a reported one.
     pub fn reported_refresh_hz(&self) -> Option<f32> {
-        self.refresh_reported.then_some(self.refresh_hz)
+        (self.refresh_reported && self.refresh_hz.is_finite() && self.refresh_hz > 0.0).then_some(self.refresh_hz)
+    }
+
+    /// The shortest interval between presents, for a display that reported its refresh rate.
+    /// Without one there is no floor: guessing 60 Hz would cap every stream at 60 frames a second
+    /// on a panel that runs faster, while a real 60 Hz display already spaces frames by its own
+    /// refresh through V-Sync.
+    pub fn refresh_interval_us(&self) -> Option<i64> {
+        self.reported_refresh_hz().map(|hz| (1_000_000.0 / hz) as i64)
     }
 }
 
@@ -889,11 +897,7 @@ impl Streaming {
     }
 
     pub fn new(connecting: Connecting, session: Session, facts: Facts, display: Display) -> Self {
-        let min_interval = if display.refresh_hz > 0.0 {
-            (1_000_000.0 / display.refresh_hz) as i64
-        } else {
-            0
-        };
+        let min_interval = display.refresh_interval_us().unwrap_or(0);
         crate::sdl::alt_f4_to_host(true);
         if facts.host_timing {
             let _ = session.send(ClientMessage::HostTimingRequest(HostTimingRequest { enabled: true }));
@@ -1412,7 +1416,7 @@ impl Streaming {
     }
 
     pub fn follow_display(&mut self, display: Display) {
-        self.pacer.clock.settings.min_interval_us = (1_000_000.0 / display.refresh_hz.max(1.0)) as i64;
+        self.pacer.clock.settings.min_interval_us = display.refresh_interval_us().unwrap_or(0);
         if display.refresh_hz != self.plan.display.refresh_hz { self.skipped.restart(); }
         self.plan.display = display;
         if !self.facts.reconfigure || !self.display_change.is_some_and(|at| at.elapsed() >= Duration::from_millis(300)) { return; }

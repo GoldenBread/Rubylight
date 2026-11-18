@@ -1070,3 +1070,17 @@ fn only_terminations_the_pc_sent_ask_it_for_the_reason() {
     );
     assert_eq!(doctor::with_host_reason("Ended.".into(), None), "Ended.");
 }
+
+#[test]
+fn an_unreported_or_unusable_refresh_rate_leaves_pacing_unfloored() {
+    assert_eq!(display().refresh_interval_us(), Some(6_949), "1 s / 143.9 Hz, in whole microseconds");
+    let unknown = [
+        Display { refresh_hz: 60.0, refresh_reported: false, ..display() },
+        Display { refresh_hz: f32::NAN, refresh_reported: true, ..display() },
+        Display { refresh_hz: f32::INFINITY, refresh_reported: true, ..display() },
+        Display { refresh_hz: 0.0, refresh_reported: true, ..display() },
+    ];
+    for display in unknown {
+        assert_eq!(display.refresh_interval_us(), None, "{display:?} sets no floor");
+    }
+}
