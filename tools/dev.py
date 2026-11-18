@@ -8,7 +8,7 @@ The changed files are those between the merge base of HEAD and --base
 checks (see plan()):
 
 - host workspace crates, and the crates that depend on them, to
-  C:\\src\\rl-quick.ps1 (fmt, clippy, tests) with this worktree's target dir;
+  C:\\src\\rl-quick.ps1 (fmt, clippy, tests) in a warm target slot;
 - client/protocol crates, and their dependants, to `cargo test` in Nightjar's
   workspace, plus `cargo clippy -D warnings` for the crates CI lints
   (CLIENT_CLIPPY), plus the interop tests once tests/interop exists;
@@ -23,8 +23,12 @@ each check's output goes to <log dir>/<run>/<check>.log with summary.json.
 Stops after failure unless --keep-going. Exits 1 if any check fails.
 
 Each build stage takes its own lanes (tools/build_lock.py), not one lock for
-the whole check: the Cargo stages a Cargo slot, the app stage the Gradle lane,
-the web stage the web lane.
+the whole check: the Cargo stages a Cargo slot and a warm target slot from the
+pool (host: <pool>\\<n>, client: <pool>\\client-<n>), the app stage the Gradle
+lane, the web stage the web lane. A target slot remembers its last checkout;
+when another checkout built there, the fingerprints of the repository's own
+packages are removed first (claim_target), because Cargo judges path packages
+by modification time and would reuse that checkout's build.
 """
 import argparse, dataclasses, datetime, hashlib, json, os, pathlib, re, shutil, subprocess, sys, time, tomllib, uuid
 import build_lock
@@ -272,22 +276,133 @@ def worktree_name(root=ROOT):
     return root.resolve().name
 
 
-def default_target(root=ROOT):
-    """C:\\src\\rl-target-<topic> for a worktree C:\\src\\rl-<topic> (tools/wt.ps1), else the shared one."""
-    name = worktree_name(root)
-    return pathlib.Path(r'C:\src') / (f'rl-target-{name[3:]}' if name.startswith('rl-') else 'rl-target')
+STAMP = '.rubylight-checkout'
+
+
+def same_path(a, b):
+    return os.path.normcase(os.path.normpath(str(a).strip())) == os.path.normcase(os.path.normpath(str(b).strip()))
+
+
+def local_packages(root=ROOT):
+    """The names of every Cargo package in this checkout and its submodules: the ones Cargo
+    builds from paths here and judges by modification time."""
+    names = set()
+    out = subprocess.run(['git', '-C', str(root), 'ls-files', '--recurse-submodules', '--', 'Cargo.toml', '*/Cargo.toml'],
+                         capture_output=True, text=True, encoding='utf-8')
+    for rel in out.stdout.splitlines():
+        try:
+            name = tomllib.loads((root / rel).read_text(encoding='utf-8')).get('package', {}).get('name')
+        except (OSError, ValueError):
+            continue
+        if isinstance(name, str):
+            names.add(name)
+    return names
+
+
+def fingerprint_dirs(target):
+    """Cargo's .fingerprint folders in a target dir: <profile>, <triple>/<profile>, and the
+    same below a nested target (the service's <target>/service)."""
+    target = pathlib.Path(target)
+    found = []
+    for pattern in ('*/.fingerprint', '*/*/.fingerprint', '*/*/*/.fingerprint'):
+        found += [p for p in target.glob(pattern) if p.is_dir()]
+    return found
+
+
+def invalidate(target, names):
+    """Remove the fingerprints of the named packages so Cargo rebuilds them; the
+    dependencies' (registry and git crates, keyed by version and source) stay warm."""
+    if not names:
+        return 0
+    pattern = re.compile('^(?:%s)-[0-9a-f]{16}$' % '|'.join(re.escape(n) for n in sorted(names)))
+    removed, left = 0, []
+    for directory in fingerprint_dirs(target):
+        for entry in directory.iterdir():
+            if entry.is_dir() and pattern.match(entry.name):
+                shutil.rmtree(entry, ignore_errors=True)
+                if entry.exists():
+                    left.append(str(entry))
+                else:
+                    removed += 1
+    if left:
+        raise RuntimeError(f'could not reset {len(left)} fingerprints in {target} (is another build using it?): {left[0]}')
+    return removed
+
+
+def claim_target(target, root=ROOT, previous_owner=None):
+    r"""Make a reused target dir safe for this checkout; returns how many fingerprints it removed.
+
+    Cargo judges a path package fresh when none of its files is newer than its last build,
+    with the files listed relative to the package root, and hashes the package's path
+    relative to the workspace. Two checkouts of the same version therefore share artifact
+    names in one target dir, and a checkout whose files are older than another checkout's
+    last build there gets that build (2026-11-18 in C:\src\rl-target: `cannot find value
+    MAX_BITRATE_KBPS` and `unresolved import rubylight_protocol::invite_uri`, both present
+    in the checkout's source). So when the folder's last checkout was another one, or is
+    unknown while it holds builds, this checkout's packages lose their fingerprints first.
+    """
+    target = pathlib.Path(target)
+    stamp = target / STAMP
+    last = build_lock.read(stamp)
+    mine = str(pathlib.Path(root).resolve())
+    others = [o for o in (last, previous_owner) if o and o.strip() and not same_path(o, mine)]
+    unknown = last is None and target.is_dir() and bool(fingerprint_dirs(target))
+    removed = invalidate(target, local_packages(root)) if others or unknown else 0
+    target.mkdir(parents=True, exist_ok=True)
+    stamp.write_text(mine, encoding='utf-8')
+    return removed
+
+
+def by_affinity(slots, root=ROOT):
+    """This checkout's own slots first, then other checkouts' least recently used ones (their
+    dependencies are warm), then never used ones."""
+    def key(slot):
+        owner_file = slot.path.with_suffix('.owner')
+        owner = build_lock.read(owner_file) if owner_file.exists() else None
+        if owner and same_path(owner, root):
+            return (0, 0)
+        if owner and owner.strip():
+            return (1, owner_file.stat().st_mtime)
+        return (2, 0)
+    return sorted(slots, key=key)
 
 
 def stage_groups(check, root, args):
     """The lanes a check takes, as (name, candidates) for StageLease."""
-    lock_dir = args.lock_directory
+    lock_dir, pool = args.lock_directory, args.pool
+    cargo = ('cargo', lambda: build_lock.cargo_lanes(lock_dir))
     if check.kind in ('host', 'service', 'client', 'interop'):
-        return [('cargo', lambda: build_lock.cargo_lanes(lock_dir))]
+        if args.target_dir:
+            return [cargo]
+        if check.kind in ('host', 'service'):
+            return [cargo, ('host target', lambda: by_affinity(build_lock.host_slots(lock_dir, pool), root))]
+        return [cargo, ('client target', lambda: by_affinity(build_lock.client_slots(lock_dir, pool), root))]
     if check.kind == 'gradle':
         return [('gradle', lambda: build_lock.gradle_lanes(lock_dir))]
     if check.kind == 'web':
         return [('web', lambda: build_lock.web_lanes(lock_dir))]
     return []
+
+
+def stage_target(check, taken, root, target_dir=None):
+    """The target dir of a Cargo check, claimed for this checkout: its pool slot, else
+    --target-dir (the client's beside it, the service's inside it). None for other checks."""
+    if check.kind not in ('host', 'service', 'client', 'interop'):
+        return None
+    slot = taken.get('host target') or taken.get('client target')
+    previous = None
+    if slot is not None:
+        owner_file = slot.path.with_suffix('.owner')
+        previous = build_lock.read(owner_file) if owner_file.exists() else None
+        target = slot.path.with_suffix('')
+        # C:\src\rl-quick.ps1's Enter-RlSlot reads and writes the same owner file.
+        owner_file.write_text(str(pathlib.Path(root).resolve()), encoding='utf-8')
+    else:
+        target = pathlib.Path(target_dir)
+        if check.kind in ('client', 'interop'):
+            target = pathlib.Path(f'{target}-client')
+    claim_target(target, root, previous)
+    return target
 
 
 def client_env(target):
@@ -386,7 +501,8 @@ def read_quick(path):
 
 
 def execute(check, root, log, target, fresh_dependencies=False):
-    log.write_text('', encoding='utf-8')
+    if not log.exists():
+        log.write_text('', encoding='utf-8')
     if check.kind == 'host':
         crates = ','.join(f"'{c}'" for c in check.items)
         command = (f"& '{RL_QUICK}' -Repo '{root}' -Crates {crates} -TargetDir '{target}' "
@@ -399,7 +515,7 @@ def execute(check, root, log, target, fresh_dependencies=False):
         quick.unlink(missing_ok=True)
         return code == 0 and passed
     if check.kind == 'client':
-        env = client_env(f'{target}-client')
+        env = client_env(target)
         return all(run(command, log, root / CLIENT_WORKSPACE, env) == 0
                    for command in client_commands(root, check.items))
     if check.kind == 'service':
@@ -415,7 +531,7 @@ def execute(check, root, log, target, fresh_dependencies=False):
             ['cargo', 'test', '-j', '4', '--locked', *manifest],
         ))
     if check.kind == 'interop':
-        env = client_env(f'{target}-client')
+        env = client_env(target)
         return run(['cargo', 'test', '-j', '4', '--locked', '--manifest-path', str(root / 'tests/interop/Cargo.toml')],
                    log, root, env) == 0
     if check.kind == 'gradle':
@@ -455,6 +571,8 @@ def main(argv=None):
     parser.add_argument('--fresh-dependencies', action='store_true', help='force npm ci for web checks')
     parser.add_argument('--lock-directory', type=pathlib.Path, help='shared machine lock directory')
     parser.add_argument('--lock-timeout', type=float, default=1800, help='maximum build wait in seconds')
+    parser.add_argument('--pool', type=pathlib.Path,
+                        help='warm target pool (default: C:\\src\\rl-target-pool with the machine locks, else beside them)')
     args = parser.parse_args(argv)
     if args.lock_timeout < 0:
         parser.error('--lock-timeout must be nonnegative')
@@ -465,7 +583,7 @@ def main(argv=None):
     else:
         paths = args.paths
     checks, unchecked = plan(paths, root)
-    target = args.target_dir or default_target(root)
+    where = str(args.target_dir) if args.target_dir else f'a warm slot of {args.pool or build_lock.pool_directory(args.lock_directory)}'
     run_id = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + uuid.uuid4().hex[:8]
     log_dir = (args.log_dir or LOG_ROOT / worktree_name(root)) / run_id
     if unchecked:
@@ -475,12 +593,12 @@ def main(argv=None):
         print('Nothing to check.')
         return 0
     if args.dry_run:
-        print(f'Plan (target dir {target}, logs in {log_dir}):')
+        print(f'Plan (Cargo target: {where}; logs in {log_dir}):')
         for check in checks:
             print(f'  {check.name:<16} {"SKIP" if check.skip else "run":<5} {check.describe()}')
         return 0
     log_dir.mkdir(parents=True, exist_ok=True)
-    rows, failed = [], False
+    rows, failed, targets = [], False, {}
     for check in checks:
         log = log_dir / f'{check.name}.log'
         if check.skip:
@@ -490,6 +608,7 @@ def main(argv=None):
             rows.append((check.name, 'NOT RUN', '', '', 'earlier check failed'))
             continue
         print(f'-- {check.name}: {check.describe()}', flush=True)
+        log.write_text('', encoding='utf-8')
         waited, start = 0.0, time.monotonic()
         try:
             # Each stage takes its own lanes; pure Python suites take none.
@@ -497,9 +616,14 @@ def main(argv=None):
             if groups:
                 with StageLease(groups, args.lock_directory, f'dev {check.name} {root}', args.lock_timeout) as lease:
                     waited, start = lease.waited, time.monotonic()
+                    target = stage_target(check, lease.taken, root, args.target_dir)
+                    if target is not None:
+                        targets[check.name] = str(target)
+                        with log.open('a', encoding='utf-8') as out:
+                            out.write(f'== target {target}\n')
                     ok = execute(check, root, log, target, args.fresh_dependencies)
             else:
-                ok = execute(check, root, log, target, args.fresh_dependencies)
+                ok = execute(check, root, log, None, args.fresh_dependencies)
         except (OSError, RuntimeError) as error:
             with log.open('a', encoding='utf-8') as out:
                 out.write(str(error) + '\n')
@@ -513,7 +637,7 @@ def main(argv=None):
         print(f'{name:<16} {result:<7} {took:>6} {wait:>6}  {detail}')
     print(f'Logs: {log_dir}')
     summary = dict(head=git('rev-parse', 'HEAD', root=root).strip(), worktree=str(root), paths=paths,
-                   target=str(target), passed=not failed, checks=[dict(name=n, result=r, time=t, wait=w, detail=d)
+                   targets=targets, passed=not failed, checks=[dict(name=n, result=r, time=t, wait=w, detail=d)
                    for n, r, t, w, d in rows])
     (log_dir / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n', encoding='utf-8')
     return 1 if failed else 0

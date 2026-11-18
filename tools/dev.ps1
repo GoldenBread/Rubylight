@@ -14,6 +14,7 @@ param(
     [switch] $KeepGoing,
     [switch] $FreshDependencies,
     [string] $LockDirectory,
+    [string] $Pool,
     [ValidateRange(0, 86400)][int] $LockTimeout = 1800
 )
 $py = @("$PSScriptRoot\dev.py", $Command, '--base', $Base)
@@ -23,6 +24,7 @@ if ($DryRun) { $py += '--dry-run' }
 if ($KeepGoing) { $py += '--keep-going' }
 if ($FreshDependencies) { $py += '--fresh-dependencies' }
 if ($LockDirectory) { $py += @('--lock-directory', $LockDirectory) }
+if ($Pool) { $py += @('--pool', $Pool) }
 $py += @('--lock-timeout', $LockTimeout)
 & python @py
 exit $LASTEXITCODE

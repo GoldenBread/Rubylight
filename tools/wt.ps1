@@ -1,6 +1,7 @@
 # Parallel worktrees, one per topic: C:\src\rl-<topic> on branch <topic>, with
-# its submodules and its own target dir C:\src\rl-target-<topic> (what
-# tools\dev.ps1 check builds into), so worktrees never share a stale one.
+# its submodules. tools\dev.ps1 check builds in a warm slot of the shared target
+# pool (tools/dev.py claim_target keeps a reused slot safe); `rm` still removes
+# an old per-topic target dir C:\src\rl-target-<topic>.
 #   tools\wt.ps1 new <topic> [-From origin/main]
 #   tools\wt.ps1 rm <topic> [-Into origin/main] [-Force]
 # `rm` refuses while the branch has commits that are not in -Into (patch
@@ -40,8 +41,7 @@ if ($Action -eq 'new') {
     if (-not $LASTEXITCODE) { Fail "branch $Topic already exists; remove it or pick another topic" }
     Invoke-Git -C $repo worktree add --quiet $tree -b $Topic $From | Out-Null
     Invoke-Git -C $tree submodule --quiet update --init --recursive | Out-Null
-    New-Item -ItemType Directory -Force $target | Out-Null
-    "worktree $tree on $Topic from $From; target dir $target"
+    "worktree $tree on $Topic from $From"
     exit 0
 }
 

@@ -142,9 +142,94 @@ class Plan(unittest.TestCase):
         self.assertEqual(planned, {})
         self.assertEqual(len(unchecked), 4)
 
-    def test_target_dir_follows_the_worktree(self):
-        self.assertEqual(dev.default_target(pathlib.Path(r'C:\src\rl-tools')), pathlib.Path(r'C:\src\rl-target-tools'))
-        self.assertEqual(dev.default_target(pathlib.Path(r'C:\src\rubylight-rel')), pathlib.Path(r'C:\src\rl-target'))
+
+
+class WarmTargets(unittest.TestCase):
+    """Reused target dirs: a checkout never gets another checkout's build of its own packages."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.target = pathlib.Path(temp.name, 'slot')
+        self.dirs = []
+        for profile in ('debug/.fingerprint', 'service/debug/.fingerprint'):
+            for name in ('butterpollo-core-0123456789abcdef', 'rubylight-protocol-fedcba9876543210',
+                         'tokio-00112233445566aa', 'butterpollo-core-extra'):
+                path = self.target / profile / name
+                path.mkdir(parents=True)
+                self.dirs.append(path)
+
+    def left(self):
+        return sorted(str(p.relative_to(self.target)).replace('\\', '/') for p in self.dirs if p.exists())
+
+    def test_the_repository_packages_are_found(self):
+        names = dev.local_packages(ROOT)
+        self.assertTrue({'butterpollo-core', 'butterpollo', 'rubylight-protocol', 'butterpollo-service'} <= names, names)
+
+    def test_another_checkouts_build_loses_only_this_repositorys_fingerprints(self):
+        (self.target / dev.STAMP).write_text(r'C:\src\other-checkout')
+        removed = dev.claim_target(self.target, ROOT)
+        self.assertEqual(removed, 4)
+        self.assertEqual(self.left(), ['debug/.fingerprint/butterpollo-core-extra', 'debug/.fingerprint/tokio-00112233445566aa',
+                                       'service/debug/.fingerprint/butterpollo-core-extra',
+                                       'service/debug/.fingerprint/tokio-00112233445566aa'])
+        self.assertTrue(dev.same_path((self.target / dev.STAMP).read_text(), ROOT))
+
+    def test_its_own_last_build_is_kept(self):
+        (self.target / dev.STAMP).write_text(str(ROOT).upper() + '\\')
+        self.assertEqual(dev.claim_target(self.target, ROOT), 0)
+        self.assertEqual(len(self.left()), 8)
+
+    def test_a_slot_rl_quick_last_entered_for_another_checkout_is_reset(self):
+        # rl-quick writes the slot's owner file but not the stamp inside the folder.
+        (self.target / dev.STAMP).write_text(str(ROOT))
+        self.assertEqual(dev.claim_target(self.target, ROOT, previous_owner=r'C:\src\other'), 4)
+
+    def test_a_folder_with_builds_of_unknown_checkouts_is_reset(self):
+        self.assertEqual(dev.claim_target(self.target, ROOT), 4)
+
+    def test_an_empty_folder_needs_nothing(self):
+        empty = self.target.parent / 'empty'
+        self.assertEqual(dev.claim_target(empty, ROOT), 0)
+        self.assertTrue((empty / dev.STAMP).exists())
+
+    def test_own_slots_first_then_others_oldest_then_new(self):
+        pool = self.target.parent / 'pool'
+        pool.mkdir()
+        slots = [dev.build_lock.HandleSlot(pool / f'{n}.lock') for n in (1, 2, 3, 4)]
+        (pool / '1.owner').write_text(r'C:\src\recent')
+        (pool / '2.owner').write_text(r'C:\src\old')
+        os.utime(pool / '2.owner', (1, 1))
+        (pool / '4.owner').write_text(str(ROOT) + '\r\n')  # as Set-Content writes it
+        order = [s.path.stem for s in dev.by_affinity(slots, ROOT)]
+        self.assertEqual(order, ['4', '2', '1', '3'])
+
+    def test_each_stage_takes_its_own_lanes(self):
+        args = dev.argparse.Namespace(lock_directory=self.target.parent, pool=None, target_dir=None)
+        names = lambda kind: [name for name, _ in dev.stage_groups(dev.Check(kind, kind), ROOT, args)]
+        self.assertEqual(names('host'), ['cargo', 'host target'])
+        self.assertEqual(names('service'), ['cargo', 'host target'])
+        self.assertEqual(names('client'), ['cargo', 'client target'])
+        self.assertEqual(names('gradle'), ['gradle'])
+        self.assertEqual(names('web'), ['web'])
+        self.assertEqual(names('python'), [])
+        args.target_dir = self.target
+        self.assertEqual(names('host'), ['cargo'])
+
+    def test_a_target_dir_given_keeps_the_client_beside_it(self):
+        target = self.target.parent / 'given'
+        self.assertEqual(dev.stage_target(dev.Check('c', 'client'), {}, ROOT, target), pathlib.Path(f'{target}-client'))
+        self.assertEqual(dev.stage_target(dev.Check('h', 'host'), {}, ROOT, target), target)
+        self.assertIsNone(dev.stage_target(dev.Check('a', 'gradle'), {}, ROOT, target))
+
+    def test_a_pool_slot_records_this_checkout_for_rl_quick(self):
+        pool = self.target.parent / 'pool'
+        slot = dev.build_lock.HandleSlot(pool / '2.lock')
+        self.assertTrue(slot.try_take('test'))
+        self.addCleanup(slot.release)
+        target = dev.stage_target(dev.Check('h', 'host'), {'host target': slot}, ROOT)
+        self.assertEqual(target, pool / '2')
+        self.assertTrue(dev.same_path((pool / '2.owner').read_text(), ROOT))
 
 
 class QuickLog(unittest.TestCase):
