@@ -2,6 +2,7 @@
 <resources>
     <string name="library_computers">Bilgisayarlar</string>
     <string name="pc_offline">Çevrimdışı</string>
+    <string name="pc_another_answers">Bu bilgisayarın adresinde başka bir bilgisayar veya program yanıt veriyor. Bu bilgisayar yeniden kurulduysa onu kaldırıp yeniden ekleyin.</string>
     <string name="pc_checking">Denetleniyor…</string>
     <string name="app_running">Çalışıyor</string>
     <string name="app_hidden">Gizli</string>

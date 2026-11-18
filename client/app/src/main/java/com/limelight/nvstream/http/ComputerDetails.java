@@ -119,6 +119,11 @@ public class ComputerDetails {
     public String internetPath;
     /** Why no path reached a PC that gave this device internet play details, in words; null otherwise. Not saved. */
     public String unreachable;
+    /**
+     * The last poll reached none of the PC's addresses, and at one of them another certificate than the pinned one
+     * answered: another PC or program answers in its place. Not saved.
+     */
+    public volatile boolean anotherCertificate;
     public int pyroWaveBandwidthProbeBytes;
     /** Frame-shaped UDP probes with the handshake (Vibeshine), and the FEC its wire budget counts. */
     public boolean pyroWaveBurstProbe;
@@ -251,6 +256,7 @@ public class ComputerDetails {
         this.state = details.state;
         this.internetPath = details.internetPath;
         this.unreachable = details.unreachable;
+        this.anotherCertificate = details.anotherCertificate;
         this.name = details.name;
         this.uuid = details.uuid;
         if (details.activeAddress != null) {
@@ -328,6 +334,7 @@ public class ComputerDetails {
                 virtualDisplayFrameLimiterEnabled, frameLimiterFpsLimitMilliHz, pyroWaveHostLinkMbps,
                 pyroWaveBandwidthProbeBytes, pyroWaveBurstProbe, pyroWaveCriticalFecPercentage,
                 pyroWaveMinParityShards, packed444Modes, hostLastFailure, internetPath, unreachable,
+                anotherCertificate,
         };
     }
 

@@ -2,6 +2,7 @@
 <resources>
     <string name="library_computers">PC</string>
     <string name="pc_offline">Hors ligne</string>
+    <string name="pc_another_answers">Un autre PC ou programme répond à l’adresse de ce PC. Si ce PC a été réinstallé, retirez-le puis ajoutez-le à nouveau.</string>
     <string name="pc_checking">Vérification…</string>
     <string name="app_running">En cours</string>
     <string name="app_hidden">Masqué</string>

@@ -2151,3 +2151,35 @@ fn another_certificate_at_the_address_keeps_the_pairing_and_the_unique_id() {
     // Other failures read as before.
     assert_eq!(poll_error(&nightjar_core::http::Error::NotPaired), describe(&nightjar_core::http::Error::NotPaired));
 }
+
+/// Another certificate at the PC's first address and a timeout at the next (its IPv6 or remote
+/// address): the PC reads as away with the reason the user can act on, not the last timeout.
+#[test]
+fn another_certificate_is_the_reason_over_a_later_paths_failure() {
+    let mut failure = PollFailure::default();
+    failure.failed(poll_error(&nightjar_core::http::Error::CertificateMismatch));
+    failure.failed(describe(&nightjar_core::http::Error::Io(std::io::ErrorKind::TimedOut.into())));
+    assert_eq!(failure.reason(), ANOTHER_PC_ANSWERS);
+    let mut failure = PollFailure::default();
+    failure.failed("timed out".into());
+    assert_eq!(failure.reason(), "timed out", "otherwise the last failure, as before");
+    assert_eq!(PollFailure::default().reason(), "No address");
+}
+
+/// A plain answer for a paired PC (a poll that left before its pairing ended) is taken in for the
+/// address only: the PC stays at Checking… for the pinned check that follows, and the flag that
+/// asks for it is spent.
+#[test]
+fn a_late_plain_answer_leaves_checking_to_the_pinned_check() {
+    let mut hosts = Hosts::without_discovery(vec![paired_record("uid")], Arc::new(|| {}));
+    let id = hosts.list[0].id;
+    info_lands(&mut hosts, id, native_info());
+    let host = hosts.get_mut(id).unwrap();
+    (host.poll_seq, host.polling, host.checking) = (host.info_seq + 1, true, true);
+    let seq = host.poll_seq;
+    send(&mut hosts, Event::Info { path: InfoPath::Plain, id, seq, address: "192.0.2.1".into(), result: Ok(Box::new(native_info_of("uid", false))) });
+    let host = hosts.get(id).unwrap();
+    assert!(host.paired());
+    assert!(host.checking && host.polling, "the pinned check, not the plain answer, ends Checking…");
+    assert!(!host.pinned_check, "the check was asked for once");
+}

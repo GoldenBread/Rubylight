@@ -2,6 +2,7 @@
 <resources>
     <string name="library_computers">Komputery</string>
     <string name="pc_offline">Offline</string>
+    <string name="pc_another_answers">Pod adresem tego komputera odpowiada inny komputer lub program. Jeśli ten komputer został skonfigurowany od nowa, usuń go i dodaj ponownie.</string>
     <string name="pc_checking">Sprawdzanie…</string>
     <string name="app_running">Uruchomiona</string>
     <string name="app_hidden">Ukryta</string>

@@ -29,9 +29,12 @@ impl Hosts {
                         }
                         None => Some(false),
                     };
+                    let mut check = false;
                     if let Some(newest) = newest {
                         changed |= self.apply_info(id, address, path, result);
-                        if let Some(host) = self.get_mut(id).filter(|_| newest) {
+                        // Taken in for its address only: the pinned check that follows ends Checking….
+                        check = self.get_mut(id).is_some_and(|h| std::mem::take(&mut h.pinned_check));
+                        if let Some(host) = self.get_mut(id).filter(|_| newest && !check) {
                             host.polling = false;
                             host.checking = false;
                         }
@@ -42,6 +45,8 @@ impl Hosts {
                     }
                     if again {
                         self.start_poll(id, Lane::Asked);
+                    } else if check {
+                        self.poll_one(id);
                     }
                 }
                 Event::InternetPlay { id, unique_id, result } => {
@@ -496,7 +501,12 @@ impl Hosts {
                 self.drop_workers(gone);
                 changed = true;
                 let index = self.list.iter().position(|h| h.id == keep_id).unwrap_or(0);
-                return self.store_info(index, address, path, result) || changed;
+                changed |= self.store_info(index, address, path, result);
+                // The sighting's poll is over with it: the kept PC is asked over pinned HTTPS now.
+                if keep_id != id && self.get_mut(keep_id).is_some_and(|h| std::mem::take(&mut h.pinned_check)) {
+                    self.poll_one(keep_id);
+                }
+                return changed;
             }
         }
         changed |= self.store_info(index, address, path, result);
@@ -513,11 +523,10 @@ impl Hosts {
             // forgetting this device: only the address is taken, and the PC is asked again over
             // pinned HTTPS for the rest.
             Ok(_) if path == InfoPath::Plain && host.record.server_certificate.is_some() => {
-                let id = host.id;
                 if !away_address(&host.record, &address) {
                     changed |= move_to(&mut host.record, &address);
                 }
-                self.poll_one(id);
+                host.pinned_check = true;
                 return changed;
             }
             Ok(info) => {

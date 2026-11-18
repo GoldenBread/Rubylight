@@ -893,6 +893,7 @@ public class ComputerManagerService extends Service {
             // reach the PC.
             if (anotherCertificate) {
                 LimeLog.info("Another certificate answers at " + address);
+                details.anotherCertificate = true;
                 return null;
             }
 
@@ -1164,6 +1165,7 @@ public class ComputerManagerService extends Service {
     boolean pollComputer(ComputerDetails details) throws InterruptedException {
         RedactedLog.addComputerSecrets(details);
         // Poll all addresses in parallel to speed up the process
+        details.anotherCertificate = false;
         LimeLog.info("Starting parallel poll for "+details.name+" ("+details.localAddress +", "+details.remoteAddress +", "+details.manualAddress+", "+details.ipv6Address+")");
         ComputerDetails polledDetails = parallelPollPc(details);
         LimeLog.info("Parallel poll for "+details.name+" returned address: "+details.activeAddress);

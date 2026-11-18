@@ -199,6 +199,9 @@ pub struct Host {
     asked_again: bool,
     /// Until then the PC is polled every second (see `RECHECK_WINDOW`).
     recheck_until: Option<Instant>,
+    /// A plain HTTP answer for this paired PC was taken in for its address only: ask it again over
+    /// pinned HTTPS (`Hosts::drain` starts that poll).
+    pinned_check: bool,
     /// The remote address, when the last poll reached the PC only there (this device is away
     /// from the PC's network). Never saved: the address the PC is stored under stays its own.
     via_remote: Option<String>,
@@ -868,6 +871,30 @@ fn poll_error(error: &nightjar_core::http::Error) -> String {
     }
 }
 
+/// The failures of one poll's paths and what the PC reads as when none answered. Another
+/// certificate on any of them is told over a later path's failure (an IPv6 or remote address that
+/// timed out): it is the one the user can act on.
+#[derive(Default)]
+struct PollFailure {
+    last: Option<String>,
+    another_pc: bool,
+}
+
+impl PollFailure {
+    fn failed(&mut self, error: String) {
+        self.another_pc |= error == ANOTHER_PC_ANSWERS;
+        self.last = Some(error);
+    }
+
+    fn reason(self) -> String {
+        if self.another_pc {
+            ANOTHER_PC_ANSWERS.into()
+        } else {
+            self.last.unwrap_or_else(|| en("No address").into())
+        }
+    }
+}
+
 pub(crate) fn describe(error: &nightjar_core::http::Error) -> String {
     use nightjar_core::http::Error;
     match error {
@@ -978,6 +1005,7 @@ impl Hosts {
             asked_poll: None,
             asked_again: false,
             recheck_until: None,
+            pinned_check: false,
             via_remote: None,
             internet_read: None,
             foundation_probe: None,
@@ -1388,7 +1416,7 @@ impl Hosts {
         let likely_online = host.reach == Reach::Online;
         let away = host.reach == Reach::Offline;
         let poll = move || {
-            let mut last_error = String::from(en("No address"));
+            let mut failure = PollFailure::default();
             let mut tried = Vec::new();
             for address in poll_addresses(&record) {
                 let result = client_for(&identity, &record, &address)
@@ -1405,7 +1433,7 @@ impl Hosts {
                     }
                     Err(e) => {
                         tried.push(address);
-                        last_error = e;
+                        failure.failed(e);
                     }
                 }
             }
@@ -1424,13 +1452,16 @@ impl Hosts {
                     client_for(&identity, &record, &address)
                         .and_then(|c| c.server_info_checked(true).map_err(|e| poll_error(&e)))
                         .map(|info| (address, info))
-                        .map_err(|e| nightjar_core::internet::unreachable(&reply, tried, Some(e)))
+                        .map_err(|e| {
+                            failure.another_pc |= e == ANOTHER_PC_ANSWERS;
+                            nightjar_core::internet::unreachable(&reply, tried, Some(e))
+                        })
                 });
                 match punched {
                     Ok((address, (info, path))) => {
                         return Some(Event::Info { id, seq, address, path, result: Ok(Box::new(info)) })
                     }
-                    Err(words) => last_error = words,
+                    Err(words) => failure.failed(words),
                 }
             }
             Some(Event::Info {
@@ -1438,7 +1469,7 @@ impl Hosts {
                 seq,
                 address: record.address.clone(),
                 path: InfoPath::Plain,
-                result: Err(last_error),
+                result: Err(failure.reason()),
             })
         };
         let accepted = self.run_on(id, lane, poll);
