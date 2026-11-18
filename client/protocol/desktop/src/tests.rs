@@ -655,3 +655,9 @@ fn controllers_off_with_one_connected_says_where_it_was_turned_off() {
             Some("„Controller“ ist im Profil Reise auf Aus gestellt, daher erreicht kein Controller den PC."));
     });
 }
+
+#[test]
+fn macos_fullscreen_leaves_spaces_for_the_notch() {
+    assert_eq!(crate::sdl::fullscreen_spaces_hint(true), Some(c"0"), "SDL's own fullscreen covers the notch area");
+    assert_eq!(crate::sdl::fullscreen_spaces_hint(false), None, "Windows and Linux keep SDL's defaults");
+}
