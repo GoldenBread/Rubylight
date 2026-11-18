@@ -334,3 +334,15 @@ fn previous_golden_snapshot_import_preserves_fractional_rates_clones_hdr_and_ori
     assert!(Snapshot::decode(&malformed).is_err());
     assert!(Snapshot::decode(&serde_json::json!({"version":2,"nodes":[],"hdr":{}})).is_err());
 }
+#[test]
+fn a_display_back_at_its_saved_scale_logs_nothing() {
+    assert!(!scale_moved(125, Some(125), Some(125)));
+    assert!(!scale_moved(125, None, None));
+    assert!(!scale_moved(125, None, Some(125)));
+}
+#[test]
+fn a_display_back_at_another_scale_is_logged_even_if_its_mode_fixes_it() {
+    assert!(scale_moved(125, Some(100), Some(125)));
+    assert!(scale_moved(125, Some(125), Some(150)));
+    assert!(scale_moved(100, None, Some(125)));
+}
