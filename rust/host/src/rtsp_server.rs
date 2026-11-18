@@ -637,7 +637,10 @@ fn note_codec_refusal(warnings: &butterpollo_core::session::Warnings, refusal: O
 /// console card and the log say so, and the stream still starts. The floor is the same function
 /// link-rate adaptation stops at, so the two agree, and a client asking exactly the floor is not
 /// below it just because the picture gives up a few Mbps to sound and control.
-fn note_pyrowave_minimum(warnings: &butterpollo_core::session::Warnings, stream: &Negotiated) {
+pub(crate) fn note_pyrowave_minimum(
+    warnings: &butterpollo_core::session::Warnings,
+    stream: &Negotiated,
+) {
     if stream.codec != 3 {
         warnings.clear("pyrowave_minimum");
         return;

@@ -534,24 +534,16 @@ async fn bitrate(
             );
             s.set_client_bitrate(applied);
             count += 1;
-            let minimum = butterpollo_core::pyrowave::minimum_kbps(
-                s.config.width,
-                s.config.height,
-                s.config.fps.saturating_mul(1000),
-            );
-            let recommended = butterpollo_core::pyrowave::recommended_kbps(
-                s.config.width,
-                s.config.height,
-                s.config.fps.saturating_mul(1000),
-            );
-            if s.config.codec == 3 && applied < minimum {
-                tracing::warn!(
-                    bitrate_kbps = applied,
-                    minimum_kbps = minimum,
-                    recommended_kbps = recommended,
-                    "PyroWave bitrate is below the level where the project's test scenes kept detail; text and textures may lose detail. Raise the bitrate in Moonlight with network headroom, lower the resolution or frame rate, or use HEVC or AV1"
-                );
-            } else if s.config.codec == 3 && applied < recommended {
+            // The card warns about a PyroWave stream below the level where the project's test
+            // scenes kept detail at launch; a runtime change sets or clears it the same way.
+            // `applied` is the client's new rate itself, not scaled down from a launch setting.
+            let mut stream = s.config.clone();
+            stream.bitrate_kbps = applied;
+            stream.configured_bitrate_kbps = 0;
+            crate::rtsp_server::note_pyrowave_minimum(&s.launch.warnings, &stream);
+            let minimum = butterpollo_core::link_rate::pyrowave_floor_kbps(&stream);
+            let recommended = butterpollo_core::link_rate::pyrowave_recommended_kbps(&stream);
+            if s.config.codec == 3 && applied >= minimum && applied < recommended {
                 tracing::warn!(
                     bitrate_kbps = applied,
                     minimum_kbps = minimum,
