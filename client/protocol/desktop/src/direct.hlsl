@@ -24,7 +24,8 @@ Texture2D<float> hudMask : register(t2);
 #include "frame_warp.hlsl"
 
 // flags: bit 0 10-bit, bit 1 full range, bits 2-3 matrix (0 BT.601, 1 BT.709, 2 BT.2020),
-// bit 4 PQ, bit 5 linear (scRGB) output, bit 6 tone map, bit 7 HLG.
+// bit 4 PQ, bit 5 linear (scRGB) output, bit 6 tone map, bit 7 HLG, bit 8 chroma centred between
+// two luma columns.
 bool flag(uint bit) { return (flags >> bit & 1) != 0; }
 
 float4 vertex(uint id : SV_VertexID, out float2 uv : TEXCOORD0) : SV_Position {
@@ -78,10 +79,11 @@ float4 draw(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
     uv = frameWarp(uv, picture / textureSize, fade);
     // Keep the bilinear taps inside the picture: the decoder's surfaces are taller than it.
     float2 lumaAt = clamp(uv, 0.5 / textureSize, (picture - 0.5) / textureSize);
-    // 4:2:0 chroma sits on the left luma sample of its pair and between the two rows
-    // (chroma_sample_loc_type 0, which hosts encode and AV1 streams signal as CSP_VERTICAL), not
-    // in the middle of the pair as the texture's own coordinates put it: half a luma pixel right.
-    float2 chromaAt = clamp(uv + float2(0.5 / textureSize.x, 0), 1.0 / textureSize, (picture - 1.0) / textureSize);
+    // 4:2:0 chroma sits on the left luma sample of its pair (chroma_sample_loc_type 0, which
+    // hosts encode and AV1 streams signal as CSP_VERTICAL) unless the stream says it is centred,
+    // where the texture's own coordinates put it: half a luma pixel right of those.
+    float2 chromaAt = clamp(uv + float2(flag(8) ? 0 : 0.5 / textureSize.x, 0), 1.0 / textureSize,
+                            (picture - 1.0) / textureSize);
     float3 rgb = rgbOf(luma.Sample(linearClamp, float3(lumaAt, slice)),
                        chroma.Sample(linearClamp, float3(chromaAt, slice)));
     if (flag(4) || flag(7)) {

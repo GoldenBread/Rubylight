@@ -117,6 +117,8 @@ pub struct VideoTexture {
     hdr_frame: bool,
     /// The last picture carried the HLG transfer (ARIB STD-B67).
     hlg_frame: bool,
+    /// The last picture's chroma sat midway between luma columns (`media::centred_chroma`).
+    centred_chroma: bool,
     /// Measurement: CPU time per PyroWave picture in `pyrowave_gpu`, kept across `destroy`.
     pub pyrowave_stages: super::stage_times::Stages<2>,
     packed_format: Option<[u32; 12]>,
@@ -234,6 +236,7 @@ impl Default for VideoTexture {
             logged_failure: None,
             hdr_frame: false,
             hlg_frame: false,
+            centred_chroma: false,
             pyrowave_stages: super::stage_times::Stages::new(super::pyrowave_gpu::UPLOAD_AND_PASSES),
             packed_format: None,
             white_level: 1.0,
@@ -691,6 +694,7 @@ impl VideoTexture {
         let (matrix, full_range) = direct_matrix(self.colorspace);
         Some(super::direct::Picture {
             texture, slice, size: (self.size().0 as u32, self.size().1 as u32), ten_bit, full_range, matrix, transfer: self.transfer(),
+            centred_chroma: self.centred_chroma,
         })
     }
 
@@ -761,6 +765,7 @@ impl VideoTexture {
             // Facts about the stream, not the texture: `ensure` calls `destroy` before it reads them.
             hdr_frame: self.hdr_frame,
             hlg_frame: self.hlg_frame,
+            centred_chroma: self.centred_chroma,
             #[cfg(windows)]
             dolby_vision_ipt_said: self.dolby_vision_ipt_said,
             logged_failure: self.logged_failure.take(),

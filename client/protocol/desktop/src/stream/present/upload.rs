@@ -307,6 +307,7 @@ impl VideoTexture {
         }
         self.hdr_frame = info.color_trc == TRC_PQ;
         self.hlg_frame = info.color_trc == TRC_HLG;
+        self.centred_chroma = frame.centred_chroma();
         if let Some(layout) = media::PlanarLayout::of(&info) {
             return self.upload_planar(renderer, &info, layout, white_level);
         }

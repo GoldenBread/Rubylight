@@ -8,8 +8,9 @@
 //! other slices of the same array (Nightjar #112): every GPU copies by default now, and
 //! `NIGHTJAR_D3D11_BIND=1` or `=0` overrides that, as V+'s `D3D11VA_FORCE_BIND` does. Without
 //! binding the pass reads the copy in SDL's video texture. Its color conversion follows SDL's
-//! D3D11 shaders, so a picture looks the same as SDL draws it (except that it puts 4:2:0 chroma on
-//! the left luma sample, where hosts encode it, and SDL in the middle), but its tone map takes the content
+//! D3D11 shaders, so a picture looks the same as SDL draws it (except that it puts 4:2:0 chroma
+//! where the stream says, on the left luma sample unless it says otherwise, and SDL always in the
+//! middle), but its tone map takes the content
 //! peak per frame: from the stream's Dolby Vision RPU (profiles 8.1 and 10.1 have an HDR10 base
 //! layer, drawn as PQ), else its HDR10+ metadata, else measured on the picture, as V+'s libplacebo
 //! renderer does (plvk.cpp, with libplacebo's peak detection defaults: 20 frames of smoothing,
@@ -95,6 +96,8 @@ pub struct Picture {
     /// 0 BT.601, 1 BT.709, 2 BT.2020.
     pub matrix: u32,
     pub transfer: Transfer,
+    /// The stream puts chroma midway between two luma columns, not on the left one.
+    pub centred_chroma: bool,
 }
 
 /// How a picture's codes map to light: SDR gamma, PQ (SMPTE ST 2084) or HLG (ARIB STD-B67).
@@ -232,7 +235,7 @@ struct Constants {
 fn flags(picture: &Picture, output: &Output, tonemap: bool) -> u32 {
     u32::from(picture.ten_bit) | u32::from(picture.full_range) << 1 | (picture.matrix & 3) << 2
         | u32::from(picture.transfer == Transfer::Pq) << 4 | u32::from(output.linear) << 5 | u32::from(tonemap) << 6
-        | u32::from(picture.transfer == Transfer::Hlg) << 7
+        | u32::from(picture.transfer == Transfer::Hlg) << 7 | u32::from(picture.centred_chroma) << 8
 }
 
 /// The pass. It records on a deferred context, so SDL's cached immediate-context state holds.
@@ -598,7 +601,7 @@ mod tests {
 
     #[test]
     fn transfers_set_their_own_shader_flags() {
-        let picture = |transfer| Picture { texture: std::ptr::null_mut(), slice: 0, size: (1, 1), ten_bit: true, full_range: false, matrix: 2, transfer };
+        let picture = |transfer| Picture { texture: std::ptr::null_mut(), slice: 0, size: (1, 1), ten_bit: true, full_range: false, matrix: 2, transfer, centred_chroma: false };
         let output = Output { linear: true, color_scale: 1.0, headroom: 4.0 };
         assert_eq!(flags(&picture(Transfer::Pq), &output, false) & (1 << 4 | 1 << 7), 1 << 4);
         assert_eq!(flags(&picture(Transfer::Hlg), &output, false) & (1 << 4 | 1 << 7), 1 << 7, "HLG is never drawn as PQ");

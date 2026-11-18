@@ -673,3 +673,13 @@ fn a_held_device_outlives_the_renderers_release() {
     assert!(DeviceRef::of(Hardware::None).holds(std::ptr::null_mut()));
     assert!(DeviceRef::of_device(std::ptr::null_mut()).holds(std::ptr::null_mut()));
 }
+
+#[test]
+fn chroma_is_on_the_left_column_unless_the_stream_says_centred() {
+    for location in [AVCHROMA_LOC_UNSPECIFIED, AVCHROMA_LOC_LEFT, AVCHROMA_LOC_TOPLEFT, AVCHROMA_LOC_BOTTOMLEFT] {
+        assert!(!centred_chroma(location), "{location}");
+    }
+    for location in [AVCHROMA_LOC_CENTER, AVCHROMA_LOC_TOP, AVCHROMA_LOC_BOTTOM] {
+        assert!(centred_chroma(location), "{location}");
+    }
+}

@@ -229,17 +229,36 @@ float2 chromaCode(float3 rgb) {
 // and vertically centred. A symmetric [1,2,1] x [1,1] filter preserves that
 // position while suppressing aliasing. Clamp in target coordinates so the
 // left edge also works with resizing and letterboxing.
-// PQ streams filter light, not codes: PQ is so steep that averaging the codes
-// of ClearType's coloured glyph fringes gave small text a magenta cast that
-// SDR's gentler curve hides (Rubylight #130). `nonlinear` writes PQ for every
-// `hdr` but 0 and 2, so `depq` returns its light; HLG and SDR keep their codes.
-bool chromaInLight() { return hdr != 0 && hdr != 2; }
-float3 chromaLight(float3 rgb) { return chromaInLight() ? depq(rgb) : rgb; }
+// HDR streams filter light, not codes: PQ and HLG are so steep that averaging
+// the codes of ClearType's coloured glyph fringes gave small text a magenta
+// cast that SDR's gentler curve hides (Rubylight #130). `chromaLight` undoes
+// `nonlinear`'s last step (`pq` for every `hdr` but 0 and 2, `hlg` for 2) and
+// `chromaCodes` redoes it; SDR keeps filtering its codes.
+// BT.2020 display light in scRGB units for an HLG signal: ARIB STD-B67's
+// inverse OETF to scene light, then the reference OOTF at system gamma 1.2
+// for `hlg`'s 1000-nit display (scene * Ys^0.2), the inverse of `hlg`.
+float3 hlgLight(float3 v) {
+    v = max(v, 0);
+    float3 scene = lerp((exp((v - 0.55991073) / 0.17883277) + 0.28466892) / 12.0,
+                        v * v / 3.0, step(v, 0.5));
+    float y = dot(scene, float3(0.2627, 0.6780, 0.0593));
+    return y > 0 ? scene * pow(y, 0.2) * (1000.0 / 80.0) : float3(0, 0, 0);
+}
+// Branches, not `?:`, which would evaluate every curve for every stream.
+float3 chromaLight(float3 rgb) {
+    [branch] if (hdr == 0) return rgb;
+    [branch] if (hdr == 2) return hlgLight(rgb);
+    return depq(rgb);
+}
+float3 chromaCodes(float3 light) {
+    [branch] if (hdr == 0) return light;
+    [branch] if (hdr == 2) return hlg(light);
+    return pq(light);
+}
 float3 leftChroma(float2 at, bool menu, float3 c00, float3 c10, float3 c01, float3 c11) {
     float2 left = float2(max(at.x - 1, 0), at.y);
-    float3 rgb = (chromaLight(rgb_at(left, menu)) + chromaLight(rgb_at(left + float2(0, 1), menu)) +
-                  2 * (chromaLight(c00) + chromaLight(c01)) + chromaLight(c10) + chromaLight(c11)) * 0.125;
-    return chromaInLight() ? pq(rgb) : rgb;
+    return chromaCodes((chromaLight(rgb_at(left, menu)) + chromaLight(rgb_at(left + float2(0, 1), menu)) +
+                        2 * (chromaLight(c00) + chromaLight(c01)) + chromaLight(c10) + chromaLight(c11)) * 0.125);
 }
 float lumaPixel(float2 p, bool menu) {
     if (menu) menu_clip(uint2(p));
@@ -426,7 +445,8 @@ float2 pyroChroma(float3 rgb) {
 // PyroWave's decoder explicitly uses centre-sited 4:2:0 (pyrowave.h).
 // Keep its 2x2 average separate from standard codecs' left-sited filter.
 float2 pyroBlock(float3 c00, float3 c10, float3 c01, float3 c11) {
-    return pyroChroma((c00 + c10 + c01 + c11) * 0.25);
+    // In light for HDR, as `leftChroma`.
+    return pyroChroma(chromaCodes((chromaLight(c00) + chromaLight(c10) + chromaLight(c01) + chromaLight(c11)) * 0.25));
 }
 float pyroLumaPixel(float2 p, bool menu) {
     if (menu) menu_clip(uint2(p));

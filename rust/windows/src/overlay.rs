@@ -147,6 +147,31 @@ pub(crate) mod reference {
                 rgb
             }
         }
+        /// `chromaLight`: display light for HDR codes, SDR's codes as they are.
+        fn light(self, rgb: [f64; 3]) -> [f64; 3] {
+            if self.hlg {
+                crate::color::hlg_light(rgb)
+            } else if self.hdr {
+                rgb.map(depq)
+            } else {
+                rgb
+            }
+        }
+        /// `chromaCodes`, the inverse of `light`.
+        fn codes(self, light: [f64; 3]) -> [f64; 3] {
+            if self.hlg {
+                crate::color::hlg(light)
+            } else if self.hdr {
+                light.map(pq)
+            } else {
+                light
+            }
+        }
+        /// The chroma filter's weighted mean, in light for HDR (`leftChroma`, `pyroBlock`).
+        fn filtered(self, samples: &[[f64; 3]], weights: &[f64]) -> [f64; 3] {
+            let light: Vec<[f64; 3]> = samples.iter().map(|&s| self.light(s)).collect();
+            self.codes(average(&light, weights))
+        }
         fn luma(self, rgb: [f64; 3]) -> u16 {
             let [kr, kg, kb] = self.weights();
             let y = kr * rgb[0] + kg * rgb[1] + kb * rgb[2];
@@ -293,13 +318,7 @@ pub(crate) mod reference {
                                 [at[0] + 1, at[1] + 1],
                             ]
                             .map(|p| panel.at(p));
-                            let weights = [1., 1., 2., 2., 1., 1.];
-                            // color.hlsl's `leftChroma` filters PQ in light.
-                            colour.chroma(if colour.hdr && !colour.hlg {
-                                average(&samples.map(|s| s.map(depq)), &weights).map(pq)
-                            } else {
-                                average(&samples, &weights)
-                            })
+                            colour.chroma(colour.filtered(&samples, &[1., 1., 2., 2., 1., 1.]))
                         });
                         plane.push(uv.map(|uv| uv[0]));
                         plane.push(uv.map(|uv| uv[1]));
@@ -373,7 +392,7 @@ pub(crate) mod reference {
                                     [at[0] + 1, at[1] + 1],
                                 ]
                                 .map(|p| panel.at(p));
-                                colour.chroma(average(&samples, &[1.; 4]))
+                                colour.chroma(colour.filtered(&samples, &[1.; 4]))
                             })
                         })
                         .collect()
