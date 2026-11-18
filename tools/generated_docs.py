@@ -113,8 +113,11 @@ def merge(base, ours, theirs, name):
 def install(root=ROOT):
     # The config is shared by every worktree of the clone: one on a branch from before this
     # tool falls back to git's own merge, conflict markers included.
+    # This Python, else python on PATH; neither: git's own merge, markers included.
     script = 'tools/generated_docs.py'
-    driver = (f'if test -f {script}; then python {script} merge %O %A %B %P; '
+    python = pathlib.Path(sys.executable).as_posix()
+    driver = (f'PY="{python}"; command -v "$PY" >/dev/null 2>&1 || PY=python; '
+              f'if test -f {script} && command -v "$PY" >/dev/null 2>&1; then "$PY" {script} merge %O %A %B %P; '
               'else git merge-file -L ours -L base -L theirs %A %O %B; fi')
     for key, value in ((f'merge.{DRIVER}.name', 'Rubylight generated docs (regenerate after merging)'),
                        (f'merge.{DRIVER}.driver', driver)):

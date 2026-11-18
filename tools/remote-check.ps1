@@ -33,8 +33,12 @@ $Branch = $Branch -replace '^(refs/heads/|origin/)', ''
 $name = $Branch -replace '[^A-Za-z0-9-]', '-'
 if (-not $Out) { $Out = "C:\src\butterpollo-release\unified\dev-check\$Machine-$name" }
 $sshOptions = @('-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15')
+# Windows' OpenSSH, which has the keys; from Git Bash a bare ssh would be Git's.
+$openSsh = Join-Path $env:SystemRoot 'System32\OpenSSH'
+$sshExe = if (Test-Path -LiteralPath "$openSsh\ssh.exe") { "$openSsh\ssh.exe" } else { 'ssh' }
+$scpExe = if (Test-Path -LiteralPath "$openSsh\scp.exe") { "$openSsh\scp.exe" } else { 'scp' }
 function Invoke-Remote([string]$Command) {
-    $output = & ssh @sshOptions $Ssh $Command 2>&1
+    $output = & $sshExe @sshOptions $Ssh $Command 2>&1
     [pscustomobject]@{ Code = $LASTEXITCODE; Text = ($output | Out-String).TrimEnd() }
 }
 
@@ -46,7 +50,7 @@ $remote = "$RemoteWork\remote"
 $made = Invoke-Remote "New-Item -ItemType Directory -Force -Path '$remote' | Out-Null"
 if ($made.Code) { throw "ssh to $Ssh failed: $($made.Text)" }
 foreach ($file in 'start.ps1', 'run.ps1') {
-    & scp @sshOptions -q (Join-Path $PSScriptRoot "remote-check\$file") "${Ssh}:$($remote.Replace('\', '/'))/$file"
+    & $scpExe @sshOptions -q (Join-Path $PSScriptRoot "remote-check\$file") "${Ssh}:$($remote.Replace('\', '/'))/$file"
     if ($LASTEXITCODE) { throw "scp of $file to $Ssh failed" }
 }
 
@@ -65,33 +69,32 @@ while ($true) {
 $log = "$RemoteWork\$name.log"
 $shown = 0
 $text = ''
-try {
-    while ($true) {
-        Start-Sleep -Seconds 20
-        $read = Invoke-Remote "Get-Content -LiteralPath '$log' -ErrorAction SilentlyContinue"
-        $lines = @($read.Text -split "`r?`n")
-        for ($i = $shown; $i -lt $lines.Count; $i++) {
-            if ($lines[$i] -match '^(-- |remote check|checked out|.*waiting:)') { Write-Host $lines[$i] }
-        }
-        $shown = [math]::Max($shown, $lines.Count)
-        if ($read.Text -match '(?m)^EXIT=') { $text = $read.Text; break }
-        if ((Get-Date) -gt $deadline) { Write-Host "no result after $TimeoutMinutes minutes; the task keeps running on $Machine"; exit 3 }
+while ($true) {
+    Start-Sleep -Seconds 20
+    $read = Invoke-Remote "Get-Content -LiteralPath '$log' -ErrorAction SilentlyContinue"
+    $lines = @($read.Text -split "`r?`n")
+    for ($i = $shown; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^(-- |remote check|checked out|.*waiting:)') { Write-Host $lines[$i] }
     }
-} finally {
-    Invoke-Remote "Unregister-ScheduledTask -TaskName 'rl-remote-check-$name' -Confirm:`$false -ErrorAction SilentlyContinue" | Out-Null
+    $shown = [math]::Max($shown, $lines.Count)
+    if ($read.Text -match '(?m)^EXIT=') { $text = $read.Text; break }
+    # The task stays registered while it runs, so start.ps1 refuses a second check meanwhile.
+    if ((Get-Date) -gt $deadline) { Write-Host "no result after $TimeoutMinutes minutes; the task rl-remote-check-$name keeps running on $Machine"; exit 3 }
 }
+Invoke-Remote "Unregister-ScheduledTask -TaskName 'rl-remote-check-$name' -Confirm:`$false -ErrorAction SilentlyContinue" | Out-Null
 
 $code = if ($text -match '(?m)^EXIT=(-?\d+)') { [int]$Matches[1] } else { 1 }
-$logs = if ($text -match '(?m)^LOGS=(.+)$') { $Matches[1].Trim() } else { $null }
+# This run's folder, from dev.py's own Logs: line (earlier runs sit beside it).
+$run = if ($text -match '(?m)^Logs: (.+)$') { $Matches[1].Trim() } else { $null }
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
 Set-Content -LiteralPath (Join-Path $Out 'remote.log') -Value $text -Encoding utf8
-if ($logs -and (Invoke-Remote "if (Test-Path -LiteralPath '$logs') { 'yes' }").Text -eq 'yes') {
-    & scp @sshOptions -q -r "${Ssh}:$($logs.Replace('\', '/'))/*" $Out
-    if ($LASTEXITCODE) { Write-Host "could not copy $logs from $Machine" }
+$copied = $null
+if ($run -and (Invoke-Remote "if (Test-Path -LiteralPath '$run') { 'yes' }").Text -eq 'yes') {
+    & $scpExe @sshOptions -q -r "${Ssh}:$($run.Replace('\', '/'))" $Out
+    if ($LASTEXITCODE) { Write-Host "could not copy $run from $Machine" } else { $copied = Join-Path $Out (Split-Path -Leaf $run) }
 }
 # The check's own table, as printed on the remote machine.
 $table = $text -split "`r?`n" | Where-Object { $_ -match '^(Nothing to check|No check for|check |\S+\s+(PASS|FAIL|SKIP|NOT RUN)\b|Logs: )' }
 $table | ForEach-Object { Write-Host $_ }
-$summary = Get-ChildItem -LiteralPath $Out -Recurse -Filter summary.json -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
-Write-Host "Result on ${Machine}: exit $code; copied to $(if ($summary) { $summary.Directory.FullName } else { $Out })"
+Write-Host "Result on ${Machine}: exit $code; copied to $(if ($copied) { $copied } else { $Out })"
 exit $code

@@ -192,6 +192,18 @@ class WarmTargets(unittest.TestCase):
         (self.target / dev.STAMP).write_text(str(ROOT))
         self.assertEqual(dev.claim_target(self.target, ROOT, previous_owner=r'C:\src\other'), 4)
 
+    def test_a_slot_entered_after_the_last_claim_is_reset_whoever_it_names(self):
+        # Claim by A, rl-quick from B, rl-quick from A again: the owner file names A, but B built there.
+        (self.target / dev.STAMP).write_text(str(ROOT))
+        os.utime(self.target / dev.STAMP, (1000, 1000))
+        self.assertEqual(dev.claim_target(self.target, ROOT, previous_owner=str(ROOT), owner_since=5000), 4)
+        self.assertEqual(dev.claim_target(self.target, ROOT, previous_owner=str(ROOT), owner_since=1000), 0)
+
+    def test_a_target_dir_given_is_locked_too(self):
+        args = dev.argparse.Namespace(lock_directory=self.target.parent, pool=None, target_dir=self.target)
+        groups = dict(dev.stage_groups(dev.Check('client', 'client'), ROOT, args))
+        self.assertEqual(groups['target dir']()[0].path, pathlib.Path(f'{self.target}-client.lock'))
+
     def test_a_folder_with_builds_of_unknown_checkouts_is_reset(self):
         self.assertEqual(dev.claim_target(self.target, ROOT), 4)
 
@@ -221,7 +233,7 @@ class WarmTargets(unittest.TestCase):
         self.assertEqual(names('web'), ['web'])
         self.assertEqual(names('python'), [])
         args.target_dir = self.target
-        self.assertEqual(names('host'), ['cargo'])
+        self.assertEqual(names('host'), ['cargo', 'target dir'])
 
     def test_a_target_dir_given_keeps_the_client_beside_it(self):
         target = self.target.parent / 'given'

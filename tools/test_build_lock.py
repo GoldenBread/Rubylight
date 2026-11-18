@@ -203,7 +203,7 @@ class Lanes(unittest.TestCase):
     """Per-stage lanes: stages of different kinds run side by side, BUILD-LOCK stays exclusive."""
 
     def setUp(self):
-        temp = tempfile.TemporaryDirectory()
+        temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)  # a killed holder closes its lane a moment later
         self.addCleanup(temp.cleanup)
         self.root = pathlib.Path(temp.name)
         self.environment = mock.patch.dict(os.environ, {build_lock.CARGO_SLOTS_ENV: '1'})
@@ -290,6 +290,24 @@ class Lanes(unittest.TestCase):
             self.assertGreater(time.monotonic() - started, .5)
             self.assertFalse(build_lock.HandleSlot(self.root / 'lanes/cargo-1.lock').busy())
         self.assertEqual(stage.wait(timeout=15), 0)
+
+    def test_a_gradle_lane_left_by_a_dead_owner_is_named_not_waited_for_or_removed(self):
+        lane = self.root / 'gradle-lane'
+        lane.mkdir()
+        (lane / 'BUILD-LOCK').write_text('dev app C:\\src\\x 2026-11-18 pid=4294967 token=t')
+        with build_lock.BuildLock(self.root, timeout=2, poll=.05):
+            pass
+        self.assertTrue((lane / 'BUILD-LOCK').exists())
+        with self.assertRaisesRegex(TimeoutError, 'its owner is gone'):
+            with self.lease('gradle'):
+                pass
+
+    def test_the_documented_gradle_call_does_not_wait_for_itself(self):
+        lane = self.root / 'gradle-lane'
+        os.environ[build_lock.GRADLE_ENV] = str(lane)
+        result = subprocess.run([sys.executable, build_lock.__file__, '--lock-directory', str(lane), '--timeout', '2',
+                                 '--', sys.executable, '-c', 'pass'], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_build_lock_gives_up_without_removing_a_stage_lane(self):
         self.hold('gradle', 'gradle')

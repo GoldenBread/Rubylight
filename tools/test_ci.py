@@ -53,9 +53,10 @@ class Watch(unittest.TestCase):
             return ''
         out = io.StringIO()
         with mock.patch.object(ci, 'gh', side_effect=gh), mock.patch.object(ci, 'remote_head', return_value='abc'), \
-                mock.patch.object(ci, 'branch_files', return_value=['rust/core/src/lib.rs']), \
+                mock.patch.object(ci, 'branch_files', getattr(ci.branch_files, 'return_value', None) and ci.branch_files
+                                  or mock.Mock(return_value=['rust/core/src/lib.rs'])), \
                 mock.patch.object(ci.time, 'sleep'), contextlib.redirect_stdout(out):
-            code = ci.main(['wip/x', '--poll', '0', '--settle', '0', *argv])
+            code = ci.main(['wip/x', '--poll', '0', *(['--settle', '0'] if '--settle' not in argv else []), *argv])
         return code, out.getvalue(), calls
 
     def test_passed_runs_exit_zero(self):
@@ -75,12 +76,21 @@ class Watch(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn('--dispatch host', out)
 
-    def test_dispatch_starts_the_workflows_and_watches_only_dispatched_runs(self):
-        code, out, calls = self.main([self.runs(('Nightjar Android', 'completed', 'failure', 'push'),
-                                                ('Nightjar Android', 'completed', 'success', 'workflow_dispatch'))],
-                                     '--dispatch', 'android')
+    def test_dispatch_starts_the_workflows_and_watches_only_the_new_runs(self):
+        earlier = ('Nightjar Android', 'completed', 'failure', 'workflow_dispatch')
+        code, out, calls = self.main([self.runs(earlier),  # before dispatching: an earlier dispatch
+                                      self.runs(earlier),  # the new run has not appeared yet
+                                      self.runs(earlier, ('Nightjar Android', 'completed', 'success', 'workflow_dispatch'))],
+                                     '--dispatch', 'android', '--settle', '5')
         self.assertIn(('workflow', 'run', 'nightjar-android.yml', '--ref', 'wip/x'), calls)
         self.assertEqual(code, 0, out)
+        self.assertNotIn('failure', out)
+
+    def test_an_expected_workflow_that_did_not_run_is_no_pass(self):
+        with mock.patch.object(ci, 'branch_files', return_value=['rust/core/src/lib.rs', 'tools/dev.py']):
+            code, out, _ = self.main([self.runs(('Developer workflow checks', 'completed', 'success', 'push'))])
+        self.assertEqual(code, 2, out)
+        self.assertIn('Not started: Rubylight Windows', out)
 
     def test_an_unpushed_branch_pushes_nothing(self):
         out = io.StringIO()

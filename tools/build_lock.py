@@ -171,6 +171,59 @@ def now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
+def process_start():
+    """This process's start time as priority_alive reads it (start=), so a reused pid does not count."""
+    if os.name != 'nt':
+        return None
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel.GetProcessTimes.argtypes = [wintypes.HANDLE, *([ctypes.POINTER(wintypes.FILETIME)] * 4)]
+    times = [wintypes.FILETIME() for _ in range(4)]
+    if not kernel.GetProcessTimes(kernel.GetCurrentProcess(), *(ctypes.byref(t) for t in times)):
+        return None
+    seconds = ((times[0].dwHighDateTime << 32) + times[0].dwLowDateTime) / 10_000_000 - 11644473600
+    return datetime.datetime.fromtimestamp(seconds, datetime.timezone.utc).isoformat()
+
+
+def end_children_with_me():
+    """Put this process in a job that kills everything it starts when it ends, so a killed
+    dev check leaves no build running in a slot it no longer holds (lane handles end with
+    this process, not with its children). Best effort: False when Windows refuses."""
+    if os.name != 'nt':
+        return False
+    from ctypes import wintypes
+
+    class Basic(ctypes.Structure):
+        _fields_ = [('per_process_time', ctypes.c_int64), ('per_job_time', ctypes.c_int64),
+                    ('flags', wintypes.DWORD), ('min_ws', ctypes.c_size_t), ('max_ws', ctypes.c_size_t),
+                    ('active', wintypes.DWORD), ('affinity', ctypes.c_size_t), ('priority', wintypes.DWORD),
+                    ('scheduling', wintypes.DWORD)]
+
+    class Counters(ctypes.Structure):
+        _fields_ = [(name, ctypes.c_uint64) for name in ('r', 'w', 'o', 'rb', 'wb', 'ob')]
+
+    class Extended(ctypes.Structure):
+        _fields_ = [('basic', Basic), ('io', Counters), ('process_memory', ctypes.c_size_t),
+                    ('job_memory', ctypes.c_size_t), ('peak_process', ctypes.c_size_t), ('peak_job', ctypes.c_size_t)]
+
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+    kernel.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+    kernel.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    kernel.GetCurrentProcess.restype = wintypes.HANDLE
+    job = kernel.CreateJobObjectW(None, None)
+    if not job:
+        return False
+    info = Extended()
+    info.basic.flags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    if not kernel.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):  # extended limits
+        return False
+    # The job handle stays open (never closed) until this process ends.
+    return bool(kernel.AssignProcessToJobObject(job, kernel.GetCurrentProcess()))
+
+
 def held_lanes():
     return {p for p in os.environ.get(LANES_ENV, '').split(os.pathsep) if p}
 
@@ -285,7 +338,9 @@ class FileSlot:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         try:
             with self.path.open('x', encoding='utf-8') as out:
-                self.text = f'{label} {now()} pid={os.getpid()} token={uuid.uuid4().hex}'
+                start = process_start()
+                self.text = f'{label} {now()} pid={os.getpid()}' + (f' start={start}' if start else '') + \
+                    f' token={uuid.uuid4().hex}'
                 out.write(self.text)
         except FileExistsError:
             return False
@@ -308,11 +363,17 @@ class FileSlot:
                 time.sleep(.05)
 
     def busy(self):
-        return self.guard is None and peek(self.path) is not None and not own_exclusive(self.path) \
-            and str(self.path) not in held_lanes()
+        """Held by a live owner. A file whose owner is gone is never removed here, as with
+        BUILD-LOCK, but an exclusive owner does not wait for it (holder() names it)."""
+        text = peek(self.path)
+        return self.guard is None and text is not None and not own_exclusive(self.path) \
+            and str(self.path) not in held_lanes() and priority_alive(text)
 
     def holder(self):
-        return peek(self.path) or str(self.path)
+        text = peek(self.path)
+        if text and not priority_alive(text):
+            return f'{text} (its owner is gone: check for surviving Gradle processes, then remove {self.path})'
+        return text or str(self.path)
 
 
 def cargo_lanes(directory=None):
@@ -348,11 +409,13 @@ def all_lanes(directory=None, pool=None):
     return [HandleSlot(p) for p in sorted(paths)] + gradle_lanes(directory)
 
 
-def drain(directory=None, timeout=1800, poll=.5, pool=None, say=print):
-    """Wait until no lane is held by another process tree; BUILD-LOCK keeps new stages out meanwhile."""
+def drain(directory=None, timeout=1800, poll=.5, pool=None, say=print, exclude=None):
+    """Wait until no lane is held by another process tree; BUILD-LOCK keeps new stages out meanwhile.
+    exclude: the exclusive lock itself, when its directory is also a lane (the Gradle lane)."""
     deadline, last = time.monotonic() + timeout, None
     while True:
-        busy = [lane.holder() for lane in all_lanes(directory, pool) if lane.busy()]
+        busy = [lane.holder() for lane in all_lanes(directory, pool)
+                if (exclude is None or lane.path != exclude) and lane.busy()]
         if not busy:
             return
         text = '; '.join(busy)
@@ -467,7 +530,7 @@ class BuildLock:
             time.sleep(self.poll)
         if self.drain:
             try:
-                drain(self.path.parent, max(0, deadline - time.monotonic()), self.poll)
+                drain(self.path.parent, max(0, deadline - time.monotonic()), self.poll, exclude=self.path)
             except BaseException:
                 self.__exit__()
                 raise

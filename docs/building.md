@@ -153,9 +153,14 @@ The Cargo slot count caps the Cargo stages at once: CPU threads per `-j 4`
 stage and memory above a 16 GB reserve per stage peak (7 GB of commit charge
 measured for a host stage on 2026-11-18), whichever is fewer. That is 4 on this
 PC (16 threads, 64 GB) and 2 on the laptop (16 threads, 31 GB);
-`RUBYLIGHT_CARGO_SLOTS` overrides it. A lane is a file held open without
-sharing: Windows closes it when its owner exits, so a crashed stage never
-leaves one taken, and no lane is ever removed by hand.
+`RUBYLIGHT_CARGO_SLOTS` overrides it. A Cargo, target or web lane is a file
+held open without sharing: Windows closes it when its owner exits, so a crashed
+stage never leaves one taken. The dev check also ends its builds when it is
+killed, so none keeps building in a slot it no longer holds. The Gradle lane is
+a `BUILD-LOCK`-style file, shared with manual Gradle runs: a crashed owner
+leaves it behind, the next app stage names it, and exclusive owners stop
+waiting for it once its owner is gone; remove it after checking for surviving
+Gradle processes.
 
 `BUILD-LOCK` stays exclusive. `rust\build.ps1`, the release checks and
 `tools/build_lock.py` without `--lane` take it before SDK setup, tests or

@@ -333,7 +333,7 @@ def invalidate(target, names):
     return removed
 
 
-def claim_target(target, root=ROOT, previous_owner=None):
+def claim_target(target, root=ROOT, previous_owner=None, owner_since=None):
     r"""Make a reused target dir safe for this checkout; returns how many fingerprints it removed.
 
     Cargo judges a path package fresh when none of its files is newer than its last build,
@@ -344,12 +344,17 @@ def claim_target(target, root=ROOT, previous_owner=None):
     MAX_BITRATE_KBPS` and `unresolved import rubylight_protocol::invite_uri`, both present
     in the checkout's source). So when the folder's last checkout was another one, or is
     unknown while it holds builds, this checkout's packages lose their fingerprints first.
+    owner_since: when the slot's owner file was last written; C:\src\rl-quick.ps1 rewrites it
+    without claiming the folder, so an owner file newer than the stamp means someone else
+    may have built there since, whoever it names.
     """
     target = pathlib.Path(target)
     stamp = target / STAMP
     last = build_lock.read(stamp)
     mine = str(pathlib.Path(root).resolve())
     others = [o for o in (last, previous_owner) if o and o.strip() and not same_path(o, mine)]
+    if owner_since is not None and stamp.exists() and owner_since > stamp.stat().st_mtime + 1:
+        others.append('another run since the last claim')
     unknown = last is None and target.is_dir() and bool(fingerprint_dirs(target))
     removed = invalidate(target, local_packages(root)) if others or unknown else 0
     target.mkdir(parents=True, exist_ok=True)
@@ -377,7 +382,9 @@ def stage_groups(check, root, args):
     cargo = ('cargo', lambda: build_lock.cargo_lanes(lock_dir))
     if check.kind in ('host', 'service', 'client', 'interop'):
         if args.target_dir:
-            return [cargo]
+            # Two checks never build one folder at once: claiming and building are not atomic.
+            folder = str(args.target_dir) + ('-client' if check.kind in ('client', 'interop') else '')
+            return [cargo, ('target dir', lambda: [build_lock.HandleSlot(f'{folder}.lock')])]
         if check.kind in ('host', 'service'):
             return [cargo, ('host target', lambda: by_affinity(build_lock.host_slots(lock_dir, pool), root))]
         return [cargo, ('client target', lambda: by_affinity(build_lock.client_slots(lock_dir, pool), root))]
@@ -398,6 +405,7 @@ def stage_target(check, taken, root, target_dir=None):
     if slot is not None:
         owner_file = slot.path.with_suffix('.owner')
         previous = build_lock.read(owner_file) if owner_file.exists() else None
+        since = owner_file.stat().st_mtime if owner_file.exists() else None
         target = slot.path.with_suffix('')
         # C:\src\rl-quick.ps1's Enter-RlSlot reads and writes the same owner file.
         owner_file.write_text(str(pathlib.Path(root).resolve()), encoding='utf-8')
@@ -405,7 +413,8 @@ def stage_target(check, taken, root, target_dir=None):
         target = pathlib.Path(target_dir)
         if check.kind in ('client', 'interop'):
             target = pathlib.Path(f'{target}-client')
-    claim_target(target, root, previous)
+        since = None
+    claim_target(target, root, previous, since)
     return target
 
 
@@ -540,6 +549,8 @@ def execute(check, root, log, target, fresh_dependencies=False):
                    log, root, env) == 0
     if check.kind == 'gradle':
         env = {k: v for k, v in os.environ.items() if k.upper() != 'CARGO_TARGET_DIR'}
+        # Its Rust engine builds beside the Cargo stages: at most a stage's share of the CPU.
+        env['CARGO_BUILD_JOBS'] = str(build_lock.CARGO_STAGE_THREADS)
         filters = [a for t in check.items for a in ('--tests', t)]
         # By its full path: with NoDefaultCurrentDirectoryInExePath set, cmd
         # doesn't look in its working folder for a bare gradlew.bat.
@@ -583,6 +594,8 @@ def main(argv=None):
     if args.lock_timeout < 0:
         parser.error('--lock-timeout must be nonnegative')
     root = ROOT
+    if not args.dry_run:
+        build_lock.end_children_with_me()
     if args.paths is None:
         merge_base, paths = changed(args.base, root)
         print(f'{len(paths)} changed files against {args.base} (merge base {merge_base[:9]})')

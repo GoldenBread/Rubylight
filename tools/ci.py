@@ -151,7 +151,10 @@ def main(argv=None):
     unknown = [w for w in wanted if w not in WORKFLOWS]
     if unknown:
         parser.error(f'unknown workflow {unknown[0]}; choose from {", ".join(WORKFLOWS)} or all')
+    before = set()
     if wanted:
+        # Runs of an earlier dispatch on the same head are not this one's.
+        before = {r['databaseId'] for r in runs_for(branch, sha)}
         for key in wanted:
             gh('workflow', 'run', WORKFLOWS[key], '--ref', branch)
             print(f'started {WORKFLOWS[key]} on {branch}')
@@ -170,7 +173,7 @@ def main(argv=None):
     while True:
         found = runs_for(branch, sha)
         if wanted:
-            found = [r for r in found if r['event'] == 'workflow_dispatch']
+            found = [r for r in found if r['event'] == 'workflow_dispatch' and r['databaseId'] not in before]
         # The newest run per workflow (a re-run or a later dispatch replaces it).
         latest = {}
         for r in sorted(found, key=lambda r: r['createdAt']):
@@ -207,7 +210,7 @@ def main(argv=None):
                 print(f'    failed job: {job}')
     if args.no_wait and not all(r['status'] == 'completed' for r in latest.values()):
         return 0
-    return 1 if bad else 0
+    return 1 if bad else 2 if missing and not args.no_wait else 0
 
 
 if __name__ == '__main__':
