@@ -83,6 +83,7 @@ public final class PyroWaveDecoderRenderer {
     static final int DRIVER_NOT_LOADED = 11;
     static final int DRIVER_NOT_STARTED = 12;
     static final int DRIVER_NO_GPU = 13;
+    static final int DRIVER_NOT_VULKAN = 14;
     static final int DRIVER_STREAM_FAILED = 100;
     private static final int PROBE_FAILED = 9;
     private static final Object DRIVER_LOG_LOCK = new Object();
@@ -94,7 +95,10 @@ public final class PyroWaveDecoderRenderer {
      * and logged once with the dynamic linker's message when the driver did not load.
      */
     private static int customDriverReadiness(Context context, GpuDriverStore.Driver driver, boolean hdr) {
-        if (!GpuDriverStore.beginUse(context, driver)) return PROBE_FAILED;
+        if (!GpuDriverStore.beginUse(context, driver)) {
+            LimeLog.warning("Custom GPU driver skipped: its in-use marker could not be saved");
+            return PROBE_FAILED;
+        }
         String hooks = context.getApplicationInfo().nativeLibraryDir;
         String directory = driver.directory.getAbsolutePath() + File.separator;
         int result = nativeGetReadiness(hdr, hooks, directory, driver.libraryName);
@@ -121,6 +125,7 @@ public final class PyroWaveDecoderRenderer {
             case DRIVER_NOT_LOADED: text = "its library did not load"; break;
             case DRIVER_NOT_STARTED: text = "its library loaded but Vulkan did not start on it"; break;
             case DRIVER_NO_GPU: text = "Vulkan started on it but it listed no GPU"; break;
+            case DRIVER_NOT_VULKAN: text = "its library is not an Android Vulkan driver"; break;
             case DRIVER_STREAM_FAILED: text = "the stream's renderer did not start on it"; break;
             default: text = "a GPU check failed (reason " + reason + ")"; break;
         }
@@ -134,8 +139,10 @@ public final class PyroWaveDecoderRenderer {
             case DRIVER_NOT_LOADED: return R.string.gpu_driver_failed_load;
             case DRIVER_NOT_STARTED: return R.string.gpu_driver_failed_start;
             case DRIVER_NO_GPU: return R.string.gpu_driver_failed_no_gpu;
+            case DRIVER_NOT_VULKAN: return R.string.gpu_driver_failed_not_vulkan;
             case DRIVER_STREAM_FAILED: return R.string.gpu_driver_failed_stream;
-            case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8:
+            case 8: return R.string.gpu_driver_failed_hdr;
+            case 1: case 2: case 3: case 4: case 5: case 6: case 7:
                 return R.string.gpu_driver_failed_features;
             default: return R.string.gpu_driver_system_fallback;
         }

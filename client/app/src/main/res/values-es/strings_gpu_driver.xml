@@ -16,6 +16,8 @@
     <string name="gpu_driver_failed_load">Falló el controlador personalizado: su biblioteca no se cargó en este teléfono, a menudo porque necesita una biblioteca que falta en esta versión de Android. Usando el controlador de GPU del sistema.</string>
     <string name="gpu_driver_failed_start">Falló el controlador personalizado: se cargó, pero no inició Vulkan en este teléfono. Usando el controlador de GPU del sistema.</string>
     <string name="gpu_driver_failed_no_gpu">Falló el controlador personalizado: se cargó, pero no encontró en este teléfono ninguna GPU compatible. Usando el controlador de GPU del sistema.</string>
+    <string name="gpu_driver_failed_not_vulkan">Falló el controlador personalizado: su biblioteca no es un controlador Vulkan de Android, quizá compilado para otro sistema. Usando el controlador de GPU del sistema.</string>
     <string name="gpu_driver_failed_features">Falló el controlador personalizado: funciona en esta GPU, pero le faltan funciones que PyroWave necesita. Usando el controlador de GPU del sistema.</string>
+    <string name="gpu_driver_failed_hdr">Falló el controlador personalizado: no tiene salida HDR para PyroWave. Usando el controlador de GPU del sistema; una transmisión SDR aún puede usar el controlador personalizado.</string>
     <string name="gpu_driver_failed_stream">Falló el controlador personalizado: superó su comprobación, pero no inició la transmisión. Usando el controlador de GPU del sistema.</string>
 </resources>

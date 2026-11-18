@@ -22,16 +22,19 @@ constexpr int PYRO_DRIVER_NOT_OPENED = 10;   // the system Vulkan loader did not
 constexpr int PYRO_DRIVER_NOT_LOADED = 11;   // the hook did not load the driver library
 constexpr int PYRO_DRIVER_NOT_STARTED = 12;  // the library loaded, but Vulkan did not start on it
 constexpr int PYRO_DRIVER_NO_GPU = 13;       // Vulkan started on it and listed no GPU
+constexpr int PYRO_DRIVER_NOT_VULKAN = 14;   // the library opened but is not an Android Vulkan driver
 
 // How far a readiness probe got: through the loader and vkCreateInstance, through listing the GPUs,
 // or to a device check whose own reason stands.
 enum PyroProbeStage { PYRO_STAGE_LOADER, PYRO_STAGE_DEVICES, PYRO_STAGE_CHECKED };
 
 // A custom driver's readiness. opened: the hooked loader opened; loaded: its hook loaded the driver
-// library, so the system driver was not quietly used instead. A library that loaded and then stopped
-// before any GPU was checked names that stage, not the device check it never reached.
-inline int pyroCustomDriverReadiness(bool opened, bool loaded, PyroProbeStage stage, int readiness) {
+// library, so the system driver was not quietly used instead; notVulkan: the hook opened the library
+// and turned it away. A library that loaded and then stopped before any GPU was checked names that
+// stage, not the device check it never reached.
+inline int pyroCustomDriverReadiness(bool opened, bool loaded, bool notVulkan, PyroProbeStage stage, int readiness) {
     if (!opened) return PYRO_DRIVER_NOT_OPENED;
+    if (notVulkan) return PYRO_DRIVER_NOT_VULKAN;
     if (!loaded) return PYRO_DRIVER_NOT_LOADED;
     if (stage == PYRO_STAGE_LOADER) return PYRO_DRIVER_NOT_STARTED;
     if (stage == PYRO_STAGE_DEVICES) return PYRO_DRIVER_NO_GPU;

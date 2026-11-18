@@ -17,7 +17,7 @@ import static org.junit.Assert.assertTrue;
 
 // nightjar#116: a custom driver that falls back to the system driver says why, on screen and in the log.
 public class PyroWaveCustomDriverFailureTest {
-    private static final String[] NOTICES = {"open", "load", "start", "no_gpu", "features", "stream"};
+    private static final String[] NOTICES = {"open", "load", "start", "no_gpu", "not_vulkan", "features", "hdr", "stream"};
 
     @Test
     public void eachStageHasItsOwnNotice() {
@@ -29,12 +29,16 @@ public class PyroWaveCustomDriverFailureTest {
                 PyroWaveDecoderRenderer.customDriverFailureSummary(PyroWaveDecoderRenderer.DRIVER_NOT_STARTED));
         assertEquals(R.string.gpu_driver_failed_no_gpu,
                 PyroWaveDecoderRenderer.customDriverFailureSummary(PyroWaveDecoderRenderer.DRIVER_NO_GPU));
+        assertEquals(R.string.gpu_driver_failed_not_vulkan,
+                PyroWaveDecoderRenderer.customDriverFailureSummary(PyroWaveDecoderRenderer.DRIVER_NOT_VULKAN));
         assertEquals(R.string.gpu_driver_failed_stream,
                 PyroWaveDecoderRenderer.customDriverFailureSummary(PyroWaveDecoderRenderer.DRIVER_STREAM_FAILED));
-        // The device checks' codes 1-8: the driver runs but lacks what PyroWave needs.
-        for (int reason = 1; reason <= 8; reason++) {
+        // The device checks' codes 1-7: the driver runs but lacks what PyroWave needs. 8 is HDR alone,
+        // which an SDR stream would not need.
+        for (int reason = 1; reason <= 7; reason++) {
             assertEquals(R.string.gpu_driver_failed_features, PyroWaveDecoderRenderer.customDriverFailureSummary(reason));
         }
+        assertEquals(R.string.gpu_driver_failed_hdr, PyroWaveDecoderRenderer.customDriverFailureSummary(8));
         // A failed check, a crash or an older stored value keeps the general notice.
         assertEquals(R.string.gpu_driver_system_fallback, PyroWaveDecoderRenderer.customDriverFailureSummary(9));
         assertEquals(R.string.gpu_driver_system_fallback, PyroWaveDecoderRenderer.customDriverFailureSummary(0));
@@ -59,6 +63,7 @@ public class PyroWaveCustomDriverFailureTest {
         assertEquals(PyroWaveDecoderRenderer.DRIVER_NOT_LOADED, nativeCode(header, "PYRO_DRIVER_NOT_LOADED"));
         assertEquals(PyroWaveDecoderRenderer.DRIVER_NOT_STARTED, nativeCode(header, "PYRO_DRIVER_NOT_STARTED"));
         assertEquals(PyroWaveDecoderRenderer.DRIVER_NO_GPU, nativeCode(header, "PYRO_DRIVER_NO_GPU"));
+        assertEquals(PyroWaveDecoderRenderer.DRIVER_NOT_VULKAN, nativeCode(header, "PYRO_DRIVER_NOT_VULKAN"));
     }
 
     @Test

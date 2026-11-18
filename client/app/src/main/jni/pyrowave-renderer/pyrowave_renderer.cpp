@@ -128,6 +128,7 @@ namespace {
         DRIVER_NOT_LOADED = PYRO_DRIVER_NOT_LOADED,
         DRIVER_NOT_STARTED = PYRO_DRIVER_NOT_STARTED,
         DRIVER_NO_GPU = PYRO_DRIVER_NO_GPU,
+        DRIVER_NOT_VULKAN = PYRO_DRIVER_NOT_VULKAN,
     };
 
     constexpr uint64_t ACQUIRE_TIMEOUT_NS = 250'000'000;
@@ -350,8 +351,13 @@ namespace {
                    EnumerateInstanceExtensionProperties != nullptr;
         }
 
+        // The hook writes 1 once the custom driver loaded, 2 when it turned the library away.
         bool usingRequestedDriver() const {
-            return custom == nullptr || __atomic_load_n(&custom->loaded, __ATOMIC_ACQUIRE) != 0;
+            return custom == nullptr || __atomic_load_n(&custom->loaded, __ATOMIC_ACQUIRE) == 1;
+        }
+
+        bool customNotVulkan() const {
+            return custom != nullptr && __atomic_load_n(&custom->loaded, __ATOMIC_ACQUIRE) == 2;
         }
 
         bool loadInstance(VkInstance instance) {
@@ -4276,7 +4282,7 @@ namespace {
         // The hook falls back to the system driver when the custom one does not load: a probe of that
         // must not pass for the custom driver, and a stop before any device check names its stage.
         const auto result = static_cast<Readiness>(pyroCustomDriverReadiness(
-            custom->library != nullptr, vk.usingRequestedDriver(), stage, readiness));
+            custom->library != nullptr, vk.usingRequestedDriver(), vk.customNotVulkan(), stage, readiness));
         if (result != READY) {
             LOGW("Custom Vulkan driver PyroWave readiness: %d (probe %d, stage %d)%s%s", result, readiness, stage,
                  custom->error[0] ? ": " : "", custom->error);

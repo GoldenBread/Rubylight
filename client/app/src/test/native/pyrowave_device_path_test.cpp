@@ -88,15 +88,17 @@ static void adrenoAndMaliNeedTheirDriverIdBelowVulkan12() {
 // imported and then fell back with no reason), and a device check it reached keeps its own reason.
 static void customDriverFailuresNameTheirStage() {
     for (PyroProbeStage stage : {PYRO_STAGE_LOADER, PYRO_STAGE_DEVICES, PYRO_STAGE_CHECKED}) {
-        assert(pyroCustomDriverReadiness(false, false, stage, 0) == PYRO_DRIVER_NOT_OPENED);
+        assert(pyroCustomDriverReadiness(false, false, false, stage, 0) == PYRO_DRIVER_NOT_OPENED);
         // The hook fell back to the system driver: even a passing probe ran on the wrong driver.
-        assert(pyroCustomDriverReadiness(true, false, stage, 0) == PYRO_DRIVER_NOT_LOADED);
+        assert(pyroCustomDriverReadiness(true, false, false, stage, 0) == PYRO_DRIVER_NOT_LOADED);
+        // A library without the HAL module symbol, which the loader would swap for a GPU-less stub.
+        assert(pyroCustomDriverReadiness(true, false, true, stage, 0) == PYRO_DRIVER_NOT_VULKAN);
     }
-    assert(pyroCustomDriverReadiness(true, true, PYRO_STAGE_LOADER, 9) == PYRO_DRIVER_NOT_STARTED);
-    assert(pyroCustomDriverReadiness(true, true, PYRO_STAGE_LOADER, 1) == PYRO_DRIVER_NOT_STARTED);
-    assert(pyroCustomDriverReadiness(true, true, PYRO_STAGE_DEVICES, 9) == PYRO_DRIVER_NO_GPU);
+    assert(pyroCustomDriverReadiness(true, true, false, PYRO_STAGE_LOADER, 9) == PYRO_DRIVER_NOT_STARTED);
+    assert(pyroCustomDriverReadiness(true, true, false, PYRO_STAGE_LOADER, 1) == PYRO_DRIVER_NOT_STARTED);
+    assert(pyroCustomDriverReadiness(true, true, false, PYRO_STAGE_DEVICES, 9) == PYRO_DRIVER_NO_GPU);
     for (int reason = 0; reason <= 9; ++reason) {
-        assert(pyroCustomDriverReadiness(true, true, PYRO_STAGE_CHECKED, reason) == reason);
+        assert(pyroCustomDriverReadiness(true, true, false, PYRO_STAGE_CHECKED, reason) == reason);
     }
 }
 

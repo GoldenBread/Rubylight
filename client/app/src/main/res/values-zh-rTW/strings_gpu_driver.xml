@@ -16,6 +16,8 @@
     <string name="gpu_driver_failed_load">自訂驅動程式失敗：其函式庫無法在此手機上載入，通常是因為它需要此 Android 版本缺少的函式庫。正在使用系統 GPU 驅動程式。</string>
     <string name="gpu_driver_failed_start">自訂驅動程式失敗：已載入，但未能在此手機上啟動 Vulkan。正在使用系統 GPU 驅動程式。</string>
     <string name="gpu_driver_failed_no_gpu">自訂驅動程式失敗：已載入，但在此手機上找不到它支援的 GPU。正在使用系統 GPU 驅動程式。</string>
+    <string name="gpu_driver_failed_not_vulkan">自訂驅動程式失敗：其函式庫不是 Android Vulkan 驅動程式，可能是為其他系統建置的。正在使用系統 GPU 驅動程式。</string>
     <string name="gpu_driver_failed_features">自訂驅動程式失敗：可在此 GPU 上執行，但缺少 PyroWave 所需的功能。正在使用系統 GPU 驅動程式。</string>
+    <string name="gpu_driver_failed_hdr">自訂驅動程式失敗：它沒有供 PyroWave 使用的 HDR 輸出。正在使用系統 GPU 驅動程式；SDR 串流仍可使用自訂驅動程式。</string>
     <string name="gpu_driver_failed_stream">自訂驅動程式失敗：已通過檢查，但未能啟動串流。正在使用系統 GPU 驅動程式。</string>
 </resources>

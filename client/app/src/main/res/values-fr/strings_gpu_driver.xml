@@ -16,6 +16,8 @@
     <string name="gpu_driver_failed_load">Échec du pilote personnalisé : sa bibliothèque ne s’est pas chargée sur ce téléphone, souvent parce qu’elle a besoin d’une bibliothèque absente de cette version d’Android. Le pilote GPU du système est utilisé.</string>
     <string name="gpu_driver_failed_start">Échec du pilote personnalisé : il s’est chargé mais n’a pas démarré Vulkan sur ce téléphone. Le pilote GPU du système est utilisé.</string>
     <string name="gpu_driver_failed_no_gpu">Échec du pilote personnalisé : il s’est chargé mais n’a trouvé sur ce téléphone aucun GPU qu’il prend en charge. Le pilote GPU du système est utilisé.</string>
+    <string name="gpu_driver_failed_not_vulkan">Échec du pilote personnalisé : sa bibliothèque n’est pas un pilote Vulkan Android, peut-être compilé pour un autre système. Le pilote GPU du système est utilisé.</string>
     <string name="gpu_driver_failed_features">Échec du pilote personnalisé : il fonctionne sur ce GPU mais il lui manque des fonctions dont PyroWave a besoin. Le pilote GPU du système est utilisé.</string>
+    <string name="gpu_driver_failed_hdr">Échec du pilote personnalisé : il n’a pas de sortie HDR pour PyroWave. Le pilote GPU du système est utilisé ; un stream SDR peut toujours utiliser le pilote personnalisé.</string>
     <string name="gpu_driver_failed_stream">Échec du pilote personnalisé : il a passé sa vérification mais n’a pas démarré le stream. Le pilote GPU du système est utilisé.</string>
 </resources>

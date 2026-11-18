@@ -16,6 +16,8 @@
     <string name="gpu_driver_failed_load">Özel sürücü başarısız: kitaplığı bu telefonda yüklenmedi; genellikle bu Android sürümünde olmayan bir kitaplığa ihtiyaç duyduğu içindir. Sistem GPU sürücüsü kullanılıyor.</string>
     <string name="gpu_driver_failed_start">Özel sürücü başarısız: yüklendi ama bu telefonda Vulkan başlatamadı. Sistem GPU sürücüsü kullanılıyor.</string>
     <string name="gpu_driver_failed_no_gpu">Özel sürücü başarısız: yüklendi ama bu telefonda desteklediği bir GPU bulamadı. Sistem GPU sürücüsü kullanılıyor.</string>
+    <string name="gpu_driver_failed_not_vulkan">Özel sürücü başarısız: kitaplığı bir Android Vulkan sürücüsü değil, başka bir sistem için derlenmiş olabilir. Sistem GPU sürücüsü kullanılıyor.</string>
     <string name="gpu_driver_failed_features">Özel sürücü başarısız: bu GPU üzerinde çalışıyor ama PyroWave için gereken özellikler eksik. Sistem GPU sürücüsü kullanılıyor.</string>
+    <string name="gpu_driver_failed_hdr">Özel sürücü başarısız: PyroWave için HDR çıkışı yok. Sistem GPU sürücüsü kullanılıyor; SDR yayın özel sürücüyü yine kullanabilir.</string>
     <string name="gpu_driver_failed_stream">Özel sürücü başarısız: denetimi geçti ama yayını başlatamadı. Sistem GPU sürücüsü kullanılıyor.</string>
 </resources>
