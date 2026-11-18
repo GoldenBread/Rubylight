@@ -225,7 +225,7 @@ pub fn follow_focus_under(ui: &mut egui::Ui, area: impl std::hash::Hash + std::f
 impl Gui {
     pub fn new() -> Self {
         let ctx = egui::Context::default();
-        // The UI zoom is ours (85-150 % steps, saved in the settings); egui's own Ctrl+=/-/0 would
+        // The UI zoom is ours (85-250 % steps, saved in the settings); egui's own Ctrl+=/-/0 would
         // zoom outside those steps and never be saved.
         ctx.options_mut(|o| o.zoom_with_keyboard = false);
         Self {

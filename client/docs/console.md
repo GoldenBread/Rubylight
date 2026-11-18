@@ -74,7 +74,7 @@ non-commercial use under the Twitch Developer Services Agreement.
 
 ## On a TV
 
-Home and the PC list have dedicated TV layouts, chosen by Android's television mode. **Interface layout** in the settings selects the TV layout on other devices too.
+Home and the PC list have dedicated TV layouts, chosen by Android's television mode. **Interface layout** in the settings is Android-only; Nightjar on the desktop has no TV layout.
 
 - **Library rows.** Recently played, one row per store, Other apps (games no store owns), and On your PCs, not added (games the host found in a store but has not added). A row shows up to 20 games; a longer row ends in an **All N games** tile that opens All games with that row's filter.
 - **Cards.** Each card shows a store chip. A game that is not installed is dimmed and says so. Selecting a game marked Not added asks the host to add it, when this device may launch games and the host supports it; otherwise the card says **Add it on the PC**.
@@ -214,7 +214,7 @@ Every focusable element shows a visible ring when focused with a D-pad or contro
 Four settings under **Settings → App** change how Nightjar looks. They are global.
 
 - **Language.** **System default** or one of the 15 languages Nightjar ships, the same as on Android ([translations](TRANSLATIONS.md)). System default uses the operating system's first language that Nightjar supports, otherwise English. Japanese, Korean, Chinese, Cyrillic, Polish, Turkish and Vietnamese text uses the system's own font. Brand names, error text from the host or network, the upscaler names, the performance overlay and log lines stay in English.
-- **UI zoom.** 85, 100, 115, 130 or 150 percent for the launcher, the stream menu and the overlay. **Ctrl+=** and **Ctrl+-** change it; **Ctrl+0** resets it to 100. At 150 percent a 1280×720 window still shows every control.
+- **UI zoom.** 85, 100, 115, 130, 150, 200 or 250 percent (the last two for a 4K TV whose system reports no display scale, such as SteamOS gamescope) for the launcher, the stream menu and the overlay. **Ctrl+=** and **Ctrl+-** change it; **Ctrl+0** resets it to 100. At 150 percent a 1280×720 window still shows every control.
 - **High contrast.** Black surfaces, white text, outlines on every control and a thicker focus ring. Body text reaches at least 7:1 and the focus ring at least 3:1; the normal theme meets WCAG AA (4.5:1) for text.
 - **Reduce motion.** **Follow system**, **Reduce** or **Full motion**. Follow system reads Windows' **Show animations in Windows** setting or macOS's **Reduce motion**; Linux has no equivalent, so there it leaves motion on.
 

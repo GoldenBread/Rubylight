@@ -572,12 +572,19 @@ fn a_value_from_a_newer_version_does_not_reset_the_other_settings() {
 fn zoom_steps_stay_inside_the_range_and_odd_values_snap() {
     assert_eq!(step_zoom(100, 1), 115);
     assert_eq!(step_zoom(100, -1), 85);
-    assert_eq!(step_zoom(150, 1), 150, "the top step stays");
+    assert_eq!(step_zoom(150, 1), 200, "150 % is no longer the top");
+    assert_eq!(step_zoom(200, 1), 250);
+    assert_eq!(step_zoom(250, 1), 250, "the top step stays");
+    assert_eq!(step_zoom(250, -1), 200);
+    assert_eq!(nearest_zoom(230), 250);
+    assert_eq!(nearest_zoom(170), 150);
     assert_eq!(step_zoom(85, -1), 85, "the bottom step stays");
     assert_eq!(nearest_zoom(0), 85);
-    assert_eq!(nearest_zoom(9999), 150);
+    assert_eq!(nearest_zoom(9999), 250);
     assert_eq!(nearest_zoom(120), 115);
     assert_eq!(step_zoom(120, 1), 130);
+    let set: Settings = serde_json::from_str("{\"ui_zoom\":250}").unwrap();
+    assert_eq!(nearest_zoom(set.ui_zoom), 250, "a stored 250 % loads as it is");
 }
 
 #[test]

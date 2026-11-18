@@ -1510,9 +1510,10 @@ fn ctrl_equals_minus_and_zero_step_the_zoom_except_in_a_text_field() {
     f.press_with(Key::Equals, egui::Modifiers::COMMAND);
     f.press_with(Key::Equals, egui::Modifiers::COMMAND);
     f.press_with(Key::Equals, egui::Modifiers::COMMAND);
-    assert_eq!(f.l.settings.ui_zoom, 150, "the top step is the last one");
+    f.press_with(Key::Equals, egui::Modifiers::COMMAND);
+    assert_eq!(f.l.settings.ui_zoom, 250, "the top step is the last one");
     f.press_with(Key::Minus, egui::Modifiers::COMMAND);
-    assert_eq!(f.l.settings.ui_zoom, 130);
+    assert_eq!(f.l.settings.ui_zoom, 200);
     f.press_with(Key::Num0, egui::Modifiers::COMMAND);
     assert_eq!(f.l.settings.ui_zoom, 100);
     // The Rename dialog's name field has the keyboard.
