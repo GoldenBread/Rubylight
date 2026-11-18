@@ -98,9 +98,12 @@ public class GpuDriverSettings extends NightjarActivity {
             });
         });
         if (selected != null && !selected.description.isEmpty()) addText(content, selected.description);
-        if (GpuDriverStore.usedFallback(this)) addText(content, getString(R.string.gpu_driver_system_fallback));
+        String message = busy ? null : work.message.getValue();
+        String fallback = GpuDriverStore.usedFallback(this) ? getString(GpuDriverStore.fallbackSummary(this)) : null;
+        // The check that just ran may already say why the driver failed.
+        if (fallback != null && (message == null || !message.contains(fallback))) addText(content, fallback);
         if (busy) addText(content, getString(R.string.gpu_driver_working));
-        else if (work.message.getValue() != null) addText(content, work.message.getValue());
+        else if (message != null) addText(content, message);
 
         MaterialButton importButton = button(content, R.string.gpu_driver_import, com.google.android.material.R.attr.materialButtonStyle);
         importButton.setEnabled(supported && !busy);

@@ -4,6 +4,8 @@ import android.app.Application;
 import android.content.Context;
 import android.content.ContextWrapper;
 
+import com.limelight.R;
+
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -172,11 +174,11 @@ public class GpuDriverStoreTest {
         assertTrue(GpuDriverStore.beginUse(context, driver));
         assertEquals(driver.id, GpuDriverStore.selected(context).id);
         assertThrows(IOException.class, () -> GpuDriverStore.remove(context, driver));
-        GpuDriverStore.endUse(context, driver, true);
+        GpuDriverStore.endUse(context, driver, PyroWaveDecoderRenderer.DRIVER_NOT_LOADED);
         assertTrue(GpuDriverStore.usedFallback(context));
         assertEquals(driver.id, GpuDriverStore.selected(context).id);
         assertTrue(GpuDriverStore.beginUse(context, driver));
-        GpuDriverStore.endUse(context, driver, false);
+        GpuDriverStore.endUse(context, driver, 0);
         assertFalse(GpuDriverStore.usedFallback(context));
         context.getSharedPreferences("gpu-drivers", Context.MODE_PRIVATE).edit().putString("active", driver.id).commit();
         assertNull(GpuDriverStore.selected(context));
@@ -186,16 +188,43 @@ public class GpuDriverStoreTest {
         assertFalse(GpuDriverStore.usedFallback(context));
     }
 
+    // nightjar#116: the fallback notice names why the custom driver failed, until the next use or choice.
+    @Test
+    public void fallbackNoticeNamesTheFailureUntilTheDriverIsUsedAgain() throws Exception {
+        GpuDriverStore.Driver driver = install(packageFiles());
+        GpuDriverStore.select(context, driver);
+        assertTrue(GpuDriverStore.beginUse(context, driver));
+        GpuDriverStore.endUse(context, driver, PyroWaveDecoderRenderer.DRIVER_NO_GPU);
+        assertTrue(GpuDriverStore.usedFallback(context));
+        assertEquals(R.string.gpu_driver_failed_no_gpu, GpuDriverStore.fallbackSummary(context));
+        assertTrue(GpuDriverStore.beginUse(context, driver));
+        GpuDriverStore.endUse(context, driver, PyroWaveDecoderRenderer.DRIVER_STREAM_FAILED);
+        assertEquals(R.string.gpu_driver_failed_stream, GpuDriverStore.fallbackSummary(context));
+        // A new use that works clears the notice, and a later crash names no reason.
+        assertTrue(GpuDriverStore.beginUse(context, driver));
+        assertFalse(GpuDriverStore.usedFallback(context));
+        GpuDriverStore.endUse(context, driver, 0);
+        assertFalse(GpuDriverStore.usedFallback(context));
+        assertTrue(GpuDriverStore.beginUse(context, driver));
+        GpuDriverStore.endUse(context, driver, PyroWaveDecoderRenderer.DRIVER_NOT_LOADED);
+        context.getSharedPreferences("gpu-drivers", Context.MODE_PRIVATE).edit().putString("active", driver.id).commit();
+        assertNull(GpuDriverStore.selected(context));
+        assertEquals(R.string.gpu_driver_system_fallback, GpuDriverStore.fallbackSummary(context));
+        GpuDriverStore.select(context, driver);
+        assertFalse(GpuDriverStore.usedFallback(context));
+        assertEquals(R.string.gpu_driver_system_fallback, GpuDriverStore.fallbackSummary(context));
+    }
+
     @Test
     public void probeCompletionDoesNotClearAnActiveStreamsCrashMarker() throws Exception {
         GpuDriverStore.Driver driver = install(packageFiles());
         GpuDriverStore.select(context, driver);
         assertTrue(GpuDriverStore.beginUse(context, driver));
         assertTrue(GpuDriverStore.beginUse(context, driver));
-        GpuDriverStore.endUse(context, driver, false);
+        GpuDriverStore.endUse(context, driver, 0);
         assertEquals(driver.id, context.getSharedPreferences("gpu-drivers", Context.MODE_PRIVATE).getString("active", ""));
         assertThrows(IOException.class, () -> GpuDriverStore.remove(context, driver));
-        GpuDriverStore.endUse(context, driver, false);
+        GpuDriverStore.endUse(context, driver, 0);
         assertEquals("", context.getSharedPreferences("gpu-drivers", Context.MODE_PRIVATE).getString("active", ""));
         GpuDriverStore.remove(context, driver);
     }

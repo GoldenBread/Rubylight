@@ -57,6 +57,7 @@ typedef VkQueueGlobalPriorityKHR VkQueueGlobalPriority;
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <iterator>
@@ -122,6 +123,12 @@ namespace {
         MISSING_SWAPCHAIN = 7,
         MISSING_HDR = 8,
         PROBE_FAILED = 9,
+        // A custom driver's own failures, before any device check (device_path.h).
+        DRIVER_NOT_OPENED = PYRO_DRIVER_NOT_OPENED,
+        DRIVER_NOT_LOADED = PYRO_DRIVER_NOT_LOADED,
+        DRIVER_NOT_STARTED = PYRO_DRIVER_NOT_STARTED,
+        DRIVER_NO_GPU = PYRO_DRIVER_NO_GPU,
+        DRIVER_NOT_VULKAN = PYRO_DRIVER_NOT_VULKAN,
     };
 
     constexpr uint64_t ACQUIRE_TIMEOUT_NS = 250'000'000;
@@ -246,6 +253,9 @@ namespace {
         void *adrenotools = nullptr;
         void *library = nullptr;
         uint32_t loaded = 0;
+        // Why the driver did not load (the dynamic linker's message), for the app's log. Written
+        // while the loader first opens the driver, which readiness probes do under readinessMutex.
+        char error[512] = {};
     };
 
     CustomDriverLibrary *customDriverLibrary(const std::string &hooks, const std::string &directory,
@@ -263,9 +273,19 @@ namespace {
             driver->adrenotools = dlopen("libadrenotools.so", RTLD_NOW | RTLD_LOCAL);
             auto openDriver = driver->adrenotools == nullptr ? nullptr :
                 reinterpret_cast<decltype(&adrenotools_open_libvulkan)>(dlsym(driver->adrenotools, "adrenotools_open_libvulkan"));
-            if (openDriver != nullptr) {
+            if (driver->adrenotools == nullptr) {
+                const char *error = dlerror();
+                snprintf(driver->error, sizeof(driver->error), "libadrenotools.so: %s", error ? error : "not found");
+            } else if (openDriver == nullptr) {
+                snprintf(driver->error, sizeof(driver->error), "libadrenotools.so has no adrenotools_open_libvulkan");
+            } else {
                 driver->library = openDriver(RTLD_NOW | RTLD_LOCAL, ADRENOTOOLS_DRIVER_CUSTOM,
-                        nullptr, hooks.c_str(), directory.c_str(), name.c_str(), nullptr, nullptr, &driver->loaded);
+                        nullptr, hooks.c_str(), directory.c_str(), name.c_str(), nullptr, nullptr, &driver->loaded,
+                        driver->error, sizeof(driver->error));
+                if (driver->library == nullptr) {
+                    snprintf(driver->error, sizeof(driver->error),
+                             "adrenotools could not open the system Vulkan loader with its hooks");
+                }
             }
         }
         return driver.get();
@@ -276,6 +296,10 @@ namespace {
         return nullptr;
 #endif
     }
+
+    // Serialises readiness probes, and with them the first open of each custom driver, which
+    // writes its CustomDriverLibrary::error.
+    std::mutex readinessMutex;
 
     std::string jniString(JNIEnv *env, jstring value) {
         if (value == nullptr) return {};
@@ -327,8 +351,13 @@ namespace {
                    EnumerateInstanceExtensionProperties != nullptr;
         }
 
+        // The hook writes 1 once the custom driver loaded, 2 when it turned the library away.
         bool usingRequestedDriver() const {
-            return custom == nullptr || __atomic_load_n(&custom->loaded, __ATOMIC_ACQUIRE) != 0;
+            return custom == nullptr || __atomic_load_n(&custom->loaded, __ATOMIC_ACQUIRE) == 1;
+        }
+
+        bool customNotVulkan() const {
+            return custom != nullptr && __atomic_load_n(&custom->loaded, __ATOMIC_ACQUIRE) == 2;
         }
 
         bool loadInstance(VkInstance instance) {
@@ -4151,11 +4180,9 @@ namespace {
         }
     };
 
-    Readiness probeReadiness(bool tenBit, CustomDriverLibrary *custom) {
-        if (!apiVersionSupported()) {
-            return PROBE_FAILED;
-        }
-        VulkanLoader vk(custom);
+    // stage says how far the probe got (device_path.h), which names a custom driver's failure.
+    Readiness probeVulkan(bool tenBit, VulkanLoader &vk, PyroProbeStage &stage) {
+        stage = PYRO_STAGE_LOADER;
         if (!vk.loadGlobal()) {
             return NEEDS_VULKAN;
         }
@@ -4173,11 +4200,17 @@ namespace {
         for (const char *required : INSTANCE_EXTENSIONS) {
             if (std::none_of(extensions.begin(), extensions.end(), [required](const VkExtensionProperties &ext) {
                 return !strcmp(ext.extensionName, required);
-            })) return MISSING_SWAPCHAIN;
+            })) {
+                stage = PYRO_STAGE_CHECKED;
+                return MISSING_SWAPCHAIN;
+            }
         }
         if (tenBit && std::none_of(extensions.begin(), extensions.end(), [](const VkExtensionProperties &ext) {
             return !strcmp(ext.extensionName, VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
-        })) return MISSING_HDR;
+        })) {
+            stage = PYRO_STAGE_CHECKED;
+            return MISSING_HDR;
+        }
 
         VkApplicationInfo appInfo = {VK_STRUCTURE_TYPE_APPLICATION_INFO};
         appInfo.apiVersion = instanceApiVersion(loaderVersion);
@@ -4213,12 +4246,14 @@ namespace {
             return PROBE_FAILED;
         }
 
+        stage = PYRO_STAGE_DEVICES;
         Readiness readiness = PROBE_FAILED;
         uint32_t count = 0;
         if (vk.EnumeratePhysicalDevices(instance, &count, nullptr) == VK_SUCCESS && count > 0) {
             std::vector<VkPhysicalDevice> devices(count);
-            if (vk.EnumeratePhysicalDevices(instance, &count, devices.data()) == VK_SUCCESS) {
+            if (vk.EnumeratePhysicalDevices(instance, &count, devices.data()) == VK_SUCCESS && count > 0) {
                 devices.resize(count);
+                stage = PYRO_STAGE_CHECKED;
                 readiness = NEEDS_VULKAN;
                 for (auto device : devices) {
                     auto probe = probeFeatures(vk, device, tenBit, appInfo.apiVersion);
@@ -4233,7 +4268,26 @@ namespace {
             }
         }
         vk.DestroyInstance(instance, nullptr);
-        return vk.usingRequestedDriver() ? readiness : PROBE_FAILED;
+        return readiness;
+    }
+
+    Readiness probeReadiness(bool tenBit, CustomDriverLibrary *custom) {
+        if (!apiVersionSupported()) {
+            return PROBE_FAILED;
+        }
+        VulkanLoader vk(custom);
+        PyroProbeStage stage = PYRO_STAGE_LOADER;
+        const Readiness readiness = probeVulkan(tenBit, vk, stage);
+        if (custom == nullptr) return readiness;
+        // The hook falls back to the system driver when the custom one does not load: a probe of that
+        // must not pass for the custom driver, and a stop before any device check names its stage.
+        const auto result = static_cast<Readiness>(pyroCustomDriverReadiness(
+            custom->library != nullptr, vk.usingRequestedDriver(), vk.customNotVulkan(), stage, readiness));
+        if (result != READY) {
+            LOGW("Custom Vulkan driver PyroWave readiness: %d (probe %d, stage %d)%s%s", result, readiness, stage,
+                 custom->error[0] ? ": " : "", custom->error);
+        }
+        return result;
     }
 }  // namespace
 
@@ -4251,13 +4305,24 @@ Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeGetReadiness(JNIE
         customDriverLibrary(jniString(env, hooks), jniString(env, directory), jniString(env, name));
     if (directory != nullptr && custom == nullptr) return PROBE_FAILED;
     // Selection changes use a different immutable package and receive their own capability probe.
-    static std::mutex mutex;
     static std::map<std::pair<CustomDriverLibrary *, bool>, Readiness> results;
-    std::lock_guard<std::mutex> lock(mutex);
+    std::lock_guard<std::mutex> lock(readinessMutex);
     auto key = std::make_pair(custom, tenBit != 0);
     auto found = results.find(key);
     if (found == results.end()) found = results.emplace(key, probeReadiness(tenBit != 0, custom)).first;
     return found->second;
+}
+
+// Why the custom driver in directory did not load (the dynamic linker's message), or null when it
+// loaded or was not tried. Read after nativeGetReadiness, whose probe opens the driver first.
+JNIEXPORT jstring JNICALL
+Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeGetCustomDriverError(JNIEnv *env, jclass, jstring hooks,
+                                                                                    jstring directory, jstring name) {
+    if (directory == nullptr) return nullptr;
+    CustomDriverLibrary *custom = customDriverLibrary(jniString(env, hooks), jniString(env, directory), jniString(env, name));
+    if (custom == nullptr) return nullptr;
+    std::lock_guard<std::mutex> lock(readinessMutex);
+    return custom->error[0] ? env->NewStringUTF(custom->error) : nullptr;
 }
 
 JNIEXPORT jlong JNICALL

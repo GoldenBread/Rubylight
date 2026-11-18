@@ -16,7 +16,7 @@
 #include <adrenotools/driver.h>
 #include <unistd.h>
 
-void *adrenotools_open_libvulkan(int dlopenFlags, int featureFlags, const char *tmpLibDir, const char *hookLibDir, const char *customDriverDir, const char *customDriverName, const char *fileRedirectDir, void **userMappingHandle, uint32_t *customDriverLoaded) {
+void *adrenotools_open_libvulkan(int dlopenFlags, int featureFlags, const char *tmpLibDir, const char *hookLibDir, const char *customDriverDir, const char *customDriverName, const char *fileRedirectDir, void **userMappingHandle, uint32_t *customDriverLoaded, char *customDriverError, size_t customDriverErrorSize) {
     // Bail out if linkernsbypass failed to load, this probably means we're on api < 28
     if (!linkernsbypass_load_status())
         return nullptr;
@@ -84,7 +84,7 @@ void *adrenotools_open_libvulkan(int dlopenFlags, int featureFlags, const char *
         }
     }()};
 
-    initHookParam(new HookImplParams(featureFlags, tmpLibDir, hookLibDir, customDriverDir, customDriverName, fileRedirectDir, importMapping, customDriverLoaded));
+    initHookParam(new HookImplParams(featureFlags, tmpLibDir, hookLibDir, customDriverDir, customDriverName, fileRedirectDir, importMapping, customDriverLoaded, customDriverError, customDriverErrorSize));
 
     // Load the libvulkan hook into the isolated namespace
     if (!linkernsbypass_namespace_dlopen("libmain_hook.so", RTLD_GLOBAL, hookNs))

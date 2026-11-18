@@ -12,4 +12,12 @@
     <string name="gpu_driver_imported">已导入并选择：%1$s</string>
     <string name="gpu_driver_working">正在检查驱动…</string>
     <string name="gpu_driver_error">驱动操作失败：%1$s</string>
+    <string name="gpu_driver_failed_open">自定义驱动失败：Android 不允许 Nightjar 加载它。现正使用系统 GPU 驱动。</string>
+    <string name="gpu_driver_failed_load">自定义驱动失败：其库文件无法在此手机上加载，通常是因为它需要此 Android 版本缺少的库。现正使用系统 GPU 驱动。</string>
+    <string name="gpu_driver_failed_start">自定义驱动失败：已加载，但未能在此手机上启动 Vulkan。现正使用系统 GPU 驱动。</string>
+    <string name="gpu_driver_failed_no_gpu">自定义驱动失败：已加载，但在此手机上找不到它支持的 GPU。现正使用系统 GPU 驱动。</string>
+    <string name="gpu_driver_failed_not_vulkan">自定义驱动失败：其库文件不是 Android Vulkan 驱动，可能是为其他系统构建的。现正使用系统 GPU 驱动。</string>
+    <string name="gpu_driver_failed_features">自定义驱动失败：可在此 GPU 上运行，但缺少 PyroWave 所需的功能。现正使用系统 GPU 驱动。</string>
+    <string name="gpu_driver_failed_hdr">自定义驱动失败：它没有供 PyroWave 使用的 HDR 输出。现正使用系统 GPU 驱动；SDR 串流仍可使用自定义驱动。</string>
+    <string name="gpu_driver_failed_stream">自定义驱动失败：已通过检查，但未能启动串流。现正使用系统 GPU 驱动。</string>
 </resources>

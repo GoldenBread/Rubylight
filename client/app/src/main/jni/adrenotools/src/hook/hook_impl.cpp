@@ -35,6 +35,13 @@ __attribute__((visibility("default"))) void init_gsl(void *alloc, void *alloc64,
     gsl_memory_free_pure_sym = reinterpret_cast<gsl_memory_free_pure_t>(free);
 }
 
+// Nightjar: keeps why the custom driver did not load, for the app's notice.
+static void record_custom_driver_error(const char *error) {
+    if ((hook_params->featureFlags & ADRENOTOOLS_DRIVER_CUSTOM) && hook_params->customDriverError &&
+        hook_params->customDriverErrorSize)
+        snprintf(hook_params->customDriverError, hook_params->customDriverErrorSize, "%s", error ? error : "unknown error");
+}
+
 __attribute__((visibility("default"))) void *hook_android_dlopen_ext(const char *filename, int flags, const android_dlextinfo *extinfo) {
     auto fallback{[&]() {
         LOGI("hook_android_dlopen_ext: falling back!");
@@ -49,6 +56,7 @@ __attribute__((visibility("default"))) void *hook_android_dlopen_ext(const char 
 
     if (extinfo->library_namespace == nullptr || !(extinfo->flags & ANDROID_DLEXT_USE_NAMESPACE)) {
         LOGI("hook_android_dlopen_ext: hook failed: namespace not supplied!");
+        record_custom_driver_error("the system loader gave no driver namespace");
         return fallback();
     }
 
@@ -58,6 +66,7 @@ __attribute__((visibility("default"))) void *hook_android_dlopen_ext(const char 
                                            nullptr, extinfo->library_namespace)};
     if (!driverNs) {
         LOGI("hook_android_dlopen_ext: hook failed: namespace not supplied!");
+        record_custom_driver_error("the driver namespace could not be created");
         return fallback();
     }
 
@@ -67,13 +76,17 @@ __attribute__((visibility("default"))) void *hook_android_dlopen_ext(const char 
     // Preload ourself, a new instance will be created since we have different linker ancestory
     // If we don't preload we get a weird issue where despite being in NEEDED of the hook lib the hook's symbols will overwrite ours and cause an infinite loop
     auto hookImpl{linkernsbypass_namespace_dlopen("libhook_impl.so", RTLD_NOW, driverNs)};
-    if (!hookImpl)
+    if (!hookImpl) {
+        record_custom_driver_error("the hook could not load itself into the driver namespace");
         return nullptr;
+    }
 
     // Pass parameters to ourself
     auto initHookParam{reinterpret_cast<void (*)(const void *)>(dlsym(hookImpl, "init_hook_param"))};
-    if (!initHookParam)
+    if (!initHookParam) {
+        record_custom_driver_error("the hook in the driver namespace has no init_hook_param");
         return nullptr;
+    }
 
     initHookParam(hook_params);
 
@@ -128,7 +141,20 @@ __attribute__((visibility("default"))) void *hook_android_dlopen_ext(const char 
         LOGI("hook_android_dlopen_ext: loading custom driver: %s%s", hook_params->customDriverDir.c_str(), hook_params->customDriverName.c_str());
         void *handle{android_dlopen_ext(hook_params->customDriverName.c_str(), flags, &newExtinfo)};
         if (!handle) {
-            LOGI("hook_android_dlopen_ext: hook failed: failed to load custom driver: %s!", dlerror());
+            const char *error{dlerror()};
+            LOGI("hook_android_dlopen_ext: hook failed: failed to load custom driver: %s!", error);
+            record_custom_driver_error(error);
+            return fallback();
+        }
+
+        // Nightjar: Android's loader opens a Vulkan driver through its HAL module symbol. Without
+        // it the loader quietly uses a stub with no GPUs, so name the wrong build here instead.
+        if (!dlsym(handle, "HMI")) {
+            LOGI("hook_android_dlopen_ext: hook failed: custom driver has no HMI symbol!");
+            record_custom_driver_error("the library has no HMI symbol, so it is not built as an Android Vulkan driver");
+            dlclose(handle);
+            if (hook_params->customDriverLoaded)
+                __atomic_store_n(hook_params->customDriverLoaded, 2U, __ATOMIC_RELEASE);
             return fallback();
         }
 

@@ -11,4 +11,12 @@
     <string name="gpu_driver_imported">Imported and selected: %1$s</string>
     <string name="gpu_driver_working">Checking the driver…</string>
     <string name="gpu_driver_error">Driver operation failed: %1$s</string>
+    <string name="gpu_driver_failed_open">Custom driver failed: Android did not let Nightjar load it. Using the system GPU driver.</string>
+    <string name="gpu_driver_failed_load">Custom driver failed: its library did not load on this phone, often because it needs a library this Android version lacks. Using the system GPU driver.</string>
+    <string name="gpu_driver_failed_start">Custom driver failed: it loaded but did not start Vulkan on this phone. Using the system GPU driver.</string>
+    <string name="gpu_driver_failed_no_gpu">Custom driver failed: it loaded but found no GPU it supports on this phone. Using the system GPU driver.</string>
+    <string name="gpu_driver_failed_not_vulkan">Custom driver failed: its library is not an Android Vulkan driver, so it may be built for another system. Using the system GPU driver.</string>
+    <string name="gpu_driver_failed_features">Custom driver failed: it runs on this GPU but lacks features PyroWave needs. Using the system GPU driver.</string>
+    <string name="gpu_driver_failed_hdr">Custom driver failed: it has no HDR output for PyroWave. Using the system GPU driver; an SDR stream can still use the custom driver.</string>
+    <string name="gpu_driver_failed_stream">Custom driver failed: it passed its check but did not start the stream. Using the system GPU driver.</string>
 </resources>

@@ -73,20 +73,85 @@ public final class PyroWaveDecoderRenderer {
         int app = appReadiness();
         if (app != 0) return app;
         GpuDriverStore.Driver driver = GpuDriverStore.isSupported() ? GpuDriverStore.selected(context) : null;
-        if (driver != null && GpuDriverStore.beginUse(context, driver)) {
-            int result = nativeGetReadiness(hdr, context.getApplicationInfo().nativeLibraryDir,
-                    driver.directory.getAbsolutePath() + File.separator, driver.libraryName);
-            GpuDriverStore.endUse(context, driver, result != 0);
-            if (result == 0) return 0;
-            LimeLog.warning("Custom GPU driver cannot decode PyroWave; checking the system driver");
-        }
+        if (driver != null && customDriverReadiness(context, driver, hdr) == 0) return 0;
         return nativeGetReadiness(hdr, null, null, null);
+    }
+
+    // Native codes a custom driver fails with before any device check (device_path.h), and the
+    // stream's own failure after its check passed.
+    static final int DRIVER_NOT_OPENED = 10;
+    static final int DRIVER_NOT_LOADED = 11;
+    static final int DRIVER_NOT_STARTED = 12;
+    static final int DRIVER_NO_GPU = 13;
+    static final int DRIVER_NOT_VULKAN = 14;
+    static final int DRIVER_STREAM_FAILED = 100;
+    private static final int PROBE_FAILED = 9;
+    private static final Object DRIVER_LOG_LOCK = new Object();
+    private static String loggedDriverFailure;
+
+    /**
+     * The custom driver's own readiness, 0 when it can decode PyroWave, else why not. The native side
+     * checks each driver once per process and format; a failure is recorded for the fallback notice
+     * and logged once with the dynamic linker's message when the driver did not load.
+     */
+    private static int customDriverReadiness(Context context, GpuDriverStore.Driver driver, boolean hdr) {
+        if (!GpuDriverStore.beginUse(context, driver)) {
+            LimeLog.warning("Custom GPU driver skipped: its in-use marker could not be saved");
+            return PROBE_FAILED;
+        }
+        String hooks = context.getApplicationInfo().nativeLibraryDir;
+        String directory = driver.directory.getAbsolutePath() + File.separator;
+        int result = nativeGetReadiness(hdr, hooks, directory, driver.libraryName);
+        GpuDriverStore.endUse(context, driver, result);
+        if (result != 0) {
+            String error = nativeGetCustomDriverError(hooks, directory, driver.libraryName);
+            String failure = customDriverFailureLog(result, error);
+            String key = driver.id + ' ' + hdr + ' ' + failure;
+            boolean log;
+            synchronized (DRIVER_LOG_LOCK) {
+                log = !key.equals(loggedDriverFailure);
+                loggedDriverFailure = key;
+            }
+            if (log) LimeLog.warning("Custom GPU driver cannot decode PyroWave: " + failure + "; checking the system driver");
+        }
+        return result;
+    }
+
+    /** What a custom driver's failure code means, in English for the log. error is the linker's message, if any. */
+    static String customDriverFailureLog(int reason, String error) {
+        String text;
+        switch (reason) {
+            case DRIVER_NOT_OPENED: text = "Android did not open the Vulkan loader with the driver hooks"; break;
+            case DRIVER_NOT_LOADED: text = "its library did not load"; break;
+            case DRIVER_NOT_STARTED: text = "its library loaded but Vulkan did not start on it"; break;
+            case DRIVER_NO_GPU: text = "Vulkan started on it but it listed no GPU"; break;
+            case DRIVER_NOT_VULKAN: text = "its library is not an Android Vulkan driver"; break;
+            case DRIVER_STREAM_FAILED: text = "the stream's renderer did not start on it"; break;
+            default: text = "a GPU check failed (reason " + reason + ")"; break;
+        }
+        return error == null || error.isEmpty() ? text : text + " (" + error + ")";
+    }
+
+    /** The notice for a custom driver that failed with reason, after which the system driver is used. */
+    static int customDriverFailureSummary(int reason) {
+        switch (reason) {
+            case DRIVER_NOT_OPENED: return R.string.gpu_driver_failed_open;
+            case DRIVER_NOT_LOADED: return R.string.gpu_driver_failed_load;
+            case DRIVER_NOT_STARTED: return R.string.gpu_driver_failed_start;
+            case DRIVER_NO_GPU: return R.string.gpu_driver_failed_no_gpu;
+            case DRIVER_NOT_VULKAN: return R.string.gpu_driver_failed_not_vulkan;
+            case DRIVER_STREAM_FAILED: return R.string.gpu_driver_failed_stream;
+            case 8: return R.string.gpu_driver_failed_hdr;
+            case 1: case 2: case 3: case 4: case 5: case 6: case 7:
+                return R.string.gpu_driver_failed_features;
+            default: return R.string.gpu_driver_system_fallback;
+        }
     }
 
     public static int getReadinessSummary(Context context, boolean hdr) {
         int readiness = getReadiness(context, hdr);
         if (readiness == 0) {
-            return GpuDriverStore.usedFallback(context) ? R.string.gpu_driver_system_fallback : R.string.pyrowave_ready;
+            return GpuDriverStore.usedFallback(context) ? GpuDriverStore.fallbackSummary(context) : R.string.pyrowave_ready;
         }
         return failureSummary(readiness);
     }
@@ -172,7 +237,15 @@ public final class PyroWaveDecoderRenderer {
         driverContext = context.getApplicationContext();
         customDriver = GpuDriverStore.isSupported() ? GpuDriverStore.selected(context) : null;
         boolean requestedCustom = customDriver != null;
-        for (int attempt = 0; attempt < (requestedCustom ? 2 : 1); attempt++) {
+        int driverFailure = 0;
+        // A driver that failed its check would fail here too: go straight to the system driver.
+        if (customDriver != null) {
+            driverFailure = customDriverReadiness(context, customDriver,
+                    (format & MoonBridge.VIDEO_FORMAT_MASK_10BIT) != 0);
+            if (driverFailure != 0) customDriver = null;
+        }
+        int attempts = customDriver != null ? 2 : 1;
+        for (int attempt = 0; attempt < attempts; attempt++) {
             if (customDriver != null && !GpuDriverStore.beginUse(context, customDriver)) customDriver = null;
             try {
                 handle = nativeCreate(surface, width, height, fps, displayRefreshRate, topRefreshRate, pacingMode,
@@ -187,13 +260,15 @@ public final class PyroWaveDecoderRenderer {
             }
             if (handle != 0) break;
             if (customDriver != null) {
-                GpuDriverStore.endUse(context, customDriver, true);
+                GpuDriverStore.endUse(context, customDriver, DRIVER_STREAM_FAILED);
                 customDriver = null;
+                driverFailure = DRIVER_STREAM_FAILED;
                 LimeLog.warning("Custom GPU driver initialization failed; retrying the system driver");
             }
         }
         driverStatus = customDriver != null ? customDriver.name : context.getString(
-                requestedCustom || GpuDriverStore.usedFallback(context) ? R.string.gpu_driver_system_fallback : R.string.gpu_driver_system);
+                requestedCustom ? customDriverFailureSummary(driverFailure) :
+                GpuDriverStore.usedFallback(context) ? GpuDriverStore.fallbackSummary(context) : R.string.gpu_driver_system);
         this.format = handle != 0 ? format : 0;
         setMaxClocks(context, handle != 0 && maxClocks && hasAdrenoGpu());
         return handle != 0;
@@ -465,7 +540,7 @@ public final class PyroWaveDecoderRenderer {
             if (renderer != 0) nativeDestroy(renderer, stats);
         } finally {
             if (customDriver != null) {
-                GpuDriverStore.endUse(driverContext, customDriver, false);
+                GpuDriverStore.endUse(driverContext, customDriver, 0);
                 customDriver = null;
             }
             driverContext = null;
@@ -484,6 +559,7 @@ public final class PyroWaveDecoderRenderer {
 
     private static native int nativeGetHdrSurfaceFailure();
     private static native int nativeGetReadiness(boolean hdr, String hooks, String directory, String name);
+    private static native String nativeGetCustomDriverError(String hooks, String directory, String name);
     private static native long nativeCreate(Surface surface, int width, int height, int fps, float displayRefreshRate,
                                            float topRefreshRate, int pacingMode,
                                            boolean chroma444, boolean tenBit, boolean fullRange, boolean stretch,

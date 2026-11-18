@@ -12,4 +12,12 @@
     <string name="gpu_driver_imported">インポートして選択しました: %1$s</string>
     <string name="gpu_driver_working">ドライバを確認しています…</string>
     <string name="gpu_driver_error">ドライバの操作に失敗しました: %1$s</string>
+    <string name="gpu_driver_failed_open">カスタムドライバを使用できません: Android が Nightjar による読み込みを許可しませんでした。システムの GPU ドライバを使用しています。</string>
+    <string name="gpu_driver_failed_load">カスタムドライバを使用できません: この端末でライブラリを読み込めませんでした。多くの場合、この Android バージョンにないライブラリが必要なためです。システムの GPU ドライバを使用しています。</string>
+    <string name="gpu_driver_failed_start">カスタムドライバを使用できません: 読み込みはできましたが、この端末で Vulkan を開始できませんでした。システムの GPU ドライバを使用しています。</string>
+    <string name="gpu_driver_failed_no_gpu">カスタムドライバを使用できません: 読み込みはできましたが、この端末で対応する GPU が見つかりませんでした。システムの GPU ドライバを使用しています。</string>
+    <string name="gpu_driver_failed_not_vulkan">カスタムドライバを使用できません: ライブラリが Android 用の Vulkan ドライバではありません。別のシステム向けにビルドされている可能性があります。システムの GPU ドライバを使用しています。</string>
+    <string name="gpu_driver_failed_features">カスタムドライバを使用できません: この GPU で動作しますが、 PyroWave に必要な機能がありません。システムの GPU ドライバを使用しています。</string>
+    <string name="gpu_driver_failed_hdr">カスタムドライバを使用できません: PyroWave 用の HDR 出力がありません。システムの GPU ドライバを使用しています。SDR のストリームではカスタムドライバを引き続き使用できます。</string>
+    <string name="gpu_driver_failed_stream">カスタムドライバを使用できません: チェックは通過しましたが、ストリームを開始できませんでした。システムの GPU ドライバを使用しています。</string>
 </resources>

@@ -8,6 +8,7 @@ extern "C" {
 #endif
 
 #include <stdbool.h>
+#include <stddef.h>
 #include "priv.h"
 
 /**
@@ -28,8 +29,11 @@ extern "C" {
  * @param fileRedirectDir The directory which to redirect all file accesses performed by the driver to. Only used if ADRENOTOOLS_DRIVER_FILE_REDIRECT is set in `featureFlags`
  * @param userMappingHandle A pointer to a void* which will be set to the mapping handle if ADRENOTOOLS_DRIVER_GPU_MAPPING_IMPORT is set in `featureFlags`
  */
-// Nightjar: the optional result stays alive with the loader and is written atomically by its hook.
-void *adrenotools_open_libvulkan(int dlopenMode, int featureFlags, const char *tmpLibDir, const char *hookLibDir, const char *customDriverDir, const char *customDriverName, const char *fileRedirectDir, void **userMappingHandle, uint32_t *customDriverLoaded);
+// Nightjar: the optional result stays alive with the loader and is written atomically by its hook:
+// 1 when the custom driver loaded, 2 when its library opened but is not an Android Vulkan driver.
+// customDriverError, when not null, receives why the hook could not load the custom driver (the
+// dynamic linker's message), as a terminated string of at most customDriverErrorSize bytes.
+void *adrenotools_open_libvulkan(int dlopenMode, int featureFlags, const char *tmpLibDir, const char *hookLibDir, const char *customDriverDir, const char *customDriverName, const char *fileRedirectDir, void **userMappingHandle, uint32_t *customDriverLoaded, char *customDriverError, size_t customDriverErrorSize);
 
 /**
  * @brief Imports the given CPU mapped memory range into the GSL allocator. This should then be followed by a call to vkAllocateMemory with a matching size which will return a VkDeviceMemory view over the input region

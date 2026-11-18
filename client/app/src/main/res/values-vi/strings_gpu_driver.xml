@@ -12,4 +12,12 @@
     <string name="gpu_driver_imported">Đã nhập và chọn: %1$s</string>
     <string name="gpu_driver_working">Đang kiểm tra driver…</string>
     <string name="gpu_driver_error">Thao tác với driver thất bại: %1$s</string>
+    <string name="gpu_driver_failed_open">Trình điều khiển tùy chỉnh lỗi: Android không cho Nightjar tải nó. Đang dùng trình điều khiển GPU hệ thống.</string>
+    <string name="gpu_driver_failed_load">Trình điều khiển tùy chỉnh lỗi: thư viện của nó không tải được trên điện thoại này, thường vì nó cần một thư viện mà phiên bản Android này không có. Đang dùng trình điều khiển GPU hệ thống.</string>
+    <string name="gpu_driver_failed_start">Trình điều khiển tùy chỉnh lỗi: đã tải nhưng không khởi động được Vulkan trên điện thoại này. Đang dùng trình điều khiển GPU hệ thống.</string>
+    <string name="gpu_driver_failed_no_gpu">Trình điều khiển tùy chỉnh lỗi: đã tải nhưng không tìm thấy GPU nào được hỗ trợ trên điện thoại này. Đang dùng trình điều khiển GPU hệ thống.</string>
+    <string name="gpu_driver_failed_not_vulkan">Trình điều khiển tùy chỉnh lỗi: thư viện của nó không phải trình điều khiển Vulkan cho Android, có thể được dựng cho hệ thống khác. Đang dùng trình điều khiển GPU hệ thống.</string>
+    <string name="gpu_driver_failed_features">Trình điều khiển tùy chỉnh lỗi: chạy được trên GPU này nhưng thiếu tính năng PyroWave cần. Đang dùng trình điều khiển GPU hệ thống.</string>
+    <string name="gpu_driver_failed_hdr">Trình điều khiển tùy chỉnh lỗi: không có đầu ra HDR cho PyroWave. Đang dùng trình điều khiển GPU hệ thống; luồng SDR vẫn có thể dùng trình điều khiển tùy chỉnh.</string>
+    <string name="gpu_driver_failed_stream">Trình điều khiển tùy chỉnh lỗi: đã qua bước kiểm tra nhưng không khởi động được luồng. Đang dùng trình điều khiển GPU hệ thống.</string>
 </resources>

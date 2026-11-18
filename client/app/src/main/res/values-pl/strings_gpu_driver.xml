@@ -12,4 +12,12 @@
     <string name="gpu_driver_imported">Zaimportowano i wybrano: %1$s</string>
     <string name="gpu_driver_working">Sprawdzanie sterownika…</string>
     <string name="gpu_driver_error">Operacja na sterowniku nie powiodła się: %1$s</string>
+    <string name="gpu_driver_failed_open">Własny sterownik zawiódł: Android nie pozwolił Nightjar go wczytać. Używany jest systemowy sterownik GPU.</string>
+    <string name="gpu_driver_failed_load">Własny sterownik zawiódł: jego biblioteka nie wczytała się na tym telefonie, często dlatego, że potrzebuje biblioteki, której brakuje w tej wersji Androida. Używany jest systemowy sterownik GPU.</string>
+    <string name="gpu_driver_failed_start">Własny sterownik zawiódł: wczytał się, ale nie uruchomił Vulkana na tym telefonie. Używany jest systemowy sterownik GPU.</string>
+    <string name="gpu_driver_failed_no_gpu">Własny sterownik zawiódł: wczytał się, ale nie znalazł na tym telefonie obsługiwanego GPU. Używany jest systemowy sterownik GPU.</string>
+    <string name="gpu_driver_failed_not_vulkan">Własny sterownik zawiódł: jego biblioteka nie jest sterownikiem Vulkan dla Androida i może być zbudowana dla innego systemu. Używany jest systemowy sterownik GPU.</string>
+    <string name="gpu_driver_failed_features">Własny sterownik zawiódł: działa na tym GPU, ale brakuje mu funkcji potrzebnych PyroWave. Używany jest systemowy sterownik GPU.</string>
+    <string name="gpu_driver_failed_hdr">Własny sterownik zawiódł: nie ma wyjścia HDR dla PyroWave. Używany jest systemowy sterownik GPU; stream SDR nadal może używać własnego sterownika.</string>
+    <string name="gpu_driver_failed_stream">Własny sterownik zawiódł: przeszedł sprawdzenie, ale nie uruchomił streamu. Używany jest systemowy sterownik GPU.</string>
 </resources>
