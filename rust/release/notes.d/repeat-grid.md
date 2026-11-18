@@ -1,1 +1,1 @@
-A still desktop with constant-rate capture, or the still-picture resend, now keeps the full stream frame rate (180 instead of about 170 on a 180 fps stream).
+- **A still desktop keeps the full frame rate.** With constant-rate capture, or the still-picture resend, a desktop where nothing moves now holds the stream frame rate (180 instead of about 170 on a 180 fps stream).
