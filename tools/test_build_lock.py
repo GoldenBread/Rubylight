@@ -187,5 +187,180 @@ throw 'synthetic failure'
                 self.assertFalse(self.lock.exists())
 
 
+def kill_tree(child):
+    """The wrapper and the command it started (which outlives a killed wrapper)."""
+    if child.poll() is None and os.name == 'nt':
+        subprocess.run(['taskkill', '/PID', str(child.pid), '/T', '/F'], capture_output=True)
+    if child.poll() is None:
+        child.kill()
+    child.wait(timeout=15)
+
+
+HOLD = 'import pathlib,sys,time; pathlib.Path(sys.argv[1]).touch(); time.sleep(float(sys.argv[2]))'
+
+
+class Lanes(unittest.TestCase):
+    """Per-stage lanes: stages of different kinds run side by side, BUILD-LOCK stays exclusive."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = pathlib.Path(temp.name)
+        self.environment = mock.patch.dict(os.environ, {build_lock.CARGO_SLOTS_ENV: '1'})
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
+        for name in (build_lock.OWNER_ENV, build_lock.PATH_ENV, build_lock.LANES_ENV, build_lock.POOL_ENV,
+                     build_lock.GRADLE_ENV, 'RUBYLIGHT_LOCK_DIRECTORY'):
+            os.environ.pop(name, None)
+        self.children = []
+
+    def tearDown(self):
+        for child in self.children:
+            kill_tree(child)
+
+    def hold(self, lane, name, seconds=30, directory=None):
+        """A separate process holding a lane until it is killed; returns once it holds it."""
+        marker = self.root / f'{name}.held'
+        command = [sys.executable, build_lock.__file__, '--lock-directory', str(directory or self.root), '--timeout', '10',
+                   *(['--lane', lane] if lane else []), '--', sys.executable, '-c', HOLD, str(marker), str(seconds)]
+        output = self.root / f'{name}.out'
+        with output.open('w') as out:
+            child = subprocess.Popen(command, stdout=out, stderr=subprocess.STDOUT)
+        self.children.append(child)
+        deadline = time.monotonic() + 15
+        while not marker.exists():
+            self.assertIsNone(child.poll(), output.read_text() if child.poll() is not None else '')
+            self.assertLess(time.monotonic(), deadline, 'the holder never started')
+            time.sleep(.05)
+        return child
+
+    def lease(self, *lanes, timeout=0):
+        groups = [g for lane in lanes for g in build_lock.LANE_GROUPS[lane](self.root)]
+        return build_lock.StageLease(groups, self.root, 'test', timeout, poll=.05, say=lambda *a, **k: None)
+
+    def test_slots_follow_threads_and_memory(self):
+        os.environ.pop(build_lock.CARGO_SLOTS_ENV)
+        # This PC: 16 threads, 64 GB. The laptop: 16 threads, 31 GB.
+        self.assertEqual(build_lock.cargo_slots(16, 63.9), 4)
+        self.assertEqual(build_lock.cargo_slots(16, 31.3), 2)
+        self.assertEqual(build_lock.cargo_slots(4, 8), 1)
+        os.environ[build_lock.CARGO_SLOTS_ENV] = '3'
+        self.assertEqual(build_lock.cargo_slots(16, 8), 3)
+
+    def test_stages_of_different_kinds_run_side_by_side(self):
+        self.hold('cargo', 'host')
+        with self.lease('gradle') as gradle, self.lease('web') as web:
+            self.assertEqual(set(gradle.taken), {'gradle'})
+            self.assertEqual(set(web.taken), {'web'})
+        with self.assertRaisesRegex(TimeoutError, 'cargo slots busy: build'):
+            with self.lease('cargo'):
+                pass
+
+    def test_cargo_slots_count(self):
+        os.environ[build_lock.CARGO_SLOTS_ENV] = '2'
+        with self.lease('cargo') as first, self.lease('cargo') as second:
+            self.assertNotEqual(first.taken['cargo'].path, second.taken['cargo'].path)
+            with self.assertRaises(TimeoutError):
+                with self.lease('cargo'):
+                    pass
+
+    def test_a_killed_stage_gives_its_lane_back(self):
+        holder = self.hold('cargo', 'host')
+        kill_tree(holder)
+        with self.lease('cargo', timeout=5) as lease:
+            self.assertTrue(lease.taken['cargo'].path.exists())
+
+    def test_a_stage_waits_while_build_lock_is_held_and_takes_no_lane(self):
+        self.hold(None, 'exclusive')
+        with self.assertRaisesRegex(TimeoutError, 'BUILD-LOCK: build'):
+            with self.lease('web', timeout=.3):
+                pass
+        self.assertFalse(build_lock.HandleSlot(self.root / 'lanes/web-1.lock').busy())
+
+    def test_a_stage_waits_for_a_live_release_priority(self):
+        (self.root / 'PRIORITY').write_text(f'release pid={os.getpid()}')
+        with self.assertRaisesRegex(TimeoutError, 'release priority'):
+            with self.lease('web', timeout=.2):
+                pass
+
+    def test_build_lock_waits_until_the_stages_are_done(self):
+        stage = self.hold('cargo', 'stage', seconds=1.5)
+        started = time.monotonic()
+        with build_lock.BuildLock(self.root, timeout=15, poll=.05):
+            self.assertGreater(time.monotonic() - started, .5)
+            self.assertFalse(build_lock.HandleSlot(self.root / 'lanes/cargo-1.lock').busy())
+        self.assertEqual(stage.wait(timeout=15), 0)
+
+    def test_build_lock_gives_up_without_removing_a_stage_lane(self):
+        self.hold('gradle', 'gradle')
+        result = subprocess.run([sys.executable, build_lock.__file__, '--lock-directory', str(self.root), '--timeout', '0.5',
+                                 '--', sys.executable, '-c', 'raise SystemExit("must not run")'],
+                                capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('stages still running', result.stderr)
+        self.assertFalse((self.root / 'BUILD-LOCK').exists())
+        self.assertTrue((self.root / 'gradle-lane/BUILD-LOCK').exists())
+
+    def test_an_exclusive_owner_inside_a_stage_does_not_wait_for_its_own_lanes(self):
+        with self.lease('cargo'):
+            result = subprocess.run([sys.executable, build_lock.__file__, '--lock-directory', str(self.root),
+                                     '--timeout', '2', '--', sys.executable, '-c', 'pass'],
+                                    capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_the_gradle_lane_is_the_one_gradle_callers_take(self):
+        # `build_lock.py --lock-directory <gradle lane> -- gradlew ...` outside the dev check.
+        lane = self.root / 'gradle-lane'
+        manual = self.hold(None, 'manual', directory=lane)
+        with self.assertRaisesRegex(TimeoutError, 'gradle slots busy: build'):
+            with self.lease('gradle'):
+                pass
+        kill_tree(manual)
+        (lane / 'BUILD-LOCK').unlink()  # what a person does after checking the killed owner
+        with self.lease('gradle'):
+            self.assertIn('test', (lane / 'BUILD-LOCK').read_text())
+
+    def test_private_locks_keep_the_pool_and_gradle_lane_beside_them(self):
+        self.assertEqual(build_lock.pool_directory(self.root), self.root.resolve() / 'target-pool')
+        self.assertEqual(build_lock.gradle_lane(self.root), self.root.resolve() / 'gradle-lane')
+        self.assertEqual(build_lock.pool_directory(build_lock.DEFAULT_DIRECTORY), build_lock.DEFAULT_POOL)
+
+    def test_rl_quick_slots_and_python_slots_exclude_each_other(self):
+        pool = self.root / 'pool'
+        slot = build_lock.HandleSlot(pool / '1.lock')
+        self.assertTrue(slot.try_take('python'))
+        try:
+            other = build_lock.HandleSlot(pool / '1.lock')
+            self.assertFalse(other.try_take('other'))
+            if shutil.which('pwsh'):
+                # As C:\src\rl-env.ps1's Enter-RlSlot opens it.
+                script = f"try {{ [IO.File]::Open('{pool / '1.lock'}', 'OpenOrCreate', 'ReadWrite', 'None').Dispose(); 'free' }} catch {{ 'held' }}"
+                out = subprocess.run(['pwsh', '-NoProfile', '-Command', script], capture_output=True, text=True, timeout=20)
+                self.assertEqual(out.stdout.strip(), 'held')
+        finally:
+            slot.release()
+        self.assertFalse(build_lock.HandleSlot(pool / '1.lock').busy())
+
+    @unittest.skipUnless(shutil.which('pwsh'), 'PowerShell 7')
+    def test_build_ps1_lease_waits_for_the_stages(self):
+        driver = self.root / 'lease.ps1'
+        driver.write_text("""param([string]$Locks)
+$ErrorActionPreference = 'Stop'
+. $env:CHECK_STREAMS
+Initialize-CheckLocks $Locks
+$CheckBuildDeadline = 1
+$held = Enter-CheckBuildLock -RespectPriority
+try { 'acquired' } finally { Exit-CheckLocks $held -NoPause }
+""")
+        env = dict(os.environ, CHECK_STREAMS=str(pathlib.Path(__file__).resolve().parents[1] / 'rust/release/check_streams.ps1'))
+        self.hold('cargo', 'stage')
+        child = subprocess.run(['pwsh', '-NoProfile', '-File', str(driver), '-Locks', str(self.root)],
+                               capture_output=True, text=True, env=env, timeout=30)
+        self.assertEqual(child.returncode, 1, child.stdout + child.stderr)
+        self.assertIn('stages did not finish', child.stdout + child.stderr)
+        self.assertNotIn('acquired', child.stdout)
+        self.assertFalse((self.root / 'BUILD-LOCK').exists())
+
+
 if __name__ == '__main__':
     unittest.main()

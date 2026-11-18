@@ -164,7 +164,20 @@ function Enter-CheckRunLock {
     }
 }
 
-# For the fixture builds: BUILD-LOCK only, waiting like Enter-BuildLock.
+# BUILD-LOCK is exclusive: its owner then waits until the dev check's stage
+# lanes (Cargo slots, warm target slots, the Gradle and web lanes;
+# tools/build_lock.py) are given back. A stage that sees BUILD-LOCK gives its
+# lanes back and waits, so no new stage starts meanwhile.
+function Wait-CheckStages([double] $Seconds) {
+    $lockTool = Join-Path $PSScriptRoot '..\..\tools\build_lock.py'
+    if (-not (Test-Path -LiteralPath $lockTool)) { return }
+    $py = if ($python) { $python } elseif ($env:BUTTERPOLLO_TEST_PYTHON) { $env:BUTTERPOLLO_TEST_PYTHON } else { 'python' }
+    $directory = Split-Path -Parent $script:CheckBuildLock
+    & $py $lockTool --drain --lock-directory $directory --timeout ([int] [math]::Ceiling($Seconds)) | Write-Host
+    if ($LASTEXITCODE) { throw "BUILD-LOCK held but the dev check's stages did not finish within $([int] $Seconds) s; no lock removed." }
+}
+
+# For the fixture builds: BUILD-LOCK, waiting like Enter-BuildLock, then the stages.
 function Enter-CheckBuildLock([switch] $RespectPriority, [string] $Owner = 'check') {
     if (-not $script:CheckLocks -or (Test-LockOurs $script:CheckBuildLock)) { return @{} }
     $waiting = [Diagnostics.Stopwatch]::StartNew()
@@ -173,7 +186,12 @@ function Enter-CheckBuildLock([switch] $RespectPriority, [string] $Owner = 'chec
             Write-Holder 'release priority' $script:CheckPriority
         } else {
             $written = Lock-Try $script:CheckBuildLock $Owner
-            if ($written) { return @{ build = $written } }
+            if ($written) {
+                $held = @{ build = $written }
+                try { Wait-CheckStages ([math]::Max(0, $script:CheckBuildDeadline - $waiting.Elapsed.TotalSeconds)) }
+                catch { Exit-CheckLocks $held -NoPause; throw }
+                return $held
+            }
             Write-Holder 'the build lock' $script:CheckBuildLock
         }
         Assert-BuildLockWait $waiting

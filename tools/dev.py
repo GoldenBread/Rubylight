@@ -21,9 +21,14 @@ checks (see plan()):
 Markdown is documentation and maps to nothing. One PASS/FAIL table is printed;
 each check's output goes to <log dir>/<run>/<check>.log with summary.json.
 Stops after failure unless --keep-going. Exits 1 if any check fails.
+
+Each build stage takes its own lanes (tools/build_lock.py), not one lock for
+the whole check: the Cargo stages a Cargo slot, the app stage the Gradle lane,
+the web stage the web lane.
 """
 import argparse, dataclasses, datetime, hashlib, json, os, pathlib, re, shutil, subprocess, sys, time, tomllib, uuid
-from build_lock import BuildLock, wait_child
+import build_lock
+from build_lock import StageLease, wait_child
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 RL_QUICK = pathlib.Path(r'C:\src\rl-quick.ps1')
@@ -273,6 +278,18 @@ def default_target(root=ROOT):
     return pathlib.Path(r'C:\src') / (f'rl-target-{name[3:]}' if name.startswith('rl-') else 'rl-target')
 
 
+def stage_groups(check, root, args):
+    """The lanes a check takes, as (name, candidates) for StageLease."""
+    lock_dir = args.lock_directory
+    if check.kind in ('host', 'service', 'client', 'interop'):
+        return [('cargo', lambda: build_lock.cargo_lanes(lock_dir))]
+    if check.kind == 'gradle':
+        return [('gradle', lambda: build_lock.gradle_lanes(lock_dir))]
+    if check.kind == 'web':
+        return [('web', lambda: build_lock.web_lanes(lock_dir))]
+    return []
+
+
 def client_env(target):
     env = dict(os.environ)
     env['PATH'] = r'C:\msys64\ucrt64\bin;' + str(pathlib.Path.home() / '.cargo/bin') + ';' + env.get('PATH', '')
@@ -467,18 +484,19 @@ def main(argv=None):
     for check in checks:
         log = log_dir / f'{check.name}.log'
         if check.skip:
-            rows.append((check.name, 'SKIP', '', check.describe()))
+            rows.append((check.name, 'SKIP', '', '', check.describe()))
             continue
         if failed and not args.keep_going:
-            rows.append((check.name, 'NOT RUN', '', 'earlier check failed'))
+            rows.append((check.name, 'NOT RUN', '', '', 'earlier check failed'))
             continue
         print(f'-- {check.name}: {check.describe()}', flush=True)
-        start = time.monotonic()
+        waited, start = 0.0, time.monotonic()
         try:
-            # All build-producing checks share one lease across worktrees and
-            # target dirs. Pure Python suites do not consume a build slot.
-            if check.kind in ('host', 'client', 'service', 'interop', 'gradle', 'web'):
-                with BuildLock(args.lock_directory, f'dev {check.name} {root}', args.lock_timeout):
+            # Each stage takes its own lanes; pure Python suites take none.
+            groups = stage_groups(check, root, args)
+            if groups:
+                with StageLease(groups, args.lock_directory, f'dev {check.name} {root}', args.lock_timeout) as lease:
+                    waited, start = lease.waited, time.monotonic()
                     ok = execute(check, root, log, target, args.fresh_dependencies)
             else:
                 ok = execute(check, root, log, target, args.fresh_dependencies)
@@ -488,15 +506,15 @@ def main(argv=None):
             ok = False
         failed |= not ok
         rows.append((check.name, 'PASS' if ok else 'FAIL', f'{time.monotonic() - start:.0f} s',
-                     check.describe() if ok else str(log)))
+                     f'{waited:.0f} s' if waited >= 1 else '', check.describe() if ok else str(log)))
     print()
-    print(f'{"check":<16} {"result":<6} {"time":>6}  detail')
-    for name, result, took, detail in rows:
-        print(f'{name:<16} {result:<6} {took:>6}  {detail}')
+    print(f'{"check":<16} {"result":<7} {"time":>6} {"wait":>6}  detail')
+    for name, result, took, wait, detail in rows:
+        print(f'{name:<16} {result:<7} {took:>6} {wait:>6}  {detail}')
     print(f'Logs: {log_dir}')
     summary = dict(head=git('rev-parse', 'HEAD', root=root).strip(), worktree=str(root), paths=paths,
-                   target=str(target), passed=not failed, checks=[dict(name=n, result=r, time=t, detail=d)
-                   for n, r, t, d in rows])
+                   target=str(target), passed=not failed, checks=[dict(name=n, result=r, time=t, wait=w, detail=d)
+                   for n, r, t, w, d in rows])
     (log_dir / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n', encoding='utf-8')
     return 1 if failed else 0
 
