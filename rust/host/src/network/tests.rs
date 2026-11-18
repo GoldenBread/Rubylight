@@ -622,6 +622,47 @@ fn the_guest_lease_record_keeps_added_leases_until_a_confirmed_delete() {
 }
 
 #[test]
+fn an_expired_guest_lease_is_dropped_at_load() {
+    let (record, directory) = super::fixtures::guest_record();
+    let udp = Mapping {
+        protocol: Protocol::UDP,
+        port: 8002,
+    };
+    let tcp = Mapping {
+        protocol: Protocol::TCP,
+        port: 47991,
+    };
+    let mut expired = GuestLease::new(LeaseMethod::Pcp, udp);
+    expired.expires = Some(now_seconds().saturating_sub(1));
+    let upnp = GuestLease::new(LeaseMethod::Upnp, tcp);
+    record.lock().unwrap().add_all([expired, upnp]);
+    // A PCP lease whose lifetime ran out leaves the record at the next start, without asking
+    // the router; a UPnP mapping has no lifetime and stays until its delete is confirmed.
+    assert_eq!(LeaseRecord::load(&directory).leases(), [upnp]);
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+#[test]
+fn a_silent_router_does_not_extend_a_lease() {
+    let (record, directory) = super::fixtures::guest_record();
+    let mapping = Mapping {
+        protocol: Protocol::UDP,
+        port: 8002,
+    };
+    let lease = GuestLease::new(LeaseMethod::NatPmp, mapping);
+    let expires = lease.expires;
+    record.lock().unwrap().add_all([lease]);
+    // Every round pre-adds the wanted ports before its request; a later expiry from that
+    // pre-add must not replace the one the router granted, so a router that never answers
+    // cannot keep the entry past the lifetime.
+    let mut later = GuestLease::new(LeaseMethod::NatPmp, mapping);
+    later.expires = Some(u64::MAX);
+    record.lock().unwrap().add_all([later]);
+    assert_eq!(record.lock().unwrap().leases()[0].expires, expires);
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+#[test]
 fn cleanup_takes_only_the_recorded_leases_from_each_method() {
     let tcp = Mapping {
         protocol: Protocol::TCP,

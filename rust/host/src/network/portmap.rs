@@ -11,8 +11,8 @@ use std::{
 use tokio::net::UdpSocket;
 
 /// The lifetime asked for every mapping, in seconds; leases renew at half of what the router
-/// grants.
-const LIFETIME: u32 = 7200;
+/// grants. The lease record keeps a guest port until this lifetime ends.
+pub(super) const LIFETIME: u32 = 7200;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Method {
@@ -45,11 +45,15 @@ pub(super) struct PortMapper {
     pub(super) external: Option<IpAddr>,
 }
 
-/// What a renewal did: each wanted port mapped (with its external port) or refused and why,
-/// the leases it confirmed gone, and the router's silence if it ran out of answers.
+/// What a renewal did: each wanted port mapped (with its external port) or refused and why, the
+/// mappings the router mapped afresh this round, the leases it confirmed gone, and the router's
+/// silence if it ran out of answers.
 #[derive(Debug, Default)]
 pub(super) struct Outcome {
     pub(super) mapped: Vec<(Mapping, u16)>,
+    /// The mappings the router answered with a fresh lease this round; a mapping whose lease
+    /// was still valid is in `mapped` alone.
+    pub(super) renewed: Vec<Mapping>,
     pub(super) failed: Vec<(Mapping, String)>,
     /// The mappings the router answered for and refused: not this host's to keep.
     pub(super) refused: Vec<Mapping>,
@@ -284,6 +288,7 @@ impl PortMapper {
                         renew_at: now + Duration::from_secs(u64::from(lifetime.max(120)) / 2),
                     });
                     outcome.mapped.push((mapping, external));
+                    outcome.renewed.push(mapping);
                 }
                 Err(error) => {
                     // No answer at all is the router's, not this port's: stop asking. A

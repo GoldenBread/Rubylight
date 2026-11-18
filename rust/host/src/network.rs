@@ -576,19 +576,28 @@ impl From<LeaseProtocol> for Protocol {
     }
 }
 
-/// One guest port lease the router granted this host: how, and the port.
+/// One guest port lease the router granted this host: how, the port, and when a PCP or NAT-PMP
+/// lease ends. A UPnP mapping has no expiry: the router's table says when it is gone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 struct GuestLease {
     method: LeaseMethod,
     protocol: LeaseProtocol,
     port: u16,
+    /// Unix seconds. `None` for UPnP, and for a record written before leases carried one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expires: Option<u64>,
 }
 impl GuestLease {
     fn new(method: LeaseMethod, mapping: Mapping) -> Self {
+        let expires = match method {
+            LeaseMethod::Upnp => None,
+            _ => Some(lease_expiry()),
+        };
         Self {
             method,
             protocol: mapping.protocol.into(),
             port: mapping.port,
+            expires,
         }
     }
     fn mapping(self) -> Mapping {
@@ -597,6 +606,30 @@ impl GuestLease {
             port: self.port,
         }
     }
+    /// The same lease, whatever its expiry.
+    fn same_mapping(&self, other: &Self) -> bool {
+        self.method == other.method && self.protocol == other.protocol && self.port == other.port
+    }
+    /// Whether the lease's lifetime has run out: a PCP or NAT-PMP lease with no expiry came
+    /// from a record written before leases carried one, so it is no longer trusted.
+    fn expired(&self, now: u64) -> bool {
+        match self.method {
+            LeaseMethod::Upnp => false,
+            _ => self.expires.is_none_or(|at| at <= now),
+        }
+    }
+}
+
+/// The Unix time now, in whole seconds.
+fn now_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
+/// The end of the PCP or NAT-PMP lease this host asks for.
+fn lease_expiry() -> u64 {
+    now_seconds().saturating_add(u64::from(portmap::LIFETIME))
 }
 
 /// The guest leases on disk: written before each map request, dropped once a delete is
@@ -622,6 +655,8 @@ impl LeaseRecord {
                     }
                     Vec::new()
                 });
+        let now = now_seconds();
+        leases.retain(|lease| !lease.expired(now));
         leases.sort_unstable();
         leases.dedup();
         Self { path, leases }
@@ -630,12 +665,32 @@ impl LeaseRecord {
         &self.leases
     }
     /// Adds leases before their map requests go out: a stop between a request and its answer
-    /// leaves them listed, to be taken down at the next start.
+    /// leaves them listed, to be taken down at the next start. A lease already listed keeps the
+    /// expiry it was granted: a router that never answers must not extend it.
     fn add_all(&mut self, leases: impl IntoIterator<Item = GuestLease>) {
         let mut next = self.leases.clone();
-        next.extend(leases);
+        for lease in leases {
+            if !next.iter().any(|held| held.same_mapping(&lease)) {
+                next.push(lease);
+            }
+        }
         next.sort_unstable();
         next.dedup();
+        self.write(next);
+    }
+    /// The router answered with a fresh lease for these guest ports: they now end a lifetime
+    /// from now. Only a grant extends a lease, so a silent router's entries run out.
+    fn granted(&mut self, method: LeaseMethod, mappings: &[Mapping]) {
+        if mappings.is_empty() {
+            return;
+        }
+        let expires = lease_expiry();
+        let mut next = self.leases.clone();
+        for lease in &mut next {
+            if lease.method == method && mappings.contains(&lease.mapping()) {
+                lease.expires = Some(expires);
+            }
+        }
         self.write(next);
     }
     /// Drops the leases of `methods` for `mappings`, once the router confirmed those gone: a
@@ -1624,13 +1679,20 @@ async fn renew(
                     .ok();
             }
         }
+        // The mapper's own method once known: a NAT-PMP round then neither rewrites the record
+        // nor adds a second method every minute. While unknown, PCP is what it asks first.
+        let known = held.mapper.as_ref().and_then(portmap::PortMapper::method);
+        let preadded = match known {
+            Some(portmap::Method::NatPmp) => LeaseMethod::NatPmp,
+            _ => LeaseMethod::Pcp,
+        };
         let outcome = match held.mapper.as_mut() {
             Some(mapper) => {
                 // Entries go in before the map requests: a stop in between leaves them listed.
                 record.lock().unwrap().add_all(
                     guest
                         .iter()
-                        .map(|mapping| GuestLease::new(LeaseMethod::Pcp, *mapping)),
+                        .map(|mapping| GuestLease::new(preadded, *mapping)),
                 );
                 mapper.renew(wanted).await
             }
@@ -1651,12 +1713,17 @@ async fn renew(
                 .filter(|mapping| outcome.mapped.iter().any(|(done, _)| done == *mapping))
                 .copied()
                 .collect();
+            let renewed: Vec<Mapping> = guest
+                .iter()
+                .filter(|mapping| outcome.renewed.contains(mapping))
+                .copied()
+                .collect();
             let refused = &outcome.refused;
             let removed = &outcome.removed;
             let mut record = record.lock().unwrap();
-            if method == LeaseMethod::NatPmp {
+            if method == LeaseMethod::NatPmp && known != Some(portmap::Method::NatPmp) {
                 // The pre-added PCP entries are these leases under the protocol the router
-                // answered with.
+                // answered with: rewrite them once, not every round.
                 record.remove_confirmed(
                     |held| matches!(held, LeaseMethod::Pcp | LeaseMethod::NatPmp),
                     &mapped,
@@ -1667,6 +1734,7 @@ async fn renew(
                         .map(|mapping| GuestLease::new(LeaseMethod::NatPmp, *mapping)),
                 );
             }
+            record.granted(method, &renewed);
             record.remove_confirmed(
                 |held| matches!(held, LeaseMethod::Pcp | LeaseMethod::NatPmp),
                 refused,
@@ -1768,6 +1836,7 @@ async fn renew_pinholes(
     let mut opened = 0;
     let mut last_error = None;
     let mut guest_ipv6 = None;
+    let mut renewed = Vec::new();
     let mut gone = Vec::new();
     for mapper in &mut held.pinholes {
         let outcome = mapper.renew(wanted).await;
@@ -1775,6 +1844,11 @@ async fn renew_pinholes(
             last_error = Some(format!("{error:#}"));
         }
         opened += outcome.mapped.len();
+        for mapping in &outcome.renewed {
+            if guest.contains(mapping) {
+                renewed.push(*mapping);
+            }
+        }
         gone.extend(outcome.refused.iter().copied());
         gone.extend(outcome.removed.iter().copied());
         let all_guests = guest
@@ -1786,6 +1860,9 @@ async fn renew_pinholes(
         {
             guest_ipv6.get_or_insert(local);
         }
+    }
+    if !renewed.is_empty() {
+        record.lock().unwrap().granted(LeaseMethod::PcpV6, &renewed);
     }
     if !gone.is_empty() {
         record
