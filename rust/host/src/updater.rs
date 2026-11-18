@@ -542,6 +542,7 @@ pub fn cancel(h: &Shared) -> Result<()> {
     state["attempted_version"] = state["latest_version"].clone();
     // A cancelled download is not resumed: its folder goes at the next tidy.
     state["partial"] = Value::Null;
+    tidy_soon();
     Ok(())
 }
 
@@ -606,6 +607,7 @@ fn poll_with(h: &Shared, hashed: Option<Hashed>, hash: &dyn Fn(&std::path::Path)
         // A half-finished download is not resumed: its folder goes at the next
         // tidy, which skips a download it believes is still running.
         state["partial"] = Value::Null;
+        tidy_soon();
         return;
     }
     drop(state);
@@ -1007,6 +1009,12 @@ fn remove_legacy_downloads(updates: &Path) {
 }
 /// When the next `tidy_downloads` runs, in seconds since the epoch.
 static NEXT_TIDY: AtomicU64 = AtomicU64::new(0);
+/// A download was just given up: the tidy looks again at the next maintenance pass. It stops
+/// looking once it finds no folder left, which without this would leave one given up later
+/// (a cancelled download, automatic updates turned off) until the host restarts.
+fn tidy_soon() {
+    NEXT_TIDY.store(0, Ordering::Relaxed);
+}
 /// A setup that updated this host ran from its download folder until after
 /// it started this host, so only this host can remove that folder once
 /// setup has exited: tried every minute until none is left.

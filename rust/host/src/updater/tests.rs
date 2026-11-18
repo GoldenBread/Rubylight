@@ -231,6 +231,31 @@ fn cancellation_invalidates_a_download_and_stops_automatic_requeue() {
     h.updates.lock().unwrap()["phase"] = json!("installing");
     assert!(cancel(h).is_err());
 }
+// The tidy stops looking once no download folder is left, which on an installed host is the first
+// pass after the start. A download given up after that must start it again, or its folder stays
+// until the host restarts. One test for both ways, as they share the process-wide timer.
+#[test]
+fn giving_up_a_download_starts_the_tidy_again() {
+    let f = Fixture::new();
+    let h = &f.host;
+    NEXT_TIDY.store(u64::MAX, Ordering::Relaxed);
+    *h.updates.lock().unwrap() = json!({"phase":"downloading","download_id":"old","latest_version":"2.1.0","partial":"setup.exe"});
+    cancel(h).unwrap();
+    assert!(
+        NEXT_TIDY.load(Ordering::Relaxed) < u64::MAX,
+        "a cancelled download's folder is looked for"
+    );
+
+    NEXT_TIDY.store(u64::MAX, Ordering::Relaxed);
+    *h.updates.lock().unwrap() =
+        json!({"phase":"waiting","automatic":true,"idle_since":0,"partial":"setup.exe"});
+    poll(h);
+    assert!(h.updates.lock().unwrap()["partial"].is_null());
+    assert!(
+        NEXT_TIDY.load(Ordering::Relaxed) < u64::MAX,
+        "so is the one automatic updates left when turned off"
+    );
+}
 #[test]
 fn disabling_automatic_updates_cancels_an_automatic_queue_only() {
     let f = Fixture::new();
