@@ -640,6 +640,35 @@ fn a_pyrowave_link_notice_names_the_mode_the_rate_and_the_link() {
     assert!(connect::pyrowave_link_text(&chosen, 1920, 1080, 60).contains("1500 Mbps"));
 }
 
+// The low-bitrate notice follows the bitrate actually sent, after this client's cap and the
+// host's, not the setting: a 100 Mbps limit at 1080p60 and the automatic 4K240 default (held at
+// the 2 Gbps runtime maximum) both land below the mode's level.
+#[test]
+fn the_pyrowave_minimum_notice_follows_the_bitrate_actually_sent() {
+    let automatic = Settings::default();
+    let capped = capped_bitrate(start_bitrate(&automatic, 1920, 1080, 60, true, 0), 100_000);
+    assert_eq!(capped, 100_000);
+    let notice = pyrowave_minimum_notice(capped, 1920, 1080, 60).expect("100 Mbps is below 187");
+    assert!(notice.contains("187 Mbps or more at 1920x1080, 60 fps"), "{notice}");
+    let automatic_4k = start_bitrate(&Settings::default(), 3840, 2160, 240, true, 0);
+    assert_eq!(automatic_4k, 2_000_000);
+    assert!(pyrowave_minimum_notice(automatic_4k, 3840, 2160, 240).is_some());
+    // At the level itself there is nothing to warn about, whatever the setting says.
+    assert_eq!(pyrowave_minimum_notice(186_624, 1920, 1080, 60), None);
+}
+
+// A PyroWave choice the PC answers with HEVC shows no PyroWave notice, even though the launch
+// offered it: the notices follow the negotiated format, not the offer.
+#[test]
+fn a_fallback_to_hevc_shows_no_pyrowave_notice() {
+    let (link, minimum) = pyrowave_notices_if_stream(
+        VIDEO_FORMAT_H265, Some("link".into()), Some("minimum".into()));
+    assert_eq!((link, minimum), (None, None));
+    let (link, minimum) = pyrowave_notices_if_stream(
+        VIDEO_FORMAT_PYROWAVE, Some("link".into()), Some("minimum".into()));
+    assert_eq!((link.as_deref(), minimum.as_deref()), (Some("link"), Some("minimum")));
+}
+
 #[test]
 fn formats_respect_the_host() {
     let all = SCM_H264 | SCM_HEVC | SCM_HEVC_MAIN10 | SCM_AV1_MAIN8 | SCM_AV1_MAIN10;

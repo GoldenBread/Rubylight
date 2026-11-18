@@ -78,10 +78,32 @@ pub(super) fn offers_pyrowave(offered: u32, scm: u32) -> bool {
 /// where the project's test scenes kept detail for the stream's `w`x`h` at `fps`, naming it. The
 /// bitrate is kept as chosen; the automatic one never goes below that level.
 pub fn pyrowave_bitrate_warning(settings: &Settings, w: u32, h: u32, fps: u32) -> Option<String> {
+    if !settings.codec.is_pyrowave() || settings.bitrate_kbps == 0 {
+        return None;
+    }
+    pyrowave_minimum_notice(settings.bitrate_kbps, w, h, fps)
+}
+
+/// The stream's start notice when the bitrate it actually sends (`kbps`, after the client's and the
+/// host's caps) is below the level where the project's test scenes kept detail for `w`x`h` at
+/// `fps`, naming it. `None` at or above it, and `None` for a stream that fell back to another
+/// codec: the caller decides by the negotiated format.
+pub fn pyrowave_minimum_notice(kbps: u32, w: u32, h: u32, fps: u32) -> Option<String> {
     let minimum = nightjar_policy::pyrowave::minimum_kbps(w, h, fps);
-    (settings.codec.is_pyrowave() && settings.bitrate_kbps != 0 && settings.bitrate_kbps < minimum).then(|| {
+    (kbps < minimum).then(|| {
         trf("Below the level where the project's test scenes kept detail for PyroWave: {} Mbps or more at {}x{}, {} fps. Text and textures may lose detail; raise the bitrate or use HEVC or AV1.", &[&minimum.div_ceil(1000), &w, &h, &fps])
     })
+}
+
+/// The PyroWave start notices kept for a stream whose negotiated format is `format`: both are
+/// dropped when the handshake answered with another codec, since they describe a mode this
+/// stream does not run.
+pub fn pyrowave_notices_if_stream(format: u32, link: Option<String>, minimum: Option<String>) -> (Option<String>, Option<String>) {
+    if format & VIDEO_FORMAT_MASK_PYROWAVE == 0 {
+        (None, None)
+    } else {
+        (link, minimum)
+    }
 }
 
 /// With the link test switched on (`link_probe`, off by default because it measured worse), a new

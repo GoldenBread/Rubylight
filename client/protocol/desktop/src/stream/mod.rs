@@ -144,7 +144,7 @@ use negotiate::*;
 use stats::*;
 pub use connect::{end_all_before, host_ended_stream, offers_714, termination_text, connect_timeout_text, Attempts, ConnectFailed, Connecting, CONNECT_TIMEOUT, LEAVE_WAIT};
 pub(crate) use connect::env_flag;
-pub use negotiate::{base_probe_formats, codec_name, color_probe_formats, plain_formats, probes_color, pyrowave_bitrate_warning, pyrowave_notice, stream_mode};
+pub use negotiate::{base_probe_formats, codec_name, color_probe_formats, plain_formats, probes_color, pyrowave_bitrate_warning, pyrowave_minimum_notice, pyrowave_notices_if_stream, pyrowave_notice, stream_mode};
 pub use frame_warp::frame_warp_notice;
 
 /// What the display offers, for "native" resolution and "display" refresh.

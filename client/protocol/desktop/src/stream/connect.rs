@@ -1184,25 +1184,6 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
     if pyrowave && settings.bitrate_kbps == 0 {
         eprintln!("nightjar: PyroWave: starting at {bitrate} kbps, its default for {width}x{height} at {fps} fps and a {link_mbps} Mbps link");
     }
-    // A PyroWave mode whose rate this link cannot carry is not stopped, but the player hears it
-    // before the first picture: a lower resolution or frame rate, or HEVC/AV1, is their choice.
-    let pyrowave_link = pyrowave
-        .then(|| nightjar_policy::pyrowave::link_notice(width, height, fps, link_mbps, settings.bitrate_kbps))
-        .flatten()
-        .map(|notice| {
-            let text = pyrowave_link_text(&notice, width, height, fps);
-            eprintln!("nightjar: {text}");
-            text
-        });
-    // The host warns a PyroWave stream below the level where the project's test scenes kept
-    // detail; the player hears the same in the stream's start notices, before the host's card.
-    let pyrowave_minimum = pyrowave
-        .then(|| pyrowave_bitrate_warning(settings, width, height, fps))
-        .flatten()
-        .map(|text| {
-            eprintln!("nightjar: {text}");
-            text
-        });
     let bitrate = if probes_first_bitrate(settings, plan.resume, &plan.info) {
         match client.probe_link(&plan.info) {
             Ok(mbps) => {
@@ -1420,6 +1401,27 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
         packed_refused: nightjar_core::full_chroma::restarts_without(settings.experimental_packed_444, e.code),
     })?;
     let outcome = session.outcome();
+    // A PyroWave mode whose rate this link cannot carry is not stopped, but the player hears it
+    // before the first picture: a lower resolution or frame rate, or HEVC/AV1, is their choice.
+    // Both notices are dropped below when the handshake fell back to another codec.
+    let (stream_width, stream_height, stream_fps) = (
+        outcome.config.width as u32,
+        outcome.config.height as u32,
+        outcome.config.fps.max(1) as u32,
+    );
+    let link = nightjar_policy::pyrowave::link_notice(
+        stream_width, stream_height, stream_fps, link_mbps, settings.bitrate_kbps)
+        .map(|notice| pyrowave_link_text(&notice, stream_width, stream_height, stream_fps));
+    // The host warns a PyroWave stream below the level where the project's test scenes kept
+    // detail; the player hears the same in the stream's start notices, before the host's card.
+    // The rate compared is the one actually sent, after this client's and the host's caps.
+    let minimum = pyrowave_minimum_notice(
+        outcome.config.bitrate_kbps as u32, stream_width, stream_height, stream_fps);
+    let (pyrowave_link, pyrowave_minimum) = pyrowave_notices_if_stream(
+        outcome.negotiated_video_format, link, minimum);
+    for text in pyrowave_link.iter().chain(pyrowave_minimum.iter()) {
+        eprintln!("nightjar: {text}");
+    }
     if jumbo_fallback.is_none() && jumbo_passed
         && outcome.config.packet_size <= i32::from(rubylight_protocol::video_packet::STOCK_MAX_VIDEO_PACKET)
     {
