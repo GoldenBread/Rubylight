@@ -201,9 +201,9 @@ impl Depacketizer {
         }
     }
 
-    /// The RTP queue left the position it was assembling: a frame or sequence counter jump no
-    /// streaming host makes, or a rewind it confirmed (a host whose counters restarted). Drops
-    /// the frame in progress and waits for a key frame, asking for one, without counting network
+    /// The RTP queue found a frame or sequence counter jump no streaming host makes: the packets
+    /// before it were never part of this stream (`RtpQueue`'s discontinuity check). Drops the
+    /// frame in progress and waits for a key frame, asking for one, without counting network
     /// loss. The datagram that brought the jump starts a block but is not shown: its frame may
     /// be half missing.
     pub(super) fn resync<S: VideoSink>(&mut self, frame: u32, io: &mut Io<S>) {

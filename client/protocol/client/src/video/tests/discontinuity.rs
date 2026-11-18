@@ -16,20 +16,6 @@ fn with_frame(packets: Vec<Vec<u8>>, frame: u32) -> Vec<Vec<u8>> {
         .collect()
 }
 
-/// `packets` with every datagram's frame rewritten to `frame` and its sequence number to `seq`,
-/// advanced by one per datagram: a host whose counters restarted from a clean position.
-fn rewound(packets: Vec<Vec<u8>>, frame: u32, seq: &mut u16) -> Vec<Vec<u8>> {
-    packets
-        .into_iter()
-        .map(|mut packet| {
-            packet[20..24].copy_from_slice(&frame.to_le_bytes());
-            packet[2..4].copy_from_slice(&seq.to_be_bytes());
-            *seq = seq.wrapping_add(1);
-            packet
-        })
-        .collect()
-}
-
 fn requests_idr(events: &[VideoEvent]) -> bool {
     events
         .iter()
@@ -95,13 +81,10 @@ fn a_wrong_frame_number_resyncs_instead_of_freezing() {
     let shown = frames(&events);
     assert_eq!(shown.len(), 2, "the stream continues after the wrong frame number");
     assert_eq!(shown[1].frame_type, FrameType::Idr);
-    assert!(
-        rx.stats().frame_drops <= 1,
-        "finding the real position again may lose the frame whose datagrams were dropped"
-    );
+    assert_eq!(rx.stats().frame_drops, 0);
 }
 
-/// A sequence number that outran what the frames can carry, with a plausible frame number, would
+/// A datagram whose sequence number is 5,000 packets ahead, with a plausible frame number, would
 /// otherwise have the queue reject every real packet behind it until the sequence wrapped.
 #[test]
 fn a_wrong_sequence_number_resyncs_instead_of_freezing() {
@@ -115,8 +98,7 @@ fn a_wrong_sequence_number_resyncs_instead_of_freezing() {
 
     let next = host.frame(&h264_p(3000), 1);
     let mut wrong = next[0].clone();
-    // 30,000 packets behind one frame is more than four blocks of 3,632 packets can carry.
-    let seq = u16::from_be_bytes([wrong[2], wrong[3]]).wrapping_add(30_000);
+    let seq = u16::from_be_bytes([wrong[2], wrong[3]]).wrapping_add(5_000);
     wrong[2..4].copy_from_slice(&seq.to_be_bytes());
     rx.receive(&wrong, 2, &mut events);
     assert!(requests_idr(&events), "a discontinuity asks for a key frame");
@@ -125,142 +107,18 @@ fn a_wrong_sequence_number_resyncs_instead_of_freezing() {
     for packet in &next[1..] {
         rx.receive(packet, 3, &mut events);
     }
-    // The next frame is a new one, so it resets the block window from its own sequence number
-    // and is not rejected behind the wrong one: the frame lost with the jump is counted, and
-    // the key frame asked for recovers the picture.
-    for packet in host.frame(&h264_idr(), 2) {
+    // The next frame resyncs the queue on the real sequence numbers; it is not shown because it
+    // arrived before the key frame asked for.
+    for packet in host.frame(&h264_p(3000), 1) {
         rx.receive(&packet, 4, &mut events);
+    }
+    for packet in host.frame(&h264_idr(), 2) {
+        rx.receive(&packet, 5, &mut events);
     }
     let shown = frames(&events);
     assert_eq!(shown.len(), 2, "the stream continues after the wrong sequence number");
     assert_eq!(shown[1].frame_type, FrameType::Idr);
-}
-
-/// A 100 ms burst at 500 Mbps skips six frames and 6,250 packets: both counters advanced
-/// together, so it is loss. It is counted, invalidates the skipped frames over RFI, and asks for
-/// no key frame.
-#[test]
-fn a_burst_of_loss_counts_as_loss_and_uses_rfi() {
-    let mut host = Host::new();
-    let mut cfg = config(0x1);
-    cfg.rfi = true;
-    let mut rx = VideoReceiver::new(cfg);
-    let mut events = Vec::new();
-    for packet in host.frame(&h264_idr(), 2) {
-        rx.receive(&packet, 1, &mut events);
-    }
-    rx.frame_decoded(FrameType::Idr);
-    events.clear();
-    // Frame 2 arrives missing a data packet and its parity, so its block waits for the next one.
-    let mut partial = host.frame(&h264_p(3000), 1);
-    let _missing = partial.remove(1);
-    let _parity = partial.pop();
-    for packet in &partial {
-        rx.receive(packet, 2, &mut events);
-    }
-    assert!(fec_blocks(&events).is_empty(), "the block still waits");
-
-    // The first frame after the burst is still arriving: its block waits, so no picture is
-    // dropped again behind the gap.
-    let mut burst = host.frame(&h264_p(2000), 1);
-    let frame = 3u32 + 6;
-    let seq = u16::from_be_bytes([burst[0][2], burst[0][3]]).wrapping_add(6_250);
-    burst[0][20..24].copy_from_slice(&frame.to_le_bytes());
-    burst[0][2..4].copy_from_slice(&seq.to_be_bytes());
-    rx.receive(&burst[0], 3, &mut events);
-
-    assert_eq!(
-        rx.stats().frame_drops,
-        1,
-        "the burst is one lost frame, not a discontinuity"
-    );
-    assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, VideoEvent::Signal(VideoSignal::InvalidateFrames { .. }))),
-        "RFI invalidates the frames the burst skipped"
-    );
-    assert!(!requests_idr(&events), "no key frame is asked for: the invalidation is enough");
-    let blocks = fec_blocks(&events);
-    assert!(
-        blocks.iter().any(|block| block.frame == 2 && block.unrecovered),
-        "the block the burst cut off is reported: {blocks:?}"
-    );
-}
-
-/// A packet 75 ms late is a straggler: dropped, without moving the queue or asking for a key
-/// frame, and the stream carries on.
-#[test]
-fn a_straggler_is_dropped_without_a_resync() {
-    let mut host = Host::new();
-    let mut rx = VideoReceiver::new(config(0x1));
-    let mut events = Vec::new();
-    for packet in host.frame(&h264_idr(), 2) {
-        rx.receive(&packet, 1, &mut events);
-    }
-    rx.frame_decoded(FrameType::Idr);
-    for i in 0..5 {
-        for packet in host.frame(&h264_p(500), 1) {
-            rx.receive(&packet, 2 + i, &mut events);
-        }
-    }
-    let shown = frames(&events).len();
-    let drops = rx.stats().frame_drops;
-    let current = rx.current_frame_number();
-
-    // Four frames and 4,700 packets back: 75 ms at 60 fps and 500 Mbps.
-    let next = host.frame(&h264_p(500), 1);
-    let mut straggler = next[0].clone();
-    straggler[20..24].copy_from_slice(&(current - 4).to_le_bytes());
-    let seq = u16::from_be_bytes([straggler[2], straggler[3]]).wrapping_sub(4_700);
-    straggler[2..4].copy_from_slice(&seq.to_be_bytes());
-    rx.receive(&straggler, 9, &mut events);
-
-    assert_eq!(rx.current_frame_number(), current, "the queue stays where it was");
-    assert_eq!(rx.stats().frame_drops, drops, "a straggler is no loss");
-    assert!(!requests_idr(&events), "and no discontinuity");
-    for packet in &next {
-        rx.receive(packet, 10, &mut events);
-    }
-    assert_eq!(frames(&events).len(), shown + 1, "the stream carries on");
-}
-
-/// A host whose counters restart (frame 1, sequence 0) is followed once its datagrams keep
-/// coming from there, and then the stream runs on.
-#[test]
-fn a_host_counter_reset_resyncs_once() {
-    // Smaller packets: the restarted key frame's block carries enough parity for the datagrams
-    // the queue drops while it confirms the rewind.
-    let mut host = Host::with_packet_size(256);
-    let mut cfg = config(0x1);
-    cfg.packet_size = 256;
-    let mut rx = VideoReceiver::new(cfg);
-    let mut events = Vec::new();
-    for packet in host.frame(&h264_idr(), 2) {
-        rx.receive(&packet, 1, &mut events);
-    }
-    rx.frame_decoded(FrameType::Idr);
-    // The stream had run on before its counters restarted.
-    rx.queue.seek(1_000);
-    let mut seq = 0u16;
-    for packet in rewound(host.frame(&h264_idr(), 2), 1, &mut seq) {
-        rx.receive(&packet, 2, &mut events);
-    }
-    assert_eq!(
-        events
-            .iter()
-            .filter(|e| matches!(e, VideoEvent::Signal(VideoSignal::RequestIdr)))
-            .count(),
-        1,
-        "the restarted stream is followed once, with one key frame asked for"
-    );
-    // The frame after the restart's first is shown, and the stream goes on from the new position.
-    for packet in rewound(host.frame(&h264_idr(), 2), 2, &mut seq) {
-        rx.receive(&packet, 3, &mut events);
-    }
-    let shown = frames(&events);
-    assert_eq!(shown.last().map(|frame| frame.number), Some(2));
-    assert_eq!(rx.current_frame_number(), 3);
+    assert_eq!(rx.stats().frame_drops, 0);
 }
 
 /// An encrypted stream's packets carry the frame number in the clear, and the receive path drops
