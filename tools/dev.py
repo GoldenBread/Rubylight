@@ -31,7 +31,7 @@ packages are removed first (claim_target), because Cargo judges path packages
 by modification time and would reuse that checkout's build.
 """
 import argparse, dataclasses, datetime, hashlib, json, os, pathlib, re, shutil, subprocess, sys, time, tomllib, uuid
-import build_lock
+import build_lock, generated_docs
 from build_lock import StageLease, wait_child
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -255,6 +255,10 @@ def plan(paths, root=ROOT):
         checks.append(Check('release-py', 'python', sorted(release)))
     if tools:
         checks.append(Check('tools-py', 'tools', ['tools/test_*.py']))
+    # A generated doc, its generator or its sources: is the doc still what they generate?
+    generated = generated_docs.affected(paths)
+    if generated:
+        checks.append(Check('generated-docs', 'generated', [d.path for d in generated]))
     return checks, notes
 
 
@@ -556,6 +560,8 @@ def execute(check, root, log, target, fresh_dependencies=False):
                        log, root) == 0 for suite in check.items)
     if check.kind == 'tools':
         return run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tools', '-p', 'test_*.py'], log, root) == 0
+    if check.kind == 'generated':
+        return run([sys.executable, str(root / 'tools/generated_docs.py'), '--check', *check.items], log, root) == 0
     raise ValueError(check.kind)
 
 

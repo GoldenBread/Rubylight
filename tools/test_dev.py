@@ -136,6 +136,12 @@ class Plan(unittest.TestCase):
         self.assertIn('service', planned)
         self.assertIn('butterpollo-core', planned['host'].items)
 
+    def test_generated_docs_are_checked_when_their_sources_change(self):
+        planned, _ = checks('client/app/src/main/res/xml/preferences.xml')
+        self.assertEqual(planned['generated-docs'].items, ['client/docs/settings.md'])
+        planned, _ = checks('client/docs/devices.md')
+        self.assertEqual(planned['generated-docs'].items, ['client/docs/devices.md'])
+
     def test_docs_map_to_nothing(self):
         planned, unchecked = checks('docs/architecture.md', 'rust/core/README.md', 'client/notes.d/x.md',
                                     'client/site/index.html')
