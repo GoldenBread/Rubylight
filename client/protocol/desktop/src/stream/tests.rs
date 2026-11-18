@@ -1179,6 +1179,24 @@ fn a_timed_out_reconfigure_restores_the_whole_mode() {
     assert_eq!(before.fps_millihz.div_ceil(1000), 60, "the pacer gets the old rate");
 }
 
+// A reconnect keeps the running session's packet size, as the PC refuses a test while it holds the
+// session. Jumbo packets were tested on the path the stream started on: once the network moved
+// (docked Ethernet to Wi-Fi), the reconnect asks for normal packets instead of streaming nothing.
+#[test]
+fn a_reconnect_after_the_network_moved_does_not_carry_jumbo_packets() {
+    assert_eq!(carried_packet_size(8160, false), 8160);
+    assert_eq!(carried_packet_size(8160, true), 0);
+    // A normal size was never tested and is carried as before.
+    assert_eq!(carried_packet_size(1392, true), 1392);
+    assert_eq!(carried_packet_size(1392, false), 1392);
+    assert_eq!(carried_packet_size(-1, true), 0);
+    // What the reconnect then asks for: the route's size, or the run's own normal one.
+    assert_eq!(connect::resume_packet_size(carried_packet_size(8160, true), 1392, 0), 1392);
+    assert_eq!(connect::resume_packet_size(carried_packet_size(8160, true), 1392, 8192), 1392);
+    assert_eq!(connect::resume_packet_size(carried_packet_size(8160, true), 1392, 1024), 1024);
+    assert_eq!(connect::resume_packet_size(carried_packet_size(8160, false), 1392, 0), 8160);
+}
+
 // The snapshot is the stream as it runs, not the mode the menu's size editor (or the request
 // itself) already wrote into the requested mode: a 1440p60 stream asked for 4K120 that the PC does
 // not apply goes back to 1440p60 in the menu and in the bitrate policy, which reads this mode.

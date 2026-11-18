@@ -87,6 +87,7 @@ impl Streaming {
                     // A session without roaming (off, or a host that does not roam) never roams,
                     // but still says whether its connection carries on.
                     let change = self.session.network_changed(hint);
+                    self.network_changed(change);
                     if after_loss { self.network_returned(change, hint.metered, away); }
                 }
                 Notice::NetworkLost => self.network_lost(away),

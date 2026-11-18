@@ -147,6 +147,16 @@ pub(crate) use connect::env_flag;
 pub use negotiate::{base_probe_formats, codec_name, color_probe_formats, plain_formats, probes_color, pyrowave_bitrate_warning, pyrowave_minimum_notice, pyrowave_notices_if_stream, pyrowave_notice, stream_mode};
 pub use frame_warp::frame_warp_notice;
 
+/// The packet size a reconnect carries from the running session ([`LaunchPlan::negotiated_packet_size`]):
+/// the negotiated one, except a jumbo size once the network moved under the stream. Jumbo packets
+/// passed their test on the path the stream started on. Another path (from docked Ethernet to
+/// Wi-Fi) may drop them whole, and a reconnect cannot test it while the PC still holds the
+/// session: 0 has it ask for normal packets, as every reconnect did before it carried a size.
+fn carried_packet_size(negotiated: i32, network_moved: bool) -> u32 {
+    let size = negotiated.max(0) as u32;
+    if network_moved && size > u32::from(rubylight_protocol::video_packet::STOCK_MAX_VIDEO_PACKET) { 0 } else { size }
+}
+
 /// The stream's rate, size and settings before a reconfigure was asked. A request the host does
 /// not apply is undone from this one snapshot, so no field keeps the asked mode on its own.
 #[derive(Clone, Copy)]
@@ -711,6 +721,9 @@ pub struct Streaming {
     pub toast: Option<(String, Instant)>,
     /// The route toward the PC is gone: the lost-network notice stays until one returns.
     pub network_lost: bool,
+    /// The network moved under this stream (a roam, or a route its connection cannot follow): a
+    /// reconnect no longer takes the path the jumbo packets were tested on.
+    network_moved: bool,
     /// The next automatic reconnect starts without its delay (a network came back).
     retry_now: bool,
     pub host_id: u64,
@@ -1189,6 +1202,7 @@ impl Streaming {
             exit: mic_refused.then(|| Exit::Ended(Some(trf("{} did not accept the microphone", &[&facts_host])))),
             toast: None,
             network_lost: false,
+            network_moved: false,
             retry_now: false,
             host_id: connecting.host_id,
             absolute: settings.mouse_mode == MouseMode::Absolute,
@@ -1382,6 +1396,12 @@ impl Streaming {
         self.show_toast(tr(lost_notice(&self.settings, self.reconnects_on_its_own(away))));
     }
 
+    /// Notes a network change that moved the stream's route, whether or not the network was lost
+    /// first: [`carried_packet_size`] reads it.
+    fn network_changed(&mut self, change: NetworkChange) {
+        if change != NetworkChange::CarriesOn { self.network_moved = true; }
+    }
+
     /// A network is back after the route was gone; `change`: what it means for the session
     /// ([`reconnects_on_return`]).
     fn network_returned(&mut self, change: NetworkChange, metered: bool, away: bool) {
@@ -1435,7 +1455,7 @@ impl Streaming {
         plan.microphone_muted = self.microphone_muted;
         // The packets the running session negotiated: a resume of it asks for the same size and
         // probes nothing while the old one may still be live.
-        plan.negotiated_packet_size = self.facts.packet_size.max(0) as u32;
+        plan.negotiated_packet_size = carried_packet_size(self.facts.packet_size, self.network_moved);
         // Automatic bitrate and the client-hint controller never run together; whichever owned the
         // rate leaves its cut. A Foundation PC's own controller cannot be told where to start
         // (`AbrRequest` has no starting rate), so its cut is not carried.
