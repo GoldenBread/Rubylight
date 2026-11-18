@@ -117,15 +117,16 @@ The service is a separate workspace: `rust/build.ps1` runs the same three comman
 Use `tools\dev.ps1 check -DryRun` to preview the checks selected for this
 worktree's changes, then `tools\dev.ps1 check` to run them. Changes are
 compared against the merge base with `-Base` (default `origin/main`), plus
-uncommitted files; `-Base HEAD` checks only uncommitted changes. Build-producing
-checks share `BUILD-LOCK` across worktrees, including Nightjar's Cargo and
-Gradle checks. Pure Python suites can run alongside them. A failure stops
-later checks by default; `-KeepGoing` runs the remaining independent checks.
+uncommitted files; `-Base HEAD` checks only uncommitted changes. Each build
+stage takes its own lane (below), so stages of different worktrees run side by
+side. Pure Python suites take none. A failure stops later checks by default;
+`-KeepGoing` runs the remaining independent checks.
 Every invocation writes a separate run folder, by default under
 `C:\src\butterpollo-release\unified\dev-check\<worktree>` (`-LogDir` chooses
 another), with one log per check and `summary.json` with the commit, worktree,
-selected paths and results. `-TargetDir` sets the Cargo target folder. These are development results,
-not release approval; uncommitted changes may be included.
+selected paths, results and each stage's lock wait (`wait`). The Cargo stages build in a warm slot of the
+target pool `C:\src\rl-target-pool` (`-Pool` chooses another; `-TargetDir` one folder instead). These are
+development results, not release approval; uncommitted changes may be included.
 
 For the workflow's own Python tests, install the small pinned test dependency
 once with `python -m pip install -r tools/requirements-test.txt`. The
@@ -137,37 +138,100 @@ matching manifests, Node/npm versions, npm configuration and installed lock
 file. `-FreshDependencies` forces a clean install when investigating dependency
 problems. CI and release packaging still install dependencies afresh.
 
-`rust\build.ps1` automatically takes the same machine-wide lease before SDK
-setup, tests or packaging. `-Jobs` defaults to 4 and sets the Cargo, CMake,
-PyroWave and FFmpeg build limits. Wrap any other heavy Cargo, Gradle or
-packaging command with `tools/build_lock.py`:
+#### Build locks and lanes
+
+A lock for the whole check made a client-only branch wait behind a host build.
+So each stage takes its own lane (`tools/build_lock.py`) in the lock directory:
+
+| Stage | Lane |
+| --- | --- |
+| host, service, client-protocol, interop (Cargo) | one of the Cargo slots, and a warm target slot |
+| app (Gradle) | the Gradle lane `D:\CodexArtifacts\locks\gradle-lane`, the one manual Gradle runs take with `--lock-directory` |
+| web | the web lane |
+
+The Cargo slot count caps the Cargo stages at once: CPU threads per `-j 4`
+stage and memory above a 16 GB reserve per stage peak (7 GB of commit charge
+measured for a host stage on 2026-11-18), whichever is fewer. That is 4 on this
+PC (16 threads, 64 GB) and 2 on the laptop (16 threads, 31 GB);
+`RUBYLIGHT_CARGO_SLOTS` overrides it. A lane is a file held open without
+sharing: Windows closes it when its owner exits, so a crashed stage never
+leaves one taken, and no lane is ever removed by hand.
+
+`BUILD-LOCK` stays exclusive. `rust\build.ps1`, the release checks and
+`tools/build_lock.py` without `--lane` take it before SDK setup, tests or
+packaging and then wait until every lane is given back; a stage that sees it,
+or a live release `PRIORITY` ticket, gives its lanes back and waits. `-Jobs`
+defaults to 4 and sets the Cargo, CMake, PyroWave and FFmpeg build limits.
+Wrap other heavy commands with `tools/build_lock.py`, with a lane when the
+work is one stage's:
 
 ```powershell
-python tools/build_lock.py --label nightjar-apk -- cmd /c client\gradlew.bat -p client --no-daemon --max-workers=2 assembleNonRootDebug
+python tools/build_lock.py --lane gradle --label nightjar-apk -- cmd /c client\gradlew.bat -p client --no-daemon --max-workers=2 assembleNonRootDebug
+python tools/build_lock.py --status
 ```
+
+A warm target slot remembers the checkout that last built in it
+(`.rubylight-checkout`, and the slot's `<n>.owner` that `C:\src\rl-quick.ps1`
+writes too). A stage prefers its own checkout's slot, then another checkout's
+least recently used one. When another checkout built there last, the
+fingerprints of this repository's own packages are removed first: Cargo judges
+a path package fresh when none of its files is newer than its last build and
+names its artifacts the same in every checkout of a version, so a checkout
+whose files are older would get the other checkout's build (the
+`MAX_BITRATE_KBPS` failures of 2026-11-18 in the shared `C:\src\rl-target`).
+Registry and git dependencies stay built.
 
 The shared directory defaults to `C:\src\butterpollo-release` on Windows.
 Set `RUBYLIGHT_LOCK_DIRECTORY` consistently for all build callers when using
 another machine directory; pass the same `-LockDirectory` to release checks.
+With a private lock directory (tests), the target pool and the Gradle lane
+move beside it too, so a test never touches the machine's slots.
 The developer checker also accepts `-LockDirectory` and `-LockTimeout` (seconds,
 default 1800). The wrapper accepts `--lock-directory`, `--timeout` (seconds,
 default 1800) and `--label`, the owner name waiting builds see.
 A nested command inherits the lease rather than waiting for itself. Do not
 start independent parallel builds inside a single lease.
 
-Leases never expire by age. Windows keeps a handle that prevents a live lease
+`BUILD-LOCK` never expires by age. Windows keeps a handle that prevents a live lease
 being deleted by an older waiter. If a runner is forcibly terminated, its file
 remains: check the named owner **and surviving child processes** before removing
 it manually. A timeout reports the holder and leaves it untouched. Use separate
 Orca worktrees for overlapping edits; one coordinator should integrate their
 changes and verify the combined commit before pushing main.
 
+#### Other lanes: GitHub CI and the laptop
+
+Pushes to `wip/**` branches run the host, Nightjar and tools workflows with
+main's path filters (docs-only pushes run nothing; only main saves the
+compiled-dependency caches). `tools\dev.ps1 ci wip/<topic>` pushes nothing: it
+watches the runs of the branch's head on origin and prints the result;
+`-Dispatch host,android,macos,tools|all` starts them on the branch when the last
+push touched only docs, since GitHub filters each push by its own changes.
+
+`tools\remote-check.ps1 -Host laptop -Branch wip/<topic>` runs `tools\dev.ps1
+check -KeepGoing` for a pushed branch on the laptop and copies the run folder
+back. Over ssh the laptop's shell is session 0 and elevated, where host tests
+that start programs fail, so the check runs through an Interactive scheduled
+task in the console user's session. It refuses while the laptop's
+`BUILD-LOCK`, `LAPTOP-LOCK`, a release ticket, a lane or another remote check
+is busy (`-Wait` waits).
+
+#### Merges
+
+Nightjar's desktop string tables merge with git's union driver, so two
+branches that append entries keep both; an entry both change comes out twice,
+which the table test rejects. Generated docs (`client/docs/settings.md`,
+`client/docs/devices.md`) use the driver of `tools/generated_docs.py`: register
+it once per clone with `python tools/generated_docs.py install`; after a merge
+that touched their sources, run `python tools/generated_docs.py`. The dev check
+fails while one is stale.
+
 The dev and test profiles keep only line tables for the workspace crates (panics and backtraces still show file and line) and no debug info for dependencies, which keeps test target folders small (a cold test build of the core, Windows and host crates: 10 GB instead of 25). Set `CARGO_PROFILE_DEV_DEBUG=full` for a debugger session. Release builds keep their own profile. Two optional tools cut local build time further:
 
 - **sccache** caches compiled crates across target folders and checkouts: `cargo install sccache --locked --no-default-features`, then set `RUSTC_WRAPPER=sccache`, `SCCACHE_DIR` (not under `%LOCALAPPDATA%` if it is virtualized) and `CARGO_INCREMENTAL=0`.
 - **lld** links the test binaries faster than GNU ld: install `mingw-w64-ucrt-x86_64-lld` in MSYS2 and set `CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS=-Clink-arg=-fuse-ld=lld`. Not `RUSTFLAGS`: it would replace the display driver's `+crt-static`. Rust flags are part of every artifact's fingerprint and cache key, so set them the same way for every build or each change rebuilds everything.
 
-Keep target folders between runs instead of deleting them. Two checkouts may reuse one target folder one after the other but never at the same time, and the second must touch its sources first: Cargo compares modification times, so a checkout whose files are older than the folder's artifacts would test the other checkout's build.
+Keep target folders between runs instead of deleting them. Two checkouts may reuse one target folder one after the other but never at the same time, and the second must make Cargo rebuild its own packages first: Cargo compares modification times, so a checkout whose files are older than the folder's artifacts would test the other checkout's build. `tools\dev.ps1 check` does this itself (`claim_target` in `tools/dev.py`); for a hand-run Cargo command, touch the sources or use a folder of its own.
 
 The display driver (`rust/drivers/rubylight-vdisplay`) is outside the main workspace; the build script builds it separately with the Windows Driver Kit. The NVIDIA adapter (`rust/truehdr-runtime`) is outside it too; only `-Nvidia` checks and builds it, for `x86_64-pc-windows-msvc`. Nightjar (`client/`) keeps its own workspace in `client/protocol`; the host takes only its `rubylight-protocol` crate, by path.
 

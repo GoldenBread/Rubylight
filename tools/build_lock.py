@@ -39,10 +39,10 @@ GRADLE_ENV = 'RUBYLIGHT_GRADLE_LANE'
 DEFAULT_GRADLE_LANE = pathlib.Path(r'D:\CodexArtifacts\locks\gradle-lane')
 CARGO_SLOTS_ENV = 'RUBYLIGHT_CARGO_SLOTS'
 # Measured 2026-11-18 (docs/building.md, "Build locks and lanes"): a dev-check
-# Cargo stage runs at -j 4 and peaked at CARGO_STAGE_PEAK_GB of commit charge
-# (rustc, the linker and the test binaries together).
+# Cargo stage (a cold host check) runs at -j 4 and peaked at 7.0 GB of commit charge,
+# 5.5 GB working set (rustc, the linker and the test binaries together).
 CARGO_STAGE_THREADS = 4
-CARGO_STAGE_PEAK_GB = 6
+CARGO_STAGE_PEAK_GB = 7
 # Left for the desktop, the user's games and streams, and Gradle.
 MEMORY_RESERVE_GB = 16
 
