@@ -382,6 +382,18 @@ pub fn paced_send_buffer(pace_bps: u64) -> usize {
 /// lateness; a longer stall or idle gap earns no more than this.
 pub const SEND_SLACK: Duration = Duration::from_micros(500);
 
+/// How long the send of one video frame may wait for room in a full socket
+/// before its sender abandons the rest of that frame: about one frame period,
+/// at most this. A busy CPU can keep the socket full for 20 to 60 ms; waiting
+/// a frame carries it instead of dropping holes, and giving up the rest of the
+/// frame keeps a failure inside one picture.
+pub const SEND_FRAME_WAIT: Duration = Duration::from_millis(20);
+
+/// [`SEND_FRAME_WAIT`] for a stream whose pictures come `period` apart.
+pub fn frame_send_wait(period: Duration) -> Duration {
+    period.min(SEND_FRAME_WAIT)
+}
+
 pub struct Pacer {
     due: Instant,
 }

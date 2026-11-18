@@ -2,6 +2,7 @@ package com.limelight;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import android.app.Application;
@@ -21,6 +22,7 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.Shadows;
 import org.robolectric.annotation.Config;
+import org.robolectric.util.ReflectionHelpers;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -108,6 +110,38 @@ public class DualScreenTest {
         game.dualScreenStarted = true;
         DualScreen.end(game);
         assertTrue(Shadows.shadowOf(RuntimeEnvironment.getApplication()).getBroadcastIntents().isEmpty());
+    }
+
+    @Test
+    public void leavingAsTheLaunchCompletesStartsNoSecondStream() {
+        Application app = RuntimeEnvironment.getApplication();
+        String uuid = "dual-host";
+        com.limelight.computers.HostCapabilityCache.save(app, uuid,
+                com.limelight.nvstream.http.TestHosts.fixture("rubylight-30-serverinfo.xml"));
+        int displayId = org.robolectric.shadows.ShadowDisplayManager.addDisplay("w1920dp-h1080dp");
+        Intent intent = new Intent(app, Game.class).putExtra(Game.EXTRA_PC_UUID, uuid)
+                .putExtra(Game.EXTRA_APP_ID, 73);
+        try {
+            Game game = Robolectric.buildActivity(Game.class, intent).get();
+            PreferenceConfiguration prefs = new PreferenceConfiguration();
+            prefs.dualScreen = true;
+            ReflectionHelpers.setField(game, "prefConfig", prefs);
+            ReflectionHelpers.setField(game, "app", new com.limelight.nvstream.http.NvApp("Game", 73, false));
+
+            // The user backs out just as the host accepts the launch.
+            game.finish();
+            game.stageComplete("launch");
+            Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+
+            // DualScreen.start sets both before launch() declines a finishing activity, so the test
+            // fails without the guard in Game.stageComplete, not just without the launch guard.
+            assertNull("no second-screen link is kept", game.dualScreenLink);
+            assertFalse("no second stream was started", game.dualScreenStarted);
+            assertNull("a stream that is ending starts no second one",
+                    Shadows.shadowOf(game).getNextStartedActivity());
+        } finally {
+            org.robolectric.shadows.ShadowDisplayManager.removeDisplay(displayId);
+        }
     }
 
     @Test

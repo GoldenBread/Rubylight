@@ -14,6 +14,10 @@ use std::{
     time::{Duration, Instant},
 };
 pub type Shared = Arc<Host>;
+/// The part of main's 8 s `stop_app` wait that the audio route may hold while
+/// the game closes. Past it the route goes back even if the game ignores close,
+/// so it is never left on the virtual sink when that wait runs out.
+const AUDIO_RELEASE_WAIT: Duration = Duration::from_secs(6);
 type FileStamp = (std::time::SystemTime, u64);
 /// When a file was last written and its size; None while it is missing.
 fn file_stamp(path: &std::path::Path) -> Option<FileStamp> {
@@ -618,6 +622,10 @@ impl Host {
         }
     }
     pub fn stop_app(&self, why: AppStop<'_>) {
+        // Shutdown's whole stop runs under main's 8 s wait, counted from this
+        // call: the audio route may hold only the part of it below.
+        let audio_deadline =
+            matches!(why, AppStop::Shutdown).then(|| Instant::now() + AUDIO_RELEASE_WAIT);
         // A game moved by Continue here whose new device's stream has arrived saves its settings
         // files for that device, also when it closes before the next housekeeping tick settles
         // the move. Callers that end the streams first settle before they do: a stopped stream
@@ -626,12 +634,51 @@ impl Host {
         let teardown = self.session_teardown(crate::session_control::Scope::Game);
         // Stopping the app waits for it to exit, up to its exit timeout and
         // undo commands: never under the lock every serverinfo request takes.
-        let app = self.current_app.lock().unwrap().take();
+        let mut app = self.current_app.lock().unwrap().take();
+        // At shutdown the wait runs under a budget. The display layout goes
+        // back before the game is asked to close; its audio route stays until
+        // its processes have stopped (before its undo commands), or until its
+        // part of the wait runs out, for a game that ignores close.
+        if let Some(deadline) = audio_deadline {
+            let displays = std::mem::take(&mut *self.app_display.lock().unwrap());
+            drop(displays);
+            if let Some(mut running) = app.take() {
+                let (stopped, stopped_rx) = std::sync::mpsc::channel();
+                running.notify_when_processes_stop(stopped);
+                std::thread::scope(|scope| {
+                    scope.spawn(move || self.release_audio_by(stopped_rx, deadline));
+                    self.end_app(Some(running), why);
+                    drop(self.app_audio.lock().unwrap().take());
+                    drop(std::mem::take(&mut *self.app_display.lock().unwrap()));
+                });
+            } else {
+                drop(self.app_audio.lock().unwrap().take());
+                self.end_app(None, why);
+            }
+            drop(teardown);
+            return;
+        }
         self.end_app(app, why);
         let audio = self.app_audio.lock().unwrap().take();
         let displays = std::mem::take(&mut *self.app_display.lock().unwrap());
         drop((audio, displays));
         drop(teardown);
+    }
+    /// Releases the app's audio route once its processes have stopped, or at
+    /// `deadline` when the game ignores close, whichever comes first. Only the
+    /// deadline warns: a normal close releases by its notice.
+    fn release_audio_by(&self, stopped: std::sync::mpsc::Receiver<()>, deadline: Instant) {
+        let timed_out = matches!(
+            stopped.recv_timeout(deadline.saturating_duration_since(Instant::now())),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        );
+        let audio = self.app_audio.lock().unwrap().take();
+        if timed_out && audio.is_some() {
+            tracing::warn!(
+                "the game's processes had not stopped when the shutdown's audio wait ran out; releasing its audio route"
+            );
+        }
+        drop(audio);
     }
     /// Stops `app`, taken out of `current_app`: logs why, waits for it to
     /// exit and raises app.stopped. Never under the `current_app` lock.

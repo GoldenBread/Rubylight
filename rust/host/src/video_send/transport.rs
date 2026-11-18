@@ -214,6 +214,7 @@ impl Transport<'_> {
         let safe = network_pacing::rate_bps(0, bitrate, route.bps, true, needed);
         let bps = s.keyframe_loss_bps(bps, safe, frame.wire_frame, frame.idr);
         if Instant::now() >= self.link_due {
+            crate::video_send::check_route_mtu(s, s.config.packet_size, self.watch.mtu(peer));
             network_pacing::report_rate(
                 &s.launch.warnings,
                 bps,
@@ -236,6 +237,10 @@ impl Transport<'_> {
         s.stats
             .video_frame
             .store(u64::from(frame.wire_frame) + 1, Ordering::Release);
+        // A full socket is waited on for about one picture period, shared by
+        // every batch of this frame; then the rest of it is abandoned.
+        self.batch
+            .begin_frame(network_pacing::frame_send_wait(period));
         let waits = self.batch.waits.unwrap();
         Sending {
             dequeued,
@@ -495,6 +500,7 @@ impl Transport<'_> {
 
     /// The frame's last part is out: account for it.
     fn finish(&mut self, frame: &Prepared, cur: Sending) {
+        self.batch.end_frame();
         let (s, c) = (&self.s, &self.c);
         let period = s.stream_mode().period();
         let start = self.start;
@@ -524,8 +530,10 @@ impl Transport<'_> {
         let (link_packets, link_bytes) =
             super::reached_socket(sent_packets, self.batch.dropped - dropped, sent_bytes, ipv6);
         s.record_link_sent(frame.wire_frame, link_packets, link_bytes);
+        let refused = self.batch.dropped.saturating_sub(self.batch.oversized)
+            != dropped.saturating_sub(oversized);
         if lost.unrecoverable() {
-            s.keyframe_abandoned(frame.wire_frame);
+            s.keyframe_abandoned_as(frame.wire_frame, refused);
             tracing::debug!(
                 frame = frame.wire_frame,
                 idr = frame.idr,
@@ -535,10 +543,8 @@ impl Transport<'_> {
         } else {
             self.send_loss.delivered(frame.idr);
         }
-        if self.batch.dropped.saturating_sub(self.batch.oversized)
-            != dropped.saturating_sub(oversized)
-        {
-            s.launch.warnings.event("network_send", "Video packets were dropped by the host after transient socket send failures. You may see stutter or recovery frames; lower bitrate and check the network adapter. The log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
+        if refused {
+            s.launch.warnings.event("network_send", "The PC could not send the video fast enough (its CPU or network adapter fell behind), so video packets were dropped. You may see stutter or recovery frames; close other work on the PC, or lower the bitrate, resolution or frame rate. The log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
         }
         super::report_oversized(s, &self.batch, oversized);
         s.stats.latency_us.store(frame.latency, Ordering::Relaxed);
@@ -702,8 +708,7 @@ pub(super) fn run_with(
 ) -> Result<()> {
     let mut batch = Batch::default();
     batch.waits = Some(Default::default());
-    batch.dont_fragment =
-        s.config.packet_size > usize::from(butterpollo_core::video_packet::STOCK_MAX_VIDEO_PACKET);
+    batch.dont_fragment = crate::stream::video_refuses_fragmentation();
     let batch_kb = match c.integer("video_max_batch_size_kb", 64) {
         16 => 16,
         32 => 32,

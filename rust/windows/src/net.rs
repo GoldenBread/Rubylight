@@ -330,13 +330,13 @@ pub fn configure_udp(socket: &UdpSocket) -> Result<()> {
     Ok(())
 }
 /// Set whether this socket refuses to fragment its later datagrams:
-/// `IP_DONTFRAGMENT` and `IPV6_DONTFRAG`, so an oversized jumbo packet fails
+/// `IP_DONTFRAGMENT` and `IPV6_DONTFRAG`, so an oversized probe packet fails
 /// with WSAEMSGSIZE at the sender instead of being fragmented and lost whole
 /// on a hop that cannot reassemble it. Both options are tried because a
 /// dual-stack socket carries both families; the one the socket does not carry
-/// refuses its option harmlessly. A stock stream clears them, since the socket
-/// lives for the process and a jumbo session must not leave a later stock
-/// session refusing its own datagrams.
+/// refuses its option harmlessly. The PyroWave probe sets it on its own socket
+/// and clears it again; the shared video socket never sets it, since the flag
+/// would govern every stream using that process-wide socket.
 pub fn set_dont_fragment(socket: &UdpSocket, enabled: bool) -> Result<()> {
     let raw = SOCKET(socket.as_raw_socket() as usize);
     let value = u32::from(enabled).to_ne_bytes();
@@ -391,18 +391,49 @@ pub fn datagram_lost(error: &std::io::Error) -> bool {
 }
 /// How long one send, or all of one batch's sends together, wait for room in
 /// a full socket buffer before dropping. Per datagram, 64 refused datagrams
-/// would hold the sender for 256 ms.
+/// would hold the sender for 256 ms. Within a video frame
+/// ([`Batch::begin_frame`]) all its batches share one deadline: the later of
+/// the frame's own (about a frame period from its start, at most 20 ms) and
+/// this long after the frame's first refusal.
 pub const WRITABLE_WAIT: std::time::Duration = std::time::Duration::from_millis(4);
 const BUFFER_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(1);
 /// The writable wait left to one send call, started at its first full buffer.
 #[derive(Default)]
 struct WaitBudget {
     deadline: Option<std::time::Instant>,
+    /// The frame's own deadline ([`Batch::begin_frame`]), if one is in flight.
+    frame_until: Option<std::time::Instant>,
+    /// Full-buffer refusals seen by this send call.
+    refusals: u32,
     backoff_timer: Option<crate::timing::Timer>,
 }
 impl WaitBudget {
+    /// A budget shared by every batch of the frame in flight: `deadline` is
+    /// the frame's, once a batch of it met a full socket, so a socket that
+    /// stays full is not waited on again for each batch and the rest of that
+    /// frame is abandoned instead; `until` is the frame's own deadline.
+    fn for_frame(until: Option<std::time::Instant>, deadline: Option<std::time::Instant>) -> Self {
+        Self {
+            deadline,
+            frame_until: until,
+            ..Default::default()
+        }
+    }
+    /// The deadline, set at the first full buffer: [`WRITABLE_WAIT`] from
+    /// then, or the frame's own deadline if that is later. A frame that took
+    /// most of its period to pace out still gets the usual wait.
     fn deadline_at(&mut self, now: std::time::Instant) -> std::time::Instant {
-        *self.deadline.get_or_insert(now + WRITABLE_WAIT)
+        let wait = now + WRITABLE_WAIT;
+        *self
+            .deadline
+            .get_or_insert(self.frame_until.map_or(wait, |until| until.max(wait)))
+    }
+    /// Count a full-buffer refusal; true from the second on, when the retry
+    /// should pause first. A socket can poll writable and still refuse a
+    /// large segmented batch, and polling alone would spin on it.
+    fn refused_again(&mut self) -> bool {
+        self.refusals += 1;
+        self.refusals > 1
     }
     /// Milliseconds to wait for a full buffer now; 0 once the budget is spent.
     fn take(&mut self, now: std::time::Instant) -> i32 {
@@ -461,8 +492,9 @@ pub struct WritableWaits {
     pub last_error: i32,
 }
 /// ENOBUFS can come from transport/driver allocation pressure while the socket
-/// still polls writable. Pause briefly before one retry rather than hot-polling
-/// that readiness bit or dropping an entire segmented batch immediately.
+/// still polls writable. Pause briefly before a retry rather than hot-polling
+/// that readiness bit or dropping an entire segmented batch immediately. A
+/// repeated WSAEWOULDBLOCK pauses the same way before it polls again.
 fn buffer_available(
     socket: &UdpSocket,
     error: WSA_ERROR,
@@ -472,10 +504,20 @@ fn buffer_available(
     if let Some(trace) = trace.as_mut() {
         trace.last_error = error.0;
     }
+    let again = budget.refused_again();
     if error == WSAEWOULDBLOCK {
+        if again && !pause(budget, trace.as_deref_mut()) {
+            return false;
+        }
         return writable(socket, budget, trace);
     }
     debug_assert_eq!(error, WSAENOBUFS);
+    pause(budget, trace)
+}
+
+/// Wait [`BUFFER_RETRY_DELAY`] if the budget leaves time for a retry after
+/// it; false when it does not.
+fn pause(budget: &mut WaitBudget, trace: Option<&mut WritableWaits>) -> bool {
     let started = std::time::Instant::now();
     let Some(retry_at) = budget.backoff_at(started) else {
         return false;
@@ -496,16 +538,21 @@ fn buffer_available(
     finished < budget.deadline_at(started)
 }
 
-/// A successful UDP send must never be repeated. Retry only buffer pressure,
-/// once, after the caller's shared wait budget permits it; all other errors
-/// retain their existing drop/fatal handling.
+/// A successful UDP send must never be repeated. Retry buffer pressure for as
+/// long as the caller's budget allows, so a socket that is full for a moment
+/// (a busy CPU, a late transmit completion) carries the batch instead of
+/// losing it; `wait` paces the retries ([`buffer_available`] pauses 1 ms
+/// before each after the first). All other errors retain their existing
+/// drop/fatal handling.
 fn send_with_retry<T>(
     mut send: impl FnMut() -> std::result::Result<T, WSA_ERROR>,
-    wait: impl FnOnce(WSA_ERROR) -> bool,
+    mut wait: impl FnMut(WSA_ERROR) -> bool,
 ) -> std::result::Result<T, WSA_ERROR> {
-    match send() {
-        Err(error) if [WSAEWOULDBLOCK, WSAENOBUFS].contains(&error) && wait(error) => send(),
-        result => result,
+    loop {
+        match send() {
+            Err(error) if [WSAEWOULDBLOCK, WSAENOBUFS].contains(&error) && wait(error) => continue,
+            result => return result,
+        }
     }
 }
 fn writable(
@@ -544,7 +591,10 @@ fn send_one(
     trace: Option<&mut WritableWaits>,
 ) -> Result<std::result::Result<(), WSA_ERROR>> {
     let send = || send_from(socket, packet, peer, source);
-    let result = send_with_retry(send, |error| buffer_available(socket, error, budget, trace));
+    let mut trace = trace;
+    let result = send_with_retry(send, |error| {
+        buffer_available(socket, error, budget, trace.as_deref_mut())
+    });
     Ok(match result {
         Ok(size) => {
             anyhow::ensure!(
@@ -884,12 +934,16 @@ pub struct Batch {
     /// Datagrams the path refused because they are larger than its MTU with
     /// `IP_DONTFRAGMENT`/`IPV6_DONTFRAG` set; also counted in `dropped`.
     pub oversized: u64,
-    /// The sender set the socket to refuse fragmentation ([`set_dont_fragment`]),
-    /// so an oversized jumbo datagram is a lost packet to report, not a send
-    /// error that ends the stream.
+    /// The sender's socket refuses fragmentation ([`set_dont_fragment`]), as
+    /// the PyroWave probe's does for a jumbo path, so an oversized datagram is
+    /// a lost packet to report, not a send error that ends the stream.
     pub dont_fragment: bool,
     /// Enabled by the sender only for pacing traces.
     pub waits: Option<WritableWaits>,
+    /// The frame in flight (see [`Batch::begin_frame`]): its own deadline,
+    /// and the deadline its batches share once one met a full socket. `None`
+    /// outside a frame, where one batch waits [`WRITABLE_WAIT`] on its own.
+    frame: Option<FrameWait>,
     unreported: u64,
     reported: Option<std::time::Instant>,
 }
@@ -902,12 +956,38 @@ impl Default for Batch {
             oversized: 0,
             dont_fragment: false,
             waits: None,
+            frame: None,
             unreported: 0,
             reported: None,
         }
     }
 }
+#[derive(Clone, Copy)]
+struct FrameWait {
+    until: std::time::Instant,
+    deadline: Option<std::time::Instant>,
+}
 impl Batch {
+    /// Start one video frame: its batches share one wait for room in a full
+    /// socket, up to `wait` from now or [`WRITABLE_WAIT`] from the frame's
+    /// first refusal, whichever is later (see [`Batch::frame_wait_spent`]).
+    pub fn begin_frame(&mut self, wait: std::time::Duration) {
+        self.frame = Some(FrameWait {
+            until: std::time::Instant::now() + wait,
+            deadline: None,
+        });
+    }
+    /// The frame is over: a later batch outside a frame gets its own wait.
+    pub fn end_frame(&mut self) {
+        self.frame = None;
+    }
+    /// The frame in flight met a full socket and its shared wait is over:
+    /// its sender gives up the rest of it.
+    pub fn frame_wait_spent(&self) -> bool {
+        self.frame
+            .and_then(|frame| frame.deadline)
+            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+    }
     /// How many of the leading `packets` one segmented send carries: equal
     /// sizes, then at most one shorter, at most 64 and 65507 bytes in all.
     /// The shorter tail rides along, as it would otherwise take a paced
@@ -953,7 +1033,7 @@ impl Batch {
             tracing::warn!(
                 code = error.0,
                 dropped = self.unreported,
-                "UDP send failed; packets dropped and the client may stutter. Lower bitrate and check the network adapter"
+                "UDP send failed: the socket stayed full, so packets were dropped and the client may stutter. The PC could not send fast enough (its CPU or network adapter fell behind); close other work on the PC or lower the bitrate"
             );
             self.unreported = 0;
             self.reported = Some(std::time::Instant::now());
@@ -1000,7 +1080,28 @@ impl Batch {
             return Ok(0);
         }
         let mut source = socket.source(peer);
-        let mut budget = WaitBudget::default();
+        let mut budget = WaitBudget::for_frame(
+            self.frame.map(|frame| frame.until),
+            self.frame.and_then(|frame| frame.deadline),
+        );
+        let dropped = self.dropped;
+        let result = self.send_within(socket, packets, peer, &mut source, &mut budget);
+        if let Some(frame) = self.frame.as_mut() {
+            // The shared deadline lasts only while the socket stays full: a
+            // batch that dropped nothing ends that spell, and a later refusal
+            // starts a new one with at least WRITABLE_WAIT.
+            frame.deadline = budget.deadline.filter(|_| self.dropped > dropped);
+        }
+        result
+    }
+    fn send_within(
+        &mut self,
+        socket: &ReplySocket,
+        packets: &[Vec<u8>],
+        peer: SocketAddr,
+        source: &mut Option<IpAddr>,
+        budget: &mut WaitBudget,
+    ) -> Result<usize> {
         if self.offload
             && packets.len() > 1
             && packets.len() <= 64
@@ -1011,8 +1112,8 @@ impl Batch {
             && (1..=packets[0].len()).contains(&packets.last().unwrap().len())
         {
             let result;
-            (result, source) = socket.send_pinned(peer, source, |source| {
-                self.send_segmented(socket, packets, peer, source, &mut budget)
+            (result, *source) = socket.send_pinned(peer, *source, |source| {
+                self.send_segmented(socket, packets, peer, source, budget)
             })?;
             match result {
                 Ok(sent) => return Ok(sent),
@@ -1039,22 +1140,16 @@ impl Batch {
         let mut sent = 0;
         for packet in packets {
             let result;
-            (result, source) = socket.send_pinned(peer, source, |source| {
+            (result, *source) = socket.send_pinned(peer, *source, |source| {
                 self.system_calls += 1;
-                send_one(
-                    socket,
-                    packet,
-                    peer,
-                    source,
-                    &mut budget,
-                    self.waits.as_mut(),
-                )
+                send_one(socket, packet, peer, source, budget, self.waits.as_mut())
             })?;
             match result {
                 Ok(()) => sent += packet.len(),
-                // The video socket is process-wide: another session may have set DF even when
-                // this batch did not, so a stock-size datagram can hit the path's limit too.
-                // Drop it like a path-MTU refusal; ending a stock stream is worse.
+                // A socket that refuses fragmentation reports a datagram larger than the
+                // path's MTU this way, as the PyroWave probe does on a jumbo path. Drop
+                // it like a path-MTU refusal; ending the probe's or a stream's send is
+                // worse than losing that datagram.
                 Err(error) if error == WSAEMSGSIZE => {
                     self.too_large(1, error);
                 }

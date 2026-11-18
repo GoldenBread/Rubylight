@@ -87,6 +87,15 @@ test('a bitrate the host lowered for the network is shown on the card', () => {
   assert.match(html({ encoder_bitrate_kbps: 2_000, link_rate: link('floor', 2_000, 15_000) }), /Bitrate limited by the network/);
 });
 
+test('a bitrate the host lowered because the PC could not send says so', () => {
+  const pc = html({
+    encoder_bitrate_kbps: 9_000,
+    link_rate: { ...link('limited', 9_000, 15_000), reason: 'send_losses' },
+  });
+  assert.match(pc, /Bitrate limited by the PC \(it could not send fast enough\)/);
+  assert.doesNotMatch(pc, /limited by the network/);
+});
+
 test('no network badge on a healthy, disabled or older host stream', () => {
   for (const link_rate of [link('full', 15_000, 15_000), link('off', 15_000, 15_000), undefined]) {
     assert.doesNotMatch(html({ link_rate }), /limited by the network/);
@@ -107,7 +116,7 @@ test('the card shows the current bitrate, and says when the encoder cannot go lo
 test('a bitrate cut for a standing queue says so on the card', () => {
   const link = { state: 'limited', reason: 'queue', ceiling_kbps: 75_000, current_kbps: 32_000, encoder_floor_kbps: 0 };
   const queue = html({ encoder_bitrate_kbps: 32_000, link_rate: link });
-  assert.match(queue, /Bitrate limited by the network: <span class="num">32<\/span> of\s*<span class="num">75<\/span> Mbps/);
+  assert.match(queue, /Bitrate limited by the network:[\s\S]*?<span class="num">32<\/span>[\s\S]*?of[\s\S]*?<span class="num">75<\/span> Mbps/);
   assert.match(queue, /video was held back in a queue/);
   const loss = html({ encoder_bitrate_kbps: 32_000, link_rate: { ...link, reason: 'unrecoverable_frames' } });
   assert.match(loss, /Bitrate limited by the network/);

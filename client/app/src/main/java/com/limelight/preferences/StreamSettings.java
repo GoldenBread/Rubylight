@@ -888,6 +888,8 @@ public class StreamSettings extends NightjarActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        // The decoder scan the Recommended rows compare against runs on a worker, not here.
+        SimpleProfile.warmCapabilities();
         // Framework fragments are recreated by super.onCreate(), before our views exist, and their lists read this.
         twoPane = getResources().getBoolean(R.bool.settings_two_pane);
         moreOpen.addAll(rememberedMore());
@@ -1898,6 +1900,10 @@ public class StreamSettings extends NightjarActivity {
                             prefs.getBoolean(MOUSE_MODE_KEY, false) ? 1 : 0];
                 } else if (com.limelight.console.OpenPlay.SETTING.equals(pref.getKey())) {
                     value = startScreenName(StartScreenChoice.read(prefs));
+                } else if (pref instanceof ConsoleModePreference) {
+                    // The switch follows the start screen the row above it sets, without writing.
+                    ((ConsoleModePreference) pref).followStored();
+                    continue;
                 } else if (HOST_DISPLAY_KEY.equals(pref.getKey())) {
                     value = DisplayArrangementChoice.names(getActivity(), true)[DisplayArrangementChoice.readMain(prefs)];
                 } else if (PACE_CALIBRATION_KEY.equals(pref.getKey())) {

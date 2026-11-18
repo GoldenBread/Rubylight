@@ -141,7 +141,10 @@ impl SessionThread<'_> {
         } else {
             None
         };
-        let mut metadata_due = Instant::now() + Duration::from_secs(1);
+        // The first picture updates HDR metadata after the enhancer has chosen
+        // its conversion: RTX HDR's peak comes from that selection, not only
+        // from the configuration the encoder was made with.
+        let mut metadata_due = Instant::now();
         // A keyframe a while after an AMF reference-invalidation recovery.
         let mut confirm_keyframe: Option<Instant> = None;
         let mut timing_due = Instant::now() + Duration::from_secs(5);
@@ -196,8 +199,7 @@ impl SessionThread<'_> {
         let mut first_seen: Option<(usize, Instant, Option<Duration>, Option<Instant>)> = None;
         let mut video_qos = Tagged::default();
         let mut batch = butterpollo_windows::net::Batch::default();
-        batch.dont_fragment = packetizer.packet_size
-            > usize::from(butterpollo_core::video_packet::STOCK_MAX_VIDEO_PACKET);
+        batch.dont_fragment = crate::stream::video_refuses_fragmentation();
         let mut packets = Vec::new();
         let trace_send = tracing::enabled!(target: "pacing", tracing::Level::TRACE);
         let mut admission_trace = trace_send.then(AdmissionTrace::default);
@@ -412,6 +414,8 @@ impl SessionThread<'_> {
                         let pushed = streamed.push(&mut packetizer, &frame.bytes, last, &mut packets, |shards, block| {
                             sent.lost.push_block(block.data, block.parity);
                             if block.index == 0 {
+                                // The frame's batches share one wait for a full socket.
+                                batch.begin_frame(butterpollo_core::network_pacing::frame_send_wait(stream_period.get()));
                                 next_wire_frame.set(u64::from(wire_frame.wrapping_add(1)));
                                 s.stats.video_frame.store(u64::from(wire_frame) + 1, Ordering::Release);
                             }
@@ -494,6 +498,7 @@ impl SessionThread<'_> {
                         continue 'frames;
                     }
                     let Some(st) = streaming.take() else { continue 'frames };
+                    batch.end_frame();
                     if st.failed {
                         slice_spare = st.frame.into_buffer();
                         continue 'frames;
@@ -503,16 +508,16 @@ impl SessionThread<'_> {
                     let unrecoverable = sent.lost.unrecoverable();
                     let (link_packets, link_bytes) = crate::video_send::reached_socket(sent.packets, batch.dropped - sent.dropped_at_start, sent.bytes, peer.ip().to_canonical().is_ipv6());
                     s.record_link_sent(wire_frame, link_packets, link_bytes);
+                    let refused = batch.dropped.saturating_sub(batch.oversized)
+                        != sent.dropped_at_start.saturating_sub(sent.oversized_at_start);
                     if unrecoverable {
-                        s.keyframe_abandoned(wire_frame);
+                        s.keyframe_abandoned_as(wire_frame, refused);
                         tracing::debug!(frame = wire_frame, finished = streamed.is_done(), "video frame lost on send; the rest of it was not sent");
                     } else {
                         send_loss.delivered(false);
                     }
-                    if batch.dropped.saturating_sub(batch.oversized)
-                        != sent.dropped_at_start.saturating_sub(sent.oversized_at_start)
-                    {
-                        s.launch.warnings.event("network_send", "Video packets were dropped by the host after transient socket send failures. You may see stutter or recovery frames; lower bitrate and check the network adapter. The log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
+                    if refused {
+                        s.launch.warnings.event("network_send", "The PC could not send the video fast enough (its CPU or network adapter fell behind), so video packets were dropped. You may see stutter or recovery frames; close other work on the PC, or lower the bitrate, resolution or frame rate. The log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
                     }
                     crate::video_send::report_oversized(&s, &batch, sent.oversized_at_start);
                     // As the whole-frame path judges it, from the frame's size, so an
@@ -643,6 +648,8 @@ impl SessionThread<'_> {
                 let mut abandoned = 0;
                 let mut sent_packets = 0;
                 let mut sent_bytes = 0;
+                // The frame's batches share one wait for a full socket.
+                batch.begin_frame(butterpollo_core::network_pacing::frame_send_wait(stream_period.get()));
                 'blocks: loop {
                     let block_started = Instant::now();
                     let block_count = match next_block(&mut packets) {
@@ -722,18 +729,19 @@ impl SessionThread<'_> {
                     }
                 }
                 drop(next_block);
+                batch.end_frame();
                 let (link_packets, link_bytes) = crate::video_send::reached_socket(sent_packets, batch.dropped - dropped, sent_bytes, peer.ip().to_canonical().is_ipv6());
                 s.record_link_sent(wire_frame, link_packets, link_bytes);
+                let refused = batch.dropped.saturating_sub(batch.oversized)
+                    != dropped.saturating_sub(oversized);
                 if lost.unrecoverable() {
-                    s.keyframe_abandoned(wire_frame);
+                    s.keyframe_abandoned_as(wire_frame, refused);
                     tracing::debug!(frame = packetizer.frame.wrapping_sub(1), idr = frame.idr, abandoned, "video frame lost on send; the rest of it was not sent");
                 } else {
                     send_loss.delivered(frame.idr);
                 }
-                if batch.dropped.saturating_sub(batch.oversized)
-                    != dropped.saturating_sub(oversized)
-                {
-                    s.launch.warnings.event("network_send", "Video packets were dropped by the host after transient socket send failures. You may see stutter or recovery frames; lower bitrate and check the network adapter. The log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
+                if refused {
+                    s.launch.warnings.event("network_send", "The PC could not send the video fast enough (its CPU or network adapter fell behind), so video packets were dropped. You may see stutter or recovery frames; close other work on the PC, or lower the bitrate, resolution or frame rate. The log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
                 }
                 crate::video_send::report_oversized(&s, &batch, oversized);
                 s.stats.frames.fetch_add(1, Ordering::Relaxed);
@@ -991,6 +999,7 @@ impl SessionThread<'_> {
                                 sent_mbps=ms("bitrate_mbps"),
                                 link_state=%link["state"].as_str().unwrap_or(""),
                                 link_ceiling_kbps=link["ceiling_kbps"].as_u64().unwrap_or(0),
+                                link_learned_kbps=link["learned_kbps"].as_u64().unwrap_or(0),
                                 link_current_kbps=link["current_kbps"].as_u64().unwrap_or(0),
                                 link_delivered_kbps=link["delivered_kbps"].as_u64().unwrap_or(0),
                                 link_steps_down=link["steps_down"].as_u64().unwrap_or(0),
@@ -1564,7 +1573,12 @@ impl SessionThread<'_> {
                 }
                 if Instant::now() >= metadata_due {
                     let checks_started = Instant::now();
-                    let display_metadata = image.gpu.hdr_metadata();
+                    let mut display_metadata = image.gpu.hdr_metadata();
+                    if let Some(peak) = enhancer.hdr_peak(&runtime_config) {
+                        // RTX HDR generated this picture at its own peak; the
+                        // SDR monitor's peak does not describe it.
+                        display_metadata = display_metadata.generated(peak);
+                    }
                     frame_checks += checks_started.elapsed();
                     let metadata = m.set_display_hdr_metadata(&s, display_metadata);
                     active.set_hdr_metadata(metadata);

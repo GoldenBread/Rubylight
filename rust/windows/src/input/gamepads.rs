@@ -598,6 +598,9 @@ impl Gamepads {
                 self.steam_attributes.retain(|i, _| active & (1 << *i) != 0);
                 self.dualsense_failed.retain(|i| active & (1 << *i) != 0);
                 self.states.retain(|i, _| active & (1 << *i) != 0);
+                // A pad this state turns back on is not on its way out: only
+                // the client's removal had deferred its unplug.
+                self.dropped.retain(|i| active & (1 << *i) == 0);
                 // Every state passes here: find the pads that left without
                 // copying the map, which only a removal needs to change.
                 let gone = self.active.keys().fold(0u16, |mask, i| mask | (1 << i)) & !active;
@@ -657,22 +660,7 @@ impl Gamepads {
                     self.started.elapsed(),
                     self.policy.back_button_timeout,
                 );
-                let submitted = self.submit(*id, buttons, left_trigger, right_trigger, sticks);
-                if let Err(error) = submitted {
-                    // The VHF driver's pads do not survive the machine's sleep:
-                    // it retires their HID children and refuses input until
-                    // the slot is created again (`recreate`).
-                    if !device_removed(&error) {
-                        return Err(error);
-                    }
-                    // A driver that stays gone is asked once a second for each
-                    // pad, not at every controller state.
-                    if !self.recreate_due(*id, Instant::now()) {
-                        return Err(error);
-                    }
-                    self.recreate(*id)?;
-                    self.submit(*id, buttons, left_trigger, right_trigger, sticks)?;
-                }
+                self.submit_state(*id, buttons, left_trigger, right_trigger, sticks)?;
             }
             Event::Arrival {
                 id,
@@ -1074,6 +1062,29 @@ impl Gamepads {
         self.backend
             .submit(self.slot(id)?, buttons, left, right, sticks)
     }
+    /// Sends a state, creating the pad again when the driver reports its
+    /// device removed, as the VHF driver does after the machine's sleep. A
+    /// driver that stays gone is asked once a second for this pad.
+    fn submit_state(
+        &mut self,
+        id: u16,
+        buttons: u32,
+        left: u8,
+        right: u8,
+        sticks: &[i16; 4],
+    ) -> Result<()> {
+        let Err(error) = self.submit(id, buttons, left, right, sticks) else {
+            return Ok(());
+        };
+        if !device_removed(&error) {
+            return Err(error);
+        }
+        if !self.recreate_due(id, Instant::now()) {
+            return Err(error);
+        }
+        self.recreate(id)?;
+        self.submit(id, buttons, left, right, sticks)
+    }
     /// Whether controller `id`'s pad may be created again at `now`: a driver
     /// that stays gone is asked [`RECREATE_RETRY`] apart for that pad, from
     /// the input path and the feedback poll alike.
@@ -1184,10 +1195,19 @@ impl Gamepads {
                 updates.push((*id, buttons, *left_trigger, *right_trigger, *sticks));
             }
         }
+        // One pad's failure must not skip the others' back-button update: try
+        // every pad and report the last error, as the input and feedback paths
+        // treat each pad on its own.
+        let mut last_error = None;
         for (id, buttons, left, right, sticks) in updates {
-            self.submit(id, buttons, left, right, &sticks)?;
+            if let Err(error) = self.submit_state(id, buttons, left, right, &sticks) {
+                last_error = Some(error);
+            }
         }
-        keepalive
+        match last_error {
+            Some(error) => Err(error),
+            None => keepalive,
+        }
     }
     /// Controllers whose client is asked for motion again, with their
     /// arrival capabilities: a ViGEmBus DualShock 4 whose gyro went silent,

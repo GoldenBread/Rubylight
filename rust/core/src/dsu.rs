@@ -27,6 +27,13 @@ pub const PROTOCOL_VERSION: u16 = 1001;
 pub const SLOTS: usize = 4;
 /// A client that stops asking for pad data is dropped after this long.
 pub const CLIENT_TIMEOUT: Duration = Duration::from_secs(5);
+/// The most clients one server keeps. Pad data is sent to each of them at the
+/// controller's report rate, and a flood of spoofed requests must not grow the
+/// map without bound.
+pub const MAX_CLIENTS: usize = 16;
+/// The most MAC addresses one client may ask for. Four controllers are all a
+/// DSU server reports, and a client cannot grow its registration without bound.
+pub const MAX_MACS: usize = 4;
 /// Protocol version request and reply.
 pub const MSG_VERSION: u32 = 0x10_0000;
 /// Connected controllers (`ListPorts`) request and port info reply.
@@ -529,8 +536,15 @@ pub struct Clients {
 }
 
 impl Clients {
-    /// Records a [`Request::PadData`] from `from`.
+    /// Records a [`Request::PadData`] from `from`, within [`MAX_CLIENTS`] and
+    /// [`MAX_MACS`]: registrations a flood would add beyond them are ignored.
     pub fn register(&mut self, from: SocketAddr, flags: u8, slot: u8, mac: [u8; 6], now: Instant) {
+        // A stale registration makes room for a new client before the cap is
+        // checked, so a client that stopped asking never keeps one waiting.
+        self.prune(now);
+        if self.clients.len() >= MAX_CLIENTS && !self.clients.contains_key(&from) {
+            return;
+        }
         let client = self.clients.entry(from).or_default();
         if flags == 0 {
             client.all = Some(now);
@@ -539,9 +553,10 @@ impl Clients {
             client.slots[usize::from(slot)] = Some(now);
         }
         if flags & 2 != 0 {
-            match client.macs.iter_mut().find(|(m, _)| *m == mac) {
-                Some((_, at)) => *at = now,
-                None => client.macs.push((mac, now)),
+            if let Some((_, at)) = client.macs.iter_mut().find(|(m, _)| *m == mac) {
+                *at = now;
+            } else if client.macs.len() < MAX_MACS {
+                client.macs.push((mac, now));
             }
         }
     }

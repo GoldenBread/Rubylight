@@ -636,6 +636,12 @@ impl Config {
         self.boolean("enable_dsu_server", false)
             .then(|| self.webrtc_port_setting("dsu_server_port", crate::dsu::DEFAULT_PORT))
     }
+    /// Whether the DSU motion server listens where other devices on the
+    /// network can reach it (`dsu_server_lan`, off by default): off keeps it
+    /// on this PC only, where an emulator on the same PC finds it.
+    pub fn dsu_server_lan(&self) -> bool {
+        self.boolean("dsu_server_lan", false)
+    }
     fn webrtc_port_setting(&self, key: &str, default: u16) -> u16 {
         let n = self.integer(key, i64::from(default));
         if !WEBRTC_PORTS.contains(&n) {

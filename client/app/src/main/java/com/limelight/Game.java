@@ -1486,8 +1486,11 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
     @Override
     public void stageComplete(String stage) {
         // The host has accepted this stream's launch or resume: the second screen need not wait for the
-        // rest of the handshake and the first frame.
-        runOnUiThread(() -> DualScreen.start(this));
+        // rest of the handshake and the first frame. The user can leave before this reaches the UI.
+        runOnUiThread(() -> {
+            if (isFinishing() || isDestroyed()) return;
+            DualScreen.start(this);
+        });
     }
 
     @Override

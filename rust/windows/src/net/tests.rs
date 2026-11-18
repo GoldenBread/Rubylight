@@ -43,7 +43,7 @@ fn a_loopback_connection_belongs_to_the_process_that_opened_it() {
 }
 
 #[test]
-fn a_refused_datagram_or_segmented_batch_retries_once_after_buffer_pressure() {
+fn a_refused_datagram_or_segmented_batch_retries_while_the_budget_allows() {
     // Both the audio/datagram path and WSASendMsg use this operation. A
     // refused batch has not been submitted, so retrying it cannot duplicate
     // any successful datagrams.
@@ -74,7 +74,7 @@ fn a_refused_datagram_or_segmented_batch_retries_once_after_buffer_pressure() {
 
 #[test]
 fn persistent_pressure_and_an_expired_budget_do_not_loop_or_hide_errors() {
-    for can_wait in [true, false] {
+    for max_waits in [0, 2] {
         let mut sends = 0;
         let mut waits = 0;
         let result: std::result::Result<usize, _> = send_with_retry(
@@ -84,12 +84,12 @@ fn persistent_pressure_and_an_expired_budget_do_not_loop_or_hide_errors() {
             },
             |_| {
                 waits += 1;
-                can_wait
+                waits <= max_waits
             },
         );
         assert_eq!(result, Err(WSAENOBUFS));
-        assert_eq!(sends, if can_wait { 2 } else { 1 });
-        assert_eq!(waits, 1);
+        assert_eq!(sends, max_waits + 1);
+        assert_eq!(waits, max_waits + 1);
     }
     for error in [WSAEHOSTUNREACH, WSAECONNRESET, WSAEINVAL, WSAENOTSOCK] {
         let result: std::result::Result<usize, _> = send_with_retry(
@@ -98,6 +98,76 @@ fn persistent_pressure_and_an_expired_budget_do_not_loop_or_hide_errors() {
         );
         assert_eq!(result, Err(error));
     }
+}
+
+#[test]
+fn one_frame_shares_a_single_wait_for_room_in_the_socket() {
+    let ms = std::time::Duration::from_millis;
+    let start = std::time::Instant::now();
+    // The frame's deadline, not a fresh WRITABLE_WAIT per batch: a busy CPU
+    // may keep the socket full for a whole picture period.
+    let mut budget = WaitBudget::for_frame(Some(start + ms(20)), None);
+    assert_eq!(budget.take(start), 20);
+    assert_eq!(budget.take(start + ms(12)), 8);
+    assert_eq!(budget.take(start + ms(20)), 0);
+    assert!(budget.backoff_at(start + ms(20)).is_none());
+    // A frame paced out over most of its period meets its first full socket
+    // late: it still gets the usual wait from then, not what is left.
+    let mut late = WaitBudget::for_frame(Some(start + ms(20)), None);
+    assert_eq!(late.take(start + ms(18)), WRITABLE_WAIT.as_millis() as i32);
+    // A later batch of the same frame shares the deadline the first one set.
+    let mut next = WaitBudget::for_frame(Some(start + ms(20)), late.deadline);
+    assert_eq!(next.take(start + ms(21)), 1);
+    assert_eq!(next.take(start + ms(22)), 0);
+    // Outside a frame one batch gets the old short wait.
+    let mut batch = WaitBudget::default();
+    assert_eq!(batch.take(start), WRITABLE_WAIT.as_millis() as i32);
+}
+
+/// Review 2026-11-17: one brief refusal spent the frame's whole wait, so a
+/// later full socket in the same frame was dropped at once. A batch that
+/// drops nothing ends the full-socket spell.
+#[test]
+fn a_batch_sent_whole_ends_the_frames_full_socket_spell() -> Result<()> {
+    let sender = ReplySocket::bind("127.0.0.1:0")?;
+    let receiver = UdpSocket::bind("127.0.0.1:0")?;
+    let mut batch = Batch::default();
+    batch.begin_frame(std::time::Duration::from_millis(20));
+    let past = std::time::Instant::now() - std::time::Duration::from_millis(1);
+    batch.frame.as_mut().unwrap().deadline = Some(past);
+    assert!(batch.frame_wait_spent());
+    batch.send(&sender, &[vec![7; 64]], receiver.local_addr()?)?;
+    assert_eq!(batch.dropped, 0);
+    assert!(!batch.frame_wait_spent());
+    assert!(batch.frame.unwrap().deadline.is_none());
+    batch.end_frame();
+    assert!(batch.frame.is_none());
+    Ok(())
+}
+
+/// Review 2026-11-17: the retry loop polled a socket that reported writable
+/// and refused again at once, spinning for the whole frame wait. From the
+/// second refusal on it pauses a millisecond first, so a 20 ms wait is about
+/// twenty tries.
+#[test]
+fn a_socket_that_polls_writable_but_refuses_is_not_spun_on() {
+    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let mut budget = WaitBudget::for_frame(
+        Some(std::time::Instant::now() + std::time::Duration::from_millis(20)),
+        None,
+    );
+    let mut sends = 0;
+    let started = std::time::Instant::now();
+    let result: std::result::Result<usize, _> = send_with_retry(
+        || {
+            sends += 1;
+            Err(WSAEWOULDBLOCK)
+        },
+        |error| buffer_available(&socket, error, &mut budget, None),
+    );
+    assert_eq!(result, Err(WSAEWOULDBLOCK));
+    assert!(started.elapsed() >= std::time::Duration::from_millis(15));
+    assert!((2..=30).contains(&sends), "{sends} tries in 20 ms");
 }
 
 #[test]

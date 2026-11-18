@@ -12,7 +12,7 @@ fn a_stream_is_recorded_with_what_it_ran_and_how_it_went() {
     session.stats.frames.store(3_600, Ordering::Relaxed);
     session.stats.packets.store(100_000, Ordering::Relaxed);
     session.stats.bytes.store(18_000_000, Ordering::Relaxed);
-    session.bitrate.store(40_000, Ordering::Relaxed);
+    session.bitrate.store(12_000, Ordering::Relaxed);
     // Two full seconds of 120 fps, sampled as the housekeeping tick does.
     let start = Instant::now();
     f.host.session_history.sample(&session.launch.id, 0, start);
@@ -35,7 +35,10 @@ fn a_stream_is_recorded_with_what_it_ran_and_how_it_went() {
     assert_eq!(entry.transport, "moonlight");
     assert_eq!(entry.codec, "h264");
     assert_eq!((entry.width, entry.height, entry.fps), (1920, 1080, 60));
-    assert_eq!(entry.bitrate_kbps, 40_000);
+    // The encoder ran below the rate the stream asked for, and both are
+    // recorded: the effective one is the old field's meaning, unchanged.
+    assert_eq!(entry.requested_bitrate_kbps, 20_000);
+    assert_eq!(entry.bitrate_kbps, 12_000);
     assert_eq!(entry.end_reason, "ended");
     assert_eq!(entry.end_category, None);
     // Two sampled seconds are not a 5% tail: the mean stands alone.
@@ -88,10 +91,16 @@ fn a_start_that_never_ran_has_no_figures() {
     f.host
         .record_session(&session, history::REASON_START_FAILED);
     let entry = &f.host.session_history.entries()[0];
-    // The negotiated request is not a measurement.
+    // The negotiated request is not a measurement; neither bitrate is set.
     assert_eq!(
-        (entry.width, entry.height, entry.fps, entry.bitrate_kbps),
-        (0, 0, 0, 0)
+        (
+            entry.width,
+            entry.height,
+            entry.fps,
+            entry.bitrate_kbps,
+            entry.requested_bitrate_kbps
+        ),
+        (0, 0, 0, 0, 0)
     );
     assert_eq!(entry.mean_fps, 0.);
     assert_eq!(entry.p95_fps, 0.);

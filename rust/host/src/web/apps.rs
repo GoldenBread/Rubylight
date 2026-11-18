@@ -147,10 +147,20 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
             if h.current_app.lock().unwrap().is_some() {
                 anyhow::bail!("application already running");
             }
+            // A console launch belongs to the host, not to a device: named here,
+            // a service stop cancels its running prep command and the undo
+            // commands of those that finished still run.
+            let _started = h.launch_started("console");
             // Started without the lock every serverinfo request takes: its
             // prep commands can run for minutes. launch_transition keeps
             // another app from being installed meanwhile.
             let running = crate::process::launch(h, &app, &Default::default())?;
+            // Stopped while it prepared: the game is closed again and its undo
+            // commands run, and it never becomes the running app.
+            if h.launch_stopped() || h.stop.load(std::sync::atomic::Ordering::Acquire) {
+                drop(running);
+                anyhow::bail!("the launch was stopped");
+            }
             let mut current = h.current_app.lock().unwrap();
             if current.is_some() {
                 drop(current);

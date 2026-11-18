@@ -277,6 +277,87 @@ public class RumblePolicyTest {
         }
     }
 
+    @Test
+    public void levelsSentWhileRumbleIsPausedReachThePadWhenItResumes() {
+        try (ActivityController<Activity> activity = Robolectric.buildActivity(Activity.class).create()) {
+            NvConnection connection = new NvConnection(null,
+                    new ComputerDetails.AddressTuple("127.0.0.1", 47989), 47984, "test",
+                    new StreamConfiguration.Builder().build(), null, null);
+            ControllerHandler handler = new ControllerHandler(activity.get(), connection, null,
+                    new PreferenceConfiguration());
+            ControllerHandler.InputDeviceContext context = handler.new InputDeviceContext();
+            context.assignedControllerNumber = true;
+            context.controllerNumber = 0;
+            context.vibrator = (android.os.Vibrator) activity.get().getSystemService(android.content.Context.VIBRATOR_SERVICE);
+            noShieldRumble(handler, activity.get());
+            inputContexts(handler).put(1, context);
+            try {
+                handler.handleRumble((short) 0, (short) 0x4000, (short) 0x2000);
+                assertEquals(0x4000, context.lowFreqMotor);
+
+                org.robolectric.util.ReflectionHelpers.callInstanceMethod(handler, "pauseRumble",
+                        org.robolectric.util.ReflectionHelpers.ClassParameter.from(boolean.class, true));
+                handler.handleRumble((short) 0, (short) 0, (short) 0);
+
+                // The host's newest levels are kept while paused: a trigger update after the resume must
+                // not bring the old big-motor level back.
+                assertEquals("low motor", 0, context.lowFreqMotor);
+                assertEquals("high motor", 0, context.highFreqMotor);
+            } finally {
+                handler.destroy();
+            }
+        }
+    }
+
+    @Test
+    public void aReleasedSlotKeepsNoLevelForTheNextPad() {
+        try (ActivityController<Activity> activity = Robolectric.buildActivity(Activity.class).create()) {
+            NvConnection connection = new NvConnection(null,
+                    new ComputerDetails.AddressTuple("127.0.0.1", 47989), 47984, "test",
+                    new StreamConfiguration.Builder().build(), null, null);
+            ControllerHandler handler = new ControllerHandler(activity.get(), connection, null,
+                    new PreferenceConfiguration());
+            ControllerHandler.InputDeviceContext context = handler.new InputDeviceContext();
+            context.assignedControllerNumber = true;
+            context.controllerNumber = 0;
+            context.vibrator = (android.os.Vibrator) activity.get().getSystemService(android.content.Context.VIBRATOR_SERVICE);
+            noShieldRumble(handler, activity.get());
+            inputContexts(handler).put(1, context);
+            try {
+                handler.handleRumble((short) 0, (short) 0x4000, (short) 0x2000);
+                assertTrue(rumbleLevels(handler).containsKey((short) 0));
+
+                handler.onInputDeviceRemoved(1);
+
+                assertFalse("the next pad in the slot starts silent",
+                        rumbleLevels(handler).containsKey((short) 0));
+            } finally {
+                handler.destroy();
+            }
+        }
+    }
+
+    /** Replaces the Shield controller extension, which has no device here and would throw on a null one. */
+    private static void noShieldRumble(ControllerHandler handler, Activity activity) {
+        org.robolectric.util.ReflectionHelpers.setField(handler, "sceManager",
+                new org.cgutman.shieldcontrollerextensions.SceManager(activity) {
+                    @Override public boolean rumble(android.view.InputDevice device, int low, int high) {
+                        return false;
+                    }
+                });
+    }
+
+    @SuppressWarnings("unchecked")
+    private static java.util.Map<Integer, ControllerHandler.InputDeviceContext> inputContexts(ControllerHandler handler) {
+        return (java.util.Map<Integer, ControllerHandler.InputDeviceContext>)
+                org.robolectric.util.ReflectionHelpers.getField(handler, "inputDeviceContexts");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static java.util.Map<Short, short[]> rumbleLevels(ControllerHandler handler) {
+        return (java.util.Map<Short, short[]>) org.robolectric.util.ReflectionHelpers.getField(handler, "rumbleLevels");
+    }
+
     private static int rumbleCalls(boolean disableRumble) {
         try (ActivityController<Activity> activity = Robolectric.buildActivity(Activity.class).create()) {
             NvConnection connection = new NvConnection(null,
