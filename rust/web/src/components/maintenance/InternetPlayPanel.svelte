@@ -80,7 +80,7 @@
           <dt>Browser guest ports</dt>
           <dd>
             {#if !status.mapping.guestFailed?.length}
-              <Badge tone="ok">Mapped for an internet link</Badge> <span class="muted">{ports(status.mapping.guestMapped ?? [])}</span>
+              <Badge tone="ok">Mapped while a link works</Badge> <span class="muted">{ports(status.mapping.guestMapped ?? [])}</span>
             {:else}
               <Badge tone="warn">Not all mapped</Badge>
               <span class="muted">{ports(status.mapping.guestFailed)}{status.mapping.guestFailed[0]?.reason ? `: ${status.mapping.guestFailed[0].reason}` : ''}</span>
