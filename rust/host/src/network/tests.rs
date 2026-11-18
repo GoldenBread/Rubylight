@@ -592,13 +592,15 @@ fn the_guest_lease_record_keeps_what_was_granted_and_clears_after_a_clean_releas
     };
     let upnp = GuestLease::new(LeaseMethod::Upnp, tcp);
     let natpmp = GuestLease::new(LeaseMethod::NatPmp, udp);
-    record.set(vec![upnp, natpmp]);
+    let upnp6 = GuestLease::new(LeaseMethod::UpnpV6, tcp);
+    let pcp6 = GuestLease::new(LeaseMethod::PcpV6, udp);
+    record.set(vec![upnp, natpmp, upnp6, pcp6]);
     let reread = LeaseRecord::load(&directory);
-    assert_eq!(reread.leases(), [upnp, natpmp]);
+    assert_eq!(reread.leases(), [upnp, natpmp, upnp6, pcp6]);
 
     // A lease recorded twice is one lease.
-    record.set(vec![upnp, upnp, natpmp]);
-    assert_eq!(record.leases(), [upnp, natpmp]);
+    record.set(vec![upnp, upnp, natpmp, upnp6, pcp6]);
+    assert_eq!(record.leases(), [upnp, natpmp, upnp6, pcp6]);
 
     // A clean release leaves no record, so the next start deletes nothing.
     record.clear();

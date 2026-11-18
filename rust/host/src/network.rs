@@ -547,6 +547,19 @@ enum LeaseMethod {
     Upnp,
     Pcp,
     NatPmp,
+    /// A pinhole in an IPv6 router's firewall, through UPnP IGDv2 or PCP.
+    UpnpV6,
+    PcpV6,
+}
+impl LeaseMethod {
+    /// An IPv4 mapping, which one renewal round refreshes as a group.
+    fn ipv4(self) -> bool {
+        !self.ipv6()
+    }
+    /// An IPv6 pinhole, which one renewal round refreshes as a group.
+    fn ipv6(self) -> bool {
+        matches!(self, Self::UpnpV6 | Self::PcpV6)
+    }
 }
 
 /// A mapping's protocol, as the lease record writes it.
@@ -1040,6 +1053,34 @@ async fn remove_mapped(bind: IpAddr, mapped: &[Mapping], secret: &[u8]) -> bool 
     mapper.delete(mapped).await
 }
 
+/// Deletes the PCP pinholes `mapped` lists through every IPv6 router and address this PC has,
+/// and says whether it answered. A PC with no global IPv6 address now leaves no pinhole that
+/// can still let a guest in.
+async fn remove_pinholes(mapped: &[Mapping], secret: &[u8]) -> bool {
+    if mapped.is_empty() {
+        return true;
+    }
+    let locals = portmap::ipv6_locals(IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED));
+    if locals.is_empty() {
+        return true;
+    }
+    let gateways = ipv6_gateways();
+    let mut tried = false;
+    for (local, index) in locals {
+        for gateway in &gateways {
+            let Ok(mut mapper) = portmap::PortMapper::ipv6(*gateway, local, index, secret).await
+            else {
+                continue;
+            };
+            tried = true;
+            if !mapper.delete(mapped).await {
+                return false;
+            }
+        }
+    }
+    tried
+}
+
 /// One round at host start: takes down the guest ports an unclean stop left forwarded, and only
 /// the leases `record` lists, so another application's mapping on the same port stays. A link
 /// does not survive a restart, so nothing wants them; the first renewal asks for what the
@@ -1082,6 +1123,30 @@ async fn cleanup_guests(
         } else {
             clean &= remove_mapped(bind, &mapped, secret).await;
         }
+    }
+    // IPv6 pinholes: the host need not listen on IPv6 now, so search every router and address
+    // the PC has, not the ones its current bind would use.
+    let pinholes = recorded_ports(&leases, |method| method == LeaseMethod::UpnpV6);
+    if !pinholes.is_empty() {
+        match ipv6::discover(IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED)).await {
+            Ok(mut firewall) => {
+                // Re-adding a recorded tuple renews a leftover pinhole and returns its current
+                // ID; close then deletes what this call holds.
+                if firewall.renew(&pinholes).await.is_ok() {
+                    clean &= firewall.close().await.is_ok();
+                } else {
+                    clean = false;
+                }
+            }
+            Err(error) => {
+                clean = false;
+                tracing::debug!(%error, "IPv6 firewall unavailable for the guest pinhole cleanup");
+            }
+        }
+    }
+    let pcp_pinholes = recorded_ports(&leases, |method| method == LeaseMethod::PcpV6);
+    if !pcp_pinholes.is_empty() {
+        clean &= remove_pinholes(&pcp_pinholes, secret).await;
     }
     if clean {
         record.clear();
@@ -1257,7 +1322,27 @@ pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
         };
     });
     if !runs {
-        return None;
+        // A record can name guest leases a previous run left on the router, even when the
+        // settings that asked for them were turned off since: take them down once, then end.
+        if bind.is_loopback() {
+            return None;
+        }
+        let record = LeaseRecord::load(&h.directory);
+        if record.leases().is_empty() {
+            return None;
+        }
+        let description = format!("Butterpollo Rust {}", h.paired.read().unwrap().unique_id);
+        let nonce_secret = h.identity.private_pem.clone();
+        let stop = std::sync::Arc::new(tokio::sync::Notify::new());
+        let stopped = stop.clone();
+        let task = tokio::spawn(async move {
+            let mut record = record;
+            tokio::select! {
+                () = stopped.notified() => {}
+                _ = cleanup_guests(&mut record, bind, &description, nonce_secret.as_bytes()) => {}
+            }
+        });
+        return Some(PortForward { task, stop });
     }
     let stop = std::sync::Arc::new(tokio::sync::Notify::new());
     let stopped = stop.clone();
@@ -1475,23 +1560,32 @@ async fn renew(
             }
         }
     }
-    if bind.is_ipv6() {
-        renew_pinholes(held, bind, guest, wanted, nonce_secret).await;
-    }
-    // Only a round that learned what the router granted rewrites the record: an unanswered
-    // router may still hold the leases listed there, and they go at the next start.
+    // Only a round that learned what the router granted rewrites that group in the record: an
+    // unanswered router may still hold the leases listed there, and they go at the next start.
+    let mut leases = record.leases().to_vec();
     if known {
-        record.set(guest_leases);
+        leases.retain(|lease| !lease.method.ipv4());
+        leases.extend(guest_leases);
     }
+    if bind.is_ipv6() {
+        let (pinholes, pinholes_known) =
+            renew_pinholes(held, bind, guest, wanted, nonce_secret).await;
+        if pinholes_known {
+            leases.retain(|lease| !lease.method.ipv6());
+            leases.extend(pinholes);
+        }
+    }
+    record.set(leases);
 }
-/// IPv6 pinholes for `wanted` through the router's UPnP IGDv2 firewall, else PCP.
+/// IPv6 pinholes for `wanted` through the router's UPnP IGDv2 firewall, else PCP: what the
+/// guest ports among them hold, and whether the router answered for that way of opening them.
 async fn renew_pinholes(
     held: &mut Held,
     bind: IpAddr,
     guest: &[Mapping],
     wanted: &[Mapping],
     nonce_secret: &[u8],
-) {
+) -> (Vec<GuestLease>, bool) {
     if held.firewall.is_none() {
         held.firewall = ipv6::discover(bind).await.ok();
     }
@@ -1500,8 +1594,17 @@ async fn renew_pinholes(
         if let Err(error) = &result {
             tracing::debug!(%error, "IPv6 firewall pinholes could not be renewed");
         }
-        let pinholes = if result.is_ok() { wanted.len() } else { 0 };
-        let guest_ipv6 = (result.is_ok() && !guest.is_empty()).then(|| firewall.local());
+        let renewed = result.is_ok();
+        let pinholes = if renewed { wanted.len() } else { 0 };
+        let guest_ipv6 = (renewed && !guest.is_empty()).then(|| firewall.local());
+        let pinholes_held = if renewed {
+            guest
+                .iter()
+                .map(|mapping| GuestLease::new(LeaseMethod::UpnpV6, *mapping))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let error = result.err().map(|error| format!("{error:#}"));
         crate::internet_play::update_mapping(|status| {
             status.ipv6_method = Some("UPnP".into());
@@ -1509,7 +1612,7 @@ async fn renew_pinholes(
             status.ipv6_error = error;
             status.guest_ipv6 = guest_ipv6;
         });
-        return;
+        return (pinholes_held, renewed);
     }
     if held.pinholes.is_empty() {
         let gateways = ipv6_gateways();
@@ -1526,10 +1629,18 @@ async fn renew_pinholes(
     let mut opened = 0;
     let mut last_error = None;
     let mut guest_ipv6 = None;
+    let mut pinholes_held = Vec::new();
+    let mut known = false;
     for mapper in &mut held.pinholes {
         match mapper.renew(wanted).await {
             Ok(outcome) => {
+                known = true;
                 opened += outcome.mapped.len();
+                for (mapping, _) in &outcome.mapped {
+                    if guest.contains(mapping) {
+                        pinholes_held.push(GuestLease::new(LeaseMethod::PcpV6, *mapping));
+                    }
+                }
                 let all_guests = guest
                     .iter()
                     .all(|port| outcome.mapped.iter().any(|(done, _)| done == port));
@@ -1557,6 +1668,7 @@ async fn renew_pinholes(
         });
         status.guest_ipv6 = guest_ipv6;
     });
+    (pinholes_held, known)
 }
 #[cfg(test)]
 mod port_state_tests {
