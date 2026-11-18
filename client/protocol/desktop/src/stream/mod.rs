@@ -160,6 +160,21 @@ struct ModeBefore {
 }
 
 impl ModeBefore {
+    /// The stream as it runs, taken before a request changes any of it. The mode to go back to
+    /// is the stream's own size and rate, never the `requested_mode` field: the menu's size
+    /// editor writes the asked mode there before it sends it, and so does the request.
+    fn of((stream_width, stream_height, fps): (i32, i32, i32), fps_millihz: u32, settings: &Settings) -> Self {
+        let side = |pixels: i32| u16::try_from(pixels).unwrap_or(0);
+        Self {
+            fps_millihz,
+            fps,
+            settings_fps: settings.fps,
+            width: settings.width,
+            height: settings.height,
+            requested: Reconfigure { width: side(stream_width), height: side(stream_height), fps_millihz },
+        }
+    }
+
     /// Puts the previous rate and size back into the facts, the shared rate, the settings and
     /// the mode the menu and the launch plan read.
     fn restore(&self, fps: &mut i32, shared_millihz: &std::sync::atomic::AtomicU32, settings: &mut Settings, requested: &mut Reconfigure) {
@@ -1501,21 +1516,16 @@ impl Streaming {
             self.show_toast(trf("Could not change the stream: {}", &[&error]));
             return false;
         }
+        // Before any field takes the asked mode: a request the host does not apply goes back to
+        // this.
+        if self.mode_before.is_none() {
+            self.mode_before = Some(ModeBefore::of((self.facts.width, self.facts.height, self.facts.fps), self.shared.fps_millihz.load(Ordering::Relaxed), &self.settings));
+        }
         self.requested_mode = request;
         self.stream_sizes.ask((i32::from(request.width), i32::from(request.height)));
         self.pending_mode = Some((request, Instant::now()));
         self.late_mode = None;
         self.fps_evidence = 0;
-        if self.mode_before.is_none() {
-            self.mode_before = Some(ModeBefore {
-                fps_millihz: self.shared.fps_millihz.load(Ordering::Relaxed),
-                fps: self.facts.fps,
-                settings_fps: self.settings.fps,
-                width: self.settings.width,
-                height: self.settings.height,
-                requested: self.requested_mode,
-            });
-        }
         self.facts.fps = request.fps_millihz.div_ceil(1000) as i32;
         self.shared.fps_millihz.store(request.fps_millihz, Ordering::Relaxed);
         *lock(&self.shared.decode_window) = pipeline::DecodeWindow::default();

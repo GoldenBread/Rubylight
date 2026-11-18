@@ -1179,6 +1179,27 @@ fn a_timed_out_reconfigure_restores_the_whole_mode() {
     assert_eq!(before.fps_millihz.div_ceil(1000), 60, "the pacer gets the old rate");
 }
 
+// The snapshot is the stream as it runs, not the mode the menu's size editor (or the request
+// itself) already wrote into the requested mode: a 1440p60 stream asked for 4K120 that the PC does
+// not apply goes back to 1440p60 in the menu and in the bitrate policy, which reads this mode.
+#[test]
+fn the_mode_to_go_back_to_is_the_running_one_not_the_asked_one() {
+    let settings = Settings { fps: 60, width: 2560, height: 1440, ..Default::default() };
+    let before = ModeBefore::of((2560, 1440, 60), 59_940, &settings);
+    assert_eq!(before.requested, Reconfigure { width: 2560, height: 1440, fps_millihz: 59_940 });
+    assert_eq!((before.fps, before.fps_millihz, before.settings_fps), (60, 59_940, 60));
+    assert_eq!((before.width, before.height), (2560, 1440));
+
+    // Restoring over the asked mode, as the timeout does.
+    let mut asked_settings = Settings { fps: 120, width: 3840, height: 2160, ..Default::default() };
+    let shared = std::sync::atomic::AtomicU32::new(120_000);
+    let mut requested = Reconfigure { width: 3840, height: 2160, fps_millihz: 120_000 };
+    let mut fps = 120;
+    before.restore(&mut fps, &shared, &mut asked_settings, &mut requested);
+    assert_eq!(requested, Reconfigure { width: 2560, height: 1440, fps_millihz: 59_940 });
+    assert_eq!((asked_settings.width, asked_settings.height, asked_settings.fps), (2560, 1440, 60));
+}
+
 /// The teardown handle is what lets the app hold the renderer until a session's decoder and audio
 /// threads have ended, and reports honestly when the deadline passed first.
 #[test]
