@@ -720,6 +720,9 @@ pub struct Streaming {
     decode_generation: i64,
     pub requested_mode: Reconfigure,
     pending_mode: Option<(Reconfigure, Instant)>,
+    /// The request a timeout cleared, kept until a picture of its size arrives late: the PC
+    /// applied it after all, and the rate and settings it asked for are applied with the picture.
+    late_mode: Option<Reconfigure>,
     /// Pictures whose RTP timestamps show the rate a reconfigure asked for (`shows_rate`), and
     /// the mode before it was asked, restored whole when the host does not apply it.
     fps_evidence: u32,
@@ -1164,6 +1167,7 @@ impl Streaming {
             decode_generation: 0,
             requested_mode: mode,
             pending_mode: None,
+            late_mode: None,
             fps_evidence: 0,
             mode_before: None,
             stream_sizes: render::StreamSizes::new((i32::from(mode.width), i32::from(mode.height))),
@@ -1454,6 +1458,7 @@ impl Streaming {
         self.requested_mode = request;
         self.stream_sizes.ask((i32::from(request.width), i32::from(request.height)));
         self.pending_mode = Some((request, Instant::now()));
+        self.late_mode = None;
         self.fps_evidence = 0;
         if self.mode_before.is_none() {
             self.mode_before = Some(ModeBefore {
@@ -1483,6 +1488,29 @@ impl Streaming {
         self.skipped.restart();
     }
 
+    /// Applies a mode the PC has shown it took: a confirmation, or the size a timed-out request
+    /// asked for arriving after the timeout. Everything the timeout put back is set again, together
+    /// with the pacer and the menus.
+    fn apply_mode(&mut self, mode: Reconfigure) {
+        self.facts.fps = mode.fps_millihz.div_ceil(1000) as i32;
+        self.facts.width = i32::from(mode.width);
+        self.facts.height = i32::from(mode.height);
+        self.shared.fps_millihz.store(mode.fps_millihz, Ordering::Relaxed);
+        self.settings.width = u32::from(mode.width);
+        self.settings.height = u32::from(mode.height);
+        self.settings.fps = mode.fps_millihz.div_ceil(1000);
+        self.plan.settings = self.settings.clone();
+        self.requested_mode = mode;
+        self.decode_generation += 1;
+        self.decode_window_us = session::now_us();
+        *lock(&self.shared.decode_window) = pipeline::DecodeWindow::default();
+        if let Some(rate) = &mut self.bitrate_policy {
+            rate.set_mode(u32::from(mode.width), u32::from(mode.height), mode.fps_millihz.div_ceil(1000));
+        }
+        if let Some(rates) = &mut self.rate_change { rates.fps_set(mode.fps_millihz); }
+        self.stream_rate_changed(mode.fps_millihz.div_ceil(1000).max(1));
+    }
+
     /// One picture's RTP interval toward confirming an fps-only reconfigure: the host's own frame
     /// timestamps show it applied the rate. A request that changes the size is confirmed by the
     /// pictures' size instead (`StreamSizes::arrive`); a request that only changes the rate has no
@@ -1502,6 +1530,7 @@ impl Streaming {
         }
         self.fps_evidence = 0;
         self.mode_before = None;
+        self.late_mode = None;
         if let Some((mode, _)) = self.pending_mode.take() {
             self.stream_rate_changed(mode.fps_millihz.div_ceil(1000));
         }

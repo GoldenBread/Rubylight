@@ -56,7 +56,15 @@ impl StreamSizes {
 
     /// The stream's part of a picture of `coded` size arriving at `now`, and whether it confirms
     /// `pending`, the size asked for and when, not confirmed yet.
+    #[cfg(test)]
     pub(super) fn arrive(&mut self, coded: (i32, i32), pending: Option<((i32, i32), Instant)>, now: Instant) -> ((i32, i32), bool) {
+        let (visible, confirmed, _) = self.arrive_mode(coded, pending, now);
+        (visible, confirmed)
+    }
+
+    /// [`arrive`](Self::arrive), also saying whether the size is one the PC applied after the
+    /// timeout dropped its pending request: no confirmation, but the asked mode is applied with it.
+    pub(super) fn arrive_mode(&mut self, coded: (i32, i32), pending: Option<((i32, i32), Instant)>, now: Instant) -> ((i32, i32), bool, bool) {
         use nightjar_core::video::crop::visible_size;
         if self.previous.is_some_and(|(_, at)| now.saturating_duration_since(at) >= SWITCH_GRACE) { self.previous = None; }
         let sizes = [self.asked, self.current];
@@ -77,7 +85,7 @@ impl StreamSizes {
             self.previous = Some((self.current, now));
             self.current = visible;
         }
-        (visible, confirmed)
+        (visible, confirmed, late)
     }
 }
 
@@ -175,7 +183,7 @@ impl Streaming {
                 // The size without an encoder's alignment padding, worked out once on arrival: the
                 // presenter shows that part of this picture whatever was asked for since.
                 let pending = self.pending_mode.map(|(mode, at)| ((i32::from(mode.width), i32::from(mode.height)), at));
-                let ((width, height), confirmed) = self.stream_sizes.arrive(coded, pending, Instant::now());
+                let ((width, height), confirmed, late) = self.stream_sizes.arrive_mode(coded, pending, Instant::now());
                 decoded.visible = Some((width, height));
                 self.facts.width = width;
                 self.facts.height = height;
@@ -183,6 +191,10 @@ impl Streaming {
                     self.fps_evidence = 0;
                     self.mode_before = None;
                     if let Some((mode, _)) = self.pending_mode.take() { self.stream_rate_changed(mode.fps_millihz.div_ceil(1000)); }
+                } else if late {
+                    // The PC applied a request whose timeout already put the old mode back: apply
+                    // the asked mode now, as a confirmation would, with its size.
+                    if let Some(mode) = self.late_mode.take() { self.apply_mode(mode); }
                 }
             } else if decoded.setup.chroma_packing != 0 || decoded.setup.format & VIDEO_FORMAT_MASK_PYROWAVE != 0 {
                 // The menu's header and the session page name the stream's size: PyroWave and packed
@@ -210,7 +222,8 @@ impl Streaming {
         self.observe_slices(&mut slices);
         self.taken_slices = slices;
         if self.pending_mode.is_some_and(|(_, at)| at.elapsed() >= Duration::from_secs(5)) {
-            self.pending_mode = None;
+            // Kept for a picture of its size that arrives late: the PC may apply it after all.
+            self.late_mode = self.pending_mode.take().map(|(mode, _)| mode);
             self.fps_evidence = 0;
             // The host applied nothing: rate, size, settings, the request in flight, the bitrate
             // policy and the menu's rate go back together, so no field keeps the asked mode.
@@ -1591,6 +1604,18 @@ mod tests {
         assert_eq!(shown, [((1904, 1080), true), ((1904, 1080), false), ((1904, 1080), false), ((1904, 1080), false)]);
     }
 
+
+    #[test]
+    fn a_size_applied_after_the_timeout_reports_itself_for_its_mode() {
+        let t0 = Instant::now();
+        let mut sizes = StreamSizes::new((1920, 1080));
+        sizes.ask((2184, 1968));
+        // The timeout cleared the pending request; the PC switches later.
+        assert_eq!(sizes.arrive_mode((2240, 1968), None, t0 + Duration::from_secs(6)), ((2184, 1968), false, true));
+        // A picture of the size the stream already shows is no late apply.
+        let (_, _, late) = sizes.arrive_mode((2240, 1968), None, t0 + Duration::from_secs(7));
+        assert!(!late);
+    }
     #[test]
     fn a_size_the_pc_applies_after_the_timeout_is_still_cropped() {
         // The 5 s timeout cleared the pending 2184x1968 (`pump` drops it); the PC switches later.
