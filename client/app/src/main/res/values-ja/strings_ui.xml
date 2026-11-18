@@ -2,6 +2,7 @@
 <resources>
     <string name="library_computers">PC</string>
     <string name="pc_offline">オフライン</string>
+    <string name="pc_another_answers">この PC のアドレスで別の PC またはプログラムが応答しています。この PC をセットアップし直した場合は、削除してから追加し直してください。</string>
     <string name="pc_checking">確認中…</string>
     <string name="app_running">実行中</string>
     <string name="app_hidden">非表示</string>

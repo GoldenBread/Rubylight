@@ -204,8 +204,10 @@ public class ComputerManagerService extends Service {
 
                 if (details.state == ComputerDetails.State.ONLINE) {
                     if (details.pairState == PairingManager.PairState.NOT_PAIRED) {
-                        // The PC no longer takes this device's pairing (unpaired there, or a new certificate): the
-                        // saved one goes, so Home never shows the PC as a paired one that is away.
+                        // The PC no longer takes this device's pairing (unpaired there: the pinned PC refused this
+                        // device): the saved one goes, so Home never shows the PC as a paired one that is away.
+                        // Another certificate never gets here (tryPollIp), and a poll without the pin (a PC
+                        // found again by mDNS) leaves a pin it did not ask with alone.
                         if (details.serverCert == pinned) {
                             details.serverCert = null;
                         }
@@ -877,10 +879,22 @@ public class ComputerManagerService extends Service {
             boolean isLikelyOnline = details.state == ComputerDetails.State.ONLINE && address.equals(details.activeAddress);
 
             ComputerDetails newDetails;
+            boolean anotherCertificate;
             try {
                 newDetails = lease.http.getComputerDetails(isLikelyOnline);
+                anotherCertificate = lease.http.serverInfoFromAnotherCertificate();
             } finally {
                 pollConnections.giveBack(lease, SystemClock.elapsedRealtime());
+            }
+
+            // Another certificate than the pinned one answers at this address: another PC took its
+            // lease, or a second streaming app answers on the same ports. Its "not paired" over HTTP
+            // is not this PC forgetting this device, so the pairing stays and this address does not
+            // reach the PC.
+            if (anotherCertificate) {
+                LimeLog.info("Another certificate answers at " + address);
+                details.anotherCertificate = true;
+                return null;
             }
 
             // Check if this is the PC we expected
@@ -1151,6 +1165,7 @@ public class ComputerManagerService extends Service {
     boolean pollComputer(ComputerDetails details) throws InterruptedException {
         RedactedLog.addComputerSecrets(details);
         // Poll all addresses in parallel to speed up the process
+        details.anotherCertificate = false;
         LimeLog.info("Starting parallel poll for "+details.name+" ("+details.localAddress +", "+details.remoteAddress +", "+details.manualAddress+", "+details.ipv6Address+")");
         ComputerDetails polledDetails = parallelPollPc(details);
         LimeLog.info("Parallel poll for "+details.name+" returned address: "+details.activeAddress);

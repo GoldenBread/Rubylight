@@ -133,6 +133,18 @@ public class NvHTTP {
         this.serverCert = serverCert;
     }
 
+    // The last getServerInfo met another certificate than the pinned one and answered over HTTP.
+    private volatile boolean serverInfoFromAnotherCertificate;
+
+    /**
+     * Whether the last {@link #getServerInfo} met another certificate than the pinned one and
+     * answered over plain HTTP: that answer is another PC's or program's, whose PairStatus 0 says
+     * nothing about this PC's pairing.
+     */
+    public boolean serverInfoFromAnotherCertificate() {
+        return serverInfoFromAnotherCertificate;
+    }
+
     /**
      * For an instance kept between polls (PollConnections): the HTTPS port a new instance would be
      * given, 0 to ask the host for it again. Only whoever has the instance to itself calls this.
@@ -404,6 +416,7 @@ public class NvHTTP {
 
         // If we believe the PC is online, give it a little extra time to respond
         OkHttpClient client = likelyOnline ? httpClientLongConnectTimeout : httpClientShortConnectTimeout;
+        serverInfoFromAnotherCertificate = false;
         
         //
         // TODO: Shield Hub uses HTTP for this and is able to get an accurate PairStatus with HTTP.
@@ -421,6 +434,7 @@ public class NvHTTP {
                     if (e.getCause() instanceof CertificateException) {
                         // Jump to the GfeHttpResponseException exception handler to retry
                         // over HTTP which will allow us to pair again to update the cert
+                        serverInfoFromAnotherCertificate = true;
                         throw new HostHttpResponseException(401, "Server certificate mismatch");
                     }
                     else {

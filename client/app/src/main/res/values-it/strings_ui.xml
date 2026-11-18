@@ -2,6 +2,7 @@
 <resources>
     <string name="library_computers">PC</string>
     <string name="pc_offline">Offline</string>
+    <string name="pc_another_answers">Un altro PC o programma risponde all’indirizzo di questo PC. Se questo PC è stato configurato di nuovo, rimuovilo e aggiungilo di nuovo.</string>
     <string name="pc_checking">Verifica in corso…</string>
     <string name="app_running">In esecuzione</string>
     <string name="app_hidden">Nascosto</string>

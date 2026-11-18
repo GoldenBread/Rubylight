@@ -2,6 +2,7 @@
 <resources>
     <string name="library_computers">PC</string>
     <string name="pc_offline">Ngoại tuyến</string>
+    <string name="pc_another_answers">Một PC hoặc chương trình khác đang trả lời tại địa chỉ của PC này. Nếu PC này đã được cài đặt lại, hãy gỡ nó rồi thêm lại.</string>
     <string name="pc_checking">Đang kiểm tra…</string>
     <string name="app_running">Đang chạy</string>
     <string name="app_hidden">Đã ẩn</string>

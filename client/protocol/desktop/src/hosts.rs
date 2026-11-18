@@ -13,7 +13,7 @@ use nightjar_core::http::native_api::feature;
 use nightjar_core::http::native_api::library::Library;
 use nightjar_core::http::native_api::session::{ActionId, Session};
 use nightjar_core::http::{
-    App, AppControl, Availability, ClientIdentity, Feature, HostClient, HostUpdate, LateRefusal, NativeCapabilities, NativeLibrary, PairResult, PairingRequest,
+    App, AppControl, Availability, ClientIdentity, Feature, HostClient, HostUpdate, InfoPath, LateRefusal, NativeCapabilities, NativeLibrary, PairResult, PairingRequest,
     StreamMove,
     PcPower, PcPowerOffer, PowerError, PowerReply, Reason, ServerInfo, DEFAULT_HTTP_PORT,
 };
@@ -199,6 +199,9 @@ pub struct Host {
     asked_again: bool,
     /// Until then the PC is polled every second (see `RECHECK_WINDOW`).
     recheck_until: Option<Instant>,
+    /// A plain HTTP answer for this paired PC was taken in for its address only: ask it again over
+    /// pinned HTTPS (`Hosts::drain` starts that poll).
+    pinned_check: bool,
     /// The remote address, when the last poll reached the PC only there (this device is away
     /// from the PC's network). Never saved: the address the PC is stored under stays its own.
     via_remote: Option<String>,
@@ -533,11 +536,16 @@ pub const PC_POWER_BUSY: &str = en("The PC cannot do this right now. Close games
 // Approving a new device, without the permission for it. The console's own names, in every language.
 pub const PAIRING_NOT_ALLOWED: &str = en("Needs Approve new devices on the PC’s Devices page.");
 
+// A poll met another certificate at the PC's address.
+pub const ANOTHER_PC_ANSWERS: &str = en("Another PC or program answers at this PC’s address. If this PC was set up again, remove it and add it again.");
+
 pub enum Event {
     Info {
         id: u64,
         seq: u64,
         address: String,
+        /// How the answer was reached: what its pairing status is worth.
+        path: InfoPath,
         result: Result<Box<ServerInfo>, String>,
     },
     Discovered {
@@ -853,6 +861,40 @@ pub fn parse_invite(text: &str) -> Result<Box<InviteUri>, &'static str> {
         .ok_or(INVITE_INVALID)
 }
 
+/// A poll's failure at one address. Another certificate there is another PC or program
+/// answering in this one's place (a new DHCP lease, a second streaming app on the same ports):
+/// the pairing is kept, and the PC reads as away until it answers again.
+fn poll_error(error: &nightjar_core::http::Error) -> String {
+    match error {
+        nightjar_core::http::Error::CertificateMismatch => ANOTHER_PC_ANSWERS.into(),
+        other => describe(other),
+    }
+}
+
+/// The failures of one poll's paths and what the PC reads as when none answered. Another
+/// certificate on any of them is told over a later path's failure (an IPv6 or remote address that
+/// timed out): it is the one the user can act on.
+#[derive(Default)]
+struct PollFailure {
+    last: Option<String>,
+    another_pc: bool,
+}
+
+impl PollFailure {
+    fn failed(&mut self, error: String) {
+        self.another_pc |= error == ANOTHER_PC_ANSWERS;
+        self.last = Some(error);
+    }
+
+    fn reason(self) -> String {
+        if self.another_pc {
+            ANOTHER_PC_ANSWERS.into()
+        } else {
+            self.last.unwrap_or_else(|| en("No address").into())
+        }
+    }
+}
+
 pub(crate) fn describe(error: &nightjar_core::http::Error) -> String {
     use nightjar_core::http::Error;
     match error {
@@ -963,6 +1005,7 @@ impl Hosts {
             asked_poll: None,
             asked_again: false,
             recheck_until: None,
+            pinned_check: false,
             via_remote: None,
             internet_read: None,
             foundation_probe: None,
@@ -1373,23 +1416,24 @@ impl Hosts {
         let likely_online = host.reach == Reach::Online;
         let away = host.reach == Reach::Offline;
         let poll = move || {
-            let mut last_error = String::from(en("No address"));
+            let mut failure = PollFailure::default();
             let mut tried = Vec::new();
             for address in poll_addresses(&record) {
                 let result = client_for(&identity, &record, &address)
-                    .and_then(|c| c.server_info(likely_online).map_err(|e| describe(&e)));
+                    .and_then(|c| c.server_info_checked(likely_online).map_err(|e| poll_error(&e)));
                 match result {
-                    Ok(info) => {
+                    Ok((info, path)) => {
                         return Some(Event::Info {
                             id,
                             seq,
                             address,
+                            path,
                             result: Ok(Box::new(info)),
                         })
                     }
                     Err(e) => {
                         tried.push(address);
-                        last_error = e;
+                        failure.failed(e);
                     }
                 }
             }
@@ -1406,22 +1450,26 @@ impl Hosts {
                 let punched = nightjar_core::internet::punch(&record.unique_id, &reply, tried).and_then(|at| {
                     let address = at.ip().to_string();
                     client_for(&identity, &record, &address)
-                        .and_then(|c| c.server_info(true).map_err(|e| describe(&e)))
+                        .and_then(|c| c.server_info_checked(true).map_err(|e| poll_error(&e)))
                         .map(|info| (address, info))
-                        .map_err(|e| nightjar_core::internet::unreachable(&reply, tried, Some(e)))
+                        .map_err(|e| {
+                            failure.another_pc |= e == ANOTHER_PC_ANSWERS;
+                            nightjar_core::internet::unreachable(&reply, tried, Some(e))
+                        })
                 });
                 match punched {
-                    Ok((address, info)) => {
-                        return Some(Event::Info { id, seq, address, result: Ok(Box::new(info)) })
+                    Ok((address, (info, path))) => {
+                        return Some(Event::Info { id, seq, address, path, result: Ok(Box::new(info)) })
                     }
-                    Err(words) => last_error = words,
+                    Err(words) => failure.failed(words),
                 }
             }
             Some(Event::Info {
                 id,
                 seq,
                 address: record.address.clone(),
-                result: Err(last_error),
+                path: InfoPath::Plain,
+                result: Err(failure.reason()),
             })
         };
         let accepted = self.run_on(id, lane, poll);

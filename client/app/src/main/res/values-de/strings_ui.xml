@@ -2,6 +2,7 @@
 <resources>
     <string name="library_computers">PCs</string>
     <string name="pc_offline">Offline</string>
+    <string name="pc_another_answers">An der Adresse dieses PCs antwortet ein anderer PC oder ein anderes Programm. Wurde dieser PC neu eingerichtet, entferne ihn und füge ihn erneut hinzu.</string>
     <string name="pc_checking">Wird geprüft…</string>
     <string name="app_running">Läuft</string>
     <string name="app_hidden">Ausgeblendet</string>

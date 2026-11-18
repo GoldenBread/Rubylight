@@ -1726,4 +1726,5 @@ sudo sysctl -w net.core.rmem_max={}", "Bufor odbioru: system przydzielił {0} Ki
     ("Join my game with Nightjar: open this link in Nightjar, or copy it and paste it under Add PC.\n{}", "Dołącz do mojej gry w Nightjar: otwórz ten link w Nightjar albo skopiuj go i wklej w „Dodaj komputer”.\n{}"),
     ("Set up for this device and {}", "Skonfigurowano dla tego urządzenia i {}"),
     ("codec chosen when the stream starts", "kodek wybierany przy starcie strumienia"),
+    ("Another PC or program answers at this PC’s address. If this PC was set up again, remove it and add it again.", "Pod adresem tego komputera odpowiada inny komputer lub program. Jeśli ten komputer został skonfigurowany od nowa, usuń go i dodaj ponownie."),
 ];

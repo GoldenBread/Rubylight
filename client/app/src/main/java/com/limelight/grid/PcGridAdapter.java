@@ -159,9 +159,7 @@ public class PcGridAdapter extends GenericGridAdapter<PcView.ComputerObject> {
             case WAKING:
                 return context.getString(R.string.pc_status_waking);
             case OFFLINE:
-                // A PC that gave this device internet play details says which paths failed and why.
-                return computer.details.unreachable != null ? computer.details.unreachable :
-                        context.getString(R.string.pc_offline);
+                return offlineReason(context, computer.details, context.getString(R.string.pc_offline));
             default:
                 return context.getString(R.string.pc_checking);
         }
@@ -214,6 +212,18 @@ public class PcGridAdapter extends GenericGridAdapter<PcView.ComputerObject> {
     }
 
     /** The short line under a PC's name, real data only: the game it plays, or its state in a word. */
+    /**
+     * Why an away PC is away, or {@code otherwise}. Another certificate at its address comes first: its fix (remove
+     * the PC and add it again, if it was set up again) is the user's to make. A PC that gave this device internet
+     * play details says which paths failed and why.
+     */
+    public static String offlineReason(Context context, ComputerDetails details, String otherwise) {
+        if (details.anotherCertificate) {
+            return context.getString(R.string.pc_another_answers);
+        }
+        return details.unreachable != null ? details.unreachable : otherwise;
+    }
+
     public static String shortStatus(Context context, PcView.ComputerObject computer) {
         switch (computer.rowState()) {
             case RUNNING:

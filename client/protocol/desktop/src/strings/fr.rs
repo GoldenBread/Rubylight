@@ -1726,4 +1726,5 @@ sudo sysctl -w net.core.rmem_max={}", "Tampon de réception : le système a acco
     ("Join my game with Nightjar: open this link in Nightjar, or copy it and paste it under Add PC.\n{}", "Rejoins ma partie avec Nightjar : ouvre ce lien dans Nightjar, ou copie-le et colle-le dans « Ajouter un PC ».\n{}"),
     ("Set up for this device and {}", "Configuré pour cet appareil et {}"),
     ("codec chosen when the stream starts", "codec choisi au démarrage du stream"),
+    ("Another PC or program answers at this PC’s address. If this PC was set up again, remove it and add it again.", "Un autre PC ou programme répond à l’adresse de ce PC. Si ce PC a été réinstallé, retirez-le puis ajoutez-le à nouveau."),
 ];

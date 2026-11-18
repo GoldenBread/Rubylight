@@ -34,7 +34,7 @@ pub(crate) fn native_lands(hosts: &mut Hosts, id: u64, capabilities: NativeCapab
 pub(crate) fn info_lands(hosts: &mut Hosts, id: u64, info: ServerInfo) {
     let seq = hosts.get(id).unwrap().info_seq + 1;
     let address = hosts.get(id).unwrap().record.address.clone();
-    send(hosts, Event::Info { id, seq, address, result: Ok(Box::new(info)) });
+    send(hosts, Event::Info { path: InfoPath::Pinned, id, seq, address, result: Ok(Box::new(info)) });
 }
 
 /// Serverinfo of a paired PC with the native API and the clipboard permission.
@@ -101,7 +101,7 @@ fn an_older_polls_answer_leaves_a_newer_check_checking() {
     let id = hosts.list[0].id;
     let host = hosts.get_mut(id).unwrap();
     (host.poll_seq, host.polling, host.checking) = (2, true, true);
-    send(&mut hosts, Event::Info { id, seq: 1, address: "192.0.2.1".into(), result: Err("timed out".into()) });
+    send(&mut hosts, Event::Info { path: InfoPath::Pinned, id, seq: 1, address: "192.0.2.1".into(), result: Err("timed out".into()) });
     let host = hosts.get(id).unwrap();
     assert!(host.checking && host.polling, "the old poll's answer is not the check's");
     assert_eq!(hosts.polling_seq(id), Some(2));
@@ -263,7 +263,7 @@ fn the_remote_address_reaches_the_pc_but_never_becomes_its_own() {
     send(&mut hosts, Event::Remote { id, result: Ok(Some(Ipv4Addr::new(93, 184, 216, 34))) });
     let answer = |hosts: &mut Hosts, address: &str| {
         let seq = hosts.get(id).unwrap().info_seq + 1;
-        send(hosts, Event::Info { id, seq, address: address.into(), result: Ok(Box::new(native_info())) });
+        send(hosts, Event::Info { path: InfoPath::Pinned, id, seq, address: address.into(), result: Ok(Box::new(native_info())) });
     };
     answer(&mut hosts, "93.184.216.34");
     let host = hosts.get(id).unwrap();
@@ -296,7 +296,7 @@ fn the_lan_address_comes_back_from_a_saved_remote_one() {
 
     let mut hosts = Hosts::without_discovery(vec![record.clone()], Arc::new(|| {}));
     let id = hosts.list[0].id;
-    send(&mut hosts, Event::Info { id, seq: 1, address: "192.0.2.1".into(), result: Ok(Box::new(native_info())) });
+    send(&mut hosts, Event::Info { path: InfoPath::Pinned, id, seq: 1, address: "192.0.2.1".into(), result: Ok(Box::new(native_info())) });
     let host = hosts.get(id).unwrap();
     assert_eq!(host.record.address, "192.0.2.1");
     assert!(host.record.other_addresses.is_empty(), "the remote address stays only the remote one");
@@ -600,7 +600,7 @@ fn a_pinned_address_wins_until_the_pin_is_removed() {
     assert_eq!(poll_addresses(pinned), ["fd00::5"], "the only address polled");
     // An answer from the old address, still in flight when the user pinned, keeps the pin.
     let seq = hosts.get(id).unwrap().info_seq + 1;
-    send(&mut hosts, Event::Info { id, seq, address: "192.0.2.1".into(), result: Ok(Box::new(native_info())) });
+    send(&mut hosts, Event::Info { path: InfoPath::Pinned, id, seq, address: "192.0.2.1".into(), result: Ok(Box::new(native_info())) });
     assert_eq!(hosts.list[0].record.address, "fd00::5");
     assert!(hosts.pin_address(id, None));
     let automatic = &hosts.list[0].record;
@@ -642,7 +642,7 @@ fn a_classic_pcs_app_list_becomes_its_home_library_and_is_saved() {
     info_lands(&mut hosts, id, playing);
     assert!(hosts.list[0].library().unwrap().games[1].running);
     let seq = hosts.list[0].info_seq + 1;
-    send(&mut hosts, Event::Info { id, seq, address: "192.0.2.1".into(), result: Err("timed out".into()) });
+    send(&mut hosts, Event::Info { path: InfoPath::Pinned, id, seq, address: "192.0.2.1".into(), result: Err("timed out".into()) });
     assert!(hosts.list[0].library().unwrap().games.iter().all(|g| !g.running));
     assert!(hosts.list[0].library().is_some(), "the list stays for Home while the PC is away");
 
@@ -766,7 +766,7 @@ fn known_pc_with_link(cert_sha256: [u8; 32]) -> (Hosts, u64) {
 fn a_link_address_claiming_a_known_pc_cannot_move_it() {
     let (mut hosts, id) = known_pc_with_link([9; 32]);
     let info = ServerInfo::parse(INFO, 47989).unwrap();
-    assert!(hosts.apply_info(id, "203.0.113.9".into(), Ok(Box::new(info))));
+    assert!(hosts.apply_info(id, "203.0.113.9".into(), InfoPath::Pinned, Ok(Box::new(info))));
     assert_eq!(hosts.list.len(), 1, "the record the link added is gone");
     let known = &hosts.list[0].record;
     assert_eq!(known.unique_id, "uid");
@@ -780,7 +780,7 @@ fn a_link_address_claiming_a_known_pc_cannot_move_it() {
 fn the_known_pcs_own_link_may_still_find_it_at_a_new_address() {
     let (mut hosts, id) = known_pc_with_link(nightjar_core::http::certificate_sha256(PEM).unwrap());
     let info = ServerInfo::parse(INFO, 47989).unwrap();
-    assert!(hosts.apply_info(id, "203.0.113.9".into(), Ok(Box::new(info))));
+    assert!(hosts.apply_info(id, "203.0.113.9".into(), InfoPath::Pinned, Ok(Box::new(info))));
     assert_eq!(hosts.list.len(), 1, "one PC, as before");
     assert_eq!(hosts.list[0].record.address, "203.0.113.9");
     assert_eq!(hosts.list[0].record.server_certificate.as_deref(), Some(PEM));
@@ -1428,7 +1428,7 @@ fn a_pc_paired_nowhere_takes_any_link_and_a_typed_address_is_as_before() {
     let mut hosts = Hosts::without_discovery(vec![known], Arc::new(|| {}));
     let id = hosts.add_manual("203.0.113.9", Some(47989));
     let info = ServerInfo::parse(INFO, 47989).unwrap();
-    hosts.apply_info(id, "203.0.113.9".into(), Ok(Box::new(info)));
+    hosts.apply_info(id, "203.0.113.9".into(), InfoPath::Pinned, Ok(Box::new(info)));
     assert_eq!(hosts.list[0].record.address, "203.0.113.9", "no link, no claim");
 }
 
@@ -1439,7 +1439,7 @@ fn a_name_chosen_here_survives_the_pc_reporting_another() {
     let mut hosts = Hosts::without_discovery(vec![record], Arc::new(|| {}));
     let id = hosts.list[0].id;
     let info = ServerInfo::parse(INFO, 47989).unwrap();
-    assert!(hosts.apply_info(id, "192.0.2.1".into(), Ok(Box::new(info))));
+    assert!(hosts.apply_info(id, "192.0.2.1".into(), InfoPath::Pinned, Ok(Box::new(info))));
     let host = &hosts.list[0];
     assert_eq!(host.record.name, "Renamed on the PC", "the PC's own name keeps following the PC");
     assert_eq!(host.display_name(), "Living room");
@@ -1453,7 +1453,7 @@ fn names_a_pc_reports_or_is_given_later_are_kept_out_of_the_log() {
     let mut hosts = Hosts::without_discovery(vec![paired_record("uid")], Arc::new(|| {}));
     let id = hosts.list[0].id;
     let info = INFO.replace("Renamed on the PC", "Secret name from serverinfo").replace("<uniqueid>uid", "<uniqueid>secret-uid-from-serverinfo");
-    assert!(hosts.apply_info(id, "192.0.2.1".into(), Ok(Box::new(ServerInfo::parse(&info, 47989).unwrap()))));
+    assert!(hosts.apply_info(id, "192.0.2.1".into(), InfoPath::Pinned, Ok(Box::new(ServerInfo::parse(&info, 47989).unwrap()))));
     assert!(hosts.rename(id, "Secret alias given here"));
     hosts.apply_discovery("Secret name from mDNS".into(), vec!["192.0.2.99".parse().unwrap()], 0);
     let line = nightjar_core::report::redact::scrub("Secret name from serverinfo, secret-uid-from-serverinfo, Secret alias given here, Secret name from mDNS");
@@ -1472,7 +1472,7 @@ fn a_pc_reads_as_away_before_its_punched_path_is_tried() {
     let mut hosts = Hosts::without_discovery(vec![paired_record("uid")], Arc::new(|| {}));
     let id = hosts.list[0].id;
     let seq = hosts.list[0].info_seq + 1;
-    send(&mut hosts, Event::Info { id, seq, address: "192.0.2.1".into(), result: Err("timed out".into()) });
+    send(&mut hosts, Event::Info { path: InfoPath::Pinned, id, seq, address: "192.0.2.1".into(), result: Err("timed out".into()) });
     assert!(hosts.list[0].reach == Reach::Offline);
 }
 
@@ -1523,7 +1523,7 @@ fn merging_two_records_of_one_pc_keeps_the_name_chosen_here() {
         let mut hosts = Hosts::without_discovery(vec![first, second], Arc::new(|| {}));
         let id = hosts.list[0].id;
         let info = ServerInfo::parse(INFO, 47989).unwrap();
-        assert!(hosts.apply_info(id, hosts.list[0].record.address.clone(), Ok(Box::new(info))));
+        assert!(hosts.apply_info(id, hosts.list[0].record.address.clone(), InfoPath::Pinned, Ok(Box::new(info))));
         assert_eq!(hosts.list.len(), 1, "the two records are one PC");
         assert_eq!(hosts.list[0].display_name(), "Living room");
     }
@@ -1533,7 +1533,7 @@ fn info_event(id: u64, seq: u64, game: i32) -> Event {
     let text = INFO
         .replace("<currentgame>0", &format!("<currentgame>{game}"))
         .replace("SERVER_FREE", if game == 0 { "SERVER_FREE" } else { "SERVER_BUSY" });
-    Event::Info { id, seq, address: "192.0.2.1".into(), result: Ok(Box::new(ServerInfo::parse(&text, 47989).unwrap())) }
+    Event::Info { path: InfoPath::Pinned, id, seq, address: "192.0.2.1".into(), result: Ok(Box::new(ServerInfo::parse(&text, 47989).unwrap())) }
 }
 
 #[test]
@@ -1554,7 +1554,7 @@ fn the_failure_reason_comes_only_from_the_poll_after_the_stream() {
     let id = hosts.list[0].id;
     let failed = |seq| {
         let text = INFO.replace("<state>", "<RustHostLastFailure>HDR is on, but the display is not in HDR</RustHostLastFailure><state>");
-        Event::Info { id, seq, address: "192.0.2.1".into(), result: Ok(Box::new(ServerInfo::parse(&text, 47989).unwrap())) }
+        Event::Info { path: InfoPath::Pinned, id, seq, address: "192.0.2.1".into(), result: Ok(Box::new(ServerInfo::parse(&text, 47989).unwrap())) }
     };
     // An answer from before the stream says nothing about it.
     send(&mut hosts, failed(1));
@@ -1564,7 +1564,7 @@ fn the_failure_reason_comes_only_from_the_poll_after_the_stream() {
     // A PC that gives no reason, or could not be asked, ends the wait without one.
     send(&mut hosts, info_event(id, 3, 0));
     assert_eq!(hosts.failure_after(id, 3), Some(None));
-    send(&mut hosts, Event::Info { id, seq: 4, address: "192.0.2.1".into(), result: Err("timed out".into()) });
+    send(&mut hosts, Event::Info { path: InfoPath::Pinned, id, seq: 4, address: "192.0.2.1".into(), result: Err("timed out".into()) });
     assert_eq!(hosts.failure_after(id, 4), Some(None));
 }
 
@@ -2091,4 +2091,95 @@ fn an_offer_without_a_token_says_why() {
     ] {
         assert_eq!(sleep_token(&Offer(Box::new(reply(flags)))).err().as_deref(), Some(why));
     }
+}
+
+/// A paired PC comes back at a new address (a new DHCP lease, only new IPv6 addresses after a
+/// reboot or a wake): the sighting there is polled over plain HTTP, where every host says "not
+/// paired". It merges into the paired PC, which keeps its pairing and takes the new address; only
+/// the pinned PC's own word (its refusal of this device) drops the pairing.
+#[test]
+fn a_paired_pc_at_a_new_address_keeps_its_pairing() {
+    let mut hosts = Hosts::without_discovery(vec![paired_record("uid")], Arc::new(|| {}));
+    let id = hosts.list[0].id;
+    info_lands(&mut hosts, id, native_info());
+    assert!(hosts.list[0].paired());
+
+    sight(&mut hosts, "PC", "192.0.2.50", 0);
+    assert_eq!(hosts.list.len(), 2, "a sighting at an address not listed is a new entry until it answers");
+    let sighted = hosts.list[1].id;
+    send(&mut hosts, Event::Info { path: InfoPath::Plain, id: sighted, seq: 1, address: "192.0.2.50".into(), result: Ok(Box::new(native_info_of("uid", false))) });
+    assert_eq!(hosts.list.len(), 1, "the same unique ID: merged into the paired PC");
+    let host = &hosts.list[0];
+    assert_eq!(host.id, id);
+    assert_eq!(host.record.server_certificate.as_deref(), Some("pem"), "the pairing survives an HTTP answer");
+    assert_eq!(host.record.address, "192.0.2.50", "the PC moves to the new address");
+    assert!(host.record.other_addresses.contains(&"192.0.2.1".to_owned()), "the old one is kept among its others");
+    assert!(host.paired(), "Nightjar does not ask for a PIN");
+
+    // The poll over pinned HTTPS at the new address confirms it.
+    info_lands(&mut hosts, id, native_info());
+    assert!(hosts.list[0].paired() && hosts.list[0].reach == Reach::Online);
+
+    // A poll that left over plain HTTP before a pairing ended lands after it: the new pin stays.
+    let plain = Event::Info { path: InfoPath::Plain, id, seq: hosts.list[0].info_seq + 1, address: "192.0.2.50".into(), result: Ok(Box::new(native_info_of("uid", false))) };
+    send(&mut hosts, plain);
+    assert!(hosts.list[0].paired());
+
+    // The pinned PC refusing this device (401 over pinned HTTPS) is the PC forgetting it.
+    let refused = Event::Info { path: InfoPath::Refused, id, seq: hosts.list[0].info_seq + 1, address: "192.0.2.50".into(), result: Ok(Box::new(native_info_of("uid", false))) };
+    send(&mut hosts, refused);
+    assert!(hosts.list[0].record.server_certificate.is_none(), "the PC forgot this device: pair again");
+}
+
+/// Another certificate at the PC's address (another PC took its lease, or a second streaming app
+/// answers on the same ports): no HTTP answer of that one is taken. The PC keeps its pairing and
+/// its unique ID, and reads as away with the reason.
+#[test]
+fn another_certificate_at_the_address_keeps_the_pairing_and_the_unique_id() {
+    let mut hosts = Hosts::without_discovery(vec![paired_record("uid")], Arc::new(|| {}));
+    let id = hosts.list[0].id;
+    info_lands(&mut hosts, id, native_info());
+    let error = poll_error(&nightjar_core::http::Error::CertificateMismatch);
+    assert_eq!(error, ANOTHER_PC_ANSWERS);
+    let seq = hosts.list[0].info_seq + 1;
+    send(&mut hosts, Event::Info { path: InfoPath::Plain, id, seq, address: "192.0.2.1".into(), result: Err(error) });
+    let host = &hosts.list[0];
+    assert_eq!(host.record.server_certificate.as_deref(), Some("pem"), "the pin stays");
+    assert_eq!(host.record.unique_id, "uid", "the unique ID is not the other one's");
+    assert_eq!(host.reach, Reach::Offline);
+    assert_eq!(host.error.as_deref(), Some(ANOTHER_PC_ANSWERS));
+    // Other failures read as before.
+    assert_eq!(poll_error(&nightjar_core::http::Error::NotPaired), describe(&nightjar_core::http::Error::NotPaired));
+}
+
+/// Another certificate at the PC's first address and a timeout at the next (its IPv6 or remote
+/// address): the PC reads as away with the reason the user can act on, not the last timeout.
+#[test]
+fn another_certificate_is_the_reason_over_a_later_paths_failure() {
+    let mut failure = PollFailure::default();
+    failure.failed(poll_error(&nightjar_core::http::Error::CertificateMismatch));
+    failure.failed(describe(&nightjar_core::http::Error::Io(std::io::ErrorKind::TimedOut.into())));
+    assert_eq!(failure.reason(), ANOTHER_PC_ANSWERS);
+    let mut failure = PollFailure::default();
+    failure.failed("timed out".into());
+    assert_eq!(failure.reason(), "timed out", "otherwise the last failure, as before");
+    assert_eq!(PollFailure::default().reason(), "No address");
+}
+
+/// A plain answer for a paired PC (a poll that left before its pairing ended) is taken in for the
+/// address only: the PC stays at Checking… for the pinned check that follows, and the flag that
+/// asks for it is spent.
+#[test]
+fn a_late_plain_answer_leaves_checking_to_the_pinned_check() {
+    let mut hosts = Hosts::without_discovery(vec![paired_record("uid")], Arc::new(|| {}));
+    let id = hosts.list[0].id;
+    info_lands(&mut hosts, id, native_info());
+    let host = hosts.get_mut(id).unwrap();
+    (host.poll_seq, host.polling, host.checking) = (host.info_seq + 1, true, true);
+    let seq = host.poll_seq;
+    send(&mut hosts, Event::Info { path: InfoPath::Plain, id, seq, address: "192.0.2.1".into(), result: Ok(Box::new(native_info_of("uid", false))) });
+    let host = hosts.get(id).unwrap();
+    assert!(host.paired());
+    assert!(host.checking && host.polling, "the pinned check, not the plain answer, ends Checking…");
+    assert!(!host.pinned_check, "the check was asked for once");
 }

@@ -1726,4 +1726,5 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("Join my game with Nightjar: open this link in Nightjar, or copy it and paste it under Add PC.\n{}", "Nightjar로 내 게임에 참가해 줘: 이 링크를 Nightjar에서 열거나, 복사해서 'PC 추가'에 붙여 넣어.\n{}"),
     ("Set up for this device and {}", "이 기기와 {}에 맞게 설정됨"),
     ("codec chosen when the stream starts", "코덱은 스트림 시작 시 선택"),
+    ("Another PC or program answers at this PC’s address. If this PC was set up again, remove it and add it again.", "이 PC의 주소에서 다른 PC나 프로그램이 응답하고 있습니다. 이 PC를 다시 설정했다면 제거한 뒤 다시 추가하세요."),
 ];

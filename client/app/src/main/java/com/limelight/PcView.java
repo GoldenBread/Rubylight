@@ -875,7 +875,8 @@ public class PcView extends NightjarActivity implements AdapterFragmentCallbacks
 
     private void doAppList(ComputerDetails computer, boolean newlyPaired, boolean showHiddenGames) {
         if (computer.state == ComputerDetails.State.OFFLINE) {
-            hostActions.showError(computer.displayName(), getString(R.string.error_pc_offline), null);
+            hostActions.showError(computer.displayName(), PcGridAdapter.offlineReason(this, computer,
+                    getString(R.string.error_pc_offline)), null);
             return;
         }
         if (managerBinder == null) {

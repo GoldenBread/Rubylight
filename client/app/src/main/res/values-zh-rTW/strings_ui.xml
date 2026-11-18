@@ -2,6 +2,7 @@
 <resources>
     <string name="library_computers">電腦</string>
     <string name="pc_offline">離線</string>
+    <string name="pc_another_answers">另一台電腦或另一個程式在這台電腦的位址上回應。如果這台電腦重新安裝過，請移除它，然後重新加入。</string>
     <string name="pc_checking">正在檢查…</string>
     <string name="app_running">執行中</string>
     <string name="app_hidden">已隱藏</string>

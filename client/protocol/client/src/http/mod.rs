@@ -150,6 +150,19 @@ pub fn is_placeholder_box_art(bytes: &[u8]) -> bool {
     })
 }
 
+/// How a serverinfo answer was reached ([`HostClient::server_info_checked`]), which says what
+/// its `PairStatus` is worth: hosts report 0 over plain HTTP whatever they hold.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InfoPath {
+    /// Over HTTPS from the pinned certificate: `PairStatus` is the host's word.
+    Pinned,
+    /// The pinned certificate's host refused this client (401) and answered over HTTP: it no
+    /// longer knows this client.
+    Refused,
+    /// Over plain HTTP with nothing pinned: `PairStatus` says nothing of a pairing.
+    Plain,
+}
+
 /// Why a host request failed.
 #[derive(Debug)]
 pub enum Error {
@@ -540,6 +553,19 @@ impl HostClient {
     /// Serverinfo: over pinned HTTPS when paired, falling back to HTTP when the host does not
     /// know this client (401) or shows another certificate, so the client can pair again.
     pub fn server_info(&self, likely_online: bool) -> Result<ServerInfo, Error> {
+        match self.server_info_checked(likely_online) {
+            Ok((info, _)) => Ok(info),
+            Err(Error::CertificateMismatch) => self.server_info_http(likely_online),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Serverinfo and how it was reached ([`InfoPath`]), which says what its `PairStatus` is
+    /// worth. Over pinned HTTPS when paired, over HTTP after the pinned host refused this client
+    /// (401) or when nothing is pinned. Another certificate at this address is
+    /// [`Error::CertificateMismatch`], with no HTTP fallback: that answer would be another
+    /// host's, not this one's.
+    pub fn server_info_checked(&self, likely_online: bool) -> Result<(ServerInfo, InfoPath), Error> {
         let connect = if likely_online {
             LONG_CONNECT_TIMEOUT
         } else {
@@ -557,12 +583,14 @@ impl HostClient {
                 )
                 .and_then(|raw| ServerInfo::parse(&raw, self.http_port));
             match https {
-                Ok(info) => return Ok(info),
-                Err(Error::CertificateMismatch) | Err(Error::Status { code: 401, .. }) => {}
+                Ok(info) => return Ok((info, InfoPath::Pinned)),
+                Err(Error::Status { code: 401, .. }) => {
+                    return self.server_info_http(likely_online).map(|info| (info, InfoPath::Refused))
+                }
                 Err(e) => return Err(e),
             }
         }
-        self.server_info_http(likely_online)
+        self.server_info_http(likely_online).map(|info| (info, InfoPath::Plain))
     }
 
     /// Serverinfo over plain HTTP; hosts report `PairStatus` 0 there.

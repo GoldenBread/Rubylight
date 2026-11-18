@@ -1726,4 +1726,5 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приёма: система �
     ("Join my game with Nightjar: open this link in Nightjar, or copy it and paste it under Add PC.\n{}", "Присоединяйся к моей игре в Nightjar: открой эту ссылку в Nightjar или скопируй её и вставь в «Добавить ПК».\n{}"),
     ("Set up for this device and {}", "Настроено для этого устройства и {}"),
     ("codec chosen when the stream starts", "кодек выбирается при запуске стрима"),
+    ("Another PC or program answers at this PC’s address. If this PC was set up again, remove it and add it again.", "По адресу этого ПК отвечает другой ПК или другая программа. Если этот ПК настроили заново, уберите его и добавьте снова."),
 ];

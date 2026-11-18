@@ -2,6 +2,7 @@
 <resources>
     <string name="library_computers">ПК</string>
     <string name="pc_offline">Не в мережі</string>
+    <string name="pc_another_answers">За адресою цього ПК відповідає інший ПК або інша програма. Якщо цей ПК налаштували заново, приберіть його й додайте знову.</string>
     <string name="pc_checking">Перевірка…</string>
     <string name="app_running">Запущено</string>
     <string name="app_hidden">Приховано</string>

@@ -1726,4 +1726,5 @@ sudo sysctl -w net.core.rmem_max={}", "Búfer de recepción: el sistema concedi�
     ("Join my game with Nightjar: open this link in Nightjar, or copy it and paste it under Add PC.\n{}", "Únete a mi partida con Nightjar: abre este enlace en Nightjar, o cópialo y pégalo en «Añadir PC».\n{}"),
     ("Set up for this device and {}", "Configurado para este dispositivo y {}"),
     ("codec chosen when the stream starts", "el códec se elige al iniciar la transmisión"),
+    ("Another PC or program answers at this PC’s address. If this PC was set up again, remove it and add it again.", "Otro PC u otro programa responde en la dirección de este PC. Si este PC se configuró de nuevo, quítalo y vuelve a añadirlo."),
 ];

@@ -2,6 +2,7 @@
 <resources>
     <string name="library_computers">PC</string>
     <string name="pc_offline">오프라인</string>
+    <string name="pc_another_answers">이 PC의 주소에서 다른 PC나 프로그램이 응답하고 있습니다. 이 PC를 다시 설정했다면 제거한 뒤 다시 추가하세요.</string>
     <string name="pc_checking">확인 중…</string>
     <string name="app_running">실행 중</string>
     <string name="app_hidden">숨김</string>

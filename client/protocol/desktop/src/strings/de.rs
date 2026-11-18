@@ -1726,4 +1726,5 @@ sudo sysctl -w net.core.rmem_max={2}"),
     ("Join my game with Nightjar: open this link in Nightjar, or copy it and paste it under Add PC.\n{}", "Spiel mit mir über Nightjar: Öffne diesen Link in Nightjar, oder kopiere ihn und füge ihn unter „PC hinzufügen“ ein.\n{}"),
     ("Set up for this device and {}", "Eingerichtet für dieses Gerät und {}"),
     ("codec chosen when the stream starts", "Codec wird beim Start des Streams gewählt"),
+    ("Another PC or program answers at this PC’s address. If this PC was set up again, remove it and add it again.", "An der Adresse dieses PCs antwortet ein anderer PC oder ein anderes Programm. Wurde dieser PC neu eingerichtet, entferne ihn und füge ihn erneut hinzu."),
 ];
