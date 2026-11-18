@@ -115,7 +115,8 @@ HDR10, HDR10+, Dolby Vision and HLG, with per-scene brightness measured on the G
 A game that Nucleus Co-op supports gets a "(Co-op)" entry. Each device that starts it joins as the next player, up to four, each in its own instance of the game with its own picture, sound and controller. Home shows who plays in which slot, and a player who steps away keeps their slot for two minutes.
 
 - **Guests on your game.** A second paired device can join the game you are playing as the next player, with its own controller. You decide what each guest may do, and can let guests in for a set time.
-- **Friends in a browser.** While you stream in the console, up to four friends open an invite link, type a name and watch in their own browsers, and play along with a controller or keyboard and mouse if you let them. They need no app, no account and no pairing, and the link can reach friends outside your home. [Guests in the browser](docs/browser-guests.md)
+- **Friends in a browser.** While you stream in the console, up to four friends open an invite link, type a name and watch in their own browsers, and play along with a controller or keyboard and mouse if you let them. They need no app, no account and no pairing, and the link can reach friends outside your home: the console's **Invite** asks your router to forward the guest ports for you. [Guests in the browser](docs/browser-guests.md)
+- **Invite a friend over the internet.** **Invite a friend** makes a one-time link for a friend with Nightjar. It pairs them as a guest without a PIN or port forwarding, lasts a day by default, and you are asked before they join. [How it works](docs/multiclient.md#invite-a-friend-over-the-internet)
 - **Play while the PC is in use.** A device can play its own instance of a game in the background while someone else keeps using the PC's displays, keyboard and mouse.
 
 <p align="center">

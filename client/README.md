@@ -98,7 +98,7 @@ Every screen works with a controller or a TV remote as well as touch, mouse and 
 
 Settings open on **Recommended**: **Stream smoothness**, **Picture quality**, the screen and **HDR**, each on Auto, which uses what your device measured as best, and **Back to recommended** returns to it. **Console mode** opens Nightjar straight into Home. Controls, Audio and App follow, and **More settings** unfolds the rest, with search, presets and help on every row.
 
-Phones, TVs and computers share one settings layout. Settings can differ per PC and per game, with profiles that switch by network: mobile data, home Wi-Fi or other Wi-Fi. Nightjar comes in 15 languages, with high contrast, reduced motion and screen reader support.
+Phones, TVs and computers share one settings layout, and **Interface layout** (Automatic, TV or Handheld) in every Android build gives a handheld the TV screens or a TV the touch ones. Settings can differ per PC and per game, with profiles that switch by network: mobile data, home Wi-Fi or other Wi-Fi. Nightjar comes in 15 languages, with high contrast, reduced motion and screen reader support.
 
 <p align="center"><img src="docs/assets/readme/desktop-settings.webp" width="820" alt="Settings on the desktop, on the Recommended page: Stream smoothness, Picture quality, Screen and HDR on Auto, a Console mode switch and Back to recommended, beside Controls, Audio, App and More settings (demo data)"></p>
 
@@ -150,6 +150,7 @@ A performance overlay in three levels of detail shows the network and decoding, 
 ### Play together, and away from home
 
 - **Join as a guest.** On a PC that offers guests, **Join** on a game another device plays asks that device to let you in: the same picture and sound, your own controller, and the keyboard and mouse only if the player grants them.
+- **Invite a friend over the internet.** **Guests** in the stream menu makes a one-time link, `rubylight://invite`, for one friend. Their Nightjar opens it, or takes it pasted under **Add PC**, and joins as a guest without a PIN or port forwarding once you let them in.
 - **Take a co-op seat.** Take a free player slot in a PC's split-screen co-op session, or return to your own.
 - **Play away from home.** **Play away from home** in a PC's settings walks you through connecting this device and the PC over a private VPN such as Tailscale, then tests the PC from where you are. Nightjar also tries the PC's IPv6 address and a forwarded port, and with a Rubylight PC that offers it, a direct path both sides punch through their routers, without port forwarding. [Play away from home](docs/remote-setup.md)
 
