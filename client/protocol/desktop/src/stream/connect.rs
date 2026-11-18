@@ -766,6 +766,9 @@ pub(super) enum JumboPreflight {
 pub(super) enum JumboSkip {
     /// Nothing asked for jumbo packets.
     NotAsked,
+    /// A resume of a running session: the stream keeps the packets its launch asked for, and the
+    /// PC refuses a probe while that session runs (#126).
+    Resume,
     /// A remote, public or tunnelled route: jumbo is only for the local network.
     Remote,
     /// The PC's serverinfo offers no more than stock packets.
@@ -778,6 +781,7 @@ impl JumboSkip {
     fn reason(self) -> &'static str {
         match self {
             Self::NotAsked => "not asked for",
+            Self::Resume => "not probed on a resume, which keeps the running session's packets",
             Self::Remote => "not tried over a remote or public route",
             Self::NotOffered => "asked for but this PC offers no more than stock packets",
             Self::NoProbe => "asked for but this PC cannot test the path",
@@ -785,10 +789,12 @@ impl JumboSkip {
     }
 }
 
-/// Whether to probe for jumbo packets this stream: only when the run or the setting asks, the
-/// PC offers more than stock, the PC can probe, and the route is local (`Local`, or `Auto` to a
-/// private address). A public `Auto` address becomes remote only later, in the session, so it
-/// must be refused here too.
+/// Whether to probe for jumbo packets this stream: only a new stream, when the run or the setting
+/// asks, the PC offers more than stock, the PC can probe, and the route is local (`Local`, or
+/// `Auto` to a private address). A public `Auto` address becomes remote only later, in the
+/// session, so it must be refused here too. A resume probes nothing: the PC refuses a probe while
+/// the session it resumes runs, and the launch keeps the packet size that session started with.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn jumbo_preflight(
     location: Location,
     address: Option<std::net::IpAddr>,
@@ -796,9 +802,13 @@ pub(super) fn jumbo_preflight(
     burst_probe: bool,
     packet_size: u32,
     jumbo_frames: bool,
+    resume: bool,
 ) -> JumboPreflight {
     if !asks_for_jumbo(packet_size, jumbo_frames) {
         return JumboPreflight::Skip(JumboSkip::NotAsked);
+    }
+    if resume {
+        return JumboPreflight::Skip(JumboSkip::Resume);
     }
     let local = match location {
         Location::Local => true,
@@ -1192,6 +1202,7 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
         plan.info.pyrowave_burst_probe,
         settings.packet_size,
         settings.jumbo_frames,
+        plan.resume,
     );
     // Before the launch: the PC refuses a probe while a stream or a launch is pending (#126).
     let launched = preflight_then_launch(

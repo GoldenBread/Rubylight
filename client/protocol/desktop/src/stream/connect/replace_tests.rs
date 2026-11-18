@@ -126,17 +126,21 @@ fn jumbo_is_probed_only_on_a_local_route_and_only_when_the_pc_offers_it() {
     use std::net::IpAddr;
     let private: IpAddr = "192.168.1.20".parse().unwrap();
     let public: IpAddr = "203.0.113.5".parse().unwrap();
-    assert_eq!(jumbo_preflight(Location::Local, None, 8192, true, 0, true), JumboPreflight::Probe { candidate: 8192 });
+    assert_eq!(jumbo_preflight(Location::Local, None, 8192, true, 0, true, false), JumboPreflight::Probe { candidate: 8192 });
     // Auto follows the session: a private address is local, a public one is remote.
-    assert_eq!(jumbo_preflight(Location::Auto, Some(private), 8192, true, 0, true), JumboPreflight::Probe { candidate: 8192 });
-    assert_eq!(jumbo_preflight(Location::Auto, Some(public), 8192, true, 0, true), JumboPreflight::Skip(JumboSkip::Remote));
-    assert_eq!(jumbo_preflight(Location::Remote, Some(private), 8192, true, 0, true), JumboPreflight::Skip(JumboSkip::Remote));
+    assert_eq!(jumbo_preflight(Location::Auto, Some(private), 8192, true, 0, true, false), JumboPreflight::Probe { candidate: 8192 });
+    assert_eq!(jumbo_preflight(Location::Auto, Some(public), 8192, true, 0, true, false), JumboPreflight::Skip(JumboSkip::Remote));
+    assert_eq!(jumbo_preflight(Location::Remote, Some(private), 8192, true, 0, true, false), JumboPreflight::Skip(JumboSkip::Remote));
     // The setting alone, the PC's offer and a probe-capable PC are all required.
-    assert_eq!(jumbo_preflight(Location::Local, None, 8192, true, 0, false), JumboPreflight::Skip(JumboSkip::NotAsked));
-    assert_eq!(jumbo_preflight(Location::Local, None, 0, true, 0, true), JumboPreflight::Skip(JumboSkip::NotOffered));
-    assert_eq!(jumbo_preflight(Location::Local, None, 8192, false, 0, true), JumboPreflight::Skip(JumboSkip::NoProbe));
+    assert_eq!(jumbo_preflight(Location::Local, None, 8192, true, 0, false, false), JumboPreflight::Skip(JumboSkip::NotAsked));
+    assert_eq!(jumbo_preflight(Location::Local, None, 0, true, 0, true, false), JumboPreflight::Skip(JumboSkip::NotOffered));
+    assert_eq!(jumbo_preflight(Location::Local, None, 8192, false, 0, true, false), JumboPreflight::Skip(JumboSkip::NoProbe));
     // A forced size is capped at the PC's offer, not probed above it.
-    assert_eq!(jumbo_preflight(Location::Local, None, 4096, true, 8192, false), JumboPreflight::Probe { candidate: 4096 });
+    assert_eq!(jumbo_preflight(Location::Local, None, 4096, true, 8192, false, false), JumboPreflight::Probe { candidate: 4096 });
+    // A resume keeps the packets the running session was launched with: the PC refuses a probe
+    // while it runs (#126), so a probe there only delayed the reconnect and fell back.
+    assert_eq!(jumbo_preflight(Location::Local, None, 8192, true, 0, true, true), JumboPreflight::Skip(JumboSkip::Resume));
+    assert_eq!(jumbo_preflight(Location::Local, None, 8192, true, 8192, false, true), JumboPreflight::Skip(JumboSkip::Resume));
     // A failed pre-flight hands a forced jumbo size back to the route, but keeps a stock run.
     assert_eq!(reset_packet_size(1024, 8192), 1024);
     assert_eq!(reset_packet_size(1392, 8192), 1392);
