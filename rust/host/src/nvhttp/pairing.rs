@@ -391,8 +391,13 @@ fn finish_invite(
     // held, so no other pairing took it meanwhile; one taken back or ended in between pairs
     // nothing.
     if let Err(error) = crate::invites::spend(h, invite, &uuid, &p.name) {
-        before.save(&h.paired_path)?;
+        // In memory whatever the disk says: a save that fails here must not leave the device
+        // paired for a link that was taken back.
+        let saved = before.save(&h.paired_path);
         *state = before;
+        if let Err(save_error) = saved {
+            tracing::error!(error = %format!("{save_error:#}"), "an unspent invite's device could not be removed from the saved list");
+        }
         return Err(error);
     }
     drop(state);
