@@ -5,7 +5,8 @@ name: Nightjar macOS
 # the development machine, so this job is the Mac check.
 on:
   push:
-    branches: [main]
+    # wip/** branches are a CI lane for work not yet on main (tools\dev.ps1 ci).
+    branches: [main, 'wip/**']
     paths:
       - 'client/protocol/**'
       - 'client/scripts/**'
@@ -14,6 +15,11 @@ on:
       - 'client/app/src/main/res/**'
       - '.github/workflows/nightjar-macos.yml'
   workflow_dispatch:
+
+# A newer push to the same wip/ branch replaces its run; every run of main keeps its own group.
+concurrency:
+  group: nightjar-macos-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

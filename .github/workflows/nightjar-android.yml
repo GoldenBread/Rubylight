@@ -4,10 +4,16 @@ name: Nightjar Android
 # running client/.github/workflows (including pre-releases and releases).
 on:
   push:
-    branches: [main]
+    # wip/** branches are a CI lane for work not yet on main (tools\dev.ps1 ci).
+    branches: [main, 'wip/**']
     # Docs, store listing and artwork sources don't change the APK.
     paths: ['client/**', '!client/**/*.md', '!client/docs/**', '!client/fastlane/**', '!client/store-assets/**', '!client/LICENSE.txt', '!client/.github/**', '.github/workflows/nightjar-android.yml']
   workflow_dispatch:
+
+# A newer push to the same wip/ branch replaces its run; every run of main keeps its own group.
+concurrency:
+  group: nightjar-android-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

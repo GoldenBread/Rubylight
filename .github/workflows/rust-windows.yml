@@ -2,7 +2,10 @@ name: Rubylight Windows
 permissions: {}
 on:
   push:
-    branches: [main]
+    # wip/** branches are a CI lane for work not yet on main (tools\dev.ps1 ci
+    # watches them): the same jobs and path filter; only main saves the
+    # compiled-dependency caches, and only tags sign or publish.
+    branches: [main, 'wip/**']
     # A release tag publishes the GitHub release (tag and publish below).
     # GitHub ignores paths for tag pushes, so a tag always runs.
     tags: ['v[2-9].*']

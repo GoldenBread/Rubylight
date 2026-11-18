@@ -1,7 +1,7 @@
 name: Developer workflow checks
 on:
   push:
-    branches: [main]
+    branches: [main, 'wip/**']
     paths: ['tools/**', 'rust/build.ps1', 'rust/release/check*.ps1', '.github/workflows/developer-tools.yml']
   pull_request:
     paths: ['tools/**', 'rust/build.ps1', 'rust/release/check*.ps1', '.github/workflows/developer-tools.yml']
