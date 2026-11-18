@@ -139,6 +139,15 @@ pub fn end_before(connecting: Option<Connecting>, wait: Duration, teardown: impl
     end_all_before(connecting.into_iter().collect(), wait, teardown)
 }
 
+/// Waits for a previous session's teardown before this attempt's first request: a reconnect that
+/// launched while the old control connection was open made the PC see two of this device.
+pub(super) fn wait_for_previous(previous: Option<super::Teardown>) {
+    let Some(previous) = previous else { return };
+    if !previous.join_until(Instant::now() + super::LEAVE_WAIT) {
+        eprintln!("nightjar: the previous session was still stopping after {} ms; reconnecting while it ends", super::LEAVE_WAIT.as_millis());
+    }
+}
+
 impl Connecting {
     /// What this start was asked to do: a failed start's card makes it again.
     pub fn plan(&self) -> &LaunchPlan {
@@ -151,7 +160,7 @@ impl Connecting {
         recent_game(&self.plan)
     }
 
-    pub fn start(mut plan: LaunchPlan, waker: Waker) -> Self {
+    pub fn start(mut plan: LaunchPlan, waker: Waker, previous: Option<super::Teardown>) -> Self {
         // All connection attempts enter here on the main thread, before the audio
         // worker starts. A missing output already allows streaming without sound.
         #[cfg(target_os = "macos")]
@@ -177,6 +186,9 @@ impl Connecting {
         let worker = std::thread::Builder::new()
             .name("connect".into())
             .spawn(move || {
+                // A reconnect of a session still stopping must not launch while its control
+                // connection and decoder are open: the PC would see two of this device.
+                wait_for_previous(previous);
                 let result: Result<(Session, Facts, LaunchPlan), ConnectError> = match connect_with_recovery(&mut worker_plan, worker_shared, &worker_interrupt) {
                     // The screen left this start before it made a stream: nobody waits for its
                     // pictures, and a session nobody holds would stream unseen.
@@ -209,29 +221,41 @@ impl Connecting {
     }
 
     /// Cancels the launch and waits up to `wait` for the worker to end, stopping a session it
-    /// started. True once the worker has ended, so nothing it made is in use any more; false if it
-    /// is still running after `wait`.
+    /// started. True once the worker and that session's teardown have both ended, so nothing it
+    /// made is in use any more; false if it is still running after `wait`.
     pub fn finish(self, wait: Duration) -> bool {
         self.cancel();
         let deadline = Instant::now() + wait;
+        let mut teardown = super::Teardown::none();
         match self.result.recv_timeout(wait) {
             Ok(Ok((session, _, _))) => {
                 lock(&self.shared.roam_watch).take();
-                super::reap_session(session);
+                teardown = super::reap_session(session);
             }
             Ok(Err(_)) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => return false,
         }
         // After its result the worker only wakes the app.
-        let Some(worker) = self.worker else { return true };
-        while !worker.is_finished() {
-            if Instant::now() >= deadline { return false; }
-            std::thread::sleep(Duration::from_millis(2));
+        let mut worker_ended = true;
+        if let Some(worker) = self.worker {
+            while !worker.is_finished() {
+                if Instant::now() >= deadline {
+                    worker_ended = false;
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            if worker_ended && worker.join().is_err() {
+                eprintln!("nightjar: the connect thread panicked");
+            }
         }
-        if worker.join().is_err() {
-            eprintln!("nightjar: the connect thread panicked");
+        // The renderer's GPU device and the control connection go only once the session's own
+        // threads have ended; `end_all_before` keeps the renderer when this says false.
+        let stopped = teardown.join_until(deadline);
+        if !stopped {
+            eprintln!("nightjar: a session did not stop within {} ms of leaving; the renderer stays until the process exits", wait.as_millis());
         }
-        true
+        worker_ended && stopped
     }
 
     /// The stream presents for a VRR display (the setting is on and the swap chain tears).

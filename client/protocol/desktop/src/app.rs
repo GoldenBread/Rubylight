@@ -73,7 +73,12 @@ impl App {
         // The PC's automatic bitrate goes off after the window has gone, not with the process.
         self.gui_back_from_overlay();
         let mut abr_stops: Vec<_> = self.abr_stops.drain(..).map(|(_, stop)| stop).collect();
-        abr_stops.extend(self.streaming.take().and_then(|(streaming, _)| streaming.finish(self.window, &mut self.pads)));
+        let (stop, teardown) = match self.streaming.take() {
+            Some((streaming, _)) => streaming.finish(self.window, &mut self.pads),
+            None => (None, stream::Teardown::none()),
+        };
+        abr_stops.extend(stop);
+        self.teardowns.push(teardown);
         self.save_hosts_and_place();
         self.pads.close_all();
         self.gui.destroy();
@@ -96,10 +101,18 @@ impl App {
         if !checks_stopped {
             eprintln!("nightjar: a decoder check did not end within {} ms of leaving; the window and its GPU device stay until the process exits, as it may still be using them", wait.as_millis());
         }
+        // A session stopping on its own thread joins the decoder and audio threads that used the
+        // renderer: they end before it goes, within the same leaving deadline.
+        let teardowns_joined = std::mem::take(&mut self.teardowns)
+            .into_iter()
+            .all(|teardown| teardown.join_until(deadline));
+        if !teardowns_joined {
+            eprintln!("nightjar: a stream's teardown did not end within {} ms of leaving; the window and its GPU device stay until the process exits, as it may still be using them", wait.as_millis());
+        }
         // The launches are cancelled and waited for either way; the renderer goes only when no
         // decoder check is still inside a call that may use it.
         stream::end_all_before(self.attempts.take_all(), deadline.saturating_duration_since(Instant::now()), || {
-            if checks_stopped {
+            if checks_stopped && teardowns_joined {
                 // SAFETY: tearing down what run() created, with nothing else using it any more.
                 unsafe {
                     crate::sdl::destroy_renderer(renderer);

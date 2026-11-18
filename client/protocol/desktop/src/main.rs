@@ -157,6 +157,9 @@ struct App {
     /// still be in flight, each with the PC it went to: the next stream to that PC (a reconnect
     /// too) turns it on only after it, and the app's end waits for them all.
     abr_stops: Vec<(u64, stream::host_abr::AbrStop)>,
+    /// Sessions stopping on their own threads. Joined before the renderer they decoded on goes
+    /// (exit) or before the next connection's launch request (a reconnect carries its own).
+    teardowns: Vec<stream::Teardown>,
     pending_launch: Option<(u64, i32)>,
     /// The launch the PC refused until the user confirms closing the app it runs, while the
     /// launcher asks (`Dialog::ConfirmReplace`).
@@ -933,6 +936,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         waking: wol::Wakes::default(),
         streaming: None,
         abr_stops: Vec::new(),
+        teardowns: Vec::new(),
         pending_launch: None,
         pending_replace: None,
         quitting_on_leave: None,

@@ -2335,9 +2335,11 @@ impl Streaming {
         self.started.elapsed()
     }
 
-    /// Ends the stream: releases input, stops the session. Returns the request that turns the
-    /// PC's automatic bitrate off while it runs on; one closing Nightjar waits for it.
-    pub fn finish(mut self, window: *mut SDL_Window, pads: &mut Gamepads) -> Option<host_abr::AbrStop> {
+    /// Ends the stream: releases input, stops the session on a reaper thread. Returns the request
+    /// that turns the PC's automatic bitrate off while it runs (one closing Nightjar waits for it)
+    /// and the teardown's handle, which a caller that owns the renderer or starts the next
+    /// connection waits for where it must.
+    pub fn finish(mut self, window: *mut SDL_Window, pads: &mut Gamepads) -> (Option<host_abr::AbrStop>, Teardown) {
         self.microphone = None;
         self.stop_host_abr();
         if let Some(client) = &*lock(&self.shared.host_client) {
@@ -2426,20 +2428,51 @@ impl Streaming {
         // `Session::stop` joins the receive, decode and audio threads, which can wait on a socket
         // timeout or a decoder call: a reaper thread stops it while the launcher comes back.
         let session = self.session;
-        spawn_background(move || session.stop());
-        self.host_abr_stop.take()
+        (self.host_abr_stop.take(), spawn_background(move || session.stop()))
+    }
+}
+
+/// A session's stop on a thread of its own, with the handle that lets an owner wait for it where
+/// it must: before the renderer it decodes on goes, or before the next launch's HTTP request.
+pub(crate) struct Teardown(Option<std::thread::JoinHandle<()>>);
+
+impl Teardown {
+    pub(crate) fn none() -> Self {
+        Self(None)
+    }
+
+    /// Waits for the work to end, at most until `deadline`; true once it has (or there was none).
+    /// A teardown thread that panicked is finished too, and logged.
+    pub(crate) fn join_until(self, deadline: Instant) -> bool {
+        let Some(handle) = self.0 else { return true };
+        while !handle.is_finished() {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        if handle.join().is_err() {
+            eprintln!("nightjar: a stream's teardown thread panicked");
+        }
+        true
     }
 }
 
 /// Runs `work` on a thread of its own, for teardown that may block on a socket, a decoder or an
-/// audio device. The UI thread never waits for it.
-fn spawn_background(work: impl FnOnce() + Send + 'static) {
-    let _ = std::thread::Builder::new().name("nightjar teardown".into()).spawn(work);
+/// audio device. The UI thread does not wait for it; a [`Teardown`] owner does where it must.
+fn spawn_background(work: impl FnOnce() + Send + 'static) -> Teardown {
+    match std::thread::Builder::new().name("nightjar teardown".into()).spawn(work) {
+        Ok(handle) => Teardown(Some(handle)),
+        Err(e) => {
+            eprintln!("nightjar: the teardown thread cannot start: {e}");
+            Teardown::none()
+        }
+    }
 }
 
 /// Stops a stream on a reaper thread (`spawn_background`), for a session that is not `finish`ed.
-pub(crate) fn reap_session(session: Session) {
-    spawn_background(move || session.stop());
+pub(crate) fn reap_session(session: Session) -> Teardown {
+    spawn_background(move || session.stop())
 }
 
 /// The file Settings → Advanced → Export latency CSV saves, in the statistics folder.

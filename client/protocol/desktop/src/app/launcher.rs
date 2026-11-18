@@ -558,7 +558,7 @@ impl App {
                         // the decoder's pictures are on the old device, which nothing draws.
                         let why = connecting.plan().device.removed_reason().map_or(String::new(), |why| format!(" (the old one was removed: {why})"));
                         eprintln!("nightjar: the renderer's Direct3D 11 device changed while connecting{why}; the stream ends");
-                        stream::reap_session(session);
+                        self.teardowns.push(stream::reap_session(session));
                         self.launcher.notify(tr("The stream could not start"), tr("The graphics driver was reset, which ended the stream. Connect again."));
                     } else {
                         self.begin_stream(connecting, session, facts);

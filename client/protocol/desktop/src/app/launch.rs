@@ -630,7 +630,7 @@ impl App {
             resume_bitrate_kbps: None,
             resume_quality: None,
         };
-        self.attempts.begin(Connecting::start(plan, self.waker.clone()));
+        self.attempts.begin(Connecting::start(plan, self.waker.clone(), None));
     }
 }
 
