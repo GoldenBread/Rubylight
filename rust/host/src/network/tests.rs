@@ -550,3 +550,77 @@ async fn dual_stack_listener_accepts_ipv4_and_ipv6_loopback() {
         drop(client);
     }
 }
+
+#[test]
+fn the_guest_lease_record_keeps_what_was_granted_and_clears_after_a_clean_release() {
+    let directory = std::env::temp_dir().join(format!("rubylight-leases-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let mut record = LeaseRecord::load(&directory);
+    assert!(record.leases().is_empty());
+    // No record on disk: the next start deletes nothing.
+    assert!(!directory.join(GUEST_LEASES).exists());
+
+    let tcp = Mapping {
+        protocol: Protocol::TCP,
+        port: 47991,
+    };
+    let udp = Mapping {
+        protocol: Protocol::UDP,
+        port: 8002,
+    };
+    let upnp = GuestLease::new(LeaseMethod::Upnp, tcp);
+    let natpmp = GuestLease::new(LeaseMethod::NatPmp, udp);
+    record.set(vec![upnp, natpmp]);
+    let reread = LeaseRecord::load(&directory);
+    assert_eq!(reread.leases(), [upnp, natpmp]);
+
+    // A lease recorded twice is one lease.
+    record.set(vec![upnp, upnp, natpmp]);
+    assert_eq!(record.leases(), [upnp, natpmp]);
+
+    // A clean release leaves no record, so the next start deletes nothing.
+    record.clear();
+    assert!(record.leases().is_empty());
+    assert!(!directory.join(GUEST_LEASES).exists());
+    assert!(LeaseRecord::load(&directory).leases().is_empty());
+
+    // An unreadable record lists nothing rather than guessing at ports to delete.
+    std::fs::write(directory.join(GUEST_LEASES), b"{ not json").unwrap();
+    assert!(LeaseRecord::load(&directory).leases().is_empty());
+
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+#[test]
+fn cleanup_takes_only_the_recorded_ports_from_each_method() {
+    let tcp = Mapping {
+        protocol: Protocol::TCP,
+        port: 47991,
+    };
+    let udp = Mapping {
+        protocol: Protocol::UDP,
+        port: 8002,
+    };
+    let leases = [
+        GuestLease::new(LeaseMethod::Upnp, tcp),
+        GuestLease::new(LeaseMethod::NatPmp, udp),
+    ];
+    assert_eq!(
+        recorded_ports(&leases, |method| method == LeaseMethod::Upnp),
+        [tcp]
+    );
+    // A record with no PCP or NAT-PMP lease sends the router no delete for them.
+    assert_eq!(
+        recorded_ports(&leases, |method| matches!(
+            method,
+            LeaseMethod::Pcp | LeaseMethod::NatPmp
+        )),
+        [udp]
+    );
+    assert!(recorded_ports(&[], |_| true).is_empty());
+    assert!(
+        recorded_ports(&[GuestLease::new(LeaseMethod::Upnp, tcp)], |method| method
+            == LeaseMethod::NatPmp)
+        .is_empty()
+    );
+}

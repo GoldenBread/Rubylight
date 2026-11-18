@@ -259,38 +259,48 @@ async fn a_manual_forward_to_this_pc_counts_as_mapped_and_is_left_alone() {
 }
 
 #[tokio::test]
-async fn a_start_removes_only_this_hosts_guest_ports_a_stop_left_forwarded() {
+async fn a_start_removes_only_the_guest_ports_the_record_lists() {
     let owner = "Butterpollo Rust fixture-host";
     let local = "192.0.2.10".parse().unwrap();
-    let row = |port, owner: &str| Row {
+    let row = |port, protocol, owner: &str| Row {
         port,
-        protocol: if port == 48125 {
-            Protocol::TCP
-        } else {
-            Protocol::UDP
-        },
+        protocol,
         owner: owner.into(),
     };
     let state = Arc::new(Mutex::new(RouterState {
         rows: vec![
-            row(48125, owner),
+            row(48125, Protocol::TCP, owner),
             // A streaming port and another application's media port stay.
-            row(48124, owner),
-            row(8003, "Other application"),
-            row(8002, owner),
-            row(8004, owner),
+            row(48124, Protocol::TCP, owner),
+            row(8003, Protocol::UDP, owner),
+            row(8004, Protocol::UDP, "Other application"),
+            row(8002, Protocol::UDP, owner),
+            // No longer a configured guest port, but the record lists it: it goes too.
+            row(8006, Protocol::UDP, owner),
         ],
         ..Default::default()
     }));
     let (gateway, server) = serve(state.clone()).await;
-    let config = Config::parse("webrtc_server=true\n").unwrap();
-    let guest = guest_ports(&config, Ports::from_base(48123));
-    remove_guest_leftovers(&gateway, local, &guest, owner).await;
+    let recorded = [
+        Mapping {
+            protocol: Protocol::TCP,
+            port: 48125,
+        },
+        Mapping {
+            protocol: Protocol::UDP,
+            port: 8002,
+        },
+        Mapping {
+            protocol: Protocol::UDP,
+            port: 8006,
+        },
+    ];
+    assert!(remove_guest_leftovers(&gateway, local, &recorded, owner).await);
     let state = state.lock().unwrap();
-    assert_eq!(state.deleted, [48125, 8002, 8004]);
+    assert_eq!(state.deleted, [48125, 8002, 8006]);
     assert_eq!(
         state.rows.iter().map(|row| row.port).collect::<Vec<_>>(),
-        [48124, 8003]
+        [48124, 8003, 8004]
     );
     drop(state);
     server.abort();

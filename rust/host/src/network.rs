@@ -7,9 +7,11 @@ use igd_next::{
     aio::{Gateway, Provider},
 };
 use mdns_sd::{IfKind, ServiceDaemon, ServiceInfo};
+use serde::{Deserialize, Serialize};
 use socket2::{Domain, Socket, Type};
 use std::{
     net::{IpAddr, SocketAddr, UdpSocket},
+    path::{Path, PathBuf},
     sync::atomic::Ordering,
     time::{Duration, Instant},
 };
@@ -533,6 +535,126 @@ fn guest_mappings(config: &Config, ports: Ports) -> Vec<Mapping> {
     }
     guest_ports(config, ports)
 }
+
+/// The guest leases written to the profile ([`LeaseRecord`]).
+const GUEST_LEASES: &str = "guest-port-leases.json";
+
+/// How a guest port was forwarded, which says how a start after an unclean stop takes it down.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum LeaseMethod {
+    /// A UPnP IGD mapping under this host's description.
+    Upnp,
+    Pcp,
+    NatPmp,
+}
+
+/// A mapping's protocol, as the lease record writes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum LeaseProtocol {
+    Tcp,
+    Udp,
+}
+impl From<Protocol> for LeaseProtocol {
+    fn from(protocol: Protocol) -> Self {
+        match protocol {
+            Protocol::TCP => Self::Tcp,
+            Protocol::UDP => Self::Udp,
+        }
+    }
+}
+impl From<LeaseProtocol> for Protocol {
+    fn from(protocol: LeaseProtocol) -> Self {
+        match protocol {
+            LeaseProtocol::Tcp => Self::TCP,
+            LeaseProtocol::Udp => Self::UDP,
+        }
+    }
+}
+
+/// One guest port lease the router granted this host: how, and the port.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+struct GuestLease {
+    method: LeaseMethod,
+    protocol: LeaseProtocol,
+    port: u16,
+}
+impl GuestLease {
+    fn new(method: LeaseMethod, mapping: Mapping) -> Self {
+        Self {
+            method,
+            protocol: mapping.protocol.into(),
+            port: mapping.port,
+        }
+    }
+    fn mapping(self) -> Mapping {
+        Mapping {
+            protocol: self.protocol.into(),
+            port: self.port,
+        }
+    }
+}
+
+/// The guest leases on disk: written when a round learns what the router granted, cleared once
+/// a clean release took them all down, and read at start so that only those ports, never
+/// another application's mapping on the same numbers, are deleted.
+struct LeaseRecord {
+    path: PathBuf,
+    leases: Vec<GuestLease>,
+}
+impl LeaseRecord {
+    /// The record in `directory`; a missing or unreadable one lists nothing, so nothing is
+    /// deleted from it.
+    fn load(directory: &Path) -> Self {
+        let path = directory.join(GUEST_LEASES);
+        let mut leases: Vec<GuestLease> =
+            butterpollo_core::state::load_json(&path, serde_json::Value::Array(Vec::new()))
+                .and_then(|value| {
+                    serde_json::from_value::<Vec<GuestLease>>(value).map_err(anyhow::Error::from)
+                })
+                .unwrap_or_else(|error| {
+                    if path.exists() {
+                        tracing::warn!(%error, path = %path.display(), "guest lease record could not be read; no ports are cleaned from it");
+                    }
+                    Vec::new()
+                });
+        leases.sort_unstable();
+        leases.dedup();
+        Self { path, leases }
+    }
+    fn leases(&self) -> &[GuestLease] {
+        &self.leases
+    }
+    /// Replaces the record when the leases changed: what a round was granted.
+    fn set(&mut self, mut leases: Vec<GuestLease>) {
+        leases.sort_unstable();
+        leases.dedup();
+        if leases == self.leases {
+            return;
+        }
+        let result = if leases.is_empty() {
+            match std::fs::remove_file(&self.path) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
+                _ => Ok(()),
+            }
+        } else {
+            butterpollo_core::state::write_json(&self.path, &leases)
+        };
+        match result {
+            Ok(()) => self.leases = leases,
+            Err(error) => tracing::warn!(
+                %error,
+                path = %self.path.display(),
+                "guest lease record could not be written"
+            ),
+        }
+    }
+    /// A clean release took every lease down: nothing is left to clean at the next start.
+    fn clear(&mut self) {
+        self.set(Vec::new());
+    }
+}
 /// The WebRTC TV protocol's discovery port, UDP 8000 whatever the settings say; the owner's own
 /// stream's media port defaults to the next one.
 const WEBRTC_DISCOVERY_PORT: u16 = 8000;
@@ -824,15 +946,15 @@ async fn remove<P: Provider>(
     failed.map_or(Ok(()), Err)
 }
 
-/// The router's entries for `guest` that carry this host's description: what an unclean stop
-/// left forwarded.
+/// The router's entries among `recorded` that carry this host's description: the guest ports an
+/// unclean stop left behind.
 fn guest_leftovers(
     entries: &[igd_next::PortMappingEntry],
     local: IpAddr,
     description: &str,
-    guest: &[Mapping],
+    recorded: &[Mapping],
 ) -> Vec<Mapping> {
-    guest
+    recorded
         .iter()
         .filter(|mapping| {
             entries.iter().any(|entry| {
@@ -846,15 +968,16 @@ fn guest_leftovers(
 }
 
 /// Takes the guest ports an earlier run left on `gateway` down: only this host's own entries,
-/// so the streaming ports and another application's forwards stay.
+/// so the streaming ports and another application's forwards stay. Says whether they are gone.
 async fn remove_guest_leftovers<P: Provider>(
     gateway: &Gateway<P>,
     local: IpAddr,
-    guest: &[Mapping],
+    recorded: &[Mapping],
     description: &str,
-) {
+) -> bool {
     let (entries, _) = entries(gateway).await;
-    for mapping in guest_leftovers(&entries, local, description, guest) {
+    let mut clean = true;
+    for mapping in guest_leftovers(&entries, local, description, recorded) {
         match tokio::time::timeout(
             Duration::from_secs(3),
             gateway.remove_port(mapping.protocol, mapping.port),
@@ -868,9 +991,11 @@ async fn remove_guest_leftovers<P: Provider>(
                 );
             }
             Ok(Err(error)) => {
+                clean = false;
                 tracing::debug!(%error, port = mapping.port, "guest port left by an earlier run could not be removed");
             }
             Err(_) => {
+                clean = false;
                 tracing::debug!(
                     port = mapping.port,
                     "UPnP router timed out removing a guest port left by an earlier run"
@@ -879,35 +1004,68 @@ async fn remove_guest_leftovers<P: Provider>(
             }
         }
     }
+    clean
 }
 
-/// One round at host start: takes the guest ports an unclean stop left forwarded down. Links do
-/// not survive a restart, so nothing wants them, and the first renewal asks for what it needs.
-/// UPnP entries go only under this host's description; PCP and NAT-PMP mappings go with a
-/// mapping request of lifetime 0, which PCP checks against this host's nonce.
-async fn cleanup_guests(bind: IpAddr, config: &Config, description: &str, secret: &[u8]) {
-    let Ok(ports) = config.ports() else {
-        return;
-    };
-    let guest = guest_ports(config, ports);
-    if guest.is_empty() {
-        return;
+/// The recorded leases whose method `wanted` accepts, as mappings.
+fn recorded_ports(leases: &[GuestLease], wanted: impl Fn(LeaseMethod) -> bool) -> Vec<Mapping> {
+    leases
+        .iter()
+        .filter(|lease| wanted(lease.method))
+        .map(|lease| lease.mapping())
+        .collect()
+}
+
+/// Deletes the PCP or NAT-PMP mappings `mapped` lists, and says whether the router answered for
+/// every one. PCP checks this host's nonce, so another program's mapping on the port is refused
+/// rather than deleted.
+async fn remove_mapped(bind: IpAddr, mapped: &[Mapping], secret: &[u8]) -> bool {
+    if mapped.is_empty() {
+        return true;
     }
-    match upnp_gateway(bind).await {
-        Ok((gateway, local)) => {
-            remove_guest_leftovers(&gateway, local, &guest, description).await;
-        }
-        Err(error) => {
-            tracing::debug!(%error, "UPnP gateway unavailable for the guest port cleanup");
-        }
-    }
-    let route = default_gateways()
+    let Some((gateway, local)) = default_gateways()
         .ok()
-        .and_then(|gateways| portmap::ipv4_route(&gateways, bind));
-    if let Some((gateway, local)) = route
-        && let Ok(mut mapper) = portmap::PortMapper::ipv4(gateway, local, secret).await
-    {
-        mapper.delete(&guest).await;
+        .and_then(|gateways| portmap::ipv4_route(&gateways, bind))
+    else {
+        tracing::debug!("no default gateway for the PCP or NAT-PMP cleanup");
+        return false;
+    };
+    let Ok(mut mapper) = portmap::PortMapper::ipv4(gateway, local, secret).await else {
+        return false;
+    };
+    mapper.delete(mapped).await
+}
+
+/// One round at host start: takes down the guest ports an unclean stop left forwarded, and only
+/// the leases `record` lists, so another application's mapping on the same port stays. A link
+/// does not survive a restart, so nothing wants them; the first renewal asks for what the
+/// running configuration needs. With no record it asks the router nothing.
+async fn cleanup_guests(record: &mut LeaseRecord, bind: IpAddr, description: &str, secret: &[u8]) {
+    let leases = record.leases().to_vec();
+    if leases.is_empty() {
+        return;
+    }
+    let mut clean = true;
+    let upnp = recorded_ports(&leases, |method| method == LeaseMethod::Upnp);
+    if !upnp.is_empty() {
+        match upnp_gateway(bind).await {
+            Ok((gateway, local)) => {
+                clean &= remove_guest_leftovers(&gateway, local, &upnp, description).await;
+            }
+            Err(error) => {
+                clean = false;
+                tracing::debug!(%error, "UPnP gateway unavailable for the guest port cleanup");
+            }
+        }
+    }
+    let mapped = recorded_ports(&leases, |method| {
+        matches!(method, LeaseMethod::Pcp | LeaseMethod::NatPmp)
+    });
+    if !mapped.is_empty() {
+        clean &= remove_mapped(bind, &mapped, secret).await;
+    }
+    if clean {
+        record.clear();
     }
 }
 /// The UPnP and IPv6 pinhole task, which sleeps until its next renewal or until
@@ -1024,23 +1182,32 @@ impl Held {
             || !self.pinholes.is_empty()
     }
     /// Takes every mapping and pinhole down: nothing is wanted any more, or the host stops.
-    async fn release(&mut self, description: &str) {
+    /// `Some(true)` once everything came down, `Some(false)` when something could not, and
+    /// `None` when this host held nothing.
+    async fn release(&mut self, description: &str) -> Option<bool> {
+        if !self.any() {
+            return None;
+        }
+        let mut clean = true;
         if let Some(mut firewall) = self.firewall.take()
             && let Err(error) = firewall.close().await
         {
+            clean = false;
             tracing::debug!(%error, "IPv6 pinholes will expire after their finite lease");
         }
         for mut mapper in self.pinholes.drain(..) {
-            mapper.close().await;
+            clean &= mapper.close().await;
         }
         if let Some(mut mapper) = self.mapper.take() {
-            mapper.close().await;
+            clean &= mapper.close().await;
         }
         if let Some((gateway, local, applied)) = self.upnp.take()
             && let Err(error) = remove(&gateway, local, &applied, description).await
         {
+            clean = false;
             tracing::warn!(%error, "UPnP cleanup failed; permanent mappings remain reclaimable by this host");
         }
+        Some(clean)
     }
 }
 /// Writes one mapping attempt to the console's status: the streaming ports and the guests' apart,
@@ -1079,9 +1246,10 @@ pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
         let description = format!("Butterpollo Rust {}", h.paired.read().unwrap().unique_id);
         // Makes the PCP mapping nonce, which must survive new mappers and restarts.
         let nonce_secret = h.identity.private_pem.clone();
+        let mut record = LeaseRecord::load(&h.directory);
         // A previous run that stopped uncleanly left the guest ports forwarded, and no link
-        // survives a restart: take them down before the first renewal.
-        cleanup_guests(bind, &config, &description, nonce_secret.as_bytes()).await;
+        // survives a restart: take down the leases its record lists before the first renewal.
+        cleanup_guests(&mut record, bind, &description, nonce_secret.as_bytes()).await;
         let mut next_search = Instant::now();
         let mut held = Held::default();
         let mut reported = Vec::new();
@@ -1101,7 +1269,9 @@ pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
                 let wanted: Vec<Mapping> = stream.iter().chain(&guest).copied().collect();
                 if wanted.is_empty() {
                     if held.any() {
-                        held.release(&description).await;
+                        if held.release(&description).await == Some(true) {
+                            record.clear();
+                        }
                         reported.clear();
                     }
                     crate::internet_play::update_mapping(|status| {
@@ -1122,6 +1292,7 @@ pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
                         &description,
                         nonce_secret.as_bytes(),
                         &mut reported,
+                        &mut record,
                     )
                     .await;
                     crate::internet_play::update_mapping(|status| status.guest_round = round);
@@ -1133,7 +1304,9 @@ pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
                 () = h.guests.mapping_changed() => next_search = Instant::now(),
             }
         }
-        held.release(&description).await;
+        if held.release(&description).await == Some(true) {
+            record.clear();
+        }
     });
     Some(PortForward { task, stop })
 }
@@ -1149,7 +1322,10 @@ async fn renew(
     description: &str,
     nonce_secret: &[u8],
     reported: &mut Vec<Mapping>,
+    record: &mut LeaseRecord,
 ) {
+    let mut guest_leases = Vec::new();
+    let mut known = false;
     let mut upnp_error = None;
     if held.upnp.is_none() {
         match upnp_gateway(bind).await {
@@ -1166,6 +1342,12 @@ async fn renew(
             Ok((mappings, elsewhere)) => {
                 *applied = mappings;
                 forwarded = elsewhere;
+                known = true;
+                guest_leases = guest
+                    .iter()
+                    .filter(|mapping| applied.contains(mapping))
+                    .map(|mapping| GuestLease::new(LeaseMethod::Upnp, *mapping))
+                    .collect();
             }
             Err(error) => tracing::warn!(%error, "UPnP mapping could not be renewed"),
         }
@@ -1215,6 +1397,18 @@ async fn renew(
         };
         match result {
             Ok(outcome) => {
+                known = true;
+                if let Some(method) = held.mapper.as_ref().and_then(portmap::PortMapper::method) {
+                    let method = match method {
+                        portmap::Method::Pcp => LeaseMethod::Pcp,
+                        portmap::Method::NatPmp => LeaseMethod::NatPmp,
+                    };
+                    guest_leases = guest
+                        .iter()
+                        .filter(|mapping| outcome.mapped.iter().any(|(done, _)| done == *mapping))
+                        .map(|mapping| GuestLease::new(method, *mapping))
+                        .collect();
+                }
                 for (mapping, reason) in &outcome.failed {
                     if !reported.contains(mapping) {
                         reported.push(*mapping);
@@ -1252,6 +1446,11 @@ async fn renew(
     }
     if bind.is_ipv6() {
         renew_pinholes(held, bind, guest, wanted, nonce_secret).await;
+    }
+    // Only a round that learned what the router granted rewrites the record: an unanswered
+    // router may still hold the leases listed there, and they go at the next start.
+    if known {
+        record.set(guest_leases);
     }
 }
 /// IPv6 pinholes for `wanted` through the router's UPnP IGDv2 firewall, else PCP.

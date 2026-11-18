@@ -252,7 +252,7 @@ impl PortMapper {
             .filter(|mapping| !wanted.contains(mapping))
             .collect();
         for mapping in gone {
-            self.unmap(mapping).await;
+            let _ = self.unmap(mapping).await;
         }
         let mut outcome = Outcome::default();
         for &mapping in wanted {
@@ -331,7 +331,9 @@ impl PortMapper {
         }
     }
 
-    async fn unmap(&mut self, mapping: Mapping) {
+    /// Asks the router to delete `mapping`, and says whether it answered: one that did not
+    /// keeps the mapping until its lease runs out.
+    async fn unmap(&mut self, mapping: Mapping) -> bool {
         let removed = match self.method {
             Some(Method::Pcp) => self.pcp(mapping, 0).await.is_ok(),
             Some(Method::NatPmp) => self.natpmp(mapping, 0).await.is_ok(),
@@ -344,13 +346,15 @@ impl PortMapper {
             );
         }
         self.leases.retain(|lease| lease.mapping != mapping);
+        removed
     }
 
     /// Deletes `mappings` this host left on the router, as one start after an unclean stop does:
     /// a mapping request with lifetime 0 for each, which PCP checks against this host's nonce.
     /// The first request also tells which protocol the router speaks; one that answers neither
-    /// ends the round, as asking for every port would only wait as long.
-    pub(super) async fn delete(&mut self, mappings: &[Mapping]) {
+    /// ends the round, as asking for every port would only wait as long. Says whether the
+    /// router answered for every mapping.
+    pub(super) async fn delete(&mut self, mappings: &[Mapping]) -> bool {
         for &mapping in mappings {
             if self.method.is_none() {
                 match self.pcp(mapping, 0).await {
@@ -362,27 +366,30 @@ impl PortMapper {
                             continue;
                         }
                     }
-                    Err(_) => return,
+                    Err(_) => return false,
                 }
             }
-            match self.method {
-                Some(Method::Pcp) => {
-                    let _ = self.pcp(mapping, 0).await;
-                }
-                Some(Method::NatPmp) => {
-                    let _ = self.natpmp(mapping, 0).await;
-                }
-                None => return,
+            let answered = match self.method {
+                Some(Method::Pcp) => self.pcp(mapping, 0).await.is_ok(),
+                Some(Method::NatPmp) => self.natpmp(mapping, 0).await.is_ok(),
+                None => return false,
+            };
+            if !answered {
+                return false;
             }
         }
+        true
     }
 
-    /// Removes every mapping this mapper made: the host stops.
-    pub(super) async fn close(&mut self) {
+    /// Removes every mapping this mapper made: the host stops. Says whether the router answered
+    /// for every one.
+    pub(super) async fn close(&mut self) -> bool {
         let mappings: Vec<Mapping> = self.leases.iter().map(|lease| lease.mapping).collect();
+        let mut clean = true;
         for mapping in mappings {
-            self.unmap(mapping).await;
+            clean &= self.unmap(mapping).await;
         }
+        clean
     }
 }
 
@@ -493,7 +500,7 @@ mod tests {
                 port: 8002,
             },
         ];
-        mapper.delete(&guest).await;
+        assert!(mapper.delete(&guest).await);
         let seen = seen.lock().unwrap();
         assert_eq!(seen.len(), 3, "{seen:?}");
         // One PCP delete, under this host's nonce, with no lifetime and the guest port.
