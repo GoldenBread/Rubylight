@@ -368,7 +368,7 @@ const video: Setting[] = [
     description:
       'Lets compatible devices ask for PyroWave, a very low-latency GPU codec that needs hundreds of Mbps and a fast wired network. Leave it on: other devices never see it.',
     details:
-      'PyroWave encodes each frame on its own. Synthetic desktop and game tests suggest 277 Mbps for 720p60, 399 Mbps for 1080p60 or 1593 Mbps for 4K60 for clean pictures. Severe detail loss is likely below 139, 187 or 747 Mbps respectively. Quality depends on the picture. Leave network headroom for packet overhead and recovery data; 4K60 needs more than gigabit Ethernet. If the device or network cannot carry the rate, use HEVC or AV1.',
+      'PyroWave encodes each frame on its own. Synthetic desktop and game tests suggest 277 Mbps for 720p60, 399 Mbps for 1080p60 or 1593 Mbps for 4K60 for clean pictures. Text and textures may lose detail below 139, 187 or 747 Mbps respectively. Quality depends on the picture. Leave network headroom for packet overhead and recovery data; 4K60 needs more than gigabit Ethernet. If the device or network cannot carry the rate, use HEVC or AV1.',
     category: 'video',
     group: 'Codecs',
     control: { kind: 'toggle' },

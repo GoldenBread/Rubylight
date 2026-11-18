@@ -241,7 +241,7 @@ For **native HDR**, enable HDR in the client and use an HDR-capable display and 
 
 ### PyroWave
 
-**PyroWave needs a compatible client** and much more bandwidth than conventional codecs. Desktop and game test scenes on AMD give two warning levels. The floor is the rate below which those test scenes lost detail; the recommendation is where they kept it. Passing the floor alone does not mean a clean picture.
+**PyroWave needs a compatible client** and much more bandwidth than conventional codecs. Desktop and game test scenes on AMD give two warning levels. The floor is the rate below which those test scenes lost detail; the recommendation is where they kept it. Passing the floor alone does not mean a clean picture; below it, text and textures may lose detail.
 
 | Stream | Test-scene detail floor | Recommended |
 | --- | ---: | ---: |
