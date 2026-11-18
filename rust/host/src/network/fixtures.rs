@@ -259,6 +259,44 @@ async fn a_manual_forward_to_this_pc_counts_as_mapped_and_is_left_alone() {
 }
 
 #[tokio::test]
+async fn a_start_removes_only_this_hosts_guest_ports_a_stop_left_forwarded() {
+    let owner = "Butterpollo Rust fixture-host";
+    let local = "192.0.2.10".parse().unwrap();
+    let row = |port, owner: &str| Row {
+        port,
+        protocol: if port == 48125 {
+            Protocol::TCP
+        } else {
+            Protocol::UDP
+        },
+        owner: owner.into(),
+    };
+    let state = Arc::new(Mutex::new(RouterState {
+        rows: vec![
+            row(48125, owner),
+            // A streaming port and another application's media port stay.
+            row(48124, owner),
+            row(8003, "Other application"),
+            row(8002, owner),
+            row(8004, owner),
+        ],
+        ..Default::default()
+    }));
+    let (gateway, server) = serve(state.clone()).await;
+    let config = Config::parse("webrtc_server=true\n").unwrap();
+    let guest = guest_ports(&config, Ports::from_base(48123));
+    remove_guest_leftovers(&gateway, local, &guest, owner).await;
+    let state = state.lock().unwrap();
+    assert_eq!(state.deleted, [48125, 8002, 8004]);
+    assert_eq!(
+        state.rows.iter().map(|row| row.port).collect::<Vec<_>>(),
+        [48124, 8003]
+    );
+    drop(state);
+    server.abort();
+}
+
+#[tokio::test]
 async fn a_router_that_hides_its_table_still_gets_and_loses_the_mappings() {
     let owner = "Butterpollo Rust fixture-host";
     let state = Arc::new(Mutex::new(RouterState {

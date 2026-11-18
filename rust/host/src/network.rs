@@ -499,10 +499,7 @@ fn mappings(config: &Config, ports: Ports) -> Vec<Mapping> {
 /// Browser guests' ports (docs/browser-guests.md): the guest page on its own port, and one media
 /// port per guest seat. Never the console's port, the WebRTC signalling port or the owner's own
 /// media port.
-fn guest_mappings(config: &Config, ports: Ports) -> Vec<Mapping> {
-    if !config.webrtc_server() {
-        return Vec::new();
-    }
+fn guest_ports(config: &Config, ports: Ports) -> Vec<Mapping> {
     let media = config.webrtc_media_port();
     // A media port moved next to one of these (`webrtc_media_port = 7999` would reach UDP 8000
     // and 8001) leaves that seat unforwarded rather than open what must stay closed.
@@ -527,6 +524,14 @@ fn guest_mappings(config: &Config, ports: Ports) -> Vec<Mapping> {
     )
     .filter(|mapping| !never.contains(&mapping.port))
     .collect()
+}
+/// [`guest_ports`] while the WebRTC server that serves them is on. The cleanup at host start
+/// uses [`guest_ports`] itself: a stop can leave them behind after the setting was turned off.
+fn guest_mappings(config: &Config, ports: Ports) -> Vec<Mapping> {
+    if !config.webrtc_server() {
+        return Vec::new();
+    }
+    guest_ports(config, ports)
 }
 /// The WebRTC TV protocol's discovery port, UDP 8000 whatever the settings say; the owner's own
 /// stream's media port defaults to the next one.
@@ -617,6 +622,31 @@ fn ours(
         Some(entry) => owned(entry, local, description),
         None => !complete,
     }
+}
+/// This PC's address as the router sees it, for the mappings `gateway` holds.
+fn local_for(gateway: &Gateway<upnp::Bounded>, bind: IpAddr) -> Result<IpAddr> {
+    let socket = UdpSocket::bind((IpAddr::from([0, 0, 0, 0]), 0))?;
+    socket.connect(gateway.addr)?;
+    Ok(if bind.is_unspecified() || bind.is_ipv6() {
+        socket.local_addr()?.ip()
+    } else {
+        bind
+    })
+}
+/// The UPnP gateway on this network, and this PC's address towards it.
+async fn upnp_gateway(bind: IpAddr) -> Result<(Gateway<upnp::Bounded>, IpAddr)> {
+    let gateway = upnp::discover(igd_next::SearchOptions {
+        timeout: Some(Duration::from_secs(3)),
+        bind_addr: if bind.is_ipv4() {
+            (bind, 0).into()
+        } else {
+            (IpAddr::from([0, 0, 0, 0]), 0).into()
+        },
+        ..Default::default()
+    })
+    .await?;
+    let local = local_for(&gateway, bind)?;
+    Ok((gateway, local))
 }
 /// `reported` holds the ports already warned about: the router is asked
 /// again every minute, but a continuing conflict is only warned once.
@@ -793,6 +823,93 @@ async fn remove<P: Provider>(
     }
     failed.map_or(Ok(()), Err)
 }
+
+/// The router's entries for `guest` that carry this host's description: what an unclean stop
+/// left forwarded.
+fn guest_leftovers(
+    entries: &[igd_next::PortMappingEntry],
+    local: IpAddr,
+    description: &str,
+    guest: &[Mapping],
+) -> Vec<Mapping> {
+    guest
+        .iter()
+        .filter(|mapping| {
+            entries.iter().any(|entry| {
+                entry.protocol == mapping.protocol
+                    && entry.external_port == mapping.port
+                    && owned(entry, local, description)
+            })
+        })
+        .copied()
+        .collect()
+}
+
+/// Takes the guest ports an earlier run left on `gateway` down: only this host's own entries,
+/// so the streaming ports and another application's forwards stay.
+async fn remove_guest_leftovers<P: Provider>(
+    gateway: &Gateway<P>,
+    local: IpAddr,
+    guest: &[Mapping],
+    description: &str,
+) {
+    let (entries, _) = entries(gateway).await;
+    for mapping in guest_leftovers(&entries, local, description, guest) {
+        match tokio::time::timeout(
+            Duration::from_secs(3),
+            gateway.remove_port(mapping.protocol, mapping.port),
+        )
+        .await
+        {
+            Ok(Ok(())) => {
+                tracing::debug!(
+                    port = mapping.port,
+                    "guest port left by an earlier run was removed"
+                );
+            }
+            Ok(Err(error)) => {
+                tracing::debug!(%error, port = mapping.port, "guest port left by an earlier run could not be removed");
+            }
+            Err(_) => {
+                tracing::debug!(
+                    port = mapping.port,
+                    "UPnP router timed out removing a guest port left by an earlier run"
+                );
+                break;
+            }
+        }
+    }
+}
+
+/// One round at host start: takes the guest ports an unclean stop left forwarded down. Links do
+/// not survive a restart, so nothing wants them, and the first renewal asks for what it needs.
+/// UPnP entries go only under this host's description; PCP and NAT-PMP mappings go with a
+/// mapping request of lifetime 0, which PCP checks against this host's nonce.
+async fn cleanup_guests(bind: IpAddr, config: &Config, description: &str, secret: &[u8]) {
+    let Ok(ports) = config.ports() else {
+        return;
+    };
+    let guest = guest_ports(config, ports);
+    if guest.is_empty() {
+        return;
+    }
+    match upnp_gateway(bind).await {
+        Ok((gateway, local)) => {
+            remove_guest_leftovers(&gateway, local, &guest, description).await;
+        }
+        Err(error) => {
+            tracing::debug!(%error, "UPnP gateway unavailable for the guest port cleanup");
+        }
+    }
+    let route = default_gateways()
+        .ok()
+        .and_then(|gateways| portmap::ipv4_route(&gateways, bind));
+    if let Some((gateway, local)) = route
+        && let Ok(mut mapper) = portmap::PortMapper::ipv4(gateway, local, secret).await
+    {
+        mapper.delete(&guest).await;
+    }
+}
 /// The UPnP and IPv6 pinhole task, which sleeps until its next renewal or until
 /// it is told that the host stops.
 pub struct PortForward {
@@ -962,6 +1079,9 @@ pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
         let description = format!("Butterpollo Rust {}", h.paired.read().unwrap().unique_id);
         // Makes the PCP mapping nonce, which must survive new mappers and restarts.
         let nonce_secret = h.identity.private_pem.clone();
+        // A previous run that stopped uncleanly left the guest ports forwarded, and no link
+        // survives a restart: take them down before the first renewal.
+        cleanup_guests(bind, &config, &description, nonce_secret.as_bytes()).await;
         let mut next_search = Instant::now();
         let mut held = Held::default();
         let mut reported = Vec::new();
@@ -1032,30 +1152,8 @@ async fn renew(
 ) {
     let mut upnp_error = None;
     if held.upnp.is_none() {
-        let options = igd_next::SearchOptions {
-            timeout: Some(Duration::from_secs(3)),
-            bind_addr: if bind.is_ipv4() {
-                (bind, 0).into()
-            } else {
-                (IpAddr::from([0, 0, 0, 0]), 0).into()
-            },
-            ..Default::default()
-        };
-        match upnp::discover(options).await {
-            Ok(gateway) => {
-                let local = (|| -> Result<IpAddr> {
-                    let socket = UdpSocket::bind((IpAddr::from([0, 0, 0, 0]), 0))?;
-                    socket.connect(gateway.addr)?;
-                    Ok(if bind.is_unspecified() || bind.is_ipv6() {
-                        socket.local_addr()?.ip()
-                    } else {
-                        bind
-                    })
-                })();
-                if let Ok(local) = local {
-                    held.upnp = Some((gateway, local, Vec::new()));
-                }
-            }
+        match upnp_gateway(bind).await {
+            Ok((gateway, local)) => held.upnp = Some((gateway, local, Vec::new())),
             Err(error) => {
                 tracing::debug!(%error, "UPnP gateway unavailable; retrying");
                 upnp_error = Some(format!("{error:#}"));

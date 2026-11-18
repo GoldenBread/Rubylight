@@ -346,6 +346,37 @@ impl PortMapper {
         self.leases.retain(|lease| lease.mapping != mapping);
     }
 
+    /// Deletes `mappings` this host left on the router, as one start after an unclean stop does:
+    /// a mapping request with lifetime 0 for each, which PCP checks against this host's nonce.
+    /// The first request also tells which protocol the router speaks; one that answers neither
+    /// ends the round, as asking for every port would only wait as long.
+    pub(super) async fn delete(&mut self, mappings: &[Mapping]) {
+        for &mapping in mappings {
+            if self.method.is_none() {
+                match self.pcp(mapping, 0).await {
+                    Ok(response) => {
+                        if pcp::wants_natpmp(response.as_ref()) && self.local.is_ipv4() {
+                            self.method = Some(Method::NatPmp);
+                        } else {
+                            self.method = Some(Method::Pcp);
+                            continue;
+                        }
+                    }
+                    Err(_) => return,
+                }
+            }
+            match self.method {
+                Some(Method::Pcp) => {
+                    let _ = self.pcp(mapping, 0).await;
+                }
+                Some(Method::NatPmp) => {
+                    let _ = self.natpmp(mapping, 0).await;
+                }
+                None => return,
+            }
+        }
+    }
+
     /// Removes every mapping this mapper made: the host stops.
     pub(super) async fn close(&mut self) {
         let mappings: Vec<Mapping> = self.leases.iter().map(|lease| lease.mapping).collect();
@@ -415,6 +446,69 @@ pub(super) fn ipv6_locals(bind: IpAddr) -> Vec<(Ipv6Addr, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A start after an unclean stop deletes the guest ports it may have left forwarded. The
+    /// first request is PCP with no lifetime; the router's version 0 answer says it speaks
+    /// NAT-PMP, whose delete for every guest port asks for lifetime 0 and no external port.
+    #[tokio::test]
+    async fn a_start_deletes_leftover_guest_leases_with_lifetime_zero() {
+        use std::sync::{Arc, Mutex};
+        let router = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let address = router.local_addr().unwrap();
+        let seen: Arc<Mutex<Vec<Vec<u8>>>> = Arc::default();
+        let log = seen.clone();
+        tokio::spawn(async move {
+            let mut buffer = [0u8; 128];
+            loop {
+                let Ok((length, from)) = router.recv_from(&mut buffer).await else {
+                    return;
+                };
+                let request = buffer[..length].to_vec();
+                // A NAT-PMP router answers PCP with version 0, and a NAT-PMP mapping request
+                // or delete with the internal port asked and no external port.
+                let reply = match request[0] {
+                    2 => vec![0, 0x81, 0, 1, 0, 0, 0, 0],
+                    _ => {
+                        let mut reply = vec![0, 0x80 | request[1], 0, 0, 0, 0, 0, 1];
+                        reply.extend_from_slice(&request[4..6]);
+                        reply.extend_from_slice(&[0, 0]);
+                        reply.extend_from_slice(&0u32.to_be_bytes());
+                        reply
+                    }
+                };
+                log.lock().unwrap().push(request);
+                router.send_to(&reply, from).await.unwrap();
+            }
+        });
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        socket.connect(address).await.unwrap();
+        let mut mapper = PortMapper::new(socket, "127.0.0.1".parse().unwrap(), b"key");
+        let guest = [
+            Mapping {
+                protocol: Protocol::TCP,
+                port: 47991,
+            },
+            Mapping {
+                protocol: Protocol::UDP,
+                port: 8002,
+            },
+        ];
+        mapper.delete(&guest).await;
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 3, "{seen:?}");
+        // One PCP delete, under this host's nonce, with no lifetime and the guest port.
+        assert_eq!(seen[0][0], 2);
+        assert_eq!(u32::from_be_bytes(seen[0][4..8].try_into().unwrap()), 0);
+        assert_eq!(u16::from_be_bytes([seen[0][40], seen[0][41]]), 47991);
+        // Then a NAT-PMP delete per guest port: no external port, no lifetime.
+        for (request, port, protocol) in [(&seen[1], 47991, 2), (&seen[2], 8002, 1)] {
+            assert_eq!(request[0], 0);
+            assert_eq!(request[1], protocol);
+            assert_eq!(u16::from_be_bytes([request[4], request[5]]), port);
+            assert_eq!(u16::from_be_bytes([request[6], request[7]]), 0);
+            assert_eq!(u32::from_be_bytes(request[8..12].try_into().unwrap()), 0);
+        }
+    }
 
     /// A NAT-PMP-only router on loopback: it refuses PCP with version 0, maps with NAT-PMP and
     /// reports its address.
