@@ -249,7 +249,7 @@ fn pq_chroma_keeps_cleartype_text_neutral() {
     let planes = reference(&source, &s);
     // Decoded as chroma_sample_loc_type 0 says: chroma i at luma 2i, halfway between for 2i + 1.
     let half = row.len() / 2;
-    let chroma = |plane: &[f64], x: usize| (plane[x / 2] + plane[((x + 1) / 2).min(half - 1)]) / 2.;
+    let chroma = |plane: &[f64], x: usize| (plane[x / 2] + plane[x.div_ceil(2).min(half - 1)]) / 2.;
     let mut shown = [0.; 3];
     let mut wanted = [0.; 3];
     for (x, rgb) in nonlinear(&source, &s)[..row.len()].iter().enumerate() {
