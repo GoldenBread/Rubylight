@@ -12,7 +12,7 @@ use nightjar_core::sdp::{VIDEO_FORMAT_MASK_10BIT, VIDEO_FORMAT_MASK_AV1, VIDEO_F
 use nightjar_core::session::{
     self, AudioRenderer, AudioSetup, DecodeStatus, Listener, Stage, VideoDecoder, VideoSetup,
 };
-use nightjar_core::video::Frame;
+use nightjar_core::video::{Frame, FrameType};
 use sdl3_sys::everything::*;
 
 use crate::hosts::Waker;
@@ -32,6 +32,8 @@ pub struct Decoded {
     pub rtp: u32,
     /// The host's frame number.
     pub number: u32,
+    /// A key frame: a new scene, whose picture temporal upscaling must not blend with the last.
+    pub key: bool,
     /// The frame's first packet arrived (session clock, µs).
     pub receive_us: u64,
     /// The frame was complete and queued for decoding.
@@ -428,6 +430,7 @@ pub struct Decoder {
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct InFlight {
     number: u32,
+    key: bool,
     receive_us: u64,
     enqueue_us: u64,
     input_us: u64,
@@ -1280,7 +1283,8 @@ impl Decoder {
             }
             drop(timing);
             self.shared.count_race(&output.race);
-            let decoded = Decoded { picture: output.picture, setup, rtp: frame.rtp_timestamp, number: frame.number, receive_us: frame.receive_time_us,
+            let decoded = Decoded { picture: output.picture, setup, rtp: frame.rtp_timestamp, number: frame.number,
+                key: frame.frame_type == FrameType::Idr, receive_us: frame.receive_time_us,
                 enqueue_us: frame.enqueue_time_us, input_us: start, ready_us, host_latency: frame.host_processing_latency,
                 early, first_block_us: output.first_block_us, race: output.race, bands: output.bands, race_seq: output.race_seq, visible: None };
             self.shared.queue(decoded);
@@ -1295,6 +1299,7 @@ impl Decoder {
         let pts = (i64::from(frame.number) << 32) | i64::from(frame.rtp_timestamp);
         let sent = InFlight {
             number: frame.number,
+            key: frame.frame_type == FrameType::Idr,
             receive_us: frame.receive_time_us,
             enqueue_us: frame.enqueue_time_us,
             input_us: started,
@@ -1339,6 +1344,7 @@ impl Decoder {
                     setup,
                     rtp: pts as u32,
                     number: own.number,
+                    key: own.key,
                     receive_us: own.receive_us,
                     enqueue_us: own.enqueue_us,
                     input_us: own.input_us,

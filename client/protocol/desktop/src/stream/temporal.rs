@@ -145,6 +145,20 @@ fn uniforms(stage: Stage, input: (u32, u32), output: (u32, u32), reset: bool, sh
     values.map(f32::to_bits)
 }
 
+/// Whether temporal upscaling's history belongs to another picture than this one: the picture is
+/// a key frame, or first, or the host's frame numbers skipped, which a lost frame or a counter
+/// discontinuity leaves behind. The accumulate pass then starts the history afresh instead of
+/// blending a different scene into this picture for several frames.
+pub(super) fn history_stale(key: bool, number: u32, last_drawn: Option<u32>) -> bool {
+    if key {
+        return true;
+    }
+    match last_drawn {
+        Some(last) => number != last.wrapping_add(1),
+        None => true,
+    }
+}
+
 /// One pass's shader and its draws, every binding of parity 0 then of parity 1.
 enum Pass {
     #[cfg(windows)]
@@ -328,6 +342,13 @@ impl Temporal {
         !self.reset
     }
 
+    /// Makes the next [`draw`](Self::draw)'s accumulate pass ignore the history: the picture it
+    /// would blend with is from another scene, before a key frame or across a lost frame's gap
+    /// (`history_stale`).
+    pub fn reset(&mut self) {
+        self.reset = true;
+    }
+
     /// Which half of the ping-pong state the next frame writes.
     #[cfg(any(test, all(target_os = "macos", feature = "demo-library")))]
     pub fn parity(&self) -> usize {
@@ -407,6 +428,21 @@ mod tests {
             assert_eq!(bindings(Stage::Detail, parity)[0], (vec![FRAME, history(cur)], OUTPUT));
         }
         assert!(linear(FRAME) && linear(motion(1)) && linear(history(0)) && !linear(luma(2, 0)) && !linear(CUT));
+    }
+
+    /// The history is kept only between consecutive pictures of one scene: a key frame, the
+    /// first picture and a gap in the host's frame numbers (a lost frame, a discontinuity) start
+    /// it afresh, and the 32-bit frame numbers wrap as the host counts them.
+    #[test]
+    fn the_history_is_stale_for_a_key_frame_a_gap_and_the_first_picture() {
+        assert!(!history_stale(false, 8, Some(7)), "the next picture keeps the history");
+        assert!(history_stale(true, 8, Some(7)), "a key frame starts a new scene");
+        assert!(history_stale(false, 9, Some(7)), "a lost frame's gap");
+        assert!(history_stale(false, 8, None), "the first picture");
+        assert!(
+            !history_stale(false, 0, Some(u32::MAX)),
+            "a host's frame numbers wrap"
+        );
     }
 
     #[test]

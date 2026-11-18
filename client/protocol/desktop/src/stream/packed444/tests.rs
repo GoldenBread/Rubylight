@@ -103,6 +103,7 @@ unsafe fn direct_matches_reconstruction(window: *mut SDL_Window, renderer: *mut 
                 },
                 rtp: 0,
                 number: 0,
+                key: false,
                 receive_us: 0,
                 enqueue_us: 0,
                 input_us: 0,

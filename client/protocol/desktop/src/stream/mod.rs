@@ -811,6 +811,9 @@ pub struct Streaming {
     timings: VecDeque<(u32, u64)>,
     /// Frame Warp's shift for each present, while the stream runs it (`Facts::frame_warp`).
     frame_warp: Option<frame_warp::Presenter>,
+    /// The host frame number of the last picture a present took, which temporal upscaling's
+    /// history follows (`temporal::history_stale`).
+    last_drawn: Option<u32>,
 }
 
 /// What the main loop should do next.
@@ -1218,6 +1221,7 @@ impl Streaming {
             hdr_output: hdr_stream.then(|| HdrOutput::new(true)),
             timings: VecDeque::new(),
             frame_warp: warp_presenter,
+            last_drawn: None,
         };
         streaming.report_keyboard_layout();
         streaming.start_clipboard_sync();
