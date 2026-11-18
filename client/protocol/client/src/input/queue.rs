@@ -677,10 +677,13 @@ impl InputQueue {
 
     /// A wheel turn in the events' units: one is a whole notch, and a trackpad sends a fraction of
     /// one per event. The fraction that is not a whole 1/120 of a click waits for the next turn,
-    /// so a slow scroll still moves the page instead of vanishing in the conversion.
+    /// so a slow scroll still moves the page instead of vanishing in the conversion. The vertical
+    /// axis goes first: a host that refuses horizontal scroll (GFE) must not cost the turn's
+    /// scroll, and a full queue on one axis must not drop the other.
     pub fn send_wheel_turn(&mut self, x: f64, y: f64) -> Result<(), InputError> {
-        self.send_wheel_axis(x, false)?;
-        self.send_wheel_axis(y, true)
+        let vertical = self.send_wheel_axis(y, true);
+        let horizontal = self.send_wheel_axis(x, false);
+        vertical.and(horizontal)
     }
 
     fn send_wheel_axis(&mut self, units: f64, vertical: bool) -> Result<(), InputError> {

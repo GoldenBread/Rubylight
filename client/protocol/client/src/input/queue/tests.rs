@@ -652,3 +652,31 @@ fn a_wheel_turn_smaller_than_a_unit_is_carried_to_the_next() {
     assert_eq!(out.len(), 1);
     assert_eq!(decode(&out[0].data).unwrap(), Input::Scroll { amount: 120, horizontal: false });
 }
+
+// The vertical axis goes first: a host that refuses horizontal scroll (GFE) must not cost the
+// turn's scroll.
+#[test]
+fn a_wheel_turn_sends_the_vertical_axis_when_the_horizontal_one_is_refused() {
+    let mut q = queue(&gfe());
+    assert_eq!(q.send_wheel_turn(1.0, 1.0), Err(InputError::Unsupported), "GFE takes no horizontal scroll");
+    let mut out = Vec::new();
+    q.poll(Instant::now(), false, &mut out);
+    assert_eq!(out.len(), 1, "the vertical click went out");
+    assert_eq!(decode(&out[0].data).unwrap(), Input::Scroll { amount: 120, horizontal: false });
+}
+
+// A full queue keeps a small reserve for releases: a burst of presses cannot take the room a
+// key or button going up needs.
+#[test]
+fn a_release_fits_the_reserve_above_a_full_queue() {
+    let mut q = queue(&sunshine());
+    for i in 0..MAX_QUEUED {
+        q.send_mouse_button(1, i % 2 == 0).unwrap();
+    }
+    assert_eq!(q.send_keyboard(0x41, true, 0, 0), Err(InputError::QueueFull), "a press does not take the reserve");
+    q.send_keyboard(0x41, false, 0, 0).expect("a release fits its reserve");
+    let mut out = Vec::new();
+    q.drain(Instant::now(), false, &mut out);
+    assert_eq!(out.len(), MAX_QUEUED + 1, "one release above the bound");
+    assert!(matches!(decode(&out.last().unwrap().data).unwrap(), Input::Keyboard { key: 0x41, down: false, .. }));
+}
