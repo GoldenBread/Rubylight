@@ -35,6 +35,15 @@ fn state() -> &'static Mutex<State> {
     static STATE: OnceLock<Mutex<State>> = OnceLock::new();
     STATE.get_or_init(Mutex::default)
 }
+/// Whether the layout just applied makes `target` the primary display. A layout with several
+/// streams' displays makes only the first owner's primary (`Arrangement::compose_all`), so a
+/// stream that joined another's display, another device or a device's second screen has no
+/// primary of its own to watch.
+fn applied_primary_for(applied: &[Node], target: &str) -> bool {
+    applied
+        .iter()
+        .any(|node| node.active && node.primary && node.device_id == target)
+}
 pub fn matches(nodes: &[Node], applied: &[Node]) -> bool {
     matches_connected(nodes, applied, None)
 }
@@ -1842,6 +1851,14 @@ impl Lease {
     /// The layout in force for this stream: the running streams', if it joined them.
     pub fn arrangement(&self) -> Arrangement {
         self.arrangement
+    }
+    /// Whether the layout in force makes this stream's display the primary one. A stream that
+    /// joined another's display is laid out beside it, and only the first owner's display is
+    /// primary: such a stream has no primary of its own to put back.
+    pub fn makes_primary(&self) -> bool {
+        let state = state().lock().unwrap();
+        let target = self.target.lock().unwrap();
+        applied_primary_for(&state.applied, target.as_str())
     }
     /// Why what Windows recalled when this stream's display arrived could not be put back.
     pub fn repair_failure(&self) -> Option<&str> {

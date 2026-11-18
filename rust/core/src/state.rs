@@ -35,7 +35,10 @@ pub const FIRST_DEVICE_PERMISSION: u32 = 0x07131f00;
 /// The paired state's migrations, counted in `root.rubylight_state_version`.
 /// 1: Upload files and Download files, which test builds gave the first
 /// device with everything else, are taken back once.
-const STATE_VERSION: u64 = 1;
+/// 2: an "extended" layout learned from an "extended_primary" stream, which was
+/// Windows or a game moving the primary, is dropped so the device follows the
+/// host setting again.
+const STATE_VERSION: u64 = 2;
 /// What every later device may do until the administrator grants more: view only.
 pub const LATER_DEVICE_PERMISSION: u32 = 0x03000000;
 /// Permission bits, as in the console's permission table.
@@ -73,6 +76,13 @@ pub const REMEMBERED_SCALE: &str = "remembered_scale";
 /// The device settings each of its screens keeps for itself: its second screen's are stored
 /// under [`screen_setting`] and are the only ones it reads ([`Client::second_screen`]).
 pub const PER_SCREEN_SETTINGS: [&str; 2] = [REMEMBERED_RESOLUTION, REMEMBERED_SCALE];
+/// The device setting naming the app or host layout (`virtual_display_layout`) a layout
+/// learned from a stream replaced, so the learned one yields when that layout changes.
+pub const LEARNED_OVER: &str = "virtual_display_layout_learned_over";
+/// Set in the device settings when the user picked the device's layout in the console. Only
+/// it protects a layout from being learned over: a layout saved before it existed, or one a
+/// stream learned, stays learnable.
+pub const SET_BY_USER: &str = "virtual_display_layout_set_by_user";
 /// The key in the device record that holds `setting` of the screen `uuid` streams to.
 pub fn screen_setting(uuid: &str, setting: &str) -> String {
     if uuid.ends_with(SECOND_SCREEN_SUFFIX) {
@@ -513,6 +523,28 @@ impl PairedState {
         if version < 1 {
             for c in &mut clients {
                 c.perm &= !(crate::native::FILE_UPLOAD | crate::native::FILE_DOWNLOAD);
+            }
+        }
+        if version < 2 {
+            // The virtual display's layout learned at the end of an "extended_primary"
+            // stream was Windows or a game moving the primary back, not the user's choice
+            // (issue #33): drop it so the device follows the host setting again instead of
+            // keeping the demotion for every later stream.
+            for c in &mut clients {
+                let learned = c.extra.get(LEARNED_OVER).and_then(Value::as_str);
+                let layout = c
+                    .extra
+                    .get("virtual_display_layout")
+                    .and_then(Value::as_str);
+                let chosen = c.extra.get(SET_BY_USER).and_then(Value::as_bool) == Some(true);
+                if learned == Some("extended_primary") && layout == Some("extended") && !chosen {
+                    tracing::info!(
+                        device = %c.name,
+                        "the \"extended\" layout a stream learned from \"extended_primary\" was Windows moving the primary; the device follows the host layout again"
+                    );
+                    c.extra.remove("virtual_display_layout");
+                    c.extra.remove(LEARNED_OVER);
+                }
             }
         }
         if version < STATE_VERSION {

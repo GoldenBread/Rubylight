@@ -32,7 +32,9 @@ pub use recovery::{
     leased_displays, restore_positions, stream_display_rotation,
 };
 pub(crate) use recovery::{restore_was_refused, rotation, set_rotation};
-pub use topology::{Monitor, Topology, active_device_ids, edid_refresh, monitors};
+pub use topology::{
+    Monitor, Topology, active_device_ids, active_displays, edid_refresh, monitors, shown_primary,
+};
 pub use virtual_display::{
     RenderAdapter, VirtualDisplay, VirtualOptions, configured_render_adapter,
     ensure_virtual_display_available, joinable_mode, virtual_display_available,

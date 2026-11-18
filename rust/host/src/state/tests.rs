@@ -719,6 +719,79 @@ fn nvidia_settings_a_2_6_host_left_pending_are_reported_at_start() {
 }
 
 #[test]
+fn an_older_device_layout_becomes_learned_once_with_a_notice() {
+    use super::test_support::Fixture;
+    let directory = Fixture::profile();
+    let first = Fixture::load(directory.clone());
+    first.client(u32::MAX);
+    let path = first.host.paired_path.clone();
+    let mut paired = PairedState::load(&path).unwrap();
+    let device = paired
+        .clients
+        .iter_mut()
+        .find(|c| c.name == "Parity device")
+        .unwrap();
+    device
+        .extra
+        .insert("virtual_display_layout".into(), json!("extended"));
+    paired.document["root"]
+        .as_object_mut()
+        .unwrap()
+        .remove("legacy_extended_layout_migrated");
+    paired.save(&path).unwrap();
+    // The fixture host asks for the default exclusive layout: the device's "extended" stays,
+    // learned over it, instead of yielding to a layout that turns the other monitors off.
+    let second = Fixture::load(directory.clone());
+    {
+        let paired = second.host.paired.read().unwrap();
+        let device = paired
+            .clients
+            .iter()
+            .find(|c| c.name == "Parity device")
+            .unwrap();
+        assert_eq!(
+            device.extra["virtual_display_layout"],
+            json!("extended"),
+            "{:?}",
+            device.extra
+        );
+        assert_eq!(
+            device.extra[butterpollo_core::state::LEARNED_OVER],
+            json!("exclusive")
+        );
+        assert_eq!(
+            paired.document["root"]["legacy_extended_layout_migrated"],
+            json!(true)
+        );
+    }
+    let warnings = second.host.warnings.snapshot();
+    let notice = warnings
+        .iter()
+        .find(|warning| warning.code == "display_layout_learned")
+        .unwrap_or_else(|| panic!("{warnings:?}"));
+    assert!(
+        notice.message.contains("Parity device"),
+        "{}",
+        notice.message
+    );
+    assert!(notice.message.contains("keep Extend"), "{}", notice.message);
+    assert!(
+        notice.message.contains("under Devices"),
+        "{}",
+        notice.message
+    );
+    // The one-time flag keeps a later start from migrating or warning again.
+    crate::host_warnings::dismiss(&directory, &second.host.warnings, "display_layout_learned")
+        .unwrap();
+    let third = Fixture::load(directory);
+    assert!(third.host.warnings.snapshot().is_empty());
+    assert_eq!(
+        third.host.paired.read().unwrap().clients[0].extra[butterpollo_core::state::LEARNED_OVER],
+        json!("exclusive")
+    );
+}
+
+#[test]
 fn a_rejoin_in_the_same_mode_reuses_the_clients_own_display_untouched() {
     use super::take_retained;
     use std::collections::BTreeMap;

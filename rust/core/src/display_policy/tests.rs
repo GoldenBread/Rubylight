@@ -173,13 +173,20 @@ fn a_layout_chosen_during_the_stream_is_kept_for_the_device() {
         chosen_layout("extended", vd, &on(&[(vd, true), (r"\\.\DISPLAY1", false)])),
         Some("extended_primary")
     );
+    // A primary plan keeps its primary: Windows or a game moving it back to a
+    // monitor is not the user's choice, so it is never learned as "extended".
     assert_eq!(
         chosen_layout(
             "extended_primary",
             vd,
             &on(&[(vd, false), (r"\\.\DISPLAY1", true)])
         ),
-        Some("extended")
+        None
+    );
+    // The user's "Show only on 2" from there is learned.
+    assert_eq!(
+        chosen_layout("extended_primary", vd, &on(&[(vd, true)])),
+        Some("exclusive")
     );
     // Unchanged, the stream's display off ("Show only on 1"), an exclusive
     // stream (kept by the host itself) and isolated layouts learn nothing.
@@ -208,6 +215,337 @@ fn a_layout_chosen_during_the_stream_is_kept_for_the_device() {
         chosen_layout("extended", r"\\.\display9", &on(&[(vd, true)])),
         Some("exclusive")
     );
+}
+
+#[test]
+fn an_extended_primary_start_without_primary_is_reported_and_watched() {
+    use super::{PrimaryAction, PrimaryWatch, chosen_layout, layout_mismatch};
+    let vd = r"\\.\DISPLAY9";
+    let active = vec![(vd.to_string(), false), (r"\\.\DISPLAY1".to_string(), true)];
+    // The start-of-stream check sees a layout Windows did not take, even though learning
+    // must not keep that demotion for the device.
+    assert_eq!(
+        layout_mismatch("extended_primary", vd, &active),
+        Some("extended")
+    );
+    assert_eq!(chosen_layout("extended_primary", vd, &active), None);
+    // The start is a change Windows made as it took the layout: the watch puts the primary
+    // back after the settle (issue #33's stream opened with the display on but not primary).
+    let start = std::time::Instant::now();
+    let mut watch = PrimaryWatch::starting(start);
+    assert_eq!(watch.observe(true, start), PrimaryAction::Wait);
+    assert_eq!(
+        watch.observe(true, start + super::LayoutWatch::SETTLE),
+        PrimaryAction::Restore
+    );
+    // The first heartbeat can come after the event window: the start still decides.
+    let mut watch = PrimaryWatch::starting(start);
+    let late = start + PrimaryWatch::WINDOW * 2;
+    assert_eq!(watch.observe(true, late), PrimaryAction::Wait);
+    assert_eq!(
+        watch.observe(true, late + super::LayoutWatch::SETTLE),
+        PrimaryAction::Restore
+    );
+    // A watch that did not start is not armed by a move Windows made before it existed.
+    let mut watch = PrimaryWatch::default();
+    assert_eq!(
+        watch.observe(true, start + super::LayoutWatch::SETTLE),
+        PrimaryAction::Wait
+    );
+}
+
+#[test]
+fn a_delayed_primary_move_after_a_display_change_is_restored() {
+    use super::{PrimaryAction, PrimaryChange, PrimaryWatch};
+    let start = std::time::Instant::now();
+    let settle = super::LayoutWatch::SETTLE;
+    // A display changed; the first look still finds the stream's display primary, which is
+    // not the end of the change's window: Windows can move the primary a moment later.
+    let mut watch = PrimaryWatch::default();
+    watch.changed(PrimaryChange::Display, start);
+    watch.settled(start);
+    let moved = start + std::time::Duration::from_secs(2);
+    assert_eq!(watch.observe(true, moved), PrimaryAction::Wait);
+    assert_eq!(watch.observe(true, moved + settle), PrimaryAction::Restore);
+}
+
+#[test]
+fn a_move_first_seen_late_in_the_window_still_settles() {
+    use super::{PrimaryAction, PrimaryChange, PrimaryWatch};
+    let start = std::time::Instant::now();
+    let settle = super::LayoutWatch::SETTLE;
+    let mut watch = PrimaryWatch::default();
+    watch.changed(PrimaryChange::Display, start);
+    // The first look already sees the move, just before the change's window ends: it must
+    // hold its settle and be put back, rather than being left to the user.
+    let seen = start + PrimaryWatch::WINDOW - settle / 2;
+    assert_eq!(watch.observe(true, seen), PrimaryAction::Wait);
+    assert_eq!(watch.observe(true, seen + settle), PrimaryAction::Restore);
+}
+
+#[test]
+fn a_refused_restore_stays_armed_through_its_retry() {
+    use super::{PrimaryAction, PrimaryChange, PrimaryWatch};
+    let start = std::time::Instant::now();
+    let settle = super::LayoutWatch::SETTLE;
+    let retry = super::LayoutWatch::RETRY;
+    let mut watch = PrimaryWatch::default();
+    watch.changed(PrimaryChange::Display, start);
+    // The move is first seen a moment before the window ends, so the retry after a refusal
+    // falls outside it; the watch must still put the primary back then.
+    let seen = start + PrimaryWatch::WINDOW - settle / 2;
+    assert_eq!(watch.observe(true, seen), PrimaryAction::Wait);
+    assert_eq!(watch.observe(true, seen + settle), PrimaryAction::Restore);
+    assert!(!watch.failed(seen + settle));
+    let after = seen + settle + retry;
+    assert!(after > start + PrimaryWatch::WINDOW);
+    assert!(watch.due(after));
+    assert_eq!(watch.observe(true, after), PrimaryAction::Wait);
+    assert_eq!(watch.observe(true, after + settle), PrimaryAction::Restore);
+}
+
+#[test]
+fn a_refused_start_stops_after_the_attempt_limit() {
+    use super::{PrimaryAction, PrimaryChange, PrimaryWatch};
+    let start = std::time::Instant::now();
+    let settle = super::LayoutWatch::SETTLE;
+    let retry = super::LayoutWatch::RETRY;
+    let mut watch = PrimaryWatch::starting(start);
+    let mut at = start;
+    for attempt in 1..=PrimaryWatch::ATTEMPTS {
+        assert_eq!(watch.observe(true, at), PrimaryAction::Wait);
+        assert_eq!(watch.observe(true, at + settle), PrimaryAction::Restore);
+        assert_eq!(
+            watch.failed(at + settle),
+            attempt == PrimaryWatch::ATTEMPTS,
+            "attempt {attempt}"
+        );
+        at += retry;
+    }
+    assert!(watch.stopped());
+    // The watch is done for the stream, whatever Windows changes later.
+    let later = start + retry * 8;
+    watch.changed(PrimaryChange::Display, later);
+    assert_eq!(watch.observe(true, later), PrimaryAction::Wait);
+    assert_eq!(watch.observe(true, later + settle), PrimaryAction::Wait);
+}
+
+#[test]
+fn an_interrupted_look_starts_its_settle_again() {
+    use super::{PrimaryAction, PrimaryChange, PrimaryWatch};
+    let start = std::time::Instant::now();
+    let settle = super::LayoutWatch::SETTLE;
+    let mut watch = PrimaryWatch::default();
+    watch.changed(PrimaryChange::Display, start);
+    assert_eq!(watch.observe(true, start), PrimaryAction::Wait);
+    // The stream paused before the move settled, or the lock screen hid the displays: the
+    // move must settle again after the resume or unlock, however long that wait.
+    watch.interrupted();
+    let resumed = start + settle * 4;
+    assert_eq!(watch.observe(true, resumed), PrimaryAction::Wait);
+    assert_eq!(
+        watch.observe(true, resumed + settle),
+        PrimaryAction::Restore
+    );
+}
+
+#[test]
+fn refused_restores_stop_the_watch_like_restores_do() {
+    use super::{PrimaryAction, PrimaryChange, PrimaryWatch};
+    let start = std::time::Instant::now();
+    let settle = super::LayoutWatch::SETTLE;
+    let mut watch = PrimaryWatch::default();
+    let mut stopped = false;
+    // The first display change's refusal is a one-off; the quick ones after it are the
+    // display fighting back.
+    for round in 0..=PrimaryWatch::RETURNS as u64 {
+        let at = start + std::time::Duration::from_secs(round * 10);
+        watch.changed(PrimaryChange::Display, at);
+        assert_eq!(watch.observe(true, at), PrimaryAction::Wait);
+        assert_eq!(watch.observe(true, at + settle), PrimaryAction::Restore);
+        stopped = watch.failed(at + settle);
+        assert_eq!(watch.stopped(), stopped);
+        assert_eq!(stopped, round >= PrimaryWatch::RETURNS as u64);
+    }
+    assert!(stopped);
+    // A change Windows makes later leaves the primary where it is too.
+    let later = start + std::time::Duration::from_secs(120);
+    watch.changed(PrimaryChange::Display, later);
+    assert_eq!(watch.observe(true, later), PrimaryAction::Wait);
+    // A refusal outside the window does not count towards the limit.
+    let mut watch = PrimaryWatch::default();
+    let mut stopped = false;
+    for round in 0..PrimaryWatch::RETURNS as u32 {
+        let at = start + PrimaryWatch::RETURN_WINDOW * (round + 1) * 2;
+        watch.changed(PrimaryChange::Display, at);
+        assert_eq!(watch.observe(true, at), PrimaryAction::Wait);
+        assert_eq!(watch.observe(true, at + settle), PrimaryAction::Restore);
+        stopped = watch.failed(at + settle);
+    }
+    assert!(!stopped);
+    assert!(!watch.stopped());
+}
+
+#[test]
+fn a_primary_move_windows_made_is_put_back_but_a_plain_one_is_left_alone() {
+    use super::{Arrangement, PrimaryAction, PrimaryChange, PrimaryWatch, primary_moved};
+    // Only the layouts that keep the user's displays on and make the stream's display
+    // primary have a primary to put back.
+    for planned in [Arrangement::Primary, Arrangement::PrimaryIsolated] {
+        assert!(primary_moved(planned, Some(false)), "{planned:?}");
+        assert!(!primary_moved(planned, Some(true)), "{planned:?}");
+        // Off, or Windows still laying it out: the recovery and the layout watch own that.
+        assert!(!primary_moved(planned, None), "{planned:?}");
+    }
+    for planned in [
+        Arrangement::Extended,
+        Arrangement::Exclusive,
+        Arrangement::Isolated,
+    ] {
+        assert!(!primary_moved(planned, Some(false)), "{planned:?}");
+    }
+    // A primary picked while nothing changed the displays is the user's or the game's, and
+    // stays, however long it stays: only a display arriving or leaving starts the watch.
+    let start = std::time::Instant::now();
+    let mut watch = PrimaryWatch::default();
+    for seconds in [0, 1, 10, 300, 3600] {
+        let now = start + std::time::Duration::from_secs(seconds);
+        assert_eq!(
+            watch.observe(true, now),
+            PrimaryAction::Wait,
+            "no change at {seconds}s"
+        );
+    }
+    // Windows changed the layout (a display arrived or left, a session switch): the move
+    // that follows must hold for the settle time, then it is put back.
+    watch.changed(PrimaryChange::Display, start);
+    assert_eq!(watch.observe(true, start), PrimaryAction::Wait);
+    assert_eq!(
+        watch.observe(true, start + super::LayoutWatch::SETTLE / 2),
+        PrimaryAction::Wait
+    );
+    assert_eq!(
+        watch.observe(true, start + super::LayoutWatch::SETTLE),
+        PrimaryAction::Restore
+    );
+    assert!(!watch.restored(start + super::LayoutWatch::SETTLE));
+    // A restore Windows refused waits before the next try.
+    watch.changed(PrimaryChange::Display, start);
+    assert_eq!(watch.observe(true, start), PrimaryAction::Wait);
+    assert_eq!(
+        watch.observe(true, start + super::LayoutWatch::SETTLE),
+        PrimaryAction::Restore
+    );
+    watch.failed(start + super::LayoutWatch::SETTLE);
+    assert!(!watch.due(start + super::LayoutWatch::SETTLE));
+    let later = start + super::LayoutWatch::SETTLE + super::LayoutWatch::RETRY;
+    assert!(watch.due(later));
+    assert_eq!(
+        watch.observe(true, later),
+        PrimaryAction::Wait,
+        "the move is timed from the first look after the wait"
+    );
+}
+
+#[test]
+fn a_display_that_keeps_taking_the_primary_back_is_left_alone_after_three_fights() {
+    use super::{PrimaryAction, PrimaryChange, PrimaryWatch};
+    let start = std::time::Instant::now();
+    let mut watch = PrimaryWatch::default();
+    let mut restores = 0;
+    // Issue #56: a monitor that drops its link and reappears every 30-60 s makes Windows move
+    // the primary each time. The first restore answers the change; the quick ones after it
+    // are the display fighting back, and the third fight stops the watch for the stream.
+    for round in 0..=PrimaryWatch::RETURNS as u64 {
+        let at = start + std::time::Duration::from_secs(round * 60);
+        watch.changed(PrimaryChange::Display, at);
+        assert_eq!(watch.observe(true, at), PrimaryAction::Wait);
+        if watch.observe(true, at + super::LayoutWatch::SETTLE) == PrimaryAction::Restore {
+            restores += 1;
+            watch.restored(at + super::LayoutWatch::SETTLE);
+        }
+        assert_eq!(watch.stopped(), restores > PrimaryWatch::RETURNS);
+        if watch.stopped() {
+            break;
+        }
+    }
+    assert_eq!(restores, PrimaryWatch::RETURNS + 1);
+    assert!(watch.stopped());
+    // Even a change Windows makes later leaves the primary where it is.
+    let later = start + PrimaryWatch::RETURN_WINDOW * 2;
+    watch.changed(PrimaryChange::Display, later);
+    assert_eq!(watch.observe(true, later), PrimaryAction::Wait);
+    assert_eq!(
+        watch.observe(true, later + super::LayoutWatch::SETTLE),
+        PrimaryAction::Wait
+    );
+}
+
+#[test]
+fn a_start_or_session_restore_is_not_counted_as_fighting_back() {
+    use super::{PrimaryAction, PrimaryChange, PrimaryWatch};
+    let start = std::time::Instant::now();
+    let settle = super::LayoutWatch::SETTLE;
+    let restore = |watch: &mut PrimaryWatch, at| {
+        assert_eq!(watch.observe(true, at), PrimaryAction::Wait);
+        assert_eq!(watch.observe(true, at + settle), PrimaryAction::Restore);
+        watch.restored(at + settle)
+    };
+    // The start's restore and the lock screen's or a session switch's are one-offs.
+    let mut watch = PrimaryWatch::starting(start);
+    assert!(!restore(&mut watch, start));
+    let mut at = start + std::time::Duration::from_secs(10);
+    for kind in [PrimaryChange::Session, PrimaryChange::Secure] {
+        watch.changed(kind, at);
+        assert!(!restore(&mut watch, at));
+        at += std::time::Duration::from_secs(10);
+    }
+    // The first display change's restore answers it; the quick ones after it are the fights.
+    watch.changed(PrimaryChange::Display, at);
+    assert!(!restore(&mut watch, at));
+    for fight in 1..=PrimaryWatch::RETURNS as u64 {
+        at += std::time::Duration::from_secs(60);
+        watch.changed(PrimaryChange::Display, at);
+        assert_eq!(
+            restore(&mut watch, at),
+            fight >= PrimaryWatch::RETURNS as u64
+        );
+    }
+}
+
+#[test]
+fn a_move_that_stopped_being_seen_starts_its_settle_again() {
+    use super::{PrimaryAction, PrimaryChange, PrimaryWatch};
+    let start = std::time::Instant::now();
+    let mut watch = PrimaryWatch::default();
+    watch.changed(PrimaryChange::Display, start);
+    assert_eq!(watch.observe(true, start), PrimaryAction::Wait);
+    // The display is off for a look (Windows laying it out, or the stream's display gone):
+    // the watch has nothing pending, and the move is timed from where it is seen again.
+    watch.settled(start);
+    assert_eq!(
+        watch.observe(true, start + super::LayoutWatch::SETTLE),
+        PrimaryAction::Wait
+    );
+    assert_eq!(
+        watch.observe(
+            true,
+            start + super::LayoutWatch::SETTLE + super::LayoutWatch::SETTLE
+        ),
+        PrimaryAction::Restore
+    );
+}
+
+#[test]
+fn an_excuse_lasts_the_window_and_no_longer() {
+    use super::LayoutWatch;
+    let start = std::time::Instant::now();
+    let mut watch = LayoutWatch::default();
+    assert!(!watch.excused(start));
+    watch.excuse(start);
+    assert!(watch.excused(start));
+    assert!(watch.excused(start + LayoutWatch::EXCUSE / 2));
+    assert!(!watch.excused(start + LayoutWatch::EXCUSE));
 }
 
 #[test]

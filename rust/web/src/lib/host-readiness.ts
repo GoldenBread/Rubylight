@@ -231,6 +231,7 @@ interface HostWarning {
 const WARNING_TITLES: Record<string, string> = {
   settings_retired: 'Settings replaced',
   nvidia_limiter_retired: 'NVIDIA frame limiter setting removed',
+  display_layout_learned: 'Device display layout updated',
   codec_support: 'Codecs missing',
   firewall_blocked: 'Windows Firewall blocks Rubylight',
   webrtc_server: 'Browser streaming can’t start',

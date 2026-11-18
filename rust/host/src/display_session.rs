@@ -441,12 +441,9 @@ pub(crate) fn launch_display_layout<'a>(
     layout
 }
 
-/// The device setting naming the app or host layout a learned device layout replaced.
-pub(crate) const LEARNED_OVER: &str = "virtual_display_layout_learned_over";
-/// Set in the device settings when the user picked the device's layout in the
-/// console. Only it protects a layout from being learned over: a layout saved
-/// before it existed, or by a stream, stays learnable.
-pub(crate) const SET_BY_USER: &str = "virtual_display_layout_set_by_user";
+/// The device setting naming the app or host layout a learned device layout replaced, and the
+/// one marking a layout the user picked (both in `butterpollo_core::state`).
+pub(crate) use butterpollo_core::state::{LEARNED_OVER, SET_BY_USER};
 /// Whether the device's own virtual display layout is one the user set rather
 /// than one learned from a stream.
 fn has_user_layout(client: &butterpollo_core::state::Client) -> bool {
@@ -478,6 +475,77 @@ fn inherited_layout<'a>(
                 .map(|_| "extended_primary")
         })
         .unwrap_or(config.get("virtual_display_layout", "exclusive"))
+}
+
+/// The virtual display layout the host asks for itself: what a device layout from before the
+/// marker existed has to be compared with.
+pub(crate) fn legacy_host_layout(config: &Config) -> &str {
+    config.get("virtual_display_layout", "exclusive")
+}
+
+/// Both primary layouts make the stream's display the main screen.
+fn primary_layout(layout: &str) -> bool {
+    matches!(layout, "extended_primary" | "extended_primary_isolated")
+}
+
+/// Give a device's unmarked "extended" layout from before the marker existed its meaning back.
+/// [`LEARNED_OVER`] records what a stream's learned layout replaced, and [`SET_BY_USER`] a
+/// pick made in Devices; neither existed for a layout learned on 2.4.1 to 2.5.9, nor for a
+/// pick made before 3.0.0, so the two cannot be told apart. A host that asks for a primary
+/// layout wins over it: the stream was after the main screen and the learned value is the
+/// likely source (issue #33). Otherwise the layout stays, learned over the host's layout, so it
+/// follows that layout until it changes, and an app that asks for the primary still gets it
+/// while the others keep "extended". Returns the devices whose layout changed.
+pub(crate) fn migrate_legacy_extended_layouts(
+    clients: &mut [butterpollo_core::state::Client],
+    host_layout: &str,
+) -> Vec<String> {
+    let mut changed = Vec::new();
+    for client in clients {
+        let layout = client
+            .extra
+            .get("virtual_display_layout")
+            .and_then(serde_json::Value::as_str);
+        let chosen = client
+            .extra
+            .get(SET_BY_USER)
+            .and_then(serde_json::Value::as_bool)
+            == Some(true);
+        if layout != Some("extended") || client.extra.contains_key(LEARNED_OVER) || chosen {
+            continue;
+        }
+        if primary_layout(host_layout) {
+            tracing::info!(
+                device = %client.name,
+                "the \"extended\" layout learned before the marker existed was Windows moving the primary; the device follows the host layout again"
+            );
+            client.extra.remove("virtual_display_layout");
+        } else {
+            tracing::info!(
+                device = %client.name,
+                learned_over = host_layout,
+                "the \"extended\" layout from before the marker existed stays until the host layout changes"
+            );
+            client
+                .extra
+                .insert(LEARNED_OVER.into(), serde_json::json!(host_layout));
+        }
+        changed.push(client.name.clone());
+    }
+    changed
+}
+
+/// The one-time console notice for the devices [`migrate_legacy_extended_layouts`] changed: the
+/// host layout is the same for all of them, so one branch says what happened to every device.
+pub(crate) fn legacy_layout_notice(devices: &[String], host_layout: &str) -> String {
+    let devices = devices.join(", ");
+    if primary_layout(host_layout) {
+        format!("{devices} follow the host's display layout again.")
+    } else {
+        format!(
+            "{devices} keep Extend, now marked as learned: an app's own layout or a later change of the host's layout replaces it. Pick it again under Devices to keep it everywhere."
+        )
+    }
 }
 
 /// What the client asked the PC's displays to do for this stream (the
@@ -551,6 +619,19 @@ struct ModeReportState {
     /// Why what Windows recalled when a display left could not be put back, until a repair
     /// after a later departure goes through.
     unrepaired: Option<String>,
+    /// Why the stream's display could not be made the primary one again, until it is.
+    primary_refused: Option<String>,
+    /// Why this stream leaves the primary where Windows puts it: Windows refused the layout,
+    /// or kept taking the primary back.
+    primary_stopped: Option<PrimaryStop>,
+}
+/// Why the primary watch stopped for the stream, for the card that says so.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PrimaryStop {
+    /// Windows refused the layout, or accepted it without moving the primary.
+    Refused,
+    /// Windows kept taking the primary back after restores.
+    KeptTaking,
 }
 impl ModeReportState {
     fn report(&self) {
@@ -588,6 +669,21 @@ impl ModeReportState {
             Some(error) => self.warnings.set("display_repair", format!("Windows recalled a saved display layout over your displays and it could not be put back ({error}), so a monitor can stay off or at another refresh rate. Check Windows display settings and reconnect.")),
             None => self.warnings.clear("display_repair"),
         }
+        match &self.primary_refused {
+            Some(error) => self.warnings.set("display_primary", format!("Windows kept another display as the main screen and the virtual display could not be made the main one again ({error}), so games open on your monitor instead of the stream. Set the virtual display layout to Exclusive for this device, or make the virtual display the main screen in Windows display settings and reconnect.")),
+            None => self.warnings.clear("display_primary"),
+        }
+        if let Some(stop) = self.primary_stopped {
+            let what = match stop {
+                PrimaryStop::Refused => {
+                    "Windows refused to make the virtual display the main screen again"
+                }
+                PrimaryStop::KeptTaking => "Windows kept taking the main screen back",
+            };
+            self.warnings.set("display_primary_kept", format!("{what}, so Rubylight leaves it where Windows puts it for the rest of the stream. Games open on your monitor instead of the stream; choose Exclusive for this device, or keep the virtual display as the main screen in Windows display settings."));
+        } else {
+            self.warnings.clear("display_primary_kept");
+        }
     }
 }
 impl ModeReport {
@@ -602,12 +698,39 @@ impl ModeReport {
             kept_on: false,
             unrepaired_at_start: None,
             unrepaired: None,
+            primary_refused: None,
+            primary_stopped: None,
         })))
     }
     /// What Windows recalled when this stream's display arrived could not be put back.
     fn unrepaired_at_start(&self, failure: Option<&str>) {
         let mut state = self.0.lock().unwrap();
         state.unrepaired_at_start = failure.map(str::to_owned);
+        state.report();
+    }
+    /// How making the stream's display the primary one again went.
+    fn primary_refused(&self, error: &str) {
+        let mut state = self.0.lock().unwrap();
+        state.primary_refused = Some(error.to_owned());
+        state.report();
+    }
+    /// The stream's display is the primary one.
+    fn primary_restored(&self) {
+        let mut state = self.0.lock().unwrap();
+        if state.primary_refused.take().is_some() {
+            state.report();
+        }
+    }
+    /// The start's display_layout warning was about the primary only, which the stream has
+    /// back: nothing there needs a reconnect.
+    fn start_layout_restored(&self) {
+        self.0.lock().unwrap().warnings.clear("display_layout");
+    }
+    /// The primary watch stopped: this stream leaves the primary where Windows puts it, and
+    /// the card says whether Windows refused the layout or kept taking the primary back.
+    fn primary_gave_up(&self, why: PrimaryStop) {
+        let mut state = self.0.lock().unwrap();
+        state.primary_stopped = Some(why);
         state.report();
     }
     /// How putting back what Windows recalled when a display left went.
@@ -663,17 +786,19 @@ fn wake_layout_passed(seen: &mut u64, now: u64) -> bool {
 }
 
 /// Start the wait for Windows to settle when a display left another stream's layout
-/// since this stream last looked (`seen`).
+/// since this stream last looked (`seen`); true when it did.
 fn notice_departure(
     seen: &mut u64,
     departures: u64,
     watch: &mut butterpollo_core::display_policy::LayoutWatch,
     now: std::time::Instant,
-) {
+) -> bool {
     if departures != *seen {
         *seen = departures;
         watch.display_left(now);
+        return true;
     }
+    false
 }
 /// Whether a display left that this stream has yet to lay the displays out again for. What is
 /// on until then can be what Windows recalled.
@@ -1339,12 +1464,28 @@ pub struct Prepared {
     revision: u64,
     recovery: Recovery,
     layout_watch: butterpollo_core::display_policy::LayoutWatch,
+    /// The primary a primary layout made, which Windows or a game can move back to a monitor
+    /// while the stream goes on.
+    primary_watch: butterpollo_core::display_policy::PrimaryWatch,
     /// [`display_arrangement::departures`] when this stream last looked.
     departures: u64,
     /// [`display_arrangement::wake_layouts`] when this stream last looked.
     wake_layouts: u64,
     /// The console session at the last layout check.
     console_session: Option<u32>,
+    /// Whether the secure desktop showed at the last layout check: its return is a layout
+    /// change Windows made, after which the primary can be somewhere else.
+    secure_desktop: bool,
+    /// The displays Windows showed at the last primary check, to see one arrive or leave.
+    displays_seen: Option<usize>,
+    /// Whether the last primary look found the stream's display the primary one: a Windows
+    /// change is only this stream's to undo when it was.
+    shown_primary: Option<bool>,
+    /// A change that arrived while the stream was paused, to arm at the resume.
+    paused_change: Option<butterpollo_core::display_policy::PrimaryChange>,
+    /// The start applied the layout but Windows kept the primary elsewhere (and only the
+    /// primary): a successful restore clears the start's display_layout warning.
+    start_primary_mismatch: bool,
     /// Keep switching the physical monitors of an exclusive layout off while
     /// the stream is paused (`dd_hold_layout_while_paused`).
     hold_layout_while_paused: bool,
@@ -1540,9 +1681,17 @@ impl Prepared {
             revision: 0,
             recovery: Recovery::new(),
             layout_watch: Default::default(),
+            primary_watch: butterpollo_core::display_policy::PrimaryWatch::starting(
+                std::time::Instant::now(),
+            ),
             departures: display_arrangement::departures(),
             wake_layouts: display_arrangement::wake_layouts(),
             console_session: None,
+            secure_desktop: false,
+            displays_seen: None,
+            shown_primary: None,
+            paused_change: None,
+            start_primary_mismatch: false,
             // A game window holds no layout to keep while paused.
             hold_layout_while_paused: false,
             mode_report,
@@ -1711,16 +1860,16 @@ impl Prepared {
         if self.recovery.pending || !self.layout_watch.due(now) {
             return Ok(());
         }
-        let Some(arrangement) = &self._arrangement else {
-            return Ok(());
-        };
-        notice_departure(
+        let departed = notice_departure(
             &mut self.departures,
             display_arrangement::departures(),
             &mut self.layout_watch,
             now,
         );
         if self.layout_watch.departure_due(now) {
+            let Some(arrangement) = &self._arrangement else {
+                return Ok(());
+            };
             tracing::info!(output = %self.output, "another stream's display left; laying this stream's displays out again");
             let monitors = self.remote_monitors();
             lay_out_after_departure(
@@ -1738,29 +1887,50 @@ impl Prepared {
             }
             return Ok(());
         }
-        // A monitor this stream's launch cut short: back, it gets the layout planned.
-        match arrangement.follow_wake() {
-            Ok(false) => {}
-            Ok(true) => self.mode_report.repaired(None),
-            Err(error) => self.mode_report.repaired(Some(failed_wake_layout(error))),
+        {
+            let Some(arrangement) = &self._arrangement else {
+                return Ok(());
+            };
+            // A monitor this stream's launch cut short: back, it gets the layout planned.
+            match arrangement.follow_wake() {
+                Ok(false) => {}
+                Ok(true) => self.mode_report.repaired(None),
+                Err(error) => self.mode_report.repaired(Some(failed_wake_layout(error))),
+            }
         }
         // Any stream's heartbeat can have run that, and every stream's mode can have suffered.
-        if wake_layout_passed(&mut self.wake_layouts, display_arrangement::wake_layouts())
-            && let Some(display) = &self.display
-        {
+        let woke = wake_layout_passed(&mut self.wake_layouts, display_arrangement::wake_layouts());
+        if woke && let Some(display) = &self.display {
             display.apply_virtual_mode("after a monitor returned");
         }
         // Windows recalls its own layout after the lock screen, a UAC prompt
         // or a session switch: a display back on then is not coming back.
+        let secure = butterpollo_windows::input::secure_desktop_shown();
         let session = butterpollo_windows::process::console_session();
-        if butterpollo_windows::input::secure_desktop_shown()
-            || self
-                .console_session
-                .replace(session)
-                .is_some_and(|last| last != session)
-        {
+        let session_changed = self
+            .console_session
+            .replace(session)
+            .is_some_and(|last| last != session);
+        if secure || session_changed {
             self.layout_watch.excuse(now);
         }
+        let returned_from_secure = std::mem::replace(&mut self.secure_desktop, secure) && !secure;
+        // A display arriving or leaving, a session switch or the secure desktop's return is
+        // Windows rearranging: only then can it have moved the primary by itself. A display
+        // change is the one that can repeat; the others count for the log but not the limit.
+        let change = if departed || woke {
+            Some(butterpollo_core::display_policy::PrimaryChange::Display)
+        } else if returned_from_secure {
+            Some(butterpollo_core::display_policy::PrimaryChange::Secure)
+        } else if session_changed {
+            Some(butterpollo_core::display_policy::PrimaryChange::Session)
+        } else {
+            None
+        };
+        self.keep_primary(now, change, active, secure);
+        let Some(arrangement) = &self._arrangement else {
+            return Ok(());
+        };
         let switched_on = match arrangement.switched_back_on() {
             Ok(switched_on) => switched_on,
             Err(error) => {
@@ -1792,6 +1962,202 @@ impl Prepared {
             Err(_) => self.layout_watch.failed(now),
         }
         result
+    }
+    /// Whether a primary restore may be looked at now: the layout makes the stream's display
+    /// the primary one, this lease is the stream whose display the layout made primary, the
+    /// stream is running, and Windows is not showing the secure desktop. A second stream,
+    /// another device's display or a device's second screen joins beside the first owner's
+    /// and only that one is primary, so laying this stream's displays out again would change
+    /// nothing; a paused stream holds its layout but has nobody to show a move to.
+    fn primary_watch_applies(
+        planned: Arrangement,
+        lease_primary: bool,
+        active: bool,
+        secure: bool,
+        due: bool,
+    ) -> bool {
+        planned.primary_beside_the_users() && lease_primary && active && !secure && due
+    }
+    /// Whether the layout put back for the primary did it: Windows shows the stream's display
+    /// as the primary now. A layout Windows accepted but left the primary where it was did
+    /// not, and counting it as restored kept the watch from telling the two apart.
+    fn primary_taken_back(shown: &Result<Option<bool>>) -> bool {
+        matches!(shown, Ok(Some(true)))
+    }
+    /// Whether a change arms the primary watch: only when the last look found the stream's
+    /// display the primary one, so a primary the user picked before the change is left
+    /// alone. The start arms it by itself.
+    fn primary_change_arms(
+        last_shown: Option<bool>,
+        change: Option<butterpollo_core::display_policy::PrimaryChange>,
+    ) -> bool {
+        change.is_some() && last_shown == Some(true)
+    }
+    /// The change to arm at a resume: one that arrived while the stream was paused, else the
+    /// one now. A paused stream has nobody to show a restore to, so it waits for the resume.
+    fn resumed_primary_change(
+        paused: Option<butterpollo_core::display_policy::PrimaryChange>,
+        change: Option<butterpollo_core::display_policy::PrimaryChange>,
+    ) -> Option<butterpollo_core::display_policy::PrimaryChange> {
+        paused.or(change)
+    }
+    /// Put the stream's display back as the primary one when Windows moved it while changing
+    /// the layout by itself: a display arrived or left, the session changed, or the secure
+    /// desktop went away. Only a change while the display had the primary arms the watch: a
+    /// primary picked before it is the user's or a game's and is left alone. Windows gets the
+    /// layout watch's settle before the layout is put back, a restore that did not move the
+    /// primary waits the retry, and a display that keeps taking it back stops the watch for the
+    /// stream. The recovery lays the whole layout out itself while it runs, which includes the
+    /// primary.
+    fn keep_primary(
+        &mut self,
+        now: std::time::Instant,
+        change: Option<butterpollo_core::display_policy::PrimaryChange>,
+        active: bool,
+        secure: bool,
+    ) {
+        use butterpollo_core::display_policy::{PrimaryAction, PrimaryChange};
+        let Some(arrangement) = &self._arrangement else {
+            return;
+        };
+        let lease_primary = arrangement.makes_primary();
+        if !arrangement.arrangement().primary_beside_the_users() || !lease_primary {
+            return;
+        }
+        if !active {
+            // A change during a pause arms at the resume, when the displays are looked at
+            // again; the pause itself must not keep a window that already ran out, nor a
+            // settle a move started before it.
+            self.primary_watch.interrupted();
+            if change.is_some() {
+                self.paused_change = change;
+            }
+            return;
+        }
+        let change = Self::resumed_primary_change(std::mem::take(&mut self.paused_change), change);
+        if Self::primary_change_arms(self.shown_primary, change)
+            && let Some(change) = change
+        {
+            // Only a change while the stream's display had the primary can have taken it
+            // away; one after the user picked another display is not the stream's to undo.
+            self.primary_watch.changed(change, now);
+        }
+        if secure {
+            // The lock screen hides the displays: a move first seen before it must start its
+            // settle again after the unlock, not restore because the lock was long.
+            self.primary_watch.interrupted();
+        }
+        if !Self::primary_watch_applies(
+            arrangement.arrangement(),
+            lease_primary,
+            active,
+            secure,
+            self.primary_watch.due(now),
+        ) {
+            return;
+        }
+        // A display that arrived or left changes the count: Windows rearranges the desktop
+        // then, and the primary can follow its choice rather than this stream's.
+        let displays_changed = match butterpollo_windows::display::active_displays() {
+            Ok(count) => self
+                .displays_seen
+                .replace(count)
+                .is_some_and(|seen| seen != count),
+            Err(error) => {
+                tracing::debug!(error = %format!("{error:#}"), "the displays could not be counted");
+                false
+            }
+        };
+        if displays_changed
+            && Self::primary_change_arms(self.shown_primary, Some(PrimaryChange::Display))
+        {
+            self.primary_watch.changed(PrimaryChange::Display, now);
+        }
+        let shown = match butterpollo_windows::display::shown_primary(&self.output) {
+            Ok(shown) => shown,
+            Err(error) => {
+                tracing::debug!(error = %format!("{error:#}"), "the primary display could not be read");
+                return;
+            }
+        };
+        // The last look before the next change: a change after the display here is not
+        // primary has the user's or a game's pick before it and is left alone. A display
+        // Windows is laying out says nothing, so it does not erase the last answer.
+        if shown.is_some() {
+            self.shown_primary = shown;
+        }
+        if !butterpollo_core::display_policy::primary_moved(arrangement.arrangement(), shown) {
+            // The display is the primary one, or off or still being laid out. A look that
+            // finds it primary only clears a pending settle; the change's window stays open
+            // for a move that follows it.
+            self.primary_watch.settled(now);
+            if shown == Some(true) {
+                self.mode_report.primary_restored();
+                self.clear_start_primary_warning();
+            }
+            return;
+        }
+        if let Some(delay) = self.primary_watch.change_delay(now) {
+            // For tuning WINDOW on a real rig: how long Windows took to move the primary
+            // after the change that armed the watch (once per change).
+            tracing::info!(output = %self.output, delay_ms = %delay.as_millis(), "the stream's display lost the primary one after a Windows change");
+        }
+        if self.primary_watch.observe(true, now) == PrimaryAction::Wait {
+            return;
+        }
+        tracing::info!(output = %self.output, "the stream's display lost the primary one; laying the display out as primary again");
+        // The displays left on stay on while the rest are laid out again, as the layout
+        // watch keeps them for its own reapplies.
+        let mut retained = self.remote_monitors();
+        retained.extend(self.layout_watch.kept().iter().cloned());
+        match arrangement.reapply(&self.output, &retained) {
+            Ok(()) => {
+                // Windows accepted the layout; whether it moved the primary is the look after
+                // it. A layout that changed nothing is a failure, not a restore.
+                let after = butterpollo_windows::display::shown_primary(&self.output);
+                if Self::primary_taken_back(&after) {
+                    self.shown_primary = Some(true);
+                    let stopped = self.primary_watch.restored(now);
+                    self.mode_report.primary_restored();
+                    self.clear_start_primary_warning();
+                    if stopped {
+                        tracing::warn!(output = %self.output, "Windows keeps taking the main screen back; leaving the primary where Windows moves it for the rest of the stream");
+                        self.mode_report.primary_gave_up(PrimaryStop::KeptTaking);
+                    }
+                } else {
+                    let problem = match after {
+                        Ok(_) => {
+                            "the layout went through but the primary stayed where it was".to_owned()
+                        }
+                        Err(error) => format!("{error:#}"),
+                    };
+                    self.primary_failed(now, problem);
+                }
+            }
+            Err(error) => {
+                self.primary_failed(now, format!("{error:#}"));
+            }
+        }
+    }
+    /// The start's display_layout warning was about the primary only, which the stream has
+    /// back: it needs no reconnect and the card drops the warning.
+    fn clear_start_primary_warning(&mut self) {
+        if std::mem::replace(&mut self.start_primary_mismatch, false) {
+            self.mode_report.start_layout_restored();
+        }
+    }
+    /// A restore that did not give the display the primary: Windows refused the layout, or
+    /// accepted it without moving the primary. The card says so, and the watch stops after
+    /// [`PrimaryWatch::RETURNS`] such refusals within its window, as a display that keeps
+    /// taking the primary back does.
+    fn primary_failed(&mut self, now: std::time::Instant, problem: String) {
+        tracing::warn!(%problem, "the layout did not make the stream's display the primary one");
+        let stopped = self.primary_watch.failed(now);
+        self.mode_report.primary_refused(&problem);
+        if stopped {
+            tracing::warn!(output = %self.output, "Windows keeps refusing the main screen; leaving the primary where Windows puts it for the rest of the stream");
+            self.mode_report.primary_gave_up(PrimaryStop::Refused);
+        }
     }
     fn create(
         h: &Shared,
@@ -2285,21 +2651,29 @@ impl Prepared {
         let expected = in_force.map_or(selection, |arrangement| arrangement.name());
         // A monitor still on its way back leaves the stream's display alone for now, which
         // says nothing of the layout.
-        let layout_took = !virtual_layout
+        let mut start_primary_mismatch = false;
+        let layout_took = if !virtual_layout
             || arrangement
                 .as_ref()
                 .is_none_or(display_arrangement::Lease::after_cut_watch)
-            || butterpollo_windows::display::monitors()
-                .map(|monitors| {
+        {
+            true
+        } else {
+            match butterpollo_windows::display::monitors() {
+                Ok(monitors) => {
                     let active: Vec<_> = monitors
                         .into_iter()
                         .map(|m| (m.display_name, m.primary))
                         .collect();
-                    match butterpollo_core::display_policy::chosen_layout(
+                    match butterpollo_core::display_policy::layout_mismatch(
                         expected, &output, &active,
                     ) {
                         None => true,
                         Some(actual) => {
+                            // Only the primary is the watch's to put back; the card drops
+                            // the warning once it did.
+                            start_primary_mismatch =
+                                expected == "extended_primary" && actual == "extended";
                             tracing::warn!(
                                 output = %output,
                                 planned = expected,
@@ -2313,8 +2687,11 @@ impl Prepared {
                             false
                         }
                     }
-                })
-                .unwrap_or(false);
+                }
+                // A layout Windows would not report is not one it took.
+                Err(_) => false,
+            }
+        };
         tracing::info!(
             client = %launch.client.name,
             role = ?launch.role,
@@ -2423,9 +2800,17 @@ impl Prepared {
                 revision,
                 recovery: Recovery::new(),
                 layout_watch: Default::default(),
+                primary_watch: butterpollo_core::display_policy::PrimaryWatch::starting(
+                    std::time::Instant::now(),
+                ),
                 departures: display_arrangement::departures(),
                 wake_layouts: display_arrangement::wake_layouts(),
                 console_session: None,
+                secure_desktop: false,
+                displays_seen: None,
+                shown_primary: None,
+                paused_change: None,
+                start_primary_mismatch,
                 hold_layout_while_paused,
                 mode_report,
                 recovery_scale: scale,

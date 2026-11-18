@@ -109,6 +109,8 @@ export interface Draft {
   virtual_display_layout: string;
   /** The layout field was picked in the editor, so the host never learns over it. */
   virtual_display_layout_set_by_user: boolean;
+  /** The app or host layout a layout learned from a stream replaced; empty for a layout the user picked or none. */
+  virtual_display_layout_learned_over: string;
   prefer_10bit_sdr: '' | 'on' | 'off';
   hdr_profile: string;
   allow_client_commands: boolean;
@@ -278,6 +280,7 @@ export function toDraft(client: Client): Draft {
     virtual_display_mode: choice(client.virtual_display_mode, VIRTUAL_DISPLAY_MODES),
     virtual_display_layout: choice(client.virtual_display_layout, VIRTUAL_DISPLAY_LAYOUTS),
     virtual_display_layout_set_by_user: flag(client.virtual_display_layout_set_by_user) === true,
+    virtual_display_layout_learned_over: text(client.virtual_display_layout_learned_over),
     prefer_10bit_sdr: sdr === null ? '' : sdr ? 'on' : 'off',
     hdr_profile: text(client.hdr_profile),
     allow_client_commands: flag(client.allow_client_commands) !== false,
@@ -308,6 +311,23 @@ export function toDraft(client: Client): Draft {
     do: commandRows(client.do),
     undo: commandRows(client.undo),
   };
+}
+
+/**
+ * The layout a stream learned for this device, as its label, while the host's layout still
+ * lets it apply: the host ignores a learned layout once the app or host layout it replaced
+ * changes, so the page must not say the device still uses it.
+ */
+export function learnedLayoutLabel(draft: Draft, hostLayout: string): string {
+  const over = draft.virtual_display_layout_learned_over;
+  if (!over || !draft.virtual_display_layout || draft.virtual_display_layout_set_by_user) return '';
+  // An empty host layout is a console that has not read the setting yet: say nothing about a
+  // difference it cannot know.
+  if (hostLayout && over !== hostLayout) return '';
+  return (
+    VIRTUAL_DISPLAY_LAYOUTS.find((layout) => layout.value === draft.virtual_display_layout)?.label ??
+    draft.virtual_display_layout
+  );
 }
 
 type Command = { cmd: string; elevated: boolean };
