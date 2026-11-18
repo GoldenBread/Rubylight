@@ -103,7 +103,7 @@ def setup(args):
         # A package installed or cleared since its last start has no database or client key until it opens once.
         if 'computers4.db' not in run_as('ls databases', check=False) or 'client.crt' not in run_as('ls files', check=False):
             log(f'{PACKAGE} has no database or client key yet: opening it once')
-            sh(f'monkey -p {PACKAGE} -c android.intent.category.LAUNCHER 1', check=False)
+            sh(f'am start -n {PACKAGE}/com.limelight.PcView', check=False)
             for _ in range(20):
                 time.sleep(1)
                 if 'computers4.db' in run_as('ls databases', check=False) and 'client.crt' in run_as('ls files', check=False):
