@@ -1449,12 +1449,30 @@ pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
         // Makes the PCP mapping nonce, which must survive new mappers and restarts.
         let nonce_secret = h.identity.private_pem.clone();
         let record = std::sync::Arc::new(std::sync::Mutex::new(LeaseRecord::load(&h.directory)));
-        // Take down what an unclean stop left before the first renewal, or give up at once
-        // when the host stops meanwhile.
-        tokio::select! {
-            () = stopped.notified() => {}
-            () = cleanup_guests(&record, bind, &description, nonce_secret.as_bytes()) => {}
-        }
+        // Take down what an unclean stop left in its own task, beside this loop: the stream
+        // ports map at once, and a guest link waits only for this one cleanup round.
+        let cleaning = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+            !record.lock().unwrap().leases().is_empty(),
+        ));
+        let cleanup_done = std::sync::Arc::new(tokio::sync::Notify::new());
+        let cleanup = {
+            let record = record.clone();
+            let stopped = stopped.clone();
+            let cleaning = cleaning.clone();
+            let done = cleanup_done.clone();
+            let description = description.clone();
+            let secret = nonce_secret.clone();
+            tokio::spawn(async move {
+                if cleaning.load(Ordering::Acquire) {
+                    tokio::select! {
+                        () = stopped.notified() => {}
+                        () = cleanup_guests(&record, bind, &description, secret.as_bytes()) => {}
+                    }
+                }
+                cleaning.store(false, Ordering::Release);
+                done.notify_one();
+            })
+        };
         let mut next_search = Instant::now();
         let mut held = Held::default();
         let mut reported = Vec::new();
@@ -1464,24 +1482,32 @@ pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
                 // Read before the guests are asked: a request made during this round is
                 // served by the next one.
                 let round = h.guests.internet_round();
-                let (stream, guest) = wanted_now(
+                let cleaning_now = cleaning.load(Ordering::Acquire);
+                let (stream, mut guest) = wanted_now(
                     &config,
                     ports,
                     upnp,
                     h.guests.open(),
                     h.guests.internet_wanted(),
                 );
+                // The cleanup deletes guest ports this host held: a guest link's map requests
+                // wait for it, so its deletes never race them.
+                if cleaning_now {
+                    guest.clear();
+                }
                 let wanted: Vec<Mapping> = stream.iter().chain(&guest).copied().collect();
                 if wanted.is_empty() {
                     if held.any() {
                         held.release(&description, &record).await;
                         reported.clear();
                     }
+                    // A guest question is answered only by a round that could map its ports.
+                    let guest_round = if cleaning_now { 0 } else { round };
                     crate::internet_play::update_mapping(|status| {
                         *status = crate::internet_play::MappingStatus {
                             enabled: upnp,
                             runs,
-                            guest_round: round,
+                            guest_round,
                             ..Default::default()
                         };
                     });
@@ -1498,15 +1524,24 @@ pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
                         &record,
                     )
                     .await;
-                    crate::internet_play::update_mapping(|status| status.guest_round = round);
+                    if !cleaning_now {
+                        crate::internet_play::update_mapping(|status| status.guest_round = round);
+                    }
                 }
             }
             tokio::select! {
                 () = until_renewal_or_stop(&stopped, next_search) => {}
                 // A link made or revoked for the internet: map or unmap the guest ports now.
                 () = h.guests.mapping_changed() => next_search = Instant::now(),
+                // The start cleanup finished: a guest link asked for meanwhile goes now.
+                () = cleanup_done.notified() => next_search = Instant::now(),
             }
         }
+        // The cleanup shares the record, so let it finish before the final release: neither
+        // then races the other on the same guest ports. The loop may have taken the stop
+        // notification, so wake the cleanup too.
+        stopped.notify_waiters();
+        let _ = cleanup.await;
         held.release(&description, &record).await;
     });
     Some(PortForward { task, stop })
