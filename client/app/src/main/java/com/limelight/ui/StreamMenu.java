@@ -742,7 +742,9 @@ public final class StreamMenu {
             Entry entry = find(offered, cell.id);
             String value = null;
             if (entry.item == Item.NATIVE_PAGE || (entry.item == Item.OVERLAY_PAGE && !native_)) value = facts;
-            else if ((entry.item == Item.BITRATE || entry.item == Item.RATE_CHANGE) && o.streamFps > 0) value = o.streamFps + " FPS";
+            // The rate-change row opens the frame-rate dialog; a host without it only has the bitrate row (nightjar #134).
+            else if (entry.item == Item.RATE_CHANGE && o.streamFps > 0) value = o.streamFps + " FPS";
+            else if (entry.item == Item.BITRATE && o.bitrateKbps > 0) value = BitrateSlider.text(activity, o.bitrateKbps);
             MenuRow row = sheet.addStatusRow(group, label(labels, cell.id), value,
                     cell.hotkey == null ? null : cell.hotkey.toUpperCase(Locale.ROOT));
             rows.put(entry.item, row);

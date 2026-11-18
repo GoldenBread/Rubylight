@@ -178,6 +178,7 @@ public class StreamMenuGlassTest {
             activity.setTheme(R.style.StreamTheme);
             StreamMenu.Options state = new StreamMenu.Options(NvApp.Role.STREAM, TestHosts.details("rubylight-serverinfo.xml"));
             state.streamFps = 120;
+            state.bitrateKbps = 80000;
             state.overlayShown = true;
             List<StreamMenu.Item> chosen = new ArrayList<>();
             StreamMenu menu = new StreamMenu(activity, () -> state, chosen::add, null, null);
@@ -188,9 +189,14 @@ public class StreamMenuGlassTest {
                 assertNotNull("every cell of the model has its view: " + layout.grid.get(at).id, view);
                 if (view instanceof MenuRow) {
                     MenuRow row = (MenuRow) view;
-                    if ("rate_change".equals(layout.grid.get(at).id) || "bitrate".equals(layout.grid.get(at).id)) {
+                    if ("rate_change".equals(layout.grid.get(at).id)) {
                         assertEquals("120 FPS", row.value());
                         assertTrue(row.getContentDescription().toString().endsWith(", 120 FPS"));
+                    }
+                    if ("bitrate".equals(layout.grid.get(at).id)) {
+                        String bitrate = BitrateSlider.text(activity, 80000);
+                        assertEquals(bitrate, row.value());
+                        assertTrue(row.getContentDescription().toString().endsWith(", " + bitrate));
                     }
                 }
             }
