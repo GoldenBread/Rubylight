@@ -180,6 +180,8 @@ impl Streaming {
                 self.facts.width = width;
                 self.facts.height = height;
                 if confirmed {
+                    self.fps_evidence = 0;
+                    self.mode_fps_before = None;
                     if let Some((mode, _)) = self.pending_mode.take() { self.stream_rate_changed(mode.fps_millihz.div_ceil(1000)); }
                 }
             } else if decoded.setup.chroma_packing != 0 || decoded.setup.format & VIDEO_FORMAT_MASK_PYROWAVE != 0 {
@@ -193,6 +195,7 @@ impl Streaming {
                     let delta = ((decoded.receive_us - received) as f64 / 1000.0 - f64::from(ticks) / 90.0).abs();
                     self.jitter_ms = if self.jitter_ms < 0.0 { delta } else { self.jitter_ms + (delta - self.jitter_ms) / 16.0 };
                 }
+                self.fps_evidence_step(ticks);
             }
             self.last_arrival = Some((decoded.rtp, decoded.receive_us));
             self.doctor.arrived(decoded.rtp, decoded.host_latency, decoded.receive_us, self.facts.fps.max(0) as u32);
@@ -208,6 +211,13 @@ impl Streaming {
         self.taken_slices = slices;
         if self.pending_mode.is_some_and(|(_, at)| at.elapsed() >= Duration::from_secs(5)) {
             self.pending_mode = None;
+            self.fps_evidence = 0;
+            // The host applied nothing: the stream's rate, and the pacing that follows it, stay
+            // the ones its pictures show.
+            if let Some(fps) = self.mode_fps_before.take() {
+                self.facts.fps = fps as i32;
+                self.stream_rate_changed(fps);
+            }
             let quality_on = self.quality_mode != QualityMode::Off;
             self.quality_policy = None;
             self.quality_mode = QualityMode::Off;

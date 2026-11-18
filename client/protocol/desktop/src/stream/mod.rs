@@ -139,6 +139,20 @@ pub(crate) use connect::env_flag;
 pub use negotiate::{base_probe_formats, codec_name, color_probe_formats, plain_formats, probes_color, pyrowave_bitrate_warning, pyrowave_notice, stream_mode};
 pub use frame_warp::frame_warp_notice;
 
+/// Pictures in a row whose RTP timestamps must show a requested rate before a reconfigure that
+/// changes only the rate counts as applied.
+const FPS_EVIDENCE_FRAMES: u32 = 6;
+
+/// Whether a picture's RTP interval (`ticks` of the 90 kHz clock) shows `fps_millihz`: within 15%
+/// of one frame of it, which tells 60 from 120 apart however the timestamps round.
+fn shows_rate(ticks: u32, fps_millihz: u32) -> bool {
+    if fps_millihz == 0 {
+        return false;
+    }
+    let expected = 90_000_000.0 / f64::from(fps_millihz);
+    (f64::from(ticks) - expected).abs() <= expected * 0.15
+}
+
 /// What the display offers, for "native" resolution and "display" refresh.
 #[derive(Clone, Copy, Debug)]
 pub struct Display {
@@ -672,6 +686,10 @@ pub struct Streaming {
     decode_generation: i64,
     pub requested_mode: Reconfigure,
     pending_mode: Option<(Reconfigure, Instant)>,
+    /// Pictures whose RTP timestamps show the rate a reconfigure asked for (`shows_rate`), and
+    /// the stream's rate before it was asked, for a request the host does not apply.
+    fps_evidence: u32,
+    mode_fps_before: Option<u32>,
     /// The sizes decoded pictures are cropped to past an encoder's alignment padding.
     stream_sizes: render::StreamSizes,
     display_change: Option<Instant>,
@@ -1112,6 +1130,8 @@ impl Streaming {
             decode_generation: 0,
             requested_mode: mode,
             pending_mode: None,
+            fps_evidence: 0,
+            mode_fps_before: None,
             stream_sizes: render::StreamSizes::new((i32::from(mode.width), i32::from(mode.height))),
             display_change: None,
             last_arrival: None,
@@ -1397,6 +1417,10 @@ impl Streaming {
         self.requested_mode = request;
         self.stream_sizes.ask((i32::from(request.width), i32::from(request.height)));
         self.pending_mode = Some((request, Instant::now()));
+        self.fps_evidence = 0;
+        if self.mode_fps_before.is_none() {
+            self.mode_fps_before = Some(self.facts.fps.max(0) as u32);
+        }
         self.facts.fps = request.fps_millihz.div_ceil(1000) as i32;
         self.shared.fps_millihz.store(request.fps_millihz, Ordering::Relaxed);
         *lock(&self.shared.decode_window) = pipeline::DecodeWindow::default();
@@ -1413,6 +1437,30 @@ impl Streaming {
     fn stream_rate_changed(&mut self, fps: u32) {
         self.pacer.set_fps(fps);
         self.skipped.restart();
+    }
+
+    /// One picture's RTP interval toward confirming an fps-only reconfigure: the host's own frame
+    /// timestamps show it applied the rate. A request that changes the size is confirmed by the
+    /// pictures' size instead (`StreamSizes::arrive`); a request that only changes the rate has no
+    /// other evidence, and without this the pacing stays at the old frame time for the stream.
+    fn fps_evidence_step(&mut self, ticks: i32) {
+        let Some((mode, _)) = self.pending_mode else { return };
+        if (i32::from(mode.width), i32::from(mode.height)) != (self.facts.width, self.facts.height) {
+            return;
+        }
+        if ticks <= 0 || !shows_rate(ticks as u32, mode.fps_millihz) {
+            self.fps_evidence = 0;
+            return;
+        }
+        self.fps_evidence += 1;
+        if self.fps_evidence < FPS_EVIDENCE_FRAMES {
+            return;
+        }
+        self.fps_evidence = 0;
+        self.mode_fps_before = None;
+        if let Some((mode, _)) = self.pending_mode.take() {
+            self.stream_rate_changed(mode.fps_millihz.div_ceil(1000));
+        }
     }
 
     pub fn follow_display(&mut self, display: Display) {

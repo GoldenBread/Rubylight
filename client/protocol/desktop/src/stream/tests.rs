@@ -1084,3 +1084,15 @@ fn an_unreported_or_unusable_refresh_rate_leaves_pacing_unfloored() {
         assert_eq!(display.refresh_interval_us(), None, "{display:?} sets no floor");
     }
 }
+
+#[test]
+fn a_reconfigured_rate_is_confirmed_by_the_hosts_frame_timestamps() {
+    assert!(shows_rate(1500, 60_000));
+    assert!(shows_rate(1499, 60_000), "the host rounds its 90 kHz stamps");
+    assert!(shows_rate(750, 120_000));
+    assert!(shows_rate(1502, 59_940), "59.94 Hz at 90 kHz");
+    assert!(!shows_rate(1500, 120_000), "a rate the host did not apply");
+    assert!(!shows_rate(750, 60_000));
+    assert!(!shows_rate(0, 60_000));
+    assert!(!shows_rate(1500, 0), "no rate to confirm");
+}
