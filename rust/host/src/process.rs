@@ -283,6 +283,10 @@ pub struct RunningApp {
     settings_swap: Option<crate::game_settings::Swap>,
     /// Told once the app's processes have stopped, before its undo commands.
     processes_stopped: Option<std::sync::mpsc::Sender<()>>,
+    /// A test's pause before that notice, standing in for a game whose close
+    /// takes longer than the shutdown's audio wait.
+    #[cfg(test)]
+    pub stop_delay: Option<std::time::Duration>,
     /// When the game's programs were last recorded for [`Self::settings_swap`].
     settings_watch: std::time::Instant,
     /// An app launched before anyone signed in, started once a user does.
@@ -502,6 +506,8 @@ impl RunningApp {
             settings_swap: None,
             settings_watch: std::time::Instant::now(),
             processes_stopped: None,
+            #[cfg(test)]
+            stop_delay: None,
         };
         let commands: Vec<PrepCommand> = serde_json::from_value(
             app.extra
@@ -769,6 +775,10 @@ impl RunningApp {
         {
             tracing::warn!(%error, "application could not exit gracefully");
             let _ = child.stop();
+        }
+        #[cfg(test)]
+        if let Some(delay) = self.stop_delay.take() {
+            std::thread::sleep(delay);
         }
         if let Some(stopped) = self.processes_stopped.take() {
             let _ = stopped.send(());
