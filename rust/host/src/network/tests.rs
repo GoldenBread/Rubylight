@@ -519,21 +519,43 @@ fn guest_ports_are_wanted_only_while_a_link_needs_them() {
 #[test]
 fn a_mapping_left_by_another_host_on_this_pc_is_not_a_conflict() {
     let local: IpAddr = "192.168.0.20".parse().unwrap();
-    let entry = |client: &str, internal_port| igd_next::PortMappingEntry {
-        remote_host: String::new(),
+    let entry = |remote: &str, client: &str, internal_port, enabled| igd_next::PortMappingEntry {
+        remote_host: remote.into(),
         external_port: 47989,
         protocol: Protocol::TCP,
         internal_port,
         internal_client: client.into(),
-        enabled: true,
+        enabled,
         port_mapping_description: "Sunshine".into(),
         lease_duration: 0,
     };
-    assert!(forwards_here(&entry("192.168.0.20", 47989), local));
-    assert!(!forwards_here(&entry("192.168.0.30", 47989), local));
-    assert!(!forwards_here(&entry("192.168.0.20", 47990), local));
+    // A mapping from any address, enabled, forwards the port to this PC under its own number.
+    for remote in ["", "0.0.0.0", "*"] {
+        assert!(forwards_here(
+            &entry(remote, "192.168.0.20", 47989, true),
+            local
+        ));
+    }
+    // Another address, another number, a disabled mapping, or one only for one remote host:
+    // guests elsewhere reach nothing through it, so the port is not mapped.
+    assert!(!forwards_here(
+        &entry("", "192.168.0.30", 47989, true),
+        local
+    ));
+    assert!(!forwards_here(
+        &entry("", "192.168.0.20", 47990, true),
+        local
+    ));
+    assert!(!forwards_here(
+        &entry("", "192.168.0.20", 47989, false),
+        local
+    ));
+    assert!(!forwards_here(
+        &entry("203.0.113.7", "192.168.0.20", 47989, true),
+        local
+    ));
     assert!(!owned(
-        &entry("192.168.0.20", 47989),
+        &entry("", "192.168.0.20", 47989, true),
         local,
         "Butterpollo Rust id"
     ));

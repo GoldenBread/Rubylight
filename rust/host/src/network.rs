@@ -717,9 +717,13 @@ fn owned(entry: &igd_next::PortMappingEntry, local: IpAddr, description: &str) -
 }
 /// Whether another mapping already forwards this port to the same port on
 /// this PC, as one left by another streaming host does: clients reach the
-/// host through it, so it is not a conflict.
+/// host through it, so it is not a conflict. Only an enabled mapping from any
+/// address does: one limited to a remote host, or switched off, forwards no
+/// guest of this link.
 fn forwards_here(entry: &igd_next::PortMappingEntry, local: IpAddr) -> bool {
-    entry.internal_client.parse::<IpAddr>().ok() == Some(local)
+    entry.enabled
+        && matches!(entry.remote_host.trim(), "" | "0.0.0.0" | "*")
+        && entry.internal_client.parse::<IpAddr>().ok() == Some(local)
         && entry.internal_port == entry.external_port
 }
 /// The router's entry for `mapping`, whichever application owns it.
