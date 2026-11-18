@@ -1,7 +1,0 @@
-# Steadier bitrate on a path that carries less than the stream asks for
-
-- **No more climb and collapse at a fixed limit.** When the bitrate fails twice near the same rate, the host now holds at the rate it came down to and tries a small step above it only after a wait that doubles with each failure there, from 10 seconds up to five minutes. Before, it climbed back toward the requested rate and broke down again every 10 to 50 seconds on such a path (a device wired to a mesh node with a wireless backhaul, for example).
-- **PyroWave under its own floor comes down too.** A PyroWave stream whose requested bitrate is already under PyroWave's quality floor (4K120 at 800 Mbps, 1080p120 at 200 Mbps) is now lowered when the device loses video, to half its bitrate at most. Before, only the PC's own send failures could lower it, so a path that carried less held it in a full queue.
-- **Deep buffers.** Behind a router or mesh node that queues a lot, a step up now waits long enough for the queue to show it was too much, and a queue that stays after the bitrate came down is answered with a further cut.
-- **When the PC cannot send fast enough.** The sender waits about one frame for room in a full socket and then drops the rest of that one picture, instead of leaving holes in the next ones. The warning now says the PC could not send fast enough (its CPU or network adapter) instead of blaming the network, and such refusals alone no longer lower the rate the host learns for the network.
-- A connection that never fills up is unchanged.

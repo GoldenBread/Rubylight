@@ -1,1 +1,0 @@
-- Exiting Playnite Fullscreen after playing a game ends the stream again, once the **Wait after a game closes** time has passed, instead of leaving the stream on the PC's desktop.

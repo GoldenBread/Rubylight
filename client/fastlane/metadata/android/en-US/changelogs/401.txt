@@ -1,0 +1,6 @@
+- Invite a friend over the internet: Guests in the stream menu makes a link, and their Nightjar joins your game as a guest, with no PIN or port forwarding.
+- Modern on-screen controls gain a pointer touchpad, Xbox, PlayStation or Nintendo glyphs, presets and a layout per orientation.
+- Settings open on Recommended, Controls, Audio and App.
+- PyroWave warns when the link can't carry its rate.
+- No more pairing again when another app answers for your PC.
+- Rumble, PC list and Android TV fixes.
