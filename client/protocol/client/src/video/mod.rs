@@ -576,14 +576,13 @@ impl VideoReceiver {
         }
         let mut buf = self.pools.packet();
         let len = if let Some(decryptor) = &self.decryptor {
-            // Drop shards of frames already reassembled before spending time on decryption, in
-            // the queue's 16-bit order: a host whose counters restarted can be more than 0x8000
-            // back in the 32-bit counter and ahead in that order, and must reach the queue, which
-            // follows a far-behind position once its datagrams keep coming from it. A straggler
-            // or a replay from the last seconds is dropped here (`rejects_datagram`'s order).
+            // Drop shards of frames already reassembled before spending time on decryption. A
+            // frame far behind the queue's position may be a host whose counters restarted: the
+            // queue follows it once its datagrams keep coming from there, so it is decrypted and
+            // decided on there. A straggler or a replay from the last seconds is dropped here.
             let frame = le32(datagram, 12);
             if frame != 0
-                && is_before16(frame, self.queue.current_frame_number())
+                && frame < self.queue.current_frame_number()
                 && !self.queue.is_rewind(frame)
             {
                 self.pools.recycle_packet(buf);
