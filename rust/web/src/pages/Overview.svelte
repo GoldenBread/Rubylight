@@ -21,7 +21,7 @@
   import StreamCard from '../components/overview/StreamCard.svelte';
   import { heroGame, liveFigures, pairedCopy, readyCopy } from '../components/overview/now-playing';
   import {
-    api, type App, type Client, type CoopSessions, type GuestInvites, type PowerStatus, type SessionGuestsStatus, type SessionStatus,
+    api, ApiError, type App, type Client, type CoopSessions, type GuestInvites, type PowerStatus, type SessionGuestsStatus, type SessionStatus,
     type StreamSession,
   } from '../lib/api';
   import { shown as guestsShown } from '../lib/session-guests';
@@ -233,8 +233,10 @@
       // Asked after the status's await, past the poll's own mark: unmarked, it would count as someone using the
       // console every two seconds and keep the PC from sleeping while this page is open.
       invites = await marked(() => api.sessionGuests.invites());
-    } catch {
-      // A missed answer keeps the last one: taking the card away would lose a link it shows only once.
+    } catch (error) {
+      // A missed answer keeps the last one: taking the card away would lose a link it shows only once. A refusal
+      // (this account may no longer invite, or the host has no invites) has nothing to show.
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500) invites = null;
     }
   }
 
