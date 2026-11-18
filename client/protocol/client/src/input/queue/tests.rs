@@ -634,3 +634,21 @@ fn stopped_and_full_queues_refuse_input() {
     q.stop();
     assert_eq!(q.send_keyboard(1, true, 0, 0), Err(InputError::Stopped));
 }
+
+// A trackpad sends a fraction of a notch per event: the fraction is carried to the next turn,
+// not truncated away, so a slow scroll still reaches the PC.
+#[test]
+fn a_wheel_turn_smaller_than_a_unit_is_carried_to_the_next() {
+    let mut q = queue(&gfe());
+    for _ in 0..999 {
+        q.send_wheel_turn(0.0, 0.001).unwrap();
+    }
+    let mut out = Vec::new();
+    q.poll(Instant::now(), false, &mut out);
+    assert!(out.is_empty(), "999 turns of 1/1000 notch are 119.88 of the 120 in a click");
+    q.send_wheel_turn(0.0, 0.001).unwrap();
+    out.clear();
+    q.poll(Instant::now(), false, &mut out);
+    assert_eq!(out.len(), 1);
+    assert_eq!(decode(&out[0].data).unwrap(), Input::Scroll { amount: 120, horizontal: false });
+}

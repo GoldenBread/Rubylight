@@ -154,6 +154,9 @@ pub struct InputQueue {
     pen_barrel_roll: bool,
     controller_identity: bool,
     scroll_accumulator: i32,
+    /// Fractional wheel units (1/120 of a click) not yet sent, per axis: a trackpad reports a
+    /// fraction of a notch per event, and each turn carries the fraction it left.
+    wheel_units: (f64, f64),
     position: (f32, f32),
     last_mouse: Option<Instant>,
     last_pen: Option<Instant>,
@@ -187,6 +190,7 @@ impl InputQueue {
             pen_barrel_roll: false,
             controller_identity: false,
             scroll_accumulator: 0,
+            wheel_units: (0.0, 0.0),
             position: (0.5, 0.5),
             last_mouse: None,
             last_pen: None,
@@ -669,6 +673,41 @@ impl InputQueue {
             self.scroll_accumulator -= click;
         }
         Ok(())
+    }
+
+    /// A wheel turn in the events' units: one is a whole notch, and a trackpad sends a fraction of
+    /// one per event. The fraction that is not a whole 1/120 of a click waits for the next turn,
+    /// so a slow scroll still moves the page instead of vanishing in the conversion.
+    pub fn send_wheel_turn(&mut self, x: f64, y: f64) -> Result<(), InputError> {
+        self.send_wheel_axis(x, false)?;
+        self.send_wheel_axis(y, true)
+    }
+
+    fn send_wheel_axis(&mut self, units: f64, vertical: bool) -> Result<(), InputError> {
+        self.check()?;
+        if !units.is_finite() || units == 0.0 {
+            return Ok(());
+        }
+        let held = if vertical { self.wheel_units.1 } else { self.wheel_units.0 };
+        let total = held + units * f64::from(WHEEL_DELTA);
+        let whole = total.trunc().clamp(-32_000.0, 32_000.0) as i16;
+        if whole == 0 {
+            if vertical { self.wheel_units.1 = total } else { self.wheel_units.0 = total };
+            return Ok(());
+        }
+        let result = if vertical {
+            self.send_high_res_scroll(whole)
+        } else {
+            self.send_high_res_hscroll(whole)
+        };
+        let kept = match &result {
+            Ok(()) => total - f64::from(whole),
+            // The host never takes this axis: nothing would ever carry the fraction.
+            Err(InputError::Unsupported) => 0.0,
+            Err(_) => total,
+        };
+        if vertical { self.wheel_units.1 = kept } else { self.wheel_units.0 = kept };
+        result
     }
 
     pub fn send_hscroll(&mut self, clicks: i8) -> Result<(), InputError> {
