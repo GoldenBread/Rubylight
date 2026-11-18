@@ -186,14 +186,18 @@ fn the_reference_chroma_is_left_sited_and_vertically_centred() {
         (Transfer::Pq, Source::Pq10),
     ] {
         let s = spec(transfer, source, 64, 32);
+        // PQ chroma is filtered in light, and the light of a ramp even in PQ codes curves, so its
+        // filtered code lands about 0.012 luma samples off the code at the filter's centre. A
+        // misplaced filter is off by 0.5.
+        let tolerance = if transfer == Transfer::Pq { 0.03 } else { 1e-3 };
         let across = reference(&ramp(&s, true), &s);
         let row: Vec<f64> = across.cr[..32].to_vec();
         let h = siting(&row, |x| ramp_chroma(&s, true, x).1).unwrap();
-        assert!(close(h, 0., 1e-3), "{transfer:?} horizontal {h}");
+        assert!(close(h, 0., tolerance), "{transfer:?} horizontal {h}");
         let down = reference(&ramp(&s, false), &s);
         let column: Vec<f64> = (0..16).map(|j| down.cr[j * 32]).collect();
         let v = siting(&column, |y| ramp_chroma(&s, false, y).1).unwrap();
-        assert!(close(v, 0.5, 1e-3), "{transfer:?} vertical {v}");
+        assert!(close(v, 0.5, tolerance), "{transfer:?} vertical {v}");
     }
 }
 
