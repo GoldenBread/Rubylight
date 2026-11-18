@@ -157,6 +157,9 @@ struct App {
     /// still be in flight, each with the PC it went to: the next stream to that PC (a reconnect
     /// too) turns it on only after it, and the app's end waits for them all.
     abr_stops: Vec<(u64, stream::host_abr::AbrStop)>,
+    /// Sessions stopping on their own threads. Joined before the renderer they decoded on goes
+    /// (exit) or before the next connection's launch request (a reconnect carries its own).
+    teardowns: Vec<stream::Teardown>,
     pending_launch: Option<(u64, i32)>,
     /// The launch the PC refused until the user confirms closing the app it runs, while the
     /// launcher asks (`Dialog::ConfirmReplace`).
@@ -877,18 +880,37 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
             eprintln!("nightjar: saving settings failed: {e}");
         }
     }
-    let identity = match store.identity().filter(|_| !cfg!(feature = "demo-library")) {
-        Some(saved) => match ClientIdentity::from_pem(saved.unique_id, &saved.certificate_pem, &saved.private_key_pem) {
-            Ok(identity) => {
-                launcher.identity_ready = true;
-                Some(identity)
-            }
+    // A file that is there but cannot be read is not an identity to create a new one over: its
+    // pairing key may still be recovered, so it stays as it is and the player is told.
+    let mut identity_unreadable = false;
+    let identity = if cfg!(feature = "demo-library") {
+        None
+    } else {
+        match store.identity() {
+            Ok(Some(saved)) => match ClientIdentity::from_pem(saved.unique_id, &saved.certificate_pem, &saved.private_key_pem) {
+                Ok(identity) => {
+                    launcher.identity_ready = true;
+                    Some(identity)
+                }
+                Err(e) => {
+                    eprintln!("nightjar: stored identity unusable ({e}); not creating a new one over it");
+                    let reason = format!("{} ({e})", crate::strings::tr(crate::strings::PAIRING_KEY_UNREADABLE));
+                    launcher.notify(crate::strings::tr("No pairing key"), reason.clone());
+                    launcher.identity_error = Some(reason);
+                    identity_unreadable = true;
+                    None
+                }
+            },
+            Ok(None) => None,
             Err(e) => {
-                eprintln!("nightjar: stored identity unusable ({e}); creating a new one");
+                eprintln!("nightjar: {e}; not creating a new pairing key");
+                let reason = format!("{} ({e})", crate::strings::tr(crate::strings::PAIRING_KEY_UNREADABLE));
+                launcher.notify(crate::strings::tr("No pairing key"), reason.clone());
+                launcher.identity_error = Some(reason);
+                identity_unreadable = true;
                 None
             }
-        },
-        None => None,
+        }
     };
     let screenshot_dir = std::env::var_os("NIGHTJAR_SCREENSHOT_DIR")
         .map(PathBuf::from)
@@ -928,6 +950,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         waking: wol::Wakes::default(),
         streaming: None,
         abr_stops: Vec::new(),
+        teardowns: Vec::new(),
         pending_launch: None,
         pending_replace: None,
         quitting_on_leave: None,
@@ -995,6 +1018,8 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         }
         // The demo library has no identity: without one nothing can ask a PC.
         None if cfg!(feature = "demo-library") => {}
+        // A file that could not be read keeps its place; a new identity would replace it.
+        None if identity_unreadable => {}
         None => {
             let (sender, receiver) = channel();
             let waker = app.waker.clone();

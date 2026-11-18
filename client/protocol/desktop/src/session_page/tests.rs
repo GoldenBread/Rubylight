@@ -457,7 +457,7 @@ fn live_host_answers_the_page() {
     let Some(address) = crate::sdl::test_input("NIGHTJAR_LIVE_ADDRESS", "the host's address") else { return };
     let (dir, address) = (dir.to_string_lossy().into_owned(), address.to_string_lossy().into_owned());
     let store = crate::config::Store::at(dir.into()).unwrap();
-    let saved = store.identity().expect("a saved identity");
+    let saved = store.identity().expect("a readable store").expect("a saved identity");
     let identity = Arc::new(ClientIdentity::from_pem(saved.unique_id, &saved.certificate_pem, &saved.private_key_pem).unwrap());
     let record = store.hosts().into_iter().find(|h| h.address == address && h.server_certificate.is_some()).expect("a paired host at that address");
     let page = Page::open(move || crate::hosts::client_for(&identity, &record, &address), Arc::new(|| {}));

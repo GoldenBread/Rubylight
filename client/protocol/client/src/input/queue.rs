@@ -17,6 +17,9 @@ use crate::control::wire::Delivery;
 
 /// Most packets waiting to be sent (`MAX_QUEUED_INPUT_PACKETS`).
 pub const MAX_QUEUED: usize = 150;
+/// Releases a full queue keeps room for above [`MAX_QUEUED`]: a key or button going up must reach
+/// the PC, so a burst of presses cannot take the room its release needs.
+const RELEASE_RESERVE: usize = 8;
 /// Mouse and pen motion closer together than this waits to be batched with the next.
 pub const MOTION_BATCHING_INTERVAL: Duration = Duration::from_millis(1);
 /// A relative motion floor that a 1 kHz mouse's reports, jitter included, stay clear of, while
@@ -95,6 +98,28 @@ enum Entry {
     Text(Vec<u8>),
 }
 
+/// Whether `entry` is something going up: a key or button release, a neutral controller, or a
+/// touch, pen or controller contact ending. A full queue keeps [`RELEASE_RESERVE`] for these.
+fn is_release(entry: &Entry) -> bool {
+    match entry {
+        Entry::Event(Pending { event, .. }) => match event {
+            InputEvent::Keyboard { down, .. } | InputEvent::MouseButton { down, .. } => !*down,
+            InputEvent::Touch { event, .. }
+            | InputEvent::Pen { event, .. }
+            | InputEvent::ControllerTouch { event, .. }
+            | InputEvent::Touchpad { event, .. } => {
+                matches!(*event, touch_event::UP | touch_event::CANCEL | touch_event::CANCEL_ALL | touch_event::HOVER_LEAVE)
+            }
+            _ => false,
+        },
+        Entry::Controller { state, .. } => matches!(
+            &state.event,
+            InputEvent::Controller { buttons: 0, left_trigger: 0, right_trigger: 0, left_stick: (0, 0), right_stick: (0, 0), .. }
+        ),
+        _ => false,
+    }
+}
+
 #[derive(Clone, Copy, Default)]
 struct SensorState {
     xyz: [f32; 3],
@@ -154,6 +179,9 @@ pub struct InputQueue {
     pen_barrel_roll: bool,
     controller_identity: bool,
     scroll_accumulator: i32,
+    /// Fractional wheel units (1/120 of a click) not yet sent, per axis: a trackpad reports a
+    /// fraction of a notch per event, and each turn carries the fraction it left.
+    wheel_units: (f64, f64),
     position: (f32, f32),
     last_mouse: Option<Instant>,
     last_pen: Option<Instant>,
@@ -187,6 +215,7 @@ impl InputQueue {
             pen_barrel_roll: false,
             controller_identity: false,
             scroll_accumulator: 0,
+            wheel_units: (0.0, 0.0),
             position: (0.5, 0.5),
             last_mouse: None,
             last_pen: None,
@@ -294,10 +323,26 @@ impl InputQueue {
 
     fn offer(&mut self, entry: Entry) -> Result<(), InputError> {
         if self.entries.len() >= MAX_QUEUED {
-            return Err(InputError::QueueFull);
+            let made_room = self.drop_unreliable();
+            if !made_room && (!is_release(&entry) || self.entries.len() >= MAX_QUEUED + RELEASE_RESERVE) {
+                return Err(InputError::QueueFull);
+            }
         }
         self.entries.push_back(entry);
         Ok(())
+    }
+
+    /// Drops the oldest event the protocol allows to be lost, to make room for one it does not
+    /// (a release, a key, a click): a full queue must never cost the host a button it still holds
+    /// down. Moves and hovers are the only entries that go.
+    fn drop_unreliable(&mut self) -> bool {
+        let Some(at) = self.entries.iter().position(|entry| {
+            matches!(entry, Entry::Event(pending) if pending.delivery == Delivery::Unreliable)
+        }) else {
+            return false;
+        };
+        self.entries.remove(at);
+        true
     }
 
     fn offer_event(&mut self, event: InputEvent) -> Result<(), InputError> {
@@ -656,6 +701,44 @@ impl InputQueue {
             self.scroll_accumulator -= click;
         }
         Ok(())
+    }
+
+    /// A wheel turn in the events' units: one is a whole notch, and a trackpad sends a fraction of
+    /// one per event. The fraction that is not a whole 1/120 of a click waits for the next turn,
+    /// so a slow scroll still moves the page instead of vanishing in the conversion. The vertical
+    /// axis goes first: a host that refuses horizontal scroll (GFE) must not cost the turn's
+    /// scroll, and a full queue on one axis must not drop the other.
+    pub fn send_wheel_turn(&mut self, x: f64, y: f64) -> Result<(), InputError> {
+        let vertical = self.send_wheel_axis(y, true);
+        let horizontal = self.send_wheel_axis(x, false);
+        vertical.and(horizontal)
+    }
+
+    fn send_wheel_axis(&mut self, units: f64, vertical: bool) -> Result<(), InputError> {
+        self.check()?;
+        if !units.is_finite() || units == 0.0 {
+            return Ok(());
+        }
+        let held = if vertical { self.wheel_units.1 } else { self.wheel_units.0 };
+        let total = held + units * f64::from(WHEEL_DELTA);
+        let whole = total.trunc().clamp(-32_000.0, 32_000.0) as i16;
+        if whole == 0 {
+            if vertical { self.wheel_units.1 = total } else { self.wheel_units.0 = total };
+            return Ok(());
+        }
+        let result = if vertical {
+            self.send_high_res_scroll(whole)
+        } else {
+            self.send_high_res_hscroll(whole)
+        };
+        let kept = match &result {
+            Ok(()) => total - f64::from(whole),
+            // The host never takes this axis: nothing would ever carry the fraction.
+            Err(InputError::Unsupported) => 0.0,
+            Err(_) => total,
+        };
+        if vertical { self.wheel_units.1 = kept } else { self.wheel_units.0 = kept };
+        result
     }
 
     pub fn send_hscroll(&mut self, clicks: i8) -> Result<(), InputError> {

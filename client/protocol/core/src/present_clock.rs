@@ -746,8 +746,9 @@ impl PresentClock {
         if let Some(last) = self.last_present {
             // Never before the frame before it; when spaced, also no closer than the display's
             // shortest interval, but never more than one interval past the frame's own time
-            // (see `Settings::min_interval_us`).
-            let min = if spaced { self.settings.min_interval_us.max(0) } else { 0 };
+            // (see `Settings::min_interval_us`). No interval at all (a display that reported no
+            // refresh rate) spaces nothing, and a bad one cannot overflow the sum below.
+            let min = if spaced { self.settings.min_interval_us.clamp(0, 1_000_000) } else { 0 };
             present = present.max((last + min).min(present + min)).max(last);
         }
         // A frame that raised the delay was due before it did.

@@ -139,10 +139,27 @@ pub fn end_before(connecting: Option<Connecting>, wait: Duration, teardown: impl
     end_all_before(connecting.into_iter().collect(), wait, teardown)
 }
 
+/// Waits for a previous session's teardown before this attempt's first request: a reconnect that
+/// launched while the old control connection was open made the PC see two of this device. A
+/// teardown still running after the wait is handed to `shared` for the app to join, never dropped.
+pub(super) fn wait_for_previous(previous: Option<super::Teardown>, shared: &Shared) {
+    let Some(mut previous) = previous else { return };
+    if !previous.join_until(Instant::now() + super::LEAVE_WAIT) {
+        eprintln!("nightjar: the previous session was still stopping after {} ms; reconnecting while it ends", super::LEAVE_WAIT.as_millis());
+        lock(&shared.teardowns).push(previous);
+    }
+}
+
 impl Connecting {
     /// What this start was asked to do: a failed start's card makes it again.
     pub fn plan(&self) -> &LaunchPlan {
         &self.plan
+    }
+
+    /// Sessions this attempt set aside to stop (a recovery that gave up, a previous session's
+    /// stop that timed out): the app takes them and joins them before the renderer goes.
+    pub fn take_teardowns(&self) -> Vec<super::Teardown> {
+        std::mem::take(&mut *lock(&self.shared.teardowns))
     }
 
     /// The game this stream plays, for the recent list; None when the PC has no unique id yet
@@ -151,7 +168,7 @@ impl Connecting {
         recent_game(&self.plan)
     }
 
-    pub fn start(mut plan: LaunchPlan, waker: Waker) -> Self {
+    pub fn start(mut plan: LaunchPlan, waker: Waker, previous: Option<super::Teardown>) -> Self {
         // All connection attempts enter here on the main thread, before the audio
         // worker starts. A missing output already allows streaming without sound.
         #[cfg(target_os = "macos")]
@@ -177,6 +194,9 @@ impl Connecting {
         let worker = std::thread::Builder::new()
             .name("connect".into())
             .spawn(move || {
+                // A reconnect of a session still stopping must not launch while its control
+                // connection and decoder are open: the PC would see two of this device.
+                wait_for_previous(previous, &worker_shared);
                 let result: Result<(Session, Facts, LaunchPlan), ConnectError> = match connect_with_recovery(&mut worker_plan, worker_shared, &worker_interrupt) {
                     // The screen left this start before it made a stream: nobody waits for its
                     // pictures, and a session nobody holds would stream unseen.
@@ -209,29 +229,47 @@ impl Connecting {
     }
 
     /// Cancels the launch and waits up to `wait` for the worker to end, stopping a session it
-    /// started. True once the worker has ended, so nothing it made is in use any more; false if it
-    /// is still running after `wait`.
+    /// started. True once the worker and that session's teardown have both ended, so nothing it
+    /// made is in use any more; false if it is still running after `wait`.
     pub fn finish(self, wait: Duration) -> bool {
         self.cancel();
         let deadline = Instant::now() + wait;
+        let mut teardown = super::Teardown::none();
         match self.result.recv_timeout(wait) {
             Ok(Ok((session, _, _))) => {
                 lock(&self.shared.roam_watch).take();
-                session.stop();
+                teardown = super::reap_session(session);
             }
             Ok(Err(_)) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => return false,
         }
         // After its result the worker only wakes the app.
-        let Some(worker) = self.worker else { return true };
-        while !worker.is_finished() {
-            if Instant::now() >= deadline { return false; }
-            std::thread::sleep(Duration::from_millis(2));
+        let mut worker_ended = true;
+        if let Some(worker) = self.worker {
+            while !worker.is_finished() {
+                if Instant::now() >= deadline {
+                    worker_ended = false;
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            if worker_ended && worker.join().is_err() {
+                eprintln!("nightjar: the connect thread panicked");
+            }
         }
-        if worker.join().is_err() {
-            eprintln!("nightjar: the connect thread panicked");
+        // The renderer's GPU device and the control connection go only once the session's own
+        // threads have ended; `end_all_before` keeps the renderer when this says false. Sessions
+        // the attempt set aside (a recovery that gave up, a previous stop that timed out) join
+        // under the same deadline.
+        let mut teardown = teardown;
+        let mut stopped = teardown.join_until(deadline);
+        for mut ended in std::mem::take(&mut *lock(&self.shared.teardowns)) {
+            stopped &= ended.join_until(deadline);
         }
-        true
+        if !stopped {
+            eprintln!("nightjar: a session did not stop within {} ms of leaving; the renderer stays until the process exits", wait.as_millis());
+        }
+        worker_ended && stopped
     }
 
     /// The stream presents for a VRR display (the setting is on and the swap chain tears).
@@ -274,7 +312,7 @@ impl Connecting {
             Ok(Ok((session, facts, plan))) => {
                 if expired {
                     lock(&self.shared.roam_watch).take();
-                    session.stop();
+                    lock(&self.shared.teardowns).push(super::reap_session(session));
                     Err(ConnectFailed::Message(recovery_gave_up(lock(&self.shared.last_failure).as_deref())))
                 } else {
                     self.plan = plan;
@@ -786,6 +824,10 @@ pub(super) enum JumboPreflight {
 pub(super) enum JumboSkip {
     /// Nothing asked for jumbo packets.
     NotAsked,
+    /// A resume of a session that may still be running (an automatic reconnect): the stream
+    /// keeps the packets its launch negotiated, and the PC refuses a probe while that session
+    /// runs (#126). A manual resume of a running game still probes.
+    Resume,
     /// A remote, public or tunnelled route: jumbo is only for the local network.
     Remote,
     /// The PC's serverinfo offers no more than stock packets.
@@ -798,6 +840,7 @@ impl JumboSkip {
     fn reason(self) -> &'static str {
         match self {
             Self::NotAsked => "not asked for",
+            Self::Resume => "not probed on a resume, which keeps the running session's packets",
             Self::Remote => "not tried over a remote or public route",
             Self::NotOffered => "asked for but this PC offers no more than stock packets",
             Self::NoProbe => "asked for but this PC cannot test the path",
@@ -805,10 +848,13 @@ impl JumboSkip {
     }
 }
 
-/// Whether to probe for jumbo packets this stream: only when the run or the setting asks, the
-/// PC offers more than stock, the PC can probe, and the route is local (`Local`, or `Auto` to a
-/// private address). A public `Auto` address becomes remote only later, in the session, so it
-/// must be refused here too.
+/// Whether to probe for jumbo packets this stream: only a new stream, when the run or the setting
+/// asks, the PC offers more than stock, the PC can probe, and the route is local (`Local`, or
+/// `Auto` to a private address). A public `Auto` address becomes remote only later, in the
+/// session, so it must be refused here too. An automatic reconnect probes nothing: the PC refuses
+/// a probe while the session it resumes runs, and the launch keeps the packet size that session
+/// negotiated. A manual resume of a running game is not that case and probes as before.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn jumbo_preflight(
     location: Location,
     address: Option<std::net::IpAddr>,
@@ -816,10 +862,13 @@ pub(super) fn jumbo_preflight(
     burst_probe: bool,
     packet_size: u32,
     jumbo_frames: bool,
+    auto_reconnect: bool,
 ) -> JumboPreflight {
     if !asks_for_jumbo(packet_size, jumbo_frames) {
         return JumboPreflight::Skip(JumboSkip::NotAsked);
     }
+    // The route decides first: a remote, VPN or tunnelled path never carries jumbo packets, not
+    // even the size a reconnect would otherwise keep, and uses the route's own stock size.
     let local = match location {
         Location::Local => true,
         Location::Remote => false,
@@ -827,6 +876,9 @@ pub(super) fn jumbo_preflight(
     };
     if !local {
         return JumboPreflight::Skip(JumboSkip::Remote);
+    }
+    if auto_reconnect {
+        return JumboPreflight::Skip(JumboSkip::Resume);
     }
     let Some(candidate) = jumbo_config_size(offered, packet_size) else {
         return JumboPreflight::Skip(JumboSkip::NotOffered);
@@ -845,6 +897,25 @@ pub(super) fn reset_packet_size(route: i32, requested: u32) -> i32 {
         requested as i32
     } else {
         route
+    }
+}
+
+/// The whole video packet size a launch asked the PC for, before the SDP takes the encryption
+/// header off: what the session's facts keep, so an automatic reconnect carries the same request
+/// and does not lose another 32 bytes per reconnect.
+pub(super) fn facts_packet_size(requested: i32, announced: i32) -> i32 {
+    let _ = announced;
+    requested.max(0)
+}
+
+/// The packet size a resume asks for: the whole size the running session asked for when it is
+/// known (an automatic reconnect carries it into its ANNOUNCE), else the route's or the run's stock
+/// size.
+pub(super) fn resume_packet_size(negotiated: u32, route: i32, requested: u32) -> i32 {
+    if negotiated > 0 {
+        negotiated as i32
+    } else {
+        reset_packet_size(route, requested)
     }
 }
 
@@ -1215,6 +1286,9 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
         packet_size = settings.packet_size as i32;
         eprintln!("nightjar: --packet-size {packet_size}");
     }
+    // A reconnect of a session that may still be live keeps its negotiated packet size and probes
+    // nothing; a manual resume of a running game probes as a new stream does.
+    let auto_reconnect = plan.resume && plan.recovery.is_some();
     let preflight = jumbo_preflight(
         location,
         plan.record.address.parse::<std::net::IpAddr>().ok(),
@@ -1222,6 +1296,7 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
         plan.info.pyrowave_burst_probe,
         settings.packet_size,
         settings.jumbo_frames,
+        auto_reconnect,
     );
     // Before the launch: the PC refuses a probe while a stream or a launch is pending (#126).
     let launched = preflight_then_launch(
@@ -1262,7 +1337,11 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
             JumboPreflight::Skip(JumboSkip::NotAsked) => {}
             JumboPreflight::Skip(reason) => {
                 eprintln!("nightjar: jumbo video packets {}; streaming normal packets", reason.reason());
-                packet_size = reset_packet_size(route_packet_size, settings.packet_size);
+                packet_size = if auto_reconnect && reason == JumboSkip::Resume {
+                    resume_packet_size(plan.negotiated_packet_size, route_packet_size, settings.packet_size)
+                } else {
+                    reset_packet_size(route_packet_size, settings.packet_size)
+                };
             }
         },
         || {
@@ -1450,6 +1529,7 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
         height: outcome.config.height,
         fps: outcome.config.fps,
         bitrate_kbps: outcome.config.bitrate_kbps,
+        packet_size: facts_packet_size(packet_size, outcome.config.packet_size),
         format: outcome.negotiated_video_format,
         host_timing: outcome.host_control_messages.contains(&HOST_TIMING_MESSAGE_TYPE),
         link_notice: outcome.host_control_messages.contains(&LINK_NOTICE_MESSAGE_TYPE),

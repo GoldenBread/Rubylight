@@ -67,6 +67,11 @@ fn jumbo_packets_are_announced_within_the_streams_offer() {
     // A jumbo request without an offer streams stock packets; a stock request stays as it was.
     assert_eq!(announced(8192, 0, true), 1360);
     assert_eq!(announced(1392, 8192, true), 1360);
+    // A request smaller than the encrypted header cannot become a negative size: the smallest
+    // datagram that has room for the header is announced instead.
+    assert_eq!(announced(16, 8192, true), 32);
+    assert_eq!(announced(0, 0, true), 32);
+    assert_eq!(announced(16, 8192, false), 16, "unencrypted keeps the request");
 }
 
 #[test]

@@ -461,6 +461,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Could not import shortcuts", "ショートカットをインポートできませんでした"),
     ("File dialog unavailable", "ファイルダイアログを利用できません"),
     ("No pairing key", "ペアリングキーがありません"),
+    ("This device’s pairing key cannot be read. Restore or remove identity.json, then start Nightjar again.", "このデバイスのペアリングキーを読み取れません。identity.json を復元するか削除してから、Nightjar を起動し直してください。"),
     ("Waking {}…", "{}をウェイクしています…"),
     ("Sending Wake-on-LAN until the PC answers.", "PCが応答するまでWake-on-LANを送信しています。"),
     ("The PC did not wake up", "PCがウェイクしませんでした"),

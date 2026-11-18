@@ -376,7 +376,7 @@ impl App {
         let decode_time = streaming.decode_time_line().filter(|_| self.launcher.settings.post_stream_decode_time && reconnect.is_none());
         // Kept for the next stream, which turns the PC's automatic bitrate on only after it is off.
         let stopped_host = streaming.host_id;
-        let stop = streaming.finish(self.window, &mut self.pads);
+        let (stop, teardown) = streaming.finish(self.window, &mut self.pads);
         // A player who just left a stream, maybe with a controller, is still there.
         self.screen_awake.active(Instant::now());
         // The ones that reached their PC are done with; another PC's stays beside this one.
@@ -398,8 +398,12 @@ impl App {
         }
         if let Some(mut plan) = reconnect {
             self.refresh_plan(&mut plan);
-            self.attempts.begin(Connecting::start(plan, self.waker.clone()));
+            // The old session's threads join before the next launch's HTTP request (the connect
+            // thread joins this handle first): its control connection must be closed first, or
+            // the PC sees two of this device.
+            self.attempts.begin(Connecting::start(plan, self.waker.clone(), Some(teardown)));
         } else {
+            self.push_teardown(teardown);
         // A failure the PC ended the stream on: the message waits for the poll just started,
         // which carries the PC's own words for it where it says them.
         let reason_poll = match exit {

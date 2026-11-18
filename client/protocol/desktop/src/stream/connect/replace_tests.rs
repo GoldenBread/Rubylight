@@ -20,6 +20,7 @@ pub(super) fn launch_plan() -> LaunchPlan {
             monitor_resume: false,
         },
         resume: false,
+        negotiated_packet_size: 0,
         join: false,
         small_stream_input_only: false,
         mic_only: false,
@@ -126,17 +127,28 @@ fn jumbo_is_probed_only_on_a_local_route_and_only_when_the_pc_offers_it() {
     use std::net::IpAddr;
     let private: IpAddr = "192.168.1.20".parse().unwrap();
     let public: IpAddr = "203.0.113.5".parse().unwrap();
-    assert_eq!(jumbo_preflight(Location::Local, None, 8192, true, 0, true), JumboPreflight::Probe { candidate: 8192 });
+    assert_eq!(jumbo_preflight(Location::Local, None, 8192, true, 0, true, false), JumboPreflight::Probe { candidate: 8192 });
     // Auto follows the session: a private address is local, a public one is remote.
-    assert_eq!(jumbo_preflight(Location::Auto, Some(private), 8192, true, 0, true), JumboPreflight::Probe { candidate: 8192 });
-    assert_eq!(jumbo_preflight(Location::Auto, Some(public), 8192, true, 0, true), JumboPreflight::Skip(JumboSkip::Remote));
-    assert_eq!(jumbo_preflight(Location::Remote, Some(private), 8192, true, 0, true), JumboPreflight::Skip(JumboSkip::Remote));
+    assert_eq!(jumbo_preflight(Location::Auto, Some(private), 8192, true, 0, true, false), JumboPreflight::Probe { candidate: 8192 });
+    assert_eq!(jumbo_preflight(Location::Auto, Some(public), 8192, true, 0, true, false), JumboPreflight::Skip(JumboSkip::Remote));
+    assert_eq!(jumbo_preflight(Location::Remote, Some(private), 8192, true, 0, true, false), JumboPreflight::Skip(JumboSkip::Remote));
     // The setting alone, the PC's offer and a probe-capable PC are all required.
-    assert_eq!(jumbo_preflight(Location::Local, None, 8192, true, 0, false), JumboPreflight::Skip(JumboSkip::NotAsked));
-    assert_eq!(jumbo_preflight(Location::Local, None, 0, true, 0, true), JumboPreflight::Skip(JumboSkip::NotOffered));
-    assert_eq!(jumbo_preflight(Location::Local, None, 8192, false, 0, true), JumboPreflight::Skip(JumboSkip::NoProbe));
+    assert_eq!(jumbo_preflight(Location::Local, None, 8192, true, 0, false, false), JumboPreflight::Skip(JumboSkip::NotAsked));
+    assert_eq!(jumbo_preflight(Location::Local, None, 0, true, 0, true, false), JumboPreflight::Skip(JumboSkip::NotOffered));
+    assert_eq!(jumbo_preflight(Location::Local, None, 8192, false, 0, true, false), JumboPreflight::Skip(JumboSkip::NoProbe));
     // A forced size is capped at the PC's offer, not probed above it.
-    assert_eq!(jumbo_preflight(Location::Local, None, 4096, true, 8192, false), JumboPreflight::Probe { candidate: 4096 });
+    assert_eq!(jumbo_preflight(Location::Local, None, 4096, true, 8192, false, false), JumboPreflight::Probe { candidate: 4096 });
+    // An automatic reconnect keeps the packets the running session negotiated: the PC refuses a
+    // probe while it runs (#126), so a probe there only delayed the reconnect and fell back.
+    assert_eq!(jumbo_preflight(Location::Local, None, 8192, true, 0, true, true), JumboPreflight::Skip(JumboSkip::Resume));
+    assert_eq!(jumbo_preflight(Location::Local, None, 8192, true, 8192, false, true), JumboPreflight::Skip(JumboSkip::Resume));
+    // A manual resume of a running game is not an automatic reconnect and probes as before.
+    assert_eq!(jumbo_preflight(Location::Local, None, 8192, true, 0, true, false), JumboPreflight::Probe { candidate: 8192 });
+    // The resume's ANNOUNCE carries the negotiated size; an unknown one falls back to the route.
+    assert_eq!(resume_packet_size(8160, 1392, 0), 8160);
+    assert_eq!(resume_packet_size(8160, 1392, 1024), 8160);
+    assert_eq!(resume_packet_size(0, 1392, 8192), 1392);
+    assert_eq!(resume_packet_size(0, 1392, 1024), 1024);
     // A failed pre-flight hands a forced jumbo size back to the route, but keeps a stock run.
     assert_eq!(reset_packet_size(1024, 8192), 1024);
     assert_eq!(reset_packet_size(1392, 8192), 1392);
@@ -482,4 +494,32 @@ fn a_launch_that_failed_on_its_decoder_says_why() {
     let mut plain = connecting(result, None);
     sender.send(Err(ConnectError { message: "Could not start the stream".into(), retryable: false, asks_replace: false, moved_to: None, packed_refused: false, cause: None })).unwrap();
     assert!(matches!(plain.poll(), Err(ConnectFailed::Message(message)) if message == "Could not start the stream"));
+}
+
+// An automatic reconnect still tests the route first: a remote, VPN or tunnelled path uses the
+// route's stock size and never the size a local session negotiated.
+#[test]
+fn a_remote_route_keeps_only_stock_packets_even_on_a_reconnect() {
+    use std::net::IpAddr;
+    let public: IpAddr = "203.0.113.5".parse().unwrap();
+    assert_eq!(jumbo_preflight(Location::Remote, None, 8192, true, 0, true, true), JumboPreflight::Skip(JumboSkip::Remote));
+    assert_eq!(jumbo_preflight(Location::Auto, Some(public), 8192, true, 0, true, true), JumboPreflight::Skip(JumboSkip::Remote));
+    assert_eq!(jumbo_preflight(Location::Local, None, 8192, true, 0, true, true), JumboPreflight::Skip(JumboSkip::Resume));
+}
+
+// Three encrypted reconnects ask for the same whole packet size: the ANNOUNCE takes its 32-byte
+// header off each time, and the session's facts keep what was asked, not the reduced size.
+#[test]
+fn three_encrypted_reconnects_keep_the_requested_packet_size() {
+    for (whole, announced) in [(8192i32, 8160i32), (1424, 1392)] {
+        let mut requested = whole;
+        for _ in 0..3 {
+            let announced_now = nightjar_core::sdp::announced_packet_size(requested, 8192, true);
+            assert_eq!(announced_now, announced, "the ANNOUNCE's size for {whole}");
+            // The session's facts keep the whole request, and the next reconnect carries it.
+            let next = resume_packet_size(facts_packet_size(requested, announced_now) as u32, 1392, 0);
+            assert_eq!(next, whole, "the reconnect after {requested} asks for {next}");
+            requested = next;
+        }
+    }
 }

@@ -303,6 +303,15 @@ fn jumbo_packet_size(requested: i32, offered: u16) -> i32 {
     packet - packet % 16
 }
 
+/// The `x-nv-video[0].packetSize` the ANNOUNCE asks for, in whole datagrams: the jumbo size, less
+/// the encrypted video header's 32 bytes when the stream is encrypted. A smaller ask than that
+/// header (a hand-written setting, a host's tiny offer) is clamped to it: a negative size would
+/// reach the PC as an unsigned field and mean a packet larger than any datagram.
+pub fn announced_packet_size(requested: i32, offered: u16, encrypted: bool) -> i32 {
+    let whole = jumbo_packet_size(requested, offered);
+    if encrypted { (whole - ENC_VIDEO_HEADER_SIZE).max(ENC_VIDEO_HEADER_SIZE) } else { whole }
+}
+
 /// The HDR format the description asks for, if the stream can carry it: a 10-bit HEVC or AV1
 /// stream, Dolby Vision 8.1 and 8.4 only on HEVC and 10.1 only on AV1; on a 10-bit PyroWave
 /// stream only HLG, and only when the host offers
@@ -406,10 +415,8 @@ pub fn generate(p: &SdpParams<'_>) -> Sdp {
     }
     a.add("x-nv-video[0].clientViewportHt", c.height);
     a.add("x-nv-video[0].maxFPS", c.fps);
-    let mut packet_size = jumbo_packet_size(c.packet_size, p.max_video_packet);
-    if enabled & SS_ENC_VIDEO != 0 {
-        packet_size -= ENC_VIDEO_HEADER_SIZE;
-    }
+    let video_enabled = enabled & SS_ENC_VIDEO != 0;
+    let packet_size = announced_packet_size(c.packet_size, p.max_video_packet, video_enabled);
     a.add("x-nv-video[0].packetSize", packet_size);
     // Foundation Sunshine's client FEC control, where V+'s SdpGenerator.c puts it.
     if let Some(percentage) = p.video_fec_percentage {

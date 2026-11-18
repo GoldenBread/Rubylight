@@ -609,6 +609,19 @@ fn silent_host_input_is_held_then_replaced_by_the_current_state() {
 }
 
 #[test]
+fn a_release_is_never_dropped_for_a_full_queue() {
+    let mut q = queue(&sunshine());
+    for _ in 0..MAX_QUEUED {
+        q.send_touch(touch_event::MOVE, 1, 0.5, 0.5, 1., 0., 0., 0).unwrap();
+    }
+    q.send_mouse_button(1, true).expect("a move gives way to a press");
+    let mut out = Vec::new();
+    q.drain(Instant::now(), false, &mut out);
+    assert_eq!(out.len(), MAX_QUEUED, "the queue stays bounded");
+    assert_eq!(decode(&out.last().unwrap().data).unwrap(), Input::MouseButton { button: 1, down: true });
+}
+
+#[test]
 fn stopped_and_full_queues_refuse_input() {
     let mut q = queue(&sunshine());
     for i in 0..MAX_QUEUED {
@@ -620,4 +633,50 @@ fn stopped_and_full_queues_refuse_input() {
     assert_eq!(out.len(), MAX_QUEUED);
     q.stop();
     assert_eq!(q.send_keyboard(1, true, 0, 0), Err(InputError::Stopped));
+}
+
+// A trackpad sends a fraction of a notch per event: the fraction is carried to the next turn,
+// not truncated away, so a slow scroll still reaches the PC.
+#[test]
+fn a_wheel_turn_smaller_than_a_unit_is_carried_to_the_next() {
+    let mut q = queue(&gfe());
+    for _ in 0..999 {
+        q.send_wheel_turn(0.0, 0.001).unwrap();
+    }
+    let mut out = Vec::new();
+    q.poll(Instant::now(), false, &mut out);
+    assert!(out.is_empty(), "999 turns of 1/1000 notch are 119.88 of the 120 in a click");
+    q.send_wheel_turn(0.0, 0.001).unwrap();
+    out.clear();
+    q.poll(Instant::now(), false, &mut out);
+    assert_eq!(out.len(), 1);
+    assert_eq!(decode(&out[0].data).unwrap(), Input::Scroll { amount: 120, horizontal: false });
+}
+
+// The vertical axis goes first: a host that refuses horizontal scroll (GFE) must not cost the
+// turn's scroll.
+#[test]
+fn a_wheel_turn_sends_the_vertical_axis_when_the_horizontal_one_is_refused() {
+    let mut q = queue(&gfe());
+    assert_eq!(q.send_wheel_turn(1.0, 1.0), Err(InputError::Unsupported), "GFE takes no horizontal scroll");
+    let mut out = Vec::new();
+    q.poll(Instant::now(), false, &mut out);
+    assert_eq!(out.len(), 1, "the vertical click went out");
+    assert_eq!(decode(&out[0].data).unwrap(), Input::Scroll { amount: 120, horizontal: false });
+}
+
+// A full queue keeps a small reserve for releases: a burst of presses cannot take the room a
+// key or button going up needs.
+#[test]
+fn a_release_fits_the_reserve_above_a_full_queue() {
+    let mut q = queue(&sunshine());
+    for i in 0..MAX_QUEUED {
+        q.send_mouse_button(1, i % 2 == 0).unwrap();
+    }
+    assert_eq!(q.send_keyboard(0x41, true, 0, 0), Err(InputError::QueueFull), "a press does not take the reserve");
+    q.send_keyboard(0x41, false, 0, 0).expect("a release fits its reserve");
+    let mut out = Vec::new();
+    q.drain(Instant::now(), false, &mut out);
+    assert_eq!(out.len(), MAX_QUEUED + 1, "one release above the bound");
+    assert!(matches!(decode(&out.last().unwrap().data).unwrap(), Input::Keyboard { key: 0x41, down: false, .. }));
 }

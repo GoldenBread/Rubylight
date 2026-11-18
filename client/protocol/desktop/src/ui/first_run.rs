@@ -121,8 +121,11 @@ impl Launcher {
 
     /// What is happening, in as few words as say so, and whether the search runs. A search that
     /// could not start is said in the page's own ink: Add PC is the way on, and Search again the fix.
-    fn search_words(&self, view: &View<'_>) -> (&'static str, bool) {
-        if !self.identity_ready {
+    fn search_words(&self, view: &View<'_>) -> (&str, bool) {
+        if let Some(reason) = &self.identity_error {
+            // A key that cannot be read never arrives: say why instead of waiting for it.
+            (reason, false)
+        } else if !self.identity_ready {
             (tr("Creating this device’s pairing key…"), true)
         } else if view.hosts.discovering {
             (tr("Searching for PCs…"), true)

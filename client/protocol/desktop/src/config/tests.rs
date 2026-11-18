@@ -1230,13 +1230,55 @@ fn files_are_replaced_whole_and_only_the_user_reads_them() {
     store.save_identity(&identity).unwrap();
     let names: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
     assert_eq!(names, ["identity.json"], "no temporary file is left behind");
-    assert!(store.identity().is_some());
+    assert!(store.identity().unwrap().is_some());
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let mode = std::fs::metadata(dir.join("identity.json")).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600, "the private key is the user's alone");
     }
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn an_override_this_version_cannot_read_keeps_the_base_setting() {
+    let base = Settings { fps: 60, ..Default::default() };
+    let overrides = Overrides(serde_json::Map::from_iter([("fps".to_owned(), serde_json::json!(-1))]));
+    assert_eq!(overrides.apply(&base), base, "a bad override costs its entry, not the UI");
+}
+
+#[test]
+fn an_unreadable_file_keeps_its_bytes_and_refuses_a_save_over_it() {
+    let dir = std::env::temp_dir().join(format!("nightjar-unreadable-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    let store = Store::at(dir.clone()).unwrap();
+    // A directory where the file should be: the read fails for a reason that is not "no file".
+    std::fs::create_dir(dir.join("hosts.json")).unwrap();
+    assert!(store.hosts().is_empty(), "a default stands in for the contents");
+    let error = store.save_hosts(&[]).expect_err("the unreadable file is not replaced");
+    assert!(error.to_string().contains("left as it is"), "{error}");
+    assert!(dir.join("hosts.json").is_dir(), "it is still there");
+
+    std::fs::create_dir(dir.join("settings.json")).unwrap();
+    let _ = store.settings();
+    assert!(store.save_settings(&Settings::default()).is_err(), "nor the settings over it");
+    assert!(dir.join("settings.json").is_dir());
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn an_identity_that_cannot_be_read_is_kept_and_never_replaced() {
+    let dir = std::env::temp_dir().join(format!("nightjar-identity-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    let store = Store::at(dir.clone()).unwrap();
+    assert_eq!(store.identity().unwrap(), None, "no file: a new key can be made");
+    let damaged = br#"{"unique_id":"kept","certificate_pem":"#;
+    std::fs::write(dir.join("identity.json"), damaged).unwrap();
+    assert!(store.identity().is_err(), "a file this version cannot read is not none");
+    assert!(dir.join("identity.json.bad").is_file(), "a copy is kept beside it");
+    let identity = Identity { unique_id: "new".into(), certificate_pem: "cert".into(), private_key_pem: "key".into() };
+    assert!(store.save_identity(&identity).is_err(), "no new identity is written over it");
+    assert_eq!(std::fs::read(dir.join("identity.json")).unwrap(), damaged, "the pairing key stays as it was");
     std::fs::remove_dir_all(dir).ok();
 }
 

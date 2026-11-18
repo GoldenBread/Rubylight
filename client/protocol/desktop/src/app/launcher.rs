@@ -224,6 +224,9 @@ impl App {
         // Ending attempts that their workers let go of since the last frame (a stuck one stays):
         // the settings below must see what is still in use, not what ended moments ago.
         self.attempts.reap();
+        for ended in self.attempts.drain_teardowns() {
+            self.push_teardown(ended);
+        }
         #[cfg(target_os = "linux")]
         self.apply_renderer_choice();
         #[cfg(windows)]
@@ -369,11 +372,16 @@ impl App {
                 self.identity = None;
                 match result {
                     Ok(identity) => {
-                        let _ = self.store.save_identity(&config::Identity {
+                        let saved = config::Identity {
                             unique_id: identity.unique_id().to_owned(),
                             certificate_pem: identity.certificate_pem().to_owned(),
                             private_key_pem: identity.private_key_pem().to_owned(),
-                        });
+                        };
+                        if let Err(e) = self.store.save_identity(&saved) {
+                            eprintln!("nightjar: saving the pairing key failed: {e}");
+                            self.launcher.notify(crate::strings::tr("Could not save this choice"),
+                                format!("The pairing key could not be saved, so the PCs paired with this device have to be paired again after a restart: {e}"));
+                        }
                         self.hosts.set_identity(Arc::new(identity));
                         self.launcher.identity_ready = true;
                         self.hosts.poll(true, None);
@@ -572,6 +580,9 @@ impl App {
         // A cancelled start's worker may still be inside a call that cannot be stopped; it ends on
         // its own, and a stream it makes late is stopped there.
         self.attempts.reap();
+        for ended in self.attempts.drain_teardowns() {
+            self.push_teardown(ended);
+        }
         // The worker's answer comes first: one that arrives just as its deadline passes is a
         // result, not silence (a start that keeps reporting stages moves its deadline, `poll`).
         let mut answered = false;
@@ -580,12 +591,15 @@ impl App {
                 Ok(Some((session, facts))) => {
                     answered = true;
                     let connecting = self.attempts.take().expect("connecting");
+                    for ended in connecting.take_teardowns() {
+                        self.push_teardown(ended);
+                    }
                     if decodes_on_device(connecting.plan()) && !connecting.plan().device.holds(self.renderer_device()) {
                         // SDL made its Direct3D 11 device again while connecting (a driver reset):
                         // the decoder's pictures are on the old device, which nothing draws.
                         let why = connecting.plan().device.removed_reason().map_or(String::new(), |why| format!(" (the old one was removed: {why})"));
                         eprintln!("nightjar: the renderer's Direct3D 11 device changed while connecting{why}; the stream ends");
-                        session.stop();
+                        self.push_teardown(stream::reap_session(session));
                         self.launcher.notify(tr("The stream could not start"), tr("The graphics driver was reset, which ended the stream. Connect again."));
                     } else {
                         self.begin_stream(connecting, session, facts);
@@ -595,6 +609,11 @@ impl App {
                 Ok(None) => {}
                 Err(failed) => {
                     answered = true;
+                    // A recovery that gave up may have set a session aside to stop: keep its
+                    // teardown before the attempt goes.
+                    for ended in self.attempts.drain_teardowns() {
+                        self.push_teardown(ended);
+                    }
                     let gone = self.attempts.take();
                     match failed {
                         ConnectFailed::Message(e) => match gone {

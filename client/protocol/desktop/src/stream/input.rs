@@ -76,15 +76,11 @@ pub(super) fn pointer_goes_out(captured: bool, focused: bool) -> bool {
     captured && focused
 }
 
-/// A wheel turn as the PC's high-resolution scroll.
+/// A wheel turn as the PC's high-resolution scroll. SDL gives a trackpad's turn in fractions of a
+/// notch; the queue carries the fraction to the next turn.
 pub(super) fn send_wheel(w: &SDL_MouseWheelEvent, q: &mut nightjar_core::input::InputQueue) {
     let (x, y) = crate::sdl::wheel_turn(w);
-    if y != 0.0 {
-        let _ = q.send_high_res_scroll((y * 120.0).clamp(-32000.0, 32000.0) as i16);
-    }
-    if x != 0.0 {
-        let _ = q.send_high_res_hscroll((x * 120.0).clamp(-32000.0, 32000.0) as i16);
-    }
+    let _ = q.send_wheel_turn(f64::from(x), f64::from(y));
 }
 
 impl Streaming {

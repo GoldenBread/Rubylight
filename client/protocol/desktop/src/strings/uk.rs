@@ -461,6 +461,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Could not import shortcuts", "Не вдалося імпортувати комбінації"),
     ("File dialog unavailable", "Діалог файлів недоступний"),
     ("No pairing key", "Немає ключа сполучення"),
+    ("This device’s pairing key cannot be read. Restore or remove identity.json, then start Nightjar again.", "Не вдається прочитати ключ сполучення цього пристрою. Відновіть або видаліть identity.json і знову запустіть Nightjar."),
     ("Waking {}…", "Пробудження {}…"),
     ("Sending Wake-on-LAN until the PC answers.", "Надсилання Wake-on-LAN, доки ПК не відповість."),
     ("The PC did not wake up", "ПК не прокинувся"),

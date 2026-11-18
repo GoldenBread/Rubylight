@@ -461,6 +461,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Could not import shortcuts", "Không thể nhập phím tắt"),
     ("File dialog unavailable", "Hộp thoại tệp không khả dụng"),
     ("No pairing key", "Không có khóa ghép đôi"),
+    ("This device’s pairing key cannot be read. Restore or remove identity.json, then start Nightjar again.", "Không thể đọc khóa ghép nối của thiết bị này. Hãy khôi phục hoặc xóa identity.json, rồi khởi động lại Nightjar."),
     ("Waking {}…", "Đang đánh thức {}…"),
     ("Sending Wake-on-LAN until the PC answers.", "Đang gửi Wake-on-LAN cho đến khi PC phản hồi."),
     ("The PC did not wake up", "PC chưa được đánh thức"),

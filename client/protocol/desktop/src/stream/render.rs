@@ -56,7 +56,15 @@ impl StreamSizes {
 
     /// The stream's part of a picture of `coded` size arriving at `now`, and whether it confirms
     /// `pending`, the size asked for and when, not confirmed yet.
+    #[cfg(test)]
     pub(super) fn arrive(&mut self, coded: (i32, i32), pending: Option<((i32, i32), Instant)>, now: Instant) -> ((i32, i32), bool) {
+        let (visible, confirmed, _) = self.arrive_mode(coded, pending, now);
+        (visible, confirmed)
+    }
+
+    /// [`arrive`](Self::arrive), also saying whether the size is one the PC applied after the
+    /// timeout dropped its pending request: no confirmation, but the asked mode is applied with it.
+    pub(super) fn arrive_mode(&mut self, coded: (i32, i32), pending: Option<((i32, i32), Instant)>, now: Instant) -> ((i32, i32), bool, bool) {
         use nightjar_core::video::crop::visible_size;
         if self.previous.is_some_and(|(_, at)| now.saturating_duration_since(at) >= SWITCH_GRACE) { self.previous = None; }
         let sizes = [self.asked, self.current];
@@ -77,7 +85,26 @@ impl StreamSizes {
             self.previous = Some((self.current, now));
             self.current = visible;
         }
-        (visible, confirmed)
+        (visible, confirmed, late)
+    }
+}
+
+/// What a picture whose size applies a reconfigure asks for: a confirmation only moves the rate
+/// (the size and settings were set when it was asked), while a late apply after the timeout must
+/// set the whole mode, which the timeout had put back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ModeApply {
+    Rate(Reconfigure),
+    Whole(Reconfigure),
+}
+
+fn mode_to_apply(confirmed: bool, late: bool, pending: Option<Reconfigure>, late_mode: Option<Reconfigure>) -> Option<ModeApply> {
+    if confirmed {
+        pending.map(ModeApply::Rate)
+    } else if late {
+        late_mode.map(ModeApply::Whole)
+    } else {
+        None
     }
 }
 
@@ -175,12 +202,27 @@ impl Streaming {
                 // The size without an encoder's alignment padding, worked out once on arrival: the
                 // presenter shows that part of this picture whatever was asked for since.
                 let pending = self.pending_mode.map(|(mode, at)| ((i32::from(mode.width), i32::from(mode.height)), at));
-                let ((width, height), confirmed) = self.stream_sizes.arrive(coded, pending, Instant::now());
+                let ((width, height), confirmed, late) = self.stream_sizes.arrive_mode(coded, pending, Instant::now());
                 decoded.visible = Some((width, height));
                 self.facts.width = width;
                 self.facts.height = height;
-                if confirmed {
-                    if let Some((mode, _)) = self.pending_mode.take() { self.stream_rate_changed(mode.fps_millihz.div_ceil(1000)); }
+                if confirmed || late {
+                    self.fps_evidence = 0;
+                    self.mode_before = None;
+                    let pending = self.pending_mode.map(|(mode, _)| mode);
+                    match mode_to_apply(confirmed, late, pending, self.late_mode) {
+                        Some(ModeApply::Rate(mode)) => {
+                            self.pending_mode = None;
+                            self.late_mode = None;
+                            self.stream_rate_changed(mode.fps_millihz.div_ceil(1000));
+                        }
+                        // The timeout already put the old mode back: apply the whole asked mode.
+                        Some(ModeApply::Whole(mode)) => {
+                            self.late_mode = None;
+                            self.apply_mode(mode);
+                        }
+                        None => {}
+                    }
                 }
             } else if decoded.setup.chroma_packing != 0 || decoded.setup.format & VIDEO_FORMAT_MASK_PYROWAVE != 0 {
                 // The menu's header and the session page name the stream's size: PyroWave and packed
@@ -193,6 +235,7 @@ impl Streaming {
                     let delta = ((decoded.receive_us - received) as f64 / 1000.0 - f64::from(ticks) / 90.0).abs();
                     self.jitter_ms = if self.jitter_ms < 0.0 { delta } else { self.jitter_ms + (delta - self.jitter_ms) / 16.0 };
                 }
+                self.fps_evidence_step(ticks);
             }
             self.last_arrival = Some((decoded.rtp, decoded.receive_us));
             self.doctor.arrived(decoded.rtp, decoded.host_latency, decoded.receive_us, self.facts.fps.max(0) as u32);
@@ -207,7 +250,23 @@ impl Streaming {
         self.observe_slices(&mut slices);
         self.taken_slices = slices;
         if self.pending_mode.is_some_and(|(_, at)| at.elapsed() >= Duration::from_secs(5)) {
-            self.pending_mode = None;
+            // Kept for a picture of its size that arrives late: the PC may apply it after all.
+            self.late_mode = self.pending_mode.take().map(|(mode, _)| mode);
+            self.fps_evidence = 0;
+            // The host applied nothing: rate, size, settings, the request in flight, the bitrate
+            // policy and the menu's rate go back together, so no field keeps the asked mode.
+            if let Some(before) = self.mode_before.take() {
+                before.restore(&mut self.facts.fps, &self.shared.fps_millihz, &mut self.settings, &mut self.requested_mode);
+                self.plan.settings = self.settings.clone();
+                self.decode_generation += 1;
+                self.decode_window_us = session::now_us();
+                *lock(&self.shared.decode_window) = pipeline::DecodeWindow::default();
+                if let Some(rate) = &mut self.bitrate_policy {
+                    rate.set_mode(u32::from(before.requested.width), u32::from(before.requested.height), before.requested.fps_millihz.div_ceil(1000));
+                }
+                if let Some(rates) = &mut self.rate_change { rates.fps_set(before.fps_millihz); }
+                self.stream_rate_changed(before.fps_millihz.div_ceil(1000).max(1));
+            }
             let quality_on = self.quality_mode != QualityMode::Off;
             self.quality_policy = None;
             self.quality_mode = QualityMode::Off;
@@ -1637,6 +1696,28 @@ mod tests {
         assert_eq!(shown, [((1904, 1080), true), ((1904, 1080), false), ((1904, 1080), false), ((1904, 1080), false)]);
     }
 
+
+
+    #[test]
+    fn a_late_size_applies_the_whole_mode_and_a_confirmation_only_the_rate() {
+        let asked = Reconfigure { width: 2184, height: 1968, fps_millihz: 90_000 };
+        let old = Reconfigure { width: 1920, height: 1080, fps_millihz: 60_000 };
+        assert_eq!(mode_to_apply(true, false, Some(asked), Some(old)), Some(ModeApply::Rate(asked)));
+        assert_eq!(mode_to_apply(false, true, None, Some(asked)), Some(ModeApply::Whole(asked)), "the timeout put the whole mode back");
+        assert_eq!(mode_to_apply(false, false, Some(asked), Some(old)), None);
+        assert_eq!(mode_to_apply(false, true, None, None), None);
+    }
+    #[test]
+    fn a_size_applied_after_the_timeout_reports_itself_for_its_mode() {
+        let t0 = Instant::now();
+        let mut sizes = StreamSizes::new((1920, 1080));
+        sizes.ask((2184, 1968));
+        // The timeout cleared the pending request; the PC switches later.
+        assert_eq!(sizes.arrive_mode((2240, 1968), None, t0 + Duration::from_secs(6)), ((2184, 1968), false, true));
+        // A picture of the size the stream already shows is no late apply.
+        let (_, _, late) = sizes.arrive_mode((2240, 1968), None, t0 + Duration::from_secs(7));
+        assert!(!late);
+    }
     #[test]
     fn a_size_the_pc_applies_after_the_timeout_is_still_cropped() {
         // The 5 s timeout cleared the pending 2184x1968 (`pump` drops it); the PC switches later.

@@ -461,6 +461,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Could not import shortcuts", "無法匯入快捷鍵"),
     ("File dialog unavailable", "檔案對話方塊不可用"),
     ("No pairing key", "沒有配對金鑰"),
+    ("This device’s pairing key cannot be read. Restore or remove identity.json, then start Nightjar again.", "無法讀取此裝置的配對金鑰。請還原或刪除 identity.json，然後重新啟動 Nightjar。"),
     ("Waking {}…", "正在喚醒 {}…"),
     ("Sending Wake-on-LAN until the PC answers.", "正在傳送 Wake-on-LAN，直到電腦回應。"),
     ("The PC did not wake up", "電腦沒有被喚醒"),
