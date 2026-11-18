@@ -576,15 +576,9 @@ impl VideoReceiver {
         }
         let mut buf = self.pools.packet();
         let len = if let Some(decryptor) = &self.decryptor {
-            // Drop shards of frames already reassembled before spending time on decryption. A
-            // frame number a jump behind the queue's position is not an old frame: it is a
-            // corrupt or stale counter, and the queue resyncs on the decrypted packet instead
-            // of dropping every real frame as "before" the jumped position.
+            // Drop shards of frames already reassembled before spending time on decryption.
             let frame = le32(datagram, 12);
-            if frame != 0
-                && frame < self.queue.current_frame_number()
-                && !self.queue.frame_is_a_jump(frame)
-            {
+            if frame != 0 && frame < self.queue.current_frame_number() {
                 self.pools.recycle_packet(buf);
                 return;
             }

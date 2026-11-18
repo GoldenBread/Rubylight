@@ -17,20 +17,6 @@ pub const FEC_STATUS_TYPE: u16 = 0x5502;
 /// No speculative RFI for 5 minutes after out-of-order data or a wrong loss prediction.
 const SPECULATIVE_RFI_COOLDOWN_PERIOD_US: u64 = 300_000_000;
 
-/// Frames a host may skip while streaming before the frame number is a discontinuity: 240 frames
-/// is 4 s at 60 fps, longer than any loss the queue recovers from.
-const MAX_FRAME_JUMP: u32 = 240;
-/// Packets a host may skip while streaming before the sequence number is a discontinuity: more
-/// than the 3,632 packets of the largest FEC block.
-const MAX_SEQ_JUMP: u32 = 4096;
-
-/// Whether `x` is more than `limit` away from `y` in either direction of the 16-bit wrapping
-/// order that hosts count frame and RTP sequence numbers in.
-fn jumps16(x: u32, y: u32, limit: u32) -> bool {
-    let ahead = x.wrapping_sub(y) & 0xFFFF;
-    ahead > limit && ahead < 0x1_0000 - limit
-}
-
 pub(super) struct RtpQueue {
     pending: Vec<Packet>,
     completed: Vec<Packet>,
@@ -54,8 +40,6 @@ pub(super) struct RtpQueue {
     reported_lost_frame: bool,
 
     current_frame: u32,
-    /// A block started: from here on the frame and sequence numbers have a position to jump from.
-    started: bool,
 
     multi_fec_capable: bool,
     current_block: u8,
@@ -105,7 +89,6 @@ impl RtpQueue {
             seen: [0; 57],
             reported_lost_frame: false,
             current_frame: 1,
-            started: false,
             multi_fec_capable: config.at_least(7, 1, 431),
             current_block: 0,
             last_block: 0,
@@ -128,86 +111,10 @@ impl RtpQueue {
         self.current_frame
     }
 
-    /// Whether this datagram's frame or sequence number is farther from the queue's position than
-    /// a host that keeps streaming jumps. Such a counter is corrupt, stale or a new stream's, not
-    /// loss: a host wraps its frame and RTP sequence numbers, so only their low 16 bits say how
-    /// far apart two of them are. PyroWave records keep their own recovery (and full 32-bit frame
-    /// numbers), so they are left as they were.
-    fn is_discontinuity(&self, frame: u32, seq: u16) -> bool {
-        self.frame_is_a_jump(frame)
-            || (self.started
-                && !self.records
-                && jumps16(seq.into(), self.next_contiguous_seq.into(), MAX_SEQ_JUMP))
-    }
-
-    /// [`is_discontinuity`](Self::is_discontinuity) on the frame number alone, for the encrypted
-    /// path's early drop of a frame already reassembled, which runs before the queue sees
-    /// anything but the clear frame number.
-    pub(super) fn frame_is_a_jump(&self, frame: u32) -> bool {
-        self.started && !self.records && jumps16(frame, self.current_frame, MAX_FRAME_JUMP)
-    }
-
-    /// Starts the block this datagram begins: the queue's position moves to `frame`, and the
-    /// block's counters come from its header.
-    fn start_block<S: VideoSink>(
-        &mut self,
-        frame: u32,
-        block: u8,
-        blocks: u8,
-        fec_info: u32,
-        seq: u16,
-        io: &mut Io<S>,
-    ) {
-        self.current_frame = frame;
-        self.started = true;
-        io.sink.signal(VideoSignal::FrameSeen { frame });
-
-        self.buffer_first_recv_time_us = io.now_us;
-        self.buffer_lowest_seq = seq.wrapping_sub(((fec_info & 0x3F_F000) >> 12) as u16);
-        self.next_contiguous_seq = self.buffer_lowest_seq;
-        self.received_data_packets = 0;
-        self.received_parity_packets = 0;
-        self.forwarded = 0;
-        self.received_highest_seq = 0;
-        self.missing_packets = 0;
-        self.use_fast_queue_path = true;
-        self.seen = [0; 57];
-        self.reported_lost_frame = false;
-        self.buffer_data_packets = (fec_info & 0xFFC0_0000) >> 22;
-        self.fec_percentage = (fec_info & 0xFF0) >> 4;
-        self.buffer_parity_packets = (self.buffer_data_packets * self.fec_percentage).div_ceil(100);
-        self.buffer_first_parity_seq = self
-            .buffer_lowest_seq
-            .wrapping_add(self.buffer_data_packets as u16);
-        self.buffer_highest_seq = self
-            .buffer_first_parity_seq
-            .wrapping_add(self.buffer_parity_packets as u16)
-            .wrapping_sub(1);
-        self.current_block = block;
-        self.last_block = (blocks >> 6) & 0x3;
-
-        io.stats.packet_count_video = io
-            .stats
-            .packet_count_video
-            .wrapping_add(self.buffer_data_packets);
-        io.stats.packet_count_fec = io
-            .stats
-            .packet_count_fec
-            .wrapping_add(self.buffer_parity_packets);
-    }
-
     /// The previous behaviour, every block of a frame processed at its last, for comparison.
     #[cfg(test)]
     pub(super) fn set_process_ahead(&mut self, on: bool) {
         self.process_ahead = on && !self.records;
-    }
-
-    /// Tests: the position the queue has after the frames before `frame` were received, so a
-    /// counter's wrap can be checked without the 65,536 frames that lead to it.
-    #[cfg(test)]
-    pub(super) fn seek(&mut self, frame: u32) {
-        self.current_frame = frame;
-        self.started = true;
     }
 
     fn purge_pending<S: VideoSink>(&mut self, io: &mut Io<S>) {
@@ -611,6 +518,9 @@ impl RtpQueue {
             return false;
         }
         let seq = u16::from_be_bytes([datagram[2], datagram[3]]);
+        if is_before16(seq.into(), self.next_contiguous_seq.into()) {
+            return true;
+        }
         let offset = rtp_data_offset(datagram[0]);
         if datagram.len() < offset + NV_VIDEO_PACKET_SIZE {
             return true;
@@ -621,15 +531,7 @@ impl RtpQueue {
         } else {
             0
         };
-        let starts_block =
-            self.pending.is_empty() || self.current_frame != frame || self.current_block != block;
-        // A counter jump past the bounds is a discontinuity that `add_packet` resyncs the queue
-        // on, so it is not dropped here with the duplicates and finished blocks.
-        if starts_block && self.is_discontinuity(frame, seq) {
-            return false;
-        }
-        is_before16(seq.into(), self.next_contiguous_seq.into())
-            || is_before16(frame, self.current_frame)
+        is_before16(frame, self.current_frame)
             || (frame == self.current_frame && block < self.current_block)
     }
 
@@ -639,52 +541,36 @@ impl RtpQueue {
         depacketizer: &mut Depacketizer,
         io: &mut Io<S>,
     ) -> Result<(), Packet> {
+        if is_before16(packet.seq.into(), self.next_contiguous_seq.into()) {
+            return Err(packet);
+        }
         let offset = packet.data_offset();
         if packet.len < offset + NV_VIDEO_PACKET_SIZE {
             return Err(packet);
         }
-        let frame = le32(&packet.buf, offset + 4);
         // Legacy hosts look like single-block multi-FEC hosts.
-        let block = if self.multi_fec_capable {
-            (packet.buf[offset + 11] >> 4) & 0x3
-        } else {
-            0
-        };
-        let starts_block =
-            self.pending.is_empty() || self.current_frame != frame || self.current_block != block;
-        // A counter jump no streaming host makes is a discontinuity, not loss: resync on it
-        // rather than rejecting every packet that follows, which would freeze the picture until
-        // the counter catches up.
-        let discontinuity = starts_block && self.is_discontinuity(frame, packet.seq);
-        if is_before16(packet.seq.into(), self.next_contiguous_seq.into()) && !discontinuity {
-            return Err(packet);
-        }
         if !self.multi_fec_capable {
             packet.buf[offset + 10] = 0x10;
             packet.buf[offset + 11] = 0;
         }
+        let frame = le32(&packet.buf, offset + 4);
         let fec_info = le32(&packet.buf, offset + 12);
         let blocks = packet.buf[offset + 11];
 
-        if is_before16(frame, self.current_frame) && !discontinuity {
+        if is_before16(frame, self.current_frame) {
             return Err(packet);
         }
 
-        if frame == self.current_frame && block < self.current_block && !discontinuity {
+        let fec_index = (fec_info & 0x3F_F000) >> 12;
+        let block = (blocks >> 4) & 0x3;
+
+        if frame == self.current_frame && block < self.current_block {
             return Err(packet);
         }
 
         // Start a new block when the queue is empty after a delivery or when the next frame or
         // block begins before this one completed.
-        if discontinuity {
-            // Drop what was in flight: the counters say it belongs to another stream or another
-            // stretch of frames and cannot be joined to this datagram. Nothing is counted lost,
-            // and the key frame asked for recovers the picture.
-            self.purge_pending(io);
-            self.purge_completed(depacketizer, io);
-            depacketizer.resync(frame, io);
-            self.start_block(frame, block, blocks, fec_info, packet.seq, io);
-        } else if starts_block {
+        if self.pending.is_empty() || self.current_frame != frame || self.current_block != block {
             if !self.pending.is_empty() {
                 self.report_fec_status(io);
                 self.finish_fec_block(io, true);
@@ -731,7 +617,42 @@ impl RtpQueue {
                 }
             }
 
-            self.start_block(frame, block, blocks, fec_info, packet.seq, io);
+            self.current_frame = frame;
+            io.sink.signal(VideoSignal::FrameSeen { frame });
+
+            self.buffer_first_recv_time_us = io.now_us;
+            self.buffer_lowest_seq = packet.seq.wrapping_sub(fec_index as u16);
+            self.next_contiguous_seq = self.buffer_lowest_seq;
+            self.received_data_packets = 0;
+            self.received_parity_packets = 0;
+            self.forwarded = 0;
+            self.received_highest_seq = 0;
+            self.missing_packets = 0;
+            self.use_fast_queue_path = true;
+            self.seen = [0; 57];
+            self.reported_lost_frame = false;
+            self.buffer_data_packets = (fec_info & 0xFFC0_0000) >> 22;
+            self.fec_percentage = (fec_info & 0xFF0) >> 4;
+            self.buffer_parity_packets =
+                (self.buffer_data_packets * self.fec_percentage).div_ceil(100);
+            self.buffer_first_parity_seq = self
+                .buffer_lowest_seq
+                .wrapping_add(self.buffer_data_packets as u16);
+            self.buffer_highest_seq = self
+                .buffer_first_parity_seq
+                .wrapping_add(self.buffer_parity_packets as u16)
+                .wrapping_sub(1);
+            self.current_block = block;
+            self.last_block = (blocks >> 6) & 0x3;
+
+            io.stats.packet_count_video = io
+                .stats
+                .packet_count_video
+                .wrapping_add(self.buffer_data_packets);
+            io.stats.packet_count_fec = io
+                .stats
+                .packet_count_fec
+                .wrapping_add(self.buffer_parity_packets);
         }
 
         if is_before16(self.buffer_highest_seq.into(), packet.seq.into()) {
@@ -825,23 +746,6 @@ mod tests {
             assert!(!queue.received_oos_data, "lowest {lowest:#06x}");
             assert_eq!(queue.next_contiguous_seq, lowest.wrapping_add(1));
         }
-    }
-
-    /// A lost frame or a damaged packet is not a jump; a counter tens of thousands away is, in
-    /// either direction, and a host whose counters wrapped stays adjacent.
-    #[test]
-    fn a_counter_jump_is_a_discontinuity_only_past_its_bound() {
-        assert!(!jumps16(2, 1, MAX_FRAME_JUMP), "one frame lost");
-        assert!(!jumps16(1 + MAX_FRAME_JUMP, 1, MAX_FRAME_JUMP), "at the bound");
-        assert!(jumps16(2 + MAX_FRAME_JUMP, 1, MAX_FRAME_JUMP), "past the bound");
-        assert!(jumps16(10_002, 2, MAX_FRAME_JUMP), "a wrong frame number ahead");
-        assert!(jumps16(2, 10_002, MAX_FRAME_JUMP), "a stale frame number behind");
-        assert!(!jumps16(65_536, 65_535, MAX_FRAME_JUMP), "the 16-bit frame wrap");
-        assert!(!jumps16(3, 65_535, MAX_FRAME_JUMP), "across the wrap");
-        assert!(!jumps16(2, 1, MAX_SEQ_JUMP), "one packet lost");
-        assert!(jumps16(5_000, 1, MAX_SEQ_JUMP), "a wrong sequence number ahead");
-        assert!(jumps16(1, 5_000, MAX_SEQ_JUMP), "a stale sequence number behind");
-        assert!(!jumps16(65_539, 65_535, MAX_SEQ_JUMP), "the 16-bit sequence wrap");
     }
 
     /// A duplicate after a reordered packet is rejected, inside the contiguous run or behind it.

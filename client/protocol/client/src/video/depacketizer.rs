@@ -201,24 +201,6 @@ impl Depacketizer {
         }
     }
 
-    /// The RTP queue found a frame or sequence counter jump no streaming host makes: the packets
-    /// before it were never part of this stream (`RtpQueue`'s discontinuity check). Drops the
-    /// frame in progress and waits for a key frame, asking for one, without counting network
-    /// loss. The datagram that brought the jump starts a block but is not shown: its frame may
-    /// be half missing.
-    pub(super) fn resync<S: VideoSink>(&mut self, frame: u32, io: &mut Io<S>) {
-        self.rewind();
-        self.cleanup_frame_state();
-        self.next_frame_number = frame.wrapping_add(1);
-        self.waiting_for_idr_frame = true;
-        self.waiting_for_ref_inval_frame = false;
-        self.waiting_for_next_successful_frame = false;
-        self.drop_state_pending = false;
-        self.decoding_frame = false;
-        self.consecutive_frame_drops = 0;
-        io.sink.signal(VideoSignal::RequestIdr);
-    }
-
     pub(super) fn idr_frame_processed(&mut self) {
         self.idr_frame_processed = true;
     }

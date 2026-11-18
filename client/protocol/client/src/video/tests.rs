@@ -711,7 +711,6 @@ fn bytes_held_past_recycling_are_never_reused() {
     assert!(reused || after.data().as_ptr() == address, "unheld storage comes back");
 }
 
-mod discontinuity;
 mod dolby_vision;
 pub(crate) mod early_chunks;
 mod multi_block;
