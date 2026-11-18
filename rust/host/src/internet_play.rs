@@ -102,6 +102,43 @@ fn public_ipv4(address: IpAddr) -> bool {
     }
 }
 
+/// What holds a router whose own internet address is not public, for the note that says why
+/// the forwarded ports are out of reach.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InFront {
+    /// The provider shares one address among its customers: carrier-grade NAT (100.64/10).
+    CarrierGrade,
+    /// Another router or modem forwards first (192.168/16 and 172.16/12).
+    AnotherRouter,
+    /// Either: 10/8 is used both inside homes and by providers behind another NAT.
+    Either,
+}
+
+fn in_front(address: IpAddr) -> InFront {
+    match address {
+        IpAddr::V4(ip) if ip.octets()[0] == 100 && ip.octets()[1] & 0xc0 == 64 => {
+            InFront::CarrierGrade
+        }
+        IpAddr::V4(ip)
+            if (ip.octets()[0] == 192 && ip.octets()[1] == 168)
+                || (ip.octets()[0] == 172 && ip.octets()[1] & 0xf0 == 16) =>
+        {
+            InFront::AnotherRouter
+        }
+        _ => InFront::Either,
+    }
+}
+
+/// Why a router whose own address is not public can't be reached from the internet, in plain
+/// words, and what to do about it.
+fn not_public(address: IpAddr) -> String {
+    match in_front(address) {
+        InFront::CarrierGrade => "your internet provider shares one address among its customers (carrier-grade NAT), so nothing on the internet can open a port on it".to_owned(),
+        InFront::AnotherRouter => "another router or modem is in front of this one, so nothing on the internet can open a port on it; forward the ports there too, or put it in bridge mode".to_owned(),
+        InFront::Either => "your internet provider may share one address among its customers (carrier-grade NAT), or another router or modem may be in front of this one, so nothing on the internet can open a port on it; if it is another router or modem, forward the ports there too or put it in bridge mode".to_owned(),
+    }
+}
+
 /// The public IPv4 address Moonlight stores as the PC's remote address (`ExternalIP`): the
 /// router's own address when it is public, else the address STUN servers see.
 pub fn external_ipv4() -> Option<IpAddr> {
@@ -134,7 +171,8 @@ fn notes(mapping: &MappingStatus, stun: &[SocketAddr], nat: Nat) -> Vec<String> 
     if let Some(external) = mapping.external_ipv4 {
         if !public_ipv4(external) {
             notes.push(format!(
-                "The router's own internet address ({external}) is not public: the internet provider shares one address among customers (carrier-grade NAT), so forwarded ports can't be reached from outside. Devices use a direct internet path instead."
+                "The router's own internet address ({external}) is not public: {}. Devices use a direct internet path instead.",
+                not_public(external)
             ));
         } else if let Some(seen) = stun.iter().map(SocketAddr::ip).find(|ip| ip.is_ipv4())
             && seen != external
@@ -263,7 +301,10 @@ fn guest_reach_of(mapping: &MappingStatus, host: &GuestHost) -> GuestReach {
     let mut holder = None;
     if let Some(router) = mapping.external_ipv4 {
         if !public_ipv4(router) {
-            notes.push(format!("The router's own internet address ({router}) is not public: your internet provider shares one address among its customers (carrier-grade NAT), so nothing on the internet can open a port on it."));
+            notes.push(format!(
+                "The router's own internet address ({router}) is not public: {}.",
+                not_public(router)
+            ));
         } else if let Some(seen) = stun.iter().map(SocketAddr::ip).find(IpAddr::is_ipv4)
             && seen != router
         {
@@ -590,6 +631,57 @@ mod tests {
         assert!(found[1].contains("symmetric NAT"));
 
         assert!(notes(&double, &["203.0.113.5:40000".parse().unwrap()], Nat::Cone).is_empty());
+    }
+
+    #[test]
+    fn a_private_router_address_names_what_is_in_front_of_it() {
+        let router_note = |address: &str| {
+            let mapping = MappingStatus {
+                external_ipv4: Some(address.parse().unwrap()),
+                ..Default::default()
+            };
+            notes(&mapping, &[], Nat::Cone)
+        };
+        for address in ["192.168.1.1", "172.20.0.1"] {
+            let found = router_note(address);
+            assert_eq!(found.len(), 1, "{address}: {found:?}");
+            assert!(
+                found[0].contains("another router or modem is in front of this one"),
+                "{address}: {found:?}"
+            );
+            assert!(
+                found[0].contains("forward the ports there too, or put it in bridge mode"),
+                "{address}: {found:?}"
+            );
+            assert!(
+                !found[0].contains("carrier-grade NAT"),
+                "{address}: {found:?}"
+            );
+        }
+        // 10/8 is used at home and by providers behind another NAT: the note names either.
+        let found = router_note("10.1.2.3");
+        assert!(found[0].contains("carrier-grade NAT"), "{found:?}");
+        assert!(found[0].contains("another router or modem"), "{found:?}");
+        // 100.64/10 is the provider's shared address, never another router.
+        let found = router_note("100.72.0.1");
+        assert!(found[0].contains("carrier-grade NAT"), "{found:?}");
+        assert!(!found[0].contains("another router"), "{found:?}");
+
+        // The guest link's note says the same, and stays off the address.
+        let behind = MappingStatus {
+            runs: true,
+            method: Some("UPnP".into()),
+            external_ipv4: Some("192.168.1.1".parse().unwrap()),
+            guest_mapped: guest_ports(|port| port),
+            ..Default::default()
+        };
+        let reach = guest_reach_of(&behind, &host(0, None, &[]));
+        assert_eq!(reach.address, None);
+        assert!(
+            reach.notes[0].contains("forward the ports there too, or put it in bridge mode"),
+            "{:?}",
+            reach.notes
+        );
     }
 
     fn guest_ports(external: impl Fn(u16) -> u16) -> Vec<PortState> {
