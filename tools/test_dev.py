@@ -5,6 +5,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import dev  # noqa: E402
 
 ROOT = dev.ROOT
+CARGO = dev.shutil.which("cargo") or dev.shutil.which("cargo", path=str(pathlib.Path.home() / ".cargo/bin"))
 
 
 def checks(*paths):
@@ -227,6 +228,45 @@ class WarmTargets(unittest.TestCase):
         self.assertEqual(dev.stage_target(dev.Check('c', 'client'), {}, ROOT, target), pathlib.Path(f'{target}-client'))
         self.assertEqual(dev.stage_target(dev.Check('h', 'host'), {}, ROOT, target), target)
         self.assertIsNone(dev.stage_target(dev.Check('a', 'gradle'), {}, ROOT, target))
+
+    @unittest.skipUnless(CARGO, 'cargo')
+    def test_cargo_reuses_another_checkouts_build_unless_the_target_is_claimed(self):
+        # The 2026-11-18 failure in miniature: checkout b adds Y to its library, but its
+        # library files are older than checkout a's last build in the shared target dir.
+        base = self.target.parent
+        target = base / 'shared-target'
+        def checkout(name, lib, app, age):
+            root = base / name
+            for rel, text in (('Cargo.toml', '[workspace]\nmembers = ["app", "lib"]\nresolver = "2"\n'),
+                              ('lib/Cargo.toml', '[package]\nname = "lib"\nversion = "0.1.0"\nedition = "2021"\n'),
+                              ('lib/src/lib.rs', lib),
+                              ('app/Cargo.toml', '[package]\nname = "app"\nversion = "0.1.0"\nedition = "2021"\n'
+                                                 '[dependencies]\nlib = { path = "../lib" }\n'),
+                              ('app/src/main.rs', app)):
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (root / rel).write_text(text)
+            for git in (['init', '-q'], ['add', '-A']):
+                dev.subprocess.run(['git', '-C', str(root), *git], check=True, capture_output=True)
+            stamp = dev.time.time() - age
+            os.utime(root / 'lib/src/lib.rs', (stamp, stamp))
+            return root
+        def check(root):
+            return dev.subprocess.run([CARGO, 'check', '-q', '--offline', '--target-dir', str(target)], cwd=root,
+                                      capture_output=True, text=True, env=dict(os.environ, CARGO_INCREMENTAL='0'))
+        a = checkout('a', 'pub const X: u32 = 1;\n', 'fn main() { let _ = lib::X; }\n', 0)
+        b = checkout('b', 'pub const X: u32 = 1;\npub const Y: u32 = 2;\n', 'fn main() { let _ = lib::Y; }\n', 3600)
+        self.assertEqual(dev.claim_target(target, a), 0)
+        self.assertEqual(check(a).returncode, 0)
+        # b's application changed after a's build, its library long before: Cargo rebuilds the
+        # application against a's library (left alone, both would pass as fresh, silently).
+        later = dev.time.time() + 10
+        os.utime(b / 'app/src/main.rs', (later, later))
+        stale = check(b)
+        self.assertNotEqual(stale.returncode, 0, 'Cargo now judges path packages by content; claim_target may be moot')
+        self.assertIn('Y', stale.stderr)
+        self.assertEqual(dev.claim_target(target, b), 2)  # lib and app lose their fingerprints
+        fresh = check(b)
+        self.assertEqual(fresh.returncode, 0, fresh.stderr)
 
     def test_a_pool_slot_records_this_checkout_for_rl_quick(self):
         pool = self.target.parent / 'pool'
