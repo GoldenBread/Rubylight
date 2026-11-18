@@ -80,15 +80,21 @@ public class SimpleProfileTest {
             if ("chosen".equals(op)) {
                 JSONObject current = ask.getJSONObject("current");
                 String pacing = current.isNull("pacing") ? null : current.getString("pacing");
+                // The HDR row shows what the stream does: Auto while the switch asks for HDR, Off
+                // while it does not. An Off row still matches the profile (a fresh install's HDR
+                // switch is off); only the advanced settings decide Custom.
+                String hdr = current.getBoolean("hdr") ? "auto" : "off";
                 boolean restOfBalanced = !current.getBoolean("vrr")
                         && current.isNull("bitrate_milli") && "auto".equals(current.getString("codec"))
-                        && current.getBoolean("hdr") && !current.getBoolean("adaptive_bitrate")
+                        && !current.getBoolean("adaptive_bitrate")
                         && "off".equals(current.isNull("adaptive_quality") ? null : current.getString("adaptive_quality"));
                 if ("latency".equals(pacing) && restOfBalanced) {
-                    return "{\"ok\":{\"choices\":{\"smoothness\":\"auto\",\"picture\":\"auto\",\"hdr\":\"auto\"}}}";
+                    return new JSONObject().put("ok", new JSONObject().put("choices", new JSONObject()
+                            .put("smoothness", "auto").put("picture", "auto").put("hdr", hdr))).toString();
                 }
                 if ("smoothest".equals(pacing) && restOfBalanced) {
-                    return "{\"ok\":{\"choices\":{\"smoothness\":\"smoothest\",\"picture\":\"auto\",\"hdr\":\"auto\"}}}";
+                    return new JSONObject().put("ok", new JSONObject().put("choices", new JSONObject()
+                            .put("smoothness", "smoothest").put("picture", "auto").put("hdr", hdr))).toString();
                 }
                 return "{\"ok\":{\"choices\":null}}";
             }
@@ -172,6 +178,9 @@ public class SimpleProfileTest {
         assertTrue(SimpleProfile.apply(context, SimpleProfile.SMOOTHNESS, "smoothest"));
         SimpleProfilePreference row = openSmoothnessRow();
         assertEquals("Smoothest", row.getEntry().toString());
+        // The fresh install's HDR switch is off, and the row follows that too instead of calling
+        // the profile Custom: only the advanced settings decide.
+        assertEquals("off", SimpleProfile.chosen(context)[2]);
 
         // Back to recommended, an advanced setting or a preset moves the settings under the row.
         assertTrue(SimpleProfile.applyRecommended(context));
