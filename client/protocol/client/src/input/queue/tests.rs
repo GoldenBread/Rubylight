@@ -609,6 +609,19 @@ fn silent_host_input_is_held_then_replaced_by_the_current_state() {
 }
 
 #[test]
+fn a_release_is_never_dropped_for_a_full_queue() {
+    let mut q = queue(&sunshine());
+    for _ in 0..MAX_QUEUED {
+        q.send_touch(touch_event::MOVE, 1, 0.5, 0.5, 1., 0., 0., 0).unwrap();
+    }
+    q.send_mouse_button(1, true).expect("a move gives way to a press");
+    let mut out = Vec::new();
+    q.drain(Instant::now(), false, &mut out);
+    assert_eq!(out.len(), MAX_QUEUED, "the queue stays bounded");
+    assert_eq!(decode(&out.last().unwrap().data).unwrap(), Input::MouseButton { button: 1, down: true });
+}
+
+#[test]
 fn stopped_and_full_queues_refuse_input() {
     let mut q = queue(&sunshine());
     for i in 0..MAX_QUEUED {

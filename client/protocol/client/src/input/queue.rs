@@ -293,11 +293,24 @@ impl InputQueue {
     }
 
     fn offer(&mut self, entry: Entry) -> Result<(), InputError> {
-        if self.entries.len() >= MAX_QUEUED {
+        if self.entries.len() >= MAX_QUEUED && !self.drop_unreliable() {
             return Err(InputError::QueueFull);
         }
         self.entries.push_back(entry);
         Ok(())
+    }
+
+    /// Drops the oldest event the protocol allows to be lost, to make room for one it does not
+    /// (a release, a key, a click): a full queue must never cost the host a button it still holds
+    /// down. Moves and hovers are the only entries that go.
+    fn drop_unreliable(&mut self) -> bool {
+        let Some(at) = self.entries.iter().position(|entry| {
+            matches!(entry, Entry::Event(pending) if pending.delivery == Delivery::Unreliable)
+        }) else {
+            return false;
+        };
+        self.entries.remove(at);
+        true
     }
 
     fn offer_event(&mut self, event: InputEvent) -> Result<(), InputError> {
