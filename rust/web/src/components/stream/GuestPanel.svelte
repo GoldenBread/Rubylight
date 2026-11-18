@@ -8,22 +8,27 @@
   import Dialog from '../Dialog.svelte';
   import Field from '../Field.svelte';
   import Input from '../Input.svelte';
+  import InternetReach from './InternetReach.svelte';
   import Panel from '../Panel.svelte';
   import Select from '../Select.svelte';
-  import { api, type CreatedInvite, type GuestEntry, type GuestInvite, type GuestPermission, type GuestsStatus } from '../../lib/api';
+  import { api, type CreatedInvite, type GuestEntry, type GuestInvite, type GuestPermission, type GuestReach, type GuestsStatus } from '../../lib/api';
   import { failed, notify } from '../../lib/feedback.svelte';
   import { poll } from '../../lib/format';
   import {
+    AUDIENCES,
     EXPIRIES,
     PERMISSIONS,
     UNITS,
     expiresIn,
     guestLink,
+    guestPorts,
+    suggestedAddress,
     lifetime,
     linkAddress,
     permissionLabel,
     addressProblem,
     withPort,
+    type Audience,
     type Expiry,
   } from '../../lib/guests';
 
@@ -42,30 +47,57 @@
   let address = $state('');
   /** The address the link starts with, so only one the owner typed is remembered. */
   let suggested = '';
+  /** Where the guests are; "On the internet" maps the guest ports and finds the public address. */
+  let audience = $state<string>('local');
+  /** What the router did with the guest ports, for "On the internet". */
+  let reach = $state.raw<GuestReach | null>(null);
+  /** The owner typed over the address the host found: it stays. */
+  let typed = $state(false);
+  /** Counts audience changes, so an answer for an earlier choice is dropped. */
+  let asked = 0;
 
   /** The address and port the link was made for. */
   let linked = $state('');
 
   const seconds = $derived(lifetime(expiry as Expiry, Number(amount), Number(unit)));
   const port = $derived(status?.port ?? null);
-  const addressError = $derived(port === null ? 'The guest port is unknown' : addressProblem(address));
+  // "On the internet" with no address: the router's answer is pending, or nothing reaches this PC
+  // (InternetReach says so); Create stays off until there is one.
+  const addressError = $derived(
+    port === null
+      ? 'The guest port is unknown'
+      : audience === 'internet' && !address.trim()
+        ? reach && !reach.checking
+          ? 'Type a public address or DNS name the guest ports are forwarded to'
+          : undefined
+        : addressProblem(address),
+  );
+  const addressMissing = $derived(!address.trim());
   const link = $derived(created ? guestLink(linked, created.token) : '');
   const guests = $derived(status?.guests ?? []);
   const invites = $derived(status?.invites ?? []);
+  const portNames = $derived(guestPorts(port, status?.media_ports ?? []));
+  const internet = $derived(audience === 'internet');
 
   const ADDRESS_KEY = 'butterpollo.guest-address';
+  /** An address typed for guests on the internet (such as a DNS name), kept apart from the local one. */
+  const INTERNET_ADDRESS_KEY = 'butterpollo.guest-address.internet';
+  const addressKey = (value: string) => (value === 'internet' ? INTERNET_ADDRESS_KEY : ADDRESS_KEY);
   // A browser that blocks site data throws on localStorage: the address then lasts for this visit.
-  function savedAddress(): string | null {
+  function savedAddress(value = 'local'): string | null {
     try {
-      return localStorage.getItem(ADDRESS_KEY);
+      return localStorage.getItem(addressKey(value));
     } catch {
       return null;
     }
   }
+  /** Remembers an address the owner typed over the one the dialog found, and forgets it when they
+   * take the found one again. */
   function rememberAddress() {
+    const found = audience === 'internet' ? (reach?.address ?? '') : suggested;
     try {
-      if (address.trim() && address.trim() !== suggested) localStorage.setItem(ADDRESS_KEY, address.trim());
-      else localStorage.removeItem(ADDRESS_KEY);
+      if (address.trim() && address.trim() !== found) localStorage.setItem(addressKey(audience), address.trim());
+      else localStorage.removeItem(addressKey(audience));
     } catch {
       // Not remembered; see savedAddress().
     }
@@ -93,6 +125,40 @@
     }
     suggested = linkAddress(location, lan, port);
     address = savedAddress() ?? suggested;
+    if (audience === 'internet') void chooseAudience('internet');
+  }
+
+  /** "On the internet" asks the router for the guest ports and waits for its answer while the
+   * dialog stays open, then puts the public address in the link, unless the owner typed one
+   * there before (remembered) or since. */
+  async function chooseAudience(value: string) {
+    audience = value;
+    const ask = ++asked;
+    typed = false;
+    if (value !== 'internet') {
+      reach = null;
+      address = savedAddress() ?? suggested;
+      return;
+    }
+    reach = null;
+    const saved = savedAddress('internet');
+    address = saved ?? '';
+    typed = saved !== null;
+    try {
+      let answer = await api.guests.prepareInternet();
+      // A round can take a while (no UPnP router, several IPv6 addresses): keep asking every
+      // second, then every three.
+      for (let tries = 0; answer.checking && ask === asked && open; tries++) {
+        await new Promise((resolve) => setTimeout(resolve, tries < 20 ? 1000 : 3000));
+        if (ask !== asked || !open) return;
+        answer = await api.guests.internet();
+      }
+      if (ask !== asked) return;
+      reach = answer;
+      if (!typed) address = suggestedAddress(value as Audience, suggested, answer);
+    } catch (cause) {
+      if (ask === asked) failed('Asking the router failed', cause);
+    }
   }
 
   async function create() {
@@ -100,7 +166,7 @@
     creating = true;
     try {
       const target = withPort(address, port);
-      const made = await api.guests.invite(permission as GuestPermission, seconds, target);
+      const made = await api.guests.invite(permission as GuestPermission, seconds, target, internet);
       linked = target;
       rememberAddress();
       created = made;
@@ -163,6 +229,7 @@
         {@const joined = joinedWith(invite)}
         <li>
           <span class="name">Link</span>
+          {#if invite.internet}<Badge tone="accent">Internet</Badge>{/if}
           <Badge>{permissionLabel(invite.permission)}</Badge>
           <span class="muted when">{invite.expires <= now ? 'Expired' : `Expires ${expiresIn(invite.expires, now)}`}{joined ? ` · ${joined} watching` : ''}</span>
           <Button size="sm" variant="danger" onclick={() => revoke(invite)}>Revoke</Button>
@@ -207,8 +274,34 @@
           </Field>
         </div>
       {/if}
-      <Field label="Address" id="guest-address" error={addressError}>
-        <Input id="guest-address" bind:value={address} mono invalid={!!addressError} spellcheck="false" autocomplete="off" />
+      <Field label="Guests are" id="guest-audience">
+        <Select id="guest-audience" value={audience} options={[...AUDIENCES]} onchange={chooseAudience} />
+      </Field>
+      {#if internet}
+        <InternetReach {reach} ports={portNames} />
+      {/if}
+      <Field
+        label="Address"
+        id="guest-address"
+        error={addressError}
+        hint={internet && reach?.address
+          ? typed && address.trim() !== reach.address
+            ? `Your own address. Clear it and the link uses ${reach.address}, which Rubylight found.`
+            : 'Found automatically. Type your own address or DNS name to use that instead.'
+          : undefined}
+      >
+        <Input
+          id="guest-address"
+          bind:value={address}
+          oninput={() => {
+            typed = !!address.trim();
+            if (!typed && internet && reach?.address) address = reach.address;
+          }}
+          mono
+          invalid={!!addressError}
+          spellcheck="false"
+          autocomplete="off"
+        />
       </Field>
     </div>
   {/if}
@@ -217,7 +310,7 @@
       <Button variant="primary" onclick={done}>Done</Button>
     {:else}
       <Button variant="secondary" disabled={creating} onclick={() => (open = false)}>Cancel</Button>
-      <Button variant="primary" icon="link" busy={creating} disabled={seconds === null || !!addressError} onclick={create}>Create link</Button>
+      <Button variant="primary" icon="link" busy={creating} disabled={seconds === null || !!addressError || addressMissing} onclick={create}>Create link</Button>
     {/if}
   {/snippet}
 </Dialog>

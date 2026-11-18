@@ -306,3 +306,114 @@ test('a waiting page whose link expired says the link does not work, not that it
   await new Promise((resolve) => setTimeout(resolve));
   assert.deepEqual(run.endings.map((e) => [e.code, e.final]), [['refused', false]]);
 });
+
+// "On the internet" in the invite dialog: the guest ports the router forwarded, the address the
+// link takes, and what works instead when nothing reaches the PC.
+const { default: InternetReach } = await server.ssrLoadModule('/src/components/stream/InternetReach.svelte');
+
+const reachFixture = (over = {}) => ({
+  checking: false,
+  runs: true,
+  method: 'UPnP',
+  error: null,
+  ports: [
+    { protocol: 'TCP', port: 47991, external: 47991, reason: null },
+    ...[8002, 8003, 8004, 8005].map((port) => ({ protocol: 'UDP', port, external: port, reason: null })),
+  ],
+  publicIpv4: '203.0.113.5',
+  routerIpv4: '203.0.113.5',
+  ipv6: null,
+  address: '203.0.113.5:47991',
+  notes: [],
+  internetPlay: false,
+  ipv6Listening: false,
+  guestJoin: 'ask',
+  ...over,
+});
+
+test('an internet invite names the guest ports and takes the address the host found', () => {
+  assert.equal(guests.guestPorts(47991, [8005, 8002, 8003, 8004]), 'TCP 47991, UDP 8002-8005');
+  assert.equal(guests.guestPorts(47991, [8002, 8009]), 'TCP 47991, UDP 8002, UDP 8009');
+  assert.equal(guests.guestPorts(47991, []), 'TCP 47991');
+  assert.deepEqual(guests.AUDIENCES.map((a) => a.value), ['local', 'internet']);
+  // The local choice keeps the console's address; the internet one takes the host's, or none.
+  assert.equal(guests.suggestedAddress('local', '192.168.4.69:47991', reachFixture()), '192.168.4.69:47991');
+  assert.equal(guests.suggestedAddress('internet', '192.168.4.69:47991', reachFixture()), '203.0.113.5:47991');
+  assert.equal(guests.suggestedAddress('internet', '192.168.4.69:47991', reachFixture({ address: null })), '');
+  assert.equal(guests.suggestedAddress('internet', '192.168.4.69:47991', null), '');
+  assert.deepEqual(
+    guests.portLines([
+      { protocol: 'TCP', port: 47991, external: 47991, reason: null },
+      { protocol: 'UDP', port: 8002, external: 18002, reason: null },
+      { protocol: 'UDP', port: 8003, external: null, reason: 'the router is out of mappings' },
+    ]),
+    [
+      { label: 'TCP 47991', ok: true, detail: 'forwarded' },
+      { label: 'UDP 8002', ok: true, detail: "forwarded as 18002, which guests can't use" },
+      { label: 'UDP 8003', ok: false, detail: 'the router is out of mappings' },
+    ],
+  );
+});
+
+test('the dialog says whether the internet reaches the PC before the link is sent', () => {
+  assert.equal(guests.reachVerdict(null).tone, 'neutral');
+  assert.equal(guests.reachVerdict(reachFixture({ checking: true })).tone, 'neutral');
+  assert.deepEqual(guests.reachVerdict(reachFixture()), { tone: 'ok', text: 'Guests on the internet reach this PC at 203.0.113.5:47991.' });
+  assert.match(guests.reachVerdict(reachFixture({ address: '[2001:db8::7]:47991' })).text, /over IPv6 .* They need IPv6 too/);
+  assert.equal(guests.reachVerdict(reachFixture({ address: null })).tone, 'warn');
+  assert.match(guests.reachVerdict(reachFixture({ runs: false, address: null })).text, /listens on this PC only/);
+  // Nothing reaches it: say plainly what works instead.
+  const instead = guests.reachAlternatives(reachFixture({ address: null }), 'TCP 47991, UDP 8002-8005');
+  assert.match(instead[0], /Tailscale or another VPN/);
+  assert.match(instead[1], /IPv6, if you both have it: set IP versions to IPv4 and IPv6/);
+  assert.match(instead[2], /forward TCP 47991, UDP 8002-8005 on your router by hand/);
+  assert.equal(instead.length, 3);
+  assert.match(
+    guests.reachAlternatives(reachFixture({ address: null, ipv6Listening: true }), 'TCP 47991')[1],
+    /allow TCP 47991 in to this PC in your router's IPv6 firewall/,
+  );
+  const nightjar = guests.reachAlternatives(reachFixture({ address: null, internetPlay: true }), '')[3];
+  assert.match(nightjar, /Nightjar .* Play over the internet/);
+  // Ask the player or Let in without asking already let a guest in: no setting to name.
+  assert.doesNotMatch(nightjar, /When another device joins/);
+  assert.match(
+    guests.reachAlternatives(reachFixture({ address: null, internetPlay: true, guestJoin: 'off' }), '')[3],
+    /When another device joins the running game set to Ask the player or Let in without asking/,
+  );
+});
+
+test('the reach panel shows each port, the public address and the carrier-grade NAT note', () => {
+  let { body } = render(InternetReach, { props: { reach: reachFixture(), ports: 'TCP 47991, UDP 8002-8005' } });
+  assert.match(body, /Reachable/);
+  assert.match(body, /203\.0\.113\.5:47991/);
+  assert.match(body, /UDP 8005/);
+  assert.match(body, /forwards only TCP 47991, UDP 8002-8005 on your router/);
+  assert.match(body, /also with automatic port forwarding off/);
+  assert.doesNotMatch(body, /Tailscale/);
+  assert.doesNotMatch(body, /experiment/i);
+
+  const cgnat = reachFixture({
+    address: null,
+    publicIpv4: null,
+    routerIpv4: '100.72.0.1',
+    notes: ["The router's own internet address (100.72.0.1) is not public: your internet provider shares one address among its customers (carrier-grade NAT), so nothing on the internet can open a port on it."],
+  });
+  ({ body } = render(InternetReach, { props: { reach: cgnat, ports: 'TCP 47991, UDP 8002-8005' } }));
+  assert.match(body, /Not reachable/);
+  assert.match(body, /100\.72\.0\.1 \(not public\)/);
+  assert.match(body, /carrier-grade NAT/);
+  assert.match(body, /Tailscale or another VPN/);
+
+  const refused = reachFixture({
+    address: null,
+    method: null,
+    error: 'the router answers none of UPnP, PCP and NAT-PMP: turn UPnP on in the router, or forward the ports by hand (no UPnP router found)',
+    ports: [{ protocol: 'TCP', port: 47991, external: null, reason: 'the router refused the mapping' }],
+  });
+  ({ body } = render(InternetReach, { props: { reach: refused, ports: 'TCP 47991' } }));
+  assert.match(body, /Not forwarded/);
+  assert.match(body, /answers none of UPnP, PCP and NAT-PMP/);
+
+  ({ body } = render(InternetReach, { props: { reach: null, ports: 'TCP 47991' } }));
+  assert.match(body, /Asking the router to forward the guest ports/);
+});

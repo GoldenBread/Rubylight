@@ -1,6 +1,6 @@
 // The Stream page's guests (docs/browser-guests.md): what an invite may do, how long it lasts and
 // the link it makes. Pure, so it is tested in Node (Guests.test.mjs).
-import type { GuestPermission } from './api';
+import type { GuestPermission, GuestPort, GuestReach } from './api';
 
 export const PERMISSIONS: readonly { value: GuestPermission; label: string }[] = [
   { value: 'view', label: 'View only' },
@@ -64,6 +64,79 @@ export function addressProblem(address: string): string | undefined {
   if (!validAddress(address)) return 'A host name or IP address, with an optional port';
   if (loopback(address.trim().replace(/:\d{1,5}$/, ''))) return 'Only this PC opens this address';
   return undefined;
+}
+
+/** Where the guests are: the PC's own network (or a VPN), or the internet. */
+export type Audience = 'local' | 'internet';
+export const AUDIENCES: readonly { value: Audience; label: string }[] = [
+  { value: 'local', label: 'This network or a VPN' },
+  { value: 'internet', label: 'On the internet' },
+];
+
+/** "TCP 47991, UDP 8002-8005" for the guest ports, as the dialog names them. */
+export function guestPorts(port: number | null, mediaPorts: readonly number[]): string {
+  const sorted = [...mediaPorts].sort((a, b) => a - b);
+  const contiguous = sorted.every((p, i) => i === 0 || p === (sorted[i - 1] ?? NaN) + 1);
+  const udp = !sorted.length ? '' : contiguous && sorted.length > 1 ? `UDP ${sorted[0]}-${sorted[sorted.length - 1]}` : sorted.map((p) => `UDP ${p}`).join(', ');
+  return [port === null ? '' : `TCP ${port}`, udp].filter(Boolean).join(', ');
+}
+
+/** One line per guest port: mapped, or not and why. */
+export function portLines(ports: readonly GuestPort[]): { label: string; ok: boolean; detail: string }[] {
+  return ports.map((p) => ({
+    label: `${p.protocol} ${p.port}`,
+    ok: p.external !== null,
+    detail:
+      p.external === null
+        ? (p.reason ?? 'not mapped')
+        : p.external === p.port
+          ? 'forwarded'
+          : `forwarded as ${p.external}, which guests can't use`,
+  }));
+}
+
+/** What the dialog says about reaching this PC from the internet, in one line. */
+export function reachVerdict(reach: GuestReach | null): { tone: 'neutral' | 'ok' | 'warn'; text: string } {
+  if (!reach) return { tone: 'neutral', text: 'Asking the router to forward the guest ports…' };
+  if (!reach.runs) return { tone: 'warn', text: 'Rubylight listens on this PC only, so nothing on the internet can reach it.' };
+  if (reach.address && !reach.checking) {
+    const ipv6 = reach.address.startsWith('[');
+    return {
+      tone: 'ok',
+      text: ipv6
+        ? `Guests on the internet reach this PC over IPv6 at ${reach.address}. They need IPv6 too.`
+        : `Guests on the internet reach this PC at ${reach.address}.`,
+    };
+  }
+  if (reach.checking) return { tone: 'neutral', text: 'Asking the router to forward the guest ports…' };
+  return { tone: 'warn', text: 'Nothing on the internet can reach this PC\'s guest ports.' };
+}
+
+/** What works instead when the router forwards nothing, plainly. */
+export function reachAlternatives(reach: GuestReach, ports: string): string[] {
+  const lines = [
+    'Invite them over Tailscale or another VPN: pick "This network or a VPN" and use this PC\'s VPN address.',
+    reach.ipv6Listening
+      ? `Over IPv6, if you both have it: allow ${ports} in to this PC in your router's IPv6 firewall, then type the PC's IPv6 address in brackets below.`
+      : 'Over IPv6, if you both have it: set IP versions to IPv4 and IPv6 (All settings, Network) and restart Rubylight, so the router can open the guest ports to IPv6 guests.',
+    `Or forward ${ports} on your router by hand, then type your public address or a DNS name for it below.`,
+  ];
+  if (reach.internetPlay) {
+    // A paired friend joins as a guest only when When another device joins the running game
+    // lets a guest in; name the two values then, and keep the line short when it already does.
+    const setting =
+      reach.guestJoin === 'off'
+        ? ' with When another device joins the running game set to Ask the player or Let in without asking'
+        : '';
+    lines.push(`A friend with Nightjar paired to this PC can join your game through Play over the internet instead${setting}.`);
+  }
+  return lines;
+}
+
+/** The address the link starts with: the one the host found for the audience, else the page's. */
+export function suggestedAddress(audience: Audience, local: string, reach: GuestReach | null): string {
+  if (audience === 'local') return local;
+  return reach?.address ?? '';
 }
 
 /** The token goes in the fragment: browsers never send it, so no log or proxy sees it. */

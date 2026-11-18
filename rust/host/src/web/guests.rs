@@ -1,7 +1,9 @@
 //! The Stream page's guests (docs/browser-guests.md). `GET /api/guests` lists the invite links
 //! and the guests watching, never a token, and the guest page's port. `POST /api/guests/invite`
 //! makes a link lasting `seconds` with a `permission` for the `address` the owner puts in it,
-//! and answers with its token, the only time the host has it. `GET /api/guests/addresses` is
+//! and answers with its token, the only time the host has it; with `internet` the guest ports
+//! stay mapped on the router while it works. `GET`/`POST /api/guests/internet` is what the
+//! router did with those ports and the address such a link should carry. `GET /api/guests/addresses` is
 //! this PC's LAN addresses, for a console opened on this PC. `POST /api/guests/revoke` withdraws
 //! a link and disconnects whoever joined with it; `POST /api/guests/kick` disconnects one guest,
 //! whose link keeps working. Console-only: API tokens cannot reach them, and the guest port
@@ -21,12 +23,35 @@ use std::time::Duration;
 pub(super) fn handle(h: &Shared, method: &Method, path: &str, data: &Value) -> Response {
     match (method.as_str(), path) {
         ("GET", "/api/guests") => {
-            let port = h.config.read().unwrap().ports().map(|ports| ports.guest);
+            let (port, media) = {
+                let config = h.config.read().unwrap();
+                let media = config.webrtc_media_port();
+                let media: Vec<u16> = (1..=crate::webrtc::guests::MAX_GUESTS)
+                    .filter_map(|seat| media.checked_add(seat))
+                    .collect();
+                (config.ports().map(|ports| ports.guest), media)
+            };
             let mut status = json!(h.guests.status());
             status["port"] = json!(port.ok());
+            status["media_ports"] = json!(media);
             Json(status).into_response()
         }
         ("GET", "/api/guests/addresses") => Json(json!({"addresses": addresses()})).into_response(),
+        // The invite dialog's "On the internet": what the router did with the guest ports, and
+        // the address a link should carry. POST asks for the ports first (for a while, before
+        // a link is made), GET reads the answer.
+        ("GET" | "POST", "/api/guests/internet") => {
+            if method == Method::POST {
+                h.guests.prepare_internet();
+            }
+            match crate::internet_play::guest_reach(h) {
+                Ok(reach) => Json(reach).into_response(),
+                Err(cause) => error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &format!("The guest port is unknown: {cause:#}"),
+                ),
+            }
+        }
         ("POST", "/api/guests/invite") => {
             let Some(permission) = data
                 .get("permission")
@@ -56,19 +81,31 @@ pub(super) fn handle(h: &Shared, method: &Method, path: &str, data: &Value) -> R
                     }
                 },
             };
+            let internet = match data.get("internet") {
+                None | Some(Value::Null) => false,
+                Some(Value::Bool(internet)) => *internet,
+                Some(_) => {
+                    return error(StatusCode::BAD_REQUEST, "internet must be true or false");
+                }
+            };
             match h
                 .guests
-                .create(permission, Duration::from_secs(seconds), address)
+                .create_for(permission, Duration::from_secs(seconds), address, internet)
             {
                 Ok((invite, token)) => {
                     tracing::info!(
                         invite = %invite.id,
                         permission = permission.as_str(),
                         expires = invite.expires,
+                        internet,
                         "guest invite created"
                     );
+                    let info = InviteInfo {
+                        internet,
+                        ..InviteInfo::from(&invite)
+                    };
                     Json(json!({
-                        "invite": InviteInfo::from(&invite),
+                        "invite": info,
                         "token": token,
                     }))
                     .into_response()

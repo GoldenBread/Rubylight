@@ -33,7 +33,7 @@ use butterpollo_core::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     net::{IpAddr, SocketAddr, UdpSocket},
     sync::{
         Arc, Mutex, Weak,
@@ -64,6 +64,9 @@ const BIND_WAIT: Duration = Duration::from_secs(3);
 /// keyframes; a guest that asks too soon is asked for again by its transport.
 pub const KEYFRAME_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_MESSAGE: usize = 64 * 1024;
+/// How long the invite dialog's "On the internet" keeps the guest ports mapped before a link is
+/// made with it: long enough to read what the router did and create the link.
+pub const INTERNET_PREPARE: Duration = Duration::from_secs(120);
 
 fn unix_now() -> u64 {
     SystemTime::now()
@@ -180,6 +183,11 @@ struct Inner {
     invites: Invites,
     /// The address the owner put in each live link, by invite id.
     addresses: HashMap<String, String>,
+    /// The links made for guests on the internet, by invite id, while they work or a guest
+    /// watches with them: the guest ports stay mapped on the router for them.
+    internet: HashSet<String>,
+    /// Until when the invite dialog asked for the guest ports to be mapped before making a link.
+    prepared_until: Option<Instant>,
     lookups: Lookups,
     /// The owner's stream and the number it was registered under.
     owner: Option<(u64, Owner)>,
@@ -197,6 +205,11 @@ pub struct Guests {
     /// Outside the lock: the owner's frame thread asks when a guest's queue drops a frame.
     keyframe_at: AtomicU64,
     epoch: Instant,
+    /// Wakes the port mapping task when the guest ports become wanted or unwanted.
+    mapping_changed: tokio::sync::Notify,
+    /// How often the guest ports were asked for; the port mapping task reports the last one it
+    /// served, so the invite dialog knows when the router's answer is current.
+    internet_requests: AtomicU64,
 }
 
 impl Default for Guests {
@@ -205,6 +218,8 @@ impl Default for Guests {
             inner: Mutex::default(),
             keyframe_at: AtomicU64::new(0),
             epoch: Instant::now(),
+            mapping_changed: tokio::sync::Notify::new(),
+            internet_requests: AtomicU64::new(0),
         }
     }
 }
@@ -215,6 +230,8 @@ pub struct InviteInfo {
     pub permission: Permission,
     pub created: u64,
     pub expires: u64,
+    /// Made for guests on the internet: the guest ports are mapped on the router for it.
+    pub internet: bool,
 }
 
 impl From<&Invite> for InviteInfo {
@@ -224,6 +241,7 @@ impl From<&Invite> for InviteInfo {
             permission: invite.permission,
             created: invite.created,
             expires: invite.expires,
+            internet: false,
         }
     }
 }
@@ -247,13 +265,32 @@ pub struct Status {
 }
 
 impl Inner {
-    /// Forget expired invites and the addresses of links that are gone.
+    /// Forget expired invites and the addresses of links that are gone. An internet link stays
+    /// marked while a guest still watches with it, so its ports stay mapped.
     fn prune(&mut self, now: u64) {
         self.invites.prune(now);
         let Self {
-            invites, addresses, ..
+            invites,
+            addresses,
+            internet,
+            joined,
+            ..
         } = self;
         addresses.retain(|id, _| invites.live(now).any(|invite| invite.id == *id));
+        internet.retain(|id| {
+            invites.live(now).any(|invite| invite.id == *id)
+                || joined.values().any(|guest| guest.link.id == *id)
+        });
+    }
+
+    /// Whether the guest ports should be mapped for the internet: the dialog asked within
+    /// [`INTERNET_PREPARE`], an internet link works, or a guest who joined with one watches.
+    fn internet_wanted(&mut self, now: u64, instant: Instant) -> bool {
+        self.prune(now);
+        if self.prepared_until.is_some_and(|until| until <= instant) {
+            self.prepared_until = None;
+        }
+        self.prepared_until.is_some() || !self.internet.is_empty()
     }
 }
 
@@ -266,6 +303,18 @@ impl Guests {
         lifetime: Duration,
         address: Option<String>,
     ) -> Result<(Invite, String), InviteError> {
+        self.create_for(permission, lifetime, address, false)
+    }
+
+    /// [`create`](Self::create), and for `internet` keeps the guest ports mapped on the router
+    /// while the link works or a guest watches with it.
+    pub fn create_for(
+        &self,
+        permission: Permission,
+        lifetime: Duration,
+        address: Option<String>,
+        internet: bool,
+    ) -> Result<(Invite, String), InviteError> {
         let now = unix_now();
         let mut inner = self.inner.lock().unwrap();
         inner.prune(now);
@@ -276,7 +325,46 @@ impl Guests {
         if let Some(address) = address {
             inner.addresses.insert(invite.id.clone(), address);
         }
+        if internet {
+            inner.internet.insert(invite.id.clone());
+            // The link now holds the ports the dialog asked for.
+            inner.prepared_until = None;
+            drop(inner);
+            self.internet_requests.fetch_add(1, Ordering::AcqRel);
+        }
+        // With automatic port forwarding on, any link wants the guest ports: map them now.
+        self.mapping_changed.notify_one();
         Ok((invite, token))
+    }
+
+    /// The invite dialog picked "On the internet": map the guest ports now, before a link is
+    /// made, for [`INTERNET_PREPARE`], so it can show what the router did. Returns the request's
+    /// number, which `MappingStatus::guest_round` reaches once the port mapping task has asked
+    /// the router.
+    pub fn prepare_internet(&self) -> u64 {
+        self.inner.lock().unwrap().prepared_until = Some(Instant::now() + INTERNET_PREPARE);
+        let round = self.internet_requests.fetch_add(1, Ordering::AcqRel) + 1;
+        self.mapping_changed.notify_one();
+        round
+    }
+
+    /// Whether the guest ports should be mapped for guests on the internet now.
+    pub fn internet_wanted(&self) -> bool {
+        self.inner
+            .lock()
+            .unwrap()
+            .internet_wanted(unix_now(), Instant::now())
+    }
+
+    /// The last request for the guest ports ([`prepare_internet`](Self::prepare_internet) or an
+    /// internet link): the port mapping task reads it before it asks the router.
+    pub fn internet_round(&self) -> u64 {
+        self.internet_requests.load(Ordering::Acquire)
+    }
+
+    /// Resolves when the guest ports became wanted or unwanted at once (a link made or revoked).
+    pub async fn mapping_changed(&self) {
+        self.mapping_changed.notified().await;
     }
 
     /// Whether a guest page may load: a link is live or a guest is watching. Until the owner
@@ -291,6 +379,9 @@ impl Guests {
         let mut inner = self.inner.lock().unwrap();
         inner.prune(now);
         let mut invites: Vec<InviteInfo> = inner.invites.live(now).map(InviteInfo::from).collect();
+        for invite in &mut invites {
+            invite.internet = inner.internet.contains(&invite.id);
+        }
         // An expired link lets nobody new in, but whoever joined with it is still watching: it
         // stays listed, so it can be revoked.
         for joined in inner.joined.values() {
@@ -323,6 +414,10 @@ impl Guests {
         let mut inner = self.inner.lock().unwrap();
         let mut found = inner.invites.revoke(id);
         inner.addresses.remove(id);
+        // Its guests are told to leave; until they have, their media still needs the ports.
+        if !inner.joined.values().any(|j| j.link.id == id) && inner.internet.remove(id) {
+            self.mapping_changed.notify_one();
+        }
         for joined in inner.joined.values().filter(|j| j.link.id == id) {
             let _ = joined.leave.send(Leave::Revoked);
             found = true;
@@ -391,7 +486,7 @@ impl Guests {
         if !inner.lookups.allowed(peer, now) {
             return Err(JoinError::RateLimited);
         }
-        let Some((link, permission)) = inner
+        let Some((mut link, permission)) = inner
             .invites
             .find(token, unix)
             .map(|invite| (InviteInfo::from(invite), invite.permission))
@@ -411,6 +506,7 @@ impl Guests {
         let name = guest_name(name);
         let (leave, receiver) = unbounded_channel();
         let address = inner.addresses.get(&link.id).cloned();
+        link.internet = inner.internet.contains(&link.id);
         inner.joined.insert(
             id,
             Joined {
@@ -449,6 +545,7 @@ impl Guests {
             permission: Permission::View,
             created: 0,
             expires: u64::MAX,
+            internet: false,
         };
         inner.joined.insert(
             id,

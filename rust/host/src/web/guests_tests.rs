@@ -1169,3 +1169,81 @@ async fn an_unpaired_play_socket_can_only_pair_and_unpairing_ends_its_access_at_
     ws.send(json!({"version": 2, "type": "get-apps"})).await;
     assert_eq!(ws.expect("error").await["code"], "not-authenticated");
 }
+
+#[tokio::test]
+async fn an_internet_invite_asks_for_the_guest_ports_and_says_what_the_router_did() {
+    let f = Fixture::new();
+    let (cookie, csrf) = sign_in(&f);
+    let headers = console(&cookie, &csrf);
+    // Signed out, nothing.
+    let anonymous = call(&f, LAN, "GET", "/api/guests/internet", &[], None).await;
+    assert_ne!(anonymous.status, StatusCode::OK);
+    let before = f.host.guests.internet_round();
+    let asked = call(
+        &f,
+        LAN,
+        "POST",
+        "/api/guests/internet",
+        &headers,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(asked.status, StatusCode::OK, "{}", asked.text());
+    assert_eq!(f.host.guests.internet_round(), before + 1);
+    assert!(f.host.guests.internet_wanted());
+    let reach = asked.json();
+    for key in [
+        "checking",
+        "runs",
+        "method",
+        "error",
+        "ports",
+        "publicIpv4",
+        "routerIpv4",
+        "ipv6",
+        "address",
+        "notes",
+        "internetPlay",
+        "guestJoin",
+    ] {
+        assert!(reach.get(key).is_some(), "{key}: {reach}");
+    }
+    assert_eq!(reach["guestJoin"], "off");
+    let read = call(&f, LAN, "GET", "/api/guests/internet", &headers, None).await;
+    assert_eq!(read.status, StatusCode::OK, "{}", read.text());
+    assert_eq!(f.host.guests.internet_round(), before + 1);
+
+    let made = invite(
+        &f,
+        &cookie,
+        &csrf,
+        json!({"permission": "view", "seconds": 300, "address": "203.0.113.5:47991", "internet": true}),
+    )
+    .await;
+    assert_eq!(made.status, StatusCode::OK, "{}", made.text());
+    assert_eq!(made.json()["invite"]["internet"], true);
+    let local = invite(
+        &f,
+        &cookie,
+        &csrf,
+        json!({"permission": "view", "seconds": 300}),
+    )
+    .await;
+    assert_eq!(local.json()["invite"]["internet"], false);
+    let wrong = invite(
+        &f,
+        &cookie,
+        &csrf,
+        json!({"permission": "view", "seconds": 300, "internet": "yes"}),
+    )
+    .await;
+    assert_eq!(wrong.status, StatusCode::BAD_REQUEST);
+    let listed = call(&f, LAN, "GET", "/api/guests", &headers, None).await;
+    let invites = listed.json()["invites"].as_array().unwrap().clone();
+    assert_eq!(invites.iter().filter(|i| i["internet"] == true).count(), 1);
+    // Each guest seat's media port, for the dialog to name.
+    assert_eq!(
+        listed.json()["media_ports"].as_array().unwrap().len(),
+        usize::from(crate::webrtc::guests::MAX_GUESTS)
+    );
+}

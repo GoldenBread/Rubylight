@@ -422,7 +422,7 @@ const network: Setting[] = [
     description:
       'Asks the router to forward the streaming ports (UPnP, PCP or NAT-PMP), opening them to the internet so devices can connect from anywhere. Turn it on only to play away from home.',
     details:
-      'Works with routers that have UPnP, PCP or NAT-PMP turned on. The forwards are renewed while Rubylight runs and removed when it stops. With Console access on Any network, the console port is forwarded too.',
+      'Works with routers that have UPnP, PCP or NAT-PMP turned on. The forwards are renewed while Rubylight runs and removed when it stops. With Console access on Any network, the console port is forwarded too. Browser guests\' ports are forwarded only while an invite link works or a guest watches, and a link made for guests on the internet forwards them also with this off.',
     category: 'network',
     group: 'Discovery and internet',
     control: { kind: 'toggle' },
