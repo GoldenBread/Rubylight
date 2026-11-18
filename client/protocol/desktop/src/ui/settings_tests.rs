@@ -654,6 +654,9 @@ fn the_section_key_table_is_what_the_page_draws() {
         // Everywhere, saying why where it holds nothing (VRR, macOS, X11).
         "fractional_vsync" => true,
         "renderer" | "display_output" | "video_planes" | "high_performance_gpu_power" | "vulkan_video_first" | "vulkan_rfi" => cfg!(target_os = "linux"),
+        "videotoolbox_rfi" => cfg!(target_os = "macos"),
+        // A Mac's GPU decoder uses the graphics queue of a device of its own.
+        "pyrowave_async_compute" => !cfg!(target_os = "macos"),
         "graphics_card" => graphics_card_here(),
         // Windows' wait for the scan line, with Variable refresh rate On.
         "vrr_wait" => cfg!(windows) && vrr,
@@ -680,16 +683,17 @@ fn the_section_key_table_is_what_the_page_draws() {
 #[test]
 fn the_developer_rows_and_diagnostics_are_in_debug() {
     // Android's main rows in its order, then PyroWave's, the decoder's, the cursor and Diagnostics.
-    const DEBUG: [&str; 12] = ["error_correction", "tell_host_wireless", "tell_host_link_speed",
+    const DEBUG: [&str; 13] = ["error_correction", "tell_host_wireless", "tell_host_link_speed",
         "network_priority", "unbatched_input", "full_range", "pyrowave_decoder", "pyrowave_async_compute", "decoder",
-        "vulkan_video_first", "vulkan_rfi", "cursor_shapes"];
+        "vulkan_video_first", "vulkan_rfi", "videotoolbox_rfi", "cursor_shapes"];
     assert_eq!(SETTINGS_SECTIONS.last(), Some(&"Debug"));
     // Prioritize stream traffic does something on Linux and Windows, so only they draw it; Vulkan
     // video is Linux's; the compute queue is the GPU decoder's, macOS's default is the processor.
     let wanted = DEBUG.into_iter()
         .filter(|k| *k != "network_priority" || cfg!(any(target_os = "linux", windows)))
         .filter(|k| !matches!(*k, "vulkan_video_first" | "vulkan_rfi") || cfg!(target_os = "linux"))
-        .filter(|k| *k != "pyrowave_async_compute" || Settings::default().pyrowave_decoder == crate::config::PyroWaveDecoder::Gpu)
+        .filter(|k| *k != "videotoolbox_rfi" || cfg!(target_os = "macos"))
+        .filter(|k| *k != "pyrowave_async_compute" || (Settings::default().pyrowave_decoder == crate::config::PyroWaveDecoder::Gpu && !cfg!(target_os = "macos")))
         .collect::<Vec<_>>();
     let mut f = settings_with(Settings::default());
     open_folds(&mut f);

@@ -39,7 +39,7 @@ public class ShortcutHelperContinueTest {
                 throw new IllegalStateException("the shortcut service went away");
             }
         };
-        helper.reportGameLaunched(pc("desk"), new NvApp("Dota 2", 7, false));
+        helper.reportGameLaunched(pc("desk"), new NvApp("Dota 2", 7, false), null);
         org.junit.Assert.assertTrue("it was on the path", asked[0]);
     }
 

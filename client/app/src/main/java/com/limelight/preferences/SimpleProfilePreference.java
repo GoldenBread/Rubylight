@@ -25,8 +25,24 @@ public class SimpleProfilePreference extends MaterialListPreference {
 
     @Override
     public boolean callChangeListener(Object newValue) {
-        userPicked = true;
-        return super.callChangeListener(newValue);
+        // A pick the listener refuses is not a choice: it must not apply on the next bind.
+        userPicked = super.callChangeListener(newValue);
+        return userPicked;
+    }
+
+    /**
+     * {@link android.preference.ListPreference#setValue} skips persisting a value equal to the one the row
+     * remembers, so a pick that matches a stale remembered value would do nothing after the settings changed
+     * under the row (Back to recommended, an advanced setting, a preset). A pick always applies here; the
+     * framework still remembers the value afterwards.
+     */
+    @Override
+    public void setValue(String value) {
+        if (userPicked) {
+            userPicked = false;
+            if (!applyPick(value)) return;
+        }
+        super.setValue(value);
     }
 
     /** The list's own value is always read from the settings, never from XML's default. */
@@ -47,10 +63,17 @@ public class SimpleProfilePreference extends MaterialListPreference {
 
     @Override
     public CharSequence getEntry() {
+        // The summary is read whenever the screen's values refresh, which is also when the settings can
+        // have changed under the row: follow them before the framework's remembered value is used.
+        String shown = shownChoice();
+        if (!shown.equals(super.getValue())) {
+            super.setValue(shown);
+        }
         if (noPreferences() || SimpleProfile.custom(getContext(), getKey())) {
             return getContext().getString(R.string.settings_custom);
         }
-        return super.getEntry();
+        int index = findIndexOfValue(getValue());
+        return index >= 0 ? getEntries()[index] : super.getEntry();
     }
 
     /** The choice the current settings are, so the row shows the profile they equal; the stored one while Custom. */
@@ -76,6 +99,11 @@ public class SimpleProfilePreference extends MaterialListPreference {
         // The framework persists the first value it binds; that is not a choice.
         if (!userPicked) return true;
         userPicked = false;
+        return applyPick(value);
+    }
+
+    /** Applies a choice the player made; false when it could not be saved (a toast says why). */
+    private boolean applyPick(String value) {
         if (noPreferences()) return false;
         if (!SimpleProfile.apply(getContext(), getKey(), value)) {
             Toast.makeText(getContext(), R.string.simple_profile_failed, Toast.LENGTH_LONG).show();

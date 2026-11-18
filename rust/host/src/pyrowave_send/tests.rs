@@ -548,6 +548,67 @@ fn a_failed_block_abandons_a_frame_handed_over_block_by_block() {
     }
 }
 
+/// Review 2026-11-17: a frame the sender gave up on a full socket left its
+/// later blocks queued, so the sender never looked idle again (no frame went
+/// out block by block for the rest of the session) and the blocks never went
+/// back to the pool. The ones still being built are waited for and returned
+/// too.
+#[test]
+fn a_stalled_frame_returns_its_blocks_and_leaves_the_sender_idle() {
+    for building in [false, true] {
+        let fixture = crate::state::test_support::Fixture::new();
+        let launch = fixture.launch(fixture.client(0), butterpollo_core::session::Role::Stream);
+        let session = Session::new(launch, Default::default());
+        let sender = Sender::packetizer(
+            session,
+            fixture.host.config.read().unwrap().clone(),
+            fixture.host.clone(),
+            Instant::now(),
+            None,
+        )
+        .unwrap();
+        let slot = &sender.slot;
+        let block = |tag: u8| vec![vec![tag; 4]];
+        {
+            let mut ready = slot.ready.lock().unwrap();
+            ready.sending = true;
+            ready.open = building;
+            ready.blocks.push_back(block(3));
+            ready.blocks.push_back(block(4));
+        }
+        std::thread::scope(|scope| {
+            if building {
+                // The packetizer hands over one more block, then the frame
+                // is complete.
+                scope.spawn(|| {
+                    std::thread::sleep(Duration::from_millis(30));
+                    let mut ready = slot.ready.lock().unwrap();
+                    ready.blocks.push_back(block(5));
+                    ready.open = false;
+                    drop(ready);
+                    slot.ready_changed.notify_one();
+                });
+            }
+            transport::discard_rest(slot, vec![block(2)].into_iter(), true);
+        });
+        {
+            let mut ready = slot.ready.lock().unwrap();
+            // As the sender does once the frame is over.
+            ready.sending = false;
+            assert!(ready.idle(), "building {building}");
+        }
+        let mut pooled: Vec<_> = std::iter::from_fn(|| Some(slot.pool.take()))
+            .take_while(|block| !block.is_empty())
+            .collect();
+        pooled.sort();
+        let mut expected = vec![block(2), block(3), block(4)];
+        if building {
+            expected.push(block(5));
+        }
+        assert_eq!(pooled, expected, "building {building}");
+    }
+}
+
 /// The paced sender sends a streamed frame's later blocks too, and only
 /// then counts the frame as sent.
 #[test]

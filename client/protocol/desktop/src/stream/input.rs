@@ -78,8 +78,7 @@ pub(super) fn pointer_goes_out(captured: bool, focused: bool) -> bool {
 
 /// A wheel turn as the PC's high-resolution scroll.
 pub(super) fn send_wheel(w: &SDL_MouseWheelEvent, q: &mut nightjar_core::input::InputQueue) {
-    let flip = if w.direction == SDL_MOUSEWHEEL_FLIPPED { -1.0 } else { 1.0 };
-    let (x, y) = (w.x * flip, w.y * flip);
+    let (x, y) = crate::sdl::wheel_turn(w);
     if y != 0.0 {
         let _ = q.send_high_res_scroll((y * 120.0).clamp(-32000.0, 32000.0) as i16);
     }

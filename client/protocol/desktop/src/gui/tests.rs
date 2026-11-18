@@ -102,6 +102,24 @@ fn a_wheel_turn_scrolls_without_a_motion_first() {
     assert!(page_offset(&mut gui) > 0.0, "the turn scrolls the page under the pointer");
 }
 
+/// SDL_MOUSEWHEEL_FLIPPED reports natural scrolling, it is no turn to undo: SDL 3.4 already applied
+/// the system's direction to the values on macOS and Wayland, so the launcher scrolls the way the
+/// system setting says there too.
+#[test]
+fn a_natural_scrolling_turn_scrolls_like_the_system_says() {
+    let scale = Scale { pixels_per_point: 1.0, density: 1.0 };
+    // SAFETY: an all-zero SDL_Event is a valid value of the C union.
+    let mut event: SDL_Event = unsafe { std::mem::zeroed() };
+    event.r#type = SDL_EVENT_MOUSE_WHEEL.0;
+    event.wheel.y = -3.0;
+    event.wheel.direction = SDL_MOUSEWHEEL_FLIPPED;
+    event.wheel.mouse_x = 200.0;
+    event.wheel.mouse_y = 150.0;
+    let mut gui = Gui::new();
+    gui.handle(&event, scale);
+    assert!(page_offset(&mut gui) > 0.0, "a turn toward the user moves down the page, flipped or not");
+}
+
 #[test]
 fn egui_does_not_zoom_on_its_own_ctrl_keys() {
     // The default context would, which is why `Gui::new` turns it off.

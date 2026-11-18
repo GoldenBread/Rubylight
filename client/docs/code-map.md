@@ -4,7 +4,7 @@
 
 Where each part of Nightjar lives, which files change together and which test proves a change. It is written for people and coding agents changing the client.
 
-Nightjar is developed inside the [Rubylight](https://github.com/RamazanKara/Rubylight) repository, in its `client` folder, and mirrored from there. That repository's `tools/code_map.py` answers three questions from the tree and its history: `index <folder>` prints lines, tests and the header sentence of each file, `with <file>` lists the files that changed in the same commits, and `hot <folder>` lists fix commits per file. Its `check` verifies the paths and names on this page, so correct the page in the change that moves the code.
+Nightjar is developed inside the [Rubylight](https://github.com/RamazanKara/Rubylight) repository, in its `client` folder, and mirrored from there. That repository's code map tool (tools/code_map.py there) answers three questions from the tree and its history: `index <folder>` prints lines, tests and the header sentence of each file, `with <file>` lists the files that changed in the same commits, and `hot <folder>` lists fix commits per file. Its `check` verifies the paths and names on this page, so correct the page in the change that moves the code.
 
 ## Crates
 
@@ -50,7 +50,7 @@ A feature lands in both apps in one change. What they share goes into `nightjar-
 | Decode | `media.rs` (FFmpeg, Opus), `vulkan_video.rs`, `amd_decode.rs`, `linux_video.rs`, `dmabuf.rs`, `stream/pyrowave.rs`, `stream/pyrowave_gpu.rs` |
 | Windows only | `stream/direct.rs`, `stream/d3d11.rs`, `stream/amf_scaler.rs`, `stream/wasapi.rs`, `stream/microphone.rs` |
 | Linux only | `dmabuf.rs`, `vulkan_video.rs`, `stream/wl_scanout.rs`, `stream/wl_presentation.rs`, `stream/drm_vrr.rs`, `stream/planes_gpu.rs`, `kms/` with `stream/kms_scanout.rs` (DRM/KMS output without a desktop), `stream/touchpad/evdev.rs` |
-| macOS only | `metal/`, `stream/macos_video_check.rs` |
+| macOS only | `metal/`, `stream/macos_video_check.rs`, `stream/metalfx.rs` with its Objective-C bridge `stream/metalfx.m` (MetalFX upscaling, compiled by the crate's build script), `stream/pyrowave_sdk/own_vulkan.rs` (PyroWave's GPU decoder on the bundled KosmicKrisp Vulkan driver; the desktop crate's macos-vulkan.sh builds the driver and loader) |
 | Settings, text | `config.rs`, `strings.rs`, `strings/` |
 | Artwork and game facts | `game_info.rs` (keys, HTTPS, the record and image cache) over `nightjar_policy::game_info`; the HTTPS is `update_net.rs`'s `exchange` |
 
@@ -67,7 +67,7 @@ A stream runs on one of two engines. The Rust engine is `nightjar-core` behind [
 | Stream activity | `Game.java`, with `GameConnection.java`, `GameRecovery.java`, `GameVideoOutput.java`, `GameTouchInput.java`, `GameOverlays.java`, `StreamGuests.java` |
 | Connection | `nvstream/NvConnection.java`, `nvstream/http/` (serverinfo, pairing, [`HostCapabilities`](../app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java)), `nvstream/jni/` |
 | Video | `binding/video/`, led by `binding/video/MediaCodecDecoderRenderer.java` |
-| Input, audio | `binding/input/ControllerHandler.java`, `binding/input/driver/`, `binding/input/touch/`, `binding/input/virtual_controller/`, `binding/audio/` |
+| Input, audio | `binding/input/ControllerHandler.java`, `binding/input/driver/`, `binding/input/touch/`, `binding/input/pad/` (the modern on-screen controller), `binding/input/virtual_controller/`, `binding/audio/` |
 | Settings | `preferences/PreferenceConfiguration.java`, `preferences/StreamSettings.java` |
 | PCs, library, UI | `computers/`, `console/`, `ui/`, `grid/` |
 | Artwork and game facts | `console/GameInfo.java` (keys, OkHttp, cache), `console/GameInfoModel.java` (`nightjar_policy::game_info` through `protocol/android/src/game_info.rs`), `console/GameInfoFilter.java` |

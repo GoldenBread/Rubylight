@@ -635,6 +635,15 @@ test('the stream card shows present to sent across the metrics, also on a phone'
       send_interval_p99_ms: 9, sample_frames: 240, history: [],
       stages: { frames: 600, window_seconds: 5, present_to_sent: spread(4.26, 7.46), moonlight_host: spread(3.29, 3.99) },
     },
+    stutter: {
+      windows: 4, pictures: 600, late_pictures: 12, lost_ms: 124.6, dominant: 'encode',
+      stages: [
+        { id: 'encode', lost_ms: 76.8, percent: 62 },
+        { id: 'send', lost_ms: 37.4, percent: 30 },
+        { id: 'capture', lost_ms: 10.4, percent: 8 },
+      ],
+      not_measured: ['game', 'network', 'decode', 'present'],
+    },
   };
   const { page } = await fixture(t, { streams: [stream] });
   await page.goto(base + '/');
@@ -650,6 +659,9 @@ test('the stream card shows present to sent across the metrics, also on a phone'
   const single = await card.getByText('Frame rate', { exact: true }).locator('xpath=..').boundingBox();
   // Within the metrics' 1px border.
   assert(cell.width >= grid.width - 3 && cell.width > single.width * 3, `row ${cell.width}px, metrics ${grid.width}px`);
+  const lost = card.getByText('Where pictures lost time', { exact: true });
+  await lost.waitFor();
+  assert.match(await lost.locator('xpath=..').innerText(), /62% in encoding[\s\S]*12 of 600 new pictures[\s\S]*125 ms, 62% of it in encoding/);
   if (process.env.BUTTERPOLLO_TEST_ARTIFACTS) {
     await card.screenshot({ path: path.join(process.env.BUTTERPOLLO_TEST_ARTIFACTS, 'stream-card-desktop.png') });
   }

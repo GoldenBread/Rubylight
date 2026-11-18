@@ -2,6 +2,38 @@ use super::handle;
 use crate::state::test_support::Fixture;
 use serde_json::json;
 
+/// A console launch is named with the launch lock, so a service stop
+/// cancels it as it does a device's launch, and no game outlives the host.
+#[test]
+fn a_console_launch_is_cancelled_by_a_host_stop() {
+    use std::sync::atomic::Ordering;
+    let f = Fixture::new();
+    handle(
+        &f.host,
+        "POST",
+        "/api/apps",
+        &json!({"name": "Tool", "uuid": "tool"}),
+    )
+    .unwrap();
+    f.host.stop.store(true, Ordering::Release);
+    let launched = handle(
+        &f.host,
+        "POST",
+        "/api/apps/launch",
+        &json!({"uuid": "tool"}),
+    );
+    assert!(launched.is_err(), "the stopped launch does not start");
+    assert!(
+        f.host.current_app.lock().unwrap().is_none(),
+        "no app was left running behind the host's stop"
+    );
+    assert!(
+        f.host.launch_cancellation().is_none(),
+        "the launch named itself and let go"
+    );
+    f.host.stop.store(false, Ordering::Release);
+}
+
 #[test]
 fn a_cover_the_browser_holds_is_not_sent_again_until_the_file_changes() {
     use axum::http::{HeaderMap, StatusCode, header};

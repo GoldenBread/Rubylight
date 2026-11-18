@@ -415,6 +415,7 @@ public class SettingsKeysTest {
         reads.put("checkbox_absolute_mouse_mode", new Read(false, true, c -> c.absoluteMouseMode));
         reads.put("checkbox_input_only_any_host", new Read(false, true, c -> c.inputOnlyAnyHost));
         reads.put("checkbox_show_onscreen_controls", new Read(false, true, c -> c.onscreenController));
+        reads.put("checkbox_osc_auto_hide", new Read(false, true, c -> c.oscAutoHideOnController));
         reads.put("checkbox_vibrate_osc", new Read(true, false, c -> c.vibrateOsc));
         reads.put("checkbox_only_show_L3R3", new Read(false, true, c -> c.onlyL3R3));
         reads.put("checkbox_onscreen_own_player", new Read(false, true, c -> c.onscreenOwnPlayer));

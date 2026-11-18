@@ -200,11 +200,15 @@ struct App {
     pointer: handheld::Pointer,
     /// The stream being started plays in SDR although HDR was asked for (gamescope without HDR): its start says so.
     hdr_note: bool,
+    /// The launcher keeps the screen awake for a while after controller input or a stream.
+    screen_awake: sdl::LauncherAwake,
     /// What the stream being started plays without, straight to the display without the GPU renderer
     /// (`kms::without_gpu`): its start says so.
     kms_notes: Vec<String>,
     /// Full chroma was asked for and the stream being started runs without it: its start says so.
     packed_note: Option<String>,
+    /// macOS: why PyroWave decodes on the processor for the stream starting, for its start notices.
+    pyrowave_note: Option<String>,
     /// The PC (by id) refused full chroma after this start's launch: the start made again for it
     /// runs without it (`full_chroma::decide`).
     full_chroma_off: Option<u64>,
@@ -403,6 +407,9 @@ fn first_frame_line(already: &std::sync::atomic::AtomicBool, since: Option<std::
 }
 
 fn main() {
+    // Before any thread starts and anything loads Vulkan: the loader sees the bundled driver only.
+    #[cfg(target_os = "macos")]
+    stream::pyrowave_sdk::own_vulkan::prepare_environment();
     #[cfg(all(target_os = "macos", feature = "demo-library"))]
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--check-metal")) {
         stream::check_metal();
@@ -600,6 +607,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     // can otherwise hold the Cocoa thread before the launcher has drawn a window.
     #[cfg(not(target_os = "macos"))]
     let subsystems = subsystems | SDL_INIT_AUDIO;
+    sdl::screen_sleeps_outside_streams();
     // SAFETY: SDL initialisation on the main thread.
     unsafe {
         if !SDL_Init(subsystems) {
@@ -947,8 +955,10 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         nav_repeat: nav_repeat::NavRepeat::default(),
         pointer: handheld::Pointer::new(handheld::gamescope()),
         hdr_note: false,
+        screen_awake: sdl::LauncherAwake::default(),
         kms_notes: Vec::new(),
         packed_note: None,
+        pyrowave_note: None,
         full_chroma_off: None,
         running: true,
         autostream: autostream::Autostream::from_env(),

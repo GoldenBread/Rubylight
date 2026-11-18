@@ -10,12 +10,14 @@ public final class PadInput {
     static final float[][] FACE_CENTERS = {{.5f, .78f}, {.78f, .5f}, {.22f, .5f}, {.5f, .22f}};
     static final int[] FACE_FLAGS = {ControllerPacket.A_FLAG, ControllerPacket.B_FLAG,
             ControllerPacket.X_FLAG, ControllerPacket.Y_FLAG};
-    static final String[] FACE_LABELS = {"A", "B", "X", "Y"};
     /** A face button's radius, how far from its center a finger still presses it, and the chord margin. */
     static final float FACE_RADIUS = .19f, FACE_REACH = .30f, FACE_CHORD = .07f, FACE_CENTER_GAP = .10f;
     /** A second press on a stick within this time after letting go holds the stick's click (L3 or R3). */
     public static final long STICK_CLICK_MS = 300, STICK_TAP_MS = 200;
     static final float STICK_TAP_PUSH = .5f;
+    /** A touchpad tap: this short, and the finger stayed this near where it landed. */
+    public static final long TOUCHPAD_TAP_MS = 250;
+    public static final float TOUCHPAD_TAP_SLOP_DP = 12;
 
     private PadInput() { }
 
@@ -63,6 +65,12 @@ public final class PadInput {
     /** Whether a stick touched at {@code downAt} after letting go at {@code lastUpAt} holds its click. */
     public static boolean stickClick(long lastUpAt, long downAt) {
         return lastUpAt > 0 && downAt >= lastUpAt && downAt - lastUpAt <= STICK_CLICK_MS;
+    }
+
+    /** Whether a pointer touchpad touch was a tap: short, and the finger stayed near where it landed. */
+    public static boolean touchpadTap(long heldMs, float travelPx, float density) {
+        return heldMs >= 0 && heldMs <= TOUCHPAD_TAP_MS &&
+                travelPx <= TOUCHPAD_TAP_SLOP_DP * Math.max(1, density);
     }
 
     /** The button a simple control holds, as a gamepad flag; 0 for the sticks, the D-pad, the face cluster and the triggers. */

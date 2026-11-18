@@ -28,6 +28,15 @@ public class ConsoleModePreference extends MaterialSwitchPreference {
         binding = false;
     }
 
+    /** The switch follows the start screen the same screen's picker set, without writing anything. */
+    void followStored() {
+        boolean home = getPersistedBoolean(false);
+        if (isChecked() == home) return;
+        binding = true;
+        setChecked(home);
+        binding = false;
+    }
+
     @Override
     protected boolean getPersistedBoolean(boolean defaultReturnValue) {
         return StartScreenChoice.read(PreferenceManager.getDefaultSharedPreferences(getContext()))

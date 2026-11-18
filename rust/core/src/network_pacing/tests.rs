@@ -1,4 +1,16 @@
 use super::*;
+
+#[test]
+fn one_frame_waits_about_its_own_period_for_a_full_socket() {
+    // 120 fps: one picture period, not the flat 20 ms cap.
+    assert_eq!(
+        frame_send_wait(Duration::from_micros(8_333)),
+        Duration::from_micros(8_333)
+    );
+    // A slow stream holds at the cap.
+    assert_eq!(frame_send_wait(Duration::from_millis(60)), SEND_FRAME_WAIT);
+}
+
 #[test]
 fn two_frames_is_the_recovery_cap_floor() {
     // 64 FPS, a period f64 holds exactly: 857,421.875 B rounds up.

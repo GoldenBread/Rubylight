@@ -679,6 +679,103 @@ fn a_feedback_poll_never_brings_back_a_pad_the_client_removed() {
     );
 }
 
+/// A client that sends the controller active again says the removal is over:
+/// the pad must not be forgotten as removed by the next feedback poll.
+#[test]
+fn a_state_that_turns_a_pad_back_on_clears_its_deferred_removal() {
+    let mut pads = scripted_pads();
+    pads.active.insert(0, 2);
+    pads.profiles.insert(0, 4);
+    script(&mut pads)
+        .unplugs
+        .push_back(Err(anyhow::anyhow!("the driver is busy")));
+    // The client's mask no longer has the controller: its removal is deferred.
+    pads.apply(&state(0, 0)).unwrap();
+    assert!(pads.dropped.contains(&0));
+    // The next state has it back before the poll.
+    pads.apply(&state(0, 1)).unwrap();
+    assert!(
+        !pads.dropped.contains(&0),
+        "a pad the client turns on again is not being removed"
+    );
+    script(&mut pads).calls.clear();
+    script(&mut pads)
+        .feedback
+        .insert(2, VecDeque::from([Err(device_removed_error())]));
+    assert!(pads.feedback().is_empty());
+    assert_eq!(
+        script(&mut pads).calls,
+        ["feedback 2", "plug 2"],
+        "the poll re-creates the active pad instead of forgetting it"
+    );
+    pads.active.clear();
+}
+
+/// A back-button timeout due on two pads: one pad's failed submit must not
+/// skip the other's update, and the last error is reported.
+#[test]
+fn refresh_updates_every_pad_and_returns_the_last_failure() {
+    let mut pads = scripted_pads();
+    pads.policy.back_button_timeout = Some(Duration::ZERO);
+    for id in [0u16, 1] {
+        pads.active.insert(id, id + 2);
+        pads.profiles.insert(id, 4);
+        pads.apply(&Event::Controller {
+            id,
+            active: 0b11,
+            buttons: 0x20,
+            left_trigger: 0,
+            right_trigger: 0,
+            sticks: [0; 4],
+        })
+        .unwrap();
+    }
+    // The timeout has passed: both pads' back buttons are due.
+    std::thread::sleep(Duration::from_millis(150));
+    script(&mut pads).calls.clear();
+    script(&mut pads).submits = VecDeque::from([
+        Err(anyhow::anyhow!("first pad failed")),
+        Err(anyhow::anyhow!("second pad failed")),
+    ]);
+    let error = pads.refresh().unwrap_err();
+    assert!(format!("{error:#}").contains("second pad failed"));
+    assert_eq!(
+        script(&mut pads).calls,
+        ["submit 2", "submit 3"],
+        "the second pad was updated after the first failed"
+    );
+    pads.active.clear();
+}
+
+/// The back-button update takes the same device-removed path as a controller
+/// state: the slot is created again and the update retried.
+#[test]
+fn refresh_recreates_a_pad_whose_driver_device_was_removed() {
+    let mut pads = scripted_pads();
+    pads.policy.back_button_timeout = Some(Duration::ZERO);
+    pads.active.insert(0, 2);
+    pads.profiles.insert(0, 4);
+    pads.apply(&Event::Controller {
+        id: 0,
+        active: 1,
+        buttons: 0x20,
+        left_trigger: 0,
+        right_trigger: 0,
+        sticks: [0; 4],
+    })
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(150));
+    script(&mut pads).calls.clear();
+    script(&mut pads).submits = VecDeque::from([Err(device_removed_error()), Ok(())]);
+    pads.refresh().unwrap();
+    assert_eq!(
+        script(&mut pads).calls,
+        ["submit 2", "plug 2", "submit 2"],
+        "the slot was created again and the update retried"
+    );
+    pads.active.clear();
+}
+
 /// A driver whose answers a test scripts, for the paths that only a real
 /// sleep can otherwise reach.
 fn scripted_pads() -> Gamepads {

@@ -13,6 +13,20 @@ fn main() {
         .unwrap_or_else(|| panic!("no versionName \"<version>\" line in {}", gradle.display()));
     println!("cargo:rustc-env=NIGHTJAR_VERSION={version}");
     println!("cargo:rerun-if-env-changed=NIGHTJAR_FFMPEG_DIR");
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        println!("cargo:rerun-if-changed=src/stream/metalfx.m");
+        let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+        let arch = if std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("aarch64") { "arm64" } else { "x86_64" };
+        let status = std::process::Command::new("clang").args(["-fobjc-arc", "-arch", arch, "-mmacosx-version-min=13.0", "-c", "src/stream/metalfx.m", "-o"])
+            .arg(out.join("metalfx.o")).status().expect("compile MetalFX bridge");
+        assert!(status.success(), "compile MetalFX bridge");
+        assert!(std::process::Command::new("ar").arg("crs").arg(out.join("libnightjar_metalfx.a")).arg(out.join("metalfx.o")).status().unwrap().success());
+        println!("cargo:rustc-link-search=native={}", out.display());
+        println!("cargo:rustc-link-lib=static=nightjar_metalfx");
+        for framework in ["Foundation", "Metal", "MetalFX", "QuartzCore", "CoreVideo", "IOSurface"] {
+            println!("cargo:rustc-link-lib=framework={framework}");
+        }
+    }
     let windows = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
     if windows {
         // packaging/icons/nightjar.ico (packaging/make-icons.py) becomes icon resource 1 of

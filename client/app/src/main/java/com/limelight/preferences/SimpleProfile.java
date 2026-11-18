@@ -55,10 +55,28 @@ public final class SimpleProfile {
     }
 
     private static SimpleProfileModel.Capabilities cachedCapabilities;
+    /**
+     * The device's hardware decoders: Android's list does not change while the app runs, so it is read
+     * once for the process, on a worker when the Settings screen opens, and not on every resume.
+     */
+    private static volatile Codecs cachedCodecs;
 
     /** Drops the measured capabilities: Settings resumes, a stored preference changes, or a choice
      *  is applied; the rows then share one fresh decoder scan for that visit. */
     static void forgetCapabilities() { cachedCapabilities = null; }
+
+    /** Reads the decoder list on a worker thread, so the first Settings screen meets it ready. */
+    static void warmCapabilities() {
+        if (cachedCodecs != null) return;
+        Thread scan = new Thread(SimpleProfile::codecs, "decoder-scan");
+        scan.setDaemon(true);
+        scan.start();
+    }
+
+    /** Tests only: a device's decoder list does not change while the app runs. */
+    static void forgetCodecs() {
+        cachedCodecs = null;
+    }
 
     /** What this device and its paired PCs measured, for the mapping. Cached until a stored
      *  preference changes or Settings resumes, so one visit shares one decoder scan. */
@@ -99,7 +117,7 @@ public final class SimpleProfile {
         return display != null && HdrPolicy.hasHdr10(HdrPolicy.displayHdrTypes(display));
     }
 
-    private static final class Codecs {
+    static final class Codecs {
         boolean hevc, av1, hdr;
     }
 
@@ -109,6 +127,23 @@ public final class SimpleProfile {
      * 10-bit HDR one. The decoder benchmark is a decode time, not a sustained rate, so it does not cap the stream.
      */
     private static Codecs codecs() {
+        Codecs known = cachedCodecs;
+        if (known != null) return known;
+        synchronized (SimpleProfile.class) {
+            if (cachedCodecs == null) rememberCodecs(scanCodecs());
+            // A read that failed is not kept: the next visit asks Android again.
+            return cachedCodecs != null ? cachedCodecs : new Codecs();
+        }
+    }
+
+    /** Keeps a decoder list for the rest of the run; a failed read (null) is retried on the next visit. */
+    static Codecs rememberCodecs(Codecs scanned) {
+        if (scanned != null) cachedCodecs = scanned;
+        return scanned != null ? scanned : new Codecs();
+    }
+
+    /** The decoder list, or null when Android would not list it. */
+    private static Codecs scanCodecs() {
         Codecs codecs = new Codecs();
         try {
             MediaCodecList list = new MediaCodecList(MediaCodecList.REGULAR_CODECS);
@@ -127,6 +162,7 @@ public final class SimpleProfile {
             }
         } catch (RuntimeException e) {
             com.limelight.LimeLog.warning("Simple settings: the decoder list could not be read: " + e);
+            return null;
         }
         return codecs;
     }

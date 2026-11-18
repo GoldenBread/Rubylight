@@ -512,15 +512,36 @@ fn a_pyrowave_stream_with_no_room_under_it_is_told_to_use_hevc_or_av1() {
     }
     s.stats.video_frame.store(70, Ordering::Release);
     lose_frames(&s, 50..=54);
-    assert_eq!(
-        s.tick_link_rate(end + Duration::from_millis(200), Duration::from_millis(10)),
-        None,
-        "nothing to lower"
-    );
+    let (_, cut) = s
+        .tick_link_rate(end + Duration::from_millis(200), Duration::from_millis(10))
+        .expect("loss cuts a stream with no room under it");
+    assert!((100_000..200_000).contains(&cut), "{cut}");
+    assert_eq!(s.info()["link_rate"]["state"], "limited");
+    // More loss: it stops at half its bitrate, and since PyroWave has no
+    // usable picture that low the warning names HEVC and AV1.
+    // The reports are stamped with the real clock, so every round stays
+    // within the 2 s evidence window of it.
+    for round in 0..2u32 {
+        let first = 64 + round * 30;
+        // Past the last change's fence (500 ms).
+        let from = end + Duration::from_millis(650 * u64::from(round) + 800);
+        // Frames the size of the bitrate now in effect, 8 ms apart: an
+        // encoder that follows the cuts.
+        let bytes = s.bitrate.load(Ordering::Acquire);
+        for frame in first..=first + 16 {
+            let at = from + Duration::from_millis(8 * u64::from(frame - first));
+            s.record_link_sent_at(frame, bytes as usize / 1_400, u64::from(bytes), at);
+        }
+        s.stats
+            .video_frame
+            .store(u64::from(first + 26), Ordering::Release);
+        lose_frames(&s, first + 6..=first + 10);
+        s.tick_link_rate(from + Duration::from_millis(150), Duration::from_millis(10));
+    }
     assert_eq!(s.info()["link_rate"]["state"], "floor");
     let message = link_warning(&s).expect("the link warning");
     assert!(
-        message.contains("loses PyroWave video at 200 Mbps"),
+        message.contains("loses PyroWave video at 100 Mbps"),
         "{message}"
     );
     assert!(message.contains("HEVC or AV1"), "{message}");
@@ -2367,7 +2388,7 @@ fn only_pyrowave_sessions_report_quality_bitrates() {
     }
 }
 #[test]
-fn host_only_loss_on_a_remembered_route_names_the_host_s_adapter() {
+fn host_only_loss_on_a_remembered_route_names_the_pc_not_the_path() {
     const FAST: u64 = 800_000_000;
     const SAFE: u64 = 62_000_000;
     let s = Session::new(launch("onn", Role::Stream), Negotiated::default());
@@ -2376,7 +2397,7 @@ fn host_only_loss_on_a_remembered_route_names_the_host_s_adapter() {
         assert_eq!(s.keyframe_loss_bps(FAST, SAFE, frame, frame == 20), SAFE);
     }
     // The socket refuses keyframe 20: held for the stream, never saved,
-    // and the warning points at the host, not the network path.
+    // and the warning points at the PC, not the network path.
     s.keyframe_abandoned(20);
     assert!(s.keyframe_loss_active());
     assert!(s.keyframe_loss_sustained_at().is_none());
@@ -2384,7 +2405,10 @@ fn host_only_loss_on_a_remembered_route_names_the_host_s_adapter() {
         .as_str()
         .unwrap()
         .to_owned();
-    assert!(message.contains("host's network adapter"), "{message}");
+    assert!(
+        message.contains("PC could not send video packets fast enough"),
+        "{message}"
+    );
     assert!(message.contains("rest of the stream"), "{message}");
     assert!(!message.contains("network path"), "{message}");
 }
@@ -2629,7 +2653,7 @@ fn frames_the_host_could_not_send_slow_the_stream_and_the_clients_report_adds_no
         s.info()["warnings"][0]["message"]
             .as_str()
             .unwrap()
-            .contains("The host's network adapter refused video packets")
+            .contains("The PC could not send video packets fast enough")
     );
     // Two such frames are not enough, and the client reporting them is the
     // same loss, not more of it.
@@ -3050,4 +3074,59 @@ fn arrival_feedback_turns_the_ledger_on_and_a_client_bitrate_turns_it_off() {
     // The takeover outlives a rebuilt stream.
     s.rebuild_congestion(&s.config, true, 0, false);
     assert!(!s.congestion_active());
+}
+
+#[test]
+fn the_session_info_names_the_stage_that_took_the_time_pictures_lost() {
+    use crate::performance::Stamps;
+    use std::time::Duration;
+    let session = Session::new(launch("stutter", Role::Stream), Negotiated::default());
+    let start = Instant::now();
+    let stamped = |stages: [u64; 9], at: Instant| {
+        let mut points = [at; 10];
+        for (index, us) in stages.into_iter().enumerate() {
+            points[index + 1] = points[index] + Duration::from_micros(us);
+        }
+        Stamps {
+            presented: points[0],
+            acquired: points[1],
+            published: points[2],
+            claimed: points[3],
+            submitted: points[4],
+            encoded: points[5],
+            packetized: points[6],
+            prepared: points[7],
+            first_sent: points[8],
+            last_sent: points[9],
+            streamed: None,
+        }
+    };
+    {
+        let mut performance = session.stats.performance.lock().unwrap();
+        for n in 0..60 {
+            // capture, hold, claim, convert, encode, queue, packetize, send queue, send
+            let mut stages = [1_000, 20, 5, 300, 4_000, 10, 40, 50, 500];
+            if n == 20 {
+                stages[4] = 24_000;
+            }
+            performance.record_stages(&stamped(stages, start + Duration::from_millis(n)), 0);
+        }
+    }
+    let info = session.info();
+    assert_eq!(info["stutter"]["pictures"], 60);
+    assert_eq!(info["stutter"]["late_pictures"], 1);
+    assert_eq!(info["stutter"]["dominant"], "encode");
+    assert_eq!(info["stutter"]["lost_ms"], 20.0);
+    assert_eq!(
+        info["stutter"]["stages"],
+        serde_json::json!([{ "id": "encode", "lost_ms": 20.0, "percent": 100 }])
+    );
+    assert_eq!(
+        info["stutter"]["not_measured"],
+        serde_json::json!(["game", "network", "decode", "present"])
+    );
+    // A stream that has not sent a picture yet has nothing to show.
+    let empty = Session::new(launch("cold", Role::Stream), Negotiated::default());
+    assert_eq!(empty.info()["stutter"]["pictures"], 0);
+    assert_eq!(empty.info()["stutter"]["dominant"], serde_json::Value::Null);
 }

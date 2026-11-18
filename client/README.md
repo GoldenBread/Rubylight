@@ -54,6 +54,13 @@ Phones, TVs and computers share one settings layout with search and presets. Set
 
 <table>
 <tr>
+<td width="50%" valign="top"><img src="docs/assets/shots/android-settings-recommended.png" alt="Settings on an Android tablet: the Recommended page with Stream smoothness, Picture quality, Screen and HDR, a Console mode switch and Back to recommended, beside the list of settings sections (demo data)"><br><sub><b>Start with Recommended.</b> Stream smoothness, Picture quality and HDR in a few choices; every other setting is under More settings.</sub></td>
+<td width="50%" valign="top"><img src="docs/assets/shots/android-stream-menu.png" alt="Nightjar's stream menu over a running game: keyboard, PC keyboard, overlay, microphone, touch mode, on-screen controls, zoom and clipboard buttons, a bitrate slider, Disconnect and Quit game (demo stream)"><br><sub><b>The stream menu.</b> Keyboard, touch mode, clipboard and the bitrate, with Disconnect and Quit game.</sub></td>
+</tr>
+</table>
+
+<table>
+<tr>
 <td width="50%" valign="top"><img src="docs/assets/shots/handheld-home.png" alt="Home on a handheld: Racing Game running, with Resume, Favourite and Quit game, a Continue playing list and the Recently played row, under a glass top bar (demo library)"><br><sub><b>Made for handhelds.</b> Every action has its button on screen.</sub></td>
 <td width="50%" valign="top"><img src="docs/assets/shots/desktop-home.png" alt="Nightjar for Windows: Home tinted by Racing Game's cover, the game in progress with Resume, Favourite and Quit game, a Continue list and a row of cover art per store, under a top bar with Home, PCs, Settings and Help (demo library)"><br><sub><b>On the desktop too.</b> Windows, Linux and macOS, with a row per store on Home. <a href="protocol/desktop/README.md#using-nightjar">More of the desktop app</a></sub></td>
 </tr>
@@ -264,4 +271,4 @@ Nightjar is a fork of [Moonlight Android](https://github.com/moonlight-stream/mo
 - Nonary's moonlight-qt fork, the reference for the desktop client's VRR pacing and D3D11VA rendering, and the source of the Linux high-performance GPU power hold (`client/protocol/desktop/src/stream/gpu_hold.rs`), the Windows VRR sync switch `blank` (`stream/present/pacer.rs`) and the macOS refresh range (`src/mac_display.rs`), all from commit 19758e5e6
 - [Nonary/moonlight-common-c](https://github.com/Nonary/moonlight-common-c), for the DualSense waveform protocol
 
-The bundled third-party components (PyroWave, Granite, volk, libadrenotools, AMD FSR 1, Qualcomm SGSR 1 and SGSR 2, SDL, FFmpeg, the Figtree font and others) keep their own licenses. [License and credits](docs/index.md#license-and-credits) names each contribution and the notices to retain when redistributing.
+The bundled third-party components (PyroWave, Granite, volk, KosmicKrisp from Mesa, the Khronos Vulkan loader, SPIRV-Tools, SPIRV-Headers, libadrenotools, AMD FSR 1, Qualcomm SGSR 1 and SGSR 2, SDL, FFmpeg, the Figtree font and others) keep their own licenses. [License and credits](docs/index.md#license-and-credits) names each contribution and the notices to retain when redistributing.

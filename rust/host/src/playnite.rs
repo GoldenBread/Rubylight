@@ -746,6 +746,10 @@ struct LaunchState {
     focus_menu: bool,
     /// The phase is Exited because the game's processes ended.
     game_ended: bool,
+    /// Playnite said it is closing with no game of its own running
+    /// (`playniteExiting`): the user quit the fullscreen menu, so neither a
+    /// menu still shutting down nor the game's end brings it back.
+    playnite_exiting: bool,
     exit_grace: ExitGrace,
     /// Looks for the game's processes when its settings files were swapped;
     /// the worker takes it, to read the process list without this state held.
@@ -789,6 +793,8 @@ impl LaunchState {
                 self.stopped = false;
                 self.missing_since = None;
                 self.focus_game = true;
+                // A Playnite started again (its pipe reconnected) runs a game: its exit counts anew.
+                self.playnite_exiting = false;
                 tracing::info!(id, folder = %self.install_dir, exe = %self.exe, "Playnite started the game");
             }
             "gameStopped" if ours => {
@@ -817,6 +823,15 @@ impl LaunchState {
                         "Playnite fullscreen is closing with no active game; ending the stream"
                     );
                     return;
+                }
+                if self.fullscreen {
+                    // The plugin sends this only when Playnite runs no game,
+                    // and it never reports the stop of a game started from the
+                    // fullscreen menu (only of one the host asked for). So the
+                    // game is over as far as Playnite knows: its processes
+                    // still decide, but the menu is not started again (#127).
+                    self.stopped = true;
+                    self.playnite_exiting = true;
                 }
                 tracing::info!(id, "Playnite is closing; checking the game independently");
                 self.disconnected();
@@ -883,7 +898,8 @@ impl LaunchState {
             self.focus_menu = true;
         }
         self.fullscreen_seen = true;
-        if self.phase == Phase::Exited {
+        // A menu still shutting down after `playniteExiting` is not kept.
+        if self.phase == Phase::Exited && !self.playnite_exiting {
             tracing::info!(id = %self.game_id, "Playnite game ended; keeping the fullscreen menu open");
             self.back_to_menu();
             self.focus_menu = true;
@@ -894,7 +910,12 @@ impl LaunchState {
     /// the menu, as in Vibepollo: true when fullscreen mode has to start
     /// again. Closing Playnite with no game running still ends the stream.
     fn relaunch_menu(&mut self, running: bool) -> bool {
-        if !self.fullscreen || running || self.phase != Phase::Exited || !self.game_ended {
+        if !self.fullscreen
+            || running
+            || self.playnite_exiting
+            || self.phase != Phase::Exited
+            || !self.game_ended
+        {
             return false;
         }
         tracing::info!(id = %self.game_id, "Playnite game ended with Playnite closed; starting fullscreen mode again");

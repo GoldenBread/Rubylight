@@ -82,6 +82,45 @@ public class PcViewLifecycleTest {
         return controller;
     }
 
+    @Test
+    public void theShortcutReplayWhenPollingStartsRunsOffTheUiThread() throws Exception {
+        ActivityController<Library> controller = emptyScreen(new CountDownLatch(0));
+        try {
+            Library screen = controller.get();
+            java.util.concurrent.atomic.AtomicReference<Thread> publishedOn =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+            final CountDownLatch published = new CountDownLatch(1);
+            ReflectionHelpers.setField(screen, "shortcutHelper",
+                    new com.limelight.utils.ShortcutHelper(screen) {
+                        @Override public void createAppViewShortcutForOnlineHost(ComputerDetails details) {
+                            publishedOn.set(Thread.currentThread());
+                            published.countDown();
+                        }
+                    });
+            ComputerManagerService manager = new ComputerManagerService();
+            ReflectionHelpers.setField(screen, "managerBinder", manager.new ComputerManagerBinder() {
+                @Override public boolean isPersistent() { return true; }
+                @Override public void startPolling(ComputerManagerListener listener) { polling[0] = listener; }
+                @Override public void stopPolling() { }
+                @Override public String getUniqueId() { return "client"; }
+            });
+            ReflectionHelpers.setField(screen, "runningPolling", false);
+            ReflectionHelpers.callInstanceMethod(screen, "startComputerUpdates");
+
+            // The service replays its PCs on the caller's thread, the UI thread here.
+            ComputerDetails online = pc("shortcut-host", "PC", ComputerDetails.State.ONLINE,
+                    PairingManager.PairState.PAIRED);
+            online.caps = com.limelight.nvstream.http.HostCapabilities.UNKNOWN;
+            polling[0].notifyComputerUpdated(online);
+
+            assertTrue(published.await(5, java.util.concurrent.TimeUnit.SECONDS));
+            assertNotSame("the shortcut service is asked off the UI thread",
+                    Looper.getMainLooper().getThread(), publishedOn.get());
+        } finally {
+            controller.pause().stop().destroy();
+        }
+    }
+
     /** The PCs page, polling a manager that has reported no PC yet. */
     private ActivityController<Library> emptyScreen(CountDownLatch pollingStopped) {
         Application application = RuntimeEnvironment.getApplication();

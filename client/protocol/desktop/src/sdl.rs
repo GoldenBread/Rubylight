@@ -5,6 +5,15 @@ use std::path::Path;
 
 use sdl3_sys::everything::*;
 
+/// A wheel turn as the launcher and the PC take it. SDL 3.4 already applies the system's natural
+/// scrolling to `x` and `y` on macOS and Wayland, where the compositor adjusts the values, and
+/// reports it in `direction` only (SDL_MOUSEWHEEL_FLIPPED: "multiply by -1 to change them back");
+/// turning it back scrolled against the system setting on both (moonlight-qt keeps SDL's values).
+/// Windows and X11 never set the flag.
+pub fn wheel_turn(w: &SDL_MouseWheelEvent) -> (f32, f32) {
+    (w.x, w.y)
+}
+
 #[cfg(test)]
 pub static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -176,6 +185,60 @@ pub fn set_hint(name: *const c_char, value: &CStr) {
 /// (and V+): the stream's own quit shortcut and the window's close button still end it.
 pub fn alt_f4_to_host(streaming: bool) {
     set_hint(SDL_HINT_WINDOWS_CLOSE_ON_ALT_F4, if streaming { c"0" } else { c"1" });
+}
+
+/// Before SDL starts: SDL would keep the screen awake for as long as a window exists ("Playing a
+/// game" on a Linux desktop, nightjar#132), so the launcher lets it sleep and
+/// [`keep_screen_awake`] holds it only while a stream runs.
+pub fn screen_sleeps_outside_streams() {
+    set_hint(SDL_HINT_VIDEO_ALLOW_SCREENSAVER, c"1");
+    set_hint(SDL_HINT_SCREENSAVER_INHIBIT_ACTIVITY_NAME, c"Streaming a game");
+}
+
+/// While streaming the screen stays awake: the desktop counts no controller input as activity.
+pub fn keep_screen_awake(streaming: bool) {
+    // SAFETY: plain SDL calls; without the video subsystem they only return false.
+    unsafe {
+        if streaming {
+            SDL_DisableScreenSaver();
+        } else {
+            SDL_EnableScreenSaver();
+        }
+    }
+}
+
+/// How long the launcher keeps the screen awake after the last controller input or the end of a
+/// stream: the desktop counts no controller input as activity, so a couch player browsing games
+/// with a controller would see the screen dim and blank.
+pub const LAUNCHER_AWAKE: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+/// The launcher's hold on the screen: awake for [`LAUNCHER_AWAKE`] after controller input or a
+/// stream, then free to sleep.
+#[derive(Default)]
+pub struct LauncherAwake {
+    until: Option<std::time::Instant>,
+}
+
+impl LauncherAwake {
+    /// Controller input arrived, or a stream ended.
+    pub fn active(&mut self, now: std::time::Instant) {
+        self.until = Some(now + LAUNCHER_AWAKE);
+    }
+
+    /// Whether the launcher holds the screen awake at `now`.
+    pub fn wants(&self, now: std::time::Instant) -> bool {
+        self.until.is_some_and(|until| now < until)
+    }
+
+    /// Sets SDL's screen saver to [`Self::wants`], on each launcher frame (never during a stream,
+    /// which holds the screen itself).
+    pub fn apply(&self, now: std::time::Instant) {
+        let want = self.wants(now);
+        // SAFETY: a plain SDL query.
+        if want == unsafe { SDL_ScreenSaverEnabled() } {
+            keep_screen_awake(want);
+        }
+    }
 }
 
 /// The system's preferred languages, most preferred first, as lower-case codes with the country
@@ -1457,6 +1520,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_wheel_turn_keeps_sdls_values_on_every_platform() {
+        // SAFETY: an all-zero SDL_MouseWheelEvent is a valid value.
+        let mut w: SDL_MouseWheelEvent = unsafe { std::mem::zeroed() };
+        (w.x, w.y) = (1.5, -2.0);
+        assert_eq!(wheel_turn(&w), (1.5, -2.0), "an unflipped turn stays as it is");
+        w.direction = SDL_MOUSEWHEEL_FLIPPED;
+        assert_eq!(wheel_turn(&w), (1.5, -2.0),
+            "macOS and Wayland already adjusted the values to the system setting, the flag only reports it");
+    }
+
+    #[test]
     fn the_hdr10_swapchain_gets_the_hosts_metadata_capped_at_the_output_peak() {
         // BT.2020 primaries and D65 in 1/50000 units, a 1000-nit mastering display at 0.005 nits.
         let host = nightjar_core::control::HdrMetadata {
@@ -1528,6 +1602,39 @@ mod tests {
             assert!(!any_display_hdr(), "and off again");
             SDL_QuitSubSystem(SDL_INIT_VIDEO);
             SDL_ResetHint(SDL_HINT_VIDEO_DRIVER);
+        }
+    }
+
+    // nightjar#132: SDL kept the screen awake from the first window until Nightjar quit.
+    #[test]
+    fn the_screen_is_kept_awake_only_while_streaming() {
+        let _sdl = TEST_LOCK.lock().unwrap();
+        screen_sleeps_outside_streams();
+        // SAFETY: on one thread under the lock; the dummy driver opens no device or window.
+        unsafe {
+            SDL_SetHint(SDL_HINT_VIDEO_DRIVER, c"dummy".as_ptr());
+            assert!(SDL_InitSubSystem(SDL_INIT_VIDEO), "{}", error());
+            assert!(SDL_ScreenSaverEnabled(), "the launcher lets the screen sleep");
+            keep_screen_awake(true);
+            assert!(!SDL_ScreenSaverEnabled(), "a stream keeps it awake");
+            keep_screen_awake(false);
+            assert!(SDL_ScreenSaverEnabled(), "and lets it go when it ends");
+            // In the launcher, controller input holds it for a while: the desktop does not see it.
+            let mut launcher = LauncherAwake::default();
+            let now = std::time::Instant::now();
+            launcher.apply(now);
+            assert!(SDL_ScreenSaverEnabled(), "no controller input yet");
+            launcher.active(now);
+            launcher.apply(now);
+            assert!(!SDL_ScreenSaverEnabled(), "a controller was used");
+            launcher.apply(now + LAUNCHER_AWAKE - std::time::Duration::from_secs(1));
+            assert!(!SDL_ScreenSaverEnabled());
+            launcher.apply(now + LAUNCHER_AWAKE);
+            assert!(SDL_ScreenSaverEnabled(), "free to sleep once it has been idle");
+            SDL_QuitSubSystem(SDL_INIT_VIDEO);
+            SDL_ResetHint(SDL_HINT_VIDEO_DRIVER);
+            SDL_ResetHint(SDL_HINT_VIDEO_ALLOW_SCREENSAVER);
+            SDL_ResetHint(SDL_HINT_SCREENSAVER_INHIBIT_ACTIVITY_NAME);
         }
     }
 

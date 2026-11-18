@@ -266,6 +266,8 @@ fn the_decoder_checks_run_again_when_vulkan_video_first_changes() {
     assert_eq!(probe(&settings), 1);
     settings.vulkan_rfi = true;
     assert_eq!(probe(&settings), 1, "recovery does not change what decodes");
+    settings.videotoolbox_rfi = true;
+    assert_eq!(probe(&settings), 1, "nor does VideoToolbox's");
     settings.vulkan_video_first = true;
     assert_eq!(probe(&settings), 2, "the backend order the check decodes through changed");
     assert_eq!(probe(&settings), 2);

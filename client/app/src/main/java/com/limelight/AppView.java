@@ -8,6 +8,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import android.content.Context;
+
 import com.limelight.computers.ComputerManagerListener;
 import com.limelight.computers.ComputerManagerService;
 import com.limelight.computers.HostCapabilityCache;
@@ -436,22 +438,39 @@ public class AppView extends NightjarActivity implements AdapterFragmentCallback
     }
 
     private void populateAppGridWithCache() {
-        try {
-            // Try to load from cache
-            lastRawApplist = CacheHelper.readInputStreamToString(CacheHelper.openCacheFileForInput(getCacheDir(), "applist", uuidString));
-            List<NvApp> applist = NvHTTP.getAppListByReader(new StringReader(lastRawApplist),
-                    HostCapabilityCache.load(this, uuidString));
-            updateUiWithAppList(applist);
-            LimeLog.info("Loaded applist from cache");
-        } catch (IOException | XmlPullParserException e) {
-            if (lastRawApplist != null) {
-                LimeLog.warning("Saved applist corrupted");
-                e.printStackTrace();
+        // The grid says it is loading until the saved list (or the host's) paints; a cache miss
+        // must not wait for the reader to say so.
+        loadAppsBlocking();
+        Context app = getApplicationContext();
+        String uuid = uuidString;
+        Thread reader = new Thread(() -> {
+            String raw = null;
+            List<NvApp> parsed = null;
+            try {
+                // The cache can hold a few hundred games: read and parse it off the UI thread.
+                raw = CacheHelper.readInputStreamToString(CacheHelper.openCacheFileForInput(app.getCacheDir(), "applist", uuid));
+                parsed = NvHTTP.getAppListByReader(new StringReader(raw), HostCapabilityCache.load(app, uuid));
+            } catch (IOException | XmlPullParserException e) {
+                if (raw != null) {
+                    LimeLog.warning("Saved applist corrupted");
+                    e.printStackTrace();
+                }
+                LimeLog.info("Loading applist from the network");
             }
-            LimeLog.info("Loading applist from the network");
-            // We'll need to load from the network
-            loadAppsBlocking();
-        }
+            String rawList = raw;
+            List<NvApp> apps = parsed;
+            if (apps == null) return;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed() || appGridAdapter == null) return;
+                // A poll may have brought the host's own list while the cache was read: it is newer.
+                if (lastRawApplist != null) return;
+                lastRawApplist = rawList;
+                updateUiWithAppList(apps);
+                LimeLog.info("Loaded applist from cache");
+            });
+        }, "applist-cache");
+        reader.setDaemon(true);
+        reader.start();
     }
 
     // Keep navigation and any cached apps usable while the host responds.

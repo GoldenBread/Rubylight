@@ -875,7 +875,7 @@ test('a value that exposes the PC, loses progress or adds delay says so; the def
     [{ upnp: 'enabled' }, 'upnp', /open to the internet/],
     [{ wan_encryption_mode: 0 }, 'wan_encryption_mode', /unencrypted/],
     [{ origin_web_ui_allowed: 'wan' }, 'origin_web_ui_allowed', /addresses on the internet/],
-    [{ enable_dsu_server: 'enabled' }, 'enable_dsu_server', /No password/],
+    [{ enable_dsu_server: 'enabled', dsu_server_lan: 'enabled' }, 'dsu_server_lan', /No password/],
     [{ dd_configuration_option: 'ensure_only_display' }, 'dd_configuration_option', /other monitors are off/],
     [{ terminate_on_pause: 'enabled' }, 'terminate_on_pause', /Unsaved progress/],
     [{ exit_timeout: 0 }, 'exit_timeout', /by force at once/],
@@ -890,6 +890,30 @@ test('a value that exposes the PC, loses progress or adds delay says so; the def
     { wan_encryption_mode: 2 }, { origin_web_ui_allowed: 'pc' }, { dd_configuration_option: 'ensure_primary' },
     { exit_timeout: 30 }, { guest_join: 'ask' }, { amd_input_queue_size: 4 },
   ]) assert.deepEqual(risks(config), [], JSON.stringify(config));
+});
+
+test('the DSU server is on this PC unless local-network access is turned on', () => {
+  const server = settings.get('enable_dsu_server');
+  assert.equal(server.restart, true);
+  assert.match(server.description, /leave it off unless you use one/);
+  assert.match(server.details, /127\.0\.0\.1/);
+  assert.match(server.details, /this PC only/);
+  assert.match(server.details, /unless Motion server on the local network is on/);
+  assert.equal(server.cautionWhen, undefined);
+  const lan = settings.get('dsu_server_lan');
+  assert.deepEqual([lan.category, lan.group, lan.default], ['input', 'Controllers', false]);
+  assert.equal(lan.restart, true);
+  assert.match(lan.description, /emulator runs on another PC on a network you trust/);
+  assert.match(lan.description, /no password/);
+  assert.match(lan.description, /any device on the network can read input/);
+  assert.match(lan.details, /no password/i);
+  assert.match(lan.details, /network you trust/i);
+  assert.match(lan.cautionWhen({ dsu_server_lan: 'enabled' }), /No password/);
+  assert.equal(lan.cautionWhen({ dsu_server_lan: 'disabled' }), undefined);
+  // It only appears once controllers and the DSU server are on.
+  assert.equal(lan.visibleWhen({}), false);
+  assert.equal(lan.visibleWhen({ enable_dsu_server: 'enabled' }), true);
+  assert.equal(lan.visibleWhen({ controller: false, enable_dsu_server: 'enabled' }), false);
 });
 
 test('a preset that removes the frame cap shows it on the row, not as a hand-set cost', () => {

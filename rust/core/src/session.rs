@@ -92,12 +92,39 @@ pub struct Stats {
     /// Last frame offered to the video socket, plus one; zero means none yet.
     pub video_frame: AtomicU64,
     pub performance: std::sync::Mutex<crate::performance::Performance>,
+    /// The video thread's stutter totals over the windows that ended, published
+    /// after each one. The send path never takes this lock; the console and the
+    /// teardown read it, with the pictures recorded since in `performance`.
+    pub stutter: std::sync::Mutex<crate::stutter_report::Totals>,
     /// The stages `frames` doesn't count, for the pipeline frame rates.
     pub pipeline: crate::pipeline_rates::Counters,
     /// The console's pipeline frame rates, over `pipeline_rates::CONSOLE_WINDOW`.
     pub pipeline_console: std::sync::Mutex<crate::pipeline_rates::Sampler>,
     /// Socket read to injected for ENet input passes, for the `stream timings` line.
     pub input_latency: std::sync::Mutex<crate::input_latency::InputLatency>,
+}
+impl Stats {
+    /// The video thread publishes its stutter totals after each window, so a
+    /// reader never does the medians while holding the lock the send path
+    /// records under.
+    pub fn publish_stutter(&self, totals: &crate::stutter_report::Totals) {
+        *self.stutter.lock().unwrap() = totals.clone();
+    }
+    /// The stream's stutter report so far: the totals the video thread last
+    /// published, plus the pictures it has not counted yet, copied under the
+    /// stage lock. The medians and the JSON run after both locks are released,
+    /// as [`Performance::window`](crate::performance::Performance::window)
+    /// sorts after the same lock.
+    pub fn stutter_window(&self) -> crate::performance::StutterWindow {
+        let pictures = self
+            .performance
+            .lock()
+            .unwrap()
+            .uncounted_stutter()
+            .collect();
+        let totals = self.stutter.lock().unwrap().clone();
+        crate::performance::StutterWindow::new(totals, pictures)
+    }
 }
 /// The encoder's share of a video `budget` that also carries `fec` percent
 /// parity: budget × 100 / (100 + fec), at least 1 Kbps of a non-zero budget.
@@ -1092,6 +1119,14 @@ impl<P, A> Session<P, A> {
         match change.kind {
             ChangeKind::StepDown | ChangeKind::Floor | ChangeKind::EncoderFloor => {
                 let message = match change.kind {
+                    ChangeKind::StepDown | ChangeKind::Floor | ChangeKind::EncoderFloor
+                        if change.reason == "send_losses" =>
+                    {
+                        format!(
+                            "The PC could not send the stream fast enough (its CPU or network adapter fell behind and the socket refused video packets), so the host lowered the video bitrate to {} and raises it again once the PC keeps up. Close other work on the PC, or lower the resolution or frame rate in Moonlight.",
+                            mbps(change.to_kbps)
+                        )
+                    }
                     ChangeKind::Floor if no_room => format!(
                         "This network loses PyroWave video at {}, and PyroWave cannot go lower at this resolution and frame rate and keep a usable picture, so the picture will keep breaking up. HEVC or AV1 will hold up better on this device; or check the network path (Wi-Fi signal, cable, router).",
                         mbps(change.to_kbps)
@@ -1129,6 +1164,22 @@ impl<P, A> Session<P, A> {
             ChangeKind::Probe | ChangeKind::ProbeFailed => {}
         }
         match change.kind {
+            ChangeKind::StepDown if !was_limited && change.reason == "send_losses" => {
+                tracing::warn!(
+                    stream_id = %self.launch.id,
+                    link_rate_change = kind,
+                    reason = change.reason,
+                    from_kbps = change.from_kbps,
+                    to_kbps = change.to_kbps,
+                    delivered_kbps = change.delivered_kbps,
+                    unrecoverable_frames = e.unrecoverable_frames,
+                    send_losses = e.send_losses,
+                    keyframe_requests = e.keyframe_requests,
+                    loss_windows = e.loss_windows,
+                    loss_share_percent = e.loss_share * 100.,
+                    "the PC could not send the stream fast enough (its socket refused video packets); lowering the video bitrate"
+                )
+            }
             ChangeKind::StepDown if !was_limited => tracing::warn!(
                 stream_id = %self.launch.id,
                 link_rate_change = kind,
@@ -1143,6 +1194,17 @@ impl<P, A> Session<P, A> {
                 loss_windows = e.loss_windows,
                 loss_share_percent = e.loss_share * 100.,
                 "the network to this device cannot carry the stream; lowering the video bitrate"
+            ),
+            ChangeKind::Floor if warned && change.reason == "send_losses" => tracing::warn!(
+                stream_id = %self.launch.id,
+                link_rate_change = kind,
+                reason = change.reason,
+                from_kbps = change.from_kbps,
+                to_kbps = change.to_kbps,
+                delivered_kbps = change.delivered_kbps,
+                send_losses = e.send_losses,
+                loss_share_percent = e.loss_share * 100.,
+                "the PC could not send the stream fast enough even at the lowest video bitrate (its socket refused video packets)"
             ),
             ChangeKind::Floor if warned => tracing::warn!(
                 stream_id = %self.launch.id,
@@ -1405,9 +1467,9 @@ impl<P, A> Session<P, A> {
             if kind == LatchKind::Startup {
                 self.launch.warnings.set("network_keyframe_loss", format!("The first video frame was lost on the way to this device ({reason}), so video is paced like Wi-Fi for now. This limits packet bursts without reducing the encoder bitrate. The host returns to the normal rate after 10 seconds without further loss."));
             } else if kind == LatchKind::Send {
-                self.launch.warnings.set("network_keyframe_loss", format!("The host's network adapter refused video packets ({reason}), so video is paced like Wi-Fi for now. This limits packet bursts without reducing the encoder bitrate. The host returns to the normal rate after 10 seconds without further loss."));
+                self.launch.warnings.set("network_keyframe_loss", format!("The PC could not send video packets fast enough ({reason}; its CPU or network adapter fell behind), so video is paced like Wi-Fi for now. This limits packet bursts without reducing the encoder bitrate. The host returns to the normal rate after 10 seconds without further loss."));
             } else if host_only {
-                self.launch.warnings.set("network_keyframe_loss", format!("The host's network adapter refused video packets ({reason}), so video is paced like Wi-Fi for the rest of the stream. This limits packet bursts without reducing the encoder bitrate. The device reported no loss; check the host's network adapter and its driver if this continues."));
+                self.launch.warnings.set("network_keyframe_loss", format!("The PC could not send video packets fast enough ({reason}; its CPU or network adapter fell behind), so video is paced like Wi-Fi for the rest of the stream. This limits packet bursts without reducing the encoder bitrate. The device reported no loss; close other work on the PC, or check the network adapter and its driver, if this continues."));
             } else {
                 self.launch.warnings.set("network_keyframe_loss", format!("Video frames were lost on the way to this device ({reason}), so video is now paced like Wi-Fi for the rest of the stream. This limits packet bursts without reducing the encoder bitrate. Check the network path if loss continues."));
             }
@@ -1418,10 +1480,17 @@ impl<P, A> Session<P, A> {
     pub fn keyframe_loss_rate_bps(&self, base: u64, safe: u64) -> u64 {
         self.keyframe_loss.lock().unwrap().bps(base, safe)
     }
+    /// The host stopped sending this frame part way because its socket
+    /// refused packets: loss on send. See [`Self::keyframe_abandoned_as`].
+    pub fn keyframe_abandoned(&self, wire_frame: u32) {
+        self.keyframe_abandoned_as(wire_frame, true);
+    }
     /// The host stopped sending this frame part way: loss on send. It counts
     /// toward slower pacing under its own reason, and the client's report of
-    /// the same frame is not counted again.
-    pub fn keyframe_abandoned(&self, wire_frame: u32) {
+    /// the same frame is not counted again. `refused` is whether the socket
+    /// refused packets of it (a full buffer); a frame lost only to datagrams
+    /// too large for the path does not make the PC's send path the limit.
+    pub fn keyframe_abandoned_as(&self, wire_frame: u32, refused: bool) {
         self.stats
             .frames_lost_on_send
             .fetch_add(1, Ordering::Relaxed);
@@ -1436,7 +1505,11 @@ impl<P, A> Session<P, A> {
         if self.link_sent.live() {
             let mut link = self.link_rate.lock().unwrap();
             link.drain(&self.link_sent);
-            link.rate.on_send_loss(wire_frame, Instant::now());
+            if refused {
+                link.rate.on_send_loss(wire_frame, Instant::now());
+            } else {
+                link.rate.on_send_too_large(wire_frame, Instant::now());
+            }
         }
         self.report_keyframe_loss(latched, ignored);
     }
@@ -1616,13 +1689,16 @@ impl<P, A> Session<P, A> {
         } else {
             fps
         };
-        // Sorted after the lock the video sender records into is released.
-        let performance = self
-            .stats
-            .performance
-            .lock()
-            .unwrap()
-            .window(Instant::now());
-        serde_json::json!({"warnings":warnings,"encoder":*self.encoder.read().unwrap(),"uuid":self.launch.client.uuid,"device_name":self.launch.client.name,"width":width,"height":height,"display_width":requested.width,"display_height":requested.height,"fps":fps,"requested_fps":requested_fps,"video_format":self.config.codec,"hdr":self.config.hdr,"vrr":self.config.vrr_low_latency,"encoder_bitrate_kbps":self.bitrate.load(Ordering::Relaxed),"adaptive_bitrate":self.adaptive_bitrate.lock().unwrap().snapshot(),"link_rate":self.link_rate_snapshot(),"congestion":self.congestion_snapshot(),"packet_pacing":self.automatic_pacing.lock().unwrap().snapshot(),"fec_percent":self.fec_percent(),"pyrowave_minimum_kbps":(self.config.codec == 3).then(|| crate::pyrowave::minimum_kbps(self.config.width, self.config.height, self.config.fps_millihz())),"pyrowave_recommended_kbps":(self.config.codec == 3).then(|| crate::pyrowave::recommended_kbps(self.config.width, self.config.height, self.config.fps_millihz())),"audio_channels":self.config.audio_channels,"state":if self.stopping(){"STOPPING"}else{"RUNNING"},"frames_sent":self.stats.frames.load(Ordering::Relaxed),"frames_replaced":self.stats.frames_replaced.load(Ordering::Relaxed),"packets_sent":self.stats.packets.load(Ordering::Relaxed),"bytes_sent":self.stats.bytes.load(Ordering::Relaxed),"idr_requests":self.stats.idr_requests.load(Ordering::Relaxed),"reference_invalidations":self.stats.reference_invalidations.load(Ordering::Relaxed),"send_loss_recoveries":self.stats.send_loss_recoveries.load(Ordering::Relaxed),"frames_lost_on_send":self.stats.frames_lost_on_send.load(Ordering::Relaxed),"keyframes_past_fec":self.stats.keyframes_past_fec.load(Ordering::Relaxed),"slice_delivery_overflows":self.stats.slice_delivery_overflows.load(Ordering::Relaxed),"encode_latency_ms":self.stats.latency_us.load(Ordering::Relaxed) as f64/1000.,"performance":performance.snapshot(),"pipeline_rates":self.console_pipeline_rates(),"uptime_seconds":self.started.elapsed().as_secs_f64(),"role":self.launch.role,"guest":self.launch.guest()})
+        // Taken under the send path's lock and sorted after it is released. The
+        // stutter report adds the window the video thread has not advanced yet,
+        // from the totals it published and the pictures recorded since, so the
+        // console reads this stream to its latest picture.
+        let performance = {
+            let performance = self.stats.performance.lock().unwrap();
+            performance.window(Instant::now())
+        };
+        let performance = performance.snapshot();
+        let stutter = self.stats.stutter_window().report(mode.period()).snapshot();
+        serde_json::json!({"warnings":warnings,"encoder":*self.encoder.read().unwrap(),"uuid":self.launch.client.uuid,"device_name":self.launch.client.name,"width":width,"height":height,"display_width":requested.width,"display_height":requested.height,"fps":fps,"requested_fps":requested_fps,"video_format":self.config.codec,"hdr":self.config.hdr,"vrr":self.config.vrr_low_latency,"encoder_bitrate_kbps":self.bitrate.load(Ordering::Relaxed),"adaptive_bitrate":self.adaptive_bitrate.lock().unwrap().snapshot(),"link_rate":self.link_rate_snapshot(),"congestion":self.congestion_snapshot(),"packet_pacing":self.automatic_pacing.lock().unwrap().snapshot(),"fec_percent":self.fec_percent(),"pyrowave_minimum_kbps":(self.config.codec == 3).then(|| crate::pyrowave::minimum_kbps(self.config.width, self.config.height, self.config.fps_millihz())),"pyrowave_recommended_kbps":(self.config.codec == 3).then(|| crate::pyrowave::recommended_kbps(self.config.width, self.config.height, self.config.fps_millihz())),"audio_channels":self.config.audio_channels,"state":if self.stopping(){"STOPPING"}else{"RUNNING"},"frames_sent":self.stats.frames.load(Ordering::Relaxed),"frames_replaced":self.stats.frames_replaced.load(Ordering::Relaxed),"packets_sent":self.stats.packets.load(Ordering::Relaxed),"bytes_sent":self.stats.bytes.load(Ordering::Relaxed),"idr_requests":self.stats.idr_requests.load(Ordering::Relaxed),"reference_invalidations":self.stats.reference_invalidations.load(Ordering::Relaxed),"send_loss_recoveries":self.stats.send_loss_recoveries.load(Ordering::Relaxed),"frames_lost_on_send":self.stats.frames_lost_on_send.load(Ordering::Relaxed),"keyframes_past_fec":self.stats.keyframes_past_fec.load(Ordering::Relaxed),"slice_delivery_overflows":self.stats.slice_delivery_overflows.load(Ordering::Relaxed),"encode_latency_ms":self.stats.latency_us.load(Ordering::Relaxed) as f64/1000.,"performance":performance,"stutter":stutter,"pipeline_rates":self.console_pipeline_rates(),"uptime_seconds":self.started.elapsed().as_secs_f64(),"role":self.launch.role,"guest":self.launch.guest()})
     }
 }

@@ -60,6 +60,10 @@ public final class UpscalingPolicy {
     private int ringIndex, ringFilled, ringSlow;
     private volatile Reason reason = Reason.NONE;
     private volatile float addedMs = -1;
+    // Whether the temporal passes run beside SGSR 1: their first sustained slow verdict falls back to
+    // SGSR 1 instead of ending upscaling, and only a too-slow SGSR 1 does that.
+    private boolean temporalActive;
+    private boolean temporalFallback;
 
     public UpscalingPolicy(int fps) {
         setFrameRate(fps);
@@ -71,8 +75,29 @@ public final class UpscalingPolicy {
         if (frameBudgetNs != budgetNs) {
             frameBudgetNs = budgetNs;
             overBudget = new boolean[(int) Math.max(MIN_WINDOW_FRAMES, WINDOW_NS / budgetNs)];
-            ringIndex = ringFilled = ringSlow = 0;
+            resetWindow();
         }
+    }
+
+    /** Starts a new window, so the frames after a fallback are judged on their own. */
+    private void resetWindow() {
+        ringIndex = ringFilled = ringSlow = 0;
+        warmup = WARMUP_FRAMES;
+    }
+
+    /** Records whether the temporal passes run; {@link #takeTemporalFallback} tells when they must stop. */
+    synchronized void setTemporalActive(boolean active) {
+        temporalActive = active;
+    }
+
+    /**
+     * Takes the request a slow temporal pass made: SGSR 1, built beside it, draws from here on without a
+     * decoder restart. False when none was made, as when SGSR 1 itself is too slow.
+     */
+    synchronized boolean takeTemporalFallback() {
+        boolean asked = temporalFallback;
+        temporalFallback = false;
+        return asked;
     }
 
     public static Reason unavailableReason(Mode mode, int width, int height, int outputWidth,
@@ -193,7 +218,17 @@ public final class UpscalingPolicy {
         // Coalesced texture frames can come from decoder bursts or a faster stream than the
         // panel. Only a full window that is mostly over budget, not routine replacement or a few
         // spikes anywhere in it, warrants fallback.
-        if (ringFilled == overBudget.length && ringSlow * 2 > overBudget.length) fail(Reason.SLOW);
+        if (ringFilled == overBudget.length && ringSlow * 2 > overBudget.length) {
+            if (temporalActive) {
+                // SGSR 1, built beside the temporal passes, draws from here on: no decoder restart and
+                // no window left over, so only a too-slow SGSR 1 ends upscaling.
+                temporalActive = false;
+                temporalFallback = true;
+                resetWindow();
+            } else {
+                fail(Reason.SLOW);
+            }
+        }
     }
 
     void checkStall(long elapsedNs) {

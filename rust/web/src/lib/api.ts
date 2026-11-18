@@ -610,6 +610,31 @@ export interface Performance {
   sample_frames: number;
   history: PerfSample[];
 }
+/** The host stages the stutter report can name. */
+export type StutterStageId = 'capture' | 'convert' | 'encode' | 'packetize' | 'send';
+/** One host stage's share of the time this stream's pictures lost against its own usual path. */
+export interface StutterStage {
+  id: StutterStageId;
+  lost_ms: number;
+  /** Of the report's `lost_ms`, in whole percent. */
+  percent: number;
+}
+/** Where this stream's pictures lost time, from the host's present to its last packet. */
+export interface StutterReport {
+  /** Five-second windows the report covers. */
+  windows: number;
+  /** New pictures measured; static repeats have no present and are not counted. */
+  pictures: number;
+  /** Pictures at least half a frame (or a millisecond) later than this stream's usual path. */
+  late_pictures: number;
+  lost_ms: number;
+  /** The stage with the most lost time, or null when none stands out. */
+  dominant: StutterStageId | null;
+  /** The stages that took time, most first. */
+  stages: StutterStage[];
+  /** Stages the host cannot see: the game's own intervals, the network and the device. */
+  not_measured: ('game' | 'network' | 'decode' | 'present')[];
+}
 export type Role = 'stream' | 'remote_monitor' | 'input_only';
 export interface StreamSession {
   /** The guest id when this stream joined another device's game as a guest (`/api/session-guests`). */
@@ -640,6 +665,10 @@ export interface StreamSession {
     delivered_kbps: number;
     /** The rate that last failed, or 0 when none is known. */
     bad_kbps: number;
+    /** The highest rate that ran clean, or 0 while the path has shown no edge; probes stay under it. */
+    learned_kbps: number;
+    /** The PC's own socket refused video within the last 5 s: probes stop and this is not a network limit. */
+    host_limited: boolean;
     /** What the encoder was seen to send after a cut asked for less, or 0. The host does not cut below it. */
     encoder_floor_kbps: number;
     steps_down: number;
@@ -669,6 +698,8 @@ export interface StreamSession {
   bytes_sent: number;
   idr_requests: number;
   performance: Performance;
+  /** Where the stream's new pictures lost time so far, from the host's stage stamps. */
+  stutter?: StutterReport;
   uptime_seconds: number;
   role: Role;
 }
@@ -699,6 +730,8 @@ export interface SessionHistoryEntry {
   hdr: boolean;
   /** The encoder's bitrate when the stream ended; 0 when it never started. */
   bitrate_kbps: number;
+  /** The bitrate the stream asked for; 0 when it never started or for an entry saved by an older host. */
+  requested_bitrate_kbps: number;
   /** What the video actually sent on average; audio is not counted. */
   mean_bitrate_kbps: number;
   mean_fps: number;

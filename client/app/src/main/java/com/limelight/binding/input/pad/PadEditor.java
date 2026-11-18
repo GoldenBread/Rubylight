@@ -16,6 +16,7 @@ import com.google.android.material.button.MaterialButton;
 import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.android.material.slider.Slider;
 import com.limelight.R;
+import com.limelight.ui.NavigationDialogBuilder;
 
 import java.util.Locale;
 
@@ -41,7 +42,7 @@ final class PadEditor extends FrameLayout {
     private final Surface surface;
     private final View panel;
     private final TextView selection, sizeText, hint;
-    private final MaterialButton hide, reset, addWasd;
+    private final MaterialButton hide, reset, addWasd, addTouchpad, preset, glyphs, pointerMode;
     private boolean compactButtons;
     private final Slider opacity;
     private final float density;
@@ -72,6 +73,15 @@ final class PadEditor extends FrameLayout {
         reset = panel.findViewById(R.id.pad_editor_reset);
         addWasd = panel.findViewById(R.id.pad_editor_add_wasd);
         addWasd.setOnClickListener(v -> addWasd());
+        addTouchpad = panel.findViewById(R.id.pad_editor_add_touchpad);
+        addTouchpad.setOnClickListener(v -> addTouchpad());
+        preset = panel.findViewById(R.id.pad_editor_preset);
+        preset.setOnClickListener(v -> choosePreset());
+        glyphs = panel.findViewById(R.id.pad_editor_glyphs);
+        glyphs.setContentDescription(getContext().getString(R.string.pad_edit_glyphs));
+        glyphs.setOnClickListener(v -> chooseGlyphs());
+        pointerMode = panel.findViewById(R.id.pad_editor_pointer_mode);
+        pointerMode.setOnClickListener(v -> togglePointerMode());
         hint = panel.findViewById(R.id.pad_editor_hint);
         opacity = panel.findViewById(R.id.pad_editor_opacity);
         panel.findViewById(R.id.pad_editor_smaller).setOnClickListener(v -> scaleBy(-SCALE_STEP));
@@ -79,7 +89,9 @@ final class PadEditor extends FrameLayout {
         hide.setOnClickListener(v -> toggleHidden());
         reset.setOnClickListener(v -> {
             draft.reset();
+            painter.setGlyph(draft.glyph());
             select(null);
+            changed();
         });
         panel.findViewById(R.id.pad_editor_cancel).setOnClickListener(v -> controller.finishEditing(false));
         panel.findViewById(R.id.pad_editor_done).setOnClickListener(v -> controller.finishEditing(true));
@@ -176,6 +188,40 @@ final class PadEditor extends FrameLayout {
         select(PadLayout.Control.WASD);
     }
 
+    /** Puts the pointer touchpad in the layout and picks it, ready to move, resize and set its mode. */
+    void addTouchpad() {
+        draft.spec(PadLayout.Control.POINTER_PAD).hidden = false;
+        select(PadLayout.Control.POINTER_PAD);
+    }
+
+    /** A preset replaces the layout with its selection of controls; Done keeps it, Cancel drops it. */
+    void choosePreset() {
+        new NavigationDialogBuilder(getContext()).setTitle(R.string.pad_edit_preset)
+                .setItems(R.array.pad_preset_names, (dialog, which) -> {
+                    draft.applyPreset(PadLayout.Preset.values()[which]);
+                    painter.setGlyph(draft.glyph());
+                    select(null);
+                    changed();
+                }).setNegativeButton(android.R.string.cancel, null).create().show();
+    }
+
+    /** The face letters and shoulder names of one controller family. */
+    void chooseGlyphs() {
+        new NavigationDialogBuilder(getContext()).setTitle(R.string.pad_edit_glyphs)
+                .setItems(R.array.pad_glyph_names, (dialog, which) -> {
+                    draft.setGlyph(PadLayout.Glyph.values()[which]);
+                    painter.setGlyph(draft.glyph());
+                    changed();
+                }).setNegativeButton(android.R.string.cancel, null).create().show();
+    }
+
+    /** Switches the pointer touchpad between moving the pointer and moving the camera. */
+    void togglePointerMode() {
+        draft.setPointerMode(draft.pointerMode() == PadLayout.PointerMode.MOUSE ?
+                PadLayout.PointerMode.CAMERA : PadLayout.PointerMode.MOUSE);
+        changed();
+    }
+
     private void changed() {
         updatePanel();
         surface.invalidate();
@@ -205,6 +251,23 @@ final class PadEditor extends FrameLayout {
         label(reset, getContext().getString(R.string.pad_edit_reset));
         boolean wasdOut = editable(PadLayout.Control.WASD) && draft.spec(PadLayout.Control.WASD).hidden;
         addWasd.setVisibility(wasdOut ? VISIBLE : GONE);
+        boolean touchpadOut = editable(PadLayout.Control.POINTER_PAD) && draft.spec(PadLayout.Control.POINTER_PAD).hidden;
+        addTouchpad.setVisibility(touchpadOut ? VISIBLE : GONE);
+        pointerMode.setVisibility(selected == PadLayout.Control.POINTER_PAD ? VISIBLE : GONE);
+        boolean camera = draft.pointerMode() == PadLayout.PointerMode.CAMERA;
+        // The text names the mode now; the description names what pressing gives, since the button switches.
+        pointerMode.setText(getContext().getString(camera ? R.string.pad_touchpad_camera : R.string.pad_touchpad_mouse));
+        pointerMode.setContentDescription(getContext().getString(camera ? R.string.pad_touchpad_mouse : R.string.pad_touchpad_camera));
+        glyphs.setText(glyphName(getContext(), draft.glyph()));
+        preset.setText(getContext().getString(R.string.pad_edit_preset));
+    }
+
+    private static String glyphName(Context context, PadLayout.Glyph glyph) {
+        switch (glyph) {
+            case PLAYSTATION: return context.getString(R.string.pad_glyph_playstation);
+            case NINTENDO: return context.getString(R.string.pad_glyph_nintendo);
+            default: return context.getString(R.string.pad_glyph_xbox);
+        }
     }
 
     /** A labelled button, or on a narrow panel its icon alone with the label as description and tooltip. */
@@ -239,6 +302,7 @@ final class PadEditor extends FrameLayout {
             case START: return context.getString(R.string.pad_menu);
             case HOME: return context.getString(R.string.pad_home);
             case TOUCHPAD: return context.getString(R.string.pad_touchpad);
+            case POINTER_PAD: return context.getString(R.string.pad_pointer_touchpad);
             case WASD: return context.getString(R.string.pad_wasd);
             case LEFT_PAD: return context.getString(R.string.pad_left_trackpad);
             case RIGHT_PAD: return context.getString(R.string.pad_right_trackpad);

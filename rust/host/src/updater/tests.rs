@@ -237,11 +237,16 @@ fn disabling_automatic_updates_cancels_an_automatic_queue_only() {
     let h = &f.host;
     for automatic in [true, false] {
         *h.updates.lock().unwrap() =
-            json!({"phase":"waiting","automatic":automatic,"idle_since":0});
+            json!({"phase":"waiting","automatic":automatic,"idle_since":0,"partial":"setup.exe"});
         poll(h);
+        let state = h.updates.lock().unwrap();
+        assert_eq!(state["phase"], if automatic { "idle" } else { "waiting" });
+        // Turning automatic updates off is not a pause: its half-finished
+        // download goes at the next tidy, not at the next restart.
         assert_eq!(
-            h.updates.lock().unwrap()["phase"],
-            if automatic { "idle" } else { "waiting" }
+            state["partial"].is_null(),
+            automatic,
+            "automatic={automatic}"
         );
     }
     assert!(!status(h)["install_supported"].as_bool().unwrap());

@@ -15,6 +15,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -87,6 +88,8 @@ public class ComputerManagerService extends Service {
     private ExecutorService wakeRequests;
     // "Play over the internet" as it changes, in order and off the main thread: off ends the open tunnels at once.
     private ExecutorService internetPlayCalls;
+    // The default network's changes, off the callback thread and its per-PC locks.
+    private ExecutorService networkChanges;
     private final SharedPreferences.OnSharedPreferenceChangeListener internetPlaySetting = (preferences, key) -> {
         if (PreferenceConfiguration.INTERNET_PLAY_PREF_STRING.equals(key)) applyInternetPlay(preferences);
     };
@@ -1091,15 +1094,19 @@ public class ComputerManagerService extends Service {
         final ComputerDetails.AddressTuple address = details.activeAddress;
         final int httpsPort = details.httpsPort;
         final X509Certificate cert = details.serverCert;
-        wakeRequests.execute(() -> {
-            try {
-                NvHTTP http = new NvHTTP(address, httpsPort, idManager.getUniqueId(), cert,
-                        PlatformBinding.getCryptoProvider(ComputerManagerService.this));
-                InternetPlay.save(ComputerManagerService.this, uuid, http.getInternetPlay());
-            } catch (IOException e) {
-                LimeLog.warning("Internet play: the PC's details could not be read: " + e.getMessage());
-            }
-        });
+        try {
+            wakeRequests.execute(() -> {
+                try {
+                    NvHTTP http = new NvHTTP(address, httpsPort, idManager.getUniqueId(), cert,
+                            PlatformBinding.getCryptoProvider(ComputerManagerService.this));
+                    InternetPlay.save(ComputerManagerService.this, uuid, http.getInternetPlay());
+                } catch (IOException e) {
+                    LimeLog.warning("Internet play: the PC's details could not be read: " + e.getMessage());
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            // A poll still running while the service goes away: the read is not needed any more.
+        }
     }
 
     /** The PC's native API, or null before it is paired (no address or pinned certificate). */
@@ -1146,6 +1153,7 @@ public class ComputerManagerService extends Service {
         wakeTargets = new WakeTargetsPoll(new WakeTargets(this), this::nativeClient, wakeRequests,
                 SystemClock::elapsedRealtime);
         internetPlayCalls = Executors.newSingleThreadExecutor(task -> new Thread(task, "Internet play setting"));
+        networkChanges = Executors.newSingleThreadExecutor(task -> new Thread(task, "Network changes"));
         SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
         preferences.registerOnSharedPreferenceChangeListener(internetPlaySetting);
         applyInternetPlay(preferences);
@@ -1174,34 +1182,55 @@ public class ComputerManagerService extends Service {
                 @Override
                 public void onAvailable(Network network) {
                     LimeLog.info("Resetting PC state for new available network");
-                    synchronized (pollingTuples) {
-                        for (PollingTuple tuple : pollingTuples) {
-                            tuple.computer.state = ComputerDetails.State.UNKNOWN;
-                            ComputerManagerListener currentListener = listener;
-                            if (currentListener != null) {
-                                currentListener.notifyComputerUpdated(tuple.computer);
-                            }
-                        }
-                    }
+                    applyNetworkChange(true, SystemClock.elapsedRealtime());
                 }
 
                 @Override
                 public void onLost(Network network) {
                     LimeLog.info("Offlining PCs due to network loss");
-                    synchronized (pollingTuples) {
-                        for (PollingTuple tuple : pollingTuples) {
-                            tuple.computer.state = ComputerDetails.State.OFFLINE;
-                            ComputerManagerListener currentListener = listener;
-                            if (currentListener != null) {
-                                currentListener.notifyComputerUpdated(tuple.computer);
-                            }
-                        }
-                    }
+                    applyNetworkChange(false, SystemClock.elapsedRealtime());
                 }
             };
 
             ConnectivityManager connMgr = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
             connMgr.registerDefaultNetworkCallback(networkCallback);
+        }
+    }
+
+    /**
+     * A change of the default network resets what the pollers last found, since a PC's addresses may
+     * have moved. Each PC's state is written under the lock its poll holds; a poll that answered after
+     * this change began keeps its state, so a callback dispatched late cannot show it offline. It runs
+     * on a worker: a poll can hold its lock for seconds, which the default network callback thread
+     * must not wait for ({@code atMs} is when the change arrived).
+     */
+    void resetStateForNetworkChange(boolean available, long atMs) {
+        List<PollingTuple> tuples;
+        synchronized (pollingTuples) {
+            tuples = new ArrayList<>(pollingTuples);
+        }
+        List<PollingTuple> updated = new ArrayList<>();
+        for (PollingTuple tuple : tuples) {
+            synchronized (tuple.networkLock) {
+                if (destroyed || tuple.removed) continue;
+                if (tuple.lastSuccessfulPollMs >= atMs) continue;
+                tuple.computer.state = available ? ComputerDetails.State.UNKNOWN : ComputerDetails.State.OFFLINE;
+            }
+            updated.add(tuple);
+        }
+        ComputerManagerListener currentListener = listener;
+        if (currentListener == null || destroyed) return;
+        for (PollingTuple tuple : updated) {
+            currentListener.notifyComputerUpdated(tuple.computer);
+        }
+    }
+
+    /** Hands a network change to the worker that can wait for the polls' locks. */
+    private void applyNetworkChange(boolean available, long atMs) {
+        try {
+            networkChanges.execute(() -> resetStateForNetworkChange(available, atMs));
+        } catch (RejectedExecutionException e) {
+            // The service is going away.
         }
     }
 
@@ -1224,6 +1253,7 @@ public class ComputerManagerService extends Service {
         discoveryBinder = null;
         wakeRequests.shutdownNow();
         wakeTargets.shutdown();
+        networkChanges.shutdownNow();
         PreferenceManager.getDefaultSharedPreferences(this).unregisterOnSharedPreferenceChangeListener(internetPlaySetting);
         // A setting turned off just before still ends the tunnels.
         internetPlayCalls.shutdown();

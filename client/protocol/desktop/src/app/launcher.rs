@@ -158,6 +158,9 @@ impl App {
         // SAFETY: reading the event type.
         self.window_changed |= window_needs_a_frame(SDL_EventType(unsafe { event.r#type }));
         if let Some(source) = input_source::of(event, |id| self.pads.real_pad_type(id)) {
+            if matches!(source, input_source::InputSource::Pad(_)) {
+                self.screen_awake.active(Instant::now());
+            }
             self.launcher.input_source = source;
         }
         // SAFETY: reading the event type.
@@ -258,6 +261,8 @@ impl App {
         if !self.running {
             return;
         }
+        // Before a stream this frame may start, which holds the screen itself.
+        self.screen_awake.apply(Instant::now());
         // Before anything this frame launches or draws: SDL lost its device (`recover_renderer`).
         #[cfg(windows)]
         if std::mem::take(&mut self.renderer_lost) {

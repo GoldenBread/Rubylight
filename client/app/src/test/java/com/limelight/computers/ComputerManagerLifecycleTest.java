@@ -413,6 +413,56 @@ public class ComputerManagerLifecycleTest {
         }
     }
 
+    @Test
+    public void aNetworkCallbackDoesNotOverwriteAStateAPollConfirmedMeanwhile() throws Exception {
+        ServiceController<Manager> controller = Robolectric.buildService(Manager.class).create();
+        ComputerManagerService service = controller.get();
+        try {
+            ComputerDetails computer = new ComputerDetails();
+            computer.uuid = "network-host";
+            computer.state = ComputerDetails.State.ONLINE;
+            addTuple(service, computer);
+            List<PollingTuple> tuples = ReflectionHelpers.getField(service, "pollingTuples");
+            PollingTuple tuple = tuples.get(tuples.size() - 1);
+            android.net.ConnectivityManager.NetworkCallback callback =
+                    ReflectionHelpers.getField(service, "networkCallback");
+
+            CountDownLatch pollRunning = new CountDownLatch(1);
+            Thread poll = new Thread(() -> {
+                synchronized (tuple.networkLock) {
+                    pollRunning.countDown();
+                    try {
+                        Thread.sleep(800);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                    // The poll that the worker waits for answers, after the network change arrived.
+                    tuple.lastSuccessfulPollMs = android.os.SystemClock.elapsedRealtime();
+                }
+            });
+            poll.start();
+            assertTrue(pollRunning.await(5, TimeUnit.SECONDS));
+
+            Thread network = new Thread(() -> callback.onLost(null));
+            network.start();
+            network.join(300);
+            // The default network callback thread never waits for a poll's lock.
+            assertFalse("the network callback waited for a poll", network.isAlive());
+
+            poll.join(5000);
+            awaitNetworkChanges(service);
+            assertEquals("the poll that answered meanwhile keeps the PC online",
+                    ComputerDetails.State.ONLINE, tuple.computer.state);
+        } finally {
+            controller.destroy();
+        }
+    }
+
+    private static void awaitNetworkChanges(ComputerManagerService service) throws Exception {
+        ExecutorService changes = ReflectionHelpers.getField(service, "networkChanges");
+        changes.submit(() -> { }).get(10, TimeUnit.SECONDS);
+    }
+
     private static ComputerDetails savedWithCertificate(android.content.Context context, String uuid) {
         ComputerDetails stored = new ComputerDetails();
         stored.uuid = uuid;
@@ -680,5 +730,26 @@ public class ComputerManagerLifecycleTest {
             controller.destroy();
             InternetPlay.use(null);
         }
+    }
+
+    @Test
+    public void aPollReadingInternetPlayAfterShutdownDoesNotCrashItsThread() {
+        ServiceController<Manager> controller = Robolectric.buildService(Manager.class).create();
+        ComputerManagerService service = controller.get();
+        ComputerDetails details = new ComputerDetails();
+        details.uuid = "internet-host";
+        details.state = ComputerDetails.State.ONLINE;
+        details.pairState = com.limelight.nvstream.http.PairingManager.PairState.PAIRED;
+        details.serverCert = NativeApiFixtures.certificate();
+        details.internetPath = "lan";
+        details.activeAddress = new ComputerDetails.AddressTuple("192.168.1.9", 47984);
+        details.caps = com.limelight.nvstream.http.TestHosts.caps(
+                com.limelight.nvstream.http.TestHosts.serverInfo("rubylight-serverinfo.xml")
+                        .replace("</root>", "<RustHostInternetPlayVersion>1</RustHostInternetPlayVersion></root>"));
+        controller.destroy();
+
+        // A poll pass may still be running when the service goes away; it must not throw out of here.
+        ReflectionHelpers.callInstanceMethod(service, "readInternetPlay",
+                ReflectionHelpers.ClassParameter.from(ComputerDetails.class, details));
     }
 }

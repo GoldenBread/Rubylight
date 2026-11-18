@@ -1,13 +1,16 @@
 //! The DSU (cemuhook) motion server (`enable_dsu_server`, off by default):
-//! emulators on the PC, or on the network, read each streamed controller's
-//! gyroscope, accelerometer, buttons and touch from UDP `dsu_server_port`
-//! (26760). The packets and the client registrations are
-//! `butterpollo_core::dsu`'s; the setting names and port are Foundation
-//! Sunshine's (AlkaidLab/foundation-sunshine, GPL-3.0), and like its server
-//! this one listens on every interface.
+//! emulators on the PC read each streamed controller's gyroscope,
+//! accelerometer, buttons and touch from UDP `dsu_server_port` (26760). The
+//! packets and the client registrations are `butterpollo_core::dsu`'s; the
+//! setting names and port are Foundation Sunshine's
+//! (AlkaidLab/foundation-sunshine, GPL-3.0). Unlike its server this one
+//! listens only on `127.0.0.1` unless `dsu_server_lan` asks for an emulator
+//! on another network device.
 //!
 //! The control thread only updates a slot and wakes the sender; nothing is
-//! sent from it, and with the setting off [`observe`] returns at once.
+//! sent from it, and with the setting off [`observe`] returns at once. The
+//! client registrations have a lock of their own, so a flood of spoofed
+//! requests cannot stall the input path.
 use butterpollo_core::{
     dsu::{self, Clients, Request, SLOTS, Slots},
     input::Input,
@@ -30,23 +33,37 @@ struct Server {
     /// Random, as every DSU server's: a client sees a restarted server as new.
     id: u32,
     started: Instant,
+    /// The slots and their changes, the only state the input path takes.
     state: Mutex<State>,
+    /// The clients that asked for pad data: never touched by [`observe`].
+    clients: Mutex<Clients>,
     wake: Condvar,
 }
 
 #[derive(Default)]
 struct State {
     slots: Slots,
-    clients: Clients,
     /// Slots whose pad data changed since the sender last ran.
     dirty: [bool; SLOTS],
 }
 
+/// The address the server listens on: this PC only unless the user asks for
+/// emulators on the network (`dsu_server_lan`).
+fn bind_address(port: u16, lan: bool) -> SocketAddr {
+    let ip = if lan {
+        Ipv4Addr::UNSPECIFIED
+    } else {
+        Ipv4Addr::LOCALHOST
+    };
+    (ip, port).into()
+}
+
 /// Starts the server when `port` is set (`Config::dsu_server_port`). A port
 /// that cannot be opened is a console warning; the stream works without it.
-pub fn start(port: Option<u16>, warnings: &Warnings) {
+pub fn start(port: Option<u16>, lan: bool, warnings: &Warnings) {
     let Some(port) = port else { return };
-    let socket = match UdpSocket::bind((Ipv4Addr::UNSPECIFIED, port)) {
+    let address = bind_address(port, lan);
+    let socket = match UdpSocket::bind(address) {
         Ok(socket) => socket,
         Err(error) => {
             tracing::warn!(port, %error, "DSU motion server unavailable");
@@ -63,6 +80,7 @@ pub fn start(port: Option<u16>, warnings: &Warnings) {
         receiver.set_read_timeout(Some(RECEIVE_TIMEOUT))?;
         Ok(receiver)
     });
+    let local = socket.local_addr().map(|local| local.to_string());
     let receiver = match receiver {
         Ok(receiver) => receiver,
         Err(error) => {
@@ -77,12 +95,18 @@ pub fn start(port: Option<u16>, warnings: &Warnings) {
         id: rand::random(),
         started: Instant::now(),
         state: Mutex::new(State::default()),
+        clients: Mutex::new(Clients::default()),
         wake: Condvar::new(),
     });
     if SERVER.set(server.clone()).is_err() {
         return;
     }
-    tracing::info!(port, "DSU motion server listening on every interface");
+    tracing::info!(
+        port,
+        lan,
+        address = local.as_deref().unwrap_or("unknown"),
+        "DSU motion server listening"
+    );
     let receiving = server.clone();
     let spawned = std::thread::Builder::new()
         .name("dsu-receive".into())
@@ -147,7 +171,7 @@ impl Server {
                         ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted
                     ) =>
                 {
-                    self.state.lock().unwrap().clients.prune(Instant::now());
+                    self.clients.lock().unwrap().prune(Instant::now());
                     continue;
                 }
                 // Windows reports a client that went away as a reset on the
@@ -176,12 +200,15 @@ impl Server {
                     }
                 }
                 Request::PadData { flags, slot, mac } => {
-                    let mut state = self.state.lock().unwrap();
-                    state
-                        .clients
+                    // The clients have their own lock: registering never
+                    // delays [`observe`] on the control thread.
+                    self.clients
+                        .lock()
+                        .unwrap()
                         .register(from, flags, slot, mac, Instant::now());
                     // A new subscriber gets the current state now, not at the
                     // controller's next change.
+                    let mut state = self.state.lock().unwrap();
                     for slot in 0..SLOTS {
                         state.dirty[slot] |= state.slots.pad(slot as u8).is_some();
                     }
@@ -191,7 +218,10 @@ impl Server {
         }
     }
 
-    /// Sends the slots that changed to the clients that want them.
+    /// Sends the slots that changed to the clients that want them. The
+    /// changed slots are taken under the input path's lock and the clients
+    /// are read after it is released: walking the client map never holds up
+    /// a controller packet.
     fn send(&self) {
         let mut state = self.state.lock().unwrap();
         loop {
@@ -199,22 +229,26 @@ impl Server {
                 state = self.wake.wait(state).unwrap();
             }
             let now = Instant::now();
-            let mut packets = Vec::new();
+            let mut changed = Vec::new();
             for slot in 0..SLOTS as u8 {
                 if !std::mem::take(&mut state.dirty[usize::from(slot)]) {
                     continue;
                 }
-                let Some(pad) = state.slots.pad(slot).cloned() else {
-                    continue;
-                };
-                let subscribers = state.clients.subscribers(slot, now);
-                if subscribers.is_empty() {
-                    continue;
+                if let Some(pad) = state.slots.pad(slot).cloned() {
+                    changed.push((slot, pad, state.slots.next_number(slot)));
                 }
-                let number = state.slots.next_number(slot);
-                packets.push((dsu::pad_data(self.id, slot, &pad, number), subscribers));
             }
             drop(state);
+            let mut packets = Vec::new();
+            if !changed.is_empty() {
+                let mut clients = self.clients.lock().unwrap();
+                for (slot, pad, number) in changed {
+                    let subscribers = clients.subscribers(slot, now);
+                    if !subscribers.is_empty() {
+                        packets.push((dsu::pad_data(self.id, slot, &pad, number), subscribers));
+                    }
+                }
+            }
             for (packet, subscribers) in &packets {
                 for to in subscribers {
                     self.reply(packet, *to);
@@ -228,5 +262,22 @@ impl Server {
         if let Err(error) = self.socket.send_to(packet, to) {
             tracing::debug!(%error, %to, "DSU packet not sent");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The motion server is a passwordless input feed: an emulator on this PC
+    /// reaches it at 127.0.0.1, and only `dsu_server_lan` exposes it.
+    #[test]
+    fn the_motion_server_listens_on_loopback_unless_lan_access_is_on() {
+        let local = bind_address(26760, false);
+        assert!(local.ip().is_loopback());
+        assert_eq!(local.port(), 26760);
+        let lan = bind_address(26760, true);
+        assert!(lan.ip().is_unspecified());
+        assert_eq!(lan.port(), 26760);
     }
 }

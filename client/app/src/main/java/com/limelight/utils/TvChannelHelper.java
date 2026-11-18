@@ -19,6 +19,8 @@ import android.os.Build;
 import com.limelight.LimeLog;
 import com.limelight.PosterContentProvider;
 import com.limelight.R;
+import com.limelight.grid.assets.DiskAssetLoader;
+import com.limelight.grid.assets.PlaceholderArt;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.NvApp;
 
@@ -128,7 +130,24 @@ public class TvChannelHelper {
         return bitmap;
     }
 
-    void addGameToChannel(ComputerDetails computer, NvApp app) {
+    /**
+     * The key of the game's cached cover: the one the launch was started with, unless only the
+     * app's own key names a cached file. A stream's app is made again from the launch's extras
+     * without the host's art version, so its own key names a file that was never cached and the
+     * channel's card stayed grey (nightjar#130).
+     */
+    static String posterArtKey(String launchArtKey, String appKey, boolean launchCached, boolean appCached) {
+        boolean launch = launchArtKey != null && !launchArtKey.isEmpty();
+        if (launch && launchCached) return launchArtKey;
+        if (appCached) return appKey;
+        return launch ? launchArtKey : appKey;
+    }
+
+    private boolean cached(String uuid, String key) {
+        return key != null && !key.isEmpty() && new DiskAssetLoader(context).getFile(uuid, key).isFile();
+    }
+
+    void addGameToChannel(ComputerDetails computer, NvApp app, String launchArtKey) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             if (!isAndroidTV()) {
                 return;
@@ -140,12 +159,24 @@ public class TvChannelHelper {
                 return;
             }
 
+            String appKey = app.getAssetCacheKey();
+            String artKey = posterArtKey(launchArtKey, appKey, cached(computer.uuid, launchArtKey), cached(computer.uuid, appKey));
+            // A game without a cover of its own gets a poster with its title: the TV home screen
+            // draws a poster it cannot open as an empty grey card.
+            if (!PlaceholderArt.isCover(new DiskAssetLoader(context).getFile(computer.uuid, artKey))) {
+                try {
+                    PosterContentProvider.writeTitlePoster(context, computer.uuid, artKey, app.getAppName());
+                } catch (IOException | RuntimeException e) {
+                    LimeLog.warning("TV channel: no title poster for " + app.getAppName() + ": " + e);
+                }
+            }
+
             PreviewProgramBuilder builder = new PreviewProgramBuilder()
                     .setChannelId(channelId)
                     .setType(TYPE_GAME)
                     .setTitle(app.getAppName())
                     .setPosterArtAspectRatio(ASPECT_RATIO_MOVIE_POSTER)
-                    .setPosterArtUri(PosterContentProvider.createBoxArtUri(computer.uuid, app.getAssetCacheKey()))
+                    .setPosterArtUri(PosterContentProvider.createBoxArtUri(computer.uuid, artKey))
                     .setIntent(ServerHelper.createAppShortcutIntent(context, computer, app))
                     .setInternalProviderId(""+app.getAppId())
                     // Weight should increase each time we run the game

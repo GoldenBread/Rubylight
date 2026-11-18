@@ -603,6 +603,9 @@ fn poll_with(h: &Shared, hashed: Option<Hashed>, hash: &dyn Fn(&std::path::Path)
     {
         state["phase"] = json!("idle");
         state["download_id"] = Value::Null;
+        // A half-finished download is not resumed: its folder goes at the next
+        // tidy, which skips a download it believes is still running.
+        state["partial"] = Value::Null;
         return;
     }
     drop(state);

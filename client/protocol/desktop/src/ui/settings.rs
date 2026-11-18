@@ -61,7 +61,7 @@ pub(super) const SECTION_KEYS: [&[&[&str]]; 9] = [
     &[&["error_correction"], &["tell_host_wireless"], &["tell_host_link_speed"],
         &["network_priority"], &["unbatched_input"], &["full_range"],
         &["pyrowave_decoder"], &["pyrowave_async_compute"],
-        &["decoder"], &["software_slices"], &["vulkan_video_first"], &["vulkan_rfi"], &["cursor_shapes"],
+        &["decoder"], &["software_slices"], &["vulkan_video_first"], &["vulkan_rfi"], &["videotoolbox_rfi"], &["cursor_shapes"],
         &["link_probe"], &["post_stream_decode_time"]],
 ];
 
@@ -1157,7 +1157,8 @@ impl Launcher {
                         for codec in [CodecPreference::Auto, CodecPreference::H264, CodecPreference::Hevc, CodecPreference::Av1] {
                             ui.selectable_value(&mut s.codec, codec, codec_name(codec));
                         }
-                        let menu_error = gpu_probe(ui);
+                        // A Mac decodes PyroWave on the processor where the GPU decoder cannot.
+                        let menu_error = if cfg!(target_os = "macos") { None } else { gpu_probe(ui) };
                         if menu_error.is_none() {
                             for codec in [CodecPreference::PyroWave, CodecPreference::PyroWave444] {
                                 ui.selectable_value(&mut s.codec, codec, codec_name(codec));
@@ -1334,10 +1335,10 @@ impl Launcher {
             } else if let Some(reason) = fractional_vsync_display_reason(s, &display, &self.fullscreen_modes, cfg!(windows), crate::kms::active()) {
                 rows.note(reason, *TERTIARY);
             }
-            setting_row(ui, s, &mut rows, &["fractional_vsync"], "Fractional V-Sync", "On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Measured on Windows, it adds 1 to 2 ms of delay on most frames and 2.5 to 4 ms on the slowest ones; turn it on if motion judders with V-Sync.", |ui, s| toggle(ui, &mut s.fractional_vsync));
+            setting_row(ui, s, &mut rows, &["fractional_vsync"], "Fractional V-Sync", "On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Each frame waits for its turn, which adds delay; turn it on if motion judders with V-Sync.", |ui, s| toggle(ui, &mut s.fractional_vsync));
             rows.always();
             rows.group(en("Image"));
-            setting_row(ui, s, &mut rows, &["upscaling"], "Upscaling", "How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; Temporal reuses earlier frames to rebuild detail, but in our tests looked softer than SGSR at three to four times its GPU work, so leave SGSR on unless you want to compare. HDR streams are enlarged without them.", |ui, s| {
+            setting_row(ui, s, &mut rows, &["upscaling"], "Upscaling", if cfg!(target_os = "macos") { en("How a stream smaller than the screen is enlarged. FSR, SGSR and MetalFX sharpen edges at some GPU time and battery; Temporal reuses earlier frames to rebuild detail, but in our tests looked softer than SGSR at three to four times its GPU work, so leave SGSR on unless you want to compare; MetalFX also adds a few milliseconds of delay. HDR streams are enlarged without them.") } else { en("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; Temporal reuses earlier frames to rebuild detail, but in our tests looked softer than SGSR at three to four times its GPU work, so leave SGSR on unless you want to compare. HDR streams are enlarged without them.") }, |ui, s| {
                 Combo::from_id_salt("upscaling").selected_text(tr(s.upscaling.label())).show_ui(ui, |ui| {
                     // AI enhancement is offered only where the GPU's probe finds the vendor's super
                     // resolution or RTX Video HDR. It loads the AMF runtime, so it runs once per
@@ -1345,8 +1346,9 @@ impl Launcher {
                     let probe = crate::stream::enhance::settings_probe(probe_device);
                     if probe.is_none() { ui.ctx().request_repaint_after(std::time::Duration::from_millis(200)); }
                     let ai_offered = probe.flatten().is_some();
-                    for mode in [crate::config::Upscaling::Bilinear, crate::config::Upscaling::Fsr1, crate::config::Upscaling::Sgsr1, crate::config::Upscaling::Sgsr2, crate::config::Upscaling::Ai] {
+                    for mode in [crate::config::Upscaling::Bilinear, crate::config::Upscaling::Fsr1, crate::config::Upscaling::Sgsr1, crate::config::Upscaling::Sgsr2, crate::config::Upscaling::Ai, crate::config::Upscaling::MetalFx] {
                         if mode == crate::config::Upscaling::Ai && !ai_offered && s.upscaling != mode { continue; }
+                        if mode == crate::config::Upscaling::MetalFx && !crate::stream::metalfx_supported() && s.upscaling != mode { continue; }
                         ui.selectable_value(&mut s.upscaling, mode, tr(mode.label()));
                     }
                 }).response
@@ -2020,7 +2022,7 @@ impl Launcher {
             if let Some(reason) = &gpu_decoder_error {
                 rows.note(trf("GPU decoding isn’t available here: {}", &[reason]), *TERTIARY);
             }
-            setting_row(ui, s, &mut rows, &["pyrowave_decoder"], "PyroWave decoder", "Decodes PyroWave on the GPU or the CPU. GPU measured lower latency; where it can’t run, PyroWave is not offered until you choose CPU.", |ui, s| {
+            setting_row(ui, s, &mut rows, &["pyrowave_decoder"], "PyroWave decoder", if cfg!(target_os = "macos") { en("Decodes PyroWave on the GPU or the CPU. On a Mac, GPU needs Apple silicon and macOS 26 or later and copies each picture back through memory before it is drawn; where it can’t start, the CPU decodes and the stream says so. Leave it on CPU unless the CPU can’t keep up with the stream.") } else { en("Decodes PyroWave on the GPU or the CPU. GPU measured lower latency; where it can’t run, PyroWave is not offered until you choose CPU.") }, |ui, s| {
                 Combo::from_id_salt("pyrowave-decoder")
                     .selected_text(tr(s.pyrowave_decoder.label()))
                     .show_ui(ui, |ui| {
@@ -2030,7 +2032,8 @@ impl Launcher {
                     })
                     .response
             });
-            rows.when(s.pyrowave_decoder == crate::config::PyroWaveDecoder::Gpu);
+            // A Mac's GPU decoder decodes on the graphics queue of a device of its own.
+            rows.when(s.pyrowave_decoder == crate::config::PyroWaveDecoder::Gpu && !cfg!(target_os = "macos"));
             setting_row(ui, s, &mut rows, &["pyrowave_async_compute"], "Decode PyroWave on a compute queue", "For comparing. Lets a PyroWave decode overlap the drawing of the previous frame on GPUs that can; it showed no clear gain on a Radeon 780M laptop. Leave it off.", |ui, s| {
                 toggle(ui, &mut s.pyrowave_async_compute)
             });
@@ -2065,6 +2068,15 @@ impl Launcher {
                 }
                 setting_row(ui, s, &mut rows, &["vulkan_rfi"], "Vulkan video recovery", "For comparing. With Vulkan video decoding, repairs a lost frame without waiting for a keyframe (a full new picture). Leave it off.", |ui, s| {
                     toggle(ui, &mut s.vulkan_rfi)
+                });
+            }
+            // VideoToolbox is macOS's hardware decoder.
+            if cfg!(target_os = "macos") {
+                if s.decoder == DecoderPreference::Software {
+                    unused_with(&mut rows, decoder_name(s.decoder));
+                }
+                setting_row(ui, s, &mut rows, &["videotoolbox_rfi"], "VideoToolbox recovery", "For comparing. With VideoToolbox decoding, repairs a lost frame without waiting for a keyframe (a full new picture, about four times larger). Not yet measured on a Mac; leave it off unless you are comparing.", |ui, s| {
+                    toggle(ui, &mut s.videotoolbox_rfi)
                 });
             }
             rows.group("");
