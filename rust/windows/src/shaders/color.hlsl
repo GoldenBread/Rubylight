@@ -229,10 +229,17 @@ float2 chromaCode(float3 rgb) {
 // and vertically centred. A symmetric [1,2,1] x [1,1] filter preserves that
 // position while suppressing aliasing. Clamp in target coordinates so the
 // left edge also works with resizing and letterboxing.
+// PQ streams filter light, not codes: PQ is so steep that averaging the codes
+// of ClearType's coloured glyph fringes gave small text a magenta cast that
+// SDR's gentler curve hides (Rubylight #130). `nonlinear` writes PQ for every
+// `hdr` but 0 and 2, so `depq` returns its light; HLG and SDR keep their codes.
+bool chromaInLight() { return hdr != 0 && hdr != 2; }
+float3 chromaLight(float3 rgb) { return chromaInLight() ? depq(rgb) : rgb; }
 float3 leftChroma(float2 at, bool menu, float3 c00, float3 c10, float3 c01, float3 c11) {
     float2 left = float2(max(at.x - 1, 0), at.y);
-    return (rgb_at(left, menu) + rgb_at(left + float2(0, 1), menu) +
-            2 * (c00 + c01) + c10 + c11) * 0.125;
+    float3 rgb = (chromaLight(rgb_at(left, menu)) + chromaLight(rgb_at(left + float2(0, 1), menu)) +
+                  2 * (chromaLight(c00) + chromaLight(c01)) + chromaLight(c10) + chromaLight(c11)) * 0.125;
+    return chromaInLight() ? pq(rgb) : rgb;
 }
 float lumaPixel(float2 p, bool menu) {
     if (menu) menu_clip(uint2(p));

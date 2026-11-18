@@ -8,7 +8,8 @@
 //! other slices of the same array (Nightjar #112): every GPU copies by default now, and
 //! `NIGHTJAR_D3D11_BIND=1` or `=0` overrides that, as V+'s `D3D11VA_FORCE_BIND` does. Without
 //! binding the pass reads the copy in SDL's video texture. Its color conversion follows SDL's
-//! D3D11 shaders, so a picture looks the same as SDL draws it, but its tone map takes the content
+//! D3D11 shaders, so a picture looks the same as SDL draws it (except that it puts 4:2:0 chroma on
+//! the left luma sample, where hosts encode it, and SDL in the middle), but its tone map takes the content
 //! peak per frame: from the stream's Dolby Vision RPU (profiles 8.1 and 10.1 have an HDR10 base
 //! layer, drawn as PQ), else its HDR10+ metadata, else measured on the picture, as V+'s libplacebo
 //! renderer does (plvk.cpp, with libplacebo's peak detection defaults: 20 frames of smoothing,

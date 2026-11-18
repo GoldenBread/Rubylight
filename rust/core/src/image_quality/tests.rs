@@ -218,3 +218,59 @@ fn summary_reports_mean_p99_and_worst() {
     assert_eq!(worst, 100.);
     assert!(summarize(&mut []).iter().all(|v| v.is_nan()));
 }
+
+#[test]
+fn pq_chroma_keeps_cleartype_text_neutral() {
+    // Rubylight #130: a row of Segoe UI's "ill" as Windows' ClearType draws it, black on white,
+    // shown on an HDR desktop with SDR content at 200 nits. Averaging the PQ codes of its
+    // coloured fringes made the decoded text magenta (mean light R 155, G 121, B 141 nits for
+    // the source's 126, 134, 126; ΔE ITP 24); averaging their light keeps it near neutral.
+    let (w, y, m, c) = (
+        [255.; 3],
+        [255., 255., 182.],
+        [102., 0., 58.],
+        [144., 219., 255.],
+    );
+    let row = [w, y, m, c, y, m, c, w, y, m, c, w];
+    let s = spec(Transfer::Pq, Source::ScRgbF16, row.len(), 2);
+    let source = Picture {
+        width: row.len(),
+        height: 2,
+        rgb: [row, row]
+            .concat()
+            .iter()
+            .map(|p| p.map(|v| srgb_decode(v / 255.) * 200. / 80.))
+            .collect(),
+    };
+    let planes = reference(&source, &s);
+    // Decoded as chroma_sample_loc_type 0 says: chroma i at luma 2i, halfway between for 2i + 1.
+    let half = row.len() / 2;
+    let chroma = |plane: &[f64], x: usize| (plane[x / 2] + plane[((x + 1) / 2).min(half - 1)]) / 2.;
+    let mut shown = [0.; 3];
+    let mut wanted = [0.; 3];
+    for (x, rgb) in nonlinear(&source, &s)[..row.len()].iter().enumerate() {
+        let decoded = decode(
+            &s,
+            rgb_from_codes(
+                &s,
+                planes.y[x],
+                chroma(&planes.cb, x),
+                chroma(&planes.cr, x),
+            ),
+        );
+        let light = decode(&s, *rgb);
+        for i in 0..3 {
+            shown[i] += decoded[i] / row.len() as f64;
+            wanted[i] += light[i] / row.len() as f64;
+        }
+    }
+    let tint = delta_e_itp(ictcp(shown), ictcp(wanted));
+    assert!(
+        tint < 4.,
+        "ΔE ITP {tint}: shown {shown:?}, source {wanted:?}"
+    );
+    assert!(
+        shown[1] > shown[0].max(shown[2]) - 2.,
+        "green fell behind: {shown:?}"
+    );
+}

@@ -161,3 +161,115 @@ fn sdr_bt2020_gpu_matches_reference_primaries_and_transfer() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+#[ignore = "requires D3D11 P010 conversion and D3D12 compute"]
+fn pq_chroma_is_filtered_in_light_on_every_path() -> Result<()> {
+    use butterpollo_core::amf_vpe::{Source, Transfer};
+    use butterpollo_core::image_quality as q;
+    let _com = ComGuard::new()?;
+    let gpu = Device::new("")?;
+    let compute = crate::compute::Compute::for_device(&gpu.device)?;
+    // Rubylight #130: Segoe UI's "ill" as ClearType draws it, black on white, on an HDR desktop
+    // with SDR content at 200 nits (scRGB 2.5). Averaging these fringes' PQ codes tinted it magenta.
+    let (w, y, m, c) = (
+        [255.; 3],
+        [255., 255., 182.],
+        [102., 0., 58.],
+        [144., 219., 255.],
+    );
+    let row = [w, y, m, c, y, m, c, w, y, m, c, w];
+    let colors: Vec<[f32; 3]> = (0..64)
+        .map(|x| row[x % row.len()].map(|v: f64| (q::srgb_decode(v / 255.) * 2.5) as f32))
+        .collect();
+    let image = make_image(&colors, 1, 16);
+    let source = GpuImage::upload(&gpu, &image)?;
+    let spec = q::Spec {
+        width: 64,
+        height: 16,
+        source: Source::ScRgbF16,
+        transfer: Transfer::Pq,
+        matrix: 2,
+        full_range: false,
+        ten_bit: true,
+    };
+    let picture = q::Picture {
+        width: 64,
+        height: 16,
+        rgb: (0..64 * 16)
+            .map(|i| colors[i % 64].map(|v| f64::from(half::f16::from_f32(v).to_f32())))
+            .collect(),
+    };
+    let wanted = q::reference(&picture, &spec);
+    // The pattern tells light from codes: the old filter of the codes lands far from the reference.
+    // (The reference filters codes for any transfer but PQ, and HLG changes nothing else here.)
+    let nonlinear = q::nonlinear(&picture, &spec);
+    let of_codes = q::planes_from_rgb(
+        &nonlinear,
+        &q::Spec {
+            transfer: Transfer::Hlg,
+            ..spec
+        },
+    );
+    let apart = wanted
+        .cr
+        .iter()
+        .zip(&of_codes.cr)
+        .map(|(a, b)| (a - b).abs())
+        .fold(0., f64::max);
+    assert!(
+        apart > 8.,
+        "the pattern does not separate light from codes: {apart}"
+    );
+    let config = butterpollo_core::rtsp::Negotiated {
+        width: 64,
+        height: 16,
+        codec: 2,
+        hdr: true,
+        csc_mode: 4,
+        ..Default::default()
+    };
+    let mut paths = Vec::new();
+    for with_compute in [false, true] {
+        let mut converter = Converter::new(&gpu, &config, (64, 16, image.pixel))?;
+        if !with_compute {
+            converter.compute = None;
+        }
+        paths.push((
+            if with_compute {
+                "D3D11 compute"
+            } else {
+                "D3D11 graphics"
+            },
+            readback(&gpu, converter.convert(&source)?.as_ref())?,
+        ));
+    }
+    let mut converter = crate::compute::Converter::new(compute.clone(), 64, 16, true)?;
+    converter.values = constants(&config, (64, 16, image.pixel), [100., 1.], None);
+    let converted = converter.convert(
+        &compute.open(&source.texture)?,
+        crate::compute::format(image.pixel),
+        None,
+        &source,
+    )?;
+    converted.wait()?;
+    paths.push((
+        "D3D12 compute",
+        readback_compute(&compute, &converted.texture)?,
+    ));
+    for (path, pixels) in paths {
+        for j in 0..8 {
+            for i in 0..32 {
+                let at = 64 * 16 + j * 64 + i * 2;
+                for (plane, value) in [(&wanted.cb, pixels[at]), (&wanted.cr, pixels[at + 1])] {
+                    let expected = plane[j * 32 + i];
+                    assert!(
+                        (f64::from(value) - expected).abs() <= 1.,
+                        "{path} chroma ({i}, {j}): {value}, wanted {expected:.2}"
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}

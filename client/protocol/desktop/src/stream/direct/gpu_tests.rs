@@ -251,3 +251,22 @@ fn read_half(device: &ID3D11Device, context: &ID3D11DeviceContext, target: &ID3D
         pixels
     }
 }
+
+#[test]
+#[ignore = "needs a GPU"]
+fn chroma_is_drawn_on_the_left_luma_sample_of_its_pair() {
+    let (device, context) = device();
+    // Grey, with one reddish chroma sample: the third, which hosts take at luma column 4
+    // (chroma_sample_loc_type 0). Drawn in the middle of its pair, columns 4 and 5 were equally
+    // red (Rubylight #130).
+    let texture = picture_array(&device, (16, 8), (16, 8), 1, false, |x, _| [126, 128, if x / 2 == 2 { 168 } else { 128 }]);
+    let picture = Picture { texture: texture.as_raw(), slice: 0, size: (16, 8), ten_bit: false, full_range: false, matrix: 1, transfer: Transfer::Sdr };
+    // SAFETY: The test's device, on this thread.
+    let mut pass = unsafe { Direct::new(&device) }.unwrap();
+    let output = Output { linear: false, color_scale: 1.0, headroom: 1.0 };
+    let pixels = render(&device, &context, &mut pass, &picture, (16, 8), DXGI_FORMAT_R8G8B8A8_UNORM, output, Tone::default());
+    let red: Vec<f32> = (0..16).map(|x| pixels[4 * 16 + x][0] - pixels[4 * 16 + x][1]).collect();
+    assert!(red[4] > 0.3, "the sample's own column is not fully red: {red:?}");
+    assert!((red[3] - red[4] / 2.).abs() < 0.03 && (red[5] - red[4] / 2.).abs() < 0.03, "neighbours not half red: {red:?}");
+    assert!(red[2].abs() < 0.03 && red[6].abs() < 0.03, "red beyond the neighbours: {red:?}");
+}

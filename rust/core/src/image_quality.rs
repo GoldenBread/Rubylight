@@ -16,7 +16,8 @@
 //!   range;
 //! - chroma horizontally co-sited with the left luma sample and vertically
 //!   centred (chroma_sample_loc_type 0, which decoders assume), filtered
-//!   [1 2 1] across and [1 1] down.
+//!   [1 2 1] across and [1 1] down: in light for PQ, whose codes averaged
+//!   tint ClearType text magenta (#130), on the codes otherwise.
 use crate::amf_vpe::{Source, Transfer};
 
 /// The stream a reference is made for.
@@ -404,9 +405,11 @@ pub fn reference(source: &Picture, spec: &Spec) -> Planes {
     let rgb = nonlinear(source, spec);
     planes_from_rgb(&rgb, spec)
 }
-/// 4:2:0 codes for target-sized R'G'B', with the left-sited chroma filter.
+/// 4:2:0 codes for target-sized R'G'B', with the left-sited chroma filter,
+/// which averages light for PQ (`leftChroma` in color.hlsl).
 pub fn planes_from_rgb(rgb: &[[f64; 3]], spec: &Spec) -> Planes {
     let (w, h) = (spec.width, spec.height);
+    let in_light = spec.transfer == Transfer::Pq;
     let y = rgb.iter().map(|&p| luma_code(spec, p)).collect();
     let (cw, ch) = (w / 2, h / 2);
     let mut cb = Vec::with_capacity(cw * ch);
@@ -420,11 +423,12 @@ pub fn planes_from_rgb(rgb: &[[f64; 3]], spec: &Spec) -> Planes {
                 for row in [y0, (y0 + 1).min(h - 1)] {
                     let p = rgb[row * w + column];
                     for c in 0..3 {
-                        sum[c] += p[c] * weight;
+                        sum[c] += if in_light { depq(p[c]) } else { p[c] } * weight;
                     }
                 }
             }
-            let (u, v) = chroma_codes(spec, sum.map(|s| s / 8.));
+            let filtered = sum.map(|s| if in_light { pq(s / 8.) } else { s / 8. });
+            let (u, v) = chroma_codes(spec, filtered);
             cb.push(u);
             cr.push(v);
         }
