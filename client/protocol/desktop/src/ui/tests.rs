@@ -2915,8 +2915,16 @@ fn home_with_games(count: u32) -> Frames {
 #[test]
 fn the_first_pairing_offers_the_setup_card_once() {
     let mut l = launcher(true, true);
-    assert!(!l.offer_setup_card(5, 2), "a second paired PC is no first pairing");
-    assert!(!l.settings.setup_card_seen && l.settings.setup_card_host.is_none());
+    assert!(l.offer_setup_card(5, 2), "a second paired PC is no first pairing, but a pairing seen, to be saved");
+    assert!(l.settings.setup_card_seen && l.settings.setup_card_host.is_none());
+    assert!(!l.offer_setup_card(6, 1), "and no later pairing offers it");
+    assert_eq!(l.settings.setup_card_host, None);
+    // An install from before the card starts with its PC paired: pairing it again offers nothing.
+    let mut l = launcher(true, true);
+    assert!(l.paired_before_setup_card(), "to be saved");
+    assert!(!l.paired_before_setup_card());
+    assert!(!l.offer_setup_card(5, 1) && l.settings.setup_card_host.is_none());
+    let mut l = launcher(true, true);
     assert!(l.offer_setup_card(5, 1), "the first pairing offers it, to be saved");
     assert_eq!((l.settings.setup_card_host, l.settings.setup_card_seen), (Some(5), true));
     l.settings.setup_card_host = None;

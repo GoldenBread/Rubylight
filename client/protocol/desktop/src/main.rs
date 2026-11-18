@@ -831,6 +831,12 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     let records = store.hosts();
     #[cfg(feature = "demo-library")]
     let records = ui::demo::records();
+    // An install from before Home's setup card that has a PC paired made its first pairing long ago.
+    if records.iter().any(|record| record.server_certificate.is_some()) && launcher.paired_before_setup_card() {
+        if let Err(e) = store.save_settings(&launcher.settings) {
+            eprintln!("nightjar: saving settings failed: {e}");
+        }
+    }
     // The demo library looks for nobody, and the second screen streams from the first's PC.
     let mut hosts = if cfg!(feature = "demo-library") || second_screen::this_process() { Hosts::without_discovery(records, waker.clone()) } else { Hosts::new(records, waker.clone()) };
     let cli = match launch {

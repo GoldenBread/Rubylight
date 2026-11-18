@@ -165,9 +165,11 @@ Home's **View** (the grid button in the top row, reached with the remote) offers
 
 After the first pairing this device makes, Home shows one card: "Set up for this device and <PC>", and under it the values a stream to that PC starts with: resolution, frame rate, bitrate, HDR or SDR. It answers "is it set up right?" without opening Settings. There is nothing to press but its close button, which a remote, a pad and the keyboard reach; closed once, it never returns.
 
-- It speaks for Recommended's Auto only. While the stream's settings are the player's own (Custom, or a choice other than Auto) the card does not show, and it comes back if they return to Auto before it was closed.
-- The codec: Auto leaves it to the stream, which negotiates the best codec both ends decode when it starts (`simple_profile`), so before a stream ran there is none to name. The card says "codec chosen when the stream starts"; with a codec forced in Video it names that codec.
-- It is offered once per install, by the pairing that leaves exactly one paired PC. A pairing on a device that already has a PC is not the first and offers nothing, then or later.
+- It speaks for Recommended's Auto only. While the stream's settings are the player's own (Custom, or a choice other than Auto) the card does not show, and it comes back if they return to Auto before it was closed. Both apps ask the same thing: what Settings → Recommended shows, not one PC's own values. The line then gives what a stream to that PC starts with.
+- The codec: Auto leaves it to the stream, which negotiates the best codec both ends decode when it starts (`simple_profile`), so before a stream ran there is none to name. The card says "codec chosen when the stream starts". A codec forced in Video makes the settings Custom, so the card does not show then; it names a codec only where that PC's own settings force one.
+- It is offered once per install, by the pairing that leaves exactly one paired PC. A pairing on a device that already has a PC is not the first and offers nothing, then or later; nor does a PC that answers "already paired" (a link scanned again). A device that comes from a version before the card with a PC paired is marked at its first start, so pairing that PC again shows nothing.
+- HDR reads as Recommended's row does on Android: left on Auto it is HDR where the screen and the decoder show it.
+- While it shows, Up from the first row of games stops on its close button and Down from there returns, on a remote and a pad alike.
 - It is part of the page, not a notice over it: Home's first content under the top row, with the games starting beneath it, and it scrolls away with them. On a TV it stands in the hero's band beside the game's name, which ends before it, so the shelves keep their height.
 - It yields to "… wants to pair", which asks for an answer.
 

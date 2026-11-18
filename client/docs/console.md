@@ -25,7 +25,7 @@ Nightjar opens on Home when a paired PC supports the native API. Home has four p
 
 Phones, tablets and TVs keep their usual look until you change it.
 
-**After the first pairing.** Once the first PC is paired, Home shows one card, **Set up for this device and** the PC's name, with what the automatic settings use for a stream to it: resolution, frame rate, bitrate, and HDR or SDR. The codec is chosen when the stream starts, so the card names one only when you forced it in Video. The card shows while the three choices under **Settings → Recommended** are on Auto; its close button puts it away for good.
+**After the first pairing.** Once the first PC is paired, Home shows one card, **Set up for this device and** the PC's name, with what the automatic settings use for a stream to it: resolution, frame rate, bitrate, and HDR or SDR. The codec is chosen when the stream starts, and the card says so. The card shows while the three choices under **Settings → Recommended** are on Auto. A choice of your own there, or a codec forced in Video, makes the settings Custom, and the card stays away until they are on Auto again. Its close button puts it away for good. A device that already had a PC paired before this version does not get the card.
 
 **Collections.** When a PC names collections (Steam collections, Playnite categories; Rubylight 3.7 or newer), **Group by** offers **Collection**: a row per collection by name, a game in several in each, then **No collection**. All games has a chip for each. Nothing needs setting up on the PC, and with no collections the option does not appear.
 

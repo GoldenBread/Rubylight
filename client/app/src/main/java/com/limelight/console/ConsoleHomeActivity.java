@@ -71,6 +71,8 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
     private android.widget.Button pairingBanner;
     /** What the automatic settings will use, after the first pairing ({@link SetupCard}); gone for nearly everyone. */
     private View setupCard;
+    /** Whether the card's PC was among the hosts when the card was last worked out: a poll asks again only when that changed. */
+    private boolean setupCardHostThere;
     private List<PairingWatch.Waiting> waitingToPair = java.util.Collections.emptyList();
     /** The phone's Home: one grid of headers and cards. Null on TV. */
     private ConsoleHomeListAdapter adapter;
@@ -596,6 +598,7 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
             if (com.limelight.ui.InputSource.isDpad(event.getKeyCode())) focusPending = false;
             onInput(InputSource.of(event), InputSource.vendorOf(event));
         }
+        if (upToSetupCard(event)) return true;
         // Up from the top of the list goes to the current tab of the shell bar, whatever the focus search would pick
         // (View, at the bar's end, included).
         // On a phone the tabs are at the foot: Up from the top card stays in the top row.
@@ -605,6 +608,30 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
             return true;
         }
         return super.dispatchKeyEvent(event);
+    }
+
+    /**
+     * Up from the list's first row stops on the set-up card's close button: the card stands between that row and the top
+     * row, and the button is at its far end, where a focus search from the left columns never looks. Up from the button
+     * goes on to the top row as usual, and Down from it back to the list.
+     */
+    private boolean upToSetupCard(android.view.KeyEvent event) {
+        if (event.getAction() != android.view.KeyEvent.ACTION_DOWN || !event.hasNoModifiers()
+                || setupCard == null || setupCard.getVisibility() != View.VISIBLE) {
+            return false;
+        }
+        View close = setupCard.findViewById(R.id.home_setup_dismiss);
+        // And Down from the button is back in the list, where Up came from.
+        if (event.getKeyCode() == android.view.KeyEvent.KEYCODE_DPAD_DOWN) return close.isFocused() && list.requestFocus();
+        if (event.getKeyCode() != android.view.KeyEvent.KEYCODE_DPAD_UP) return false;
+        View focused = list.findFocus();
+        if (focused == null || !close.isFocusable()) return false;
+        View next = focused.focusSearch(View.FOCUS_UP);
+        for (View at = next; at != null; at = at.getParent() instanceof View ? (View) at.getParent() : null) {
+            // Still inside the list: this press moves among the rows.
+            if (at == list) return false;
+        }
+        return close.requestFocus();
     }
 
     @Override
@@ -682,8 +709,10 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
         if (drawn.changed(feed.hosts(), feed.waiting())) {
             scheduleReload();
         }
-        // The card waits for its PC to be among the hosts; once it shows, a poll has nothing to add.
-        if (setupCard.getVisibility() != View.VISIBLE && SetupCard.host(this) != null) {
+        // The card waits for its PC to be among the hosts and goes when that PC is unpaired or removed. A poll works it
+        // out again only then: the settings it speaks for change on other screens, and a resume reads them.
+        String cardFor = SetupCard.host(this);
+        if (cardFor != null && (feed.host(cardFor) != null) != setupCardHostThere) {
             showSetupCard();
         }
         // The watch has no timer of its own: it counts on every report.
@@ -699,6 +728,7 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
     private void showSetupCard() {
         String uuid = SetupCard.host(this);
         ComputerDetails host = uuid == null ? null : feed.host(uuid);
+        setupCardHostThere = host != null;
         SetupCard.Text text = host == null || !waitingToPair.isEmpty() ? null : SetupCard.text(this, host);
         setupCard.setVisibility(text == null ? View.GONE : View.VISIBLE);
         if (chrome != null) chrome.fitSetupCard();

@@ -21,5 +21,6 @@ public class NightjarApplication extends Application {
         crashCapture.start(this);
         com.limelight.pin.PinGate.install(this);
         com.limelight.console.OpenPlay.install(this);
+        com.limelight.console.SetupCard.atStart(this);
     }
 }

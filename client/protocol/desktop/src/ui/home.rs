@@ -928,20 +928,32 @@ pub(super) fn setup_line(settings: &Settings, display: Display) -> String {
 
 impl Launcher {
     /// A pairing succeeded and `paired_pcs` PCs are paired now: the first one on this install
-    /// (exactly one paired, no card offered before) gets Home's setup card. True when the
+    /// (exactly one paired, no pairing seen before) gets Home's setup card. Every pairing counts
+    /// as seen, so one made beside another PC leaves none for later either. True when the
     /// settings changed and want saving.
     pub fn offer_setup_card(&mut self, host: u64, paired_pcs: usize) -> bool {
-        if self.settings.setup_card_seen || paired_pcs != 1 {
+        if self.settings.setup_card_seen {
             return false;
         }
         self.settings.setup_card_seen = true;
-        self.settings.setup_card_host = Some(host);
+        if paired_pcs == 1 {
+            self.settings.setup_card_host = Some(host);
+        }
         true
     }
 
+    /// The app starts with a PC paired. With no pairing seen, the install comes from a version
+    /// before the card and made its first pairing long ago: pairing that PC again offers nothing.
+    /// True when the settings changed and want saving.
+    pub fn paired_before_setup_card(&mut self) -> bool {
+        !std::mem::replace(&mut self.settings.setup_card_seen, true)
+    }
+
     /// The setup card's title and line while it shows: its PC is still paired, no device waits to
-    /// pair (that banner goes first), and the PC's settings are what "Auto (recommended)" writes in
-    /// all three Recommended choices. With Custom settings it says nothing, and stays for later.
+    /// pair (that banner goes first), and the settings are what "Auto (recommended)" writes in all
+    /// three Recommended choices. With Custom settings it says nothing, and stays for later. The
+    /// rule is Android's: Recommended's own settings decide, the ones its page shows, and the line
+    /// then gives what a stream to this PC starts with, a value of the PC's own included.
     pub(super) fn setup_card_words(&self, view: &View<'_>) -> Option<(String, String)> {
         let host = view.hosts.get(self.settings.setup_card_host?)?;
         if !host.paired() || view.hosts.list.iter().any(|h| !h.waiting_to_pair().is_empty()) {
@@ -951,7 +963,7 @@ impl Launcher {
         let settings = host.record.settings(&self.profiles.settings(&self.settings, kind));
         let vrr_offered = self.tearing_supported || cfg!(not(windows));
         let caps = settings::simple_caps(&self.display, self.hdr_display, vrr_offered);
-        let (choices, custom) = settings::simple_state(&settings, &self.display, &caps, vrr_offered);
+        let (choices, custom) = settings::simple_state(&self.settings, &self.display, &caps, vrr_offered);
         if custom || choices != nightjar_policy::simple_profile::recommended(&caps) {
             return None;
         }

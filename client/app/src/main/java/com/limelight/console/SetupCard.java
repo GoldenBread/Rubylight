@@ -50,7 +50,8 @@ public final class SetupCard {
     /** A pairing succeeded. The first one this device ever makes offers the card; with another PC already paired it is not the first. */
     public static void offer(Context context, ComputerDetails computer) {
         if (computer == null || computer.uuid == null || state(context).getBoolean(SEEN, false)) return;
-        offer(context, computer.uuid, otherPairedPcs(context, computer.uuid));
+        int others = otherPairedPcs(context, computer.uuid);
+        if (others != UNREAD) offer(context, computer.uuid, others);
     }
 
     @VisibleForTesting
@@ -62,12 +63,24 @@ public final class SetupCard {
         edit.apply();
     }
 
+    /**
+     * The app starts. A device with a PC paired and no pairing seen came from a version before the card: its first
+     * pairing is long done, so no later one (the same PC paired again, say) offers it.
+     */
+    public static void atStart(Context context) {
+        if (state(context).getBoolean(SEEN, false)) return;
+        if (otherPairedPcs(context, "") > 0) state(context).edit().putBoolean(SEEN, true).apply();
+    }
+
     /** For the debug build's demo and its captures: the card as the first pairing with this PC leaves it. */
     public static void show(Context context, String uuid) {
         state(context).edit().putString(HOST, uuid).putBoolean(SEEN, true).apply();
     }
 
-    /** The PCs paired besides this one, from the saved list; one that cannot be read counts as some, and no card shows. */
+    /** The saved list could not be read: nothing is known, so no card is offered and nothing is marked. */
+    private static final int UNREAD = -1;
+
+    /** The PCs paired besides this one, from the saved list, or {@link #UNREAD}. */
     private static int otherPairedPcs(Context context, String uuid) {
         ComputerDatabaseManager database = null;
         try {
@@ -79,7 +92,7 @@ public final class SetupCard {
             return others;
         } catch (RuntimeException e) {
             LimeLog.warning("Set-up card: the saved PCs could not be read: " + e);
-            return 1;
+            return UNREAD;
         } finally {
             if (database != null) database.close();
         }
@@ -100,7 +113,9 @@ public final class SetupCard {
         if (!SimpleProfile.allAuto(context)) return null;
         PreferenceConfiguration config = PreferenceConfiguration.readPreferences(context, host.uuid, host.caps, null, 0, null);
         return new Text(context.getString(R.string.home_setup_title, host.displayName()),
-                values(context, config.width, config.height, config.fps, config.bitrate, config.enableHdr, config.videoFormat));
+                values(context, config.width, config.height, config.fps, config.bitrate,
+                        // Recommended's HDR on Auto is on where the screen and the decoder show HDR, as its row says.
+                        config.enableHdr || SimpleProfile.hdrOnAuto(context), config.videoFormat));
     }
 
     /** "2560×1440 · 120 FPS · 60 Mbps · HDR · codec chosen when the stream starts": the values a stream to the PC starts with. */

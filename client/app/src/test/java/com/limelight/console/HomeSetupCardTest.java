@@ -264,4 +264,153 @@ public class HomeSetupCardTest {
             controller.pause().stop().destroy();
         }
     }
+
+    /** A device that comes from a version before the card has its PC paired already: pairing it again offers nothing. */
+    @Test
+    public void aDeviceThatAlreadyHasAPairedPcNeverGetsTheCard() throws Exception {
+        ComputerDetails paired = new ComputerDetails();
+        paired.uuid = "tower";
+        paired.name = "Tower";
+        paired.serverCert = com.limelight.nativeapi.NativeApiFixtures.certificate();
+        com.limelight.computers.ComputerDatabaseManager database = new com.limelight.computers.ComputerDatabaseManager(context);
+        try {
+            database.updateComputer(paired);
+        } finally {
+            database.close();
+        }
+        try {
+            SetupCard.atStart(context);
+            SetupCard.offer(context, "tower", 0);
+            assertNull("its only PC paired again is no first pairing", SetupCard.host(context));
+        } finally {
+            context.deleteDatabase("computers4.db");
+            for (String name : context.databaseList()) context.deleteDatabase(name);
+        }
+    }
+
+    /** A fresh install starts with nothing paired: the start marks nothing, and the first pairing offers the card. */
+    @Test
+    public void aFreshInstallStillGetsTheCardWithItsFirstPairing() {
+        SetupCard.atStart(context);
+        SetupCard.offer(context, "tower", 0);
+        assertEquals("tower", SetupCard.host(context));
+    }
+
+    /** The card's PC is unpaired or removed while Home shows: the card goes with it, and is back if the PC is. */
+    @Test
+    public void theCardGoesWhenItsPcIsNoLongerPaired() {
+        SetupCard.offer(context, "tower", 0);
+        ActivityController<HomeShellTest.Home> controller = home();
+        try {
+            HomeShellTest.Home home = controller.get();
+            View card = cardAfter(home, nativeHost("tower", "Tower", true));
+            assertEquals(View.VISIBLE, card.getVisibility());
+            ComputerDetails unpaired = nativeHost("tower", "Tower", true);
+            unpaired.pairState = com.limelight.nvstream.http.PairingManager.PairState.NOT_PAIRED;
+            unpaired.serverCert = null;
+            cardAfter(home, unpaired);
+            assertEquals("its PC is not paired any more", View.GONE, card.getVisibility());
+            assertEquals("hidden, not closed", "tower", SetupCard.host(context));
+            cardAfter(home, nativeHost("tower", "Tower", true));
+            assertEquals(View.VISIBLE, card.getVisibility());
+        } finally {
+            controller.pause().stop().destroy();
+        }
+    }
+
+    /** With Custom settings the card stays away, and a poll does not ask the settings' model again: a resume does. */
+    @Test
+    public void aPollDoesNotReadTheSettingsAgainWhileTheCardIsHidden() {
+        SetupCard.offer(context, "tower", 0);
+        int[] asked = {0};
+        SimpleProfileModel.use(request -> {
+            asked[0]++;
+            return "{\"ok\":{\"choices\":null}}";
+        });
+        ActivityController<HomeShellTest.Home> controller = home();
+        try {
+            HomeShellTest.Home home = controller.get();
+            View card = cardAfter(home, nativeHost("tower", "Tower", true));
+            assertEquals(View.GONE, card.getVisibility());
+            int before = asked[0];
+            assertTrue("the PC's arrival read them once", before > 0);
+            for (int i = 0; i < 5; i++) home.onHostsChanged();
+            assertEquals(before, asked[0]);
+            controller.pause().resume();
+            assertTrue("a resume reads them: they are changed on other screens", asked[0] > before);
+        } finally {
+            controller.pause().stop().destroy();
+        }
+    }
+
+    /** HDR left on Auto reads as Recommended's row reads it: on, where the screen and the decoder show HDR. */
+    @Test
+    public void hdrOnAutoIsHdrWhereTheScreenAndTheDecoderShowIt() {
+        ComputerDetails tower = nativeHost("tower", "Tower", true);
+        try {
+            ReflectionHelpers.setStaticField(com.limelight.preferences.SimpleProfile.class, "cachedCapabilities",
+                    new SimpleProfileModel.Capabilities(1920, 1080, 60, true, false, true, true, false, true, null, null, null));
+            assertTrue(SetupCard.text(context, tower).values, SetupCard.text(context, tower).values.contains(" · HDR · "));
+            ReflectionHelpers.setStaticField(com.limelight.preferences.SimpleProfile.class, "cachedCapabilities",
+                    new SimpleProfileModel.Capabilities(1920, 1080, 60, false, false, true, true, false, true, null, null, null));
+            assertTrue(SetupCard.text(context, tower).values, SetupCard.text(context, tower).values.contains(" · SDR · "));
+        } finally {
+            ReflectionHelpers.setStaticField(com.limelight.preferences.SimpleProfile.class, "cachedCapabilities", null);
+        }
+    }
+
+    /** Up from the list's first row, whatever its column, stops on the card's close button; Up again goes on to the top row. */
+    private void upFromTheFirstRowReachesTheCloseButton() {
+        SetupCard.offer(context, "tower", 0);
+        ActivityController<HomeShellTest.Home> controller = home();
+        try {
+            HomeShellTest.Home home = controller.get();
+            View card = cardAfter(home, nativeHost("tower", "Tower", true));
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            assertEquals(View.VISIBLE, card.getVisibility());
+            android.view.ViewGroup list = home.findViewById(R.id.console_list);
+            java.util.ArrayList<View> stops = list.getFocusables(View.FOCUS_DOWN);
+            assertFalse("the list has something to stand on", stops.isEmpty());
+            // The leftmost stop of the first row: straight above it are the tabs, not the button at the card's far end.
+            View first = stops.get(0);
+            for (View stop : stops) {
+                int[] at = new int[2], best = new int[2];
+                stop.getLocationInWindow(at);
+                first.getLocationInWindow(best);
+                if (at[1] < best[1] || (at[1] == best[1] && at[0] < best[0])) first = stop;
+            }
+            assertTrue(first.requestFocus());
+            View close = card.findViewById(R.id.home_setup_dismiss);
+            android.view.KeyEvent up = new android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_DPAD_UP);
+            assertTrue("Up from " + first + " is used", home.dispatchKeyEvent(up));
+            assertTrue("and stands on the close button", close.isFocused());
+            // From the button the press is the system's own: nothing here holds it back from the top row.
+            View above = close.focusSearch(View.FOCUS_UP);
+            assertTrue("above the button is the top row: " + above, above != null && above != close && !inside(list, above));
+            assertTrue("Down from the button is used", home.dispatchKeyEvent(
+                    new android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_DPAD_DOWN)));
+            View below = home.getWindow().getDecorView().findFocus();
+            assertTrue("and is back in the list: " + below, below != null && inside(list, below));
+        } finally {
+            controller.pause().stop().destroy();
+        }
+    }
+
+    private static boolean inside(View parent, View child) {
+        for (View at = child; at != null; at = at.getParent() instanceof View ? (View) at.getParent() : null) {
+            if (at == parent) return true;
+        }
+        return false;
+    }
+
+    @Test
+    public void onAHandheldUpFromTheFirstRowReachesTheCloseButton() {
+        upFromTheFirstRowReachesTheCloseButton();
+    }
+
+    @Test
+    @Config(qualifiers = "w960dp-h540dp-land-television-xhdpi")
+    public void onATvUpFromTheFirstRowReachesTheCloseButton() {
+        upFromTheFirstRowReachesTheCloseButton();
+    }
 }
