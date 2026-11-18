@@ -1043,18 +1043,26 @@ async fn remove_mapped(bind: IpAddr, mapped: &[Mapping], secret: &[u8]) -> bool 
 /// One round at host start: takes down the guest ports an unclean stop left forwarded, and only
 /// the leases `record` lists, so another application's mapping on the same port stays. A link
 /// does not survive a restart, so nothing wants them; the first renewal asks for what the
-/// running configuration needs. With no record it asks the router nothing.
-async fn cleanup_guests(record: &mut LeaseRecord, bind: IpAddr, description: &str, secret: &[u8]) {
+/// running configuration needs. With no record it asks the router nothing, and it returns the
+/// UPnP gateway it discovered so the first renewal need not search again.
+async fn cleanup_guests(
+    record: &mut LeaseRecord,
+    bind: IpAddr,
+    description: &str,
+    secret: &[u8],
+) -> Option<(Gateway<upnp::Bounded>, IpAddr)> {
     let leases = record.leases().to_vec();
     if leases.is_empty() {
-        return;
+        return None;
     }
     let mut clean = true;
+    let mut presearched = None;
     let upnp = recorded_ports(&leases, |method| method == LeaseMethod::Upnp);
     if !upnp.is_empty() {
         match upnp_gateway(bind).await {
             Ok((gateway, local)) => {
                 clean &= remove_guest_leftovers(&gateway, local, &upnp, description).await;
+                presearched = Some((gateway, local));
             }
             Err(error) => {
                 clean = false;
@@ -1066,11 +1074,19 @@ async fn cleanup_guests(record: &mut LeaseRecord, bind: IpAddr, description: &st
         matches!(method, LeaseMethod::Pcp | LeaseMethod::NatPmp)
     });
     if !mapped.is_empty() {
-        clean &= remove_mapped(bind, &mapped, secret).await;
+        if presearched.is_some() {
+            // The router already answered UPnP: asking it for PCP or NAT-PMP too would hold
+            // the first renewal back for one timeout per port on a router that ignores them.
+            // Those leases expire with their own lifetime.
+            tracing::debug!("PCP or NAT-PMP guest leases left to expire: the router answered UPnP");
+        } else {
+            clean &= remove_mapped(bind, &mapped, secret).await;
+        }
     }
     if clean {
         record.clear();
     }
+    presearched
 }
 /// The UPnP and IPv6 pinhole task, which sleeps until its next renewal or until
 /// it is told that the host stops.
@@ -1252,8 +1268,12 @@ pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
         let nonce_secret = h.identity.private_pem.clone();
         let mut record = LeaseRecord::load(&h.directory);
         // A previous run that stopped uncleanly left the guest ports forwarded, and no link
-        // survives a restart: take down the leases its record lists before the first renewal.
-        cleanup_guests(&mut record, bind, &description, nonce_secret.as_bytes()).await;
+        // survives a restart: take down the leases its record lists before the first renewal,
+        // or give up at once when the host stops meanwhile.
+        let mut presearched = tokio::select! {
+            () = stopped.notified() => None,
+            found = cleanup_guests(&mut record, bind, &description, nonce_secret.as_bytes()) => found,
+        };
         let mut next_search = Instant::now();
         let mut held = Held::default();
         let mut reported = Vec::new();
@@ -1272,6 +1292,7 @@ pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
                 );
                 let wanted: Vec<Mapping> = stream.iter().chain(&guest).copied().collect();
                 if wanted.is_empty() {
+                    presearched = None;
                     if held.any() {
                         if held.release(&description).await == Some(true) {
                             record.clear();
@@ -1287,6 +1308,12 @@ pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
                         };
                     });
                 } else {
+                    // The gateway the cleanup found is the one the first renewal maps on.
+                    if let Some((gateway, local)) = presearched.take()
+                        && held.upnp.is_none()
+                    {
+                        held.upnp = Some((gateway, local, Vec::new()));
+                    }
                     renew(
                         &mut held,
                         bind,
