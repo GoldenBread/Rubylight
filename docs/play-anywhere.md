@@ -11,7 +11,8 @@ At home a paired device finds the PC by itself. Away from home it needs a way in
 | [Tailscale or another VPN](#tailscale-or-another-vpn) | The PC as if you were at home, from any network, for every client. Nothing on the PC is open to the internet. | An app and an account on the PC and on each device. A relayed route adds delay. | You can install an app on the device. This is the recommended way. |
 | [Automatic port forwarding](#automatic-port-forwarding) | Moonlight and Nightjar reach the PC at your public address. | The streaming ports are open to the internet; the router must allow UPnP, PCP or NAT-PMP. | Your router has a public address and you can't use a VPN. |
 | [Play over the internet](#play-over-the-internet) | Nightjar reaches the PC even where no port can be forwarded, such as behind carrier-grade NAT. | Nightjar only. The device learns the way once on your home network. Two routers that both change ports per destination can't be passed. | Port forwarding is impossible and you use Nightjar. |
-| [Guests in the browser](browser-guests.md) | A friend watches or plays along from a link, with no app and no pairing. | The guest ports are reachable from where the friend is. | You want to share your game with someone else, not play your own. |
+| [Invite a friend over the internet](multiclient.md#invite-a-friend-over-the-internet) | A friend with Nightjar joins your game from a one-time link, with no PIN and no port forwarding. | Guest rights only, for a day by default; you are asked before they join. | You want to share your game with a friend who uses Nightjar. |
+| [Guests in the browser](browser-guests.md) | A friend watches or plays along from a link, with no app and no pairing. | The guest ports are reachable from where the friend is; **Invite → On the internet** asks your router to forward them. | You want to share your game with someone else, not play your own. |
 
 ## Tailscale or another VPN
 

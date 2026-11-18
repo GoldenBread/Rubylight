@@ -17,12 +17,15 @@ A setting you change by hand always wins over the preset ([Stream presets](confi
 
 - **Codec.** H.264 works everywhere; HEVC and AV1 give a better picture at the same bitrate where the device decodes them, and carry HDR. PyroWave keeps full colour and suits a fast wired local network, with Nightjar ([Choose your stream format](getting-started.md#choose-your-stream-format)).
 - **HDR.** Turn on HDR in the client and in the game. The PC's streamed display switches to HDR for the stream by itself. Dolby Vision, HDR10+ and HLG go to devices that ask for them ([Codecs, full chroma and HDR](configuration.md#codecs-full-chroma-and-hdr), [HDR troubleshooting](troubleshooting.md#hdr-looks-washed-out-too-bright-or-different-between-clients)).
+- **PyroWave at a low bitrate.** Below the rate where its test scenes kept detail, a PyroWave stream still starts at the rate the client asked for and warns on the stream card and in Nightjar that text and textures may lose detail. Raise the bitrate, lower the resolution or frame rate, or use HEVC or AV1.
+- **Text colour in HDR.** In HDR10 and HLG streams the host mixes ClearType's coloured glyph edges by their light, so small text keeps its colour instead of turning magenta.
 - **Sharp text.** Small coloured text needs full colour (4:4:4). On NVIDIA, Moonlight's **YUV 4:4:4** works where the encoder offers it; on Radeon, use PyroWave or Nightjar's **Sharper colored text**. It adds encode time and pays off only at higher bitrates, so leave it off for games.
 
 ## Displays
 
 By default each device gets a **virtual display** of its own, at the device's resolution and refresh rate, on Windows 11 23H2 and later. Games open on it, and the PC's monitors turn off while you stream so games can't open on them; they come back when the stream ends.
 
+- **Virtual display as the main screen.** With **Extend — make virtual display primary**, the virtual display stays the main screen: when Windows changes the displays by itself, the stream puts it back within about a second. A main screen you pick yourself in Windows stays yours.
 - **Keep your monitors on.** Choose an **Extend** layout under **All settings → Picture → Streamed display → Virtual display layout**. Games may then open on a monitor instead of the stream.
 - **Stream a monitor instead.** Choose **Off, stream a monitor** under **Settings → Picture → Virtual display**. The monitor switches to the device's resolution and the stream's frame rate where it has that mode, and back afterwards; to leave it exactly as it is, set **Monitor setup** to Disabled.
 - **One device, its own choice.** Nightjar can ask, for each PC, for the virtual display alone, beside your monitors, or none.

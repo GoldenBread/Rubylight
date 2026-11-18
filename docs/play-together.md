@@ -9,6 +9,7 @@ Rubylight has several ways for more than one person to use the PC. They differ i
 | You want | Use | Everyone sees | They need |
 | --- | --- | --- | --- |
 | A friend joins the game you are playing, on their own device | [Guests from other devices](#guests-from-other-devices) | The same picture | A paired device with Nightjar or Moonlight |
+| A friend far away plays along with Nightjar, with no PIN and no port forwarding | [Invite a friend over the internet](#invite-a-friend-over-the-internet) | The same picture | Nightjar and your link |
 | A friend watches or plays along without installing anything | [Guests in the browser](#guests-in-the-browser) | The same picture | A browser and your link |
 | Each player has their own picture in a split-screen game | [Co-op with Nucleus Co-op](#split-screen-co-op) | Their own instance of the game | A paired device each, and a Nucleus Co-op handler for the game |
 | You play on a device while someone else uses the PC | [Background streaming](#background-streaming) | You your game, they the desktop | A paired device |
@@ -24,11 +25,15 @@ A second paired device that joins the running game becomes a **guest** of the de
 
 Each guest gets an encoder of its own, so every guest adds load on the GPU. Up to four guests can join. [Guests from other devices](multiclient.md) has the details.
 
+## Invite a friend over the internet
+
+**Invite a friend** on the console's **Home**, or **Guests** in Nightjar's stream menu, makes a link such as `rubylight://invite#...` for one person. Their Nightjar opens it, or takes it pasted under **Add PC**, pairs as a guest without a PIN and finds your PC over the internet; you are asked before they join the game. The link works once and ends after a day by default, and the friend's device gets guest rights only and is unpaired when the invite ends. [Invite a friend over the internet](multiclient.md#invite-a-friend-over-the-internet) has what it needs and what it gives.
+
 ## Guests in the browser
 
 While you stream a game in the console's **Stream** page, an invite link lets up to four friends watch in their browsers, view only or with a controller, or with keyboard and mouse if you allow it. They need no app, account or pairing, and connect straight to your PC with no relay in between. The link expires when you choose, and **Kick** and **Revoke** end a guest's or a link's access.
 
-It needs the WebRTC server on, and guests outside your network need the guest ports to reach the PC. [Guests in the browser](browser-guests.md) has the setup and what must be reachable.
+It needs the WebRTC server on. For friends on the internet, pick **Guests are → On the internet** in the **Invite** dialog: Rubylight asks your router to forward the guest ports, puts your public address in the link and shows what the router did, so there is nothing to type. The friend's browser shows a certificate warning to accept once. [Guests in the browser](browser-guests.md) has the setup and what must be reachable.
 
 ## Split-screen co-op
 
