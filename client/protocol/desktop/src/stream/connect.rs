@@ -140,11 +140,13 @@ pub fn end_before(connecting: Option<Connecting>, wait: Duration, teardown: impl
 }
 
 /// Waits for a previous session's teardown before this attempt's first request: a reconnect that
-/// launched while the old control connection was open made the PC see two of this device.
-pub(super) fn wait_for_previous(previous: Option<super::Teardown>) {
-    let Some(previous) = previous else { return };
+/// launched while the old control connection was open made the PC see two of this device. A
+/// teardown still running after the wait is handed to `shared` for the app to join, never dropped.
+pub(super) fn wait_for_previous(previous: Option<super::Teardown>, shared: &Shared) {
+    let Some(mut previous) = previous else { return };
     if !previous.join_until(Instant::now() + super::LEAVE_WAIT) {
         eprintln!("nightjar: the previous session was still stopping after {} ms; reconnecting while it ends", super::LEAVE_WAIT.as_millis());
+        lock(&shared.teardowns).push(previous);
     }
 }
 
@@ -152,6 +154,12 @@ impl Connecting {
     /// What this start was asked to do: a failed start's card makes it again.
     pub fn plan(&self) -> &LaunchPlan {
         &self.plan
+    }
+
+    /// Sessions this attempt set aside to stop (a recovery that gave up, a previous session's
+    /// stop that timed out): the app takes them and joins them before the renderer goes.
+    pub fn take_teardowns(&self) -> Vec<super::Teardown> {
+        std::mem::take(&mut *lock(&self.shared.teardowns))
     }
 
     /// The game this stream plays, for the recent list; None when the PC has no unique id yet
@@ -188,7 +196,7 @@ impl Connecting {
             .spawn(move || {
                 // A reconnect of a session still stopping must not launch while its control
                 // connection and decoder are open: the PC would see two of this device.
-                wait_for_previous(previous);
+                wait_for_previous(previous, &worker_shared);
                 let result: Result<(Session, Facts, LaunchPlan), ConnectError> = match connect_with_recovery(&mut worker_plan, worker_shared, &worker_interrupt) {
                     // The screen left this start before it made a stream: nobody waits for its
                     // pictures, and a session nobody holds would stream unseen.
@@ -250,8 +258,14 @@ impl Connecting {
             }
         }
         // The renderer's GPU device and the control connection go only once the session's own
-        // threads have ended; `end_all_before` keeps the renderer when this says false.
-        let stopped = teardown.join_until(deadline);
+        // threads have ended; `end_all_before` keeps the renderer when this says false. Sessions
+        // the attempt set aside (a recovery that gave up, a previous stop that timed out) join
+        // under the same deadline.
+        let mut teardown = teardown;
+        let mut stopped = teardown.join_until(deadline);
+        for mut ended in std::mem::take(&mut *lock(&self.shared.teardowns)) {
+            stopped &= ended.join_until(deadline);
+        }
         if !stopped {
             eprintln!("nightjar: a session did not stop within {} ms of leaving; the renderer stays until the process exits", wait.as_millis());
         }
@@ -298,7 +312,7 @@ impl Connecting {
             Ok(Ok((session, facts, plan))) => {
                 if expired {
                     lock(&self.shared.roam_watch).take();
-                    super::reap_session(session);
+                    lock(&self.shared.teardowns).push(super::reap_session(session));
                     Err(ConnectFailed::Message(recovery_gave_up(lock(&self.shared.last_failure).as_deref())))
                 } else {
                     self.plan = plan;

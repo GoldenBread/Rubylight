@@ -185,6 +185,10 @@ pub struct Shared {
     pub host_times: std::sync::atomic::AtomicBool,
     /// Client roaming's network watcher while a session runs; dropping it stops it.
     pub roam_watch: Mutex<Option<crate::network::RoamWatch>>,
+    /// Sessions whose connect attempt stopped for them (a recovery that gave up, a launch that
+    /// waited too long for the previous session): the app takes these and joins them before the
+    /// renderer goes.
+    pub teardowns: Mutex<Vec<super::Teardown>>,
     /// The toast that the microphone runs without the echo cancellation asked for was shown.
     pub echo_cancel_noted: std::sync::atomic::AtomicBool,
     /// When the last of the pictures in a row the presenter could not show was ready (session
@@ -223,6 +227,7 @@ impl Shared {
             queue_limit,
             host_times: std::sync::atomic::AtomicBool::new(false),
             roam_watch: Mutex::new(None),
+            teardowns: Mutex::new(Vec::new()),
             echo_cancel_noted: std::sync::atomic::AtomicBool::new(false),
             present_refused: AtomicU64::new(0),
             waker,

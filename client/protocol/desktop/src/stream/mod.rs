@@ -2469,7 +2469,9 @@ impl Streaming {
 }
 
 /// A session's stop on a thread of its own, with the handle that lets an owner wait for it where
-/// it must: before the renderer it decodes on goes, or before the next launch's HTTP request.
+/// it must: before the renderer it decodes on goes, or before the next launch's HTTP request. Every
+/// drop is a choice, so the handle is handed to the app and never silently detached.
+#[must_use = "a dropped teardown is a session still stopping on the renderer's device"]
 pub(crate) struct Teardown(Option<std::thread::JoinHandle<()>>);
 
 impl Teardown {
@@ -2477,12 +2479,19 @@ impl Teardown {
         Self(None)
     }
 
+    /// Whether the teardown thread has ended (a handle that was never started counts as ended).
+    pub(crate) fn finished(&self) -> bool {
+        self.0.as_ref().is_none_or(std::thread::JoinHandle::is_finished)
+    }
+
     /// Waits for the work to end, at most until `deadline`; true once it has (or there was none).
-    /// A teardown thread that panicked is finished too, and logged.
-    pub(crate) fn join_until(self, deadline: Instant) -> bool {
-        let Some(handle) = self.0 else { return true };
+    /// A teardown thread that panicked is finished too, and logged. One still running at the
+    /// deadline keeps its handle, so its owner can hand it on or join it later.
+    pub(crate) fn join_until(&mut self, deadline: Instant) -> bool {
+        let Some(handle) = self.0.take() else { return true };
         while !handle.is_finished() {
             if Instant::now() >= deadline {
+                self.0 = Some(handle);
                 return false;
             }
             std::thread::sleep(Duration::from_millis(2));

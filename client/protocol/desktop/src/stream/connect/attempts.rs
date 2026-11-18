@@ -20,7 +20,8 @@ impl Connecting {
             Ok(Ok((session, _, _))) => {
                 eprintln!("nightjar: a cancelled start made a stream after all; it ends");
                 lock(&self.shared.roam_watch).take();
-                session.stop();
+                // Its threads may outlive the worker by a decoder call: the app joins them.
+                lock(&self.shared.teardowns).push(super::reap_session(session));
                 true
             }
             Ok(Err(_)) | Err(std::sync::mpsc::TryRecvError::Disconnected) => true,
@@ -108,6 +109,20 @@ impl Attempts {
     #[cfg(windows)]
     pub fn devices(&self) -> impl Iterator<Item = &crate::media::DeviceRef> {
         self.current.iter().chain(self.ending.iter()).map(|attempt| &attempt.plan.device)
+    }
+
+    /// Sessions the attempts set aside to stop (a recovery that gave up, a previous session's
+    /// stop that timed out, a cancelled start's late stream), for the app to keep and join
+    /// before the renderer goes.
+    pub fn drain_teardowns(&mut self) -> Vec<super::Teardown> {
+        let mut ended: Vec<super::Teardown> = Vec::new();
+        if let Some(current) = &self.current {
+            ended.append(&mut lock(&current.shared.teardowns));
+        }
+        for attempt in &self.ending {
+            ended.append(&mut lock(&attempt.shared.teardowns));
+        }
+        ended
     }
 
     /// Every attempt, the one on the screen cancelled too, for [`end_all_before`].
