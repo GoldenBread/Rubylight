@@ -863,18 +863,37 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
             eprintln!("nightjar: saving settings failed: {e}");
         }
     }
-    let identity = match store.identity().filter(|_| !cfg!(feature = "demo-library")) {
-        Some(saved) => match ClientIdentity::from_pem(saved.unique_id, &saved.certificate_pem, &saved.private_key_pem) {
-            Ok(identity) => {
-                launcher.identity_ready = true;
-                Some(identity)
-            }
+    // A file that is there but cannot be read is not an identity to create a new one over: its
+    // pairing key may still be recovered, so it stays as it is and the player is told.
+    let mut identity_unreadable = false;
+    let identity = if cfg!(feature = "demo-library") {
+        None
+    } else {
+        match store.identity() {
+            Ok(Some(saved)) => match ClientIdentity::from_pem(saved.unique_id, &saved.certificate_pem, &saved.private_key_pem) {
+                Ok(identity) => {
+                    launcher.identity_ready = true;
+                    Some(identity)
+                }
+                Err(e) => {
+                    eprintln!("nightjar: stored identity unusable ({e}); not creating a new one over it");
+                    launcher.notify(crate::strings::tr("No pairing key"), format!(
+                        "identity.json cannot be read ({e}). Pairing stays unavailable until it is restored or removed; Nightjar does not replace it."
+                    ));
+                    identity_unreadable = true;
+                    None
+                }
+            },
+            Ok(None) => None,
             Err(e) => {
-                eprintln!("nightjar: stored identity unusable ({e}); creating a new one");
+                eprintln!("nightjar: {e}; not creating a new pairing key");
+                launcher.notify(crate::strings::tr("No pairing key"), format!(
+                    "{e}. Pairing stays unavailable until the file is restored or removed; a copy was kept beside it where one could be made."
+                ));
+                identity_unreadable = true;
                 None
             }
-        },
-        None => None,
+        }
     };
     let screenshot_dir = std::env::var_os("NIGHTJAR_SCREENSHOT_DIR")
         .map(PathBuf::from)
@@ -979,6 +998,8 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         }
         // The demo library has no identity: without one nothing can ask a PC.
         None if cfg!(feature = "demo-library") => {}
+        // A file that could not be read keeps its place; a new identity would replace it.
+        None if identity_unreadable => {}
         None => {
             let (sender, receiver) = channel();
             let waker = app.waker.clone();

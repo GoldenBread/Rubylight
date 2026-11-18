@@ -1626,6 +1626,9 @@ pub struct Store {
     /// The second screen's process (`second_screen.rs`) reads the files and leaves them as the
     /// first screen's process writes them.
     read_only: bool,
+    /// Files a read failed on for a reason other than "there is none": they are left as they are
+    /// this run, so a default that stood in for their contents never replaces them.
+    unreadable: std::sync::Mutex<std::collections::BTreeSet<PathBuf>>,
 }
 
 /// A game that was streamed, for Home's "Recently played". It names the PC by its unique id and
@@ -1920,7 +1923,7 @@ impl Store {
 
     pub fn at(dir: PathBuf) -> std::io::Result<Self> {
         std::fs::create_dir_all(&dir)?;
-        Ok(Self { dir, read_only: false })
+        Ok(Self { dir, read_only: false, unreadable: std::sync::Mutex::new(std::collections::BTreeSet::new()) })
     }
 
     /// The same files, read and never written or removed: every save does nothing.
@@ -1932,7 +1935,28 @@ impl Store {
         if self.read_only {
             return Ok(());
         }
+        if self.left_as_it_is(path) {
+            return Err(std::io::Error::other(format!(
+                "{} could not be read, so it is left as it is to keep what it holds",
+                path.display()
+            )));
+        }
         write_json(path, value)
+    }
+
+    /// Records that `path` could not be read and must not be replaced.
+    fn leave_as_it_is(&self, path: &Path) {
+        self.unreadable
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(path.to_owned());
+    }
+
+    fn left_as_it_is(&self, path: &Path) -> bool {
+        self.unreadable
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains(path)
     }
 
     pub fn dir(&self) -> &Path {
@@ -1944,8 +1968,16 @@ impl Store {
     /// with what `keep_readable` left of it, so one unreadable value doesn't cost the rest.
     fn read_or_keep_readable<T: Default + for<'de> Deserialize<'de>>(&self, name: &str, keep_readable: fn(&mut serde_json::Value)) -> T {
         let path = self.dir.join(name);
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            return T::default();
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return T::default(),
+            // Not an empty file: something is there that this run cannot read. Keep it as it is,
+            // so a default written in its place does not cost what it holds.
+            Err(e) => {
+                eprintln!("nightjar: cannot read {} ({e}); it is left as it is", path.display());
+                self.leave_as_it_is(&path);
+                return T::default();
+            }
         };
         let error = match serde_json::from_str(&text) {
             Ok(value) => return value,
@@ -2067,8 +2099,31 @@ impl Store {
         self.write(&self.dir.join("controllers.json"), mappings)
     }
 
-    pub fn identity(&self) -> Option<Identity> {
-        read_json(&self.dir.join("identity.json"))
+    /// The saved identity: `Ok(None)` only when there is no `identity.json`. A file that cannot be
+    /// read is backed up when it could be (`.bad`) and left as it is, never replaced by a new
+    /// identity, whose save would overwrite the pairing key the user may still recover.
+    pub fn identity(&self) -> Result<Option<Identity>, String> {
+        let path = self.dir.join("identity.json");
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => {
+                self.leave_as_it_is(&path);
+                return Err(format!("{} cannot be read: {e}", path.display()));
+            }
+        };
+        match serde_json::from_str(&text) {
+            Ok(identity) => Ok(Some(identity)),
+            Err(e) => {
+                if !self.read_only {
+                    if let Err(copy) = back_up(&path, "bad") {
+                        eprintln!("nightjar: could not keep a copy of {}: {copy}", path.display());
+                    }
+                }
+                self.leave_as_it_is(&path);
+                Err(format!("{} cannot be read: {e}", path.display()))
+            }
+        }
     }
 
     pub fn save_identity(&self, identity: &Identity) -> std::io::Result<()> {

@@ -544,15 +544,19 @@ pub fn run_list(list: &List, store: &crate::config::Store) -> i32 {
         }
     };
     let identity = match store.identity() {
-        Some(saved) => match nightjar_core::http::ClientIdentity::from_pem(saved.unique_id, &saved.certificate_pem, &saved.private_key_pem) {
+        Ok(Some(saved)) => match nightjar_core::http::ClientIdentity::from_pem(saved.unique_id, &saved.certificate_pem, &saved.private_key_pem) {
             Ok(identity) => std::sync::Arc::new(identity),
             Err(e) => {
                 eprintln!("this device's pairing key cannot be read ({e}); open Nightjar once");
                 return LIST_NO_PC;
             }
         },
-        None => {
+        Ok(None) => {
             eprintln!("this device has no pairing key yet; pair the PC in Nightjar first");
+            return LIST_NO_PC;
+        }
+        Err(e) => {
+            eprintln!("this device's pairing key cannot be read ({e}); open Nightjar once");
             return LIST_NO_PC;
         }
     };
