@@ -319,7 +319,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("10-bit SDR isn’t used, so the stream is 8-bit: {}", "10-Bit-SDR wird nicht verwendet, der Stream läuft mit 8 Bit: {}"),
     ("This PC didn’t accept 10-bit, so the stream is 8-bit.", "Dieser PC hat 10 Bit nicht angenommen, der Stream läuft mit 8 Bit."),
     ("This PC doesn’t offer PyroWave, so Nightjar uses {}.", "Dieser PC bietet PyroWave nicht an, daher nutzt Nightjar {}."),
-    ("Below the level where the project's test scenes kept detail for PyroWave: {} Mbps or more at {}x{}, {} fps. Text and textures may lose detail; raise the bitrate or use HEVC or AV1.", "Unter dem Niveau, auf dem die Testbilder des Projekts Details behielten, liegt PyroWave bei {0} Mbit/s oder mehr bei {1}x{2}, {3} fps. Text und Texturen können Details verlieren; erhöhe die Bitrate oder nutze HEVC oder AV1."),
+    ("Below the level where the project's test scenes kept detail for PyroWave: {} Mbps or more at {}x{}, {} fps. Text and textures may lose detail; raise the bitrate or use HEVC or AV1.", "PyroWave liegt unter dem Niveau, auf dem die Testbilder des Projekts Details behielten: {0} Mbit/s oder mehr bei {1}x{2}, {3} fps. Text und Texturen können Details verlieren; erhöhe die Bitrate oder nutze HEVC oder AV1."),
     ("sharper colored text is on and has its own 4:4:4 and 10-bit handling.", "schärferer farbiger Text ist aktiv und hat eine eigene 4:4:4- und 10-Bit-Behandlung."),
     ("PyroWave is chosen, and it has its own 4:4:4 and 10-bit modes.", "PyroWave ist gewählt und hat eigene 4:4:4- und 10-Bit-Modi."),
     ("this device can’t decode or draw it ({}).", "dieses Gerät kann es nicht decodieren oder darstellen ({})."),

@@ -361,7 +361,7 @@
     <string name="stream_bitrate_help">Mbit/s für diese Sitzung festlegen.\n„Bitrate bei ausgelastetem Netzwerk senken“ wird ausgeschaltet.</string>
     <string name="stream_bitrate_invalid">Gib eine Bitrate von 0,5 bis 2000 Mbit/s ein.</string>
     <string name="stream_bitrate_applied">PC nutzt %1$.1f Mbit/s</string>
-    <string name="summary_bitrate_pyrowave_below_minimum">Unter dem Niveau, auf dem die Testbilder des Projekts Details behielten, liegt PyroWave bei %1$d Mbit/s oder mehr bei %2$d×%3$d, %4$d FPS. Text und Texturen können Details verlieren; erhöhe die Bitrate oder nutze HEVC oder AV1.</string>
+    <string name="summary_bitrate_pyrowave_below_minimum">PyroWave liegt unter dem Niveau, auf dem die Testbilder des Projekts Details behielten: %1$d Mbit/s oder mehr bei %2$d×%3$d, %4$d FPS. Text und Texturen können Details verlieren; erhöhe die Bitrate oder nutze HEVC oder AV1.</string>
     <string name="stream_enabled">An</string>
     <string name="stream_disabled">Aus</string>
     <string name="stream_limiter_status">FPS-Limit des PCs: %1$s\nAuto-Display-Limit: %2$s\nZiel: %3$s</string>

@@ -616,7 +616,7 @@ fn a_chosen_bitrate_below_pyrowaves_minimum_is_warned_in_the_settings() {
     assert_eq!(pyrowave_bitrate_warning(&low, 1920, 1080, 60).as_deref(),
         Some("Below the level where the project's test scenes kept detail for PyroWave: 187 Mbps or more at 1920x1080, 60 fps. Text and textures may lose detail; raise the bitrate or use HEVC or AV1."));
     let german = crate::strings::tests::with_lang(crate::strings::Lang::De, || pyrowave_bitrate_warning(&low, 1920, 1080, 60));
-    assert_eq!(german.as_deref(), Some("Unter dem Niveau, auf dem die Testbilder des Projekts Details behielten, liegt PyroWave bei 187 Mbit/s oder mehr bei 1920x1080, 60 fps. Text und Texturen können Details verlieren; erhöhe die Bitrate oder nutze HEVC oder AV1."));
+    assert_eq!(german.as_deref(), Some("PyroWave liegt unter dem Niveau, auf dem die Testbilder des Projekts Details behielten: 187 Mbit/s oder mehr bei 1920x1080, 60 fps. Text und Texturen können Details verlieren; erhöhe die Bitrate oder nutze HEVC oder AV1."));
     assert_eq!(pyrowave_bitrate_warning(&Settings { bitrate_kbps: 186_624, ..low.clone() }, 1920, 1080, 60), None);
     assert_eq!(pyrowave_bitrate_warning(&Settings { bitrate_kbps: 0, ..low.clone() }, 1920, 1080, 60), None, "automatic");
     assert_eq!(pyrowave_bitrate_warning(&Settings { codec: CodecPreference::Hevc, ..low.clone() }, 1920, 1080, 60), None);
