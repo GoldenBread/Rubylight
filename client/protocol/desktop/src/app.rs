@@ -78,11 +78,17 @@ impl App {
             None => (None, stream::Teardown::none()),
         };
         abr_stops.extend(stop);
-        self.teardowns.push(teardown);
+        self.push_teardown(teardown);
+        // Sessions an attempt set aside to stop (a recovery that gave up, a previous stop that
+        // timed out) are the app's to join too.
+        for ended in self.attempts.drain_teardowns() {
+            self.push_teardown(ended);
+        }
         self.save_hosts_and_place();
         self.pads.close_all();
         self.gui.destroy();
-        if self.attempts.is_busy() || self.probe.is_some() || !self.ending_probes.is_empty() {
+        let teardowns_pending = self.teardowns_busy();
+        if self.attempts.is_busy() || self.probe.is_some() || !self.ending_probes.is_empty() || teardowns_pending {
             // Ending a launch or its decoder checks can take seconds: the window goes now rather
             // than sitting frozen meanwhile.
             // SAFETY: the window run() created, still alive.
@@ -105,7 +111,7 @@ impl App {
         // renderer: they end before it goes, within the same leaving deadline.
         let teardowns_joined = std::mem::take(&mut self.teardowns)
             .into_iter()
-            .all(|teardown| teardown.join_until(deadline));
+            .all(|mut teardown| teardown.join_until(deadline));
         if !teardowns_joined {
             eprintln!("nightjar: a stream's teardown did not end within {} ms of leaving; the window and its GPU device stay until the process exits, as it may still be using them", wait.as_millis());
         }
@@ -133,6 +139,36 @@ impl App {
 
     pub(crate) fn save_hosts(&self) {
         save_hosts(&self.store, &self.hosts);
+    }
+
+    /// Keeps a session's teardown for the joins before a renderer switch or the exit, dropping the
+    /// ones that already ended instead of letting the list grow with every stream.
+    pub(crate) fn push_teardown(&mut self, teardown: stream::Teardown) {
+        self.teardowns.retain(|kept| !kept.finished());
+        self.teardowns.push(teardown);
+    }
+
+    /// Whether a session is still stopping on the renderer's GPU device: finished teardowns are
+    /// dropped, and the rest block a renderer switch or the exit as a start that has ended does.
+    pub(crate) fn teardowns_busy(&mut self) -> bool {
+        stream::prune_teardowns(&mut self.teardowns)
+    }
+
+    /// Waits up to `wait` for the sessions still stopping to end. False says one is still using the
+    /// renderer's device; its handle is kept for the next wait or the exit, never dropped.
+    #[cfg(unix)]
+    pub(crate) fn join_teardowns(&mut self, wait: std::time::Duration) -> bool {
+        let deadline = Instant::now() + wait;
+        let mut still = Vec::new();
+        let mut stopped = true;
+        for mut teardown in std::mem::take(&mut self.teardowns) {
+            if !teardown.join_until(deadline) {
+                stopped = false;
+                still.push(teardown);
+            }
+        }
+        self.teardowns = still;
+        stopped
     }
 
     /// Adds the PC a pairing link names and pairs with its one-time PIN and certificate.

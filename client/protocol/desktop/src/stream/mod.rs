@@ -218,8 +218,10 @@ pub struct LaunchPlan {
     /// Whether `app` is an entry of the PC's list; a resume of a game it does not list is not.
     pub listed: bool,
     pub resume: bool,
-    /// The video packet size the session being resumed negotiated (0 when none is known): a
-    /// reconnect carries it into the resume, which probes nothing while the old session may run.
+    /// The whole video packet size the session being resumed asked the PC for, encryption header
+    /// included (0 when none is known): a reconnect carries it into the resume, which probes
+    /// nothing while the old session may run. It is the launch's request, never the ANNOUNCE's
+    /// reduced size, so three reconnects keep the same packets.
     pub negotiated_packet_size: u32,
     /// This resume joins the game the PC runs although the PC reports no game of this device's: the
     /// user chose Stream here too. `/resume` starts nothing, so a closed game stays closed.
@@ -303,7 +305,9 @@ pub struct Facts {
     pub height: i32,
     pub fps: i32,
     pub bitrate_kbps: i32,
-    /// The video packet size the host set for this session, encryption header included.
+    /// The whole video packet size this launch asked the PC for, encryption header included: what
+    /// an automatic reconnect carries. Not the ANNOUNCE's size, which has the 32-byte header taken
+    /// off already and would lose another 32 on every reconnect.
     pub packet_size: i32,
     pub format: u32,
     pub host_timing: bool,
@@ -716,6 +720,9 @@ pub struct Streaming {
     decode_generation: i64,
     pub requested_mode: Reconfigure,
     pending_mode: Option<(Reconfigure, Instant)>,
+    /// The request a timeout cleared, kept until a picture of its size arrives late: the PC
+    /// applied it after all, and the rate and settings it asked for are applied with the picture.
+    late_mode: Option<Reconfigure>,
     /// Pictures whose RTP timestamps show the rate a reconfigure asked for (`shows_rate`), and
     /// the mode before it was asked, restored whole when the host does not apply it.
     fps_evidence: u32,
@@ -1163,6 +1170,7 @@ impl Streaming {
             decode_generation: 0,
             requested_mode: mode,
             pending_mode: None,
+            late_mode: None,
             fps_evidence: 0,
             mode_before: None,
             stream_sizes: render::StreamSizes::new((i32::from(mode.width), i32::from(mode.height))),
@@ -1454,6 +1462,7 @@ impl Streaming {
         self.requested_mode = request;
         self.stream_sizes.ask((i32::from(request.width), i32::from(request.height)));
         self.pending_mode = Some((request, Instant::now()));
+        self.late_mode = None;
         self.fps_evidence = 0;
         if self.mode_before.is_none() {
             self.mode_before = Some(ModeBefore {
@@ -1483,6 +1492,29 @@ impl Streaming {
         self.skipped.restart();
     }
 
+    /// Applies a mode the PC has shown it took: a confirmation, or the size a timed-out request
+    /// asked for arriving after the timeout. Everything the timeout put back is set again, together
+    /// with the pacer and the menus.
+    fn apply_mode(&mut self, mode: Reconfigure) {
+        self.facts.fps = mode.fps_millihz.div_ceil(1000) as i32;
+        self.facts.width = i32::from(mode.width);
+        self.facts.height = i32::from(mode.height);
+        self.shared.fps_millihz.store(mode.fps_millihz, Ordering::Relaxed);
+        self.settings.width = u32::from(mode.width);
+        self.settings.height = u32::from(mode.height);
+        self.settings.fps = mode.fps_millihz.div_ceil(1000);
+        self.plan.settings = self.settings.clone();
+        self.requested_mode = mode;
+        self.decode_generation += 1;
+        self.decode_window_us = session::now_us();
+        *lock(&self.shared.decode_window) = pipeline::DecodeWindow::default();
+        if let Some(rate) = &mut self.bitrate_policy {
+            rate.set_mode(u32::from(mode.width), u32::from(mode.height), mode.fps_millihz.div_ceil(1000));
+        }
+        if let Some(rates) = &mut self.rate_change { rates.fps_set(mode.fps_millihz); }
+        self.stream_rate_changed(mode.fps_millihz.div_ceil(1000).max(1));
+    }
+
     /// One picture's RTP interval toward confirming an fps-only reconfigure: the host's own frame
     /// timestamps show it applied the rate. A request that changes the size is confirmed by the
     /// pictures' size instead (`StreamSizes::arrive`); a request that only changes the rate has no
@@ -1502,6 +1534,7 @@ impl Streaming {
         }
         self.fps_evidence = 0;
         self.mode_before = None;
+        self.late_mode = None;
         if let Some((mode, _)) = self.pending_mode.take() {
             self.stream_rate_changed(mode.fps_millihz.div_ceil(1000));
         }
@@ -2469,7 +2502,9 @@ impl Streaming {
 }
 
 /// A session's stop on a thread of its own, with the handle that lets an owner wait for it where
-/// it must: before the renderer it decodes on goes, or before the next launch's HTTP request.
+/// it must: before the renderer it decodes on goes, or before the next launch's HTTP request. Every
+/// drop is a choice, so the handle is handed to the app and never silently detached.
+#[must_use = "a dropped teardown is a session still stopping on the renderer's device"]
 pub(crate) struct Teardown(Option<std::thread::JoinHandle<()>>);
 
 impl Teardown {
@@ -2477,12 +2512,19 @@ impl Teardown {
         Self(None)
     }
 
+    /// Whether the teardown thread has ended (a handle that was never started counts as ended).
+    pub(crate) fn finished(&self) -> bool {
+        self.0.as_ref().is_none_or(std::thread::JoinHandle::is_finished)
+    }
+
     /// Waits for the work to end, at most until `deadline`; true once it has (or there was none).
-    /// A teardown thread that panicked is finished too, and logged.
-    pub(crate) fn join_until(self, deadline: Instant) -> bool {
-        let Some(handle) = self.0 else { return true };
+    /// A teardown thread that panicked is finished too, and logged. One still running at the
+    /// deadline keeps its handle, so its owner can hand it on or join it later.
+    pub(crate) fn join_until(&mut self, deadline: Instant) -> bool {
+        let Some(handle) = self.0.take() else { return true };
         while !handle.is_finished() {
             if Instant::now() >= deadline {
+                self.0 = Some(handle);
                 return false;
             }
             std::thread::sleep(Duration::from_millis(2));
@@ -2509,6 +2551,13 @@ fn spawn_background(work: impl FnOnce() + Send + 'static) -> Teardown {
 /// Stops a stream on a reaper thread (`spawn_background`), for a session that is not `finish`ed.
 pub(crate) fn reap_session(session: Session) -> Teardown {
     spawn_background(move || session.stop())
+}
+
+/// Drops the teardowns that have ended and says whether any is still stopping: the renderer, its
+/// GPU device and a launch may not go while one is.
+pub(crate) fn prune_teardowns(teardowns: &mut Vec<Teardown>) -> bool {
+    teardowns.retain(|teardown| !teardown.finished());
+    !teardowns.is_empty()
 }
 
 /// The file Settings → Advanced → Export latency CSV saves, in the statistics folder.

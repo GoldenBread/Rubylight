@@ -140,11 +140,13 @@ pub fn end_before(connecting: Option<Connecting>, wait: Duration, teardown: impl
 }
 
 /// Waits for a previous session's teardown before this attempt's first request: a reconnect that
-/// launched while the old control connection was open made the PC see two of this device.
-pub(super) fn wait_for_previous(previous: Option<super::Teardown>) {
-    let Some(previous) = previous else { return };
+/// launched while the old control connection was open made the PC see two of this device. A
+/// teardown still running after the wait is handed to `shared` for the app to join, never dropped.
+pub(super) fn wait_for_previous(previous: Option<super::Teardown>, shared: &Shared) {
+    let Some(mut previous) = previous else { return };
     if !previous.join_until(Instant::now() + super::LEAVE_WAIT) {
         eprintln!("nightjar: the previous session was still stopping after {} ms; reconnecting while it ends", super::LEAVE_WAIT.as_millis());
+        lock(&shared.teardowns).push(previous);
     }
 }
 
@@ -152,6 +154,12 @@ impl Connecting {
     /// What this start was asked to do: a failed start's card makes it again.
     pub fn plan(&self) -> &LaunchPlan {
         &self.plan
+    }
+
+    /// Sessions this attempt set aside to stop (a recovery that gave up, a previous session's
+    /// stop that timed out): the app takes them and joins them before the renderer goes.
+    pub fn take_teardowns(&self) -> Vec<super::Teardown> {
+        std::mem::take(&mut *lock(&self.shared.teardowns))
     }
 
     /// The game this stream plays, for the recent list; None when the PC has no unique id yet
@@ -188,7 +196,7 @@ impl Connecting {
             .spawn(move || {
                 // A reconnect of a session still stopping must not launch while its control
                 // connection and decoder are open: the PC would see two of this device.
-                wait_for_previous(previous);
+                wait_for_previous(previous, &worker_shared);
                 let result: Result<(Session, Facts, LaunchPlan), ConnectError> = match connect_with_recovery(&mut worker_plan, worker_shared, &worker_interrupt) {
                     // The screen left this start before it made a stream: nobody waits for its
                     // pictures, and a session nobody holds would stream unseen.
@@ -250,8 +258,14 @@ impl Connecting {
             }
         }
         // The renderer's GPU device and the control connection go only once the session's own
-        // threads have ended; `end_all_before` keeps the renderer when this says false.
-        let stopped = teardown.join_until(deadline);
+        // threads have ended; `end_all_before` keeps the renderer when this says false. Sessions
+        // the attempt set aside (a recovery that gave up, a previous stop that timed out) join
+        // under the same deadline.
+        let mut teardown = teardown;
+        let mut stopped = teardown.join_until(deadline);
+        for mut ended in std::mem::take(&mut *lock(&self.shared.teardowns)) {
+            stopped &= ended.join_until(deadline);
+        }
         if !stopped {
             eprintln!("nightjar: a session did not stop within {} ms of leaving; the renderer stays until the process exits", wait.as_millis());
         }
@@ -298,7 +312,7 @@ impl Connecting {
             Ok(Ok((session, facts, plan))) => {
                 if expired {
                     lock(&self.shared.roam_watch).take();
-                    super::reap_session(session);
+                    lock(&self.shared.teardowns).push(super::reap_session(session));
                     Err(ConnectFailed::Message(recovery_gave_up(lock(&self.shared.last_failure).as_deref())))
                 } else {
                     self.plan = plan;
@@ -833,9 +847,8 @@ pub(super) fn jumbo_preflight(
     if !asks_for_jumbo(packet_size, jumbo_frames) {
         return JumboPreflight::Skip(JumboSkip::NotAsked);
     }
-    if auto_reconnect {
-        return JumboPreflight::Skip(JumboSkip::Resume);
-    }
+    // The route decides first: a remote, VPN or tunnelled path never carries jumbo packets, not
+    // even the size a reconnect would otherwise keep, and uses the route's own stock size.
     let local = match location {
         Location::Local => true,
         Location::Remote => false,
@@ -843,6 +856,9 @@ pub(super) fn jumbo_preflight(
     };
     if !local {
         return JumboPreflight::Skip(JumboSkip::Remote);
+    }
+    if auto_reconnect {
+        return JumboPreflight::Skip(JumboSkip::Resume);
     }
     let Some(candidate) = jumbo_config_size(offered, packet_size) else {
         return JumboPreflight::Skip(JumboSkip::NotOffered);
@@ -864,8 +880,17 @@ pub(super) fn reset_packet_size(route: i32, requested: u32) -> i32 {
     }
 }
 
-/// The packet size a resume asks for: the size the running session negotiated when it is known
-/// (an automatic reconnect carries it into its ANNOUNCE), else the route's or the run's stock size.
+/// The whole video packet size a launch asked the PC for, before the SDP takes the encryption
+/// header off: what the session's facts keep, so an automatic reconnect carries the same request
+/// and does not lose another 32 bytes per reconnect.
+pub(super) fn facts_packet_size(requested: i32, announced: i32) -> i32 {
+    let _ = announced;
+    requested.max(0)
+}
+
+/// The packet size a resume asks for: the whole size the running session asked for when it is
+/// known (an automatic reconnect carries it into its ANNOUNCE), else the route's or the run's stock
+/// size.
 pub(super) fn resume_packet_size(negotiated: u32, route: i32, requested: u32) -> i32 {
     if negotiated > 0 {
         negotiated as i32
@@ -1453,7 +1478,7 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
         height: outcome.config.height,
         fps: outcome.config.fps,
         bitrate_kbps: outcome.config.bitrate_kbps,
-        packet_size: outcome.config.packet_size,
+        packet_size: facts_packet_size(packet_size, outcome.config.packet_size),
         format: outcome.negotiated_video_format,
         host_timing: outcome.host_control_messages.contains(&HOST_TIMING_MESSAGE_TYPE),
         link_notice: outcome.host_control_messages.contains(&LINK_NOTICE_MESSAGE_TYPE),

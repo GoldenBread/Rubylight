@@ -161,3 +161,33 @@ fn leaving_waits_for_the_screen_and_the_ending_attempts_under_one_wait() {
     let _ = release_ending.send(());
     let _ = release_screen.send(());
 }
+
+/// A recovery that gave up sets its session aside to stop; the attempt ends and is dropped by
+/// reap, and its teardown must reach the app, not go with the attempt.
+#[test]
+fn an_ended_attempts_teardown_survives_reap() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let (sender, result) = channel::<ConnectResult>();
+    let worker = std::thread::spawn(move || {
+        let _ = sender.send(Err("refused".into()));
+    });
+    let mut attempts = Attempts::default();
+    let attempt = connecting(result, Some(worker));
+    let stopped = std::sync::Arc::new(AtomicBool::new(false));
+    let flag = stopped.clone();
+    lock(&attempt.shared.teardowns).push(super::super::spawn_background(move || {
+        flag.store(true, Ordering::Release);
+    }));
+    attempts.begin(attempt);
+    attempts.cancel();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !attempts.reap() {
+        assert!(Instant::now() < deadline, "the worker answers");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let mut ended = attempts.drain_teardowns();
+    assert_eq!(ended.len(), 1, "the ended attempt's teardown reached the app");
+    let mut teardown = ended.pop().expect("the teardown");
+    assert!(teardown.join_until(Instant::now() + Duration::from_secs(10)));
+    assert!(stopped.load(Ordering::Acquire), "and it ran");
+}

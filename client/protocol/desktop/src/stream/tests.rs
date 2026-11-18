@@ -1101,11 +1101,12 @@ fn a_reconfigured_rate_is_confirmed_by_the_hosts_frame_timestamps() {
 fn teardown_runs_off_the_calling_thread() {
     let caller = std::thread::current().id();
     let (sender, receiver) = std::sync::mpsc::channel();
-    crate::stream::spawn_background(move || {
+    let mut teardown = crate::stream::spawn_background(move || {
         let _ = sender.send(std::thread::current().id());
     });
     let ran_on = receiver.recv_timeout(std::time::Duration::from_secs(10)).expect("teardown runs");
     assert_ne!(ran_on, caller, "a session's stop joins its threads, never on the UI thread");
+    assert!(teardown.join_until(Instant::now() + Duration::from_secs(10)));
 }
 
 // A request the host does not apply puts every field it changed back together: the facts' rate,
@@ -1137,7 +1138,7 @@ fn a_timed_out_reconfigure_restores_the_whole_mode() {
 #[test]
 fn a_teardown_is_joined_where_its_owner_must_wait() {
     let (sender, receiver) = std::sync::mpsc::channel();
-    let teardown = spawn_background(move || {
+    let mut teardown = spawn_background(move || {
         let _ = sender.send(());
     });
     assert!(teardown.join_until(Instant::now() + Duration::from_secs(10)));
@@ -1145,7 +1146,7 @@ fn a_teardown_is_joined_where_its_owner_must_wait() {
 
     let (started, running) = std::sync::mpsc::channel();
     let (release, released) = std::sync::mpsc::channel::<()>();
-    let teardown = spawn_background(move || {
+    let mut teardown = spawn_background(move || {
         let _ = started.send(());
         let _ = released.recv();
     });
@@ -1164,6 +1165,57 @@ fn a_reconnect_joins_the_old_session_before_its_first_request() {
         std::thread::sleep(Duration::from_millis(20));
         flag.store(true, Ordering::Release);
     });
-    super::connect::wait_for_previous(Some(previous));
+    let shared = pipeline::Shared::new(std::sync::Arc::new(|| {}), 2);
+    super::connect::wait_for_previous(Some(previous), &shared);
     assert!(ended.load(Ordering::Acquire), "the old session ended before the launch");
+}
+
+/// A renderer switch and the exit prune the teardowns that ended and are busy only while one is
+/// still stopping on the device.
+#[test]
+fn a_teardown_blocks_the_renderer_only_until_it_ends() {
+    let mut teardowns = Vec::new();
+    teardowns.push(spawn_background(|| {}));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !teardowns[0].finished() {
+        assert!(Instant::now() < deadline, "the empty teardown ends");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(!prune_teardowns(&mut teardowns), "a finished teardown does not block");
+    assert!(teardowns.is_empty(), "and is dropped");
+
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    teardowns.push(spawn_background(move || {
+        let _ = released.recv();
+    }));
+    assert!(prune_teardowns(&mut teardowns), "a session still stopping blocks");
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while prune_teardowns(&mut teardowns) {
+        assert!(Instant::now() < deadline, "the teardown ends");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// A connect attempt that set a session aside to stop hands its teardown to the app, which joins
+/// it with the others.
+#[test]
+fn a_connect_attempt_hands_its_teardown_to_the_app() {
+    let shared = pipeline::Shared::new(std::sync::Arc::new(|| {}), 2);
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    lock(&shared.teardowns).push(spawn_background(move || {
+        let _ = released.recv();
+    }));
+    let mut kept = Vec::new();
+    for teardown in std::mem::take(&mut *lock(&shared.teardowns)) {
+        kept.push(teardown);
+    }
+    assert_eq!(kept.len(), 1);
+    assert!(prune_teardowns(&mut kept), "still stopping");
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while prune_teardowns(&mut kept) {
+        assert!(Instant::now() < deadline, "the teardown ends");
+        std::thread::sleep(Duration::from_millis(2));
+    }
 }

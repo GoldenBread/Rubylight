@@ -398,7 +398,7 @@ impl App {
             // the PC sees two of this device.
             self.attempts.begin(Connecting::start(plan, self.waker.clone(), Some(teardown)));
         } else {
-            self.teardowns.push(teardown);
+            self.push_teardown(teardown);
         // A failure the PC ended the stream on: the message waits for the poll just started,
         // which carries the PC's own words for it where it says them.
         let reason_poll = match exit {
