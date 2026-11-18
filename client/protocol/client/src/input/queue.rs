@@ -17,6 +17,9 @@ use crate::control::wire::Delivery;
 
 /// Most packets waiting to be sent (`MAX_QUEUED_INPUT_PACKETS`).
 pub const MAX_QUEUED: usize = 150;
+/// Releases a full queue keeps room for above [`MAX_QUEUED`]: a key or button going up must reach
+/// the PC, so a burst of presses cannot take the room its release needs.
+const RELEASE_RESERVE: usize = 8;
 /// Mouse and pen motion closer together than this waits to be batched with the next.
 pub const MOTION_BATCHING_INTERVAL: Duration = Duration::from_millis(1);
 /// A relative motion floor that a 1 kHz mouse's reports, jitter included, stay clear of, while
@@ -93,6 +96,28 @@ enum Entry {
         kind: u8,
     },
     Text(Vec<u8>),
+}
+
+/// Whether `entry` is something going up: a key or button release, a neutral controller, or a
+/// touch, pen or controller contact ending. A full queue keeps [`RELEASE_RESERVE`] for these.
+fn is_release(entry: &Entry) -> bool {
+    match entry {
+        Entry::Event(Pending { event, .. }) => match event {
+            InputEvent::Keyboard { down, .. } | InputEvent::MouseButton { down, .. } => !*down,
+            InputEvent::Touch { event, .. }
+            | InputEvent::Pen { event, .. }
+            | InputEvent::ControllerTouch { event, .. }
+            | InputEvent::Touchpad { event, .. } => {
+                matches!(*event, touch_event::UP | touch_event::CANCEL | touch_event::CANCEL_ALL | touch_event::HOVER_LEAVE)
+            }
+            _ => false,
+        },
+        Entry::Controller { state, .. } => matches!(
+            &state.event,
+            InputEvent::Controller { buttons: 0, left_trigger: 0, right_trigger: 0, left_stick: (0, 0), right_stick: (0, 0), .. }
+        ),
+        _ => false,
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -297,8 +322,11 @@ impl InputQueue {
     }
 
     fn offer(&mut self, entry: Entry) -> Result<(), InputError> {
-        if self.entries.len() >= MAX_QUEUED && !self.drop_unreliable() {
-            return Err(InputError::QueueFull);
+        if self.entries.len() >= MAX_QUEUED {
+            let made_room = self.drop_unreliable();
+            if !made_room && (!is_release(&entry) || self.entries.len() >= MAX_QUEUED + RELEASE_RESERVE) {
+                return Err(InputError::QueueFull);
+            }
         }
         self.entries.push_back(entry);
         Ok(())
