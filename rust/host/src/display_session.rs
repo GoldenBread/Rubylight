@@ -477,6 +477,73 @@ fn inherited_layout<'a>(
         .unwrap_or(config.get("virtual_display_layout", "exclusive"))
 }
 
+/// The host's virtual display layout, and whether the host or an app asks for the primary
+/// one: what a device layout from before the marker existed has to be compared with.
+pub(crate) fn legacy_layout_owner<'a>(
+    config: &'a Config,
+    apps: &[butterpollo_core::state::App],
+) -> (&'a str, bool) {
+    // Both primary layouts make the stream's display the main screen, so a learned "extended"
+    // would override either.
+    let asks_primary =
+        |layout: &str| matches!(layout, "extended_primary" | "extended_primary_isolated");
+    let host = config.get("virtual_display_layout", "exclusive");
+    (
+        host,
+        asks_primary(host)
+            || apps
+                .iter()
+                .any(|app| asks_primary(inherited_layout(config, Some(app)))),
+    )
+}
+
+/// Give a device's unmarked "extended" layout from before the marker existed its meaning back.
+/// [`LEARNED_OVER`] records what a stream's learned layout replaced, and [`SET_BY_USER`] a
+/// pick made in Devices; neither existed for a layout learned on 2.4.1 to 2.5.9, nor for a
+/// pick made before 3.0.0, so the two cannot be told apart. When the host or an app asks for
+/// the primary, the learned value is the likely source (issue #33), and the device follows
+/// the inherited layout again. Otherwise it stays, learned over the host's layout, until that
+/// layout changes. True when a device changed.
+pub(crate) fn migrate_legacy_extended_layouts(
+    clients: &mut [butterpollo_core::state::Client],
+    host_layout: &str,
+    app_asks_primary: bool,
+) -> bool {
+    let mut changed = false;
+    for client in clients {
+        let layout = client
+            .extra
+            .get("virtual_display_layout")
+            .and_then(serde_json::Value::as_str);
+        let chosen = client
+            .extra
+            .get(SET_BY_USER)
+            .and_then(serde_json::Value::as_bool)
+            == Some(true);
+        if layout != Some("extended") || client.extra.contains_key(LEARNED_OVER) || chosen {
+            continue;
+        }
+        if app_asks_primary {
+            tracing::info!(
+                device = %client.name,
+                "the \"extended\" layout learned before the marker existed was Windows moving the primary; the device follows the host layout again"
+            );
+            client.extra.remove("virtual_display_layout");
+        } else {
+            tracing::info!(
+                device = %client.name,
+                learned_over = host_layout,
+                "the \"extended\" layout from before the marker existed stays until the host layout changes"
+            );
+            client
+                .extra
+                .insert(LEARNED_OVER.into(), serde_json::json!(host_layout));
+        }
+        changed = true;
+    }
+    changed
+}
+
 /// What the client asked the PC's displays to do for this stream (the
 /// `hostDisplay` launch parameter), or None to follow the host, app and
 /// per-device settings. Only a stream chooses; a remote monitor keeps the
@@ -1987,8 +2054,11 @@ impl Prepared {
             }
         };
         // The last look before the next change: a change after the display here is not
-        // primary has the user's or a game's pick before it and is left alone.
-        self.shown_primary = shown;
+        // primary has the user's or a game's pick before it and is left alone. A display
+        // Windows is laying out says nothing, so it does not erase the last answer.
+        if shown.is_some() {
+            self.shown_primary = shown;
+        }
         if !butterpollo_core::display_policy::primary_moved(arrangement.arrangement(), shown) {
             // The display is the primary one, or off or still being laid out. A look that
             // finds it primary only clears a pending settle; the change's window stays open
@@ -2003,7 +2073,7 @@ impl Prepared {
         if let Some(delay) = self.primary_watch.change_delay(now) {
             // For tuning WINDOW on a real rig: how long Windows took to move the primary
             // after the change that armed the watch (once per change).
-            tracing::debug!(output = %self.output, delay_ms = %delay.as_millis(), "the stream's display lost the primary one after a Windows change");
+            tracing::info!(output = %self.output, delay_ms = %delay.as_millis(), "the stream's display lost the primary one after a Windows change");
         }
         if self.primary_watch.observe(true, now) == PrimaryAction::Wait {
             return;

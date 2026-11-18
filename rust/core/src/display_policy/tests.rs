@@ -270,6 +270,41 @@ fn a_delayed_primary_move_after_a_display_change_is_restored() {
 }
 
 #[test]
+fn a_move_first_seen_late_in_the_window_still_settles() {
+    use super::{PrimaryAction, PrimaryChange, PrimaryWatch};
+    let start = std::time::Instant::now();
+    let settle = super::LayoutWatch::SETTLE;
+    let mut watch = PrimaryWatch::default();
+    watch.changed(PrimaryChange::Display, start);
+    // The first look already sees the move, just before the change's window ends: it must
+    // hold its settle and be put back, rather than being left to the user.
+    let seen = start + PrimaryWatch::WINDOW - settle / 2;
+    assert_eq!(watch.observe(true, seen), PrimaryAction::Wait);
+    assert_eq!(watch.observe(true, seen + settle), PrimaryAction::Restore);
+}
+
+#[test]
+fn a_refused_restore_stays_armed_through_its_retry() {
+    use super::{PrimaryAction, PrimaryChange, PrimaryWatch};
+    let start = std::time::Instant::now();
+    let settle = super::LayoutWatch::SETTLE;
+    let retry = super::LayoutWatch::RETRY;
+    let mut watch = PrimaryWatch::default();
+    watch.changed(PrimaryChange::Display, start);
+    // The move is first seen a moment before the window ends, so the retry after a refusal
+    // falls outside it; the watch must still put the primary back then.
+    let seen = start + PrimaryWatch::WINDOW - settle / 2;
+    assert_eq!(watch.observe(true, seen), PrimaryAction::Wait);
+    assert_eq!(watch.observe(true, seen + settle), PrimaryAction::Restore);
+    assert!(!watch.failed(seen + settle));
+    let after = seen + settle + retry;
+    assert!(after > start + PrimaryWatch::WINDOW);
+    assert!(watch.due(after));
+    assert_eq!(watch.observe(true, after), PrimaryAction::Wait);
+    assert_eq!(watch.observe(true, after + settle), PrimaryAction::Restore);
+}
+
+#[test]
 fn refused_restores_stop_the_watch_like_restores_do() {
     use super::{PrimaryAction, PrimaryChange, PrimaryWatch};
     let start = std::time::Instant::now();

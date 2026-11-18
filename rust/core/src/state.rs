@@ -38,10 +38,7 @@ pub const FIRST_DEVICE_PERMISSION: u32 = 0x07131f00;
 /// 2: an "extended" layout learned from an "extended_primary" stream, which was
 /// Windows or a game moving the primary, is dropped so the device follows the
 /// host setting again.
-/// 3: an "extended" layout from before the marker existed (2.4.1 to 2.5.1) is
-/// marked as learned over "extended", so it yields when the host or an app asks
-/// for "extended_primary" instead of overriding it.
-const STATE_VERSION: u64 = 3;
+const STATE_VERSION: u64 = 2;
 /// What every later device may do until the administrator grants more: view only.
 pub const LATER_DEVICE_PERMISSION: u32 = 0x03000000;
 /// Permission bits, as in the console's permission table.
@@ -547,26 +544,6 @@ impl PairedState {
                     );
                     c.extra.remove("virtual_display_layout");
                     c.extra.remove(LEARNED_OVER);
-                }
-            }
-        }
-        if version < 3 {
-            // 2.4.1 to 2.5.1 learned the layout a stream ended in before the marker that
-            // names what it replaced existed: an unmarked "extended" is that learned value.
-            // Mark it as learned over "extended" so it follows the host or an app that asks
-            // for "extended_primary" again instead of overriding it (issue #33).
-            for c in &mut clients {
-                let layout = c
-                    .extra
-                    .get("virtual_display_layout")
-                    .and_then(Value::as_str);
-                let chosen = c.extra.get(SET_BY_USER).and_then(Value::as_bool) == Some(true);
-                if layout == Some("extended") && !c.extra.contains_key(LEARNED_OVER) && !chosen {
-                    tracing::info!(
-                        device = %c.name,
-                        "the \"extended\" layout a stream learned before the marker existed follows the host again when it asks for \"extended_primary\""
-                    );
-                    c.extra.insert(LEARNED_OVER.into(), json!("extended"));
                 }
             }
         }

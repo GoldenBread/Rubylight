@@ -2216,26 +2216,145 @@ fn a_learned_device_layout_yields_when_the_host_layout_changes() {
     );
 }
 #[test]
-fn a_layout_learned_before_the_marker_yields_when_the_host_asks_for_the_primary() {
-    // The state's third migration marks the unmarked "extended" of 2.4.1-2.5.1 as learned
-    // over "extended": the host or an app that asks for the primary now wins over it.
+fn a_legacy_extended_layout_stays_on_an_exclusive_host_and_still_applies() {
+    // A device layout from 2.4.1-2.5.9 (a stream learned it) or from before 3.0.0 (the user
+    // picked Extend in Devices) looks the same: neither marker exists. On an exclusive host
+    // it must stay as it is, or the upgrade would turn the user's monitors off.
+    let mut clients = vec![legacy_extended()];
+    let exclusive = Config::parse("virtual_display_layout=exclusive").unwrap();
+    assert!(migrate_legacy_extended_layouts(
+        &mut clients,
+        "exclusive",
+        false
+    ));
+    assert_eq!(
+        clients[0].extra["virtual_display_layout"],
+        serde_json::json!("extended")
+    );
+    assert_eq!(
+        clients[0].extra[LEARNED_OVER],
+        serde_json::json!("exclusive")
+    );
+    assert_eq!(
+        virtual_display_layout(&exclusive, &clients[0], None, None),
+        "extended"
+    );
+    // It follows the host from then on: an extended_primary host wins over the kept layout.
+    let primary = Config::parse("virtual_display_layout=extended_primary").unwrap();
+    assert_eq!(
+        virtual_display_layout(&primary, &clients[0], None, None),
+        "extended_primary"
+    );
+}
+
+#[test]
+fn a_legacy_extended_layout_yields_when_the_host_or_an_app_asks_for_the_primary() {
+    let primary = Config::parse("virtual_display_layout=extended_primary").unwrap();
+    // The host asks for the primary: the learned value is the likely source (issue #33), so
+    // the device follows the host layout again.
+    let mut clients = vec![legacy_extended()];
+    assert!(migrate_legacy_extended_layouts(
+        &mut clients,
+        "extended_primary",
+        true
+    ));
+    assert!(!clients[0].extra.contains_key("virtual_display_layout"));
+    assert_eq!(
+        virtual_display_layout(&primary, &clients[0], None, None),
+        "extended_primary"
+    );
+    // An app asks for it while the host stays exclusive.
+    let exclusive = Config::parse("virtual_display_layout=exclusive").unwrap();
+    let app: butterpollo_core::state::App = serde_json::from_value(
+        serde_json::json!({"name":"Game","virtual-display-layout":"extended_primary"}),
+    )
+    .unwrap();
+    let mut clients = vec![legacy_extended()];
+    assert!(migrate_legacy_extended_layouts(
+        &mut clients,
+        "exclusive",
+        true
+    ));
+    assert!(!clients[0].extra.contains_key("virtual_display_layout"));
+    assert_eq!(
+        virtual_display_layout(&exclusive, &clients[0], None, None),
+        "exclusive"
+    );
+    assert_eq!(
+        virtual_display_layout(&exclusive, &clients[0], Some(&app), None),
+        "extended_primary"
+    );
+}
+
+#[test]
+fn a_picked_or_already_marked_legacy_layout_is_left_alone() {
+    let mut picked = legacy_extended();
+    picked
+        .extra
+        .insert(SET_BY_USER.into(), serde_json::json!(true));
+    let mut marked = legacy_extended();
+    marked
+        .extra
+        .insert(LEARNED_OVER.into(), serde_json::json!("exclusive"));
+    let mut clients = vec![picked, marked];
+    assert!(!migrate_legacy_extended_layouts(
+        &mut clients,
+        "exclusive",
+        true
+    ));
+    assert_eq!(
+        clients[0].extra["virtual_display_layout"],
+        serde_json::json!("extended")
+    );
+    assert_eq!(
+        clients[1].extra[LEARNED_OVER],
+        serde_json::json!("exclusive")
+    );
+}
+
+#[test]
+fn legacy_layout_owner_reads_the_host_and_an_app_that_asks_for_the_primary() {
+    let exclusive = Config::parse("virtual_display_layout=exclusive").unwrap();
+    let plain: butterpollo_core::state::App =
+        serde_json::from_value(serde_json::json!({"name":"Game"})).unwrap();
+    let primary: butterpollo_core::state::App =
+        serde_json::from_value(serde_json::json!({"name":"Game","virtual-display-primary":true}))
+            .unwrap();
+    assert_eq!(
+        legacy_layout_owner(&exclusive, std::slice::from_ref(&plain)),
+        ("exclusive", false)
+    );
+    assert_eq!(
+        legacy_layout_owner(&exclusive, &[plain.clone(), primary.clone()]),
+        ("exclusive", true)
+    );
+    let extended = Config::parse("virtual_display_layout=extended").unwrap();
+    assert_eq!(
+        legacy_layout_owner(&extended, std::slice::from_ref(&plain)),
+        ("extended", false)
+    );
+    // The host alone asks for it, with no app at all.
+    let primary_host = Config::parse("virtual_display_layout=extended_primary").unwrap();
+    assert_eq!(
+        legacy_layout_owner(&primary_host, &[]),
+        ("extended_primary", true)
+    );
+    // The isolated primary layout asks for the same main screen.
+    let isolated = Config::parse("virtual_display_layout=extended_primary_isolated").unwrap();
+    assert_eq!(
+        legacy_layout_owner(&isolated, &[]),
+        ("extended_primary_isolated", true)
+    );
+}
+
+fn legacy_extended() -> butterpollo_core::state::Client {
     let mut client: butterpollo_core::state::Client =
         serde_json::from_value(serde_json::json!({"name":"Device","uuid":"device","cert":""}))
             .unwrap();
     client
         .extra
         .insert("virtual_display_layout".into(), "extended".into());
-    client.extra.insert(LEARNED_OVER.into(), "extended".into());
-    let primary = Config::parse("virtual_display_layout=extended_primary").unwrap();
-    let extended = Config::parse("virtual_display_layout=extended").unwrap();
-    assert_eq!(
-        virtual_display_layout(&primary, &client, None, None),
-        "extended_primary"
-    );
-    assert_eq!(
-        virtual_display_layout(&extended, &client, None, None),
-        "extended"
-    );
+    client
 }
 #[test]
 fn a_retained_display_matches_only_the_exact_mode_it_was_made_for() {

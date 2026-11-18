@@ -1156,9 +1156,11 @@ impl PrimaryWatch {
             // The first look after a start: a demotion now is the start's, however long the
             // stream took to get here.
             self.arm(PrimaryChange::Start, now);
-        } else if self.armed_until.is_none_or(|until| now >= until) {
+        } else if self.since.is_none() && self.armed_until.is_none_or(|until| now >= until) {
+            // The first look at this move, and nothing changed the displays: the primary is
+            // where the user or a game put it. A move already seen while armed keeps its
+            // settle even when the window ends meanwhile.
             self.expire(now);
-            // Nothing changed the displays: the primary is where the user or a game put it.
             self.since = None;
             return PrimaryAction::Wait;
         }
@@ -1196,6 +1198,12 @@ impl PrimaryWatch {
         self.attempt = false;
         self.starting = false;
         self.next_check = Some(now + LayoutWatch::RETRY);
+        // The retry is still the move of the change that armed the watch, even when its
+        // window ends while Windows decides: keep the watch armed until the retry has had
+        // its own settle, instead of leaving the primary with the user.
+        if let Some(until) = self.armed_until {
+            self.armed_until = Some(until.max(now + LayoutWatch::RETRY + Self::WINDOW));
+        }
         self.count(self.change, now)
     }
     /// The time from the change this arm came from to now, once per change, for the log that

@@ -837,6 +837,23 @@ impl Host {
             assets.parent().unwrap_or(&assets),
         )?;
         butterpollo_core::state::write_json(&aliases_path, &aliases)?;
+        // Once per host: an "extended" device layout from before the marker that names what
+        // a stream's layout replaced is either one a stream learned (2.4.1 to 2.5.9) or a
+        // pick made in Devices before 3.0.0, which look the same. Keep it where it can stand,
+        // so it follows the host's layout from now on, except when the host or an app asks
+        // for the primary: then the learned value is the likely source (issue #33) and the
+        // display follows the inherited layout again.
+        if paired.document["root"]["legacy_extended_layout_migrated"].as_bool() != Some(true) {
+            let (host_layout, app_asks_primary) =
+                crate::display_session::legacy_layout_owner(&config, &apps);
+            crate::display_session::migrate_legacy_extended_layouts(
+                &mut paired.clients,
+                host_layout,
+                app_asks_primary,
+            );
+            paired.document["root"]["legacy_extended_layout_migrated"] = true.into();
+            paired.save(&paired_path)?;
+        }
         let web_sessions = web_sessions::load(
             &aliases,
             credentials

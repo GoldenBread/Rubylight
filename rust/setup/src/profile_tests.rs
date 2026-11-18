@@ -215,13 +215,6 @@ pub fn assert_usable(profile: &Path) -> Result<()> {
         let perm = device["perm"].as_u64().unwrap() as u32;
         assert_ne!(perm & file_bits, 0, "the fixture grants file transfer");
         device["perm"] = json!(perm & !file_bits);
-        // The third migration marks the unmarked "extended" of a profile from 2.4.1-2.5.1
-        // as learned over "extended": it was learned before the marker existed.
-        if device["virtual_display_layout"] == json!("extended")
-            && device.get("virtual_display_layout_learned_over").is_none()
-        {
-            device["virtual_display_layout_learned_over"] = json!("extended");
-        }
     }
     assert_eq!(serde_json::to_value(&paired.clients)?, kept);
     assert!(Identity::read(&files.certificate, &files.key)?.is_some());
