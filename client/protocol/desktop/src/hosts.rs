@@ -513,6 +513,8 @@ pub fn invite_error(error: &str) -> String {
         .find(|known| **known == error)
         .map_or_else(|| error.to_owned(), |known| tr(known).to_owned())
 }
+/// An invite that names a PC of the list which is paired with another certificate than the invite's.
+pub const INVITE_KNOWN_PC: &str = en("This invite is for a PC that is already on your list with another certificate, so Nightjar did not join it and changed nothing. If that PC was set up again, remove it from the list and open the invite again.");
 pub const UNPAIR_FAILED: &str = en("Failed to unpair. The PC may still list this device.");
 pub const UNPAIR_NOT_PAIRED: &str = en("Device was not paired.");
 // A quit the PC refused because another device started the game, worded like Nightjar Android's.
@@ -1172,6 +1174,15 @@ impl Hosts {
     /// Opens an invite on a thread: the PC is reached over the internet, paired as a guest and
     /// added (or updated) once [`Event::Invited`] comes back.
     pub fn redeem_invite(&mut self, link: InviteUri) {
+        // Anyone can write a link that names a PC of this list: one paired with another
+        // certificate than the link's is not what the link leads to, and is neither asked nor
+        // changed. Nothing is sent, so the invite is not spent either.
+        if self.invite_claims_known_pc(&link.unique_id, &link.cert_sha256) {
+            eprintln!("nightjar: an invite names a known PC with another certificate; not opened");
+            let _ = self.sender.send(Event::Invited { result: Err(tr(INVITE_KNOWN_PC).to_owned()), id: None });
+            (self.waker)();
+            return;
+        }
         let Some(identity) = self.identity.clone() else {
             let _ = self.sender.send(Event::Invited {
                 result: Err(tr(
@@ -1192,9 +1203,27 @@ impl Hosts {
         });
     }
 
+    /// Whether a PC of the list has `unique_id` and is paired with a certificate other than the
+    /// one that hashes to `certificate`.
+    fn invite_claims_known_pc(&self, unique_id: &str, certificate: &[u8; 32]) -> bool {
+        self.list
+            .iter()
+            .any(|h| h.record.unique_id == unique_id && pairing::pins_another(&h.record, certificate))
+    }
+
     /// A PC paired from an invite: updates the PC with that ID, or adds it. Its address is where
-    /// it answered; a punched path's loopback end finds the PC through the tunnel again.
-    fn apply_invite(&mut self, redeemed: &nightjar_core::invite::Redeemed) -> u64 {
+    /// it answered; a punched path's loopback end finds the PC through the tunnel again. A PC of
+    /// the list that is paired with another certificate stays as it is: the invite proved its own
+    /// certificate, not that it is that PC.
+    fn apply_invite(&mut self, redeemed: &nightjar_core::invite::Redeemed) -> Result<u64, String> {
+        let proved = nightjar_core::http::certificate_sha256(&redeemed.server_certificate_pem).ok();
+        if proved.is_none_or(|certificate| self.invite_claims_known_pc(&redeemed.unique_id, &certificate)) {
+            eprintln!("nightjar: an invite paired a PC that a known PC with another certificate already is; not kept");
+            // The redeem may have pointed this ID's internet path at the invite's PC: the known
+            // PC's next poll makes its own again from its kept details.
+            nightjar_core::internet::stop(&redeemed.unique_id);
+            return Err(tr(INVITE_KNOWN_PC).to_owned());
+        }
         let known = self
             .list
             .iter()
@@ -1222,7 +1251,7 @@ impl Hosts {
             }),
         };
         self.poll_one(id);
-        id
+        Ok(id)
     }
 
     /// Adds a host by address and checks it at once. Returns its ID. No port is the default one,

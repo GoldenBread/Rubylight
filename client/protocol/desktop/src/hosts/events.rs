@@ -84,12 +84,13 @@ impl Hosts {
                     Err(e) => eprintln!("nightjar: STUN failed: {e}"),
                 },
                 Event::Invited { result, .. } => {
-                    let id = match &result {
-                        Ok(redeemed) => {
+                    let applied = result.and_then(|redeemed| self.apply_invite(&redeemed).map(|id| (redeemed, id)));
+                    let (result, id) = match applied {
+                        Ok((redeemed, id)) => {
                             changed = true;
-                            Some(self.apply_invite(redeemed))
+                            (Ok(redeemed), Some(id))
                         }
-                        Err(_) => None,
+                        Err(why) => (Err(why), None),
                     };
                     out.push(Event::Invited { result, id });
                 }

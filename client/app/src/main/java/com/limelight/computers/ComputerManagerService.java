@@ -33,6 +33,7 @@ import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.HostCapabilities;
 import com.limelight.nvstream.http.NvApp;
 import com.limelight.nvstream.http.NvHTTP;
+import com.limelight.nvstream.http.InviteLink;
 import com.limelight.nvstream.http.PairingLink;
 import com.limelight.nvstream.http.PairingManager;
 import com.limelight.nvstream.mdns.MdnsComputer;
@@ -381,9 +382,17 @@ public class ComputerManagerService extends Service {
             ComputerManagerService.this.removeComputer(computer);
         }
 
-        /** Keeps a PC an invite paired, with its internet play reply, and starts polling it. */
-        public void addInvitedComputer(ComputerDetails details, String reply) {
-            ComputerManagerService.this.addInvitedComputer(details, reply);
+        /**
+         * Keeps a PC an invite paired, with its internet play reply, and starts polling it. False, with nothing
+         * changed, when a PC known here under that ID is paired with another certificate.
+         */
+        public boolean addInvitedComputer(ComputerDetails details, String reply) {
+            return ComputerManagerService.this.addInvitedComputer(details, reply);
+        }
+
+        /** Whether the invite names a PC known here that is paired with another certificate than the invite's. */
+        public boolean inviteClaimsKnownPc(InviteLink invite) {
+            return ComputerManagerService.this.inviteClaimsKnownPc(invite);
         }
 
         /** Gives the PC a name on this device only; null shows the PC's own name again. */
@@ -648,14 +657,26 @@ public class ComputerManagerService extends Service {
     /**
      * Keeps a PC an invite paired (Invites#redeem): its reply first, so the first poll can take the internet paths,
      * then the PC itself, saved as a poll would save it.
+     *
+     * <p>Anyone can write an invite that names the ID of a PC known here. The invite proved its own certificate, not
+     * that it is that PC: one paired here with another certificate keeps it, its addresses and its internet details,
+     * and this returns false with nothing changed.
      */
-    public void addInvitedComputer(ComputerDetails details, String reply) {
-        InternetPlay.save(this, details.uuid, reply);
+    public boolean addInvitedComputer(ComputerDetails details, String reply) {
+        if (pinsAnotherCertificate(details.uuid, details.serverCert)) {
+            LimeLog.warning("An invite paired a PC that a known PC with another certificate already is; not kept");
+            return false;
+        }
         if (getLocalDatabaseReference()) {
             try {
                 // A PC already known here keeps its other addresses and MAC: only what the invite proved changes.
                 synchronized (removalLock) {
                     ComputerDetails saved = dbManager.getComputerByUUID(details.uuid);
+                    if (saved != null && saved.serverCert != null && !saved.serverCert.equals(details.serverCert)) {
+                        LimeLog.warning("An invite paired a PC that a saved PC with another certificate already is; not kept");
+                        return false;
+                    }
+                    InternetPlay.save(this, details.uuid, reply);
                     if (saved == null) {
                         dbManager.updateComputer(details);
                     } else {
@@ -669,8 +690,35 @@ public class ComputerManagerService extends Service {
             } finally {
                 releaseLocalDatabaseReference();
             }
+        } else {
+            InternetPlay.save(this, details.uuid, reply);
         }
         addTuple(details);
+        return true;
+    }
+
+    /** Whether the invite names a PC known here that is paired with another certificate than the invite's. */
+    boolean inviteClaimsKnownPc(InviteLink invite) {
+        synchronized (pollingTuples) {
+            for (PollingTuple tuple : pollingTuples) {
+                if (tuple.computer.uuid.equals(invite.uniqueId)) {
+                    return tuple.computer.serverCert != null && !invite.matches(tuple.computer.serverCert);
+                }
+            }
+        }
+        return false;
+    }
+
+    /** Whether the PC known here as {@code uuid} is paired with a certificate other than {@code certificate}. */
+    private boolean pinsAnotherCertificate(String uuid, X509Certificate certificate) {
+        synchronized (pollingTuples) {
+            for (PollingTuple tuple : pollingTuples) {
+                if (tuple.computer.uuid.equals(uuid)) {
+                    return tuple.computer.serverCert != null && !tuple.computer.serverCert.equals(certificate);
+                }
+            }
+        }
+        return false;
     }
 
     /** What became of the PC a pairing link names. */

@@ -33,6 +33,8 @@ public final class Invites {
     static final String EXPIRED = "This invite has expired. Ask for a new one.";
     static final String REFUSED = "The PC did not accept this invite: it was already used, taken back or has expired. Ask for a new one.";
     static final String INTERNET_OFF = "Turn on Play over the internet in Nightjar's settings, then open the invite again.";
+    /** This app's own: the invite names a PC known here that is paired with another certificate than the invite's. */
+    static final String KNOWN_PC = "This invite is for a PC that is already on your list with another certificate.";
 
     private Invites() {
     }
@@ -45,6 +47,7 @@ public final class Invites {
             case EXPIRED: return context.getString(R.string.invite_expired);
             case REFUSED: return context.getString(R.string.invite_refused);
             case INTERNET_OFF: return context.getString(R.string.invite_internet_off);
+            case KNOWN_PC: return context.getString(R.string.invite_known_pc);
             default: return english;
         }
     }
@@ -98,6 +101,12 @@ public final class Invites {
      */
     public static ComputerDetails redeem(Context context, String link, ComputerManagerService.ComputerManagerBinder binder)
             throws InternetPlay.Unreachable {
+        // Before anything is sent, so the invite is not spent either: the PC it names is known here with another
+        // certificate, which the invite's PC cannot be.
+        InviteLink invite = InviteLink.parse(link);
+        if (invite != null && binder.inviteClaimsKnownPc(invite)) {
+            throw new InternetPlay.Unreachable(KNOWN_PC);
+        }
         LimelightCryptoProvider crypto = PlatformBinding.getCryptoProvider(context);
         // The engine refuses with its words when this device's "Play over the internet" is off.
         InternetPlay.setEnabled(PreferenceManager.getDefaultSharedPreferences(context)
@@ -107,7 +116,9 @@ public final class Invites {
                     pem("CERTIFICATE", crypto.getClientCertificate().getEncoded()),
                     pem("PRIVATE KEY", crypto.getClientPrivateKey().getEncoded()), Build.MODEL);
             ComputerDetails details = details(redeemed);
-            binder.addInvitedComputer(details, redeemed.getString("reply"));
+            if (!binder.addInvitedComputer(details, redeemed.getString("reply"))) {
+                throw new InternetPlay.Unreachable(KNOWN_PC);
+            }
             return details;
         } catch (JSONException | CertificateException e) {
             throw new InternetPlay.Unreachable(String.valueOf(e.getMessage()));

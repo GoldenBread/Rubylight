@@ -64,6 +64,7 @@ public class InvitesTest {
         assertEquals(context.getString(R.string.invite_internet_off), Invites.errorText(context, Invites.INTERNET_OFF));
         assertEquals(context.getString(R.string.invite_expired), Invites.errorText(context, Invites.EXPIRED));
         assertEquals(context.getString(R.string.invite_not_a_link), Invites.errorText(context, Invites.NOT_AN_INVITE));
+        assertEquals(context.getString(R.string.invite_known_pc), Invites.errorText(context, Invites.KNOWN_PC));
         assertEquals("No path reached the PC", Invites.errorText(context, "No path reached the PC"));
     }
 

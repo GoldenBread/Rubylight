@@ -3,6 +3,7 @@
     <string name="invite_not_a_link">Esto no es un enlace de invitación de Nightjar</string>
     <string name="invite_expired">Esta invitación ha caducado. Pide una nueva.</string>
     <string name="invite_refused">El PC no aceptó esta invitación: ya se usó, se retiró o ha caducado. Pide una nueva.</string>
+    <string name="invite_known_pc">Esta invitación es para un PC que ya está en tu lista con otro certificado, así que Nightjar no se unió ni cambió nada. Si ese PC se configuró de nuevo, quítalo de la lista y vuelve a abrir la invitación.</string>
     <string name="invite_internet_off">Activa «Jugar por internet» en los ajustes de Nightjar y vuelve a abrir la invitación.</string>
     <string name="invite_failed_title">No se pudo unir por internet</string>
     <string name="invite_confirm_title">¿Unirte a %1$s por internet?</string>

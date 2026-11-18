@@ -3,6 +3,7 @@
     <string name="invite_not_a_link">Este não é um link de convite do Nightjar</string>
     <string name="invite_expired">Este convite expirou. Peça um novo.</string>
     <string name="invite_refused">O PC não aceitou este convite: ele já foi usado, foi cancelado ou expirou. Peça um novo.</string>
+    <string name="invite_known_pc">Este convite é de um PC que já está na sua lista com outro certificado, então o Nightjar não entrou e não alterou nada. Se esse PC foi configurado de novo, remova-o da lista e abra o convite de novo.</string>
     <string name="invite_internet_off">Ative “Jogar pela internet” nas configurações do Nightjar e abra o convite de novo.</string>
     <string name="invite_failed_title">Não foi possível entrar pela internet</string>
     <string name="invite_confirm_title">Entrar em %1$s pela internet?</string>

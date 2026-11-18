@@ -1707,6 +1707,7 @@ sudo sysctl -w net.core.rmem_max={}", "Tampon de réception : le système a acco
     ("PyroWave at {}×{}, {} fps asks for {} Mbps; that may be more than this link carries ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave en {0}×{1} à {2} i/s demande {3} Mbps ; cela peut être plus que ce lien ne porte ({4} Mbps). Réduisez la résolution ou la fréquence d’images, ou utilisez HEVC ou AV1."),
     ("This is not a Nightjar invite link", "Ce n’est pas un lien d’invitation Nightjar"),
     ("This invite has expired. Ask for a new one.", "Cette invitation a expiré. Demandez-en une nouvelle."),
+    ("This invite is for a PC that is already on your list with another certificate, so Nightjar did not join it and changed nothing. If that PC was set up again, remove it from the list and open the invite again.", "Cette invitation concerne un PC déjà présent dans votre liste avec un autre certificat ; Nightjar ne l’a donc pas rejoint et n’a rien modifié. Si ce PC a été réinstallé, retirez-le de la liste, puis rouvrez l’invitation."),
     ("The PC did not accept this invite: it was already used, taken back or has expired. Ask for a new one.", "Le PC n’a pas accepté cette invitation : elle a déjà servi, a été retirée ou a expiré. Demandez-en une nouvelle."),
     ("Turn on Play over the internet in Nightjar's settings, then open the invite again.", "Activez « Jouer par internet » dans les réglages de Nightjar, puis rouvrez l’invitation."),
     ("Could not join over the internet", "Impossible de rejoindre par internet"),

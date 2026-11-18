@@ -1707,6 +1707,7 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("PyroWave at {}×{}, {} fps asks for {} Mbps; that may be more than this link carries ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave {0}×{1}, {2} fps için {3} Mbps istiyor; bu, bu bağlantının taşıdığından ({4} Mbps) fazla olabilir. Çözünürlüğü veya kare hızını düşürün ya da HEVC veya AV1 kullanın."),
     ("This is not a Nightjar invite link", "Bu bir Nightjar davet bağlantısı değil"),
     ("This invite has expired. Ask for a new one.", "Bu davetin süresi doldu. Yeni bir davet isteyin."),
+    ("This invite is for a PC that is already on your list with another certificate, so Nightjar did not join it and changed nothing. If that PC was set up again, remove it from the list and open the invite again.", "Bu davet, listenizde başka bir sertifikayla zaten bulunan bir bilgisayar için. Bu yüzden Nightjar katılmadı ve hiçbir şeyi değiştirmedi. O bilgisayar yeniden kurulduysa onu listeden kaldırın ve daveti yeniden açın."),
     ("The PC did not accept this invite: it was already used, taken back or has expired. Ask for a new one.", "Bilgisayar bu daveti kabul etmedi: daha önce kullanıldı, geri alındı ya da süresi doldu. Yeni bir davet isteyin."),
     ("Turn on Play over the internet in Nightjar's settings, then open the invite again.", "Nightjar ayarlarında “İnternet üzerinden oyna”yı açın, ardından daveti yeniden açın."),
     ("Could not join over the internet", "İnternet üzerinden katılınamadı"),

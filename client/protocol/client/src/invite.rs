@@ -24,6 +24,10 @@ pub const REFUSED: &str = "The PC did not accept this invite: it was already use
 pub const INTERNET_OFF: &str =
     "Turn on Play over the internet in Nightjar's settings, then open the invite again.";
 
+/// The words for a PC that paired and then said it is another PC than the link names.
+pub const ANOTHER_PC: &str =
+    "The PC that answered is not the one this invite names, so Nightjar did not keep it.";
+
 /// How often the device's own internet details are asked for after pairing.
 const DETAILS_TRIES: usize = 3;
 
@@ -191,13 +195,18 @@ pub fn redeem(
     let (info, reply, own) = details.ok_or_else(|| {
         format!("The PC paired this device but did not give it its internet details: {last}")
     })?;
+    // What answers with the paired certificate is the PC the link names and nothing else: the
+    // apps keep a PC under this ID, and one that names another PC here would be kept as that PC.
+    if !names_the_links_pc(&info.unique_id, link) {
+        return Err(ANOTHER_PC.to_owned());
+    }
     // The link's rendezvous ends soon after it is spent: carry on with this device's own.
     if path == InternetPath::Punched {
         internet::stop(&link.unique_id);
         let _ = internet::tunnel(&link.unique_id, &own);
     }
     Ok(Redeemed {
-        unique_id: info.unique_id.clone(),
+        unique_id: link.unique_id.clone(),
         name: info.hostname.clone(),
         address,
         path,
@@ -205,6 +214,13 @@ pub fn redeem(
         server_certificate_pem: certificate,
         reply,
     })
+}
+
+/// Whether the ID a paired PC gives over its pinned connection is the link's. The link's ID is the
+/// one the player was shown the PC under and the one the lookup asked for; the paired answer's
+/// is whatever that PC says.
+fn names_the_links_pc(answered: &str, link: &InviteUri) -> bool {
+    answered == link.unique_id
 }
 
 /// What a confirmation shows before anything is sent: `{name, expires, permission, expired}`.
@@ -294,6 +310,15 @@ mod tests {
             let error = redeem(&link(), identity, "Phone", 1_000).unwrap_err();
             assert_eq!(error, INTERNET_OFF);
         }
+    }
+
+    #[test]
+    fn a_paired_pc_that_names_another_pc_is_not_the_links() {
+        assert!(names_the_links_pc("HOST-1", &link()));
+        // An invite's PC that answers, once paired, with the ID of a PC the player already has.
+        assert!(!names_the_links_pc("HOME-PC", &link()));
+        assert!(!names_the_links_pc("host-1", &link()));
+        assert!(!names_the_links_pc("", &link()));
     }
 
     #[test]

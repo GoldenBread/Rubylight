@@ -4,6 +4,7 @@
     <string name="invite_not_a_link">This is not a Nightjar invite link</string>
     <string name="invite_expired">This invite has expired. Ask for a new one.</string>
     <string name="invite_refused">The PC did not accept this invite: it was already used, taken back or has expired. Ask for a new one.</string>
+    <string name="invite_known_pc">This invite is for a PC that is already on your list with another certificate, so Nightjar did not join it and changed nothing. If that PC was set up again, remove it from the list and open the invite again.</string>
     <string name="invite_internet_off">Turn on Play over the internet in Nightjar\'s settings, then open the invite again.</string>
     <string name="invite_failed_title">Could not join over the internet</string>
     <string name="invite_confirm_title">Join %1$s over the internet?</string>

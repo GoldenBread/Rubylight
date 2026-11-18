@@ -1707,6 +1707,7 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("PyroWave at {}×{}, {} fps asks for {} Mbps; that may be more than this link carries ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave の {0}×{1}、{2} fps は {3} Mbps を要求しますが、この回線が運べる量（{4} Mbps）を超えている可能性があります。解像度かフレームレートを下げるか、HEVC か AV1 を使ってください。"),
     ("This is not a Nightjar invite link", "これは Nightjar の招待リンクではありません"),
     ("This invite has expired. Ask for a new one.", "この招待は期限切れです。新しい招待をもらってください。"),
+    ("This invite is for a PC that is already on your list with another certificate, so Nightjar did not join it and changed nothing. If that PC was set up again, remove it from the list and open the invite again.", "この招待は、別の証明書ですでにリストにある PC のものです。そのため Nightjar は参加せず、何も変更していません。その PC を設定し直した場合は、リストから削除してから招待をもう一度開いてください。"),
     ("The PC did not accept this invite: it was already used, taken back or has expired. Ask for a new one.", "PC はこの招待を受け付けませんでした。すでに使われたか、取り消されたか、期限切れです。新しい招待をもらってください。"),
     ("Turn on Play over the internet in Nightjar's settings, then open the invite again.", "Nightjar の設定で「インターネット経由でプレイ」をオンにしてから、招待をもう一度開いてください。"),
     ("Could not join over the internet", "インターネット経由で参加できませんでした"),

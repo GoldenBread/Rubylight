@@ -3,6 +3,7 @@
     <string name="invite_not_a_link">這不是 Nightjar 邀請連結</string>
     <string name="invite_expired">此邀請已過期。請索取新的邀請。</string>
     <string name="invite_refused">電腦未接受此邀請：它已被使用、已被收回或已過期。請索取新的邀請。</string>
+    <string name="invite_known_pc">此邀請對應的電腦已在你的清單中，但憑證不同，因此 Nightjar 沒有加入，也沒有變更任何內容。如果那台電腦已重新設定，請先將它從清單中移除，再重新開啟邀請。</string>
     <string name="invite_internet_off">請在 Nightjar 設定中開啟「透過網際網路遊玩」，然後再次開啟邀請。</string>
     <string name="invite_failed_title">無法透過網際網路加入</string>
     <string name="invite_confirm_title">透過網際網路加入 %1$s？</string>

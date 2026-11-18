@@ -1765,6 +1765,77 @@ fn the_engines_invite_errors_are_the_ones_translated() {
     );
 }
 
+const OTHER_PEM: &str = "-----BEGIN CERTIFICATE-----
+BAUG
+-----END CERTIFICATE-----
+";
+
+fn redeemed_as(unique_id: &str, pem: &str) -> nightjar_core::invite::Redeemed {
+    nightjar_core::invite::Redeemed {
+        unique_id: unique_id.into(),
+        name: "Den".into(),
+        address: "203.0.113.9:47989".parse().unwrap(),
+        path: nightjar_core::internet::InternetPath::MappedIpv4,
+        https_port: 47984,
+        server_certificate_pem: pem.into(),
+        reply: "the invite's".into(),
+    }
+}
+
+// A link anyone can write names the ID of a PC the player already paired, with the certificate of
+// the PC it really leads to: the paired PC keeps its certificate and its internet details.
+#[test]
+fn an_invite_never_replaces_the_certificate_of_a_pc_paired_with_another_one() {
+    let mut known = paired_record("HOST-1");
+    known.server_certificate = Some(PEM.into());
+    known.internet_play = Some("its own".into());
+    known.https_port = 47984;
+    let mut hosts = Hosts::without_discovery(vec![known], Arc::new(|| {}));
+
+    // Before anything is sent: the link's certificate is not the one this PC is paired with.
+    hosts.redeem_invite(invite_link("Den"));
+    assert!(matches!(
+        hosts.events.try_recv(),
+        Ok(Event::Invited { result: Err(why), id: None }) if why == INVITE_KNOWN_PC
+    ));
+
+    // And once more where the PC is kept, whatever led there.
+    assert_eq!(hosts.apply_invite(&redeemed_as("HOST-1", OTHER_PEM)), Err(INVITE_KNOWN_PC.to_owned()));
+    assert_eq!(hosts.apply_invite(&redeemed_as("HOST-1", "not a certificate")), Err(INVITE_KNOWN_PC.to_owned()));
+    assert_eq!(hosts.list.len(), 1);
+    let record = &hosts.list[0].record;
+    assert_eq!(record.server_certificate.as_deref(), Some(PEM));
+    assert_eq!(record.internet_play.as_deref(), Some("its own"));
+}
+
+#[test]
+fn an_invite_renews_the_pc_it_proved_and_adds_one_not_listed() {
+    let mut known = paired_record("HOST-1");
+    known.server_certificate = Some(PEM.into());
+    known.internet_play = Some("its own".into());
+    let mut hosts = Hosts::without_discovery(vec![known], Arc::new(|| {}));
+    let id = hosts.list[0].id;
+
+    // The same certificate: the PC itself, which gets the invite's details.
+    assert_eq!(hosts.apply_invite(&redeemed_as("HOST-1", PEM)), Ok(id));
+    assert_eq!(hosts.list.len(), 1);
+    assert_eq!(hosts.list[0].record.internet_play.as_deref(), Some("the invite's"));
+
+    // A PC not on the list is added with the certificate the invite proved.
+    let added = hosts.apply_invite(&redeemed_as("HOST-2", OTHER_PEM)).unwrap();
+    assert_ne!(added, id);
+    assert_eq!(hosts.list.len(), 2);
+    assert_eq!(hosts.get(added).unwrap().record.server_certificate.as_deref(), Some(OTHER_PEM));
+
+    // A PC found on the network and never paired has no certificate to keep.
+    let mut found = paired_record("HOST-3");
+    found.server_certificate = None;
+    let mut hosts = Hosts::without_discovery(vec![found], Arc::new(|| {}));
+    let id = hosts.list[0].id;
+    assert_eq!(hosts.apply_invite(&redeemed_as("HOST-3", OTHER_PEM)), Ok(id));
+    assert_eq!(hosts.list[0].record.server_certificate.as_deref(), Some(OTHER_PEM));
+}
+
 #[test]
 fn add_pc_reads_addresses_and_pairing_links() {
     assert_eq!(parse_entry(" 192.168.1.20:48123 "), Ok(Entry::Address("192.168.1.20".into(), Some(48123))));

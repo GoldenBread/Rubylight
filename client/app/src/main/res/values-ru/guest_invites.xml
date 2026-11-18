@@ -3,6 +3,7 @@
     <string name="invite_not_a_link">Это не ссылка-приглашение Nightjar</string>
     <string name="invite_expired">Срок действия приглашения истёк. Попросите новое.</string>
     <string name="invite_refused">ПК не принял приглашение: оно уже использовано, отозвано или истекло. Попросите новое.</string>
+    <string name="invite_known_pc">Это приглашение относится к ПК, который уже есть в вашем списке с другим сертификатом, поэтому Nightjar не подключился и ничего не изменил. Если этот ПК настроили заново, удалите его из списка и откройте приглашение снова.</string>
     <string name="invite_internet_off">Включите «Игра через интернет» в настройках Nightjar и откройте приглашение снова.</string>
     <string name="invite_failed_title">Не удалось присоединиться через интернет</string>
     <string name="invite_confirm_title">Присоединиться к %1$s через интернет?</string>

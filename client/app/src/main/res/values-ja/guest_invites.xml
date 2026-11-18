@@ -3,6 +3,7 @@
     <string name="invite_not_a_link">これは Nightjar の招待リンクではありません</string>
     <string name="invite_expired">この招待は期限切れです。新しい招待をもらってください。</string>
     <string name="invite_refused">PC はこの招待を受け付けませんでした。すでに使われたか、取り消されたか、期限切れです。新しい招待をもらってください。</string>
+    <string name="invite_known_pc">この招待は、別の証明書ですでにリストにある PC のものです。そのため Nightjar は参加せず、何も変更していません。その PC を設定し直した場合は、リストから削除してから招待をもう一度開いてください。</string>
     <string name="invite_internet_off">Nightjar の設定で「インターネット経由でプレイ」をオンにしてから、招待をもう一度開いてください。</string>
     <string name="invite_failed_title">インターネット経由で参加できませんでした</string>
     <string name="invite_confirm_title">インターネット経由で %1$s に参加しますか?</string>

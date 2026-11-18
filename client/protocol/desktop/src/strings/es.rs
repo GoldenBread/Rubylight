@@ -1707,6 +1707,7 @@ sudo sysctl -w net.core.rmem_max={}", "Búfer de recepción: el sistema concedi�
     ("PyroWave at {}×{}, {} fps asks for {} Mbps; that may be more than this link carries ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave a {0}×{1} y {2} fps pide {3} Mbps; puede ser más de lo que este enlace soporta ({4} Mbps). Baja la resolución o la frecuencia de imágenes, o usa HEVC o AV1."),
     ("This is not a Nightjar invite link", "Esto no es un enlace de invitación de Nightjar"),
     ("This invite has expired. Ask for a new one.", "Esta invitación ha caducado. Pide una nueva."),
+    ("This invite is for a PC that is already on your list with another certificate, so Nightjar did not join it and changed nothing. If that PC was set up again, remove it from the list and open the invite again.", "Esta invitación es para un PC que ya está en tu lista con otro certificado, así que Nightjar no se unió ni cambió nada. Si ese PC se configuró de nuevo, quítalo de la lista y vuelve a abrir la invitación."),
     ("The PC did not accept this invite: it was already used, taken back or has expired. Ask for a new one.", "El PC no aceptó esta invitación: ya se usó, se retiró o ha caducado. Pide una nueva."),
     ("Turn on Play over the internet in Nightjar's settings, then open the invite again.", "Activa «Jugar por internet» en los ajustes de Nightjar y vuelve a abrir la invitación."),
     ("Could not join over the internet", "No se pudo unir por internet"),

@@ -3,6 +3,7 @@
     <string name="invite_not_a_link">Bu bir Nightjar davet bağlantısı değil</string>
     <string name="invite_expired">Bu davetin süresi doldu. Yeni bir davet isteyin.</string>
     <string name="invite_refused">Bilgisayar bu daveti kabul etmedi: daha önce kullanıldı, geri alındı ya da süresi doldu. Yeni bir davet isteyin.</string>
+    <string name="invite_known_pc">Bu davet, listenizde başka bir sertifikayla zaten bulunan bir bilgisayar için. Bu yüzden Nightjar katılmadı ve hiçbir şeyi değiştirmedi. O bilgisayar yeniden kurulduysa onu listeden kaldırın ve daveti yeniden açın.</string>
     <string name="invite_internet_off">Nightjar ayarlarında “İnternet üzerinden oyna”yı açın, ardından daveti yeniden açın.</string>
     <string name="invite_failed_title">İnternet üzerinden katılınamadı</string>
     <string name="invite_confirm_title">%1$s bilgisayarına internet üzerinden katılınsın mı?</string>

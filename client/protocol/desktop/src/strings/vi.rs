@@ -1707,6 +1707,7 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("PyroWave at {}×{}, {} fps asks for {} Mbps; that may be more than this link carries ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave ở {0}×{1}, {2} fps cần {3} Mbps; mức này có thể nhiều hơn mức đường truyền này tải ({4} Mbps). Hãy giảm độ phân giải hoặc tốc độ khung hình, hoặc dùng HEVC hay AV1."),
     ("This is not a Nightjar invite link", "Đây không phải là liên kết mời của Nightjar"),
     ("This invite has expired. Ask for a new one.", "Lời mời này đã hết hạn. Hãy xin một lời mời mới."),
+    ("This invite is for a PC that is already on your list with another certificate, so Nightjar did not join it and changed nothing. If that PC was set up again, remove it from the list and open the invite again.", "Lời mời này dành cho một PC đã có trong danh sách của bạn với chứng chỉ khác, nên Nightjar không tham gia và không thay đổi gì. Nếu PC đó đã được thiết lập lại, hãy xóa nó khỏi danh sách rồi mở lại lời mời."),
     ("The PC did not accept this invite: it was already used, taken back or has expired. Ask for a new one.", "PC không chấp nhận lời mời này: lời mời đã được dùng, đã bị thu hồi hoặc đã hết hạn. Hãy xin một lời mời mới."),
     ("Turn on Play over the internet in Nightjar's settings, then open the invite again.", "Hãy bật “Chơi qua internet” trong cài đặt của Nightjar rồi mở lại lời mời."),
     ("Could not join over the internet", "Không thể tham gia qua internet"),

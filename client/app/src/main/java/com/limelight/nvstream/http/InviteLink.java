@@ -1,5 +1,6 @@
 package com.limelight.nvstream.http;
 
+import java.security.cert.X509Certificate;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -27,12 +28,18 @@ public final class InviteLink {
     public final long expires;
     /** One of {@link #VIEW}, {@link #CONTROLLER}, {@link #KEYBOARD_MOUSE}. */
     public final String permission;
+    /** The ID of the PC the link names. Whoever wrote the link chose it: it proves nothing about the PC. */
+    public final String uniqueId;
+    /** SHA-256 of the certificate the PC must pair with. */
+    private final byte[] certSha256;
 
-    private InviteLink(String text, String name, long expires, String permission) {
+    private InviteLink(String text, String name, long expires, String permission, String uniqueId, byte[] certSha256) {
         this.text = text;
         this.name = name;
         this.expires = expires;
         this.permission = permission;
+        this.uniqueId = uniqueId;
+        this.certSha256 = certSha256;
     }
 
     public static boolean looksLikeLink(String text) {
@@ -59,7 +66,8 @@ public final class InviteLink {
         }
         if (!"1".equals(pairs.get("v"))) return null;
         if (PairingLink.fingerprint(orEmpty(pairs.get("k"))) == null) return null;
-        if (PairingLink.fingerprint(orEmpty(pairs.get("fp"))) == null) return null;
+        byte[] certSha256 = PairingLink.fingerprint(orEmpty(pairs.get("fp")));
+        if (certSha256 == null) return null;
         String id = orEmpty(pairs.get("id"));
         if (id.isEmpty() || id.length() > 64 || !id.matches("[A-Za-z0-9_-]+")) return null;
         String permission = orEmpty(pairs.get("perm"));
@@ -80,7 +88,7 @@ public final class InviteLink {
         } catch (NumberFormatException e) {
             return null;
         }
-        return new InviteLink(trimmed, orEmpty(pairs.get("name")), end, permission);
+        return new InviteLink(trimmed, orEmpty(pairs.get("name")), end, permission, id, certSha256);
     }
 
     private static String orEmpty(String value) {
@@ -90,6 +98,11 @@ public final class InviteLink {
     /** The PC's name for a confirmation, cleaned as a pairing link's is. */
     public String shownName() {
         return PairingLink.shown(name);
+    }
+
+    /** True when the certificate's DER hashes to the link's fingerprint. */
+    public boolean matches(X509Certificate certificate) {
+        return certificate != null && PairingLink.matches(certSha256, certificate);
     }
 
     /** Whether the link's own end has passed at {@code nowSeconds}; the PC decides, this spares a lookup. */

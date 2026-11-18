@@ -3,6 +3,7 @@
     <string name="invite_not_a_link">Nightjar 초대 링크가 아닙니다</string>
     <string name="invite_expired">이 초대는 만료되었습니다. 새 초대를 요청하세요.</string>
     <string name="invite_refused">PC가 이 초대를 받지 않았습니다. 이미 사용되었거나 취소되었거나 만료되었습니다. 새 초대를 요청하세요.</string>
+    <string name="invite_known_pc">이 초대는 이미 다른 인증서로 목록에 있는 PC의 것입니다. 그래서 Nightjar는 참가하지 않았고 아무것도 바꾸지 않았습니다. 그 PC를 다시 설정했다면 목록에서 제거한 다음 초대를 다시 여세요.</string>
     <string name="invite_internet_off">Nightjar 설정에서 \'인터넷으로 플레이\'를 켠 다음 초대를 다시 여세요.</string>
     <string name="invite_failed_title">인터넷으로 참가하지 못했습니다</string>
     <string name="invite_confirm_title">인터넷으로 %1$s에 참가할까요?</string>

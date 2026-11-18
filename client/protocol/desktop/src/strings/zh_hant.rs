@@ -1707,6 +1707,7 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("PyroWave at {}×{}, {} fps asks for {} Mbps; that may be more than this link carries ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.", "PyroWave 在 {0}×{1}、{2} fps 下需要 {3} Mbps；這可能超過此連線可承載的 {4} Mbps。請降低解析度或影格率，或改用 HEVC 或 AV1。"),
     ("This is not a Nightjar invite link", "這不是 Nightjar 邀請連結"),
     ("This invite has expired. Ask for a new one.", "此邀請已過期。請索取新的邀請。"),
+    ("This invite is for a PC that is already on your list with another certificate, so Nightjar did not join it and changed nothing. If that PC was set up again, remove it from the list and open the invite again.", "此邀請對應的電腦已在你的清單中，但憑證不同，因此 Nightjar 沒有加入，也沒有變更任何內容。如果那台電腦已重新設定，請先將它從清單中移除，再重新開啟邀請。"),
     ("The PC did not accept this invite: it was already used, taken back or has expired. Ask for a new one.", "電腦未接受此邀請：它已被使用、已被收回或已過期。請索取新的邀請。"),
     ("Turn on Play over the internet in Nightjar's settings, then open the invite again.", "請在 Nightjar 設定中開啟「透過網際網路遊玩」，然後再次開啟邀請。"),
     ("Could not join over the internet", "無法透過網際網路加入"),
