@@ -369,18 +369,70 @@ pub fn reattach_console(expected_session: u32, expected_console: u32) -> Result<
 /// Whether a user is signed in to this process's session. Only a host
 /// running as SYSTEM can tell; a portable host runs as the user.
 pub fn user_signed_in() -> bool {
-    // SAFETY: `session` and `token` are valid out-pointers, and the token returned is closed once
-    // here.
-    unsafe {
-        let mut session = 0;
-        if ProcessIdToSessionId(GetCurrentProcessId(), &mut session).is_err() {
-            return false;
+    current_session().is_ok_and(|session| own_session_user_token(session).is_ok())
+}
+/// The signed-in user's token for `session`, the host's own. A SYSTEM host logs why there is none,
+/// once per change, since the tray icon, the Microsoft Store scan and the helper-run probes all
+/// wait for that user.
+pub(super) fn own_session_user_token(session: u32) -> Result<OwnedHandle> {
+    let mut token = HANDLE::default();
+    // SAFETY: `token` is a valid out-pointer, and the token returned is owned once.
+    let queried = unsafe { WTSQueryUserToken(session, &mut token) };
+    let outcome = match &queried {
+        Ok(()) => Ok(()),
+        Err(error) => Err(format!("{error} ({:#010x})", error.code().0)),
+    };
+    if is_system() {
+        report_user_lookup(session, outcome);
+    }
+    queried.context("no signed-in user in the host session")?;
+    Ok(owned(token))
+}
+/// The last reason the host's session had no signed-in user.
+static USER_LOOKUP: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+fn report_user_lookup(session: u32, outcome: std::result::Result<(), String>) {
+    let change = user_lookup_change(
+        &mut USER_LOOKUP.lock().unwrap_or_else(|p| p.into_inner()),
+        outcome.err(),
+    );
+    match change {
+        Some(UserLookup::Missing(error)) => {
+            let console = console_session();
+            tracing::warn!(
+                session_id = session,
+                console_session_id = console,
+                state = session_connection(session).ok().map(|(state, _)| state.0),
+                user_name = session_has_user(session).ok(),
+                %error,
+                "Windows gives no signed-in user for the host's session; the tray icon, the Microsoft Store scan and the 4:4:4 and PyroWave probes wait for one"
+            );
         }
-        let mut token = HANDLE::default();
-        if WTSQueryUserToken(session, &mut token).is_err() {
-            return false;
+        Some(UserLookup::Found) => {
+            tracing::info!(
+                session_id = session,
+                "a user is signed in to the host's session"
+            )
         }
-        let _ = CloseHandle(token);
-        true
+        None => {}
+    }
+}
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum UserLookup {
+    Missing(String),
+    Found,
+}
+/// What the log says of a user lookup whose error was `now` (None: a user was found), after
+/// `last`: a new or different reason once, and a user found after none was.
+pub(super) fn user_lookup_change(
+    last: &mut Option<String>,
+    now: Option<String>,
+) -> Option<UserLookup> {
+    match now {
+        Some(error) if last.as_deref() != Some(error.as_str()) => {
+            *last = Some(error.clone());
+            Some(UserLookup::Missing(error))
+        }
+        Some(_) => None,
+        None => last.take().map(|_| UserLookup::Found),
     }
 }

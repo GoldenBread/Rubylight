@@ -392,12 +392,7 @@ fn session_token(target: &Target) -> Result<Option<OwnedHandle>> {
         let source = match target {
             Target::SystemSession(_) => token()?,
             Target::User { .. } | Target::Account(_) => {
-                let mut user = own_session_user(current_session, |session| {
-                    let mut user = HANDLE::default();
-                    WTSQueryUserToken(session, &mut user)
-                        .context("no signed-in user in the host session")?;
-                    Ok(owned(user))
-                })?;
+                let mut user = own_session_user(current_session, own_session_user_token)?;
                 if matches!(target, Target::User { elevated: true })
                     && let Some(linked) = linked_token(&user)
                 {

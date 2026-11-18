@@ -6,7 +6,7 @@ use std::{
     path::PathBuf,
     sync::{Mutex, mpsc},
     thread,
-    time::Instant,
+    time::{Duration, Instant},
 };
 use windows::{
     Win32::{
@@ -51,6 +51,79 @@ struct State {
     port: u16,
     taskbar: u32,
     hide_controls: bool,
+    added: AddLog,
+}
+/// How long the taskbar may refuse the icon before the log says so again.
+const ADD_REFUSED_LONG: Duration = Duration::from_secs(60);
+/// What the log says of the attempts to add the icon: Windows refusing it, once, and again once
+/// it keeps refusing, and the icon going in.
+#[derive(Default)]
+struct AddLog {
+    refused_since: Option<Instant>,
+    warned_long: bool,
+    added_once: bool,
+}
+#[derive(Debug, PartialEq, Eq)]
+enum AddReport {
+    Refused,
+    StillRefused,
+    /// Added, the first time or after Windows refused it for this long.
+    Added(Option<Duration>),
+}
+impl AddLog {
+    fn attempt(&mut self, added: bool, now: Instant) -> Option<AddReport> {
+        if added {
+            let refused = self.refused_since.take().map(|since| now - since);
+            self.warned_long = false;
+            let first = !std::mem::replace(&mut self.added_once, true);
+            return (first || refused.is_some()).then_some(AddReport::Added(refused));
+        }
+        match self.refused_since {
+            None => {
+                self.refused_since = Some(now);
+                Some(AddReport::Refused)
+            }
+            Some(since) if !self.warned_long && now - since >= ADD_REFUSED_LONG => {
+                self.warned_long = true;
+                Some(AddReport::StillRefused)
+            }
+            Some(_) => None,
+        }
+    }
+}
+/// Add the icon, and log what [`AddLog`] says of the attempt.
+unsafe fn add_icon(state: &mut State) -> bool {
+    // SAFETY: the caller passes the live State of the tray window, whose icon data is complete.
+    let (added, error) = unsafe {
+        let added = Shell_NotifyIconW(NIM_ADD, &state.icon).as_bool();
+        (added, (!added).then(|| GetLastError()))
+    };
+    let report = state.added.attempt(added, Instant::now());
+    let session = crate::process::current_session().ok();
+    // Explorer's taskbar on this desktop: without it nothing can show an icon.
+    // SAFETY: both strings are static and NUL-terminated.
+    let taskbar = unsafe { FindWindowW(w!("Shell_TrayWnd"), PCWSTR::null()) }.is_ok();
+    match report {
+        Some(AddReport::Refused) => tracing::warn!(
+            error = ?error,
+            session_id = session,
+            taskbar,
+            "Windows refused the tray icon; adding it again every 3 s and when the taskbar starts"
+        ),
+        Some(AddReport::StillRefused) => tracing::warn!(
+            error = ?error,
+            session_id = session,
+            taskbar,
+            "Windows still refuses the tray icon after a minute; it shows only on the taskbar of a user signed in to this session"
+        ),
+        Some(AddReport::Added(refused)) => tracing::info!(
+            session_id = session,
+            refused_s = refused.map(|refused| refused.as_secs()),
+            "tray icon added"
+        ),
+        None => {}
+    }
+    added
 }
 impl State {
     /// Show the running app's state in the icon and its tooltip.
@@ -218,7 +291,7 @@ unsafe extern "system" fn window(
             if message == taskbar || (message == WM_TIMER && wparam.0 == RETRY_TIMER) {
                 let s = &mut *state;
                 s.show();
-                if Shell_NotifyIconW(NIM_ADD, &s.icon).as_bool() {
+                if add_icon(s) {
                     let _ = KillTimer(Some(hwnd), RETRY_TIMER);
                 } else if message == taskbar {
                     SetTimer(Some(hwnd), RETRY_TIMER, 3000, None);
@@ -409,6 +482,7 @@ impl Tray {
                         },
                         taskbar: RegisterWindowMessageW(w!("TaskbarCreated")),
                         hide_controls,
+                        added: AddLog::default(),
                     });
                     state.show();
                     let hwnd = CreateWindowExW(
@@ -434,7 +508,7 @@ impl Tray {
                     for message in [state.taskbar, WM_APP + 1] {
                         let _ = ChangeWindowMessageFilterEx(hwnd, message, MSGFLT_ALLOW, None);
                     }
-                    if !Shell_NotifyIconW(NIM_ADD, &state.icon).as_bool() {
+                    if !add_icon(&mut state) {
                         SetTimer(Some(hwnd), RETRY_TIMER, 3000, None);
                     }
                     *SHOWN.lock().unwrap() = Some(hwnd.0 as isize);
@@ -670,6 +744,40 @@ pub fn open_web_page(port: u16, page: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_refused_tray_icon_is_logged_once_and_again_when_it_keeps_failing() {
+        let start = Instant::now();
+        let mut log = AddLog::default();
+        assert_eq!(log.attempt(false, start), Some(AddReport::Refused));
+        // The 3 s retries say nothing more until a minute has passed, then once.
+        assert_eq!(log.attempt(false, start + Duration::from_secs(3)), None);
+        assert_eq!(
+            log.attempt(false, start + ADD_REFUSED_LONG),
+            Some(AddReport::StillRefused)
+        );
+        assert_eq!(log.attempt(false, start + Duration::from_secs(120)), None);
+        assert_eq!(
+            log.attempt(true, start + Duration::from_secs(123)),
+            Some(AddReport::Added(Some(Duration::from_secs(123))))
+        );
+        // Explorer restarting adds it again: no line; a later refusal is new.
+        assert_eq!(log.attempt(true, start + Duration::from_secs(200)), None);
+        assert_eq!(
+            log.attempt(false, start + Duration::from_secs(300)),
+            Some(AddReport::Refused)
+        );
+    }
+
+    #[test]
+    fn the_first_tray_icon_added_is_logged() {
+        let mut log = AddLog::default();
+        assert_eq!(
+            log.attempt(true, Instant::now()),
+            Some(AddReport::Added(None))
+        );
+        assert_eq!(log.attempt(true, Instant::now()), None);
+    }
 
     #[test]
     fn the_pairing_pages_lead_to_the_devices_page() {

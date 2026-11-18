@@ -1267,3 +1267,29 @@ fn an_exited_process_another_program_still_holds_open_is_not_running() {
     assert_eq!(super::creation_time(pid), 0);
     drop(child);
 }
+
+#[test]
+fn the_log_names_a_missing_signed_in_user_once_per_reason() {
+    use super::session::{UserLookup, user_lookup_change};
+    let mut last = None;
+    // Found from the start: nothing to say.
+    assert_eq!(user_lookup_change(&mut last, None), None);
+    let none = "A specified logon session does not exist. (0x80070520)".to_string();
+    assert_eq!(
+        user_lookup_change(&mut last, Some(none.clone())),
+        Some(UserLookup::Missing(none.clone()))
+    );
+    // The scan every few minutes repeats the same reason: logged once.
+    assert_eq!(user_lookup_change(&mut last, Some(none.clone())), None);
+    let other = "Access is denied. (0x80070005)".to_string();
+    assert_eq!(
+        user_lookup_change(&mut last, Some(other.clone())),
+        Some(UserLookup::Missing(other))
+    );
+    assert_eq!(user_lookup_change(&mut last, None), Some(UserLookup::Found));
+    assert_eq!(user_lookup_change(&mut last, None), None);
+    assert_eq!(
+        user_lookup_change(&mut last, Some(none.clone())),
+        Some(UserLookup::Missing(none))
+    );
+}
