@@ -280,6 +280,14 @@ pub fn router() -> Router<Shared> {
             &path("/session/guests/keyboard-mouse"),
             post(guests::keyboard_mouse).fallback(unknown),
         )
+        .route(
+            &path("/session/guests/invites"),
+            get(guests::invites).post(guests::invite).fallback(unknown),
+        )
+        .route(
+            &path("/session/guests/invites/revoke"),
+            post(guests::revoke_invite).fallback(unknown),
+        )
         .route(&path("/coop"), get(coop::list).fallback(unknown))
         .route(&path("/coop/join"), post(coop::join).fallback(unknown))
         .route(
@@ -487,6 +495,7 @@ async fn capabilities(State(h): State<Shared>, Extension(c): Extension<Connectio
             .chain(pairing.then_some(feature::PAIRING_APPROVE))
             // While another device may join the running game as a guest.
             .chain(guests.then_some(feature::SESSION_GUESTS))
+            .chain(pairing.then_some(feature::GUEST_INVITES))
             .chain(extension_features)
             .map(String::from)
             .collect(),

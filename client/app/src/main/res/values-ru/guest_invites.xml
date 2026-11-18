@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="invite_not_a_link">Это не ссылка-приглашение Nightjar</string>
+    <string name="invite_expired">Срок действия приглашения истёк. Попросите новое.</string>
+    <string name="invite_refused">ПК не принял приглашение: оно уже использовано, отозвано или истекло. Попросите новое.</string>
+    <string name="invite_internet_off">Включите «Игра через интернет» в настройках Nightjar и откройте приглашение снова.</string>
+    <string name="invite_failed_title">Не удалось присоединиться через интернет</string>
+    <string name="invite_confirm_title">Присоединиться к %1$s через интернет?</string>
+    <string name="invite_confirm_body">Это устройство подключится к ПК как гость: вы сможете присоединиться к игре, в которую там кто-то играет, когда вас впустят. Приглашение срабатывает один раз.</string>
+    <string name="invite_permission">Что вам можно: %1$s</string>
+    <string name="invite_connecting">Подключение к %1$s через интернет…</string>
+    <string name="invite_connecting_hint">Это может занять до минуты.</string>
+    <string name="invite_accepted_title">Приглашение принято</string>
+    <string name="invite_accepted">%1$s теперь в вашем списке. Присоединяйтесь к игре, в которую там кто-то играет; вас впустят.</string>
+    <string name="invite_make_failed">Не удалось создать приглашение: %1$s</string>
+    <string name="invite_title">Пригласить друга через интернет</string>
+    <string name="invite_making">Создание приглашения…</string>
+    <string name="invite_made">Отправьте приглашение одному человеку. Оно один раз подключит его Nightjar как гостя и действует сутки.</string>
+    <string name="invite_copy">Копировать приглашение</string>
+    <string name="invite_copied">Приглашение скопировано</string>
+    <string name="invite_share_text">Присоединяйся к моей игре в Nightjar: открой эту ссылку в Nightjar или скопируй её и вставь в «Добавить ПК».\n%1$s</string>
+    <string name="invite_share">Поделиться приглашением</string>
+    <string name="invite_this_pc">ПК</string>
+</resources>

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="invite_not_a_link">これは Nightjar の招待リンクではありません</string>
+    <string name="invite_expired">この招待は期限切れです。新しい招待をもらってください。</string>
+    <string name="invite_refused">PC はこの招待を受け付けませんでした。すでに使われたか、取り消されたか、期限切れです。新しい招待をもらってください。</string>
+    <string name="invite_internet_off">Nightjar の設定で「インターネット経由でプレイ」をオンにしてから、招待をもう一度開いてください。</string>
+    <string name="invite_failed_title">インターネット経由で参加できませんでした</string>
+    <string name="invite_confirm_title">インターネット経由で %1$s に参加しますか?</string>
+    <string name="invite_confirm_body">このデバイスはその PC にゲストとしてペアリングされます。誰かがそこでプレイしているゲームに、その人が許可すれば参加できます。招待は 1 回だけ使えます。</string>
+    <string name="invite_permission">できること: %1$s</string>
+    <string name="invite_connecting">インターネット経由で %1$s に接続しています…</string>
+    <string name="invite_connecting_hint">最大 1 分ほどかかることがあります。</string>
+    <string name="invite_accepted_title">招待を受け入れました</string>
+    <string name="invite_accepted">%1$s が一覧に追加されました。そこで誰かがプレイしているゲームに参加すると、その人が許可します。</string>
+    <string name="invite_make_failed">招待を作成できませんでした: %1$s</string>
+    <string name="invite_title">インターネット経由で友達を招待</string>
+    <string name="invite_making">招待を作成しています…</string>
+    <string name="invite_made">この招待は 1 人だけに送ってください。相手の Nightjar をゲストとして 1 回だけペアリングし、1 日有効です。</string>
+    <string name="invite_copy">招待をコピー</string>
+    <string name="invite_copied">招待をコピーしました</string>
+    <string name="invite_share_text">Nightjar で私のゲームに参加して: このリンクを Nightjar で開くか、コピーして「PC を追加」に貼り付けてね。\n%1$s</string>
+    <string name="invite_share">招待を共有</string>
+    <string name="invite_this_pc">PC</string>
+</resources>

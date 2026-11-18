@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="invite_not_a_link">Das ist kein Nightjar-Einladungslink</string>
+    <string name="invite_expired">Diese Einladung ist abgelaufen. Bitte um eine neue.</string>
+    <string name="invite_refused">Der PC hat diese Einladung nicht angenommen: Sie wurde schon benutzt, zurückgenommen oder ist abgelaufen. Bitte um eine neue.</string>
+    <string name="invite_internet_off">Schalte „Über das Internet spielen“ in den Einstellungen von Nightjar ein und öffne die Einladung dann erneut.</string>
+    <string name="invite_failed_title">Beitritt über das Internet nicht möglich</string>
+    <string name="invite_confirm_title">%1$s über das Internet beitreten?</string>
+    <string name="invite_confirm_body">Dieses Gerät wird mit dem PC als Gast gekoppelt: Du kannst einem Spiel beitreten, das dort jemand spielt, sobald er dich hereinlässt. Die Einladung funktioniert einmal.</string>
+    <string name="invite_permission">Was du darfst: %1$s</string>
+    <string name="invite_connecting">Verbindung mit %1$s über das Internet…</string>
+    <string name="invite_connecting_hint">Das kann bis zu einer Minute dauern.</string>
+    <string name="invite_accepted_title">Einladung angenommen</string>
+    <string name="invite_accepted">%1$s steht jetzt in deiner Liste. Tritt einem Spiel bei, das dort jemand spielt; er lässt dich herein.</string>
+    <string name="invite_make_failed">Einladung konnte nicht erstellt werden: %1$s</string>
+    <string name="invite_title">Freund über das Internet einladen</string>
+    <string name="invite_making">Einladung wird erstellt…</string>
+    <string name="invite_made">Sende diese Einladung an eine Person. Sie koppelt deren Nightjar einmal als Gast und gilt einen Tag.</string>
+    <string name="invite_copy">Einladung kopieren</string>
+    <string name="invite_copied">Einladung kopiert</string>
+    <string name="invite_share_text">Spiel mit mir über Nightjar: Öffne diesen Link in Nightjar, oder kopiere ihn und füge ihn unter „PC hinzufügen“ ein.\n%1$s</string>
+    <string name="invite_share">Einladung teilen</string>
+    <string name="invite_this_pc">dem PC</string>
+</resources>

@@ -11,6 +11,7 @@ mod game_files;
 mod game_settings;
 mod host_warnings;
 mod internet_play;
+mod invites;
 mod launcher_watch;
 mod library;
 mod logging;
@@ -518,6 +519,7 @@ async fn run(args: Args, assets: PathBuf) -> Result<()> {
     dsu::start(dsu_port, dsu_lan, &h.warnings);
     let port_forward = network::port_forward(h.clone(), bind);
     let internet_play = internet_play::start(h.clone(), bind);
+    let invite_sweep = invites::start(h.clone());
     let (tray, actions) = if args.no_tray || !h.config.read().unwrap().boolean("system_tray", true)
     {
         (None, None)
@@ -690,6 +692,7 @@ async fn run(args: Args, assets: PathBuf) -> Result<()> {
     tasks.abort_all();
     while tasks.join_next().await.is_some() {}
     // Tunnelled devices are told the host stops; their streams ended above.
+    invite_sweep.abort();
     if let Some(internet_play) = internet_play {
         internet_play.stop();
     }

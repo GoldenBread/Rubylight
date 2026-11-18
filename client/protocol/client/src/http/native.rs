@@ -9,7 +9,9 @@
 
 use super::coop::{Coop, CoopJoined, JoinRequest};
 use super::device_approval::{PairingApprove, PairingApproved, PairingDeny, PairingRequests, FEATURE_PAIRING_APPROVE};
-use super::session_guests::{GuestAction, SessionGuests, FEATURE_SESSION_GUESTS};
+use super::session_guests::{
+    GuestAction, InviteCreate, InviteCreated, SessionGuests, FEATURE_GUEST_INVITES, FEATURE_SESSION_GUESTS,
+};
 use super::pc_power::{HostUpdate, PcPower, PcPowerOffer, PowerRequest};
 use super::native_api::audio::{Audio, AudioWrite};
 use super::native_api::capabilities::Capabilities;
@@ -158,6 +160,13 @@ impl NativeCapabilities {
         self.capabilities.features.iter().any(|f| f == FEATURE_SESSION_GUESTS)
     }
 
+    /// Whether the PC makes invites to play over the internet. Its guests list and join prompts
+    /// are then read too, even with `guest_join` off: a friend's device paired from an invite
+    /// always waits for the player to let it in.
+    pub fn offers_guest_invites(&self) -> bool {
+        self.capabilities.features.iter().any(|f| f == FEATURE_GUEST_INVITES)
+    }
+
     /// Whether this PC can approve new devices at all, for this device or another.
     pub fn offers_pairing_approve(&self) -> bool {
         self.capabilities.features.iter().any(|f| f == FEATURE_PAIRING_APPROVE)
@@ -167,6 +176,16 @@ impl NativeCapabilities {
     /// "Approve new devices" or Host control.
     pub fn may_approve_pairing(&self) -> bool {
         self.offers_pairing_approve()
+            && (self.files.pairing_approve || self.capabilities.permissions.host_control)
+    }
+
+    /// Whether this device may make invites to play over the internet: the PC offers them
+    /// (`session.guest-invites`) and this device holds "Approve new devices" or Host control.
+    pub fn may_invite(&self) -> bool {
+        self.capabilities
+            .features
+            .iter()
+            .any(|f| f == FEATURE_GUEST_INVITES)
             && (self.files.pairing_approve || self.capabilities.permissions.host_control)
     }
 }
@@ -420,6 +439,19 @@ impl HostClient {
     pub fn guest_action(&self, action: &GuestAction) -> Result<SessionGuests, Error> {
         let (path, body) = action.request();
         self.native(path, Some(&body), MAX_JSON_BYTES, ACTION_READ_TIMEOUT)
+    }
+
+    /// Makes an invite to play over the internet ([`NativeCapabilities::may_invite`]): a link that
+    /// pairs one friend's Nightjar as a guest. The link is answered once; keep it only to share it.
+    pub fn create_invite(&self, invite: &InviteCreate) -> Result<InviteCreated, Error> {
+        let body = serde_json::to_vec(invite)
+            .map_err(|e| Error::InvalidArgument(format!("invite: {e}")))?;
+        self.native(
+            "session/guests/invites",
+            Some(&body),
+            MAX_JSON_BYTES,
+            ACTION_READ_TIMEOUT,
+        )
     }
 
     /// Installs the host's pending update, ending this device's own stream. Needs Host control;

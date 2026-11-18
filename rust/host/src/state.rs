@@ -359,6 +359,8 @@ pub struct Host {
     pub guests: crate::webrtc::guests::Guests,
     /// Paired devices joining another device's game as guests (`multiclient`).
     pub device_guests: crate::multiclient::DeviceGuests,
+    /// Invites to play over the internet (`invites`).
+    pub invites: crate::invites::HostInvites,
     pub otp: Mutex<OneTimePins>,
     pub web_sessions: Mutex<HashMap<String, WebSession>>,
     pub stop: std::sync::atomic::AtomicBool,
@@ -933,6 +935,7 @@ impl Host {
             webrtc: crate::webrtc::clients::Registry::new(),
             webrtc_links: Default::default(),
             guests: Default::default(),
+            invites: Default::default(),
             otp: Mutex::new(OneTimePins::default()),
             web_sessions: Mutex::new(web_sessions),
             stop: std::sync::atomic::AtomicBool::new(false),

@@ -374,9 +374,17 @@ Redacted logs, oldest line first; addresses, PC names, PINs and credentials are 
             Command::CancelPair => self.hosts.cancel_pairing(),
             Command::AddHost(text) => self.add_entry(&text),
             Command::PairLink(link) => self.pair_link(*link),
+            Command::RedeemInvite(link) => self.redeem_invite(*link),
             Command::AddFromClipboard => match gui::clipboard_text() {
-                Some(text) if rubylight_protocol::pairing_uri::PairingUri::is_link(text.trim()) => self.add_entry(&text),
-                _ => self.launcher.message(tr("No pairing link to paste"), tr(hosts::CLIPBOARD_NO_LINK)),
+                Some(text)
+                    if rubylight_protocol::pairing_uri::PairingUri::is_link(text.trim())
+                        || rubylight_protocol::invite_uri::InviteUri::is_link(text.trim()) =>
+                {
+                    self.add_entry(&text)
+                }
+                _ => self
+                    .launcher
+                    .message(tr("No pairing link to paste"), tr(hosts::CLIPBOARD_NO_LINK)),
             },
             Command::Unpair(host) => {
                 // The library and the certificate go when the PC has answered (see the event).

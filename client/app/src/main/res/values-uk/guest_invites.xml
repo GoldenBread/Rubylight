@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="invite_not_a_link">Це не посилання-запрошення Nightjar</string>
+    <string name="invite_expired">Термін дії запрошення минув. Попросіть нове.</string>
+    <string name="invite_refused">ПК не прийняв запрошення: його вже використано, відкликано або термін минув. Попросіть нове.</string>
+    <string name="invite_internet_off">Увімкніть «Гра через інтернет» у налаштуваннях Nightjar і відкрийте запрошення знову.</string>
+    <string name="invite_failed_title">Не вдалося приєднатися через інтернет</string>
+    <string name="invite_confirm_title">Приєднатися до %1$s через інтернет?</string>
+    <string name="invite_confirm_body">Цей пристрій під’єднається до ПК як гість: ви зможете приєднатися до гри, у яку там хтось грає, коли вас впустять. Запрошення спрацьовує один раз.</string>
+    <string name="invite_permission">Що вам можна: %1$s</string>
+    <string name="invite_connecting">Підключення до %1$s через інтернет…</string>
+    <string name="invite_connecting_hint">Це може тривати до хвилини.</string>
+    <string name="invite_accepted_title">Запрошення прийнято</string>
+    <string name="invite_accepted">%1$s тепер у вашому списку. Приєднуйтеся до гри, у яку там хтось грає; вас впустять.</string>
+    <string name="invite_make_failed">Не вдалося створити запрошення: %1$s</string>
+    <string name="invite_title">Запросити друга через інтернет</string>
+    <string name="invite_making">Створення запрошення…</string>
+    <string name="invite_made">Надішліть запрошення одній людині. Воно один раз під’єднає її Nightjar як гостя й діє добу.</string>
+    <string name="invite_copy">Копіювати запрошення</string>
+    <string name="invite_copied">Запрошення скопійовано</string>
+    <string name="invite_share_text">Приєднуйся до моєї гри в Nightjar: відкрий це посилання в Nightjar або скопіюй його й встав у «Додати ПК».\n%1$s</string>
+    <string name="invite_share">Поділитися запрошенням</string>
+    <string name="invite_this_pc">ПК</string>
+</resources>

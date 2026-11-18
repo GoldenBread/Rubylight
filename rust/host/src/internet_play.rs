@@ -63,6 +63,10 @@ pub struct MappingStatus {
 static MAPPING: LazyLock<Mutex<MappingStatus>> =
     LazyLock::new(|| Mutex::new(MappingStatus::default()));
 static SERVICE: Mutex<Option<HostService>> = Mutex::new(None);
+/// The address the host listens on, kept from [`start`] so invites can start the rendezvous later.
+static BIND: Mutex<Option<IpAddr>> = Mutex::new(None);
+/// The task that keeps the rendezvous's devices current while it runs.
+static REFRESH: Mutex<Option<tokio::task::JoinHandle<()>>> = Mutex::new(None);
 
 pub fn update_mapping(change: impl FnOnce(&mut MappingStatus)) {
     change(&mut MAPPING.lock().unwrap());
@@ -179,7 +183,7 @@ pub fn console_status(h: &Shared) -> Result<Value> {
     }))
 }
 
-fn ports(config: &Config) -> Result<Ports> {
+pub(crate) fn ports(config: &Config) -> Result<Ports> {
     let ports = config.ports()?;
     Ok(Ports {
         http: ports.http,
@@ -206,11 +210,17 @@ fn parse_secret(value: &Value) -> Option<[u8; 32]> {
     bytes.try_into().ok()
 }
 
-/// The devices that have a secret, for the rendezvous.
+/// The devices that have a secret, for the rendezvous: every paired device's while Play over the
+/// internet is on, else only those of devices paired from an invite; and the invites' own.
 fn devices(h: &Shared) -> Vec<Device> {
+    let all = enabled(&h.config_snapshot());
     let paired = h.paired.read().unwrap();
     let mut devices: Vec<Device> = Vec::new();
-    for client in paired.clients.iter().filter(|client| client.enabled) {
+    for client in paired
+        .clients
+        .iter()
+        .filter(|client| client.enabled && (all || crate::invites::invited_live(client)))
+    {
         let Some(secret) = client.extra.get(SECRET_FIELD).and_then(parse_secret) else {
             continue;
         };
@@ -223,7 +233,82 @@ fn devices(h: &Shared) -> Vec<Device> {
             });
         }
     }
+    drop(paired);
+    devices.extend(
+        crate::invites::rendezvous(h)
+            .into_iter()
+            .map(|(id, name, secret)| Device { id, name, secret }),
+    );
     devices
+}
+
+/// Whether the rendezvous should run: Play over the internet is on, or an invite or a device
+/// paired from one needs it.
+fn needed(h: &Shared) -> bool {
+    enabled(&h.config_snapshot()) || crate::invites::need_rendezvous(h)
+}
+
+/// Gives the running rendezvous the devices and invites of now, and stops it once nothing needs
+/// it.
+pub(crate) fn refresh(h: &Shared) {
+    let Some(service) = service() else { return };
+    if needed(h) {
+        service.set_devices(devices(h));
+    } else if stop_unless_needed(h, false) {
+        tracing::info!("Play over the internet stopped: no invite or invited device needs it");
+    }
+}
+
+/// Whether a paired device's internet play is on: everyone's while the setting is on, else that
+/// of a device paired from an invite until its time ends.
+pub(crate) fn enabled_for(config: &Config, client: &butterpollo_core::state::Client) -> bool {
+    enabled(config) || crate::invites::invited_live(client)
+}
+
+/// What a friend's first path can start from, for an invite's link: the ports, this PC's
+/// addresses and the rendezvous's session and public endpoints when it runs.
+pub(crate) struct Hints {
+    pub ports: Ports,
+    pub session: Option<[u8; 16]>,
+    pub endpoints: Vec<SocketAddr>,
+    pub nat: &'static str,
+    pub ipv6: Vec<std::net::Ipv6Addr>,
+    pub external_ipv4: Option<Ipv4Addr>,
+    pub mapped_ports: bool,
+}
+
+/// Every streaming port forwarded under its own number.
+fn mapped_ports(mapping: &MappingStatus) -> bool {
+    mapping.failed.is_empty()
+        && !mapping.mapped.is_empty()
+        && mapping
+            .mapped
+            .iter()
+            .all(|port| port.external == Some(port.port))
+}
+
+pub(crate) fn hints(config: &Config) -> Result<Hints> {
+    let status = service().map(|service| (service.session(), service.status()));
+    Ok(Hints {
+        ports: ports(config)?,
+        session: status.as_ref().map(|(session, _)| *session),
+        endpoints: status
+            .as_ref()
+            .map(|(_, status)| status.public.clone())
+            .unwrap_or_default(),
+        nat: status
+            .as_ref()
+            .map_or("unknown", |(_, status)| nat_name(status.nat)),
+        ipv6: ipv6_addresses(config)
+            .iter()
+            .filter_map(|ip| ip.parse().ok())
+            .collect(),
+        external_ipv4: match external_ipv4() {
+            Some(IpAddr::V4(ip)) => Some(ip),
+            _ => None,
+        },
+        mapped_ports: mapped_ports(&mapping()),
+    })
 }
 
 /// The device's secret, made and stored with its pairing the first time it asks.
@@ -276,21 +361,31 @@ fn ipv6_addresses(config: &Config) -> Vec<String> {
 }
 
 /// `GET /internet-play/v1` for a paired device (`certificate`, over HTTPS): the secret, the
-/// host session, the public endpoints and ports. The device keeps it per host.
+/// host session, the public endpoints and ports. The device keeps it per host. A device paired
+/// from an invite gets them while its time lasts, with the setting off too.
 pub fn describe(h: &Shared, certificate: &str) -> Result<Value> {
     let config = h.config_snapshot();
+    let invited = h
+        .paired
+        .read()
+        .unwrap()
+        .clients
+        .iter()
+        .any(|c| c.cert.trim() == certificate.trim() && crate::invites::invited_live(c));
+    if invited {
+        ensure(h);
+    }
+    let on = enabled(&config) || invited;
     let ports = ports(&config)?;
     let mapping = mapping();
     let mut answer = json!({
         "version": VERSION,
-        "enabled": enabled(&config),
+        "enabled": on,
         "portMapping": config.boolean("upnp", false),
         "externalIpv4": external_ipv4(),
         // A client derives every port from the base port: a mapping is usable only when the
         // router kept the port numbers.
-        "mappedPorts": mapping.failed.is_empty()
-            && !mapping.mapped.is_empty()
-            && mapping.mapped.iter().all(|port| port.external == Some(port.port)),
+        "mappedPorts": mapped_ports(&mapping),
         "ipv6": ipv6_addresses(&config),
         "ports": {
             "http": ports.http,
@@ -302,7 +397,7 @@ pub fn describe(h: &Shared, certificate: &str) -> Result<Value> {
             "mic": ports.mic,
         },
     });
-    if enabled(&config) {
+    if on {
         answer["secret"] = Value::String(hex::encode(secret(h, certificate)?));
         if let Some(service) = service() {
             let status = service.status();
@@ -314,31 +409,79 @@ pub fn describe(h: &Shared, certificate: &str) -> Result<Value> {
     Ok(answer)
 }
 
-/// The running rendezvous; stops it when dropped through [`InternetPlay::stop`].
-pub struct InternetPlay {
-    refresh: tokio::task::JoinHandle<()>,
-}
+/// The rendezvous's handle for the host's end; stops whatever runs through [`InternetPlay::stop`].
+pub struct InternetPlay(());
 
 impl InternetPlay {
     pub fn stop(self) {
-        self.refresh.abort();
-        if let Some(service) = SERVICE.lock().unwrap().take() {
-            service.stop();
-        }
+        stop_service();
     }
 }
 
-/// Starts STUN, the rendezvous and the tunnels when Play over the internet is on.
+/// Stops the rendezvous unless something needs it, deciding under the service's lock so that an
+/// invite made meanwhile, which starts it through [`ensure`], is never left without one. A call
+/// from the refresh task itself leaves its own handle to end with it (`from_refresh`).
+fn stop_unless_needed(h: &Shared, from_refresh: bool) -> bool {
+    let mut running = SERVICE.lock().unwrap();
+    if needed(h) {
+        return false;
+    }
+    let refresh = REFRESH.lock().unwrap().take();
+    if let Some(refresh) = refresh
+        && !from_refresh
+    {
+        refresh.abort();
+    }
+    if let Some(service) = running.take() {
+        service.stop();
+    }
+    true
+}
+
+/// Whether the rendezvous runs now.
+pub(crate) fn running() -> bool {
+    service().is_some()
+}
+
+/// Whether the host listens beyond this PC, so that the rendezvous can start at all.
+pub(crate) fn bound() -> bool {
+    BIND.lock().unwrap().is_some()
+}
+
+fn stop_service() {
+    if let Some(refresh) = REFRESH.lock().unwrap().take() {
+        refresh.abort();
+    }
+    if let Some(service) = SERVICE.lock().unwrap().take() {
+        service.stop();
+    }
+}
+
+/// Remembers where the host listens and starts STUN, the rendezvous and the tunnels when Play
+/// over the internet is on or an invite needs them. None on a host that listens on this PC only.
 pub fn start(h: Shared, bind: IpAddr) -> Option<InternetPlay> {
-    let config = h.config_snapshot();
-    if !enabled(&config) || bind.is_loopback() {
+    if bind.is_loopback() {
         return None;
     }
+    *BIND.lock().unwrap() = Some(bind);
+    ensure(&h);
+    Some(InternetPlay(()))
+}
+
+/// Starts the rendezvous when it is needed and not running.
+pub(crate) fn ensure(h: &Shared) {
+    let Some(bind) = *BIND.lock().unwrap() else {
+        return;
+    };
+    if service().is_some() || !needed(h) {
+        return;
+    }
+    let config = h.config_snapshot();
     let ports = match ports(&config) {
         Ok(ports) => ports,
         Err(error) => {
             tracing::warn!(error = %format!("{error:#}"), "Play over the internet could not read the ports");
-            return None;
+            return;
         }
     };
     // Tunnels connect to the host's own ports on loopback, from an address per device; a host
@@ -352,6 +495,10 @@ pub fn start(h: Shared, bind: IpAddr) -> Option<InternetPlay> {
         IpAddr::V4(ip) if !ip.is_unspecified() => SocketAddr::new(bind, 0),
         _ => traverse::node::any_ipv4(),
     };
+    let mut running = SERVICE.lock().unwrap();
+    if running.is_some() {
+        return;
+    }
     let host = match HostService::start(HostConfig {
         ports,
         service: service_address,
@@ -369,18 +516,30 @@ pub fn start(h: Shared, bind: IpAddr) -> Option<InternetPlay> {
         Ok(host) => host,
         Err(error) => {
             tracing::warn!(%error, "Play over the internet could not open its UDP socket");
-            return None;
+            return;
         }
     };
-    host.set_devices(devices(&h));
-    tracing::info!(local = ?host.local_addr().ok(), "Play over the internet started");
-    *SERVICE.lock().unwrap() = Some(host);
+    *running = Some(host.clone());
+    drop(running);
+    host.set_devices(devices(h));
+    tracing::info!(
+        local = ?host.local_addr().ok(),
+        invites_only = !enabled(&config),
+        "Play over the internet started"
+    );
+    let h = h.clone();
     let refresh = tokio::spawn(async move {
         let mut reported: Option<String> = None;
         let mut reported_paths: Vec<(String, String)> = Vec::new();
         loop {
             tokio::time::sleep(Duration::from_secs(15)).await;
             let Some(service) = service() else { return };
+            if !needed(&h) && stop_unless_needed(&h, true) {
+                tracing::info!(
+                    "Play over the internet stopped: no invite or invited device needs it"
+                );
+                return;
+            }
             service.set_devices(devices(&h));
             // Log a changed state once, not every 15 s.
             let status = service.status();
@@ -411,7 +570,7 @@ pub fn start(h: Shared, bind: IpAddr) -> Option<InternetPlay> {
             reported_paths = status.path_errors;
         }
     });
-    Some(InternetPlay { refresh })
+    *REFRESH.lock().unwrap() = Some(refresh);
 }
 
 #[cfg(test)]

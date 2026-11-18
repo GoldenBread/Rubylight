@@ -516,6 +516,7 @@ async fn capabilities_list_the_radeon_features_only_with_a_worker() {
             "radeon.profile",
             "session.couch_menu",
             "pairing.approve",
+            "session.guest-invites",
             "clipboard.image"
         ]
     );

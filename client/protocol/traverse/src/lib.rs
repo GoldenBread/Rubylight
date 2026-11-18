@@ -24,6 +24,7 @@ pub mod client;
 pub mod crypto;
 pub mod dht;
 pub mod host;
+pub mod invite;
 pub mod natpmp;
 pub mod node;
 pub mod path;

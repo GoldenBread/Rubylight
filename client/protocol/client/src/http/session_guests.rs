@@ -6,6 +6,9 @@
 use serde::{Deserialize, Serialize};
 
 pub const FEATURE_SESSION_GUESTS: &str = "session.guests";
+/// Invites to play over the internet: `POST /session/guests/invites` makes a link that pairs one
+/// friend's Nightjar as a guest ([`crate::invite`] opens one).
+pub const FEATURE_GUEST_INVITES: &str = "session.guest-invites";
 
 /// What a guest may do, as the wire spells it.
 pub const GUEST_VIEW: &str = "view";
@@ -23,6 +26,8 @@ pub const REVOKED: &str = "The player does not let you join this game";
 pub const EXPIRED: &str = "Your time as a guest in this game ended";
 pub const GAME_OVER: &str = "The game you joined ended";
 pub const GUEST_ENDINGS: [&str; 4] = [KICKED, REVOKED, EXPIRED, GAME_OVER];
+/// The refusal a device paired from an invite gets for anything but joining the game being played.
+pub const INVITED_JOINS_ONLY: &str = "You can only join a game someone is playing on this PC";
 
 /// `GET /session/guests`, and the answer of every action.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,6 +108,38 @@ pub struct GuestPermissionChange {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GuestKeyboardMouse {
     pub id: Option<u32>,
+}
+
+/// `POST /session/guests/invites`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InviteCreate {
+    /// One of [`GUEST_PERMISSIONS`]; the PC's default without it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission: Option<String>,
+    /// 300 to 604800; a day without it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seconds: Option<u64>,
+}
+
+/// The answer to [`InviteCreate`]: the link, shown once.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InviteCreated {
+    pub id: u32,
+    pub link: String,
+    pub expires: u64,
+    #[serde(default)]
+    pub permission: String,
+}
+
+/// Leaves out the link, a secret.
+impl std::fmt::Debug for InviteCreated {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InviteCreated")
+            .field("id", &self.id)
+            .field("expires", &self.expires)
+            .field("permission", &self.permission)
+            .finish_non_exhaustive()
+    }
 }
 
 /// An action on a guest or a waiting device.
@@ -211,12 +248,13 @@ pub fn guest_ended(reason: &str) -> bool {
 /// Whether a launch refusal is a join the player turned down or the host refused; the caller
 /// shows the message as it is and does not retry.
 pub fn join_refused(message: &str) -> bool {
-    const REFUSALS: [&str; 5] = [
+    const REFUSALS: [&str; 6] = [
         "This game has as many guests as it takes",
         "The player did not let you join",
         "Nobody answered your request to join",
         "The game ended before you could join",
         REVOKED,
+        INVITED_JOINS_ONLY,
     ];
     let message = message.trim();
     REFUSALS.iter().any(|refusal| message.starts_with(refusal))
@@ -313,6 +351,32 @@ mod tests {
         assert!(!guest_ended(""));
         assert!(join_refused("The player did not let you join"));
         assert!(join_refused(REVOKED));
+        assert!(join_refused(INVITED_JOINS_ONLY));
         assert!(!join_refused("Launch failed"));
+    }
+
+    #[test]
+    fn an_invite_request_and_answer_read_as_the_host_writes_them() {
+        assert_eq!(
+            serde_json::to_string(&InviteCreate::default()).unwrap(),
+            "{}"
+        );
+        let ask = InviteCreate {
+            permission: Some(GUEST_CONTROLLER.into()),
+            seconds: Some(3600),
+        };
+        assert_eq!(
+            serde_json::to_string(&ask).unwrap(),
+            r#"{"permission":"controller","seconds":3600}"#
+        );
+        let made: InviteCreated = serde_json::from_str(
+            r#"{"id":3,"link":"rubylight://invite#v=1&k=ab","expires":1800000000,"permission":"view","later":1}"#,
+        )
+        .unwrap();
+        assert_eq!(made.id, 3);
+        assert!(
+            !format!("{made:?}").contains("rubylight://"),
+            "the link stays out of logs"
+        );
     }
 }

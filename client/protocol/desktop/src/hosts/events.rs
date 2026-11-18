@@ -77,7 +77,21 @@ impl Hosts {
                     Ok(None) => eprintln!("nightjar: STUN: no answer, the PC has no remote address yet"),
                     Err(e) => eprintln!("nightjar: STUN failed: {e}"),
                 },
-                Event::Paired { id, request, result } => {
+                Event::Invited { result, .. } => {
+                    let id = match &result {
+                        Ok(redeemed) => {
+                            changed = true;
+                            Some(self.apply_invite(redeemed))
+                        }
+                        Err(_) => None,
+                    };
+                    out.push(Event::Invited { result, id });
+                }
+                Event::Paired {
+                    id,
+                    request,
+                    result,
+                } => {
                     if request != self.pairing_generation {
                         continue;
                     }

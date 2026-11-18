@@ -20,6 +20,8 @@ public final class NativeCapabilities {
     public static final String CONTINUE_HERE = "session.continue_here";
     /** A device that resumes another device's game joins it as a guest; the device playing lets it in. */
     public static final String SESSION_GUESTS = "session.guests";
+    /** POST /session/guests/invites: links that pair a friend's Nightjar as a guest over the internet. */
+    public static final String GUEST_INVITES = "session.guest-invites";
     /** GET /wake lists the PC's wake targets: every adapter's MAC and subnet broadcasts. */
     public static final String WAKE = "wake";
     /** USB devices this device forwards to the host during a stream (control message 0x553A). */
@@ -46,9 +48,12 @@ public final class NativeCapabilities {
     public final boolean hostControl;
     /** The per-device USB permission: only {@code true} allows it. */
     public final boolean usb;
+    /** The per-device "Approve new devices" permission. */
+    public final boolean pairingApprove;
 
     NativeCapabilities(int apiVersion, String hostName, String hostVersion, List<String> features,
-                       boolean list, boolean view, boolean launch, boolean hostControl, boolean usb) {
+                       boolean list, boolean view, boolean launch, boolean hostControl, boolean usb,
+                       boolean pairingApprove) {
         this.apiVersion = apiVersion;
         this.hostName = hostName;
         this.hostVersion = hostVersion;
@@ -58,6 +63,12 @@ public final class NativeCapabilities {
         this.launch = launch;
         this.hostControl = hostControl;
         this.usb = usb;
+        this.pairingApprove = pairingApprove;
+    }
+
+    /** Whether this device may make invites to play over the internet: Approve new devices or Host control. */
+    public boolean mayInvite() {
+        return has(GUEST_INVITES) && (pairingApprove || hostControl);
     }
 
     /** Whether the host forwards USB devices and lets this device do it. */
@@ -113,6 +124,7 @@ public final class NativeCapabilities {
         return new NativeCapabilities(json.optInt("api_version"), host == null ? null : host.optString("name", null),
                 host == null ? null : host.optString("version", null), features,
                 permissions.optBoolean("list"), permissions.optBoolean("view"), permissions.optBoolean("launch"),
-                permissions.optBoolean("host_control"), Boolean.TRUE.equals(permissions.opt("usb")));
+                permissions.optBoolean("host_control"), Boolean.TRUE.equals(permissions.opt("usb")),
+                Boolean.TRUE.equals(permissions.opt("pairing_approve")));
     }
 }

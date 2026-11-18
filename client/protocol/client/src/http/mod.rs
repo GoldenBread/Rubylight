@@ -77,8 +77,9 @@ pub use device_approval::{
 };
 pub use network_path::{NetworkPath, MAX_NETWORK_PATH_BYTES};
 pub use session_guests::{
-    guest_ended, join_refused, GuestAction, GuestRequest, SessionGuest, SessionGuests, FEATURE_SESSION_GUESTS, GUESTS_POLL_MS,
-    GUEST_CONTROLLER, GUEST_KEYBOARD_MOUSE, GUEST_PERMISSIONS, GUEST_VIEW,
+    guest_ended, join_refused, GuestAction, GuestRequest, InviteCreate, InviteCreated, SessionGuest, SessionGuests,
+    FEATURE_GUEST_INVITES, FEATURE_SESSION_GUESTS, GUESTS_POLL_MS, GUEST_CONTROLLER, GUEST_KEYBOARD_MOUSE,
+    GUEST_PERMISSIONS, GUEST_VIEW, INVITED_JOINS_ONLY,
 };
 pub use neural::{
     Neural, NeuralAction, NeuralJob, NeuralMode, NeuralPhase, NeuralSwitch, NeuralWhy, NeuralWrite,

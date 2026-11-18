@@ -562,6 +562,93 @@ impl Launcher {
                     });
                 });
             }
+            Dialog::ConfirmInvite { link, shown } => {
+                let now = ctx.input(|i| i.time);
+                let waited = now - *shown.get_or_insert(now);
+                let may_join = waited >= PAIR_LINK_DELAY;
+                if !may_join {
+                    ctx.request_repaint_after(std::time::Duration::from_secs_f64(
+                        PAIR_LINK_DELAY - waited,
+                    ));
+                }
+                let name = link.shown_name();
+                let shown: &str = if name.is_empty() { tr("the PC") } else { &name };
+                let unix = std::time::SystemTime::now()
+                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs());
+                let expired = link.expired(unix);
+                modal(ctx, "confirm-invite", |ui| {
+                    ui.set_width(460.0);
+                    ui.label(
+                        RichText::new(trf("Join {} over the internet?", &[&shown]))
+                            .font(semibold(text::SECTION)),
+                    );
+                    if expired {
+                        ui.label(
+                            RichText::new(tr("This invite has expired. Ask for a new one."))
+                                .color(ON_SURFACE_VARIANT),
+                        );
+                    } else {
+                        ui.label(
+                            RichText::new(tr(
+                                "This device pairs with that PC as a guest: you can join a game someone plays there when they let you in. The invite works once.",
+                            ))
+                            .color(ON_SURFACE_VARIANT),
+                        );
+                        ui.label(
+                            RichText::new(trf(
+                                "What you may do: {}",
+                                &[&crate::stream::guests::permission_label(&link.permission)],
+                            ))
+                            .color(ON_SURFACE_VARIANT),
+                        );
+                    }
+                    dialog_buttons(ui, |ui| {
+                        if !expired
+                            && ui
+                                .add_enabled_ui(may_join, |ui| primary_button(ui, "Join"))
+                                .inner
+                                .clicked()
+                        {
+                            commands.push(Command::RedeemInvite(link.clone()));
+                            close = true;
+                        }
+                        // Cancel has focus: a key or button already held down must not join.
+                        let cancel = quiet_button(ui, "Cancel");
+                        if focus_first {
+                            cancel.request_focus();
+                            focused = true;
+                        }
+                        if cancel.clicked() {
+                            close = true;
+                        }
+                    });
+                });
+            }
+            Dialog::Inviting { name } => {
+                modal(ctx, "inviting", |ui| {
+                    ui.set_width(440.0);
+                    ui.label(
+                        RichText::new(trf("Connecting to {} over the internet…", &[name]))
+                            .font(semibold(text::SECTION)),
+                    );
+                    ui.horizontal(|ui| {
+                        spinner(ui, 10.0);
+                        ui.label(tr("This can take up to a minute."));
+                    });
+                    dialog_buttons(ui, |ui| {
+                        // Hiding it leaves the attempt running: its answer comes as a message.
+                        let button = quiet_button(ui, "Close");
+                        if focus_first {
+                            button.request_focus();
+                            focused = true;
+                        }
+                        if button.clicked() {
+                            close = true;
+                        }
+                    });
+                });
+            }
             Dialog::ConfirmUnpair { host, name } => {
                 let id = *host;
                 modal(ctx, "confirm-unpair", |ui| {

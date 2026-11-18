@@ -114,6 +114,11 @@ public final class PairingLink {
      * and cut to a length a dialog can show. Empty when none is left.
      */
     public String shownName() {
+        return shown(name);
+    }
+
+    /** {@code name} cleaned for a confirmation as {@link #shownName} cleans a link's name. */
+    public static String shown(String name) {
         StringBuilder out = new StringBuilder();
         int shown = 0;
         boolean space = false;
@@ -210,7 +215,7 @@ public final class PairingLink {
         return value == null ? "" : value;
     }
 
-    private static String decode(String text) {
+    static String decode(String text) {
         ByteArrayOutputStream out = new ByteArrayOutputStream(text.length());
         int at = 0;
         while (at < text.length()) {
@@ -248,7 +253,7 @@ public final class PairingLink {
         return -1;
     }
 
-    private static byte[] fingerprint(String text) {
+    static byte[] fingerprint(String text) {
         if (text.length() != 64) {
             return null;
         }

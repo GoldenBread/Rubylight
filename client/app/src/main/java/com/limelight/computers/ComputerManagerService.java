@@ -379,6 +379,11 @@ public class ComputerManagerService extends Service {
             ComputerManagerService.this.removeComputer(computer);
         }
 
+        /** Keeps a PC an invite paired, with its internet play reply, and starts polling it. */
+        public void addInvitedComputer(ComputerDetails details, String reply) {
+            ComputerManagerService.this.addInvitedComputer(details, reply);
+        }
+
         /** Gives the PC a name on this device only; null shows the PC's own name again. */
         public void renameComputer(String uuid, String alias) {
             ComputerManagerService.this.renameComputer(uuid, alias);
@@ -636,6 +641,34 @@ public class ComputerManagerService extends Service {
         // We cannot use runPoll() here because it will attempt to persist the state of the machine
         // in the database, which would be bad because we don't have our pinned cert loaded yet.
         return finishAdding(fakeDetails, pollComputer(fakeDetails));
+    }
+
+    /**
+     * Keeps a PC an invite paired (Invites#redeem): its reply first, so the first poll can take the internet paths,
+     * then the PC itself, saved as a poll would save it.
+     */
+    public void addInvitedComputer(ComputerDetails details, String reply) {
+        InternetPlay.save(this, details.uuid, reply);
+        if (getLocalDatabaseReference()) {
+            try {
+                // A PC already known here keeps its other addresses and MAC: only what the invite proved changes.
+                synchronized (removalLock) {
+                    ComputerDetails saved = dbManager.getComputerByUUID(details.uuid);
+                    if (saved == null) {
+                        dbManager.updateComputer(details);
+                    } else {
+                        saved.name = details.name;
+                        saved.serverCert = details.serverCert;
+                        saved.httpsPort = details.httpsPort;
+                        if (details.manualAddress != null) saved.manualAddress = details.manualAddress;
+                        dbManager.updateComputer(saved);
+                    }
+                }
+            } finally {
+                releaseLocalDatabaseReference();
+            }
+        }
+        addTuple(details);
     }
 
     /** What became of the PC a pairing link names. */

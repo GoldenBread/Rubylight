@@ -121,4 +121,20 @@ public final class NativeGuests {
             "Your time as a guest in this game ended",
             "The game you joined ended",
     };
+
+    /** An invite just made: the link to send (a secret) and when it ends, in Unix seconds. */
+    public static final class Invite {
+        public final String link;
+        public final long expires;
+
+        public Invite(String link, long expires) {
+            this.link = link;
+            this.expires = expires;
+        }
+
+        @Override
+        public String toString() {
+            return "Invite{expires=" + expires + "}";
+        }
+    }
 }

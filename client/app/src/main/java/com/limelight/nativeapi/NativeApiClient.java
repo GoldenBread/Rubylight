@@ -370,6 +370,19 @@ public final class NativeApiClient {
         }
     }
 
+    /**
+     * Makes an invite to play over the internet (POST /session/guests/invites), with the PC's default permission
+     * and lifetime. Only with feature session.guest-invites; the link is a secret, shown once and never logged.
+     */
+    public NativeGuests.Invite createInvite() throws NativeApiException {
+        try {
+            JSONObject made = call("guests.invite", "");
+            return new NativeGuests.Invite(made.getString("link"), made.getLong("expires"));
+        } catch (JSONException e) {
+            throw malformed("invite", e);
+        }
+    }
+
     /** Ends a waiting device's request (POST /pairing/deny) and answers the devices still waiting. */
     public List<NativePairing.Request> denyPairing(String id) throws NativeApiException {
         try {

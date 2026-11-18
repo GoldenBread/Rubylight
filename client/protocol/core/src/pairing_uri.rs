@@ -127,29 +127,7 @@ impl PairingUri {
     /// can reorder or hide text, each run of spaces one space, so that it cannot pass for the
     /// address line, and cut to a length a dialog can show. Empty when none is left.
     pub fn shown_name(&self) -> String {
-        let mut out = String::new();
-        let mut count = 0;
-        let mut space = false;
-        for c in self.name.chars().filter(|&c| !hidden_char(c)) {
-            if c.is_whitespace() {
-                space = true;
-                continue;
-            }
-            if count == MAX_SHOWN_NAME {
-                break;
-            }
-            if space && count > 0 {
-                out.push(' ');
-                count += 1;
-                if count == MAX_SHOWN_NAME {
-                    break;
-                }
-            }
-            space = false;
-            out.push(c);
-            count += 1;
-        }
-        out
+        shown_text(&self.name)
     }
 
     /// Where the link pairs, for a confirmation: `host:port`, `[v6-address]:port`.
@@ -162,6 +140,35 @@ impl PairingUri {
         }
         out
     }
+}
+
+/// A name for a confirmation ([`PairingUri::shown_name`]): without control characters and the
+/// invisible ones that can reorder or hide text, each run of spaces one space, cut to a length a
+/// dialog can show.
+pub(crate) fn shown_text(name: &str) -> String {
+    let mut out = String::new();
+    let mut count = 0;
+    let mut space = false;
+    for c in name.chars().filter(|&c| !hidden_char(c)) {
+        if c.is_whitespace() {
+            space = true;
+            continue;
+        }
+        if count == MAX_SHOWN_NAME {
+            break;
+        }
+        if space && count > 0 {
+            out.push(' ');
+            count += 1;
+            if count == MAX_SHOWN_NAME {
+                break;
+            }
+        }
+        space = false;
+        out.push(c);
+        count += 1;
+    }
+    out
 }
 
 /// A name or an IP address (`pc.local`, `192.168.4.2`, `::1`, `[fe80::1%eth0]`): nothing that can
@@ -202,7 +209,7 @@ fn hidden_char(c: char) -> bool {
 }
 
 /// Percent-encodes everything but RFC 3986's unreserved characters.
-fn encode(out: &mut String, text: &str) {
+pub(crate) fn encode(out: &mut String, text: &str) {
     for byte in text.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
             out.push(char::from(byte));
@@ -212,7 +219,7 @@ fn encode(out: &mut String, text: &str) {
     }
 }
 
-fn decode(text: &str) -> Option<String> {
+pub(crate) fn decode(text: &str) -> Option<String> {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut at = 0;
@@ -230,7 +237,7 @@ fn decode(text: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-fn fingerprint(text: &str) -> Option<[u8; 32]> {
+pub(crate) fn fingerprint(text: &str) -> Option<[u8; 32]> {
     let bytes = text.as_bytes();
     if bytes.len() != 64 {
         return None;
@@ -242,7 +249,7 @@ fn fingerprint(text: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
-fn hex_digit(byte: u8) -> Option<u8> {
+pub(crate) fn hex_digit(byte: u8) -> Option<u8> {
     char::from(byte).to_digit(16).map(|digit| digit as u8)
 }
 

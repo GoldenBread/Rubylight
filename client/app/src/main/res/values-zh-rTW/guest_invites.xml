@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="invite_not_a_link">這不是 Nightjar 邀請連結</string>
+    <string name="invite_expired">此邀請已過期。請索取新的邀請。</string>
+    <string name="invite_refused">電腦未接受此邀請：它已被使用、已被收回或已過期。請索取新的邀請。</string>
+    <string name="invite_internet_off">請在 Nightjar 設定中開啟「透過網際網路遊玩」，然後再次開啟邀請。</string>
+    <string name="invite_failed_title">無法透過網際網路加入</string>
+    <string name="invite_confirm_title">透過網際網路加入 %1$s？</string>
+    <string name="invite_confirm_body">此裝置將以訪客身分與該電腦配對：有人在那裡玩遊戲時，經對方同意你即可加入。邀請只能使用一次。</string>
+    <string name="invite_permission">你可以：%1$s</string>
+    <string name="invite_connecting">正在透過網際網路連線 %1$s…</string>
+    <string name="invite_connecting_hint">這可能需要最多一分鐘。</string>
+    <string name="invite_accepted_title">已接受邀請</string>
+    <string name="invite_accepted">%1$s 已加入你的清單。加入有人在那裡玩的遊戲，對方會讓你進入。</string>
+    <string name="invite_make_failed">無法建立邀請：%1$s</string>
+    <string name="invite_title">透過網際網路邀請朋友</string>
+    <string name="invite_making">正在建立邀請…</string>
+    <string name="invite_made">請只把此邀請傳給一個人。它會將對方的 Nightjar 以訪客身分配對一次，有效期為一天。</string>
+    <string name="invite_copy">複製邀請</string>
+    <string name="invite_copied">已複製邀請</string>
+    <string name="invite_share_text">用 Nightjar 加入我的遊戲：在 Nightjar 中開啟此連結，或複製後貼到「新增電腦」中。\n%1$s</string>
+    <string name="invite_share">分享邀請</string>
+    <string name="invite_this_pc">電腦</string>
+</resources>

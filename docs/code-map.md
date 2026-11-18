@@ -71,6 +71,7 @@ Deadlines, by name: [`ENCODER_RECOVERY`](../rust/host/src/stream/video.rs), [`RE
 | Co-op, background | `nucleus.rs`, `nucleus/`, `background.rs` | `nucleus.rs`, `nucleus/` | `nucleus.rs`, `stream/instance_audio.rs`, `stream/background.rs` |
 | Client extensions | `extensions.rs`, `native.rs`, `native/`, `roaming.rs` | `clipboard.rs`, `files.rs`, `shared_folder.rs` | `extensions.rs`, `native_api.rs`, `native_api/`, `stream/roaming.rs`, `usb_forward.rs` |
 | Internet play | (`rubylight-traverse`) | | `internet_play.rs`, `network/portmap.rs` |
+| Invites to play over the internet | `invites.rs` (links, invited devices) | | `invites.rs`, `nvhttp/pairing.rs`, `multiclient.rs`, `internet_play.rs`, `native_api/guests.rs`, `web/session_guests.rs` |
 | Console, API | `auth.rs`, `log_analysis.rs` | | `web.rs`, `web/`, `console/`, `web_sessions.rs`, `webhooks.rs` |
 | Browser play | `webrtc/` | | `webrtc/` |
 | Update, service | `update_files.rs`, `update_recovery.rs` | `service.rs` | `updater.rs`, `updater/`, `maintenance.rs`, `service_tasks.rs` |

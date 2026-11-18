@@ -9,6 +9,7 @@ const server = await createTestServer();
 const guests = await server.ssrLoadModule('/src/lib/session-guests.ts');
 const { default: GuestsCard } = await server.ssrLoadModule('/src/components/overview/GuestsCard.svelte');
 const { default: StreamCard } = await server.ssrLoadModule('/src/components/overview/StreamCard.svelte');
+const { default: InviteCard } = await server.ssrLoadModule('/src/components/overview/InviteCard.svelte');
 const { render } = await server.ssrLoadModule('svelte/server');
 
 const status = (changes = {}) => ({
@@ -92,4 +93,44 @@ test('a guest stream is marked on its stream card', () => {
   assert.match(card({ guest: 2 }), />Guest</);
   assert.doesNotMatch(card({ guest: null }), />Guest</);
   assert.doesNotMatch(card({}), />Guest</);
+});
+
+test('an invite works one hour, a day or a week, and its message says how to open it', () => {
+  assert.equal(guests.inviteSeconds('1h'), 3600);
+  assert.equal(guests.inviteSeconds('24h'), 86_400);
+  assert.equal(guests.inviteSeconds('7d'), 604_800);
+  assert.equal(guests.inviteSeconds('unknown'), 86_400);
+  for (const lifetime of guests.INVITE_LIFETIMES) {
+    assert.ok(lifetime.seconds >= 300 && lifetime.seconds <= 604_800, lifetime.value);
+  }
+  const message = guests.inviteMessage('rubylight://invite#v=1&k=00');
+  assert.match(message, /Nightjar/);
+  assert.match(message, /Add PC/);
+  assert.ok(message.endsWith('rubylight://invite#v=1&k=00'));
+});
+
+test('the invite card lists links waiting with Take back and invited devices with Remove', () => {
+  const html = render(InviteCard, {
+    props: {
+      invites: {
+        links: [{ id: 1, permission: 'controller', created: 1, expires: Date.now() / 1000 + 3600 }],
+        friends: [{ uuid: 'u', name: '<i>Alex</i>', permission: 'view', until: Date.now() / 1000 + 7200 }],
+        max_links: 8,
+        default_seconds: 86_400,
+      },
+    },
+  }).body;
+  assert.match(html, /Invite a friend over the internet/);
+  assert.match(html, /Invite a friend/);
+  assert.match(html, /Links not used yet/);
+  assert.match(html, /Take back/);
+  assert.match(html, /Invited devices/);
+  assert.match(html, /Remove/);
+  assert.match(html, /View only/);
+  assert.doesNotMatch(html, /<i>Alex<\/i>/);
+  assert.doesNotMatch(html, /experimental|beta|preview/i);
+  const empty = render(InviteCard, {
+    props: { invites: { links: [], friends: [], max_links: 8, default_seconds: 86_400 } },
+  }).body;
+  assert.doesNotMatch(empty, /Links not used yet|Invited devices/);
 });

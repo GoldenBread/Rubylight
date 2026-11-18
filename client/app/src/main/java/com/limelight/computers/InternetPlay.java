@@ -131,6 +131,21 @@ public final class InternetPlay {
         }
     }
 
+    /**
+     * Opens an invite link (nightjar-core invite.rs): reaches the PC with the link's secret, pairs this device as a
+     * guest and reads its own internet play reply. Blocks up to about a minute; throws with the words for the user.
+     */
+    static JSONObject redeem(String link, String uniqueId, String certificatePem, String keyPem, String name)
+            throws Unreachable {
+        try {
+            return (JSONObject) ask(new JSONObject().put("op", "redeem").put("link", link).put("uniqueId", uniqueId)
+                    .put("certificate", certificatePem).put("key", keyPem).put("name", name)
+                    .put("now", System.currentTimeMillis() / 1000));
+        } catch (JSONException | ClassCastException e) {
+            throw new Unreachable(String.valueOf(e.getMessage()));
+        }
+    }
+
     /** The PC's IPv6 addresses and forwarded IPv4 address from its reply, or none. */
     public static Addresses addresses(String reply) {
         Addresses out = new Addresses();

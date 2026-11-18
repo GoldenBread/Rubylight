@@ -89,8 +89,19 @@ pub enum Command {
     PairOtp { host: u64, pin: String, passphrase: String },
     /// Add and pair the PC of a link the user confirmed.
     PairLink(Box<rubylight_protocol::pairing_uri::PairingUri>),
-    ApprovePairing { host: u64, request: String, name: String, pin: String },
-    DenyPairing { host: u64, request: String, name: String },
+    /// Open an invite the user confirmed: reach the PC over the internet and pair as a guest.
+    RedeemInvite(Box<rubylight_protocol::invite_uri::InviteUri>),
+    ApprovePairing {
+        host: u64,
+        request: String,
+        name: String,
+        pin: String,
+    },
+    DenyPairing {
+        host: u64,
+        request: String,
+        name: String,
+    },
     Wake(u64),
     /// Stop waking the PC ("Waking <PC>…").
     CancelWake,
@@ -290,7 +301,20 @@ pub enum Dialog {
     /// A pairing link the system opened with Nightjar: any web page can open one, so nothing is
     /// added or paired until Pair is chosen here. `shown` is when it first appeared (egui's time):
     /// Pair stays off for a moment, so a click meant for what was there before cannot land on it.
-    ConfirmLink { link: Box<rubylight_protocol::pairing_uri::PairingUri>, shown: Option<f64> },
+    ConfirmLink {
+        link: Box<rubylight_protocol::pairing_uri::PairingUri>,
+        shown: Option<f64>,
+    },
+    /// An invite to play over the internet the system opened, or one pasted: asked about the same
+    /// way, since any web page or message can carry one.
+    ConfirmInvite {
+        link: Box<rubylight_protocol::invite_uri::InviteUri>,
+        shown: Option<f64>,
+    },
+    /// An invite being opened: the PC is looked for over the internet, which takes up to a minute.
+    Inviting {
+        name: String,
+    },
     /// A network test running: Connection test, or PyroWave's frame-pace calibration with
     /// `calibrate`. `stage` is in English; the dialog translates it.
     NetworkTest { stage: String, calibrate: bool },
@@ -1016,6 +1040,13 @@ impl Launcher {
     /// Asks about a link from the system, or refuses it. The link is not shown back: it holds a
     /// PIN and passphrase.
     pub fn open_link(&mut self, text: &str) {
+        if rubylight_protocol::invite_uri::InviteUri::is_link(text) {
+            match crate::hosts::parse_invite(text) {
+                Ok(link) => self.ask(Dialog::ConfirmInvite { link, shown: None }),
+                Err(why) => self.message(tr("Could not join over the internet"), tr(why)),
+            }
+            return;
+        }
         match crate::hosts::parse_link(text) {
             Ok(link) => self.ask(Dialog::ConfirmLink { link, shown: None }),
             Err(why) => self.message(tr("Could not pair"), tr(why)),

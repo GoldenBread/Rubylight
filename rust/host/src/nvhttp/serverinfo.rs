@@ -422,7 +422,8 @@ pub(super) fn serverinfo_response(
         // Play over the internet: Moonlight keeps ExternalIP as the PC's remote address, and
         // Nightjar fetches `/internet-play/v1` when the version is set. Paired only: the
         // public address is the owner's.
-        let internet_play = crate::internet_play::enabled(config);
+        // A device paired from an invite has it while its time lasts, with the setting off too.
+        let internet_play = crate::internet_play::enabled_for(config, client);
         if (internet_play || config.boolean("upnp", false))
             && let Some(external) = crate::internet_play::external_ipv4()
         {

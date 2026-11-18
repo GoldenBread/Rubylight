@@ -24,6 +24,7 @@ pub mod fec_report;
 pub mod frame_warp;
 pub mod hdr;
 pub mod ids;
+pub mod invite_uri;
 pub mod keyboard_layout;
 pub mod ltr_recovery;
 pub mod nvidia_enhance;

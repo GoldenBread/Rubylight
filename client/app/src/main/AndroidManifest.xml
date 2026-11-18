@@ -347,6 +347,7 @@
                 <category android:name="android.intent.category.BROWSABLE" />
 
                 <data android:scheme="rubylight" android:host="pair" />
+                <data android:scheme="rubylight" android:host="invite" />
             </intent-filter>
         </activity>
         <activity

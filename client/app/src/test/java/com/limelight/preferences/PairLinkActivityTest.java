@@ -271,4 +271,57 @@ public class PairLinkActivityTest {
         assertTrue(game.indexOf("LinkGate.hold(this)", start) < game.indexOf("}", game.indexOf("super.onStart()", start)));
         assertTrue(game.indexOf("LinkGate.release(this, this)", stop) < game.indexOf("}", game.indexOf("super.onStop()", stop)));
     }
+
+    /** An invite as libnightjar_core writes it, ending long after these tests run. */
+    private static final String INVITE = "rubylight://invite#v=1&k=" + "01".repeat(32) + "&id=0123ABCD-ef&fp="
+            + "ab".repeat(32) + "&name=Wohnzimmer&exp=4102444800&perm=controller&ports=47989,47984,48010,47998,48000,47999,0";
+
+    @Test
+    public void anInviteAsksWhoseGameItJoinsAndWhatTheFriendMayDo() {
+        try (var controller = Robolectric.buildActivity(PairLinkActivity.class, opening(INVITE)).setup()) {
+            PairLinkActivity activity = controller.get();
+            AlertDialog dialog = shownDialog();
+            String message = message(dialog);
+            assertTrue(message, message.startsWith(activity.getString(R.string.invite_confirm_body)));
+            assertTrue(message, message.endsWith(activity.getString(R.string.invite_permission,
+                    activity.getString(R.string.guests_controller))));
+            assertEquals(activity.getString(R.string.guests_join), dialog.getButton(AlertDialog.BUTTON_POSITIVE).getText().toString());
+            assertTrue("Cancel has the focus", dialog.getButton(AlertDialog.BUTTON_NEGATIVE).isFocused());
+            assertFalse("a tap meant for what was there before", dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled());
+            assertNull(nextStarted());
+
+            pass(PairLinkActivity.PAIR_DELAY_MS);
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
+            ShadowLooper.idleMainLooper();
+            Intent next = Shadows.shadowOf(activity).getNextStartedActivity();
+            assertEquals(AddComputerManually.class.getName(), next.getComponent().getClassName());
+            assertNull("the secret stays out of the intent", next.getData());
+            assertFalse(next.toUri(Intent.URI_INTENT_SCHEME).contains("0101"));
+            assertEquals(INVITE, LinkGate.takeConfirmed());
+        }
+    }
+
+    @Test
+    public void anExpiredInviteSaysSoAndOffersNoJoin() {
+        String old = INVITE.replace("exp=4102444800", "exp=1000");
+        try (var controller = Robolectric.buildActivity(PairLinkActivity.class, opening(old)).setup()) {
+            PairLinkActivity activity = controller.get();
+            AlertDialog dialog = shownDialog();
+            assertEquals(activity.getString(R.string.invite_expired), message(dialog));
+            assertNotEquals(activity.getString(R.string.guests_join), dialog.getButton(AlertDialog.BUTTON_POSITIVE).getText().toString());
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
+            ShadowLooper.idleMainLooper();
+            assertTrue(activity.isFinishing());
+            assertNull(LinkGate.takeConfirmed());
+        }
+    }
+
+    @Test
+    public void aBrokenInviteIsRefusedAsAnInvite() {
+        try (var controller = Robolectric.buildActivity(PairLinkActivity.class, opening(INVITE.replace("v=1", "v=9"))).setup()) {
+            PairLinkActivity activity = controller.get();
+            assertEquals(activity.getString(R.string.invite_not_a_link), message(shownDialog()));
+            assertNull(LinkGate.takeConfirmed());
+        }
+    }
 }

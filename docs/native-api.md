@@ -282,6 +282,16 @@ Only asking for the game shares: `/resume`, or a `/launch` of a Resume tile. Any
 | POST | `/session/guests/permission` | `{"id", "permission"}` | SessionGuests |
 | POST | `/session/guests/keyboard-mouse` | `{"id"}` or `{"id": null}` | SessionGuests. Hands the keyboard and mouse to a guest, or back to the owner |
 
+**Invites to play over the internet (`session.guest-invites`).** Listed while **Allow pairing** (`enable_pairing`) is on ([Invite a friend over the internet](multiclient.md#invite-a-friend-over-the-internet)). Making, listing and taking back invites needs **Approve new devices** or **Host control**, otherwise 403 `permission_required`.
+
+| Method | Path | Body | Result |
+|---|---|---|---|
+| GET | `/session/guests/invites` | | GuestInvites |
+| POST | `/session/guests/invites` | `{"permission"?, "seconds"?}` | `{"id", "link", "expires", "permission"}`. `permission` defaults to `guest_permission` and is lowered to the input the caller holds; `seconds` is 300 to 604800, a day without it. 503 `temporarily_unavailable` while pairing is off; 422 `invalid_value` for another lifetime or with 8 unused invites |
+| POST | `/session/guests/invites/revoke` | `{"id"}` or `{"uuid"}` | GuestInvites. Takes back an unused invite, or unpairs a device paired from one |
+
+GuestInvites is `{"links": [{"id", "permission", "created", "expires"}], "friends": [{"uuid", "name", "permission", "until"}], "max_links", "default_seconds"}`; the link itself is answered only once, when it is made. A device paired from an invite holds List and View plus its permission's input, never Launch; its `/launch` or `/resume` may only join a game another device plays, always asks the player, and otherwise fails with "You can only join a game someone is playing on this PC".
+
 SessionGuests is `{"policy", "default_permission", "manage", "you", "owner", "max_guests", "version", "keyboard_mouse", "guests": [{"id", "name", "permission", "streaming", "since", "expires"}], "waiting": [{"id", "name", "seconds_left"}]}`. A permission is `view`, `controller` or `controller-keyboard-mouse`; any other is 422 `invalid_value`. `you` is the caller's own guest id, `keyboard_mouse` the guest holding them (null: the owner), `version` changes with every change, and `since` and `expires` are Unix seconds. An id no longer there is 404 `not_found`. Clients poll it about every 2 s while streaming, only while the feature is listed. When the host ends a guest's stream (kick, block, expiry, the game ending), the device's `/serverinfo` `RustHostLastFailure` says why, for example "The player removed you from the game".
 
 **Couch menu (`session.couch_menu`).** `POST /session/couch-menu` with `{"open": true}` opens the menu the host draws into the caller's own live stream, and `{"open": false}` closes it ([Couch menu](configuration.md#couch-menu)). It is idempotent and answers `{"open"}`, whether the menu is open now. The body takes no other field. Without a live stream of its own the caller gets 409 `no_session`; a stream that can't show the menu (the menu off for it, a stream too small, or its control stream not connected yet) gets 503 `temporarily_unavailable` with the reason. The feature is listed only to a device with View or Launch whose `couch_menu` setting, the host's or its own, is on.

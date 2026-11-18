@@ -43,3 +43,19 @@ export const initialPermission = (status: SessionGuestsStatus): GuestPermission 
 
 /** Whether `permission` lets a guest take the keyboard and mouse. */
 export const usesKeyboardMouse = (permission: GuestPermission) => permission === 'controller-keyboard-mouse';
+
+/** How long an invite to play over the internet works: the link, and the friend's access after it. */
+export const INVITE_LIFETIMES: readonly { value: string; label: string; seconds: number }[] = [
+  { value: '1h', label: '1 hour', seconds: 3600 },
+  { value: '24h', label: '24 hours', seconds: 86_400 },
+  { value: '7d', label: '7 days', seconds: 7 * 86_400 },
+];
+
+export const inviteSeconds = (value: string): number =>
+  INVITE_LIFETIMES.find((lifetime) => lifetime.value === value)?.seconds ?? 86_400;
+
+/** What the owner sends with the link: how to open it, in words a friend without the console reads. */
+export function inviteMessage(link: string): string {
+  return `Join my game with Nightjar: open this link in Nightjar, or copy it and paste it under Add PC.
+${link}`;
+}

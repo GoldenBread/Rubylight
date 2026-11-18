@@ -29,7 +29,7 @@ A feature lands in both apps in one change. What they share goes into `nightjar-
 | Step | Where |
 | --- | --- |
 | Find and pair a PC, list apps, launch | `protocol/client/src/http/`; what the host offers is [`Feature`, `HostCapabilities`](../protocol/client/src/http/capabilities.rs) |
-| Internet play, guests | `protocol/client/src/internet.rs` and `protocol/client/src/http/internet_play.rs` (over `rubylight-traverse`); joining another device's game in `protocol/client/src/http/session_guests.rs` |
+| Internet play, guests | `protocol/client/src/internet.rs` and `protocol/client/src/http/internet_play.rs` (over `rubylight-traverse`); joining another device's game in `protocol/client/src/http/session_guests.rs`; invite links in `protocol/core/src/invite_uri.rs`, opened by `protocol/client/src/invite.rs` (Android `computers/Invites.java`, desktop `hosts.rs`) |
 | RTSP | `protocol/client/src/rtsp/`, `protocol/client/src/sdp.rs` |
 | Control | `protocol/client/src/control/`: `session.rs` is the state machine without a socket, `driver.rs` runs it on ENet, `messages.rs` and `events.rs` are what is sent and received |
 | Start | `protocol/client/src/session/mod.rs`, which also defines the [`VideoDecoder`](../protocol/client/src/session/mod.rs) an app implements |

@@ -5,6 +5,7 @@
   import AppCover from '../components/library/AppCover.svelte';
   import CoopCard from '../components/overview/CoopCard.svelte';
   import GuestsCard from '../components/overview/GuestsCard.svelte';
+  import InviteCard from '../components/overview/InviteCard.svelte';
   import { coverPath, coverVersion, placeholder } from '../components/library/app';
   import { homeLead, problems } from '../lib/host-readiness';
   import { applyFix, dismissWarning, fixes } from '../lib/host-fixes.svelte';
@@ -20,7 +21,7 @@
   import StreamCard from '../components/overview/StreamCard.svelte';
   import { heroGame, liveFigures, pairedCopy, readyCopy } from '../components/overview/now-playing';
   import {
-    api, type App, type Client, type CoopSessions, type PowerStatus, type SessionGuestsStatus, type SessionStatus,
+    api, type App, type Client, type CoopSessions, type GuestInvites, type PowerStatus, type SessionGuestsStatus, type SessionStatus,
     type StreamSession,
   } from '../lib/api';
   import { shown as guestsShown } from '../lib/session-guests';
@@ -219,12 +220,20 @@
 
   // Guests from paired devices in the running game, and devices waiting to join it.
   let deviceGuests = $state<SessionGuestsStatus | null>(null);
+  // Invites to play over the internet: the links waiting and the devices paired from one.
+  let invites = $state<GuestInvites | null>(null);
   async function refreshDeviceGuests() {
     try {
       deviceGuests = await api.sessionGuests.status();
     } catch {
       // A host without guests answers nothing to show.
       deviceGuests = null;
+    }
+    try {
+      invites = await api.sessionGuests.invites();
+    } catch {
+      // A host without invites answers nothing to show.
+      invites = null;
     }
   }
 
@@ -354,6 +363,9 @@
 {/each}
 {#if deviceGuests && guestsShown(deviceGuests)}
   <GuestsCard status={deviceGuests} onchange={(next) => (deviceGuests = next)} />
+{/if}
+{#if invites && paired}
+  <InviteCard {invites} onchange={(next) => (invites = next)} />
 {/if}
 {#if streams.length}
   <Panel title="Connected streams" flush>

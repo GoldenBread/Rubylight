@@ -273,6 +273,9 @@ pub fn punch(host_id: &str, reply: &InternetPlay, tried: Tried) -> Result<Socket
 /// - `unreachable` `{reply, tried}`: the error for every path without punching.
 /// - `path` `{address, lan: [..], reply|null}`: `"lan"`, `"ipv6"`, `"mapped"` or `"punched"`.
 /// - `stop` `{host}`, `stopAll`.
+/// - `invite` `{link, now}`: what the confirmation shows ([`crate::invite::summary`]).
+/// - `redeem` `{link, uniqueId, certificate, key, name, now}`: blocks while the PC is reached and
+///   pairs; `{uniqueId, name, address, port, httpsPort, path, certificate, reply}`.
 pub mod json {
     use super::*;
     use serde_json::{json, Value};
@@ -345,6 +348,38 @@ pub mod json {
             "stopAll" => {
                 stop_all();
                 Ok(Value::Null)
+            }
+            "invite" => {
+                let link = crate::invite::parse(text("link").ok_or("no link")?)?;
+                Ok(crate::invite::summary(
+                    &link,
+                    request["now"].as_u64().unwrap_or(0),
+                ))
+            }
+            "redeem" => {
+                let link = crate::invite::parse(text("link").ok_or("no link")?)?;
+                let identity = crate::http::ClientIdentity::from_pem(
+                    text("uniqueId").ok_or("no uniqueId")?,
+                    text("certificate").ok_or("no certificate")?,
+                    text("key").ok_or("no key")?,
+                )
+                .map_err(|e| e.to_string())?;
+                let redeemed = crate::invite::redeem(
+                    &link,
+                    std::sync::Arc::new(identity),
+                    text("name").unwrap_or("Nightjar"),
+                    request["now"].as_u64().unwrap_or(0),
+                )?;
+                Ok(json!({
+                    "uniqueId": redeemed.unique_id,
+                    "name": redeemed.name,
+                    "address": redeemed.address.ip().to_string(),
+                    "port": redeemed.address.port(),
+                    "httpsPort": redeemed.https_port,
+                    "path": redeemed.path.key(),
+                    "certificate": redeemed.server_certificate_pem,
+                    "reply": redeemed.reply,
+                }))
             }
             other => Err(format!("unknown op {other}")),
         }
