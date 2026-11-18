@@ -221,6 +221,9 @@ impl App {
         // Ending attempts that their workers let go of since the last frame (a stuck one stays):
         // the settings below must see what is still in use, not what ended moments ago.
         self.attempts.reap();
+        for ended in self.attempts.drain_teardowns() {
+            self.push_teardown(ended);
+        }
         #[cfg(target_os = "linux")]
         self.apply_renderer_choice();
         #[cfg(windows)]

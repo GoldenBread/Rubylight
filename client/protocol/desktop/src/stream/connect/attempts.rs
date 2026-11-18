@@ -38,6 +38,9 @@ pub struct Attempts {
     current: Option<Connecting>,
     /// Cancelled or timed-out attempts whose workers have not ended yet.
     ending: Vec<Connecting>,
+    /// Teardowns the ended attempts set aside, kept after their attempt is dropped so the app can
+    /// join them before the renderer goes.
+    teardowns: Vec<super::Teardown>,
 }
 
 impl Attempts {
@@ -97,12 +100,22 @@ impl Attempts {
         self.current.as_ref().is_some_and(|connecting| connecting.overdue(now))
     }
 
-    /// Drops the ending attempts whose workers ended, stopping any stream one made late. True
-    /// when at least one ended.
+    /// Drops the ending attempts whose workers ended, stopping any stream one made late and
+    /// keeping the teardowns it set aside. True when at least one ended.
     pub fn reap(&mut self) -> bool {
-        let before = self.ending.len();
-        self.ending.retain_mut(|attempt| !attempt.ended());
-        self.ending.len() < before
+        let ending = std::mem::take(&mut self.ending);
+        let mut kept = Vec::with_capacity(ending.len());
+        let mut ended_any = false;
+        for mut attempt in ending {
+            if attempt.ended() {
+                ended_any = true;
+                self.teardowns.extend(attempt.take_teardowns());
+            } else {
+                kept.push(attempt);
+            }
+        }
+        self.ending = kept;
+        ended_any
     }
 
     /// The device holds of every attempt, for the renderer's remake (`App::launch_devices`).
@@ -115,7 +128,7 @@ impl Attempts {
     /// stop that timed out, a cancelled start's late stream), for the app to keep and join
     /// before the renderer goes.
     pub fn drain_teardowns(&mut self) -> Vec<super::Teardown> {
-        let mut ended: Vec<super::Teardown> = Vec::new();
+        let mut ended: Vec<super::Teardown> = std::mem::take(&mut self.teardowns);
         if let Some(current) = &self.current {
             ended.append(&mut lock(&current.shared.teardowns));
         }
