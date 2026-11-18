@@ -1107,3 +1107,63 @@ fn teardown_runs_off_the_calling_thread() {
     let ran_on = receiver.recv_timeout(std::time::Duration::from_secs(10)).expect("teardown runs");
     assert_ne!(ran_on, caller, "a session's stop joins its threads, never on the UI thread");
 }
+
+// A request the host does not apply puts every field it changed back together: the facts' rate,
+// the shared millihertz, the settings (rate and size), the request in flight and, through it, the
+// bitrate policy's mode, the menu's rate and the pacer's frame time.
+#[test]
+fn a_timed_out_reconfigure_restores_the_whole_mode() {
+    let before = ModeBefore {
+        fps_millihz: 59_940,
+        fps: 60,
+        settings_fps: 60,
+        width: 2560,
+        height: 1440,
+        requested: Reconfigure { width: 2560, height: 1440, fps_millihz: 59_940 },
+    };
+    let mut settings = Settings { fps: 120, width: 1920, height: 1080, ..Default::default() };
+    let shared = std::sync::atomic::AtomicU32::new(120_000);
+    let mut requested = Reconfigure { width: 1920, height: 1080, fps_millihz: 120_000 };
+    let mut fps = 120;
+    before.restore(&mut fps, &shared, &mut settings, &mut requested);
+    assert_eq!((fps, shared.load(Ordering::Relaxed), settings.fps), (60, 59_940, 60));
+    assert_eq!((settings.width, settings.height), (2560, 1440));
+    assert_eq!(requested, before.requested, "the mode menu and the plan read is the old one");
+    assert_eq!(before.fps_millihz.div_ceil(1000), 60, "the pacer gets the old rate");
+}
+
+/// The teardown handle is what lets the app hold the renderer until a session's decoder and audio
+/// threads have ended, and reports honestly when the deadline passed first.
+#[test]
+fn a_teardown_is_joined_where_its_owner_must_wait() {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let teardown = spawn_background(move || {
+        let _ = sender.send(());
+    });
+    assert!(teardown.join_until(Instant::now() + Duration::from_secs(10)));
+    assert!(receiver.try_recv().is_ok(), "the stop ran before the join returned");
+
+    let (started, running) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let teardown = spawn_background(move || {
+        let _ = started.send(());
+        let _ = released.recv();
+    });
+    running.recv().expect("the teardown started");
+    assert!(!teardown.join_until(Instant::now() + Duration::from_millis(10)), "a deadline that passed first says the session did not join");
+    release.send(()).expect("release the teardown");
+}
+
+/// A reconnect joins the old session's teardown before the connect worker's first request, so the
+/// PC never sees this device's old control connection and its new one at once.
+#[test]
+fn a_reconnect_joins_the_old_session_before_its_first_request() {
+    let ended = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = ended.clone();
+    let previous = spawn_background(move || {
+        std::thread::sleep(Duration::from_millis(20));
+        flag.store(true, Ordering::Release);
+    });
+    super::connect::wait_for_previous(Some(previous));
+    assert!(ended.load(Ordering::Acquire), "the old session ended before the launch");
+}

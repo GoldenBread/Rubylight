@@ -139,6 +139,31 @@ pub(crate) use connect::env_flag;
 pub use negotiate::{base_probe_formats, codec_name, color_probe_formats, plain_formats, probes_color, pyrowave_bitrate_warning, pyrowave_notice, stream_mode};
 pub use frame_warp::frame_warp_notice;
 
+/// The stream's rate, size and settings before a reconfigure was asked. A request the host does
+/// not apply is undone from this one snapshot, so no field keeps the asked mode on its own.
+#[derive(Clone, Copy)]
+struct ModeBefore {
+    fps_millihz: u32,
+    fps: i32,
+    settings_fps: u32,
+    width: u32,
+    height: u32,
+    requested: Reconfigure,
+}
+
+impl ModeBefore {
+    /// Puts the previous rate and size back into the facts, the shared rate, the settings and
+    /// the mode the menu and the launch plan read.
+    fn restore(&self, fps: &mut i32, shared_millihz: &std::sync::atomic::AtomicU32, settings: &mut Settings, requested: &mut Reconfigure) {
+        *fps = self.fps;
+        shared_millihz.store(self.fps_millihz, Ordering::Relaxed);
+        settings.fps = self.settings_fps;
+        settings.width = self.width;
+        settings.height = self.height;
+        *requested = self.requested;
+    }
+}
+
 /// Pictures in a row whose RTP timestamps must show a requested rate before a reconfigure that
 /// changes only the rate counts as applied.
 const FPS_EVIDENCE_FRAMES: u32 = 6;
@@ -692,9 +717,9 @@ pub struct Streaming {
     pub requested_mode: Reconfigure,
     pending_mode: Option<(Reconfigure, Instant)>,
     /// Pictures whose RTP timestamps show the rate a reconfigure asked for (`shows_rate`), and
-    /// the stream's rate before it was asked, for a request the host does not apply.
+    /// the mode before it was asked, restored whole when the host does not apply it.
     fps_evidence: u32,
-    mode_fps_before: Option<u32>,
+    mode_before: Option<ModeBefore>,
     /// The sizes decoded pictures are cropped to past an encoder's alignment padding.
     stream_sizes: render::StreamSizes,
     display_change: Option<Instant>,
@@ -1136,7 +1161,7 @@ impl Streaming {
             requested_mode: mode,
             pending_mode: None,
             fps_evidence: 0,
-            mode_fps_before: None,
+            mode_before: None,
             stream_sizes: render::StreamSizes::new((i32::from(mode.width), i32::from(mode.height))),
             display_change: None,
             last_arrival: None,
@@ -1426,8 +1451,15 @@ impl Streaming {
         self.stream_sizes.ask((i32::from(request.width), i32::from(request.height)));
         self.pending_mode = Some((request, Instant::now()));
         self.fps_evidence = 0;
-        if self.mode_fps_before.is_none() {
-            self.mode_fps_before = Some(self.facts.fps.max(0) as u32);
+        if self.mode_before.is_none() {
+            self.mode_before = Some(ModeBefore {
+                fps_millihz: self.shared.fps_millihz.load(Ordering::Relaxed),
+                fps: self.facts.fps,
+                settings_fps: self.settings.fps,
+                width: self.settings.width,
+                height: self.settings.height,
+                requested: self.requested_mode,
+            });
         }
         self.facts.fps = request.fps_millihz.div_ceil(1000) as i32;
         self.shared.fps_millihz.store(request.fps_millihz, Ordering::Relaxed);
@@ -1465,7 +1497,7 @@ impl Streaming {
             return;
         }
         self.fps_evidence = 0;
-        self.mode_fps_before = None;
+        self.mode_before = None;
         if let Some((mode, _)) = self.pending_mode.take() {
             self.stream_rate_changed(mode.fps_millihz.div_ceil(1000));
         }

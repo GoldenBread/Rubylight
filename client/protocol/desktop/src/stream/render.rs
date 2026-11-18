@@ -181,7 +181,7 @@ impl Streaming {
                 self.facts.height = height;
                 if confirmed {
                     self.fps_evidence = 0;
-                    self.mode_fps_before = None;
+                    self.mode_before = None;
                     if let Some((mode, _)) = self.pending_mode.take() { self.stream_rate_changed(mode.fps_millihz.div_ceil(1000)); }
                 }
             } else if decoded.setup.chroma_packing != 0 || decoded.setup.format & VIDEO_FORMAT_MASK_PYROWAVE != 0 {
@@ -212,11 +212,19 @@ impl Streaming {
         if self.pending_mode.is_some_and(|(_, at)| at.elapsed() >= Duration::from_secs(5)) {
             self.pending_mode = None;
             self.fps_evidence = 0;
-            // The host applied nothing: the stream's rate, and the pacing that follows it, stay
-            // the ones its pictures show.
-            if let Some(fps) = self.mode_fps_before.take() {
-                self.facts.fps = fps as i32;
-                self.stream_rate_changed(fps);
+            // The host applied nothing: rate, size, settings, the request in flight, the bitrate
+            // policy and the menu's rate go back together, so no field keeps the asked mode.
+            if let Some(before) = self.mode_before.take() {
+                before.restore(&mut self.facts.fps, &self.shared.fps_millihz, &mut self.settings, &mut self.requested_mode);
+                self.plan.settings = self.settings.clone();
+                self.decode_generation += 1;
+                self.decode_window_us = session::now_us();
+                *lock(&self.shared.decode_window) = pipeline::DecodeWindow::default();
+                if let Some(rate) = &mut self.bitrate_policy {
+                    rate.set_mode(u32::from(before.requested.width), u32::from(before.requested.height), before.requested.fps_millihz.div_ceil(1000));
+                }
+                if let Some(rates) = &mut self.rate_change { rates.fps_set(before.fps_millihz); }
+                self.stream_rate_changed(before.fps_millihz.div_ceil(1000).max(1));
             }
             let quality_on = self.quality_mode != QualityMode::Off;
             self.quality_policy = None;
