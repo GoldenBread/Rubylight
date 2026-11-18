@@ -1024,25 +1024,49 @@ pub enum PrimaryAction {
     Restore,
 }
 
+/// What changed the displays under the stream, and whether a restore for it is the display
+/// fighting back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrimaryChange {
+    /// The stream just started: Windows took the layout as it began.
+    Start,
+    /// A display arrived or left: Windows rearranged the desktop.
+    Display,
+    /// The console session changed.
+    Session,
+    /// The secure desktop went away.
+    Secure,
+}
+
 /// Watches the primary a primary layout made, as [`LayoutWatch`] watches the displays a
 /// layout switched off. Windows changes the layout by itself when a display arrives or
 /// leaves, when the session changes or the stream starts, and can leave the primary on a
-/// monitor; only such a change starts the watch ([`PrimaryWatch::changed`]), and the watch
-/// disarms as soon as it sees the display still primary or has put it back
-/// ([`PrimaryWatch::disarm`]). A primary picked later is the user's or the game's and is left
-/// alone (issue #33: a stream that learned such a move kept it for the device). A move must
-/// hold for [`LayoutWatch::SETTLE`] before the layout is put back, a restore Windows refused
-/// or one that did not move the primary waits [`LayoutWatch::RETRY`], and a display that
-/// keeps taking the primary back stops the watch for the rest of the stream after
-/// [`PrimaryWatch::RETURNS`] restores or refusals within [`PrimaryWatch::RETURN_WINDOW`], as
-/// a monitor that keeps coming back on is left on ([`LayoutWatch`], issue #56).
+/// monitor; only such a change starts the watch ([`PrimaryWatch::changed`]), and its window
+/// ends a move that does not come. A look that sees the display still primary only clears a
+/// pending settle, so a move later in the window is still Windows'; once the window is over,
+/// a primary picked is the user's or the game's and is left alone (issue #33: a stream that
+/// learned such a move kept it for the device). A move must hold for [`LayoutWatch::SETTLE`]
+/// before the layout is put back, a restore Windows refused or one that did not move the
+/// primary waits [`LayoutWatch::RETRY`]. A display that fights back stops the watch for the
+/// rest of the stream after [`PrimaryWatch::RETURNS`] restores or refusals that followed a
+/// previous one quickly ([`PrimaryWatch::RETURN_WINDOW`]); the start's restore and the ones
+/// after the lock screen or a session switch are one-offs and do not count, as a monitor
+/// that keeps coming back on is left on ([`LayoutWatch`], issue #56).
 #[derive(Debug, Default)]
 pub struct PrimaryWatch {
     since: Option<std::time::Instant>,
     next_check: Option<std::time::Instant>,
     /// Until when a change Windows made, or the stream's start, explains a primary move.
     armed_until: Option<std::time::Instant>,
-    /// When this stream put the primary back, for [`PrimaryWatch::RETURNS`].
+    /// Why the watch is armed, until a restore or the window ends.
+    change: Option<PrimaryChange>,
+    /// When that change happened, for the log that tunes [`Self::WINDOW`].
+    change_at: Option<std::time::Instant>,
+    change_logged: bool,
+    /// The last restore or refusal a display change caused, to tell fighting back from a
+    /// one-off.
+    last_attempt: Option<std::time::Instant>,
+    /// Restores or refusals that followed a previous one quickly, for [`Self::RETURNS`].
     restores: Vec<std::time::Instant>,
     /// The last look decided to put the primary back: the next [`PrimaryWatch::restored`]
     /// counts it. A look that simply finds a display off or the primary elsewhere does not.
@@ -1060,8 +1084,8 @@ impl PrimaryWatch {
     pub const RETURN_WINDOW: std::time::Duration = LayoutWatch::RETURN_WINDOW;
     /// How long a display arriving or leaving, a session change or the stream's start still
     /// explains a primary move. Windows settles its rearrangement within a couple of seconds;
-    /// the watch disarms as soon as it sees the display still primary or puts it back, so a
-    /// move later is the user's or a game's.
+    /// a look that still sees the display primary does not end the window, so a move that
+    /// follows it is still caught.
     pub const WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
     /// Whether to look at the displays now: a refused restore waits before its next try.
     pub fn due(&self, now: std::time::Instant) -> bool {
@@ -1073,7 +1097,7 @@ impl PrimaryWatch {
     /// decides, so a slow first heartbeat does not lose the start.
     pub fn starting(now: std::time::Instant) -> Self {
         let mut watch = Self::default();
-        watch.changed(now);
+        watch.arm(PrimaryChange::Start, now);
         watch.starting = true;
         watch
     }
@@ -1081,17 +1105,41 @@ impl PrimaryWatch {
     pub fn stopped(&self) -> bool {
         self.stopped
     }
-    /// A display arrived or left, Windows changed the session, or the stream started: for
-    /// [`Self::WINDOW`] a primary move is Windows rearranging the desktop, not the user's
-    /// choice.
-    pub fn changed(&mut self, now: std::time::Instant) {
+    /// A display arrived or left, Windows changed the session, or the secure desktop went
+    /// away: for [`Self::WINDOW`] a primary move is Windows rearranging the desktop, not the
+    /// user's choice.
+    pub fn changed(&mut self, change: PrimaryChange, now: std::time::Instant) {
+        self.arm(change, now);
+    }
+    fn arm(&mut self, change: PrimaryChange, now: std::time::Instant) {
         self.armed_until = Some(now + Self::WINDOW);
+        self.change = Some(change);
+        self.change_at = Some(now);
+        self.change_logged = false;
+    }
+    /// The window a change opened is over, or nothing armed the watch: a primary picked now
+    /// is the user's or a game's.
+    fn expire(&mut self, now: std::time::Instant) {
+        if self.armed_until.is_some_and(|until| now >= until) {
+            self.armed_until = None;
+            self.change = None;
+            self.change_at = None;
+        }
     }
     /// The stream's display is still the primary one, or has it back: nothing waits for a
-    /// restore any more. A move after this is the user's or a game's and is left alone.
+    /// restore any more, but the change's window stays open for a move that follows it.
+    pub fn settled(&mut self, now: std::time::Instant) {
+        self.since = None;
+        self.attempt = false;
+        self.starting = false;
+        self.expire(now);
+    }
+    /// The stream's display has the primary one again, or the watch is done: disarmed.
     pub fn disarm(&mut self) {
         self.since = None;
         self.armed_until = None;
+        self.change = None;
+        self.change_at = None;
         self.attempt = false;
         self.starting = false;
     }
@@ -1101,13 +1149,15 @@ impl PrimaryWatch {
         let starting = std::mem::replace(&mut self.starting, false);
         if !demoted || self.stopped {
             self.since = None;
+            self.expire(now);
             return PrimaryAction::Wait;
         }
         if starting {
             // The first look after a start: a demotion now is the start's, however long the
             // stream took to get here.
-            self.armed_until = Some(now + Self::WINDOW);
-        } else if !self.armed_until.is_some_and(|until| now < until) {
+            self.arm(PrimaryChange::Start, now);
+        } else if self.armed_until.is_none_or(|until| now >= until) {
+            self.expire(now);
             // Nothing changed the displays: the primary is where the user or a game put it.
             self.since = None;
             return PrimaryAction::Wait;
@@ -1120,13 +1170,6 @@ impl PrimaryWatch {
         self.attempt = true;
         PrimaryAction::Restore
     }
-    /// Nothing is pending: the stream's display has the primary, is off, or Windows is still
-    /// laying it out.
-    pub fn settled(&mut self) {
-        self.since = None;
-        self.attempt = false;
-        self.starting = false;
-    }
     /// The stream's display has the primary one again: the watch disarms, and true when the
     /// restores and refusals reached [`Self::RETURNS`] within [`Self::RETURN_WINDOW`] and the
     /// watch stops for the stream.
@@ -1138,23 +1181,51 @@ impl PrimaryWatch {
         if !std::mem::replace(&mut self.attempt, false) {
             return self.stopped;
         }
+        let change = self.change;
+        let stopped = self.count(change, now);
         self.armed_until = None;
-        self.count(now)
+        self.change = None;
+        self.change_at = None;
+        stopped
     }
     /// Windows did not take the layout back, or accepted it without moving the primary: wait
-    /// [`LayoutWatch::RETRY`] before asking again, and count the refusal like a restore: true
-    /// when the watch stops for the stream.
+    /// [`LayoutWatch::RETRY`] before asking again, and count the refusal the way a restore is
+    /// counted: true when the watch stops for the stream.
     pub fn failed(&mut self, now: std::time::Instant) -> bool {
         self.since = None;
         self.attempt = false;
         self.starting = false;
         self.next_check = Some(now + LayoutWatch::RETRY);
-        self.count(now)
+        self.count(self.change, now)
     }
-    /// One restore or refusal for [`Self::RETURNS`]; true when the watch stops.
-    fn count(&mut self, now: std::time::Instant) -> bool {
+    /// The time from the change this arm came from to now, once per change, for the log that
+    /// tunes [`Self::WINDOW`] on a real rig.
+    pub fn change_delay(&mut self, now: std::time::Instant) -> Option<std::time::Duration> {
+        let at = self.change_at?;
+        if self.change_logged {
+            return None;
+        }
+        self.change_logged = true;
+        Some(now.duration_since(at))
+    }
+    /// One restore or refusal for [`Self::RETURNS`]; only a display change that follows on a
+    /// previous one quickly counts, so the start and the lock screen's own rearranging do not
+    /// end the watch early. True when the watch stops.
+    fn count(&mut self, change: Option<PrimaryChange>, now: std::time::Instant) -> bool {
         if self.stopped {
             return true;
+        }
+        if change != Some(PrimaryChange::Display) {
+            // The start and the session's own rearrangements are one-offs, not the display
+            // fighting back.
+            return false;
+        }
+        let quick = self
+            .last_attempt
+            .is_some_and(|at| now.duration_since(at) < Self::RETURN_WINDOW);
+        self.last_attempt = Some(now);
+        if !quick {
+            return false;
         }
         self.restores
             .retain(|at| now.duration_since(*at) < Self::RETURN_WINDOW);

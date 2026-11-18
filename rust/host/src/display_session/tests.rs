@@ -1349,6 +1349,9 @@ fn test_prepared(host: &Shared) -> Prepared {
         console_session: None,
         secure_desktop: false,
         displays_seen: None,
+        shown_primary: None,
+        paused_change: None,
+        start_primary_mismatch: false,
         hold_layout_while_paused: false,
         mode_report: ModeReport::new(Arc::new(Warnings::default()), (None, None, None), 60_000),
         recovery_scale: 0,
@@ -2213,6 +2216,28 @@ fn a_learned_device_layout_yields_when_the_host_layout_changes() {
     );
 }
 #[test]
+fn a_layout_learned_before_the_marker_yields_when_the_host_asks_for_the_primary() {
+    // The state's third migration marks the unmarked "extended" of 2.4.1-2.5.1 as learned
+    // over "extended": the host or an app that asks for the primary now wins over it.
+    let mut client: butterpollo_core::state::Client =
+        serde_json::from_value(serde_json::json!({"name":"Device","uuid":"device","cert":""}))
+            .unwrap();
+    client
+        .extra
+        .insert("virtual_display_layout".into(), "extended".into());
+    client.extra.insert(LEARNED_OVER.into(), "extended".into());
+    let primary = Config::parse("virtual_display_layout=extended_primary").unwrap();
+    let extended = Config::parse("virtual_display_layout=extended").unwrap();
+    assert_eq!(
+        virtual_display_layout(&primary, &client, None, None),
+        "extended_primary"
+    );
+    assert_eq!(
+        virtual_display_layout(&extended, &client, None, None),
+        "extended"
+    );
+}
+#[test]
 fn a_retained_display_matches_only_the_exact_mode_it_was_made_for() {
     let made = Negotiated {
         width: 2560,
@@ -2450,6 +2475,9 @@ fn a_faster_stream_request_keeps_only_a_display_that_can_follow_it() {
         console_session: None,
         secure_desktop: false,
         displays_seen: None,
+        shown_primary: None,
+        paused_change: None,
+        start_primary_mismatch: false,
         hold_layout_while_paused: false,
         mode_report: ModeReport::new(Arc::new(Warnings::default()), (None, None, None), 60_000),
         recovery_scale: 0,
@@ -2707,7 +2735,9 @@ fn only_a_primary_the_layout_makes_for_this_stream_is_watched() {
 }
 #[test]
 fn a_primary_move_without_a_windows_change_is_left_alone() {
-    use butterpollo_core::display_policy::{LayoutWatch, PrimaryAction, PrimaryWatch};
+    use butterpollo_core::display_policy::{
+        LayoutWatch, PrimaryAction, PrimaryChange, PrimaryWatch,
+    };
     let start = std::time::Instant::now();
     let mut watch = PrimaryWatch::default();
     // The user picks the monitor as the main screen in Windows, or a game takes it: no
@@ -2718,12 +2748,66 @@ fn a_primary_move_without_a_windows_change_is_left_alone() {
         assert_eq!(watch.observe(true, now), PrimaryAction::Wait, "{seconds}s");
     }
     // Windows changed the layout: the move that follows is put back after the settle.
-    watch.changed(start);
+    watch.changed(PrimaryChange::Display, start);
     assert_eq!(watch.observe(true, start), PrimaryAction::Wait);
     assert_eq!(
         watch.observe(true, start + LayoutWatch::SETTLE),
         PrimaryAction::Restore
     );
+}
+#[test]
+fn a_user_pick_before_a_later_windows_change_is_not_undone() {
+    use butterpollo_core::display_policy::PrimaryChange;
+    let arms = |last_shown: Option<bool>, change: Option<PrimaryChange>| {
+        Prepared::primary_change_arms(last_shown, change)
+    };
+    // A change while the stream's display had the primary can have taken it away.
+    assert!(arms(Some(true), Some(PrimaryChange::Display)));
+    assert!(arms(Some(true), Some(PrimaryChange::Secure)));
+    assert!(arms(Some(true), Some(PrimaryChange::Session)));
+    // The user picked the monitor as the main screen before the change: that pick stays,
+    // whatever Windows does later.
+    assert!(!arms(Some(false), Some(PrimaryChange::Secure)));
+    assert!(!arms(Some(false), Some(PrimaryChange::Session)));
+    assert!(!arms(Some(false), Some(PrimaryChange::Display)));
+    // A display that was off says nothing about a pick before it, and no change arms any.
+    assert!(!arms(None, Some(PrimaryChange::Display)));
+    assert!(!arms(Some(true), None));
+}
+
+#[test]
+fn the_start_layout_warning_goes_once_the_primary_is_restored() {
+    let warnings = Arc::new(Warnings::default());
+    let report = ModeReport::new(warnings.clone(), (None, None, None), 60_000);
+    warnings.set(
+        "display_layout",
+        "Windows did not apply the extended_primary display layout; the stream's display is extended. Check that no other display tool rearranges displays, then reconnect.",
+    );
+    assert_eq!(codes(&warnings), ["display_layout"]);
+    // The watch put the primary back: the stream needs no reconnect and the card drops it.
+    report.start_layout_restored();
+    assert!(codes(&warnings).is_empty());
+}
+
+#[test]
+fn a_change_that_arrives_while_paused_arms_at_the_resume() {
+    use butterpollo_core::display_policy::PrimaryChange;
+    let resumed = |paused, change| Prepared::resumed_primary_change(paused, change);
+    // A display changed while the stream had nobody to show a restore to: the resume arms
+    // the watch with it, at the resume time.
+    assert_eq!(
+        resumed(Some(PrimaryChange::Display), None),
+        Some(PrimaryChange::Display)
+    );
+    assert_eq!(
+        resumed(Some(PrimaryChange::Display), Some(PrimaryChange::Secure)),
+        Some(PrimaryChange::Display)
+    );
+    assert_eq!(
+        resumed(None, Some(PrimaryChange::Secure)),
+        Some(PrimaryChange::Secure)
+    );
+    assert_eq!(resumed(None, None), None);
 }
 
 #[test]

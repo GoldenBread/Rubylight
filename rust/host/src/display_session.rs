@@ -635,6 +635,11 @@ impl ModeReport {
             state.report();
         }
     }
+    /// The start's display_layout warning was about the primary only, which the stream has
+    /// back: nothing there needs a reconnect.
+    fn start_layout_restored(&self) {
+        self.0.lock().unwrap().warnings.clear("display_layout");
+    }
     /// Windows kept taking the primary back: this stream leaves it where Windows puts it.
     fn primary_gave_up(&self) {
         let mut state = self.0.lock().unwrap();
@@ -1386,6 +1391,14 @@ pub struct Prepared {
     secure_desktop: bool,
     /// The displays Windows showed at the last primary check, to see one arrive or leave.
     displays_seen: Option<usize>,
+    /// Whether the last primary look found the stream's display the primary one: a Windows
+    /// change is only this stream's to undo when it was.
+    shown_primary: Option<bool>,
+    /// A change that arrived while the stream was paused, to arm at the resume.
+    paused_change: Option<butterpollo_core::display_policy::PrimaryChange>,
+    /// The start applied the layout but Windows kept the primary elsewhere (and only the
+    /// primary): a successful restore clears the start's display_layout warning.
+    start_primary_mismatch: bool,
     /// Keep switching the physical monitors of an exclusive layout off while
     /// the stream is paused (`dd_hold_layout_while_paused`).
     hold_layout_while_paused: bool,
@@ -1589,6 +1602,9 @@ impl Prepared {
             console_session: None,
             secure_desktop: false,
             displays_seen: None,
+            shown_primary: None,
+            paused_change: None,
+            start_primary_mismatch: false,
             // A game window holds no layout to keep while paused.
             hold_layout_while_paused: false,
             mode_report,
@@ -1813,13 +1829,18 @@ impl Prepared {
         }
         let returned_from_secure = std::mem::replace(&mut self.secure_desktop, secure) && !secure;
         // A display arriving or leaving, a session switch or the secure desktop's return is
-        // Windows rearranging: only then can it have moved the primary by itself.
-        self.keep_primary(
-            now,
-            departed || woke || session_changed || returned_from_secure,
-            active,
-            secure,
-        );
+        // Windows rearranging: only then can it have moved the primary by itself. A display
+        // change is the one that can repeat; the others count for the log but not the limit.
+        let change = if departed || woke {
+            Some(butterpollo_core::display_policy::PrimaryChange::Display)
+        } else if returned_from_secure {
+            Some(butterpollo_core::display_policy::PrimaryChange::Secure)
+        } else if session_changed {
+            Some(butterpollo_core::display_policy::PrimaryChange::Session)
+        } else {
+            None
+        };
+        self.keep_primary(now, change, active, secure);
         let Some(arrangement) = &self._arrangement else {
             return Ok(());
         };
@@ -1876,15 +1897,39 @@ impl Prepared {
     fn primary_taken_back(shown: &Result<Option<bool>>) -> bool {
         matches!(shown, Ok(Some(true)))
     }
+    /// Whether a change arms the primary watch: only when the last look found the stream's
+    /// display the primary one, so a primary the user picked before the change is left
+    /// alone. The start arms it by itself.
+    fn primary_change_arms(
+        last_shown: Option<bool>,
+        change: Option<butterpollo_core::display_policy::PrimaryChange>,
+    ) -> bool {
+        change.is_some() && last_shown == Some(true)
+    }
+    /// The change to arm at a resume: one that arrived while the stream was paused, else the
+    /// one now. A paused stream has nobody to show a restore to, so it waits for the resume.
+    fn resumed_primary_change(
+        paused: Option<butterpollo_core::display_policy::PrimaryChange>,
+        change: Option<butterpollo_core::display_policy::PrimaryChange>,
+    ) -> Option<butterpollo_core::display_policy::PrimaryChange> {
+        paused.or(change)
+    }
     /// Put the stream's display back as the primary one when Windows moved it while changing
     /// the layout by itself: a display arrived or left, the session changed, or the secure
-    /// desktop went away. A primary picked while the displays stay as they were is the user's
-    /// or a game's, and is left alone. Windows gets the layout watch's settle before the layout
-    /// is put back, a restore that did not move the primary waits the retry, and a display that
-    /// keeps taking it back stops the watch for the stream. The recovery lays the whole layout
-    /// out itself while it runs, which includes the primary.
-    fn keep_primary(&mut self, now: std::time::Instant, changed: bool, active: bool, secure: bool) {
-        use butterpollo_core::display_policy::PrimaryAction;
+    /// desktop went away. Only a change while the display had the primary arms the watch: a
+    /// primary picked before it is the user's or a game's and is left alone. Windows gets the
+    /// layout watch's settle before the layout is put back, a restore that did not move the
+    /// primary waits the retry, and a display that keeps taking it back stops the watch for the
+    /// stream. The recovery lays the whole layout out itself while it runs, which includes the
+    /// primary.
+    fn keep_primary(
+        &mut self,
+        now: std::time::Instant,
+        change: Option<butterpollo_core::display_policy::PrimaryChange>,
+        active: bool,
+        secure: bool,
+    ) {
+        use butterpollo_core::display_policy::{PrimaryAction, PrimaryChange};
         let Some(arrangement) = &self._arrangement else {
             return;
         };
@@ -1892,10 +1937,21 @@ impl Prepared {
         if !arrangement.arrangement().primary_beside_the_users() || !lease_primary {
             return;
         }
-        // The change is remembered even while the secure desktop holds the restore back:
-        // after it, the primary Windows moved is still this stream's to put back.
-        if changed {
-            self.primary_watch.changed(now);
+        if !active {
+            // A change during a pause arms at the resume, when the displays are looked at
+            // again; the pause itself must not keep a window that already ran out.
+            if change.is_some() {
+                self.paused_change = change;
+            }
+            return;
+        }
+        let change = Self::resumed_primary_change(std::mem::take(&mut self.paused_change), change);
+        if Self::primary_change_arms(self.shown_primary, change)
+            && let Some(change) = change
+        {
+            // Only a change while the stream's display had the primary can have taken it
+            // away; one after the user picked another display is not the stream's to undo.
+            self.primary_watch.changed(change, now);
         }
         if !Self::primary_watch_applies(
             arrangement.arrangement(),
@@ -1918,8 +1974,10 @@ impl Prepared {
                 false
             }
         };
-        if displays_changed {
-            self.primary_watch.changed(now);
+        if displays_changed
+            && Self::primary_change_arms(self.shown_primary, Some(PrimaryChange::Display))
+        {
+            self.primary_watch.changed(PrimaryChange::Display, now);
         }
         let shown = match butterpollo_windows::display::shown_primary(&self.output) {
             Ok(shown) => shown,
@@ -1928,17 +1986,24 @@ impl Prepared {
                 return;
             }
         };
+        // The last look before the next change: a change after the display here is not
+        // primary has the user's or a game's pick before it and is left alone.
+        self.shown_primary = shown;
         if !butterpollo_core::display_policy::primary_moved(arrangement.arrangement(), shown) {
             // The display is the primary one, or off or still being laid out. A look that
-            // finds it still primary disarms the watch: a move after this is the user's or a
-            // game's. Without a primary shown, only the pending move is cleared.
+            // finds it primary only clears a pending settle; the change's window stays open
+            // for a move that follows it.
+            self.primary_watch.settled(now);
             if shown == Some(true) {
-                self.primary_watch.disarm();
                 self.mode_report.primary_restored();
-            } else {
-                self.primary_watch.settled();
+                self.clear_start_primary_warning();
             }
             return;
+        }
+        if let Some(delay) = self.primary_watch.change_delay(now) {
+            // For tuning WINDOW on a real rig: how long Windows took to move the primary
+            // after the change that armed the watch (once per change).
+            tracing::debug!(output = %self.output, delay_ms = %delay.as_millis(), "the stream's display lost the primary one after a Windows change");
         }
         if self.primary_watch.observe(true, now) == PrimaryAction::Wait {
             return;
@@ -1954,8 +2019,10 @@ impl Prepared {
                 // it. A layout that changed nothing is a failure, not a restore.
                 let after = butterpollo_windows::display::shown_primary(&self.output);
                 if Self::primary_taken_back(&after) {
+                    self.shown_primary = Some(true);
                     let stopped = self.primary_watch.restored(now);
                     self.mode_report.primary_restored();
+                    self.clear_start_primary_warning();
                     if stopped {
                         tracing::warn!(output = %self.output, "Windows keeps taking the main screen back; leaving the primary where Windows moves it for the rest of the stream");
                         self.mode_report.primary_gave_up();
@@ -1973,6 +2040,13 @@ impl Prepared {
             Err(error) => {
                 self.primary_failed(now, format!("{error:#}"));
             }
+        }
+    }
+    /// The start's display_layout warning was about the primary only, which the stream has
+    /// back: it needs no reconnect and the card drops the warning.
+    fn clear_start_primary_warning(&mut self) {
+        if std::mem::replace(&mut self.start_primary_mismatch, false) {
+            self.mode_report.start_layout_restored();
         }
     }
     /// A restore that did not give the display the primary: Windows refused the layout, or
@@ -2480,12 +2554,16 @@ impl Prepared {
         let expected = in_force.map_or(selection, |arrangement| arrangement.name());
         // A monitor still on its way back leaves the stream's display alone for now, which
         // says nothing of the layout.
-        let layout_took = !virtual_layout
+        let mut start_primary_mismatch = false;
+        let layout_took = if !virtual_layout
             || arrangement
                 .as_ref()
                 .is_none_or(display_arrangement::Lease::after_cut_watch)
-            || butterpollo_windows::display::monitors()
-                .map(|monitors| {
+        {
+            true
+        } else {
+            match butterpollo_windows::display::monitors() {
+                Ok(monitors) => {
                     let active: Vec<_> = monitors
                         .into_iter()
                         .map(|m| (m.display_name, m.primary))
@@ -2495,6 +2573,10 @@ impl Prepared {
                     ) {
                         None => true,
                         Some(actual) => {
+                            // Only the primary is the watch's to put back; the card drops
+                            // the warning once it did.
+                            start_primary_mismatch =
+                                expected == "extended_primary" && actual == "extended";
                             tracing::warn!(
                                 output = %output,
                                 planned = expected,
@@ -2508,8 +2590,11 @@ impl Prepared {
                             false
                         }
                     }
-                })
-                .unwrap_or(false);
+                }
+                // A layout Windows would not report is not one it took.
+                Err(_) => false,
+            }
+        };
         tracing::info!(
             client = %launch.client.name,
             role = ?launch.role,
@@ -2626,6 +2711,9 @@ impl Prepared {
                 console_session: None,
                 secure_desktop: false,
                 displays_seen: None,
+                shown_primary: None,
+                paused_change: None,
+                start_primary_mismatch,
                 hold_layout_while_paused,
                 mode_report,
                 recovery_scale: scale,
