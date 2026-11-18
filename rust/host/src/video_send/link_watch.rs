@@ -21,9 +21,11 @@ const SLOW_LOOKUP: Duration = Duration::from_secs(2);
 /// still sends the old address's frames as the encoder meets the new one.
 const ROUTES: usize = 2;
 
-/// A looked-up link and the MTU of this PC's interface on the route.
+/// A looked-up link and, when asked for, the MTU of this PC's interface on it.
 type Lookup = (Link, Option<u32>);
-type Query = dyn Fn(SocketAddr) -> Lookup + Send + Sync;
+/// The route lookup; the bool asks for the interface MTU too, which only the
+/// watcher does, so a stream thread's first route costs no extra syscall.
+type Query = dyn Fn(SocketAddr, bool) -> Lookup + Send + Sync;
 
 /// One per stream, shared by its encode loop and video senders.
 pub(crate) struct LinkWatch {
@@ -123,10 +125,14 @@ impl State {
 impl Default for LinkWatch {
     fn default() -> Self {
         Self::new(
-            |peer| {
+            |peer, with_mtu| {
                 (
                     butterpollo_windows::net::routed_link(peer),
-                    butterpollo_windows::net::routed_mtu(peer),
+                    if with_mtu {
+                        butterpollo_windows::net::routed_mtu(peer)
+                    } else {
+                        None
+                    },
                 )
             },
             INTERVAL,
@@ -136,7 +142,7 @@ impl Default for LinkWatch {
 
 impl LinkWatch {
     pub(crate) fn new(
-        query: impl Fn(SocketAddr) -> Lookup + Send + Sync + 'static,
+        query: impl Fn(SocketAddr, bool) -> Lookup + Send + Sync + 'static,
         interval: Duration,
     ) -> Self {
         Self {
@@ -160,9 +166,10 @@ impl LinkWatch {
                 return link;
             }
         }
-        let (link, mtu) = self.inner.lookup(peer);
+        let (link, _) = self.inner.lookup(peer, false);
         let mut state = self.inner.state.lock().unwrap();
-        state.insert(peer, link, mtu, Instant::now());
+        // The MTU is no part of this synchronous lookup; the watcher fills it.
+        state.insert(peer, link, None, Instant::now());
         if !state.watching && !state.spawn_failed && !state.stopped {
             let inner = self.inner.clone();
             // Detached: a lookup stuck in the network stack must not hold up
@@ -201,9 +208,9 @@ impl LinkWatch {
 }
 
 impl Inner {
-    fn lookup(&self, peer: SocketAddr) -> Lookup {
+    fn lookup(&self, peer: SocketAddr, with_mtu: bool) -> Lookup {
         let started = Instant::now();
-        let route = (self.query)(peer);
+        let route = (self.query)(peer, with_mtu);
         let took = started.elapsed();
         self.slowest.fetch_max(
             took.as_micros().min(u128::from(u64::MAX)) as u64,
@@ -233,7 +240,7 @@ impl Inner {
             drop(state);
             let links: Vec<(SocketAddr, Lookup, Instant)> = peers
                 .into_iter()
-                .map(|peer| (peer, self.lookup(peer), Instant::now()))
+                .map(|peer| (peer, self.lookup(peer, true), Instant::now()))
                 .collect();
             state = self.state.lock().unwrap();
             for (peer, (link, mtu), at) in links {
@@ -294,6 +301,7 @@ mod tests {
 
     struct Fake {
         lookups: AtomicUsize,
+        mtu_lookups: AtomicUsize,
         bps: AtomicU64,
         mtu: AtomicU64,
     }
@@ -301,20 +309,25 @@ mod tests {
     fn watch(interval: Duration) -> (LinkWatch, Arc<Fake>) {
         let fake = Arc::new(Fake {
             lookups: AtomicUsize::new(0),
+            mtu_lookups: AtomicUsize::new(0),
             bps: AtomicU64::new(1_000_000_000),
             mtu: AtomicU64::new(9000),
         });
         let query = fake.clone();
         let watch = LinkWatch::new(
-            move |peer: SocketAddr| {
+            move |peer: SocketAddr, with_mtu: bool| {
                 query.lookups.fetch_add(1, Ordering::SeqCst);
+                let mtu = with_mtu.then(|| {
+                    query.mtu_lookups.fetch_add(1, Ordering::SeqCst);
+                    query.mtu.load(Ordering::SeqCst) as u32
+                });
                 (
                     Link {
                         bps: query.bps.load(Ordering::SeqCst),
                         wireless: false,
                         interface: u64::from(peer.port()),
                     },
-                    Some(query.mtu.load(Ordering::SeqCst) as u32),
+                    mtu,
                 )
             },
             interval,
@@ -352,32 +365,33 @@ mod tests {
         assert_eq!(fake.lookups.load(Ordering::SeqCst), 1);
     }
 
-    /// The MTU is cached with the route and read from there: the paced sender
-    /// makes no network lookup of its own.
+    /// A synchronous route lookup does not ask for the MTU, so the encode and
+    /// sender threads pay no extra syscall; the watcher adds it later.
     #[test]
-    fn the_route_mtu_is_cached_with_the_route_and_read_without_a_lookup() {
+    fn a_synchronous_route_leaves_its_mtu_to_the_watcher() {
         let (watch, fake) = watch(Duration::from_secs(3600));
         let client = peer("192.168.4.20:47998");
         assert_eq!(watch.mtu(client), None);
-        assert_eq!(fake.lookups.load(Ordering::SeqCst), 0);
         watch.get(client);
-        assert_eq!(watch.mtu(client), Some(9000));
         for _ in 0..1000 {
-            assert_eq!(watch.mtu(client), Some(9000));
+            assert_eq!(watch.mtu(client), None);
         }
         assert_eq!(fake.lookups.load(Ordering::SeqCst), 1);
+        assert_eq!(fake.mtu_lookups.load(Ordering::SeqCst), 0);
     }
 
     #[test]
     fn the_watcher_publishes_a_changed_link() {
         let (watch, fake) = watch(Duration::from_millis(10));
         let client = peer("192.168.4.20:47998");
-        assert_eq!(watch.get(client).bps, 1_000_000_000);
+        watch.get(client);
+        assert!(eventually(|| watch.mtu(client) == Some(9000)));
         fake.bps.store(100_000_000, Ordering::SeqCst);
         assert!(eventually(|| watch.get(client).bps == 100_000_000));
         fake.mtu.store(1500, Ordering::SeqCst);
         assert!(eventually(|| watch.mtu(client) == Some(1500)));
         assert!(fake.lookups.load(Ordering::SeqCst) >= 2);
+        assert!(fake.mtu_lookups.load(Ordering::SeqCst) >= 2);
     }
 
     #[test]
@@ -483,7 +497,7 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let counted = calls.clone();
         let watch = LinkWatch::new(
-            move |_| {
+            move |_, _| {
                 if counted.fetch_add(1, Ordering::SeqCst) > 0 {
                     let (lock, changed) = &*gate;
                     let _held = changed
@@ -507,7 +521,7 @@ mod tests {
     #[test]
     fn the_slowest_lookup_is_reported_once() {
         let watch = LinkWatch::new(
-            |_| {
+            |_, _| {
                 thread::sleep(Duration::from_millis(3));
                 (Link::default(), None)
             },
