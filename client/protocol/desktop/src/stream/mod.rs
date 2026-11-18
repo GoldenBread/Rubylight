@@ -2520,6 +2520,13 @@ pub(crate) fn reap_session(session: Session) -> Teardown {
     spawn_background(move || session.stop())
 }
 
+/// Drops the teardowns that have ended and says whether any is still stopping: the renderer, its
+/// GPU device and a launch may not go while one is.
+pub(crate) fn prune_teardowns(teardowns: &mut Vec<Teardown>) -> bool {
+    teardowns.retain(|teardown| !teardown.finished());
+    !teardowns.is_empty()
+}
+
 /// The file Settings → Advanced → Export latency CSV saves, in the statistics folder.
 pub const LATENCY_CSV: &str = "nightjar-latency.csv";
 

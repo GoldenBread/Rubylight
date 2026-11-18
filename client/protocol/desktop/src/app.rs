@@ -141,6 +141,19 @@ impl App {
         save_hosts(&self.store, &self.hosts);
     }
 
+    /// Keeps a session's teardown for the joins before a renderer switch or the exit, dropping the
+    /// ones that already ended instead of letting the list grow with every stream.
+    pub(crate) fn push_teardown(&mut self, teardown: stream::Teardown) {
+        self.teardowns.retain(|kept| !kept.finished());
+        self.teardowns.push(teardown);
+    }
+
+    /// Whether a session is still stopping on the renderer's GPU device: finished teardowns are
+    /// dropped, and the rest block a renderer switch or the exit as a start that has ended does.
+    pub(crate) fn teardowns_busy(&mut self) -> bool {
+        stream::prune_teardowns(&mut self.teardowns)
+    }
+
     /// Adds the PC a pairing link names and pairs with its one-time PIN and certificate.
     pub(crate) fn pair_link(&mut self, link: rubylight_protocol::pairing_uri::PairingUri) {
         let id = self.hosts.add_manual(&link.host, Some(link.port));

@@ -218,7 +218,8 @@ impl App {
         let display_hdr = settings.hdr && handheld::hdr_display(handheld::gamescope(), sdl::any_display_hdr());
         // The quit-and-start prompt's plan holds the renderer's device, and a launch's checks may
         // still decode on it.
-        let busy = self.streaming.is_some() || self.attempts.is_busy() || self.probe.is_some() || !self.ending_probes.is_empty() || self.pending_replace.is_some();
+        let busy = self.streaming.is_some() || self.attempts.is_busy() || self.probe.is_some() || !self.ending_probes.is_empty()
+            || self.pending_replace.is_some() || self.teardowns_busy();
         let Some(switch) = handheld::renderer_switch(state.choice, now, need, settings.hdr && !planes, display_hdr && !planes, busy) else { return };
         if let Err(why) = self.rebuild_renderer(true, settings.hdr, display_hdr, vulkan_video, switch.reason()) {
             self.renderer_state.gpu_failed = Some(why.clone());
@@ -228,7 +229,9 @@ impl App {
 
     #[cfg(target_os = "macos")]
     pub(crate) fn switch_for_stream(&mut self, settings: &config::Settings) {
-        if self.streaming.is_some() || self.attempts.is_busy() || self.probe.is_some() || !self.ending_probes.is_empty() || self.pending_replace.is_some() {
+        if self.streaming.is_some() || self.attempts.is_busy() || self.probe.is_some() || !self.ending_probes.is_empty()
+            || self.pending_replace.is_some() || self.teardowns_busy()
+        {
             return;
         }
         let shaders = settings.codec.is_pyrowave() || settings.experimental_packed_444
@@ -255,7 +258,7 @@ impl App {
         if self.attempts.is_connecting() || self.probe.is_some() {
             return;
         }
-        if self.attempts.is_busy() {
+        if self.attempts.is_busy() || self.teardowns_busy() {
             if self.graphics_card_blocked != Some(choice) {
                 self.graphics_card_blocked = Some(choice);
                 self.launcher.notify(
@@ -288,7 +291,7 @@ impl App {
         if self.attempts.is_connecting() || self.probe.is_some() {
             return;
         }
-        if self.attempts.is_busy() || !self.ending_probes.is_empty() {
+        if self.attempts.is_busy() || !self.ending_probes.is_empty() || self.teardowns_busy() {
             if self.renderer_choice_blocked != Some(choice) {
                 self.renderer_choice_blocked = Some(choice);
                 self.launcher.notify(
@@ -321,6 +324,11 @@ impl App {
     /// its place), and the error says why; with none at all Nightjar ends, loudly.
     #[cfg(unix)]
     fn rebuild_renderer(&mut self, gpu: bool, hdr: bool, display_hdr: bool, vulkan_video: bool, reason: &str) -> Result<(), String> {
+        // A session still stopping on this renderer's GPU device keeps it: the caller says the
+        // change waits, with the message a start that has ended gets.
+        if self.teardowns_busy() {
+            return Err(tr("A start that has ended is still using the graphics card, so it cannot be switched yet. The change is kept and applied when that start stops; if it does not stop, restart Nightjar.").to_owned());
+        }
         let from = sdl::renderer_name(self.renderer);
         let wanted = if gpu { "gpu" } else if cfg!(target_os = "macos") { "metal" } else { "opengl" };
         // Waits for a settings probe still on the old device, and forgets what it found.
