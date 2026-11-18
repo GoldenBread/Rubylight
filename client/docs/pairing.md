@@ -15,6 +15,8 @@ Each Nightjar installation pairs with a PC's host once. Pairing exchanges certif
 
 Keep the host running and the PC awake on the same network. Select the PC Nightjar discovered, or choose **Add PC** and enter a host name, IPv4 address or IPv6 address. A custom port can be given as `hostname:port` or `[IPv6-address]:port`; it is the streaming service's HTTP port, not the port of the host's web UI.
 
+Nightjar keeps a PC's pairing when the PC comes back at a new address after a reboot, an update or a wake, and when another program or device answers at the PC's old address: the PC shows as unavailable with the reason instead of asking to pair again.
+
 Discovery does not cross guest networks, VLANs or VPNs. Add the PC by its address there; manual entry works over any route that reaches the PC through its firewall.
 
 ## PIN flow
