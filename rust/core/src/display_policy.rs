@@ -1047,11 +1047,13 @@ pub enum PrimaryChange {
 /// a primary picked is the user's or the game's and is left alone (issue #33: a stream that
 /// learned such a move kept it for the device). A move must hold for [`LayoutWatch::SETTLE`]
 /// before the layout is put back, a restore Windows refused or one that did not move the
-/// primary waits [`LayoutWatch::RETRY`]. A display that fights back stops the watch for the
-/// rest of the stream after [`PrimaryWatch::RETURNS`] restores or refusals that followed a
-/// previous one quickly ([`PrimaryWatch::RETURN_WINDOW`]); the start's restore and the ones
-/// after the lock screen or a session switch are one-offs and do not count, as a monitor
-/// that keeps coming back on is left on ([`LayoutWatch`], issue #56).
+/// primary waits [`LayoutWatch::RETRY`], and one arm tries at most [`PrimaryWatch::ATTEMPTS`]
+/// restores, so a change Windows keeps refusing cannot lay the display out for the rest of
+/// the stream. A display that fights back stops the watch for the rest of the stream after
+/// [`PrimaryWatch::RETURNS`] restores or refusals that followed a previous one quickly
+/// ([`PrimaryWatch::RETURN_WINDOW`]); the start's restore and the ones after the lock screen
+/// or a session switch are one-offs and do not count, as a monitor that keeps coming back on
+/// is left on ([`LayoutWatch`], issue #56).
 #[derive(Debug, Default)]
 pub struct PrimaryWatch {
     since: Option<std::time::Instant>,
@@ -1063,6 +1065,10 @@ pub struct PrimaryWatch {
     /// When that change happened, for the log that tunes [`Self::WINDOW`].
     change_at: Option<std::time::Instant>,
     change_logged: bool,
+    /// Restores this arm has tried, for [`Self::ATTEMPTS`].
+    attempts: usize,
+    /// This arm's window was extended once for its retry.
+    retried: bool,
     /// The last restore or refusal a display change caused, to tell fighting back from a
     /// one-off.
     last_attempt: Option<std::time::Instant>,
@@ -1082,6 +1088,11 @@ impl PrimaryWatch {
     /// the stream.
     pub const RETURNS: usize = LayoutWatch::RETURNS;
     pub const RETURN_WINDOW: std::time::Duration = LayoutWatch::RETURN_WINDOW;
+    /// Restores one arm may try: the first, and two retries after Windows refused one. The
+    /// start, a session change and the lock screen's return are one-offs that never count
+    /// towards [`Self::RETURNS`], so without this limit a refused one would lay the stream's
+    /// display out every [`Self::WINDOW`] or so for the whole stream.
+    pub const ATTEMPTS: usize = 3;
     /// How long a display arriving or leaving, a session change or the stream's start still
     /// explains a primary move. Windows settles its rearrangement within a couple of seconds;
     /// a look that still sees the display primary does not end the window, so a move that
@@ -1116,6 +1127,14 @@ impl PrimaryWatch {
         self.change = Some(change);
         self.change_at = Some(now);
         self.change_logged = false;
+        self.attempts = 0;
+        self.retried = false;
+    }
+    /// The look was interrupted, by a pause or the secure desktop: a move it first saw must
+    /// start its settle again after the resume or unlock, instead of restoring at once
+    /// because the wait was long.
+    pub fn interrupted(&mut self) {
+        self.since = None;
     }
     /// The window a change opened is over, or nothing armed the watch: a primary picked now
     /// is the user's or a game's.
@@ -1170,6 +1189,7 @@ impl PrimaryWatch {
         }
         self.since = None;
         self.attempt = true;
+        self.attempts += 1;
         PrimaryAction::Restore
     }
     /// The stream's display has the primary one again: the watch disarms, and true when the
@@ -1192,19 +1212,27 @@ impl PrimaryWatch {
     }
     /// Windows did not take the layout back, or accepted it without moving the primary: wait
     /// [`LayoutWatch::RETRY`] before asking again, and count the refusal the way a restore is
-    /// counted: true when the watch stops for the stream.
+    /// counted: true when the watch stops for the stream. This arm's window is extended once
+    /// so a retry has its settle, and the arm stops after [`Self::ATTEMPTS`] restores whatever
+    /// [`Self::RETURNS`] would say, as a start or session change never reaches it.
     pub fn failed(&mut self, now: std::time::Instant) -> bool {
         self.since = None;
         self.attempt = false;
         self.starting = false;
         self.next_check = Some(now + LayoutWatch::RETRY);
-        // The retry is still the move of the change that armed the watch, even when its
-        // window ends while Windows decides: keep the watch armed until the retry has had
-        // its own settle, instead of leaving the primary with the user.
-        if let Some(until) = self.armed_until {
-            self.armed_until = Some(until.max(now + LayoutWatch::RETRY + Self::WINDOW));
+        // Only the first refusal extends the window: a refusal that extended it every time
+        // would keep laying the display out for the whole stream.
+        if !self.retried {
+            self.retried = true;
+            if let Some(until) = self.armed_until {
+                self.armed_until = Some(until.max(now + LayoutWatch::RETRY + Self::WINDOW));
+            }
         }
-        self.count(self.change, now)
+        let counted = self.count(self.change, now);
+        if self.attempts >= Self::ATTEMPTS {
+            self.stopped = true;
+        }
+        counted || self.stopped
     }
     /// The time from the change this arm came from to now, once per change, for the log that
     /// tunes [`Self::WINDOW`] on a real rig.

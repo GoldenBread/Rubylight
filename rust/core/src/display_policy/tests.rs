@@ -305,6 +305,51 @@ fn a_refused_restore_stays_armed_through_its_retry() {
 }
 
 #[test]
+fn a_refused_start_stops_after_the_attempt_limit() {
+    use super::{PrimaryAction, PrimaryChange, PrimaryWatch};
+    let start = std::time::Instant::now();
+    let settle = super::LayoutWatch::SETTLE;
+    let retry = super::LayoutWatch::RETRY;
+    let mut watch = PrimaryWatch::starting(start);
+    let mut at = start;
+    for attempt in 1..=PrimaryWatch::ATTEMPTS {
+        assert_eq!(watch.observe(true, at), PrimaryAction::Wait);
+        assert_eq!(watch.observe(true, at + settle), PrimaryAction::Restore);
+        assert_eq!(
+            watch.failed(at + settle),
+            attempt == PrimaryWatch::ATTEMPTS,
+            "attempt {attempt}"
+        );
+        at += retry;
+    }
+    assert!(watch.stopped());
+    // The watch is done for the stream, whatever Windows changes later.
+    let later = start + retry * 8;
+    watch.changed(PrimaryChange::Display, later);
+    assert_eq!(watch.observe(true, later), PrimaryAction::Wait);
+    assert_eq!(watch.observe(true, later + settle), PrimaryAction::Wait);
+}
+
+#[test]
+fn an_interrupted_look_starts_its_settle_again() {
+    use super::{PrimaryAction, PrimaryChange, PrimaryWatch};
+    let start = std::time::Instant::now();
+    let settle = super::LayoutWatch::SETTLE;
+    let mut watch = PrimaryWatch::default();
+    watch.changed(PrimaryChange::Display, start);
+    assert_eq!(watch.observe(true, start), PrimaryAction::Wait);
+    // The stream paused before the move settled, or the lock screen hid the displays: the
+    // move must settle again after the resume or unlock, however long that wait.
+    watch.interrupted();
+    let resumed = start + settle * 4;
+    assert_eq!(watch.observe(true, resumed), PrimaryAction::Wait);
+    assert_eq!(
+        watch.observe(true, resumed + settle),
+        PrimaryAction::Restore
+    );
+}
+
+#[test]
 fn refused_restores_stop_the_watch_like_restores_do() {
     use super::{PrimaryAction, PrimaryChange, PrimaryWatch};
     let start = std::time::Instant::now();

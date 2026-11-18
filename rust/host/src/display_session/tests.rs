@@ -2222,11 +2222,10 @@ fn a_legacy_extended_layout_stays_on_an_exclusive_host_and_still_applies() {
     // it must stay as it is, or the upgrade would turn the user's monitors off.
     let mut clients = vec![legacy_extended()];
     let exclusive = Config::parse("virtual_display_layout=exclusive").unwrap();
-    assert!(migrate_legacy_extended_layouts(
-        &mut clients,
-        "exclusive",
-        false
-    ));
+    assert_eq!(
+        migrate_legacy_extended_layouts(&mut clients, "exclusive"),
+        ["Device".to_owned()]
+    );
     assert_eq!(
         clients[0].extra["virtual_display_layout"],
         serde_json::json!("extended")
@@ -2248,40 +2247,59 @@ fn a_legacy_extended_layout_stays_on_an_exclusive_host_and_still_applies() {
 }
 
 #[test]
-fn a_legacy_extended_layout_yields_when_the_host_or_an_app_asks_for_the_primary() {
-    let primary = Config::parse("virtual_display_layout=extended_primary").unwrap();
+fn a_legacy_extended_layout_yields_when_the_host_asks_for_the_primary() {
     // The host asks for the primary: the learned value is the likely source (issue #33), so
     // the device follows the host layout again.
-    let mut clients = vec![legacy_extended()];
-    assert!(migrate_legacy_extended_layouts(
-        &mut clients,
-        "extended_primary",
-        true
-    ));
-    assert!(!clients[0].extra.contains_key("virtual_display_layout"));
-    assert_eq!(
-        virtual_display_layout(&primary, &clients[0], None, None),
-        "extended_primary"
-    );
-    // An app asks for it while the host stays exclusive.
+    for host in ["extended_primary", "extended_primary_isolated"] {
+        let mut clients = vec![legacy_extended()];
+        assert_eq!(
+            migrate_legacy_extended_layouts(&mut clients, host),
+            ["Device".to_owned()],
+            "{host}"
+        );
+        assert!(!clients[0].extra.contains_key("virtual_display_layout"));
+        let config = Config::parse(&format!("virtual_display_layout={host}")).unwrap();
+        assert_eq!(
+            virtual_display_layout(&config, &clients[0], None, None),
+            host
+        );
+    }
+}
+
+#[test]
+fn an_app_that_asks_for_the_primary_gets_it_while_a_legacy_layout_stays() {
     let exclusive = Config::parse("virtual_display_layout=exclusive").unwrap();
-    let app: butterpollo_core::state::App = serde_json::from_value(
+    let primary: butterpollo_core::state::App = serde_json::from_value(
         serde_json::json!({"name":"Game","virtual-display-layout":"extended_primary"}),
     )
     .unwrap();
+    let plain: butterpollo_core::state::App =
+        serde_json::from_value(serde_json::json!({"name":"Desktop"})).unwrap();
+    // Only an app asks for the primary: the device keeps its layout, learned over the host's,
+    // so that app gets the main screen while the host and the other apps keep "extended".
     let mut clients = vec![legacy_extended()];
-    assert!(migrate_legacy_extended_layouts(
-        &mut clients,
-        "exclusive",
-        true
-    ));
-    assert!(!clients[0].extra.contains_key("virtual_display_layout"));
     assert_eq!(
-        virtual_display_layout(&exclusive, &clients[0], None, None),
-        "exclusive"
+        migrate_legacy_extended_layouts(&mut clients, "exclusive"),
+        ["Device".to_owned()]
     );
     assert_eq!(
-        virtual_display_layout(&exclusive, &clients[0], Some(&app), None),
+        clients[0].extra["virtual_display_layout"],
+        serde_json::json!("extended")
+    );
+    assert_eq!(
+        clients[0].extra[LEARNED_OVER],
+        serde_json::json!("exclusive")
+    );
+    assert_eq!(
+        virtual_display_layout(&exclusive, &clients[0], None, None),
+        "extended"
+    );
+    assert_eq!(
+        virtual_display_layout(&exclusive, &clients[0], Some(&plain), None),
+        "extended"
+    );
+    assert_eq!(
+        virtual_display_layout(&exclusive, &clients[0], Some(&primary), None),
         "extended_primary"
     );
 }
@@ -2297,11 +2315,7 @@ fn a_picked_or_already_marked_legacy_layout_is_left_alone() {
         .extra
         .insert(LEARNED_OVER.into(), serde_json::json!("exclusive"));
     let mut clients = vec![picked, marked];
-    assert!(!migrate_legacy_extended_layouts(
-        &mut clients,
-        "exclusive",
-        true
-    ));
+    assert!(migrate_legacy_extended_layouts(&mut clients, "extended_primary").is_empty());
     assert_eq!(
         clients[0].extra["virtual_display_layout"],
         serde_json::json!("extended")
@@ -2313,37 +2327,18 @@ fn a_picked_or_already_marked_legacy_layout_is_left_alone() {
 }
 
 #[test]
-fn legacy_layout_owner_reads_the_host_and_an_app_that_asks_for_the_primary() {
-    let exclusive = Config::parse("virtual_display_layout=exclusive").unwrap();
-    let plain: butterpollo_core::state::App =
-        serde_json::from_value(serde_json::json!({"name":"Game"})).unwrap();
-    let primary: butterpollo_core::state::App =
-        serde_json::from_value(serde_json::json!({"name":"Game","virtual-display-primary":true}))
-            .unwrap();
+fn the_legacy_layout_notice_names_every_changed_device() {
+    let notice = legacy_layout_notice(&["Steam Deck".into(), "Phone".into()]);
+    assert!(notice.contains("Steam Deck, Phone"), "{notice}");
+    assert!(notice.contains("under Devices"), "{notice}");
+}
+
+#[test]
+fn the_legacy_host_layout_reads_the_host_setting_or_the_default() {
+    assert_eq!(legacy_host_layout(&Config::default()), "exclusive");
     assert_eq!(
-        legacy_layout_owner(&exclusive, std::slice::from_ref(&plain)),
-        ("exclusive", false)
-    );
-    assert_eq!(
-        legacy_layout_owner(&exclusive, &[plain.clone(), primary.clone()]),
-        ("exclusive", true)
-    );
-    let extended = Config::parse("virtual_display_layout=extended").unwrap();
-    assert_eq!(
-        legacy_layout_owner(&extended, std::slice::from_ref(&plain)),
-        ("extended", false)
-    );
-    // The host alone asks for it, with no app at all.
-    let primary_host = Config::parse("virtual_display_layout=extended_primary").unwrap();
-    assert_eq!(
-        legacy_layout_owner(&primary_host, &[]),
-        ("extended_primary", true)
-    );
-    // The isolated primary layout asks for the same main screen.
-    let isolated = Config::parse("virtual_display_layout=extended_primary_isolated").unwrap();
-    assert_eq!(
-        legacy_layout_owner(&isolated, &[]),
-        ("extended_primary_isolated", true)
+        legacy_host_layout(&Config::parse("virtual_display_layout=extended_primary").unwrap()),
+        "extended_primary"
     );
 }
 

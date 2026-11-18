@@ -477,39 +477,28 @@ fn inherited_layout<'a>(
         .unwrap_or(config.get("virtual_display_layout", "exclusive"))
 }
 
-/// The host's virtual display layout, and whether the host or an app asks for the primary
-/// one: what a device layout from before the marker existed has to be compared with.
-pub(crate) fn legacy_layout_owner<'a>(
-    config: &'a Config,
-    apps: &[butterpollo_core::state::App],
-) -> (&'a str, bool) {
-    // Both primary layouts make the stream's display the main screen, so a learned "extended"
-    // would override either.
-    let asks_primary =
-        |layout: &str| matches!(layout, "extended_primary" | "extended_primary_isolated");
-    let host = config.get("virtual_display_layout", "exclusive");
-    (
-        host,
-        asks_primary(host)
-            || apps
-                .iter()
-                .any(|app| asks_primary(inherited_layout(config, Some(app)))),
-    )
+/// The virtual display layout the host asks for itself: what a device layout from before the
+/// marker existed has to be compared with.
+pub(crate) fn legacy_host_layout(config: &Config) -> &str {
+    config.get("virtual_display_layout", "exclusive")
 }
 
 /// Give a device's unmarked "extended" layout from before the marker existed its meaning back.
 /// [`LEARNED_OVER`] records what a stream's learned layout replaced, and [`SET_BY_USER`] a
 /// pick made in Devices; neither existed for a layout learned on 2.4.1 to 2.5.9, nor for a
-/// pick made before 3.0.0, so the two cannot be told apart. When the host or an app asks for
-/// the primary, the learned value is the likely source (issue #33), and the device follows
-/// the inherited layout again. Otherwise it stays, learned over the host's layout, until that
-/// layout changes. True when a device changed.
+/// pick made before 3.0.0, so the two cannot be told apart. A host that asks for a primary
+/// layout wins over it: the stream was after the main screen and the learned value is the
+/// likely source (issue #33). Otherwise the layout stays, learned over the host's layout, so it
+/// follows the host until that layout changes, and an app that asks for the primary still gets
+/// it while the others keep "extended". Returns the devices whose layout changed.
 pub(crate) fn migrate_legacy_extended_layouts(
     clients: &mut [butterpollo_core::state::Client],
     host_layout: &str,
-    app_asks_primary: bool,
-) -> bool {
-    let mut changed = false;
+) -> Vec<String> {
+    // Both primary layouts make the stream's display the main screen.
+    let asks_primary =
+        |layout: &str| matches!(layout, "extended_primary" | "extended_primary_isolated");
+    let mut changed = Vec::new();
     for client in clients {
         let layout = client
             .extra
@@ -523,7 +512,7 @@ pub(crate) fn migrate_legacy_extended_layouts(
         if layout != Some("extended") || client.extra.contains_key(LEARNED_OVER) || chosen {
             continue;
         }
-        if app_asks_primary {
+        if asks_primary(host_layout) {
             tracing::info!(
                 device = %client.name,
                 "the \"extended\" layout learned before the marker existed was Windows moving the primary; the device follows the host layout again"
@@ -539,9 +528,18 @@ pub(crate) fn migrate_legacy_extended_layouts(
                 .extra
                 .insert(LEARNED_OVER.into(), serde_json::json!(host_layout));
         }
-        changed = true;
+        changed.push(client.name.clone());
     }
     changed
+}
+
+/// The one-time console notice for the devices [`migrate_legacy_extended_layouts`] changed: the
+/// user can pick a device's layout again under Devices to keep it whatever the host uses.
+pub(crate) fn legacy_layout_notice(devices: &[String]) -> String {
+    format!(
+        "Older display layouts were updated for {}. They now follow the host's display layout; pick one again under Devices if you want it kept.",
+        devices.join(", ")
+    )
 }
 
 /// What the client asked the PC's displays to do for this stream (the
@@ -2006,7 +2004,9 @@ impl Prepared {
         }
         if !active {
             // A change during a pause arms at the resume, when the displays are looked at
-            // again; the pause itself must not keep a window that already ran out.
+            // again; the pause itself must not keep a window that already ran out, nor a
+            // settle a move started before it.
+            self.primary_watch.interrupted();
             if change.is_some() {
                 self.paused_change = change;
             }
@@ -2019,6 +2019,11 @@ impl Prepared {
             // Only a change while the stream's display had the primary can have taken it
             // away; one after the user picked another display is not the stream's to undo.
             self.primary_watch.changed(change, now);
+        }
+        if secure {
+            // The lock screen hides the displays: a move first seen before it must start its
+            // settle again after the unlock, not restore because the lock was long.
+            self.primary_watch.interrupted();
         }
         if !Self::primary_watch_applies(
             arrangement.arrangement(),
