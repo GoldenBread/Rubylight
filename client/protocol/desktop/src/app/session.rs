@@ -127,6 +127,7 @@ impl App {
         streaming.display_changed(self.renderer);
         if !manual_bitrate && (settings.adaptive_bitrate || streaming.quality_mode != config::QualityMode::Off) { streaming.enable_adaptive_bitrate(true); }
         if settings.controllers && streaming.facts.role != nightjar_core::http::AppRole::RemoteMonitor {
+            self.pads.set_limit(streaming.facts.controller_limit);
             streaming.session.input(|q| self.pads.announce_all(q));
         }
         // SAFETY: a live window.
@@ -171,6 +172,10 @@ impl App {
         } else { None };
         let toast = start_toast(warning, (!notices.is_empty()).then_some(notices.as_str()), handheld::gamescope());
         streaming.show_toast(toast);
+        // Controllers this PC has no player slot for: said below the start's own notice.
+        if let Some(refused) = self.pads.refused_notice() {
+            streaming.add_toast(refused);
+        }
         // Straight to the display, the pictures go on a display plane from the first one.
         #[cfg(target_os = "linux")]
         {

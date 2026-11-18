@@ -1695,4 +1695,5 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("Opens straight into your games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open the list of PCs.", "Mở thẳng trò chơi của bạn ở toàn màn hình, nơi tay cầm hoặc điều khiển từ xa có thể chọn. Bật cho TV hoặc máy cầm tay; tắt để mở danh sách PC."),
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "Điểm sáng rực hơn và màu sắc phong phú hơn trên màn hình HDR. Tự động chỉ bật khi màn hình, bộ giải mã và PC hỗ trợ; hãy để Tự động trừ khi HDR trông nhạt."),
     ("Recommended", "Đề xuất"),
+    ("This PC takes {} controllers", "PC này nhận {} tay cầm"),
 ];

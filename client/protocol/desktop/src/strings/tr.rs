@@ -1695,4 +1695,5 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("Opens straight into your games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open the list of PCs.", "Oyunlarınızı doğrudan tam ekran açar; bir kol veya kumanda birini seçebilir. Televizyon veya el konsolu için açık bırakın; PC listesini açmak için kapatın."),
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "HDR ekranda daha parlak vurgular ve daha zengin renkler. Otomatik, yalnızca ekran, kod çözücü ve PC desteklediğinde açar; HDR soluk görünüyorsa Otomatik olarak bırakın."),
     ("Recommended", "Önerilen"),
+    ("This PC takes {} controllers", "Bu PC {} kumanda kabul ediyor"),
 ];

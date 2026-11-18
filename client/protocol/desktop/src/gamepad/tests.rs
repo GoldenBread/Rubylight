@@ -713,7 +713,7 @@ fn one_player_sends_every_controller_as_player_one() {
         for id in ids { pads.added(id).unwrap(); }
         let mut queue = InputQueue::new(&HostCapabilities { app_version: [7, 1, 431, -1], feature_flags: 0x03, ..Default::default() });
         pads.announce_all(&mut queue);
-        let numbers = |pads: &Gamepads| pads.pads.iter().map(|p| (p.index, p.sent_as())).collect::<Vec<_>>();
+        let numbers = |pads: &Gamepads| pads.pads.iter().map(|p| (p.index, p.sent_as)).collect::<Vec<_>>();
         assert_eq!(numbers(&pads), [(0, 0), (1, 0)], "each keeps its slot, both are player 1");
         assert_eq!((pads.active_mask(), pads.launch_mask(&one)), (1, 1));
         let listed = pads.launch_controllers(&one);
@@ -872,4 +872,80 @@ fn a_mapping_saved_before_gyro_settings_loads_with_the_gyro_unchanged() {
     let old: Mapping = serde_json::from_str(r#"{"name":"Pad","deadzone":10}"#).expect("an older mapping");
     assert_eq!((old.gyro_axes, old.gyro_yaw, old.gyro_pitch), ([1, 2, 3], 100, 100));
     assert!(old.valid());
+}
+
+/// GFE's GameStream takes four controllers: a fifth is not announced or sent, says so once, and
+/// its removal tells the host nothing. Sunshine and its forks keep all 16.
+#[test]
+fn a_host_that_takes_four_controllers_gets_four() {
+    let _sdl = crate::sdl::TEST_LOCK.lock().unwrap();
+    use nightjar_core::control::HostCapabilities;
+    // SAFETY: SDL calls on this test's thread; the descriptor outlives the attaches.
+    unsafe {
+        assert!(SDL_Init(SDL_INIT_GAMEPAD), "{}", crate::sdl::error());
+        let mut desc: SDL_VirtualJoystickDesc = std::mem::zeroed();
+        desc.version = std::mem::size_of::<SDL_VirtualJoystickDesc>() as u32;
+        desc.r#type = SDL_JOYSTICK_TYPE_GAMEPAD.0 as u16;
+        desc.naxes = SDL_GAMEPAD_AXIS_COUNT.0 as u16;
+        desc.nbuttons = SDL_GAMEPAD_BUTTON_COUNT.0 as u16;
+        desc.button_mask = (1u32 << SDL_GAMEPAD_BUTTON_COUNT.0) - 1;
+        desc.axis_mask = (1u32 << SDL_GAMEPAD_AXIS_COUNT.0) - 1;
+        desc.name = c"Nightjar test pad".as_ptr();
+        let ids: Vec<_> = (0..5).map(|_| SDL_AttachVirtualJoystick(&desc)).collect();
+        assert!(ids.iter().all(|id| id.0 != 0), "{}", crate::sdl::error());
+
+        // GFE: an appversion without Sunshine's negative fourth part.
+        let mut queue = InputQueue::new(&HostCapabilities { app_version: [7, 1, 431, 0], ..Default::default() });
+        let mut pads = Gamepads::default();
+        for id in &ids {
+            pads.added(*id).unwrap();
+        }
+        assert_eq!(pads.set_limit(queue.max_controllers()), 1, "the fifth controller has no slot");
+        pads.announce_all(&mut queue);
+        assert_eq!(pads.active_mask(), 0x0F, "the PC is told of four players");
+        assert!(pads.pads[..4].iter().all(|pad| pad.announced));
+        assert!(!pads.pads[4].announced, "the fifth is not announced");
+        assert_eq!(pad_slots(&pads), [Some(0), Some(1), Some(2), Some(3), None]);
+
+        // Nothing the fifth does reaches the PC; its buttons still drive Nightjar's own menu.
+        let mut out = Vec::new();
+        queue.poll(std::time::Instant::now(), false, &mut out);
+        let joystick = SDL_GetGamepadJoystick(pads.pads[4].handle);
+        SDL_SetJoystickVirtualButton(joystick, SDL_GAMEPAD_BUTTON_SOUTH.0, true);
+        SDL_UpdateJoysticks();
+        let mut event: SDL_Event = std::mem::zeroed();
+        while SDL_PollEvent(&mut event) {
+            pads.handle(&event, &mut queue);
+        }
+        assert!(queue.is_empty(), "no state from a controller the host has no slot for");
+        assert_eq!(pads.pads[4].buttons, button::A, "the controller itself still works here");
+
+        // One toast a stream, and a removed refused controller tells the host nothing.
+        assert_eq!(pads.refused_notice().as_deref(), Some("This PC takes 4 controllers"));
+        assert_eq!(pads.refused_notice(), None, "said once");
+        assert_eq!(pads.removed(ids[4]), None, "the PC never knew it");
+        pads.send_removed(4, &mut queue);
+        assert!(queue.is_empty());
+
+        // Sunshine takes all 16: the fifth controller gets its slot on its stream.
+        let mut queue = InputQueue::new(&HostCapabilities { app_version: [7, 1, 431, -1], ..Default::default() });
+        let mut sunshine = Gamepads::default();
+        for id in &ids {
+            sunshine.added(*id).unwrap();
+        }
+        assert_eq!(sunshine.set_limit(queue.max_controllers()), 0);
+        sunshine.announce_all(&mut queue);
+        assert_eq!(sunshine.active_mask(), 0x1F);
+        sunshine.close_all();
+
+        pads.close_all();
+        for id in ids {
+            SDL_DetachVirtualJoystick(id);
+        }
+        SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
+    }
+}
+
+fn pad_slots(pads: &Gamepads) -> Vec<Option<u8>> {
+    pads.pads.iter().map(Pad::slot).collect()
 }

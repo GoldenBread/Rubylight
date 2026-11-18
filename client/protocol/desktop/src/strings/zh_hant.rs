@@ -1695,4 +1695,5 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("Opens straight into your games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open the list of PCs.", "直接以全螢幕開啟你的遊戲，可用控制器或遙控器選擇。電視或掌機請保持開啟；關閉則開啟 PC 清單。"),
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "在 HDR 螢幕上呈現更亮的高光和更豐富的色彩。自動僅在螢幕、解碼器和 PC 都支援時開啟；如果 HDR 看起來泛白，請保持自動。"),
     ("Recommended", "推薦"),
+    ("This PC takes {} controllers", "此 PC 支援 {} 個控制器"),
 ];

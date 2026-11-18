@@ -28,6 +28,9 @@ const WHEEL_DELTA: i32 = 120;
 const MAX_MOTION_TYPES: usize = 2;
 const HELD_KEYS: usize = 256;
 const HELD_MOUSE_BUTTONS: usize = 8;
+/// The controller slots GFE's GameStream takes: its gamepad numbers fold past the fourth, and
+/// its mask has four bits.
+const GFE_CONTROLLERS: u8 = 4;
 
 /// An encoded input packet for [`crate::control::ControlSession::send_input`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -262,6 +265,13 @@ impl InputQueue {
         self.controller_identity
     }
 
+    /// The controller slots this host takes: four on GFE's GameStream, whose gamepad numbers
+    /// [`Self::send_controller`] folds past the fourth, and 16 on Sunshine and its forks. An app
+    /// announces and sends no more than these, so it can tell the player why a pad does nothing.
+    pub fn max_controllers(&self) -> u8 {
+        if self.sunshine { MAX_CONTROLLERS } else { GFE_CONTROLLERS }
+    }
+
     /// Counts what leaves from now on for Frame Warp (`crate::frame_warp`).
     pub fn set_frame_warp(&mut self, frame_warp: Option<std::sync::Arc<crate::frame_warp::FrameWarp>>) {
         self.frame_warp = frame_warp;
@@ -456,11 +466,11 @@ impl InputQueue {
             number % u16::from(MAX_CONTROLLERS)
         } else {
             // GFE takes four controllers and no extended buttons; MISC stands in for Guide.
-            active_mask &= 0xF;
+            active_mask &= (1 << GFE_CONTROLLERS) - 1;
             if buttons & button::MISC != 0 {
                 buttons |= button::SPECIAL;
             }
-            number % 4
+            number % u16::from(GFE_CONTROLLERS)
         };
         let event = InputEvent::Controller {
             number,

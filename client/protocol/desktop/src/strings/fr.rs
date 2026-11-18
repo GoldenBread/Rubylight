@@ -1695,4 +1695,5 @@ sudo sysctl -w net.core.rmem_max={}", "Tampon de réception : le système a acco
     ("Opens straight into your games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open the list of PCs.", "Ouvre directement vos jeux en plein écran, où une manette ou une télécommande peut en choisir un. Laissez-le activé pour un téléviseur ou une console portable ; désactivez-le pour ouvrir la liste des PC."),
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "Des hautes lumières plus vives et des couleurs plus riches sur un écran HDR. Auto ne l'active que si l'écran, le décodeur et le PC le prennent en charge ; laissez sur Auto sauf si le HDR paraît délavé."),
     ("Recommended", "Recommandé"),
+    ("This PC takes {} controllers", "Ce PC accepte {} manettes"),
 ];

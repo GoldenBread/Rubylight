@@ -1695,4 +1695,5 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("Opens straight into your games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open the list of PCs.", "게임을 전체 화면으로 바로 열어 컨트롤러나 리모컨으로 선택할 수 있습니다. TV나 휴대용 기기에서는 켜 두고, PC 목록을 열려면 끄세요."),
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "HDR 화면에서 더 밝은 하이라이트와 풍부한 색을 보여 줍니다. 자동은 화면, 디코더, PC가 모두 지원할 때만 켭니다. HDR이 흐릿하게 보이면 끄세요."),
     ("Recommended", "추천"),
+    ("This PC takes {} controllers", "이 PC는 컨트롤러 {}개를 지원합니다"),
 ];

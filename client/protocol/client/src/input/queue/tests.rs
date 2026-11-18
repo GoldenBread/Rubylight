@@ -34,6 +34,14 @@ fn take(q: &mut InputQueue, now: Instant) -> Vec<Input> {
     out.iter().map(|p| decode(&p.data).unwrap()).collect()
 }
 
+/// GFE takes four controllers, Sunshine and its forks 16: an app announces no more than these
+/// ([`InputQueue::max_controllers`]) so it can tell the player why a controller does nothing.
+#[test]
+fn the_controller_slots_follow_the_host() {
+    assert_eq!(queue(&gfe()).max_controllers(), 4);
+    assert_eq!(queue(&sunshine()).max_controllers(), 16);
+}
+
 /// A sent packet: a controller identity (0x55000080), read with the shared decoder the
 /// host uses for it (the host core these tests pin predates the packet), or any other
 /// input as the host core decodes it.

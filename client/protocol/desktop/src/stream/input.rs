@@ -227,6 +227,9 @@ impl Streaming {
                     if self.controller_audio_available() { pads.auto_audio(); }
                     if self.sends_controllers() {
                         self.session.input(|q| pads.announce_new(q));
+                        if let Some(refused) = pads.refused_notice() {
+                            self.show_toast(refused);
+                        }
                     }
                 }
                 SDL_EVENT_GAMEPAD_REMOVED => {

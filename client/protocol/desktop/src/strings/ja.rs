@@ -1695,4 +1695,5 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("Opens straight into your games, full screen, where a controller or remote can pick one. Leave it on for a TV or handheld; turn it off to open the list of PCs.", "ゲームを全画面で直接開き、コントローラーやリモコンで選べます。テレビや携帯ゲーム機ではオンにしたままにし、PC一覧を開くにはオフにしてください。"),
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "HDR 画面で明るいハイライトと豊かな色になります。自動は画面、デコーダー、PC が対応しているときだけオンにします。HDR が白っぽく見える場合はオフにしてください。"),
     ("Recommended", "おすすめ"),
+    ("This PC takes {} controllers", "この PC は {} 台のコントローラーに対応しています"),
 ];
