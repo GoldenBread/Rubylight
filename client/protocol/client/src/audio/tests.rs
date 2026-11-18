@@ -227,16 +227,3 @@ fn blocks_nothing_claims_cannot_grow_the_audio_queue() {
     }
     assert!(rx.queue.queued_blocks() <= 16, "{} blocks wait", rx.queue.queued_blocks());
 }
-
-// The version check's verdict is permanent: an old GFE whose FEC scheme this queue cannot serve
-// must not be tried again after the strikes' retry window.
-#[test]
-fn an_old_hosts_fec_scheme_stays_off_for_the_stream() {
-    let mut packets = stream(1600, 60);
-    let lost = [1500u16, 1502];
-    packets.retain(|p| p[1] != 97 || !lost.contains(&u16::from_be_bytes([p[2], p[3]])));
-    let mut rx = AudioReceiver::new(AudioConfig { app_version: [7, 1, 400, -1], ..config() });
-    rx.packets_to_drop = 0;
-    let _ = run(&mut rx, &packets);
-    assert_eq!(rx.stats().packet_count_fec_recovered, 0, "an old host's audio is played straight through, losses included");
-}

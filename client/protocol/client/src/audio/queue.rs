@@ -139,9 +139,6 @@ pub(super) struct AudioQueue {
     received_oos_data: bool,
     synchronizing: bool,
     incompatible_server: bool,
-    /// A host version whose FEC scheme this queue cannot serve at all: permanent for the stream,
-    /// unlike the strikes a modern host's odd packets earn.
-    incompatible_by_version: bool,
     /// Odd packets toward giving up on FEC, and audio packets since the last one counted.
     incompatible_strikes: u8,
     packets_since_strike: u32,
@@ -168,8 +165,7 @@ impl AudioQueue {
             last_oos_seq: 0,
             received_oos_data: false,
             synchronizing: true,
-            incompatible_server: false,
-            incompatible_by_version: !modern,
+            incompatible_server: !modern,
             incompatible_strikes: 0,
             packets_since_strike: 0,
             packets_fec_off: 0,
@@ -233,11 +229,6 @@ impl AudioQueue {
 
     /// Counts an audio packet for the strikes' and FEC's decay; true when FEC is off now.
     fn fec_off(&mut self) -> bool {
-        // A host the version check found incompatible stays so: nothing about later packets can
-        // make its scheme work.
-        if self.incompatible_by_version {
-            return true;
-        }
         if self.incompatible_server {
             self.packets_fec_off = self.packets_fec_off.saturating_add(1);
             if self.packets_fec_off >= INCOMPATIBLE_RETRY_PACKETS {
@@ -485,7 +476,7 @@ impl AudioQueue {
             if self.fec_off() {
                 return AddResult::HandleNow;
             }
-        } else if self.incompatible_server || self.incompatible_by_version {
+        } else if self.incompatible_server {
             return AddResult::Queued;
         }
 
