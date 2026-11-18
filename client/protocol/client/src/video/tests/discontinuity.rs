@@ -320,6 +320,67 @@ fn an_encrypted_wrong_frame_number_resyncs_instead_of_freezing() {
     assert_eq!(shown[1].frame_type, FrameType::Idr);
 }
 
+/// An encrypted stream whose counters restart far behind in the 32-bit counter: in the queue's
+/// 16-bit order that position is ahead, so the early drop must not throw it away before
+/// decryption, and the queue follows it once.
+#[test]
+fn an_encrypted_restart_far_behind_resyncs_instead_of_freezing() {
+    use aes_gcm::aead::generic_array::GenericArray;
+    use aes_gcm::aead::{AeadInPlace, KeyInit};
+    let key = [7u8; 16];
+    let cipher = aes_gcm::Aes128Gcm::new(GenericArray::from_slice(&key));
+    let mut nonce = 0u64;
+    let encrypt = |packet: &[u8], frame: u32, nonce: &mut u64| {
+        let mut body = packet.to_vec();
+        let mut iv = [0u8; 12];
+        iv[..8].copy_from_slice(&nonce.to_le_bytes());
+        *nonce += 1;
+        let tag = cipher
+            .encrypt_in_place_detached(GenericArray::from_slice(&iv), &[], &mut body)
+            .unwrap();
+        let mut datagram = iv.to_vec();
+        datagram.extend_from_slice(&frame.to_le_bytes());
+        datagram.extend_from_slice(&tag);
+        datagram.extend_from_slice(&body);
+        datagram
+    };
+    let mut host = Host::new();
+    let mut cfg = config(0x1);
+    cfg.encryption_key = Some(key);
+    let mut rx = VideoReceiver::new(cfg);
+    let mut events = Vec::new();
+    for packet in host.frame(&h264_idr(), 2) {
+        let encrypted = encrypt(&packet, 1, &mut nonce);
+        rx.receive(&encrypted, 1, &mut events);
+    }
+    rx.frame_decoded(FrameType::Idr);
+    // The stream had run on; its counters now restart at frame 1, sequence 0, with the queue
+    // 40,000 frames ahead: more than half the 16-bit range back in the counter, ahead in order.
+    rx.queue.seek(40_000);
+    let mut seq = 0u16;
+    for packet in rewound(host.frame(&h264_idr(), 2), 1, &mut seq) {
+        let encrypted = encrypt(&packet, 1, &mut nonce);
+        rx.receive(&encrypted, 2, &mut events);
+    }
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, VideoEvent::Signal(VideoSignal::RequestIdr)))
+            .count(),
+        1,
+        "the restarted stream is followed once, with one key frame asked for"
+    );
+    // The frame after the restart's first is shown, and the stream goes on from the new position.
+    for packet in rewound(host.frame(&h264_idr(), 2), 2, &mut seq) {
+        let encrypted = encrypt(&packet, 2, &mut nonce);
+        rx.receive(&encrypted, 3, &mut events);
+    }
+    let shown = frames(&events);
+    assert_eq!(shown.last().map(|frame| frame.number), Some(2));
+    assert_eq!(rx.current_frame_number(), 3);
+    assert_eq!(rx.stats().frame_drops, 0, "a restart is not loss");
+}
+
 /// The 16-bit wrap hosts count frames in is a normal step, not a jump: the queue follows it.
 #[test]
 fn a_frame_counter_wrap_is_not_a_discontinuity() {
