@@ -580,6 +580,30 @@ public class StreamMenuTest {
         }
     }
 
+    /** Without the live frame-rate change the row sets the bitrate, so it shows the bitrate, not the frame rate (nightjar #134). */
+    @Test
+    public void theBitrateRowShowsTheBitrateAndTheRateChangeRowTheFrameRate() {
+        try (var controller = Robolectric.buildActivity(Activity.class).setup()) {
+            Activity activity = controller.get();
+            activity.setTheme(R.style.StreamTheme);
+            StreamMenu.Options state = options("rubylight-serverinfo.xml", NvApp.Role.STREAM);
+            state.streamFps = 60;
+            state.bitrateKbps = 80000;
+            state.bitrateChange = kbps -> kbps;
+            StreamMenu menu = new StreamMenu(activity, () -> state, item -> { }, null, null);
+            menu.show();
+            MenuRow bitrate = (MenuRow) menu.row(BITRATE);
+            assertEquals(BitrateSlider.text(activity, 80000), bitrate.value().toString());
+            menu.sheet().dismiss();
+
+            state.rateChange = true;
+            menu = new StreamMenu(activity, () -> state, item -> { }, null, null);
+            menu.show();
+            assertEquals("60 FPS", ((MenuRow) menu.row(RATE_CHANGE)).value().toString());
+            menu.sheet().dismiss();
+        }
+    }
+
     @Test
     public void theOverlayPageChoosesAStyleAndHoldsTheDiagnostics() {
         StreamMenu.Options options = options("rubylight-serverinfo.xml", NvApp.Role.STREAM);
