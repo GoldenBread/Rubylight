@@ -177,17 +177,19 @@ async fn permanent_only_router_reclaims_old_own_ports_and_preserves_other_owners
         },
     ];
     let mut reported = Vec::new();
-    let applied = apply(&gateway, local, &wanted, owner, &mut reported, &[])
+    let (applied, forwarded) = apply(&gateway, local, &wanted, owner, &mut reported, &[])
         .await
         .unwrap();
-    // The other application's 48124 already forwards to this PC: no warning.
+    // The other application's 48124 already forwards to this PC: no warning, guests reach it
+    // under its own number, and the mapping stays the application's.
     assert!(reported.is_empty());
     assert_eq!(state.lock().unwrap().leases, [120, 0]);
+    assert_eq!(forwarded, [wanted[0]]);
     // This host's own 48125, left by an earlier run and no longer wanted, goes at once.
     assert_eq!(applied, [wanted[1]]);
     assert_eq!(state.lock().unwrap().deleted, [48125]);
     // A restarted host adopts its own permanent mapping.
-    let adopted = apply(&gateway, local, &[wanted[1]], owner, &mut reported, &[])
+    let (adopted, _) = apply(&gateway, local, &[wanted[1]], owner, &mut reported, &[])
         .await
         .unwrap();
     assert_eq!(adopted, applied);
@@ -201,7 +203,7 @@ async fn permanent_only_router_reclaims_old_own_ports_and_preserves_other_owners
         .find(|r| r.port == 48126)
         .unwrap()
         .owner = "New owner".into();
-    let unwanted = apply(&gateway, local, &[], owner, &mut reported, &adopted)
+    let (unwanted, _) = apply(&gateway, local, &[], owner, &mut reported, &adopted)
         .await
         .unwrap();
     assert!(unwanted.is_empty());
@@ -215,6 +217,48 @@ async fn permanent_only_router_reclaims_old_own_ports_and_preserves_other_owners
     server.abort();
 }
 #[tokio::test]
+async fn a_manual_forward_to_this_pc_counts_as_mapped_and_is_left_alone() {
+    let owner = "Butterpollo Rust fixture-host";
+    let local = "192.0.2.10".parse().unwrap();
+    // A forward the user made by hand on the router, under another description.
+    let state = Arc::new(Mutex::new(RouterState {
+        rows: vec![Row {
+            port: 48125,
+            protocol: Protocol::TCP,
+            owner: "Sunshine".into(),
+        }],
+        ..Default::default()
+    }));
+    let (gateway, server) = serve(state.clone()).await;
+    let wanted = [Mapping {
+        protocol: Protocol::TCP,
+        port: 48125,
+    }];
+    let mut reported = Vec::new();
+    let (applied, forwarded) = apply(&gateway, local, &wanted, owner, &mut reported, &[])
+        .await
+        .unwrap();
+    // The router already forwards the guest port to this PC: reachable at its own number, with
+    // no lease, no conflict, and no mapping of this host's.
+    assert!(applied.is_empty());
+    assert_eq!(forwarded, wanted);
+    assert!(reported.is_empty());
+    assert!(state.lock().unwrap().leases.is_empty());
+    // The link ends: the forward was never this host's, so it stays on the router and stops
+    // counting.
+    let (applied, forwarded) = apply(&gateway, local, &[], owner, &mut reported, &applied)
+        .await
+        .unwrap();
+    assert!(applied.is_empty());
+    assert!(forwarded.is_empty());
+    let state = state.lock().unwrap();
+    assert!(state.deleted.is_empty());
+    assert_eq!(state.rows.len(), 1);
+    drop(state);
+    server.abort();
+}
+
+#[tokio::test]
 async fn a_router_that_hides_its_table_still_gets_and_loses_the_mappings() {
     let owner = "Butterpollo Rust fixture-host";
     let state = Arc::new(Mutex::new(RouterState {
@@ -227,17 +271,18 @@ async fn a_router_that_hides_its_table_still_gets_and_loses_the_mappings() {
         protocol: Protocol::TCP,
         port: 48126,
     }];
-    let applied = apply(&gateway, local, &wanted, owner, &mut Vec::new(), &[])
+    let (applied, forwarded) = apply(&gateway, local, &wanted, owner, &mut Vec::new(), &[])
         .await
         .unwrap();
     assert_eq!(applied, wanted);
+    assert!(forwarded.is_empty());
     assert_eq!(state.lock().unwrap().rows.len(), 1);
     // The next round still knows it: the table can't show it, yet it goes once unwanted.
-    let again = apply(&gateway, local, &wanted, owner, &mut Vec::new(), &applied)
+    let (again, _) = apply(&gateway, local, &wanted, owner, &mut Vec::new(), &applied)
         .await
         .unwrap();
     assert_eq!(again, wanted);
-    let unwanted = apply(&gateway, local, &[], owner, &mut Vec::new(), &again)
+    let (unwanted, _) = apply(&gateway, local, &[], owner, &mut Vec::new(), &again)
         .await
         .unwrap();
     assert!(unwanted.is_empty());
@@ -260,36 +305,32 @@ async fn hidden_table_conflicts_remain_reported_until_the_mapping_succeeds() {
     }];
     let mut reported = Vec::new();
     for _ in 0..2 {
-        assert!(
-            apply(
-                &gateway,
-                "192.0.2.10".parse().unwrap(),
-                &wanted,
-                "fixture",
-                &mut reported,
-                &[]
-            )
-            .await
-            .unwrap()
-            .is_empty()
-        );
-        assert_eq!(reported, wanted);
-        state.lock().unwrap().list_fault = None;
-    }
-    state.lock().unwrap().add_fault = None;
-    assert_eq!(
-        apply(
+        let (applied, _) = apply(
             &gateway,
             "192.0.2.10".parse().unwrap(),
             &wanted,
             "fixture",
             &mut reported,
-            &[]
+            &[],
         )
         .await
-        .unwrap(),
-        wanted
-    );
+        .unwrap();
+        assert!(applied.is_empty());
+        assert_eq!(reported, wanted);
+        state.lock().unwrap().list_fault = None;
+    }
+    state.lock().unwrap().add_fault = None;
+    let (mapped, _) = apply(
+        &gateway,
+        "192.0.2.10".parse().unwrap(),
+        &wanted,
+        "fixture",
+        &mut reported,
+        &[],
+    )
+    .await
+    .unwrap();
+    assert_eq!(mapped, wanted);
     assert!(reported.is_empty());
     server.abort();
 }
@@ -340,7 +381,7 @@ async fn browser_guest_ports_are_forwarded_while_a_link_needs_them_and_removed_a
         // An internet link works.
         let (stream, guests) = wanted_now(&config, ports, upnp, true, true);
         let wanted: Vec<Mapping> = stream.iter().chain(&guests).copied().collect();
-        let applied = apply(&gateway, local, &wanted, owner, &mut Vec::new(), &[])
+        let (applied, _) = apply(&gateway, local, &wanted, owner, &mut Vec::new(), &[])
             .await
             .unwrap();
         assert_eq!(applied, wanted);
@@ -351,7 +392,7 @@ async fn browser_guest_ports_are_forwarded_while_a_link_needs_them_and_removed_a
         // The link is gone and nobody watches: the guest ports go, the streaming ports stay.
         let (stream, guests) = wanted_now(&config, ports, upnp, false, false);
         assert!(guests.is_empty());
-        let applied = apply(&gateway, local, &stream, owner, &mut Vec::new(), &applied)
+        let (applied, _) = apply(&gateway, local, &stream, owner, &mut Vec::new(), &applied)
             .await
             .unwrap();
         assert_eq!(applied, stream);

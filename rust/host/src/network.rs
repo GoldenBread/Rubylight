@@ -595,10 +595,35 @@ fn forwards_here(entry: &igd_next::PortMappingEntry, local: IpAddr) -> bool {
     entry.internal_client.parse::<IpAddr>().ok() == Some(local)
         && entry.internal_port == entry.external_port
 }
+/// The router's entry for `mapping`, whichever application owns it.
+fn entry<'a>(
+    entries: &'a [igd_next::PortMappingEntry],
+    mapping: &Mapping,
+) -> Option<&'a igd_next::PortMappingEntry> {
+    entries
+        .iter()
+        .find(|entry| entry.protocol == mapping.protocol && entry.external_port == mapping.port)
+}
+/// Whether a mapping is this host's to take down: one under its description, or one an
+/// unreadable table cannot show, which stays this host's until the table shows another owner.
+fn ours(
+    entries: &[igd_next::PortMappingEntry],
+    complete: bool,
+    local: IpAddr,
+    description: &str,
+    mapping: &Mapping,
+) -> bool {
+    match entry(entries, mapping) {
+        Some(entry) => owned(entry, local, description),
+        None => !complete,
+    }
+}
 /// `reported` holds the ports already warned about: the router is asked
 /// again every minute, but a continuing conflict is only warned once.
 /// `previous` is what the last round left mapped: a router that hides its table still gets the
 /// ones no longer wanted removed.
+/// Returns the mappings this host holds, and the ports another mapping already forwards to this
+/// PC under the same number: reachable, but never this host's to take down.
 async fn apply<P: Provider>(
     gateway: &Gateway<P>,
     local: IpAddr,
@@ -606,7 +631,7 @@ async fn apply<P: Provider>(
     description: &str,
     reported: &mut Vec<Mapping>,
     previous: &[Mapping],
-) -> Result<Vec<Mapping>> {
+) -> Result<(Vec<Mapping>, Vec<Mapping>)> {
     let (entries, complete) = entries(gateway).await;
     // The stable host description lets a restarted host reclaim its own
     // permanent leases, including ports removed from a later configuration.
@@ -618,6 +643,7 @@ async fn apply<P: Provider>(
             port: entry.external_port,
         })
         .collect();
+    let mut forwarded = Vec::new();
     // A table read to the end shows which of them are still this host's; an unreadable one
     // can't, so they stay this host's, as `remove` takes them at shutdown.
     if !complete {
@@ -634,7 +660,14 @@ async fn apply<P: Provider>(
                 && !owned(entry, local, description)
         }) {
             if forwards_here(entry, local) {
+                // Another mapping already forwards the port to this PC, as a manual forward
+                // does: guests reach it at its own number, so it counts as mapped, and the
+                // mapping is not this host's to renew or take down.
                 tracing::debug!(port=mapping.port, protocol=?mapping.protocol, owner=%entry.port_mapping_description, "UPnP port already forwards to this PC under another mapping");
+                reported.retain(|reported| reported != mapping);
+                if !forwarded.contains(mapping) {
+                    forwarded.push(*mapping);
+                }
             } else if reported.contains(mapping) {
                 tracing::debug!(port=mapping.port, protocol=?mapping.protocol, "UPnP port is still owned by another mapping");
             } else {
@@ -697,6 +730,12 @@ async fn apply<P: Provider>(
         .copied()
         .collect();
     for mapping in unwanted {
+        // A mapping the router now shows under another owner is not this host's: it stays on
+        // the router, and stops counting here now that nothing wants it.
+        if !ours(&entries, complete, local, description, &mapping) {
+            applied.retain(|held| *held != mapping);
+            continue;
+        }
         match tokio::time::timeout(
             Duration::from_secs(3),
             gateway.remove_port(mapping.protocol, mapping.port),
@@ -716,7 +755,7 @@ async fn apply<P: Provider>(
             }
         }
     }
-    Ok(applied)
+    Ok((applied, forwarded))
 }
 async fn remove<P: Provider>(
     gateway: &Gateway<P>,
@@ -731,16 +770,9 @@ async fn remove<P: Provider>(
     // host's shutdown gives this task ten seconds.
     let mut failed = None;
     for mapping in applied {
-        let entry = entries.iter().find(|entry| {
-            entry.protocol == mapping.protocol && entry.external_port == mapping.port
-        });
         // A mapping this host added that an unreadable table cannot show is
         // still removed; one the table shows under another owner is not.
-        let ours = match entry {
-            Some(entry) => owned(entry, local, description),
-            None => !complete,
-        };
-        if ours {
+        if ours(&entries, complete, local, description, mapping) {
             let removed = tokio::time::timeout(
                 Duration::from_secs(3),
                 gateway.remove_port(mapping.protocol, mapping.port),
@@ -795,6 +827,15 @@ fn protocol_name(protocol: Protocol) -> String {
         "UDP"
     }
     .to_owned()
+}
+/// Every port the router has mapped for this host: the ones it holds, and the ones another
+/// mapping already forwards here under the same number.
+fn mapped_ports(applied: &[Mapping], forwarded: &[Mapping]) -> Vec<(Mapping, u16)> {
+    applied
+        .iter()
+        .chain(forwarded)
+        .map(|mapping| (*mapping, mapping.port))
+        .collect()
 }
 /// The console's view of a mapping attempt: each wanted port mapped or refused, and why.
 fn port_states(
@@ -1022,18 +1063,19 @@ async fn renew(
         }
     }
     if let Some((gateway, local, applied)) = held.upnp.as_mut() {
+        let mut forwarded = Vec::new();
         match apply(gateway, *local, wanted, description, reported, applied).await {
-            Ok(mappings) => *applied = mappings,
+            Ok((mappings, elsewhere)) => {
+                *applied = mappings;
+                forwarded = elsewhere;
+            }
             Err(error) => tracing::warn!(%error, "UPnP mapping could not be renewed"),
         }
         let external = tokio::time::timeout(Duration::from_secs(3), gateway.get_external_ip())
             .await
             .ok()
             .and_then(|result| result.ok());
-        let mapped: Vec<(Mapping, u16)> = applied
-            .iter()
-            .map(|mapping| (*mapping, mapping.port))
-            .collect();
+        let mapped = mapped_ports(applied, &forwarded);
         let refused: Vec<(Mapping, String)> = reported
             .iter()
             .map(|mapping| {
@@ -1191,6 +1233,19 @@ async fn renew_pinholes(
 #[cfg(test)]
 mod port_state_tests {
     use super::*;
+    #[test]
+    fn a_port_another_mapping_forwards_here_is_reported_mapped_at_its_own_number() {
+        let forwarded = [Mapping {
+            protocol: Protocol::TCP,
+            port: 47991,
+        }];
+        let (ok, failed) = port_states(&forwarded, &mapped_ports(&[], &forwarded), &[]);
+        assert_eq!(ok.len(), 1);
+        assert_eq!(ok[0].port, 47991);
+        assert_eq!(ok[0].external, Some(47991));
+        assert!(ok[0].reason.is_none());
+        assert!(failed.is_empty());
+    }
     #[test]
     fn the_console_sees_every_wanted_port_mapped_or_refused_with_a_reason() {
         let wanted = [
