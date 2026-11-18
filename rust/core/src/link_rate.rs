@@ -664,10 +664,28 @@ impl Default for LinkRate {
 pub fn pyrowave_floor_kbps(stream: &Negotiated) -> u32 {
     let minimum =
         crate::pyrowave::minimum_kbps(stream.width, stream.height, stream.fps.saturating_mul(1000));
+    in_session_bitrate(minimum, stream)
+}
+
+/// PyroWave's recommended rate ([`crate::pyrowave::recommended_kbps`]) in the session's bitrate,
+/// scaled exactly as the floor is, so the stream card's amber level, the log and the launch
+/// warning agree. The whole frame rate is used, as for the floor.
+pub fn pyrowave_recommended_kbps(stream: &Negotiated) -> u32 {
+    let recommended = crate::pyrowave::recommended_kbps(
+        stream.width,
+        stream.height,
+        stream.fps.saturating_mul(1000),
+    );
+    in_session_bitrate(recommended, stream)
+}
+
+/// `rate_kbps` reduced from the bitrate the client configured to the one the sender codes
+/// (`bitrate_kbps` over `configured_bitrate_kbps`), unchanged when the client's number is unknown.
+fn in_session_bitrate(rate_kbps: u32, stream: &Negotiated) -> u32 {
     if stream.configured_bitrate_kbps == 0 {
-        return minimum;
+        return rate_kbps;
     }
-    (u64::from(minimum) * u64::from(stream.bitrate_kbps)
+    (u64::from(rate_kbps) * u64::from(stream.bitrate_kbps)
         / u64::from(stream.configured_bitrate_kbps))
     .min(u64::from(u32::MAX)) as u32
 }

@@ -2371,13 +2371,14 @@ fn only_pyrowave_sessions_report_quality_bitrates() {
         let session = Session::new(launch("quality", Role::Stream), config.clone());
         let info = session.info();
         if codec == 3 {
+            // 59.94 is judged as 60 fps, as the client's minimum and link-rate adaptation are.
             assert_eq!(
                 info["pyrowave_minimum_kbps"],
-                crate::pyrowave::minimum_kbps(config.width, config.height, 59_940)
+                crate::pyrowave::minimum_kbps(config.width, config.height, 60_000)
             );
             assert_eq!(
                 info["pyrowave_recommended_kbps"],
-                crate::pyrowave::recommended_kbps(config.width, config.height, 59_940)
+                crate::pyrowave::recommended_kbps(config.width, config.height, 60_000)
             );
         } else {
             assert!(info["pyrowave_minimum_kbps"].is_null());
@@ -2386,6 +2387,21 @@ fn only_pyrowave_sessions_report_quality_bitrates() {
         session.bitrate.store(100_000, Ordering::Relaxed);
         assert_eq!(session.info()["encoder_bitrate_kbps"], 100_000);
     }
+    // A client that asked exactly the floor: the published rates are scaled by configured over
+    // negotiated like the encoder's, so the card compares equal numbers and stays green.
+    let floor = crate::pyrowave::minimum_kbps(1920, 1080, 60_000);
+    let config = Negotiated {
+        codec: 3,
+        rate_millihz: 59_940,
+        bitrate_kbps: floor - 752,
+        configured_bitrate_kbps: floor,
+        ..Default::default()
+    };
+    let session = Session::new(launch("quality", Role::Stream), config);
+    session.bitrate.store(floor - 752, Ordering::Relaxed);
+    let info = session.info();
+    assert_eq!(info["pyrowave_minimum_kbps"], floor - 752);
+    assert_eq!(info["encoder_bitrate_kbps"], floor - 752);
 }
 #[test]
 fn host_only_loss_on_a_remembered_route_names_the_pc_not_the_path() {

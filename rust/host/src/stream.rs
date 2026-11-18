@@ -1270,11 +1270,7 @@ impl Media {
         // The same floor link-rate adaptation stops at, measured on the project's test scenes.
         // Whole frames per second, as the client's minimum is, so 59.94 compares as 60.
         let minimum = butterpollo_core::link_rate::pyrowave_floor_kbps(&s.config);
-        let recommended = butterpollo_core::pyrowave::recommended_kbps(
-            s.config.width,
-            s.config.height,
-            s.config.fps.saturating_mul(1000),
-        );
+        let recommended = butterpollo_core::link_rate::pyrowave_recommended_kbps(&s.config);
         let bitrate = s.bitrate.load(Ordering::Relaxed);
         if s.config.codec == 3 && bitrate < minimum {
             tracing::warn!(

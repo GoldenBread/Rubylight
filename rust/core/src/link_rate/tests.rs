@@ -3152,4 +3152,26 @@ fn the_pyrowave_floor_uses_whole_frames_per_second() {
         pyrowave_floor_kbps(&stream(120, 119_880)),
         crate::pyrowave::minimum_kbps(1920, 1080, 120_000)
     );
+    assert_eq!(
+        pyrowave_recommended_kbps(&stream(60, 59_940)),
+        crate::pyrowave::recommended_kbps(1920, 1080, 60_000)
+    );
+    // A client that asked exactly a rate is not red or amber for the few Mbps the picture gives
+    // up to sound and control: the published rate and the coded one are scaled alike.
+    let floor = crate::pyrowave::minimum_kbps(1920, 1080, 60_000);
+    let exact = Negotiated {
+        codec: 3,
+        bitrate_kbps: floor - 752,
+        configured_bitrate_kbps: floor,
+        ..Default::default()
+    };
+    assert_eq!(pyrowave_floor_kbps(&exact), floor - 752);
+    let recommended = crate::pyrowave::recommended_kbps(1920, 1080, 60_000);
+    let exact = Negotiated {
+        codec: 3,
+        bitrate_kbps: recommended - 1300,
+        configured_bitrate_kbps: recommended,
+        ..Default::default()
+    };
+    assert_eq!(pyrowave_recommended_kbps(&exact), recommended - 1300);
 }
