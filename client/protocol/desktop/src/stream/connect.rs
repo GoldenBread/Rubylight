@@ -201,12 +201,17 @@ impl Connecting {
         let worker_shared = shared.clone();
         let worker_interrupt = interrupt.clone();
         let mut worker_plan = plan.clone();
+        // Handed over through a slot both sides hold: a worker that cannot start drops its closure,
+        // and the sessions still stopping must not be dropped (detached) with it.
+        let stopping = Arc::new(std::sync::Mutex::new(previous));
+        let worker_stopping = stopping.clone();
         // A worker that cannot start drops the sender: `poll` then reports the attempt ended.
         let worker = std::thread::Builder::new()
             .name("connect".into())
             .spawn(move || {
                 // A start must not launch while a session still stopping has its control
                 // connection and decoder open: the PC would see two of this device.
+                let previous = std::mem::take(&mut *lock(&worker_stopping));
                 wait_for_previous(previous, &worker_shared, &worker_interrupt);
                 let result: Result<(Session, Facts, LaunchPlan), ConnectError> = match connect_with_recovery(&mut worker_plan, worker_shared, &worker_interrupt) {
                     // The screen left this start before it made a stream: nobody waits for its
@@ -223,6 +228,10 @@ impl Connecting {
             })
             .inspect_err(|e| eprintln!("nightjar: the connect thread cannot start: {e}"))
             .ok();
+        if worker.is_none() {
+            // Nobody waits for them now: the app takes them back with this attempt's teardowns.
+            lock(&shared.teardowns).append(&mut lock(&stopping));
+        }
         Self {
             shared,
             interrupt,

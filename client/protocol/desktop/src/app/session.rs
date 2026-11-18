@@ -405,8 +405,10 @@ impl App {
             self.refresh_plan(&mut plan);
             // The old session's threads join before the next launch's HTTP request (the connect
             // thread joins this handle first): its control connection must be closed first, or
-            // the PC sees two of this device.
-            self.attempts.begin(Connecting::start(plan, self.waker.clone(), vec![teardown]));
+            // the PC sees two of this device. So does any earlier session still stopping.
+            let mut stopping = self.take_stopping();
+            stopping.push(teardown);
+            self.attempts.begin(Connecting::start(plan, self.waker.clone(), stopping));
         } else {
             self.push_teardown(teardown);
         // A failure the PC ended the stream on: the message waits for the poll just started,
