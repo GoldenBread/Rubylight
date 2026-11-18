@@ -15,7 +15,9 @@ $logs = Join-Path $Work "logs\$Name"
 $code = 1
 try {
     "remote check of $Branch on $env:COMPUTERNAME as $env:USERNAME in session $((Get-Process -Id $PID).SessionId)" | Out-File $log -Encoding utf8
-    $env:PATH = "$env:USERPROFILE\.cargo\bin;C:\msys64\ucrt64\bin;$env:PATH"
+    # MSYS2 last: its python must not shadow the user's (the tools suites need PyYAML);
+    # rl-env.ps1 and tools/dev.py put MSYS2 first for the Cargo stages themselves.
+    $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH;C:\msys64\ucrt64\bin"
     git -C $Repo fetch -q origin 2>&1 | Out-File -Append $log -Encoding utf8
     if (Test-Path -LiteralPath $tree) { git -C $Repo worktree remove --force $tree 2>&1 | Out-File -Append $log -Encoding utf8 }
     git -C $Repo worktree prune 2>&1 | Out-File -Append $log -Encoding utf8
