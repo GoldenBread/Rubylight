@@ -231,7 +231,7 @@ fn decoded(frame: media::Frame, case: &Case) -> Decoded {
         setup,
         rtp: 0,
         number: 0,
-        key: false,
+        follows: true, history_breaks: 1,
         receive_us: 0,
         enqueue_us: 0,
         input_us: 0,

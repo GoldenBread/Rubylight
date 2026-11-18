@@ -584,6 +584,23 @@ fn a_picture_takes_the_times_of_its_own_frame_and_drops_those_of_frames_without_
     assert_eq!(in_flight, [times(1)]);
 }
 
+/// The decode side decides temporal upscaling's continuity: consecutive frames of one scene
+/// follow each other, a lost frame and a key frame break it, and the count is cumulative so a
+/// picture the pacer drops cannot hide its break.
+#[test]
+fn a_picture_follows_the_last_decoded_and_a_lost_frame_or_key_frame_breaks_the_history() {
+    let mut history = DecodedHistory::default();
+    assert_eq!(history.step(1, false), (false, 1), "the first picture has no history");
+    assert_eq!(history.step(2, false), (true, 1));
+    assert_eq!(history.step(4, false), (false, 2), "a lost frame");
+    assert_eq!(history.step(5, false), (true, 2));
+    assert_eq!(history.step(6, true), (false, 3), "a key frame");
+    assert_eq!(history.step(7, false), (true, 3));
+    // The host's frame numbers wrap.
+    let mut history = DecodedHistory { last: Some(u32::MAX), breaks: 3 };
+    assert_eq!(history.step(0, false), (true, 3));
+}
+
 #[test]
 fn a_refused_backend_goes_on_with_the_ones_after_it() {
     let gpu = std::ptr::dangling_mut::<c_void>();

@@ -1208,10 +1208,11 @@ impl Streaming {
         self.window.dropped_pacing += dropped;
         self.shared.counters.replaced.fetch_add(u64::from(dropped), Ordering::Relaxed);
         let has_picture = picture.is_some();
-        // Temporal upscaling keeps its history from the last picture it drew: a key frame, or a
-        // gap in the host's frame numbers (a lost frame), makes that history another picture's.
-        let temporal_reset = picture.as_ref().is_some_and(|p| temporal::history_stale(p.decoded.key, p.decoded.number, self.last_drawn));
-        if let Some(p) = &picture { self.last_drawn = Some(p.decoded.number); }
+        // Temporal upscaling's history is the same scene's until the decode side reports a key
+        // frame or a gap. The count is cumulative, so pictures the pacer drops carry it on:
+        // skipping pictures alone keeps the history, a break in a dropped one still resets it.
+        let temporal_reset = picture.as_ref().is_some_and(|p| temporal::history_stale(self.drawn_history, p.decoded.follows, p.decoded.history_breaks));
+        if let Some(p) = &picture { self.drawn_history = p.decoded.history_breaks; }
         // Without a picture or a redraw, the held picture may go out again: for a VRR panel
         // about to refresh by itself, or shifted anew by Frame Warp.
         let kept = !has_picture && !self.needs_redraw && !sliced && self.lfc_repeat(now);

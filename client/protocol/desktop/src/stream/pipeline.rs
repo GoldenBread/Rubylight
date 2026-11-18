@@ -32,8 +32,13 @@ pub struct Decoded {
     pub rtp: u32,
     /// The host's frame number.
     pub number: u32,
-    /// A key frame: a new scene, whose picture temporal upscaling must not blend with the last.
-    pub key: bool,
+    /// The picture follows the last one decoded (the host's next frame number, no key frame), so
+    /// temporal upscaling's history is still the same scene's.
+    pub follows: bool,
+    /// How many pictures so far did not follow the one before, this one included: the decode
+    /// side's cumulative count, so a picture the pacer drops still counts. Temporal upscaling
+    /// resets when it differs from the last drawn picture's.
+    pub history_breaks: u64,
     /// The frame's first packet arrived (session clock, µs).
     pub receive_us: u64,
     /// The frame was complete and queued for decoding.
@@ -191,12 +196,36 @@ pub struct Shared {
     /// waited too long for the previous session): the app takes these and joins them before the
     /// renderer goes.
     pub teardowns: Mutex<Vec<super::Teardown>>,
+    /// The decode side's picture continuity (`Decoded::follows` and `Decoded::history_breaks`).
+    pub history: Mutex<DecodedHistory>,
     /// The toast that the microphone runs without the echo cancellation asked for was shown.
     pub echo_cancel_noted: std::sync::atomic::AtomicBool,
     /// When the last of the pictures in a row the presenter could not show was ready (session
     /// clock, us; 0 for none): the decoder that made it gives way (`Decoder::presenter_refused`).
     pub present_refused: AtomicU64,
     waker: Waker,
+}
+
+/// The last picture decoded and how many breaks the decode side has seen: what
+/// [`Shared::decode_history`] keeps for temporal upscaling.
+#[derive(Default)]
+pub struct DecodedHistory {
+    last: Option<u32>,
+    breaks: u64,
+}
+
+impl DecodedHistory {
+    /// Whether a picture of `number` is a key frame (`key`) or skips the host's frame numbers:
+    /// temporal upscaling's history is another picture's then. Returns `follows` and the number
+    /// of breaks up to and including this picture (`Decoded::follows`, `Decoded::history_breaks`).
+    fn step(&mut self, number: u32, key: bool) -> (bool, u64) {
+        let follows = !key && self.last.is_some_and(|last| number == last.wrapping_add(1));
+        if !follows {
+            self.breaks += 1;
+        }
+        self.last = Some(number);
+        (follows, self.breaks)
+    }
 }
 
 #[derive(Default)]
@@ -230,6 +259,7 @@ impl Shared {
             host_times: std::sync::atomic::AtomicBool::new(false),
             roam_watch: Mutex::new(None),
             teardowns: Mutex::new(Vec::new()),
+            history: Mutex::new(DecodedHistory::default()),
             echo_cancel_noted: std::sync::atomic::AtomicBool::new(false),
             present_refused: AtomicU64::new(0),
             waker,
@@ -283,6 +313,12 @@ impl Shared {
     pub fn notify(&self, notice: Notice) {
         lock(&self.notices).push(notice);
         self.wake();
+    }
+
+    /// Frame `number`'s continuity for temporal upscaling: whether it follows the last picture
+    /// decoded, and the decode side's count of breaks up to it.
+    pub fn decode_history(&self, number: u32, key: bool) -> (bool, u64) {
+        lock(&self.history).step(number, key)
     }
 
     /// A failed attempt is being retried: its notices are dropped, and so is anything its
@@ -1288,8 +1324,10 @@ impl Decoder {
             }
             drop(timing);
             self.shared.count_race(&output.race);
+            let key = frame.frame_type == FrameType::Idr;
+            let (follows, history_breaks) = self.shared.decode_history(frame.number, key);
             let decoded = Decoded { picture: output.picture, setup, rtp: frame.rtp_timestamp, number: frame.number,
-                key: frame.frame_type == FrameType::Idr, receive_us: frame.receive_time_us,
+                follows, history_breaks, receive_us: frame.receive_time_us,
                 enqueue_us: frame.enqueue_time_us, input_us: start, ready_us, host_latency: frame.host_processing_latency,
                 early, first_block_us: output.first_block_us, race: output.race, bands: output.bands, race_seq: output.race_seq, visible: None };
             self.shared.queue(decoded);
@@ -1344,12 +1382,14 @@ impl Decoder {
                 let budget_us = 2_000_000_000 / u64::from(fps_millihz);
                 timing.late += u32::from(ready.saturating_sub(own.enqueue_us) >= budget_us);
                 drop(timing);
+                let (follows, history_breaks) = shared.decode_history(own.number, own.key);
                 let decoded = Decoded {
                     picture: Picture::Frame(picture),
                     setup,
                     rtp: pts as u32,
                     number: own.number,
-                    key: own.key,
+                    follows,
+                    history_breaks,
                     receive_us: own.receive_us,
                     enqueue_us: own.enqueue_us,
                     input_us: own.input_us,

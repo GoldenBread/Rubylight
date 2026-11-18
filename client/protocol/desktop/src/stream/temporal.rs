@@ -145,18 +145,14 @@ fn uniforms(stage: Stage, input: (u32, u32), output: (u32, u32), reset: bool, sh
     values.map(f32::to_bits)
 }
 
-/// Whether temporal upscaling's history belongs to another picture than this one: the picture is
-/// a key frame, or first, or the host's frame numbers skipped, which a lost frame or a counter
-/// discontinuity leaves behind. The accumulate pass then starts the history afresh instead of
-/// blending a different scene into this picture for several frames.
-pub(super) fn history_stale(key: bool, number: u32, last_drawn: Option<u32>) -> bool {
-    if key {
-        return true;
-    }
-    match last_drawn {
-        Some(last) => number != last.wrapping_add(1),
-        None => true,
-    }
+/// Whether temporal upscaling's history belongs to another picture than this one: the picture
+/// does not follow the one before it, or the decode side's breaks count
+/// (`Decoded::history_breaks`) is newer than the last picture drawn, so a key frame or a gap
+/// happened since, in this picture or in one the pacer dropped. Pictures that only skip a turn
+/// leave the count alone, so a stream shown at fewer presents than it decodes keeps its history.
+/// The accumulate pass starts the history afresh instead of blending another scene.
+pub(super) fn history_stale(last_drawn: u64, follows: bool, breaks: u64) -> bool {
+    !follows || breaks != last_drawn
 }
 
 /// One pass's shader and its draws, every binding of parity 0 then of parity 1.
@@ -430,19 +426,28 @@ mod tests {
         assert!(linear(FRAME) && linear(motion(1)) && linear(history(0)) && !linear(luma(2, 0)) && !linear(CUT));
     }
 
-    /// The history is kept only between consecutive pictures of one scene: a key frame, the
-    /// first picture and a gap in the host's frame numbers (a lost frame, a discontinuity) start
-    /// it afresh, and the 32-bit frame numbers wrap as the host counts them.
+    /// The history is kept across pictures the pacer drops, and starts afresh only for a real
+    /// gap or a key frame, even when the picture carrying that break was the one dropped.
     #[test]
-    fn the_history_is_stale_for_a_key_frame_a_gap_and_the_first_picture() {
-        assert!(!history_stale(false, 8, Some(7)), "the next picture keeps the history");
-        assert!(history_stale(true, 8, Some(7)), "a key frame starts a new scene");
-        assert!(history_stale(false, 9, Some(7)), "a lost frame's gap");
-        assert!(history_stale(false, 8, None), "the first picture");
-        assert!(
-            !history_stale(false, 0, Some(u32::MAX)),
-            "a host's frame numbers wrap"
-        );
+    fn the_history_keeps_across_pacer_skips_and_resets_on_a_break() {
+        // A stream whose only break is its first picture (there was no history before it), every
+        // other picture dropped as on a 60 Hz display showing a 120 fps stream.
+        let mut drawn = 0;
+        let mut resets = Vec::new();
+        for (i, breaks) in [1u64, 1, 1, 1, 1, 1].into_iter().enumerate() {
+            if i % 2 == 0 {
+                if history_stale(drawn, true, breaks) {
+                    resets.push(i);
+                }
+                drawn = breaks;
+            }
+        }
+        assert_eq!(resets, [0], "the first picture starts the history; skips keep it");
+        assert!(!history_stale(1, true, 1), "a picture that follows keeps it");
+        assert!(history_stale(1, false, 1), "one that does not follow resets it");
+        assert!(history_stale(1, true, 2), "a lost frame's gap resets the next picture drawn");
+        assert!(!history_stale(2, true, 2), "and the pictures after it keep the new history");
+        assert!(history_stale(2, true, 3), "even when the picture that broke it was dropped");
     }
 
     #[test]

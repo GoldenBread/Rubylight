@@ -864,7 +864,7 @@ pub(crate) fn decoded(ready_us: u64) -> Decoded {
         },
         rtp: ready_us as u32,
         number: 0,
-        key: false,
+        follows: true, history_breaks: 1,
         receive_us: 0,
         enqueue_us: 0,
         input_us: 0,
