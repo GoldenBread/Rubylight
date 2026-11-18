@@ -45,11 +45,18 @@ pub(super) struct PortMapper {
     pub(super) external: Option<IpAddr>,
 }
 
-/// What a renewal did: each wanted port mapped (with its external port) or refused, and why.
+/// What a renewal did: each wanted port mapped (with its external port) or refused and why,
+/// the leases it confirmed gone, and the router's silence if it ran out of answers.
 #[derive(Debug, Default)]
 pub(super) struct Outcome {
     pub(super) mapped: Vec<(Mapping, u16)>,
     pub(super) failed: Vec<(Mapping, String)>,
+    /// The mappings the router answered for and refused: not this host's to keep.
+    pub(super) refused: Vec<Mapping>,
+    /// The leases this round asked the router to delete, and that it answered for.
+    pub(super) removed: Vec<Mapping>,
+    /// The router stopped answering: why, for the console.
+    pub(super) error: Option<anyhow::Error>,
 }
 
 /// The PCP mapping nonce of this host at `local`, from `secret` (the host's private key). A PCP
@@ -113,7 +120,7 @@ impl PortMapper {
         Ok(mapper)
     }
 
-    fn new(socket: UdpSocket, local: IpAddr, secret: &[u8]) -> Self {
+    pub(super) fn new(socket: UdpSocket, local: IpAddr, secret: &[u8]) -> Self {
         Self {
             socket,
             local,
@@ -242,9 +249,12 @@ impl PortMapper {
         }
     }
 
-    /// Maps (or renews) each wanted port whose lease is due, and removes leases no longer wanted.
-    pub(super) async fn renew(&mut self, wanted: &[Mapping]) -> Result<Outcome> {
+    /// Maps (or renews) each wanted port whose lease is due, and removes leases no longer
+    /// wanted. Says which of those deletes the router answered for, and why an unanswered
+    /// router ended the round.
+    pub(super) async fn renew(&mut self, wanted: &[Mapping]) -> Outcome {
         let now = Instant::now();
+        let mut outcome = Outcome::default();
         let gone: Vec<Mapping> = self
             .leases
             .iter()
@@ -252,9 +262,10 @@ impl PortMapper {
             .filter(|mapping| !wanted.contains(mapping))
             .collect();
         for mapping in gone {
-            let _ = self.unmap(mapping).await;
+            if self.unmap(mapping).await {
+                outcome.removed.push(mapping);
+            }
         }
-        let mut outcome = Outcome::default();
         for &mapping in wanted {
             if let Some(lease) = self
                 .leases
@@ -275,12 +286,16 @@ impl PortMapper {
                     outcome.mapped.push((mapping, external));
                 }
                 Err(error) => {
-                    // No answer at all is the router's, not this port's: stop asking.
-                    if self.method.is_none()
-                        || (outcome.mapped.is_empty()
-                            && error.to_string().contains("does not answer"))
-                    {
-                        return Err(error);
+                    // No answer at all is the router's, not this port's: stop asking. A
+                    // mapping it did not answer for may still be held, so only a refusal
+                    // means this host no longer has it.
+                    let silent = error.to_string().contains("does not answer");
+                    if self.method.is_none() || (outcome.mapped.is_empty() && silent) {
+                        outcome.error = Some(error);
+                        return outcome;
+                    }
+                    if !silent {
+                        outcome.refused.push(mapping);
                     }
                     outcome.failed.push((mapping, format!("{error:#}")));
                 }
@@ -289,7 +304,7 @@ impl PortMapper {
         if self.method == Some(Method::NatPmp) && self.external.is_none() {
             self.natpmp_address().await;
         }
-        Ok(outcome)
+        outcome
     }
 
     /// One mapping: its external port and granted lifetime.
@@ -352,9 +367,10 @@ impl PortMapper {
     /// Deletes `mappings` this host left on the router, as one start after an unclean stop does:
     /// a mapping request with lifetime 0 for each, which PCP checks against this host's nonce.
     /// The first request also tells which protocol the router speaks; one that answers neither
-    /// ends the round, as asking for every port would only wait as long. Says whether the
-    /// router answered for every mapping.
-    pub(super) async fn delete(&mut self, mappings: &[Mapping]) -> bool {
+    /// ends the round, as asking for every port would only wait as long. Returns the mappings
+    /// the router answered for: those deletes are confirmed, the rest may still be held.
+    pub(super) async fn delete(&mut self, mappings: &[Mapping]) -> Vec<Mapping> {
+        let mut answered = Vec::new();
         for &mapping in mappings {
             if self.method.is_none() {
                 match self.pcp(mapping, 0).await {
@@ -363,33 +379,37 @@ impl PortMapper {
                             self.method = Some(Method::NatPmp);
                         } else {
                             self.method = Some(Method::Pcp);
+                            answered.push(mapping);
                             continue;
                         }
                     }
-                    Err(_) => return false,
+                    Err(_) => return answered,
                 }
             }
-            let answered = match self.method {
+            let deleted = match self.method {
                 Some(Method::Pcp) => self.pcp(mapping, 0).await.is_ok(),
                 Some(Method::NatPmp) => self.natpmp(mapping, 0).await.is_ok(),
-                None => return false,
+                None => return answered,
             };
-            if !answered {
-                return false;
+            if !deleted {
+                return answered;
             }
+            answered.push(mapping);
         }
-        true
+        answered
     }
 
-    /// Removes every mapping this mapper made: the host stops. Says whether the router answered
-    /// for every one.
-    pub(super) async fn close(&mut self) -> bool {
+    /// Removes every mapping this mapper made: the host stops. Returns the mappings whose delete
+    /// the router answered for.
+    pub(super) async fn close(&mut self) -> Vec<Mapping> {
         let mappings: Vec<Mapping> = self.leases.iter().map(|lease| lease.mapping).collect();
-        let mut clean = true;
+        let mut confirmed = Vec::new();
         for mapping in mappings {
-            clean &= self.unmap(mapping).await;
+            if self.unmap(mapping).await {
+                confirmed.push(mapping);
+            }
         }
-        clean
+        confirmed
     }
 }
 
@@ -500,7 +520,7 @@ mod tests {
                 port: 8002,
             },
         ];
-        assert!(mapper.delete(&guest).await);
+        assert_eq!(mapper.delete(&guest).await, guest);
         let seen = seen.lock().unwrap();
         assert_eq!(seen.len(), 3, "{seen:?}");
         // One PCP delete, under this host's nonce, with no lifetime and the guest port.
@@ -557,13 +577,13 @@ mod tests {
                 port: 47998,
             },
         ];
-        let outcome = mapper.renew(&wanted).await.unwrap();
+        let outcome = mapper.renew(&wanted).await;
         assert_eq!(mapper.method(), Some(Method::NatPmp));
         assert_eq!(outcome.mapped, vec![(wanted[0], 47984), (wanted[1], 47998)]);
         assert!(outcome.failed.is_empty());
         assert_eq!(mapper.external, Some("203.0.113.9".parse().unwrap()));
         // A second renewal within the lease asks nothing.
-        let again = mapper.renew(&wanted).await.unwrap();
+        let again = mapper.renew(&wanted).await;
         assert_eq!(again.mapped.len(), 2);
         mapper.close().await;
         assert!(mapper.leases.is_empty());
@@ -604,7 +624,7 @@ mod tests {
                 port: 47998,
             },
         ];
-        let outcome = mapper.renew(&wanted).await.unwrap();
+        let outcome = mapper.renew(&wanted).await;
         assert_eq!(mapper.method(), Some(Method::Pcp));
         assert_eq!(outcome.mapped, vec![(wanted[0], 47984)]);
         assert_eq!(outcome.failed.len(), 1);
@@ -674,13 +694,13 @@ mod tests {
             port: 47998,
         }];
         let mut first = mapper().await;
-        assert_eq!(first.renew(&wanted).await.unwrap().mapped.len(), 1);
+        assert_eq!(first.renew(&wanted).await.mapped.len(), 1);
         // The first mapper is forgotten without a word (its renewal got no answer, or the host
         // crashed); the next one still renews the port.
         first.leases.clear();
         drop(first);
         let mut second = mapper().await;
-        let outcome = second.renew(&wanted).await.unwrap();
+        let outcome = second.renew(&wanted).await;
         assert_eq!(
             outcome.mapped,
             vec![(wanted[0], 47998)],
@@ -691,7 +711,7 @@ mod tests {
         let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         socket.connect(address).await.unwrap();
         let mut other = PortMapper::new(socket, "127.0.0.1".parse().unwrap(), b"other");
-        assert_eq!(other.renew(&wanted).await.unwrap().failed.len(), 1);
+        assert_eq!(other.renew(&wanted).await.failed.len(), 1);
         other.leases.clear();
         // Dropped with its lease, the second mapper deletes it.
         drop(second);

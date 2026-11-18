@@ -574,10 +574,9 @@ async fn dual_stack_listener_accepts_ipv4_and_ipv6_loopback() {
 }
 
 #[test]
-fn the_guest_lease_record_keeps_what_was_granted_and_clears_after_a_clean_release() {
-    let directory = std::env::temp_dir().join(format!("rubylight-leases-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&directory).unwrap();
-    let mut record = LeaseRecord::load(&directory);
+fn the_guest_lease_record_keeps_added_leases_until_a_confirmed_delete() {
+    let (record, directory) = super::fixtures::guest_record();
+    let mut record = record.into_inner().unwrap();
     assert!(record.leases().is_empty());
     // No record on disk: the next start deletes nothing.
     assert!(!directory.join(GUEST_LEASES).exists());
@@ -591,22 +590,29 @@ fn the_guest_lease_record_keeps_what_was_granted_and_clears_after_a_clean_releas
         port: 8002,
     };
     let upnp = GuestLease::new(LeaseMethod::Upnp, tcp);
-    let natpmp = GuestLease::new(LeaseMethod::NatPmp, udp);
-    let upnp6 = GuestLease::new(LeaseMethod::UpnpV6, tcp);
     let pcp6 = GuestLease::new(LeaseMethod::PcpV6, udp);
-    record.set(vec![upnp, natpmp, upnp6, pcp6]);
-    let reread = LeaseRecord::load(&directory);
-    assert_eq!(reread.leases(), [upnp, natpmp, upnp6, pcp6]);
+    // Added before its map request: the file lists it at once.
+    record.add_all([upnp, pcp6]);
+    assert_eq!(LeaseRecord::load(&directory).leases(), [upnp, pcp6]);
 
-    // A lease recorded twice is one lease.
-    record.set(vec![upnp, upnp, natpmp, upnp6, pcp6]);
-    assert_eq!(record.leases(), [upnp, natpmp, upnp6, pcp6]);
+    // A lease added twice is one lease.
+    record.add_all([upnp]);
+    assert_eq!(record.leases(), [upnp, pcp6]);
 
-    // A clean release leaves no record, so the next start deletes nothing.
-    record.clear();
+    // A delete for another method, or one the router did not answer for, drops nothing.
+    record.remove_confirmed(|method| method == LeaseMethod::Upnp, &[udp]);
+    assert_eq!(record.leases(), [upnp, pcp6]);
+    record.remove_confirmed(|method| method == LeaseMethod::Upnp, &[]);
+    assert_eq!(record.leases(), [upnp, pcp6]);
+
+    // The confirmed delete of the UPnP lease drops only it.
+    record.remove_confirmed(|method| method == LeaseMethod::Upnp, &[tcp]);
+    assert_eq!(record.leases(), [pcp6]);
+
+    // The last confirmed delete removes the file: nothing is left for a start to clean.
+    record.remove_confirmed(|method| method == LeaseMethod::PcpV6, &[udp]);
     assert!(record.leases().is_empty());
     assert!(!directory.join(GUEST_LEASES).exists());
-    assert!(LeaseRecord::load(&directory).leases().is_empty());
 
     // An unreadable record lists nothing rather than guessing at ports to delete.
     std::fs::write(directory.join(GUEST_LEASES), b"{ not json").unwrap();
@@ -616,7 +622,7 @@ fn the_guest_lease_record_keeps_what_was_granted_and_clears_after_a_clean_releas
 }
 
 #[test]
-fn cleanup_takes_only_the_recorded_ports_from_each_method() {
+fn cleanup_takes_only_the_recorded_leases_from_each_method() {
     let tcp = Mapping {
         protocol: Protocol::TCP,
         port: 47991,
@@ -625,26 +631,194 @@ fn cleanup_takes_only_the_recorded_ports_from_each_method() {
         protocol: Protocol::UDP,
         port: 8002,
     };
-    let leases = [
-        GuestLease::new(LeaseMethod::Upnp, tcp),
-        GuestLease::new(LeaseMethod::NatPmp, udp),
-    ];
+    let upnp = GuestLease::new(LeaseMethod::Upnp, tcp);
+    let natpmp = GuestLease::new(LeaseMethod::NatPmp, udp);
+    let leases = [upnp, natpmp];
     assert_eq!(
-        recorded_ports(&leases, |method| method == LeaseMethod::Upnp),
-        [tcp]
+        recorded_leases(&leases, |method| method == LeaseMethod::Upnp),
+        [upnp]
     );
     // A record with no PCP or NAT-PMP lease sends the router no delete for them.
     assert_eq!(
-        recorded_ports(&leases, |method| matches!(
+        recorded_leases(&leases, |method| matches!(
             method,
             LeaseMethod::Pcp | LeaseMethod::NatPmp
         )),
-        [udp]
+        [natpmp]
     );
-    assert!(recorded_ports(&[], |_| true).is_empty());
-    assert!(
-        recorded_ports(&[GuestLease::new(LeaseMethod::Upnp, tcp)], |method| method
-            == LeaseMethod::NatPmp)
-        .is_empty()
+    assert!(recorded_leases(&[], |_| true).is_empty());
+    assert!(recorded_leases(&[upnp], |method| method == LeaseMethod::NatPmp).is_empty());
+}
+
+#[tokio::test]
+async fn a_cleanup_the_router_does_not_answer_keeps_the_record() {
+    let router = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let address = router.local_addr().unwrap();
+    // The router receives the delete and never answers it.
+    tokio::spawn(async move {
+        let mut buffer = [0u8; 128];
+        while router.recv_from(&mut buffer).await.is_ok() {}
+    });
+    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    socket.connect(address).await.unwrap();
+    let mut mapper = portmap::PortMapper::new(socket, "127.0.0.1".parse().unwrap(), b"key");
+    let (record, directory) = super::fixtures::guest_record();
+    let lease = GuestLease::new(
+        LeaseMethod::NatPmp,
+        Mapping {
+            protocol: Protocol::UDP,
+            port: 8002,
+        },
     );
+    record.lock().unwrap().add_all([lease]);
+    delete_recorded(&mut mapper, &record, &[lease]).await;
+    // No answer: the mapping may still be on the router, so the lease stays listed.
+    assert_eq!(record.lock().unwrap().leases(), [lease]);
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[tokio::test]
+async fn a_cleanup_the_router_answers_drops_the_recorded_lease() {
+    let router = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let address = router.local_addr().unwrap();
+    // A NAT-PMP router: PCP gets version 0, mapping and delete requests get the internal port
+    // asked back with no lifetime.
+    tokio::spawn(async move {
+        let mut buffer = [0u8; 128];
+        loop {
+            let Ok((length, from)) = router.recv_from(&mut buffer).await else {
+                return;
+            };
+            let request = buffer[..length].to_vec();
+            let reply = match request[0] {
+                2 => vec![0, 0x81, 0, 1, 0, 0, 0, 0],
+                _ => {
+                    let mut reply = vec![0, 0x80 | request[1], 0, 0, 0, 0, 0, 1];
+                    reply.extend_from_slice(&request[4..6]);
+                    reply.extend_from_slice(&[0, 0]);
+                    reply.extend_from_slice(&0u32.to_be_bytes());
+                    reply
+                }
+            };
+            router.send_to(&reply, from).await.unwrap();
+        }
+    });
+    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    socket.connect(address).await.unwrap();
+    let mut mapper = portmap::PortMapper::new(socket, "127.0.0.1".parse().unwrap(), b"key");
+    let (record, directory) = super::fixtures::guest_record();
+    let lease = GuestLease::new(
+        LeaseMethod::NatPmp,
+        Mapping {
+            protocol: Protocol::UDP,
+            port: 8002,
+        },
+    );
+    record.lock().unwrap().add_all([lease]);
+    delete_recorded(&mut mapper, &record, &[lease]).await;
+    assert!(record.lock().unwrap().leases().is_empty());
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[tokio::test]
+async fn a_release_keeps_leases_the_router_did_not_answer_for() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let router = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let address = router.local_addr().unwrap();
+    let answers = std::sync::Arc::new(AtomicBool::new(true));
+    let replying = answers.clone();
+    tokio::spawn(async move {
+        let mut buffer = [0u8; 128];
+        loop {
+            let Ok((length, from)) = router.recv_from(&mut buffer).await else {
+                return;
+            };
+            if !replying.load(Ordering::Acquire) {
+                continue;
+            }
+            let request = buffer[..length].to_vec();
+            let reply = match request[0] {
+                2 => vec![0, 0x81, 0, 1, 0, 0, 0, 0],
+                // The router's own address, for a NAT-PMP address request.
+                _ if request[1] == 0 => vec![0, 128, 0, 0, 0, 0, 0, 1, 203, 0, 113, 9],
+                _ => {
+                    let mut reply = vec![0, 0x80 | request[1], 0, 0, 0, 0, 0, 1];
+                    reply.extend_from_slice(&request[4..6]);
+                    reply.extend_from_slice(&request[4..6]);
+                    reply.extend_from_slice(&3600u32.to_be_bytes());
+                    reply
+                }
+            };
+            router.send_to(&reply, from).await.unwrap();
+        }
+    });
+    let mapping = Mapping {
+        protocol: Protocol::UDP,
+        port: 8002,
+    };
+    let lease = GuestLease::new(LeaseMethod::NatPmp, mapping);
+    let (record, directory) = super::fixtures::guest_record();
+    record.lock().unwrap().add_all([lease]);
+    let mapper = {
+        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        socket.connect(address).await.unwrap();
+        let mut mapper = portmap::PortMapper::new(socket, "127.0.0.1".parse().unwrap(), b"key");
+        assert_eq!(mapper.renew(&[mapping]).await.mapped.len(), 1);
+        mapper
+    };
+    // The router stops answering: the release cannot confirm the delete, so the lease stays.
+    answers.store(false, Ordering::Release);
+    let mut held = Held {
+        mapper: Some(mapper),
+        ..Default::default()
+    };
+    held.release("fixture", &record).await;
+    assert_eq!(record.lock().unwrap().leases(), [lease]);
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[tokio::test]
+async fn a_release_the_router_answers_drops_the_recorded_lease() {
+    let router = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let address = router.local_addr().unwrap();
+    tokio::spawn(async move {
+        let mut buffer = [0u8; 128];
+        loop {
+            let Ok((length, from)) = router.recv_from(&mut buffer).await else {
+                return;
+            };
+            let request = buffer[..length].to_vec();
+            let reply = match request[0] {
+                2 => vec![0, 0x81, 0, 1, 0, 0, 0, 0],
+                // The router's own address, for a NAT-PMP address request.
+                _ if request[1] == 0 => vec![0, 128, 0, 0, 0, 0, 0, 1, 203, 0, 113, 9],
+                _ => {
+                    let mut reply = vec![0, 0x80 | request[1], 0, 0, 0, 0, 0, 1];
+                    reply.extend_from_slice(&request[4..6]);
+                    reply.extend_from_slice(&request[4..6]);
+                    reply.extend_from_slice(&3600u32.to_be_bytes());
+                    reply
+                }
+            };
+            router.send_to(&reply, from).await.unwrap();
+        }
+    });
+    let mapping = Mapping {
+        protocol: Protocol::UDP,
+        port: 8002,
+    };
+    let lease = GuestLease::new(LeaseMethod::NatPmp, mapping);
+    let (record, directory) = super::fixtures::guest_record();
+    record.lock().unwrap().add_all([lease]);
+    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    socket.connect(address).await.unwrap();
+    let mut mapper = portmap::PortMapper::new(socket, "127.0.0.1".parse().unwrap(), b"key");
+    assert_eq!(mapper.renew(&[mapping]).await.mapped.len(), 1);
+    let mut held = Held {
+        mapper: Some(mapper),
+        ..Default::default()
+    };
+    held.release("fixture", &record).await;
+    assert!(record.lock().unwrap().leases().is_empty());
+    let _ = std::fs::remove_dir_all(directory);
 }
