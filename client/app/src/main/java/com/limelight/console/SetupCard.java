@@ -113,9 +113,8 @@ public final class SetupCard {
         if (!SimpleProfile.allAuto(context)) return null;
         PreferenceConfiguration config = PreferenceConfiguration.readPreferences(context, host.uuid, host.caps, null, 0, null);
         return new Text(context.getString(R.string.home_setup_title, host.displayName()),
-                values(context, config.width, config.height, config.fps, config.bitrate,
-                        // Recommended's HDR on Auto is on where the screen and the decoder show HDR, as its row says.
-                        config.enableHdr || SimpleProfile.hdrOnAuto(context), config.videoFormat));
+                // HDR as the stream starts with it: the switch, with this PC's own value over it.
+                values(context, config.width, config.height, config.fps, config.bitrate, config.enableHdr, config.videoFormat));
     }
 
     /** "2560×1440 · 120 FPS · 60 Mbps · HDR · codec chosen when the stream starts": the values a stream to the PC starts with. */

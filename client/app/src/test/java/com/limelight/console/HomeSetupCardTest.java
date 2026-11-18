@@ -343,23 +343,27 @@ public class HomeSetupCardTest {
         }
     }
 
-    /** HDR left on Auto reads as Recommended's row reads it: on, where the screen and the decoder show HDR. */
+    /** HDR is what the stream starts with: the switch, which a fresh install leaves off, whatever the screen can show. */
     @Test
-    public void hdrOnAutoIsHdrWhereTheScreenAndTheDecoderShowIt() {
+    public void hdrIsTheSwitchTheStreamStartsWith() {
         ComputerDetails tower = nativeHost("tower", "Tower", true);
         try {
             ReflectionHelpers.setStaticField(com.limelight.preferences.SimpleProfile.class, "cachedCapabilities",
                     new SimpleProfileModel.Capabilities(1920, 1080, 60, true, false, true, true, false, true, null, null, null));
-            assertTrue(SetupCard.text(context, tower).values, SetupCard.text(context, tower).values.contains(" · HDR · "));
-            ReflectionHelpers.setStaticField(com.limelight.preferences.SimpleProfile.class, "cachedCapabilities",
-                    new SimpleProfileModel.Capabilities(1920, 1080, 60, false, false, true, true, false, true, null, null, null));
             assertTrue(SetupCard.text(context, tower).values, SetupCard.text(context, tower).values.contains(" · SDR · "));
+            PreferenceManager.getDefaultSharedPreferences(context).edit()
+                    .putBoolean("checkbox_enable_hdr", true).commit();
+            PreferenceConfiguration config = PreferenceConfiguration.readPreferences(context, "tower", tower.caps, null, 0, null);
+            assertEquals(config.enableHdr, SetupCard.text(context, tower).values.contains(" · HDR · "));
         } finally {
             ReflectionHelpers.setStaticField(com.limelight.preferences.SimpleProfile.class, "cachedCapabilities", null);
         }
     }
 
-    /** Up from the list's first row, whatever its column, stops on the card's close button; Up again goes on to the top row. */
+    /**
+     * Up from the list's first row, here its third column, stops on the card's close button; Down returns to the game it
+     * left, and Up from the button goes to the current tab.
+     */
     private void upFromTheFirstRowReachesTheCloseButton() {
         SetupCard.offer(context, "tower", 0);
         ActivityController<HomeShellTest.Home> controller = home();
@@ -371,29 +375,50 @@ public class HomeSetupCardTest {
             android.view.ViewGroup list = home.findViewById(R.id.console_list);
             java.util.ArrayList<View> stops = list.getFocusables(View.FOCUS_DOWN);
             assertFalse("the list has something to stand on", stops.isEmpty());
-            // The leftmost stop of the first row: straight above it are the tabs, not the button at the card's far end.
-            View first = stops.get(0);
+            // The first row's stops from the left: straight above the left ones are the tabs, not the button at the card's end.
+            int top = Integer.MAX_VALUE;
+            for (View stop : stops) top = Math.min(top, onScreen(stop)[1]);
+            java.util.ArrayList<View> row = new java.util.ArrayList<>();
             for (View stop : stops) {
-                int[] at = new int[2], best = new int[2];
-                stop.getLocationInWindow(at);
-                first.getLocationInWindow(best);
-                if (at[1] < best[1] || (at[1] == best[1] && at[0] < best[0])) first = stop;
+                if (onScreen(stop)[1] == top) row.add(stop);
             }
-            assertTrue(first.requestFocus());
+            row.sort((a, b) -> Integer.compare(onScreen(a)[0], onScreen(b)[0]));
             View close = card.findViewById(R.id.home_setup_dismiss);
             android.view.KeyEvent up = new android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_DPAD_UP);
-            assertTrue("Up from " + first + " is used", home.dispatchKeyEvent(up));
-            assertTrue("and stands on the close button", close.isFocused());
-            // From the button the press is the system's own: nothing here holds it back from the top row.
-            View above = close.focusSearch(View.FOCUS_UP);
-            assertTrue("above the button is the top row: " + above, above != null && above != close && !inside(list, above));
-            assertTrue("Down from the button is used", home.dispatchKeyEvent(
-                    new android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_DPAD_DOWN)));
-            View below = home.getWindow().getDecorView().findFocus();
-            assertTrue("and is back in the list: " + below, below != null && inside(list, below));
+            android.view.KeyEvent down = new android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_DPAD_DOWN);
+            for (View from : new View[] {row.get(0), row.get(Math.min(2, row.size() - 1))}) {
+                assertTrue(from.requestFocus());
+                assertTrue("Up from " + from + " is used", home.dispatchKeyEvent(up));
+                assertTrue("and stands on the close button", close.isFocused());
+                assertTrue("Down from the button is used", home.dispatchKeyEvent(down));
+                assertTrue("and is back on the game it left, of " + row.size() + " in the row", from.isFocused());
+            }
+            assertTrue(home.dispatchKeyEvent(up));
+            assertTrue(close.isFocused());
+            HomeChrome chrome = ReflectionHelpers.getField(home, "chrome");
+            if (chrome.form() == com.limelight.ui.GlassForm.PHONE) {
+                // A phone's tabs are at the foot: nothing here takes the press.
+                assertFalse(home.dispatchKeyEvent(up));
+            } else {
+                assertTrue("Up from the button is used", home.dispatchKeyEvent(up));
+                View tab = home.getWindow().getDecorView().findFocus();
+                assertTrue("and stands on the current tab: " + tab,
+                        tab != null && tab.isSelected() && inside(home.findViewById(R.id.shell_bar), tab));
+            }
+            // The game Up left is gone: Down from the button finds the list all the same.
+            close.requestFocus();
+            ReflectionHelpers.setField(home, "setupCardCameFrom", new java.lang.ref.WeakReference<>(new View(context)));
+            assertTrue(home.dispatchKeyEvent(down));
+            assertTrue(inside(list, home.getWindow().getDecorView().findFocus()));
         } finally {
             controller.pause().stop().destroy();
         }
+    }
+
+    private static int[] onScreen(View view) {
+        int[] at = new int[2];
+        view.getLocationInWindow(at);
+        return at;
     }
 
     private static boolean inside(View parent, View child) {
@@ -404,6 +429,12 @@ public class HomeSetupCardTest {
     }
 
     @Test
+    public void onAPhoneUpFromTheFirstRowReachesTheCloseButton() {
+        upFromTheFirstRowReachesTheCloseButton();
+    }
+
+    @Test
+    @Config(qualifiers = "w800dp-h400dp-land-xhdpi")
     public void onAHandheldUpFromTheFirstRowReachesTheCloseButton() {
         upFromTheFirstRowReachesTheCloseButton();
     }

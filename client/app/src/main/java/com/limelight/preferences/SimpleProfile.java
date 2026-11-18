@@ -93,15 +93,6 @@ public final class SimpleProfile {
         return capabilities;
     }
 
-    /** HDR left on Auto where the screen and the decoder show it and no PC is known to lack it: Auto is on then. */
-    public static boolean hdrOnAuto(Context context) {
-        return hdrOnAuto(PreferenceManager.getDefaultSharedPreferences(context), capabilities(context));
-    }
-
-    private static boolean hdrOnAuto(SharedPreferences prefs, SimpleProfileModel.Capabilities caps) {
-        return "auto".equals(read(prefs, HDR)) && caps.displayHdr && caps.decoderHdr && !Boolean.FALSE.equals(caps.hostHdr);
-    }
-
     /** Whether this screen can show HDR10 at all; the simple HDR row shows only then. */
     static boolean hdrOffered(Context context) {
         android.view.Display display = PreferenceConfiguration.defaultDisplay(context);
@@ -326,7 +317,9 @@ public final class SimpleProfile {
         // The HDR switch left at the app's default is the layer's Auto on a screen and decoder that
         // can show HDR; reading it as Off would call a fresh HDR install Off when nothing was chosen.
         SimpleProfileModel.Capabilities caps = capabilities(context);
-        boolean hdr = prefs.getBoolean(PreferenceConfiguration.ENABLE_HDR_PREF_STRING, false) || hdrOnAuto(prefs, caps);
+        boolean hdr = prefs.getBoolean(PreferenceConfiguration.ENABLE_HDR_PREF_STRING, false)
+                || ("auto".equals(read(prefs, HDR)) && caps.displayHdr && caps.decoderHdr
+                    && !Boolean.FALSE.equals(caps.hostHdr));
         return new SimpleProfileModel.Current(nativeSize, fps, pacing,
                 vrr, latencySwitches,
                 prefs.getBoolean(SettingRules.DROP_LATE_FRAMES, true),

@@ -296,7 +296,6 @@ public final class HostActions {
         pairingThread = new Thread(() -> {
             String message = null;
             boolean success = false;
-            boolean made = false;
             try {
                 binder.waitForPollingStopped();
                 NvHTTP request = new NvHTTP(ServerHelper.getCurrentAddressFromComputer(computer),
@@ -326,7 +325,11 @@ public final class HostActions {
                             stored.serverCert = pairing.getPairedCert();
                             binder.invalidateStateForComputer(computer.uuid);
                             success = true;
-                            made = true;
+                            // The first pairing this device makes: Home says what the automatic settings will use with
+                            // this PC. Noted now, not when the result shows: that waits for the screen to be in front,
+                            // and a process ended meanwhile would start again with a PC paired and no card. A PC that
+                            // answered "already paired" (a link scanned again) was paired before, and offers nothing.
+                            com.limelight.console.SetupCard.offer(activity.getApplicationContext(), stored);
                         } else {
                             message = activity.getString(R.string.pair_fail);
                         }
@@ -345,9 +348,8 @@ public final class HostActions {
                 message = activity.getString(R.string.pair_connection_fix);
             }
             final boolean paired = success;
-            final boolean first = made;
             final String failure = message;
-            activity.runOnUiThread(() -> showPairingResult(generation, paired, first, failure, computer, oneTimePin, link != null));
+            activity.runOnUiThread(() -> showPairingResult(generation, paired, failure, computer, oneTimePin, link != null));
         }, "Pairing");
         pairingThread.start();
     }
@@ -394,16 +396,16 @@ public final class HostActions {
     @VisibleForTesting
     void showPairingResult(int generation, boolean paired, String failure,
                            ComputerDetails computer, String oneTimePin) {
-        showPairingResult(generation, paired, paired, failure, computer, oneTimePin, false);
+        showPairingResult(generation, paired, failure, computer, oneTimePin, false);
     }
 
-    private void showPairingResult(int generation, boolean paired, boolean made, String failure,
+    private void showPairingResult(int generation, boolean paired, String failure,
                                    ComputerDetails computer, String oneTimePin, boolean fromLink) {
         if (generation != pairingGeneration || gone()) {
             return;
         }
         if (!callbacks.isForeground()) {
-            pendingPairingResult = () -> showPairingResult(generation, paired, made, failure, computer, oneTimePin, fromLink);
+            pendingPairingResult = () -> showPairingResult(generation, paired, failure, computer, oneTimePin, fromLink);
             return;
         }
         pairingRequest = null;
@@ -414,9 +416,6 @@ public final class HostActions {
         }
         LimeLog.info(paired ? "Pairing succeeded" : "Pairing failed");
         if (paired) {
-            // The first pairing this device makes: Home says what the automatic settings will use with this PC. A PC that
-            // answered "already paired" (a link scanned again, a second try) was paired before, and offers nothing.
-            if (made) com.limelight.console.SetupCard.offer(activity, computer);
             callbacks.onPaired(computer);
         } else {
             callbacks.resumePolling();
