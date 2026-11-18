@@ -1086,7 +1086,7 @@ fn a_profile_with_earlier_setting_names_loads_under_the_current_ones() {
 /// The shutdown audio wait: a game that ignores close loses the route at the
 /// deadline, while a fast close releases it by its notice without a warning.
 mod shutdown_audio {
-    use super::super::{AUDIO_RELEASE_WAIT, test_support::Fixture};
+    use super::super::{AppStop, test_support::Fixture};
     use butterpollo_windows::audio_route::Route;
     use std::{
         sync::Arc,
@@ -1111,7 +1111,7 @@ mod shutdown_audio {
         std::fs::read_to_string(path).unwrap()
     }
 
-    /// The deadline is inside main's 8 s `stop_app` wait: past it the route
+    /// The passed deadline is inside main's `stop_app` wait: past it the route
     /// must be back on the PC's default device, whatever the game does.
     #[test]
     fn a_game_that_ignores_close_loses_its_audio_route_at_the_deadline() {
@@ -1119,13 +1119,17 @@ mod shutdown_audio {
         route(&f);
         // The game keeps the sender: its processes never report that they stopped.
         let (_game, stopped) = std::sync::mpsc::channel();
+        let wait = Duration::from_millis(100);
+        let began = Instant::now();
         let log = warnings(&f, || {
-            f.host
-                .release_audio_by(stopped, Instant::now() + Duration::from_millis(50));
+            f.host.release_audio_by(stopped, began + wait);
         });
+        assert!(
+            began.elapsed() >= wait,
+            "the route was released before the passed deadline"
+        );
         assert!(f.host.app_audio.lock().unwrap().is_none());
         assert!(log.contains("had not stopped"), "{log}");
-        assert!(AUDIO_RELEASE_WAIT < Duration::from_secs(8));
     }
 
     #[test]
@@ -1140,5 +1144,35 @@ mod shutdown_audio {
         });
         assert!(f.host.app_audio.lock().unwrap().is_none());
         assert!(!log.contains("had not stopped"), "{log}");
+    }
+
+    /// `stop_app` returns only after the app's stop; a game whose stop outlasts
+    /// the passed audio deadline must lose the route before that return.
+    #[test]
+    fn stop_app_releases_the_audio_route_before_the_game_stops() {
+        let f = Fixture::new();
+        route(&f);
+        let mut running = crate::process::RunningApp::with_environment(
+            &butterpollo_core::state::App::desktop(),
+            Default::default(),
+        )
+        .expect("the test app starts");
+        running.owner = "test-owner".into();
+        running.stop_delay = Some(Duration::from_secs(2));
+        *f.host.current_app.lock().unwrap() = Some(running);
+        let stopping = f.host.clone();
+        let deadline = Instant::now() + Duration::from_millis(100);
+        let stopped = std::thread::spawn(move || stopping.stop_app(AppStop::Shutdown { deadline }));
+        let gone = (0..200).any(|_| {
+            std::thread::sleep(Duration::from_millis(10));
+            f.host.app_audio.lock().unwrap().is_none()
+        });
+        assert!(gone, "the audio route outlived the passed deadline");
+        assert!(
+            !stopped.is_finished(),
+            "the audio route was not released until the game had stopped"
+        );
+        stopped.join().unwrap();
+        assert!(f.host.app_audio.lock().unwrap().is_none());
     }
 }

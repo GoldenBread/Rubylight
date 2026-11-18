@@ -14,9 +14,9 @@ use std::{
     time::{Duration, Instant},
 };
 pub type Shared = Arc<Host>;
-/// The part of main's 8 s `stop_app` wait that the audio route may hold while
-/// the game closes. Past it the route goes back even if the game ignores close,
-/// so it is never left on the virtual sink when that wait runs out.
+/// How long the audio route may hold while the game closes, counted from the
+/// stop's call; main's passed deadline can make it shorter. Past it the route
+/// goes back even if the game ignores close.
 const AUDIO_RELEASE_WAIT: Duration = Duration::from_secs(6);
 type FileStamp = (std::time::SystemTime, u64);
 /// When a file was last written and its size; None while it is missing.
@@ -490,8 +490,9 @@ pub enum AppStop<'a> {
     Exited,
     /// The deferred app failed to start.
     LaunchFailed,
-    /// The host shuts down.
-    Shutdown,
+    /// The host shuts down; `deadline` is the end of its stop wait, less the
+    /// margin main keeps for the route to go back.
+    Shutdown { deadline: Instant },
     #[cfg(test)]
     Test,
 }
@@ -507,7 +508,7 @@ impl<'a> AppStop<'a> {
             Self::Tray => "tray",
             Self::Exited => "exited",
             Self::LaunchFailed => "launch failed",
-            Self::Shutdown => "shutdown",
+            Self::Shutdown { .. } => "shutdown",
             #[cfg(test)]
             Self::Test => "test",
         }
@@ -622,10 +623,15 @@ impl Host {
         }
     }
     pub fn stop_app(&self, why: AppStop<'_>) {
-        // Shutdown's whole stop runs under main's 8 s wait, counted from this
-        // call: the audio route may hold only the part of it below.
-        let audio_deadline =
-            matches!(why, AppStop::Shutdown).then(|| Instant::now() + AUDIO_RELEASE_WAIT);
+        // Shutdown's whole stop runs under main's wait: the audio route may hold
+        // only the earlier of its own wait and the deadline main passed, which
+        // already leaves main's margin for the route to go back.
+        let audio_deadline = match why {
+            AppStop::Shutdown { deadline } => {
+                Some((Instant::now() + AUDIO_RELEASE_WAIT).min(deadline))
+            }
+            _ => None,
+        };
         // A game moved by Continue here whose new device's stream has arrived saves its settings
         // files for that device, also when it closes before the next housekeeping tick settles
         // the move. Callers that end the streams first settle before they do: a stopped stream

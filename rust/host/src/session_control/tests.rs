@@ -673,7 +673,11 @@ fn shutdown_releases_the_audio_route_before_the_games_undo_commands() {
     ));
     let stopping = setup.fixture.host.clone();
     let began = Instant::now();
-    let stopped = std::thread::spawn(move || stopping.stop_app(crate::state::AppStop::Shutdown));
+    let stopped = std::thread::spawn(move || {
+        stopping.stop_app(crate::state::AppStop::Shutdown {
+            deadline: Instant::now() + std::time::Duration::from_secs(5),
+        })
+    });
     let released = (0..100).any(|_| {
         std::thread::sleep(std::time::Duration::from_millis(10));
         host.app_audio.lock().unwrap().is_none() && host.app_display.lock().unwrap().is_empty()
@@ -1058,7 +1062,9 @@ fn a_stop_logs_its_reason_the_client_that_asked_and_the_app() {
     crate::test_log::capture_during(subscriber, || {
         assert_eq!(setup.host().close_game(setup.uuid()), Ok(Outcome::Done));
         // Nothing runs any more: a second stop has nothing to log.
-        setup.host().stop_app(crate::state::AppStop::Shutdown);
+        setup.host().stop_app(crate::state::AppStop::Shutdown {
+            deadline: Instant::now(),
+        });
     });
     let log = std::fs::read_to_string(path).unwrap();
     let stops: Vec<&str> = log
@@ -1090,7 +1096,13 @@ fn each_stop_names_its_reason_and_only_client_stops_name_a_client() {
         (AppStop::Tray, "tray", None),
         (AppStop::Exited, "exited", None),
         (AppStop::LaunchFailed, "launch failed", None),
-        (AppStop::Shutdown, "shutdown", None),
+        (
+            AppStop::Shutdown {
+                deadline: Instant::now(),
+            },
+            "shutdown",
+            None,
+        ),
     ];
     for (stop, reason, client) in cases {
         assert_eq!((stop.reason(), stop.client()), (reason, client), "{stop:?}");
