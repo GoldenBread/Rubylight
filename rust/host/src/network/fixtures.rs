@@ -330,6 +330,46 @@ async fn a_manual_forward_to_this_pc_counts_as_mapped_and_is_left_alone() {
 }
 
 #[tokio::test]
+async fn a_refused_renewal_keeps_the_lease_this_host_holds() {
+    let owner = "Butterpollo Rust fixture-host";
+    let local = "192.0.2.10".parse().unwrap();
+    let mapping = Mapping {
+        protocol: Protocol::TCP,
+        port: 48125,
+    };
+    // The table shows this host's mapping; the router then refuses the renewal request.
+    let state = Arc::new(Mutex::new(RouterState {
+        rows: vec![Row {
+            port: 48125,
+            protocol: Protocol::TCP,
+            owner: owner.into(),
+        }],
+        add_fault: Some(718),
+        ..Default::default()
+    }));
+    let (gateway, server) = serve(state.clone()).await;
+    let (record, directory) = guest_record();
+    let lease = GuestLease::new(LeaseMethod::Upnp, mapping);
+    record.lock().unwrap().add_all([lease]);
+    let outcome = apply(
+        &gateway,
+        local,
+        &[mapping],
+        owner,
+        &mut Vec::new(),
+        &[],
+        &record,
+        &[mapping],
+    )
+    .await;
+    // The mapping is still this host's; a refused renewal is not a confirmation it is gone.
+    assert_eq!(outcome.held, [mapping]);
+    assert_eq!(record.lock().unwrap().leases(), [lease]);
+    let _ = std::fs::remove_dir_all(directory);
+    server.abort();
+}
+
+#[tokio::test]
 async fn a_map_request_is_recorded_before_it_is_answered() {
     let owner = "Butterpollo Rust fixture-host";
     let local = "192.0.2.10".parse().unwrap();

@@ -1004,8 +1004,11 @@ async fn apply<P: Provider>(
                 }
             }
             Ok(Err(error)) => {
-                // The router answered, so it refused this mapping: drop the lease again.
-                record_forget(record, &[*mapping]);
+                // The router answered, but a refused renewal of a mapping this host still
+                // holds is not a confirmation it is gone.
+                if !applied.contains(mapping) {
+                    record_forget(record, &[*mapping]);
+                }
                 if matches!(&error, igd_next::AddPortError::PortInUse) {
                     if !reported.contains(mapping) {
                         reported.push(*mapping);
@@ -1425,8 +1428,21 @@ impl Held {
         {
             tracing::debug!(%error, "IPv6 pinholes will expire after their finite lease");
         }
+        // A pinhole is gone only when every (address, gateway) mapper confirmed its delete.
+        let mut confirmed: Option<Vec<Mapping>> = None;
         for mut mapper in self.pinholes.drain(..) {
-            let confirmed = mapper.close().await;
+            let answered = mapper.close().await;
+            confirmed = Some(match confirmed {
+                None => answered,
+                Some(previous) => previous
+                    .into_iter()
+                    .filter(|mapping| answered.contains(mapping))
+                    .collect(),
+            });
+        }
+        if let Some(confirmed) = confirmed
+            && !confirmed.is_empty()
+        {
             record
                 .lock()
                 .unwrap()
@@ -1837,7 +1853,9 @@ async fn renew_pinholes(
     let mut last_error = None;
     let mut guest_ipv6 = None;
     let mut renewed = Vec::new();
-    let mut gone = Vec::new();
+    // A pinhole is gone only when every (address, gateway) mapper confirmed it, as the start
+    // cleanup does.
+    let mut gone: Option<Vec<Mapping>> = None;
     for mapper in &mut held.pinholes {
         let outcome = mapper.renew(wanted).await;
         if let Some(error) = &outcome.error {
@@ -1849,8 +1867,15 @@ async fn renew_pinholes(
                 renewed.push(*mapping);
             }
         }
-        gone.extend(outcome.refused.iter().copied());
-        gone.extend(outcome.removed.iter().copied());
+        let mut mapper_gone: Vec<Mapping> = outcome.refused.clone();
+        mapper_gone.extend(outcome.removed.iter().copied());
+        gone = Some(match gone {
+            None => mapper_gone,
+            Some(previous) => previous
+                .into_iter()
+                .filter(|mapping| mapper_gone.contains(mapping))
+                .collect(),
+        });
         let all_guests = guest
             .iter()
             .all(|port| outcome.mapped.iter().any(|(done, _)| done == port));
@@ -1864,7 +1889,9 @@ async fn renew_pinholes(
     if !renewed.is_empty() {
         record.lock().unwrap().granted(LeaseMethod::PcpV6, &renewed);
     }
-    if !gone.is_empty() {
+    if let Some(gone) = gone
+        && !gone.is_empty()
+    {
         record
             .lock()
             .unwrap()
