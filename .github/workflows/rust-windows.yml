@@ -127,7 +127,8 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       # Nothing from these jobs ships, so a signed release's tests and
       # clippy use the cache too.
-      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+      - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        id: sdk-cache
         with:
           path: |
             ~/AppData/Local/ButterpolloRust/sdk
@@ -146,6 +147,15 @@ jobs:
           Import-Module "$vs\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
           Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
           .\rust\build.ps1 -MsysRoot '${{ steps.msys.outputs.msys2-location }}' -FetchDependencies -Stage Test -TargetDirectory "$env:RUNNER_TEMP\butterpollo-rust-target"
+      # Saved by main only, as rust-cache: a branch run must not use up the repository cache.
+      - uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        if: github.ref == 'refs/heads/main' && steps.sdk-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/AppData/Local/ButterpolloRust/sdk
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ steps.sdk-cache.outputs.cache-primary-key }}
   # Clippy, the web console and the release tooling tests.
   lint:
     needs: tag
@@ -210,7 +220,8 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       # Nothing from these jobs ships, so a signed release's tests and
       # clippy use the cache too.
-      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+      - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        id: sdk-cache
         with:
           path: |
             ~/AppData/Local/ButterpolloRust/sdk
@@ -229,6 +240,15 @@ jobs:
           Import-Module "$vs\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
           Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
           .\rust\build.ps1 -MsysRoot '${{ steps.msys.outputs.msys2-location }}' -FetchDependencies -Stage Lint -TargetDirectory "$env:RUNNER_TEMP\butterpollo-rust-target"
+      # Saved by main only, as rust-cache: a branch run must not use up the repository cache.
+      - uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        if: github.ref == 'refs/heads/main' && steps.sdk-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/AppData/Local/ButterpolloRust/sdk
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ steps.sdk-cache.outputs.cache-primary-key }}
   # The release build and package, and a release's signing.
   windows:
     needs: tag
@@ -291,7 +311,8 @@ jobs:
           node-version: 22
       # A signed release is built from this run's checkout and downloads,
       # never from an earlier run's cache.
-      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+      - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        id: sdk-cache
         if: env.SIGNPATH_ENABLED != 'true'
         with:
           path: |
@@ -470,6 +491,15 @@ jobs:
             ${{ runner.temp }}/butterpollo-rust-target/butterpollo-setup-*.exe
           if-no-files-found: error
           retention-days: 30
+      # Saved by main only, as rust-cache: a branch run must not use up the repository cache.
+      - uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        if: env.SIGNPATH_ENABLED != 'true' && github.ref == 'refs/heads/main' && steps.sdk-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/AppData/Local/ButterpolloRust/sdk
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ steps.sdk-cache.outputs.cache-primary-key }}
   # The NVIDIA component (rust/build.ps1 -Nvidia): the NGX adapter, which
   # links NVIDIA's RTX Video SDK, with NVIDIA's runtime DLLs, in the one
   # archive the console downloads for RTX HDR and RTX Video enhancement. No
@@ -495,7 +525,8 @@ jobs:
           rustup target add x86_64-pc-windows-msvc --toolchain 1.98.1-x86_64-pc-windows-gnu
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       # A release builds from this run's download of the SDK, as the signed build does.
-      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+      - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        id: nvidia-cache
         if: needs.tag.outputs.sign != 'true'
         with:
           path: |
@@ -515,6 +546,15 @@ jobs:
           path: ${{ runner.temp }}/butterpollo-rust-target/rubylight-nvidia-component-*.zip
           if-no-files-found: error
           retention-days: 30
+      # Saved by main only, as rust-cache: a branch run must not use up the repository cache.
+      - uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        if: needs.tag.outputs.sign != 'true' && github.ref == 'refs/heads/main' && steps.nvidia-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/AppData/Local/ButterpolloRust/sdk/RTX_Video_SDK_v1.1.0.zip
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ steps.nvidia-cache.outputs.cache-primary-key }}
   # Signs the release with the maintainer's Certum code signing certificate when
   # the repository variable CERTUM_SIGNING is 'true' (SignPath, when configured,
   # signs instead). The key stays in Certum's cloud: client/scripts/certum-login.ps1

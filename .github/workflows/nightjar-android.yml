@@ -63,7 +63,8 @@ jobs:
       # The runner's Ubuntu mirror has crawled at about 45 kB/s (cmake's 11 MB alone took
       # 4 minutes, and libudev-dev pulls a systemd update), three times past the job timeout.
       # The downloaded packages are cached between runs; the runner image has its own cmake.
-      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+      - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        id: apt-cache
         with:
           path: ~/apt-archives
           key: desktop-apt-${{ runner.os }}-${{ hashFiles('.github/workflows/nightjar-android.yml') }}
@@ -95,6 +96,12 @@ jobs:
         run: |
           cd protocol
           cargo test -p nightjar-desktop --locked -- pq_present --include-ignored
+      # Saved by main only, as rust-cache: a branch run must not use up the repository cache.
+      - uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        if: github.ref == 'refs/heads/main' && steps.apt-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/apt-archives
+          key: ${{ steps.apt-cache.outputs.cache-primary-key }}
   # The APKs, lint, the JVM unit tests and the native sanitizer runs are four jobs that run side
   # by side; together they took 26-32 minutes as one job.
   build:

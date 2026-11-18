@@ -60,7 +60,8 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # The media libraries macos-deps.sh builds (SDL, Opus, dav1d, FFmpeg), per architecture.
       # Its prefix is named after the script's own hash and is reused once complete.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: media-cache
         with:
           path: client/protocol/target/macos-native/*/prefix
           key: macos-media-${{ runner.arch }}-${{ hashFiles('client/protocol/desktop/macos-deps.sh') }}
@@ -84,6 +85,12 @@ jobs:
           python3 desktop/package-macos.py --debug --arch x86_64 --zip
           ditto -x -k target/x86_64-apple-darwin/debug/Nightjar-*-macos-x86_64.zip "$RUNNER_TEMP/intel-archive"
           python3 desktop/tests/verify_macos_bundle.py --arch x86_64 --inspect-only "$RUNNER_TEMP/intel-archive/Nightjar.app"
+      # Saved by main only, as rust-cache: a branch run must not use up the repository cache.
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: github.ref == 'refs/heads/main' && steps.media-cache.outputs.cache-hit != 'true'
+        with:
+          path: client/protocol/target/macos-native/*/prefix
+          key: ${{ steps.media-cache.outputs.cache-primary-key }}
 
   # PyroWave's GPU decoder on Apple silicon: Mesa's KosmicKrisp Vulkan driver (Metal 4, macOS 26)
   # and the Vulkan loader, built and cached here, then a check that the loader finds the driver
@@ -125,7 +132,7 @@ jobs:
           prefix=$(tail -n1 "$RUNNER_TEMP/macos-vulkan.log")
           echo "VULKAN_PREFIX=$prefix" >> "$GITHUB_ENV"
           cat "$prefix/build-info.txt"
-      - if: steps.vulkan-cache.outputs.cache-hit != 'true'
+      - if: github.ref == 'refs/heads/main' && steps.vulkan-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: client/protocol/target/macos-vulkan/*/prefix
@@ -142,7 +149,8 @@ jobs:
           set -o pipefail
           brew install vulkan-headers
           VULKAN_HEADERS_DIR="$(brew --prefix vulkan-headers)/include"             ../scripts/build-pyrowave-sdk.sh -o "$PWD/target/pyrowave-sdk" -H "$GITHUB_WORKSPACE"
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: media-cache
         with:
           path: client/protocol/target/macos-native/*/prefix
           key: macos-media-${{ runner.arch }}-${{ hashFiles('client/protocol/desktop/macos-deps.sh') }}
@@ -155,3 +163,9 @@ jobs:
           python3 desktop/tests/verify_macos_bundle.py --arch arm64 --kosmickrisp "$RUNNER_TEMP/unpacked/Nightjar.app"
       - name: PyroWave GPU decoder smoke, or its named CPU fallback
         run: desktop/tests/pyrowave_mac_smoke.sh "$RUNNER_TEMP/unpacked/Nightjar.app"
+      # Saved by main only, as rust-cache: a branch run must not use up the repository cache.
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: github.ref == 'refs/heads/main' && steps.media-cache.outputs.cache-hit != 'true'
+        with:
+          path: client/protocol/target/macos-native/*/prefix
+          key: ${{ steps.media-cache.outputs.cache-primary-key }}
