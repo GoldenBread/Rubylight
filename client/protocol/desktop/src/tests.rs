@@ -440,11 +440,11 @@ fn a_name_chosen_for_a_pc_is_saved_and_comes_back_after_a_restart() {
     let (store, dir) = temp_store("rename");
     let mut hosts = Hosts::without_discovery(vec![record("a")], Arc::new(|| {}));
     let id = hosts.list[0].id;
-    rename_host(&mut hosts, &store, id, "  Living room  ");
+    rename_host(&mut hosts, &store, id, "  Living room  ").unwrap();
     assert_eq!(store.hosts()[0].alias.as_deref(), Some("Living room"), "saved trimmed");
     let restarted = Hosts::without_discovery(store.hosts(), Arc::new(|| {}));
     assert_eq!(restarted.list[0].display_name(), "Living room");
-    rename_host(&mut hosts, &store, id, "");
+    rename_host(&mut hosts, &store, id, "").unwrap();
     assert_eq!(store.hosts()[0].alias, None, "an empty name brings the PC's own back");
     std::fs::remove_dir_all(dir).ok();
 }
@@ -464,11 +464,11 @@ fn removing_a_pc_leaves_nothing_of_it_behind() {
         std::fs::create_dir_all(cover.parent().unwrap()).unwrap();
         std::fs::write(cover, b"x").unwrap();
     }
-    save_hosts(&store, &hosts);
+    save_hosts(&store, &hosts).unwrap();
     let game = config::OpenGame { host: "gone".into(), install_id: String::new(), app_id: 1, title: "G".into() };
     store.save_open_play(&config::OpenPlayState { game: Some(game.clone()), armed: false }).unwrap();
     let mut open_game = Some(game);
-    remove_host(&mut hosts, &store, &mut recents, &mut favourites, &mut open_game, gone);
+    remove_host(&mut hosts, &store, &mut recents, &mut favourites, &mut open_game, gone).unwrap();
     assert_eq!(open_game, None, "the settings page and game menu forget its chosen game");
     assert_eq!(store.open_play().game, None);
     assert_eq!(store.hosts().len(), 1);
@@ -556,4 +556,25 @@ fn a_lost_renderer_is_made_again_on_the_same_window_in_its_colorspace() {
         SDL_DestroyWindow(window);
         SDL_Quit();
     }
+}
+
+/// A save that fails comes back as an error, so the app tells the player once a run with the
+/// folder, instead of only logging it: a read-only config folder otherwise drops every change
+/// at the next start without a word.
+#[test]
+fn a_failed_save_is_told_once_with_the_folder() {
+    use crate::app::{first_save_failure, save_failed_text, save_hosts};
+    let (store, dir) = temp_store("save-failed");
+    // A directory where hosts.json should be: the read fails for a reason that is not "no file",
+    // and the store keeps what is there instead of replacing it.
+    std::fs::create_dir(dir.join("hosts.json")).unwrap();
+    let _ = store.hosts();
+    let hosts = Hosts::without_discovery(Vec::new(), Arc::new(|| {}));
+    assert!(save_hosts(&store, &hosts).is_err(), "the PC list that cannot be saved is reported");
+    let text = save_failed_text(store.dir());
+    assert!(text.contains(&store.dir().display().to_string()), "the folder is named: {text}");
+    let mut told = false;
+    assert!(first_save_failure(&mut told), "the first failure is told");
+    assert!(!first_save_failure(&mut told), "one notice a run");
+    std::fs::remove_dir_all(dir).ok();
 }

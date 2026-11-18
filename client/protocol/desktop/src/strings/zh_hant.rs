@@ -1696,4 +1696,6 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "在 HDR 螢幕上呈現更亮的高光和更豐富的色彩。自動僅在螢幕、解碼器和 PC 都支援時開啟；如果 HDR 看起來泛白，請保持自動。"),
     ("Recommended", "推薦"),
     ("This PC takes {} controllers", "此 PC 支援 {} 個控制器"),
+    ("Changes could not be saved", "無法儲存變更"),
+    ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar 無法寫入 {}。變更在 Nightjar 關閉前有效，之後會恢復原樣；請檢查該資料夾是否可寫。"),
 ];

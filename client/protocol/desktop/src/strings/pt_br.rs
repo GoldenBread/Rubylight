@@ -1696,4 +1696,6 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer de recepção: o sistema concedeu 
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "Realces mais brilhantes e cores mais ricas em uma tela HDR. O modo Automático só o ativa quando a tela, o decodificador e o PC oferecem suporte; deixe em Automático a menos que o HDR pareça desbotado."),
     ("Recommended", "Recomendado"),
     ("This PC takes {} controllers", "Este PC aceita {} controles"),
+    ("Changes could not be saved", "Não foi possível salvar as alterações"),
+    ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "O Nightjar não conseguiu gravar em {}. As alterações valem até o Nightjar ser fechado e depois voltam ao que eram; verifique se é possível gravar na pasta."),
 ];

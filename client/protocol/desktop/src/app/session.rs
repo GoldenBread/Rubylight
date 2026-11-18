@@ -523,6 +523,9 @@ impl App {
             s.overlay_position = corner.unwrap_or(s.overlay_position);
             if let Err(e) = self.store.save_settings(s) {
                 eprintln!("nightjar: saving settings failed: {e}");
+                if first_save_failure(&mut self.save_failed_told) {
+                    streaming.show_toast(save_failed_text(self.store.dir()));
+                }
             }
         }
         // A device ticked or unticked for automatic USB forwarding in the stream controls.
@@ -530,6 +533,9 @@ impl App {
             self.launcher.settings.usb_auto = auto;
             if let Err(e) = self.store.save_settings(&self.launcher.settings) {
                 eprintln!("nightjar: saving settings failed: {e}");
+                if first_save_failure(&mut self.save_failed_told) {
+                    streaming.show_toast(save_failed_text(self.store.dir()));
+                }
             }
         }
         if let Some((_, at)) = &streaming.toast {

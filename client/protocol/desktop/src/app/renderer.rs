@@ -271,6 +271,7 @@ impl App {
             // The new start reads the choice back, whatever order this frame's commands run in.
             if let Err(e) = self.store.save_settings(&self.launcher.settings) {
                 eprintln!("nightjar: saving settings failed: {e}");
+                self.save_failed();
             }
             self.running = false;
         }

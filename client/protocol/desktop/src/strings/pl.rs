@@ -1696,4 +1696,6 @@ sudo sysctl -w net.core.rmem_max={}", "Bufor odbioru: system przydzielił {0} Ki
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "Jaśniejsze światła i bogatsze kolory na ekranie HDR. Automatycznie włącza je tylko wtedy, gdy ekran, dekoder i PC to obsługują; zostaw Automatycznie, chyba że HDR wygląda wyblakle."),
     ("Recommended", "Zalecane"),
     ("This PC takes {} controllers", "Ten PC obsługuje {} kontrolerów"),
+    ("Changes could not be saved", "Nie udało się zapisać zmian"),
+    ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar nie mógł zapisać w {}. Zmiany obowiązują do zamknięcia Nightjara, a potem wracają do poprzedniego stanu; sprawdź, czy można zapisywać w folderze."),
 ];

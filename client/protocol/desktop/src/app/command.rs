@@ -134,15 +134,19 @@ impl App {
             Command::PcPowerOffer { host, ask, action } => self.hosts.pc_power_offer(host, ask, action),
             Command::PcPower { host, ask, action, token, at } => self.hosts.pc_power(host, ask, action, token, at),
             Command::InstallUpdate { host } => self.hosts.install_update(host),
-            Command::Rename { host, alias } => rename_host(&mut self.hosts, &self.store, host, &alias),
+            Command::Rename { host, alias } => {
+                if rename_host(&mut self.hosts, &self.store, host, &alias).is_err() {
+                    self.save_failed();
+                }
+            }
             Command::WakeAddresses { host, macs } => {
                 if self.hosts.set_own_wake_macs(host, macs) {
-                    save_hosts(&self.store, &self.hosts);
+                    self.save_hosts();
                 }
             }
             Command::PinAddress { host, address } => {
                 if self.hosts.pin_address(host, address.as_deref()) {
-                    save_hosts(&self.store, &self.hosts);
+                    self.save_hosts();
                     self.hosts.poll_one(host);
                 }
             }
@@ -385,7 +389,10 @@ Redacted logs, oldest line first; addresses, PC names, PINs and credentials are 
                 }
             }
             Command::Remove(host) => {
-                remove_host(&mut self.hosts, &self.store, &mut self.launcher.recents, &mut self.launcher.favourites, &mut self.launcher.open_game, host);
+                let removed = remove_host(&mut self.hosts, &self.store, &mut self.launcher.recents, &mut self.launcher.favourites, &mut self.launcher.open_game, host);
+                if removed.is_err() {
+                    self.save_failed();
+                }
             }
             Command::Refresh(host) => {
                 self.hosts.check_now(host);
@@ -422,6 +429,7 @@ Redacted logs, oldest line first; addresses, PC names, PINs and credentials are 
                 self.pads.configure(s);
                 if let Err(e) = self.store.save_settings(s) {
                     eprintln!("nightjar: saving settings failed: {e}");
+                    self.save_failed();
                 }
             }
             Command::RetryLaunch => {

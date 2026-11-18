@@ -1696,4 +1696,6 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приёма: система �
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "Яркие блики и насыщенные цвета на HDR-экране. Авто включает HDR, только если экран, декодер и ПК это поддерживают; оставьте Авто, если HDR выглядит блёклым."),
     ("Recommended", "Рекомендуется"),
     ("This PC takes {} controllers", "Этот ПК принимает {} контроллеров"),
+    ("Changes could not be saved", "Не удалось сохранить изменения"),
+    ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar не удалось записать в {}. Изменения действуют до закрытия Nightjar, а затем возвращаются к прежним; проверьте, можно ли записывать в папку."),
 ];

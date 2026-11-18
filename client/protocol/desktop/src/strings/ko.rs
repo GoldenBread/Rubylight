@@ -1696,4 +1696,6 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "HDR 화면에서 더 밝은 하이라이트와 풍부한 색을 보여 줍니다. 자동은 화면, 디코더, PC가 모두 지원할 때만 켭니다. HDR이 흐릿하게 보이면 끄세요."),
     ("Recommended", "추천"),
     ("This PC takes {} controllers", "이 PC는 컨트롤러 {}개를 지원합니다"),
+    ("Changes could not be saved", "변경 사항을 저장할 수 없습니다"),
+    ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar가 {}에 쓸 수 없습니다. 변경 사항은 Nightjar를 종료할 때까지 적용되고 그 후에는 원래대로 돌아갑니다. 폴더에 쓸 수 있는지 확인하세요."),
 ];

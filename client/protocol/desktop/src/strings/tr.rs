@@ -1696,4 +1696,6 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "HDR ekranda daha parlak vurgular ve daha zengin renkler. Otomatik, yalnızca ekran, kod çözücü ve PC desteklediğinde açar; HDR soluk görünüyorsa Otomatik olarak bırakın."),
     ("Recommended", "Önerilen"),
     ("This PC takes {} controllers", "Bu PC {} kumanda kabul ediyor"),
+    ("Changes could not be saved", "Değişiklikler kaydedilemedi"),
+    ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar {} konumuna yazamadı. Değişiklikler Nightjar kapanana kadar geçerli, sonra eski hâline döner; klasöre yazılabildiğini denetleyin."),
 ];

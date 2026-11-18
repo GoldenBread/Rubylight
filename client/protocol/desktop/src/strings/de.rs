@@ -1696,4 +1696,6 @@ sudo sysctl -w net.core.rmem_max={2}"),
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "Hellere Spitzenlichter und sattere Farben auf einem HDR-Bildschirm. Auto schaltet HDR nur ein, wenn Bildschirm, Decoder und PC es unterstützen; lass es auf Auto, außer HDR sieht verwaschen aus."),
     ("Recommended", "Empfohlen"),
     ("This PC takes {} controllers", "Dieser PC nimmt {} Controller"),
+    ("Changes could not be saved", "Änderungen konnten nicht gespeichert werden"),
+    ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar konnte nicht nach {} schreiben. Änderungen gelten bis zum Beenden von Nightjar und sind danach wieder wie zuvor; prüfe, ob der Ordner beschreibbar ist."),
 ];

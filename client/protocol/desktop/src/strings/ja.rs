@@ -1696,4 +1696,6 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "HDR 画面で明るいハイライトと豊かな色になります。自動は画面、デコーダー、PC が対応しているときだけオンにします。HDR が白っぽく見える場合はオフにしてください。"),
     ("Recommended", "おすすめ"),
     ("This PC takes {} controllers", "この PC は {} 台のコントローラーに対応しています"),
+    ("Changes could not be saved", "変更を保存できませんでした"),
+    ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar は {} に書き込めませんでした。変更は Nightjar を終了するまで有効で、その後は元に戻ります。フォルダーに書き込めるか確認してください。"),
 ];

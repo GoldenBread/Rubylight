@@ -247,6 +247,8 @@ struct App {
     title_bar: egui::Color32,
     /// The window changed since the last launcher frame: it needs one, whatever egui paints.
     window_changed: bool,
+    /// A save failed this run and the player was told: the one notice a run gives for it.
+    save_failed_told: bool,
 }
 
 /// Now on the session clock (`nightjar_core::session::now_us`), in nanoseconds, the clock
@@ -858,9 +860,12 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     #[cfg(feature = "demo-library")]
     ui::demo::fill(&mut hosts, &mut launcher, &gui.ctx);
     // A stream started from the command line waits for the next ordinary start.
+    let mut save_failed_told = false;
     if cli.is_none() && std::env::var_os("NIGHTJAR_AUTOSTREAM").is_none() && launcher.show_kept_settings_once(&hosts.list) {
         if let Err(e) = store.save_settings(&launcher.settings) {
             eprintln!("nightjar: saving settings failed: {e}");
+            save_failed_told = true;
+            launcher.notify(crate::strings::tr("Changes could not be saved"), app::save_failed_text(store.dir()));
         }
     }
     // A file that is there but cannot be read is not an identity to create a new one over: its
@@ -990,6 +995,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         move_watch: Default::default(),
         title_bar: *theme::NIGHT,
         window_changed: true,
+        save_failed_told,
     };
     match identity {
         Some(identity) => {

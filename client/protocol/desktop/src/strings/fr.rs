@@ -1696,4 +1696,6 @@ sudo sysctl -w net.core.rmem_max={}", "Tampon de réception : le système a acco
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "Des hautes lumières plus vives et des couleurs plus riches sur un écran HDR. Auto ne l'active que si l'écran, le décodeur et le PC le prennent en charge ; laissez sur Auto sauf si le HDR paraît délavé."),
     ("Recommended", "Recommandé"),
     ("This PC takes {} controllers", "Ce PC accepte {} manettes"),
+    ("Changes could not be saved", "Impossible d’enregistrer les modifications"),
+    ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar n’a pas pu écrire dans {}. Les modifications s’appliquent jusqu’à la fermeture de Nightjar, puis reviennent à leur état précédent ; vérifiez que le dossier est accessible en écriture."),
 ];

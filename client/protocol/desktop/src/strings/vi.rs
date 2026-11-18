@@ -1696,4 +1696,6 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("Brighter highlights and richer color on an HDR screen. Auto turns it on only where this screen, the decoder and the PC support it; leave it on Auto unless HDR looks washed out.", "Điểm sáng rực hơn và màu sắc phong phú hơn trên màn hình HDR. Tự động chỉ bật khi màn hình, bộ giải mã và PC hỗ trợ; hãy để Tự động trừ khi HDR trông nhạt."),
     ("Recommended", "Đề xuất"),
     ("This PC takes {} controllers", "PC này nhận {} tay cầm"),
+    ("Changes could not be saved", "Không thể lưu thay đổi"),
+    ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar không ghi được vào {}. Các thay đổi chỉ có hiệu lực đến khi Nightjar đóng, sau đó trở lại như cũ; hãy kiểm tra thư mục có ghi được không."),
 ];
