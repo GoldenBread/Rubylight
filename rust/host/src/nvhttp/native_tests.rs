@@ -412,6 +412,7 @@ async fn capabilities_list_the_features_and_the_callers_permissions() {
             "neural.frame_generation",
             "session.couch_menu",
             "pairing.approve",
+            "session.guest-invites",
             "clipboard.image"
         ]
     );
@@ -426,7 +427,7 @@ async fn capabilities_list_the_features_and_the_callers_permissions() {
     let guests_at = asking.features.iter().position(|f| f == "session.guests");
     assert_eq!(
         guests_at,
-        Some(asking.features.len() - 2),
+        Some(asking.features.len() - 3),
         "{:?}",
         asking.features
     );
@@ -461,6 +462,7 @@ async fn capabilities_list_the_features_and_the_callers_permissions() {
             "session.couch_menu",
             "coop",
             "pairing.approve",
+            "session.guest-invites",
             "clipboard.image"
         ]
     );

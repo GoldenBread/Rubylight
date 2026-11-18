@@ -207,7 +207,7 @@ async fn only_a_device_that_may_approve_new_devices_invites_and_never_beyond_its
         serde_json::json!({"seconds": 10}).to_string(),
     )
     .await;
-    reply.assert_error(400, "invalid_value");
+    reply.assert_error(422, "invalid_value");
 }
 
 #[tokio::test]
