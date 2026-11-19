@@ -44,7 +44,7 @@ public class SettingsRowCountTest {
     }
 
     /** Settings' rows at the defaults, every More row open, the new Show debug settings included. */
-    static final int ROWS_AT_DEFAULTS = 110;
+    static final int ROWS_AT_DEFAULTS = 113;
 
     @Test
     public void rowCountsAtTheDefaults() {

@@ -1707,12 +1707,15 @@ public class StreamSettings extends NightjarActivity {
                         result.setKey("search_result_" + pref.getKey());
                         result.setTitle(pref.getTitle());
                         result.setSummary(pref.getSummary());
-                        if (idle.contains(pref.getKey())) {
-                            // A row the list leaves out because it does nothing now says why, in one line of its own.
+                        if (idle.contains(pref.getKey()) || SettingRules.NOTE_ROWS.contains(pref.getKey())) {
+                            // A row that does nothing now says why, in one line of its own: one the list leaves out, or
+                            // one always listed whose summary (behind a closed More row) doesn't say it yet.
                             String reason = SettingRules.whenReason(getActivity(), pref.getKey(),
                                     getPreferenceManager().getSharedPreferences(), ((StreamSettings) getActivity()).devices());
                             CharSequence summary = pref.getSummary();
-                            if (reason != null) result.setSummary(TextUtils.isEmpty(summary) ? reason : summary + "\n" + reason);
+                            if (reason != null && (summary == null || !summary.toString().contains(reason))) {
+                                result.setSummary(TextUtils.isEmpty(summary) ? reason : summary + "\n" + reason);
+                            }
                         }
                         result.setOnPreferenceClickListener(clicked -> {
                             StreamSettings activity = (StreamSettings) getActivity();
@@ -1786,7 +1789,9 @@ public class StreamSettings extends NightjarActivity {
         private void showWhenReasons(SharedPreferences prefs) {
             StreamSettings activity = (StreamSettings) getActivity();
             if (activity == null) return;
-            for (String key : SettingRules.WHEN_ROWS) {
+            List<String> rows = new ArrayList<>(SettingRules.WHEN_ROWS);
+            rows.addAll(SettingRules.NOTE_ROWS);
+            for (String key : rows) {
                 Preference pref = allPreferences.get(key);
                 if (pref == null || SettingRules.TAGGED_SWITCHES.contains(key) || hidden.contains(key) || idle.contains(key) ||
                         folded.contains(key)) {

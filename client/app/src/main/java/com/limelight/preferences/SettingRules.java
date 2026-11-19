@@ -440,54 +440,28 @@ final class SettingRules {
     static final String RUMBLE_FEEL = "list_rumble_feel";
 
     /**
-     * The rows shown only while some stream on this device can use them: their parent setting is on (and nothing a
-     * stream does on its own, such as the stream menu, an external display, the second screen or a PC's, game's or
-     * profile's settings, can make them act without it), or this device has what they act on (whenApplies). One whose
-     * stored value is not its default stays, saying why it does nothing now (whenReason); search finds the others with
-     * that reason, and opening the result shows the row. Not here, so always shown: Thermal protection, which a PC's
-     * or one stream's Automatic bitrate lets act (AutoBitrateChoice, GameAdaptation.toggleAdaptiveBitrateFromMenu).
+     * The rows shown only while some stream on this device can use them, decided by what no stream can change: this
+     * device has what they act on, or the stored main setting they sit under is on (and no stream menu, external
+     * display, second screen or PC's, game's or profile's settings can make them act without it) (whenApplies). One
+     * whose stored value is not its default stays, saying why it does nothing now (whenReason); search finds the others
+     * with that reason, and opening the result shows the row. Settings never reads a PC's, game's or profile's stored
+     * values to decide what it shows: a row they or the stream menu can make act is in {@link #NOTE_ROWS}, and Thermal
+     * protection, which a PC's or one stream's Automatic bitrate lets act, is always shown with its own tag.
      */
     static final java.util.List<String> WHEN_ROWS = java.util.Arrays.asList(
-            ADAPTIVE_QUALITY_MIN_RESOLUTION, ADAPTIVE_QUALITY_MIN_FPS, PreferenceConfiguration.UPSCALING_SHARPNESS_PREF_STRING, RUMBLE_FEEL, VIBRATE_STRENGTH, MOUSE_SPEED, MOUSE_NAV_BUTTONS,
+            RUMBLE_FEEL, VIBRATE_STRENGTH, MOUSE_SPEED, MOUSE_NAV_BUTTONS,
             TRACKPAD_SPEED, LOCAL_CURSOR_SPEED, PreferenceConfiguration.TRACKPAD_ACCELERATION_PREF_STRING, ACCELERATION_CURVE,
             TRACKPAD_MOMENTUM, MOMENTUM_GLIDE, TRACKPAD_AREA, FINGER_TAPS, TRACKPAD_SENSITIVITY_X, TRACKPAD_SENSITIVITY_Y, TRACKPAD_SWAP_AXIS, NATIVE_TOUCHPAD,
-            BACK_AS_META, OVERLAY_POSITION, SCREEN2_RESOLUTION, COVERING_DECODER_SIZE, CHIPSET_TUNING, IGDB_SECRET,
-            PYROWAVE_PREACQUIRE);
+            BACK_AS_META, OVERLAY_POSITION, SCREEN2_RESOLUTION, COVERING_DECODER_SIZE, CHIPSET_TUNING, IGDB_SECRET);
 
     /**
-     * Whether a PC's, game's or profile's own settings hold a value (HostStreamProfile, AppStreamSettings,
-     * StreamProfiles): those streams use it where the main setting doesn't. An unreadable layer counts as none, as
-     * the stream reads it.
+     * Rows always shown, because the stream menu or a PC's, game's or profile's settings can make them act: Automatic
+     * quality's minimums (the stream menu's choice for a PC or one stream), the sharpness (their upscaler) and PyroWave's
+     * early screen image (their codec). While the main settings leave them nothing to do they say why (whenReason).
      */
-    static boolean anyLayer(Context context, java.util.function.Predicate<HostStreamProfile> holds) {
-        for (String file : new String[] {HostStreamProfile.PREFERENCES, AppStreamSettings.PREFERENCES, StreamProfiles.PREFERENCES}) {
-            for (java.util.Map.Entry<String, ?> entry : context.getSharedPreferences(file, Context.MODE_PRIVATE).getAll().entrySet()) {
-                if (!(entry.getValue() instanceof String)) continue;
-                if (file.equals(StreamProfiles.PREFERENCES) && !entry.getKey().startsWith(StreamProfiles.VALUES)) continue;
-                try {
-                    if (holds.test(HostStreamProfile.deserialize((String) entry.getValue()))) return true;
-                } catch (RuntimeException ignored) {
-                    // Not a set of values, or one this build can't read.
-                }
-            }
-        }
-        return false;
-    }
-
-    /** The stream menu's Automatic quality choice a PC keeps (GameAdaptation, "AdaptiveQuality" by PC), other than Off. */
-    private static boolean anyPcQualityChoice(Context context) {
-        for (Object choice : context.getSharedPreferences("AdaptiveQuality", Context.MODE_PRIVATE).getAll().values()) {
-            if (choice instanceof String && !"off".equals(choice)) return true;
-        }
-        return false;
-    }
-
-    /** An upscaler that sharpens: FSR and SGSR (upscalingUsesSharpness). */
-    private static boolean sharpens(com.limelight.binding.video.UpscalingPolicy.Mode mode) {
-        return mode == com.limelight.binding.video.UpscalingPolicy.Mode.FSR1 ||
-                mode == com.limelight.binding.video.UpscalingPolicy.Mode.SGSR1 ||
-                mode == com.limelight.binding.video.UpscalingPolicy.Mode.SGSR2;
-    }
+    static final java.util.List<String> NOTE_ROWS = java.util.Arrays.asList(
+            ADAPTIVE_QUALITY_MIN_RESOLUTION, ADAPTIVE_QUALITY_MIN_FPS, PreferenceConfiguration.UPSCALING_SHARPNESS_PREF_STRING,
+            PYROWAVE_PREACQUIRE);
 
     /** The IGDB client ID, kept apart from the settings (GameInfo.keyPrefs). */
     private static boolean igdbClientIdSet(Context context) {
@@ -495,20 +469,17 @@ final class SettingRules {
                 .getString(com.limelight.console.GameInfo.KEY_IGDB_ID, "").trim().isEmpty();
     }
 
-    /** Whether a row of {@link #WHEN_ROWS} can do something now; true for every other row. */
+    /**
+     * Whether a row of {@link #WHEN_ROWS} can do something now, or a row of {@link #NOTE_ROWS} with the main settings
+     * alone; true for every other row.
+     */
     static boolean whenApplies(Context context, String key, SharedPreferences prefs, SettingDevices devices) {
         switch (key) {
             case ADAPTIVE_QUALITY_MIN_RESOLUTION:
             case ADAPTIVE_QUALITY_MIN_FPS:
-                // A PC's own choice from the stream menu (GameAdaptation.showAdaptiveQualityDialog, kept by the PC), and
-                // the second screen's, which it keeps for its own stream, use the main minimums too.
-                return qualityLimitsApply(prefs) || prefs.getBoolean("checkbox_dual_screen", false) ||
-                        anyPcQualityChoice(context);
+                return qualityLimitsApply(prefs);
             case PreferenceConfiguration.UPSCALING_SHARPNESS_PREF_STRING:
-                // A PC's, game's or profile's upscaler takes the main sharpness unless it sets its own
-                // (HostStreamProfile.keepOnlyDifferencesFrom keeps the mode and drops an equal sharpness).
-                return upscalingUsesSharpness(prefs) ||
-                        (upscalingApplies(prefs) && anyLayer(context, layer -> sharpens(layer.upscalingMode) && layer.upscalingSharpness == null));
+                return upscalingUsesSharpness(prefs);
             case RUMBLE_FEEL:
                 // RumblePolicy.allows: Turn off vibration stops every rumble the feel would shape.
                 return !prefs.getBoolean("checkbox_disable_rumble", false);
@@ -553,14 +524,13 @@ final class SettingRules {
             case IGDB_SECRET:
                 return igdbClientIdSet(context);
             case PYROWAVE_PREACQUIRE:
-                return pyroWaveChosen(prefs) ||
-                        anyLayer(context, layer -> layer.codec == PreferenceConfiguration.FormatOption.FORCE_PYROWAVE);
+                return pyroWaveChosen(prefs);
             default:
                 return true;
         }
     }
 
-    /** Why a row of {@link #WHEN_ROWS} does nothing now, in one short line; null while it applies. */
+    /** Why a row of {@link #WHEN_ROWS} or {@link #NOTE_ROWS} does nothing now, in one short line; null while it applies. */
     static String whenReason(Context context, String key, SharedPreferences prefs, SettingDevices devices) {
         if (whenApplies(context, key, prefs, devices)) return null;
         switch (key) {

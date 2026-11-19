@@ -833,12 +833,10 @@ public class HostStreamSettings extends NightjarActivity {
         private PreferenceCategory connection;
         private PreferenceCategory host;
         /**
-         * Rows shown as in Settings: Upscaling sharpness while the upscaler sharpens, and Debug while Show debug settings
-         * is on or a Debug setting is changed; either stays while this layer sets it (StreamSettings, SettingRules).
+         * Debug, shown as in Settings: while Show debug settings is on or a Debug setting is changed, or while this layer
+         * sets it (StreamSettings, SettingRules).
          */
-        private PreferenceCategory streamGroup;
         private PreferenceCategory debugGroup;
-        private Preference sharpnessRow;
         private Preference fullRangeRow;
 
         @Override
@@ -856,8 +854,7 @@ public class HostStreamSettings extends NightjarActivity {
             row(stream, "bitrate", R.string.title_seekbar_bitrate, () -> showNumber("bitrate", R.string.host_profile_bitrate));
             row(stream, "codec", R.string.title_video_format, this::showCodec);
             row(stream, "upscaling", R.string.title_upscaling, this::showUpscaling);
-            streamGroup = stream;
-            sharpnessRow = row(stream, "sharpness", R.string.title_upscaling_sharpness, this::showSharpness);
+            row(stream, "sharpness", R.string.title_upscaling_sharpness, this::showSharpness);
             row(stream, "hdr", R.string.title_enable_hdr, () -> showSwitch("hdr", R.string.title_enable_hdr));
             row(stream, "vrr", R.string.title_vrr, this::showVrr);
             row(stream, "pacing", R.string.title_frame_pacing, this::showPacing);
@@ -1151,16 +1148,11 @@ public class HostStreamSettings extends NightjarActivity {
             }
             findPreference("codec").setSummary(codec);
             findPreference("upscaling").setSummary(summary(HostStreamProfile.Field.UPSCALING, own.upscalingMode != null, upscalingText(config)));
-            sharpnessRow.setSummary(summary(HostStreamProfile.Field.SHARPNESS, own.upscalingSharpness != null,
+            findPreference("sharpness").setSummary(summary(HostStreamProfile.Field.SHARPNESS, own.upscalingSharpness != null,
                     getString(R.string.upscaling_sharpness_value, config.upscalingSharpness)));
-            boolean sharpens = config.upscalingMode == UpscalingPolicy.Mode.FSR1 ||
+            findPreference("sharpness").setEnabled(config.upscalingMode == UpscalingPolicy.Mode.FSR1 ||
                     config.upscalingMode == UpscalingPolicy.Mode.SGSR1 ||
-                    config.upscalingMode == UpscalingPolicy.Mode.SGSR2;
-            sharpnessRow.setEnabled(sharpens);
-            // Shown while the upscaler sharpens, or while this layer sets it so it can be cleared.
-            boolean sharpnessShown = sharpens || own.upscalingSharpness != null;
-            if (sharpnessShown && streamGroup.findPreference("sharpness") == null) streamGroup.addPreference(sharpnessRow);
-            else if (!sharpnessShown && streamGroup.findPreference("sharpness") != null) streamGroup.removePreference(sharpnessRow);
+                    config.upscalingMode == UpscalingPolicy.Mode.SGSR2);
             for (String key : new String[] {"hdr", "yuv444", "full_range"}) {
                 Preference row = "full_range".equals(key) ? fullRangeRow : findPreference(key);
                 row.setSummary(summary(switchField(key), switchOverride(key) != null, switchText(key, switchValue(config, key))));

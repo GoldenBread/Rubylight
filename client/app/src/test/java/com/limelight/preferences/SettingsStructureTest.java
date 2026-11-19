@@ -250,11 +250,11 @@ public class SettingsStructureTest {
             StreamSettings screen = controller.get();
             StreamSettings.SettingsFragment results = search(screen, "language");
             assertEquals(screen.getString(R.string.settings_section_app), resultGroup(results, "list_languages").toString());
-            // Sharpness is in the list only while a sharp upscaler is chosen; search finds it anyway and says why it does nothing.
+            // Sharpness is always in the list (a PC's upscaler may use it); search finds it and says why it does nothing here.
             StreamSettings.SettingsFragment unused = search(screen, "sharpness");
             assertNotNull(resultGroup(unused, "upscaling_sharpness"));
             assertTrue(String.valueOf(unused.getPreferenceScreen().findPreference("search_result_upscaling_sharpness").getSummary())
-                    .endsWith(screen.getString(R.string.tag_unused_without, screen.getString(R.string.title_upscaling))));
+                    .contains(screen.getString(R.string.tag_unused_without, screen.getString(R.string.title_upscaling))));
             ((SearchView) screen.findViewById(R.id.settings_search)).setQuery("", false);
             settle(screen);
             prefs().edit().putString("upscaling_mode", "fsr1").commit();
@@ -272,14 +272,21 @@ public class SettingsStructureTest {
             PreferenceScreen video = open(controller.get(), "video").getPreferenceScreen();
             ListPreference mode = (ListPreference) video.findPreference("adaptive_quality_mode");
             assertEquals("off", mode.getValue());
-            assertNull(video.findPreference("adaptive_quality_min_resolution"));
-            assertNull(video.findPreference("adaptive_quality_min_fps"));
+            // Always shown, saying why while Automatic quality is off here: the stream menu can turn it on for a PC or
+            // one stream (SettingRules.NOTE_ROWS).
+            String reason = RuntimeEnvironment.getApplication().getString(com.limelight.R.string.tag_unused_without,
+                    RuntimeEnvironment.getApplication().getString(com.limelight.R.string.title_adaptive_quality_setting));
+            assertTrue(String.valueOf(video.findPreference("adaptive_quality_min_resolution").getSummary()).contains(reason));
+            assertTrue(String.valueOf(video.findPreference("adaptive_quality_min_fps").getSummary()).contains(reason));
             mode.setValue("motion");
+            settle(controller.get());
             assertTrue(video.findPreference("adaptive_quality_min_resolution").isEnabled());
             assertTrue(video.findPreference("adaptive_quality_min_fps").isEnabled());
+            assertFalse(String.valueOf(video.findPreference("adaptive_quality_min_fps").getSummary()).contains(reason));
             mode.setValue("off");
-            assertNull(video.findPreference("adaptive_quality_min_resolution"));
-            assertNull(video.findPreference("adaptive_quality_min_fps"));
+            settle(controller.get());
+            assertNotNull(video.findPreference("adaptive_quality_min_resolution"));
+            assertNotNull(video.findPreference("adaptive_quality_min_fps"));
         }
         // A stored mode shows them when the screen opens.
         prefs().edit().putString("adaptive_quality_mode", "detail").commit();

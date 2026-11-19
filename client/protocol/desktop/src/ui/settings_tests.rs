@@ -2441,44 +2441,8 @@ fn row_counts_at_defaults() {
 }
 
 /// The main settings' rows at their defaults, every fold open, the new "Show debug settings" included.
-const ROWS_AT_DEFAULTS: usize = 94;
+const ROWS_AT_DEFAULTS: usize = 99;
 
-/// A PC's own upscaler, Automatic quality or vibration makes the main row act for that PC's
-/// streams, so the main settings show it though their own value leaves it nothing to do.
-#[test]
-fn a_row_a_pcs_settings_make_act_stays_on_the_main_settings() {
-    type Change = fn(&mut Settings);
-    let rows: [(&str, &str, &[&str], Change); 4] = [
-        ("Display & image", "Upscaling sharpness", &["upscaling"], |s| s.upscaling = crate::config::Upscaling::Fsr1),
-        ("Video", "Minimum resolution", &["adaptive_quality"], |s| s.adaptive_quality = crate::config::QualityMode::Motion),
-        ("Controls", "Rumble feel", &["disable_rumble"], |s| s.disable_rumble = false),
-        ("Streaming", "Second screen resolution", &["dual_screen"], |s| s.dual_screen = true),
-    ];
-    for (section, label, keys, on) in rows {
-        let base = Settings { upscaling: crate::config::Upscaling::Bilinear, disable_rumble: true, ..Settings::default() };
-        let mut f = settings_with(base.clone());
-        open_folds(&mut f);
-        in_section(&mut f, section);
-        assert!(!shows(&f, label), "{label}: nothing makes it act: {:?}", f.drawn);
-        let mut pc = base.clone();
-        on(&mut pc);
-        let mut layer = crate::config::Overrides::default();
-        layer.capture(&pc, keys);
-        f.hosts.list[0].record.settings = Some(layer);
-        f.settle();
-        assert!(shows(&f, label), "{label}: the PC makes it act: {:?}", f.drawn);
-    }
-    // A PC that sets its own sharpness with its upscaler leaves the main one nothing to do.
-    let base = Settings { upscaling: crate::config::Upscaling::Bilinear, ..Settings::default() };
-    let mut f = settings_with(base.clone());
-    let pc = Settings { upscaling: crate::config::Upscaling::Fsr1, upscale_sharpness: 80, ..base };
-    let mut layer = crate::config::Overrides::default();
-    layer.capture(&pc, &["upscaling", "upscale_sharpness"]);
-    f.hosts.list[0].record.settings = Some(layer);
-    open_folds(&mut f);
-    in_section(&mut f, "Display & image");
-    assert!(!shows(&f, "Upscaling sharpness"), "{:?}", f.drawn);
-}
 /// Debug is listed only with "Show debug settings", while one of its settings is changed, while it
 /// is open or while a search runs; its rows keep their values and search finds them.
 #[test]
@@ -2537,65 +2501,51 @@ fn show_debug_settings_is_an_app_row_and_its_value_is_kept() {
     assert!(shows(&f, "Show debug settings"), "{:?}", f.drawn);
 }
 
-/// The rows that can do nothing in the current mode are left out while they hold their default,
-/// come back with their mode, stay with a changed value saying why, and search finds them.
+/// The rows a PC's, game's or profile's settings or the stream menu can make act are never left
+/// out: while the main settings leave them nothing to do they say why, and they lose the note once
+/// their mode comes on.
 #[test]
-fn rows_that_can_do_nothing_are_left_out_until_they_can() {
+fn rows_another_layer_can_make_act_stay_with_their_reason() {
     type Change = fn(&mut Settings);
-    let rows: [(&str, &str, &str, Change, Change); 7] = [
-        ("Video", "Minimum resolution", "Not used without Automatic quality", |s| s.adaptive_quality = crate::config::QualityMode::Motion, |s| s.quality_min_short_edge = 1080),
-        ("Video", "Minimum frame rate", "Not used without Automatic quality", |s| s.adaptive_quality = crate::config::QualityMode::Motion, |s| s.quality_min_fps = 60),
-        ("Display & image", "Upscaling sharpness", "Not used with Bilinear", |s| s.upscaling = crate::config::Upscaling::Fsr1, |s| s.upscale_sharpness = 80),
-        ("Controls", "Rumble feel", "Not used with Turn off vibration", |s| s.disable_rumble = false, |s| s.rumble_feel = nightjar_policy::rumble::RumbleFeel::ALL[1]),
-        ("Streaming", "Overlay position", "Not used without Performance overlay", |s| s.overlay = true, |s| s.overlay_position = crate::config::OverlayCorner::ALL[1]),
-        ("Streaming", "Second screen resolution", "Not used without Dual screen mode", |s| s.dual_screen = true, |s| (s.second_screen_width, s.second_screen_height) = (1280, 720)),
-        ("Advanced", "IGDB client secret", "Not used without IGDB client ID", |_| {}, |_| {}),
+    let rows: [(&str, &str, &str, Change); 6] = [
+        ("Video", "Minimum resolution", "Not used without Automatic quality", |s| s.adaptive_quality = crate::config::QualityMode::Motion),
+        ("Video", "Minimum frame rate", "Not used without Automatic quality", |s| s.adaptive_quality = crate::config::QualityMode::Motion),
+        ("Display & image", "Upscaling sharpness", "Not used with Bilinear", |s| s.upscaling = crate::config::Upscaling::Fsr1),
+        ("Controls", "Rumble feel", "Not used with Turn off vibration", |s| s.disable_rumble = false),
+        ("Streaming", "Overlay position", "Not used without Performance overlay", |s| s.overlay = true),
+        ("Streaming", "Second screen resolution", "Not used without Dual screen mode", |s| s.dual_screen = true),
     ];
-    for (section, label, reason, on, changed) in rows {
-        let off = |s: &mut Settings| {
-            s.upscaling = crate::config::Upscaling::Bilinear;
-            s.disable_rumble = true;
-        };
-        let mut base = Settings::default();
-        off(&mut base);
-        let mut f = settings_with(base.clone());
+    for (section, label, reason, on) in rows {
+        let base = Settings { upscaling: crate::config::Upscaling::Bilinear, disable_rumble: true, ..Settings::default() };
+        let mut f = settings_with(base);
         open_folds(&mut f);
         in_section(&mut f, section);
-        assert!(!shows(&f, label), "{label} does nothing now: {:?}", f.drawn);
-        // Its mode comes on: the row is there on the next frame.
-        if label == "IGDB client secret" {
-            f.l.game_info_keys.igdb_client_id = "id".into();
-        } else {
-            on(&mut f.l.settings);
-        }
+        assert!(shows(&f, label) && shows(&f, reason), "{label} stays, saying why: {:?}", f.drawn);
+        on(&mut f.l.settings);
         f.settle();
-        assert!(shows(&f, label), "{label} acts now: {:?}", f.drawn);
-        // A changed value keeps the row, with the reason under it.
-        let mut held = base.clone();
-        changed(&mut held);
-        let mut f = settings_with(held);
-        if label == "IGDB client secret" {
-            f.l.game_info_keys.igdb_client_secret = "secret".into();
-        }
-        open_folds(&mut f);
-        in_section(&mut f, section);
-        assert!(shows(&f, label) && shows(&f, reason), "{label} holds a changed value: {:?}", f.drawn);
-        // Search finds it at its default, saying why.
-        let mut f = settings_with(base.clone());
-        f.l.settings_view.query = label.to_lowercase();
-        f.settle();
-        assert!(shows(&f, label) && shows(&f, reason), "search finds {label}: {:?}", f.drawn);
+        assert!(shows(&f, label) && !shows(&f, reason), "{label} acts now: {:?}", f.drawn);
     }
 }
 
-/// The fold's count leaves out the rows that can do nothing now.
+/// The IGDB client secret does nothing until the client ID is set: it is left out until then, comes
+/// back on the next frame, stays with a secret of its own saying why, and search finds it.
 #[test]
-fn the_fold_counts_only_rows_that_can_act() {
+fn the_igdb_secret_is_left_out_until_the_client_id_is_set() {
+    let (label, reason) = ("IGDB client secret", "Not used without IGDB client ID");
     let mut f = settings_with(Settings::default());
-    in_section(&mut f, "Streaming");
-    let without = fold_words(&f).expect("Streaming has a fold");
-    let mut f = settings_with(Settings { dual_screen: true, ..Settings::default() });
-    in_section(&mut f, "Streaming");
-    let with = fold_words(&f).expect("Streaming has a fold");
-    assert_ne!(without, with, "Second screen resolution joins the count");
+    open_folds(&mut f);
+    in_section(&mut f, "Advanced");
+    assert!(!shows(&f, label), "{:?}", f.drawn);
+    f.l.game_info_keys.igdb_client_id = "id".into();
+    f.settle();
+    assert!(shows(&f, label), "{:?}", f.drawn);
+    let mut f = settings_with(Settings::default());
+    f.l.game_info_keys.igdb_client_secret = "secret".into();
+    open_folds(&mut f);
+    in_section(&mut f, "Advanced");
+    assert!(shows(&f, label) && shows(&f, reason), "{:?}", f.drawn);
+    let mut f = settings_with(Settings::default());
+    f.l.settings_view.query = label.to_lowercase();
+    f.settle();
+    assert!(shows(&f, label) && shows(&f, reason), "search finds it: {:?}", f.drawn);
 }

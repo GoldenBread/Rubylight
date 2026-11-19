@@ -232,11 +232,6 @@ public class SettingsHideTest {
     }
 
     private static final List<Row> ROWS = Arrays.asList(
-            new Row("adaptive_quality_min_resolution", "video", NOTHING, set("adaptive_quality_mode", "motion"),
-                    set("adaptive_quality_min_resolution", "540")),
-            new Row("adaptive_quality_min_fps", "video", NOTHING, set("adaptive_quality_mode", "motion"),
-                    set("adaptive_quality_min_fps", "60")),
-            new Row("upscaling_sharpness", "display", NOTHING, set("upscaling_mode", "fsr1"), number("upscaling_sharpness", 70)),
             new Row("list_rumble_feel", "input", on("checkbox_disable_rumble"), (e, d) -> e.putBoolean("checkbox_disable_rumble", false),
                     (e, d) -> { e.putBoolean("checkbox_disable_rumble", true); e.putString("list_rumble_feel", "strong"); }),
             new Row("seekbar_mouse_speed", "input", true, NOTHING, (e, d) -> d.mouse = true, number("seekbar_mouse_speed", 150)),
@@ -268,8 +263,7 @@ public class SettingsHideTest {
                     on("checkbox_experimental_chipset_tuning")),
             new Row("game_info_igdb_client_secret", "advanced", NOTHING,
                     (e, d) -> gameInfoKeys().edit().putString(com.limelight.console.GameInfo.KEY_IGDB_ID, "id").commit(),
-                    (e, d) -> gameInfoKeys().edit().putString(com.limelight.console.GameInfo.KEY_IGDB_SECRET, "secret").commit()),
-            new Row("checkbox_pyrowave_preacquire", "debug", NOTHING, set("video_format", "forcepyrowave"), on("checkbox_pyrowave_preacquire")));
+                    (e, d) -> gameInfoKeys().edit().putString(com.limelight.console.GameInfo.KEY_IGDB_SECRET, "secret").commit()));
 
     private void reset(BiConsumer<SharedPreferences.Editor, Devices> state) {
         prefs().edit().clear().commit();
@@ -393,48 +387,39 @@ public class SettingsHideTest {
         }
     }
 
+    /**
+     * The rows the stream menu or a PC's, game's or profile's settings can make act are always shown, and say why while
+     * the main settings leave them nothing to do; Thermal protection keeps its own tag. Settings reads no PC's, game's
+     * or profile's values to decide this.
+     */
     @Test
-    public void thermalProtectionIsAlwaysShownAndAPcsQualityChoiceKeepsTheMinimums() {
-        try (ActivityController<StreamSettings> controller = start()) {
-            List<String> rows = visible(open(controller.get(), "video"));
-            // A PC's or one stream's Automatic bitrate lets heat act, whatever the main settings say.
-            assertTrue(rows.toString(), rows.contains(PreferenceConfiguration.THERMAL_PROTECTION_PREF_STRING));
-            assertFalse(rows.contains("adaptive_quality_min_resolution"));
-        }
-        // The stream menu's Automatic quality, kept for one PC, uses the main minimums.
-        context().getSharedPreferences("AdaptiveQuality", Context.MODE_PRIVATE).edit().putString("pc", "motion").commit();
-        try (ActivityController<StreamSettings> controller = start()) {
-            List<String> rows = visible(open(controller.get(), "video"));
-            assertTrue(rows.toString(), rows.containsAll(Arrays.asList("adaptive_quality_min_resolution", "adaptive_quality_min_fps")));
-        }
-    }
-
-    @Test
-    public void aPcsGamesOrProfilesOwnValueKeepsTheRowItMakesAct() {
+    public void rowsAStreamOrAPcCanMakeActAreAlwaysShownWithTheirReason() {
         prefs().edit().putBoolean(SettingRules.SHOW_DEBUG, true).commit();
+        String[][] rows = {
+                {"video", "adaptive_quality_min_resolution", "adaptive_quality_mode", "motion"},
+                {"video", "adaptive_quality_min_fps", "adaptive_quality_mode", "motion"},
+                {"display", "upscaling_sharpness", "upscaling_mode", "fsr1"},
+                {"debug", SettingRules.PYROWAVE_PREACQUIRE, "video_format", "forcepyrowave"}};
+        assertEquals(rows.length, SettingRules.NOTE_ROWS.size());
         try (ActivityController<StreamSettings> controller = start()) {
             StreamSettings screen = controller.get();
-            assertFalse(visible(open(screen, "display")).contains("upscaling_sharpness"));
-            assertFalse(visible(open(screen, "debug")).contains(SettingRules.PYROWAVE_PREACQUIRE));
-            assertFalse(visible(open(screen, "streaming")).contains(SettingRules.OVERLAY_POSITION));
-        }
-        // A game's upscaler that sharpens takes the main sharpness; a PC's PyroWave the main pre-acquire.
-        AppStreamSettings.save(context(), "pc", "game", 7, HostStreamProfile.deserialize("v2;upscaling=FSR1"));
-        context().getSharedPreferences(HostStreamProfile.PREFERENCES, Context.MODE_PRIVATE).edit()
-                .putString("pc", "v2;codec=FORCE_PYROWAVE").commit();
-        // The second screen shows its overlay without saving it.
-        prefs().edit().putBoolean("checkbox_dual_screen", true).commit();
-        try (ActivityController<StreamSettings> controller = start()) {
-            StreamSettings screen = controller.get();
-            assertTrue(visible(open(screen, "display")).contains("upscaling_sharpness"));
-            assertTrue(visible(open(screen, "debug")).contains(SettingRules.PYROWAVE_PREACQUIRE));
-            assertTrue(visible(open(screen, "streaming")).contains(SettingRules.OVERLAY_POSITION));
-        }
-        // A profile that sets its own sharpness with its upscaler leaves the main one nothing to do.
-        AppStreamSettings.save(context(), "pc", "game", 7, HostStreamProfile.deserialize("v2"));
-        StreamProfiles.create(context(), "Sharp", HostStreamProfile.deserialize("v2;upscaling=FSR1;sharpness=80"));
-        try (ActivityController<StreamSettings> controller = start()) {
-            assertFalse(visible(open(controller.get(), "display")).contains("upscaling_sharpness"));
+            assertTrue(visible(open(screen, "video")).contains(PreferenceConfiguration.THERMAL_PROTECTION_PREF_STRING));
+            for (String[] row : rows) {
+                assertTrue(row[1], SettingRules.NOTE_ROWS.contains(row[1]));
+                StreamSettings.SettingsFragment fragment = open(screen, row[0]);
+                assertTrue(row[1] + " is shown", visible(fragment).contains(row[1]));
+                String reason = SettingRules.whenReason(context(), row[1], prefs(), devices);
+                assertNotNull(row[1], reason);
+                CharSequence summary = fragment.findPreference(row[1]).getSummary();
+                assertTrue(row[1] + ": " + summary, summary != null && summary.toString().contains(reason));
+                // Its mode comes on: still shown, without the reason.
+                prefs().edit().putString(row[2], row[3]).commit();
+                settle(screen);
+                assertTrue(visible(fragment).contains(row[1]));
+                assertNull(row[1], SettingRules.whenReason(context(), row[1], prefs(), devices));
+                prefs().edit().remove(row[2]).commit();
+                settle(screen);
+            }
         }
     }
 
@@ -554,25 +539,23 @@ public class SettingsHideTest {
     }
 
     @Test
-    public void aGamesSettingsShowSharpnessAndDebugByTheSameRule() {
+    public void aGamesSettingsShowDebugByTheSameRuleAndAlwaysTheSharpness() {
         prefs().edit().putString("upscaling_mode", "off").commit();
         Intent intent = HostStreamSettings.intentForGame(context(), "pc", "PC", "game-uuid", 7, "Racer");
         try (ActivityController<HostStreamSettings> controller = Robolectric.buildActivity(HostStreamSettings.class, intent).setup()) {
             PreferenceFragment fragment = (PreferenceFragment) controller.get().getFragmentManager().findFragmentById(R.id.host_profile_settings);
-            assertNull("no upscaler that sharpens", fragment.findPreference("sharpness"));
+            assertNotNull("always: a layer above may choose an upscaler that sharpens", fragment.findPreference("sharpness"));
             assertNull("Debug only on request", fragment.findPreference("full_range"));
         }
-        AppStreamSettings.save(context(), "pc", "game-uuid", 7, HostStreamProfile.deserialize("v2;sharpness=70;full_range=true"));
+        AppStreamSettings.save(context(), "pc", "game-uuid", 7, HostStreamProfile.deserialize("v2;full_range=true"));
         try (ActivityController<HostStreamSettings> controller = Robolectric.buildActivity(HostStreamSettings.class, intent).setup()) {
             PreferenceFragment fragment = (PreferenceFragment) controller.get().getFragmentManager().findFragmentById(R.id.host_profile_settings);
-            assertNotNull("set by the game", fragment.findPreference("sharpness"));
             assertNotNull("set by the game", fragment.findPreference("full_range"));
         }
         AppStreamSettings.save(context(), "pc", "game-uuid", 7, HostStreamProfile.deserialize("v2"));
-        prefs().edit().putBoolean(SettingRules.SHOW_DEBUG, true).putString("upscaling_mode", "sgsr1").commit();
+        prefs().edit().putBoolean(SettingRules.SHOW_DEBUG, true).commit();
         try (ActivityController<HostStreamSettings> controller = Robolectric.buildActivity(HostStreamSettings.class, intent).setup()) {
             PreferenceFragment fragment = (PreferenceFragment) controller.get().getFragmentManager().findFragmentById(R.id.host_profile_settings);
-            assertNotNull("an upscaler that sharpens", fragment.findPreference("sharpness"));
             assertNotNull("Show debug settings", fragment.findPreference("full_range"));
         }
     }

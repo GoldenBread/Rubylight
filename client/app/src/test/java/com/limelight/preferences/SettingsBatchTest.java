@@ -286,14 +286,15 @@ public class SettingsBatchTest {
             // Behind Video's More row, in the group after the main rows; its limits follow it while it is on.
             assertSame(video.findPreference("category_basic_settings"), groupOf(video, "adaptive_quality_mode"));
             assertEquals("Automatic quality", video.findPreference("adaptive_quality_mode").getTitle().toString());
-            assertNull(video.findPreference("adaptive_quality_min_resolution"));
-            assertNull(video.findPreference("adaptive_quality_min_fps"));
+            // Always shown: the stream menu turns Automatic quality on for a PC or one stream (SettingRules.NOTE_ROWS).
+            assertNotNull(video.findPreference("adaptive_quality_min_resolution"));
+            assertNotNull(video.findPreference("adaptive_quality_min_fps"));
             prefs().edit().putString("adaptive_quality_mode", "balanced").commit();
             java.util.List<String> keys = SettingsStructureTest.keys(groupOf(video, "adaptive_quality_mode"));
             assertEquals(keys.indexOf("adaptive_quality_mode") + 1, keys.indexOf("adaptive_quality_min_resolution"));
             assertEquals(keys.indexOf("adaptive_quality_min_resolution") + 1, keys.indexOf("adaptive_quality_min_fps"));
             prefs().edit().putString("adaptive_quality_mode", "off").commit();
-            assertNull(video.findPreference("adaptive_quality_min_fps"));
+            assertNotNull(video.findPreference("adaptive_quality_min_fps"));
             // The summary no longer talks about host reconfiguration or an adaptive decoder.
             String summary = RuntimeEnvironment.getApplication().getString(com.limelight.R.string.summary_adaptive_quality_setting);
             assertFalse(summary.contains("reconfiguration"));
@@ -395,20 +396,19 @@ public class SettingsBatchTest {
     // Image
 
     @Test
-    public void sharpnessShowsOnlyForTheSharpUpscalers() {
+    public void sharpnessIsAlwaysShownAndSaysWhenOnlyTheSharpUpscalersUseIt() {
+        // A PC's, game's or profile's upscaler may sharpen with it, so it never leaves the list (SettingRules.NOTE_ROWS).
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             PreferenceScreen display = section(controller, "display");
-            assertNull(display.findPreference("upscaling_sharpness"));
-            prefs().edit().putString("upscaling_mode", "bilinear").commit();
-            assertNull(display.findPreference("upscaling_sharpness"));
-            prefs().edit().putString("upscaling_mode", "fsr1").commit();
-            assertNotNull(display.findPreference("upscaling_sharpness"));
-            prefs().edit().putString("upscaling_mode", "sgsr1").commit();
-            assertNotNull(display.findPreference("upscaling_sharpness"));
-            prefs().edit().putString("upscaling_mode", "sgsr2").commit();
-            assertNotNull(display.findPreference("upscaling_sharpness"));
-            prefs().edit().putString("upscaling_mode", "off").commit();
-            assertNull(display.findPreference("upscaling_sharpness"));
+            for (String mode : new String[] {"off", "bilinear", "fsr1", "sgsr1", "sgsr2", "off"}) {
+                prefs().edit().putString("upscaling_mode", mode).commit();
+                org.robolectric.shadows.ShadowLooper.idleMainLooper();
+                android.preference.Preference row = display.findPreference("upscaling_sharpness");
+                assertNotNull(mode, row);
+                boolean sharp = mode.startsWith("fsr") || mode.startsWith("sgsr");
+                String summary = String.valueOf(row.getSummary());
+                assertEquals(mode + ": " + summary, !sharp, summary.contains("Not used"));
+            }
         }
     }
 

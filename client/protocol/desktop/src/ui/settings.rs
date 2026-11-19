@@ -905,19 +905,6 @@ impl Launcher {
         // this device was on mobile data or a cap is set (Android's mobileBitrateShown).
         let mut mobile_limit = self.profiles.mobile_limit_kbps;
         let mobile_shown = !layered && (self.network.kind(&self.profiles.home_wifi) == crate::network::Kind::Mobile || mobile_limit > 0);
-        // The PCs', games' and profiles' own settings: on the main settings, a row they make act (an
-        // upscaler that sharpens, Automatic quality, vibration back on) shows though the main value
-        // leaves it nothing to do. A layer's own page shows its values already.
-        let layers: Vec<crate::config::Overrides> = if layered {
-            Vec::new()
-        } else {
-            view.hosts.list.iter()
-                .flat_map(|h| h.record.settings.iter().chain(h.record.app_settings.values()))
-                .chain(self.profiles.entries.iter().map(|p| &p.settings))
-                .cloned()
-                .collect()
-        };
-        let any_layer = |holds: &dyn Fn(&crate::config::Overrides) -> bool| layers.iter().any(holds);
         // Jumbo video packets are shown only where a saved PC offers more than stock packets.
         let jumbo_offered = !layered && view.hosts.list.iter().any(|h| {
             h.info.as_ref().is_some_and(|i| i.capabilities.max_video_packet() > 0)
@@ -1246,10 +1233,11 @@ impl Launcher {
                     }
                 }).response
             });
-            let quality = s.adaptive_quality != crate::config::QualityMode::Off
-                || any_layer(&|o| o.value::<crate::config::QualityMode>("adaptive_quality").is_some_and(|q| q != crate::config::QualityMode::Off));
+            // Never left out: the stream menu's Stream size turns Automatic quality on for one stream, and a
+            // PC's, game's or profile's settings for theirs, with these minimums (stream::mod).
+            let quality = s.adaptive_quality != crate::config::QualityMode::Off;
             let without_quality = || trf("Not used without {}", &[&tr("Automatic quality")]);
-            rows.applies(quality, without_quality);
+            rows.unused(quality, without_quality);
             setting_row(ui, s, &mut rows, &["quality_min_short_edge"], "Minimum resolution", "The lowest resolution Automatic quality goes to.", |ui, s| {
                 Combo::from_id_salt("quality-min-size").selected_text(short_edge_name(s.quality_min_short_edge)).show_ui(ui, |ui| {
                     for edge in nightjar_policy::quality::MIN_SHORT_EDGE_CHOICES {
@@ -1257,7 +1245,7 @@ impl Launcher {
                     }
                 }).response
             });
-            rows.applies(quality, without_quality);
+            rows.unused(quality, without_quality);
             setting_row(ui, s, &mut rows, &["quality_min_fps"], "Minimum frame rate", "The lowest frame rate Automatic quality goes to.", |ui, s| {
                 Combo::from_id_salt("quality-min-fps").selected_text(trf("{} fps", &[&s.quality_min_fps])).show_ui(ui, |ui| {
                     for fps in nightjar_policy::quality::MIN_FPS_CHOICES {
@@ -1409,11 +1397,8 @@ impl Launcher {
                 }).response
             });
             let upscaler = tr(s.upscaling.label());
-            // A layer's upscaler that sharpens takes this sharpness unless it holds its own.
-            let layer_sharpens = any_layer(&|o| {
-                !o.has(&["upscale_sharpness"]) && o.value::<crate::config::Upscaling>("upscaling").is_some_and(|u| u.is_shader())
-            });
-            rows.applies(s.upscaling.is_shader() || layer_sharpens, || trf("Not used with {}", &[&upscaler]));
+            // Never left out: a PC's, game's or profile's upscaler that sharpens takes this sharpness.
+            rows.unused(s.upscaling.is_shader(), || trf("Not used with {}", &[&upscaler]));
             setting_row(ui, s, &mut rows, &["upscale_sharpness"], "Upscaling sharpness", "How much sharpening FSR or SGSR adds. Raise it for soft edges; lower it if edges show halos.", |ui, s| {
                 slider(ui, &mut s.upscale_sharpness, 0..=100, 5.0, percent, |rail| rail, |field| field.suffix("%"))
             });
@@ -1541,8 +1526,8 @@ impl Launcher {
             setting_row(ui, s, &mut rows, &["controller_motion"], "Motion controls", "Sends the controller’s gyro and accelerometer to games, for motion aiming. The PC may then treat it as a PlayStation controller; turn it off if games show the wrong buttons.", |ui, s| toggle(ui, &mut s.controller_motion));
             setting_row(ui, s, &mut rows, &["disable_rumble"], "Turn off vibration", "Stops every vibration a game asks for: rumble, trigger rumble and haptics. Leave it off unless you want no vibration at all.", |ui, s| toggle(ui, &mut s.disable_rumble));
             // Turn off vibration stops every rumble the feel would shape.
-            rows.applies(!s.disable_rumble || any_layer(&|o| o.value::<bool>("disable_rumble") == Some(false)),
-                || trf("Not used with {}", &[&tr("Turn off vibration")]));
+            // Never left out: a PC's, game's or profile's settings can turn vibration back on for theirs.
+            rows.unused(!s.disable_rumble, || trf("Not used with {}", &[&tr("Turn off vibration")]));
             setting_row(ui, s, &mut rows, &["rumble_feel"], "Rumble feel", "Strong makes weak vibration strong enough for a small motor to show; Subtle caps strong vibration and softens weak. Either one changes the balance of weak and strong rumble the game chose, so leave it on Standard unless vibration is too faint or too harsh.", |ui, s| {
                 Combo::from_id_salt("rumble-feel").selected_text(tr(crate::config::rumble_feel_label(s.rumble_feel))).show_ui(ui, |ui| {
                     for feel in nightjar_policy::rumble::RumbleFeel::ALL {
@@ -1703,8 +1688,8 @@ impl Launcher {
                     }
                 }).response
             });
-            rows.applies(s.overlay || any_layer(&|o| o.value::<bool>("overlay") == Some(true)),
-                || trf("Not used without {}", &[&tr("Performance overlay")]));
+            // Never left out: a PC's, game's or profile's settings can show the overlay for theirs.
+            rows.unused(s.overlay, || trf("Not used without {}", &[&tr("Performance overlay")]));
             setting_row(ui, s, &mut rows, &["overlay_position"], "Overlay position", "The corner the performance overlay sits in.", |ui, s| {
                 Combo::from_id_salt("overlay-position").selected_text(tr(s.overlay_position.label())).show_ui(ui, |ui| {
                     for corner in crate::config::OverlayCorner::ALL {
@@ -1783,8 +1768,8 @@ impl Launcher {
             setting_row(ui, s, &mut rows, &["dual_screen"], "Dual screen mode", "Streams the same game to a second screen too, in a stream of its own; sound and controllers stay with the first. Needs a second screen and PC support.", |ui, s| {
                 toggle(ui, &mut s.dual_screen)
             });
-            rows.applies(s.dual_screen || any_layer(&|o| o.value::<bool>("dual_screen") == Some(true)),
-                || trf("Not used without {}", &[&tr("Dual screen mode")]));
+            // Never left out: a PC's, game's or profile's settings can turn Dual screen mode on for theirs.
+            rows.unused(s.dual_screen, || trf("Not used without {}", &[&tr("Dual screen mode")]));
             let own_size = tr("Second screen’s own size");
             setting_row(ui, s, &mut rows, &["second_screen_width", "second_screen_height"], "Second screen resolution", "The resolution of the second screen’s stream.", |ui, s| {
                 let shown = if s.second_screen_width == 0 { own_size.to_owned() } else { format!("{}x{}", s.second_screen_width, s.second_screen_height) };
@@ -3210,6 +3195,14 @@ impl Rows<'_> {
         self.idle = (!applies).then(reason);
     }
 
+    /// The next row is never left out, since a PC's, game's or profile's settings or the stream
+    /// menu can make it act, but while the main settings leave it nothing to do it says `reason`.
+    fn unused(&mut self, applies: bool, reason: impl FnOnce() -> String) {
+        if !applies && self.note.is_none() {
+            self.note = Some((reason(), *TERTIARY));
+        }
+    }
+
     /// Whether the row `id` is drawn; draws the fold and the headings waiting for it. An `idle`
     /// row (`applies`) shows only in search.
     fn shows(&mut self, ui: &mut Ui, id: &'static str, label: &str, description: &str, idle: bool) -> bool {
@@ -3497,11 +3490,16 @@ pub(super) fn setting_row(
         response.request_focus();
     }
     if has_reason {
-        let in_use = response.has_focus() || response.dragged();
-        ui.ctx().data_mut(|d| {
-            if in_use {
-                d.insert_temp(kept_id, response.id);
-            } else {
+        // The control that has the focus or the drag, if it is this row's: a slider's rail or its number
+        // field, which have ids of their own.
+        let ctx = ui.ctx().clone();
+        let in_use = [ctx.memory(|m| m.focused()), ctx.dragged_id()].into_iter().flatten()
+            .find(|held| ctx.read_response(*held).is_some_and(|r| response.rect.intersects(r.rect)));
+        ctx.data_mut(|d| match in_use {
+            Some(held) => {
+                d.insert_temp(kept_id, held);
+            }
+            None => {
                 d.remove::<egui::Id>(kept_id);
             }
         });

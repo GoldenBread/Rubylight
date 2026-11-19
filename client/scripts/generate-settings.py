@@ -242,12 +242,17 @@ SHOWN_WHILE = {
     "list_resolution_screen2": ("checkbox_dual_screen", True),
 }
 
+# Rows always shown though the main settings may leave them nothing to do (SettingRules.NOTE_ROWS), with when they say so.
+ALWAYS_LISTED = {
+    "adaptive_quality_min_resolution": "Automatic quality is off",
+    "adaptive_quality_min_fps": "Automatic quality is off",
+    "upscaling_sharpness": "no upscaler that sharpens (FSR or SGSR) is chosen",
+    "checkbox_pyrowave_preacquire": "the video codec isn't PyroWave",
+}
+
 # Rows shown only where they can do something (SettingRules.WHEN_ROWS), beyond SHOWN_WHILE's switches. Each also
 # shows while it holds another value than its default, saying why it does nothing, and search always finds it.
 SHOWN_ONLY = {
-    "adaptive_quality_min_resolution": "while Automatic quality is on here, for a PC from its stream menu, or with Dual screen mode",
-    "adaptive_quality_min_fps": "while Automatic quality is on here, for a PC from its stream menu, or with Dual screen mode",
-    "upscaling_sharpness": "while FSR or SGSR enlarges the picture, here or in a PC's, game's or profile's settings that leave the sharpness to this one",
     "list_rumble_feel": "while Turn off vibration is off",
     "seekbar_vibrate_fallback_strength": "while Vibrate device for rumble is on",
     "seekbar_mouse_speed": "while a mouse or a touchpad is connected",
@@ -269,7 +274,6 @@ SHOWN_ONLY = {
     "checkbox_covering_decoder_size": "on a device that folds, or with Orientation set to Rotate with device",
     "checkbox_experimental_chipset_tuning": "unless the chip is known to be neither MediaTek nor Exynos (Qualcomm Snapdragon, NVIDIA Tegra)",
     "game_info_igdb_client_secret": "once the IGDB client ID is set",
-    "checkbox_pyrowave_preacquire": "while the video codec is PyroWave, here or in a PC's, game's or profile's settings",
     "list_resolution_screen2": "while Dual screen mode is on",
 }
 
@@ -447,6 +451,9 @@ def generate():
             advice += f" Shown while {resolve(nodes[parent].get(ANDROID + 'title'))} is {'On' if on else 'Off'}."
         if key in SHOWN_ONLY:
             advice += f" In the list only {SHOWN_ONLY[key]}, or while it holds another value than its default; search finds it either way."
+        if key in ALWAYS_LISTED:
+            advice += (" Always in the list, since the stream menu or a PC's, game's or profile's settings can make it act;"
+                       f" it says why while {ALWAYS_LISTED[key]} in the main settings.")
         tier = "Main" if key in main or key.startswith("more_") else "More"
         return "| " + " | ".join(map(cell, [resolve(node.get(ANDROID + "title")) + f"<br>`{key}`", tier, default, choices, advice])) + " |"
 

@@ -257,9 +257,8 @@ public class AdvancedOptionsTest {
             assertEquals("Decoding and diagnostics", root(screen).findPreference("advanced").getSummary().toString());
             PreferenceScreen debugRows = open(screen, "debug").getPreferenceScreen();
             assertEquals(DEBUG_MAIN, SettingsStructureTest.keys((PreferenceGroup) debugRows.findPreference("category_debug")));
-            // PyroWave's only row acts with PyroWave alone, so its group is left out at the default codec
-            // (SettingsHideTest shows it with PyroWave chosen).
-            assertNull(debugRows.findPreference("category_debug_pyrowave"));
+            assertEquals(Arrays.asList("checkbox_pyrowave_preacquire"),
+                    SettingsStructureTest.keys((PreferenceGroup) debugRows.findPreference("category_debug_pyrowave")));
             assertEquals(Arrays.asList("checkbox_submit_hint", "checkbox_codec_direct", "checkbox_receive_decode_priority"),
                     SettingsStructureTest.keys((PreferenceGroup) debugRows.findPreference("category_debug_decoder")));
             assertEquals(DEBUG_MAIN, StreamSettings.mainKeys(screen, "debug"));
