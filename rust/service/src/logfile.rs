@@ -11,10 +11,15 @@ use std::{
 
 /// How many bytes the log writes between checks that its path is still there.
 const EXISTS_CHECK: u64 = 1 << 20;
+/// How many bytes of dropped lines go by between tries to write again.
+const RETRY_DROPPED: u64 = 1 << 20;
 
 pub struct RotatingFile {
     path: PathBuf,
     file: File,
+    /// The same file with write access, which an append-only handle lacks on
+    /// Windows; only the backstop uses it, to cut the file back.
+    cut: Option<File>,
     size: u64,
     limit: u64,
     keep: usize,
@@ -22,6 +27,14 @@ pub struct RotatingFile {
     /// rotation, or deleted or moved away by another program) and the live
     /// path could not be opened again yet.
     detached: bool,
+    /// The open file was deleted or moved away by another program: it has no
+    /// name of the log's, so nothing can roll it over.
+    orphan: bool,
+    /// Bytes of lines dropped since the backstop could not cut the file back.
+    dropped: u64,
+    /// How often the backstop cut the file being written back.
+    #[cfg(test)]
+    backstops: u32,
 }
 impl RotatingFile {
     /// The host's default: 32 MiB per file and four older files.
@@ -29,13 +42,19 @@ impl RotatingFile {
         Self::open(path, 32 * 1024 * 1024, 4)
     }
     pub fn open(path: &Path, limit: u64, keep: usize) -> io::Result<Self> {
+        let (file, cut) = open_pair(path)?;
         let mut log = Self {
             path: path.to_owned(),
-            file: append(path)?,
+            file,
+            cut,
             size: std::fs::metadata(path).map_or(0, |m| m.len()),
             limit: limit.max(1),
             keep: keep.max(1),
             detached: false,
+            orphan: false,
+            dropped: 0,
+            #[cfg(test)]
+            backstops: 0,
         };
         if log.size >= log.limit {
             // A failed rotation is not fatal: keep appending to the current
@@ -66,7 +85,8 @@ impl RotatingFile {
                     // file is no longer the log. Nothing was moved aside, so
                     // no older file moves up; the live path opens again.
                     self.detached = true;
-                    self.reopen();
+                    self.orphan = true;
+                    self.reattach(false);
                     return Ok(());
                 }
                 result => result?,
@@ -74,7 +94,7 @@ impl RotatingFile {
             // Until the live path opens, writes go on into `name.0`, and the
             // next write tries to open it again.
             self.detached = true;
-            self.file = append(&self.path)?;
+            (self.file, self.cut) = open_pair(&self.path)?;
             self.detached = false;
             self.size = 0;
         }
@@ -102,20 +122,42 @@ impl RotatingFile {
         if staged.exists() {
             self.shift()?;
         }
-        self.file = append(&staged)?;
+        (self.file, self.cut) = open_pair(&staged)?;
         self.size = 0;
+        self.orphan = false;
         Ok(())
+    }
+    /// While detached: the live path first; if it still fails, `name.0` when
+    /// the file being written is full or has no name of the log's (a deleted
+    /// file would take lines nobody can read until the size limit).
+    fn reattach(&mut self, full: bool) {
+        self.reopen();
+        if self.detached && (full || self.orphan) {
+            let _ = self.roll_detached();
+        }
     }
     /// Opens the live path again after a rotation moved the open file away but
     /// could not open it; then the moved file takes its place among the older
     /// ones. While it still fails, writing goes on into the moved file.
     fn reopen(&mut self) {
-        let Ok(file) = append(&self.path) else {
+        let opened = open_pair(&self.path).or_else(|error| {
+            // The log's folder was deleted too: it is made again, as the
+            // service does at start.
+            let folder = self
+                .path
+                .parent()
+                .filter(|_| error.kind() == io::ErrorKind::NotFound);
+            std::fs::create_dir_all(folder.ok_or(error)?)?;
+            open_pair(&self.path)
+        });
+        let Ok((file, cut)) = opened else {
             return;
         };
         self.size = file.metadata().map_or(0, |m| m.len());
         self.file = file;
+        self.cut = cut;
         self.detached = false;
+        self.orphan = false;
         if Self::rotated(&self.path, 0).exists() {
             // Moves only the older files: `name.0` is there, so the reopened
             // file stays the live one.
@@ -173,24 +215,50 @@ impl Write for ServiceLog {
 }
 fn append(path: &Path) -> io::Result<File> {
     #[cfg(test)]
-    if tests::FAIL_OPEN.with(|fail| fail.borrow().as_deref() == Some(path)) {
+    if tests::FAIL_OPEN.with(|fail| fail.borrow().iter().any(|failing| failing == path)) {
         return Err(io::Error::from(io::ErrorKind::PermissionDenied));
     }
     OpenOptions::new().create(true).append(true).open(path)
+}
+/// The append handle every line goes through, and beside it the same file
+/// with write access for the backstop (opened only with the file, never per
+/// line; without it the backstop drops lines instead).
+fn open_pair(path: &Path) -> io::Result<(File, Option<File>)> {
+    let file = append(path)?;
+    Ok((file, OpenOptions::new().write(true).open(path).ok()))
+}
+fn truncate(cut: Option<&File>) -> io::Result<()> {
+    #[cfg(test)]
+    if tests::FAIL_TRUNCATE.with(std::cell::Cell::get) {
+        return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+    }
+    cut.ok_or_else(|| io::Error::from(io::ErrorKind::PermissionDenied))?
+        .set_len(0)
 }
 impl Write for RotatingFile {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         // If rotation fails (a reader without delete sharing holds the old
         // file), keep writing to the current file rather than lose lines.
-        let full = |log: &Self| log.size > 0 && log.size + buf.len() as u64 > log.limit;
-        if self.detached {
-            self.reopen();
-            if self.detached && full(self) {
-                let _ = self.roll_detached();
+        let length = buf.len() as u64;
+        if self.dropped > 0 {
+            // Lines are dropped (see below) until about 1 MiB more went by.
+            let before = self.dropped;
+            self.dropped += length;
+            if before / RETRY_DROPPED == self.dropped / RETRY_DROPPED {
+                return Ok(buf.len());
             }
-        } else if full(self) {
+        }
+        let full = self.size > 0 && self.size + length > self.limit;
+        if self.detached {
+            self.reattach(full);
+        } else if full {
             let _ = self.rotate();
         }
+        if self.size > 0 && self.size + length > 2 * self.limit && !self.cut_back() {
+            self.dropped = self.dropped.max(length.max(1));
+            return Ok(buf.len());
+        }
+        self.dropped = 0;
         let written = self.file.write(buf)?;
         let before = self.size;
         self.size += written as u64;
@@ -202,6 +270,7 @@ impl Write for RotatingFile {
             && !self.path.exists()
         {
             self.detached = true;
+            self.orphan = true;
         }
         Ok(written)
     }
@@ -209,13 +278,35 @@ impl Write for RotatingFile {
         self.file.flush()
     }
 }
+impl RotatingFile {
+    /// The backstop, which a log that rotates never reaches: nothing could
+    /// replace the file being written (a program holds it or the oldest file
+    /// without delete sharing, a folder blocks the rotation, neither the log
+    /// path nor `name.0` opens), and it would pass twice the size limit. It is
+    /// cut back to nothing, dropping its lines, so the disk stays bounded.
+    /// Whether that worked; a file that cannot be cut back (a mapped file)
+    /// makes `write` drop lines instead.
+    fn cut_back(&mut self) -> bool {
+        #[cfg(test)]
+        {
+            self.backstops += 1;
+        }
+        if truncate(self.cut.as_ref()).is_err() {
+            return false;
+        }
+        self.size = 0;
+        true
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     thread_local! {
-        /// Makes opening this path fail, as a denied or locked path would.
-        pub(super) static FAIL_OPEN: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+        /// Makes opening these paths fail, as a denied or locked path would.
+        pub(super) static FAIL_OPEN: std::cell::RefCell<Vec<PathBuf>> = const { std::cell::RefCell::new(Vec::new()) };
+        /// Makes cutting the file back fail, as a mapped file would.
+        pub(super) static FAIL_TRUNCATE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
 
     /// A rotation that moves the open file but cannot open the live path again
@@ -232,9 +323,9 @@ mod tests {
         for line in 0..2 {
             write(&mut log, line);
         }
-        FAIL_OPEN.with(|fail| fail.replace(Some(path.clone())));
+        FAIL_OPEN.with(|fail| fail.replace(vec![path.clone()]));
         write(&mut log, 2);
-        FAIL_OPEN.with(|fail| fail.replace(None));
+        FAIL_OPEN.with(|fail| fail.replace(Vec::new()));
         assert!(!path.exists());
         for line in 3..5 {
             write(&mut log, line);
@@ -259,27 +350,48 @@ mod tests {
         Box::new(service_log(directory))
     }
 
+    /// A file made read-only until dropped, also when an assertion fails
+    /// first, so the temporary folder can be removed.
+    struct ReadOnly(PathBuf);
+    impl ReadOnly {
+        fn new(path: &Path) -> Self {
+            let mut permissions = std::fs::metadata(path).unwrap().permissions();
+            permissions.set_readonly(true);
+            std::fs::set_permissions(path, permissions).unwrap();
+            Self(path.to_owned())
+        }
+    }
+    impl Drop for ReadOnly {
+        fn drop(&mut self) {
+            if let Ok(metadata) = std::fs::metadata(&self.0) {
+                let mut permissions = metadata.permissions();
+                #[allow(clippy::permissions_set_readonly_false)]
+                permissions.set_readonly(false);
+                let _ = std::fs::set_permissions(&self.0, permissions);
+            }
+        }
+    }
+
     /// A `service.log` the service cannot open does not keep it from starting.
     #[test]
     fn a_read_only_log_does_not_stop_the_service() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("service.log");
         std::fs::write(&path, b"").unwrap();
-        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
-        permissions.set_readonly(true);
-        std::fs::set_permissions(&path, permissions.clone()).unwrap();
+        let _read_only = ReadOnly::new(&path);
         setup(directory.path()).write_all(b"line\n").unwrap();
-        // Writable again only so the temporary folder can be removed.
-        #[allow(clippy::permissions_set_readonly_false)]
-        permissions.set_readonly(false);
-        std::fs::set_permissions(&path, permissions).unwrap();
+        // The log really did not open: nothing reached it.
+        assert_eq!(std::fs::read(&path).unwrap(), b"");
     }
 
     #[test]
     fn a_folder_in_place_of_the_log_does_not_stop_the_service() {
         let directory = tempfile::tempdir().unwrap();
-        std::fs::create_dir(directory.path().join("service.log")).unwrap();
+        let path = directory.path().join("service.log");
+        std::fs::create_dir(&path).unwrap();
         setup(directory.path()).write_all(b"line\n").unwrap();
+        assert!(path.is_dir());
+        assert_eq!(std::fs::read_dir(&path).unwrap().count(), 0);
     }
 
     #[test]
@@ -288,6 +400,31 @@ mod tests {
         let logs = directory.path().join("logs");
         std::fs::write(&logs, b"").unwrap();
         setup(&logs).write_all(b"line\n").unwrap();
+        assert_eq!(std::fs::read(&logs).unwrap(), b"");
+    }
+
+    /// Once open, the service's log comes back with its `logs` folder when
+    /// both were deleted: the log makes the folder again as it reopens.
+    #[test]
+    fn a_service_log_whose_folder_was_deleted_comes_back() {
+        let directory = tempfile::tempdir().unwrap();
+        let logs = directory.path().join("logs");
+        let mut log = service_log(&logs);
+        log.write_all(b"before\n").unwrap();
+        for entry in std::fs::read_dir(&logs).unwrap() {
+            std::fs::remove_file(entry.unwrap().path()).unwrap();
+        }
+        std::fs::remove_dir(&logs).unwrap();
+        // The deletion is noticed within `EXISTS_CHECK` bytes.
+        let chunk = vec![b'x'; 4095];
+        for _ in 0..(EXISTS_CHECK / 4096 + 1) {
+            log.write_all(&chunk).unwrap();
+            log.write_all(b"\n").unwrap();
+        }
+        log.write_all(b"after\n").unwrap();
+        drop(log);
+        let text = std::fs::read_to_string(logs.join("service.log")).unwrap();
+        assert!(text.ends_with("\nafter\n"));
     }
 
     /// A program that holds the log without write sharing does not keep the
@@ -383,7 +520,7 @@ mod tests {
         for n in 0..2 {
             write(&mut log, n);
         }
-        FAIL_OPEN.with(|fail| fail.replace(Some(path.clone())));
+        FAIL_OPEN.with(|fail| fail.replace(vec![path.clone()]));
         let files = |path: &Path| -> Vec<PathBuf> {
             (0..=keep)
                 .rev()
@@ -405,7 +542,7 @@ mod tests {
             let first = n + 1 - kept.len();
             assert_eq!(kept, (first..=n).map(line).collect::<Vec<_>>());
         }
-        FAIL_OPEN.with(|fail| fail.replace(None));
+        FAIL_OPEN.with(|fail| fail.replace(Vec::new()));
         write(&mut log, 40);
         drop(log);
         assert_eq!(lines(&path), [line(40)]);
@@ -415,6 +552,234 @@ mod tests {
             .flat_map(|n| lines(&RotatingFile::rotated(&path, n)))
             .collect();
         assert_eq!(older.last(), Some(&line(39)));
+    }
+
+    const LIMIT: u64 = 100;
+    const KEEP: usize = 2;
+    /// What any state may hold on disk: `name.0` to `name.<keep>` at the size
+    /// limit and the file being written at its hard bound.
+    const BOUND: u64 = (KEEP as u64 + 1) * LIMIT + 2 * LIMIT;
+    fn write_line(log: &mut RotatingFile, n: usize) {
+        log.write_all(format!("{}\n", line(n)).as_bytes()).unwrap();
+    }
+    /// The bytes in the log's files; a folder in their place counts nothing.
+    fn on_disk(path: &Path) -> u64 {
+        std::iter::once(path.to_owned())
+            .chain((0..=KEEP).map(|n| RotatingFile::rotated(path, n)))
+            .filter_map(|file| std::fs::metadata(file).ok())
+            .filter(std::fs::Metadata::is_file)
+            .map(|m| m.len())
+            .sum()
+    }
+    fn size(path: &Path) -> u64 {
+        std::fs::metadata(path).map_or(0, |m| m.len())
+    }
+    /// `found` is lines `first..=last` for some `first`: none lost in between,
+    /// none twice.
+    fn run_ending_at(found: &[String], last: usize) {
+        assert!(!found.is_empty(), "no line up to {last}");
+        let first = last + 1 - found.len();
+        assert_eq!(found, (first..=last).map(line).collect::<Vec<_>>());
+    }
+
+    /// A healthy log rotates at its limit and never reaches the backstop.
+    #[test]
+    fn a_healthy_log_rotates_at_its_limit_and_is_never_cut_back() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("service.log");
+        let mut log = RotatingFile::open(&path, LIMIT, KEEP).unwrap();
+        for n in 0..50 {
+            write_line(&mut log, n);
+            assert!(size(&path) <= LIMIT);
+        }
+        assert_eq!(log.backstops, 0);
+        run_ending_at(&lines(&RotatingFile::rotated(&path, 1)), 47);
+        run_ending_at(&lines(&path), 49);
+    }
+
+    /// A program that holds the log without delete sharing keeps it from
+    /// rotating; at twice its limit it is cut back instead of growing.
+    #[cfg(windows)]
+    #[test]
+    fn a_log_held_without_delete_sharing_is_cut_back_at_twice_its_limit() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("service.log");
+        let mut log = RotatingFile::open(&path, LIMIT, KEEP).unwrap();
+        for n in 0..5 {
+            write_line(&mut log, n);
+        }
+        let older = [1, 2].map(|n| lines(&RotatingFile::rotated(&path, n)));
+        // FILE_SHARE_READ | FILE_SHARE_WRITE, without FILE_SHARE_DELETE.
+        let reader = OpenOptions::new()
+            .read(true)
+            .share_mode(3)
+            .open(&path)
+            .unwrap();
+        for n in 5..40 {
+            write_line(&mut log, n);
+            assert!(size(&path) <= 2 * LIMIT);
+            assert!(on_disk(&path) <= BOUND);
+            run_ending_at(&lines(&path), n);
+        }
+        assert_eq!(
+            [1, 2].map(|n| lines(&RotatingFile::rotated(&path, n))),
+            older
+        );
+        drop(reader);
+    }
+
+    /// A program that holds the oldest file without delete sharing keeps the
+    /// older files from moving up; the log is cut back at twice its limit.
+    #[cfg(windows)]
+    #[test]
+    fn a_held_older_file_keeps_the_log_within_twice_its_limit() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("service.log");
+        let mut log = RotatingFile::open(&path, LIMIT, KEEP).unwrap();
+        for n in 0..6 {
+            write_line(&mut log, n);
+        }
+        let older = [1, 2].map(|n| lines(&RotatingFile::rotated(&path, n)));
+        let reader = OpenOptions::new()
+            .read(true)
+            .share_mode(3)
+            .open(RotatingFile::rotated(&path, KEEP))
+            .unwrap();
+        for n in 6..40 {
+            write_line(&mut log, n);
+            assert!(size(&path) <= 2 * LIMIT);
+            assert!(on_disk(&path) <= BOUND);
+            run_ending_at(&lines(&path), n);
+        }
+        assert_eq!(
+            [1, 2].map(|n| lines(&RotatingFile::rotated(&path, n))),
+            older
+        );
+        assert_eq!(lines(&RotatingFile::rotated(&path, 0)), [line(4), line(5)]);
+        drop(reader);
+    }
+
+    /// A folder made at the log's path moves up with the rotations until it
+    /// blocks them for good; the log is cut back at twice its limit.
+    #[test]
+    fn a_folder_at_the_log_path_keeps_the_log_within_twice_its_limit() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("service.log");
+        let mut log = RotatingFile::open(&path, LIMIT, KEEP).unwrap();
+        for n in 0..2 {
+            write_line(&mut log, n);
+        }
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        for n in 2..60 {
+            write_line(&mut log, n);
+            assert!(on_disk(&path) <= BOUND);
+            if path.is_file() {
+                assert!(size(&path) <= 2 * LIMIT);
+            }
+        }
+        assert!(RotatingFile::rotated(&path, KEEP).is_dir());
+        run_ending_at(&lines(&path), 59);
+    }
+
+    /// When neither the log path nor `name.0` opens, the file being written
+    /// is cut back at twice the limit, and the log comes back once they open.
+    #[test]
+    fn a_log_that_can_open_nothing_stays_within_twice_its_limit() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("service.log");
+        let mut log = RotatingFile::open(&path, LIMIT, KEEP).unwrap();
+        for n in 0..2 {
+            write_line(&mut log, n);
+        }
+        FAIL_OPEN.with(|fail| fail.replace(vec![path.clone(), RotatingFile::rotated(&path, 0)]));
+        for n in 2..40 {
+            write_line(&mut log, n);
+            assert!(on_disk(&path) <= BOUND);
+        }
+        run_ending_at(&lines(&RotatingFile::rotated(&path, 1)), 39);
+        FAIL_OPEN.with(|fail| fail.replace(Vec::new()));
+        write_line(&mut log, 40);
+        assert_eq!(lines(&path), [line(40)]);
+    }
+
+    /// A file that cannot be cut back either (a mapped file) drops lines, and
+    /// is tried again only once per MiB that would have been written.
+    #[test]
+    fn a_file_that_cannot_be_cut_back_drops_lines_and_tries_again_per_mib() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("service.log");
+        let mut log = RotatingFile::open(&path, LIMIT, KEEP).unwrap();
+        for n in 0..2 {
+            write_line(&mut log, n);
+        }
+        FAIL_OPEN.with(|fail| fail.replace(vec![path.clone(), RotatingFile::rotated(&path, 0)]));
+        FAIL_TRUNCATE.with(|fail| fail.set(true));
+        for n in 2..40 {
+            write_line(&mut log, n);
+            assert!(on_disk(&path) <= BOUND);
+        }
+        FAIL_OPEN.with(|fail| fail.replace(Vec::new()));
+        FAIL_TRUNCATE.with(|fail| fail.set(false));
+        let mut n = 40;
+        while !path.exists() {
+            write_line(&mut log, n);
+            n += 1;
+            assert!(
+                n < 40 + RETRY_DROPPED as usize / 40 + 2,
+                "never tried again"
+            );
+        }
+        // About 1 MiB of lines went by before the next try.
+        assert!(
+            n > 40 + RETRY_DROPPED as usize / 40 - 40,
+            "tried again after {n}"
+        );
+        assert_eq!(lines(&path), [line(n - 1)]);
+    }
+
+    /// The log's folder deleted while the log is open comes back with the log.
+    #[test]
+    fn a_log_whose_folder_was_deleted_comes_back() {
+        let directory = tempfile::tempdir().unwrap();
+        let folder = directory.path().join("logs");
+        std::fs::create_dir(&folder).unwrap();
+        let path = folder.join("service.log");
+        let mut log = RotatingFile::open(&path, LIMIT, KEEP).unwrap();
+        for n in 0..4 {
+            write_line(&mut log, n);
+        }
+        for entry in std::fs::read_dir(&folder).unwrap() {
+            std::fs::remove_file(entry.unwrap().path()).unwrap();
+        }
+        std::fs::remove_dir(&folder).unwrap();
+        // 80 bytes in the deleted file: the next line passes the limit.
+        write_line(&mut log, 4);
+        write_line(&mut log, 5);
+        assert_eq!(lines(&path), [line(4), line(5)]);
+    }
+
+    /// A deleted log whose path cannot be opened again yet goes on in `name.0`
+    /// at once rather than in the deleted file.
+    #[test]
+    fn a_deleted_log_that_cannot_reopen_goes_on_in_name_0_at_once() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("service.log");
+        let mut log = RotatingFile::open(&path, LIMIT, KEEP).unwrap();
+        for n in 0..2 {
+            write_line(&mut log, n);
+        }
+        std::fs::remove_file(&path).unwrap();
+        FAIL_OPEN.with(|fail| fail.replace(vec![path.clone()]));
+        write_line(&mut log, 2);
+        write_line(&mut log, 3);
+        assert_eq!(lines(&RotatingFile::rotated(&path, 0)), [line(2), line(3)]);
+        FAIL_OPEN.with(|fail| fail.replace(Vec::new()));
+        write_line(&mut log, 4);
+        assert_eq!(lines(&path), [line(4)]);
+        assert_eq!(lines(&RotatingFile::rotated(&path, 1)), [line(2), line(3)]);
     }
 
     #[test]
@@ -469,21 +834,22 @@ mod tests {
             .share_mode(3)
             .open(&path)
             .unwrap();
-        for line in 5..12 {
+        // Up to twice the limit, where the backstop would cut the file back.
+        for line in 5..9 {
             write(&mut log, line);
         }
         assert_eq!(older(&path), before);
-        assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 8);
+        assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 5);
         // Once the reader lets go, the next write rotates again.
         drop(reader);
-        write(&mut log, 12);
+        write(&mut log, 9);
         assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 1);
         assert_eq!(
             std::fs::read_to_string(RotatingFile::rotated(&path, 1))
                 .unwrap()
                 .lines()
                 .count(),
-            8
+            5
         );
     }
 
