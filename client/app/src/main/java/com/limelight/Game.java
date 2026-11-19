@@ -274,14 +274,15 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
                 }
             } else {
                 long rtt = MoonBridge.getEstimatedRttInfo();
-                AdaptiveQualityController.Target target = adaptiveQuality.sample(now,
+                AdaptiveQualityController.Target target = adaptation.waitingQualityStep != null ?
+                        adaptation.waitingQualityStep : adaptiveQuality.sample(now,
                         decoderRenderer.hasRecentVideoFrames(now), poorConnection,
                         decoderRenderer.getNetworkFrameLossPercent(), decoderRenderer.getDecodeTimeMs(),
                         rtt == -1 ? -1 : (float) (rtt & 0xffffffffL), decoderRenderer.getQueueDelayMs(),
                         adaptation.adaptationThermalLevel(),
                         adaptiveBitrate != null && adaptiveBitrate.hasRoomBeforeQualityReduction(),
                         decoderRenderer.takeDecodeTiming(streamFps));
-                if (target != null && !adaptation.applyAdaptiveQuality(target, now)) return;
+                if (target != null && adaptation.applyAdaptiveQuality(target, now) == GameVideoOutput.Reconfigure.REFUSED) return;
             }
             bitrateHandler.postDelayed(this, 1000);
         }

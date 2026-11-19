@@ -288,7 +288,7 @@ public class GameQualityTest {
         AdaptiveQualityController.Target target = pressuredTarget(quality, now);
         ReflectionHelpers.setField(game, "panelMaxRefreshRate", 60f);
         try {
-            assertTrue(ReflectionHelpers.callInstanceMethod(game.adaptation, "applyAdaptiveQuality",
+            assertEquals(GameVideoOutput.Reconfigure.SENT, ReflectionHelpers.callInstanceMethod(game.adaptation, "applyAdaptiveQuality",
                     ReflectionHelpers.ClassParameter.from(AdaptiveQualityController.Target.class, target),
                     ReflectionHelpers.ClassParameter.from(long.class, now + 3000)));
             assertEquals(90, (int) ReflectionHelpers.getField(game, "streamFps"));
@@ -316,7 +316,7 @@ public class GameQualityTest {
             for (int i = 1; i <= 2; i++) {
                 long now = SystemClock.uptimeMillis() + i * 20000L;
                 AdaptiveQualityController.Target target = pressuredTarget(quality, now);
-                assertTrue(ReflectionHelpers.callInstanceMethod(game.adaptation, "applyAdaptiveQuality",
+                assertEquals(GameVideoOutput.Reconfigure.SENT, ReflectionHelpers.callInstanceMethod(game.adaptation, "applyAdaptiveQuality",
                         ReflectionHelpers.ClassParameter.from(AdaptiveQualityController.Target.class, target),
                         ReflectionHelpers.ClassParameter.from(long.class, now + 3000)));
                 clearPendingQualityTarget(game);

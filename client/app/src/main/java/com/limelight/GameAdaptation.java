@@ -874,6 +874,7 @@ final class GameAdaptation {
     void startAdaptiveQuality() {
         game.bitrateHandler.removeCallbacks(game.updateQuality);
         game.adaptiveQuality = null;
+        waitingQualityStep = null;
         game.pendingQualityTarget = null;
         game.qualityStatus = null;
         if (game.decoderRenderer != null) game.decoderRenderer.resetDecodeTiming();
@@ -902,7 +903,8 @@ final class GameAdaptation {
         int[] shown = game.decoderRenderer.getStreamSize();
         if ((!game.adaptiveQuality.current().matches(shown[0], shown[1], game.streamFps) ||
                 game.reconfigureRequester.fpsMillihz() != qualityCeilingFrameRateMilliHz()) &&
-                !applyAdaptiveQuality(game.adaptiveQuality.current(), SystemClock.uptimeMillis())) return;
+                applyAdaptiveQuality(game.adaptiveQuality.current(), SystemClock.uptimeMillis()) ==
+                        GameVideoOutput.Reconfigure.REFUSED) return;
         // Automatic quality needs it for this session only; the saved choice stays the user's own. Never keeps the
         // bitrate: automatic quality then steps only the resolution and frame rate.
         if (qualityTakesBitrate(bitrateHeld(), supportsAdaptiveBitrate(), isAdaptiveBitrateEnabled(), isRateChangeBitrateOn(),
@@ -922,7 +924,10 @@ final class GameAdaptation {
         return !held && supported && !busyOn && !hintOn && manualKbps == 0;
     }
 
-    boolean applyAdaptiveQuality(AdaptiveQualityController.Target target, long now) {
+    // A step that waited for a decoder being set up again; offered again until it is sent or refused.
+    AdaptiveQualityController.Target waitingQualityStep;
+
+    GameVideoOutput.Reconfigure applyAdaptiveQuality(AdaptiveQualityController.Target target, long now) {
         return applyAdaptiveQuality(target, now, qualityCeilingFrameRateMilliHz());
     }
 
@@ -930,25 +935,28 @@ final class GameAdaptation {
         return game.qualityMaxFrameRateMilliHz > 0 ? game.qualityMaxFrameRateMilliHz : game.qualityMaxFps * 1000;
     }
 
-    boolean applyAdaptiveQuality(AdaptiveQualityController.Target target, long now, int ceilingMilliHz) {
+    GameVideoOutput.Reconfigure applyAdaptiveQuality(AdaptiveQualityController.Target target, long now, int ceilingMilliHz) {
         int[] request = target.request();
         if (target.fps == Math.round(ceilingMilliHz / 1000f)) request[2] = ceilingMilliHz;
         GameVideoOutput.Reconfigure sent = game.videoOutput.requestStreamReconfigure(request);
-        // A decoder being set up again (after a failure) takes no size yet: the next tick asks again.
-        if (sent == GameVideoOutput.Reconfigure.PENDING) return true;
+        // A decoder being set up again (after a failure) takes no size yet: the next tick, or the
+        // check once it is set up, offers this step again.
+        waitingQualityStep = sent == GameVideoOutput.Reconfigure.PENDING ? target : null;
+        if (sent == GameVideoOutput.Reconfigure.PENDING) return sent;
         if (sent != GameVideoOutput.Reconfigure.SENT) {
             stopAdaptiveQualityWithError();
-            return false;
+            return sent;
         }
         game.healthOriginalBitrate = game.healthTrialBitrate = 0;
         game.adaptiveQuality.applied(target, now);
         game.pendingQualityTarget = target;
         game.qualityRequestSentAt = now;
-        return true;
+        return sent;
     }
 
     void stopAdaptiveQualityWithError() {
         game.adaptiveQuality = null;
+        waitingQualityStep = null;
         game.pendingQualityTarget = null;
         game.bitrateHandler.removeCallbacks(game.updateQuality);
         releaseQualityAutoBitrate();

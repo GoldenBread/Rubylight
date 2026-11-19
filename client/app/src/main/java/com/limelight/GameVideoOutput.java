@@ -802,7 +802,9 @@ final class GameVideoOutput {
             // needs to reach the host when the current level uses the ceiling's rate.
             if (target == null && game.adaptiveQuality.current().fps == Math.round(offered[2] / 1000f) &&
                     game.reconfigureRequester.fpsMillihz() != offered[2]) target = game.adaptiveQuality.current();
-            if (target == null || game.adaptation.applyAdaptiveQuality(target, now, offered[2])) {
+            // A step that waited for the decoder (the ladder was resized for it already) is asked for now.
+            if (target == null) target = game.adaptation.waitingQualityStep;
+            if (target == null || game.adaptation.applyAdaptiveQuality(target, now, offered[2]) == Reconfigure.SENT) {
                 game.qualityMaxWidth = offered[0]; game.qualityMaxHeight = offered[1]; game.qualityMaxFps = Math.round(offered[2] / 1000f);
                 game.qualityMaxFrameRateMilliHz = offered[2];
                 game.streamPanelHz = game.panelMaxRefreshRate;

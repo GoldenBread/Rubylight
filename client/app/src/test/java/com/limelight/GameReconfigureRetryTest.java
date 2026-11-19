@@ -88,16 +88,64 @@ public class GameReconfigureRetryTest {
                 com.limelight.nvstream.AdaptiveQualityController.Mode.DETAIL, 1080, 1920, 60, 360, 30, 2, 2, 0);
         ReflectionHelpers.setField(activity, "adaptiveQuality", quality);
         renderer[0].rebuilding = true;
-        assertTrue("the quality tick goes on", activity.adaptation.applyAdaptiveQuality(quality.current(), 1000));
+        assertEquals("the quality tick goes on", GameVideoOutput.Reconfigure.PENDING,
+                activity.adaptation.applyAdaptiveQuality(quality.current(), 1000));
         assertSame(quality, ReflectionHelpers.getField(activity, "adaptiveQuality"));
         assertNull("no error shown", ReflectionHelpers.getField(activity, "qualityStatus"));
         assertTrue(ReconfigureBridge.requests.isEmpty());
 
         // The next tick, once the decoder is set up again, asks the PC.
         renderer[0].rebuilding = false;
-        assertTrue(activity.adaptation.applyAdaptiveQuality(quality.current(), 2000));
+        assertEquals(GameVideoOutput.Reconfigure.SENT, activity.adaptation.applyAdaptiveQuality(quality.current(), 2000));
         assertEquals(1, ReconfigureBridge.requests.size());
         assertSame(quality.current(), ReflectionHelpers.getField(activity, "pendingQualityTarget"));
+    }
+
+    // The window turned while the decoder was rebuilt, with automatic quality on: the new ceiling
+    // is taken only once the PC was asked, after the rebuild.
+    @Test
+    public void aWindowChangeDuringARebuildWithAutomaticQualityIsTakenAfterIt() {
+        Renderer[] renderer = new Renderer[1];
+        Game activity = turnedStream(renderer);
+        ReflectionHelpers.setField(activity, "adaptiveQuality", new com.limelight.nvstream.AdaptiveQualityController(
+                com.limelight.nvstream.AdaptiveQualityController.Mode.DETAIL, 1080, 1920, 60, 360, 30, 2, 2, 0));
+        renderer[0].rebuilding = true;
+        ReflectionHelpers.callInstanceMethod(activity.videoOutput, "startReconfigureTracking");
+        ShadowLooper.idleMainLooper(2, TimeUnit.SECONDS);
+        assertTrue(ReconfigureBridge.requests.isEmpty());
+        assertEquals("no ceiling taken while waiting", 1080, (int) ReflectionHelpers.getField(activity, "qualityMaxWidth"));
+
+        renderer[0].rebuilding = false;
+        ReflectionHelpers.callInstanceMethod(renderer[0], "notifyReconfigureLimits");
+        ShadowLooper.idleMainLooper(2, TimeUnit.SECONDS);
+        assertEquals(1, ReconfigureBridge.requests.size());
+        assertArrayEquals(new int[] {1920, 1080, 60000}, ReconfigureBridge.requests.get(0));
+        assertEquals(1920, (int) ReflectionHelpers.getField(activity, "qualityMaxWidth"));
+        assertEquals(1080, (int) ReflectionHelpers.getField(activity, "qualityMaxHeight"));
+    }
+
+    // After a reconnect automatic quality returns once to the step it had reached: landing in a
+    // rebuild, that step is taken after it.
+    @Test
+    public void aResumeStepDuringARebuildIsTakenAfterIt() {
+        Renderer[] renderer = new Renderer[1];
+        Game activity = turnedStream(renderer);
+        com.limelight.nvstream.AdaptiveQualityController quality = new com.limelight.nvstream.AdaptiveQualityController(
+                com.limelight.nvstream.AdaptiveQualityController.Mode.DETAIL, 1080, 1920, 60, 360, 30, 2, 2, 0);
+        List<com.limelight.nvstream.AdaptiveQualityController.Target> levels = ReflectionHelpers.getField(quality, "levels");
+        com.limelight.nvstream.AdaptiveQualityController.Target step = levels.get(1);
+        quality.resumeAt(step.width, step.height, step.fps);
+        ReflectionHelpers.setField(activity, "adaptiveQuality", quality);
+        ReflectionHelpers.setField(activity, "foreground", true);
+        renderer[0].rebuilding = true;
+        activity.updateQuality.run();
+        assertTrue(ReconfigureBridge.requests.isEmpty());
+
+        renderer[0].rebuilding = false;
+        activity.updateQuality.run();
+        assertEquals(1, ReconfigureBridge.requests.size());
+        assertArrayEquals(step.request(), ReconfigureBridge.requests.get(0));
+        assertSame(step, quality.current());
     }
 
     @Test
@@ -125,6 +173,10 @@ public class GameReconfigureRetryTest {
 
         @Override public int[] getStreamSize() {
             return new int[] {width, height};
+        }
+
+        @Override public boolean hasRecentVideoFrames(long nowMs) {
+            return true;
         }
 
         // Read just before the rebuild cleared them: the size check passes, the decoder then refuses.
@@ -156,6 +208,10 @@ public class GameReconfigureRetryTest {
 
         @Implementation public static boolean hostSupportsControlMessage(int messageType) {
             return true;
+        }
+
+        @Implementation public static long getEstimatedRttInfo() {
+            return -1;
         }
 
         @Implementation public static boolean requestReconfigure(int width, int height, int fpsMillihz) {
