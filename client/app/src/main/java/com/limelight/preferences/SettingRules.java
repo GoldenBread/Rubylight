@@ -432,6 +432,7 @@ final class SettingRules {
     static final String BACK_AS_META = "checkbox_back_as_meta";
     static final String COVERING_DECODER_SIZE = "checkbox_covering_decoder_size";
     static final String CHIPSET_TUNING = "checkbox_experimental_chipset_tuning";
+    static final String TV_DISPLAY_COMPATIBILITY = PreferenceConfiguration.TV_DISPLAY_COMPATIBILITY_PREF_STRING;
     static final String IGDB_SECRET = "game_info_igdb_client_secret";
     static final String PYROWAVE_PREACQUIRE = "checkbox_pyrowave_preacquire";
     static final String OVERLAY_POSITION = "performance_overlay_position";
@@ -452,7 +453,7 @@ final class SettingRules {
             RUMBLE_FEEL, VIBRATE_STRENGTH, MOUSE_SPEED, MOUSE_NAV_BUTTONS,
             TRACKPAD_SPEED, LOCAL_CURSOR_SPEED, PreferenceConfiguration.TRACKPAD_ACCELERATION_PREF_STRING, ACCELERATION_CURVE,
             TRACKPAD_MOMENTUM, MOMENTUM_GLIDE, TRACKPAD_AREA, FINGER_TAPS, TRACKPAD_SENSITIVITY_X, TRACKPAD_SENSITIVITY_Y, TRACKPAD_SWAP_AXIS, NATIVE_TOUCHPAD,
-            BACK_AS_META, OVERLAY_POSITION, SCREEN2_RESOLUTION, COVERING_DECODER_SIZE, CHIPSET_TUNING, IGDB_SECRET);
+            BACK_AS_META, OVERLAY_POSITION, SCREEN2_RESOLUTION, COVERING_DECODER_SIZE, CHIPSET_TUNING, TV_DISPLAY_COMPATIBILITY, IGDB_SECRET);
 
     /**
      * Rows always shown, because the stream menu or a PC's, game's or profile's settings can make them act: Automatic
@@ -521,6 +522,9 @@ final class SettingRules {
                         prefs.getString(com.limelight.ui.StreamOrientation.PREF, null)) == com.limelight.ui.StreamOrientation.ROTATE;
             case CHIPSET_TUNING:
                 return devices.tunedChip();
+            case TV_DISPLAY_COMPATIBILITY:
+                // For TV firmware; the stream still draws the dot from a stored value on any device.
+                return devices.television();
             case IGDB_SECRET:
                 return igdbClientIdSet(context);
             case PYROWAVE_PREACQUIRE:
@@ -577,6 +581,8 @@ final class SettingRules {
                 return context.getString(R.string.tag_unused_no_fold);
             case CHIPSET_TUNING:
                 return context.getString(R.string.tag_unused_chip);
+            case TV_DISPLAY_COMPATIBILITY:
+                return context.getString(R.string.tag_tv_only);
             case IGDB_SECRET:
                 return context.getString(R.string.tag_unused_without, context.getString(R.string.game_info_igdb_id_title));
             case PYROWAVE_PREACQUIRE:

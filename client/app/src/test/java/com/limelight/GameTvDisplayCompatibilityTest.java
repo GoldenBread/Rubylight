@@ -20,7 +20,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
 import org.robolectric.RuntimeEnvironment;
-import org.robolectric.android.controller.ActivityController;
 import org.robolectric.annotation.Config;
 import org.robolectric.util.ReflectionHelpers;
 
@@ -32,27 +31,23 @@ import static org.robolectric.Shadows.shadowOf;
 /**
  * Settings › TV display compatibility in the stream: the dot runs in the window that holds the video while the
  * stream shows, read from the stored value (so a phone runs it too), and stops on pause, at the stream's end and
- * with the screen.
+ * with the screen; picture-in-picture and the setting off have none.
  */
 @RunWith(org.robolectric.RobolectricTestRunner.class)
 @Config(sdk = 29, application = Application.class,
         shadows = PcViewLifecycleTest.NoNativeMoonBridge.class,
         instrumentedPackages = "com.limelight.nvstream.jni")
 public class GameTvDisplayCompatibilityTest {
-    private ActivityController<Game> controller;
-
     @After
     public void clear() {
-        if (controller != null) controller.destroy();
         PreferenceManager.getDefaultSharedPreferences(RuntimeEnvironment.getApplication()).edit().clear().commit();
     }
 
-    /** A stream screen whose stream has started, on a phone, with the setting stored as given. */
-    private Game streaming(boolean on) {
+    /** A stream screen whose stream is connecting, with the setting stored as given; the start is the caller's. */
+    private Game connecting(boolean on) {
         PreferenceManager.getDefaultSharedPreferences(RuntimeEnvironment.getApplication()).edit()
                 .putBoolean("checkbox_tv_display_compatibility", on).commit();
-        controller = Robolectric.buildActivity(Game.class).create();
-        Game game = controller.get();
+        Game game = Robolectric.buildActivity(Game.class).get();
         game.setTheme(R.style.StreamTheme);
         game.setContentView(R.layout.activity_game);
         StreamView stream = game.findViewById(R.id.surfaceView);
@@ -65,11 +60,29 @@ public class GameTvDisplayCompatibilityTest {
                 47984, "test", new StreamConfiguration.Builder().setApp(app).build(), null, null) {
             @Override public void stop() {}
         });
+        // As on a real start, the screen is resumed before the stream connects.
         game.foreground = true;
-        game.connected = true;
-        // As GameConnection.connectionStarted does once the stream is up.
         game.videoOutput.updateCompositorHeartbeat();
+        assertNull("nothing before the stream", game.videoOutput.compositorHeartbeat);
+        return game;
+    }
+
+    /** The real start: GameConnection.connectionStarted, as the engine calls it. */
+    private static void start(Game game) {
+        game.connecting = true;
+        try {
+            game.streamConnection.connectionStarted();
+        } catch (NullPointerException later) {
+            // Past the start of the heartbeat the start goes on to the controllers, which this screen has none of.
+            assertTrue(later.getMessage(), later.getMessage().contains("controllerHandler"));
+        }
         shadowOf(Looper.getMainLooper()).idle();
+    }
+
+    private Game streaming(boolean on) {
+        Game game = connecting(on);
+        start(game);
+        assertTrue(game.connected);
         return game;
     }
 
@@ -108,14 +121,40 @@ public class GameTvDisplayCompatibilityTest {
     public void pauseStopsAndRemovesItAndResumeBringsItBack() {
         Game game = streaming(true);
         View dot = dot(game);
-        controller.pause();
+        game.onPause();
         assertNull(game.videoOutput.compositorHeartbeat);
         assertNull("gone on pause", dot.getParent());
         int paused = color(dot);
         idle(300);
         assertEquals("no tick while paused", paused, color(dot));
-        controller.resume();
+        game.onResume();
         assertNotNull("back with the stream", dot(game));
+    }
+
+    @Test
+    public void inPictureInPictureThereIsNoDot() {
+        Game game = connecting(true);
+        game.enterPictureInPictureMode(new android.app.PictureInPictureParams.Builder().build());
+        assertTrue(game.isInPictureInPictureMode());
+        start(game);
+        assertTrue(game.connected);
+        assertNull("not while the stream is in picture-in-picture", game.videoOutput.compositorHeartbeat);
+        game.videoOutput.updateCompositorHeartbeat();
+        assertNull(game.videoOutput.compositorHeartbeat);
+    }
+
+    @Test
+    public void offOnATvThereIsNoDot() {
+        shadowOf(RuntimeEnvironment.getApplication().getPackageManager())
+                .setSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK, true);
+        Game game = connecting(false);
+        ViewGroup window = (ViewGroup) game.renderView.getParent();
+        int children = window.getChildCount();
+        start(game);
+        assertTrue(game.connected);
+        assertNull(game.videoOutput.compositorHeartbeat);
+        idle(300);
+        assertEquals(children, window.getChildCount());
     }
 
     @Test
@@ -134,17 +173,17 @@ public class GameTvDisplayCompatibilityTest {
     public void nothingIsLeftWhenTheScreenGoes() {
         Game game = streaming(true);
         View dot = dot(game);
-        controller.destroy();
-        controller = null;
+        game.onDestroy();
         assertNull(game.videoOutput.compositorHeartbeat);
         assertNull(dot.getParent());
     }
 
     @Test
     public void offThereIsNoDotAndNoTicking() {
-        Game game = streaming(false);
+        Game game = connecting(false);
         ViewGroup window = (ViewGroup) game.renderView.getParent();
         int children = window.getChildCount();
+        start(game);
         assertNull(game.videoOutput.compositorHeartbeat);
         idle(300);
         assertEquals(children, window.getChildCount());

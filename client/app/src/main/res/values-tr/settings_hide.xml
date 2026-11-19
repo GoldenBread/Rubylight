@@ -9,5 +9,6 @@
     <string name="tag_unused_no_keyboard">Kullanılmıyor: bağlı klavye yok</string>
     <string name="tag_unused_no_fold">Kullanılmıyor: bu cihaz katlanmıyor ve Yönlendirme, Cihazla döndür değil</string>
     <string name="tag_unused_chip">Kullanılmıyor: bu cihazda MediaTek veya Exynos yonga yok</string>
+    <string name="tag_tv_only">Televizyonlar için: bu cihaz televizyon değil</string>
     <string name="tag_unused_no_touchscreen">Kullanılmıyor: bu cihazda dokunmatik ekran yok</string>
 </resources>

@@ -9,5 +9,6 @@
     <string name="tag_unused_no_keyboard">Nicht verwendet: Keine Tastatur angeschlossen</string>
     <string name="tag_unused_no_fold">Nicht verwendet: Dieses Gerät lässt sich nicht falten, und Ausrichtung ist nicht „Mit dem Gerät drehen“</string>
     <string name="tag_unused_chip">Nicht verwendet: Dieses Gerät hat keinen MediaTek- oder Exynos-Chip</string>
+    <string name="tag_tv_only">Für Fernseher: Dieses Gerät ist keiner</string>
     <string name="tag_unused_no_touchscreen">Nicht verwendet: Dieses Gerät hat keinen Touchscreen</string>
 </resources>

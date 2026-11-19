@@ -53,13 +53,14 @@ public class SettingsHideTest {
 
     /** Device facts a test switches. */
     static final class Devices implements SettingDevices {
-        boolean touchpad, mouse, keyboard, folds, tunedChip, touchscreen = true;
+        boolean touchpad, mouse, keyboard, folds, tunedChip, television, touchscreen = true;
         @Override public boolean touchscreen() { return touchscreen; }
         @Override public boolean touchpad() { return touchpad; }
         @Override public boolean mouse() { return mouse; }
         @Override public boolean keyboard() { return keyboard; }
         @Override public boolean folds() { return folds; }
         @Override public boolean tunedChip() { return tunedChip; }
+        @Override public boolean television() { return television; }
     }
 
     private final Devices devices = new Devices();
@@ -261,6 +262,8 @@ public class SettingsHideTest {
                     on("checkbox_covering_decoder_size")),
             new Row("checkbox_experimental_chipset_tuning", "advanced", true, NOTHING, (e, d) -> d.tunedChip = true,
                     on("checkbox_experimental_chipset_tuning")),
+            new Row("checkbox_tv_display_compatibility", "advanced", true, NOTHING, (e, d) -> d.television = true,
+                    on("checkbox_tv_display_compatibility")),
             new Row("game_info_igdb_client_secret", "advanced", NOTHING,
                     (e, d) -> gameInfoKeys().edit().putString(com.limelight.console.GameInfo.KEY_IGDB_ID, "id").commit(),
                     (e, d) -> gameInfoKeys().edit().putString(com.limelight.console.GameInfo.KEY_IGDB_SECRET, "secret").commit()));
@@ -268,7 +271,7 @@ public class SettingsHideTest {
     private void reset(BiConsumer<SharedPreferences.Editor, Devices> state) {
         prefs().edit().clear().commit();
         gameInfoKeys().edit().clear().commit();
-        devices.touchpad = devices.mouse = devices.keyboard = devices.folds = devices.tunedChip = false;
+        devices.touchpad = devices.mouse = devices.keyboard = devices.folds = devices.tunedChip = devices.television = false;
         devices.touchscreen = true;
         SharedPreferences.Editor editor = prefs().edit();
         state.accept(editor, devices);

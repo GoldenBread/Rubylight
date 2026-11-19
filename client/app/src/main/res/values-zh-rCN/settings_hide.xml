@@ -9,5 +9,6 @@
     <string name="tag_unused_no_keyboard">未使用：未连接键盘</string>
     <string name="tag_unused_no_fold">未使用：此设备不可折叠，且屏幕方向不是“随设备旋转”</string>
     <string name="tag_unused_chip">未使用：此设备没有 MediaTek 或 Exynos 芯片</string>
+    <string name="tag_tv_only">适用于电视：此设备不是电视</string>
     <string name="tag_unused_no_touchscreen">未使用：此设备没有触摸屏</string>
 </resources>

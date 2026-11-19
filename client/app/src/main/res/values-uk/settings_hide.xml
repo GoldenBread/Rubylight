@@ -9,5 +9,6 @@
     <string name="tag_unused_no_keyboard">Не використовується: клавіатуру не під’єднано</string>
     <string name="tag_unused_no_fold">Не використовується: цей пристрій не складається, а «Орієнтація» не «Повертати з пристроєм»</string>
     <string name="tag_unused_chip">Не використовується: у цьому пристрої немає чипа MediaTek або Exynos</string>
+    <string name="tag_tv_only">Для телевізорів: цей пристрій не телевізор</string>
     <string name="tag_unused_no_touchscreen">Не використовується: цей пристрій не має сенсорного екрана</string>
 </resources>

@@ -33,6 +33,9 @@ interface SettingDevices {
      */
     boolean tunedChip();
 
+    /** A TV (FEATURE_LEANBACK), whose firmware TV display compatibility is for (GameVideoOutput.updateCompositorHeartbeat). */
+    boolean television();
+
     /**
      * A touch screen, which the touch modes, the on-screen controller and an external display's trackpad all take
      * their touches from; it cannot come or go during a stream.
@@ -65,6 +68,10 @@ interface SettingDevices {
             @Override public boolean folds() {
                 return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
                         app.getPackageManager().hasSystemFeature(PackageManager.FEATURE_SENSOR_HINGE_ANGLE);
+            }
+
+            @Override public boolean television() {
+                return app.getPackageManager().hasSystemFeature(PackageManager.FEATURE_LEANBACK);
             }
 
             @Override public boolean tunedChip() {

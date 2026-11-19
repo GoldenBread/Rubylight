@@ -77,7 +77,7 @@ public final class CompositorHeartbeat {
         return running;
     }
 
-    /** Adds the dot over the video, top left, and starts its colour change. */
+    /** Adds the dot over the video in the top-left corner (left in a right-to-left layout too), and starts its colour change. */
     public void start() {
         if (running) {
             return;
@@ -86,7 +86,7 @@ public final class CompositorHeartbeat {
         running = true;
         alternatePhase = false;
         int size = Math.max(1, Math.round(holder.getResources().getDisplayMetrics().density));
-        holder.addView(dot, new FrameLayout.LayoutParams(size, size, Gravity.TOP | Gravity.START));
+        holder.addView(dot, new FrameLayout.LayoutParams(size, size, Gravity.TOP | Gravity.LEFT));
         heartbeat.run();
     }
 

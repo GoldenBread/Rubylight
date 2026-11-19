@@ -9,5 +9,6 @@
     <string name="tag_unused_no_keyboard">Nie używane: nie podłączono klawiatury</string>
     <string name="tag_unused_no_fold">Nie używane: to urządzenie się nie składa, a Orientacja nie jest ustawiona na Obracaj z urządzeniem</string>
     <string name="tag_unused_chip">Nie używane: to urządzenie nie ma układu MediaTek ani Exynos</string>
+    <string name="tag_tv_only">Dla telewizorów: to urządzenie nim nie jest</string>
     <string name="tag_unused_no_touchscreen">Nie używane: to urządzenie nie ma ekranu dotykowego</string>
 </resources>

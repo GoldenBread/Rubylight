@@ -9,5 +9,6 @@
     <string name="tag_unused_no_keyboard">使用されません: キーボードが接続されていません</string>
     <string name="tag_unused_no_fold">使用されません: このデバイスは折りたためず、画面の向きが「デバイスに合わせて回転」ではありません</string>
     <string name="tag_unused_chip">使用されません: このデバイスには MediaTek または Exynos のチップがありません</string>
+    <string name="tag_tv_only">テレビ向け: このデバイスはテレビではありません</string>
     <string name="tag_unused_no_touchscreen">使用されません: このデバイスにはタッチスクリーンがありません</string>
 </resources>

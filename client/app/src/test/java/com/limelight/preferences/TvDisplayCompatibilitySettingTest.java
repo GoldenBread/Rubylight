@@ -3,6 +3,7 @@ package com.limelight.preferences;
 import android.app.Application;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.preference.Preference;
 import android.preference.PreferenceGroup;
 import android.preference.PreferenceManager;
 import android.preference.PreferenceScreen;
@@ -28,8 +29,8 @@ import static org.junit.Assert.*;
 import static org.robolectric.Shadows.shadowOf;
 
 /**
- * Settings › Advanced › Compatibility › TV display compatibility: off by default, listed only on a TV
- * (FEATURE_LEANBACK) and behind Advanced's More row there, and read from the stored value on any device.
+ * Settings › Advanced › Compatibility › TV display compatibility: off by default, listed on a TV (FEATURE_LEANBACK)
+ * behind Advanced's More row, elsewhere only while it is on, and read from the stored value on any device.
  * The preference part follows the derflacco fork's TvCompositorPreferenceTest (branch Artemide_Experimental_Async, GPL-3.0, commit 784b4eca).
  */
 @RunWith(org.robolectric.RobolectricTestRunner.class)
@@ -57,8 +58,11 @@ public class TvDisplayCompatibilitySettingTest {
     private ActivityController<StreamSettings> start(boolean tv) {
         shadowOf(context().getPackageManager()).setSystemFeature(PackageManager.FEATURE_LEANBACK, tv);
         shadowOf(context().getPackageManager()).setSystemFeature(PackageManager.FEATURE_TOUCHSCREEN, !tv);
+        SettingsHideTest.Devices devices = new SettingsHideTest.Devices();
+        devices.television = tv;
+        devices.touchscreen = !tv;
         ActivityController<StreamSettings> built = Robolectric.buildActivity(StreamSettings.class);
-        built.get().devices = SettingsHideTest.NOTHING_ATTACHED;
+        built.get().devices = devices;
         built.get().savedPcReader = task -> { };
         return built.setup();
     }
@@ -78,12 +82,37 @@ public class TvDisplayCompatibilitySettingTest {
     }
 
     @Test
-    public void notOfferedOnAPhone() {
+    public void notListedOnAPhoneAtItsDefault() {
         try (ActivityController<StreamSettings> controller = start(false)) {
             StreamSettings screen = controller.get();
             assertFalse(visible(open(screen, "advanced")).contains(KEY));
-            assertNull("search does not find it", resultGroup(search(screen, "TV display compatibility"), KEY));
+            // As every row that can do nothing here: search finds it and says why (SettingRules.WHEN_ROWS).
+            Preference found = screenResult(search(screen, "TV display compatibility"));
+            assertNotNull(found);
+            assertTrue(String.valueOf(found.getSummary()),
+                    String.valueOf(found.getSummary()).endsWith(context().getString(com.limelight.R.string.tag_tv_only)));
         }
+    }
+
+    @Test
+    public void onOnAPhoneTheRowStaysSaysWhyAndTurnsItOff() {
+        PreferenceManager.getDefaultSharedPreferences(context()).edit().putBoolean(KEY, true).commit();
+        try (ActivityController<StreamSettings> controller = start(false)) {
+            StreamSettings screen = controller.get();
+            StreamSettings.SettingsFragment advanced = open(screen, "advanced");
+            assertTrue("a changed row stays", visible(advanced).contains(KEY));
+            TwoStatePreference row = (TwoStatePreference) advanced.findPreference(KEY);
+            assertTrue(row.isChecked());
+            assertTrue(String.valueOf(row.getSummary()),
+                    String.valueOf(row.getSummary()).contains(context().getString(com.limelight.R.string.tag_tv_only)));
+            row.setChecked(false);
+            assertFalse("turned off", PreferenceManager.getDefaultSharedPreferences(context()).getBoolean(KEY, true));
+            assertFalse(PreferenceConfiguration.readPreferences(context()).tvDisplayCompatibility);
+        }
+    }
+
+    private static Preference screenResult(StreamSettings.SettingsFragment results) {
+        return results.getPreferenceScreen().findPreference("search_result_" + KEY);
     }
 
     @Test

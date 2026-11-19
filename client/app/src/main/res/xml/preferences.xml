@@ -1053,7 +1053,7 @@
             android:title="@string/title_experimental_chipset_tuning"
             android:dialogMessage="@string/summary_experimental_chipset_tuning"
             android:defaultValue="false" />
-        <!-- Listed on TVs (FEATURE_LEANBACK) only; read on any device (GameVideoOutput.updateCompositorHeartbeat). -->
+        <!-- Listed on a TV (SettingRules.TV_DISPLAY_COMPATIBILITY) or while it is on; read on any device (GameVideoOutput.updateCompositorHeartbeat). -->
         <com.limelight.preferences.MaterialSwitchPreference
             android:key="checkbox_tv_display_compatibility"
             android:title="@string/title_tv_display_compatibility"
