@@ -141,7 +141,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private boolean packingFailed;
     // Mid-stream reconfigure (0x5532): the adaptive-playback maximum, which grows when a larger
     // size is asked for; the size the host was last asked for; and the size being shown.
-    private int maxDecodeWidth, maxDecodeHeight;
+    // Read by the UI thread in prepareForReconfigure.
+    private volatile int maxDecodeWidth, maxDecodeHeight;
     // The size covering every size this stream may switch to (a fold or a turn), set before
     // setup; null when it only changes on request. coveringRefused: a configure refused it.
     private int[] coveringSize;
@@ -272,8 +273,34 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private MediaFormat inputFormat;
     private volatile MediaFormat outputFormat;
     private MediaFormat configuredFormat;
-    // getReconfigureLimits()'s answer, never changed once published (publishReconfigureLimits).
-    private volatile int[] reconfigureLimits;
+    // What the UI reads of the configured decoder (publishReconfigureLimits), never changed once published.
+    private volatile ReconfigureCaps reconfigureLimits;
+    // A size change the UI asked for, applied by the input thread on its next frame (applyStreamChanges).
+    private final java.util.concurrent.atomic.AtomicReference<ResizeRequest> pendingResize =
+            new java.util.concurrent.atomic.AtomicReference<>();
+    // A frame rate the UI set that the codec's format and the upscaler still have to take (applyStreamChanges).
+    private final AtomicBoolean pendingFrameRate = new AtomicBoolean();
+
+    private static final class ReconfigureCaps {
+        final int[] limits;
+        final MediaCodecInfo.VideoCapabilities caps;
+
+        ReconfigureCaps(int[] limits, MediaCodecInfo.VideoCapabilities caps) {
+            this.limits = limits;
+            this.caps = caps;
+        }
+    }
+
+    private static final class ResizeRequest {
+        final int width, height, maxWidth, maxHeight;
+
+        ResizeRequest(int width, int height, int maxWidth, int maxHeight) {
+            this.width = width;
+            this.height = height;
+            this.maxWidth = maxWidth;
+            this.maxHeight = maxHeight;
+        }
+    }
 
     private boolean needsBaselineSpsHack;
     private SeqParameterSet savedSps;
@@ -1019,9 +1046,13 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     // never wait for codecRecoveryMonitor: a reset holds it for seconds, or for good when it hangs
     // while the stream ends. The decoder publishes the limits each time it configures a codec.
     public int[] getReconfigureLimits() {
+        ReconfigureCaps published = publishedReconfigureCaps();
+        return published == null ? null : published.limits.clone();
+    }
+
+    private ReconfigureCaps publishedReconfigureCaps() {
         if (decoderFailure != null || stopping || vulkanRenderer != null) return null;
-        int[] limits = reconfigureLimits;
-        return limits == null ? null : limits.clone();
+        return reconfigureLimits;
     }
 
     // After every configure (configureAndStartDecoder, which every setup, recovery and rebuild
@@ -1039,7 +1070,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             maxWidth = Math.min(maxWidth, 4096);
             maxHeight = Math.min(maxHeight, 4096);
         }
-        reconfigureLimits = new int[] {maxWidth, maxHeight, caps.getWidthAlignment(), caps.getHeightAlignment()};
+        reconfigureLimits = new ReconfigureCaps(
+                new int[] {maxWidth, maxHeight, caps.getWidthAlignment(), caps.getHeightAlignment()}, caps);
     }
 
     /**
@@ -1106,72 +1138,98 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     // Adaptive playback takes any size up to the configured maximum without a pause. A larger size
     // raises the maximum to cover both sizes, which restarts the decoder once and asks for an IDR;
     // either size can then arrive first. False when this decoder cannot take the size.
+    // Called on the UI thread, which never waits for codecRecoveryMonitor (a reset holds it for
+    // seconds, or for good when it hangs): the answer comes from what the decoder published, and
+    // the input thread applies the change before it queues its next frame, so before any frame
+    // the host sends at the new size.
     public boolean prepareForReconfigure(int width, int height) {
-        if (decoderFailure != null) return false;
-        synchronized (codecRecoveryMonitor) {
-            if (packing != null) {
-                MoonBridge.bridgeClDisplayMessage("Reconnect to change the logical size of a packed full-chroma stream.");
-                return false;
-            }
-            MediaCodecInfo.VideoCapabilities caps = reconfigureCapabilities();
-            if (caps == null) {
-                return false;
-            }
-            int[] max = StreamResizePolicy.coveringMax(maxDecodeWidth, maxDecodeHeight, width, height);
-            if (!caps.isSizeSupported(width, height) || !caps.isSizeSupported(max[0], max[1])) {
-                LimeLog.warning("Decoder cannot switch to " + width + "x" + height + " within " +
-                        max[0] + "x" + max[1]);
-                return false;
-            }
-            boolean restart = false;
-            if (max[0] != maxDecodeWidth || max[1] != maxDecodeHeight) {
-                LimeLog.info("Decoder restarts for sizes up to " + max[0] + "x" + max[1] +
-                        " (was " + maxDecodeWidth + "x" + maxDecodeHeight + ")");
-                maxDecodeWidth = max[0];
-                maxDecodeHeight = max[1];
-                configuredFormat.setInteger(MediaFormat.KEY_MAX_WIDTH, maxDecodeWidth);
-                configuredFormat.setInteger(MediaFormat.KEY_MAX_HEIGHT, maxDecodeHeight);
-                restart = true;
-            }
-            if (upscaler != null && (width != initialWidth || height != initialHeight)) {
-                // The GLES upscaler is built for the first size; continue on direct output.
-                upscalingPolicy.fail(UpscalingPolicy.Reason.SIZE_CHANGED);
-                restart = true;
-            }
-            if (restart) {
-                // An expected "recovery", like an HDR change.
-                codecRecoveryAttempts = 0;
-                requestRestart("size change");
-            }
-            expectedWidth = width;
-            expectedHeight = height;
-            reconfigureRequested = true;
-            return true;
+        if (decoderFailure != null || stopping) return false;
+        // Read first: the configure that published it saw packing set up.
+        ReconfigureCaps published = publishedReconfigureCaps();
+        if (packing != null) {
+            MoonBridge.bridgeClDisplayMessage("Reconnect to change the logical size of a packed full-chroma stream.");
+            return false;
         }
+        if (published == null) {
+            return false;
+        }
+        // A request the input thread has not applied yet already raised the maximum.
+        ResizeRequest waiting = pendingResize.get();
+        int[] max = StreamResizePolicy.coveringMax(maxDecodeWidth, maxDecodeHeight, width, height);
+        if (waiting != null) max = StreamResizePolicy.coveringMax(max[0], max[1], waiting.maxWidth, waiting.maxHeight);
+        if (!published.caps.isSizeSupported(width, height) || !published.caps.isSizeSupported(max[0], max[1])) {
+            LimeLog.warning("Decoder cannot switch to " + width + "x" + height + " within " +
+                    max[0] + "x" + max[1]);
+            return false;
+        }
+        pendingResize.set(new ResizeRequest(width, height, max[0], max[1]));
+        return true;
+    }
+
+    // On the input thread before each frame: the size and frame rate the UI asked for, under the
+    // monitor that a recovery holds while it touches the codec.
+    private void applyStreamChanges() {
+        if (pendingResize.get() == null && !pendingFrameRate.get()) return;
+        synchronized (codecRecoveryMonitor) {
+            ResizeRequest resize = pendingResize.getAndSet(null);
+            boolean frameRate = pendingFrameRate.getAndSet(false);
+            if (stopping || configuredFormat == null) return;
+            if (resize != null) applyResize(resize);
+            if (frameRate) {
+                configuredFormat.setInteger(MediaFormat.KEY_FRAME_RATE, refreshRate);
+                Display display = outputDisplay;
+                if (display != null) {
+                    updateUpscalingFrameRate(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ?
+                            display.getMode().getRefreshRate() : display.getRefreshRate());
+                }
+            }
+        }
+    }
+
+    private void applyResize(ResizeRequest resize) {
+        int[] max = StreamResizePolicy.coveringMax(maxDecodeWidth, maxDecodeHeight, resize.maxWidth, resize.maxHeight);
+        boolean restart = false;
+        if (max[0] != maxDecodeWidth || max[1] != maxDecodeHeight) {
+            LimeLog.info("Decoder restarts for sizes up to " + max[0] + "x" + max[1] +
+                    " (was " + maxDecodeWidth + "x" + maxDecodeHeight + ")");
+            maxDecodeWidth = max[0];
+            maxDecodeHeight = max[1];
+            configuredFormat.setInteger(MediaFormat.KEY_MAX_WIDTH, maxDecodeWidth);
+            configuredFormat.setInteger(MediaFormat.KEY_MAX_HEIGHT, maxDecodeHeight);
+            restart = true;
+        }
+        if (upscaler != null && (resize.width != initialWidth || resize.height != initialHeight)) {
+            // The GLES upscaler is built for the first size; continue on direct output.
+            upscalingPolicy.fail(UpscalingPolicy.Reason.SIZE_CHANGED);
+            restart = true;
+        }
+        if (restart) {
+            // An expected "recovery", like an HDR change.
+            codecRecoveryAttempts = 0;
+            requestRestart("size change");
+        }
+        expectedWidth = resize.width;
+        expectedHeight = resize.height;
+        reconfigureRequested = true;
     }
 
     public void setFrameRate(int fps) {
         setStreamFrameRateMilliHz(fps * 1000);
     }
 
-    /** Exact stream cadence; rounded FPS remains the MediaCodec/performance-hint setting. */
+    /**
+     * Exact stream cadence; rounded FPS remains the MediaCodec/performance-hint setting. Called on
+     * the UI thread, which never waits for codecRecoveryMonitor: the render threads read the rate
+     * lock-free, and the input thread gives the codec's format and the upscaler the new rate.
+     */
     @Override
     public void setStreamFrameRateMilliHz(int fpsMilliHz) {
         FramePacingPolicy.frameIntervalNs(fpsMilliHz); // Validate before publishing to the render threads.
-        if (decoderFailure != null) return;
-        synchronized (codecRecoveryMonitor) {
-            if (stopping || fpsMilliHz == streamFrameRateMilliHz) return;
-            streamFrameRateMilliHz = fpsMilliHz;
-            frameLatencyStats.resetDecodeTiming();
-            int fps = (fpsMilliHz + 500) / 1000;
-            refreshRate = fps;
-            if (configuredFormat != null) configuredFormat.setInteger(MediaFormat.KEY_FRAME_RATE, fps);
-            Display display = outputDisplay;
-            if (display != null) {
-                updateUpscalingFrameRate(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ?
-                        display.getMode().getRefreshRate() : display.getRefreshRate());
-            }
-        }
+        if (decoderFailure != null || stopping || fpsMilliHz == streamFrameRateMilliHz) return;
+        streamFrameRateMilliHz = fpsMilliHz;
+        frameLatencyStats.resetDecodeTiming();
+        refreshRate = (fpsMilliHz + 500) / 1000;
+        pendingFrameRate.set(true);
     }
 
     public int getStreamFrameRateMilliHz() {
@@ -5360,6 +5418,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             // Don't bother if we're stopping
             return MoonBridge.DR_OK;
         }
+        // Before this frame is queued: it may be the first at a size the UI asked for.
+        applyStreamChanges();
 
         lastVideoFrameTimeMs = SystemClock.uptimeMillis();
         long enqueueTimeNs = receiveTimeNs + (enqueueTimeUs - receiveTimeUs) * 1000;

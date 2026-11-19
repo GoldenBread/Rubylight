@@ -487,6 +487,8 @@ public class KeyframeSafetyNetWiringTest {
         ReflectionHelpers.setField(renderer, "adaptivePlayback", true);
         ReflectionHelpers.setField(renderer, "maxDecodeWidth", 3840);
         ReflectionHelpers.setField(renderer, "maxDecodeHeight", 2160);
+        // As configuring an adaptive decoder does: what the UI reads of it.
+        ReflectionHelpers.callInstanceMethod(renderer, "publishReconfigureLimits");
         KeyframeSafetyNet net = ReflectionHelpers.getField(renderer, "keyframeSafetyNet");
         KeyframeSafetyNet.Counts before = counts();
         submit(MoonBridge.FRAME_TYPE_IDR);
