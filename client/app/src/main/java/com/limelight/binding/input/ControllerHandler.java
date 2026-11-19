@@ -4756,9 +4756,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         return false;
     }
 
-    /** A controller is connected, so the stream menu offers its mouse switch. */
+    /** A controller is connected and can drive the mouse (not with Controllers Off), so the stream menu offers its mouse switch. */
     public boolean hasControllers() {
-        return !inputDeviceContexts.isEmpty() || !usbDeviceContexts.isEmpty();
+        return prefConfig.sendControllers && (!inputDeviceContexts.isEmpty() || !usbDeviceContexts.isEmpty());
     }
 
     /**
@@ -4996,8 +4996,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 if (!mouseEmulationActive) {
                     return;
                 }
-                // Controllers Off: a physical pad sends nothing, its mouse included (the on-screen gamepad still does).
-                if (!prefConfig.sendControllers && GenericControllerContext.this != defaultContext) {
+                if (mouseSilenced()) {
                     return;
                 }
 
@@ -5022,7 +5021,16 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             }
         };
 
+        // Controllers Off: a physical pad sends nothing, its mouse included (the on-screen gamepad still does).
+        private boolean mouseSilenced() {
+            return !prefConfig.sendControllers && this != defaultContext;
+        }
+
         public void toggleMouseEmulation() {
+            // Mouse mode does not turn on for a pad whose mouse is silenced; turning it off always works.
+            if (!mouseEmulationActive && mouseSilenced()) {
+                return;
+            }
             mainThreadHandler.removeCallbacks(mouseEmulationRunnable);
             releaseMouseButtons();
             mouseEmulationActive = !mouseEmulationActive;
