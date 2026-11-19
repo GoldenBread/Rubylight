@@ -143,4 +143,23 @@ public class ControllersOffMouseModeTest {
             handler.destroy();
         }
     }
+
+    @Test
+    public void controllersOffTheMenuStillOffersTheSwitchToTurnAnActiveMouseOff() {
+        ControllerInputReleaseTest.MenuGame activity = Robolectric.buildActivity(ControllerInputReleaseTest.MenuGame.class).get();
+        ControllerHandler handler = handler(activity, false);
+        physicalPad(handler, activity);
+        ControllerHandler.InputDeviceContext onscreen = ReflectionHelpers.getField(handler, "defaultContext");
+        try {
+            assertFalse("nothing to turn on or off yet", handler.hasControllers());
+            onscreen.toggleMouseEmulation();
+            assertTrue(handler.isMouseEmulationActive());
+            assertTrue("the switch can turn the active mouse off", handler.hasControllers());
+            handler.toggleMouseEmulationFromMenu();
+            assertFalse(handler.isMouseEmulationActive());
+            assertFalse("no longer offered once it is off", handler.hasControllers());
+        } finally {
+            handler.destroy();
+        }
+    }
 }

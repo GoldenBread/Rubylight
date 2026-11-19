@@ -4756,9 +4756,13 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         return false;
     }
 
-    /** A controller is connected and can drive the mouse (not with Controllers Off), so the stream menu offers its mouse switch. */
+    /**
+     * A controller is connected and the mouse switch can do something, so the stream menu offers it: turn a mouse on
+     * (Controllers on) or turn an active one off (also with Controllers Off, for a mouse the on-screen gamepad turned on).
+     */
     public boolean hasControllers() {
-        return prefConfig.sendControllers && (!inputDeviceContexts.isEmpty() || !usbDeviceContexts.isEmpty());
+        return (!inputDeviceContexts.isEmpty() || !usbDeviceContexts.isEmpty())
+                && (prefConfig.sendControllers || isMouseEmulationActive());
     }
 
     /**
