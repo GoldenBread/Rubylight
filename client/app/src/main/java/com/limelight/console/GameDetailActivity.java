@@ -357,9 +357,11 @@ public class GameDetailActivity extends NightjarActivity implements HostFeed.Lis
 
     private void tickCountdown() {
         if (auto != Auto.COUNTING) return;
-        if (SystemClock.elapsedRealtime() < countdownEnd) {
+        long now = SystemClock.elapsedRealtime();
+        if (now < countdownEnd) {
             countdown.setMessage(countdownText());
-            handler.postDelayed(countdownTick, 100);
+            // Each tick comes after the last one ran, so a late one moves the rest on: the last waits only for the end.
+            handler.postDelayed(countdownTick, Math.min(100, countdownEnd - now));
             return;
         }
         countdown.dismiss();

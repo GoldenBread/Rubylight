@@ -229,6 +229,20 @@ public class GameDetailOpenPlayTest {
         assertTrue(OpenPlay.armed(context));
     }
 
+    @Test
+    public void aBusyMainThreadDoesNotPushTheCountdownsEndPastItsTime() throws Exception {
+        open(true, null, null);
+        loaded();
+        long end = ReflectionHelpers.<Long>getField(screen, "countdownEnd");
+        // The main thread busy for 150 ms, as a slow frame or a pause of the collector: every tick after it runs later.
+        new android.os.Handler(Looper.getMainLooper()).post(() ->
+                org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(150)));
+        pass(end - android.os.SystemClock.elapsedRealtime() - 1);
+        assertFalse("not before the end", OpenPlay.armed(context));
+        pass(1);
+        assertTrue("at the end, not a tick after it", OpenPlay.armed(context));
+    }
+
     /** The page as it ships: {@code play} itself runs, up to the stream's intent. */
     public static class RealPlay extends GameDetailActivity {
         @Override public boolean bindService(Intent intent, android.content.ServiceConnection connection, int flags) {
