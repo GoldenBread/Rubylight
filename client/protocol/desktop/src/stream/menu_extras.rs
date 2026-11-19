@@ -301,7 +301,10 @@ impl Streaming {
         if !take_pending(ctx) { return; }
         let controls = self.menu_controls();
         if let Some(rates) = self.rate_change.as_ref().filter(|_| controls.rate_change) {
-            if rates.menu_busy() {
+            if rates.bitrate_locked() {
+                // A slider change left from before a reconnect: the new stream's bitrate is not known yet.
+                eprintln!("nightjar: bitrate slider: the PC has not said what it counts the stream's bitrate as, {} kbps not sent", rates.menu_kbps);
+            } else if rates.menu_busy() {
                 eprintln!("nightjar: bitrate slider: the PC is still answering, {} kbps not sent", rates.menu_kbps);
             } else {
                 self.change_rates();

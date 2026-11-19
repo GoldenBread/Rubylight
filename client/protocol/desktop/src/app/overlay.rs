@@ -274,7 +274,9 @@ pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mu
                             let mut keep_to = None;
                             if let Some(rates) = s.rate_change.as_mut().filter(|_| controls.rate_change) {
                                 let busy = rates.menu_busy();
-                                let mut apply = stream::menu_extras::bitrate_slider(ui, &mut rates.menu_kbps, !busy);
+                                // Disabled until the PC said what it counts the stream's bitrate as.
+                                let locked = rates.bitrate_locked();
+                                let mut apply = stream::menu_extras::bitrate_slider(ui, &mut rates.menu_kbps, !busy && !locked);
                                 if let Some(mut keep) = kept {
                                     if menu_style::switch(ui, Icon::Gauge, tr("Keep my bitrate"), &mut keep).changed() { keep_to = Some(keep); }
                                 }
@@ -282,7 +284,9 @@ pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mu
                                     let busy = rates.menu_busy();
                                     ui.add_enabled_ui(!busy, |ui| {
                                         ui.horizontal(|ui| {
-                                            theme::step_value(ui, &mut rates.menu_kbps, 500..=800_000, 1000.0, |d| d.speed(100).suffix(" kbps"));
+                                            ui.add_enabled_ui(!rates.bitrate_locked(), |ui| {
+                                                theme::step_value(ui, &mut rates.menu_kbps, 500..=800_000, 1000.0, |d| d.speed(100).suffix(" kbps"));
+                                            });
                                             theme::step_value(ui, &mut rates.menu_fps, 10.0..=500.0, 1.0, |d| d.suffix(" fps").max_decimals(3));
                                         });
                                         apply |= menu_style::button(ui, tr("Apply bitrate and frame rate")).clicked();

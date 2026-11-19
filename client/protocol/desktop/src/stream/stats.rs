@@ -531,10 +531,7 @@ impl Streaming {
         }
         if let Some(toast) = self.rate_change.as_mut().and_then(|rates| rates.expire(self.started.elapsed().as_millis() as u64)) {
             self.show_toast(toast);
-        }
-        // A menu change held for an unanswered or unsent query.
-        self.send_held_menu();
-        // "Never: keep my bitrate": once, as soon as video arrives, whatever has focus.
+        }        // "Never: keep my bitrate": once, as soon as video arrives, whatever has focus.
         {
             let now = self.started.elapsed().as_millis() as u64;
             if let Some(request) = self.rate_change.as_mut().and_then(|rates| rates.takeover_on_tick(tick.recent_video, now)) {

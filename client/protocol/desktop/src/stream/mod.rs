@@ -1990,21 +1990,9 @@ impl Streaming {
     /// Sends the stream menu's rate change; the host's answer comes back as a toast.
     pub fn change_rates(&mut self) {
         let Some(rates) = &mut self.rate_change else { return };
-        // Before the PC's answer to the query the change waits for it, and then goes out once.
-        if rates.hold_menu() { return; }
-        match rates.menu_request(self.started.elapsed().as_millis() as u64) {
+        match rates.menu_change(self.started.elapsed().as_millis() as u64) {
             Ok(request) => self.send_rate_change(request),
             Err(toast) => self.show_toast(toast),
-        }
-    }
-
-    /// The menu's change held while the query waited, once it no longer does.
-    pub(super) fn send_held_menu(&mut self) {
-        let now = self.started.elapsed().as_millis() as u64;
-        match self.rate_change.as_mut().and_then(|rates| rates.held_menu_request(now)) {
-            Some(Ok(request)) => self.send_rate_change(request),
-            Some(Err(toast)) => self.show_toast(toast),
-            None => {}
         }
     }
 
@@ -2049,7 +2037,6 @@ impl Streaming {
             }
         }
         if let Some(toast) = answer.toast { self.show_toast(toast); }
-        self.send_held_menu();
     }
 
     /// Which bitrate and rate controls the stream menu shows.
