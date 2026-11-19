@@ -683,6 +683,23 @@ fn link_rate_adaptation_is_on_unless_disabled() {
     assert!(super::override_allowed("link_rate_adaptation"));
 }
 
+/// Video FEC stays at `fec_percentage` unless the user asks for the decay: no run measured
+/// the decayed state, and the parity it saves does not go to the picture.
+#[test]
+fn adaptive_fec_is_off_unless_set() {
+    for (text, enabled) in [
+        ("", false),
+        ("adaptive_fec=true", true),
+        ("adaptive_fec=enabled", true),
+        ("adaptive_fec=invalid", false),
+        ("adaptive_fec=false", false),
+    ] {
+        let config = super::Config::parse(text).unwrap();
+        assert_eq!(config.adaptive_fec(), enabled, "{text}");
+    }
+    assert!(super::override_allowed("adaptive_fec"));
+}
+
 #[test]
 fn congestion_control_is_off_unless_set() {
     for (text, enabled) in [

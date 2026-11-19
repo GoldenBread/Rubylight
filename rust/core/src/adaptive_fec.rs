@@ -7,7 +7,7 @@
 //! parity raises it quickly; thirty seconds without either let it fall slowly
 //! towards [`AdaptiveFec::FLOOR`]. A client that never reports keeps the
 //! configured percentage for the whole stream, as does a host with
-//! `adaptive_fec` off. The floor stays above zero, so the client's minimum
+//! `adaptive_fec` off, which is the default. The floor stays above zero, so the client's minimum
 //! parity per block (`minRequiredFecPackets`, which the packetizer applies to
 //! every block whose percentage is not zero) keeps applying.
 use std::time::{Duration, Instant};

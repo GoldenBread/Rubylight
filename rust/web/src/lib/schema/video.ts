@@ -586,13 +586,13 @@ const video: Setting[] = [
     key: 'adaptive_fec',
     label: 'Adapt error correction',
     description:
-      'Uses less error correction (FEC) while the device reports a clean link, which frees bitrate for the picture, and returns to the percentage above when it reports loss. Leave it on.',
+      'Sends less error correction (FEC) while the device reports no loss; the picture gains nothing, and the next loss costs a frame more easily. Leave it off unless the link is tight.',
     details:
-      'After loss, holds protection for 30 seconds, then reduces it by one percentage point every five seconds of clean reports. Devices that send no error-correction reports keep the configured percentage. Compatible PyroWave clients use the PyroWave error-correction setting as their ceiling.',
+      'The data saved is error correction only: the picture’s bitrate stays the same. A frame that cannot be repaired shows as a short stutter and costs a new keyframe. After loss, holds protection for 30 seconds, then reduces it by one percentage point every five seconds of clean reports, down to 5 %. Keyframes and repair frames always get the full percentage. Devices that send no error-correction reports keep the configured percentage. Compatible PyroWave clients use the PyroWave error-correction setting as their ceiling.',
     category: 'video',
     group: 'Bitrate and network',
     control: { kind: 'toggle' },
-    default: true,
+    default: false,
   },
   {
     key: 'fec_max_percentage',

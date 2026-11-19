@@ -30,6 +30,15 @@ test('disconnect restoration defaults on and the exclusive-layout delay stays av
   assert.equal(retention.visibleWhen({ dd_config_revert_on_disconnect: false }), true);
 });
 
+test('error correction stays at its percentage unless adapting is asked for', () => {
+  // Config::adaptive_fec in rust/core/src/config.rs.
+  const setting = settings.get('adaptive_fec');
+  assert.equal(setting.default, false);
+  assert.match(setting.description, /Leave it off unless/);
+  assert.equal(differsFromDefault(setting, {}, { adaptive_fec: 'disabled' }), false);
+  assert.equal(differsFromDefault(setting, {}, { adaptive_fec: 'enabled' }), true);
+});
+
 test('HDR dynamic metadata defaults on and ships HDR Vivid as a normal feature', () => {
   const setting = settings.get('hdr_dynamic_metadata');
   assert.equal(setting.default, true);

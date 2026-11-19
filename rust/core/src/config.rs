@@ -278,6 +278,13 @@ impl Config {
     pub fn link_rate_adaptation(&self) -> bool {
         self.boolean("link_rate_adaptation", true)
     }
+    /// Let video FEC fall below `fec_percentage` while the client reports a clean link (off by
+    /// default). The encoder's bitrate does not grow with the parity saved, so all it buys is
+    /// less traffic, and a loss after a quiet stretch meets 5 % parity instead of 20. No run
+    /// has measured that state: every A/B leg ended before the decay reached its floor.
+    pub fn adaptive_fec(&self) -> bool {
+        self.boolean("adaptive_fec", false)
+    }
     /// Packet-level congestion control from the client's arrival feedback (off until the A/B
     /// decides).
     pub fn congestion_control(&self) -> bool {

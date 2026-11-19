@@ -220,7 +220,7 @@ test('search finds menu choices and category context, and explains hidden depend
 });
 
 test('rows show the default only when it differs, and config keys only on request', async t => {
-  const { page, writes } = await fixture(t, { fec_percentage: 30, adaptive_fec: 'enabled' });
+  const { page, writes } = await fixture(t, { fec_percentage: 30, adaptive_fec: 'disabled' });
   await page.goto(base + '/settings/picture');
   await showAdvanced(page);
   const fec = setting(page, 'fec_percentage');

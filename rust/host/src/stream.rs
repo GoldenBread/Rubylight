@@ -529,10 +529,10 @@ fn restart_on_new_path(s: &Session, c: &Config) {
     s.rebuild_link_rate(&stream, c.link_rate_adaptation(), max_bitrate_kbps(s, c));
     rebuild_congestion(s, &stream, c);
 }
-/// The stream's video FEC at its start: the configured percentage is adaptive
-/// FEC's ceiling (with `adaptive_fec` off, or a client that sends no FEC status,
-/// it is used for every frame as before), unless the client chose its own with
-/// `rlFecPercentage`.
+/// The stream's video FEC at its start: the configured percentage, for every
+/// frame, unless the client chose its own with `rlFecPercentage`. With
+/// `adaptive_fec` on (off by default) it is the ceiling adaptive FEC decays
+/// from for a client that sends FEC status.
 fn configure_video_fec(s: &Session, c: &Config) -> Result<()> {
     let requested_fec = c.integer("fec_percentage", 20);
     if requested_fec != requested_fec.clamp(0, 100) {
@@ -547,12 +547,7 @@ fn configure_video_fec(s: &Session, c: &Config) -> Result<()> {
     // A client's `rlFecPercentage` was checked at /launch.
     let choice = butterpollo_core::extensions::fec_choice(&s.launch.options)?;
     let maximum = c.fec_max_percentage();
-    let start = s.configure_fec_choice(
-        choice,
-        c.boolean("adaptive_fec", true),
-        fec_ceiling,
-        maximum,
-    );
+    let start = s.configure_fec_choice(choice, c.adaptive_fec(), fec_ceiling, maximum);
     if choice != butterpollo_core::extensions::FecChoice::Host {
         tracing::info!(
             client = %s.launch.client.name,
