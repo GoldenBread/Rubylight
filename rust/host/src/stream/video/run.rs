@@ -1047,6 +1047,8 @@ impl SessionThread<'_> {
                                 cc_queue_p95_ms=cc_queue_p95.map(|v| (v * 100.).round() / 100.),
                                 cc_queue_samples=cc_samples,
                                 cc_overuse_cuts=cc_u64("overuse_cuts"),
+                                cc_overuse_held=cc_u64("overuse_held"),
+                                cc_sent_kbps=cc_u64("sent_kbps"),
                                 cc_loss_cuts=cc_u64("loss_cuts"),
                                 cc_reports=cc_u64("reports"),
                                 cc_feedback_bytes=cc_u64("feedback_bytes"),

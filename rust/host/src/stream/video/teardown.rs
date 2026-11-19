@@ -37,7 +37,7 @@ impl SessionThread<'_> {
         // Congestion control over the whole stream, for the A/B (`congestion_ab.py`).
         if s.congestion_active() {
             let cc = s.congestion_snapshot();
-            tracing::info!(client=%s.launch.client.name, shadow=cc["shadow"].as_bool().unwrap_or(false), reports=cc["reports"].as_u64(), packets=cc["packets"].as_u64(), lost=cc["lost"].as_u64(), late=cc["late"].as_u64(), unmatched=cc["unmatched"].as_u64(), overuse_cuts=cc["overuse_cuts"].as_u64(), loss_cuts=cc["loss_cuts"].as_u64(), queue_p50_ms=cc["queue_p50_ms"].as_f64(), queue_p95_ms=cc["queue_p95_ms"].as_f64(), recovery_p50_ms=cc["recovery_p50_ms"].as_u64(), recovery_max_ms=cc["recovery_max_ms"].as_u64(), feedback_bytes=cc["feedback_bytes"].as_u64(), "congestion summary");
+            tracing::info!(client=%s.launch.client.name, shadow=cc["shadow"].as_bool().unwrap_or(false), reports=cc["reports"].as_u64(), packets=cc["packets"].as_u64(), lost=cc["lost"].as_u64(), late=cc["late"].as_u64(), unmatched=cc["unmatched"].as_u64(), overuse_cuts=cc["overuse_cuts"].as_u64(), overuse_held=cc["overuse_held"].as_u64(), loss_cuts=cc["loss_cuts"].as_u64(), queue_p50_ms=cc["queue_p50_ms"].as_f64(), queue_p95_ms=cc["queue_p95_ms"].as_f64(), recovery_p50_ms=cc["recovery_p50_ms"].as_u64(), recovery_max_ms=cc["recovery_max_ms"].as_u64(), feedback_bytes=cc["feedback_bytes"].as_u64(), "congestion summary");
         }
         // Where this stream's pictures lost time, from the stamps the send path
         // took: one line for the log and the support bundle, naming the stage.

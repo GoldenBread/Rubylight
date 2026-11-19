@@ -87,6 +87,9 @@ const NEAR_CAPACITY: f64 = 0.9;
 const APP_LIMITED: f64 = 1.5;
 /// The window the received rate is measured over.
 pub const ACKED_WINDOW_US: u64 = 500_000;
+/// Every packet of that window waited at least this long in a queue: the queue stands, and
+/// the link is the limit even for a stream that sends far below its rate.
+pub const STANDING_QUEUE_US: u64 = 10_000;
 /// Loss above this share cuts the rate, unless FEC carries more (see [`FEC_ABSORBS`]).
 pub const LOSS_HIGH: f64 = 0.10;
 /// Loss below this lets the loss limit grow again.
@@ -515,9 +518,27 @@ pub struct Counters {
     /// Reported packets the host had no send record of.
     pub unmatched: u64,
     pub overuse_cuts: u64,
+    /// Overuse signals that cut nothing, because the stream sent far below its rate and no
+    /// queue stood ([`Congestion::application_limited`]).
+    pub overuse_held: u64,
     pub loss_cuts: u64,
     /// Feedback payload bytes received.
     pub feedback_bytes: u64,
+}
+
+/// One report's share of the acked window.
+#[derive(Clone, Copy, Debug)]
+struct Acked {
+    /// When its last packet arrived, client µs.
+    arrival: u64,
+    /// The wire bytes the client received.
+    received: u64,
+    /// When the host sent the last of its packets, host µs.
+    last_send: u64,
+    /// The wire bytes the host sent for it, lost packets included.
+    sent: u64,
+    /// The least queueing delay among its packets, µs.
+    least_queue: u64,
 }
 
 /// The controller of one stream.
@@ -532,8 +553,10 @@ pub struct Congestion {
     state: RateState,
     inter: InterArrival,
     trend: Trendline,
-    /// Received (client µs of the report's last arrival, wire bytes) per report.
-    acked: VecDeque<(u64, u64)>,
+    /// What each report of the last [`ACKED_WINDOW_US`] received and stood for.
+    acked: VecDeque<Acked>,
+    /// Wire bytes of reports in which nothing arrived, for the next entry of `acked`.
+    sent_unacked: u64,
     /// (host µs, packets, lost) per report.
     losses: VecDeque<(u64, u64, u64)>,
     /// The client clock's µs at the last report, for the acked window.
@@ -573,6 +596,7 @@ impl Congestion {
             inter: InterArrival::default(),
             trend: Trendline::default(),
             acked: VecDeque::new(),
+            sent_unacked: 0,
             losses: VecDeque::new(),
             last_arrival: None,
             last_feedback: None,
@@ -621,6 +645,9 @@ impl Congestion {
         let mut packets = skipped;
         let mut lost = skipped;
         let mut received_bytes = 0;
+        let mut sent_bytes = 0;
+        let mut last_send = 0;
+        let mut least_queue = u64::MAX;
         let mut last_arrival = None;
         if self
             .last_feedback
@@ -631,6 +658,8 @@ impl Congestion {
         self.last_feedback = Some(now_us);
         for p in feedback.packets {
             packets += stride;
+            sent_bytes += u64::from(p.wire_bytes) * stride;
+            last_send = last_send.max(p.sent_us);
             let Some(arrival) = p.arrival_us else {
                 lost += stride;
                 continue;
@@ -641,6 +670,7 @@ impl Congestion {
             let owd = arrival as i64 - p.sent_us as i64;
             let base = self.base_delay.add(now_us, owd);
             let queued = (owd - base).max(0) as u64;
+            least_queue = least_queue.min(queued);
             self.window_delay.add(queued);
             self.stream_delay.add(queued);
             if let Some(deltas) = self.inter.add(p, arrival) {
@@ -659,16 +689,29 @@ impl Congestion {
         {
             self.losses.pop_front();
         }
-        if let Some(arrival) = last_arrival {
-            self.last_arrival = Some(arrival);
-            self.acked.push_back((arrival, received_bytes));
-            while self
-                .acked
-                .front()
-                .is_some_and(|(at, _)| at + ACKED_WINDOW_US < arrival)
-            {
-                self.acked.pop_front();
-            }
+        // Skipped packets have no record here: they count at the report's mean size.
+        let listed = feedback.packets.len() as u64 * stride;
+        if let Some(mean) = sent_bytes.checked_div(listed) {
+            sent_bytes += skipped * mean;
+        }
+        let Some(arrival) = last_arrival else {
+            self.sent_unacked += sent_bytes;
+            return;
+        };
+        self.last_arrival = Some(arrival);
+        self.acked.push_back(Acked {
+            arrival,
+            received: received_bytes,
+            last_send,
+            sent: sent_bytes + std::mem::take(&mut self.sent_unacked),
+            least_queue,
+        });
+        while self
+            .acked
+            .front()
+            .is_some_and(|report| report.arrival + ACKED_WINDOW_US < arrival)
+        {
+            self.acked.pop_front();
         }
     }
 
@@ -735,11 +778,56 @@ impl Congestion {
     /// What the client received over the last [`ACKED_WINDOW_US`], bps.
     pub fn acked_bps(&self) -> Option<u64> {
         let last = self.last_arrival?;
-        let first = self.acked.front()?.0;
+        let first = self.acked.front()?.arrival;
         let span = last.saturating_sub(first).max(ACKED_WINDOW_US / 5);
         // The first report's bytes arrived before the window's start.
-        let bytes: u64 = self.acked.iter().skip(1).map(|(_, b)| b).sum();
+        let bytes: u64 = self
+            .acked
+            .iter()
+            .skip(1)
+            .map(|report| report.received)
+            .sum();
         (self.acked.len() > 1).then(|| bytes * 8 * 1_000_000 / span)
+    }
+
+    /// What the host sent for the same reports, bps: their packets' wire bytes, lost ones
+    /// included, over the time it sent them in.
+    pub fn sent_bps(&self) -> Option<u64> {
+        let first = self.acked.front()?.last_send;
+        let last = self.acked.back()?.last_send;
+        let span = last.saturating_sub(first).max(ACKED_WINDOW_US / 5);
+        let bytes: u64 = self.acked.iter().skip(1).map(|report| report.sent).sum();
+        (self.acked.len() > 1).then(|| bytes * 8 * 1_000_000 / span)
+    }
+
+    /// The queueing delay no packet of the window got under, µs, once its reports span half
+    /// of it. A stall of the link or a burst of jitter leaves earlier or later packets that
+    /// waited for nothing, so it stays near zero; a queue the stream keeps filling raises it.
+    fn standing_queue_us(&self) -> u64 {
+        let (Some(first), Some(last)) = (self.acked.front(), self.acked.back()) else {
+            return 0;
+        };
+        if last.arrival.saturating_sub(first.arrival) < ACKED_WINDOW_US / 2 {
+            return 0;
+        }
+        self.acked
+            .iter()
+            .map(|report| report.least_queue)
+            .min()
+            .unwrap_or(0)
+    }
+
+    /// Whether an overuse says nothing about the link: the host sent far less than it may (a
+    /// still picture, a menu, a light scene), so what the client received is the encoder's
+    /// output and not what the link carries, and no queue stood through the window. A cut to
+    /// that output would hold the stream at it when the picture gets busy again, and the rate
+    /// cannot grow back while so little is sent. The stream's own rate is the measure, not
+    /// the received one: a link that delivers little of a full stream is the limit.
+    pub fn application_limited(&self) -> bool {
+        self.sent_bps().is_some_and(|sent| {
+            APP_LIMITED * sent as f64 + 10_000. < self.target_bps() as f64
+                && self.standing_queue_us() < STANDING_QUEUE_US
+        })
     }
 
     /// The share of packets lost over [`LOSS_WINDOW_US`], once enough came.
@@ -828,19 +916,24 @@ impl Congestion {
                     .last_decrease
                     .is_none_or(|at| now_us.saturating_sub(at) >= rtt_us);
                 if let (true, Some(acked)) = (due, acked) {
-                    let from = self.target_bps();
-                    let aimed = DECREASE_FACTOR * acked as f64;
-                    if aimed < self.delay_bps {
-                        self.delay_bps = aimed.max(self.delay_bps * (1. - MAX_CUT));
-                        self.delay_bps = self.delay_bps.max(self.min_bps as f64);
-                        self.counters.overuse_cuts += 1;
-                        self.last_decrease = Some(now_us);
-                        self.note(ChangeKind::Overuse, from, self.target_bps(), acked, 0.);
+                    if self.application_limited() {
+                        // Neither a cut nor a sample of the link's capacity.
+                        self.counters.overuse_held += 1;
+                    } else {
+                        let from = self.target_bps();
+                        let aimed = DECREASE_FACTOR * acked as f64;
+                        if aimed < self.delay_bps {
+                            self.delay_bps = aimed.max(self.delay_bps * (1. - MAX_CUT));
+                            self.delay_bps = self.delay_bps.max(self.min_bps as f64);
+                            self.counters.overuse_cuts += 1;
+                            self.last_decrease = Some(now_us);
+                            self.note(ChangeKind::Overuse, from, self.target_bps(), acked, 0.);
+                        }
+                        self.capacity_bps = Some(match self.capacity_bps {
+                            Some(cap) => 0.95 * cap + 0.05 * acked as f64,
+                            None => acked as f64,
+                        });
                     }
-                    self.capacity_bps = Some(match self.capacity_bps {
-                        Some(cap) => 0.95 * cap + 0.05 * acked as f64,
-                        None => acked as f64,
-                    });
                 }
                 self.state = RateState::Hold;
             }
@@ -992,6 +1085,7 @@ impl Congestion {
             "target_kbps": self.target_bps() / 1000,
             "max_kbps": self.max_bps / 1000,
             "acked_kbps": self.acked_bps().map(|b| b / 1000),
+            "sent_kbps": self.sent_bps().map(|b| b / 1000),
             "loss_permille": self.loss().map(|l| (l * 1000.).round() as u64),
             "trend": (self.trend.modified * 100.).round() / 100.,
             "threshold": (self.trend.threshold * 100.).round() / 100.,
@@ -1004,6 +1098,7 @@ impl Congestion {
             "late": self.counters.late,
             "unmatched": self.counters.unmatched,
             "overuse_cuts": self.counters.overuse_cuts,
+            "overuse_held": self.counters.overuse_held,
             "loss_cuts": self.counters.loss_cuts,
             "feedback_bytes": self.counters.feedback_bytes,
             "queue_p50_ms": ms(self.stream_delay.percentile_ms(50.)),

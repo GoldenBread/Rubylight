@@ -14,6 +14,8 @@ struct Link {
     /// Every `drop_every`-th packet is lost on the air (0: none).
     drop_every: u64,
     sent: u64,
+    /// (from, until, bps): the rate for packets sent in that time instead of `bps`.
+    slow: Vec<(u64, u64, f64)>,
 }
 
 impl Link {
@@ -25,6 +27,7 @@ impl Link {
             queue_limit: 200_000,
             drop_every: 0,
             sent: 0,
+            slow: Vec::new(),
         }
     }
 
@@ -38,7 +41,12 @@ impl Link {
         if start - sent > self.queue_limit {
             return None;
         }
-        self.free_at = start + (f64::from(bytes) * 8. * 1e6 / self.bps) as u64;
+        let bps = self
+            .slow
+            .iter()
+            .find(|(from, until, _)| (*from..*until).contains(&sent))
+            .map_or(self.bps, |slow| slow.2);
+        self.free_at = start + (f64::from(bytes) * 8. * 1e6 / bps) as u64;
         Some(self.free_at + self.propagation + CLIENT_OFFSET)
     }
 }
@@ -53,10 +61,23 @@ struct Run {
 /// A 60 fps stream through `link` for `seconds`: frames of the target's size, paced at the
 /// decision's pace or three times the target, a report every 50 ms, a tick every 20 ms.
 fn run(cc: &mut Congestion, link: &mut Link, from_us: u64, seconds: u64, max_bps: u64) -> Run {
+    run_content(cc, link, from_us, seconds * 1_000_000, max_bps, u64::MAX)
+}
+
+/// The same for `micros`, with a picture that needs only `content_bps`: the encoder makes the
+/// lower of that and the target.
+fn run_content(
+    cc: &mut Congestion,
+    link: &mut Link,
+    from_us: u64,
+    micros: u64,
+    max_bps: u64,
+    content_bps: u64,
+) -> Run {
     let mut pending: VecDeque<PacketResult> = VecDeque::new();
     let mut decision = Decision::default();
     let mut targets = Vec::new();
-    let end = from_us + seconds * 1_000_000;
+    let end = from_us + micros;
     let mut next_frame = from_us;
     let mut next_report = from_us + 50_000;
     let mut next_tick = from_us + 20_000;
@@ -65,7 +86,7 @@ fn run(cc: &mut Congestion, link: &mut Link, from_us: u64, seconds: u64, max_bps
         if now >= next_frame {
             let target = decision.video_bps.unwrap_or(max_bps);
             let pace = decision.pace_bps.unwrap_or(target * 3) as f64;
-            let bytes = target / 60 / 8;
+            let bytes = target.min(content_bps) / 60 / 8;
             let packets = bytes.div_ceil(u64::from(PACKET)).max(1);
             for i in 0..packets {
                 let sent = now + (i as f64 * f64::from(PACKET) * 8. * 1e6 / pace) as u64;
@@ -233,6 +254,86 @@ fn feedback_that_stops_hands_the_rate_back() {
     assert_eq!(cc.take_change().unwrap().kind, ChangeKind::Stale);
     assert_eq!(cc.target_bps(), max);
     assert!(!cc.fresh(later));
+}
+
+/// The field case: a stream allowed 33 Mbps whose picture needs about 2, on a link that
+/// carries all of it but slows for a moment every few seconds, as Wi-Fi does. Each slowing
+/// reads as overuse; a cut to 0.85 of the 2 Mbps received would hold the stream there, and
+/// the rate cannot grow back while so little is sent.
+#[test]
+fn an_overuse_while_the_picture_needs_little_cuts_nothing() {
+    let max = 33_000_000;
+    let mut cc = Congestion::new(2_000_000, max);
+    let mut link = Link::new(300e6);
+    link.slow = (1..=6)
+        .map(|i| (i * 3_000_000, i * 3_000_000 + 120_000, 1e6))
+        .collect();
+    let run = run_content(&mut cc, &mut link, 0, 21_000_000, max, 1_400_000);
+    // The slowings were seen, so the test is not passing for want of a signal.
+    assert!(cc.counters().overuse_held >= 3, "{:?}", cc.counters());
+    assert_eq!(cc.counters().overuse_cuts, 0, "{:?}", cc.counters());
+    assert_eq!(cc.counters().loss_cuts, 0);
+    assert!(run.targets.iter().all(|(_, b)| *b == max));
+    assert_eq!(run.last.video_bps, None);
+    assert!(cc.take_change().is_none());
+    let snapshot = cc.snapshot(21_000_000);
+    assert_eq!(snapshot["overuse_held"], cc.counters().overuse_held);
+    assert!(
+        snapshot["sent_kbps"].as_u64().unwrap() < 3_000,
+        "{snapshot}"
+    );
+}
+
+/// A stream sending half its rate into a link that carries less than that: the queue stands,
+/// so the overuse is the link's and the rate comes down below the link.
+#[test]
+fn a_link_narrower_than_a_light_picture_still_brings_the_rate_down() {
+    let max = 50_000_000;
+    let mut cc = Congestion::new(2_000_000, max);
+    let mut link = Link::new(20e6);
+    run_content(&mut cc, &mut link, 0, 10_000_000, max, 25_000_000);
+    let run = run_content(&mut cc, &mut link, 10_000_000, 20_000_000, max, 25_000_000);
+    assert!(cc.counters().overuse_cuts >= 1, "{:?}", cc.counters());
+    let mean = mean_after(&run.targets, 10_000_000);
+    assert!((10e6..22e6).contains(&mean), "mean target {mean}");
+    assert!(run.queue_p95_ms.unwrap() < 100., "{:?}", run.queue_p95_ms);
+}
+
+#[test]
+fn the_sent_rate_counts_lost_and_skipped_packets() {
+    let mut cc = Congestion::new(1_000_000, 50_000_000);
+    let packet = |sent_us: u64, arrived: bool| PacketResult {
+        sent_us,
+        arrival_us: arrived.then_some(CLIENT_OFFSET + sent_us + 2_000),
+        wire_bytes: 1_000,
+    };
+    let report = |cc: &mut Congestion, at: u64, packets: &[PacketResult], skipped: u32| {
+        cc.on_feedback(
+            at,
+            Feedback {
+                packets,
+                stride: 1,
+                late: 0,
+                skipped,
+            },
+            20,
+        );
+    };
+    report(&mut cc, 10_000, &[packet(0, true)], 0);
+    assert_eq!(cc.sent_bps(), None);
+    // A report in which nothing arrived adds its bytes to the next one that has an arrival.
+    report(&mut cc, 60_000, &[packet(50_000, false)], 0);
+    assert_eq!(cc.sent_bps(), None);
+    // Two listed, one of them lost, and two skipped at the listed mean: five packets since
+    // the first report, over 200 ms of sending.
+    report(
+        &mut cc,
+        210_000,
+        &[packet(150_000, false), packet(200_000, true)],
+        2,
+    );
+    assert_eq!(cc.sent_bps(), Some(5 * 1_000 * 8 * 1_000_000 / 200_000));
+    assert_eq!(cc.acked_bps(), Some(1_000 * 8 * 1_000_000 / 200_000));
 }
 
 #[test]
