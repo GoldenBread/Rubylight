@@ -1197,15 +1197,17 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         pendingResize.set(null);
     }
 
-    // On the input thread before each frame: the size and frame rate the UI asked for, under the
-    // monitor that a recovery holds while it touches the codec.
-    private void applyStreamChanges() {
-        if (pendingResize.get() == null && !pendingFrameRate.get()) return;
+    // On the input thread at a frame's first unit: the size and frame rate the UI asked for, under
+    // the monitor that a recovery holds while it touches the codec. True when the size asks for a
+    // restart, which the caller runs before it keeps that frame's parameter sets.
+    private boolean applyStreamChanges() {
+        if (pendingResize.get() == null && !pendingFrameRate.get()) return false;
+        boolean restart = false;
         synchronized (codecRecoveryMonitor) {
             ResizeRequest resize = pendingResize.getAndSet(null);
             boolean frameRate = pendingFrameRate.getAndSet(false);
-            if (stopping || configuredFormat == null) return;
-            if (resize != null) applyResize(resize);
+            if (stopping || configuredFormat == null) return false;
+            if (resize != null) restart = applyResize(resize);
             if (frameRate) {
                 configuredFormat.setInteger(MediaFormat.KEY_FRAME_RATE, refreshRate);
                 Display display = outputDisplay;
@@ -1215,9 +1217,10 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 }
             }
         }
+        return restart;
     }
 
-    private void applyResize(ResizeRequest resize) {
+    private boolean applyResize(ResizeRequest resize) {
         int[] max = StreamResizePolicy.coveringMax(maxDecodeWidth, maxDecodeHeight, resize.maxWidth, resize.maxHeight);
         // Checked against the decoder running now: a rebuild since the UI asked may have moved to
         // one that cannot take it, whose configure would then refuse the raised maximum.
@@ -1226,7 +1229,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 !live.caps.isSizeSupported(max[0], max[1])) {
             LimeLog.warning("Decoder " + activeDecoderName + " cannot switch to " + resize.width + "x" + resize.height +
                     " within " + max[0] + "x" + max[1] + "; the size change is dropped");
-            return;
+            return false;
         }
         boolean restart = false;
         if (max[0] != maxDecodeWidth || max[1] != maxDecodeHeight) {
@@ -1251,6 +1254,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         expectedWidth = resize.width;
         expectedHeight = resize.height;
         reconfigureRequested = true;
+        return restart;
     }
 
     public void setFrameRate(int fps) {
@@ -5461,8 +5465,9 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             // Don't bother if we're stopping
             return MoonBridge.DR_OK;
         }
-        // Before this frame is queued: it may be the first at a size the UI asked for.
-        applyStreamChanges();
+        // A frame's first unit (an IDR's VPS or SPS, or its picture): the frame may be the first at
+        // a size the UI asked for.
+        boolean restartForSize = frameNumber != lastFrameNumber && applyStreamChanges();
 
         lastVideoFrameTimeMs = SystemClock.uptimeMillis();
         long enqueueTimeNs = receiveTimeNs + (enqueueTimeUs - receiveTimeUs) * 1000;
@@ -5506,6 +5511,15 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         }
 
         receivedVideoBytes.addAndGet(decodeUnitLength);
+
+        if (restartForSize) {
+            // The restart a larger size needs runs now, before this frame's parameter sets are kept
+            // (it drops those it has), so the IDR the PC sends at the new size decodes. Any other
+            // frame cannot follow a restart: ask for the IDR.
+            doCodecRecoveryIfRequired(CR_FLAG_INPUT_THREAD);
+            if (stopping) return MoonBridge.DR_OK;
+            if (frameType != MoonBridge.FRAME_TYPE_IDR) return MoonBridge.DR_NEED_IDR;
+        }
 
         if ((videoFormat & MoonBridge.VIDEO_FORMAT_MASK_PYROWAVE) != 0) {
             return submitPyroWaveFrame(decodeUnitData, decodeUnitLength, frameNumber, frameHostProcessingLatency,

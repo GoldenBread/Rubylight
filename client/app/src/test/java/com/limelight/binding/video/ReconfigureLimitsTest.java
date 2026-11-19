@@ -206,6 +206,23 @@ public class ReconfigureLimitsTest {
                         .setColorFormats(new int[] {CodecCapabilities.COLOR_FormatYUV420Flexible}).build()).build();
     }
 
+    // A still screen: no frame between the request and the PC's answer, whose first unit is the
+    // new IDR's VPS. The restart runs before that IDR's parameter sets are kept, so it decodes.
+    @Test
+    public void theFirstIdrAtTheNewSizeDecodesOnAStillScreen() {
+        if (renderer.setup(MoonBridge.VIDEO_FORMAT_H265, 1920, 1080, 60) != 0) fail("setup failed");
+        org.junit.Assert.assertEquals(MoonBridge.DR_OK, submitIdr(1));
+        org.junit.Assert.assertTrue(renderer.prepareForReconfigure(2560, 1440));
+        quiesceRenderThreads();
+        ObservingCodec.observed = renderer;
+        ObservingCodec.queuedFlags.clear();
+        org.junit.Assert.assertEquals("no second IDR is asked for", MoonBridge.DR_OK, submitIdr(2));
+        org.junit.Assert.assertEquals("the parameter sets, then the picture",
+                java.util.Arrays.asList(android.media.MediaCodec.BUFFER_FLAG_CODEC_CONFIG, android.media.MediaCodec.BUFFER_FLAG_KEY_FRAME),
+                ObservingCodec.queuedFlags);
+        org.junit.Assert.assertEquals(2560, (int) ObservingCodec.queuedMaxWidths.get(ObservingCodec.queuedMaxWidths.size() - 1));
+    }
+
     // A request the old decoder took, then a rebuild onto a decoder that cannot take that size:
     // the request is dropped, not configured into the new decoder.
     @Test
