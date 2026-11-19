@@ -2036,13 +2036,17 @@ impl GpuImage {
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {
                 let mut done = BOOL(0);
-                let read = gpu.context.GetData(
-                    &query,
-                    Some((&raw mut done).cast()),
-                    std::mem::size_of::<BOOL>() as u32,
-                    0,
-                );
-                if read.is_ok() && done.as_bool() {
+                // Still copying is a success with `done` unset; a failure (the device is gone)
+                // ends the wait with its own error.
+                gpu.context
+                    .GetData(
+                        &query,
+                        Some((&raw mut done).cast()),
+                        std::mem::size_of::<BOOL>() as u32,
+                        0,
+                    )
+                    .context("the upload's event query")?;
+                if done.as_bool() {
                     break;
                 }
                 ensure!(Instant::now() < deadline, "the upload did not finish");

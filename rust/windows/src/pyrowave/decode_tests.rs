@@ -887,7 +887,7 @@ fn pyrowave_decoded_end_to_end() -> Result<()> {
                 let pictures = (0..2)
                     .map(|phase| {
                         let (source, reference) = picture(&config, phase, Scene::Chart);
-                        Ok((GpuImage::upload(&gpu, &source)?, reference))
+                        Ok((GpuImage::upload_settled(&gpu, &source)?, reference))
                     })
                     .collect::<Result<Vec<_>>>()?;
                 // Keep the conversion control near-lossless after either
@@ -1054,7 +1054,7 @@ fn pyrowave_encoder_follows_rebuilt_planes() -> Result<()> {
     let pictures = (0..2)
         .map(|phase| {
             let (source, reference) = picture(&config, phase, Scene::Chart);
-            Ok((GpuImage::upload(&gpu, &source)?, reference))
+            Ok((GpuImage::upload_settled(&gpu, &source)?, reference))
         })
         .collect::<Result<Vec<_>>>()?;
     ensure!(
@@ -1159,7 +1159,7 @@ fn record_framing_keeps_the_wire_budget_and_decoded_pixels() -> Result<()> {
     let mut decoder = Decoder::new(&gpu, &config)?;
     for scene in [Scene::Desktop, Scene::Game] {
         let (source, _) = picture(&config, 0, scene);
-        let source = GpuImage::upload(&gpu, &source)?;
+        let source = GpuImage::upload_settled(&gpu, &source)?;
         for kbps in [30_000, 80_000, 100_000, 200_000, 300_000, 400_000] {
             encoder.restart_interval();
             let frames = encoder.encode_now(&source, true, kbps)?;
@@ -1256,7 +1256,7 @@ fn quality_sweep(width: u32, height: u32, critical_fec: usize) -> Result<()> {
                 let pictures = (0..2)
                     .map(|phase| {
                         let (source, reference) = picture(&config, phase, scene);
-                        Ok((GpuImage::upload(&gpu, &source)?, reference))
+                        Ok((GpuImage::upload_settled(&gpu, &source)?, reference))
                     })
                     .collect::<Result<Vec<_>>>()?;
                 let mut decoder = Decoder::new(&gpu, &config)?;
@@ -1469,7 +1469,7 @@ fn lose_the_d3d12_device(loss: Loss) -> Result<std::time::Duration> {
         ..Default::default()
     };
     let (source, reference) = picture(&config, 0, Scene::Chart);
-    let image = GpuImage::upload(&gpu, &source)?;
+    let image = GpuImage::upload_settled(&gpu, &source)?;
     let mut decoder = Decoder::new(&gpu, &config)?;
     let mut encoder = Encoder::new_gpu_options(
         &config,
@@ -1634,7 +1634,7 @@ fn pyrowave_recovers_from_a_d3d12_device_lost_mid_frame() -> Result<()> {
 fn encoder_life(config: &Negotiated, stage: u32, compute: bool) -> Result<()> {
     let gpu = Device::new("")?;
     let (source, _) = picture(config, 0, Scene::Chart);
-    let image = GpuImage::upload(&gpu, &source)?;
+    let image = GpuImage::upload_settled(&gpu, &source)?;
     if stage == 0 {
         return Ok(());
     }
