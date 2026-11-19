@@ -1986,6 +1986,11 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     }
 
     private synchronized short getActiveControllerMask() {
+        if (!prefConfig.sendControllers) {
+            // Controllers Off: physical pads keep their numbers here (local actions, the pad mouse)
+            // but the PC hears only of the on-screen gamepad, which is player 1.
+            return (short) (prefConfig.onscreenController || layoutGamepadUsed || onscreenOwnPlayerSession ? 1 : 0);
+        }
         if (prefConfig.multiController) {
             return (short)(currentControllers | initialControllers |
                     (prefConfig.onscreenController || layoutGamepadUsed || hasBuiltInPlayerOne() ? 1 : 0));

@@ -366,6 +366,38 @@ public class ControllerPreparationTest {
         }
     }
 
+    @Test public void controllersOffSendsNoPhysicalPadInTheActiveMask() {
+        try (ActivityController<Activity> activity = Robolectric.buildActivity(Activity.class).create()) {
+            addInputDevice(activity.get(), 2, true, JOYPAD);
+            addInputDevice(activity.get(), 4, true, JOYPAD);
+            for (boolean own : new boolean[] {false, true}) {
+                PreferenceConfiguration prefs = own ? onscreenOwnPlayerPrefs(activity.get()) : new PreferenceConfiguration();
+                prefs.multiController = true;
+                prefs.onscreenController = true;
+                prefs.sendControllers = false;
+                Connection connection = new Connection(73);
+                ControllerHandler handler = new ControllerHandler(activity.get(), connection, null, prefs);
+                try {
+                    handler.prepareControllersForLaunch();
+                    handler.resendControllerArrivals();
+                    handler.reportOscState(ControllerPacket.A_FLAG, (short) 0, (short) 0, (short) 0, (short) 0, (byte) 0, (byte) 0);
+                    assertEquals("own player " + own, 1, connection.activeMask);
+                } finally { handler.destroy(); }
+            }
+            // With Controllers On both pads stay in the mask.
+            PreferenceConfiguration prefs = new PreferenceConfiguration();
+            prefs.multiController = true;
+            prefs.onscreenController = true;
+            Connection connection = new Connection(73);
+            ControllerHandler handler = new ControllerHandler(activity.get(), connection, null, prefs);
+            try {
+                handler.prepareControllersForLaunch();
+                handler.reportOscState(ControllerPacket.A_FLAG, (short) 0, (short) 0, (short) 0, (short) 0, (byte) 0, (byte) 0);
+                assertEquals(3, connection.activeMask & 3);
+            } finally { handler.destroy(); }
+        }
+    }
+
     @Test public void controllersOffAnnouncesNoPadAttachedMidStreamAndSendsNoBatteryOrPadMouse() {
         try (ActivityController<Activity> activity = Robolectric.buildActivity(Activity.class).create()) {
             for (boolean send : new boolean[] {true, false}) {
