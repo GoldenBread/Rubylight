@@ -389,6 +389,7 @@ class ServiceInputs(unittest.TestCase):
         self.assertEqual(self.tool.problems(), [])
 
     def test_a_change_needs_a_new_version(self):
+        current = self.tool.version(self.root)
         self.assertIsNone(self.tool.update(self.root))
         self.assertEqual(self.tool.problems(self.root), [])
         with open(self.root / 'rust/service/src/main.rs', 'a', encoding='utf-8', newline='') as file:
@@ -400,7 +401,7 @@ class ServiceInputs(unittest.TestCase):
         self.assertIn('9.0.0 of the service is not recorded', self.tool.problems(self.root)[0])
         self.assertIsNone(self.tool.update(self.root))
         self.assertEqual(self.tool.problems(self.root), [])
-        self.assertEqual([entry[0] for entry in self.tool.recorded(self.root)], ['1.0.0', '9.0.0'])
+        self.assertEqual([entry[0] for entry in self.tool.recorded(self.root)], [current, '9.0.0'])
         # Back to the old files under the old version is a version recorded twice.
         record = self.root / 'rust/service/inputs.txt'
         with open(record, 'a', encoding='utf-8', newline='') as file:
