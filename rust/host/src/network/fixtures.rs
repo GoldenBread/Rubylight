@@ -28,6 +28,8 @@ struct RouterState {
     silent: bool,
     /// Answer no request for the router's own address, as a busy router may not.
     ignore_external: bool,
+    /// The map requests that reached the router, answered or not.
+    adds_started: usize,
 }
 fn text<'a>(body: &'a str, tag: &str) -> &'a str {
     body.split_once(&format!("<{tag}>"))
@@ -67,7 +69,9 @@ async fn soap(
         .trim_end_matches('"');
     // A test can hold the map request here while it checks the lease record.
     let delay = if action == "AddPortMapping" {
-        state.lock().unwrap().add_delay
+        let mut state = state.lock().unwrap();
+        state.adds_started += 1;
+        state.add_delay
     } else {
         None
     };
@@ -185,6 +189,31 @@ async fn serve(
         provider: upnp::Bounded,
     };
     (gateway, server)
+}
+/// [`apply_round`] on a router that is not on trial.
+#[allow(clippy::too_many_arguments)]
+async fn apply<P: Provider>(
+    gateway: &Gateway<P>,
+    local: IpAddr,
+    wanted: &[Mapping],
+    description: &str,
+    reported: &mut Vec<Mapping>,
+    previous: &[Mapping],
+    record: &std::sync::Mutex<LeaseRecord>,
+    guest: &[Mapping],
+) -> Applied {
+    apply_round(
+        gateway,
+        local,
+        wanted,
+        description,
+        reported,
+        previous,
+        record,
+        guest,
+        false,
+    )
+    .await
 }
 /// A guest lease record in a fresh temp folder, with the folder to remove after the test.
 pub(super) fn guest_record() -> (Mutex<LeaseRecord>, std::path::PathBuf) {
@@ -756,6 +785,8 @@ fn on_lan(lan: &[&str]) {
         *net.borrow_mut() = TestNet {
             gateways: Some(Vec::new()),
             addresses: Some(lan.clone()),
+            // Windows sends multicast from the LAN.
+            multicast_from: lan.first().copied(),
             lan: lan
                 .into_iter()
                 .map(|address| match address {
@@ -775,6 +806,7 @@ fn vpn_up() {
             .get_or_insert_with(Vec::new)
             .push("10.8.0.2".parse().unwrap());
         net.gateways = Some(vec!["10.8.0.1".parse().unwrap()]);
+        net.multicast_from = Some([10, 8, 0, 2].into());
     });
 }
 /// A UPnP search from `from` finds `gateway`.
@@ -1157,11 +1189,8 @@ async fn the_search_skips_a_vpn_adapter_that_calls_itself_ethernet() {
         upnp_gateway(IpAddr::from([0, 0, 0, 0])).await.is_err(),
         "the search took the VPN adapter's router"
     );
-    // The search from no address in particular comes last, as it did before.
-    assert_eq!(
-        searches(),
-        [IpAddr::from([192, 0, 2, 10]), IpAddr::from([0, 0, 0, 0])]
-    );
+    // Windows sends multicast from the LAN address: no search from no address in particular.
+    assert_eq!(searches(), [IpAddr::from([192, 0, 2, 10])]);
     vpn_server.abort();
 }
 /// Without an uplink (a virtual machine's adapters), every Ethernet and Wi-Fi address is searched
@@ -1260,7 +1289,11 @@ async fn the_lower_metric_adapter_is_searched_from_first() {
     assert_eq!(local, IpAddr::from([192, 0, 2, 20]));
     assert_eq!(
         searches(),
-        [IpAddr::from([192, 0, 2, 10]), IpAddr::from([192, 0, 2, 20])]
+        [
+            IpAddr::from([192, 0, 2, 10]),
+            IpAddr::from([192, 0, 2, 20]),
+            IpAddr::from([0, 0, 0, 0])
+        ]
     );
     server.abort();
 }
@@ -1314,7 +1347,7 @@ async fn a_tap_adapter_with_a_gateway_is_not_chosen_over_the_lan() {
     router_on("192.0.2.10", copy(&gateway));
     let (_, local) = upnp_gateway(IpAddr::from([0, 0, 0, 0])).await.unwrap();
     assert_eq!(local, IpAddr::from([192, 0, 2, 10]));
-    assert_eq!(searches(), [IpAddr::from([192, 0, 2, 10])]);
+    assert!(!searches().contains(&IpAddr::from([10, 8, 0, 2])));
     let gateways = ["10.8.0.1".parse().unwrap(), "192.0.2.1".parse().unwrap()];
     assert_eq!(
         pcp_route(&[tap, lan], &gateways, IpAddr::from([0, 0, 0, 0])),
@@ -1436,6 +1469,74 @@ async fn a_router_given_up_that_answers_its_port_requests_is_taken_back() {
         "a router answering its port requests was not taken back"
     );
     assert_eq!(forwards(&state), forwarded_to("192.0.2.10"));
+    let _ = std::fs::remove_dir_all(directory);
+    server.abort();
+}
+
+/// A round without a UPnP router takes one search's time: the uplinks' searches run at once, and
+/// the search from no address in particular is not made again from where Windows sends
+/// multicast, an address already searched from.
+#[tokio::test]
+async fn the_searches_of_a_round_run_at_once_and_none_twice() {
+    with_adapters(vec![adapter([192, 0, 2, 10].into(), true, false, 25, &[])]);
+    TEST_NET.with(|net| net.borrow_mut().multicast_from = Some([192, 0, 2, 10].into()));
+    assert!(upnp_gateway(IpAddr::from([0, 0, 0, 0])).await.is_err());
+    assert_eq!(
+        searches(),
+        [IpAddr::from([192, 0, 2, 10])],
+        "one uplink, two searches"
+    );
+    with_adapters(ethernet_and_wifi().to_vec());
+    assert!(upnp_gateway(IpAddr::from([0, 0, 0, 0])).await.is_err());
+    assert_eq!(searches().len(), 3);
+    assert_eq!(
+        TEST_NET.with(|net| net.borrow().overlap),
+        3,
+        "the searches ran one after another"
+    );
+}
+/// A router given up for silence that holds its requests open gets one port request on trial,
+/// not one per port: the round stops at its first timeout.
+#[tokio::test]
+async fn a_router_on_trial_stops_at_its_first_timeout() {
+    on_lan(&["192.0.2.10"]);
+    let state = Arc::new(Mutex::new(RouterState {
+        silent: true,
+        add_delay: Some(std::time::Duration::from_secs(30)),
+        ..Default::default()
+    }));
+    let (gateway, server) = serve(state.clone()).await;
+    let (record, directory) = guest_record();
+    let mut held = Held {
+        upnp_silent: Some((gateway.addr, gateway.control_url.clone())),
+        ..Default::default()
+    };
+    router_on("192.0.2.10", copy(&gateway));
+    let wanted = [
+        STREAM_PORT,
+        Mapping {
+            protocol: Protocol::UDP,
+            port: 47998,
+        },
+    ];
+    renew(
+        &mut held,
+        IpAddr::from([0, 0, 0, 0]),
+        &wanted,
+        &[],
+        &wanted,
+        "Butterpollo Rust fixture-host",
+        b"key",
+        &mut Vec::new(),
+        &record,
+    )
+    .await;
+    assert!(kept(&held).is_none());
+    assert_eq!(
+        state.lock().unwrap().adds_started,
+        1,
+        "the trial went on after a timeout"
+    );
     let _ = std::fs::remove_dir_all(directory);
     server.abort();
 }

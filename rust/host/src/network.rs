@@ -270,6 +270,11 @@ struct TestNet {
     searches: Vec<IpAddr>,
     /// The address Windows picks towards a gateway, by gateway.
     routes: Vec<(std::net::Ipv4Addr, IpAddr)>,
+    /// The address Windows sends multicast from; None: unknown.
+    multicast_from: Option<IpAddr>,
+    /// The searches under way, and the most at once.
+    in_flight: usize,
+    overlap: usize,
 }
 #[cfg(test)]
 fn default_gateways() -> Result<Vec<IpAddr>> {
@@ -990,14 +995,32 @@ async fn upnp_search(from: IpAddr) -> Result<Gateway<upnp::Bounded>> {
 }
 #[cfg(test)]
 async fn upnp_search(from: IpAddr) -> Result<Gateway<upnp::Bounded>> {
-    TEST_NET.with(|net| {
+    let found = TEST_NET.with(|net| {
         let mut net = net.borrow_mut();
         net.searches.push(from);
+        net.in_flight += 1;
+        net.overlap = net.overlap.max(net.in_flight);
         match net.routers.iter().position(|(on, _)| *on == from) {
             Some(index) => Ok(net.routers.remove(index).1),
             None => anyhow::bail!("no UPnP router answers a search from {from}"),
         }
-    })
+    });
+    // A search waits for answers: others may start meanwhile.
+    tokio::task::yield_now().await;
+    TEST_NET.with(|net| net.borrow_mut().in_flight -= 1);
+    found
+}
+/// The address Windows sends a multicast search from. A UDP connect sends nothing; it only
+/// picks the route.
+#[cfg(not(test))]
+fn multicast_source() -> Option<IpAddr> {
+    let socket = UdpSocket::bind((IpAddr::from([0, 0, 0, 0]), 0)).ok()?;
+    socket.connect(("239.255.255.250", 1900)).ok()?;
+    Some(socket.local_addr().ok()?.ip())
+}
+#[cfg(test)]
+fn multicast_source() -> Option<IpAddr> {
+    TEST_NET.with(|net| net.borrow().multicast_from)
 }
 /// The UPnP gateway on this network, and this PC's address towards it. A host that listens on
 /// every address searches from each of this PC's Ethernet and Wi-Fi addresses in [`search_order`],
@@ -1005,27 +1028,59 @@ async fn upnp_search(from: IpAddr) -> Result<Gateway<upnp::Bounded>> {
 /// particular goes out where Windows sends multicast, which a VPN may have taken. When none of
 /// them finds a router, as when it is reached through an adapter of another kind (a network
 /// bridge, a NIC team, a VLAN adapter), that search still comes last, as it did before, for the
-/// address Windows routes to the router from.
+/// address Windows routes to the router from, unless it would leave from an address already
+/// searched from. The searches run at once, so a round without a UPnP router takes one search's
+/// time, and the first in that order that finds a router wins.
 async fn upnp_gateway(bind: IpAddr) -> Result<(Gateway<upnp::Bounded>, IpAddr)> {
-    let lan = if bind.is_ipv4() && !bind.is_unspecified() {
+    let lan: Vec<IpAddr> = if bind.is_ipv4() && !bind.is_unspecified() {
         Vec::new()
     } else {
-        lan_ipv4()
+        lan_ipv4().into_iter().filter(IpAddr::is_ipv4).collect()
     };
-    for from in lan.into_iter().filter(IpAddr::is_ipv4) {
-        match upnp_search(from).await {
-            Ok(gateway) => return Ok((gateway, from)),
-            Err(error) => tracing::debug!(%error, %from, "no UPnP router found from this address"),
+    let mut from = lan.clone();
+    if !multicast_source().is_some_and(|source| lan.contains(&source)) {
+        from.push(if bind.is_ipv4() {
+            bind
+        } else {
+            IpAddr::from([0, 0, 0, 0])
+        });
+    }
+    let mut searches = tokio::task::JoinSet::new();
+    for (rank, address) in from.iter().copied().enumerate() {
+        searches.spawn(async move { (rank, upnp_search(address).await) });
+    }
+    let mut results: Vec<Option<Result<Gateway<upnp::Bounded>>>> =
+        from.iter().map(|_| None).collect();
+    while let Some(done) = searches.join_next().await {
+        let (rank, result) = done?;
+        if let Err(error) = &result {
+            tracing::debug!(%error, from = %from[rank], "no UPnP router found from this address");
+        }
+        results[rank] = Some(result);
+        // Decided once every address before the first that found a router has found none.
+        match results
+            .iter()
+            .position(|result| !matches!(result, Some(Err(_))))
+        {
+            Some(rank) if results[rank].is_some() => {
+                let Some(Ok(gateway)) = results[rank].take() else {
+                    unreachable!()
+                };
+                let local = match lan.get(rank) {
+                    Some(address) => *address,
+                    None => local_for(&gateway, bind)?,
+                };
+                return Ok((gateway, local));
+            }
+            Some(_) => {}
+            None => break,
         }
     }
-    let gateway = upnp_search(if bind.is_ipv4() {
-        bind
-    } else {
-        IpAddr::from([0, 0, 0, 0])
-    })
-    .await?;
-    let local = local_for(&gateway, bind)?;
-    Ok((gateway, local))
+    results
+        .into_iter()
+        .rev()
+        .find_map(|result| result.and_then(Result::err))
+        .map_or_else(|| Err(anyhow::anyhow!("no address to search from")), Err)
 }
 /// What one UPnP round did: the mappings this host holds, and the ports another mapping
 /// already forwards here. A map request the router did not answer is in neither: unknown.
@@ -1055,14 +1110,23 @@ fn record_forget(record: &std::sync::Mutex<LeaseRecord>, mappings: &[Mapping]) {
         .unwrap()
         .remove_confirmed(|method| method == LeaseMethod::Upnp, mappings);
 }
+/// How long a UPnP map request may take; short in tests, whose routers answer at once.
+const UPNP_WAIT: Duration = if cfg!(test) {
+    Duration::from_secs(1)
+} else {
+    Duration::from_secs(3)
+};
 /// `reported` holds the ports already warned about: the router is asked
 /// again every minute, but a continuing conflict is only warned once.
 /// `previous` is what the last round left mapped: a router that hides its table still gets the
 /// ones no longer wanted removed.
 /// A guest lease enters `record` before its map request goes and leaves it only when the router
 /// answered (a refusal, a delete it confirmed) or shows another owner.
+/// On `trial`, for a router given up for silence, the map requests stop at the first it does
+/// not answer, and the rest count as unanswered too: one that holds its requests open costs one
+/// wait, not one per port.
 #[allow(clippy::too_many_arguments)]
-async fn apply<P: Provider>(
+async fn apply_round<P: Provider>(
     gateway: &Gateway<P>,
     local: IpAddr,
     wanted: &[Mapping],
@@ -1071,6 +1135,7 @@ async fn apply<P: Provider>(
     previous: &[Mapping],
     record: &std::sync::Mutex<LeaseRecord>,
     guest: &[Mapping],
+    trial: bool,
 ) -> Applied {
     let (entries, complete, mut answered) = entries(gateway).await;
     let mut unanswered = Vec::new();
@@ -1118,7 +1183,11 @@ async fn apply<P: Provider>(
             }
         }
     }
-    for mapping in wanted {
+    for (index, mapping) in wanted.iter().enumerate() {
+        if trial && !unanswered.is_empty() {
+            unanswered.extend_from_slice(&wanted[index..]);
+            break;
+        }
         if let Some(entry) = entries.iter().find(|entry| {
             entry.protocol == mapping.protocol
                 && entry.external_port == mapping.port
@@ -1152,7 +1221,7 @@ async fn apply<P: Provider>(
                 .add_all([GuestLease::new(LeaseMethod::Upnp, *mapping)]);
         }
         let result = tokio::time::timeout(
-            Duration::from_secs(3),
+            UPNP_WAIT,
             gateway.add_port(
                 mapping.protocol,
                 mapping.port,
@@ -1167,7 +1236,7 @@ async fn apply<P: Provider>(
             Ok(Err(igd_next::AddPortError::OnlyPermanentLeasesSupported))
         ) {
             tokio::time::timeout(
-                Duration::from_secs(3),
+                UPNP_WAIT,
                 gateway.add_port(
                     mapping.protocol,
                     mapping.port,
@@ -1962,7 +2031,7 @@ async fn renew(
         let Some((gateway, local, applied)) = held.upnp.as_mut() else {
             break;
         };
-        let outcome = apply(
+        let outcome = apply_round(
             gateway,
             *local,
             wanted,
@@ -1971,6 +2040,7 @@ async fn renew(
             applied,
             record,
             guest,
+            on_trial,
         )
         .await;
         *applied = outcome.held;
