@@ -221,13 +221,16 @@ Nightjar's decoder low-latency setup (client/app/src/main/java/com/limelight/bin
 video/MediaCodecHelper.java) and its vendor key tables (VendorLowLatencyKeys.java) follow
 Artemis (https://github.com/ClassicOldSong/moonlight-android) by ClassicOldSong and
 contributors, GPL-3.0, and derflacco's fork of it (https://github.com/derflacco/
-moonlight-android, branch moonlight-noir, released as "Artemide"), GPL-3.0: the MediaTek
-low-latency preset set by decoder name (the MediaTek flags first entered Artemis in
-alonsojr1980's commits b84a9ec1 and f836c8d6), the operating rate without the real-time
-priority, reference frame invalidation on MediaTek and the Tegra keys.
-The MediaTek key list and its boost and clock level 1 are the fork's at its commit
-32e38f0e (after its commits ab772215, 359f83c3 and 8dc03f3f); the shorter queues on the
-first configure try are Moonlight V+'s (see below).
+moonlight-android, GPL-3.0), whose "Artemide" releases are built from its branch
+Artemide_Experimental_Async: the MediaTek low-latency preset set by decoder name (the
+MediaTek flags first entered Artemis in alonsojr1980's commits b84a9ec1 and f836c8d6), the
+operating rate without the real-time priority, reference frame invalidation on MediaTek
+and the Tegra keys. The MediaTek key list of Nightjar's preset follows the first configure
+try of that branch at its commit 32e38f0e, after its commits 359f83c3 and 8dc03f3f, with
+boost and clock level 1: it leaves out the ultra-low-latency key, which the fork keeps
+behind a setting, and the real-time priority, and adds Nightjar's own
+low-latency.mode.value. The shorter queues on the first configure try are also Moonlight
+V+'s (see below); the full preset's values on the second try are Nightjar's own.
 
 jvanderv42's Nightjar fork (gyroscope mapping)
 

@@ -225,7 +225,6 @@ Rubylight speaks the Moonlight protocol and keeps its protocol version, so unmod
 | --- | --- | --- |
 | [Moonlight](https://moonlight-stream.org) | Windows, macOS, Linux, Android, iOS, Apple TV, and community ports such as Xbox | The reference client: H.264, HEVC and AV1, SDR and HDR, as the device decodes them |
 | [Artemis](https://github.com/ClassicOldSong/moonlight-android) | Android | Virtual displays matched to the device |
-| [Artemide](https://github.com/derflacco/moonlight-android) (derflacco's Artemis fork, branch `moonlight-noir`) | Android | Low-latency decoder settings, which Nightjar's MediaTek preset follows |
 | [Nightjar](https://github.com/RamazanKara/nightjar) ([website](https://ramazankara.github.io/nightjar/)) | Android, Android TV, Fire TV, Windows, Linux, macOS | Rubylight's own client: Frame Warp, Real VRR, PyroWave and packed 4:4:4, QR pairing, the game library, Radeon and NVIDIA driver settings, device-chosen error correction and pacing |
 | [Nonary's Moonlight](https://github.com/Nonary/moonlight-qt) | Desktop (a Moonlight-Qt fork) | PyroWave |
 | Browsers and Samsung Tizen TVs | WebRTC | H.264, HEVC and AV1 with HDR, surround sound and gamepads, paired with a PIN ([WebRTC](docs/webrtc.md)) |
@@ -344,6 +343,7 @@ Rubylight is licensed under **GPL-3.0**. Everyone who helped, with their GitHub 
 - The virtual Switch 2 Pro Controller follows **Alia5's** libVIIPER, **Luiz Filipe Bandeira's and the contributors'** Solstice and **SDL's** Switch 2 driver by **Sam Lantinga and the SDL contributors** (zlib).
 - The DSU motion server speaks the protocol of **Jays2Kings', Ryochan7's and schmaldeo's** DS4Windows, with the settings and port of **the Foundation Sunshine authors'** server.
 - Clipboard sync uses the control message frame of **qiin2333's** Moonlight V+ (GPL-3.0).
+- Nightjar's MediaTek decoder keys follow **ClassicOldSong's** [Artemis](https://github.com/ClassicOldSong/moonlight-android) and **derflacco's** [fork of it](https://github.com/derflacco/moonlight-android), branch `Artemide_Experimental_Async` (GPL-3.0).
 - Nightjar desktop predicts the display mode of Windows' Fullscreen by the rule of **SDL's** `SDL_GetClosestFullscreenDisplayMode`, by **Sam Lantinga and the SDL contributors** (zlib).
 - Nightjar's temporal upscaler adapts the upscale pass of **Qualcomm's** [Snapdragon Game Super Resolution 2](https://github.com/SnapdragonStudios/snapdragon-gsr) (BSD-3-Clause), and its SGSR 1 upscaler is Qualcomm's SGSR 1 (BSD-3-Clause).
 - Nightjar's per-controller gyroscope mapping and motion readings are ported from **jvanderv42's** [Nightjar fork](https://github.com/jvanderv42/nightjar) (GPL-3.0).
