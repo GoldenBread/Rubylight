@@ -107,6 +107,15 @@ public final class BitrateSlider {
         return bar;
     }
 
+    /**
+     * Moves a bitrate slider for the app (the stream's number changed), dropping a settle still waiting for the
+     * player's last move: only a position the player set is ever sent.
+     */
+    public static void moveTo(StepSlider bar, int kbps) {
+        if (bar.positionChangeListener() instanceof Settle settle) settle.cancel();
+        bar.setPosition(progress(kbps));
+    }
+
     /** A bitrate as the menu shows it, {@code 80 Mbps}. */
     public static String text(Context context, int kbps) {
         return mbpsText(kbps) + " " + context.getString(com.limelight.R.string.suffix_seekbar_bitrate_mbps);
@@ -147,6 +156,12 @@ public final class BitrateSlider {
                 pending = false;
                 commit.run();
             };
+        }
+
+        // The app moved the slider: a settle still waiting is dropped.
+        void cancel() {
+            pending = false;
+            handler.removeCallbacks(settled);
         }
 
         // Only the user's own changes arrive here.

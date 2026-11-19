@@ -332,7 +332,7 @@ final class GameAdaptation {
                 if (opened[0] == null || !opened[0].isShowing() || game.rateChanges != stream) return;
                 bitrateText[0] = BigDecimal.valueOf(kbps, 3).stripTrailingZeros().toPlainString();
                 bitrateField.getEditText().setText(bitrateText[0]);
-                bitrateSlider.setPosition(BitrateSlider.progress(kbps));
+                BitrateSlider.moveTo(bitrateSlider, kbps);
                 bitrateField.setEnabled(true);
                 bitrateSlider.setEnabled(true);
             };

@@ -127,6 +127,10 @@ public class StepSlider extends Slider {
         this.listener = listener;
     }
 
+    OnPositionChangeListener positionChangeListener() {
+        return listener;
+    }
+
     /** The text a position floats over the thumb while it moves, and what TalkBack reads for it. */
     public void setPositionText(IntFunction<String> text) {
         showValue(this, text);

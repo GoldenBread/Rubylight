@@ -775,7 +775,7 @@ public final class StreamMenu {
     public void showBitrate(int kbps, boolean usable) {
         if (bitrateSlider == null || kbps <= 0) return;
         bitrateSlider.setEnabled(usable);
-        bitrateSlider.setPosition(BitrateSlider.progress(kbps));
+        BitrateSlider.moveTo(bitrateSlider, kbps);
         String text = BitrateSlider.text(activity, kbps);
         if (bitrateShown != null) bitrateShown.setText(text);
         if (rows.get(Item.BITRATE) instanceof MenuRow bitrateRow) bitrateRow.setValue(text);

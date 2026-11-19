@@ -990,6 +990,36 @@ public class GameRateChangeTest {
         }
     }
 
+    /**
+     * A slider the player let go of just before a reconnect's wait began: the PC's answer moves it, and the settle
+     * left from before must not send that number as the player's own.
+     */
+    @Test
+    public void aSliderLetGoJustBeforeTheWaitSendsNothingAfterTheAnswer() {
+        prefs.rateChangeBitrate = true;
+        StreamMenuModel.use(new RustStreamMenuModel());
+        try {
+            startStream(recording());
+            game.showStreamMenu();
+            Object sheet = ReflectionHelpers.getField(game.menuActions, "streamMenuSheet");
+            com.limelight.ui.StepSlider slider = ReflectionHelpers.callInstanceMethod(sheet, "bitrateSlider");
+            // A D-pad step: the settle goes out SETTLE_MS later.
+            slider.setPosition(com.limelight.ui.BitrateSlider.progress(30_000));
+            com.limelight.ui.StepSlider.OnPositionChangeListener listener = ReflectionHelpers.getField(slider, "listener");
+            listener.onPositionChanged(slider, slider.getPosition());
+            // A reconnect starts the stream's bitrate wait within that time, and the PC answers at once.
+            sent.clear();
+            startStreamAsking(recording());
+            answerQuery(OLDER_PC_KBPS);
+            runFor(1);
+            assertTrue("nothing goes out as the player's bitrate: " + sent.size(), sent.isEmpty());
+            assertTrue((boolean) ReflectionHelpers.callInstanceMethod(game.adaptation, "isRateChangeBitrateOn"));
+            assertEquals(com.limelight.ui.BitrateSlider.progress(OLDER_PC_KBPS), slider.getPosition());
+        } finally {
+            StreamMenuModel.use(null);
+        }
+    }
+
     @Test
     public void automaticBitrateTurnedOffBeforeTheAnswerStaysOff() {
         prefs.rateChangeBitrate = true;
