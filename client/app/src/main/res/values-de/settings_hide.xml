@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Show debug settings, and why a row Settings leaves out does nothing now (SettingRules.whenReason). -->
+    <string name="title_show_debug_settings">Debug-Einstellungen anzeigen</string>
+    <string name="summary_show_debug_settings">Zeigt den Bereich Debug mit Schaltern, um Einstellungen zu vergleichen oder eine Ursache auszuschließen. Lass es aus, außer der Support bittet darum oder du willst vergleichen; eine geänderte Debug-Einstellung wird so oder so angezeigt.</string>
+    <string name="tag_unused_no_touchpad">Nicht verwendet: Kein Touchpad angeschlossen</string>
+    <string name="tag_unused_no_mouse">Nicht verwendet: Keine Maus angeschlossen</string>
+    <string name="tag_unused_no_mouse_or_touchpad">Nicht verwendet: Keine Maus und kein Touchpad angeschlossen</string>
+    <string name="tag_unused_no_keyboard">Nicht verwendet: Keine Tastatur angeschlossen</string>
+    <string name="tag_unused_no_fold">Nicht verwendet: Dieses Gerät lässt sich nicht falten, und Ausrichtung ist nicht „Mit dem Gerät drehen“</string>
+    <string name="tag_unused_chip">Nicht verwendet: Dieses Gerät hat keinen MediaTek- oder Exynos-Chip</string>
+</resources>

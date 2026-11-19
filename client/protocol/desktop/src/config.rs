@@ -711,6 +711,10 @@ pub struct Settings {
     pub ui_zoom: u32,
     /// Brighter text, black surfaces and thicker outlines and focus rings.
     pub high_contrast: bool,
+    /// "Show debug settings" (Android's `checkbox_show_debug_settings`): the settings list shows the
+    /// Debug section. It shows anyway while a Debug setting is not at its default. Not a per-PC or
+    /// per-game override.
+    pub show_debug_settings: bool,
     /// "Theme" (Android's `ThemeChoice`, stored there as `theme`; the switches
     /// `checkbox_always_dark` and `checkbox_oled_black` before): the system's light or dark, the
     /// night look, or OLED black.
@@ -1292,6 +1296,7 @@ impl Default for Settings {
             setup_card_seen: false,
             ui_zoom: 100,
             high_contrast: false,
+            show_debug_settings: false,
             theme: Theme::Dark,
             reduce_motion: ReduceMotion::System,
             language: Language::System,

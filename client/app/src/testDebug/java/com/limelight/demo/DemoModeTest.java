@@ -136,8 +136,8 @@ public class DemoModeTest {
                 if (preference instanceof android.preference.PreferenceCategory) groups.add(preference.getTitle().toString());
             }
             assertEquals(List.of(demo.getString(R.string.settings_section_video), demo.getString(R.string.pc_settings_display),
-                    demo.getString(R.string.pc_settings_connection), demo.getString(R.string.pc_settings_host),
-                    demo.getString(R.string.settings_section_debug)), groups);
+                    // Debug only on request or while the PC sets its value, as in Settings.
+                    demo.getString(R.string.pc_settings_connection), demo.getString(R.string.pc_settings_host)), groups);
             for (String key : new String[] {"host_display", "scale", "web_ui"}) {
                 assertNotNull(key, fragment.findPreference(key));
             }

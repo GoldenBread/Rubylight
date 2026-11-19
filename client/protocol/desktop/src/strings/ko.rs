@@ -1738,4 +1738,7 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("This PC takes {} controllers", "이 PC는 컨트롤러 {}개를 지원합니다"),
     ("Changes could not be saved", "변경 사항을 저장할 수 없습니다"),
     ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar가 {}에 쓸 수 없습니다. 변경 사항은 Nightjar를 종료할 때까지 적용되고 그 후에는 원래대로 돌아갑니다. 폴더에 쓸 수 있는지 확인하세요."),
+    ("Show debug settings", "디버그 설정 표시"),
+    ("Shows the Debug section, with switches for comparing settings or ruling out a cause. Leave it off unless support asks for it or you want to compare; a Debug setting you changed shows either way.", "설정을 비교하거나 원인을 배제할 때 쓰는 스위치가 있는 디버그 섹션을 표시합니다. 지원팀이 요청하거나 비교하려는 경우가 아니면 꺼 두세요. 변경한 디버그 설정은 어느 경우든 표시됩니다."),
+    ("Not used without {}", "{}이(가) 켜져 있어야 사용됨"),
 ];

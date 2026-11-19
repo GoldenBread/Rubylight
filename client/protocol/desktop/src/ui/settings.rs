@@ -29,6 +29,21 @@ pub(super) fn rail_folded(section: &str) -> bool {
     !RAIL_MAIN.contains(&section)
 }
 
+/// Whether a Debug setting is not at its default: the section then shows without "Show debug
+/// settings", so a changed diagnostic is never out of sight.
+pub(super) fn debug_changed(s: &Settings) -> bool {
+    let (now, defaults) = (serde_json::to_value(s).ok(), serde_json::to_value(Settings::default()).ok());
+    SECTION_KEYS[section_index(en("Debug"))].iter().flat_map(|keys| keys.iter()).any(|key| {
+        now.as_ref().and_then(|v| v.get(*key)) != defaults.as_ref().and_then(|v| v.get(*key))
+    })
+}
+
+/// Whether the list of sections shows Debug: asked for with "Show debug settings", a Debug setting
+/// is changed, or the layer being edited (a PC's, game's or profile's) sets one.
+pub(super) fn debug_listed(s: &Settings, layer: Option<&Overrides>) -> bool {
+    s.show_debug_settings || debug_changed(s) || layer.is_some_and(|layer| SECTION_KEYS[section_index(en("Debug"))].iter().any(|keys| layer.has(keys)))
+}
+
 /// Every setting row's keys, by section, in the order the page draws them with every fold open;
 /// the first key names the row. Rows that show only with another setting (Custom resolution,
 /// Bitrate, the controller mouse's options) share their keys or are listed where they show. Action
@@ -56,7 +71,7 @@ pub(super) const SECTION_KEYS: [&[&[&str]]; 9] = [
         &["client_roaming", "roaming_metered"], &["network_grace_ms"], &["receive_coalescing"], &["jumbo_frames"], &["internet_play"], &["hide_connection_warnings"],
         &["dual_screen"], &["second_screen_width", "second_screen_height"], &["input_only_any_host"]],
     &[&["theme"], &["language"], &["open_on_start", "console_home"], &["quick_resume"], &["check_updates"], &["home_card_size"],
-        &["ui_zoom"], &["high_contrast"], &["reduce_motion"]],
+        &["show_debug_settings"], &["ui_zoom"], &["high_contrast"], &["reduce_motion"]],
     &[&["graphics_card"], &["renderer"], &["display_output"], &["video_planes"], &["high_performance_gpu_power"], &["sops"], &["decode_queue_frames"]],
     &[&["error_correction"], &["tell_host_wireless"], &["tell_host_link_speed"],
         &["network_priority"], &["unbatched_input"], &["full_range"],
@@ -404,7 +419,12 @@ impl Launcher {
 
     pub(super) fn settings_page(&mut self, ui: &mut Ui, view: &View<'_>, commands: &mut Vec<Command>) {
         let layered = self.screen != Screen::Settings;
-        let sections: Vec<&'static str> = SETTINGS_SECTIONS.into_iter().filter(|s| !(layered && (*s == "App" || *s == "Recommended"))).collect();
+        // Debug only on request, while one of its settings is changed (here or in the layer being
+        // edited), while it is open (a link led there) or while a search looks everywhere.
+        let debug = self.settings_view.section == en("Debug") || self.settings_view.searching()
+            || debug_listed(&self.settings, layered.then_some(&self.edit_overrides));
+        let sections: Vec<&'static str> = SETTINGS_SECTIONS.into_iter()
+            .filter(|s| !(layered && (*s == "App" || *s == "Recommended")) && (debug || *s != en("Debug"))).collect();
         // The main settings keep their own section: a PC's, game's or profile's settings, which share
         // the view and open on Video, would otherwise leave it there with the list unfolded.
         if layered {
@@ -874,6 +894,8 @@ impl Launcher {
             action: None,
             note: None,
             room: 0.0,
+            idle: None,
+            held: false,
         };
         let screen = self.screen;
         // Variable refresh rate needs tearing on Windows: where the swap chain can't, the row is not
@@ -1211,7 +1233,9 @@ impl Launcher {
                     }
                 }).response
             });
-            rows.when(s.adaptive_quality != crate::config::QualityMode::Off);
+            let quality = s.adaptive_quality != crate::config::QualityMode::Off;
+            let without_quality = || trf("Not used without {}", &[&tr("Automatic quality")]);
+            rows.applies(quality, without_quality);
             setting_row(ui, s, &mut rows, &["quality_min_short_edge"], "Minimum resolution", "The lowest resolution Automatic quality goes to.", |ui, s| {
                 Combo::from_id_salt("quality-min-size").selected_text(short_edge_name(s.quality_min_short_edge)).show_ui(ui, |ui| {
                     for edge in nightjar_policy::quality::MIN_SHORT_EDGE_CHOICES {
@@ -1219,6 +1243,7 @@ impl Launcher {
                     }
                 }).response
             });
+            rows.applies(quality, without_quality);
             setting_row(ui, s, &mut rows, &["quality_min_fps"], "Minimum frame rate", "The lowest frame rate Automatic quality goes to.", |ui, s| {
                 Combo::from_id_salt("quality-min-fps").selected_text(trf("{} fps", &[&s.quality_min_fps])).show_ui(ui, |ui| {
                     for fps in nightjar_policy::quality::MIN_FPS_CHOICES {
@@ -1369,7 +1394,8 @@ impl Launcher {
                     }
                 }).response
             });
-            rows.when(s.upscaling.is_shader());
+            let upscaler = tr(s.upscaling.label());
+            rows.applies(s.upscaling.is_shader(), || trf("Not used with {}", &[&upscaler]));
             setting_row(ui, s, &mut rows, &["upscale_sharpness"], "Upscaling sharpness", "How much sharpening FSR or SGSR adds. Raise it for soft edges; lower it if edges show halos.", |ui, s| {
                 slider(ui, &mut s.upscale_sharpness, 0..=100, 5.0, percent, |rail| rail, |field| field.suffix("%"))
             });
@@ -1496,6 +1522,8 @@ impl Launcher {
             });
             setting_row(ui, s, &mut rows, &["controller_motion"], "Motion controls", "Sends the controller’s gyro and accelerometer to games, for motion aiming. The PC may then treat it as a PlayStation controller; turn it off if games show the wrong buttons.", |ui, s| toggle(ui, &mut s.controller_motion));
             setting_row(ui, s, &mut rows, &["disable_rumble"], "Turn off vibration", "Stops every vibration a game asks for: rumble, trigger rumble and haptics. Leave it off unless you want no vibration at all.", |ui, s| toggle(ui, &mut s.disable_rumble));
+            // Turn off vibration stops every rumble the feel would shape.
+            rows.applies(!s.disable_rumble, || trf("Not used with {}", &[&tr("Turn off vibration")]));
             setting_row(ui, s, &mut rows, &["rumble_feel"], "Rumble feel", "Strong makes weak vibration strong enough for a small motor to show; Subtle caps strong vibration and softens weak. Either one changes the balance of weak and strong rumble the game chose, so leave it on Standard unless vibration is too faint or too harsh.", |ui, s| {
                 Combo::from_id_salt("rumble-feel").selected_text(tr(crate::config::rumble_feel_label(s.rumble_feel))).show_ui(ui, |ui| {
                     for feel in nightjar_policy::rumble::RumbleFeel::ALL {
@@ -1656,7 +1684,7 @@ impl Launcher {
                     }
                 }).response
             });
-            rows.when(s.overlay);
+            rows.applies(s.overlay, || trf("Not used without {}", &[&tr("Performance overlay")]));
             setting_row(ui, s, &mut rows, &["overlay_position"], "Overlay position", "The corner the performance overlay sits in.", |ui, s| {
                 Combo::from_id_salt("overlay-position").selected_text(tr(s.overlay_position.label())).show_ui(ui, |ui| {
                     for corner in crate::config::OverlayCorner::ALL {
@@ -1735,7 +1763,7 @@ impl Launcher {
             setting_row(ui, s, &mut rows, &["dual_screen"], "Dual screen mode", "Streams the same game to a second screen too, in a stream of its own; sound and controllers stay with the first. Needs a second screen and PC support.", |ui, s| {
                 toggle(ui, &mut s.dual_screen)
             });
-            rows.when(s.dual_screen);
+            rows.applies(s.dual_screen, || trf("Not used without {}", &[&tr("Dual screen mode")]));
             let own_size = tr("Second screen’s own size");
             setting_row(ui, s, &mut rows, &["second_screen_width", "second_screen_height"], "Second screen resolution", "The resolution of the second screen’s stream.", |ui, s| {
                 let shown = if s.second_screen_width == 0 { own_size.to_owned() } else { format!("{}x{}", s.second_screen_width, s.second_screen_height) };
@@ -1844,6 +1872,9 @@ impl Launcher {
                         s.home_card_size = if small { crate::config::CardSize::Small } else { crate::config::CardSize::Medium };
                     }
                     response
+                });
+                setting_row(ui, s, &mut rows, &["show_debug_settings"], "Show debug settings", "Shows the Debug section, with switches for comparing settings or ruling out a cause. Leave it off unless support asks for it or you want to compare; a Debug setting you changed shows either way.", |ui, s| {
+                    toggle(ui, &mut s.show_debug_settings)
                 });
                 rows.action("about_app");
                 setting_row(ui, s, &mut rows, &[], "About", "Version, licences and credits.", |ui, _| {
@@ -1994,6 +2025,9 @@ impl Launcher {
                     key_field(ui, &mut game_info_keys.igdb_client_id)
                 });
                 rows.action("igdb_client_secret");
+                // Game facts need both: the secret does nothing until the client ID is set.
+                rows.applies(!game_info_keys.igdb_client_id.trim().is_empty(), || trf("Not used without {}", &[&tr("IGDB client ID")]));
+                rows.held = !game_info_keys.igdb_client_secret.trim().is_empty();
                 setting_row(ui, s, &mut rows, &[], "IGDB client secret", "The client secret of the same Twitch developer app. Game facts need both.", |ui, _| {
                     key_field(ui, &mut game_info_keys.igdb_client_secret)
                 });
@@ -2995,7 +3029,8 @@ pub(super) const ANDROID_KEYS: &[(&str, &str)] = &[
     // App
     ("theme", "theme"), ("language", "list_languages"), ("open_on_start", "list_open_on_start"),
     ("quick_resume", "checkbox_quick_resume"), ("pin_lock", "pin_lock"), ("help", "help"), ("report_problem", "report_problem"), ("check_updates_now", "check_updates_now"),
-    ("check_updates", "checkbox_check_updates"), ("home_card_size", "checkbox_small_icon_mode"), ("about_app", "about_app"),
+    ("check_updates", "checkbox_check_updates"), ("home_card_size", "checkbox_small_icon_mode"),
+    ("show_debug_settings", "checkbox_show_debug_settings"), ("about_app", "about_app"),
     ("reset_all", "reset_all"),
     ("ui_zoom", "list_ui_scale"), ("high_contrast", "checkbox_high_contrast"), ("reduce_motion", "list_reduce_motion"),
     // Advanced
@@ -3077,6 +3112,10 @@ pub(super) struct Rows<'a> {
     action: Option<&'static str>,
     note: Option<(String, Color32)>,
     room: f32,
+    /// Why the next row does nothing now (`applies`): it is left out while it holds its default,
+    /// and search finds it with this reason. `held` says an action row holds a value of its own.
+    idle: Option<String>,
+    held: bool,
 }
 
 /// The fold row of the open section, drawn before its first folded row; its words come once the
@@ -3143,9 +3182,17 @@ impl Rows<'_> {
         self.room = width;
     }
 
-    /// Whether the row `id` is drawn; draws the fold and the headings waiting for it.
-    fn shows(&mut self, ui: &mut Ui, id: &'static str, label: &str, description: &str) -> bool {
-        if !self.shown {
+    /// The next row can do something only while `applies` (its mode, the setting it belongs to, or
+    /// what this device has): otherwise it is left out while it holds its default, and search
+    /// finds it saying `reason`. A row holding another value stays, with the reason as its note.
+    fn applies(&mut self, applies: bool, reason: impl FnOnce() -> String) {
+        self.idle = (!applies).then(reason);
+    }
+
+    /// Whether the row `id` is drawn; draws the fold and the headings waiting for it. An `idle`
+    /// row (`applies`) shows only in search.
+    fn shows(&mut self, ui: &mut Ui, id: &'static str, label: &str, description: &str, idle: bool) -> bool {
+        if !self.shown || (idle && !self.searching()) {
             return false;
         }
         let at = section_index(self.section);
@@ -3320,10 +3367,31 @@ pub(super) fn setting_row(
     description: &str,
     control: impl FnOnce(&mut Ui, &mut Settings) -> Response,
 ) -> Option<Response> {
-    let (action, note, room) = (rows.action.take(), rows.note.take(), std::mem::take(&mut rows.room));
+    let (action, mut note, room) = (rows.action.take(), rows.note.take(), std::mem::take(&mut rows.room));
+    let (reason, held) = (rows.idle.take(), std::mem::take(&mut rows.held));
+    // A row that does nothing now still shows while it holds another value than its default, or
+    // the PC's, game's or profile's layer sets it, so the value can be seen and set back.
+    // Worked out only for a row that does nothing now: it formats both values.
+    let changed = reason.is_some()
+        && (held
+            || keys.first().is_some_and(|key| {
+                value_text(key, settings, &rows.display, rows.style) != value_text(key, &rows.defaults, &rows.display, rows.style)
+            })
+            || rows.layer.as_ref().is_some_and(|(_, overrides)| !keys.is_empty() && overrides.has(keys)));
     let id = keys.first().copied().or(action).unwrap_or_default();
-    if !rows.shows(ui, id, label, description) {
+    // A row whose control had focus or was dragged last frame stays while it still is, so setting it
+    // back to its default does not take the row from under the slider or the focus.
+    let kept_id = egui::Id::unique(("setting row in use", id));
+    let kept = reason.is_some()
+        && (ui.ctx().dragged_id().is_some() || ui.ctx().memory(|m| m.focused().is_some()))
+        && ui.ctx().data(|d| d.get_temp::<bool>(kept_id).unwrap_or(false));
+    let has_reason = reason.is_some();
+    let idle = has_reason && !changed && !kept;
+    if !rows.shows(ui, id, label, description, idle) {
         return None;
+    }
+    if let Some(reason) = reason.filter(|_| note.is_none()) {
+        note = Some((reason, *TERTIARY));
     }
     let first = keys.first().copied();
     let second = first.is_some_and(|k| rows.reset_drawn.contains(&k));
@@ -3403,6 +3471,16 @@ pub(super) fn setting_row(
     };
     if std::mem::take(&mut rows.focus_first) {
         response.request_focus();
+    }
+    if has_reason {
+        let in_use = response.has_focus() || response.dragged() || response.changed();
+        ui.ctx().data_mut(|d| {
+            if in_use {
+                d.insert_temp(kept_id, true);
+            } else {
+                d.remove::<bool>(kept_id);
+            }
+        });
     }
     Some(response)
 }

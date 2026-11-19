@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Show debug settings, and why a row Settings leaves out does nothing now (SettingRules.whenReason). -->
+    <string name="title_show_debug_settings">Mostrar ajustes de depuración</string>
+    <string name="summary_show_debug_settings">Muestra la sección Depuración, con interruptores para comparar ajustes o descartar una causa. Déjalo desactivado salvo que el soporte te lo pida o quieras comparar; un ajuste de Depuración que hayas cambiado se muestra igualmente.</string>
+    <string name="tag_unused_no_touchpad">No se usa: no hay ningún panel táctil conectado</string>
+    <string name="tag_unused_no_mouse">No se usa: no hay ningún ratón conectado</string>
+    <string name="tag_unused_no_mouse_or_touchpad">No se usa: no hay ningún ratón ni panel táctil conectado</string>
+    <string name="tag_unused_no_keyboard">No se usa: no hay ningún teclado conectado</string>
+    <string name="tag_unused_no_fold">No se usa: este dispositivo no se pliega y Orientación no está en Girar con el dispositivo</string>
+    <string name="tag_unused_chip">No se usa: este dispositivo no tiene un chip MediaTek ni Exynos</string>
+</resources>

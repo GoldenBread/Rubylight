@@ -145,6 +145,7 @@ ADVICE = {
     "pace_calibration": "Opens a saved PC's PyroWave frame pace on that PC's settings, where it is measured: the fastest pace at which the PC's PyroWave frames arrive whole. Shown while a paired PC can measure it or has one saved; with several it asks which one first. Stores nothing here.",
     "list_languages": "Choose the interface language. Android 13+ uses the system per-app language setting.",
     "checkbox_small_icon_mode": "Enable to fit more games in the library grid.",
+    "checkbox_show_debug_settings": "Off by default, under App's More rows. Turn on to list the Debug section: the switches for comparing settings or ruling out a cause, such as Error correction and the decoder options. Leave it off unless support asks for it or you want to compare. Debug is listed anyway while one of its settings is not at its default, a link or a search result opens it, and search finds its settings with the switch off. A PC's, game's or profile's settings show their Debug group by the same rule, or while they set Full color range. The desktop stores it as `show_debug_settings`.",
     "list_open_on_start": "Home by default. Home opens the games to continue, your library across PCs and the PCs (it appears once a paired PC has supplied its app list); Show my PCs opens the list of PCs. Continue my last game and A chosen game count down 3 seconds into that game on a cold start from the launcher or at sign-in; A chosen game is offered once a game was chosen from its menu. Cancel, B, Back and Esc stop the countdown; an offline PC is woken. If the last automatic start failed or its stream died within 10 seconds, the next one is skipped and says so. A running game is never replaced without asking; a game playing on another device stops the start, and so does a network still away after a minute. Stored as `list_open_on_start` and `checkbox_console_home`, read as one choice (nightjar-policy's StartScreen).",
     "checkbox_quick_resume": "Enable to go straight back into the running game when you tap its PC, skipping the library. Use the PC's menu for the library while a game runs. Off keeps the tap opening the library.",
     "help": "Open the bundled help: connecting a PC, pairing, controls and the stream menu, common fixes and problem reports. Works offline; each topic links to these documents for detail.",
@@ -239,6 +240,36 @@ SHOWN_WHILE = {
     "checkbox_mic_auto_gain": ("checkbox_enable_mic", True),
     "seekbar_mic_gain": ("checkbox_enable_mic", True),
     "list_resolution_screen2": ("checkbox_dual_screen", True),
+}
+
+# Rows shown only where they can do something (SettingRules.WHEN_ROWS), beyond SHOWN_WHILE's switches. Each also
+# shows while it holds another value than its default, saying why it does nothing, and search always finds it.
+SHOWN_ONLY = {
+    "adaptive_quality_min_resolution": "while Automatic quality is on",
+    "adaptive_quality_min_fps": "while Automatic quality is on",
+    "checkbox_thermal_protection": "while Lower bitrate, Automatic quality or Boost GPU performance with PyroWave can act on heat",
+    "upscaling_sharpness": "while FSR or SGSR enlarges the picture",
+    "list_rumble_feel": "while Turn off vibration is off",
+    "seekbar_vibrate_fallback_strength": "while Vibrate device for rumble is on",
+    "seekbar_mouse_speed": "while a mouse or a touchpad is connected",
+    "checkbox_mouse_nav_buttons": "while a mouse is connected",
+    "seekbar_trackpad_speed": "with the Trackpad or Touchpad touch mode, or the modern on-screen controller (its pointer touchpad)",
+    "seekbar_local_cursor_speed": "with the Local cursor touch mode",
+    "checkbox_trackpad_acceleration_v2": "with the Trackpad, Local cursor or Touchpad touch mode, or the modern on-screen controller",
+    "checkbox_trackpad_momentum": "with the Trackpad, Local cursor or Touchpad touch mode",
+    "list_trackpad_area": "with the Trackpad, Local cursor or Touchpad touch mode",
+    "checkbox_multi_touch_finger_taps": "with the Multi-touch touch mode",
+    "seekbar_trackpad_sensitivity_x": "while a touchpad is connected",
+    "seekbar_trackpad_sensitivity_y": "while a touchpad is connected",
+    "checkbox_trackpad_swap_axis": "while a touchpad is connected",
+    "checkbox_native_touchpad": "while a touchpad is connected (always on the desktop, which can't tell)",
+    "checkbox_back_as_meta": "while a physical keyboard is connected",
+    "performance_overlay_position": "while the performance overlay is on",
+    "checkbox_covering_decoder_size": "on a device that folds, or with Orientation set to Rotate with device",
+    "checkbox_experimental_chipset_tuning": "unless the chip is known to be neither MediaTek nor Exynos (Qualcomm Snapdragon, NVIDIA Tegra)",
+    "game_info_igdb_client_secret": "once the IGDB client ID is set",
+    "checkbox_pyrowave_preacquire": "while the video codec is PyroWave",
+    "list_resolution_screen2": "while Dual screen mode is on",
 }
 
 # Rows drawn as a choice over older stored switches: their option names and the default's index.
@@ -410,9 +441,11 @@ def generate():
         if key == "checkbox_gamepad_motion_sensors":
             default += "; Off on Android 12 (API 31)"
         advice = ADVICE[key]
-        if key in SHOWN_WHILE:
+        if key in SHOWN_WHILE and key not in SHOWN_ONLY:
             parent, on = SHOWN_WHILE[key]
             advice += f" Shown while {resolve(nodes[parent].get(ANDROID + 'title'))} is {'On' if on else 'Off'}."
+        if key in SHOWN_ONLY:
+            advice += f" In the list only {SHOWN_ONLY[key]}, or while it holds another value than its default; search finds it either way."
         tier = "Main" if key in main or key.startswith("more_") else "More"
         return "| " + " | ".join(map(cell, [resolve(node.get(ANDROID + "title")) + f"<br>`{key}`", tier, default, choices, advice])) + " |"
 

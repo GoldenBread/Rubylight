@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Show debug settings, and why a row Settings leaves out does nothing now (SettingRules.whenReason). -->
+    <string name="title_show_debug_settings">Hata ayıklama ayarlarını göster</string>
+    <string name="summary_show_debug_settings">Ayarları karşılaştırmak veya bir nedeni elemek için anahtarlar içeren Hata ayıklama bölümünü gösterir. Destek istemedikçe veya karşılaştırmak istemedikçe kapalı bırakın; değiştirdiğiniz bir Hata ayıklama ayarı her durumda görünür.</string>
+    <string name="tag_unused_no_touchpad">Kullanılmıyor: bağlı dokunmatik yüzey yok</string>
+    <string name="tag_unused_no_mouse">Kullanılmıyor: bağlı fare yok</string>
+    <string name="tag_unused_no_mouse_or_touchpad">Kullanılmıyor: bağlı fare veya dokunmatik yüzey yok</string>
+    <string name="tag_unused_no_keyboard">Kullanılmıyor: bağlı klavye yok</string>
+    <string name="tag_unused_no_fold">Kullanılmıyor: bu cihaz katlanmıyor ve Yönlendirme, Cihazla döndür değil</string>
+    <string name="tag_unused_chip">Kullanılmıyor: bu cihazda MediaTek veya Exynos yonga yok</string>
+</resources>

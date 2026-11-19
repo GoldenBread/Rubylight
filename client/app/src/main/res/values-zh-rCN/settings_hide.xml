@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Show debug settings, and why a row Settings leaves out does nothing now (SettingRules.whenReason). -->
+    <string name="title_show_debug_settings">显示调试设置</string>
+    <string name="summary_show_debug_settings">显示“调试”部分，其中的开关用于比较设置或排除原因。除非支持人员要求或你想做比较，否则请保持关闭；你更改过的调试设置无论如何都会显示。</string>
+    <string name="tag_unused_no_touchpad">未使用：未连接触控板</string>
+    <string name="tag_unused_no_mouse">未使用：未连接鼠标</string>
+    <string name="tag_unused_no_mouse_or_touchpad">未使用：未连接鼠标或触控板</string>
+    <string name="tag_unused_no_keyboard">未使用：未连接键盘</string>
+    <string name="tag_unused_no_fold">未使用：此设备不可折叠，且屏幕方向不是“随设备旋转”</string>
+    <string name="tag_unused_chip">未使用：此设备没有 MediaTek 或 Exynos 芯片</string>
+</resources>

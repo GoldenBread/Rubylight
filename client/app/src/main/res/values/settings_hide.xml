@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Show debug settings, and why a row Settings leaves out does nothing now (SettingRules.whenReason). -->
+    <string name="title_show_debug_settings">Show debug settings</string>
+    <string name="summary_show_debug_settings">Shows the Debug section, with switches for comparing settings or ruling out a cause. Leave it off unless support asks for it or you want to compare; a Debug setting you changed shows either way.</string>
+    <string name="tag_unused_no_touchpad">Not used: no touchpad is connected</string>
+    <string name="tag_unused_no_mouse">Not used: no mouse is connected</string>
+    <string name="tag_unused_no_mouse_or_touchpad">Not used: no mouse or touchpad is connected</string>
+    <string name="tag_unused_no_keyboard">Not used: no keyboard is connected</string>
+    <string name="tag_unused_no_fold">Not used: this device doesn’t fold, and Orientation isn’t Rotate with device</string>
+    <string name="tag_unused_chip">Not used: this device has no MediaTek or Exynos chip</string>
+</resources>

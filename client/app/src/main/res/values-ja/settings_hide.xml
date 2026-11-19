@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Show debug settings, and why a row Settings leaves out does nothing now (SettingRules.whenReason). -->
+    <string name="title_show_debug_settings">デバッグ設定を表示</string>
+    <string name="summary_show_debug_settings">設定の比較や原因の切り分けに使うスイッチがある「デバッグ」セクションを表示します。サポートに頼まれたときや比較したいとき以外はオフのままにしてください。変更したデバッグ設定はどちらの場合も表示されます。</string>
+    <string name="tag_unused_no_touchpad">使用されません: タッチパッドが接続されていません</string>
+    <string name="tag_unused_no_mouse">使用されません: マウスが接続されていません</string>
+    <string name="tag_unused_no_mouse_or_touchpad">使用されません: マウスもタッチパッドも接続されていません</string>
+    <string name="tag_unused_no_keyboard">使用されません: キーボードが接続されていません</string>
+    <string name="tag_unused_no_fold">使用されません: このデバイスは折りたためず、画面の向きが「デバイスに合わせて回転」ではありません</string>
+    <string name="tag_unused_chip">使用されません: このデバイスには MediaTek または Exynos のチップがありません</string>
+</resources>

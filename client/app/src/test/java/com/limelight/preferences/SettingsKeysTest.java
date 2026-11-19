@@ -115,6 +115,7 @@ public class SettingsKeysTest {
             com.limelight.ui.AppTheme.UI_MODE, // NightjarActivity.attachBaseContext
             com.limelight.ui.Motion.REDUCE_MOTION, // Motion
             com.limelight.update.UpdatePrefs.AUTO_CHECK_PREF_STRING, // UpdatePrefs
+            SettingRules.SHOW_DEBUG, // Settings and a PC's or game's settings list the Debug section
             HostDisplayChoice.MAIN_PREF, // HostDisplayChoice, under each PC's own choice
             com.limelight.console.HomeSettings.PREF_KEY)); // PcView and the console Home
 

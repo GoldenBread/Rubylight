@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Show debug settings, and why a row Settings leaves out does nothing now (SettingRules.whenReason). -->
+    <string name="title_show_debug_settings">Hiện cài đặt gỡ lỗi</string>
+    <string name="summary_show_debug_settings">Hiện mục Gỡ lỗi, với các công tắc để so sánh cài đặt hoặc loại trừ một nguyên nhân. Nên để tắt trừ khi bộ phận hỗ trợ yêu cầu hoặc bạn muốn so sánh; cài đặt Gỡ lỗi bạn đã đổi vẫn hiện trong mọi trường hợp.</string>
+    <string name="tag_unused_no_touchpad">Không dùng: chưa kết nối bàn di chuột</string>
+    <string name="tag_unused_no_mouse">Không dùng: chưa kết nối chuột</string>
+    <string name="tag_unused_no_mouse_or_touchpad">Không dùng: chưa kết nối chuột hoặc bàn di chuột</string>
+    <string name="tag_unused_no_keyboard">Không dùng: chưa kết nối bàn phím</string>
+    <string name="tag_unused_no_fold">Không dùng: thiết bị này không gập được và Hướng màn hình không phải Xoay theo thiết bị</string>
+    <string name="tag_unused_chip">Không dùng: thiết bị này không có chip MediaTek hoặc Exynos</string>
+</resources>

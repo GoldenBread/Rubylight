@@ -232,6 +232,13 @@ public class StreamSettings extends NightjarActivity {
     private boolean customizeOpen;
     /** The sections whose More row is open: all their rows show. */
     final Set<String> moreOpen = new HashSet<>();
+    /**
+     * Rows that do nothing now (SettingRules.WHEN_ROWS) that a search result or a link opened: they show for this
+     * visit, so the value they hold can be seen and changed.
+     */
+    final Set<String> revealed = new HashSet<>();
+    /** What this device has that rows act on; tests replace it. */
+    SettingDevices devices;
     /** Reads the saved PCs off the UI thread; tests replace it. */
     java.util.concurrent.Executor savedPcReader = task -> new Thread(task, "Saved PCs").start();
     /** What the last read of the saved PCs found: any PC, and any whose PyroWave frame pace can be measured or is saved. */
@@ -571,9 +578,14 @@ public class StreamSettings extends NightjarActivity {
         boolean shown = section != null && searchQuery.isEmpty();
         findViewById(R.id.settings_chips_scroll).setVisibility(shown ? View.VISIBLE : View.GONE);
         if (!shown) return;
+        List<String> sections = visibleSections();
+        List<Object> built = new ArrayList<>();
+        for (int i = 0; i < chips.getChildCount(); i++) built.add(chips.getChildAt(i).getTag());
+        // Debug comes and goes with Show debug settings: the chips follow.
+        if (!built.equals(new ArrayList<Object>(sections))) chips.removeAllViews();
         if (chips.getChildCount() == 0) {
             LayoutInflater inflater = LayoutInflater.from(this);
-            for (String key : visibleSections()) {
+            for (String key : sections) {
                 TextView chip = (TextView) inflater.inflate(R.layout.settings_chip, chips, false);
                 chip.setText(sectionTitle(key));
                 chip.setTag(key);
@@ -594,7 +606,23 @@ public class StreamSettings extends NightjarActivity {
 
     /** The sections a chip stands for, as the list of sections has them. */
     private List<String> visibleSections() {
-        return new ArrayList<>(RAIL_SECTIONS);
+        List<String> sections = new ArrayList<>(RAIL_SECTIONS);
+        if (!debugListed()) sections.remove("debug");
+        return sections;
+    }
+
+    /**
+     * Whether the list of sections shows Debug: Show debug settings is on, one of its settings is changed, or it is
+     * the section shown (a link or a search result led there).
+     */
+    boolean debugListed() {
+        return "debug".equals(section) || SettingRules.debugShown(this, PreferenceManager.getDefaultSharedPreferences(this));
+    }
+
+    /** What this device has that rows act on (SettingRules.whenApplies). */
+    SettingDevices devices() {
+        if (devices == null) devices = SettingDevices.of(this);
+        return devices;
     }
 
     /** The chrome's search takes the place of the bar's menu item; the toolbar only carries the back arrow and a title. */
@@ -760,6 +788,7 @@ public class StreamSettings extends NightjarActivity {
         }
         searchResultKey = key;
         if (LOW_LATENCY_CUSTOMIZED.contains(key)) customizeOpen = true;
+        if (SettingRules.WHEN_ROWS.contains(key)) revealed.add(key);
         unfoldFor(targetSection, key);
         // A result that is a row of the overview itself (the presets) shows there.
         if (targetSection == null) unfoldRailFor(key);
@@ -972,6 +1001,8 @@ public class StreamSettings extends NightjarActivity {
             customizeOpen = savedInstanceState.getBoolean(STATE_CUSTOMIZE, false);
             ArrayList<String> open = savedInstanceState.getStringArrayList(STATE_MORE_OPEN);
             if (open != null) moreOpen.addAll(open);
+            ArrayList<String> shownRows = savedInstanceState.getStringArrayList("revealed");
+            if (shownRows != null) revealed.addAll(shownRows);
         } else {
             String named = getIntent().getStringExtra(EXTRA_SECTION);
             String focusKey = getIntent().getStringExtra(EXTRA_FOCUS_KEY);
@@ -984,6 +1015,7 @@ public class StreamSettings extends NightjarActivity {
             // A deep link names the setting to land on; it only makes sense inside a section.
             if (section != null) searchResultKey = focusKey;
             if (LOW_LATENCY_CUSTOMIZED.contains(focusKey)) customizeOpen = true;
+            if (SettingRules.WHEN_ROWS.contains(focusKey)) revealed.add(focusKey);
             unfoldFor(keySection, focusKey);
             enterPane = focusRow = searchResultKey != null;
         }
@@ -1087,6 +1119,7 @@ public class StreamSettings extends NightjarActivity {
         outState.putString("search_result", searchResultKey);
         outState.putBoolean(STATE_CUSTOMIZE, customizeOpen);
         outState.putStringArrayList(STATE_MORE_OPEN, new ArrayList<>(moreOpen));
+        outState.putStringArrayList("revealed", new ArrayList<>(revealed));
     }
 
     @Override
@@ -1390,7 +1423,11 @@ public class StreamSettings extends NightjarActivity {
     static final String PROFILES_KEY = "stream_profiles";
 
     public static class RootFragment extends PreferenceFragment {
-        private final SharedPreferences.OnSharedPreferenceChangeListener summaryUpdater = (prefs, key) -> updateSummaries();
+        private final SharedPreferences.OnSharedPreferenceChangeListener summaryUpdater = (prefs, key) -> {
+            updateSummaries();
+            // Show debug settings, or a Debug setting changed or set back, adds or removes Debug.
+            applyFold();
+        };
         /** Every row of the overview by key, in the list or folded away. */
         private final Map<String, Preference> rows = new HashMap<>();
 
@@ -1410,8 +1447,10 @@ public class StreamSettings extends NightjarActivity {
                 Preference row = rows.get(key);
                 if (row == null) continue;
                 boolean listed = screen.findPreference(key) != null;
-                if (open && !listed) screen.addPreference(row);
-                else if (!open && listed) screen.removePreference(row);
+                // Debug only on request (Show debug settings), while one of its settings is changed, or while it shows.
+                boolean show = open && (!"debug".equals(key) || activity.debugListed());
+                if (show && !listed) screen.addPreference(row);
+                else if (!show && listed) screen.removePreference(row);
             }
             Preference more = rows.get(RAIL_MORE_KEY);
             if (more instanceof FoldPreference) ((FoldPreference) more).setExpanded(open);
@@ -1572,6 +1611,25 @@ public class StreamSettings extends NightjarActivity {
         private final Set<String> hidden = new HashSet<>();
         /** Settings behind Customize or their section's More row while it is closed: out of the list, still found by search. */
         private final Set<String> folded = new HashSet<>();
+        /**
+         * Rows of SettingRules.WHEN_ROWS that can do nothing now and hold their default: out of the list and its More
+         * count, found by search with the reason.
+         */
+        private final Set<String> idle = new HashSet<>();
+        /** Attaching or removing a mouse, keyboard or touchpad shows or hides their rows at once. */
+        private final android.hardware.input.InputManager.InputDeviceListener deviceListener =
+                new android.hardware.input.InputManager.InputDeviceListener() {
+                    @Override public void onInputDeviceAdded(int deviceId) { devicesChanged(); }
+                    @Override public void onInputDeviceRemoved(int deviceId) { devicesChanged(); }
+                    @Override public void onInputDeviceChanged(int deviceId) { devicesChanged(); }
+                };
+
+        void devicesChanged() {
+            StreamSettings activity = (StreamSettings) getActivity();
+            if (!isAdded() || activity == null || activity.isFinishing()) return;
+            refreshState();
+            if (!activity.searchQuery.isEmpty()) filterPreferences();
+        }
         /** Each section's main rows (settings_tiers.xml), read once. */
         private final Map<String, Set<String>> mainKeys = new HashMap<>();
         private int displayedResultCount;
@@ -1649,6 +1707,13 @@ public class StreamSettings extends NightjarActivity {
                         result.setKey("search_result_" + pref.getKey());
                         result.setTitle(pref.getTitle());
                         result.setSummary(pref.getSummary());
+                        if (idle.contains(pref.getKey())) {
+                            // A row the list leaves out because it does nothing now says why, in one line of its own.
+                            String reason = SettingRules.whenReason(getActivity(), pref.getKey(),
+                                    getPreferenceManager().getSharedPreferences(), ((StreamSettings) getActivity()).devices());
+                            CharSequence summary = pref.getSummary();
+                            if (reason != null) result.setSummary(TextUtils.isEmpty(summary) ? reason : summary + "\n" + reason);
+                        }
                         result.setOnPreferenceClickListener(clicked -> {
                             StreamSettings activity = (StreamSettings) getActivity();
                             activity.openSearchResult(resultSection, pref.getKey());
@@ -1690,7 +1755,17 @@ public class StreamSettings extends NightjarActivity {
                             || SimpleProfile.VRR_OPT_IN.equals(key) || SimpleProfile.VRR_LAST.equals(key)) {
                         SimpleProfile.forgetCapabilities();
                     }
+                    StreamSettings screen = (StreamSettings) getActivity();
+                    // A row set back to its default while it does nothing stays for this visit, so the edit
+                    // does not lose its row and focus.
+                    if (screen != null && SettingRules.WHEN_ROWS.contains(key) && !idle.contains(key) &&
+                            !SettingRules.whenApplies(screen, key, prefs, screen.devices()) &&
+                            !SettingRules.changed(screen, key, prefs)) {
+                        screen.revealed.add(key);
+                    }
                     refreshState();
+                    // Show debug settings, or a changed Debug setting, adds or removes Debug's chip.
+                    if (screen != null) screen.updateChips();
                     if (PreferenceConfiguration.USB_FORWARDING_PREF_STRING.equals(key)) {
                         com.limelight.binding.usb.UsbForwarding.syncPersistentPermission(getActivity());
                     }
@@ -1701,6 +1776,35 @@ public class StreamSettings extends NightjarActivity {
             // Rules first: a setting that comes back shows the stored value.
             applySettingRules(getPreferenceManager().getSharedPreferences());
             updateValueSummaries(getPreferenceScreen());
+            showWhenReasons(getPreferenceManager().getSharedPreferences());
+        }
+
+        /**
+         * A row of SettingRules.WHEN_ROWS in the list while it can do nothing (it holds a changed value, or a search result
+         * opened it) says why: a switch in its summary, a list or slider after its value, as unusedReason's rows do.
+         */
+        private void showWhenReasons(SharedPreferences prefs) {
+            StreamSettings activity = (StreamSettings) getActivity();
+            if (activity == null) return;
+            for (String key : SettingRules.WHEN_ROWS) {
+                Preference pref = allPreferences.get(key);
+                if (pref == null || SettingRules.TAGGED_SWITCHES.contains(key) || hidden.contains(key) || idle.contains(key) ||
+                        folded.contains(key)) {
+                    continue;
+                }
+                String reason = SettingRules.whenReason(activity, key, prefs, activity.devices());
+                if (pref instanceof android.preference.TwoStatePreference) {
+                    pref.setSummary(reason);
+                } else if (SettingRules.IGDB_SECRET.equals(key)) {
+                    String help = getString(R.string.game_info_igdb_secret_summary);
+                    pref.setSummary(reason == null ? help : help + "\n" + reason);
+                } else if (reason != null) {
+                    CharSequence value = pref.getSummary();
+                    String summary = TextUtils.isEmpty(value) ? reason : getString(R.string.settings_joined, value, reason);
+                    // A list formats its summary (updateValueSummaries).
+                    pref.setSummary(pref instanceof ListPreference ? summary.replace("%", "%%") : summary);
+                }
+            }
         }
 
         private String networkTestsSummary() {
@@ -1866,23 +1970,29 @@ public class StreamSettings extends NightjarActivity {
             boolean controllerMouse = SettingRules.controllerMouseApplies(prefs);
             setShown("analog_scrolling", controllerMouse);
             setShown("checkbox_mouse_emulation_fixed_step", controllerMouse);
-            setShown("seekbar_vibrate_fallback_strength", prefs.getBoolean("checkbox_vibrate_fallback", false));
             setShown("checkbox_usb_bind_all", prefs.getBoolean("checkbox_usb_driver", true));
             setShown("checkbox_usb_dualsense_haptics", prefs.getBoolean("checkbox_usb_dualsense", false));
-            setShown("list_trackpad_acceleration_curve", prefs.getBoolean(
-                    PreferenceConfiguration.TRACKPAD_ACCELERATION_PREF_STRING,
-                    PreferenceConfiguration.DEFAULT_TRACKPAD_ACCELERATION));
-            setShown("list_trackpad_momentum_glide", prefs.getBoolean("checkbox_trackpad_momentum", false));
             boolean onScreen = SettingRules.onScreenControlsOn(prefs);
             for (String key : SettingRules.ON_SCREEN_ROWS) setShown(key, onScreen);
             boolean mic = SettingRules.micOn(prefs);
             for (String key : SettingRules.MIC_ROWS) setShown(key, mic);
-            setShown("performance_overlay_position", SettingRules.overlayOn(prefs));
-            setShown("list_resolution_screen2", prefs.getBoolean("checkbox_dual_screen", false));
-            setShown(PreferenceConfiguration.UPSCALING_SHARPNESS_PREF_STRING, SettingRules.upscalingUsesSharpness(prefs));
-            boolean limits = SettingRules.qualityLimitsApply(prefs);
-            setShown(SettingRules.ADAPTIVE_QUALITY_MIN_RESOLUTION, limits);
-            setShown(SettingRules.ADAPTIVE_QUALITY_MIN_FPS, limits);
+            // The rows that do nothing in this mode or on this device leave the list but not search, and a changed value
+            // keeps its row (SettingRules.WHEN_ROWS).
+            StreamSettings activity = (StreamSettings) getActivity();
+            idle.clear();
+            for (String key : SettingRules.WHEN_ROWS) {
+                if (!activity.revealed.contains(key) && !SettingRules.whenApplies(context, key, prefs, activity.devices()) &&
+                        !SettingRules.changed(context, key, prefs)) {
+                    idle.add(key);
+                }
+            }
+            // A switch's own row follows it, and leaves with it when the switch is left out.
+            setShown("list_trackpad_acceleration_curve", prefs.getBoolean(
+                    PreferenceConfiguration.TRACKPAD_ACCELERATION_PREF_STRING,
+                    PreferenceConfiguration.DEFAULT_TRACKPAD_ACCELERATION) &&
+                    !idle.contains(PreferenceConfiguration.TRACKPAD_ACCELERATION_PREF_STRING));
+            setShown("list_trackpad_momentum_glide", prefs.getBoolean("checkbox_trackpad_momentum", false) &&
+                    !idle.contains("checkbox_trackpad_momentum"));
             setShown(PreferenceConfiguration.CLIENT_ROAMING_PREF_STRING, SettingRules.clientRoamingApplies(prefs));
             setShown(PreferenceConfiguration.RECEIVE_COALESCING_PREF_STRING, SettingRules.receiveCoalescingApplies(prefs));
             setShown(PreferenceConfiguration.AUDIO_PASSTHROUGH_PREF_STRING,
@@ -1917,7 +2027,7 @@ public class StreamSettings extends NightjarActivity {
                     String key = pref.getKey();
                     boolean behindMore = rowSection != null && !key.equals(MORE_PREFIX + rowSection) &&
                             !LOW_LATENCY_CUSTOMIZED.contains(key) && !mainKeys.get(rowSection).contains(key);
-                    if (behindMore && !hidden.contains(key)) foldedCount.merge(rowSection, 1, Integer::sum);
+                    if (behindMore && !hidden.contains(key) && !idle.contains(key)) foldedCount.merge(rowSection, 1, Integer::sum);
                     if (LOW_LATENCY_CUSTOMIZED.contains(key) ? !activity.customizeOpen :
                             behindMore && !activity.moreOpen.contains(rowSection)) {
                         folded.add(key);
@@ -1943,7 +2053,7 @@ public class StreamSettings extends NightjarActivity {
             for (List<Preference> rows : searchCategories.values()) {
                 for (Preference pref : rows) {
                     String key = pref.getKey();
-                    place(key, !hidden.contains(key) && !folded.contains(key));
+                    place(key, !hidden.contains(key) && !idle.contains(key) && !folded.contains(key));
                 }
             }
             showGroups();
@@ -2182,6 +2292,9 @@ public class StreamSettings extends NightjarActivity {
                 showMicPermissionDenied();
             }
             getPreferenceManager().getSharedPreferences().registerOnSharedPreferenceChangeListener(summaryUpdater);
+            android.hardware.input.InputManager input = (android.hardware.input.InputManager)
+                    getActivity().getSystemService(Context.INPUT_SERVICE);
+            if (input != null) input.registerInputDeviceListener(deviceListener, null);
             ListPreference codec = (ListPreference) findPreference("video_format");
             if (codec != null) {
                 updateCodecSummary(codec, codec.getValue(), getPreferenceManager().getSharedPreferences()
@@ -2223,6 +2336,9 @@ public class StreamSettings extends NightjarActivity {
         @Override
         public void onPause() {
             getPreferenceManager().getSharedPreferences().unregisterOnSharedPreferenceChangeListener(summaryUpdater);
+            android.hardware.input.InputManager input = (android.hardware.input.InputManager)
+                    getActivity().getSystemService(Context.INPUT_SERVICE);
+            if (input != null) input.unregisterInputDeviceListener(deviceListener);
             super.onPause();
         }
 
@@ -2556,6 +2672,8 @@ public class StreamSettings extends NightjarActivity {
                             String value = input.getText().toString().trim();
                             if (value.isEmpty()) keys.edit().remove(storedAs).apply();
                             else keys.edit().putString(storedAs, value).apply();
+                            // The client ID shows the secret's row; the keys live outside the settings' listener.
+                            if (isAdded()) refreshState();
                         })
                         .setNegativeButton(android.R.string.cancel, null).create();
                 UiHelper.showDialog(getActivity(), dialog);
@@ -2574,7 +2692,7 @@ public class StreamSettings extends NightjarActivity {
             UiHelper.showDialog(getActivity(), about);
         }
 
-        private static int storedTouchMode(SharedPreferences prefs) {
+        static int storedTouchMode(SharedPreferences prefs) {
             return TouchMode.resolve(prefs.getString(TouchMode.PREF, null),
                     prefs.getBoolean(TouchMode.TRACKPAD_PREF, true), prefs.getBoolean(TouchMode.NATIVE_TOUCH_PREF, false));
         }
@@ -2638,7 +2756,7 @@ public class StreamSettings extends NightjarActivity {
                 if (!section.equals(sectionOf(entry.getKey().getKey()))) continue;
                 for (Preference pref : entry.getValue()) {
                     String key = pref.getKey();
-                    if (!hidden.contains(key) && foldsInSection(getActivity(), section, key)) return key;
+                    if (!hidden.contains(key) && !idle.contains(key) && foldsInSection(getActivity(), section, key)) return key;
                 }
             }
             return null;

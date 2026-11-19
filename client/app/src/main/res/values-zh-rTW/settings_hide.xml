@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Show debug settings, and why a row Settings leaves out does nothing now (SettingRules.whenReason). -->
+    <string name="title_show_debug_settings">顯示偵錯設定</string>
+    <string name="summary_show_debug_settings">顯示「偵錯」區段，其中的開關用於比較設定或排除原因。除非支援人員要求或你想比較，否則請保持關閉；你變更過的偵錯設定無論如何都會顯示。</string>
+    <string name="tag_unused_no_touchpad">未使用：未連接觸控板</string>
+    <string name="tag_unused_no_mouse">未使用：未連接滑鼠</string>
+    <string name="tag_unused_no_mouse_or_touchpad">未使用：未連接滑鼠或觸控板</string>
+    <string name="tag_unused_no_keyboard">未使用：未連接鍵盤</string>
+    <string name="tag_unused_no_fold">未使用：此裝置無法折疊，且螢幕方向不是「隨裝置旋轉」</string>
+    <string name="tag_unused_chip">未使用：此裝置沒有 MediaTek 或 Exynos 晶片</string>
+</resources>

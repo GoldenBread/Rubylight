@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Show debug settings, and why a row Settings leaves out does nothing now (SettingRules.whenReason). -->
+    <string name="title_show_debug_settings">Afficher les réglages de débogage</string>
+    <string name="summary_show_debug_settings">Affiche la section Débogage, avec des interrupteurs pour comparer des réglages ou écarter une cause. Laissez-le désactivé sauf si l’assistance le demande ou si vous voulez comparer ; un réglage de Débogage modifié s’affiche dans tous les cas.</string>
+    <string name="tag_unused_no_touchpad">Non utilisé : aucun pavé tactile n’est connecté</string>
+    <string name="tag_unused_no_mouse">Non utilisé : aucune souris n’est connectée</string>
+    <string name="tag_unused_no_mouse_or_touchpad">Non utilisé : aucune souris ni aucun pavé tactile n’est connecté</string>
+    <string name="tag_unused_no_keyboard">Non utilisé : aucun clavier n’est connecté</string>
+    <string name="tag_unused_no_fold">Non utilisé : cet appareil ne se plie pas, et Orientation n’est pas sur Pivoter avec l’appareil</string>
+    <string name="tag_unused_chip">Non utilisé : cet appareil n’a pas de puce MediaTek ou Exynos</string>
+</resources>

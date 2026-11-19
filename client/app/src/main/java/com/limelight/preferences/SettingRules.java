@@ -403,6 +403,240 @@ final class SettingRules {
     static final String[] MIC_ROWS = {"checkbox_mic_button", PreferenceConfiguration.MIC_ECHO_PREF_STRING,
             PreferenceConfiguration.MIC_NOISE_PREF_STRING, PreferenceConfiguration.MIC_AUTO_GAIN_PREF_STRING, "seekbar_mic_gain"};
 
+    /** "Show debug settings": the Debug section is listed with it on, or while one of its settings is changed. */
+    static final String SHOW_DEBUG = "checkbox_show_debug_settings";
+
+    /** Whether the list of sections shows Debug: asked for, or one of its settings is not at its default. */
+    static boolean debugShown(Context context, SharedPreferences prefs) {
+        if (prefs.getBoolean(SHOW_DEBUG, false)) return true;
+        for (String key : xml(context).debugKeys) {
+            if (changed(context, key, prefs)) return true;
+        }
+        return false;
+    }
+
+    static final String TRACKPAD_SPEED = "seekbar_trackpad_speed";
+    static final String LOCAL_CURSOR_SPEED = "seekbar_local_cursor_speed";
+    static final String TRACKPAD_MOMENTUM = "checkbox_trackpad_momentum";
+    static final String TRACKPAD_AREA = "list_trackpad_area";
+    static final String FINGER_TAPS = "checkbox_multi_touch_finger_taps";
+    static final String TRACKPAD_SENSITIVITY_X = "seekbar_trackpad_sensitivity_x";
+    static final String TRACKPAD_SENSITIVITY_Y = "seekbar_trackpad_sensitivity_y";
+    static final String TRACKPAD_SWAP_AXIS = "checkbox_trackpad_swap_axis";
+    static final String NATIVE_TOUCHPAD = "checkbox_native_touchpad";
+    static final String MOUSE_SPEED = "seekbar_mouse_speed";
+    static final String MOUSE_NAV_BUTTONS = "checkbox_mouse_nav_buttons";
+    static final String BACK_AS_META = "checkbox_back_as_meta";
+    static final String COVERING_DECODER_SIZE = "checkbox_covering_decoder_size";
+    static final String CHIPSET_TUNING = "checkbox_experimental_chipset_tuning";
+    static final String IGDB_SECRET = "game_info_igdb_client_secret";
+    static final String PYROWAVE_PREACQUIRE = "checkbox_pyrowave_preacquire";
+    static final String OVERLAY_POSITION = "performance_overlay_position";
+    static final String VIBRATE_STRENGTH = "seekbar_vibrate_fallback_strength";
+    static final String SCREEN2_RESOLUTION = "list_resolution_screen2";
+    static final String RUMBLE_FEEL = "list_rumble_feel";
+
+    /**
+     * The rows shown only while they can do something: their mode or parent setting is on, or this device has what
+     * they act on (whenApplies). One whose stored value is not its default stays, saying why it does nothing now
+     * (whenReason); search finds the others with that reason, and opening the result shows the row.
+     */
+    static final java.util.List<String> WHEN_ROWS = java.util.Arrays.asList(
+            ADAPTIVE_QUALITY_MIN_RESOLUTION, ADAPTIVE_QUALITY_MIN_FPS, PreferenceConfiguration.THERMAL_PROTECTION_PREF_STRING,
+            PreferenceConfiguration.UPSCALING_SHARPNESS_PREF_STRING, RUMBLE_FEEL, VIBRATE_STRENGTH, MOUSE_SPEED, MOUSE_NAV_BUTTONS,
+            TRACKPAD_SPEED, LOCAL_CURSOR_SPEED, PreferenceConfiguration.TRACKPAD_ACCELERATION_PREF_STRING, TRACKPAD_MOMENTUM,
+            TRACKPAD_AREA, FINGER_TAPS, TRACKPAD_SENSITIVITY_X, TRACKPAD_SENSITIVITY_Y, TRACKPAD_SWAP_AXIS, NATIVE_TOUCHPAD,
+            BACK_AS_META, OVERLAY_POSITION, SCREEN2_RESOLUTION, COVERING_DECODER_SIZE, CHIPSET_TUNING, IGDB_SECRET,
+            PYROWAVE_PREACQUIRE);
+
+    /** The stored touch mode (TouchMode), with the two switches older versions saved; as StreamSettings reads it. */
+    static int touchMode(SharedPreferences prefs) {
+        return StreamSettings.SettingsFragment.storedTouchMode(prefs);
+    }
+
+    /** The modern on-screen controller is shown; its pointer touchpad uses Trackpad speed and acceleration (Game, ModernController). */
+    private static boolean modernOnScreen(SharedPreferences prefs) {
+        return onScreenControlsOn(prefs) && modernControllerApplies(prefs);
+    }
+
+    /** The IGDB client ID, kept apart from the settings (GameInfo.keyPrefs). */
+    private static boolean igdbClientIdSet(Context context) {
+        return !com.limelight.console.GameInfo.keyPrefs(context)
+                .getString(com.limelight.console.GameInfo.KEY_IGDB_ID, "").trim().isEmpty();
+    }
+
+    /** Whether a row of {@link #WHEN_ROWS} can do something now; true for every other row. */
+    static boolean whenApplies(Context context, String key, SharedPreferences prefs, SettingDevices devices) {
+        int touch = touchMode(prefs);
+        switch (key) {
+            case ADAPTIVE_QUALITY_MIN_RESOLUTION:
+            case ADAPTIVE_QUALITY_MIN_FPS:
+                return qualityLimitsApply(prefs);
+            case PreferenceConfiguration.THERMAL_PROTECTION_PREF_STRING:
+                // As its tag: Lower it sooner may still meet a PC that takes no rate changes (unusedReason).
+                return !context.getString(R.string.tag_unused_without_any, context.getString(R.string.title_lower_bitrate),
+                        context.getString(R.string.title_adaptive_quality_setting), context.getString(R.string.title_gpu_max_clocks))
+                        .equals(unusedReason(context, key, prefs));
+            case PreferenceConfiguration.UPSCALING_SHARPNESS_PREF_STRING:
+                return upscalingUsesSharpness(prefs);
+            case RUMBLE_FEEL:
+                // RumblePolicy.allows: Turn off vibration stops every rumble the feel would shape.
+                return !prefs.getBoolean("checkbox_disable_rumble", false);
+            case VIBRATE_STRENGTH:
+                return prefs.getBoolean("checkbox_vibrate_fallback", false);
+            case MOUSE_SPEED:
+                // A physical touchpad's pointer moves at the mouse speed too (TrackpadContext).
+                return devices.mouse() || devices.touchpad();
+            case MOUSE_NAV_BUTTONS:
+                return devices.mouse();
+            case TRACKPAD_SPEED:
+                // The screen as a trackpad or with touchpad gestures (GameTouchInput), and the modern controller's pointer touchpad.
+                return touch == com.limelight.binding.input.touch.TouchMode.TRACKPAD ||
+                        touch == com.limelight.binding.input.touch.TouchMode.TOUCHPAD || modernOnScreen(prefs);
+            case LOCAL_CURSOR_SPEED:
+                return touch == com.limelight.binding.input.touch.TouchMode.LOCAL_CURSOR;
+            case PreferenceConfiguration.TRACKPAD_ACCELERATION_PREF_STRING:
+                return com.limelight.binding.input.touch.TouchMode.isRelative(touch) || modernOnScreen(prefs);
+            case TRACKPAD_MOMENTUM:
+            case TRACKPAD_AREA:
+                // TrackpadPointer's glide and GameTouchInput's area: the modes where a finger moves the pointer.
+                return com.limelight.binding.input.touch.TouchMode.isRelative(touch);
+            case FINGER_TAPS:
+                return touch == com.limelight.binding.input.touch.TouchMode.MULTI_TOUCH;
+            case TRACKPAD_SENSITIVITY_X:
+            case TRACKPAD_SENSITIVITY_Y:
+            case TRACKPAD_SWAP_AXIS:
+            case NATIVE_TOUCHPAD:
+                return devices.touchpad();
+            case BACK_AS_META:
+                return devices.keyboard();
+            case OVERLAY_POSITION:
+                return overlayOn(prefs);
+            case SCREEN2_RESOLUTION:
+                return prefs.getBoolean("checkbox_dual_screen", false);
+            case COVERING_DECODER_SIZE:
+                // GameVideoOutput.coveringStreamSize: a foldable's panels, or the turned size with Rotate with device.
+                return devices.folds() || com.limelight.ui.StreamOrientation.fromValue(
+                        prefs.getString(com.limelight.ui.StreamOrientation.PREF, null)) == com.limelight.ui.StreamOrientation.ROTATE;
+            case CHIPSET_TUNING:
+                return devices.tunedChip();
+            case IGDB_SECRET:
+                return igdbClientIdSet(context);
+            case PYROWAVE_PREACQUIRE:
+                return pyroWaveChosen(prefs);
+            default:
+                return true;
+        }
+    }
+
+    /** Why a row of {@link #WHEN_ROWS} does nothing now, in one short line; null while it applies. */
+    static String whenReason(Context context, String key, SharedPreferences prefs, SettingDevices devices) {
+        if (whenApplies(context, key, prefs, devices)) return null;
+        switch (key) {
+            case ADAPTIVE_QUALITY_MIN_RESOLUTION:
+            case ADAPTIVE_QUALITY_MIN_FPS:
+                return context.getString(R.string.tag_unused_without, context.getString(R.string.title_adaptive_quality_setting));
+            case PreferenceConfiguration.THERMAL_PROTECTION_PREF_STRING:
+                return unusedReason(context, key, prefs);
+            case PreferenceConfiguration.UPSCALING_SHARPNESS_PREF_STRING: {
+                int vulkan = vulkanPathTitle(prefs);
+                if (!upscalingApplies(prefs)) return unusedWith(context, vulkan != 0 ? vulkan : R.string.title_vulkan_render);
+                String mode = prefs.getString(PreferenceConfiguration.UPSCALING_PREF_STRING, "off");
+                if ("off".equals(mode)) return context.getString(R.string.tag_unused_without, context.getString(R.string.title_upscaling));
+                return context.getString(R.string.tag_unused_with,
+                        StreamSettings.entryFor(context, R.array.upscaling_names, R.array.upscaling_values, mode));
+            }
+            case RUMBLE_FEEL:
+                return unusedWith(context, R.string.title_checkbox_disable_rumble);
+            case VIBRATE_STRENGTH:
+                return context.getString(R.string.tag_unused_without, context.getString(R.string.title_checkbox_vibrate_fallback));
+            case MOUSE_SPEED:
+                return context.getString(R.string.tag_unused_no_mouse_or_touchpad);
+            case MOUSE_NAV_BUTTONS:
+                return context.getString(R.string.tag_unused_no_mouse);
+            case TRACKPAD_SPEED:
+            case LOCAL_CURSOR_SPEED:
+            case PreferenceConfiguration.TRACKPAD_ACCELERATION_PREF_STRING:
+            case TRACKPAD_MOMENTUM:
+            case TRACKPAD_AREA:
+            case FINGER_TAPS:
+                return context.getString(R.string.tag_unused_with,
+                        context.getResources().getStringArray(R.array.stream_touch_modes)[touchMode(prefs)]);
+            case TRACKPAD_SENSITIVITY_X:
+            case TRACKPAD_SENSITIVITY_Y:
+            case TRACKPAD_SWAP_AXIS:
+            case NATIVE_TOUCHPAD:
+                return context.getString(R.string.tag_unused_no_touchpad);
+            case BACK_AS_META:
+                return context.getString(R.string.tag_unused_no_keyboard);
+            case OVERLAY_POSITION:
+                return context.getString(R.string.tag_unused_without, context.getString(R.string.title_performance_overlay));
+            case SCREEN2_RESOLUTION:
+                return context.getString(R.string.tag_unused_without, context.getString(R.string.title_checkbox_dual_screen));
+            case COVERING_DECODER_SIZE:
+                return context.getString(R.string.tag_unused_no_fold);
+            case CHIPSET_TUNING:
+                return context.getString(R.string.tag_unused_chip);
+            case IGDB_SECRET:
+                return context.getString(R.string.tag_unused_without, context.getString(R.string.game_info_igdb_id_title));
+            case PYROWAVE_PREACQUIRE:
+                return context.getString(R.string.tag_unused_without, PYROWAVE);
+            default:
+                return null;
+        }
+    }
+
+    /**
+     * Whether a setting's stored value is not its default in preferences.xml; a setting never stored is at its
+     * default. The IGDB client secret, kept apart from the settings, is changed once it is set.
+     */
+    static boolean changed(Context context, String key, SharedPreferences prefs) {
+        if (IGDB_SECRET.equals(key)) {
+            return !com.limelight.console.GameInfo.keyPrefs(context)
+                    .getString(com.limelight.console.GameInfo.KEY_IGDB_SECRET, "").trim().isEmpty();
+        }
+        Object stored = prefs.getAll().get(key);
+        if (stored == null) return false;
+        String standard = xml(context).defaults.get(key);
+        return standard != null && !standard.equals(String.valueOf(stored));
+    }
+
+    /** What preferences.xml says: each setting's default and the keys of the Debug section's rows. */
+    private static final class Xml {
+        final java.util.Map<String, String> defaults = new java.util.HashMap<>();
+        final java.util.List<String> debugKeys = new java.util.ArrayList<>();
+    }
+
+    private static Xml xml;
+
+    private static synchronized Xml xml(Context context) {
+        if (xml != null) return xml;
+        Xml read = new Xml();
+        String android = "http://schemas.android.com/apk/res/android";
+        java.util.List<String> debug = java.util.Arrays.asList(StreamSettings.SECTIONS.get("debug"));
+        String category = null;
+        try (android.content.res.XmlResourceParser parser = context.getResources().getXml(R.xml.preferences)) {
+            for (int event = parser.getEventType(); event != org.xmlpull.v1.XmlPullParser.END_DOCUMENT; event = parser.next()) {
+                if (event != org.xmlpull.v1.XmlPullParser.START_TAG) continue;
+                String key = parser.getAttributeValue(android, "key");
+                if (key == null) continue;
+                if (parser.getName().equals("PreferenceCategory")) {
+                    category = key;
+                    continue;
+                }
+                if (debug.contains(category)) read.debugKeys.add(key);
+                int resource = parser.getAttributeResourceValue(android, "defaultValue", 0);
+                String standard = resource != 0 ? context.getResources().getString(resource) :
+                        parser.getAttributeValue(android, "defaultValue");
+                if (standard != null) read.defaults.put(key, standard);
+            }
+        } catch (org.xmlpull.v1.XmlPullParserException | java.io.IOException | RuntimeException e) {
+            com.limelight.LimeLog.warning("Unable to read the settings' defaults: " + e);
+        }
+        xml = read;
+        return xml;
+    }
+
     /** The audio effect a microphone setting turns on, or null for every other setting. */
     static MicProcessing.Effect micEffect(String key) {
         if (PreferenceConfiguration.MIC_ECHO_PREF_STRING.equals(key)) return MicProcessing.Effect.ECHO_CANCELER;

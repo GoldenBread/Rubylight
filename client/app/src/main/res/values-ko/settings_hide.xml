@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Show debug settings, and why a row Settings leaves out does nothing now (SettingRules.whenReason). -->
+    <string name="title_show_debug_settings">디버그 설정 표시</string>
+    <string name="summary_show_debug_settings">설정을 비교하거나 원인을 배제할 때 쓰는 스위치가 있는 디버그 섹션을 표시합니다. 지원팀이 요청하거나 비교하려는 경우가 아니면 꺼 두세요. 변경한 디버그 설정은 어느 경우든 표시됩니다.</string>
+    <string name="tag_unused_no_touchpad">사용되지 않음: 연결된 터치패드가 없습니다</string>
+    <string name="tag_unused_no_mouse">사용되지 않음: 연결된 마우스가 없습니다</string>
+    <string name="tag_unused_no_mouse_or_touchpad">사용되지 않음: 연결된 마우스나 터치패드가 없습니다</string>
+    <string name="tag_unused_no_keyboard">사용되지 않음: 연결된 키보드가 없습니다</string>
+    <string name="tag_unused_no_fold">사용되지 않음: 이 기기는 접히지 않고 화면 방향이 \'기기에 따라 회전\'이 아닙니다</string>
+    <string name="tag_unused_chip">사용되지 않음: 이 기기에는 MediaTek 또는 Exynos 칩이 없습니다</string>
+</resources>

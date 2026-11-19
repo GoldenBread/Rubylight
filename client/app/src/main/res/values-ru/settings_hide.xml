@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Show debug settings, and why a row Settings leaves out does nothing now (SettingRules.whenReason). -->
+    <string name="title_show_debug_settings">Показывать настройки отладки</string>
+    <string name="summary_show_debug_settings">Показывает раздел «Отладка» с переключателями для сравнения настроек или исключения причины. Оставьте выключенным, если об этом не просит поддержка и вы не хотите сравнить; изменённая настройка отладки показывается в любом случае.</string>
+    <string name="tag_unused_no_touchpad">Не используется: тачпад не подключён</string>
+    <string name="tag_unused_no_mouse">Не используется: мышь не подключена</string>
+    <string name="tag_unused_no_mouse_or_touchpad">Не используется: мышь и тачпад не подключены</string>
+    <string name="tag_unused_no_keyboard">Не используется: клавиатура не подключена</string>
+    <string name="tag_unused_no_fold">Не используется: это устройство не складывается, а «Ориентация» не «Поворачивать с устройством»</string>
+    <string name="tag_unused_chip">Не используется: в этом устройстве нет чипа MediaTek или Exynos</string>
+</resources>

@@ -183,6 +183,8 @@ public class SettingsRailTest {
 
     @Test
     public void theRailsRowsHaveTheirIcons() {
+        // Debug is listed on request.
+        PreferenceManager.getDefaultSharedPreferences(RuntimeEnvironment.getApplication()).edit().putBoolean(SettingRules.SHOW_DEBUG, true).commit();
         StreamSettings screen = open(Motion.FULL);
         ListView list = sections(screen);
         for (String key : new String[] {"simple", "input", "stream_profiles", "video", "display", "audio", "streaming", "app", "advanced", "debug"}) {

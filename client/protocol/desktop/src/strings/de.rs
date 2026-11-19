@@ -1738,4 +1738,7 @@ sudo sysctl -w net.core.rmem_max={2}"),
     ("This PC takes {} controllers", "Dieser PC nimmt {} Controller"),
     ("Changes could not be saved", "Änderungen konnten nicht gespeichert werden"),
     ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar konnte nicht nach {} schreiben. Änderungen gelten bis zum Beenden von Nightjar und sind danach wieder wie zuvor; prüfe, ob der Ordner beschreibbar ist."),
+    ("Show debug settings", "Debug-Einstellungen anzeigen"),
+    ("Shows the Debug section, with switches for comparing settings or ruling out a cause. Leave it off unless support asks for it or you want to compare; a Debug setting you changed shows either way.", "Zeigt den Bereich Debug mit Schaltern, um Einstellungen zu vergleichen oder eine Ursache auszuschließen. Lass es aus, außer der Support bittet darum oder du willst vergleichen; eine geänderte Debug-Einstellung wird so oder so angezeigt."),
+    ("Not used without {}", "Ohne {} nicht verwendbar"),
 ];

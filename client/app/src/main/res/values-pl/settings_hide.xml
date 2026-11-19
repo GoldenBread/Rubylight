@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Show debug settings, and why a row Settings leaves out does nothing now (SettingRules.whenReason). -->
+    <string name="title_show_debug_settings">Pokaż ustawienia debugowania</string>
+    <string name="summary_show_debug_settings">Pokazuje sekcję Debugowanie z przełącznikami do porównywania ustawień lub wykluczania przyczyny. Zostaw wyłączone, chyba że prosi o to pomoc techniczna lub chcesz porównać; zmienione ustawienie z Debugowania i tak się pokazuje.</string>
+    <string name="tag_unused_no_touchpad">Nie używane: nie podłączono touchpada</string>
+    <string name="tag_unused_no_mouse">Nie używane: nie podłączono myszy</string>
+    <string name="tag_unused_no_mouse_or_touchpad">Nie używane: nie podłączono myszy ani touchpada</string>
+    <string name="tag_unused_no_keyboard">Nie używane: nie podłączono klawiatury</string>
+    <string name="tag_unused_no_fold">Nie używane: to urządzenie się nie składa, a Orientacja nie jest ustawiona na Obracaj z urządzeniem</string>
+    <string name="tag_unused_chip">Nie używane: to urządzenie nie ma układu MediaTek ani Exynos</string>
+</resources>

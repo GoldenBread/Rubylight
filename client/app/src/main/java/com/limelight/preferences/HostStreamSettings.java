@@ -832,6 +832,14 @@ public class HostStreamSettings extends NightjarActivity {
         private HostStreamSettings activity;
         private PreferenceCategory connection;
         private PreferenceCategory host;
+        /**
+         * Rows shown as in Settings: Upscaling sharpness while the upscaler sharpens, and Debug while Show debug settings
+         * is on or a Debug setting is changed; either stays while this layer sets it (StreamSettings, SettingRules).
+         */
+        private PreferenceCategory streamGroup;
+        private PreferenceCategory debugGroup;
+        private Preference sharpnessRow;
+        private Preference fullRangeRow;
 
         @Override
         public void onActivityCreated(Bundle state) {
@@ -848,7 +856,8 @@ public class HostStreamSettings extends NightjarActivity {
             row(stream, "bitrate", R.string.title_seekbar_bitrate, () -> showNumber("bitrate", R.string.host_profile_bitrate));
             row(stream, "codec", R.string.title_video_format, this::showCodec);
             row(stream, "upscaling", R.string.title_upscaling, this::showUpscaling);
-            row(stream, "sharpness", R.string.title_upscaling_sharpness, this::showSharpness);
+            streamGroup = stream;
+            sharpnessRow = row(stream, "sharpness", R.string.title_upscaling_sharpness, this::showSharpness);
             row(stream, "hdr", R.string.title_enable_hdr, () -> showSwitch("hdr", R.string.title_enable_hdr));
             row(stream, "vrr", R.string.title_vrr, this::showVrr);
             row(stream, "pacing", R.string.title_frame_pacing, this::showPacing);
@@ -901,8 +910,8 @@ public class HostStreamSettings extends NightjarActivity {
                 showActions();
             }
             // Last, after the PC's own groups too, as in Settings: rarely needed, kept for troubleshooting.
-            PreferenceCategory debug = category(screen, R.string.settings_section_debug);
-            row(debug, "full_range", R.string.title_full_range, () -> showSwitch("full_range", R.string.title_full_range));
+            debugGroup = category(screen, R.string.settings_section_debug);
+            fullRangeRow = row(debugGroup, "full_range", R.string.title_full_range, () -> showSwitch("full_range", R.string.title_full_range));
             Preference footer = new Preference(activity);
             footer.setLayoutResource(R.layout.settings_preference);
             footer.setSummary(pc ? R.string.host_profile_footer : R.string.layers_footer);
@@ -1142,14 +1151,27 @@ public class HostStreamSettings extends NightjarActivity {
             }
             findPreference("codec").setSummary(codec);
             findPreference("upscaling").setSummary(summary(HostStreamProfile.Field.UPSCALING, own.upscalingMode != null, upscalingText(config)));
-            findPreference("sharpness").setSummary(summary(HostStreamProfile.Field.SHARPNESS, own.upscalingSharpness != null,
+            sharpnessRow.setSummary(summary(HostStreamProfile.Field.SHARPNESS, own.upscalingSharpness != null,
                     getString(R.string.upscaling_sharpness_value, config.upscalingSharpness)));
-            findPreference("sharpness").setEnabled(config.upscalingMode == UpscalingPolicy.Mode.FSR1 ||
+            boolean sharpens = config.upscalingMode == UpscalingPolicy.Mode.FSR1 ||
                     config.upscalingMode == UpscalingPolicy.Mode.SGSR1 ||
-                    config.upscalingMode == UpscalingPolicy.Mode.SGSR2);
+                    config.upscalingMode == UpscalingPolicy.Mode.SGSR2;
+            sharpnessRow.setEnabled(sharpens);
+            // Shown while the upscaler sharpens, or while this layer sets it so it can be cleared.
+            boolean sharpnessShown = sharpens || own.upscalingSharpness != null;
+            if (sharpnessShown && streamGroup.findPreference("sharpness") == null) streamGroup.addPreference(sharpnessRow);
+            else if (!sharpnessShown && streamGroup.findPreference("sharpness") != null) streamGroup.removePreference(sharpnessRow);
             for (String key : new String[] {"hdr", "yuv444", "full_range"}) {
-                findPreference(key).setSummary(summary(switchField(key), switchOverride(key) != null, switchText(key, switchValue(config, key))));
+                Preference row = "full_range".equals(key) ? fullRangeRow : findPreference(key);
+                row.setSummary(summary(switchField(key), switchOverride(key) != null, switchText(key, switchValue(config, key))));
             }
+            boolean debugShown = own.fullRange != null || SettingRules.debugShown(activity,
+                    android.preference.PreferenceManager.getDefaultSharedPreferences(activity));
+            PreferenceScreen screen = getPreferenceScreen();
+            boolean debugListed = false;
+            for (int i = 0; i < screen.getPreferenceCount(); i++) debugListed |= screen.getPreference(i) == debugGroup;
+            if (debugShown && !debugListed) screen.addPreference(debugGroup);
+            else if (!debugShown && debugListed) screen.removePreference(debugGroup);
             findPreference("vrr").setSummary(summary(HostStreamProfile.Field.VRR, own.vrr != null, vrrText(config)));
             String pacing = summary(HostStreamProfile.Field.PACING, own.has(HostStreamProfile.Field.PACING), pacingText(config));
             findPreference("pacing").setSummary(config.vrr ? pacing + "\n" + getString(R.string.layers_pacing_vrr) : pacing);

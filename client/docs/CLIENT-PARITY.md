@@ -44,7 +44,7 @@ The tables below have no macOS column. The Mac client shares the desktop library
 | Remote Monitor and Input-only entries | Yes | Yes | Yes | Remote Monitor sends no input, microphone, clipboard or commands. |
 | Input-only on any PC | Yes | Yes | Yes | Off by default. A 640×360, 30 fps, 500 kbps stream that is neither shown nor played. |
 | Settings per PC and per game, profiles by network, mobile data cap | Yes | Yes | Yes | |
-| Settings that open on the main rows, with "More … settings" | Yes | Yes | Yes | The same sections (Video, Display & image, Controls, Audio, Streaming, App, Advanced, Debug), groups and labels on both; rarely needed settings sit in Debug at the end. |
+| Settings that open on the main rows, with "More … settings" | Yes | Yes | Yes | The same sections (Video, Display & image, Controls, Audio, Streaming, App, Advanced, Debug), groups and labels on both; rarely needed settings sit in Debug at the end, listed once **App → Show debug settings** is on or while one of its settings is changed (search finds them either way). Rows that can do nothing in the current mode or on this device (no mouse, touchpad or keyboard attached, a parent setting off) are left out until they can, unless they hold a changed value. |
 | Settings search | Yes | Yes | Yes | Desktop: the search field or Ctrl+F. |
 | Settings presets (Native, Battery saver) | Yes | No | No | |
 | PIN lock | Yes | Yes | Yes | Android can also lock individual PCs. |

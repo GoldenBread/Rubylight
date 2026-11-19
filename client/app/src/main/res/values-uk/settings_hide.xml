@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Show debug settings, and why a row Settings leaves out does nothing now (SettingRules.whenReason). -->
+    <string name="title_show_debug_settings">Показувати налаштування налагодження</string>
+    <string name="summary_show_debug_settings">Показує розділ «Налагодження» з перемикачами для порівняння налаштувань або виключення причини. Залиште вимкненим, якщо про це не просить підтримка і ви не хочете порівняти; змінене налаштування налагодження показується в будь-якому разі.</string>
+    <string name="tag_unused_no_touchpad">Не використовується: тачпад не під’єднано</string>
+    <string name="tag_unused_no_mouse">Не використовується: мишу не під’єднано</string>
+    <string name="tag_unused_no_mouse_or_touchpad">Не використовується: мишу й тачпад не під’єднано</string>
+    <string name="tag_unused_no_keyboard">Не використовується: клавіатуру не під’єднано</string>
+    <string name="tag_unused_no_fold">Не використовується: цей пристрій не складається, а «Орієнтація» не «Повертати з пристроєм»</string>
+    <string name="tag_unused_chip">Не використовується: у цьому пристрої немає чипа MediaTek або Exynos</string>
+</resources>

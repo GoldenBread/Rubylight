@@ -703,6 +703,9 @@ fn settings_sections_follow_androids_order() {
     let mut f = Frames::new(record("PC", true, false), Reach::Online);
     f.size = vec2(1280.0, 12000.0);
     video_settings(&mut f);
+    // Debug is listed on request; with it, every section shows.
+    f.l.settings.show_debug_settings = true;
+    f.settle();
     // The list beside the rows names the sections as Android's does, the simple ones first and the
     // rest in Android's order, then the open one heads the rows.
     let listed: [&str; 9] = ["Recommended", "Controls", "Audio", "App", "Video", "Display & image", "Streaming", "Advanced", "Debug"];

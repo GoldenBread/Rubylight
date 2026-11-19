@@ -138,6 +138,11 @@ public class SettingsStructureTest {
             StreamSettings screen = controller.get();
             settle(screen);
             PreferenceScreen root = ((StreamSettings.RootFragment) shown(screen)).getPreferenceScreen();
+            // Debug only on request (Show debug settings) or while one of its settings is changed.
+            assertEquals(Arrays.asList("simple", "input", "audio", "app", "more_sections", "stream_presets", "stream_profiles", "video", "display",
+                "streaming", "advanced"), keys(root));
+            prefs().edit().putBoolean(SettingRules.SHOW_DEBUG, true).commit();
+            settle(screen);
             assertEquals(Arrays.asList("simple", "input", "audio", "app", "more_sections", "stream_presets", "stream_profiles", "video", "display",
                 "streaming", "advanced", "debug"), keys(root));
             assertEquals(screen.getString(R.string.settings_section_display), root.findPreference("display").getTitle());
@@ -245,8 +250,11 @@ public class SettingsStructureTest {
             StreamSettings screen = controller.get();
             StreamSettings.SettingsFragment results = search(screen, "language");
             assertEquals(screen.getString(R.string.settings_section_app), resultGroup(results, "list_languages").toString());
-            // Sharpness only exists while a sharp upscaler is chosen.
-            assertNull(resultGroup(search(screen, "sharpness"), "upscaling_sharpness"));
+            // Sharpness is in the list only while a sharp upscaler is chosen; search finds it anyway and says why it does nothing.
+            StreamSettings.SettingsFragment unused = search(screen, "sharpness");
+            assertNotNull(resultGroup(unused, "upscaling_sharpness"));
+            assertTrue(String.valueOf(unused.getPreferenceScreen().findPreference("search_result_upscaling_sharpness").getSummary())
+                    .endsWith(screen.getString(R.string.tag_unused_without, screen.getString(R.string.title_upscaling))));
             ((SearchView) screen.findViewById(R.id.settings_search)).setQuery("", false);
             settle(screen);
             prefs().edit().putString("upscaling_mode", "fsr1").commit();

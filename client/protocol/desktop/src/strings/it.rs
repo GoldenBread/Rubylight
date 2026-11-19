@@ -1738,4 +1738,7 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer di ricezione: il sistema ha conces
     ("This PC takes {} controllers", "Questo PC accetta {} controller"),
     ("Changes could not be saved", "Impossibile salvare le modifiche"),
     ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar non ha potuto scrivere in {}. Le modifiche valgono fino alla chiusura di Nightjar, poi tornano com’erano; verifica che sia possibile scrivere nella cartella."),
+    ("Show debug settings", "Mostra le impostazioni di debug"),
+    ("Shows the Debug section, with switches for comparing settings or ruling out a cause. Leave it off unless support asks for it or you want to compare; a Debug setting you changed shows either way.", "Mostra la sezione Debug, con interruttori per confrontare le impostazioni o escludere una causa. Lascialo disattivato a meno che l’assistenza non lo chieda o tu voglia confrontare; un’impostazione di Debug che hai cambiato si vede comunque."),
+    ("Not used without {}", "Non usato senza {}"),
 ];

@@ -38,8 +38,9 @@ import static org.junit.Assert.*;
 public class SettingsRailFoldTest {
     private static final String WIDE = "w1280dp-h720dp-land-mdpi";
     private static final List<String> SIMPLE = Arrays.asList("simple", "input", "audio", "app", "more_sections");
+    /** The list unfolded at the defaults: Debug only on request (Show debug settings, SettingsHideTest). */
     private static final List<String> ALL = Arrays.asList("simple", "input", "audio", "app", "more_sections",
-            "stream_presets", "stream_profiles", "video", "display", "streaming", "advanced", "debug");
+            "stream_presets", "stream_profiles", "video", "display", "streaming", "advanced");
 
     private static void settle(StreamSettings screen) {
         ShadowLooper.idleMainLooper(300, TimeUnit.MILLISECONDS);
@@ -240,7 +241,8 @@ public class SettingsRailFoldTest {
     public void everySectionHasARowAndAPlaceInTheChips() {
         assertEquals(StreamSettings.SECTIONS.keySet(), new java.util.LinkedHashSet<>(sorted(StreamSettings.RAIL_SECTIONS)));
         for (String folded : StreamSettings.RAIL_FOLDED) {
-            assertTrue(folded, ALL.contains(folded));
+            // Debug folds too, though it is listed only on request.
+            assertTrue(folded, ALL.contains(folded) || "debug".equals(folded));
         }
     }
 

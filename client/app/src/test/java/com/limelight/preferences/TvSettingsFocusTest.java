@@ -132,8 +132,9 @@ public class TvSettingsFocusTest {
             assertTrue(list.hasFocus());
             visited.add(keyAt(list, list.getSelectedItemPosition()));
         }
+        // Debug only on request (Show debug settings).
         assertEquals(Arrays.asList("simple", "input", "audio", "app", "more_sections", "stream_presets", "stream_profiles", "video", "display",
-                "streaming", "advanced", "debug"), visited);
+                "streaming", "advanced"), visited);
         for (int i = list.getCount() - 2; i >= 0; i--) {
             press(screen, KeyEvent.KEYCODE_DPAD_UP);
             assertEquals("Up moves one row", i, list.getSelectedItemPosition());
@@ -164,7 +165,8 @@ public class TvSettingsFocusTest {
         assertTrue(list.hasFocus());
 
         press(screen, KeyEvent.KEYCODE_DPAD_CENTER);
-        assertEquals(12, list.getCount());
+        // The presets, Profiles and four sections; Debug only on request.
+        assertEquals(11, list.getCount());
         assertTrue("focus stays in the rail", list.hasFocus());
         assertEquals("and on the row that was pressed", StreamSettings.RAIL_MORE_KEY, keyAt(list, list.getSelectedItemPosition()));
         press(screen, KeyEvent.KEYCODE_DPAD_DOWN);
@@ -534,6 +536,8 @@ public class TvSettingsFocusTest {
      */
     @Test
     public void enteringASectionShowsTheFirstRowsWholeRing() {
+        // Every section, Debug included: it is listed on request.
+        PreferenceManager.getDefaultSharedPreferences(RuntimeEnvironment.getApplication()).edit().putBoolean(SettingRules.SHOW_DEBUG, true).commit();
         StreamSettings screen = open();
         for (String section : StreamSettings.SECTIONS.keySet()) {
             goToRow(screen, section);

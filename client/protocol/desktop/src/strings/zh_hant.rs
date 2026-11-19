@@ -1738,4 +1738,7 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("This PC takes {} controllers", "此 PC 支援 {} 個控制器"),
     ("Changes could not be saved", "無法儲存變更"),
     ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar 無法寫入 {}。變更在 Nightjar 關閉前有效，之後會恢復原樣；請檢查該資料夾是否可寫。"),
+    ("Show debug settings", "顯示偵錯設定"),
+    ("Shows the Debug section, with switches for comparing settings or ruling out a cause. Leave it off unless support asks for it or you want to compare; a Debug setting you changed shows either way.", "顯示「偵錯」區段，其中的開關用於比較設定或排除原因。除非支援人員要求或你想比較，否則請保持關閉；你變更過的偵錯設定無論如何都會顯示。"),
+    ("Not used without {}", "未開啟 {} 時不使用"),
 ];

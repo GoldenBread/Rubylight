@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Show debug settings, and why a row Settings leaves out does nothing now (SettingRules.whenReason). -->
+    <string name="title_show_debug_settings">Mostrar configurações de depuração</string>
+    <string name="summary_show_debug_settings">Mostra a seção Depuração, com chaves para comparar configurações ou descartar uma causa. Deixe desativado, a menos que o suporte peça ou você queira comparar; uma configuração de Depuração que você alterou aparece de qualquer forma.</string>
+    <string name="tag_unused_no_touchpad">Não usado: nenhum touchpad conectado</string>
+    <string name="tag_unused_no_mouse">Não usado: nenhum mouse conectado</string>
+    <string name="tag_unused_no_mouse_or_touchpad">Não usado: nenhum mouse ou touchpad conectado</string>
+    <string name="tag_unused_no_keyboard">Não usado: nenhum teclado conectado</string>
+    <string name="tag_unused_no_fold">Não usado: este dispositivo não dobra e Orientação não está em Girar com o dispositivo</string>
+    <string name="tag_unused_chip">Não usado: este dispositivo não tem chip MediaTek nem Exynos</string>
+</resources>

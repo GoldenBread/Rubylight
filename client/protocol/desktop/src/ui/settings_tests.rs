@@ -43,7 +43,9 @@ fn rail_entries(f: &Frames) -> Vec<&str> {
 }
 
 const RAIL_SIMPLE: [&str; 5] = ["Recommended", "Controls", "Audio", "App", "More settings"];
-const RAIL_ALL: [&str; 11] = ["Recommended", "Controls", "Audio", "App", "More settings", "Profiles", "Video", "Display & image", "Streaming", "Advanced", "Debug"];
+/// The list unfolded at the defaults: Debug is listed only on request
+/// (`debug_is_listed_on_request_or_while_a_debug_setting_is_changed`).
+const RAIL_ALL: [&str; 10] = ["Recommended", "Controls", "Audio", "App", "More settings", "Profiles", "Video", "Display & image", "Streaming", "Advanced"];
 
 /// Simple first: a first visit opens Recommended and lists the four sections most people need;
 /// More settings unfolds Profiles and the sections of detail under them, and folds them again.
@@ -165,7 +167,8 @@ fn a_pcs_settings_list_every_section_without_a_fold() {
     let id = f.hosts.list[0].id;
     f.l.open_host_settings(id, &f.hosts.list[0]);
     f.settle();
-    assert_eq!(rail_entries(&f), ["Video", "Display & image", "Controls", "Audio", "Streaming", "Advanced", "Debug"]);
+    // Debug by the same rule as Settings (`a_pcs_settings_list_debug_by_the_same_rule`).
+    assert_eq!(rail_entries(&f), ["Video", "Display & image", "Controls", "Audio", "Streaming", "Advanced"]);
 }
 
 /// Opens every section's fold, as its "More … settings" row does.
@@ -731,7 +734,7 @@ fn the_developer_rows_and_diagnostics_are_in_debug() {
     for (query, row) in [("full color range", "Full color range"), ("error correction", "Error correction"), ("local cursor", "Local cursor")] {
         f.l.settings_view.query = query.into();
         f.settle();
-        // The sidebar always shows "Debug"; the section's count says the row was found there.
+        // A search lists "Debug" with the switch off; the section's count says the row was found there.
         assert!(shows(&f, row) && f.l.settings_view.found[SETTINGS_SECTIONS.len() - 1] > 0,
             "{query} finds {row} in Debug: {:?} {:?}", f.l.settings_view.found, f.drawn);
     }
@@ -2411,4 +2414,148 @@ fn the_setup_section_shows_the_simple_layer_and_back_applies_it() {
     f.settle();
     assert_eq!(f.l.settings.frame_pacing, FramePacing::Latency);
     assert!(!row_words(&f, "Stream smoothness").contains(&"Custom"), "{:?}", row_words(&f, "Stream smoothness"));
+}
+
+/// How many rows the main settings show at their defaults with every fold open, per section listed
+/// ("More settings" chosen): the number the settings-simplification work counts.
+/// `cargo test -p nightjar-desktop row_counts_at_defaults -- --ignored --nocapture`.
+#[test]
+#[ignore = "prints the row counts"]
+fn row_counts_at_defaults() {
+    let mut f = settings_with(Settings::default());
+    f.size = vec2(1280.0, 20000.0);
+    open_folds(&mut f);
+    let listed: Vec<String> = rail_entries(&f).into_iter().map(str::to_owned).collect();
+    let mut total = 0;
+    for section in SETTINGS_SECTIONS {
+        if !listed.iter().any(|l| l == section) {
+            println!("{section:18} not listed");
+            continue;
+        }
+        in_section(&mut f, section);
+        let rows = f.l.settings_view.drawn.len();
+        total += rows;
+        println!("{section:18} {rows:3} {:?}", f.l.settings_view.drawn.iter().map(|(id, _)| *id).collect::<Vec<_>>());
+    }
+    println!("total {total}");
+}
+/// Debug is listed only with "Show debug settings", while one of its settings is changed, while it
+/// is open or while a search runs; its rows keep their values and search finds them.
+#[test]
+fn debug_is_listed_on_request_or_while_a_debug_setting_is_changed() {
+    let mut f = settings_with(Settings::default());
+    assert!(!rail_entries(&f).contains(&"Debug"), "not by default: {:?}", rail_entries(&f));
+    f.l.settings.show_debug_settings = true;
+    f.settle();
+    assert_eq!(rail_entries(&f).last(), Some(&"Debug"), "with the switch, last");
+    f.l.settings.show_debug_settings = false;
+    f.l.settings.link_probe = true;
+    f.settle();
+    assert!(rail_entries(&f).contains(&"Debug"), "a changed Debug setting keeps it in sight");
+    f.l.settings.link_probe = false;
+    f.settle();
+    assert!(!rail_entries(&f).contains(&"Debug"));
+    // A search looks everywhere, Debug included.
+    f.l.settings_view.query = "error correction".into();
+    f.settle();
+    assert!(shows(&f, "Error correction") && rail_entries(&f).contains(&"Debug"), "{:?}", f.drawn);
+    // A link that leads into it keeps it listed while it shows.
+    f.l.settings_view.query.clear();
+    f.l.settings_view.section = "Debug";
+    f.settle();
+    assert!(rail_entries(&f).contains(&"Debug") && shows(&f, "Error correction"));
+}
+
+/// A PC's settings list Debug by the same rule, and while the PC sets one of its settings.
+#[test]
+fn a_pcs_settings_list_debug_by_the_same_rule() {
+    let mut f = Frames::new(record("PC", true, false), Reach::Online);
+    f.size = vec2(1280.0, 4000.0);
+    let id = f.hosts.list[0].id;
+    f.l.open_host_settings(id, &f.hosts.list[0]);
+    f.settle();
+    assert!(!rail_entries(&f).contains(&"Debug"), "{:?}", rail_entries(&f));
+    f.l.edit_overrides = serde_json::from_str(r#"{"full_range":true}"#).unwrap();
+    f.settle();
+    assert!(rail_entries(&f).contains(&"Debug"), "the PC sets one: {:?}", rail_entries(&f));
+}
+
+/// "Show debug settings" is an App row behind its fold, off by default, and its value is kept in
+/// settings.json.
+#[test]
+fn show_debug_settings_is_an_app_row_and_its_value_is_kept() {
+    assert!(!Settings::default().show_debug_settings);
+    assert!(!main_row("show_debug_settings"), "behind App's fold");
+    let saved = serde_json::to_string(&Settings { show_debug_settings: true, ..Settings::default() }).unwrap();
+    let read: Settings = serde_json::from_str(&saved).unwrap();
+    assert!(read.show_debug_settings, "read back");
+    let older: Settings = serde_json::from_str("{}").unwrap();
+    assert!(!older.show_debug_settings, "off for settings saved before it");
+    let mut f = settings_with(Settings::default());
+    open_folds(&mut f);
+    in_section(&mut f, "App");
+    assert!(shows(&f, "Show debug settings"), "{:?}", f.drawn);
+}
+
+/// The rows that can do nothing in the current mode are left out while they hold their default,
+/// come back with their mode, stay with a changed value saying why, and search finds them.
+#[test]
+fn rows_that_can_do_nothing_are_left_out_until_they_can() {
+    type Change = fn(&mut Settings);
+    let rows: [(&str, &str, &str, Change, Change); 7] = [
+        ("Video", "Minimum resolution", "Not used without Automatic quality", |s| s.adaptive_quality = crate::config::QualityMode::Motion, |s| s.quality_min_short_edge = 1080),
+        ("Video", "Minimum frame rate", "Not used without Automatic quality", |s| s.adaptive_quality = crate::config::QualityMode::Motion, |s| s.quality_min_fps = 60),
+        ("Display & image", "Upscaling sharpness", "Not used with Bilinear", |s| s.upscaling = crate::config::Upscaling::Fsr1, |s| s.upscale_sharpness = 80),
+        ("Controls", "Rumble feel", "Not used with Turn off vibration", |s| s.disable_rumble = false, |s| s.rumble_feel = nightjar_policy::rumble::RumbleFeel::ALL[1]),
+        ("Streaming", "Overlay position", "Not used without Performance overlay", |s| s.overlay = true, |s| s.overlay_position = crate::config::OverlayCorner::ALL[1]),
+        ("Streaming", "Second screen resolution", "Not used without Dual screen mode", |s| s.dual_screen = true, |s| (s.second_screen_width, s.second_screen_height) = (1280, 720)),
+        ("Advanced", "IGDB client secret", "Not used without IGDB client ID", |_| {}, |_| {}),
+    ];
+    for (section, label, reason, on, changed) in rows {
+        let off = |s: &mut Settings| {
+            s.upscaling = crate::config::Upscaling::Bilinear;
+            s.disable_rumble = true;
+        };
+        let mut base = Settings::default();
+        off(&mut base);
+        let mut f = settings_with(base.clone());
+        open_folds(&mut f);
+        in_section(&mut f, section);
+        assert!(!shows(&f, label), "{label} does nothing now: {:?}", f.drawn);
+        // Its mode comes on: the row is there on the next frame.
+        if label == "IGDB client secret" {
+            f.l.game_info_keys.igdb_client_id = "id".into();
+        } else {
+            on(&mut f.l.settings);
+        }
+        f.settle();
+        assert!(shows(&f, label), "{label} acts now: {:?}", f.drawn);
+        // A changed value keeps the row, with the reason under it.
+        let mut held = base.clone();
+        changed(&mut held);
+        let mut f = settings_with(held);
+        if label == "IGDB client secret" {
+            f.l.game_info_keys.igdb_client_secret = "secret".into();
+        }
+        open_folds(&mut f);
+        in_section(&mut f, section);
+        assert!(shows(&f, label) && shows(&f, reason), "{label} holds a changed value: {:?}", f.drawn);
+        // Search finds it at its default, saying why.
+        let mut f = settings_with(base.clone());
+        f.l.settings_view.query = label.to_lowercase();
+        f.settle();
+        assert!(shows(&f, label) && shows(&f, reason), "search finds {label}: {:?}", f.drawn);
+    }
+}
+
+/// The fold's count leaves out the rows that can do nothing now.
+#[test]
+fn the_fold_counts_only_rows_that_can_act() {
+    let mut f = settings_with(Settings::default());
+    in_section(&mut f, "Streaming");
+    let without = fold_words(&f).expect("Streaming has a fold");
+    let mut f = settings_with(Settings { dual_screen: true, ..Settings::default() });
+    in_section(&mut f, "Streaming");
+    let with = fold_words(&f).expect("Streaming has a fold");
+    assert_ne!(without, with, "Second screen resolution joins the count");
 }

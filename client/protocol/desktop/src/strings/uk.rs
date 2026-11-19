@@ -1738,4 +1738,7 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приймання: систе
     ("This PC takes {} controllers", "Цей ПК приймає {} контролерів"),
     ("Changes could not be saved", "Не вдалося зберегти зміни"),
     ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar не вдалося записати в {}. Зміни діють до закриття Nightjar, а потім повертаються до попередніх; перевірте, чи можна записувати в папку."),
+    ("Show debug settings", "Показувати налаштування налагодження"),
+    ("Shows the Debug section, with switches for comparing settings or ruling out a cause. Leave it off unless support asks for it or you want to compare; a Debug setting you changed shows either way.", "Показує розділ «Налагодження» з перемикачами для порівняння налаштувань або виключення причини. Залиште вимкненим, якщо про це не просить підтримка і ви не хочете порівняти; змінене налаштування налагодження показується в будь-якому разі."),
+    ("Not used without {}", "Не використовується без: {}"),
 ];

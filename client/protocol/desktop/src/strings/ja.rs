@@ -1738,4 +1738,7 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("This PC takes {} controllers", "この PC は {} 台のコントローラーに対応しています"),
     ("Changes could not be saved", "変更を保存できませんでした"),
     ("Nightjar could not write to {}. Changes apply until Nightjar closes, then go back to how they were; check that the folder is writable.", "Nightjar は {} に書き込めませんでした。変更は Nightjar を終了するまで有効で、その後は元に戻ります。フォルダーに書き込めるか確認してください。"),
+    ("Show debug settings", "デバッグ設定を表示"),
+    ("Shows the Debug section, with switches for comparing settings or ruling out a cause. Leave it off unless support asks for it or you want to compare; a Debug setting you changed shows either way.", "設定の比較や原因の切り分けに使うスイッチがある「デバッグ」セクションを表示します。サポートに頼まれたときや比較したいとき以外はオフのままにしてください。変更したデバッグ設定はどちらの場合も表示されます。"),
+    ("Not used without {}", "{} がオンでないと使われません"),
 ];
