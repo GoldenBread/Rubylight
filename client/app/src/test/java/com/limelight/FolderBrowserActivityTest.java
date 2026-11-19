@@ -134,6 +134,21 @@ public class FolderBrowserActivityTest {
         assertEquals("- after a failure", states.get(states.size() - 1));
     }
 
+    @Test
+    public void anUploadThatEndsAfterThePageWasLeftReloadsNothing() throws Exception {
+        FolderBrowserActivity.FolderWork work = offlineWork();
+        work.folder = folder("games");
+        FolderBrowserActivity.Transfer run = new FolderBrowserActivity.Transfer(true, "a.sav", 1);
+        work.transfer = run;
+        work.onCleared();
+        java.lang.reflect.Method end = FolderBrowserActivity.FolderWork.class.getDeclaredMethod("end",
+                FolderBrowserActivity.Transfer.class, Exception.class, String.class, boolean.class, String.class);
+        end.setAccessible(true);
+        end.invoke(work, run, null, "Uploaded", true, null);
+        ShadowLooper.idleMainLooper();
+        assertFalse("no reload was started", work.loading);
+    }
+
     /** Work for a known PC that cannot be reached: every transfer fails. */
     private static FolderBrowserActivity.FolderWork offlineWork() {
         FolderBrowserActivity.FolderWork work = new FolderBrowserActivity.FolderWork(RuntimeEnvironment.getApplication());

@@ -366,6 +366,8 @@ public final class FolderBrowserActivity extends NightjarActivity {
         private final ExecutorService executor = Executors.newSingleThreadExecutor();
         private final ExecutorService transfers = Executors.newSingleThreadExecutor();
         private final Handler main = new Handler(Looper.getMainLooper());
+        /** The page was left: a transfer that ends now starts nothing, the executors are shut down. */
+        private boolean cleared;
         /** The PC; tests set it. */
         ComputerDetails computer;
         private String uniqueId;
@@ -711,7 +713,7 @@ public final class FolderBrowserActivity extends NightjarActivity {
         /** Ends {@code run} with {@code error}, a refusal found on this side before anything was sent. */
         private void end(Transfer run, String error) {
             main.post(() -> {
-                if (transfer != run) return;
+                if (cleared || transfer != run) return;
                 transfer = null;
                 this.error = error;
                 canRetry = false;
@@ -723,7 +725,7 @@ public final class FolderBrowserActivity extends NightjarActivity {
         /** Ends {@code run}; {@code left} names a partial file a failure could not delete. */
         private void end(Transfer run, Exception failure, String done, boolean reload, String left) {
             main.post(() -> {
-                if (transfer != run) return;
+                if (cleared || transfer != run) return;
                 transfer = null;
                 if (failure != null) {
                     failed(failure, run.upload);
@@ -829,6 +831,7 @@ public final class FolderBrowserActivity extends NightjarActivity {
         private void changed() { changed.setValue(changed.getValue() + 1); }
 
         @Override protected void onCleared() {
+            cleared = true;
             cancelTransfer();
             executor.shutdownNow();
             transfers.shutdownNow();
