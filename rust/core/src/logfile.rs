@@ -28,7 +28,9 @@ impl RotatingFile {
             keep: keep.max(1),
         };
         if log.size >= log.limit {
-            log.rotate()?;
+            // A failed rotation is not fatal: keep appending to the current
+            // file, as `write` does, rather than keep the host from starting.
+            let _ = log.rotate();
         }
         Ok(log)
     }
@@ -154,5 +156,27 @@ mod tests {
                 .count(),
             8
         );
+    }
+
+    /// A reader that holds an oversized log without delete sharing makes the
+    /// rotation at open fail; the log still opens and appends.
+    #[cfg(windows)]
+    #[test]
+    fn an_oversized_log_whose_rotation_fails_still_opens_and_appends() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("host.log");
+        std::fs::write(&path, vec![b'x'; 150]).unwrap();
+        // FILE_SHARE_READ | FILE_SHARE_WRITE, without FILE_SHARE_DELETE.
+        let _reader = OpenOptions::new()
+            .read(true)
+            .share_mode(3)
+            .open(&path)
+            .unwrap();
+        let mut log = RotatingFile::open(&path, 100, 2).unwrap();
+        log.write_all(b"after\n").unwrap();
+        drop(log);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.ends_with("after\n"));
     }
 }
