@@ -42,8 +42,11 @@ public class DecoderTuningKeysTest {
             "vendor.mtk.vdec.low-latency.mode", "vendor.mtk.vdec.cpu.boost.mode", "vendor.mtk.vdec.cpu.boost.mode.value",
             "vendor.mtk.vdec.dvfs.mode", "vendor.mtk.vdec.dvfs.level", "vendor.mtk.vdec.disable-idle",
             "vendor.mtk.vdec.vsync.adjust.enable", "vendor.mtk.vdec.preload.frame.count", "vendor.mtk.vdec.input.max.queue.depth",
-            "vendor.mtk.vdec.output.max.queue.depth", "vendor.mtk.vdec.bq.guard.interval.time", "vendor.mtk.vdec.pq",
-            "vendor.mtk.vdec.skip.mode", "vendor.mtk.vdec.drop.nonref.frame"};
+            "vendor.mtk.vdec.output.max.queue.depth", "vendor.mtk.vdec.bq.guard.interval.time"};
+    // Dropped from the preset to match the derflacco fork, which stopped sending them.
+    private static final String[] MTK_DROPPED_KEYS = {
+            "vendor.mtk.vdec.pq", "vendor.mtk.vdec.nvop.skip", "vendor.mtk.vdec.skip.mode",
+            "vendor.mtk.vdec.drop.nonref.frame", "vendor.mtk.vdec.frame-drop.policy"};
 
     @Before
     public void setUp() {
@@ -91,15 +94,36 @@ public class DecoderTuningKeysTest {
     }
 
     @Test
+    public void noMediaTekPresetCarriesTheDroppedKeysAndEveryLevelIsOne() {
+        for (Map<String, Integer> preset : Arrays.asList(VendorLowLatencyKeys.MEDIATEK,
+                VendorLowLatencyKeys.MEDIATEK_SHORT, VendorLowLatencyKeys.MEDIATEK_AV1)) {
+            for (String key : MTK_DROPPED_KEYS) {
+                assertFalse(key, preset.containsKey(key));
+                assertFalse(key, VendorLowLatencyKeys.KNOWN.containsKey(key));
+            }
+            for (String level : new String[] {"vendor.mtk.vdec.cpu.boost.mode", "vendor.mtk.vdec.cpu.boost.mode.value",
+                    "vendor.mtk.vdec.dvfs.mode", "vendor.mtk.vdec.dvfs.level"}) {
+                assertEquals(level, Integer.valueOf(1), preset.get(level));
+            }
+        }
+        assertEquals(13, VendorLowLatencyKeys.MEDIATEK.size());
+        assertEquals(8, VendorLowLatencyKeys.MEDIATEK_AV1.size());
+    }
+
+    @Test
     public void mediaTekDecodersGetTheWholePresetByName() {
         for (String name : new String[] {"c2.mtk.hevc.decoder", "OMX.MTK.VIDEO.DECODER.HEVC"}) {
             MediaFormat format = tune(name, 0, false);
             assertKeys(name, format, MTK_KEYS);
             assertEquals(name, 0, format.getInteger("vendor.mtk.vdec.vsync.adjust.enable"));
-            assertEquals(name, 2, format.getInteger("vendor.mtk.vdec.dvfs.level"));
+            // Boost and clock levels are 1, the mild value.
+            for (String level : new String[] {"vendor.mtk.vdec.cpu.boost.mode", "vendor.mtk.vdec.cpu.boost.mode.value",
+                    "vendor.mtk.vdec.dvfs.mode", "vendor.mtk.vdec.dvfs.level"}) {
+                assertEquals(name + " " + level, 1, format.getInteger(level));
+            }
             // Try 0 asks for the shorter queues (Moonlight V+).
             assertEquals(name, 2, format.getInteger("vendor.mtk.vdec.buffer.fetch.timeout.ms"));
-            assertEquals(name, 0, format.getInteger("vendor.mtk.vdec.pq"));
+            assertAbsent(name, format, MTK_DROPPED_KEYS);
             // The rate and priority pair sits behind the performance hints.
             assertAbsent(name, format, MediaFormat.KEY_OPERATING_RATE, MediaFormat.KEY_PRIORITY);
             MediaFormat hinted = tune(name, 0, true);
@@ -221,8 +245,8 @@ public class DecoderTuningKeysTest {
             }
             assertAbsent(name, format, "vendor.mtk.vdec.preload.frame.count", "vendor.mtk.vdec.buffer.fetch.timeout.ms",
                     "vendor.mtk.vdec.bq.guard.interval.time", "vendor.mtk.vdec.input.max.queue.depth",
-                    "vendor.mtk.vdec.output.max.queue.depth", "vendor.mtk.vdec.nvop.skip", "vendor.mtk.vdec.pq",
-                    "vendor.mtk.vdec.skip.mode", "vendor.mtk.vdec.drop.nonref.frame", "vendor.mtk.vdec.frame-drop.policy");
+                    "vendor.mtk.vdec.output.max.queue.depth");
+            assertAbsent(name, format, MTK_DROPPED_KEYS);
         }
         // H.264 and HEVC keep the queue keys.
         assertSame(VendorLowLatencyKeys.MEDIATEK, VendorLowLatencyKeys.mediaTekKeys(1, "video/hevc"));
@@ -242,7 +266,7 @@ public class DecoderTuningKeysTest {
         MediaFormat format = MediaFormat.createVideoFormat(HEVC, 1920, 1080);
         assertTrue(MediaCodecHelper.setDecoderLowLatencyOptions(format, decoder, 0, true, true, false, false));
         assertKeys("preset", format, MTK_KEYS);
-        assertKeys("preset", format, "vendor.mtk.vdec.nvop.skip", "vendor.mtk.vdec.frame-drop.policy");
+        assertAbsent("preset", format, MTK_DROPPED_KEYS);
     }
 
     @Test
@@ -646,12 +670,12 @@ public class DecoderTuningKeysTest {
         MediaFormat last = tune("c2.mtk.hevc.decoder", 4, false);
         List<String> firstKeys = MediaCodecHelper.requestedTuningKeys(first, null);
         List<String> lastKeys = MediaCodecHelper.requestedTuningKeys(last, null);
-        assertTrue(firstKeys.contains("vendor.mtk.vdec.dvfs.mode=2"));
+        assertTrue(firstKeys.contains("vendor.mtk.vdec.dvfs.mode=1"));
         assertTrue(firstKeys.contains("vendor.mtk.vdec.vsync.adjust.enable=0"));
         assertTrue(firstKeys.contains("low-latency=1"));
         assertTrue(lastKeys.isEmpty());
         List<String> dropped = MediaCodecHelper.droppedTuningKeys(firstKeys, lastKeys);
-        assertTrue(dropped.contains("vendor.mtk.vdec.dvfs.mode=2"));
+        assertTrue(dropped.contains("vendor.mtk.vdec.dvfs.mode=1"));
         assertTrue(MediaCodecHelper.droppedTuningKeys(firstKeys, firstKeys).isEmpty());
     }
 

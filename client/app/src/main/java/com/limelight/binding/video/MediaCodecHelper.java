@@ -815,7 +815,7 @@ public class MediaCodecHelper {
         // and waits, one preloaded frame) without KEY_LOW_LATENCY, try 2 and later only the plain
         // vendor switches below. Each try sends the keys of the one before or fewer, with values
         // that only relax toward the full preset (VendorLowLatencyKeys.mediaTekKeys). AV1 gets only
-        // the switches, without queue, wait, preload or skip keys, on every try.
+        // the switches, without queue, wait or preload keys, on every try.
         // Android 8 and newer, like Tegra: older builds (Fire OS 5 OMX.MTK on 5.1) have no vendor
         // key support.
         // Experimental: we have no MediaTek device to run the preset on.

@@ -23,7 +23,7 @@ final class VendorLowLatencyKeys {
     // The MediaTek preset for the first configure try: the same keys with shorter queues and waits, no preload.
     static final Map<String, Integer> MEDIATEK_SHORT;
     // The MediaTek preset for AV1: the low-latency, boost and clock switches only, no queue,
-    // wait, preload or skip keys.
+    // wait or preload keys.
     static final Map<String, Integer> MEDIATEK_AV1;
     // The Samsung Exynos preset, set on Exynos decoders by name. Experimental: no Exynos device here.
     static final Map<String, Integer> EXYNOS;
@@ -77,12 +77,13 @@ final class VendorLowLatencyKeys {
         // MediaTek Codec2.
         known.put("vendor.mtk.vdec.low-latency.mode", 1);
         known.put("vendor.mtk.vdec.low-latency.mode.value", 1);
-        // The boost level is 2 ("moderate") as in the derflacco fork; Artemis sends 1.
-        known.put("vendor.mtk.vdec.cpu.boost.mode", 2);
-        known.put("vendor.mtk.vdec.cpu.boost.mode.value", 2);
+        // Boost and clock level 1, the mild one: Artemis and the derflacco fork both send 1 (the
+        // fork withdrew its stronger profile, which used 2).
+        known.put("vendor.mtk.vdec.cpu.boost.mode", 1);
+        known.put("vendor.mtk.vdec.cpu.boost.mode.value", 1);
         // Keep the clocks up and let the app pace output; both from Artemis's MediaTek preset.
-        known.put("vendor.mtk.vdec.dvfs.mode", 2);
-        known.put("vendor.mtk.vdec.dvfs.level", 2);
+        known.put("vendor.mtk.vdec.dvfs.mode", 1);
+        known.put("vendor.mtk.vdec.dvfs.level", 1);
         known.put("vendor.mtk.vdec.disable-idle", 1);
         known.put("vendor.mtk.vdec.vsync.adjust.enable", 0);
         // NVIDIA Tegra.
@@ -99,9 +100,10 @@ final class VendorLowLatencyKeys {
         tegra.put("vendor.nvidia.disable-output-reorder", 1);
         TEGRA = Collections.unmodifiableMap(tegra);
 
-        // The MediaTek preset of Artemis (ClassicOldSong) with the values of the derflacco
-        // moonlight-noir fork (GPL-3.0): moderate boost, light prebuffering, short queues, output
-        // paced by the app, only NVOP skipped, nothing dropped.
+        // The MediaTek preset of Artemis (ClassicOldSong) with the keys of the derflacco
+        // moonlight-noir fork (GPL-3.0): mild boost, light prebuffering, short queues, output
+        // paced by the app. The picture-quality and frame skip or drop keys (pq, nvop.skip,
+        // skip.mode, drop.nonref.frame, frame-drop.policy) are not sent: the fork removed them.
         Map<String, Integer> mtk = new LinkedHashMap<>();
         for (Map.Entry<String, Integer> entry : known.entrySet()) {
             if (entry.getKey().startsWith("vendor.mtk.")) {
@@ -114,11 +116,6 @@ final class VendorLowLatencyKeys {
         mtk.put("vendor.mtk.vdec.bq.guard.interval.time", 4);
         mtk.put("vendor.mtk.vdec.input.max.queue.depth", 3);
         mtk.put("vendor.mtk.vdec.output.max.queue.depth", 3);
-        mtk.put("vendor.mtk.vdec.pq", 0);
-        mtk.put("vendor.mtk.vdec.nvop.skip", 1);
-        mtk.put("vendor.mtk.vdec.skip.mode", 0);
-        mtk.put("vendor.mtk.vdec.drop.nonref.frame", 0);
-        mtk.put("vendor.mtk.vdec.frame-drop.policy", 0);
         MEDIATEK = Collections.unmodifiableMap(mtk);
 
         // Moonlight V+ (qiin2333/moonlight-vplus, GPL-3.0) tiers this preset by configure try, not
