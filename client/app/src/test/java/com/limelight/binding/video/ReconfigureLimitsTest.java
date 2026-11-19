@@ -235,6 +235,19 @@ public class ReconfigureLimitsTest {
         org.junit.Assert.assertEquals(1920, (int) ReflectionHelpers.getField(renderer, "expectedWidth"));
     }
 
+    // A request the PC got (A), then one that could not be sent (B): the decoder keeps A's maximum.
+    @Test
+    public void aCancelledRequestGivesBackTheOneItReplaced() {
+        if (renderer.setup(MoonBridge.VIDEO_FORMAT_H265, 1920, 1080, 60) != 0) fail("setup failed");
+        org.junit.Assert.assertTrue(renderer.prepareForReconfigure(2560, 1440));
+        org.junit.Assert.assertTrue(renderer.prepareForReconfigure(1920, 1080));
+        renderer.cancelReconfigure();
+        quiesceRenderThreads();
+        submit(1, MoonBridge.BUFFER_TYPE_PICDATA);
+        org.junit.Assert.assertEquals(2560, (int) ReflectionHelpers.getField(renderer, "maxDecodeWidth"));
+        org.junit.Assert.assertEquals(2560, (int) ReflectionHelpers.getField(renderer, "expectedWidth"));
+    }
+
     // The PC was never asked (the request could not be sent): the decoder keeps its size and does not restart.
     @Test
     public void aCancelledRequestIsNotApplied() {

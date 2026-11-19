@@ -297,8 +297,11 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     private static final class ResizeRequest {
         final int width, height, maxWidth, maxHeight;
+        // The request this one replaced before the input thread took it, which the PC already got.
+        final ResizeRequest replaced;
 
-        ResizeRequest(int width, int height, int maxWidth, int maxHeight) {
+        ResizeRequest(int width, int height, int maxWidth, int maxHeight, ResizeRequest replaced) {
+            this.replaced = replaced;
             this.width = width;
             this.height = height;
             this.maxWidth = maxWidth;
@@ -1188,13 +1191,15 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                     max[0] + "x" + max[1]);
             return false;
         }
-        pendingResize.set(new ResizeRequest(width, height, max[0], max[1]));
+        pendingResize.set(new ResizeRequest(width, height, max[0], max[1], waiting));
         return true;
     }
 
     /** The UI could not send the size it prepared for: the decoder keeps its size. Never waits. */
     public void cancelReconfigure() {
-        pendingResize.set(null);
+        // A request it replaced was sent: the decoder still takes that one.
+        ResizeRequest cancelled = pendingResize.get();
+        if (cancelled != null) pendingResize.compareAndSet(cancelled, cancelled.replaced);
     }
 
     // On the input thread at a frame's first unit: the size and frame rate the UI asked for, under
