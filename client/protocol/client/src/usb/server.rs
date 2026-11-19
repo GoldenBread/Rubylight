@@ -152,6 +152,8 @@ struct Shared {
     state: Mutex<State>,
     /// An answer left [`State::out`].
     drained: Condvar,
+    /// An answer joined [`State::out`], or serving ended: wakes the writer.
+    queued: Condvar,
 }
 
 /// The transfers one device may have in flight. The driver queues a few per endpoint; one
@@ -173,13 +175,12 @@ struct State {
     closed: bool,
     /// What made a completion close the tunnel.
     failure: Option<ServeError>,
-    /// Answers waiting for the tunnel, in the order they go out. Written outside the lock, so
-    /// a PC slow to read stops neither the serve loop nor other completions.
+    /// Answers waiting for the tunnel, in the order they go out. Only the writer thread
+    /// writes them, so a PC slow to read stops neither the serve loop nor a completion.
     out: VecDeque<Vec<u8>>,
-    /// The bytes in `out`: they count against [`MAX_BUFFERED`] until written.
+    /// The bytes in `out`: they count against [`MAX_BUFFERED`] until the writer takes them.
+    /// Changed only together with `out`, so it never runs below zero.
     out_bytes: u64,
-    /// A thread is writing `out`.
-    writing: bool,
 }
 
 impl Shared {
@@ -210,34 +211,43 @@ impl Shared {
         self.tunnel.close();
     }
 
-    /// Queues `message` after every answer queued before it, and writes the queue unless
-    /// another thread already does; that one writes it in turn. False when this thread's write
-    /// failed: serving has failed and the tunnel is closed.
-    fn send<'a>(&'a self, mut state: MutexGuard<'a, State>, message: Vec<u8>) -> bool {
-        if state.closed {
-            return true;
+    /// Queues `message` after every answer queued before it, for the writer thread. Dropped
+    /// once serving ended or failed.
+    fn send(&self, mut state: MutexGuard<'_, State>, message: Vec<u8>) {
+        if state.closed || state.failure.is_some() {
+            return;
         }
         state.out_bytes += message.len() as u64;
         state.out.push_back(message);
-        if std::mem::replace(&mut state.writing, true) {
-            return true;
-        }
-        while let Some(message) = state.out.pop_front() {
+        self.queued.notify_one();
+    }
+
+    /// The writer thread: writes the queued answers in order until serving ends or a write
+    /// fails. A failed write clears the queue, records the failure and closes the tunnel.
+    fn write_out(&self) {
+        let mut state = self.state();
+        loop {
+            if state.closed {
+                return;
+            }
+            let Some(message) = state.out.pop_front() else {
+                state = self.queued.wait(state).unwrap_or_else(PoisonError::into_inner);
+                continue;
+            };
+            // Out of the count as it leaves the queue: once written, the PC may answer before
+            // this thread takes the lock again.
+            state.out_bytes -= message.len() as u64;
+            self.drained.notify_all();
             drop(state);
             let written = self.tunnel.write_all(&message);
             state = self.state();
-            state.out_bytes -= message.len() as u64;
-            self.drained.notify_all();
             if let Err(e) = written {
                 state.out.clear();
                 state.out_bytes = 0;
-                state.writing = false;
                 self.fail(&mut state, ServeError::Io(e));
-                return false;
+                return;
             }
         }
-        state.writing = false;
-        true
     }
 
     /// Waits while [`MAX_IN_FLIGHT`] answers wait for the tunnel: a PC that sends without
@@ -297,7 +307,7 @@ fn finish(shared: &Shared, asked: &Asked, reply: Reply) {
         Err(e) => return shared.fail(&mut state, ServeError::Device(e)),
     };
     // Queued under the lock it settled under, so an unlink's answer never overtakes it or goes
-    // out before it; a failed write fails serving.
+    // out before it.
     shared.send(state, message);
 }
 
@@ -374,8 +384,10 @@ pub fn serve(tunnel: Arc<dyn Tunnel>, device: Arc<dyn UsbDevice>) -> Result<(), 
         tunnel: tunnel.clone(),
         state: Mutex::new(State::default()),
         drained: Condvar::new(),
+        queued: Condvar::new(),
     });
-    let result = run(&shared, device.as_ref());
+    let mut writer = None;
+    let result = run(&shared, device.as_ref(), &mut writer);
     let failure = {
         let mut state = shared.state();
         state.closed = true;
@@ -385,7 +397,12 @@ pub fn serve(tunnel: Arc<dyn Tunnel>, device: Arc<dyn UsbDevice>) -> Result<(), 
         state.out_bytes = 0;
         state.failure.take()
     };
+    shared.queued.notify_all();
+    // Wakes a write the writer is blocked in, then waits for the writer to end.
     tunnel.close();
+    if let Some(writer) = writer {
+        let _ = writer.join();
+    }
     device.close();
     match failure {
         // A completion's failure is why the read broke.
@@ -440,7 +457,12 @@ fn pump(from: &dyn Tunnel, to: &dyn Tunnel) -> std::io::Result<()> {
     }
 }
 
-fn run(shared: &Arc<Shared>, device: &dyn UsbDevice) -> Result<(), ServeError> {
+/// `writer` gets the writer thread once the import was answered; `serve` joins it.
+fn run(
+    shared: &Arc<Shared>,
+    device: &dyn UsbDevice,
+    writer: &mut Option<std::thread::JoinHandle<()>>,
+) -> Result<(), ServeError> {
     let tunnel = shared.tunnel.as_ref();
     let described = device.describe();
     let mut request = [0; wire::IMPORT_REQUEST_BYTES];
@@ -484,6 +506,13 @@ fn run(shared: &Arc<Shared>, device: &dyn UsbDevice) -> Result<(), ServeError> {
     if let Some(peer) = peer {
         return relay(&shared.tunnel, peer);
     }
+    // From here on only this thread writes to the tunnel.
+    *writer = Some({
+        let shared = shared.clone();
+        std::thread::Builder::new()
+            .name("usb-serve-writer".into())
+            .spawn(move || shared.write_out())?
+    });
 
     loop {
         let mut head = [0; wire::HEADER_BYTES];
@@ -550,9 +579,7 @@ fn run(shared: &Arc<Shared>, device: &dyn UsbDevice) -> Result<(), ServeError> {
                     let answer = ret_submit(&asked, Reply::failed(wire::ENOMEM))
                         .map_err(ServeError::Device)?;
                     let state = shared.room(state);
-                    if !shared.send(state, answer) {
-                        return Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe).into());
-                    }
+                    shared.send(state, answer);
                     if first {
                         super::warn(&format!(
                             "USB {}: the host's driver has {count} transfers ({} KiB) in flight; \
@@ -608,9 +635,7 @@ fn run(shared: &Arc<Shared>, device: &dyn UsbDevice) -> Result<(), ServeError> {
                 };
                 // Queued like every completion, so the two never interleave.
                 let state = shared.room(shared.state());
-                if !shared.send(state, answer.encode().to_vec()) {
-                    return Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe).into());
-                }
+                shared.send(state, answer.encode().to_vec());
             }
             other => return Err(ServeError::Protocol(format!("the driver sent {other:?}"))),
         }

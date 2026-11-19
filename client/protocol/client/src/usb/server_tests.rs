@@ -725,8 +725,107 @@ impl Tunnel for Held {
         self.inner.write_all(bytes)
     }
     fn close(&self) {
+        // A closed connection wakes a held write, as a shutdown wakes a blocked one.
+        *self.held.lock().unwrap() = false;
+        self.released.notify_all();
         self.inner.close();
     }
+}
+
+impl Held {
+    fn new(inner: Arc<TcpTunnel>) -> Arc<Self> {
+        Arc::new(Self { inner, held: Mutex::new(false), released: std::sync::Condvar::new(), waiting: AtomicUsize::new(0) })
+    }
+
+    fn hold(&self) {
+        *self.held.lock().unwrap() = true;
+    }
+
+    fn release(&self) {
+        *self.held.lock().unwrap() = false;
+        self.released.notify_all();
+    }
+}
+
+/// Waits up to 3 s for `done`.
+fn within(done: impl Fn() -> bool) -> bool {
+    let started = std::time::Instant::now();
+    while !done() {
+        if started.elapsed() > Duration::from_secs(3) {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    true
+}
+
+#[test]
+fn an_unlink_answered_while_the_pc_reads_nothing_does_not_stop_the_serve_loop() {
+    let device = Arc::new(Keeper::default());
+    let (inner, mut driver) = pipe();
+    let tunnel = Held::new(inner);
+    let served = {
+        let (tunnel, device) = (tunnel.clone(), device.clone());
+        std::thread::spawn(move || serve(tunnel, device))
+    };
+    driver.import("1-1").unwrap();
+    let first = driver.submit(1, wire::DIR_IN, 8, [0; 8], &[], &[]);
+    assert!(within(|| device.kept.lock().unwrap().len() == 1));
+    // Nothing waits to go out; the PC stops reading, then gives up on the transfer.
+    tunnel.hold();
+    let unlink = driver.unlink(first);
+    assert!(within(|| tunnel.waiting.load(Ordering::SeqCst) > 0), "the unlink was never answered");
+    driver.submit(1, wire::DIR_IN, 8, [0; 8], &[], &[]);
+    let took = within(|| device.kept.lock().unwrap().len() == 2);
+    tunnel.release();
+    assert!(took, "the serve loop waited behind its own answer");
+    assert_eq!(status_of(&driver.reply(false).0), (unlink, wire::ECONNRESET));
+    drop(driver);
+    served.join().unwrap().unwrap();
+}
+
+#[test]
+fn a_completion_made_inside_submit_while_the_pc_reads_nothing_does_not_stop_the_serve_loop() {
+    /// Completes every transfer inside `submit`, on the serve loop's thread.
+    #[derive(Default)]
+    struct AtOnce {
+        submitted: AtomicUsize,
+    }
+    impl UsbDevice for AtOnce {
+        fn describe(&self) -> wire::Device {
+            wire::Device {
+                busid: "1-1".into(),
+                ..wire::Device::default()
+            }
+        }
+        fn submit(&self, _: Transfer, done: Completion) {
+            self.submitted.fetch_add(1, Ordering::SeqCst);
+            done.complete(Reply::read(vec![3]));
+        }
+        fn unlink(&self, _: u32) {}
+        fn close(&self) {}
+    }
+    let device = Arc::new(AtOnce::default());
+    let (inner, mut driver) = pipe();
+    let tunnel = Held::new(inner);
+    let served = {
+        let (tunnel, device) = (tunnel.clone(), device.clone());
+        std::thread::spawn(move || serve(tunnel, device))
+    };
+    driver.import("1-1").unwrap();
+    tunnel.hold();
+    let first = driver.submit(1, wire::DIR_IN, 8, [0; 8], &[], &[]);
+    assert!(within(|| tunnel.waiting.load(Ordering::SeqCst) > 0), "the completion was never written");
+    let second = driver.submit(1, wire::DIR_IN, 8, [0; 8], &[], &[]);
+    let took = within(|| device.submitted.load(Ordering::SeqCst) == 2);
+    tunnel.release();
+    assert!(took, "the serve loop waited behind a completion it made");
+    for seqnum in [first, second] {
+        let (header, data, _) = driver.reply(true);
+        assert_eq!((status_of(&header), data), ((seqnum, 0), vec![3]));
+    }
+    drop(driver);
+    served.join().unwrap().unwrap();
 }
 
 #[test]
