@@ -158,11 +158,17 @@ pub fn virtual_refresh(config: &Config) -> VirtualRefresh {
         }
     }
 }
+/// The fastest refresh a display mode may have (`Config`'s display-mode limits, the virtual
+/// display driver's).
+const FASTEST_REFRESH: u32 = 1_000_000;
+/// The refresh of the stream's display. A multiple of the stream rate stops at
+/// [`FASTEST_REFRESH`]: twice 540 fps asked for a mode no display takes, and the stream did
+/// not start.
 pub fn display_rate(rate: Rate, virtual_display: bool, mode: VirtualRefresh) -> Rate {
     match (virtual_display, mode) {
-        (true, VirtualRefresh::Legacy) => Rate(rate.0.saturating_mul(2)),
-        (true, VirtualRefresh::Enabled) => Rate(rate.0.saturating_mul(4)),
-        (true, VirtualRefresh::Vrr) => Rate(1_000_000),
+        (true, VirtualRefresh::Legacy) => Rate(rate.0.saturating_mul(2).min(FASTEST_REFRESH)),
+        (true, VirtualRefresh::Enabled) => Rate(rate.0.saturating_mul(4).min(FASTEST_REFRESH)),
+        (true, VirtualRefresh::Vrr) => Rate(FASTEST_REFRESH),
         _ => rate,
     }
 }

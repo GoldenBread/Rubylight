@@ -212,13 +212,42 @@ fn inherited_framegen_keeps_explicit_capture_and_sync_contract() {
     let p = Policy::resolve(&c, Rate(59940), true, "game-provided", false, true).unwrap();
     assert_eq!(p.sync_limiter, 2);
     c.values
-        .insert("virtual_display_refresh".into(), "legacy".into());
+        .insert("virtual_display_refresh".into(), "enabled".into());
     assert_eq!(
         Policy::resolve(&c, Rate(59940), true, "game-provided", false, false)
             .unwrap()
             .display_rate,
-        Rate(119880)
+        Rate(239_760)
     );
+}
+/// A display mode's refresh ends at 1000 Hz (`Config`'s display-mode limits). Twice or four
+/// times a faster stream's rate asked for more, and the stream did not start.
+#[test]
+fn a_multiple_of_the_stream_rate_stops_at_1000_hz() {
+    use VirtualRefresh::{Disabled, Enabled, Legacy, Vrr};
+    for (rate, mode, display) in [
+        (60_000, Legacy, 120_000),
+        (240_000, Legacy, 480_000),
+        (500_000, Legacy, 1_000_000),
+        (540_000, Legacy, 1_000_000),
+        (60_000, Enabled, 240_000),
+        (250_000, Enabled, 1_000_000),
+        (360_000, Enabled, 1_000_000),
+        (540_000, Vrr, 1_000_000),
+        (540_000, Disabled, 540_000),
+    ] {
+        assert_eq!(
+            display_rate(Rate(rate), true, mode),
+            Rate(display),
+            "{rate} {mode:?}"
+        );
+        // A monitor keeps the stream's rate.
+        assert_eq!(display_rate(Rate(rate), false, mode), Rate(rate));
+    }
+    // The default, through the policy a stream gets.
+    let c = Config::default();
+    let p = Policy::resolve(&c, Rate(540_000), true, "none", false, false).unwrap();
+    assert_eq!(p.display_rate, Rate(1_000_000));
 }
 /// The automatic cap of a virtual display follows the display's refresh; one the user asked
 /// for, a monitor's and a virtual display left at the stream's rate do not.
