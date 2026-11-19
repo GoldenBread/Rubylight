@@ -701,3 +701,78 @@ fn the_kernel_closing_ends_the_relay_and_closes_the_tunnel() {
     served.join().unwrap().unwrap();
     assert_eq!(device.closes.load(Ordering::SeqCst), 1);
 }
+
+/// A tunnel whose writes wait while `held`, as a PC that stops reading leaves them.
+struct Held {
+    inner: Arc<TcpTunnel>,
+    held: Mutex<bool>,
+    released: std::sync::Condvar,
+    waiting: AtomicUsize,
+}
+impl Tunnel for Held {
+    fn read(&self, bytes: &mut [u8]) -> std::io::Result<usize> {
+        self.inner.read(bytes)
+    }
+    fn write_all(&self, bytes: &[u8]) -> std::io::Result<()> {
+        let mut held = self.held.lock().unwrap();
+        if *held {
+            self.waiting.fetch_add(1, Ordering::SeqCst);
+            while *held {
+                held = self.released.wait(held).unwrap();
+            }
+        }
+        drop(held);
+        self.inner.write_all(bytes)
+    }
+    fn close(&self) {
+        self.inner.close();
+    }
+}
+
+#[test]
+fn a_completion_whose_write_waits_on_the_pc_does_not_stop_the_serve_loop() {
+    let device = Arc::new(Keeper::default());
+    let (inner, mut driver) = pipe();
+    let tunnel = Arc::new(Held { inner, held: Mutex::new(false), released: std::sync::Condvar::new(), waiting: AtomicUsize::new(0) });
+    let served = {
+        let (tunnel, device) = (tunnel.clone(), device.clone());
+        std::thread::spawn(move || serve(tunnel, device))
+    };
+    driver.import("1-1").unwrap();
+    let first = driver.submit(1, wire::DIR_IN, 8, [0; 8], &[], &[]);
+    let second = driver.submit(1, wire::DIR_IN, 8, [0; 8], &[], &[]);
+    let kept = |count: usize| {
+        let started = std::time::Instant::now();
+        while device.kept.lock().unwrap().len() < count {
+            if started.elapsed() > Duration::from_secs(3) {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        true
+    };
+    assert!(kept(2));
+    // The PC stops reading: the first completion's write waits.
+    *tunnel.held.lock().unwrap() = true;
+    let completion = device.kept.lock().unwrap().remove(0);
+    assert_eq!(completion.seqnum(), first);
+    let completing = std::thread::spawn(move || completion.complete(Reply::read(vec![1])));
+    while tunnel.waiting.load(Ordering::SeqCst) == 0 {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // The serve loop still takes a submit, an unlink and a submit after it.
+    driver.submit(1, wire::DIR_IN, 8, [0; 8], &[], &[]);
+    let unlink = driver.unlink(second);
+    driver.submit(1, wire::DIR_IN, 8, [0; 8], &[], &[]);
+    let took = kept(3);
+    *tunnel.held.lock().unwrap() = false;
+    tunnel.released.notify_all();
+    assert!(took, "the serve loop waited behind the blocked write");
+    completing.join().unwrap();
+    // The unlink's answer comes after the completion it followed.
+    let (header, data, _) = driver.reply(true);
+    assert_eq!((status_of(&header), data), ((first, 0), vec![1]));
+    assert_eq!(status_of(&driver.reply(false).0), (unlink, wire::ECONNRESET));
+    drop(driver);
+    served.join().unwrap().unwrap();
+}

@@ -1,8 +1,8 @@
 //! The USB/IP server one forwarded device runs: the driver's import, then its submits and
 //! unlinks, answered as the device completes them.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
 use rubylight_protocol::usbip::{self as wire, Base, Header, IsoPacket};
 
@@ -150,6 +150,8 @@ impl From<std::io::Error> for ServeError {
 struct Shared {
     tunnel: Arc<dyn Tunnel>,
     state: Mutex<State>,
+    /// An answer left [`State::out`].
+    drained: Condvar,
 }
 
 /// The transfers one device may have in flight. The driver queues a few per endpoint; one
@@ -171,6 +173,13 @@ struct State {
     closed: bool,
     /// What made a completion close the tunnel.
     failure: Option<ServeError>,
+    /// Answers waiting for the tunnel, in the order they go out. Written outside the lock, so
+    /// a PC slow to read stops neither the serve loop nor other completions.
+    out: VecDeque<Vec<u8>>,
+    /// The bytes in `out`: they count against [`MAX_BUFFERED`] until written.
+    out_bytes: u64,
+    /// A thread is writing `out`.
+    writing: bool,
 }
 
 impl Shared {
@@ -199,6 +208,45 @@ impl Shared {
             state.failure = Some(error);
         }
         self.tunnel.close();
+    }
+
+    /// Queues `message` after every answer queued before it, and writes the queue unless
+    /// another thread already does; that one writes it in turn. False when this thread's write
+    /// failed: serving has failed and the tunnel is closed.
+    fn send<'a>(&'a self, mut state: MutexGuard<'a, State>, message: Vec<u8>) -> bool {
+        if state.closed {
+            return true;
+        }
+        state.out_bytes += message.len() as u64;
+        state.out.push_back(message);
+        if std::mem::replace(&mut state.writing, true) {
+            return true;
+        }
+        while let Some(message) = state.out.pop_front() {
+            drop(state);
+            let written = self.tunnel.write_all(&message);
+            state = self.state();
+            state.out_bytes -= message.len() as u64;
+            self.drained.notify_all();
+            if let Err(e) = written {
+                state.out.clear();
+                state.out_bytes = 0;
+                state.writing = false;
+                self.fail(&mut state, ServeError::Io(e));
+                return false;
+            }
+        }
+        state.writing = false;
+        true
+    }
+
+    /// Waits while [`MAX_IN_FLIGHT`] answers wait for the tunnel: a PC that sends without
+    /// reading is read no further until it takes some.
+    fn room<'a>(&self, mut state: MutexGuard<'a, State>) -> MutexGuard<'a, State> {
+        while state.out.len() >= MAX_IN_FLIGHT && !state.closed && state.failure.is_none() {
+            state = self.drained.wait(state).unwrap_or_else(PoisonError::into_inner);
+        }
+        state
     }
 }
 
@@ -248,10 +296,9 @@ fn finish(shared: &Shared, asked: &Asked, reply: Reply) {
         Ok(message) => message,
         Err(e) => return shared.fail(&mut state, ServeError::Device(e)),
     };
-    // Written under the lock, so an unlink's answer never overtakes it or goes out after it.
-    if let Err(e) = shared.tunnel.write_all(&message) {
-        shared.fail(&mut state, ServeError::Io(e));
-    }
+    // Queued under the lock it settled under, so an unlink's answer never overtakes it or goes
+    // out before it; a failed write fails serving.
+    shared.send(state, message);
 }
 
 /// The `RET_SUBMIT` for `reply`, or why it does not fit the submit.
@@ -326,6 +373,7 @@ pub fn serve(tunnel: Arc<dyn Tunnel>, device: Arc<dyn UsbDevice>) -> Result<(), 
     let shared = Arc::new(Shared {
         tunnel: tunnel.clone(),
         state: Mutex::new(State::default()),
+        drained: Condvar::new(),
     });
     let result = run(&shared, device.as_ref());
     let failure = {
@@ -333,6 +381,8 @@ pub fn serve(tunnel: Arc<dyn Tunnel>, device: Arc<dyn UsbDevice>) -> Result<(), 
         state.closed = true;
         state.pending.clear();
         state.buffered = 0;
+        state.out.clear();
+        state.out_bytes = 0;
         state.failure.take()
     };
     tunnel.close();
@@ -489,15 +539,20 @@ fn run(shared: &Arc<Shared>, device: &dyn UsbDevice) -> Result<(), ServeError> {
                         base.seqnum
                     )));
                 }
-                if state.pending.len() >= MAX_IN_FLIGHT || state.buffered + bytes > MAX_BUFFERED {
-                    // Refused as Linux refuses a submit it has no memory for. Answered under
+                // Answers still waiting for the tunnel count as in flight.
+                if state.pending.len() + state.out.len() >= MAX_IN_FLIGHT
+                    || state.buffered + state.out_bytes + bytes > MAX_BUFFERED
+                {
+                    // Refused as Linux refuses a submit it has no memory for. Queued under
                     // the lock, like every completion.
                     let first = !std::mem::replace(&mut state.refused, true);
                     let (count, buffered) = (state.pending.len(), state.buffered);
                     let answer = ret_submit(&asked, Reply::failed(wire::ENOMEM))
                         .map_err(ServeError::Device)?;
-                    tunnel.write_all(&answer)?;
-                    drop(state);
+                    let state = shared.room(state);
+                    if !shared.send(state, answer) {
+                        return Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe).into());
+                    }
                     if first {
                         super::warn(&format!(
                             "USB {}: the host's driver has {count} transfers ({} KiB) in flight; \
@@ -551,10 +606,11 @@ fn run(shared: &Arc<Shared>, device: &dyn UsbDevice) -> Result<(), ServeError> {
                     },
                     status,
                 };
-                // Under the lock, like every completion, so the two never interleave.
-                let state = shared.state();
-                tunnel.write_all(&answer.encode())?;
-                drop(state);
+                // Queued like every completion, so the two never interleave.
+                let state = shared.room(shared.state());
+                if !shared.send(state, answer.encode().to_vec()) {
+                    return Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe).into());
+                }
             }
             other => return Err(ServeError::Protocol(format!("the driver sent {other:?}"))),
         }
