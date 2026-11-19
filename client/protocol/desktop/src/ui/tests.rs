@@ -3447,6 +3447,32 @@ fn settings_opened_over_a_game_page_keeps_its_neural_panel() {
     assert!(f.l.neural.state_for(pc, 1000).is_none());
 }
 
+/// With two game pages on the trail (game A, the search, game B), Settings over B keeps B's
+/// panel, not A's.
+#[test]
+fn settings_over_the_newest_game_page_keeps_that_pages_neural_panel() {
+    let mut f = game_page_with_neural(false, nightjar_core::http::native_api::radeon::ControlState::Configurable, None);
+    let pc = f.hosts.list[0].id;
+    let neural = f.l.neural.state_for(pc, 1000).and_then(|open| open.state.clone()).unwrap();
+    f.hosts.list[0].apps = Apps::Loaded(vec![
+        nightjar_core::http::App { name: "Game 00".into(), uuid: "install-0".into(), ..game(1000) },
+        nightjar_core::http::App { name: "Game 01".into(), uuid: "install-1".into(), ..game(1001) },
+    ]);
+    f.l.open(Screen::AllGames);
+    f.l.open(Screen::Game { host: pc, app: 1001 });
+    f.l.neural.open(pc, 1001, "install-1".into(), std::sync::Arc::new(FixedNeural(std::sync::Mutex::new(neural))), std::sync::Arc::new(|| {}));
+    for _ in 0..400 {
+        f.l.neural.poll(Some((pc, 1001)));
+        if f.l.neural.state_for(pc, 1001).is_some_and(|open| open.state.is_some()) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    f.l.open_settings();
+    f.settle();
+    assert!(f.l.neural.state_for(pc, 1001).is_some_and(|open| open.state.is_some()), "Settings closed game B's panel");
+}
+
 /// A window that changes size on a game page moves its moon: no ghost of the old place fades
 /// behind the settings card, at any frame.
 #[test]

@@ -1178,8 +1178,9 @@ impl Launcher {
             commands.push(Command::Launch { host, app, resume: false });
         }
         // Likewise a game page that was left closes its Neural Rendering; Settings opened over it
-        // (Start or the Settings link) keeps the panel as it was.
-        let game = std::iter::once(&self.screen).chain(self.trail.iter().map(|(screen, _)| screen)).find_map(|screen| match screen {
+        // (Start or the Settings link) keeps the panel as it was. The newest game page is the one
+        // Back returns to: the trail ends with the latest.
+        let game = std::iter::once(&self.screen).chain(self.trail.iter().rev().map(|(screen, _)| screen)).find_map(|screen| match screen {
             Screen::Game { host, app } => Some((*host, *app)),
             _ => None,
         });
