@@ -423,17 +423,20 @@ fn a_stopped_launch_ends_its_running_preparation_command_and_undoes_the_finished
                 );
                 std::thread::sleep(Duration::from_millis(20));
             }
+            let cancelled = std::time::Instant::now();
             cancel.cancel().unwrap();
+            cancelled
         }
     });
-    let begun = std::time::Instant::now();
     let error = launch_with_environment(&f.host, &app, &HashMap::new(), Ok(BTreeMap::new()))
         .err()
         .unwrap();
-    stopper.join().unwrap();
+    let ended = std::time::Instant::now();
+    let cancelled = stopper.join().unwrap();
     assert_eq!(error.to_string(), LAUNCH_STOPPED);
-    // Not the 60 s of the command, nor its 120 s limit.
-    assert!(begun.elapsed() < Duration::from_secs(45));
+    // The launch ends soon after the stop: not the 60 s of the command, nor
+    // its 120 s limit.
+    assert!(ended.saturating_duration_since(cancelled) < Duration::from_secs(20));
     assert!(f.host.launch_stopped());
     assert_eq!(
         std::fs::read_to_string(&trace)
