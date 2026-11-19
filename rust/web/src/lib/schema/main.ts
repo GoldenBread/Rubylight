@@ -67,10 +67,10 @@ export const ALWAYS_ON: readonly string[] = [
   // Picture: capture, codecs, HDR, frame pacing, bitrate and NVENC
   'idd_push_fence_ring', 'wgc_direct_encoder_input', 'gpu_compute_conversion',
   'packed_444', 'pyrowave',
-  'hdr_dynamic_metadata', 'hdr_dolby_vision', 'hdr_hlg',
+  'hdr_dolby_vision', 'hdr_hlg',
   'wgc_pacing_smoothing', 'stream_reconfigure', 'frame_warp',
   'wireless_adaptive_pacing', 'keyframe_loss_pacing', 'link_rate_adaptation',
-  'nvenc_frame_budget_guard', 'nvenc_realtime_hags', 'nvenc_latency_over_power',
+  'nvenc_frame_budget_guard', 'nvenc_realtime_hags',
 ];
 /**
  * Settings only for troubleshooting, whose values are not choices a player
@@ -79,6 +79,8 @@ export const ALWAYS_ON: readonly string[] = [
  */
 export const DIAGNOSTICS: readonly string[] = ['capture_poll_interval_us', 'capture_predictive_poll', 'wgc_slot_aligned_publish'];
 export const DEBUG_GROUP = 'Debug switches';
+/** Where a Debug switch shows once turned off, when that is not the category it is filed under: QR pairing sits beside Allow pairing. */
+const ORIGIN_CATEGORY: Readonly<Record<string, Setting['category']>> = { qr_pairing: 'network' };
 
 /** The only groups All settings starts collapsed. */
 export const EXPERT_GROUPS: ReadonlySet<string> = new Set([
@@ -129,7 +131,7 @@ export const FOLDED_GROUPS: ReadonlySet<string> = new Set([
 export function asDebugSwitch(setting: Setting): Setting {
   return {
     ...setting,
-    origin: { category: setting.category, group: setting.group },
+    origin: { category: ORIGIN_CATEGORY[setting.key] ?? setting.category, group: setting.group },
     category: 'advanced',
     group: DEBUG_GROUP,
     description: 'On for everyone. Turning it off is only for troubleshooting.',

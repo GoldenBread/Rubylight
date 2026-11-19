@@ -1,6 +1,7 @@
 // The tiers of All settings (src/lib/schema/tiers.ts): what each topic tab shows, what Advanced lists
 // as expert settings, and that nothing a user changed is hidden.
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { createTestServer } from './test-server.mjs';
 
@@ -11,6 +12,7 @@ const lib = await server.ssrLoadModule('/src/lib/settings-schema.ts');
 const { schema, settingGroups, tabLayout, topicTab, topicGroup, placeOf, placeText, movedAnchor, groupAnchor, EXPERT_HEADING, GAME_SOURCES } = lib;
 const main = await server.ssrLoadModule('/src/lib/schema/main.ts');
 const tiers = await server.ssrLoadModule('/src/lib/schema/tiers.ts');
+const { askedFor, differsFromDefault } = await server.ssrLoadModule('/src/components/settings/values.ts');
 const { results, settingHref, settingLink } = await server.ssrLoadModule('/src/lib/quick-switch.ts');
 const { ALWAYS_ON, DIAGNOSTICS, MAIN_KEYS, DEBUG_GROUP } = main;
 const { EXPERT_KEYS, GAMES_PAGE_KEYS, tierOf } = tiers;
@@ -33,7 +35,7 @@ test('every key in the tier lists is a setting, and no key has two tiers', () =>
       assert.equal(tierOf(key), name, key);
     }
   }
-  assert.deepEqual([EXPERT_KEYS.length, GAMES_PAGE_KEYS.length, ALWAYS_ON.length, DIAGNOSTICS.length], [139, 35, 22, 3]);
+  assert.deepEqual([EXPERT_KEYS.length, GAMES_PAGE_KEYS.length, ALWAYS_ON.length, DIAGNOSTICS.length], [141, 35, 20, 3]);
 });
 
 test('no topic tab starts with more than 40 everyday settings', () => {
@@ -192,4 +194,40 @@ test('every setting is in a topic tab or in Advanced, exactly where its tier say
     if (tier === 'games-page') assert.deepEqual(tabs, [], `${setting.key} stays on the Games page until asked for`);
     else assert.deepEqual(tabs, [placeOf(setting).tab], setting.key);
   }
+});
+
+test('the page decides "changed" with askedFor: stored values, unsaved edits, and nothing at the default', async () => {
+  const page = await readFile(new URL('./src/pages/Settings.svelte', import.meta.url), 'utf8');
+  assert.match(page, /askedFor\(setting, edits, config, pending\)/);
+  const asked = (stored, edits = {}, pending = new Set()) => (setting) => askedFor(setting, edits, stored, pending);
+  const stored = { congestion_control: 'enabled', frame_warp: 'disabled' };
+  const advanced = layoutOf('advanced', { changed: asked(stored) });
+  assert.ok(advanced.marked.has('frame_warp') || keysOf(advanced.groups).includes('frame_warp'));
+  const picture = layoutOf('picture', { changed: asked(stored) });
+  assert.ok(picture.marked.has('congestion_control') || keysOf(picture.groups).includes('congestion_control'));
+  assert.equal(layoutOf('picture', { changed: asked({}) }).marked.size, 0);
+  const edited = layoutOf('picture', { changed: asked({}, {}, new Set(['stream_preset'])) });
+  assert.ok(keysOf(edited.groups).includes('stream_preset'));
+});
+
+test('a JSON setting stored as empty JSON is at its default', () => {
+  const keybindings = byKey.get('keybindings');
+  assert.equal(keybindings.control.kind, 'json');
+  assert.equal(differsFromDefault(keybindings, {}, { keybindings: '[]' }), false);
+  assert.equal(differsFromDefault(keybindings, {}, { keybindings: '[{"keys":"a"}]' }), true);
+});
+
+test('a changed launcher option is an ordinary option of the Games page, without the Expert mark', () => {
+  const layout = layoutOf('games', { changed: (setting) => setting.key === 'epic_auto_sync' });
+  assert.ok(keysOf(layout.groups).includes('epic_auto_sync'));
+  assert.equal(layout.marked.has('epic_auto_sync'), false);
+});
+
+test('turning off QR pairing shows it beside Allow pairing; HDR dynamic metadata and the NVENC power choice are expert', () => {
+  const network = layoutOf('network', { changed: (setting) => setting.key === 'qr_pairing' });
+  const pairing = network.groups.find((group) => group.name === 'Pairing');
+  assert.ok(pairing.settings.some((setting) => setting.key === 'qr_pairing'));
+  assert.ok(pairing.settings.some((setting) => setting.key === 'enable_pairing'));
+  assert.ok(network.marked.has('qr_pairing'));
+  for (const key of ['hdr_dynamic_metadata', 'nvenc_latency_over_power']) assert.equal(tierOf(key), 'expert', key);
 });

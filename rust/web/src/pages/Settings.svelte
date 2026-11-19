@@ -21,6 +21,7 @@
   import { matchesSetting, matchesWords, searchWords } from '../components/settings/search';
   import {
     applyChanges,
+    askedFor,
     caution,
     computeChanges,
     currentValues,
@@ -209,7 +210,7 @@
   const dailyPart = (setting: Setting): Setting | undefined =>
     setting.control.kind === 'number' && setting.control.daily ? defaults.get(setting.control.daily.key) : undefined;
 
-  const asked = (setting: Setting) => pending.has(setting.key) || differsFromDefault(setting, edits, config);
+  const asked = (setting: Setting) => askedFor(setting, edits, config, pending);
   // Keep a pending control reachable if editing its parent makes it inactive.
   const reachable = (setting: Setting) => visible(setting) || pending.has(setting.key);
   const layout = $derived(

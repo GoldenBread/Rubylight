@@ -140,8 +140,8 @@ test('every schema key is reachable from search, and opens its own category', ()
 test('always-on keys appear only in Debug switches, described as for troubleshooting', () => {
   assert.deepEqual([...ALWAYS_ON].sort(), [
     'audio_passthrough', 'audio_surround_714', 'bandwidth_probe', 'client_roaming', 'frame_warp', 'gpu_compute_conversion',
-    'hdr_dolby_vision', 'hdr_dynamic_metadata', 'hdr_hlg', 'idd_push_fence_ring', 'keyframe_loss_pacing', 'link_rate_adaptation',
-    'nvenc_frame_budget_guard', 'nvenc_latency_over_power', 'nvenc_realtime_hags', 'packed_444', 'pyrowave', 'qr_pairing',
+    'hdr_dolby_vision', 'hdr_hlg', 'idd_push_fence_ring', 'keyframe_loss_pacing', 'link_rate_adaptation',
+    'nvenc_frame_budget_guard', 'nvenc_realtime_hags', 'packed_444', 'pyrowave', 'qr_pairing',
     'stream_reconfigure', 'wgc_direct_encoder_input', 'wgc_pacing_smoothing', 'wireless_adaptive_pacing',
   ]);
   for (const key of ALWAYS_ON) {

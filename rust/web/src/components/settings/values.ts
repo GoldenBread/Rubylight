@@ -485,7 +485,27 @@ export function computeChanges(
 export function differsFromDefault(setting: Setting, edits: Edits, stored: Config): boolean {
   const value = has(edits, setting.key) ? edits[setting.key] : stored[setting.key];
   const next = patchValue(setting, value);
-  return next !== null && !sameValue(meaning(setting, next), meaning(setting, patchValue(setting, setting.default)));
+  return next !== null && !sameValue(compared(setting, next), compared(setting, patchValue(setting, setting.default)));
+}
+
+/** A value as differsFromDefault compares it: a JSON control stored as text ('[]') equals its parsed default ([]). */
+function compared(setting: Setting, value: ConfigValue): ConfigValue {
+  if (setting.control.kind === 'json' && typeof value === 'string') {
+    try {
+      return JSON.parse(value) as ConfigValue;
+    } catch {
+      return value;
+    }
+  }
+  return meaning(setting, value);
+}
+
+/**
+ * Whether All settings treats a setting as changed: it differs from its default, saved or not, or it
+ * has an unsaved edit. A changed setting always shows in its topic tab.
+ */
+export function askedFor(setting: Setting, edits: Edits, stored: Config, pending: ReadonlySet<string>): boolean {
+  return pending.has(setting.key) || differsFromDefault(setting, edits, stored);
 }
 
 /** What the current value costs the stream (cautionWhen), while the setting applies. */

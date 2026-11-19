@@ -307,7 +307,8 @@ export function tabLayout(tab: TabId, settings: readonly Setting[], input: Layou
     const tier = tierOf(setting.key);
     if (tier === 'home' || tier === 'everyday') return true;
     if (input.changed(setting)) {
-      marked.add(setting.key);
+      // A launcher's option is an ordinary option that lives on the Games page, not an expert one.
+      if (tier !== 'games-page') marked.add(setting.key);
       return true;
     }
     return tier === 'games-page' && revealed.has(topicGroup(setting));

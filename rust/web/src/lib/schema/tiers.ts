@@ -28,7 +28,7 @@ export const EXPERT_KEYS: readonly string[] = [
   // Picture › Codecs
   'hevc_mode', 'av1_mode', 'pyrowave_encode_overlap',
   // Picture › HDR
-  'prefer_sdr_10bit', 'vulkan_hdr_layer', 'virtual_display_hdr_calibration',
+  'hdr_dynamic_metadata', 'prefer_sdr_10bit', 'vulkan_hdr_layer', 'virtual_display_hdr_calibration',
   // Picture › Frame pacing
   'frame_pacing', 'minimum_fps_target', 'limit_framerate', 'phase_lock_hold_at_stream_rate',
   // Picture › Bitrate and network
@@ -45,7 +45,7 @@ export const EXPERT_KEYS: readonly string[] = [
   'nvenc_preset', 'nvenc_rate_control', 'nvenc_target_quality', 'nvenc_peak_bitrate_ratio', 'nvenc_twopass',
   'nvenc_spatial_aq', 'nvenc_temporal_aq', 'nvenc_split_encode', 'nvenc_vbv_increase', 'nvenc_weighted_prediction',
   'nvenc_h264_cavlc', 'nvenc_insert_filler_data', 'nvenc_enable_min_qp', 'nvenc_min_qp_h264', 'nvenc_min_qp_hevc',
-  'nvenc_min_qp_av1',
+  'nvenc_min_qp_av1', 'nvenc_latency_over_power',
   // Picture › Streamed display
   'dd_activate_virtual_display', 'dd_rotation_option', 'dd_manual_rotation',
   // Picture › Mode substitutions
