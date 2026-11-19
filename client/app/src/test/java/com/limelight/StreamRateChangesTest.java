@@ -53,6 +53,32 @@ public class StreamRateChangesTest {
         throw new AssertionError("automatic bitrate never asked");
     }
 
+    /** The query asks for nothing; its answer is its own, never a takeover's or the menu's, and it can go unanswered. */
+    @Test
+    public void theQueryAsksForNothingAndItsAnswerIsItsOwn() {
+        assertTrue(changes.sendQuery(0));
+        int serial = sent.get(0)[0];
+        assertArrayEquals(new int[] {serial, 0, 0}, sent.get(0));
+        RateChangeResult answer = new RateChangeResult(serial, 14_988, 60_000, STATUS_UNCHANGED, REASON_NONE,
+                STATUS_REFUSED, REASON_INVALID);
+        StreamRateChanges.Outcome outcome = changes.onResult(answer, 100);
+        assertEquals(StreamRateChanges.Answer.QUERY, outcome.answer);
+        assertTrue("its bitrate is the stream's", outcome.takesBitrate);
+        assertEquals("once", StreamRateChanges.Answer.UNKNOWN, changes.onResult(answer, 200).answer);
+
+        // Unanswered: given up on after ANSWER_MS, and a late answer is for no request.
+        assertTrue(changes.sendQuery(1000));
+        int late = sent.get(1)[0];
+        assertEquals(1000 + StreamRateChanges.ANSWER_MS, changes.nextExpiryMs());
+        assertEquals(EnumSet.of(StreamRateChanges.Answer.QUERY_NO_ANSWER), changes.expire(1000 + StreamRateChanges.ANSWER_MS));
+        assertEquals(StreamRateChanges.Answer.UNKNOWN, changes.onResult(new RateChangeResult(late, 14_988, 60_000,
+                STATUS_UNCHANGED, REASON_NONE, STATUS_REFUSED, REASON_INVALID), 7000).answer);
+
+        sendWorks = false;
+        assertFalse(changes.sendQuery(8000));
+        assertEquals("nothing waits for it", 0, changes.nextExpiryMs());
+    }
+
     @Test
     public void aRequestFromTheMenuGoesOutWithItsOwnSerialAndComesBackAsManual() {
         assertTrue(changes.sendManual(30_000, 0, 0));

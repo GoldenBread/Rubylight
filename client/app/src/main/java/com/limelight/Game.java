@@ -244,6 +244,12 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
             if (expired.contains(StreamRateChanges.Answer.MANUAL_NO_ANSWER)) {
                 messages.alert(R.string.stream_rate_change_no_answer, Toast.LENGTH_LONG);
             }
+            if (expired.contains(StreamRateChanges.Answer.QUERY_NO_ANSWER)) {
+                // Quietly, as before the query: Keep my bitrate and automatic bitrate start from the stream's own.
+                LimeLog.warning("Rate change: the PC did not answer the bitrate query in " + StreamRateChanges.ANSWER_MS +
+                        " ms; the stream goes on from " + streamStartBitrateKbps + " kbps");
+                adaptation.streamBitrateKnown(rateChanges, 0);
+            }
             adaptation.scheduleRateChangeExpiry();
         }
     };

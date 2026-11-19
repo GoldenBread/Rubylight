@@ -428,6 +428,16 @@ final class GameAdaptation {
         LimeLog.info("Rate change: " + result + " (" + answer + (outcome.takesBitrate ? ")" : ", older bitrate)"));
         // An answer that came after a later request's keeps that one's bitrate.
         if (outcome.takesBitrate) game.currentBitrate = result.bitrateKbps;
+        if (answer == StreamRateChanges.Answer.QUERY) {
+            if (result.bitrateKbps > 0) {
+                LimeLog.info("Rate change: the PC counts this stream's bitrate as " + result.bitrateKbps +
+                        " kbps; Keep my bitrate and automatic bitrate start from it");
+            } else {
+                LimeLog.warning("Rate change: the PC's answer to the bitrate query named no bitrate; " +
+                        "the stream goes on from " + game.streamStartBitrateKbps + " kbps");
+            }
+            streamBitrateKnown(game.rateChanges, result.bitrateKbps);
+        }
         if (answer == StreamRateChanges.Answer.TAKEOVER && !takeoverHeld(result.bitrateStatus)) {
             // A refused takeover: the PC still lowers the bitrate, so the switch shows off and the notice may say so.
             game.bitrateKept = false;
@@ -475,13 +485,20 @@ final class GameAdaptation {
         // After an automatic reconnect the player's own rate is the one this stream started at.
         game.playerBitrateKbps = game.sessionManualBitrate;
         game.streamStartBitrateKbps = game.currentBitrate == 0 ? game.prefConfig.bitrate : game.currentBitrate;
+        askingStream = null;
+        automaticAfterAnswer = false;
+        streamStartMs = SystemClock.uptimeMillis();
+        // Before anything that sets a bitrate: the PC's own count of this stream's bitrate, which Keep my bitrate
+        // and automatic bitrate start from (Rubylight 6.0.1 and older count in the encoder's unit, newer PCs in the
+        // launch's).
+        if (changes != null) askStreamBitrate(changes, true);
         // A reconnect is a new session on the PC, whose controllers lower the bitrate again: Never, and a bitrate the
         // player chose before the reconnect, send it again.
         if (game.prefConfig.keepBitrate || (changes != null && game.sessionManualBitrate > 0)) {
             if (changes != null) {
-                // The bitrate dialog's switch shows on from now; it sends nothing more while the takeover waits.
+                // The bitrate dialog's switch shows on from now; it sends nothing more while the takeover waits for
+                // the PC's answer (streamBitrateKnown).
                 game.bitrateKept = true;
-                sendKeepBitrate(changes);
             } else {
                 LimeLog.info("Never: keep my bitrate is chosen, but this PC takes no bitrate changes from the device; " +
                         "the stream runs as The PC decides");
@@ -503,22 +520,64 @@ final class GameAdaptation {
         }
     }
 
+    // The stream whose start waits for the PC's answer to the query (StreamRateChanges.sendQuery); null once it went on.
+    private StreamRateChanges askingStream;
+    // Automatic bitrate on this device waits for that answer, to start from the stream's bitrate as the PC counts it.
+    private boolean automaticAfterAnswer;
+    // The stream's start in uptime: Keep my bitrate's change goes out no sooner than a second after it.
+    private long streamStartMs;
+
+    // The query, at once; one that cannot be sent yet goes once more a second later, and then the stream goes on
+    // without it.
+    private void askStreamBitrate(StreamRateChanges stream, boolean again) {
+        askingStream = stream;
+        if (stream.sendQuery(SystemClock.uptimeMillis())) {
+            LimeLog.info("Rate change: asking the PC what it counts this stream's bitrate as");
+            scheduleRateChangeExpiry();
+        } else if (again) {
+            LimeLog.warning("Rate change: the bitrate query could not be sent yet; trying again in a second");
+            game.bitrateHandler.postDelayed(() -> {
+                if (game.connected && game.rateChanges == stream && askingStream == stream) askStreamBitrate(stream, false);
+            }, 1000);
+        } else {
+            LimeLog.warning("Rate change: the bitrate query could not be sent; the stream goes on from " +
+                    game.streamStartBitrateKbps + " kbps");
+            streamBitrateKnown(stream, 0);
+        }
+    }
+
+    // The PC answered the query with the stream's bitrate in its own unit (kbps > 0), or did not, or it could not be
+    // sent (0: the stream goes on from the bitrate it started with). What waited for it goes on, once.
+    void streamBitrateKnown(StreamRateChanges stream, int kbps) {
+        if (stream == null || askingStream != stream) return;
+        askingStream = null;
+        if (!game.connected || game.rateChanges != stream) return;
+        if (kbps > 0) game.streamStartBitrateKbps = kbps;
+        if (game.bitrateKept) {
+            // Never, a bitrate the player chose before a reconnect, or the switch turned on while the PC was asked.
+            long waitMs = Math.max(0, streamStartMs + 1000 - SystemClock.uptimeMillis());
+            game.bitrateHandler.postDelayed(() -> sendKeepBitrate(stream), waitMs);
+        }
+        if (automaticAfterAnswer) {
+            automaticAfterAnswer = false;
+            if (!bitrateHeld()) setRateChangeBitrateEnabled(true);
+        }
+    }
+
     // "Never: keep my bitrate": once the stream runs, its own bitrate goes to the PC as a bitrate change, which makes
-    // the PC's link-rate and congestion controllers stand back for this stream. One second after the start, as the
-    // automatic bitrate's first sample is.
+    // the PC's link-rate and congestion controllers stand back for this stream. Once the PC said what it counts that
+    // bitrate as, and no sooner than a second after the start, as the automatic bitrate's first sample is.
     private void sendKeepBitrate(StreamRateChanges stream) {
-        game.bitrateHandler.postDelayed(() -> {
-            // Turned off in the stream menu before this ran: nothing goes out, and the switch stays off.
-            if (!game.connected || game.rateChanges != stream || !game.bitrateKept) return;
-            int kbps = keepKbps();
-            if (stream.sendTakeover(kbps, SystemClock.uptimeMillis())) {
-                LimeLog.info("Keep my bitrate: sent " + kbps + " kbps as a bitrate change so the PC stops lowering it");
-                scheduleRateChangeExpiry();
-            } else {
-                game.bitrateKept = false;
-                LimeLog.warning("Keep my bitrate: the bitrate change could not be sent; the PC may still lower the bitrate");
-            }
-        }, 1000);
+        // Turned off in the stream menu before this ran: nothing goes out, and the switch stays off.
+        if (!game.connected || game.rateChanges != stream || !game.bitrateKept) return;
+        int kbps = keepKbps();
+        if (stream.sendTakeover(kbps, SystemClock.uptimeMillis())) {
+            LimeLog.info("Keep my bitrate: sent " + kbps + " kbps as a bitrate change so the PC stops lowering it");
+            scheduleRateChangeExpiry();
+        } else {
+            game.bitrateKept = false;
+            LimeLog.warning("Keep my bitrate: the bitrate change could not be sent; the PC may still lower the bitrate");
+        }
     }
 
     /**
@@ -547,7 +606,11 @@ final class GameAdaptation {
             setRateChangeBitrateEnabled(false);
             if (isAdaptiveBitrateEnabled()) setAdaptiveBitrateEnabled(false, false);
             game.qualityAutoBitrate = false;
-            if (steering || !game.bitrateKept) {
+            if (askingStream == stream && !game.bitrateKept) {
+                // Sent with the PC's answer, from the stream's bitrate as it counts it (streamBitrateKnown).
+                game.bitrateKept = true;
+                LimeLog.info("Keep my bitrate (stream menu): goes out once the PC answered the bitrate query");
+            } else if (steering || !game.bitrateKept) {
                 int kbps = keepKbps();
                 if (game.connected && stream.sendTakeover(kbps, SystemClock.uptimeMillis())) {
                     LimeLog.info("Keep my bitrate (stream menu): sent " + kbps + " kbps as a bitrate change so the PC stops lowering it");
@@ -687,8 +750,11 @@ final class GameAdaptation {
         if (at > 0) game.bitrateHandler.postAtTime(game.expireRateChanges, at);
     }
 
+    // Also while it waits for the PC's answer to the query: no other controller takes the bitrate meanwhile, and the
+    // menu's switch turns it off.
     boolean isRateChangeBitrateOn() {
-        return game.rateChanges != null && game.rateChanges.automaticOn();
+        return game.rateChanges != null && (game.rateChanges.automaticOn() ||
+                (automaticAfterAnswer && askingStream == game.rateChanges));
     }
 
     // Automatic bitrate on this device, for this stream; the host-side automatic bitrate stops,
@@ -697,6 +763,7 @@ final class GameAdaptation {
         game.bitrateHandler.removeCallbacks(game.updateRateChangeBitrate);
         if (game.rateChanges == null) return;
         if (!enabled) {
+            automaticAfterAnswer = false;
             game.rateChanges.stopAutomatic();
             return;
         }
@@ -704,6 +771,12 @@ final class GameAdaptation {
         if (isAdaptiveBitrateEnabled()) setAdaptiveBitrateEnabled(false, false);
         game.qualityAutoBitrate = false;
         game.healthOriginalBitrate = game.healthTrialBitrate = 0;
+        if (askingStream == game.rateChanges) {
+            // Not from the setting's bitrate: it starts once the PC said what it counts this stream's as.
+            automaticAfterAnswer = true;
+            LimeLog.info("Automatic bitrate: starts once the PC answered the bitrate query");
+            return;
+        }
         game.rateChanges.startAutomatic(game.currentBitrate == 0 ? game.prefConfig.bitrate : game.currentBitrate,
                 StreamRateChanges.clientLimitKbps(game.prefConfig.layers == null ? null : game.prefConfig.layers.network,
                         game.prefConfig.mobileBitrateLimit),

@@ -44,6 +44,11 @@ final class StreamRateChanges {
         AUTOMATIC_NO_ANSWER,
         // Keep my bitrate's request got no answer in ANSWER_MS: the PC may still lower the bitrate.
         TAKEOVER_NO_ANSWER,
+        // The PC's answer to the query: the stream's bitrate in the unit the PC takes requests in.
+        // It changed nothing and says nothing to the player.
+        QUERY,
+        // The query got no answer in ANSWER_MS: the stream goes on from the setting's bitrate.
+        QUERY_NO_ANSWER,
     }
 
     // What became of one result.
@@ -64,6 +69,8 @@ final class StreamRateChanges {
         final boolean manual;
         // "Never: keep my bitrate": the stream's own bitrate, sent once so the PC stops lowering it.
         final boolean takeover;
+        // The query: asks for nothing, so the PC answers with the stream's bitrate in its own unit.
+        final boolean query;
         final long sentMs;
         // This stream's requests in the order they went out.
         final long order;
@@ -73,8 +80,13 @@ final class StreamRateChanges {
         }
 
         Request(boolean manual, boolean takeover, long sentMs, long order) {
+            this(manual, takeover, false, sentMs, order);
+        }
+
+        Request(boolean manual, boolean takeover, boolean query, long sentMs, long order) {
             this.manual = manual;
             this.takeover = takeover;
+            this.query = query;
             this.sentMs = sentMs;
             this.order = order;
         }
@@ -117,6 +129,17 @@ final class StreamRateChanges {
         int serial = nextSerial();
         if (!sender.send(serial, bitrateKbps, 0)) return false;
         outstanding.put(serial, new Request(false, true, nowMs, ++lastOrder));
+        return true;
+    }
+
+    // The query (bitrate and rate 0): every PC that takes rate changes answers it without changing
+    // anything, with the stream's bitrate as it counts it. Rubylight 6.0.1 and older count in the
+    // encoder's unit, newer ones in the launch's, so what Nightjar keeps or steers starts from the
+    // answer. False when it could not be sent.
+    boolean sendQuery(long nowMs) {
+        int serial = nextSerial();
+        if (!sender.send(serial, 0, 0)) return false;
+        outstanding.put(serial, new Request(false, false, true, nowMs, ++lastOrder));
         return true;
     }
 
@@ -170,6 +193,7 @@ final class StreamRateChanges {
         if (request == null) return new Outcome(Answer.UNKNOWN, false);
         boolean takesBitrate = result.bitrateKbps > 0 && request.order > bitrateOrder;
         if (takesBitrate) bitrateOrder = request.order;
+        if (request.query) return new Outcome(Answer.QUERY, takesBitrate);
         if (request.takeover) return new Outcome(Answer.TAKEOVER, takesBitrate);
         if (request.manual) {
             manualOutstanding--;
@@ -214,7 +238,9 @@ final class StreamRateChanges {
             int serial = entry.getKey();
             LimeLog.warning("Rate change: serial " + Integer.toUnsignedString(serial) + " got no answer in " +
                     ANSWER_MS + " ms");
-            if (request.takeover) {
+            if (request.query) {
+                expired.add(Answer.QUERY_NO_ANSWER);
+            } else if (request.takeover) {
                 expired.add(Answer.TAKEOVER_NO_ANSWER);
             } else if (request.manual) {
                 manualOutstanding--;

@@ -77,16 +77,51 @@ public class GameRateChangeTest {
         ShadowToast.reset();
     }
 
+    // The queries for the stream's bitrate (bitrate and rate 0), apart from what sets one; the order of both.
+    private final List<int[]> queries = new ArrayList<>();
+    private final List<String> order = new ArrayList<>();
+    // Queries the sender cannot send yet, as a control stream that cannot carry them.
+    private int unsentQueries;
+
     private StreamRateChanges recording() {
         return new StreamRateChanges((serial, kbps, mhz) -> {
+            if (kbps == 0 && mhz == 0) {
+                if (unsentQueries > 0) {
+                    unsentQueries--;
+                    return false;
+                }
+                queries.add(new int[] {serial, kbps, mhz});
+                order.add("query");
+                return true;
+            }
             sent.add(new int[] {serial, kbps, mhz});
+            order.add("change");
             return true;
         });
     }
 
+    // A stream start on a PC that answers the query at once with the stream's own bitrate, as one running Rubylight
+    // from after 6.0.1 does for the launch's.
     private void startStream(StreamRateChanges changes) {
+        int asked = queries.size();
+        startStreamAsking(changes);
+        if (changes != null && queries.size() > asked) {
+            answerQuery((int) ReflectionHelpers.getField(game, "streamStartBitrateKbps"));
+        }
+    }
+
+    // A stream start whose query the test answers.
+    private void startStreamAsking(StreamRateChanges changes) {
         ReflectionHelpers.callInstanceMethod(game.adaptation, "startStreamBitrate",
                 ReflectionHelpers.ClassParameter.from(StreamRateChanges.class, changes));
+    }
+
+    // The PC's answer to the last query: the stream's bitrate as it counts it, nothing changed.
+    private void answerQuery(int kbps) {
+        assertFalse("a query went out", queries.isEmpty());
+        game.rateChange(new RateChangeResult(queries.get(queries.size() - 1)[0], kbps, 60_000, STATUS_UNCHANGED, REASON_NONE,
+                STATUS_REFUSED, REASON_INVALID));
+        ShadowLooper.idleMainLooper();
     }
 
     private AlertDialog openDialog() {
@@ -715,6 +750,158 @@ public class GameRateChangeTest {
         assertEquals(game.getString(R.string.summary_rate_change_bitrate), ShadowToast.getTextOfLatestToast());
         runUntilAutomaticAsks();
         assertFalse(sent.isEmpty());
+    }
+
+    // A Rubylight 6.0.1 PC counts a stream launched at the setting's 50 Mbps as its encoder's 37488 kbps.
+    private static final int OLDER_PC_KBPS = 37_488;
+
+    @Test
+    public void onAnOlderPcKeepMyBitrateSendsWhatThePcAnsweredAndTheSliderShowsIt() {
+        prefs.keepBitrate = true;
+        startStreamAsking(recording());
+        assertEquals("the query goes out at once", 1, queries.size());
+        runFor(3);
+        assertTrue("nothing sets a bitrate before the answer", sent.isEmpty());
+        int toasts = ShadowToast.shownToastCount();
+        answerQuery(OLDER_PC_KBPS);
+        assertEquals(1, sent.size());
+        assertEquals("not the setting's 50000, which would raise the encoder", OLDER_PC_KBPS, sent.get(0)[1]);
+        assertEquals(0, sent.get(0)[2]);
+        assertEquals(java.util.Arrays.asList("query", "change"), order);
+        assertEquals("the answer says nothing", toasts, ShadowToast.shownToastCount());
+        assertEquals(OLDER_PC_KBPS, (int) ReflectionHelpers.getField(game, "currentBitrate"));
+        assertEquals("37.488", fields(openDialog()).get(0).getText().toString());
+        // Its answer is the takeover's, and the switch stays on.
+        game.rateChange(new RateChangeResult(sent.get(0)[0], OLDER_PC_KBPS, 60_000, STATUS_APPLIED, REASON_NONE,
+                STATUS_UNCHANGED, REASON_NONE));
+        ShadowLooper.idleMainLooper();
+        assertTrue(game.adaptation.keepBitrateShown());
+        runFor(10);
+        assertEquals("once", 1, sent.size());
+    }
+
+    @Test
+    public void onAnOlderPcAutomaticBitrateStartsFromWhatThePcAnswered() {
+        prefs.rateChangeBitrate = true;
+        ReflectionHelpers.setStaticField(MediaCodecHelper.class, "initialized", true);
+        ReflectionHelpers.setField(game, "decoderRenderer", new MediaCodecDecoderRenderer(game, prefs, null, 0,
+                false, false, "", null) {
+            @Override public boolean hasRecentVideoFrames(long nowMs) { return true; }
+            @Override public float getNetworkFrameLossPercent() { return 10; }
+        });
+        startStreamAsking(recording());
+        assertNull("not from the setting's bitrate before the answer", game.rateChanges.automatic());
+        assertTrue("it owns the bitrate meanwhile, so automatic quality starts no other controller",
+                (boolean) ReflectionHelpers.callInstanceMethod(game.adaptation, "isRateChangeBitrateOn"));
+        assertFalse(GameAdaptation.qualityTakesBitrate(false, true, false,
+                (boolean) ReflectionHelpers.callInstanceMethod(game.adaptation, "isRateChangeBitrateOn"), 0));
+        runFor(3);
+        assertTrue("nothing before the answer", sent.isEmpty());
+        answerQuery(OLDER_PC_KBPS);
+        assertTrue((boolean) ReflectionHelpers.callInstanceMethod(game.adaptation, "isRateChangeBitrateOn"));
+        assertEquals(OLDER_PC_KBPS, game.rateChanges.automatic().currentKbps());
+        for (int i = 0; i < 10 && sent.isEmpty(); i++) runFor(1);
+        assertFalse("loss cuts the bitrate", sent.isEmpty());
+        assertTrue("the first cut is below the stream's " + OLDER_PC_KBPS + ": " + sent.get(0)[1], sent.get(0)[1] < OLDER_PC_KBPS);
+    }
+
+    @Test
+    public void onANewerPcTheAnswerIsTheStreamsOwnBitrateAndEverythingIsAsBefore() {
+        prefs.keepBitrate = true;
+        startStreamAsking(recording());
+        answerQuery(50_000);
+        assertTrue("a second into the stream, as before", sent.isEmpty());
+        runFor(1);
+        assertEquals(1, sent.size());
+        assertEquals(50_000, sent.get(0)[1]);
+        assertEquals(50_000, (int) ReflectionHelpers.getField(game, "currentBitrate"));
+    }
+
+    @Test
+    public void withNoAnswerTheStreamGoesOnAsBeforeOnceAndALateAnswerChangesNothing() {
+        prefs.keepBitrate = true;
+        startStreamAsking(recording());
+        runFor((int) (StreamRateChanges.ANSWER_MS / 1000) - 1);
+        assertTrue("waits for the answer", sent.isEmpty());
+        int toasts = ShadowToast.shownToastCount();
+        runFor(1);
+        assertEquals(1, sent.size());
+        assertEquals("the stream's own, as before the query", 50_000, sent.get(0)[1]);
+        assertEquals("quietly", toasts, ShadowToast.shownToastCount());
+        answerQuery(OLDER_PC_KBPS);
+        runFor(5);
+        assertEquals("once", 1, sent.size());
+        assertEquals(50_000, (int) ReflectionHelpers.getField(game, "currentBitrate"));
+        assertEquals(toasts, ShadowToast.shownToastCount());
+
+        // Automatic bitrate starts then too, from the stream's own.
+        prefs.keepBitrate = false;
+        prefs.rateChangeBitrate = true;
+        startStreamAsking(recording());
+        runFor((int) (StreamRateChanges.ANSWER_MS / 1000));
+        assertTrue((boolean) ReflectionHelpers.callInstanceMethod(game.adaptation, "isRateChangeBitrateOn"));
+        assertEquals(50_000, game.rateChanges.automatic().currentKbps());
+    }
+
+    @Test
+    public void aQueryThatCannotBeSentYetGoesOnceMoreASecondLater() {
+        prefs.keepBitrate = true;
+        unsentQueries = 1;
+        startStreamAsking(recording());
+        assertTrue(queries.isEmpty());
+        runFor(1);
+        assertEquals("again a second later", 1, queries.size());
+        assertTrue(sent.isEmpty());
+        answerQuery(OLDER_PC_KBPS);
+        assertEquals(OLDER_PC_KBPS, sent.get(0)[1]);
+
+        // Twice unsent: the stream goes on from its own bitrate, as before the query.
+        sent.clear();
+        queries.clear();
+        ReflectionHelpers.setField(game, "currentBitrate", 50_000);
+        unsentQueries = 2;
+        startStreamAsking(recording());
+        runFor(1);
+        assertTrue(queries.isEmpty());
+        assertEquals(1, sent.size());
+        assertEquals(50_000, sent.get(0)[1]);
+    }
+
+    @Test
+    public void aReconnectAfterThePlayerChoseABitrateSendsThatBitrateWhateverThePcAnswers() {
+        // The player's 30 Mbps came from this PC's own answers, so it is in the PC's unit already.
+        ReflectionHelpers.setField(game, "sessionManualBitrate", 30_000);
+        ReflectionHelpers.setField(game, "currentBitrate", 30_000);
+        startStreamAsking(recording());
+        answerQuery(22_488);
+        runFor(1);
+        assertEquals(1, sent.size());
+        assertEquals(30_000, sent.get(0)[1]);
+    }
+
+    @Test
+    public void automaticBitrateTurnedOffBeforeTheAnswerStaysOff() {
+        prefs.rateChangeBitrate = true;
+        startStreamAsking(recording());
+        ReflectionHelpers.callInstanceMethod(game.adaptation, "toggleAdaptiveBitrateFromMenu");
+        assertFalse((boolean) ReflectionHelpers.callInstanceMethod(game.adaptation, "isRateChangeBitrateOn"));
+        answerQuery(OLDER_PC_KBPS);
+        assertFalse((boolean) ReflectionHelpers.callInstanceMethod(game.adaptation, "isRateChangeBitrateOn"));
+        runFor(15);
+        assertTrue(sent.isEmpty());
+    }
+
+    @Test
+    public void keepMyBitrateTurnedOnBeforeTheAnswerSendsWhatThePcAnswered() {
+        startStreamAsking(recording());
+        keepSwitch(openDialog()).setChecked(true);
+        ShadowLooper.idleMainLooper();
+        assertTrue("nothing before the answer", sent.isEmpty());
+        assertTrue(game.adaptation.keepBitrateShown());
+        answerQuery(OLDER_PC_KBPS);
+        runFor(1);
+        assertEquals(1, sent.size());
+        assertEquals(OLDER_PC_KBPS, sent.get(0)[1]);
     }
 
     @Test
