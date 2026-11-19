@@ -272,6 +272,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private MediaFormat inputFormat;
     private volatile MediaFormat outputFormat;
     private MediaFormat configuredFormat;
+    // getReconfigureLimits()'s answer, never changed once published (publishReconfigureLimits).
+    private volatile int[] reconfigureLimits;
 
     private boolean needsBaselineSpsHack;
     private SeqParameterSet savedSps;
@@ -1013,24 +1015,31 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     }
 
     // {max width, max height, width alignment, height alignment} this stream's decoder can switch
-    // to mid-stream, or null when it cannot change size in place.
+    // to mid-stream, or null when it cannot change size in place. Read on the UI thread, which must
+    // never wait for codecRecoveryMonitor: a reset holds it for seconds, or for good when it hangs
+    // while the stream ends. The decoder publishes the limits each time it configures a codec.
     public int[] getReconfigureLimits() {
-        // A failed decoder's monitor may be held by a reset that hung (see prepareForStop).
-        if (decoderFailure != null) return null;
-        synchronized (codecRecoveryMonitor) {
-            MediaCodecInfo.VideoCapabilities caps = reconfigureCapabilities();
-            if (caps == null) {
-                return null;
-            }
-            int maxWidth = caps.getSupportedWidths().getUpper();
-            int maxHeight = caps.getSupportedHeights().getUpper();
-            if ((videoFormat & MoonBridge.VIDEO_FORMAT_MASK_H264) != 0) {
-                // initializeDecoder() refuses H.264 above 4096 either way.
-                maxWidth = Math.min(maxWidth, 4096);
-                maxHeight = Math.min(maxHeight, 4096);
-            }
-            return new int[] {maxWidth, maxHeight, caps.getWidthAlignment(), caps.getHeightAlignment()};
+        if (decoderFailure != null || stopping || vulkanRenderer != null) return null;
+        int[] limits = reconfigureLimits;
+        return limits == null ? null : limits.clone();
+    }
+
+    // After every configure (configureAndStartDecoder, which every setup, recovery and rebuild
+    // ends with) and at cleanup: what getReconfigureLimits() hands out until the next one.
+    private void publishReconfigureLimits() {
+        MediaCodecInfo.VideoCapabilities caps = reconfigureCapabilities();
+        if (caps == null) {
+            reconfigureLimits = null;
+            return;
         }
+        int maxWidth = caps.getSupportedWidths().getUpper();
+        int maxHeight = caps.getSupportedHeights().getUpper();
+        if ((videoFormat & MoonBridge.VIDEO_FORMAT_MASK_H264) != 0) {
+            // initializeDecoder() refuses H.264 above 4096 either way.
+            maxWidth = Math.min(maxWidth, 4096);
+            maxHeight = Math.min(maxHeight, 4096);
+        }
+        reconfigureLimits = new int[] {maxWidth, maxHeight, caps.getWidthAlignment(), caps.getHeightAlignment()};
     }
 
     /**
@@ -2686,6 +2695,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         videoDecoder.start();
 
         configuredFormat = format;
+        publishReconfigureLimits();
 
         // After reconfiguration, we must resubmit CSD buffers
         submittedCsd = false;
@@ -2814,6 +2824,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             }
         } finally {
             if (!configured && videoDecoder != null) {
+                reconfigureLimits = null;
                 videoDecoder.release();
                 videoDecoder = null;
             }
@@ -4821,6 +4832,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         if (lastStalls != null) LimeLog.warning(lastStalls);
         addRecentStreamRow();
         pyroWaveRenderer.cleanup(frameLatencyStats);
+        reconfigureLimits = null;
         if (videoDecoder != null) {
             videoDecoder.release();
             videoDecoder = null;
