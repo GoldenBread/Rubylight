@@ -287,7 +287,8 @@ impl ClientMessage {
                 *controller < 16 && flags & !15 == 0
             }
             Self::KeyboardLayout(layout) => layout.encode().is_some(),
-            Self::RateChange(request) => request.valid(),
+            // A change, or the query that asks for nothing.
+            Self::RateChange(request) => request.valid() || request.is_query(),
             Self::ClipboardSync(frame) => frame.encode().is_some(),
             Self::TransportFeedback(report) => report.encode().is_some(),
             // Only the client's kinds, and only what encodes.

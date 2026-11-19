@@ -18,6 +18,14 @@
 //! when the request came, and a bitrate-only request sent after it is answered first. A client
 //! takes a result's bitrate only when no result for a later serial came before it.
 //!
+//! A request with both values 0 asks for nothing: it is invalid as a change and is the
+//! [query](RateChangeRequest::query) for what the stream runs at. Every host that takes 0x553C
+//! answers it without changing anything (no bitrate, no rate, and the host's controllers stay
+//! in charge): the result's bitrate and rate are the stream's as the host counts them, the
+//! bitrate in the unit the host takes requests in, with the bitrate's status unchanged and the
+//! rate's refused as invalid. Sending that bitrate back leaves the encoder where it is on a
+//! host of either kind, so a client asks first and keeps or steers from the answer.
+//!
 //! Request, little-endian: version u8, reserved u8, reserved u16, serial u32, bitrate_kbps
 //! u32, fps_millihz u32; 0 leaves that value unchanged. Result: version u8, reserved u8 x3,
 //! serial u32, bitrate_kbps u32, fps_millihz u32, then a status and a reason byte for the
@@ -48,6 +56,23 @@ pub struct RateChangeRequest {
 }
 
 impl RateChangeRequest {
+    /// The query: a request that asks for nothing, which every host taking 0x553C answers
+    /// without changing anything, with the stream's bitrate and rate as it counts them (the
+    /// bitrate in the unit it takes requests in). A client sends it before it keeps or steers
+    /// the bitrate, so the numbers it sends later are in the host's unit.
+    pub fn query(serial: u32) -> Self {
+        Self {
+            serial,
+            bitrate_kbps: 0,
+            fps_millihz: 0,
+        }
+    }
+
+    /// Asks for nothing: [`Self::query`]. Invalid as a change ([`Self::valid`]).
+    pub fn is_query(&self) -> bool {
+        self.bitrate_kbps == 0 && self.fps_millihz == 0
+    }
+
     pub fn encode(&self) -> [u8; RATE_CHANGE_REQUEST_BYTES] {
         let mut out = [0; RATE_CHANGE_REQUEST_BYTES];
         out[0] = VERSION;
@@ -270,6 +295,30 @@ mod tests {
                 Some(valid),
                 "{bitrate_kbps} {fps_millihz}"
             );
+        }
+    }
+
+    #[test]
+    fn the_query_asks_for_nothing_and_is_no_change() {
+        let query = RateChangeRequest::query(9);
+        assert_eq!(
+            query,
+            RateChangeRequest {
+                serial: 9,
+                bitrate_kbps: 0,
+                fps_millihz: 0,
+            }
+        );
+        assert!(query.is_query());
+        assert!(!query.valid(), "as a change it stays invalid");
+        assert_eq!(RateChangeRequest::decode(&query.encode()), Some(query));
+        for (bitrate_kbps, fps_millihz) in [(20_000, 0), (0, 60_000), (20_000, 60_000)] {
+            let request = RateChangeRequest {
+                serial: 9,
+                bitrate_kbps,
+                fps_millihz,
+            };
+            assert!(!request.is_query(), "{bitrate_kbps} {fps_millihz}");
         }
     }
 

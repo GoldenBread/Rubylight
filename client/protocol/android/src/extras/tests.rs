@@ -80,7 +80,12 @@ fn rate_changes_go_out_as_asked_and_refuse_what_the_host_would() {
     );
     assert!(rate_change_message(1, 40_000, 0).is_some());
     assert!(rate_change_message(1, 0, 60_000).is_some());
-    assert_eq!(rate_change_message(1, 0, 0), None);
+    // Nothing asked: the query for the stream's bitrate and rate.
+    let query = rate_change_message(5, 0, 0).expect("the query goes out");
+    assert_eq!(
+        RateChangeRequest::decode(&query.payload()),
+        Some(RateChangeRequest::query(5))
+    );
     assert_eq!(rate_change_message(1, -1, 60_000), None);
     assert_eq!(rate_change_message(1, 40_000, -1), None);
     assert_eq!(rate_change_message(1, 40_000, 9_999), None);

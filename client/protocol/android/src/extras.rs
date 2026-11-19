@@ -210,8 +210,9 @@ pub fn text_input_request(enabled: bool) -> ClientMessage {
     })
 }
 
-/// `sendRateChange`: a bitrate in kbps, a rate in mHz or both (0x553C), 0 keeping that value;
-/// `None` for a negative value or a request the host would refuse as invalid.
+/// `sendRateChange`: a bitrate in kbps, a rate in mHz or both (0x553C), 0 keeping that value,
+/// or both 0 for the query of the stream's bitrate and rate (`RateChangeRequest::query`);
+/// `None` for a negative value or a rate outside the protocol's limits.
 pub fn rate_change_message(
     serial: i32,
     bitrate_kbps: i32,

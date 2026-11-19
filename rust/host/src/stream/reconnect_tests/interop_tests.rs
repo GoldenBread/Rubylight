@@ -634,6 +634,49 @@ async fn nightjar_changes_the_bitrate_mid_stream() -> Result<()> {
             .host_control_messages
             .contains(&ptype::RATE_CHANGE)
     );
+    // The engine's query asks for nothing: the answer names the stream's bitrate in the
+    // launch's unit and changes neither the encoder's bitrate nor the host's controllers.
+    let controllers = || {
+        (
+            session.link_sent.live(),
+            session.transport_sent.live(),
+            session.adaptive_bitrate.lock().unwrap().snapshot(),
+        )
+    };
+    let encoder = session.bitrate.load(Ordering::Acquire);
+    let before = controllers();
+    stream.send(ClientMessage::RateChange(RateChangeRequest::query(7)))?;
+    until("the host's answer to the query", LOADED, || {
+        answer(&recorder, 7).is_some()
+    })
+    .await;
+    let known = answer(&recorder, 7).unwrap();
+    assert_eq!(
+        (known.bitrate, known.fps, known.fps_millihz),
+        (
+            Outcome::UNCHANGED,
+            Outcome::refused(Reason::Invalid),
+            60_000
+        )
+    );
+    assert!(
+        known.bitrate_kbps > encoder,
+        "{known:?}: the launch's unit, not the encoder's {encoder}"
+    );
+    assert_eq!(session.bitrate.load(Ordering::Acquire), encoder);
+    assert_eq!(controllers(), before, "no takeover");
+    // Its number sent back keeps the encoder where it is, and that change is a takeover.
+    stream.send(ask(8, known.bitrate_kbps))?;
+    until("the host's answer", LOADED, || {
+        answer(&recorder, 8).is_some()
+    })
+    .await;
+    assert_eq!(
+        answer(&recorder, 8).map(|a| (a.bitrate, a.bitrate_kbps)),
+        Some((Outcome::APPLIED, known.bitrate_kbps))
+    );
+    assert_eq!(session.bitrate.load(Ordering::Acquire), encoder);
+    assert_ne!(controllers(), before, "the change took the bitrate over");
     stream.send(ask(1, 50_000))?;
     until("the host's capped answer", LOADED, || {
         answer(&recorder, 1).is_some()

@@ -669,8 +669,15 @@ fn rate_changes_are_asked_and_answered_only_where_announced() {
     assert_eq!(sent.len(), 1);
     assert_eq!((sent[0].0, sent[0].1, sent[0].2), (0, Delivery::Reliable, 0x553C));
     assert_eq!(RateChangeRequest::decode(&sent[0].3), Some(request));
-    // Nothing asked, or a rate past the protocol's limits, is not sent.
-    for invalid in [(0, 0), (40_000, 9_999), (0, 500_001)] {
+    // A request that asks for nothing is the query for the stream's bitrate and rate: sent.
+    let query = RateChangeRequest::query(4);
+    s.send(ClientMessage::RateChange(query)).unwrap();
+    let sent = host_reads(&mut s);
+    assert_eq!(sent.len(), 1);
+    assert_eq!((sent[0].1, sent[0].2), (Delivery::Reliable, 0x553C));
+    assert_eq!(RateChangeRequest::decode(&sent[0].3), Some(query));
+    // A rate past the protocol's limits is not sent.
+    for invalid in [(40_000, 9_999), (0, 500_001)] {
         assert_eq!(
             s.send(ClientMessage::RateChange(RateChangeRequest {
                 serial: 4,
