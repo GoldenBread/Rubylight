@@ -90,6 +90,9 @@ impl PortMapper {
     /// A mapper for the IPv4 router `gateway`, from this PC's `local` address; `secret` makes
     /// the nonce ([`nonce`]).
     pub(super) async fn ipv4(gateway: Ipv4Addr, local: Ipv4Addr, secret: &[u8]) -> Result<Self> {
+        // Tests ask no router on this PC's network.
+        #[cfg(test)]
+        anyhow::ensure!(gateway.is_loopback(), "tests ask no router at {gateway}");
         let socket = UdpSocket::bind((local, 0)).await?;
         socket.connect((gateway, pcp::PORT)).await?;
         Ok(Self::new(socket, IpAddr::V4(local), secret))
@@ -434,26 +437,57 @@ impl Drop for PortMapper {
     }
 }
 
-/// The IPv4 default gateway and this PC's address towards it.
-pub(super) fn ipv4_route(gateways: &[IpAddr], bind: IpAddr) -> Option<(Ipv4Addr, Ipv4Addr)> {
-    let gateway = gateways.iter().find_map(|gateway| match gateway {
-        IpAddr::V4(ip) => Some(*ip),
-        IpAddr::V6(_) => None,
-    })?;
-    let local = match bind {
-        IpAddr::V4(ip) if !ip.is_unspecified() => ip,
-        _ => {
-            let socket = std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
-            socket
-                .connect(SocketAddr::new(IpAddr::V4(gateway), pcp::PORT))
-                .ok()?;
-            match socket.local_addr().ok()?.ip() {
-                IpAddr::V4(ip) => ip,
-                IpAddr::V6(_) => return None,
-            }
-        }
-    };
-    Some((gateway, local))
+/// The IPv4 default gateway and this PC's address towards it: of [`lan_route`]'s choosing, with
+/// `lan` this PC's Ethernet and Wi-Fi addresses.
+pub(super) fn ipv4_route(
+    gateways: &[IpAddr],
+    bind: IpAddr,
+    lan: &[IpAddr],
+) -> Option<(Ipv4Addr, Ipv4Addr)> {
+    let routes: Vec<(Ipv4Addr, Ipv4Addr)> = gateways
+        .iter()
+        .filter_map(|gateway| match gateway {
+            IpAddr::V4(ip) => Some(*ip),
+            IpAddr::V6(_) => None,
+        })
+        .filter_map(|gateway| {
+            let local = match bind {
+                IpAddr::V4(ip) if !ip.is_unspecified() => ip,
+                _ => {
+                    // A UDP connect sends nothing; it only picks the route.
+                    let socket = std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
+                    socket
+                        .connect(SocketAddr::new(IpAddr::V4(gateway), pcp::PORT))
+                        .ok()?;
+                    match socket.local_addr().ok()?.ip() {
+                        IpAddr::V4(ip) => ip,
+                        IpAddr::V6(_) => return None,
+                    }
+                }
+            };
+            Some((gateway, local))
+        })
+        .collect();
+    lan_route(&routes, lan)
+}
+/// Of the default `routes` (gateway, this PC's address towards it), the one reached from the
+/// first of the `lan` addresses (physical interfaces first), else the first: a VPN's default route
+/// may be listed before the LAN router's, and its gateway is not the router that forwards ports
+/// to this PC.
+pub(super) fn lan_route(
+    routes: &[(Ipv4Addr, Ipv4Addr)],
+    lan: &[IpAddr],
+) -> Option<(Ipv4Addr, Ipv4Addr)> {
+    routes
+        .iter()
+        .filter_map(|route| {
+            lan.iter()
+                .position(|address| *address == IpAddr::V4(route.1))
+                .map(|rank| (rank, *route))
+        })
+        .min_by_key(|(rank, _)| *rank)
+        .map(|(_, route)| route)
+        .or_else(|| routes.first().copied())
 }
 
 /// This PC's global IPv6 addresses with their interface index, for pinholes.

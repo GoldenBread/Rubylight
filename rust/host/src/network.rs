@@ -250,10 +250,32 @@ pub const TEST_GATEWAY: &str = "192.168.4.1";
 thread_local! {
     /// How often this thread read the gateways.
     static GATEWAY_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// This thread's stand-in for this PC's interfaces and its network, for the port mapping
+    /// task's tests: no test looks for a router on this PC's network.
+    static TEST_NET: std::cell::RefCell<TestNet> = std::cell::RefCell::default();
+}
+/// What the port mapping task reads of this PC and its network, as a test sets it.
+#[cfg(test)]
+#[derive(Default)]
+struct TestNet {
+    /// The default gateways; None: [`TEST_GATEWAY`].
+    gateways: Option<Vec<IpAddr>>,
+    /// This PC's Ethernet and Wi-Fi addresses, as `lan_interfaces` lists them: whether the
+    /// adapter is physical, and the address.
+    lan: Vec<(bool, IpAddr)>,
+    /// Every address this PC has; None: every address asked about.
+    addresses: Option<Vec<IpAddr>>,
+    /// The UPnP routers a search from an address finds there, each found once.
+    routers: Vec<(IpAddr, Gateway<upnp::Bounded>)>,
+    /// The address each UPnP search went out from.
+    searches: Vec<IpAddr>,
 }
 #[cfg(test)]
 fn default_gateways() -> Result<Vec<IpAddr>> {
     GATEWAY_READS.with(|reads| reads.set(reads.get() + 1));
+    if let Some(gateways) = TEST_NET.with(|net| net.borrow().gateways.clone()) {
+        return Ok(gateways);
+    }
     Ok(vec![TEST_GATEWAY.parse()?])
 }
 /// The encryption a client at `peer` needs: `lan_encryption_mode` on this PC and the local
@@ -754,11 +776,21 @@ fn wanted_now(
     };
     (stream, guest)
 }
-/// The router's mapping table, and whether it was read to the end. Routers
-/// answer the index past the end with 713, but some hide their table (606),
-/// answer 714, 402 or 501, or time out: that ends the list without stopping
-/// the host from adding its own mappings.
-async fn entries<P: Provider>(gateway: &Gateway<P>) -> (Vec<igd_next::PortMappingEntry>, bool) {
+/// Whether a failed UPnP request was answered by the router: a UPnP error it sent. A request that
+/// could not reach it, or got something that is no UPnP answer, was not.
+fn upnp_answered(error: &igd_next::RequestError) -> bool {
+    matches!(
+        error,
+        igd_next::RequestError::ErrorCode(..) | igd_next::RequestError::UnsupportedAction(_)
+    )
+}
+/// The router's mapping table, whether it was read to the end, and whether the router answered
+/// at all. Routers answer the index past the end with 713, but some hide their table (606),
+/// answer 714, 402 or 501, or time out: that ends the list without stopping the host from adding
+/// its own mappings.
+async fn entries<P: Provider>(
+    gateway: &Gateway<P>,
+) -> (Vec<igd_next::PortMappingEntry>, bool, bool) {
     let mut entries = Vec::new();
     for index in 0..4096 {
         match tokio::time::timeout(
@@ -769,20 +801,27 @@ async fn entries<P: Provider>(gateway: &Gateway<P>) -> (Vec<igd_next::PortMappin
         {
             Ok(Ok(entry)) => entries.push(entry),
             Ok(Err(igd_next::GetGenericPortMappingEntryError::SpecifiedArrayIndexInvalid)) => {
-                return (entries, true);
+                return (entries, true, true);
             }
             Ok(Err(error)) => {
                 tracing::debug!(%error, index, "UPnP router stopped listing its mappings");
-                return (entries, false);
+                let answered = !entries.is_empty()
+                    || !matches!(
+                        &error,
+                        igd_next::GetGenericPortMappingEntryError::RequestError(error)
+                            if !upnp_answered(error)
+                    );
+                return (entries, false, answered);
             }
             Err(_) => {
                 tracing::debug!(index, "UPnP router timed out listing its mappings");
-                return (entries, false);
+                let answered = !entries.is_empty();
+                return (entries, false, answered);
             }
         }
     }
     tracing::debug!("UPnP router mapping table exceeds its limit");
-    (entries, false)
+    (entries, false, true)
 }
 fn owned(entry: &igd_next::PortMappingEntry, local: IpAddr, description: &str) -> bool {
     entry.internal_client.parse::<IpAddr>().ok() == Some(local)
@@ -833,27 +872,113 @@ fn local_for(gateway: &Gateway<upnp::Bounded>, bind: IpAddr) -> Result<IpAddr> {
         bind
     })
 }
-/// The UPnP gateway on this network, and this PC's address towards it.
-async fn upnp_gateway(bind: IpAddr) -> Result<(Gateway<upnp::Bounded>, IpAddr)> {
-    let gateway = upnp::discover(igd_next::SearchOptions {
+/// The addresses to look for this PC's router from, of its Ethernet and Wi-Fi `interfaces`
+/// (whether the adapter is physical, and the address): the physical adapters' when there are
+/// any, as Hyper-V and some VPN adapters (TAP, ZeroTier) identify as Ethernet too; otherwise
+/// all of them. A tunnel's or a PPP link's are never among them.
+fn lan_ipv4_of(interfaces: &[(bool, IpAddr)]) -> Vec<IpAddr> {
+    let physical = interfaces.iter().any(|(hardware, _)| *hardware);
+    interfaces
+        .iter()
+        .filter(|(hardware, _)| *hardware || !physical)
+        .map(|(_, address)| *address)
+        .collect()
+}
+/// [`lan_ipv4_of`] this PC's interfaces, physical and then private addresses first.
+#[cfg(not(test))]
+fn lan_ipv4() -> Vec<IpAddr> {
+    let interfaces: Vec<(bool, IpAddr)> = butterpollo_windows::net::lan_interfaces()
+        .unwrap_or_else(|error| {
+            tracing::debug!(error = %format!("{error:#}"), "the LAN addresses could not be read");
+            Vec::new()
+        })
+        .into_iter()
+        .map(|(hardware, address)| (hardware, IpAddr::V4(address)))
+        .collect();
+    lan_ipv4_of(&interfaces)
+}
+#[cfg(test)]
+fn lan_ipv4() -> Vec<IpAddr> {
+    TEST_NET.with(|net| lan_ipv4_of(&net.borrow().lan))
+}
+/// Whether an interface of this PC that is up has `address`; true when they cannot be read.
+#[cfg(not(test))]
+fn has_address(address: IpAddr) -> bool {
+    if_addrs::get_if_addrs().map_or(true, |interfaces| {
+        interfaces.iter().any(|interface| {
+            interface.oper_status == if_addrs::IfOperStatus::Up && interface.ip() == address
+        })
+    })
+}
+#[cfg(test)]
+fn has_address(address: IpAddr) -> bool {
+    TEST_NET.with(|net| {
+        net.borrow()
+            .addresses
+            .as_ref()
+            .is_none_or(|addresses| addresses.contains(&address))
+    })
+}
+/// A UPnP search from `from`: the router that answers it.
+#[cfg(not(test))]
+async fn upnp_search(from: IpAddr) -> Result<Gateway<upnp::Bounded>> {
+    upnp::discover(igd_next::SearchOptions {
         timeout: Some(Duration::from_secs(3)),
-        bind_addr: if bind.is_ipv4() {
-            (bind, 0).into()
-        } else {
-            (IpAddr::from([0, 0, 0, 0]), 0).into()
-        },
+        bind_addr: (from, 0).into(),
         ..Default::default()
+    })
+    .await
+}
+#[cfg(test)]
+async fn upnp_search(from: IpAddr) -> Result<Gateway<upnp::Bounded>> {
+    TEST_NET.with(|net| {
+        let mut net = net.borrow_mut();
+        net.searches.push(from);
+        match net.routers.iter().position(|(on, _)| *on == from) {
+            Some(index) => Ok(net.routers.remove(index).1),
+            None => anyhow::bail!("no UPnP router answers a search from {from}"),
+        }
+    })
+}
+/// The UPnP gateway on this network, and this PC's address towards it. A host that listens on
+/// every address searches from each of this PC's Ethernet and Wi-Fi addresses in turn, and its
+/// mappings are for the address the router answered on: a search from no address in particular
+/// goes out where Windows sends multicast, which a VPN may have taken.
+async fn upnp_gateway(bind: IpAddr) -> Result<(Gateway<upnp::Bounded>, IpAddr)> {
+    let lan = if bind.is_ipv4() && !bind.is_unspecified() {
+        Vec::new()
+    } else {
+        lan_ipv4()
+    };
+    let mut failed = None;
+    for from in lan.into_iter().filter(IpAddr::is_ipv4) {
+        match upnp_search(from).await {
+            Ok(gateway) => return Ok((gateway, from)),
+            Err(error) => failed = Some(error),
+        }
+    }
+    if let Some(error) = failed {
+        return Err(error);
+    }
+    let gateway = upnp_search(if bind.is_ipv4() {
+        bind
+    } else {
+        IpAddr::from([0, 0, 0, 0])
     })
     .await?;
     let local = local_for(&gateway, bind)?;
     Ok((gateway, local))
 }
 /// What one UPnP round did: the mappings this host holds, and the ports another mapping
-/// already forwards here. A map request the router timed out on is in neither: unknown.
+/// already forwards here. A map request the router did not answer is in neither: unknown.
 #[derive(Default)]
 struct Applied {
     held: Vec<Mapping>,
     forwarded: Vec<Mapping>,
+    /// Whether the router answered any request of the round, if only with a refusal.
+    answered: bool,
+    /// The map requests it did not answer.
+    unanswered: Vec<Mapping>,
 }
 /// Adds the guest leases among `guest` that this host holds.
 fn record_held(record: &std::sync::Mutex<LeaseRecord>, guest: &[Mapping], held: &[Mapping]) {
@@ -889,7 +1014,8 @@ async fn apply<P: Provider>(
     record: &std::sync::Mutex<LeaseRecord>,
     guest: &[Mapping],
 ) -> Applied {
-    let (entries, complete) = entries(gateway).await;
+    let (entries, complete, mut answered) = entries(gateway).await;
+    let mut unanswered = Vec::new();
     // The leases listed before this round, to check against a table read to the end below.
     let recorded: Vec<GuestLease> = record.lock().unwrap().leases().to_vec();
     // A table read to the end also shows which recorded guest ports this host no longer holds:
@@ -973,7 +1099,7 @@ async fn apply<P: Provider>(
                 mapping.protocol,
                 mapping.port,
                 (local, mapping.port).into(),
-                120,
+                UPNP_LEASE,
                 description,
             ),
         )
@@ -998,12 +1124,20 @@ async fn apply<P: Provider>(
         };
         match result {
             Ok(Ok(())) => {
+                answered = true;
                 reported.retain(|reported| reported != mapping);
                 if !applied.contains(mapping) {
                     applied.push(*mapping);
                 }
             }
+            // No answer: whether the mapping exists is unknown, so its lease stays listed. The
+            // round says so once, not once per port.
+            Ok(Err(igd_next::AddPortError::RequestError(error))) if !upnp_answered(&error) => {
+                tracing::debug!(%error, port = mapping.port, "UPnP router did not answer a mapping");
+                unanswered.push(*mapping);
+            }
             Ok(Err(error)) => {
+                answered = true;
                 // The router answered, but a refused renewal of a mapping this host still
                 // holds is not a confirmation it is gone.
                 if !applied.contains(mapping) {
@@ -1018,8 +1152,10 @@ async fn apply<P: Provider>(
                     tracing::warn!(%error,port=mapping.port,"UPnP mapping failed");
                 }
             }
-            // No answer: whether the mapping exists is unknown, so its lease stays listed.
-            Err(error) => tracing::warn!(%error,port=mapping.port,"UPnP mapping timed out"),
+            Err(error) => {
+                tracing::debug!(%error, port = mapping.port, "UPnP mapping timed out");
+                unanswered.push(*mapping);
+            }
         }
     }
     // This host's mappings that are no longer wanted (the guests' once their links are gone, or
@@ -1044,10 +1180,15 @@ async fn apply<P: Provider>(
         .await
         {
             Ok(Ok(())) => {
+                answered = true;
                 applied.retain(|held| *held != mapping);
                 record_forget(record, &[mapping]);
             }
             Ok(Err(error)) => {
+                answered |= !matches!(
+                    &error,
+                    igd_next::RemovePortError::RequestError(error) if !upnp_answered(error)
+                );
                 tracing::debug!(%error, port = mapping.port, "UPnP mapping no longer wanted could not be removed");
             }
             Err(_) => {
@@ -1062,7 +1203,62 @@ async fn apply<P: Provider>(
     Applied {
         held: applied,
         forwarded,
+        answered,
+        unanswered,
     }
+}
+/// Deletes the mappings `gateway`'s table shows under this host's description for `old`, an
+/// address this PC no longer has. Only those it shows: a hidden table keeps them, rather than a
+/// guess deleting a port another device holds now.
+async fn remove_stale(
+    gateway: &Gateway<upnp::Bounded>,
+    old: IpAddr,
+    description: &str,
+    record: &std::sync::Mutex<LeaseRecord>,
+) {
+    let (entries, _, _) = entries(gateway).await;
+    let mut gone = Vec::new();
+    for entry in entries
+        .iter()
+        .filter(|entry| owned(entry, old, description))
+    {
+        match tokio::time::timeout(
+            Duration::from_secs(3),
+            gateway.remove_port(entry.protocol, entry.external_port),
+        )
+        .await
+        {
+            Ok(Ok(())) => gone.push(Mapping {
+                protocol: entry.protocol,
+                port: entry.external_port,
+            }),
+            Ok(Err(error)) => {
+                tracing::debug!(%error, port = entry.external_port, "UPnP mapping for an old address could not be removed");
+            }
+            Err(_) => break,
+        }
+    }
+    record_forget(record, &gone);
+}
+/// Whether `gateway` answers a UPnP request now: one request, for its address.
+async fn answers(gateway: &Gateway<upnp::Bounded>) -> bool {
+    match tokio::time::timeout(Duration::from_secs(3), gateway.get_external_ip()).await {
+        Ok(Ok(_)) => true,
+        Ok(Err(igd_next::GetExternalIpError::RequestError(error))) => upnp_answered(&error),
+        Ok(Err(_)) => true,
+        Err(_) => false,
+    }
+}
+/// The console's status while the UPnP router is looked for again: nothing mapped, and no
+/// address or error from the router given up.
+fn searching(status: &mut crate::internet_play::MappingStatus) {
+    status.method = None;
+    status.external_ipv4 = None;
+    status.mapped.clear();
+    status.failed.clear();
+    status.guest_mapped.clear();
+    status.guest_failed.clear();
+    status.error = None;
 }
 /// Removes this host's mappings in `applied` that the router holds, and returns those confirmed
 /// gone: a delete it answered, or a table showing another owner. A mapping the router would not
@@ -1075,7 +1271,7 @@ async fn remove<P: Provider>(
     applied: &[Mapping],
     description: &str,
 ) -> Vec<Mapping> {
-    let (entries, complete) = entries(gateway).await;
+    let (entries, complete, _) = entries(gateway).await;
     let mut gone = Vec::new();
     for mapping in applied {
         // A mapping this host added that an unreadable table cannot show is
@@ -1130,7 +1326,7 @@ async fn remove_guest_leftovers<P: Provider>(
     record: &std::sync::Mutex<LeaseRecord>,
     recorded: &[GuestLease],
 ) {
-    let (entries, complete) = entries(gateway).await;
+    let (entries, complete, _) = entries(gateway).await;
     for lease in recorded {
         let mapping = lease.mapping();
         let entry = entry(&entries, &mapping);
@@ -1208,7 +1404,7 @@ async fn remove_mapped(
     }
     let Some((gateway, local)) = default_gateways()
         .ok()
-        .and_then(|gateways| portmap::ipv4_route(&gateways, bind))
+        .and_then(|gateways| portmap::ipv4_route(&gateways, bind, &lan_ipv4()))
     else {
         tracing::debug!("no default gateway for the PCP or NAT-PMP cleanup");
         return;
@@ -1325,6 +1521,15 @@ impl PortForward {
         }
     }
 }
+/// How often the port mapping task renews the mappings.
+const RENEWAL: Duration = Duration::from_secs(60);
+/// The lease of a UPnP mapping, in seconds: two renewals.
+const UPNP_LEASE: u32 = 120;
+/// The renewals in a row a UPnP gateway may leave unanswered before it is given up and the
+/// router looked for again: as many as its lease spans. A router that misses fewer still holds
+/// the mappings it last granted (one silent round costs nothing); by then their lease has run
+/// out, so keeping the gateway keeps nothing open, and an answer in between starts the count again.
+const UPNP_SILENT_RENEWALS: u32 = UPNP_LEASE / RENEWAL.as_secs() as u32;
 /// Waits until `renewal` or until `stop` is notified, whichever comes first.
 async fn until_renewal_or_stop(stop: &tokio::sync::Notify, renewal: Instant) {
     let wait = renewal.saturating_duration_since(Instant::now());
@@ -1408,6 +1613,17 @@ fn ipv6_gateways() -> Vec<std::net::Ipv6Addr> {
 #[derive(Default)]
 struct Held {
     upnp: Option<(Gateway<upnp::Bounded>, IpAddr, Vec<Mapping>)>,
+    /// The renewals in a row the UPnP gateway answered nothing to.
+    upnp_misses: u32,
+    /// When the first of those rounds started.
+    upnp_silent_since: Option<Instant>,
+    /// The address and control URL of the UPnP gateway last given up for answering nothing: a
+    /// search that finds it again takes it back only once it answers.
+    upnp_silent: Option<(SocketAddr, String)>,
+    /// The gateway's address and the address of this PC's that its mappings were made for, once
+    /// this PC no longer has that address: the same gateway found again has them deleted, as it
+    /// would not forward their ports to the new address.
+    upnp_stale: Option<(SocketAddr, IpAddr)>,
     mapper: Option<portmap::PortMapper>,
     firewall: Option<ipv6::Firewall>,
     pinholes: Vec<portmap::PortMapper>,
@@ -1549,7 +1765,7 @@ pub fn port_forward(h: Shared, bind: IpAddr) -> Option<PortForward> {
         let mut reported = Vec::new();
         while !h.stop.load(Ordering::Acquire) {
             if Instant::now() >= next_search {
-                next_search = Instant::now() + Duration::from_secs(60);
+                next_search = Instant::now() + RENEWAL;
                 // Read before the guests are asked: a request made during this round is
                 // served by the next one.
                 let round = h.guests.internet_round();
@@ -1631,17 +1847,62 @@ async fn renew(
     reported: &mut Vec<Mapping>,
     record: &std::sync::Mutex<LeaseRecord>,
 ) {
+    // The rounds' times count from their start: a round waits on the routers for a while.
+    let started = Instant::now();
     let mut upnp_error = None;
-    if held.upnp.is_none() {
-        match upnp_gateway(bind).await {
-            Ok((gateway, local)) => held.upnp = Some((gateway, local, Vec::new())),
-            Err(error) => {
-                tracing::debug!(%error, "UPnP gateway unavailable; retrying");
-                upnp_error = Some(format!("{error:#}"));
+    // This PC no longer has the address the mappings were made for (another network, another
+    // address from the router): look for the router again. Only the interfaces are read, not the
+    // routes, so a VPN that takes the default route leaves a router that answers alone.
+    if let Some((gateway, local, _)) = held.upnp.take_if(|(_, local, _)| !has_address(*local)) {
+        tracing::info!(address = %local, "this PC no longer has the address its UPnP port mappings were made for; looking for the router again");
+        held.upnp_stale = Some((gateway.addr, local));
+        held.upnp_misses = 0;
+        held.upnp_silent_since = None;
+        held.upnp_silent = None;
+        crate::internet_play::update_mapping(searching);
+    }
+    let mut searched = false;
+    loop {
+        if held.upnp.is_none() {
+            searched = true;
+            match upnp_gateway(bind).await {
+                Ok((gateway, local)) => {
+                    let given_up = held.upnp_silent.as_ref().is_some_and(|(addr, control)| {
+                        *addr == gateway.addr && *control == gateway.control_url
+                    });
+                    if given_up && !answers(&gateway).await {
+                        // It answers the search and nothing else: PCP and NAT-PMP get the round,
+                        // and it is asked again, with one request, next round.
+                        tracing::debug!("the UPnP router found answers no requests");
+                        upnp_error = Some("the UPnP router found answers no requests".to_owned());
+                    } else {
+                        if given_up {
+                            tracing::info!("the UPnP router answers again");
+                        } else {
+                            tracing::info!(router = %gateway.addr, address = %local, "UPnP router found");
+                        }
+                        held.upnp_silent = None;
+                        // The same router still forwards ports to the address this PC had: it
+                        // would refuse them to the new one, so those go first. Nothing made for
+                        // another address or router is made again as it was.
+                        if let Some((router, old)) = held.upnp_stale.take()
+                            && router == gateway.addr
+                            && old != local
+                        {
+                            remove_stale(&gateway, old, description, record).await;
+                        }
+                        held.upnp = Some((gateway, local, Vec::new()));
+                    }
+                }
+                Err(error) => {
+                    tracing::debug!(%error, "UPnP gateway unavailable; retrying");
+                    upnp_error = Some(format!("{error:#}"));
+                }
             }
         }
-    }
-    if let Some((gateway, local, applied)) = held.upnp.as_mut() {
+        let Some((gateway, local, applied)) = held.upnp.as_mut() else {
+            break;
+        };
         let outcome = apply(
             gateway,
             *local,
@@ -1654,11 +1915,31 @@ async fn renew(
         )
         .await;
         *applied = outcome.held;
+        if outcome.answered {
+            if held.upnp_misses > 0 {
+                tracing::info!("the UPnP router answers again");
+            }
+            held.upnp_misses = 0;
+            held.upnp_silent_since = None;
+        } else {
+            held.upnp_misses += 1;
+            held.upnp_silent_since.get_or_insert(started);
+            if held.upnp_misses == 1 {
+                tracing::warn!(
+                    "the UPnP router did not answer the port mapping renewal; its mappings stay as they are while it may still hold them"
+                );
+            }
+        }
         let forwarded = outcome.forwarded;
-        let external = tokio::time::timeout(Duration::from_secs(3), gateway.get_external_ip())
-            .await
-            .ok()
-            .and_then(|result| result.ok());
+        // A router that answered nothing is not asked for its address: the one it gave stands.
+        let external = if outcome.answered {
+            tokio::time::timeout(Duration::from_secs(3), gateway.get_external_ip())
+                .await
+                .ok()
+                .and_then(|result| result.ok())
+        } else {
+            None
+        };
         let mapped = mapped_ports(applied, &forwarded);
         let refused: Vec<(Mapping, String)> = reported
             .iter()
@@ -1668,17 +1949,53 @@ async fn renew(
                     "another mapping on the router already uses this port".to_owned(),
                 )
             })
+            .chain(
+                outcome
+                    .unanswered
+                    .iter()
+                    .map(|mapping| (*mapping, "the router did not answer".to_owned())),
+            )
             .collect();
         crate::internet_play::update_mapping(|status| {
             status.method = Some("UPnP".into());
-            status.external_ipv4 = external;
+            if outcome.answered {
+                status.external_ipv4 = external;
+            }
             report(status, stream, guest, &mapped, &refused);
-            status.error = None;
+            status.error = (!outcome.answered && mapped.is_empty())
+                .then(|| "the UPnP router found on this network does not answer".to_owned());
         });
-    } else {
+        // Missed renewals count only as far apart as renewals are: a round a guest link asked
+        // for in between adds none of the lease's time.
+        let lease_out = held.upnp_misses >= UPNP_SILENT_RENEWALS
+            && held.upnp_silent_since.is_some_and(|since| {
+                // A second's slack: a round due a renewal later may start a hair early.
+                started.duration_since(since) + Duration::from_secs(1)
+                    >= RENEWAL * (UPNP_SILENT_RENEWALS - 1)
+            });
+        if !lease_out {
+            break;
+        }
+        // Its mappings' lease has run out unrenewed: look for the router again now, and without
+        // one, PCP and NAT-PMP get this round.
+        tracing::warn!(
+            renewals = held.upnp_misses,
+            "the UPnP router answered none of the last renewals; looking for the router again"
+        );
+        if let Some((gateway, _, _)) = held.upnp.take() {
+            held.upnp_silent = Some((gateway.addr, gateway.control_url));
+        }
+        held.upnp_misses = 0;
+        held.upnp_silent_since = None;
+        crate::internet_play::update_mapping(searching);
+        if searched {
+            break;
+        }
+    }
+    if held.upnp.is_none() {
         let route = default_gateways()
             .ok()
-            .and_then(|gateways| portmap::ipv4_route(&gateways, bind));
+            .and_then(|gateways| portmap::ipv4_route(&gateways, bind, &lan_ipv4()));
         if let Some((gateway, local)) = route {
             // Another router or address: dropping the old mapper asks its router to delete the
             // leases, without waiting on a router that may be gone.
@@ -1770,6 +2087,8 @@ async fn renew(
             tracing::debug!(error = %format!("{error:#}"), "PCP and NAT-PMP unavailable; retrying");
             crate::internet_play::update_mapping(|status| {
                 status.method = None;
+                // No router maps anything: an address a router gave before is not this one's.
+                status.external_ipv4 = None;
                 report(status, stream, guest, &outcome.mapped, &outcome.failed);
                 status.error = Some(message);
             });

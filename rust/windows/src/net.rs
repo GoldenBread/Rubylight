@@ -226,6 +226,15 @@ pub fn tcp_owner(
 }
 /// Active Ethernet/Wi-Fi IPv4 addresses for Moonlight's manual Add PC flow.
 pub fn lan_addresses() -> Result<Vec<String>> {
+    Ok(lan_interfaces()?
+        .into_iter()
+        .map(|(_, address)| address.to_string())
+        .collect())
+}
+/// Active Ethernet/Wi-Fi IPv4 addresses, each with whether its interface is a physical adapter:
+/// Hyper-V, WSL and some VPN adapters (TAP, ZeroTier) also identify as Ethernet. Physical first,
+/// then private addresses first.
+pub fn lan_interfaces() -> Result<Vec<(bool, std::net::Ipv4Addr)>> {
     use windows::Win32::{
         Foundation::{ERROR_BUFFER_OVERFLOW, ERROR_SUCCESS},
         NetworkManagement::IpHelper::*,
@@ -295,10 +304,7 @@ pub fn lan_addresses() -> Result<Vec<String>> {
         // interface so first-run instructions point at a reachable LAN address.
         addresses.sort_by_key(|(hardware, address)| (!hardware, !address.is_private(), *address));
         addresses.dedup_by_key(|(_, address)| *address);
-        return Ok(addresses
-            .into_iter()
-            .map(|(_, address)| address.to_string())
-            .collect());
+        return Ok(addresses);
     }
     anyhow::bail!("network interfaces changed during enumeration")
 }

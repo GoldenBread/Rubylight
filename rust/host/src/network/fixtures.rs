@@ -7,6 +7,8 @@ struct Row {
     port: u16,
     protocol: Protocol,
     owner: String,
+    /// The address the mapping forwards to.
+    client: String,
 }
 #[derive(Default)]
 struct RouterState {
@@ -19,6 +21,11 @@ struct RouterState {
     /// Wait this long before answering a map request, for a test that looks at the record
     /// while the request is in flight.
     add_delay: Option<std::time::Duration>,
+    /// Every SOAP request this router got.
+    requests: usize,
+    /// Answer nothing a UPnP client can read, as a router that went away or stopped its UPnP
+    /// does: the client gets no answer at once rather than after its timeout.
+    silent: bool,
 }
 fn text<'a>(body: &'a str, tag: &str) -> &'a str {
     body.split_once(&format!("<{tag}>"))
@@ -66,6 +73,10 @@ async fn soap(
         tokio::time::sleep(delay).await;
     }
     let mut state = state.lock().unwrap();
+    state.requests += 1;
+    if state.silent {
+        return String::new();
+    }
     match action {
         "GetGenericPortMappingEntry" => {
             if let Some(code) = state.list_fault {
@@ -78,8 +89,8 @@ async fn soap(
             response(
                 action,
                 &format!(
-                    "<NewRemoteHost></NewRemoteHost><NewExternalPort>{}</NewExternalPort><NewProtocol>{}</NewProtocol><NewInternalPort>{}</NewInternalPort><NewInternalClient>192.0.2.10</NewInternalClient><NewEnabled>1</NewEnabled><NewPortMappingDescription>{}</NewPortMappingDescription><NewLeaseDuration>0</NewLeaseDuration>",
-                    row.port, row.protocol, row.port, row.owner
+                    "<NewRemoteHost></NewRemoteHost><NewExternalPort>{}</NewExternalPort><NewProtocol>{}</NewProtocol><NewInternalPort>{}</NewInternalPort><NewInternalClient>{}</NewInternalClient><NewEnabled>1</NewEnabled><NewPortMappingDescription>{}</NewPortMappingDescription><NewLeaseDuration>0</NewLeaseDuration>",
+                    row.port, row.protocol, row.port, row.client, row.owner
                 ),
             )
         }
@@ -95,6 +106,15 @@ async fn soap(
             let port = text(&body, "NewExternalPort").parse().unwrap();
             let protocol = protocol(&body);
             let owner = text(&body, "NewPortMappingDescription").into();
+            let client: String = text(&body, "NewInternalClient").into();
+            // As routers do, a port forwarded to another address is not taken over.
+            if state
+                .rows
+                .iter()
+                .any(|row| (row.port, row.protocol) == (port, protocol) && row.client != client)
+            {
+                return fault(718);
+            }
             state
                 .rows
                 .retain(|row| (row.port, row.protocol) != (port, protocol));
@@ -102,6 +122,7 @@ async fn soap(
                 port,
                 protocol,
                 owner,
+                client,
             });
             response(action, "")
         }
@@ -114,6 +135,10 @@ async fn soap(
                 .retain(|row| (row.port, row.protocol) != (port, protocol));
             response(action, "")
         }
+        "GetExternalIPAddress" => response(
+            action,
+            "<NewExternalIPAddress>203.0.113.9</NewExternalIPAddress>",
+        ),
         _ => panic!("unexpected SOAP action {action}"),
     }
 }
@@ -173,11 +198,13 @@ async fn permanent_only_router_reclaims_old_own_ports_and_preserves_other_owners
                 port: 48124,
                 protocol: Protocol::TCP,
                 owner: "Other application".into(),
+                client: "192.0.2.10".into(),
             },
             Row {
                 port: 48125,
                 protocol: Protocol::TCP,
                 owner: owner.into(),
+                client: "192.0.2.10".into(),
             },
         ],
         ..Default::default()
@@ -278,6 +305,7 @@ async fn a_manual_forward_to_this_pc_counts_as_mapped_and_is_left_alone() {
             port: 48125,
             protocol: Protocol::TCP,
             owner: "Sunshine".into(),
+            client: "192.0.2.10".into(),
         }],
         ..Default::default()
     }));
@@ -343,6 +371,7 @@ async fn a_refused_renewal_keeps_the_lease_this_host_holds() {
             port: 48125,
             protocol: Protocol::TCP,
             owner: owner.into(),
+            client: "192.0.2.10".into(),
         }],
         add_fault: Some(718),
         ..Default::default()
@@ -426,6 +455,7 @@ async fn a_start_removes_only_the_guest_ports_the_record_lists() {
         port,
         protocol,
         owner: owner.into(),
+        client: "192.0.2.10".into(),
     };
     let state = Arc::new(Mutex::new(RouterState {
         rows: vec![
@@ -712,4 +742,419 @@ async fn browser_guest_ports_are_forwarded_while_a_link_needs_them_and_removed_a
         let _ = std::fs::remove_dir_all(directory);
         server.abort();
     }
+}
+
+/// This PC's network for the port mapping task's tests: physical Ethernet or Wi-Fi addresses
+/// `lan`, which are all the addresses it has, and no default gateway, so nothing falls through
+/// to a router.
+fn on_lan(lan: &[&str]) {
+    let lan: Vec<IpAddr> = lan.iter().map(|address| address.parse().unwrap()).collect();
+    TEST_NET.with(|net| {
+        *net.borrow_mut() = TestNet {
+            gateways: Some(Vec::new()),
+            addresses: Some(lan.clone()),
+            lan: lan.into_iter().map(|address| (true, address)).collect(),
+            ..Default::default()
+        };
+    });
+}
+/// A VPN connects: it adds an address and takes the default route.
+fn vpn_up() {
+    TEST_NET.with(|net| {
+        let mut net = net.borrow_mut();
+        net.addresses
+            .get_or_insert_with(Vec::new)
+            .push("10.8.0.2".parse().unwrap());
+        net.gateways = Some(vec!["10.8.0.1".parse().unwrap()]);
+    });
+}
+/// A UPnP search from `from` finds `gateway`.
+fn router_on(from: &str, gateway: Gateway<upnp::Bounded>) {
+    TEST_NET.with(|net| {
+        net.borrow_mut()
+            .routers
+            .push((from.parse().unwrap(), gateway));
+    });
+}
+/// The next round comes a renewal after the silent one, as the task schedules it.
+fn a_renewal_later(held: &mut Held) {
+    if let Some(since) = held.upnp_silent_since.as_mut() {
+        *since = since.checked_sub(RENEWAL).unwrap();
+    }
+}
+fn searches() -> Vec<IpAddr> {
+    TEST_NET.with(|net| net.borrow().searches.clone())
+}
+/// The same router as `gateway`, as a new search would find it.
+fn copy(gateway: &Gateway<upnp::Bounded>) -> Gateway<upnp::Bounded> {
+    Gateway {
+        addr: gateway.addr,
+        root_url: gateway.root_url.clone(),
+        control_url: gateway.control_url.clone(),
+        control_schema_url: gateway.control_schema_url.clone(),
+        control_schema: gateway.control_schema.clone(),
+        provider: upnp::Bounded,
+    }
+}
+const STREAM_PORT: Mapping = Mapping {
+    protocol: Protocol::TCP,
+    port: 48124,
+};
+/// One renewal round of the stream port, on a host that listens on every address.
+async fn renew_round(held: &mut Held, record: &Mutex<LeaseRecord>) {
+    let mut reported = Vec::new();
+    renew(
+        held,
+        IpAddr::from([0, 0, 0, 0]),
+        &[STREAM_PORT],
+        &[],
+        &[STREAM_PORT],
+        "Butterpollo Rust fixture-host",
+        b"key",
+        &mut reported,
+        record,
+    )
+    .await;
+}
+/// The UPnP router `held` keeps, by address, with the address its mappings are for and them.
+fn kept(held: &Held) -> Option<(SocketAddr, IpAddr, Vec<Mapping>)> {
+    held.upnp
+        .as_ref()
+        .map(|(gateway, local, applied)| (gateway.addr, *local, applied.clone()))
+}
+fn mapped_on(
+    gateway: &Gateway<upnp::Bounded>,
+    local: &str,
+) -> Option<(SocketAddr, IpAddr, Vec<Mapping>)> {
+    Some((gateway.addr, local.parse().unwrap(), vec![STREAM_PORT]))
+}
+/// The router's rows as (port, address it forwards to).
+fn forwards(state: &Mutex<RouterState>) -> Vec<(u16, String)> {
+    state
+        .lock()
+        .unwrap()
+        .rows
+        .iter()
+        .map(|row| (row.port, row.client.clone()))
+        .collect()
+}
+fn forwarded_to(address: &str) -> Vec<(u16, String)> {
+    vec![(STREAM_PORT.port, address.to_owned())]
+}
+/// A UPnP router that holds the stream port for this PC at 192.0.2.10, as one round left it.
+async fn mapped_router(
+    state: &Arc<Mutex<RouterState>>,
+    record: &Mutex<LeaseRecord>,
+) -> (Held, Gateway<upnp::Bounded>, tokio::task::JoinHandle<()>) {
+    let (gateway, server) = serve(state.clone()).await;
+    let mut held = Held {
+        upnp: Some((copy(&gateway), "192.0.2.10".parse().unwrap(), Vec::new())),
+        ..Default::default()
+    };
+    renew_round(&mut held, record).await;
+    assert_eq!(kept(&held), mapped_on(&gateway, "192.0.2.10"));
+    (held, gateway, server)
+}
+
+/// A router that misses one renewal (busy, a lost packet) still holds the mappings: the host
+/// keeps it and what it mapped, and looks for no other. Its next answer starts the count again.
+#[tokio::test]
+async fn a_upnp_router_that_misses_one_renewal_is_kept_with_its_mappings() {
+    on_lan(&["192.0.2.10"]);
+    let state = Arc::new(Mutex::new(RouterState::default()));
+    let (record, directory) = guest_record();
+    let (mut held, gateway, server) = mapped_router(&state, &record).await;
+    for _ in 0..2 {
+        state.lock().unwrap().silent = true;
+        renew_round(&mut held, &record).await;
+        assert_eq!(
+            kept(&held),
+            mapped_on(&gateway, "192.0.2.10"),
+            "one silent round dropped the router"
+        );
+        a_renewal_later(&mut held);
+        state.lock().unwrap().silent = false;
+        renew_round(&mut held, &record).await;
+        assert_eq!(kept(&held), mapped_on(&gateway, "192.0.2.10"));
+    }
+    assert_eq!(
+        searches(),
+        Vec::<IpAddr>::new(),
+        "a single silent round started a search"
+    );
+    assert_eq!(forwards(&state), forwarded_to("192.0.2.10"));
+    let _ = std::fs::remove_dir_all(directory);
+    server.abort();
+}
+/// A router that stays silent past its mappings' lease is looked for again, and the router the
+/// search finds maps the ports afresh for this PC's address.
+#[tokio::test]
+async fn a_upnp_router_that_stays_silent_is_looked_for_again() {
+    on_lan(&["192.0.2.10"]);
+    let state = Arc::new(Mutex::new(RouterState::default()));
+    let (record, directory) = guest_record();
+    let (mut held, gateway, server) = mapped_router(&state, &record).await;
+    let other = Arc::new(Mutex::new(RouterState::default()));
+    let (next, next_server) = serve(other.clone()).await;
+    router_on("192.0.2.10", copy(&next));
+    state.lock().unwrap().silent = true;
+    renew_round(&mut held, &record).await;
+    assert_eq!(searches(), Vec::<IpAddr>::new());
+    assert_eq!(kept(&held), mapped_on(&gateway, "192.0.2.10"));
+    a_renewal_later(&mut held);
+    renew_round(&mut held, &record).await;
+    assert_eq!(
+        searches(),
+        ["192.0.2.10".parse::<IpAddr>().unwrap()],
+        "a router silent for two renewals is still waited on"
+    );
+    assert_eq!(kept(&held), mapped_on(&next, "192.0.2.10"));
+    assert_eq!(forwards(&other), forwarded_to("192.0.2.10"));
+    let _ = std::fs::remove_dir_all(directory);
+    server.abort();
+    next_server.abort();
+}
+/// This PC gets another address from the same router: the router is looked for again, the
+/// mapping made for the old address goes, and the port is mapped for the new one.
+#[tokio::test]
+async fn a_new_address_on_the_same_router_is_mapped_afresh() {
+    on_lan(&["192.0.2.10"]);
+    let state = Arc::new(Mutex::new(RouterState::default()));
+    let (record, directory) = guest_record();
+    let (mut held, gateway, server) = mapped_router(&state, &record).await;
+    on_lan(&["192.0.2.23"]);
+    router_on("192.0.2.23", copy(&gateway));
+    renew_round(&mut held, &record).await;
+    assert_eq!(
+        forwards(&state),
+        forwarded_to("192.0.2.23"),
+        "the port is not forwarded to this PC's new address"
+    );
+    assert_eq!(searches(), ["192.0.2.23".parse::<IpAddr>().unwrap()]);
+    assert_eq!(kept(&held), mapped_on(&gateway, "192.0.2.23"));
+    let _ = std::fs::remove_dir_all(directory);
+    server.abort();
+}
+/// This PC moves to another router on another subnet: the new router maps the ports for the
+/// address this PC has there, and the old router is not asked again.
+#[tokio::test]
+async fn another_router_on_another_subnet_maps_for_this_pcs_address_there() {
+    on_lan(&["192.0.2.10"]);
+    let state = Arc::new(Mutex::new(RouterState::default()));
+    let (record, directory) = guest_record();
+    let (mut held, _, server) = mapped_router(&state, &record).await;
+    let asked = state.lock().unwrap().requests;
+    on_lan(&["198.51.100.7"]);
+    let other = Arc::new(Mutex::new(RouterState::default()));
+    let (next, next_server) = serve(other.clone()).await;
+    router_on("198.51.100.7", copy(&next));
+    renew_round(&mut held, &record).await;
+    assert_eq!(
+        forwards(&other),
+        forwarded_to("198.51.100.7"),
+        "the new router got no mapping for this PC's address there"
+    );
+    assert_eq!(kept(&held), mapped_on(&next, "198.51.100.7"));
+    assert_eq!(
+        state.lock().unwrap().requests,
+        asked,
+        "the old router was asked"
+    );
+    let _ = std::fs::remove_dir_all(directory);
+    server.abort();
+    next_server.abort();
+}
+/// A VPN connects: another address and default gateway appear. The LAN router still answers, so
+/// it keeps its mappings and no search starts.
+#[tokio::test]
+async fn a_vpn_connecting_leaves_an_answering_router_alone() {
+    on_lan(&["192.0.2.10"]);
+    let state = Arc::new(Mutex::new(RouterState::default()));
+    let (record, directory) = guest_record();
+    let (mut held, gateway, server) = mapped_router(&state, &record).await;
+    vpn_up();
+    for _ in 0..3 {
+        renew_round(&mut held, &record).await;
+        assert_eq!(kept(&held), mapped_on(&gateway, "192.0.2.10"));
+    }
+    assert_eq!(searches(), Vec::<IpAddr>::new());
+    assert_eq!(forwards(&state), forwarded_to("192.0.2.10"));
+    let _ = std::fs::remove_dir_all(directory);
+    server.abort();
+}
+/// A host that listens on every address looks for the UPnP router from its LAN address: an
+/// unbound search goes where Windows sends multicast, which with a VPN up can be the VPN.
+#[tokio::test]
+async fn the_upnp_search_goes_out_on_the_lan_not_a_vpn() {
+    on_lan(&["192.0.2.10"]);
+    vpn_up();
+    let (vpn_gateway, vpn_server) = serve(Arc::default()).await;
+    let (lan_gateway, lan_server) = serve(Arc::default()).await;
+    router_on("0.0.0.0", copy(&vpn_gateway));
+    router_on("10.8.0.2", copy(&vpn_gateway));
+    router_on("192.0.2.10", copy(&lan_gateway));
+    let (found, local) = upnp_gateway(IpAddr::from([0, 0, 0, 0])).await.unwrap();
+    assert_eq!(
+        (found.addr, local),
+        (lan_gateway.addr, "192.0.2.10".parse().unwrap()),
+        "the search took the VPN's router"
+    );
+    vpn_server.abort();
+    lan_server.abort();
+}
+/// The LAN router goes silent while a VPN is up: the search that follows still goes out on the
+/// LAN and maps the ports on the router found there, not on the VPN's.
+#[tokio::test]
+async fn a_search_after_the_lan_router_went_silent_does_not_choose_the_vpn() {
+    on_lan(&["192.0.2.10"]);
+    let state = Arc::new(Mutex::new(RouterState::default()));
+    let (record, directory) = guest_record();
+    let (mut held, _, server) = mapped_router(&state, &record).await;
+    vpn_up();
+    let vpn = Arc::new(Mutex::new(RouterState::default()));
+    let (vpn_gateway, vpn_server) = serve(vpn.clone()).await;
+    let lan = Arc::new(Mutex::new(RouterState::default()));
+    let (lan_gateway, lan_server) = serve(lan.clone()).await;
+    router_on("0.0.0.0", copy(&vpn_gateway));
+    router_on("10.8.0.2", copy(&vpn_gateway));
+    router_on("192.0.2.10", copy(&lan_gateway));
+    state.lock().unwrap().silent = true;
+    for _ in 0..2 {
+        renew_round(&mut held, &record).await;
+        a_renewal_later(&mut held);
+    }
+    assert_eq!(
+        kept(&held),
+        mapped_on(&lan_gateway, "192.0.2.10"),
+        "the router found after the silence is not the LAN's"
+    );
+    assert_eq!(forwards(&lan), forwarded_to("192.0.2.10"));
+    assert!(vpn.lock().unwrap().rows.is_empty());
+    let _ = std::fs::remove_dir_all(directory);
+    server.abort();
+    vpn_server.abort();
+    lan_server.abort();
+}
+
+/// With a VPN up, PCP and NAT-PMP ask the LAN router, not the VPN's gateway that Windows may list
+/// first among the default routes.
+#[test]
+fn pcp_asks_the_lan_router_not_a_vpn_gateway() {
+    let vpn = ("10.8.0.1".parse().unwrap(), "10.8.0.2".parse().unwrap());
+    let lan = ("192.0.2.1".parse().unwrap(), "192.0.2.10".parse().unwrap());
+    let lan_addresses = ["192.0.2.10".parse().unwrap()];
+    assert_eq!(portmap::lan_route(&[vpn, lan], &lan_addresses), Some(lan));
+    // A VPN adapter that calls itself Ethernet is listed after the physical one.
+    let both = ["192.0.2.10".parse().unwrap(), "10.8.0.2".parse().unwrap()];
+    assert_eq!(portmap::lan_route(&[vpn, lan], &both), Some(lan));
+    // Without a LAN address to tell them apart, the first default route stays the one asked.
+    assert_eq!(portmap::lan_route(&[vpn, lan], &[]), Some(vpn));
+}
+
+/// Two silent rounds seconds apart, as when a guest link asks for one in between, are not the
+/// lease's two minutes: the router and its mappings stay.
+#[tokio::test]
+async fn silent_rounds_closer_than_a_renewal_keep_the_router() {
+    on_lan(&["192.0.2.10"]);
+    let state = Arc::new(Mutex::new(RouterState::default()));
+    let (record, directory) = guest_record();
+    let (mut held, gateway, server) = mapped_router(&state, &record).await;
+    state.lock().unwrap().silent = true;
+    for _ in 0..3 {
+        renew_round(&mut held, &record).await;
+    }
+    assert_eq!(
+        kept(&held),
+        mapped_on(&gateway, "192.0.2.10"),
+        "rounds seconds apart gave the router up"
+    );
+    assert_eq!(searches(), Vec::<IpAddr>::new());
+    let _ = std::fs::remove_dir_all(directory);
+    server.abort();
+}
+/// A router given up for silence that still answers the search is not mapped on again round
+/// after round: PCP and NAT-PMP get the rounds, one request asks whether it answers, and once it
+/// does it maps the ports again.
+#[tokio::test]
+async fn a_router_that_answers_only_the_search_is_asked_once_a_round() {
+    on_lan(&["192.0.2.10"]);
+    let state = Arc::new(Mutex::new(RouterState::default()));
+    let (record, directory) = guest_record();
+    let (mut held, gateway, server) = mapped_router(&state, &record).await;
+    state.lock().unwrap().silent = true;
+    renew_round(&mut held, &record).await;
+    a_renewal_later(&mut held);
+    router_on("192.0.2.10", copy(&gateway));
+    renew_round(&mut held, &record).await;
+    assert_eq!(searches().len(), 1);
+    assert!(kept(&held).is_none(), "the silent router was taken back");
+    for _ in 0..2 {
+        let asked = state.lock().unwrap().requests;
+        router_on("192.0.2.10", copy(&gateway));
+        renew_round(&mut held, &record).await;
+        assert!(kept(&held).is_none());
+        assert_eq!(state.lock().unwrap().requests, asked + 1);
+    }
+    state.lock().unwrap().silent = false;
+    router_on("192.0.2.10", copy(&gateway));
+    renew_round(&mut held, &record).await;
+    assert_eq!(kept(&held), mapped_on(&gateway, "192.0.2.10"));
+    assert_eq!(forwards(&state), forwarded_to("192.0.2.10"));
+    let _ = std::fs::remove_dir_all(directory);
+    server.abort();
+}
+/// After an address change on a router that hides its table, nothing is deleted on a guess: the
+/// port may be another device's on this network.
+#[tokio::test]
+async fn an_old_address_on_a_hidden_table_deletes_nothing() {
+    on_lan(&["192.0.2.10"]);
+    let state = Arc::new(Mutex::new(RouterState::default()));
+    let (record, directory) = guest_record();
+    let (mut held, gateway, server) = mapped_router(&state, &record).await;
+    state.lock().unwrap().list_fault = Some(606);
+    on_lan(&["192.0.2.23"]);
+    router_on("192.0.2.23", copy(&gateway));
+    renew_round(&mut held, &record).await;
+    assert_eq!(state.lock().unwrap().deleted, Vec::<u16>::new());
+    assert_eq!(forwards(&state), forwarded_to("192.0.2.10"));
+    assert_eq!(
+        kept(&held).map(|(addr, local, _)| (addr, local)),
+        Some((gateway.addr, "192.0.2.23".parse().unwrap()))
+    );
+    let _ = std::fs::remove_dir_all(directory);
+    server.abort();
+}
+
+/// A VPN adapter that identifies as Ethernet (TAP, ZeroTier) is listed among the LAN addresses,
+/// after the physical one: the search for the router does not go out on it while a physical
+/// adapter has an address, even when the LAN finds no router.
+#[tokio::test]
+async fn the_search_skips_a_vpn_adapter_that_calls_itself_ethernet() {
+    on_lan(&["192.0.2.10"]);
+    TEST_NET.with(|net| {
+        net.borrow_mut()
+            .lan
+            .push((false, "10.8.0.2".parse().unwrap()));
+    });
+    let (vpn_gateway, vpn_server) = serve(Arc::default()).await;
+    router_on("10.8.0.2", copy(&vpn_gateway));
+    assert!(
+        upnp_gateway(IpAddr::from([0, 0, 0, 0])).await.is_err(),
+        "the search took the VPN adapter's router"
+    );
+    assert_eq!(searches(), ["192.0.2.10".parse::<IpAddr>().unwrap()]);
+    vpn_server.abort();
+}
+/// Without a physical adapter (a virtual machine), every Ethernet and Wi-Fi address is searched
+/// from.
+#[test]
+fn without_a_physical_adapter_every_lan_address_is_searched_from() {
+    let virtual_only = [
+        (false, "172.20.0.5".parse().unwrap()),
+        (false, "10.8.0.2".parse().unwrap()),
+    ];
+    assert_eq!(
+        lan_ipv4_of(&virtual_only),
+        virtual_only.map(|(_, address)| address)
+    );
 }

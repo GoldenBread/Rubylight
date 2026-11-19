@@ -186,6 +186,8 @@ async fn from_location(
         provider: Bounded,
     })
 }
+// Tests never search this PC's network.
+#[cfg_attr(test, allow(dead_code))]
 pub(super) async fn discover(options: SearchOptions) -> Result<Gateway<Bounded>> {
     tokio::time::timeout(options.timeout.unwrap_or(Duration::from_secs(3)), async {
         let socket = tokio::net::UdpSocket::bind(options.bind_addr).await?;
