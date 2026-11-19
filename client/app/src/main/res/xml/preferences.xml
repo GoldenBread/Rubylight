@@ -1053,6 +1053,12 @@
             android:title="@string/title_experimental_chipset_tuning"
             android:dialogMessage="@string/summary_experimental_chipset_tuning"
             android:defaultValue="false" />
+        <!-- Listed on TVs (FEATURE_LEANBACK) only; read on any device (GameVideoOutput.updateCompositorHeartbeat). -->
+        <com.limelight.preferences.MaterialSwitchPreference
+            android:key="checkbox_tv_display_compatibility"
+            android:title="@string/title_tv_display_compatibility"
+            android:dialogMessage="@string/summary_tv_display_compatibility"
+            android:defaultValue="false" />
         <!-- Both engines; a decoder that takes frames directly has no queue (MoonBridge.setDecodeQueueBound). -->
         <com.limelight.preferences.MaterialListPreference
             android:key="list_decode_queue_frames"

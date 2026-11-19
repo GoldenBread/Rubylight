@@ -488,6 +488,7 @@ public class SettingsKeysTest {
         reads.put("experimental_packed_444", new Read(false, true, c -> c.experimentalPacked444));
         reads.put("checkbox_frame_warp", new Read(false, true, c -> c.frameWarp));
         reads.put("checkbox_experimental_chipset_tuning", new Read(false, true, c -> c.experimentalChipsetTuning));
+        reads.put("checkbox_tv_display_compatibility", new Read(false, true, c -> c.tvDisplayCompatibility));
         return reads;
     }
 

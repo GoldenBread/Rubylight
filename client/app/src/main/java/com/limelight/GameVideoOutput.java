@@ -67,6 +67,8 @@ final class GameVideoOutput {
     private String launchPanel;
 
     private boolean orientationNoticeShown;
+    // Settings › TV display compatibility while it runs (updateCompositorHeartbeat); null otherwise.
+    com.limelight.ui.CompositorHeartbeat compositorHeartbeat;
     // UI actions that read the decoder's limits or ask for a size and met a decoder rebuild, in the
     // order they were asked for; one per key, a newer one taking the older one's place.
     private final java.util.LinkedHashMap<String, Runnable> decoderActions = new java.util.LinkedHashMap<>();
@@ -322,6 +324,32 @@ final class GameVideoOutput {
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && game.prefConfig.enablePip && game.externalPresentation == null &&
                 game.app.getRole() != NvApp.Role.INPUT_ONLY &&
                 game.getPackageManager().hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE);
+    }
+
+    /**
+     * Settings › TV display compatibility: the dot runs while the stream is shown in the foreground, in the window
+     * that holds the video (an external display's while the video is there). Paused, in picture-in-picture, input
+     * only, after the stream or with the setting off it is gone. Read from the stored value on any device.
+     */
+    void updateCompositorHeartbeat() {
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            game.runOnUiThread(this::updateCompositorHeartbeat);
+            return;
+        }
+        android.view.ViewParent parent = game.renderView == null ? null : game.renderView.getParent();
+        android.view.ViewGroup holder = parent instanceof android.view.ViewGroup ? (android.view.ViewGroup) parent : null;
+        boolean show = holder != null && game.prefConfig != null && game.prefConfig.tvDisplayCompatibility
+                && game.connected && game.foreground && !game.isDestroyed()
+                && (game.app == null || game.app.getRole() != NvApp.Role.INPUT_ONLY)
+                && !(Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && game.isInPictureInPictureMode());
+        if (compositorHeartbeat != null && (!show || compositorHeartbeat.holder() != holder)) {
+            compositorHeartbeat.stop();
+            compositorHeartbeat = null;
+        }
+        if (show && compositorHeartbeat == null) {
+            compositorHeartbeat = new com.limelight.ui.CompositorHeartbeat(holder);
+            compositorHeartbeat.start();
+        }
     }
 
     void enterPictureInPictureNow() {

@@ -734,6 +734,7 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
                 UiHelper.notifyStreamExitingPiP(this);
             }
         }
+        videoOutput.updateCompositorHeartbeat();
         overlays.updateHardwareMetricsPolling();
     }
 
@@ -930,6 +931,11 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         exitHandler.removeCallbacksAndMessages(null);
         exitFinished = true;
         streamConnection.stopConnection();
+        // Nothing of TV display compatibility outlives the screen, the stream ended or not.
+        if (videoOutput.compositorHeartbeat != null) {
+            videoOutput.compositorHeartbeat.stop();
+            videoOutput.compositorHeartbeat = null;
+        }
         if (externalPresentation != null) {
             externalPresentation.setOnDismissListener(null);
             externalPresentation.dismiss();
@@ -994,6 +1000,7 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
     protected void onResume() {
         super.onResume();
         foreground = true;
+        videoOutput.updateCompositorHeartbeat();
         videoOutput.armHdrRecomposition();
         if (streamRecovery.resumeStoppedStreamIfNeeded()) {
             recoveryCancelledOnPause = false;
@@ -1022,6 +1029,7 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         // Shown again on the next stream unless it was read.
         overlays.dismissStreamMenuHint(false);
         foreground = false;
+        videoOutput.updateCompositorHeartbeat();
         recoveryCancelledOnPause = recoveryHandoffInProgress || pendingRecovery != null || (streamRecovery.isRecoveryAttempt() && connecting);
         streamRecovery.cancelAutomaticRecovery();
         overlays.stopHardwareMetricsPolling();

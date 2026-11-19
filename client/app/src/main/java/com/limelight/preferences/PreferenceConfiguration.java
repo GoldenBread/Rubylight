@@ -176,6 +176,7 @@ public class PreferenceConfiguration {
     static final String PACKED_444_PREF_STRING = "experimental_packed_444";
     static final String FRAME_WARP_PREF_STRING = "checkbox_frame_warp";
     private static final String CHIPSET_TUNING_PREF_STRING = "checkbox_experimental_chipset_tuning";
+    static final String TV_DISPLAY_COMPATIBILITY_PREF_STRING = "checkbox_tv_display_compatibility";
     static final String FRAME_PACING_PREF_STRING = "frame_pacing";
     private static final String ABSOLUTE_MOUSE_MODE_PREF_STRING = "checkbox_absolute_mouse_mode";
     private static final String ENABLE_AUDIO_FX_PREF_STRING = "checkbox_enable_audiofx";
@@ -426,6 +427,8 @@ public class PreferenceConfiguration {
     public boolean frameWarp;
     // Opt-in decoder keys still being measured (docs/devices.md, Candidate per-chip changes)
     public boolean experimentalChipsetTuning;
+    /** A tiny dot over the video changes colour every 100 ms (GameVideoOutput.updateCompositorHeartbeat). Listed on TVs only. */
+    public boolean tvDisplayCompatibility;
     public boolean bindAllUsb;
     public boolean mouseEmulation;
     public boolean mouseEmulationFixedStep;
@@ -1846,6 +1849,7 @@ public class PreferenceConfiguration {
         config.experimentalPacked444 = sharpColor(prefs);
         config.frameWarp = prefs.getBoolean(FRAME_WARP_PREF_STRING, false);
         config.experimentalChipsetTuning = prefs.getBoolean(CHIPSET_TUNING_PREF_STRING, false);
+        config.tvDisplayCompatibility = prefs.getBoolean(TV_DISPLAY_COMPATIBILITY_PREF_STRING, false);
         config.absoluteMouseMode = prefs.getBoolean(ABSOLUTE_MOUSE_MODE_PREF_STRING, DEFAULT_ABSOLUTE_MOUSE_MODE);
         config.enableAudioFx = prefs.getBoolean(ENABLE_AUDIO_FX_PREF_STRING, DEFAULT_ENABLE_AUDIO_FX);
         config.audioPassthrough = prefs.getBoolean(AUDIO_PASSTHROUGH_PREF_STRING, false);

@@ -929,6 +929,7 @@ final class GameConnection {
         if (game.connecting || game.connected) {
             game.connecting = game.connected = false;
             game.videoOutput.updatePipAutoEnter();
+            game.videoOutput.updateCompositorHeartbeat();
 
             if (game.controllerHandler != null) game.controllerHandler.stop();
 
@@ -1431,6 +1432,7 @@ final class GameConnection {
                 }
 
                 game.connected = true;
+                game.videoOutput.updateCompositorHeartbeat();
                 startHostLossWatch();
                 game.conn.refreshNativeHostControl(() -> game.runOnUiThread(() -> {
                     game.menuActions.startUsbAutoForwarding();

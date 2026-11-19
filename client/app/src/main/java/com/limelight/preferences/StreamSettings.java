@@ -3103,6 +3103,9 @@ public class StreamSettings extends NightjarActivity {
             // A TV does not turn.
             if (getActivity().getPackageManager().hasSystemFeature(PackageManager.FEATURE_LEANBACK)) {
                 removeSetting(StreamOrientation.PREF);
+            } else {
+                // For TV firmware only; the stream still honours a value stored anyway.
+                removeSetting(PreferenceConfiguration.TV_DISPLAY_COMPATIBILITY_PREF_STRING);
             }
 
             // Mobile data rows only where there is mobile data, unless a value set earlier still acts (roaming's
