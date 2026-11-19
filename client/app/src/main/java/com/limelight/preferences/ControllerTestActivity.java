@@ -236,6 +236,7 @@ public class ControllerTestActivity extends NightjarActivity implements UsbDrive
         vibratorManager = null;
         vibrator = null;
         rgbLights.clear();
+        if (sensorManager != null) sensorManager.unregisterListener(this);
         sensorManager = null;
         gyroSensor = accelSensor = null;
         hasTouchpad = hasMotion = false;
