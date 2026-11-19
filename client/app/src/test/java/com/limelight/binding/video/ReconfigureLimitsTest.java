@@ -113,7 +113,7 @@ public class ReconfigureLimitsTest {
                 }
                 return null;
             });
-            held.await(5, TimeUnit.SECONDS);
+            org.junit.Assert.assertTrue("the reset holds the monitor", held.await(5, TimeUnit.SECONDS));
             Future<int[]> ui = threads.submit(renderer::getReconfigureLimits);
             int[] read;
             try {
@@ -141,33 +141,26 @@ public class ReconfigureLimitsTest {
                     threads.submit(() -> renderer.prepareForReconfigure(8192, 8192)).get(2, TimeUnit.SECONDS));
             org.junit.Assert.assertEquals(120_000, renderer.getStreamFrameRateMilliHz());
 
-            // The reset ends; the next frame applies both under the monitor, before it is queued.
-            // (The decoder thread then waits in the restart for render threads this test does not run;
-            // the stop below lets it go.)
+            // The reset ends; the next frame applies both under the monitor, and the restart the
+            // larger size needs runs before that frame is queued, which then decodes.
             release.countDown();
-            Thread input = new Thread(() -> renderer.submitDecodeUnit(new byte[64], 64, MoonBridge.BUFFER_TYPE_PICDATA,
-                    1, MoonBridge.FRAME_TYPE_IDR, (char) 0, 16_000L, 16_000L, 16_000_000L, 16_000L));
-            input.setDaemon(true);
-            input.start();
-            long deadline = System.nanoTime() + 5_000_000_000L;
-            while (!ReflectionHelpers.<Boolean>getField(renderer, "reconfigureRequested") && System.nanoTime() < deadline) {
-                Thread.sleep(5);
-            }
+            quiesceRenderThreads();
+            ObservingCodec.observed = renderer;
+            org.junit.Assert.assertEquals(MoonBridge.DR_OK, submit(1, MoonBridge.BUFFER_TYPE_PICDATA));
+            org.junit.Assert.assertFalse("the frame was queued", ObservingCodec.queuedMaxWidths.isEmpty());
+            org.junit.Assert.assertEquals("the new maximum was in place when the frame was queued", 2560,
+                    (int) ObservingCodec.queuedMaxWidths.get(ObservingCodec.queuedMaxWidths.size() - 1));
             org.junit.Assert.assertEquals(2560, (int) ReflectionHelpers.getField(renderer, "expectedWidth"));
             org.junit.Assert.assertEquals(1440, (int) ReflectionHelpers.getField(renderer, "expectedHeight"));
             org.junit.Assert.assertTrue(ReflectionHelpers.<Boolean>getField(renderer, "reconfigureRequested"));
-            org.junit.Assert.assertEquals(2560, (int) ReflectionHelpers.getField(renderer, "maxDecodeWidth"));
             org.junit.Assert.assertEquals(1440, (int) ReflectionHelpers.getField(renderer, "maxDecodeHeight"));
             MediaFormat configured = ReflectionHelpers.getField(renderer, "configuredFormat");
             org.junit.Assert.assertEquals(2560, configured.getInteger(MediaFormat.KEY_MAX_WIDTH));
             org.junit.Assert.assertEquals(120, configured.getInteger(MediaFormat.KEY_FRAME_RATE));
-            org.junit.Assert.assertEquals("size change", ReflectionHelpers.getField(renderer, "restartReason"));
 
             // Once the stream is ending, it offers no size change, still without waiting.
             renderer.prepareForStop();
             assertNull(threads.submit(renderer::getReconfigureLimits).get(2, TimeUnit.SECONDS));
-            input.join(5000);
-            org.junit.Assert.assertFalse("the decoder thread left the restart once the stream stopped", input.isAlive());
         } finally {
             release.countDown();
             threads.shutdown();
