@@ -933,7 +933,10 @@ final class GameAdaptation {
     boolean applyAdaptiveQuality(AdaptiveQualityController.Target target, long now, int ceilingMilliHz) {
         int[] request = target.request();
         if (target.fps == Math.round(ceilingMilliHz / 1000f)) request[2] = ceilingMilliHz;
-        if (!game.videoOutput.requestStreamReconfigure(request)) {
+        GameVideoOutput.Reconfigure sent = game.videoOutput.requestStreamReconfigure(request);
+        // A decoder being set up again (after a failure) takes no size yet: the next tick asks again.
+        if (sent == GameVideoOutput.Reconfigure.PENDING) return true;
+        if (sent != GameVideoOutput.Reconfigure.SENT) {
             stopAdaptiveQualityWithError();
             return false;
         }

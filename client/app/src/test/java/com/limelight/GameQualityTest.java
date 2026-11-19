@@ -43,7 +43,8 @@ public class GameQualityTest {
         requester.start(1920, 1080, 119880, 1920, 1080, 119880);
         for (boolean accepted : new boolean[] {false, true}) {
             QualityBridge.send = accepted;
-            assertEquals(accepted, (boolean) ReflectionHelpers.callInstanceMethod(game.videoOutput, "requestStreamReconfigure",
+            assertEquals(accepted ? GameVideoOutput.Reconfigure.SENT : GameVideoOutput.Reconfigure.REFUSED,
+                    ReflectionHelpers.callInstanceMethod(game.videoOutput, "requestStreamReconfigure",
                     ReflectionHelpers.ClassParameter.from(int[].class, new int[] {1920, 1080, 59940})));
             assertEquals(accepted ? 59940 : 119880, renderer.getStreamFrameRateMilliHz());
             assertEquals(accepted ? 59940 : 119880, requester.fpsMillihz());

@@ -813,7 +813,7 @@ final class GameVideoOutput {
         if (request == null) {
             return;
         }
-        if (requestStreamReconfigure(request)) {
+        if (requestStreamReconfigure(request) == Reconfigure.SENT) {
             // This is the new ceiling even if automatic quality is enabled later.
             game.qualityMaxWidth = request[0]; game.qualityMaxHeight = request[1]; game.qualityMaxFps = Math.round(request[2] / 1000f);
             game.qualityMaxFrameRateMilliHz = request[2];
@@ -821,7 +821,10 @@ final class GameVideoOutput {
         }
     }
 
-    boolean requestStreamReconfigure(int[] request) {
+    /** What became of a reconfigure request: sent to the PC, waiting for a decoder being set up again, or refused. */
+    enum Reconfigure { SENT, PENDING, REFUSED }
+
+    Reconfigure requestStreamReconfigure(int[] request) {
         LimeLog.info("Reconfigure: asking for " + request[0] + "x" + request[1] + " at " + request[2] / 1000f +
                 " fps (was " + game.reconfigureRequester.width() + "x" + game.reconfigureRequester.height() + " at " +
                 game.reconfigureRequester.fpsMillihz() / 1000f + " fps)");
@@ -829,7 +832,7 @@ final class GameVideoOutput {
             if (game.decoderRenderer.reconfigureLimitsPending()) {
                 // The decoder is being set up again; its listener asks again once it can say.
                 LimeLog.info("Reconfigure: the decoder is being set up again; asking once it is");
-                return false;
+                return Reconfigure.PENDING;
             }
             LimeLog.warning("Reconfigure: the decoder cannot switch to " + request[0] + "x" + request[1] +
                     "; the stream stays as it is");
@@ -837,19 +840,19 @@ final class GameVideoOutput {
                 orientationNoticeShown = true;
                 game.messages.alert(R.string.stream_orientation_decoder_limit, Toast.LENGTH_LONG);
             }
-            return false;
+            return Reconfigure.REFUSED;
         }
         if (!MoonBridge.requestReconfigure(request[0], request[1], request[2])) {
             LimeLog.warning("Reconfigure: request not sent");
             // No IDR at that size comes: the decoder keeps its size and does not restart for it.
             game.decoderRenderer.cancelReconfigure();
-            return false;
+            return Reconfigure.REFUSED;
         }
         boolean fpsChanged = request[2] != game.reconfigureRequester.fpsMillihz();
         game.reconfigureRequester.sent(request);
         game.decoderRenderer.resetDecodeTiming();
         if (fpsChanged) setStreamFrameRate(request[2]);
-        return true;
+        return Reconfigure.SENT;
     }
 
     // The stream runs at this rate now: a reconfigure asked for it, or a 0x553C rate change ran.

@@ -79,6 +79,27 @@ public class GameReconfigureRetryTest {
         assertArrayEquals(new int[] {1920, 1080, 60000}, ReconfigureBridge.requests.get(0));
     }
 
+    // A rebuild follows a decoder failure, just when automatic quality steps down: the step waits for it.
+    @Test
+    public void aQualityStepDuringADecoderRebuildKeepsAutomaticQualityAndIsTakenAfterIt() {
+        Renderer[] renderer = new Renderer[1];
+        Game activity = turnedStream(renderer);
+        com.limelight.nvstream.AdaptiveQualityController quality = new com.limelight.nvstream.AdaptiveQualityController(
+                com.limelight.nvstream.AdaptiveQualityController.Mode.DETAIL, 1080, 1920, 60, 360, 30, 2, 2, 0);
+        ReflectionHelpers.setField(activity, "adaptiveQuality", quality);
+        renderer[0].rebuilding = true;
+        assertTrue("the quality tick goes on", activity.adaptation.applyAdaptiveQuality(quality.current(), 1000));
+        assertSame(quality, ReflectionHelpers.getField(activity, "adaptiveQuality"));
+        assertNull("no error shown", ReflectionHelpers.getField(activity, "qualityStatus"));
+        assertTrue(ReconfigureBridge.requests.isEmpty());
+
+        // The next tick, once the decoder is set up again, asks the PC.
+        renderer[0].rebuilding = false;
+        assertTrue(activity.adaptation.applyAdaptiveQuality(quality.current(), 2000));
+        assertEquals(1, ReconfigureBridge.requests.size());
+        assertSame(quality.current(), ReflectionHelpers.getField(activity, "pendingQualityTarget"));
+    }
+
     @Test
     public void aRequestThatWasNotSentIsTakenBackFromTheDecoder() {
         ReconfigureBridge.accepts = false;
