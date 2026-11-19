@@ -1540,3 +1540,47 @@ async fn a_router_on_trial_stops_at_its_first_timeout() {
     let _ = std::fs::remove_dir_all(directory);
     server.abort();
 }
+
+/// The first address in search order wins even when its search answers after a later one's; and
+/// a later address that found a router is used only once the earlier one has answered that it
+/// found none.
+#[tokio::test]
+async fn the_first_address_in_order_wins_whenever_its_search_answers() {
+    let (gateway, server) = serve(Arc::default()).await;
+    let (other, other_server) = serve(Arc::default()).await;
+    let slow_first = |routers: &[(&str, &Gateway<upnp::Bounded>)]| {
+        with_adapters(ethernet_and_wifi().to_vec());
+        TEST_NET.with(|net| {
+            let mut net = net.borrow_mut();
+            net.multicast_from = Some([192, 0, 2, 10].into());
+            net.delays = vec![([192, 0, 2, 10].into(), 5)];
+        });
+        for (from, router) in routers {
+            router_on(from, copy(router));
+        }
+    };
+    slow_first(&[("192.0.2.10", &gateway), ("192.0.2.20", &other)]);
+    let (found, local) = upnp_gateway(IpAddr::from([0, 0, 0, 0])).await.unwrap();
+    let finished = TEST_NET.with(|net| net.borrow().finished.clone());
+    assert_eq!(finished.first(), Some(&IpAddr::from([192, 0, 2, 20])));
+    assert_eq!(
+        (found.addr, local),
+        (gateway.addr, IpAddr::from([192, 0, 2, 10])),
+        "the search that answered first won, not the first in order"
+    );
+    slow_first(&[("192.0.2.20", &other)]);
+    let (found, local) = upnp_gateway(IpAddr::from([0, 0, 0, 0])).await.unwrap();
+    assert_eq!(
+        (found.addr, local),
+        (other.addr, IpAddr::from([192, 0, 2, 20]))
+    );
+    assert!(
+        TEST_NET.with(|net| net
+            .borrow()
+            .finished
+            .contains(&IpAddr::from([192, 0, 2, 10]))),
+        "the later address was used before the first had answered"
+    );
+    server.abort();
+    other_server.abort();
+}

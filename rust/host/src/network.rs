@@ -275,6 +275,10 @@ struct TestNet {
     /// The searches under way, and the most at once.
     in_flight: usize,
     overlap: usize,
+    /// Extra turns a search from an address waits before it answers.
+    delays: Vec<(IpAddr, usize)>,
+    /// The addresses whose searches have answered, in that order.
+    finished: Vec<IpAddr>,
 }
 #[cfg(test)]
 fn default_gateways() -> Result<Vec<IpAddr>> {
@@ -1005,9 +1009,22 @@ async fn upnp_search(from: IpAddr) -> Result<Gateway<upnp::Bounded>> {
             None => anyhow::bail!("no UPnP router answers a search from {from}"),
         }
     });
-    // A search waits for answers: others may start meanwhile.
-    tokio::task::yield_now().await;
-    TEST_NET.with(|net| net.borrow_mut().in_flight -= 1);
+    // A search waits for answers: others may start, and answer, meanwhile.
+    let delay = TEST_NET.with(|net| {
+        let net = net.borrow();
+        net.delays
+            .iter()
+            .find(|(on, _)| *on == from)
+            .map_or(0, |(_, turns)| *turns)
+    });
+    for _ in 0..=delay {
+        tokio::task::yield_now().await;
+    }
+    TEST_NET.with(|net| {
+        let mut net = net.borrow_mut();
+        net.in_flight -= 1;
+        net.finished.push(from);
+    });
     found
 }
 /// The address Windows sends a multicast search from. A UDP connect sends nothing; it only
