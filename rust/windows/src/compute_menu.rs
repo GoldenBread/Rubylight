@@ -13,7 +13,8 @@ pub(super) const VIEW: usize = 5;
 struct Image {
     texture: ID3D12Resource,
     size: [u32; 2],
-    /// The last conversion reading it, `u64::MAX` while it is submitted.
+    /// The last conversion reading it, `u64::MAX` from its submission until
+    /// its fence is known.
     read: u64,
 }
 struct Upload {
@@ -46,6 +47,22 @@ impl Menu {
         }
         if let Some(upload) = &self.upload {
             work.keep(&upload.buffer);
+        }
+    }
+    /// The conversion reading `pass` is about to be submitted: from now on
+    /// its texture, and with a copy the upload buffer, are read until
+    /// [`Converter::menu_submitted`] names the fence. Only now, so a
+    /// conversion that failed before its submission leaves both as they
+    /// were; a failed submission may have reached the queue, so they stay read.
+    pub(super) fn submitting(&mut self, pass: Option<&Pass>) {
+        let Some(pass) = pass else {
+            return;
+        };
+        self.ring[pass.index].read = u64::MAX;
+        if pass.copy.is_some()
+            && let Some(upload) = &mut self.upload
+        {
+            upload.fence = u64::MAX;
         }
     }
 }
@@ -218,7 +235,6 @@ impl Converter {
             );
         }
         let (_, root, pipeline) = self.menu.pipeline.as_ref().expect("made above");
-        self.menu.ring[index].read = u64::MAX;
         self.menu.passes += 1;
         Ok(Some(Pass {
             root: root.clone(),
@@ -276,7 +292,6 @@ impl Converter {
             }
             upload.buffer.Unmap(0, None);
         }
-        upload.fence = u64::MAX;
         Ok(upload.buffer.clone())
     }
     /// The conversion that reads `pass` was submitted as `fence`. Only now

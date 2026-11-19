@@ -221,12 +221,16 @@ unsafe impl Sync for Compute {}
 /// fence of its last conversion: `u64::MAX` there would make its next use
 /// wait two seconds for a value nothing signals and mark the queue stuck. A
 /// failed submission may have reached the queue, so the slot stays in flight.
+/// `mark` counts what else the list reads as in flight (the couch menu's
+/// texture and upload), by the same rule.
 fn submit_slot(
     fence: &mut u64,
     ordered: Result<()>,
+    mark: impl FnOnce(),
     execute: impl FnOnce() -> Result<u64>,
 ) -> Result<u64> {
     ordered?;
+    mark();
     *fence = u64::MAX;
     *fence = execute()?;
     Ok(*fence)
@@ -1388,10 +1392,13 @@ impl Converter {
             .ensure_active()
             .and_then(|()| self.wait_capture(ready));
         let Slot { fence, list, .. } = &mut self.slots[slot];
-        let compute = &self.compute;
-        let fence = submit_slot(fence, ordered, || {
-            compute.execute(list).inspect_err(|_| compute.retire())
-        })?;
+        let (compute, overlay) = (&self.compute, &mut self.menu);
+        let fence = submit_slot(
+            fence,
+            ordered,
+            || overlay.submitting(menu.as_ref()),
+            || compute.execute(list).inspect_err(|_| compute.retire()),
+        )?;
         if let Some(menu) = &menu {
             self.menu_submitted(menu, fence);
         }
@@ -1568,10 +1575,13 @@ impl Converter {
                     .map_err(Into::into)
             });
         let Slot { fence, list, .. } = &mut self.slots[slot];
-        let compute = &self.compute;
-        submit_slot(fence, ordered, || {
-            compute.execute(list).inspect_err(|_| compute.retire())
-        })?;
+        let (compute, overlay) = (&self.compute, &mut self.menu);
+        submit_slot(
+            fence,
+            ordered,
+            || overlay.submitting(menu.as_ref()),
+            || compute.execute(list).inspect_err(|_| compute.retire()),
+        )?;
         if let Some(menu) = &menu {
             self.menu_submitted(menu, self.slots[slot].fence);
         }

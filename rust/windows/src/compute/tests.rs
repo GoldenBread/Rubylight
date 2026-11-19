@@ -413,18 +413,33 @@ fn unsupported_amf_state_is_rejected_before_recording_conversion() -> Result<()>
 /// reached the queue, so that slot stays in flight.
 #[test]
 fn a_slot_whose_conversion_never_reached_the_queue_keeps_its_finished_fence() {
+    // `marked`: the couch menu's panel texture and upload buffer counted as
+    // read by the submission ([`Menu::submitting`]).
     let mut fence = 7;
+    let mut marked = false;
     let failed = submit_slot(
         &mut fence,
         Err(anyhow::anyhow!("the capture's ready fence timed out")),
+        || marked = true,
         || panic!("submitted after a failed wait"),
     );
     assert!(failed.is_err());
     assert_eq!(fence, 7, "the slot waits for a conversion never submitted");
-    assert!(submit_slot(&mut fence, Ok(()), || anyhow::bail!("signal failed")).is_err());
+    assert!(
+        !marked,
+        "the menu's texture and upload wait for a conversion never submitted"
+    );
+    let failed = submit_slot(
+        &mut fence,
+        Ok(()),
+        || marked = true,
+        || anyhow::bail!("signal failed"),
+    );
+    assert!(failed.is_err());
     assert_eq!(fence, u64::MAX);
+    assert!(marked, "a failed submission may have reached the queue");
     let mut fence = 7;
-    assert_eq!(submit_slot(&mut fence, Ok(()), || Ok(9)).unwrap(), 9);
+    assert_eq!(submit_slot(&mut fence, Ok(()), || {}, || Ok(9)).unwrap(), 9);
     assert_eq!(fence, 9);
 }
 
