@@ -9,6 +9,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// How long the log writes between timed checks that its path is still there
+/// and tries of dropped lines, besides the checks every `EXISTS_CHECK` and
+/// `RETRY_DROPPED` bytes: a quiet log takes long to write 1 MiB.
+const CHECK_EVERY: Duration = Duration::from_secs(10);
+
 /// How many bytes the log writes between checks that its path is still there.
 const EXISTS_CHECK: u64 = 1 << 20;
 /// How many bytes of dropped lines go by between tries to write again.
@@ -42,6 +47,10 @@ pub struct RotatingFile {
     dropped: u64,
     /// `check` asked for dropped lines to be tried again on the next write.
     retry: bool,
+    /// `CHECK_EVERY`; tests set it to zero.
+    every: Duration,
+    /// When the last timed check ran.
+    checked: Instant,
     /// How often the backstop cut the file being written back.
     #[cfg(test)]
     backstops: u32,
@@ -65,6 +74,8 @@ impl RotatingFile {
             dropping: false,
             dropped: 0,
             retry: false,
+            every: CHECK_EVERY,
+            checked: Instant::now(),
             #[cfg(test)]
             backstops: 0,
         };
@@ -181,11 +192,9 @@ impl RotatingFile {
             let _ = self.rotate();
         }
     }
-    /// Checks now, rather than after `EXISTS_CHECK` bytes, that the log's path
-    /// is still there, and lets dropped lines be tried again on the next
-    /// write rather than after `RETRY_DROPPED` bytes: for a caller that writes
-    /// too little for those intervals to come round, on a clock of its own.
-    pub fn check(&mut self) {
+    /// Checks, every `CHECK_EVERY` of writing, that the log's path is still
+    /// there and lets dropped lines be tried again with this line.
+    fn check(&mut self) {
         if !self.detached && !self.path.exists() {
             self.detached = true;
             self.orphan = true;
@@ -201,9 +210,7 @@ impl RotatingFile {
         }
     }
 }
-/// How often a service log that could not be opened is tried again, and how
-/// often an open one checks that its path is still there and tries dropped
-/// lines again.
+/// How often a service log that could not be opened is tried again.
 const LOG_RETRY: Duration = Duration::from_secs(60);
 /// The service's log, `service.log` in `directory`. Opening it never fails: a
 /// log the service cannot use (read-only, a folder in its place, held by a
@@ -239,18 +246,8 @@ impl ServiceLog {
 }
 impl Write for ServiceLog {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if Instant::now() >= self.next {
-            match &mut self.file {
-                // The service writes a few lines an hour, so the log's own
-                // intervals (counted in MiB written) would take months: once
-                // per `LOG_RETRY` the log checks that its path is still there
-                // (one stat) and tries dropped lines again.
-                Some(file) => {
-                    file.check();
-                    self.next = Instant::now() + self.every;
-                }
-                None => self.try_open(),
-            }
+        if self.file.is_none() && Instant::now() >= self.next {
+            self.try_open();
         }
         match &mut self.file {
             Some(file) => file.write(buf),
@@ -288,6 +285,13 @@ impl Write for RotatingFile {
         // If rotation fails (a reader without delete sharing holds the old
         // file), keep writing to the current file rather than lose lines.
         let length = buf.len() as u64;
+        // A monotonic clock read per line (no system call on Windows); the
+        // check itself, one stat, runs at most every `CHECK_EVERY`.
+        let now = Instant::now();
+        if now.duration_since(self.checked) >= self.every {
+            self.checked = now;
+            self.check();
+        }
         if self.dropping && !std::mem::take(&mut self.retry) {
             // Lines are dropped (see below) until about 1 MiB more would have
             // been written, or `check` asks for a try.
@@ -481,14 +485,14 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "kept\n");
     }
 
-    /// The service writes too little for the log's 1 MiB existence check;
-    /// on its own clock (here every write) it has the log check its path, so
-    /// a deleted `logs` folder comes back with the next line.
+    /// A deleted `logs` folder comes back with the service's log: the next
+    /// line written once the log's check interval has passed makes both again.
     #[test]
-    fn a_service_log_whose_folder_was_deleted_comes_back_on_the_service_clock() {
+    fn a_service_log_whose_folder_was_deleted_comes_back() {
         let directory = tempfile::tempdir().unwrap();
         let logs = directory.path().join("logs");
-        let mut log = ServiceLog::new(&logs, Duration::ZERO);
+        let mut log = service_log(&logs);
+        log.file.as_mut().unwrap().every = Duration::ZERO;
         log.write_all(b"before\n").unwrap();
         for entry in std::fs::read_dir(&logs).unwrap() {
             std::fs::remove_file(entry.unwrap().path()).unwrap();
@@ -500,35 +504,6 @@ mod tests {
             std::fs::read_to_string(logs.join("service.log")).unwrap(),
             "after\n"
         );
-    }
-
-    /// Dropped service lines are tried again on the service's clock, not
-    /// after 1 MiB of them, which the service would take months to write.
-    #[test]
-    fn dropped_service_lines_are_tried_again_on_the_service_clock() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("service.log");
-        let mut log = ServiceLog {
-            directory: directory.path().to_owned(),
-            file: Some(RotatingFile::open(&path, LIMIT, KEEP).unwrap()),
-            every: Duration::ZERO,
-            next: Instant::now(),
-        };
-        let write = |log: &mut ServiceLog, n: usize| {
-            log.write_all(format!("{}\n", line(n)).as_bytes()).unwrap()
-        };
-        for n in 0..2 {
-            write(&mut log, n);
-        }
-        FAIL_OPEN.with(|fail| fail.replace(vec![path.clone(), RotatingFile::rotated(&path, 0)]));
-        FAIL_TRUNCATE.with(|fail| fail.set(true));
-        for n in 2..10 {
-            write(&mut log, n);
-        }
-        FAIL_OPEN.with(|fail| fail.replace(Vec::new()));
-        FAIL_TRUNCATE.with(|fail| fail.set(false));
-        write(&mut log, 10);
-        assert_eq!(lines(&path).last(), Some(&line(10)));
     }
 
     fn line(n: usize) -> String {
@@ -976,6 +951,42 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             format!("{}\nafter\n", CUT_NOTE.replace("{}", "250"))
         );
+    }
+
+    /// A quiet log deleted while open comes back with the first line written
+    /// once the check interval has passed, without 1 MiB of lines.
+    #[test]
+    fn a_quiet_log_deleted_while_open_comes_back_after_the_check_interval() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("service.log");
+        let mut log = RotatingFile::open(&path, 1 << 30, KEEP).unwrap();
+        log.every = Duration::ZERO;
+        log.write_all(b"before\n").unwrap();
+        std::fs::remove_file(&path).unwrap();
+        log.write_all(b"after\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "after\n");
+    }
+
+    /// Dropped lines are tried again once the check interval has passed, not
+    /// only after 1 MiB of them.
+    #[test]
+    fn dropped_lines_are_tried_again_after_the_check_interval() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("service.log");
+        let mut log = RotatingFile::open(&path, LIMIT, KEEP).unwrap();
+        log.every = Duration::ZERO;
+        for n in 0..2 {
+            write_line(&mut log, n);
+        }
+        FAIL_OPEN.with(|fail| fail.replace(vec![path.clone(), RotatingFile::rotated(&path, 0)]));
+        FAIL_TRUNCATE.with(|fail| fail.set(true));
+        for n in 2..10 {
+            write_line(&mut log, n);
+        }
+        FAIL_OPEN.with(|fail| fail.replace(Vec::new()));
+        FAIL_TRUNCATE.with(|fail| fail.set(false));
+        write_line(&mut log, 10);
+        assert_eq!(lines(&path).last(), Some(&line(10)));
     }
 
     /// A log deleted before its size limit, whose path cannot be opened again
