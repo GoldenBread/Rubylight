@@ -708,6 +708,7 @@ struct Held {
     held: Mutex<bool>,
     released: std::sync::Condvar,
     waiting: AtomicUsize,
+    closed: AtomicBool,
 }
 impl Tunnel for Held {
     fn read(&self, bytes: &mut [u8]) -> std::io::Result<usize> {
@@ -717,24 +718,29 @@ impl Tunnel for Held {
         let mut held = self.held.lock().unwrap();
         if *held {
             self.waiting.fetch_add(1, Ordering::SeqCst);
-            while *held {
+            while *held && !self.closed.load(Ordering::SeqCst) {
                 held = self.released.wait(held).unwrap();
             }
         }
         drop(held);
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(std::io::ErrorKind::BrokenPipe.into());
+        }
         self.inner.write_all(bytes)
     }
     fn close(&self) {
-        // A closed connection wakes a held write, as a shutdown wakes a blocked one.
-        *self.held.lock().unwrap() = false;
-        self.released.notify_all();
+        // A closed connection fails a held write, as a shutdown fails a blocked one.
+        self.closed.store(true, Ordering::SeqCst);
         self.inner.close();
+        let _held = self.held.lock().unwrap();
+        self.released.notify_all();
     }
 }
 
 impl Held {
     fn new(inner: Arc<TcpTunnel>) -> Arc<Self> {
-        Arc::new(Self { inner, held: Mutex::new(false), released: std::sync::Condvar::new(), waiting: AtomicUsize::new(0) })
+        Arc::new(Self { inner, held: Mutex::new(false), released: std::sync::Condvar::new(), waiting: AtomicUsize::new(0),
+            closed: AtomicBool::new(false) })
     }
 
     fn hold(&self) {
@@ -832,7 +838,7 @@ fn a_completion_made_inside_submit_while_the_pc_reads_nothing_does_not_stop_the_
 fn a_completion_whose_write_waits_on_the_pc_does_not_stop_the_serve_loop() {
     let device = Arc::new(Keeper::default());
     let (inner, mut driver) = pipe();
-    let tunnel = Arc::new(Held { inner, held: Mutex::new(false), released: std::sync::Condvar::new(), waiting: AtomicUsize::new(0) });
+    let tunnel = Held::new(inner);
     let served = {
         let (tunnel, device) = (tunnel.clone(), device.clone());
         std::thread::spawn(move || serve(tunnel, device))
@@ -874,4 +880,70 @@ fn a_completion_whose_write_waits_on_the_pc_does_not_stop_the_serve_loop() {
     assert_eq!(status_of(&driver.reply(false).0), (unlink, wire::ECONNRESET));
     drop(driver);
     served.join().unwrap().unwrap();
+}
+
+/// A served device whose PC reads nothing, with [`MAX_IN_FLIGHT`] answers waiting for it and the
+/// serve loop waiting for room to answer an unlink. Returns the transfer still in flight.
+type Served = std::thread::JoinHandle<Result<(), ServeError>>;
+
+fn full_queue() -> (Arc<Held>, Driver, Served, Completion) {
+    let device = Arc::new(Keeper::default());
+    let (inner, mut driver) = pipe();
+    let tunnel = Held::new(inner);
+    let served = {
+        let (tunnel, device) = (tunnel.clone(), device.clone());
+        std::thread::spawn(move || serve(tunnel, device))
+    };
+    driver.import("1-1").unwrap();
+    tunnel.hold();
+    let first = driver.submit(1, wire::DIR_IN, 8, [0; 8], &[], &[]);
+    for _ in 1..MAX_IN_FLIGHT {
+        driver.submit(1, wire::DIR_IN, 8, [0; 8], &[], &[]);
+    }
+    assert!(within(|| device.kept.lock().unwrap().len() == MAX_IN_FLIGHT));
+    let mut kept = std::mem::take(&mut *device.kept.lock().unwrap());
+    // The writer takes the first answer and waits in its write; the rest queue behind it.
+    kept.remove(0).complete(Reply::read(vec![1]));
+    assert!(within(|| tunnel.waiting.load(Ordering::SeqCst) > 0));
+    for done in kept {
+        done.complete(Reply::read(vec![1]));
+    }
+    // One more is taken, the next refused: its ENOMEM fills the queue.
+    driver.submit(1, wire::DIR_IN, 8, [0; 8], &[], &[]);
+    assert!(within(|| device.kept.lock().unwrap().len() == 1));
+    driver.submit(1, wire::DIR_IN, 8, [0; 8], &[], &[]);
+    // An unlink of a transfer already answered: its answer would go past the queue's room,
+    // so the serve loop waits.
+    driver.unlink(first);
+    std::thread::sleep(Duration::from_millis(200));
+    let in_flight = device.kept.lock().unwrap().remove(0);
+    (tunnel, driver, served, in_flight)
+}
+
+/// Waits up to 3 s for `served` to end.
+fn ended(served: &Served) -> bool {
+    within(|| served.is_finished())
+}
+
+#[test]
+fn a_tunnel_closed_while_the_serve_loop_waits_for_room_ends_serving() {
+    let (tunnel, _driver, served, in_flight) = full_queue();
+    assert!(!served.is_finished(), "the serve loop does not wait for room");
+    tunnel.close();
+    let ended = ended(&served);
+    drop(in_flight);
+    assert!(ended, "serve never returned");
+    assert!(matches!(served.join().unwrap(), Err(ServeError::Io(_))));
+}
+
+#[test]
+fn a_bad_reply_while_the_serve_loop_waits_for_room_ends_serving() {
+    let (tunnel, _driver, served, in_flight) = full_queue();
+    assert!(!served.is_finished(), "the serve loop does not wait for room");
+    // More data than the 8 bytes asked fails serving and closes the tunnel.
+    in_flight.complete(Reply::read(vec![0; 9]));
+    let ended = ended(&served);
+    tunnel.close();
+    assert!(ended, "serve never returned");
+    assert!(matches!(served.join().unwrap(), Err(ServeError::Device(_))));
 }

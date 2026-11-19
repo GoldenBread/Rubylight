@@ -203,12 +203,15 @@ impl State {
 }
 
 impl Shared {
-    /// Ends serving with `error` unless it already ended; the read loop wakes and returns it.
+    /// Ends serving with `error` unless it already ended; the read loop wakes and returns it,
+    /// from a read or from waiting for room, and the writer stops.
     fn fail(&self, state: &mut State, error: ServeError) {
         if !state.closed && state.failure.is_none() {
             state.failure = Some(error);
         }
         self.tunnel.close();
+        self.drained.notify_all();
+        self.queued.notify_all();
     }
 
     /// Queues `message` after every answer queued before it, for the writer thread. Dropped
@@ -222,12 +225,12 @@ impl Shared {
         self.queued.notify_one();
     }
 
-    /// The writer thread: writes the queued answers in order until serving ends or a write
-    /// fails. A failed write clears the queue, records the failure and closes the tunnel.
+    /// The writer thread: writes the queued answers in order until serving ends or fails. A
+    /// failed write clears the queue, records the failure and closes the tunnel.
     fn write_out(&self) {
         let mut state = self.state();
         loop {
-            if state.closed {
+            if state.closed || state.failure.is_some() {
                 return;
             }
             let Some(message) = state.out.pop_front() else {
