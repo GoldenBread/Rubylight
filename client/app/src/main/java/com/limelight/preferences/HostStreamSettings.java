@@ -838,6 +838,8 @@ public class HostStreamSettings extends NightjarActivity {
          */
         private PreferenceCategory debugGroup;
         private Preference fullRangeRow;
+        /** Debug was listed during this visit, so it stays listed until the screen closes. */
+        private boolean debugSeen;
 
         @Override
         public void onActivityCreated(Bundle state) {
@@ -1157,8 +1159,11 @@ public class HostStreamSettings extends NightjarActivity {
                 Preference row = "full_range".equals(key) ? fullRangeRow : findPreference(key);
                 row.setSummary(summary(switchField(key), switchOverride(key) != null, switchText(key, switchValue(config, key))));
             }
-            boolean debugShown = own.fullRange != null || SettingRules.debugShown(activity,
+            // Once listed it stays for this visit: setting its row back to the main settings' value must not take the
+            // group, and the focus, from under the D-pad (Settings keeps such rows the same way, StreamSettings.revealed).
+            boolean debugShown = debugSeen || own.fullRange != null || SettingRules.debugShown(activity,
                     android.preference.PreferenceManager.getDefaultSharedPreferences(activity));
+            debugSeen = debugShown;
             PreferenceScreen screen = getPreferenceScreen();
             boolean debugListed = false;
             for (int i = 0; i < screen.getPreferenceCount(); i++) debugListed |= screen.getPreference(i) == debugGroup;

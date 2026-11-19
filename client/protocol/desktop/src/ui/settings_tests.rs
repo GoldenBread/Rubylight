@@ -2549,3 +2549,34 @@ fn the_igdb_secret_is_left_out_until_the_client_id_is_set() {
     f.settle();
     assert!(shows(&f, label) && shows(&f, reason), "search finds it: {:?}", f.drawn);
 }
+
+/// A row shown only because it holds a value stays while its own control is in use: clearing the
+/// IGDB client secret (client ID empty) keeps the row under the caret until the field loses focus.
+#[test]
+fn a_row_set_back_to_its_default_stays_while_its_field_has_focus() {
+    use egui::accesskit::Role;
+    let label = "IGDB client secret";
+    let mut f = settings_with(Settings::default());
+    f.ctx.enable_accesskit();
+    f.l.game_info_keys.igdb_client_secret = "secret".into();
+    open_folds(&mut f);
+    in_section(&mut f, "Advanced");
+    assert!(shows(&f, label), "held by its secret: {:?}", f.drawn);
+    let field = f.access.as_ref().expect("AccessKit is on").nodes.iter()
+        .find(|(_, n)| n.role() == Role::TextInput && n.label() == Some(label))
+        .map(|(_, n)| n.bounds().expect("laid out"))
+        .expect("the secret's field");
+    f.click_at(Pos2::new(((field.x0 + field.x1) / 2.0) as f32, ((field.y0 + field.y1) / 2.0) as f32), egui::PointerButton::Primary);
+    assert!(f.ctx.text_edit_focused(), "the field has focus");
+    // Cleared while it keeps focus: the row stays, the caret with it.
+    for _ in 0..12 {
+        f.press(egui::Key::Backspace);
+    }
+    assert!(f.l.game_info_keys.igdb_client_secret.is_empty(), "{:?}", f.l.game_info_keys.igdb_client_secret);
+    assert!(f.ctx.text_edit_focused() && shows(&f, label), "kept while in use: {:?}", f.drawn);
+    // Focus leaves: the row does nothing without the client ID and holds nothing, so it goes.
+    f.press(egui::Key::Escape);
+    f.settle();
+    assert!(!f.ctx.text_edit_focused());
+    assert!(!shows(&f, label), "gone once focus left: {:?}", f.drawn);
+}

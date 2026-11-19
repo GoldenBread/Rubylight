@@ -539,6 +539,30 @@ public class SettingsHideTest {
     }
 
     @Test
+    public void aGamesDebugStaysListedForTheVisitOnceItsRowIsSetBackToTheMainSettings() {
+        Intent intent = HostStreamSettings.intentForGame(context(), "pc", "PC", "game-uuid", 7, "Racer");
+        AppStreamSettings.save(context(), "pc", "game-uuid", 7, HostStreamProfile.deserialize("v2;full_range=true"));
+        try (ActivityController<HostStreamSettings> controller = Robolectric.buildActivity(HostStreamSettings.class, intent).setup()) {
+            PreferenceFragment fragment = (PreferenceFragment) controller.get().getFragmentManager().findFragmentById(R.id.host_profile_settings);
+            Preference fullRange = fragment.findPreference("full_range");
+            assertNotNull("the game sets it", fullRange);
+            // Back to the main settings' value, through its dialog's first choice.
+            fullRange.getOnPreferenceClickListener().onPreferenceClick(fullRange);
+            androidx.appcompat.app.AlertDialog dialog =
+                    (androidx.appcompat.app.AlertDialog) org.robolectric.shadows.ShadowDialog.getLatestDialog();
+            dialog.getListView().performItemClick(null, 0, 0);
+            org.robolectric.shadows.ShadowLooper.idleMainLooper();
+            assertNotNull("Debug stays for this visit", fragment.findPreference("full_range"));
+        }
+        // A new visit lists it by the rule again: nothing set here, Show debug settings off.
+        AppStreamSettings.save(context(), "pc", "game-uuid", 7, HostStreamProfile.deserialize("v2"));
+        try (ActivityController<HostStreamSettings> controller = Robolectric.buildActivity(HostStreamSettings.class, intent).setup()) {
+            PreferenceFragment fragment = (PreferenceFragment) controller.get().getFragmentManager().findFragmentById(R.id.host_profile_settings);
+            assertNull("gone on the next visit", fragment.findPreference("full_range"));
+        }
+    }
+
+    @Test
     public void aGamesSettingsShowDebugByTheSameRuleAndAlwaysTheSharpness() {
         prefs().edit().putString("upscaling_mode", "off").commit();
         Intent intent = HostStreamSettings.intentForGame(context(), "pc", "PC", "game-uuid", 7, "Racer");
