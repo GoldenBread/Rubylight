@@ -1290,12 +1290,19 @@ impl Decoder {
         let hardware = if rest.is_empty() {
             Err("no other hardware decoder".to_owned())
         } else {
-            media::VideoDecoder::open_any(codec, self.pictures(&setup), rest, false, log_unavailable)
+            media::VideoDecoder::open_any(codec, self.pictures(&setup), rest, setup.chroma_packing != 0, log_unavailable)
         };
         let (opened, now) = match hardware {
             Ok(decoder) => {
                 let now = trf("{} cannot decode this stream. Now decoding with {}.", &[&refused.label(), &decoder.hardware.label()]);
                 (Ok(decoder), now)
+            }
+            Err(error) if setup.chroma_packing != 0 => {
+                // The software decoder cannot unpack the layout (setup refuses it the same way).
+                eprintln!("nightjar: after {} refused the packed 4:4:4 stream: {error}; no software decoder can show it", refused.label());
+                self.decoder = None;
+                self.shared.notify(Notice::DecoderFailed(crate::strings::tr(PACKED_NEEDS_HARDWARE).to_owned()));
+                return;
             }
             Err(error) => {
                 eprintln!("nightjar: after {} refused the stream: {error}", refused.label());

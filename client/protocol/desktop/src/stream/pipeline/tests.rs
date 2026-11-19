@@ -676,6 +676,28 @@ fn a_refused_decoder_is_replaced_and_said_on_the_frame_that_shows_it() {
     assert_eq!(*lock(&shared.decoder_name), replaced.name);
 }
 
+/// A packed 4:4:4 stream cannot be unpacked by the software decoder: when FFmpeg takes its
+/// hardware decoder to software, the stream ends with the hardware-needed reason instead of
+/// decoding garbled; an unpacked stream still goes on in software.
+#[test]
+fn a_refused_hardware_decoder_never_hands_a_packed_stream_to_software() {
+    for (chroma_packing, falls_back) in [(2, false), (0, true)] {
+        let (mut decoder, shared) = decoder();
+        let setup = VideoSetup { format: nightjar_core::sdp::VIDEO_FORMAT_H264, width: 128, height: 128, fps: 60, chroma_packing, logical_width: 128, logical_height: 128, color_space: 1, color_range: 0 };
+        decoder.setup = Some(setup);
+        decoder.hardware = Hardware::V4l2m2m;
+        decoder.replace_refused(Hardware::V4l2m2m);
+        let said = notices(&shared);
+        if falls_back {
+            assert!(matches!(said.as_slice(), [Notice::DecoderFallback(_)]), "the switch is said, the stream goes on");
+            assert_eq!(decoder.decoder.as_ref().expect("a software decoder").hardware, Hardware::None);
+        } else {
+            assert!(matches!(said.as_slice(), [Notice::DecoderFailed(text)] if *text == crate::strings::tr(PACKED_NEEDS_HARDWARE)), "the hardware-needed failure");
+            assert!(decoder.decoder.is_none(), "no software decoder under a packed stream");
+        }
+    }
+}
+
 /// Pictures the presenter could not show from the software decoder end the stream with a reason
 /// in the user's words; pictures from before the decoder was installed say nothing about it.
 #[test]
