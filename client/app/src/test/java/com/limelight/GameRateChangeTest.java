@@ -852,8 +852,10 @@ public class GameRateChangeTest {
         runFor(1);
         assertEquals("again a second later", 1, queries.size());
         assertTrue(sent.isEmpty());
+        // Video ran meanwhile, so a cut by the PC may be in the answer: not kept, the setting's number goes out.
         answerQuery(OLDER_PC_KBPS);
-        assertEquals(OLDER_PC_KBPS, sent.get(0)[1]);
+        assertEquals(50_000, sent.get(0)[1]);
+        assertEquals(50_000, (int) ReflectionHelpers.getField(game, "currentBitrate"));
 
         // Twice unsent: the stream goes on from its own bitrate, as before the query.
         sent.clear();
@@ -877,6 +879,74 @@ public class GameRateChangeTest {
         runFor(1);
         assertEquals(1, sent.size());
         assertEquals(30_000, sent.get(0)[1]);
+    }
+
+    @Test
+    public void aCutThePcMadeBeforeTheAnswerIsNotKept() {
+        prefs.keepBitrate = true;
+        startStreamAsking(recording());
+        // The PC's link-rate controller lowered the bitrate before it handled the query: its answer is the cut.
+        game.linkNotice(1, 50_000, 30_000);
+        ShadowLooper.idleMainLooper();
+        answerQuery(30_000);
+        runFor(1);
+        assertEquals(1, sent.size());
+        assertEquals("the setting's number, as before the query", 50_000, sent.get(0)[1]);
+        assertEquals(50_000, (int) ReflectionHelpers.getField(game, "currentBitrate"));
+
+        // Automatic bitrate starts from the setting's number too.
+        prefs.keepBitrate = false;
+        prefs.rateChangeBitrate = true;
+        startStreamAsking(recording());
+        game.linkNotice(2, 50_000, 5_000);
+        ShadowLooper.idleMainLooper();
+        answerQuery(5_000);
+        assertEquals(50_000, game.rateChanges.automatic().currentKbps());
+
+        // A notice from an earlier stream does not count against this one.
+        prefs.rateChangeBitrate = false;
+        prefs.keepBitrate = true;
+        sent.clear();
+        startStreamAsking(recording());
+        answerQuery(OLDER_PC_KBPS);
+        runFor(1);
+        assertEquals(OLDER_PC_KBPS, sent.get(0)[1]);
+    }
+
+    @Test
+    public void aBitratePickedBeforeTheAnswerGoesOutOnceAfterIt() {
+        startStreamAsking(recording());
+        assertEquals("the slider keeps the pick", 30_000, game.adaptation.applyBitrateFromMenu(30_000));
+        assertTrue("held until the answer", sent.isEmpty());
+        answerQuery(OLDER_PC_KBPS);
+        assertEquals(1, sent.size());
+        assertEquals(30_000, sent.get(0)[1]);
+        runFor(10);
+        assertEquals("once", 1, sent.size());
+
+        // Without an answer it goes out after the timeout.
+        sent.clear();
+        startStreamAsking(recording());
+        game.adaptation.applyBitrateFromMenu(25_000);
+        runFor((int) (StreamRateChanges.ANSWER_MS / 1000));
+        assertEquals(1, sent.size());
+        assertEquals(25_000, sent.get(0)[1]);
+    }
+
+    @Test
+    public void anOpenMenusSliderShowsWhatThePcAnswered() {
+        StreamMenuModel.use(new RustStreamMenuModel());
+        try {
+            startStreamAsking(recording());
+            game.showStreamMenu();
+            Object sheet = ReflectionHelpers.getField(game.menuActions, "streamMenuSheet");
+            com.limelight.ui.StepSlider slider = ReflectionHelpers.callInstanceMethod(sheet, "bitrateSlider");
+            assertEquals(com.limelight.ui.BitrateSlider.progress(50_000), slider.getPosition());
+            answerQuery(OLDER_PC_KBPS);
+            assertEquals(com.limelight.ui.BitrateSlider.progress(OLDER_PC_KBPS), slider.getPosition());
+        } finally {
+            StreamMenuModel.use(null);
+        }
     }
 
     @Test

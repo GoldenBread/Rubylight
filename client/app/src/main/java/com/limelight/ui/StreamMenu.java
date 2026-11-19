@@ -448,6 +448,8 @@ public final class StreamMenu {
     // What each of the model's cells became: a tile or a status row. Hotkeys go by the model's order.
     private android.view.View[] cells;
     private StepSlider bitrateSlider;
+    // The rate the slider's row shows beside it.
+    private TextView bitrateShown;
     private TextView failure;
     // The shortcut being edited (null for a new one), and the editor's name and keys in their saved names.
     private KeyboardShortcuts.Shortcut editing;
@@ -558,6 +560,7 @@ public final class StreamMenu {
         grid = null;
         cells = null;
         bitrateSlider = null;
+        bitrateShown = null;
         layout = null;
         failure = null;
         audioNote = null;
@@ -737,6 +740,7 @@ public final class StreamMenu {
                 if (rows.get(Item.BITRATE) instanceof MenuRow bitrateRow) bitrateRow.setValue(text);
             }, change);
             shown[0] = sheet.addSliderRow(sliders, activity.getString(R.string.stream_bitrate), BitrateSlider.text(activity, o.bitrateKbps), bitrateSlider);
+            bitrateShown = shown[0];
         }
         LinearLayout group = sheet.addRowGroup();
         String facts = o.connection == null ? null : o.connection.summary(activity);
@@ -759,6 +763,18 @@ public final class StreamMenu {
     /** The view of the model's cell at this index on the first page. */
     android.view.View cell(int index) {
         return cells[index];
+    }
+
+    /**
+     * The stream's bitrate as the PC counts it arrived while the menu is open: the slider and the bitrate row show it,
+     * without sending anything.
+     */
+    public void showBitrate(int kbps) {
+        if (bitrateSlider == null || kbps <= 0) return;
+        bitrateSlider.setPosition(BitrateSlider.progress(kbps));
+        String text = BitrateSlider.text(activity, kbps);
+        if (bitrateShown != null) bitrateShown.setText(text);
+        if (rows.get(Item.BITRATE) instanceof MenuRow bitrateRow) bitrateRow.setValue(text);
     }
 
     /** The first page's bitrate slider; null when it has none. */

@@ -1654,6 +1654,8 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         LinkNoticeStatus status = LinkNoticeStatus.parse(state, ceilingKbps, currentKbps);
         runOnUiThread(() -> {
             linkNotice = status;
+            // A cut before the PC's answer to the bitrate query: that answer may hold it.
+            if (status != null) adaptation.pcLowered();
             adaptation.noteLinkLowered(status);
             if (performanceOverlayView != null) overlays.updatePerformanceOverlay();
         });

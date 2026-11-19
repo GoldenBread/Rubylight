@@ -96,6 +96,11 @@ final class GameMenuActions {
         return streamMenuSheet != null && streamMenuSheet.sheet().isShowing();
     }
 
+    /** The stream's bitrate as the PC counts it arrived: an open menu's slider shows it. */
+    void showBitrate(int kbps) {
+        if (streamMenuSheet != null) streamMenuSheet.showBitrate(kbps);
+    }
+
     /** The controller quit combo: leaves the stream like the menu's Disconnect. */
     void leaveStreamFromController() {
         if (!game.foreground || game.isFinishing()) {
