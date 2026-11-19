@@ -1188,6 +1188,15 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     private void applyResize(ResizeRequest resize) {
         int[] max = StreamResizePolicy.coveringMax(maxDecodeWidth, maxDecodeHeight, resize.maxWidth, resize.maxHeight);
+        // Checked against the decoder running now: a rebuild since the UI asked may have moved to
+        // one that cannot take it, whose configure would then refuse the raised maximum.
+        ReconfigureCaps live = reconfigureLimits;
+        if (live == null || !live.caps.isSizeSupported(resize.width, resize.height) ||
+                !live.caps.isSizeSupported(max[0], max[1])) {
+            LimeLog.warning("Decoder " + activeDecoderName + " cannot switch to " + resize.width + "x" + resize.height +
+                    " within " + max[0] + "x" + max[1] + "; the size change is dropped");
+            return;
+        }
         boolean restart = false;
         if (max[0] != maxDecodeWidth || max[1] != maxDecodeHeight) {
             LimeLog.info("Decoder restarts for sizes up to " + max[0] + "x" + max[1] +

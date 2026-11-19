@@ -87,6 +87,9 @@ public class ReconfigureLimitsTest {
         surface.release();
         texture.release();
         ObservingCodec.info = previousInfo;
+        ObservingCodec.observed = null;
+        ObservingCodec.queuedFlags.clear();
+        ObservingCodec.queuedMaxWidths.clear();
         MediaCodecHelper.forgetCodecList();
         activity.close();
     }
@@ -172,6 +175,56 @@ public class ReconfigureLimitsTest {
         }
     }
 
+    // As the render and Choreographer threads do when a recovery is due, so the input thread runs it.
+    private void quiesceRenderThreads() {
+        ReflectionHelpers.setField(renderer, "codecRecoveryThreadQuiescedFlags",
+                (int) ReflectionHelpers.getStaticField(MediaCodecDecoderRenderer.class, "CR_FLAG_RENDER_THREAD"));
+    }
+
+    private int submit(int frame, int type) {
+        return renderer.submitDecodeUnit(new byte[64], 64, type, frame, MoonBridge.FRAME_TYPE_IDR, (char) 0,
+                frame * 16_000L, frame * 16_000L, frame * 16_000_000L, frame * 16_000L);
+    }
+
+    private int submitIdr(int frame) {
+        for (int type : new int[] {MoonBridge.BUFFER_TYPE_VPS, MoonBridge.BUFFER_TYPE_SPS, MoonBridge.BUFFER_TYPE_PPS}) {
+            int result = submit(frame, type);
+            if (result != MoonBridge.DR_OK) return result;
+        }
+        return submit(frame, MoonBridge.BUFFER_TYPE_PICDATA);
+    }
+
+    private static MediaCodecInfo decoder(String name, int width, int height) {
+        MediaFormat capabilities = MediaFormat.createVideoFormat("video/hevc", width, height);
+        capabilities.setFeatureEnabled(CodecCapabilities.FEATURE_AdaptivePlayback, true);
+        MediaCodecInfo.CodecProfileLevel level = new MediaCodecInfo.CodecProfileLevel();
+        level.profile = MediaCodecInfo.CodecProfileLevel.HEVCProfileMain;
+        level.level = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel51;
+        return MediaCodecInfoBuilder.newBuilder().setName(name).setIsHardwareAccelerated(true)
+                .setCapabilities(CodecCapabilitiesBuilder.newBuilder().setMediaFormat(capabilities)
+                        .setProfileLevels(new MediaCodecInfo.CodecProfileLevel[] {level})
+                        .setColorFormats(new int[] {CodecCapabilities.COLOR_FormatYUV420Flexible}).build()).build();
+    }
+
+    // A request the old decoder took, then a rebuild onto a decoder that cannot take that size:
+    // the request is dropped, not configured into the new decoder.
+    @Test
+    public void aRequestTheRebuiltDecoderCannotTakeIsDropped() {
+        if (renderer.setup(MoonBridge.VIDEO_FORMAT_H265, 1920, 1080, 60) != 0) fail("setup failed");
+        org.junit.Assert.assertTrue(renderer.prepareForReconfigure(2560, 1440));
+        ObservingCodec.info = decoder("c2.acme.hevc.decoder", 1920, 1080);
+        Object steps = ReflectionHelpers.getField(renderer, "recoveryCodec");
+        ReflectionHelpers.callInstanceMethod(steps, "rebuild", ReflectionHelpers.ClassParameter.from(boolean.class, false));
+        int maxWidth = ReflectionHelpers.getField(renderer, "maxDecodeWidth");
+        org.junit.Assert.assertTrue(maxWidth < 2560);
+        quiesceRenderThreads();
+        submit(1, MoonBridge.BUFFER_TYPE_PICDATA);
+        org.junit.Assert.assertEquals("the maximum stays the new decoder's", maxWidth,
+                (int) ReflectionHelpers.getField(renderer, "maxDecodeWidth"));
+        org.junit.Assert.assertFalse(ReflectionHelpers.<Boolean>getField(renderer, "reconfigureRequested"));
+        org.junit.Assert.assertEquals(1920, (int) ReflectionHelpers.getField(renderer, "expectedWidth"));
+    }
+
     @Test
     public void aRebuildOffersNoSizeChangeUntilItsNewDecoderIsConfigured() {
         if (renderer.setup(MoonBridge.VIDEO_FORMAT_H265, 1920, 1080, 60) != 0) fail("setup failed");
@@ -197,6 +250,9 @@ public class ReconfigureLimitsTest {
         static volatile MediaCodecDecoderRenderer observed;
         static volatile int configures;
         static volatile int[] seen;
+        /** For each buffer queued while observing: its flags, and the renderer's decode maximum then. */
+        static final java.util.List<Integer> queuedFlags = new java.util.concurrent.CopyOnWriteArrayList<>();
+        static final java.util.List<Integer> queuedMaxWidths = new java.util.concurrent.CopyOnWriteArrayList<>();
         @Override @org.robolectric.annotation.Implementation
         public void configure(MediaFormat format, Surface surface, android.media.MediaCrypto crypto, int flags) {
             MediaCodecDecoderRenderer renderer = observed;
@@ -204,6 +260,15 @@ public class ReconfigureLimitsTest {
                 configures++;
                 seen = renderer.getReconfigureLimits();
             }
+        }
+        @Override @org.robolectric.annotation.Implementation
+        public void queueInputBuffer(int index, int offset, int size, long timeUs, int flags) {
+            MediaCodecDecoderRenderer renderer = observed;
+            if (renderer != null) {
+                queuedFlags.add(flags);
+                queuedMaxWidths.add(ReflectionHelpers.<Integer>getField(renderer, "maxDecodeWidth"));
+            }
+            super.queueInputBuffer(index, offset, size, timeUs, flags);
         }
     }
 }
