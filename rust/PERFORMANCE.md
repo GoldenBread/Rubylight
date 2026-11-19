@@ -6,6 +6,7 @@ This is the dated measurement record. For a guided comparison, start with the [p
 
 | Find a result | Recorded evidence |
 | --- | --- |
+| A game that sets its own display mode under the automatic frame cap (#133): frame intervals with a cap beside V-Sync at the display's rate, with V-Sync alone, at 1000 Hz with the cap and with an uncapped source; the display slowed mid-stream with RTSS as the cap, 6.0.0 against the cap that switches off; the default bitrate controller cutting on loss in a calm picture; congestion control cutting a light picture's bitrate on a clean link; why Adapt error correction is off by default | [November 19, a frame cap beside V-Sync at the display's own rate](#november-19-a-frame-cap-beside-v-sync-at-the-displays-own-rate-133-and-two-defaults) |
 | HDR 4:2:0 chroma filtered in light instead of on PQ or HLG codes (#130, ClearType text tinted magenta): GPU cost of the host conversion at 1080p, 1440p and 4K, SDR and HDR, P010 and PyroWave, compute and graphics paths, release build (no change measured) | [November 18, HDR chroma filtered in light (#130), conversion cost](#november-18-hdr-chroma-filtered-in-light-130-conversion-cost) |
 | AMF slice output taking its frame buffers from the frame pool instead of the heap: encode, encoded to first packet, send spread and page faults at 4K60 HEVC with 20 recovery keyframes (no change measured, kept as the smaller allocation) | [November 15, AMF slice output through the frame pool](#november-15-amf-slice-output-through-the-frame-pool) |
 | Frame Warp: how much of a turn's input-to-picture gap it removes on a test game with known response, the learned gain and lag, lock time, a real game (Black Flag Resynced), GPU pass cost at 1080p to 4K, host processing on and off | [November 12, Frame Warp](#november-12-frame-warp) |
@@ -80,6 +81,184 @@ This is the dated measurement record. For a guided comparison, start with the [p
 | PyroWave encode overlap, send buffer, Nightjar receive path | [November 10, PyroWave at 1.4 Gbps](#november-10-pyrowave-at-14-gbps-to-a-780m-laptop) |
 | Temporal upscaler for Nightjar (SGSR 2 adaptation), not landed | [November 16, temporal upscaler](#november-16-a-temporal-upscaler-for-nightjar-measured-offline-not-landed) |
 | A capped path and a busy PC | [November 17, a capped path holds its learned rate](#november-17-a-capped-path-holds-its-learned-rate-and-a-busy-pc-is-not-the-network) |
+
+## November 19: a frame cap beside V-Sync at the display's own rate (#133), and two defaults
+
+**The report.** Rubylight 6.0.0, RTX 5070 Ti, 4K60 HDR HEVC to a Shield TV over
+Wi-Fi: "frame drops into the 30s" where other hosts held 60. The host log
+shows a healthy pipeline (encode 3 to 4 ms, the link at its full 63 Mbps, no
+bitrate change) and a source that falls to half its rate for about 2 s about
+every 20 s: per 5 s window the game delivered 60, 60, 47, 55, 60, 60, 45, 57,
+57, 60, 48 new pictures a second, and the send intervals of the low windows
+have p95, p99 and maximum at 33.4 to 34.7 ms, every other frame shown twice.
+Nine seconds after the game started the stream's virtual display went from the
+1000 Hz the host had set to 60 Hz (the driver's `commit_modes2` line, and
+`display_fps=60.0` in every warning after it): the game ran in exclusive
+fullscreen and set its own mode. The automatic frame cap stayed at 60.000 fps
+(RTSS, NVIDIA Reflex mode), so the cap and the display's refresh ran at almost
+the same rate and drifted across each other. The console said nine times that
+the game was rendering below the stream's rate.
+
+**Setup of our run.** Host: the Rubylight 6.0.0 release package, an isolated
+host run as SYSTEM (own profile and port, `virtual_display_layout = extended`,
+physical displays untouched), RX 7900 XT, AMF HEVC 1080p60, direct driver push
+capture. Client: the repository's `moonlight-client.exe` on the same PC over
+loopback (the laptop was not reachable), so its decode shared the GPU and
+nothing here is an end-to-end number. Picture: `motion_probe` on the virtual
+display. One 240 s leg per arm in the order A to E, the first 30 s left out;
+intervals are differences of the frames' `presentation_us` (the RTP stamp,
+11 us steps).
+
+| Arm | Display | Frame pacing | Intervals more than 4 ms off 16.67 ms | Over 25 ms | Source fps per 5 s window, min / median |
+|---|---|---|---:|---:|---|
+| A | 1000 Hz | automatic RTSS cap at 60, probe timer at 60, `Present(1)` | 2.56 % | 50 | 59.8 / 60.0 |
+| B | 60 Hz | probe timer at 59.95 fps, `Present(1)` (a cap beside V-Sync, 0.05 Hz apart) | 4.93 % | 2 | 31.4 / 59.8 |
+| C | 60 Hz | probe timer at 60.000 fps, `Present(1)` (a cap beside V-Sync at the same rate) | 17.34 % | 54 | 33.6 / 54.6 |
+| D | 60 Hz | `Present(1)` alone: the display's refresh paces the probe | 0.06 % | 0 | 59.8 / 60.0 |
+| E | 1000 Hz | no cap (`frame_limiter_provider = none`), `Present(1)` alone: about 120 fps | 0.31 % | 7 | 119.6 / 120.0 |
+
+Off-cadence intervals per 10 s bucket:
+
+- B: 106, 96, 30, 238, 56, 7, 10, 0, 10, 0, 12, 0, 14, 0, 10, 0, 10, 0, 14, 0, 8.
+  After the first minute a group of 10 to 14 comes every 20 s, the period two
+  rates 0.05 Hz apart cross at, and the report's.
+- C: 0, 0, 0, 67, 198, 258, 234, 181, 123, 114, 109, 126, 104, 86, 123, 66, 52,
+  13, 98, 8, 211. Two rates this close cross slowly, so the frames sat at the
+  refresh edge for most of the run (mostly 27 ms intervals; windows with 34
+  new pictures a second).
+- D: 8 intervals in the whole run.
+- A: 0, 0, 0, 37, 275, 6, 5 and then none: one burst in the second minute.
+  Builds ran on this PC during the batch, so a single burst may not be the
+  stream's; the November 16 run of this arm to the laptop had 0.04 %.
+- E: the host kept 60 submitted and 60 sent frames a second in every window
+  while it captured 120.
+
+A cap that runs beside V-Sync at the display's own rate disturbs the frames at
+the rate the two drift apart, and the display's refresh alone (D) paces them
+evenly. The automatic cap of a virtual display now switches off while the
+display refreshes at less than one and a half times the cap, which is arm D,
+and comes back when the display is fast again (`cap_suits_display` in
+`rust/core/src/framegen.rs`, `follow_display` in `rust/windows/src/limiter.rs`).
+Off is RTSS with no limit in place of the cap, RTSS left running; the user's
+own RTSS values return when the stream ends, as they always did. A cap the
+user asked for (`frame_limiter_enable`) stays.
+
+**The display slowed mid-stream, RTSS as the cap.** Same isolated host setup,
+client and probe; the probe ran `Present(1)` alone, so RTSS's limit (60 fps,
+`SyncLimiter` 1 as the user's profile had it) was the only cap. A helper set
+the virtual display to 60 Hz about 60 s into the stream and back to 1000 Hz at
+150 s, as a game does on entering and leaving exclusive fullscreen; 240 s a
+leg, the 10 s after each change left out. One leg on the 6.0.0 package's
+executable, two on builds of this change (`fixture` profile; the second after
+the journal was made to drop the host's claim on the zero once the cap is
+back). One later edit ran in no leg: what the host records when RTSS does not
+confirm a change, which the build and the unit tests cover.
+
+| Host | Phase | RTSS limit | Source fps per 5 s window, min / median | Intervals more than 4 ms off 16.67 ms | Over 25 ms |
+|---|---|---|---|---:|---:|
+| 6.0.0 | 1000 Hz | 60 | 59.5 / 60.0 | 0.94 % | 27 |
+| 6.0.0 | 60 Hz | 60 | 30.9 / 54.7 | 14.82 % | 605 |
+| 6.0.0 | 1000 Hz again | 60 | 59.8 / 60.0 | 0 % | 0 |
+| this change, leg 1 | 1000 Hz | 60 | 59.8 / 60.0 | 0.12 % | 1 |
+| this change, leg 1 | 60 Hz | none | 58.7 / 60.0 | 0.29 % | 7 |
+| this change, leg 1 | 1000 Hz again | 60 | 59.6 / 60.0 | 0.83 % | 9 |
+| this change, leg 2 | 1000 Hz | 60 | 59.5 / 60.0 | 0.29 % | 2 |
+| this change, leg 2 | 60 Hz | none | 57.5 / 60.0 | 0.32 % | 8 |
+| this change, leg 2 | 1000 Hz again | 60 | 59.8 / 60.0 | 0 % | 0 |
+
+Off-cadence intervals per 10 s bucket of the 60 Hz phase: 6.0.0 27, 32, 66,
+267, 169, 51, 2, 8; this change 3, 0, 0, 0, 0, 0, 1 and 2, 0, 0, 0, 0, 0, 0, 4.
+The 1000 Hz phases differ between legs as much as between hosts (0 to
+0.94 %), so only the 60 Hz phase tells the two apart.
+
+What the host did in both legs: it saw the 60 Hz mode with its next 5 s
+timing window and took the limit off 0.4 s later, saw 1000 Hz again the same
+way and had the limit back 0.4 s after that. RTSS's `Limit` /
+`LimitDenominator` / `SyncLimiter` read 120 / 1 / 1 before the stream (the
+user's own profile), 0 / 1 / 1 at 100 s with the zero named in the recovery
+journal as the host's, 60 / 1 / 1 at 200 s and 120 / 1 / 1 after the stream,
+the journal settled and the RTSS the host had started gone. Until the next
+timing window the old state runs on, so the cap stays beside V-Sync for up to
+5 s after the display slows. After the limit came back the probe still ran
+above it for a while: 61.8, 66.5 and 59.6 new pictures a second in the next
+three windows of leg 1 (up to 159 captured), 62.7 in one window of leg 2,
+while the stream kept sending 60.
+
+Not measured: NVIDIA and RTSS's Reflex mode as the cap, a real game setting
+the mode itself, 4K or HDR, a game without V-Sync (which runs uncapped while
+its display is slow, as on a host without a limiter), a client on another
+machine. Arm E ran in the extended layout, where the probe reached only
+120 fps; an uncapped game on a host without RTSS, alone on a 1000 Hz display
+and under GPU load, is not measured. An earlier build gave RTSS the user's
+own profile back while the display was slow (their 120 fps limit, RTSS still
+running): 3.32 % of the 60 Hz intervals were off, which is why off means no
+limit. Artifacts: `D:\CodexArtifacts\smooth-defaults-results\`, `beat\` for
+the five arms and `standdown\` for the legs with the display slowed.
+
+**Congestion control on a light picture.** A Retroid session on the installed
+host with `congestion_control = true` (off by default): 37 overuse cuts in
+about 20 minutes with 24 of 1,019,576 packets lost and a queueing delay p95 of
+2.63 ms. The cuts came while the picture needed far less than the 33 Mbps the
+stream may send: the client received 1.4 Mbps, the controller cut to 0.85 of
+that, half the rate per report, and the encoder ended at 2.6 Mbps; the rate
+came back in 8.2 s at the median and 30 s (the cap of that measure) at worst,
+because it cannot grow while little is sent. A stream that sends less than two
+thirds of its rate is now cut only when a queue of 10 ms or more stood through
+the whole 500 ms window (`Congestion::application_limited`). In the
+controller's link model, 21 s of a 33 Mbps stream whose picture needs 1.4 Mbps
+over a link that slows for 120 ms every 3 s: 30 cuts before, none after, and a
+stream sending 25 of 50 Mbps into a 20 Mbps link still comes down below the
+link (`rust/core/src/congestion/tests.rs`). Not measured: a device run with
+the new rule.
+
+**The default bitrate controller on a calm picture.** `link_rate_adaptation`
+(on by default) cuts on three unrecoverable frames within two seconds, to 0.85
+of the delivered rate: a first cut by at most half, one within two seconds of
+it as low as 1 Mbps of wire rate. A menu or a calm scene sends a fraction of
+the stream's bitrate, so there every cut was the deepest one allowed and
+lowered nothing that was sent; probes go up only while the picture moves, so
+the lower rate met the game when it moved again and climbed back at 12.5 % a
+step. A cut is now held, not made, when it would land at or above what the
+stream sent, on average and in the largest frame the loss can have come from
+(a frame between the first and the last lost one, or one of the six before
+them; the keyframe that repairs the loss is sent because of it and does not
+count unless it is lost too). The held rate is remembered for ten seconds as where the next cut
+starts. In the controller's unit rig (`rust/core/src/link_rate/tests.rs`: a
+33 Mbps stream whose picture needs a tenth of it, three frames lost in a row
+per burst), with the hold switched off and on:
+
+| Loss | Bitrate without the hold | With it |
+|---|---|---|
+| one burst | 33.0 to 16.0 Mbps | no change |
+| one burst, then the keyframe that repairs it (three times a full frame), whole or rebuilt by error correction | 33.0 to 16.0 Mbps | no change |
+| the same with that keyframe lost too | cut | cut |
+| two bursts a second apart | 33.0 to 16.0 to 2.4 Mbps, the lowest it goes | no change |
+| a burst every three seconds, three times | 33.0 to 16.0 to 7.3 to 3.4 Mbps | no change; a fourth burst is cut to below what the picture sends |
+| every other frame lost, the picture needing 30 % | 33.0 to 16.0 Mbps | held once at half, then cut to below what the picture sends, within two seconds |
+
+Cut as before: with a queue standing in the path, for the PC's own refused
+sends, after a failed pacing latch, for a probe step that fails, with a large
+frame among or just before the lost ones, and for PyroWave, whose pictures
+shrink with every cut. A model only: no device run, and neither an encoder's
+output for a calm picture nor the size of a real repair keyframe was measured.
+Nor does a log here show this cut in ordinary use: this PC's host logs from
+October 2 to November 19 hold 19 link-rate cuts over about 535 stream
+configurations, all of them in PyroWave or 200 Mbps test sessions. The rule
+comes from reading the controller.
+
+**Adapt error correction, off by default.** `adaptive_fec` let video FEC fall
+from the configured 20 % to 5 % after 30 s without loss plus 75 s of decay. In
+the default path the encoder's bitrate does not take the parity saved
+(`Session::encoder_bitrate` splits the budget only for a client that chose its
+own FEC share), so the decay bought less traffic and no picture quality. No run
+measured the decayed state: every A/B leg with the host's FEC (October 27,
+November 1) lasted 60 s, where it was still at 14 % or more. What the
+November 1 run on the Retroid's Wi-Fi did measure is the other mode with no
+parity floor: five of six runs lost frames to single packets, and its floor
+was then set at 10 %. In the report above, FEC had decayed to 5 to 7 % when a
+frame could not be repaired and a keyframe followed. The setting stays, off;
+keyframes and repair frames keep the configured percentage either way. Not
+measured: adaptive against fixed FEC on a real link that loses packets.
 
 ## November 18: HDR chroma filtered in light (#130), conversion cost
 
