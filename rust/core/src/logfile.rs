@@ -11,6 +11,12 @@ use std::{
 const EXISTS_CHECK: u64 = 1 << 20;
 /// How many bytes of dropped lines go by between tries to write again.
 const RETRY_DROPPED: u64 = 1 << 20;
+/// The log's own line after a cut, with the bytes cut for `{}`.
+const CUT_NOTE: &str =
+    "--- log cut back: {} bytes of earlier lines removed, the file could not be rotated ---";
+/// The log's own line when writing goes on after lines were dropped.
+const DROP_NOTE: &str =
+    "--- log lines dropped: {} bytes, the file could neither be rotated nor cut back ---";
 
 pub struct RotatingFile {
     path: PathBuf,
@@ -28,8 +34,12 @@ pub struct RotatingFile {
     /// The open file was deleted or moved away by another program: it has no
     /// name of the log's, so nothing can roll it over.
     orphan: bool,
-    /// Bytes of lines dropped since the backstop could not cut the file back.
+    /// The backstop could not cut the file back: lines are dropped.
+    dropping: bool,
+    /// Bytes of lines dropped since then.
     dropped: u64,
+    /// `check` asked for dropped lines to be tried again on the next write.
+    retry: bool,
     /// How often the backstop cut the file being written back.
     #[cfg(test)]
     backstops: u32,
@@ -50,7 +60,9 @@ impl RotatingFile {
             keep: keep.max(1),
             detached: false,
             orphan: false,
+            dropping: false,
             dropped: 0,
+            retry: false,
             #[cfg(test)]
             backstops: 0,
         };
@@ -160,6 +172,30 @@ impl RotatingFile {
             // file stays the live one.
             let _ = self.rotate();
         }
+        if self.size >= self.limit {
+            // A file already at the limit (another writer, a restored file)
+            // is rotated, as at start, rather than left to the backstop.
+            let _ = self.rotate();
+        }
+    }
+    /// Checks now, rather than after `EXISTS_CHECK` bytes, that the log's path
+    /// is still there, and lets dropped lines be tried again on the next
+    /// write rather than after `RETRY_DROPPED` bytes: for a caller that writes
+    /// too little for those intervals to come round, on a clock of its own.
+    pub fn check(&mut self) {
+        if !self.detached && !self.path.exists() {
+            self.detached = true;
+            self.orphan = true;
+        }
+        self.retry = self.dropping;
+    }
+    /// One line of the log's own, written straight to the file (never through
+    /// `write`, so never into the backstop) and counted in its size.
+    fn note(&mut self, template: &str, bytes: u64) {
+        let line = format!("{}\n", template.replace("{}", &bytes.to_string()));
+        if self.file.write_all(line.as_bytes()).is_ok() {
+            self.size += line.len() as u64;
+        }
     }
 }
 fn append(path: &Path) -> io::Result<File> {
@@ -189,11 +225,12 @@ impl Write for RotatingFile {
         // If rotation fails (a reader without delete sharing holds the old
         // file), keep writing to the current file rather than lose lines.
         let length = buf.len() as u64;
-        if self.dropped > 0 {
-            // Lines are dropped (see below) until about 1 MiB more went by.
-            let before = self.dropped;
-            self.dropped += length;
-            if before / RETRY_DROPPED == self.dropped / RETRY_DROPPED {
+        if self.dropping && !std::mem::take(&mut self.retry) {
+            // Lines are dropped (see below) until about 1 MiB more would have
+            // been written, or `check` asks for a try.
+            let after = self.dropped + length;
+            if self.dropped / RETRY_DROPPED == after / RETRY_DROPPED {
+                self.dropped = after;
                 return Ok(buf.len());
             }
         }
@@ -204,10 +241,14 @@ impl Write for RotatingFile {
             let _ = self.rotate();
         }
         if self.size > 0 && self.size + length > 2 * self.limit && !self.cut_back() {
-            self.dropped = self.dropped.max(length.max(1));
+            self.dropping = true;
+            self.dropped += length;
             return Ok(buf.len());
         }
-        self.dropped = 0;
+        if std::mem::take(&mut self.dropping) {
+            let dropped = std::mem::take(&mut self.dropped);
+            self.note(DROP_NOTE, dropped);
+        }
         let written = self.file.write(buf)?;
         let before = self.size;
         self.size += written as u64;
@@ -243,7 +284,8 @@ impl RotatingFile {
         if truncate(self.cut.as_ref()).is_err() {
             return false;
         }
-        self.size = 0;
+        let cut = std::mem::take(&mut self.size);
+        self.note(CUT_NOTE, cut);
         true
     }
 }
@@ -420,6 +462,12 @@ mod tests {
     /// `found` is lines `first..=last` for some `first`: none lost in between,
     /// none twice.
     fn run_ending_at(found: &[String], last: usize) {
+        // A file that was cut back starts with the log's own line saying so.
+        let found = match found.split_first() {
+            Some((first, rest)) if first.starts_with("--- log ") => rest,
+            _ => found,
+        };
+        assert!(!found.iter().any(|line| line.starts_with("--- log ")));
         assert!(!found.is_empty(), "no line up to {last}");
         let first = last + 1 - found.len();
         assert_eq!(found, (first..=last).map(line).collect::<Vec<_>>());
@@ -580,7 +628,17 @@ mod tests {
             n > 40 + RETRY_DROPPED as usize / 40 - 40,
             "tried again after {n}"
         );
-        assert_eq!(lines(&path), [line(n - 1)]);
+        // Writing goes on with one line saying how much was dropped.
+        let found = lines(&path);
+        assert_eq!(found.len(), 2, "{found:?}");
+        let dropped: u64 = found[0]
+            .strip_prefix("--- log lines dropped: ")
+            .and_then(|rest| rest.split(' ').next())
+            .and_then(|bytes| bytes.parse().ok())
+            .unwrap_or_else(|| panic!("{found:?}"));
+        assert_eq!(dropped % 40, 0);
+        assert!(dropped > RETRY_DROPPED - 40 * 40, "{dropped}");
+        assert_eq!(found[1], line(n - 1));
     }
 
     /// The log's folder deleted while the log is open comes back with the log.
@@ -623,6 +681,129 @@ mod tests {
         write_line(&mut log, 4);
         assert_eq!(lines(&path), [line(4)]);
         assert_eq!(lines(&RotatingFile::rotated(&path, 1)), [line(2), line(3)]);
+    }
+
+    /// A cut leaves one line of the log's own at the start of the cut file,
+    /// saying how much went; it counts towards the file's size.
+    #[test]
+    fn a_cut_back_log_says_so_once() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("host.log");
+        let mut log = RotatingFile::open(&path, LIMIT, KEEP).unwrap();
+        for n in 0..2 {
+            write_line(&mut log, n);
+        }
+        FAIL_OPEN.with(|fail| fail.replace(vec![path.clone(), RotatingFile::rotated(&path, 0)]));
+        // The file being written reaches 200 bytes with line 4; line 5 cuts it.
+        for n in 2..7 {
+            write_line(&mut log, n);
+        }
+        FAIL_OPEN.with(|fail| fail.replace(Vec::new()));
+        assert_eq!(log.backstops, 1);
+        let written = RotatingFile::rotated(&path, 1);
+        assert_eq!(
+            lines(&written),
+            [CUT_NOTE.replace("{}", "200"), line(5), line(6)]
+        );
+        assert_eq!(log.size, size(&written));
+    }
+
+    /// A log at the log path that is already over twice the limit when it
+    /// opens again is rotated, not cut back.
+    #[test]
+    fn a_reopened_log_over_its_limit_is_rotated_not_cut_back() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("host.log");
+        let mut log = RotatingFile::open(&path, LIMIT, KEEP).unwrap();
+        for n in 0..2 {
+            write_line(&mut log, n);
+        }
+        FAIL_OPEN.with(|fail| fail.replace(vec![path.clone()]));
+        write_line(&mut log, 2);
+        FAIL_OPEN.with(|fail| fail.replace(Vec::new()));
+        // Another writer put a file of 250 bytes at the log path meanwhile.
+        std::fs::write(&path, vec![b'x'; 250]).unwrap();
+        write_line(&mut log, 3);
+        assert_eq!(log.backstops, 0);
+        assert_eq!(lines(&path), [line(3)]);
+        assert_eq!(
+            std::fs::read(RotatingFile::rotated(&path, 1)).unwrap(),
+            vec![b'x'; 250]
+        );
+        assert_eq!(
+            lines(&RotatingFile::rotated(&path, 2)),
+            [line(0), line(1), line(2)]
+        );
+    }
+
+    /// A log over twice its limit whose rotation fails at start is rotated by
+    /// the first line once the holder let go.
+    #[cfg(windows)]
+    #[test]
+    fn an_oversized_log_whose_holder_let_go_rotates_on_the_first_line() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("host.log");
+        std::fs::write(&path, vec![b'x'; 250]).unwrap();
+        let reader = OpenOptions::new()
+            .read(true)
+            .share_mode(3)
+            .open(&path)
+            .unwrap();
+        let mut log = RotatingFile::open(&path, LIMIT, KEEP).unwrap();
+        drop(reader);
+        log.write_all(b"after\n").unwrap();
+        assert_eq!(log.backstops, 0);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "after\n");
+        assert_eq!(
+            std::fs::read(RotatingFile::rotated(&path, 1)).unwrap(),
+            vec![b'x'; 250]
+        );
+    }
+
+    /// A log over twice its limit that still cannot be rotated on its first
+    /// line is cut back, and says so.
+    #[cfg(windows)]
+    #[test]
+    fn an_oversized_log_that_still_cannot_rotate_is_cut_back_and_says_so() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("host.log");
+        std::fs::write(&path, vec![b'x'; 250]).unwrap();
+        let _reader = OpenOptions::new()
+            .read(true)
+            .share_mode(3)
+            .open(&path)
+            .unwrap();
+        let mut log = RotatingFile::open(&path, LIMIT, KEEP).unwrap();
+        log.write_all(b"after\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            format!("{}\nafter\n", CUT_NOTE.replace("{}", "250"))
+        );
+    }
+
+    /// A log deleted before its size limit, whose path cannot be opened again
+    /// yet, goes on in `name.0` once the existence check notices it.
+    #[test]
+    fn a_log_deleted_before_its_limit_that_cannot_reopen_goes_on_in_name_0() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("host.log");
+        let mut log = RotatingFile::open(&path, 1 << 30, KEEP).unwrap();
+        log.write_all(b"before\n").unwrap();
+        std::fs::remove_file(&path).unwrap();
+        FAIL_OPEN.with(|fail| fail.replace(vec![path.clone()]));
+        let chunk = vec![b'x'; 4095];
+        for _ in 0..(EXISTS_CHECK / 4096 + 1) {
+            log.write_all(&chunk).unwrap();
+            log.write_all(b"\n").unwrap();
+        }
+        log.write_all(b"after\n").unwrap();
+        FAIL_OPEN.with(|fail| fail.replace(Vec::new()));
+        let staged = std::fs::read_to_string(RotatingFile::rotated(&path, 0)).unwrap();
+        assert!(staged.ends_with("\nafter\n"));
+        assert!(staged.len() < 2 * 4096 + 7, "{} bytes", staged.len());
+        assert!(!path.exists());
     }
 
     #[test]
