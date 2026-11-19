@@ -1,3 +1,0 @@
-# Settings tiers
-- **All settings shows the choices, not every knob.** The topic tabs keep the everyday settings; the tuning and compatibility ones (encoder tuning, error correction, controller details and the like) are under Advanced, Expert settings, in collapsed groups, and each tab ends with a link to its own. Settings that are on for everyone are under Debug switches. A setting you changed stays in its tab, marked Expert, and its group opens by itself.
-- **Search still finds every setting.** Search, Ctrl+K and old links open the place where a setting now is, and the Ctrl+K result says where it is.

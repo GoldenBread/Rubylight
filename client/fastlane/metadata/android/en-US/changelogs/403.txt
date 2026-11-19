@@ -1,0 +1,6 @@
+• Lower bitrate has a new choice, Never: keep my bitrate. Nightjar says once per stream when the PC lowered the bitrate.
+• Settings shows fewer rows; search still finds every setting.
+• Android TV: TV display compatibility, an option for TVs that freeze or restart during a stream.
+• MediaTek: fewer special decoder settings and a milder boost.
+• The app no longer freezes while the video decoder restarts.
+• Fixes for Controllers Off, typing during a stream and shared USB devices.
