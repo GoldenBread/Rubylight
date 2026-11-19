@@ -26,6 +26,8 @@ struct RouterState {
     /// Answer nothing a UPnP client can read, as a router that went away or stopped its UPnP
     /// does: the client gets no answer at once rather than after its timeout.
     silent: bool,
+    /// Answer no request for the router's own address, as a busy router may not.
+    ignore_external: bool,
 }
 fn text<'a>(body: &'a str, tag: &str) -> &'a str {
     body.split_once(&format!("<{tag}>"))
@@ -135,6 +137,7 @@ async fn soap(
                 .retain(|row| (row.port, row.protocol) != (port, protocol));
             response(action, "")
         }
+        "GetExternalIPAddress" if state.ignore_external => String::new(),
         "GetExternalIPAddress" => response(
             action,
             "<NewExternalIPAddress>203.0.113.9</NewExternalIPAddress>",
@@ -1079,11 +1082,11 @@ async fn silent_rounds_closer_than_a_renewal_keep_the_router() {
     let _ = std::fs::remove_dir_all(directory);
     server.abort();
 }
-/// A router given up for silence that still answers the search is not mapped on again round
-/// after round: PCP and NAT-PMP get the rounds, one request asks whether it answers, and once it
-/// does it maps the ports again.
+/// A router given up for silence that still answers the search is not taken back round after
+/// round: each round tries it once (its address, its table, the ports), PCP and NAT-PMP get the
+/// rounds it answers none of, and once it answers it maps the ports again.
 #[tokio::test]
-async fn a_router_that_answers_only_the_search_is_asked_once_a_round() {
+async fn a_router_that_answers_only_the_search_is_tried_once_a_round() {
     on_lan(&["192.0.2.10"]);
     let state = Arc::new(Mutex::new(RouterState::default()));
     let (record, directory) = guest_record();
@@ -1100,7 +1103,8 @@ async fn a_router_that_answers_only_the_search_is_asked_once_a_round() {
         router_on("192.0.2.10", copy(&gateway));
         renew_round(&mut held, &record).await;
         assert!(kept(&held).is_none());
-        assert_eq!(state.lock().unwrap().requests, asked + 1);
+        // Its address, the first entry of its table, and the one port.
+        assert_eq!(state.lock().unwrap().requests, asked + 3);
     }
     state.lock().unwrap().silent = false;
     router_on("192.0.2.10", copy(&gateway));
@@ -1153,7 +1157,11 @@ async fn the_search_skips_a_vpn_adapter_that_calls_itself_ethernet() {
         upnp_gateway(IpAddr::from([0, 0, 0, 0])).await.is_err(),
         "the search took the VPN adapter's router"
     );
-    assert_eq!(searches(), ["192.0.2.10".parse::<IpAddr>().unwrap()]);
+    // The search from no address in particular comes last, as it did before.
+    assert_eq!(
+        searches(),
+        [IpAddr::from([192, 0, 2, 10]), IpAddr::from([0, 0, 0, 0])]
+    );
     vpn_server.abort();
 }
 /// Without an uplink (a virtual machine's adapters), every Ethernet and Wi-Fi address is searched
@@ -1288,7 +1296,10 @@ async fn the_hyper_v_default_switch_is_never_searched_from() {
     let (gateway, server) = serve(Arc::default()).await;
     router_on("172.20.0.1", copy(&gateway));
     assert!(upnp_gateway(IpAddr::from([0, 0, 0, 0])).await.is_err());
-    assert_eq!(searches(), [IpAddr::from([192, 0, 2, 20])]);
+    assert_eq!(
+        searches(),
+        [IpAddr::from([192, 0, 2, 20]), IpAddr::from([0, 0, 0, 0])]
+    );
     server.abort();
 }
 /// A TAP adapter with a default gateway and the lowest metric, as a VPN sets it: still not
@@ -1335,4 +1346,96 @@ fn pcp_with_a_bound_address_asks_that_adapters_gateway() {
         pcp_route(&[wifi, ethernet], &gateways, IpAddr::from([0, 0, 0, 0])),
         Some(([192, 0, 2, 1].into(), [192, 0, 2, 10].into()))
     );
+}
+
+/// Windows routes to `gateway` from `source`.
+fn route_to(gateway: &str, source: &str) {
+    TEST_NET.with(|net| {
+        net.borrow_mut()
+            .routes
+            .push((gateway.parse().unwrap(), source.parse().unwrap()));
+    });
+}
+/// Ethernet and Wi-Fi with the same metric (Windows gives gigabit Ethernet and fast Wi-Fi both 25)
+/// on the same router: the address Windows itself routes to the router from wins, whatever order
+/// the adapters are listed in, not the lower address.
+#[tokio::test]
+async fn equal_metrics_go_by_the_address_windows_routes_from() {
+    let (gateway, server) = serve(Arc::default()).await;
+    for reversed in [false, true] {
+        let mut adapters = vec![
+            adapter([192, 0, 2, 10].into(), true, false, 25, &["192.0.2.1"]),
+            adapter([192, 0, 2, 20].into(), true, false, 25, &["192.0.2.1"]),
+        ];
+        if reversed {
+            adapters.reverse();
+        }
+        with_adapters(adapters);
+        route_to("192.0.2.1", "192.0.2.20");
+        router_on("192.0.2.10", copy(&gateway));
+        router_on("192.0.2.20", copy(&gateway));
+        let (_, local) = upnp_gateway(IpAddr::from([0, 0, 0, 0])).await.unwrap();
+        assert_eq!(
+            local,
+            IpAddr::from([192, 0, 2, 20]),
+            "mapped for an address Windows does not route from"
+        );
+    }
+    server.abort();
+}
+/// The router is reached through an adapter of no kind the list knows as an uplink (a network
+/// bridge, a NIC team, a VLAN adapter) while a physical adapter has an address (a direct link to
+/// a NAS): after the listed addresses find nothing, the search from no address in particular,
+/// as before, finds it, for the address Windows routes to it from.
+#[tokio::test]
+async fn a_router_behind_an_unlisted_kind_of_adapter_is_found_by_the_unbound_search() {
+    with_adapters(vec![
+        adapter([198, 51, 100, 5].into(), true, false, 5, &[]),
+        adapter([192, 0, 2, 10].into(), false, false, 25, &["192.0.2.1"]),
+    ]);
+    let (gateway, server) = serve(Arc::default()).await;
+    router_on("0.0.0.0", copy(&gateway));
+    let (found, local) = upnp_gateway(IpAddr::from([0, 0, 0, 0]))
+        .await
+        .expect("the router behind the bridge was never found");
+    assert_eq!(found.addr, gateway.addr);
+    assert_eq!(
+        local,
+        local_for(&gateway, IpAddr::from([0, 0, 0, 0])).unwrap()
+    );
+    assert_eq!(
+        searches(),
+        [IpAddr::from([198, 51, 100, 5]), IpAddr::from([0, 0, 0, 0])]
+    );
+    server.abort();
+}
+/// A router given up for silence, busy enough to miss the first request of a round but answering
+/// the port requests, is taken back in that round.
+#[tokio::test]
+async fn a_router_given_up_that_answers_its_port_requests_is_taken_back() {
+    on_lan(&["192.0.2.10"]);
+    let state = Arc::new(Mutex::new(RouterState::default()));
+    let (record, directory) = guest_record();
+    let (mut held, gateway, server) = mapped_router(&state, &record).await;
+    state.lock().unwrap().silent = true;
+    renew_round(&mut held, &record).await;
+    a_renewal_later(&mut held);
+    router_on("192.0.2.10", copy(&gateway));
+    renew_round(&mut held, &record).await;
+    assert!(kept(&held).is_none());
+    {
+        let mut state = state.lock().unwrap();
+        state.silent = false;
+        state.ignore_external = true;
+    }
+    router_on("192.0.2.10", copy(&gateway));
+    renew_round(&mut held, &record).await;
+    assert_eq!(
+        kept(&held),
+        mapped_on(&gateway, "192.0.2.10"),
+        "a router answering its port requests was not taken back"
+    );
+    assert_eq!(forwards(&state), forwarded_to("192.0.2.10"));
+    let _ = std::fs::remove_dir_all(directory);
+    server.abort();
 }

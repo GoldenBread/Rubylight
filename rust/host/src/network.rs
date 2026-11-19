@@ -268,6 +268,8 @@ struct TestNet {
     routers: Vec<(IpAddr, Gateway<upnp::Bounded>)>,
     /// The address each UPnP search went out from.
     searches: Vec<IpAddr>,
+    /// The address Windows picks towards a gateway, by gateway.
+    routes: Vec<(std::net::Ipv4Addr, IpAddr)>,
 }
 #[cfg(test)]
 fn default_gateways() -> Result<Vec<IpAddr>> {
@@ -876,8 +878,9 @@ fn local_for(gateway: &Gateway<upnp::Bounded>, bind: IpAddr) -> Result<IpAddr> {
 /// adapters, and Hyper-V's on an external switch) when there are any, as Hyper-V's Default
 /// Switch, WSL's and some VPN adapters (TAP, ZeroTier) identify as Ethernet too; otherwise all of
 /// them. Lowest IPv4 metric first, as Windows prefers it for its own traffic, so guests' traffic
-/// arrives where this PC's leaves; the address breaks a tie. A tunnel's or a PPP link's are never
-/// among them.
+/// arrives where this PC's leaves; of equal metrics (gigabit Ethernet and fast Wi-Fi both get 25),
+/// first the one whose address Windows routes to its default gateway from, then the lower address.
+/// A tunnel's or a PPP link's are never among them.
 fn search_order(
     interfaces: &[butterpollo_windows::net::LanInterface],
 ) -> Vec<&butterpollo_windows::net::LanInterface> {
@@ -886,8 +889,33 @@ fn search_order(
         .iter()
         .filter(|interface| interface.uplink() || !uplink)
         .collect();
-    order.sort_by_key(|interface| (interface.metric, interface.address));
+    order.sort_by_cached_key(|interface| {
+        let routed = interface
+            .gateways
+            .first()
+            .and_then(|gateway| route_source(*gateway))
+            == Some(IpAddr::V4(interface.address));
+        (interface.metric, !routed, interface.address)
+    });
     order
+}
+/// The address Windows sends from towards `gateway`. A UDP connect sends nothing; it only picks
+/// the route.
+#[cfg(not(test))]
+fn route_source(gateway: std::net::Ipv4Addr) -> Option<IpAddr> {
+    let socket = UdpSocket::bind((IpAddr::from([0, 0, 0, 0]), 0)).ok()?;
+    socket.connect((gateway, 9)).ok()?;
+    Some(socket.local_addr().ok()?.ip())
+}
+#[cfg(test)]
+fn route_source(gateway: std::net::Ipv4Addr) -> Option<IpAddr> {
+    TEST_NET.with(|net| {
+        net.borrow()
+            .routes
+            .iter()
+            .find(|(to, _)| *to == gateway)
+            .map(|(_, source)| *source)
+    })
 }
 /// This PC's Ethernet and Wi-Fi interfaces; none when they cannot be read.
 #[cfg(not(test))]
@@ -972,24 +1000,23 @@ async fn upnp_search(from: IpAddr) -> Result<Gateway<upnp::Bounded>> {
     })
 }
 /// The UPnP gateway on this network, and this PC's address towards it. A host that listens on
-/// every address searches from each of this PC's Ethernet and Wi-Fi addresses in turn, and its
-/// mappings are for the address the router answered on: a search from no address in particular
-/// goes out where Windows sends multicast, which a VPN may have taken.
+/// every address searches from each of this PC's Ethernet and Wi-Fi addresses in [`search_order`],
+/// and its mappings are for the address the router answered on: a search from no address in
+/// particular goes out where Windows sends multicast, which a VPN may have taken. When none of
+/// them finds a router, as when it is reached through an adapter of another kind (a network
+/// bridge, a NIC team, a VLAN adapter), that search still comes last, as it did before, for the
+/// address Windows routes to the router from.
 async fn upnp_gateway(bind: IpAddr) -> Result<(Gateway<upnp::Bounded>, IpAddr)> {
     let lan = if bind.is_ipv4() && !bind.is_unspecified() {
         Vec::new()
     } else {
         lan_ipv4()
     };
-    let mut failed = None;
     for from in lan.into_iter().filter(IpAddr::is_ipv4) {
         match upnp_search(from).await {
             Ok(gateway) => return Ok((gateway, from)),
-            Err(error) => failed = Some(error),
+            Err(error) => tracing::debug!(%error, %from, "no UPnP router found from this address"),
         }
-    }
-    if let Some(error) = failed {
-        return Err(error);
     }
     let gateway = upnp_search(if bind.is_ipv4() {
         bind
@@ -1893,6 +1920,7 @@ async fn renew(
         crate::internet_play::update_mapping(searching);
     }
     let mut searched = false;
+    let mut on_trial = false;
     loop {
         if held.upnp.is_none() {
             searched = true;
@@ -1902,10 +1930,10 @@ async fn renew(
                         *addr == gateway.addr && *control == gateway.control_url
                     });
                     if given_up && !answers(&gateway).await {
-                        // It answers the search and nothing else: PCP and NAT-PMP get the round,
-                        // and it is asked again, with one request, next round.
-                        tracing::debug!("the UPnP router found answers no requests");
-                        upnp_error = Some("the UPnP router found answers no requests".to_owned());
+                        // A busy router may miss that one request: it gets the round's port
+                        // requests too, and is taken back only if it answers one of them.
+                        on_trial = true;
+                        held.upnp = Some((gateway, local, Vec::new()));
                     } else {
                         if given_up {
                             tracing::info!("the UPnP router answers again");
@@ -1946,6 +1974,19 @@ async fn renew(
         )
         .await;
         *applied = outcome.held;
+        if std::mem::take(&mut on_trial) {
+            if outcome.answered {
+                tracing::info!("the UPnP router answers again");
+                held.upnp_silent = None;
+            } else {
+                // It answers the search and nothing else: PCP and NAT-PMP get the round, and it
+                // is tried again next round.
+                tracing::debug!("the UPnP router found answers no requests");
+                upnp_error = Some("the UPnP router found answers no requests".to_owned());
+                held.upnp = None;
+                break;
+            }
+        }
         if outcome.answered {
             if held.upnp_misses > 0 {
                 tracing::info!("the UPnP router answers again");
