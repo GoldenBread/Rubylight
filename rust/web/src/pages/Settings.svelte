@@ -39,20 +39,28 @@
   } from '../components/settings/values';
   import { api, type Config, type ConfigValue, type WebSession } from '../lib/api';
   import { confirm, failed, notify } from '../lib/feedback.svelte';
-  import { guardNavigation, match, navigate, query as queryParam, route } from '../lib/router.svelte';
+  import { guardNavigation, link, match, navigate, query as queryParam, route } from '../lib/router.svelte';
   import { refreshMetadata, session } from '../lib/session.svelte';
   import {
     categoriesOf,
+    EXPERT_HEADING,
+    EXPERT_NOTE,
+    GAME_SOURCES,
     groupAnchor,
-    groupRank,
+    movedAnchor,
+    placeOf,
     schema,
     settingGroups,
-    settingsGroup,
+    tabLayout,
     tabOf,
+    topicGroup,
+    topicTab,
+    type LayoutGroup,
     type SettingsTab,
     type TabId,
   } from '../lib/settings-schema';
-  import { EXPERT_GROUPS, FOLDED_GROUPS } from '../lib/schema/main';
+  import { DEBUG_GROUP, EXPERT_GROUPS, FOLDED_GROUPS } from '../lib/schema/main';
+  import { GAMES_PAGE_KEY_SET } from '../lib/schema/tiers';
   import SaveBar from '../components/settings/SaveBar.svelte';
   import { SETTING as PRESET, covered, presetById, presetId, presetNotice, withPreset } from '../lib/stream-presets';
   import type { Setting } from '../lib/settings-types';
@@ -67,14 +75,17 @@
   const CUSTOM_KEYS = 'Custom configuration keys';
 
   const section = $derived(match('/settings/:section')?.section ?? 'pc');
-  /** A link to one setting opens the tab that holds it, whatever tab the link names. */
+  /** A link to one setting opens the tab where it shows, whatever tab the link names. */
   const linked = $derived(byKey.get(new URLSearchParams(route.search).get('setting') ?? ''));
-  const active = $derived<SettingsTab>(linked ? tabOf(linked.category) : tabOf(section));
+  const active = $derived<SettingsTab>(linked ? tabOf(placeOf(linked).tab) : tabOf(section));
 
   // Older links name a topic or a former tab (/settings/general, /settings/display):
-  // show the tab under its own address, keeping the query and the anchor.
+  // show the tab under its own address, keeping the query and the anchor. A link to
+  // a group that moved to Advanced (/settings/picture#amd-amf) follows it there.
   $effect(() => {
-    if (section !== active.id) navigate(`/settings/${active.id}${route.search}${location.hash}`, { replace: true });
+    const moved = linked ? null : movedAnchor(active.id, location.hash.slice(1));
+    if (moved) navigate(`/settings/${moved.tab}${route.search}#${moved.anchor}`, { replace: true });
+    else if (section !== active.id) navigate(`/settings/${active.id}${route.search}${location.hash}`, { replace: true });
   });
 
   /** What the host has stored; null until loaded. */
@@ -150,7 +161,8 @@
   const changedIn = $derived.by(() => {
     const counts: Partial<Record<TabId, number>> = {};
     for (const key of pending) {
-      const id = settingsGroup(byKey.get(key)?.category ?? 'advanced');
+      const found = byKey.get(key);
+      const id = found ? topicTab(found) : 'advanced';
       counts[id] = (counts[id] ?? 0) + 1;
     }
     return counts;
@@ -183,28 +195,13 @@
     }
   }
 
-  interface Group {
-    name: string;
-    settings: Setting[];
-  }
+  type Group = LayoutGroup;
 
-  // Every setting shows; the expert groups (EXPERT_GROUPS) and a few Picture groups (FOLDED_GROUPS) start collapsed.
+  // Opened by the user. A topic tab's groups in EXPERT_GROUPS and FOLDED_GROUPS start collapsed, and
+  // so does every group under Advanced's Expert settings; a changed group starts open.
   let foldOpen = $state<Record<string, boolean>>({});
-
-  /** Settings under their group headings, in the tab's order (groupRank), expert groups last. */
-  function grouped(list: Setting[], tab: TabId): Group[] {
-    const groups: Group[] = [];
-    for (const setting of list) {
-      const name = setting.group ?? '';
-      let group = groups.find((candidate) => candidate.name === name);
-      if (!group) {
-        group = { name, settings: [] };
-        groups.push(group);
-      }
-      group.settings.push(setting);
-    }
-    return groups.sort((a, b) => groupRank(tab, a.name) - groupRank(tab, b.name));
-  }
+  /** The launchers' option groups a link opened in full (the Games tab otherwise lists them as one row). */
+  let launcherOpen = $state<Record<string, boolean>>({});
 
   /** A setting edited inside another one's row (Setting.partOf) is listed as that row. */
   const listed = (setting: Setting): Setting => (setting.partOf ? (defaults.get(setting.partOf) ?? setting) : setting);
@@ -212,18 +209,36 @@
   const dailyPart = (setting: Setting): Setting | undefined =>
     setting.control.kind === 'number' && setting.control.daily ? defaults.get(setting.control.daily.key) : undefined;
 
-  const inTab = $derived(described.filter((setting) => !setting.partOf && settingsGroup(setting.category) === active.id));
+  const asked = (setting: Setting) => pending.has(setting.key) || differsFromDefault(setting, edits, config);
   // Keep a pending control reachable if editing its parent makes it inactive.
-  const shown = $derived(inTab.filter((setting) => visible(setting) || pending.has(setting.key)));
-  const shownGroups = $derived(grouped(shown, active.id));
+  const reachable = (setting: Setting) => visible(setting) || pending.has(setting.key);
+  const layout = $derived(
+    tabLayout(
+      active.id,
+      described.filter((setting) => !setting.partOf),
+      { changed: asked, visible: reachable, revealed: new Set(Object.keys(launcherOpen).filter((name) => launcherOpen[name])) },
+    ),
+  );
+  const debugGroup = $derived(layout.groups.find((group) => group.name === DEBUG_GROUP));
+  const tabGroups = $derived(layout.groups.filter((group) => group.name !== DEBUG_GROUP));
+  const expertNames = $derived(layout.expertGroups.map((group) => group.name));
+  const tabEmpty = $derived(layout.groups.length === 0 && layout.expertGroups.length === 0);
+  /** The expert settings of the tab that are not in it, and where Advanced lists them. */
+  const expertLink = $derived(
+    layout.expertTarget ? { count: layout.expertCount, href: `/settings/advanced#${groupAnchor(layout.expertTarget)}` } : undefined,
+  );
 
   /** The tab's sections in page order, for its sticky contents: groups, and the panels that are not settings. */
   const sections = $derived([
     ...(active.id === 'advanced' ? [SECURITY] : []),
-    ...shownGroups.map((group) => group.name || active.label),
+    ...tabGroups.map((group) => group.name || active.label),
+    ...(layout.expertGroups.length ? [EXPERT_HEADING] : []),
+    ...(debugGroup ? [DEBUG_GROUP] : []),
     ...(active.id === 'picture' ? [INTEGRATIONS] : []),
     ...(active.id === 'advanced' ? [CUSTOM_KEYS] : []),
   ]);
+  /** Every anchor a link can name on this tab: the sections, and each collapsed expert group. */
+  const anchors = $derived([...sections, ...expertNames]);
 
   // ---------- the sticky contents: where the page is, and jumps to a section ----------
 
@@ -290,7 +305,7 @@
 
   /** Show a section: open it if it folds, then bring it under the sticky bars. */
   async function reveal(name: string, smooth = true) {
-    if (EXPERT_GROUPS.has(name) || FOLDED_GROUPS.has(name)) foldOpen[name] = true;
+    if (EXPERT_GROUPS.has(name) || FOLDED_GROUPS.has(name) || expertNames.includes(name)) foldOpen[name] = true;
     if (name === INTEGRATIONS) integrationsOpen = true;
     if (name === CUSTOM_KEYS) customOpen = true;
     await tick();
@@ -335,12 +350,19 @@
     const key = new URLSearchParams(route.search).get('setting');
     if (!key) {
       const anchor = location.hash.slice(1);
-      const name = anchor && sections.find((candidate) => groupAnchor(candidate) === anchor);
+      // A link to a launcher's options lists that group in full.
+      const launcher = anchor ? described.find((item) => GAMES_PAGE_KEY_SET.has(item.key) && groupAnchor(topicGroup(item)) === anchor) : undefined;
+      if (launcher && topicTab(launcher) === active.id) launcherOpen[topicGroup(launcher)] = true;
+      const name = anchor && anchors.find((candidate) => groupAnchor(candidate) === anchor);
       if (name) void reveal(name, false);
       return;
     }
-    const group = byKey.get(key)?.group;
-    if (group) foldOpen[group] = true;
+    const picked = byKey.get(key);
+    if (picked) {
+      // Where the setting shows: its group opens, and a launcher's group lists in full.
+      if (GAMES_PAGE_KEY_SET.has(key)) launcherOpen[topicGroup(picked)] = true;
+      foldOpen[placeOf(picked).group] = true;
+    }
     void tick().then(() => {
       const row = document.querySelector<HTMLElement>(`[data-setting="${CSS.escape(key)}"]`);
       if (!row) {
@@ -417,7 +439,7 @@
             described
               .filter(
                 (setting) =>
-                  settingsGroup(setting.category) === tab.id &&
+                  placeOf(setting).tab === tab.id &&
                   inReview(setting.key) && categoriesOf(setting).some((shownUnder) => matchesSetting(setting, shownUnder, words)),
               )
               .map(listed),
@@ -590,6 +612,7 @@
         }
       : undefined}
     showKey={showKeys || (searching && matchesWords(setting.key, words))}
+    expert={!browsingResults && layout.marked.has(setting.key)}
     {inactive}
     unavailable={inactive ? setting.hostGated?.(values) : undefined}
     reason={inactive ? setting.hostReason?.(values) : undefined}
@@ -645,10 +668,21 @@
 
 {#snippet viewLogs()}<Button size="sm" href="/logs" icon="logs">View logs</Button>{/snippet}
 
-{#snippet group(item: Group)}
+{#snippet group(item: Group, collapsed = false)}
   {@const name = item.name || active.label}
   {@const anchor = groupAnchor(name)}
-  {#if active.id === 'pc' && item.name === 'Updates'}
+  {#if item.name === GAME_SOURCES}
+    <!-- The launchers' options: each has its switch and its Options link on the Games page. -->
+    <Panel id={anchor} title={name} level={3} flush>
+      <div class="sources">
+        <p class="muted">
+          Steam, Epic Games, Battle.net, Microsoft Store and Xbox, EA app, Ubisoft Connect and GOG: what each adds, and its options, are on the
+          Games page under Where your games come from.
+        </p>
+        <Button size="sm" href="/library" icon="library">Open Games</Button>
+      </div>
+    </Panel>
+  {:else if active.id === 'pc' && item.name === 'Updates'}
     <!-- The update settings above the release status they act on, as on the Settings home. -->
     <UpdatesPanel id={anchor} title={name}>
       {#snippet settings()}{@render rows(item)}{/snippet}
@@ -657,7 +691,7 @@
     <PowerPanel id={anchor} title={name}>
       {#snippet settings()}{@render rows(item)}{/snippet}
     </PowerPanel>
-  {:else if EXPERT_GROUPS.has(item.name) || FOLDED_GROUPS.has(item.name)}
+  {:else if collapsed || EXPERT_GROUPS.has(item.name) || FOLDED_GROUPS.has(item.name)}
     {@const fold = foldStatus(item.settings, edits, config, pending)}
     <!-- Opened by the user. A customized value opens it until the user closes it; an unsaved one keeps it open. -->
     <Disclosure
@@ -669,6 +703,9 @@
       open={(foldOpen[item.name] ?? fold.customized > 0) || fold.mustOpen}
       ontoggle={(open) => (foldOpen[item.name] = open)}
     >
+      {#if item.name === 'Advanced › Logging'}
+        <div class="logs-link">{@render viewLogs()}</div>
+      {/if}
       {@render rows(item)}
     </Disclosure>
   {:else}
@@ -678,7 +715,7 @@
   {/if}
 {/snippet}
 
-<PageHeader title="All settings" subtitle="Every setting Rubylight reads, by topic.">
+<PageHeader title="All settings" subtitle="The settings people change, by topic. Expert settings are in Advanced, and search finds every setting.">
   {#snippet actions()}
     <label class="show-keys">
       <span>Customized only</span>
@@ -831,12 +868,26 @@
           </section>
         {/if}
 
-        {#if inTab.length > 0 && shown.length === 0}
+        {#if tabEmpty}
           <Panel><p class="muted">None of these settings apply with the current choices.</p></Panel>
         {/if}
-        {#each shownGroups as item (item.name)}
+        {#each tabGroups as item (item.name)}
           {@render group(item)}
         {/each}
+
+        {#if layout.expertGroups.length > 0}
+          <section class="expert" id={groupAnchor(EXPERT_HEADING)} aria-labelledby="{groupAnchor(EXPERT_HEADING)}-title" data-expert-settings>
+            <h3 id="{groupAnchor(EXPERT_HEADING)}-title">{EXPERT_HEADING}</h3>
+            <p class="muted">{EXPERT_NOTE}</p>
+            {#each layout.expertGroups as item (item.name)}
+              {@render group(item, true)}
+            {/each}
+          </section>
+        {/if}
+        {#if debugGroup}
+          {@render group(debugGroup)}
+        {/if}
+
 
         {#if active.id === 'picture'}
           <!-- Installs and status, not settings keys. -->
@@ -873,6 +924,11 @@
           >
             {@render otherKeys(unknownKeys, true)}
           </Disclosure>
+        {/if}
+        {#if expertLink}
+          <p class="expert-link">
+            <a href={expertLink.href} data-expert-link use:link>Expert settings for {active.label} ({expertLink.count})</a>
+          </p>
         {/if}
       {/if}
     </div>
@@ -1034,6 +1090,48 @@
   .contents a[aria-current='location'] {
     border-color: var(--line-strong);
     background: var(--panel);
+    color: var(--ink);
+  }
+  /* Advanced's expert settings: a heading and one line, then the collapsed groups. */
+  .expert {
+    display: grid;
+    gap: var(--space-3);
+    min-width: 0;
+    scroll-margin-top: var(--sticky-offset, var(--space-4));
+  }
+  .expert h3 {
+    margin: var(--space-3) 0 0;
+    font-size: var(--text-lg, 1.1rem);
+  }
+  .expert > p {
+    margin: calc(var(--space-2) * -1) 0 0;
+    font-size: var(--text-sm);
+  }
+  .sources {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-5);
+  }
+  .sources p {
+    margin: 0;
+    max-width: 62ch;
+    font-size: var(--text-sm);
+  }
+  .logs-link {
+    padding: var(--space-3) var(--space-5) 0;
+  }
+  /* One quiet link at the end of a topic tab. */
+  .expert-link {
+    margin: var(--space-4) 0 0;
+    font-size: var(--text-sm);
+  }
+  .expert-link a {
+    color: var(--muted);
+  }
+  .expert-link a:hover {
     color: var(--ink);
   }
   .security {

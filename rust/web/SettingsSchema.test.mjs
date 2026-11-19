@@ -9,7 +9,18 @@ const values =await server.ssrLoadModule('/src/components/settings/values.ts');
 const { computeChanges, describeDefault, differsFromDefault, effective, numberError, toServerCommands } = values;
 const { matchesSetting, searchWords } = await server.ssrLoadModule('/src/components/settings/search.ts');
 const { settings: pending } = await server.ssrLoadModule('/src/lib/schema/extensions.ts');
-const settings = new Map(schema.settings.map(setting => [setting.key, setting]));
+const { ALWAYS_ON } = await server.ssrLoadModule('/src/lib/schema/main.ts');
+const shipped = new Map(schema.settings.map(setting => [setting.key, setting]));
+// An always-on setting ships in Debug switches with a troubleshooting description; these tests are
+// about each setting's own definition, so they read it from its part file (the Debug switch itself
+// is checked in SettingsHome.test.mjs).
+const parts = (await Promise.all(['basics', 'video', 'display', 'library', 'extensions']
+  .map(name => server.ssrLoadModule(`/src/lib/schema/${name}.ts`)))).flatMap(part => part.settings);
+const own = new Map(parts.map(setting => [setting.key, setting]));
+const settings = new Map(schema.settings.map(setting => [
+  setting.key,
+  ALWAYS_ON.includes(setting.key) ? { ...own.get(setting.key), advanced: setting.advanced } : setting,
+]));
 const categoryOf = setting => schema.categories.find(category => category.id === setting.category);
 
 test('AMF frame caps distinguish automatic, driver default and saved fixed limits', () => {
@@ -246,7 +257,7 @@ test('each encoder group shows for its encoder, and Automatic shows the one for 
   const groups = { amf: 'AMD AMF', nvenc: 'NVIDIA NVENC' };
   const conditional = ['amd_qvbr_quality_level', 'nvenc_target_quality', 'nvenc_peak_bitrate_ratio', 'nvenc_min_qp_h264', 'nvenc_min_qp_hevc', 'nvenc_min_qp_av1'];
   for (const [backend, group] of Object.entries(groups)) {
-    const members = schema.settings.filter(setting => setting.group === group);
+    const members = [...settings.values()].filter(setting => setting.group === group);
     assert(members.length > 10, group);
     for (const setting of members) {
       assert.match(setting.inactiveHint ?? '', backend === 'amf' ? /AMD AMF/ : /NVIDIA NVENC/, setting.key);
@@ -325,7 +336,7 @@ test('the NVENC group holds exactly the settings the NVENC encoder reads, with i
   const source = (await Promise.all(['../core/src/nvenc.rs', '../windows/src/gpu_priority.rs', '../windows/src/nvidia_profile.rs']
     .map(path => readFile(new URL(path, import.meta.url), 'utf8')))).join('\n');
   const read = [...new Set([...source.matchAll(/"(nvenc_[a-z0-9_]+)"/g)].map(match => match[1]))].sort();
-  const shown = schema.settings.filter(setting => setting.key.startsWith('nvenc_'));
+  const shown = [...settings.values()].filter(setting => setting.key.startsWith('nvenc_'));
   assert.deepEqual(shown.map(setting => setting.key).sort(), read);
   assert(shown.every(setting => setting.group === 'NVIDIA NVENC' && setting.category === 'encoders'));
   // nvenc.rs Tuning::new defaults.
@@ -422,18 +433,21 @@ test('capture quirks sit together in an advanced troubleshooting group and stay 
     assert.equal(settings.get(key).group, 'Debug switches', key);
     assert.equal(settings.get(key).advanced, true, key);
   }
+  // They are on for everyone (ALWAYS_ON): Debug switches in the console, and their own group in the part file.
   for (const key of keys) {
     assert.equal(settings.get(key).group, 'Capture troubleshooting', key);
     assert.equal(settings.get(key).advanced, true, key);
+    assert.equal(shipped.get(key).group, 'Debug switches', key);
+    assert.equal(shipped.get(key).origin.group, 'Capture troubleshooting', key);
   }
-  const grouped = schema.settings.filter(setting => setting.group === 'Capture troubleshooting');
+  const grouped = [...settings.values()].filter(setting => setting.group === 'Capture troubleshooting');
   assert.deepEqual(grouped.map(setting => setting.key).sort(), [...keys].sort());
   assert.equal(settings.get('capture').group, 'Capture');
 });
 
 test('the troubleshooting fold counts customized and unsaved settings and opens for unsaved ones', () => {
   const { foldStatus } = values;
-  const group = schema.settings.filter(setting => setting.group === 'Capture troubleshooting');
+  const group = [...settings.values()].filter(setting => setting.group === 'Capture troubleshooting');
   const none = foldStatus(group, {}, {}, new Set());
   assert.deepEqual(none, { customized: 0, unsaved: 0, mustOpen: false });
   // wgc_direct_encoder_input defaults on, so storing false customizes it.
@@ -716,8 +730,8 @@ test('touch profiles are unlabelled and their options show only as a mouse or tr
 
 test('QR pairing is always on: only a troubleshooting switch, on by default, no Experimental label', () => {
   const setting = pending.find(item => item.key === 'qr_pairing');
-  assert.equal(settings.get('qr_pairing').group, 'Debug switches');
-  assert.match(settings.get('qr_pairing').description, /only for troubleshooting/);
+  assert.equal(shipped.get('qr_pairing').group, 'Debug switches');
+  assert.match(shipped.get('qr_pairing').description, /only for troubleshooting/);
   assert.equal(setting.default, true);
   assert.doesNotMatch(setting.label + setting.description, /Experimental/);
 });

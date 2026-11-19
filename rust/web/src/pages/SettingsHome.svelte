@@ -34,7 +34,7 @@
   import { confirm, failed, notify } from '../lib/feedback.svelte';
   import { guardNavigation, link, navigate, route } from '../lib/router.svelte';
   import { MAIN_SECTIONS, UPDATE_KEYS, onHome, presetOutcome } from '../lib/schema/main';
-  import { categoriesOf, groupAnchor, schema, settingGroups, settingsGroup } from '../lib/settings-schema';
+  import { categoriesOf, groupAnchor, placeOf, placeText, schema, settingGroups } from '../lib/settings-schema';
   import { session as host } from '../lib/session.svelte';
   import type { Setting } from '../lib/settings-types';
   import { SETTING as PRESET, covered, presetById, presetId, presetNotice, withPreset } from '../lib/stream-presets';
@@ -112,9 +112,8 @@
     const named = (setting: Setting) => (matchesWords(setting.label, words) ? 0 : 1);
     return searchSettings(schema.settings, categoriesOf, query).sort((a, b) => named(a) - named(b));
   });
-  const groupLabel = (setting: Setting) => settingGroups.find((group) => group.id === settingsGroup(setting.category))?.label ?? '';
   const target = (setting: Setting) =>
-    `/settings/${settingsGroup(setting.category)}?setting=${encodeURIComponent(setting.key)}`;
+    `/settings/${placeOf(setting).tab}?setting=${encodeURIComponent(setting.key)}`;
 
   /** Where a tab's group is in All settings, such as This PC › Sleep and wake. */
   const inAllSettings = (tab: string, group: string) => `/settings/${tab}#${groupAnchor(group)}`;
@@ -332,7 +331,7 @@
               <li>
                 <a href={target(setting)} use:link>
                   <span class="result-label">{setting.label}</span>
-                  <span class="where">{groupLabel(setting)}{setting.group ? ` › ${setting.group}` : ''}</span>
+                  <span class="where">{placeText(setting)}</span>
                 </a>
               </li>
             {/each}

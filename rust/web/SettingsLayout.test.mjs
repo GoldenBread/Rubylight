@@ -78,11 +78,11 @@ test('the groups most people leave alone fold in place, open when customized', a
   }
   assert.equal(settingsGroup(schema.settings.find((setting) => setting.group === 'Steam Deck and back grips').category), 'sound');
   const page = await source('pages/Settings.svelte');
-  assert.match(page, /\{:else if EXPERT_GROUPS\.has\(item\.name\) \|\| FOLDED_GROUPS\.has\(item\.name\)\}/);
+  assert.match(page, /\{:else if collapsed \|\| EXPERT_GROUPS\.has\(item\.name\) \|\| FOLDED_GROUPS\.has\(item\.name\)\}/);
   // A customized group starts open; the contents bar and a link to one of its settings open it.
   assert.match(page, /open=\{\(foldOpen\[item\.name\] \?\? fold\.customized > 0\) \|\| fold\.mustOpen\}/);
-  assert.match(page, /if \(EXPERT_GROUPS\.has\(name\) \|\| FOLDED_GROUPS\.has\(name\)\) foldOpen\[name\] = true;/);
-  assert.match(page, /const group = byKey\.get\(key\)\?\.group;\s*if \(group\) foldOpen\[group\] = true;/);
+  assert.match(page, /EXPERT_GROUPS\.has\(name\) \|\| FOLDED_GROUPS\.has\(name\) \|\| expertNames\.includes\(name\)\) foldOpen\[name\] = true;/);
+  assert.match(page, /foldOpen\[placeOf\(picked\)\.group\] = true;/);
 });
 
 test('settings that moved sit where people look for them', () => {

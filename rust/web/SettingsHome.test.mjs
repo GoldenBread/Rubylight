@@ -138,7 +138,12 @@ test('every schema key is reachable from search, and opens its own category', ()
 });
 
 test('always-on keys appear only in Debug switches, described as for troubleshooting', () => {
-  assert.deepEqual([...ALWAYS_ON].sort(), ['link_rate_adaptation', 'qr_pairing']);
+  assert.deepEqual([...ALWAYS_ON].sort(), [
+    'audio_passthrough', 'audio_surround_714', 'bandwidth_probe', 'client_roaming', 'frame_warp', 'gpu_compute_conversion',
+    'hdr_dolby_vision', 'hdr_dynamic_metadata', 'hdr_hlg', 'idd_push_fence_ring', 'keyframe_loss_pacing', 'link_rate_adaptation',
+    'nvenc_frame_budget_guard', 'nvenc_latency_over_power', 'nvenc_realtime_hags', 'packed_444', 'pyrowave', 'qr_pairing',
+    'stream_reconfigure', 'wgc_direct_encoder_input', 'wgc_pacing_smoothing', 'wireless_adaptive_pacing',
+  ]);
   for (const key of ALWAYS_ON) {
     const setting = settings.get(key);
     assert.ok(setting, `${key} stays readable in All settings`);
@@ -147,6 +152,8 @@ test('always-on keys appear only in Debug switches, described as for troubleshoo
     assert.match(setting.description, /only for troubleshooting/, key);
     assert.equal(setting.default, true, key);
     assert.equal(MAIN_KEYS.includes(key), false, key);
+    // Where it came from is kept, so a turned-off one shows in its topic tab too.
+    assert.ok(setting.origin?.category && setting.origin.category !== 'advanced', key);
   }
   const debug = schema.settings.filter(setting => setting.group === DEBUG_GROUP).map(setting => setting.key);
   assert.deepEqual(debug.sort(), [...ALWAYS_ON, ...DIAGNOSTICS].sort());
@@ -156,8 +163,9 @@ test('always-on keys appear only in Debug switches, described as for troubleshoo
 
 test('only the expert groups start collapsed, and each one exists', () => {
   assert.deepEqual([...EXPERT_GROUPS].sort(), ['AMD AMF', 'Capture troubleshooting', 'Console', DEBUG_GROUP, 'Key remapping', 'Mode substitutions', 'NVIDIA NVENC', 'Ports and addresses', 'RTSS'].sort());
-  const groups = new Set(schema.settings.map(setting => setting.group));
-  for (const group of EXPERT_GROUPS) assert.ok(groups.has(group), group);
+  // A group shows in a topic tab under the name its settings came from, once one of them is changed.
+  const groups = new Set(schema.settings.map(setting => (setting.origin ? setting.origin.group : setting.group)));
+  for (const group of EXPERT_GROUPS) assert.ok(groups.has(group) || group === DEBUG_GROUP, group);
 });
 
 test('All settings has no second Advanced fold; the home owns updates and wake, All settings the detail and sign-in', async () => {

@@ -13,6 +13,7 @@
     resetting,
     differs,
     showKey = false,
+    expert = false,
     inactive = false,
     unavailable,
     reason,
@@ -38,6 +39,8 @@
     differs: boolean;
     /** Show the configuration key (otherwise it is in the label's tooltip). */
     showKey?: boolean;
+    /** Shown in a topic tab only because it was changed: it is an expert setting, found in Advanced. */
+    expert?: boolean;
     /** Normally hidden by the current choices, but shown in search or while edited. */
     inactive?: boolean;
     /** What this host lacks to run it (Setting.hostGated), as its tag: the row explains, and has no control. */
@@ -91,6 +94,7 @@
             <label class="label" for={id}>{setting.label}</label>
           {/if}{#if setting.details}<InfoTip label={setting.label} text={setting.details} />{/if}
         </span>
+        {#if expert}<span class="tag" data-expert>Expert</span>{/if}
         {#if unavailable}<span class="tag" data-unavailable>{unavailable}</span>{/if}
         {#if setting.restart}<span class="tag">Applies after a restart</span>{/if}
       </div>

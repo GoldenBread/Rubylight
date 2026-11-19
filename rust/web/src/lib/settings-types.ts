@@ -95,6 +95,8 @@ export interface Setting {
   category: CategoryId;
   /** A heading within the category, for grouping related settings. */
   group?: string;
+  /** Where a setting moved to Debug switches came from: its own tab topic and group (main.ts asDebugSwitch). */
+  origin?: { category: CategoryId; group?: string };
   control: Control;
   /** For a select: other spellings the host reads as one of its options. */
   aliases?: Aliases;

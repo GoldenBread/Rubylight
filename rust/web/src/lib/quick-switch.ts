@@ -5,7 +5,7 @@ import { LAUNCHER_NAMES, launcherOf } from '../components/library/selection.svel
 import { matchesWords, searchSettings, searchWords } from '../components/settings/search';
 import type { App, Client } from './api';
 import { advanced, primary, type NavItem } from './navigation';
-import { categoriesOf, schema, settingGroups, settingsGroup } from './settings-schema';
+import { categoriesOf, placeOf, placeText, schema, settingGroups } from './settings-schema';
 import type { Setting } from './settings-types';
 
 /** What an action does when chosen; QuickSwitcher.svelte runs it. */
@@ -63,8 +63,8 @@ export const PAGES: readonly Entry[] = [
 ];
 
 /** The link that opens a setting's row in All settings, on whichever tab holds it. */
-export function settingHref(setting: Pick<Setting, 'key' | 'category'>): string {
-  return `/settings/${settingsGroup(setting.category)}?setting=${encodeURIComponent(setting.key)}`;
+export function settingHref(setting: Setting): string {
+  return `/settings/${placeOf(setting).tab}?setting=${encodeURIComponent(setting.key)}`;
 }
 
 /** The link to a setting by its key, on whichever tab holds it now. */
@@ -79,11 +79,10 @@ export function settingsSearchHref(query: string): string {
 }
 
 export function settingEntry(setting: Setting): Entry {
-  const tab = categoriesOf(setting)[0]?.label;
   return {
     id: `setting:${setting.key}`,
     label: setting.label,
-    detail: [tab, setting.group].filter(Boolean).join(' › '),
+    detail: placeText(setting),
     icon: 'settings',
     href: settingHref(setting),
   };

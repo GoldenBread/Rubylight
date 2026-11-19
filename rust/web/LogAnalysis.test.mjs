@@ -40,7 +40,7 @@ test('log analysis lists each finding with its count, fix and guide link', () =>
 
 test('a fix that names a setting links to its row in All settings', async () => {
   const html = findings([{ ...finding, id: 'capture_stall', setting: 'capture' }]);
-  assert.match(html, /href="\/settings\/picture\?setting=capture"[^>]*>Open (?:<!---->)?Capture method/);
+  assert.match(html, /href="\/settings\/advanced\?setting=capture"[^>]*>Open (?:<!---->)?Capture method/);
   // A key the console doesn't describe gets no link; the guide link stays.
   assert.doesNotMatch(findings([{ ...finding, setting: 'no_such_setting' }]), /Open /);
   assert.doesNotMatch(findings([finding]), /href="\/settings/);
