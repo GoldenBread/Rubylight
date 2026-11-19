@@ -148,6 +148,37 @@ fn pending_capture_replaces_old_updates_without_growing_a_queue() {
     drop(frame);
     assert!(previous.upgrade().is_none());
 }
+/// `compute_queue_realtime` reaches the helper, which runs the copy and
+/// conversion queues itself, only when it is on: with it off, set or not, the
+/// helper starts with exactly the settings it was given before.
+#[test]
+fn helper_is_told_to_run_its_compute_queue_at_realtime_only_when_that_is_on() {
+    let start = |config: Config| {
+        serde_json::to_vec(&Request::Start {
+            version: VERSION,
+            name: "display".into(),
+            hdr: false,
+            config,
+            wake: 0x1234,
+            window: None,
+        })
+        .unwrap()
+    };
+    let base = "adapter_name = AMD\ngpu_compute_conversion = true\n";
+    let unset = capture_config(&Config::parse(base).unwrap());
+    assert_eq!(unset.values.len(), 2);
+    for off in ["false", "off", "0"] {
+        let source = Config::parse(&format!("{base}compute_queue_realtime = {off}\n")).unwrap();
+        assert_eq!(
+            start(capture_config(&source)),
+            start(capture_config(&Config::parse(base).unwrap()))
+        );
+    }
+    let source = Config::parse(&format!("{base}compute_queue_realtime = true\n")).unwrap();
+    let filtered = capture_config(&source);
+    assert_eq!(filtered.values.len(), 3);
+    assert!(filtered.boolean("compute_queue_realtime", false));
+}
 #[test]
 fn helper_receives_only_capture_settings_and_no_host_secrets_or_commands() {
     let source = Config::parse("adapter_name = AMD\ngpu_compute_conversion = false\nwgc_high_rate_capture = true\nwgc_drain_to_newest = true\nwgc_helper_streaming_scope = true\ncredentials_file = secret\nprep_cmd = run-something\nport = 47989\nwgc_user_helper = true\n").unwrap();
