@@ -220,6 +220,44 @@ fn inherited_framegen_keeps_explicit_capture_and_sync_contract() {
         Rate(119880)
     );
 }
+/// The automatic cap of a virtual display follows the display's refresh; one the user asked
+/// for, a monitor's and a virtual display left at the stream's rate do not.
+#[test]
+fn only_the_automatic_virtual_display_cap_follows_the_display() {
+    let resolve = |text: &str, virtual_display: bool| {
+        let c = Config::parse(text).unwrap();
+        Policy::resolve(&c, Rate(60_000), virtual_display, "none", false, false).unwrap()
+    };
+    let automatic = resolve("", true);
+    assert!(automatic.enabled && automatic.follows_display);
+    let with_rate = resolve("frame_limiter_fps_limit=59.94", true);
+    assert!(with_rate.enabled && with_rate.follows_display);
+    let asked_for = resolve("frame_limiter_enable=true", true);
+    assert!(asked_for.enabled && !asked_for.follows_display);
+    let off = resolve("virtual_display_refresh=disabled", true);
+    assert!(!off.enabled && !off.follows_display);
+    let monitor = resolve("", false);
+    assert!(!monitor.enabled && !monitor.follows_display);
+    let monitor_asked = resolve("frame_limiter_enable=true", false);
+    assert!(monitor_asked.enabled && !monitor_asked.follows_display);
+}
+/// A cap needs a display at one and a half times its rate or more: the modes the host sets
+/// (twice, four times, 1000 Hz) leave room, a game's own 60 Hz mode under a 60 fps cap none.
+#[test]
+fn a_cap_suits_only_a_display_well_above_it() {
+    let cap = Rate(60_000);
+    for display in [1_000_000, 240_000, 120_000, 119_880, 90_000] {
+        assert!(cap_suits_display(cap, Rate(display)), "{display}");
+    }
+    for display in [89_999, 75_000, 60_000, 59_000, 30_000] {
+        assert!(!cap_suits_display(cap, Rate(display)), "{display}");
+    }
+    // A 120 fps stream on a display a game set to 120 or 144 Hz.
+    assert!(!cap_suits_display(Rate(120_000), Rate(144_000)));
+    assert!(cap_suits_display(Rate(120_000), Rate(240_000)));
+    // The largest rates do not overflow.
+    assert!(!cap_suits_display(Rate(u32::MAX), Rate(u32::MAX)));
+}
 /// Reflex came back with NVENC: an NVIDIA stream that syncs RTSS itself uses Reflex, and a
 /// chosen Reflex mode holds on NVIDIA and becomes front edge sync elsewhere.
 #[test]

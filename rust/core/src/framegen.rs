@@ -165,6 +165,16 @@ pub fn display_rate(rate: Rate, virtual_display: bool, mode: VirtualRefresh) -> 
         _ => rate,
     }
 }
+/// Whether a display refreshing at `display` leaves room for a frame cap at `cap`: at least
+/// one and a half times the cap. The automatic cap of a virtual display counts on a refresh
+/// far above the stream's rate (twice, four times or 1000 Hz), where a capped frame is shown
+/// within a fraction of its period. A game in exclusive fullscreen sets the display to a mode
+/// of its own, often the stream's rate. A cap at the display's refresh drifts against it,
+/// and each time the two cross, frames miss their refresh and every other one is shown twice
+/// for a second or two: there the display's own refresh has to pace the game.
+pub fn cap_suits_display(cap: Rate, display: Rate) -> bool {
+    u64::from(display.0) * 2 >= u64::from(cap.0) * 3
+}
 pub fn generation_provider(value: &str) -> &'static str {
     match normalize(value).as_str() {
         "game" | "gameprovided" | "gameprovider" => "game-provided",
@@ -176,6 +186,10 @@ pub struct Policy {
     pub rate: Rate,
     pub display_rate: Rate,
     pub enabled: bool,
+    /// Whether the cap is the automatic one of a virtual display and nothing the user asked
+    /// for (`frame_limiter_enable`): it stands down while the display runs a mode too slow
+    /// for it ([`cap_suits_display`]).
+    pub follows_display: bool,
     pub provider: Provider,
     pub sync_limiter: u32,
     /// Whether the stream chose `sync_limiter` itself (virtual displays and frame generation)
@@ -203,6 +217,7 @@ impl Policy {
         let provider = Provider::parse(config.get("frame_limiter_provider", "auto"));
         let overridden = Rate::parse(config.get("frame_limiter_fps_limit", "0"))?;
         let rate = if overridden.0 > 0 { overridden } else { stream };
+        let explicit = config.boolean("frame_limiter_enable", false);
         let allow_sync_override = config.boolean("rtss_allow_virtual_display_override", false);
         let auto_sync = automatic && (!allow_sync_override || generation == "game-provided");
         let automatic_sync = !runtime_sync && (auto_sync || (!virtual_display && framegen));
@@ -247,9 +262,8 @@ impl Policy {
         Ok(Self {
             rate,
             display_rate: display_rate(stream, virtual_display, mode),
-            enabled: config.boolean("frame_limiter_enable", false)
-                || automatic
-                || (!virtual_display && framegen),
+            enabled: explicit || automatic || (!virtual_display && framegen),
+            follows_display: automatic && !explicit,
             provider,
             sync_limiter: sync,
             automatic_sync,

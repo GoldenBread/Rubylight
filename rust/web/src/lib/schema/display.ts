@@ -450,7 +450,7 @@ export const settings: Setting[] = [
     description:
       'Caps games at the stream’s FPS on monitor streams too, for even frame pacing; the game then runs no faster than that on your monitor. Virtual-display streams are capped already.',
     details:
-      'Virtual-display streams are already limited unless Virtual display refresh is off. The cap is the Frame limit, or the stream’s frame rate. It needs RTSS (see Limiter): without it the stream says the frame limit was not applied.',
+      'Virtual-display streams are already limited unless Virtual display refresh is off. That automatic limit switches off while the stream’s display refreshes below one and a half times the limit, such as 60 Hz under a 60 FPS limit (a game in exclusive fullscreen set its own mode, or the display could not get a faster one): there the display’s refresh paces the game, and a limit beside it makes the picture stutter every few seconds. With this setting on, the cap stays in that case too. The cap is the Frame limit, or the stream’s frame rate. It needs RTSS (see Limiter): without it the stream says the frame limit was not applied.',
     category: 'frame-limiting',
     group: 'Frame limiter',
     control: { kind: 'toggle' },

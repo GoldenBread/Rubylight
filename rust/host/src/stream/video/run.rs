@@ -164,6 +164,8 @@ impl SessionThread<'_> {
         // Whether the game or desktop delivers the stream's rate, over the
         // same 5 s windows.
         let mut source_rate = butterpollo_core::pipeline_rates::SourceRate::default();
+        // The refresh rate the stream's display last had, to say when it changes.
+        let mut display_refresh_mhz: Option<u32> = None;
         // The stream's stutter report over the windows that ended. This thread
         // owns it: the stage samples are copied out under the send path's lock
         // and the medians run after it is released, and the console reads the
@@ -848,6 +850,24 @@ impl SessionThread<'_> {
                             .map(|mode| mode.dmDisplayFrequency)
                             .filter(|hz| *hz > 1)
                             .map(|hz| hz.saturating_mul(1000));
+                        // A game in exclusive fullscreen sets the display to a
+                        // mode of its own, which nothing else in the log
+                        // shows. The automatic frame limit of a virtual
+                        // display counts on the refresh the host gave it, and
+                        // stands down while the game's is too slow for it.
+                        if let Some(now_mhz) = display_mhz {
+                            if let Some(was_mhz) = display_refresh_mhz.filter(|was| *was != now_mhz) {
+                                tracing::info!(
+                                    client = %s.launch.client.name,
+                                    from_hz = was_mhz / 1000,
+                                    to_hz = now_mhz / 1000,
+                                    stream_fps = stream.fps_millihz() as f64 / 1000.,
+                                    "the stream's display changed its refresh rate; a game in exclusive fullscreen sets its own"
+                                );
+                            }
+                            display_refresh_mhz = Some(now_mhz);
+                        }
+                        butterpollo_windows::limiter::follow_display(display_mhz.map(butterpollo_core::framegen::Rate));
                         // The source rate against what the stream can show. A
                         // game below it is the limit that every per-stage
                         // number hides. A new warning or a re-word writes one

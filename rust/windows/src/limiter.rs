@@ -19,6 +19,23 @@ struct RtssChange {
     before: BTreeMap<String, Option<u32>>,
     applied: BTreeMap<String, Option<u32>>,
     disabled: bool,
+    /// What this host gave RTSS in place of `applied` while the stream's display was too
+    /// slow for the cap ([`follow_display`]). A profile that holds these is the host's
+    /// doing as well, so restoring replaces them like `applied`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stood_down: Option<BTreeMap<String, Option<u32>>>,
+}
+impl RtssChange {
+    /// Whether the profile's `key` still holds a value this host wrote. A user's edit made
+    /// after it takes precedence.
+    fn ours(&self, key: &str, current: &BTreeMap<String, Option<u32>>) -> bool {
+        current.get(key) == self.applied.get(key)
+            || self
+                .stood_down
+                .as_ref()
+                .and_then(|values| values.get(key))
+                .is_some_and(|value| current.get(key) == Some(value))
+    }
 }
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct Journal {
@@ -37,6 +54,28 @@ struct State {
     directory: PathBuf,
     process: Option<(PathBuf, crate::process::Process)>,
     message: String,
+    /// The automatic cap [`follow_display`] takes off and puts back.
+    follow: Option<Follow>,
+}
+/// A virtual display's automatic cap, applied through RTSS.
+struct Follow {
+    /// Which stream's cap this is: a change on its way belongs to one.
+    id: u64,
+    root: PathBuf,
+    rate: Rate,
+    /// The cap is off: the stream's display refreshes too slowly for it.
+    standing_down: bool,
+    /// A change is on its way on its own thread.
+    changing: bool,
+    /// A change failed; the cap stays as it is until the stream ends.
+    failed: bool,
+    /// A second stream joined: the cap is no longer one display's to decide, and stays on
+    /// until the last stream ends.
+    shared: bool,
+}
+fn next_follow() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 fn state() -> &'static Mutex<State> {
     static STATE: OnceLock<Mutex<State>> = OnceLock::new();
@@ -128,7 +167,7 @@ fn restore(directory: &Path, owned: &mut Option<(PathBuf, crate::process::Proces
         let mut restore = BTreeMap::new();
         // A user edit made after our application takes precedence on restore.
         for key in rtss::KEYS {
-            if current.get(key) == change.applied.get(key) {
+            if change.ours(key, &current) {
                 restore.insert(key.into(), change.before.get(key).copied().flatten());
             }
         }
@@ -313,12 +352,20 @@ impl Lease {
         let mut state = state().lock().unwrap();
         if state.users != 0 {
             state.users += 1;
+            // Another stream joins: the cap is no longer one display's to stand down for.
+            if state.follow.as_ref().is_some_and(|f| f.standing_down) {
+                change_followed(&mut state, false, None);
+            }
+            if let Some(follow) = state.follow.as_mut() {
+                follow.shared = true;
+            }
             return Ok(Self);
         }
         state.directory = directory.into();
         state.active = "none".into();
         state.rate = policy.enabled.then_some(policy.rate);
         state.message.clear();
+        state.follow = None;
         if let Err(error) = recover(directory) {
             state.active = "rtss".into();
             state.message = format!("{error:#}");
@@ -340,39 +387,25 @@ impl Lease {
             state.process.take();
         }
         if use_rtss {
-            let applied = (|| -> Result<Vec<String>> {
-                // A failed restoration retains our process until recovery
-                // succeeds. start() returns None for that still-running RTSS;
-                // replacing its owner with None would kill it on reconnect.
-                if let Some(process) = rtss::start(&root)? {
-                    state.process = Some((root.clone(), process));
-                }
-                let reply = rtss::wait_ready(&root)?;
-                let text = rtss::read(&root)?;
-                let (numerator, denominator) = policy.rate.rational();
-                let change = RtssChange {
-                    root: root.clone(),
-                    before: rtss::properties(&text)?,
-                    applied: BTreeMap::from([
-                        ("Limit".into(), Some(numerator)),
-                        ("LimitDenominator".into(), Some(denominator)),
-                        ("SyncLimiter".into(), Some(policy.sync_limiter)),
-                    ]),
-                    disabled: reply.flags & 4 != 0,
-                };
-                journal.rtss = Some(change.clone());
-                persist(directory, &journal)?;
-                let reply = rtss::apply(&root, &change.applied, Some(false))?;
-                if reply.flags & 4 != 0 {
-                    bail!("RTSS did not confirm the requested rational frame limit");
-                }
-                confirmed(&change.applied, &reply.values, true).map_err(|_| {
-                    anyhow::anyhow!("RTSS did not confirm the requested rational frame limit")
-                })
-            })();
+            let applied = apply_cap(
+                directory,
+                &mut journal,
+                &root,
+                (policy.rate, policy.sync_limiter),
+                &mut state.process,
+            );
             match applied {
                 Ok(unsupported) => {
                     state.active = "rtss".into();
+                    state.follow = policy.follows_display.then(|| Follow {
+                        id: next_follow(),
+                        root: root.clone(),
+                        rate: policy.rate,
+                        standing_down: false,
+                        changing: false,
+                        failed: false,
+                        shared: false,
+                    });
                     let version = rtss::version(&root);
                     if unsupported.is_empty() {
                         tracing::info!(rate = ?policy.rate.rational(), sync_limiter = policy.sync_limiter, rtss_version = ?version, profile_sdk = rtss::profile_sdk(version), "RTSS frame limit applied and verified");
@@ -416,6 +449,7 @@ impl Drop for Lease {
         if state.users != 0 {
             return;
         }
+        state.follow = None;
         match restore(&state.directory, &mut state.process) {
             Ok(()) => {
                 let _ = crate::display_recovery::external(false);
@@ -430,12 +464,196 @@ impl Drop for Lease {
         }
     }
 }
+/// Journal RTSS's values as they are and give it a stream's cap. `process`: the RTSS this
+/// host started, if it had to.
+fn apply_cap(
+    directory: &Path,
+    journal: &mut Journal,
+    root: &Path,
+    (rate, sync_limiter): (Rate, u32),
+    process: &mut Option<(PathBuf, crate::process::Process)>,
+) -> Result<Vec<String>> {
+    // A failed restoration retains our process until recovery
+    // succeeds. start() returns None for that still-running RTSS;
+    // replacing its owner with None would kill it on reconnect.
+    if let Some(started) = rtss::start(root)? {
+        *process = Some((root.into(), started));
+    }
+    let reply = rtss::wait_ready(root)?;
+    let text = rtss::read(root)?;
+    let (numerator, denominator) = rate.rational();
+    let change = RtssChange {
+        root: root.into(),
+        before: rtss::properties(&text)?,
+        applied: BTreeMap::from([
+            ("Limit".into(), Some(numerator)),
+            ("LimitDenominator".into(), Some(denominator)),
+            ("SyncLimiter".into(), Some(sync_limiter)),
+        ]),
+        disabled: reply.flags & 4 != 0,
+        stood_down: None,
+    };
+    journal.rtss = Some(change.clone());
+    persist(directory, journal)?;
+    let reply = rtss::apply(root, &change.applied, Some(false))?;
+    if reply.flags & 4 != 0 {
+        bail!("RTSS did not confirm the requested rational frame limit");
+    }
+    confirmed(&change.applied, &reply.values, true)
+        .map_err(|_| anyhow::anyhow!("RTSS did not confirm the requested rational frame limit"))
+}
+/// The stream's display refreshes at `display` now: take a virtual display's automatic cap
+/// off while that is too slow for it ([`butterpollo_core::framegen::cap_suits_display`]),
+/// and put it back when the display is fast again. A cap the user asked for, a second
+/// stream's and a host without RTSS are left alone. Called from the stream's loop with each
+/// timing window, so it never waits: the change is made on a thread of its own.
+pub fn follow_display(display: Option<Rate>) {
+    let Some(display) = display else {
+        return;
+    };
+    // A stream starting or ending holds the lock across its RTSS calls; the next window asks
+    // again.
+    let Ok(mut guard) = state().try_lock() else {
+        return;
+    };
+    let Some(stand_down) = wanted_change(&guard, display) else {
+        return;
+    };
+    let Some(follow) = guard.follow.as_mut() else {
+        return;
+    };
+    let id = follow.id;
+    // Started under the lock, which the thread takes first: it runs once this returns, and a
+    // thread that could not start leaves nothing to undo.
+    let spawned = std::thread::Builder::new()
+        .name("limiter-display".into())
+        .spawn(move || {
+            let mut guard = self::state().lock().unwrap();
+            let state = &mut *guard;
+            // The stream may have ended, and another begun, since this was asked for.
+            let Some(follow) = state.follow.as_mut().filter(|follow| follow.id == id) else {
+                return;
+            };
+            follow.changing = false;
+            if wanted_change(state, display) == Some(stand_down) {
+                change_followed(state, stand_down, Some(display));
+            }
+        });
+    match spawned {
+        Ok(_) => follow.changing = true,
+        Err(error) => {
+            tracing::warn!(%error, "the frame limiter could not follow the display: no thread")
+        }
+    }
+}
+/// Whether the followed cap has to come off (`true`) or go back on for a display at
+/// `display`, or `None` when it is as it should be, a change is under way, or there is no
+/// cap one stream's display decides.
+fn wanted_change(state: &State, display: Rate) -> Option<bool> {
+    let follow = state.follow.as_ref()?;
+    if state.users != 1
+        || state.active != "rtss"
+        || follow.changing
+        || follow.failed
+        || follow.shared
+    {
+        return None;
+    }
+    let stand_down = !butterpollo_core::framegen::cap_suits_display(follow.rate, display);
+    (stand_down != follow.standing_down).then_some(stand_down)
+}
+/// Take the followed cap off or put it back, in place: the journal keeps what RTSS held
+/// before the stream, and the stream's end restores that either way.
+fn change_followed(state: &mut State, stand_down: bool, display: Option<Rate>) {
+    let Some(follow) = state.follow.as_mut() else {
+        return;
+    };
+    let result = retarget(&state.directory, &follow.root, stand_down);
+    let display_hz = display.map(|rate| f64::from(rate.0) / 1000.);
+    match result {
+        Ok(()) => {
+            follow.standing_down = stand_down;
+            if stand_down {
+                tracing::info!(rate = ?follow.rate.rational(), display_hz, "the stream's display now refreshes too slowly for the automatic frame limit, so the limit is off and the display's refresh paces the game");
+            } else {
+                tracing::info!(rate = ?follow.rate.rational(), display_hz, "the automatic frame limit is back on");
+            }
+        }
+        Err(error) => {
+            follow.failed = true;
+            // RTSS may hold the new value without having confirmed it: go by its profile.
+            let off = rtss::read(&follow.root)
+                .and_then(|profile| rtss::properties(&profile))
+                .is_ok_and(|current| {
+                    no_limit()
+                        .iter()
+                        .all(|(key, value)| current.get(key) == Some(value))
+                });
+            follow.standing_down = off;
+            tracing::warn!(stand_down, limit_off = off, display_hz, error = %format!("{error:#}"), "the automatic frame limit could not follow the display's refresh rate; RTSS keeps what it has now until the stream ends");
+        }
+    }
+}
+/// No limit, as RTSS holds it.
+fn no_limit() -> BTreeMap<String, Option<u32>> {
+    BTreeMap::from([
+        ("Limit".into(), Some(0)),
+        ("LimitDenominator".into(), Some(1)),
+    ])
+}
+/// Give RTSS no limit in place of the stream's cap (`stand_down`), or the cap again. RTSS
+/// keeps running and the journal keeps the user's own values: a limit of theirs is the
+/// stream's to replace until it ends, and would run beside the display's refresh as the
+/// cap did (their 120 fps limit on a 60 Hz mode left 3.3 % of the frame intervals off, the
+/// 2026-11-19 run). The journal names both values as this host's before RTSS gets the
+/// first, so a host that dies in either state restores the user's. A limit someone changed
+/// during the stream is theirs and is left alone.
+fn retarget(directory: &Path, root: &Path, stand_down: bool) -> Result<()> {
+    let mut journal = load(directory)?;
+    let Some(change) = journal.rtss.as_mut().filter(|change| change.root == root) else {
+        bail!("the stream's frame limit is no longer in the recovery journal");
+    };
+    let current = rtss::properties(&rtss::read(root)?)?;
+    let wanted = if stand_down {
+        no_limit()
+    } else {
+        change.applied.clone()
+    };
+    if let Some(key) = wanted.keys().find(|key| !change.ours(key, &current)) {
+        bail!("RTSS's {key} was changed during the stream");
+    }
+    if stand_down && change.stood_down.is_none() {
+        change.stood_down = Some(wanted.clone());
+        persist(directory, &journal)?;
+    }
+    // Off leaves RTSS's own switch for its limiter alone; the cap needs it on.
+    let reply = rtss::apply(root, &wanted, (!stand_down).then_some(false))?;
+    if !stand_down && reply.flags & 4 != 0 {
+        bail!("RTSS did not confirm the requested rational frame limit");
+    }
+    let unsupported = confirmed(&wanted, &reply.values, !stand_down)
+        .map_err(|key| anyhow::anyhow!("RTSS did not confirm {key}"))?;
+    warn_unsupported(&unsupported);
+    // The cap is back, so no limit is no longer this host's value: one that somebody
+    // turns off from here on is theirs. A journal that cannot be written keeps the claim.
+    if !stand_down
+        && journal
+            .rtss
+            .as_mut()
+            .is_some_and(|change| change.stood_down.take().is_some())
+    {
+        let _ = persist(directory, &journal);
+    }
+    Ok(())
+}
 /// The rate RTSS holds games to while a stream holds the frame limiter, if it limits.
 pub fn active_rate() -> Option<Rate> {
     let state = state().lock().unwrap();
-    (state.users > 0 && state.active == "rtss")
-        .then_some(state.rate)
-        .flatten()
+    (state.users > 0
+        && state.active == "rtss"
+        && !state.follow.as_ref().is_some_and(|f| f.standing_down))
+    .then_some(state.rate)
+    .flatten()
 }
 pub fn status(config: &Config) -> Json {
     let root = rtss::root(config);
@@ -474,6 +692,110 @@ mod tests {
         assert!(load(&directory).unwrap().nvidia.is_empty());
         assert!(take_stale_nvidia(&directory).is_none());
         std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    /// A game that sets the stream's display to 60 Hz under the automatic
+    /// 60 fps cap: the cap comes off, and returns with a fast mode. One stream,
+    /// RTSS and an untroubled cap only.
+    #[test]
+    fn the_automatic_cap_follows_one_streams_display() {
+        let followed = || State {
+            users: 1,
+            active: "rtss".into(),
+            rate: Some(Rate(60_000)),
+            follow: Some(Follow {
+                id: 1,
+                root: PathBuf::new(),
+                rate: Rate(60_000),
+                standing_down: false,
+                changing: false,
+                failed: false,
+                shared: false,
+            }),
+            ..State::default()
+        };
+        let mut state = followed();
+        assert_eq!(wanted_change(&state, Rate(1_000_000)), None);
+        assert_eq!(wanted_change(&state, Rate(120_000)), None);
+        assert_eq!(wanted_change(&state, Rate(60_000)), Some(true));
+        assert_eq!(wanted_change(&state, Rate(59_000)), Some(true));
+        state.follow.as_mut().unwrap().standing_down = true;
+        assert_eq!(wanted_change(&state, Rate(60_000)), None);
+        assert_eq!(wanted_change(&state, Rate(1_000_000)), Some(false));
+        // Nothing while a change is under way or after one failed.
+        state.follow.as_mut().unwrap().changing = true;
+        assert_eq!(wanted_change(&state, Rate(1_000_000)), None);
+        let mut state = followed();
+        state.follow.as_mut().unwrap().failed = true;
+        assert_eq!(wanted_change(&state, Rate(60_000)), None);
+        // A second stream shares the cap, also once the first has left; a cap the user
+        // asked for has no `follow`.
+        let mut state = followed();
+        state.users = 2;
+        assert_eq!(wanted_change(&state, Rate(60_000)), None);
+        let mut state = followed();
+        state.follow.as_mut().unwrap().shared = true;
+        assert_eq!(wanted_change(&state, Rate(60_000)), None);
+        let mut state = followed();
+        state.follow = None;
+        assert_eq!(wanted_change(&state, Rate(60_000)), None);
+        let mut state = followed();
+        state.active = "none".into();
+        assert_eq!(wanted_change(&state, Rate(60_000)), None);
+    }
+
+    /// The stream's end, or the crash watcher, finds the profile with the cap or
+    /// with the limit off (the stream's display was too slow for the cap): both
+    /// are the host's, and the user's own values come back. A limit the user set
+    /// during the stream stays.
+    #[test]
+    fn a_stood_down_limit_is_restored_like_the_cap() {
+        let values = |limit: u32, denominator: u32, sync: u32| {
+            BTreeMap::from([
+                ("Limit".to_string(), Some(limit)),
+                ("LimitDenominator".to_string(), Some(denominator)),
+                ("SyncLimiter".to_string(), Some(sync)),
+            ])
+        };
+        for (name, during, after) in [
+            ("cap", values(60, 1, 2), values(120, 1, 1)),
+            ("off", values(0, 1, 2), values(120, 1, 1)),
+            // 90 is the user's; the sync mode still holds the host's value.
+            ("edited", values(90, 1, 2), values(90, 1, 1)),
+        ] {
+            let directory = std::env::temp_dir()
+                .join(format!("limiter-stood-down-{name}-{}", std::process::id()));
+            let root = directory.join("rtss");
+            std::fs::create_dir_all(root.join("Profiles")).unwrap();
+            let profile = |values: &BTreeMap<String, Option<u32>>| {
+                rtss::replace("[Framerate]\nCustom=keep\n", values).unwrap()
+            };
+            std::fs::write(root.join("Profiles/Global"), profile(&during)).unwrap();
+            let journal = Journal {
+                version: 1,
+                rtss: Some(RtssChange {
+                    root: root.clone(),
+                    before: values(120, 1, 1),
+                    applied: values(60, 1, 2),
+                    disabled: false,
+                    stood_down: Some(no_limit()),
+                }),
+                nvidia: Vec::new(),
+            };
+            write_json(&path(&directory), &journal).unwrap();
+            recover(&directory).unwrap();
+            let restored = rtss::properties(&rtss::read(&root).unwrap()).unwrap();
+            assert_eq!(restored, after, "{name}");
+            assert!(load(&directory).unwrap().rtss.is_none(), "{name}");
+            std::fs::remove_dir_all(&directory).unwrap();
+        }
+        // A journal written before the limit could stand down reads as before.
+        let old: RtssChange = serde_json::from_str(
+            r#"{"root":"C:/rtss","before":{"Limit":120},"applied":{"Limit":60},"disabled":false}"#,
+        )
+        .unwrap();
+        assert!(old.stood_down.is_none());
+        assert!(!serde_json::to_string(&old).unwrap().contains("stood_down"));
     }
 
     /// A stream to a virtual display with `frame_limiter_provider = none` used

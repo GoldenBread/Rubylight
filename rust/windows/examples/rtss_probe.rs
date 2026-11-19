@@ -99,6 +99,7 @@ fn main() -> Result<()> {
             rate: Rate(59940),
             display_rate: Rate(59940),
             enabled: true,
+            follows_display: false,
             provider: Provider::Rtss,
             sync_limiter: 2,
             automatic_sync: false,
