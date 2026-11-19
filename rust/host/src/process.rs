@@ -590,6 +590,8 @@ impl RunningApp {
                 let Some(code) = code else {
                     bail!(LAUNCH_STOPPED);
                 };
+                // Ended by itself: what it started and left running stays (issue 135).
+                child.leave_children_running_or_warn();
                 if code != 0 {
                     return Err(prep_failure(
                         &app.name,
@@ -813,7 +815,7 @@ impl RunningApp {
                         &self.environment,
                     )
                 })
-                .and_then(|p| p.wait(Duration::from_secs(20)))
+                .and_then(|p| p.wait_leaving_children(Duration::from_secs(20)))
             {
                 Ok(0) => {}
                 Ok(code) => {
@@ -832,7 +834,7 @@ impl RunningApp {
                     prep.elevated,
                     &self.environment,
                 )
-                .and_then(|p| p.wait(Duration::from_secs(20)))
+                .and_then(|p| p.wait_leaving_children(Duration::from_secs(20)))
                 {
                     Ok(0) => {}
                     Ok(code) => tracing::warn!(code, "undo command failed"),

@@ -398,10 +398,12 @@ fn a_stopped_launch_ends_its_running_preparation_command_and_undoes_the_finished
     let elevated = butterpollo_windows::process::user_environment().is_err();
     let f = Fixture::new();
     let trace = f.host.directory.join("commands.txt");
+    let pid = f.host.directory.join("helper.pid");
     let command = |name: &str| format!("echo {name}>>\"{}\"", trace.display());
     let app: App = serde_json::from_value(json!({"name":"Commands","prep-cmd":[
         {"do":command("first"),"undo":command("undo-first"),"elevated":elevated},
-        {"do":format!("{}& ping -n 60 127.0.0.1 >nul", command("second")),"undo":command("must-not-run"),"elevated":elevated},
+        // The second leaves a helper running, which the stop ends with it.
+        {"do":format!("{} & {}& ping -n 60 127.0.0.1 >nul", starts_helper(&pid), command("second")),"undo":command("must-not-run"),"elevated":elevated},
         {"do":command("must-not-run"),"undo":"","elevated":elevated}
     ]}))
     .unwrap();
@@ -445,9 +447,96 @@ fn a_stopped_launch_ends_its_running_preparation_command_and_undoes_the_finished
             .collect::<Vec<_>>(),
         ["first", "second", "undo-first"]
     );
+    assert!(Helper::from(&pid).ends_within(Duration::from_secs(10)));
     drop(started);
     assert!(f.host.launch_cancellation().is_none());
     assert!(!f.host.launch_stopped());
+}
+
+/// A command that starts a hidden `ping` (a helper that outlives the command), writes its pid
+/// to `pid` and exits 0.
+fn starts_helper(pid: &std::path::Path) -> String {
+    format!(
+        "powershell -NoProfile -NonInteractive -Command \"(Start-Process -FilePath ping.exe -ArgumentList '-n','60','127.0.0.1' -WindowStyle Hidden -PassThru).Id | Set-Content -Encoding ascii -LiteralPath '{}'\"",
+        pid.display()
+    )
+}
+/// The helper whose pid `starts_helper` wrote, ended when the test is done whatever its outcome.
+struct Helper(Option<windows::Win32::Foundation::HANDLE>);
+impl Helper {
+    fn from(pid: &std::path::Path) -> Self {
+        use windows::Win32::System::Threading::{
+            OpenProcess, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+        };
+        let pid: u32 = std::fs::read_to_string(pid)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        // SAFETY: OpenProcess has no memory preconditions; the handle is closed in drop. It fails
+        // when the helper has already ended.
+        Self(unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, false, pid) }.ok())
+    }
+    /// Whether it ended (or was already gone) within `timeout`.
+    fn ends_within(&self, timeout: Duration) -> bool {
+        use windows::Win32::{Foundation::WAIT_OBJECT_0, System::Threading::WaitForSingleObject};
+        // SAFETY: the handle is open until drop.
+        self.0.is_none_or(|handle| unsafe {
+            WaitForSingleObject(handle, timeout.as_millis() as u32) == WAIT_OBJECT_0
+        })
+    }
+}
+impl Drop for Helper {
+    fn drop(&mut self) {
+        use windows::Win32::{
+            Foundation::CloseHandle,
+            System::Threading::{TerminateProcess, WaitForSingleObject},
+        };
+        if let Some(handle) = self.0.take() {
+            // SAFETY: the handle was opened with PROCESS_TERMINATE and is closed once, here.
+            unsafe {
+                let _ = TerminateProcess(handle, 1);
+                WaitForSingleObject(handle, 5000);
+                let _ = CloseHandle(handle);
+            }
+        }
+    }
+}
+
+#[test]
+fn what_a_finished_preparation_command_started_keeps_running() {
+    // Issue 135: a boot-screen helper the preparation command started must still run when the
+    // app's own command looks for it.
+    let elevated = butterpollo_windows::process::user_environment().is_err();
+    let f = Fixture::new();
+    let pid = f.host.directory.join("helper.pid");
+    let app: App = serde_json::from_value(json!({"name":"Helper","prep-cmd":[
+        {"do":starts_helper(&pid),"undo":"","elevated":elevated}
+    ]}))
+    .unwrap();
+    let running =
+        launch_with_environment(&f.host, &app, &HashMap::new(), Ok(BTreeMap::new())).unwrap();
+    let helper = Helper::from(&pid);
+    assert!(!helper.ends_within(Duration::from_secs(2)));
+    drop(running);
+    assert!(!helper.ends_within(Duration::from_millis(500)));
+}
+
+#[test]
+fn what_a_finished_undo_command_started_keeps_running() {
+    // `undo: start "" app.exe` brings a program back after the stream.
+    let elevated = butterpollo_windows::process::user_environment().is_err();
+    let f = Fixture::new();
+    let pid = f.host.directory.join("helper.pid");
+    let app: App = serde_json::from_value(json!({"name":"Helper","prep-cmd":[
+        {"do":"","undo":starts_helper(&pid),"elevated":elevated}
+    ]}))
+    .unwrap();
+    let running =
+        launch_with_environment(&f.host, &app, &HashMap::new(), Ok(BTreeMap::new())).unwrap();
+    drop(running);
+    let helper = Helper::from(&pid);
+    assert!(!helper.ends_within(Duration::from_secs(2)));
 }
 
 #[test]

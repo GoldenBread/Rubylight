@@ -1229,6 +1229,62 @@ fn dropping_the_job_terminates_the_shell_and_its_child() {
     }
 }
 
+/// A program the shell command started and left running, ended when the test is done
+/// whatever its outcome.
+struct LeftRunning(OwnedHandle);
+impl LeftRunning {
+    /// The shell `process` has exited by itself; the `ping` it started is still in its job.
+    fn of(process: &Process) -> Self {
+        assert_eq!(process.wait(Duration::from_secs(20)).unwrap(), 0);
+        let ids: Vec<u32> = process.image_ids("ping.exe").unwrap().into_iter().collect();
+        assert_eq!(ids.len(), 1, "{ids:?}");
+        // SAFETY: OpenProcess has no memory preconditions and the returned handle is owned once.
+        Self(owned(unsafe {
+            OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, false, ids[0]).unwrap()
+        }))
+    }
+    /// Whether it ended within `timeout`.
+    fn ends_within(&self, timeout: Duration) -> bool {
+        // SAFETY: `self.0` is an owned process handle, open for the wait.
+        unsafe { WaitForSingleObject(raw(&self.0), timeout.as_millis() as u32) == WAIT_OBJECT_0 }
+    }
+}
+impl Drop for LeftRunning {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` is an owned process handle opened with PROCESS_TERMINATE.
+        unsafe {
+            let _ = TerminateProcess(raw(&self.0), 1);
+            WaitForSingleObject(raw(&self.0), 5000);
+        }
+    }
+}
+fn starts_a_program_and_exits() -> Process {
+    Process::shell(
+        "start \"\" /b ping -n 60 127.0.0.1 >nul",
+        None,
+        target_token(&Target::User { elevated: true }).is_ok(),
+        &BTreeMap::new(),
+    )
+    .unwrap()
+}
+#[test]
+fn a_command_that_ended_by_itself_leaves_what_it_started_running() {
+    // Issue 135: a preparation command's helper must still run for the app's next command.
+    let process = starts_a_program_and_exits();
+    let helper = LeftRunning::of(&process);
+    process.leave_children_running().unwrap();
+    drop(process);
+    assert!(!helper.ends_within(Duration::from_secs(2)));
+}
+#[test]
+fn a_command_dropped_without_leaving_its_children_takes_them_with_it() {
+    // A command that was stopped, timed out or whose wait failed is dropped as it is.
+    let process = starts_a_program_and_exits();
+    let helper = LeftRunning::of(&process);
+    drop(process);
+    assert!(helper.ends_within(Duration::from_secs(10)));
+}
+
 #[test]
 fn a_host_started_from_a_shell_can_still_hand_on_its_environment() {
     use super::*;

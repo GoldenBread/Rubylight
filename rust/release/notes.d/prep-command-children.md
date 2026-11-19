@@ -1,0 +1,3 @@
+# Programs started by preparation commands
+- **A program a preparation command starts keeps running.** A preparation command that starts a helper and ends by itself now leaves that helper running for the app, instead of the helper closing the moment the command returns. A command that is stopped or runs past its time limit still closes everything it started.
+- **A program an undo command starts keeps running.** An undo command such as `start "" app.exe` brings a program back after the stream and leaves it open, for a preparation command's undo and a stream menu command's undo alike.

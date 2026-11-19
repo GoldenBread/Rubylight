@@ -675,6 +675,8 @@ Commands can use `$(SUNSHINE_CLIENT_NAME)`, `$(SUNSHINE_CLIENT_UUID)`, `$(SUNSHI
 | Detached commands | An app's `detached` | With the app, not waited for. | Helper programs that run beside a game. |
 | Webhooks | **Advanced → Webhooks** | Devices pair, apps start and stop, streams begin and end ([Webhooks](webhooks.md)). | Telling another system; a webhook runs nothing on this PC. |
 
+A program that a preparation command, its undo or a PC command's undo starts and leaves running keeps running once the command has ended; a command that is stopped or runs past its time limit is ended together with everything it started.
+
 ## Close apps on disconnect
 
 **Settings → Games → Close the app when the last device disconnects** (`terminate_on_pause`, default `false`) closes the running app after its last streaming device leaves. When off, the app stays running so a device can reconnect. Input-only connections do not keep the app running. The setting takes effect the next time an app starts, including apps started before Windows sign-in.

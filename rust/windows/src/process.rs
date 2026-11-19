@@ -1142,6 +1142,44 @@ impl Process {
             ) == 0
         }
     }
+    /// Take the kill-on-close limit off the job, so the processes the command started and left
+    /// running outlive this `Process` (issue 135). For a command that ended by itself; one that
+    /// is stopped, timed out or whose wait failed is dropped without it and takes its tree along.
+    pub fn leave_children_running(&self) -> Result<()> {
+        let limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+            BasicLimitInformation: JOBOBJECT_BASIC_LIMIT_INFORMATION {
+                LimitFlags: JOB_OBJECT_LIMIT_BREAKAWAY_OK,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // SAFETY: `self.job` is an owned job handle, and `limits` is a live local whose size is
+        // passed.
+        unsafe {
+            SetInformationJobObject(
+                raw(&self.job),
+                JobObjectExtendedLimitInformation,
+                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )?;
+        }
+        Ok(())
+    }
+    /// Wait up to `timeout` for a command that may leave programs running: one that ended by
+    /// itself leaves them ([`Self::leave_children_running`]); otherwise the error, and dropping
+    /// `self` ends its whole tree.
+    pub fn wait_leaving_children(&self, timeout: Duration) -> Result<u32> {
+        let code = self.wait(timeout)?;
+        self.leave_children_running_or_warn();
+        Ok(code)
+    }
+    /// [`Self::leave_children_running`]; when Windows refuses, the programs end with `self` as
+    /// before.
+    pub fn leave_children_running_or_warn(&self) {
+        if let Err(error) = self.leave_children_running() {
+            tracing::warn!(%error, pid = self.pid, "what the command started ends with it");
+        }
+    }
     /// Ask Windows to end the whole job, without waiting for it to be gone.
     pub fn terminate(&self) -> Result<()> {
         // SAFETY: `self.job` is an owned job handle that stays open while `self` lives.
