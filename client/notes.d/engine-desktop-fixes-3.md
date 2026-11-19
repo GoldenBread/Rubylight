@@ -3,3 +3,4 @@
 
 ## desktop
 - Opening Settings from a game page, with Start or the Settings link, no longer closes the game's Neural Rendering panel: Back shows it as you left it.
+- With two PCs' pages open one after the other, opening Settings from the second no longer cancels its connection test, its shared folders, a co-op join on its way, or its file transfers page.
