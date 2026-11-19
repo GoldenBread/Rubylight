@@ -753,7 +753,13 @@ fn on_lan(lan: &[&str]) {
         *net.borrow_mut() = TestNet {
             gateways: Some(Vec::new()),
             addresses: Some(lan.clone()),
-            lan: lan.into_iter().map(|address| (true, address)).collect(),
+            lan: lan
+                .into_iter()
+                .map(|address| match address {
+                    IpAddr::V4(address) => adapter(address, true, false, 25, &[]),
+                    IpAddr::V6(_) => unreachable!(),
+                })
+                .collect(),
             ..Default::default()
         };
     });
@@ -1037,18 +1043,19 @@ async fn a_search_after_the_lan_router_went_silent_does_not_choose_the_vpn() {
 }
 
 /// With a VPN up, PCP and NAT-PMP ask the LAN router, not the VPN's gateway that Windows may list
-/// first among the default routes.
+/// first among the default routes, also from an adapter that calls itself Ethernet.
 #[test]
 fn pcp_asks_the_lan_router_not_a_vpn_gateway() {
-    let vpn = ("10.8.0.1".parse().unwrap(), "10.8.0.2".parse().unwrap());
-    let lan = ("192.0.2.1".parse().unwrap(), "192.0.2.10".parse().unwrap());
-    let lan_addresses = ["192.0.2.10".parse().unwrap()];
-    assert_eq!(portmap::lan_route(&[vpn, lan], &lan_addresses), Some(lan));
-    // A VPN adapter that calls itself Ethernet is listed after the physical one.
-    let both = ["192.0.2.10".parse().unwrap(), "10.8.0.2".parse().unwrap()];
-    assert_eq!(portmap::lan_route(&[vpn, lan], &both), Some(lan));
-    // Without a LAN address to tell them apart, the first default route stays the one asked.
-    assert_eq!(portmap::lan_route(&[vpn, lan], &[]), Some(vpn));
+    let lan = adapter([192, 0, 2, 10].into(), true, false, 25, &["192.0.2.1"]);
+    let tap = adapter([10, 8, 0, 2].into(), false, false, 1, &["10.8.0.1"]);
+    let gateways = ["10.8.0.1".parse().unwrap(), "192.0.2.1".parse().unwrap()];
+    let any = IpAddr::from([0, 0, 0, 0]);
+    let lan_route = Some(([192, 0, 2, 1].into(), [192, 0, 2, 10].into()));
+    assert_eq!(
+        pcp_route(&[tap.clone(), lan.clone()], &gateways, any),
+        lan_route
+    );
+    assert_eq!(pcp_route(&[lan, tap], &gateways, any), lan_route);
 }
 
 /// Two silent rounds seconds apart, as when a guest link asks for one in between, are not the
@@ -1132,9 +1139,13 @@ async fn an_old_address_on_a_hidden_table_deletes_nothing() {
 async fn the_search_skips_a_vpn_adapter_that_calls_itself_ethernet() {
     on_lan(&["192.0.2.10"]);
     TEST_NET.with(|net| {
-        net.borrow_mut()
-            .lan
-            .push((false, "10.8.0.2".parse().unwrap()));
+        net.borrow_mut().lan.push(adapter(
+            [10, 8, 0, 2].into(),
+            false,
+            false,
+            1,
+            &["10.8.0.1"],
+        ));
     });
     let (vpn_gateway, vpn_server) = serve(Arc::default()).await;
     router_on("10.8.0.2", copy(&vpn_gateway));
@@ -1145,16 +1156,183 @@ async fn the_search_skips_a_vpn_adapter_that_calls_itself_ethernet() {
     assert_eq!(searches(), ["192.0.2.10".parse::<IpAddr>().unwrap()]);
     vpn_server.abort();
 }
-/// Without a physical adapter (a virtual machine), every Ethernet and Wi-Fi address is searched
+/// Without an uplink (a virtual machine's adapters), every Ethernet and Wi-Fi address is searched
 /// from.
 #[test]
-fn without_a_physical_adapter_every_lan_address_is_searched_from() {
+fn without_an_uplink_every_lan_address_is_searched_from() {
     let virtual_only = [
-        (false, "172.20.0.5".parse().unwrap()),
-        (false, "10.8.0.2".parse().unwrap()),
+        adapter([172, 20, 0, 5].into(), false, false, 25, &[]),
+        adapter([10, 8, 0, 2].into(), false, false, 35, &[]),
+    ];
+    let order: Vec<_> = search_order(&virtual_only)
+        .into_iter()
+        .map(|interface| interface.address)
+        .collect();
+    assert_eq!(
+        order,
+        [
+            std::net::Ipv4Addr::new(172, 20, 0, 5),
+            std::net::Ipv4Addr::new(10, 8, 0, 2)
+        ]
+    );
+}
+
+/// An Ethernet or Wi-Fi adapter of this PC: `hardware` a physical one, `hyper_v` Hyper-V's virtual
+/// adapter, with its IPv4 metric and default gateways.
+fn adapter(
+    address: std::net::Ipv4Addr,
+    hardware: bool,
+    hyper_v: bool,
+    metric: u32,
+    gateways: &[&str],
+) -> butterpollo_windows::net::LanInterface {
+    butterpollo_windows::net::LanInterface {
+        address,
+        hardware,
+        hyper_v,
+        metric,
+        gateways: gateways
+            .iter()
+            .map(|gateway| gateway.parse().unwrap())
+            .collect(),
+    }
+}
+/// This PC's adapters are `adapters`, and every address it has is theirs.
+fn with_adapters(adapters: Vec<butterpollo_windows::net::LanInterface>) {
+    TEST_NET.with(|net| {
+        *net.borrow_mut() = TestNet {
+            gateways: Some(Vec::new()),
+            addresses: Some(
+                adapters
+                    .iter()
+                    .map(|adapter| IpAddr::V4(adapter.address))
+                    .collect(),
+            ),
+            lan: adapters,
+            ..Default::default()
+        };
+    });
+}
+/// Ethernet at metric 25 and Wi-Fi at metric 35, both on the router at 192.0.2.1.
+fn ethernet_and_wifi() -> [butterpollo_windows::net::LanInterface; 2] {
+    [
+        adapter([192, 0, 2, 10].into(), true, false, 25, &["192.0.2.1"]),
+        adapter([192, 0, 2, 20].into(), true, false, 35, &["192.0.2.1"]),
+    ]
+}
+/// Ethernet and Wi-Fi on the same router: the search goes out on the one Windows prefers, the
+/// lower metric, whatever order the adapters are listed in, so the mappings forward to the
+/// Ethernet address. When that one finds no router, the next one is searched from.
+#[tokio::test]
+async fn the_lower_metric_adapter_is_searched_from_first() {
+    let (gateway, server) = serve(Arc::default()).await;
+    for reversed in [false, true] {
+        let mut adapters = ethernet_and_wifi().to_vec();
+        if reversed {
+            adapters.reverse();
+        }
+        with_adapters(adapters);
+        router_on("192.0.2.10", copy(&gateway));
+        router_on("192.0.2.20", copy(&gateway));
+        let (_, local) = upnp_gateway(IpAddr::from([0, 0, 0, 0])).await.unwrap();
+        assert_eq!(
+            local,
+            IpAddr::from([192, 0, 2, 10]),
+            "mapped for the Wi-Fi address (listed {})",
+            if reversed {
+                "Wi-Fi first"
+            } else {
+                "Ethernet first"
+            }
+        );
+    }
+    with_adapters(ethernet_and_wifi().to_vec());
+    router_on("192.0.2.20", copy(&gateway));
+    let (_, local) = upnp_gateway(IpAddr::from([0, 0, 0, 0])).await.unwrap();
+    assert_eq!(local, IpAddr::from([192, 0, 2, 20]));
+    assert_eq!(
+        searches(),
+        [IpAddr::from([192, 0, 2, 10]), IpAddr::from([192, 0, 2, 20])]
+    );
+    server.abort();
+}
+/// Ethernet on a Hyper-V external switch: this PC's address is on Hyper-V's virtual adapter, which
+/// has the router as its default gateway. With Wi-Fi also connected, the virtual adapter's lower
+/// metric wins, as it does for Windows' own traffic.
+#[tokio::test]
+async fn an_external_hyper_v_switch_counts_as_an_uplink() {
+    with_adapters(vec![
+        adapter([192, 0, 2, 20].into(), true, false, 35, &["192.0.2.1"]),
+        adapter([192, 0, 2, 10].into(), false, true, 15, &["192.0.2.1"]),
+    ]);
+    let (gateway, server) = serve(Arc::default()).await;
+    router_on("192.0.2.10", copy(&gateway));
+    router_on("192.0.2.20", copy(&gateway));
+    let (_, local) = upnp_gateway(IpAddr::from([0, 0, 0, 0])).await.unwrap();
+    assert_eq!(
+        local,
+        IpAddr::from([192, 0, 2, 10]),
+        "the external switch's address was passed over"
+    );
+    server.abort();
+}
+/// Hyper-V's Default Switch (and WSL's adapter) has no default gateway: this PC is the
+/// gateway of the machines behind it. Its address is never searched from while an uplink exists,
+/// though its metric is lower.
+#[tokio::test]
+async fn the_hyper_v_default_switch_is_never_searched_from() {
+    with_adapters(vec![
+        adapter([172, 20, 0, 1].into(), false, true, 5, &[]),
+        adapter([192, 0, 2, 20].into(), true, false, 35, &["192.0.2.1"]),
+    ]);
+    let (gateway, server) = serve(Arc::default()).await;
+    router_on("172.20.0.1", copy(&gateway));
+    assert!(upnp_gateway(IpAddr::from([0, 0, 0, 0])).await.is_err());
+    assert_eq!(searches(), [IpAddr::from([192, 0, 2, 20])]);
+    server.abort();
+}
+/// A TAP adapter with a default gateway and the lowest metric, as a VPN sets it: still not
+/// searched from, nor asked for PCP, while the LAN is there.
+#[tokio::test]
+async fn a_tap_adapter_with_a_gateway_is_not_chosen_over_the_lan() {
+    let tap = adapter([10, 8, 0, 2].into(), false, false, 1, &["10.8.0.1"]);
+    let lan = adapter([192, 0, 2, 10].into(), true, false, 25, &["192.0.2.1"]);
+    with_adapters(vec![tap.clone(), lan.clone()]);
+    let (gateway, server) = serve(Arc::default()).await;
+    router_on("10.8.0.2", copy(&gateway));
+    router_on("192.0.2.10", copy(&gateway));
+    let (_, local) = upnp_gateway(IpAddr::from([0, 0, 0, 0])).await.unwrap();
+    assert_eq!(local, IpAddr::from([192, 0, 2, 10]));
+    assert_eq!(searches(), [IpAddr::from([192, 0, 2, 10])]);
+    let gateways = ["10.8.0.1".parse().unwrap(), "192.0.2.1".parse().unwrap()];
+    assert_eq!(
+        pcp_route(&[tap, lan], &gateways, IpAddr::from([0, 0, 0, 0])),
+        Some(([192, 0, 2, 1].into(), [192, 0, 2, 10].into()))
+    );
+    server.abort();
+}
+/// A host bound to one address asks PCP and NAT-PMP at the default gateway of that address'
+/// adapter, not at whichever default gateway is listed first.
+#[test]
+fn pcp_with_a_bound_address_asks_that_adapters_gateway() {
+    let wifi = adapter([198, 51, 100, 7].into(), true, false, 35, &["198.51.100.1"]);
+    let [ethernet, _] = ethernet_and_wifi();
+    let gateways = [
+        "192.0.2.1".parse().unwrap(),
+        "198.51.100.1".parse().unwrap(),
     ];
     assert_eq!(
-        lan_ipv4_of(&virtual_only),
-        virtual_only.map(|(_, address)| address)
+        pcp_route(
+            &[ethernet.clone(), wifi.clone()],
+            &gateways,
+            IpAddr::from([198, 51, 100, 7])
+        ),
+        Some(([198, 51, 100, 1].into(), [198, 51, 100, 7].into())),
+        "the bound address asks another adapter's router"
+    );
+    // Listening on every address: the lower metric adapter's router.
+    assert_eq!(
+        pcp_route(&[wifi, ethernet], &gateways, IpAddr::from([0, 0, 0, 0])),
+        Some(([192, 0, 2, 1].into(), [192, 0, 2, 10].into()))
     );
 }

@@ -228,13 +228,42 @@ pub fn tcp_owner(
 pub fn lan_addresses() -> Result<Vec<String>> {
     Ok(lan_interfaces()?
         .into_iter()
-        .map(|(_, address)| address.to_string())
+        .map(|interface| interface.address.to_string())
         .collect())
 }
-/// Active Ethernet/Wi-Fi IPv4 addresses, each with whether its interface is a physical adapter:
-/// Hyper-V, WSL and some VPN adapters (TAP, ZeroTier) also identify as Ethernet. Physical first,
-/// then private addresses first.
-pub fn lan_interfaces() -> Result<Vec<(bool, std::net::Ipv4Addr)>> {
+/// An active Ethernet or Wi-Fi interface's IPv4 address, as [`lan_interfaces`] lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LanInterface {
+    pub address: std::net::Ipv4Addr,
+    /// A physical adapter: NDIS calls the interface hardware.
+    pub hardware: bool,
+    /// Hyper-V's virtual Ethernet adapter, by [`hyper_v_adapter`].
+    pub hyper_v: bool,
+    /// The IPv4 interface metric: of two routes alike, Windows takes the lower.
+    pub metric: u32,
+    /// The interface's IPv4 default gateways.
+    pub gateways: Vec<std::net::Ipv4Addr>,
+}
+impl LanInterface {
+    /// Whether this PC reaches its router through the interface: a physical adapter, or
+    /// Hyper-V's adapter on an external switch, which carries the address of the physical card
+    /// it shares and its default gateway. Hyper-V's Default Switch and WSL's adapter have no
+    /// default gateway (this PC is theirs), and VPN adapters that call themselves Ethernet (TAP,
+    /// ZeroTier) are neither.
+    pub fn uplink(&self) -> bool {
+        self.hardware || (self.hyper_v && !self.gateways.is_empty())
+    }
+}
+/// Whether an adapter's description, which its driver gives and the user cannot rename (unlike
+/// its name, "vEthernet (...)"), is Hyper-V's virtual Ethernet adapter: "Hyper-V Virtual
+/// Ethernet Adapter", with " #2" and on for more of them.
+pub fn hyper_v_adapter(description: &str) -> bool {
+    description.starts_with("Hyper-V Virtual Ethernet Adapter")
+}
+/// Active Ethernet/Wi-Fi IPv4 addresses with what tells their interfaces apart: Hyper-V, WSL and
+/// some VPN adapters (TAP, ZeroTier) also identify as Ethernet. Physical first, then private
+/// addresses first.
+pub fn lan_interfaces() -> Result<Vec<LanInterface>> {
     use windows::Win32::{
         Foundation::{ERROR_BUFFER_OVERFLOW, ERROR_SUCCESS},
         NetworkManagement::IpHelper::*,
@@ -251,7 +280,10 @@ pub fn lan_interfaces() -> Result<Vec<(bool, std::net::Ipv4Addr)>> {
         let status = unsafe {
             GetAdaptersAddresses(
                 AF_INET.0 as u32,
-                GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER,
+                GAA_FLAG_SKIP_ANYCAST
+                    | GAA_FLAG_SKIP_MULTICAST
+                    | GAA_FLAG_SKIP_DNS_SERVER
+                    | GAA_FLAG_INCLUDE_GATEWAYS,
                 None,
                 Some(first),
                 &mut size,
@@ -263,9 +295,10 @@ pub fn lan_interfaces() -> Result<Vec<(bool, std::net::Ipv4Addr)>> {
         if status != ERROR_SUCCESS.0 {
             return Err(std::io::Error::from_raw_os_error(status as i32).into());
         }
-        let mut addresses = Vec::new();
+        let mut addresses: Vec<LanInterface> = Vec::new();
         // SAFETY: As in wake::adapters, the linked records live in `storage`, and each sockaddr is read
-        // as SOCKADDR_IN only when non-null and long enough; `interface` is a local.
+        // as SOCKADDR_IN only when non-null and long enough; the gateway list is read the same way,
+        // the description is a NUL-terminated string in the same buffer, and `interface` is a local.
         unsafe {
             let mut adapter = first;
             while let Some(row) = adapter.as_ref() {
@@ -276,6 +309,26 @@ pub fn lan_interfaces() -> Result<Vec<(bool, std::net::Ipv4Addr)>> {
                     };
                     let hardware = GetIfEntry2(&mut interface).0 == 0
                         && interface.InterfaceAndOperStatusFlags._bitfield & 1 != 0;
+                    let hyper_v = !row.Description.is_null()
+                        && row
+                            .Description
+                            .to_string()
+                            .is_ok_and(|description| hyper_v_adapter(&description));
+                    let mut gateways = Vec::new();
+                    let mut gateway = row.FirstGatewayAddress;
+                    while let Some(hop) = gateway.as_ref() {
+                        if !hop.Address.lpSockaddr.is_null()
+                            && hop.Address.iSockaddrLength as usize >= size_of::<SOCKADDR_IN>()
+                        {
+                            let socket = &*hop.Address.lpSockaddr.cast::<SOCKADDR_IN>();
+                            let address =
+                                std::net::Ipv4Addr::from(socket.sin_addr.S_un.S_addr.to_ne_bytes());
+                            if socket.sin_family == AF_INET && !address.is_unspecified() {
+                                gateways.push(address);
+                            }
+                        }
+                        gateway = hop.Next;
+                    }
                     let mut unicast = row.FirstUnicastAddress;
                     while let Some(ip) = unicast.as_ref() {
                         if !ip.Address.lpSockaddr.is_null()
@@ -290,7 +343,13 @@ pub fn lan_interfaces() -> Result<Vec<(bool, std::net::Ipv4Addr)>> {
                                     && !address.is_link_local()
                                     && !address.is_unspecified()
                                 {
-                                    addresses.push((hardware, address));
+                                    addresses.push(LanInterface {
+                                        address,
+                                        hardware,
+                                        hyper_v,
+                                        metric: row.Ipv4Metric,
+                                        gateways: gateways.clone(),
+                                    });
                                 }
                             }
                         }
@@ -302,8 +361,14 @@ pub fn lan_interfaces() -> Result<Vec<(bool, std::net::Ipv4Addr)>> {
         }
         // Hyper-V/WSL adapters also identify as Ethernet. Prefer a physical
         // interface so first-run instructions point at a reachable LAN address.
-        addresses.sort_by_key(|(hardware, address)| (!hardware, !address.is_private(), *address));
-        addresses.dedup_by_key(|(_, address)| *address);
+        addresses.sort_by_key(|interface| {
+            (
+                !interface.hardware,
+                !interface.address.is_private(),
+                interface.address,
+            )
+        });
+        addresses.dedup_by_key(|interface| interface.address);
         return Ok(addresses);
     }
     anyhow::bail!("network interfaces changed during enumeration")

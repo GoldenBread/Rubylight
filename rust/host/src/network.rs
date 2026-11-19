@@ -260,9 +260,8 @@ thread_local! {
 struct TestNet {
     /// The default gateways; None: [`TEST_GATEWAY`].
     gateways: Option<Vec<IpAddr>>,
-    /// This PC's Ethernet and Wi-Fi addresses, as `lan_interfaces` lists them: whether the
-    /// adapter is physical, and the address.
-    lan: Vec<(bool, IpAddr)>,
+    /// This PC's Ethernet and Wi-Fi addresses, as `lan_interfaces` lists them.
+    lan: Vec<butterpollo_windows::net::LanInterface>,
     /// Every address this PC has; None: every address asked about.
     addresses: Option<Vec<IpAddr>>,
     /// The UPnP routers a search from an address finds there, each found once.
@@ -872,34 +871,66 @@ fn local_for(gateway: &Gateway<upnp::Bounded>, bind: IpAddr) -> Result<IpAddr> {
         bind
     })
 }
-/// The addresses to look for this PC's router from, of its Ethernet and Wi-Fi `interfaces`
-/// (whether the adapter is physical, and the address): the physical adapters' when there are
-/// any, as Hyper-V and some VPN adapters (TAP, ZeroTier) identify as Ethernet too; otherwise
-/// all of them. A tunnel's or a PPP link's are never among them.
-fn lan_ipv4_of(interfaces: &[(bool, IpAddr)]) -> Vec<IpAddr> {
-    let physical = interfaces.iter().any(|(hardware, _)| *hardware);
-    interfaces
+/// The interfaces to look for this PC's router from, of its Ethernet and Wi-Fi `interfaces`: the
+/// uplinks ([`LanInterface::uplink`](butterpollo_windows::net::LanInterface::uplink): physical
+/// adapters, and Hyper-V's on an external switch) when there are any, as Hyper-V's Default
+/// Switch, WSL's and some VPN adapters (TAP, ZeroTier) identify as Ethernet too; otherwise all of
+/// them. Lowest IPv4 metric first, as Windows prefers it for its own traffic, so guests' traffic
+/// arrives where this PC's leaves; the address breaks a tie. A tunnel's or a PPP link's are never
+/// among them.
+fn search_order(
+    interfaces: &[butterpollo_windows::net::LanInterface],
+) -> Vec<&butterpollo_windows::net::LanInterface> {
+    let uplink = interfaces.iter().any(|interface| interface.uplink());
+    let mut order: Vec<_> = interfaces
         .iter()
-        .filter(|(hardware, _)| *hardware || !physical)
-        .map(|(_, address)| *address)
-        .collect()
-}
-/// [`lan_ipv4_of`] this PC's interfaces, physical and then private addresses first.
-#[cfg(not(test))]
-fn lan_ipv4() -> Vec<IpAddr> {
-    let interfaces: Vec<(bool, IpAddr)> = butterpollo_windows::net::lan_interfaces()
-        .unwrap_or_else(|error| {
-            tracing::debug!(error = %format!("{error:#}"), "the LAN addresses could not be read");
-            Vec::new()
-        })
-        .into_iter()
-        .map(|(hardware, address)| (hardware, IpAddr::V4(address)))
+        .filter(|interface| interface.uplink() || !uplink)
         .collect();
-    lan_ipv4_of(&interfaces)
+    order.sort_by_key(|interface| (interface.metric, interface.address));
+    order
+}
+/// This PC's Ethernet and Wi-Fi interfaces; none when they cannot be read.
+#[cfg(not(test))]
+fn lan_interfaces() -> Vec<butterpollo_windows::net::LanInterface> {
+    butterpollo_windows::net::lan_interfaces().unwrap_or_else(|error| {
+        tracing::debug!(error = %format!("{error:#}"), "the LAN addresses could not be read");
+        Vec::new()
+    })
 }
 #[cfg(test)]
+fn lan_interfaces() -> Vec<butterpollo_windows::net::LanInterface> {
+    TEST_NET.with(|net| net.borrow().lan.clone())
+}
+/// The addresses to look for this PC's router from, in [`search_order`].
 fn lan_ipv4() -> Vec<IpAddr> {
-    TEST_NET.with(|net| lan_ipv4_of(&net.borrow().lan))
+    search_order(&lan_interfaces())
+        .into_iter()
+        .map(|interface| IpAddr::V4(interface.address))
+        .collect()
+}
+/// The IPv4 router PCP and NAT-PMP ask, and this PC's address towards it: the default gateway of
+/// the adapter with the bound address, or for a host listening on every address, of the first in
+/// [`search_order`] that has one; a VPN's default route may be listed before the LAN router's.
+/// Without such an adapter, the first of the default `gateways`.
+fn pcp_route(
+    interfaces: &[butterpollo_windows::net::LanInterface],
+    gateways: &[IpAddr],
+    bind: IpAddr,
+) -> Option<(std::net::Ipv4Addr, std::net::Ipv4Addr)> {
+    let route = |interface: &butterpollo_windows::net::LanInterface| {
+        interface
+            .gateways
+            .first()
+            .map(|gateway| (*gateway, interface.address))
+    };
+    match bind {
+        IpAddr::V4(bound) if !bound.is_unspecified() => interfaces
+            .iter()
+            .filter(|interface| interface.address == bound)
+            .find_map(route),
+        _ => search_order(interfaces).into_iter().find_map(route),
+    }
+    .or_else(|| portmap::ipv4_route(gateways, bind))
 }
 /// Whether an interface of this PC that is up has `address`; true when they cannot be read.
 #[cfg(not(test))]
@@ -1404,7 +1435,7 @@ async fn remove_mapped(
     }
     let Some((gateway, local)) = default_gateways()
         .ok()
-        .and_then(|gateways| portmap::ipv4_route(&gateways, bind, &lan_ipv4()))
+        .and_then(|gateways| pcp_route(&lan_interfaces(), &gateways, bind))
     else {
         tracing::debug!("no default gateway for the PCP or NAT-PMP cleanup");
         return;
@@ -1995,7 +2026,7 @@ async fn renew(
     if held.upnp.is_none() {
         let route = default_gateways()
             .ok()
-            .and_then(|gateways| portmap::ipv4_route(&gateways, bind, &lan_ipv4()));
+            .and_then(|gateways| pcp_route(&lan_interfaces(), &gateways, bind));
         if let Some((gateway, local)) = route {
             // Another router or address: dropping the old mapper asks its router to delete the
             // leases, without waiting on a router that may be gone.

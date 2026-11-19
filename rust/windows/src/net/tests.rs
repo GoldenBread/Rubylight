@@ -1432,3 +1432,65 @@ fn an_oversized_datagram_is_counted_as_oversized_but_still_dropped() {
     assert_eq!(batch.dropped, 2);
     assert_eq!(batch.oversized, 2);
 }
+
+#[test]
+fn hyper_v_adapters_are_known_by_their_drivers_description() {
+    for description in [
+        "Hyper-V Virtual Ethernet Adapter",
+        "Hyper-V Virtual Ethernet Adapter #2",
+    ] {
+        assert!(hyper_v_adapter(description), "{description}");
+    }
+    for description in [
+        "TAP-Windows Adapter V9",
+        "ZeroTier Virtual Port",
+        "Intel(R) Ethernet Connection (17) I219-V",
+        "vEthernet (External)",
+    ] {
+        assert!(!hyper_v_adapter(description), "{description}");
+    }
+}
+
+#[test]
+fn an_uplink_is_physical_or_hyper_vs_adapter_with_a_default_gateway() {
+    let interface = |hardware, hyper_v, gateways: &[&str]| LanInterface {
+        address: "192.0.2.10".parse().unwrap(),
+        hardware,
+        hyper_v,
+        metric: 25,
+        gateways: gateways
+            .iter()
+            .map(|gateway| gateway.parse().unwrap())
+            .collect(),
+    };
+    assert!(interface(true, false, &[]).uplink());
+    // An external switch's adapter, and the Default Switch's or WSL's.
+    assert!(interface(false, true, &["192.0.2.1"]).uplink());
+    assert!(!interface(false, true, &[]).uplink());
+    // A TAP or ZeroTier adapter, with or without a default gateway.
+    assert!(!interface(false, false, &["10.8.0.1"]).uplink());
+}
+
+/// Every address this PC lists is read with its metric and gateways; one with a default route
+/// has its gateway among them.
+#[test]
+fn lan_interfaces_read_this_pcs_adapters() {
+    let interfaces = lan_interfaces().unwrap();
+    let gateways = default_gateways().unwrap();
+    for interface in &interfaces {
+        assert!(!interface.address.is_unspecified());
+        for gateway in &interface.gateways {
+            assert!(
+                gateways.contains(&std::net::IpAddr::V4(*gateway)),
+                "{interface:?}"
+            );
+        }
+    }
+    assert_eq!(
+        lan_addresses().unwrap(),
+        interfaces
+            .iter()
+            .map(|interface| interface.address.to_string())
+            .collect::<Vec<_>>()
+    );
+}
