@@ -60,6 +60,7 @@ import org.cgutman.shieldcontrollerextensions.SceManager;
 
 import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -2246,12 +2247,13 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
     private void sendControllerInputPacket(GenericControllerContext originalContext) {
         // Controllers set to Off: no physical controller reaches the PC (the on-screen gamepad still does).
-        if (!prefConfig.sendControllers) return;
+        boolean physical = prefConfig.sendControllers;
+        if (!physical && originalContext != defaultContext) return;
         assignControllerNumberIfNeeded(originalContext);
         if (!originalContext.assignedControllerNumber) {
             return;
         }
-        for (UsbDeviceContext context : usbDeviceContexts.values()) {
+        for (UsbDeviceContext context : physical ? usbDeviceContexts.values() : Collections.<UsbDeviceContext>emptyList()) {
             if (context.assignedControllerNumber && context.controllerNumber == originalContext.controllerNumber &&
                     !context.ensureControllerArrival() && (context == originalContext ||
                     controllerSlotsWithInput.get(originalContext.controllerNumber) == 0)) {
@@ -2274,7 +2276,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         // In order to properly handle controllers that are split into multiple devices,
         // we must aggregate all controllers with the same controller number into a single
         // device before we send it.
-        for (GenericControllerContext context : inputDeviceContexts.values()) {
+        for (GenericControllerContext context : physical ? inputDeviceContexts.values() : Collections.<GenericControllerContext>emptyList()) {
             if (context.assignedControllerNumber &&
                     context.controllerNumber == controllerNumber &&
                     context.mouseEmulationActive == originalContext.mouseEmulationActive) {
@@ -2290,7 +2292,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 rightStickY = maxByMagnitude(rightStickY, mapped.ry);
             }
         }
-        for (UsbDeviceContext context : usbDeviceContexts.values()) {
+        for (UsbDeviceContext context : physical ? usbDeviceContexts.values() : Collections.<UsbDeviceContext>emptyList()) {
             if (context.assignedControllerNumber && !context.arrivalPending &&
                     context.controllerNumber == controllerNumber &&
                     context.mouseEmulationActive == originalContext.mouseEmulationActive) {
@@ -2322,7 +2324,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             rightStickX = maxByMagnitude(rightStickX, layoutRightStickX);
             rightStickY = maxByMagnitude(rightStickY, layoutRightStickY);
         }
-        if (handheldContext != defaultContext && handheldContext.controllerNumber == controllerNumber) {
+        if (physical && handheldContext != defaultContext && handheldContext.controllerNumber == controllerNumber) {
             inputMap |= handheldContext.inputMap;
             leftTrigger = maxByMagnitude(leftTrigger, handheldContext.leftTrigger);
             rightTrigger = maxByMagnitude(rightTrigger, handheldContext.rightTrigger);
@@ -4535,7 +4537,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      * controls' pad, which a PC with the Steam Controller type splits into its two pads.
      */
     public void reportOscTouch(byte eventType, int pointerId, float x, float y, float pressure) {
-        if (stopped || !prefConfig.sendControllers) {
+        if (stopped) {
             return;
         }
         conn.sendControllerTouchEvent((byte) defaultContext.controllerNumber, eventType, pointerId, x, y, pressure);

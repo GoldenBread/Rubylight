@@ -249,6 +249,29 @@ public class ControllerPreparationTest {
         }
     }
 
+    @Test public void controllersOffStillSendsTheOnscreenGamepadButNotAPhysicalPad() {
+        try (ActivityController<Activity> activity = Robolectric.buildActivity(Activity.class).create()) {
+            addInputDevice(activity.get(), 2, false, JOYPAD);
+            PreferenceConfiguration prefs = onscreenOwnPlayerPrefs(activity.get());
+            prefs.sendControllers = false;
+            Connection connection = new Connection(73);
+            ControllerHandler handler = new ControllerHandler(activity.get(), connection, null, prefs);
+            try {
+                handler.resendControllerArrivals();
+                ControllerHandler.InputDeviceContext builtIn = contexts(handler).get(2);
+                connection.events.clear();
+                handler.reportOscState(ControllerPacket.A_FLAG, (short) 0, (short) 0, (short) 0, (short) 0, (byte) 0, (byte) 0);
+                assertEquals(Collections.singletonList("input 0 " + ControllerPacket.A_FLAG), connection.events);
+
+                connection.events.clear();
+                builtIn.inputMap = ControllerPacket.B_FLAG;
+                ReflectionHelpers.callInstanceMethod(handler, "sendControllerInputPacket",
+                        ReflectionHelpers.ClassParameter.from(ControllerHandler.GenericControllerContext.class, builtIn));
+                assertEquals(Collections.emptyList(), connection.events);
+            } finally { handler.destroy(); }
+        }
+    }
+
     @Test public void onscreenOwnPlayerAnnouncesTheTouchpadPadItsButtonNeeds() {
         try (ActivityController<Activity> activity = Robolectric.buildActivity(Activity.class).create()) {
             addInputDevice(activity.get(), 2, true, JOYPAD);
