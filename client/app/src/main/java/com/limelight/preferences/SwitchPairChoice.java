@@ -15,7 +15,7 @@ enum SwitchPairChoice {
     /**
      * The PC decides (both switches off), When the network is busy, Lower it sooner (what was When frames are lost),
      * Never: keep my bitrate (a third key, keep_bitrate, that wins over the two switches and leaves them stored). The
-     * row lists them in the order of {@link #displayOrder}. Frame loss took the place of the busy network wherever the
+     * row lists them in the order of {@link #displayOrder}, When the network is busy only while it is stored. Frame loss took the place of the busy network wherever the
      * PC took its rate changes, so either pair with it on reads as Lower it sooner; choosing that keeps the busy
      * controller on for a PC that takes no rate changes (GameAdaptation.startStreamBitrate). Choosing Never leaves the
      * two switches as they are; any other choice writes them and clears keep_bitrate.
@@ -33,8 +33,10 @@ enum SwitchPairChoice {
             editor.putBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, choice == KEEP);
             if (choice != KEEP) super.save(editor, choice);
         }
-        @Override int offered(Context context, SharedPreferences prefs) { return 4; }
-        @Override int[] displayOrder(int offered) { return new int[] {0, 2, 1, 3}; }
+        // When the network is busy is listed only while it is the stored choice: Lower it sooner keeps its
+        // controller for a PC that takes no rate changes.
+        @Override int offered(Context context, SharedPreferences prefs) { return read(prefs) == 1 ? 4 : 3; }
+        @Override int[] displayOrder(int offered) { return offered == 4 ? new int[] {0, 2, 1, 3} : new int[] {0, 2, 3}; }
     },
     /** Back, Stream menu, Guide. With both switches on the menu won (GameKeyboardInput.handlePhysicalBackMenuKey). */
     BACK_BUTTON("back_button", R.string.title_back_button, R.string.summary_back_button, R.array.back_button_names,

@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="title_lower_bitrate">Riduci il bitrate</string>
-    <string name="lower_bitrate_pc">Decide il PC (consigliato)</string>
+    <string name="lower_bitrate_pc">Decide il PC</string>
     <string name="lower_bitrate_busy">Se la rete è congestionata</string>
     <string name="lower_bitrate_lost">Riducilo prima</string>
     <string name="lower_bitrate_keep">Mai: mantieni il mio bitrate</string>
-    <string name="summary_lower_bitrate">«Mai: mantieni il mio bitrate» può bloccare o frammentare l’immagine su una connessione che non regge quel bitrate. Altrimenti il PC riduce il bitrate quando si perdono fotogrammi che non riesce a riparare e lo rialza dopo; «Riducilo prima» e «Se la rete è congestionata» lo riducono prima, a costo di un’immagine più morbida.</string>
+    <string name="summary_lower_bitrate">«Mai: mantieni il mio bitrate» può bloccare o frammentare l’immagine su una connessione che non regge quel bitrate; sceglilo quando l’immagine diventa morbida su una connessione che lo regge. Di norma il PC riduce il bitrate quando si perdono fotogrammi che non riesce a riparare e lo rialza dopo; «Riducilo prima» e «Se la rete è congestionata» lo riducono prima, a costo di un’immagine più morbida.</string>
     <string name="title_back_button">Pulsante Indietro</string>
     <string name="back_button_back">Indietro</string>
     <string name="back_button_menu">Menu dello stream</string>

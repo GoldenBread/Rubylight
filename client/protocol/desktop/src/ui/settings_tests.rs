@@ -1525,7 +1525,7 @@ fn paired_switches_read_as_one_choice() {
     assert_eq!(value("{}", "client_roaming"), "Except mobile data");
     assert_eq!(value(r#"{"roaming_metered":true}"#, "roaming_metered"), "Any network");
     assert_eq!(value(r#"{"client_roaming":false,"roaming_metered":true}"#, "client_roaming"), "Off");
-    assert_eq!(value("{}", "adaptive_bitrate"), "The PC decides (recommended)");
+    assert_eq!(value("{}", "adaptive_bitrate"), "The PC decides");
     assert_eq!(value(r#"{"adaptive_bitrate":true}"#, "adaptive_bitrate"), "When the network is busy");
     assert_eq!(value(r#"{"adaptive_bitrate":true,"client_hint_bitrate":true}"#, "client_hint_bitrate"), "Lower it sooner");
     assert_eq!(value(r#"{"client_hint_bitrate":true}"#, "adaptive_bitrate"), "Lower it sooner");

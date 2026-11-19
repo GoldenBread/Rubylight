@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="title_lower_bitrate">Baisser le débit</string>
-    <string name="lower_bitrate_pc">Le PC décide (recommandé)</string>
+    <string name="lower_bitrate_pc">Le PC décide</string>
     <string name="lower_bitrate_busy">Si le réseau est chargé</string>
     <string name="lower_bitrate_lost">Baisser plus tôt</string>
     <string name="lower_bitrate_keep">Jamais : garder mon débit</string>
-    <string name="summary_lower_bitrate">« Jamais : garder mon débit » peut figer ou déformer l’image sur une connexion qui ne supporte pas ce débit. Sinon, le PC baisse le débit quand des images perdues ne peuvent pas être réparées, puis le remonte ensuite ; « Baisser plus tôt » et « Si le réseau est chargé » le baissent plus tôt, au prix d’une image plus douce.</string>
+    <string name="summary_lower_bitrate">« Jamais : garder mon débit » peut figer ou déformer l’image sur une connexion qui ne supporte pas ce débit ; choisissez-le quand l’image devient floue sur une connexion qui le supporte. Par défaut, le PC baisse le débit quand des images perdues ne peuvent pas être réparées, puis le remonte ensuite ; « Baisser plus tôt » et « Si le réseau est chargé » le baissent plus tôt, au prix d’une image plus douce.</string>
     <string name="title_back_button">Bouton Retour</string>
     <string name="back_button_back">Retour</string>
     <string name="back_button_menu">Menu du stream</string>

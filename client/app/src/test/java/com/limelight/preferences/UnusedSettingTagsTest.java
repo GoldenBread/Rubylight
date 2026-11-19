@@ -51,9 +51,9 @@ public class UnusedSettingTagsTest {
                 reason(PreferenceConfiguration.THERMAL_PROTECTION_PREF_STRING));
         prefs.edit().putBoolean(AutoBitrateChoice.SETTINGS_KEY, true).commit();
         assertNull(reason(PreferenceConfiguration.THERMAL_PROTECTION_PREF_STRING));
-        // When frames are lost: its controller follows no heat on a PC that takes rate changes.
+        // Lower it sooner: its controller follows no heat on a PC that takes rate changes.
         prefs.edit().putBoolean(PreferenceConfiguration.RATE_CHANGE_BITRATE_PREF_STRING, true).commit();
-        assertEquals("Not used with When frames are lost on a PC that takes bitrate changes",
+        assertEquals("Not used with Lower it sooner on a PC that takes bitrate changes",
                 reason(PreferenceConfiguration.THERMAL_PROTECTION_PREF_STRING));
         prefs.edit().clear().putString("adaptive_quality_mode", "motion").commit();
         assertNull(reason(PreferenceConfiguration.THERMAL_PROTECTION_PREF_STRING));

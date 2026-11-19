@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="title_lower_bitrate">Bit hızını düşür</string>
-    <string name="lower_bitrate_pc">PC karar verir (önerilir)</string>
+    <string name="lower_bitrate_pc">PC karar verir</string>
     <string name="lower_bitrate_busy">Ağ yoğunken</string>
     <string name="lower_bitrate_lost">Daha erken düşür</string>
     <string name="lower_bitrate_keep">Asla: bit hızımı koru</string>
-    <string name="summary_lower_bitrate">“Asla: bit hızımı koru”, taşıyamayan bir bağlantıda görüntünün donmasına veya bozulmasına yol açabilir. Aksi halde PC, onaramadığı kareler kaybolduğunda bit hızını düşürür ve sonra yeniden yükseltir; “Daha erken düşür” ve “Ağ yoğunken” bunu daha erken yapar, bedeli daha yumuşak görüntüdür.</string>
+    <string name="summary_lower_bitrate">“Asla: bit hızımı koru”, taşıyamayan bir bağlantıda görüntünün donmasına veya bozulmasına yol açabilir; taşıyabilen bir bağlantıda görüntü yumuşadığında bunu seçin. Varsayılan olarak PC, onaramadığı kareler kaybolduğunda bit hızını düşürür ve sonra yeniden yükseltir; “Daha erken düşür” ve “Ağ yoğunken” bunu daha erken yapar, bedeli daha yumuşak görüntüdür.</string>
     <string name="title_back_button">Geri düğmesi</string>
     <string name="back_button_back">Geri</string>
     <string name="back_button_menu">Yayın menüsü</string>

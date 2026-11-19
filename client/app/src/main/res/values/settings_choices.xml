@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="title_lower_bitrate">Lower bitrate</string>
-    <string name="lower_bitrate_pc">The PC decides (recommended)</string>
+    <string name="lower_bitrate_pc">The PC decides</string>
     <string name="lower_bitrate_busy">When the network is busy</string>
     <string name="lower_bitrate_lost">Lower it sooner</string>
     <string name="lower_bitrate_keep">Never: keep my bitrate</string>
-    <string name="summary_lower_bitrate">Never: keep my bitrate can freeze or break up the picture on a link that cannot carry it. Otherwise the PC lowers the bitrate when frames are lost that it cannot repair and raises it again afterwards; Lower it sooner and When the network is busy lower it earlier, with a softer picture as the cost.</string>
+    <string name="summary_lower_bitrate">Never: keep my bitrate can freeze or break up the picture on a link that cannot carry it; choose it when the picture turns soft on a link that can. By default the PC lowers the bitrate when frames are lost that it cannot repair and raises it again afterwards; Lower it sooner and When the network is busy lower it earlier, with a softer picture as the cost.</string>
     <string name="title_back_button">Back button</string>
     <string name="back_button_back">Back</string>
     <string name="back_button_menu">Stream menu</string>

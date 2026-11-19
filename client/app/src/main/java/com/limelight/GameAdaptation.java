@@ -496,8 +496,11 @@ final class GameAdaptation {
 
     // The PC reports it holds the bitrate down for the network (a limited or floor notice).
     void noteLinkLowered(LinkNoticeStatus status) {
-        if (status == null || !tellLinkLowered(game.linkLoweredTold,
-                game.prefConfig.enablePerfOverlay && !game.isHidingOverlays, game.prefConfig.keepBitrate)) return;
+        // The overlay shows when its view is visible (GameOverlays.togglePerformanceOverlay).
+        boolean overlayShowing = game.performanceOverlayScroll != null
+                && game.performanceOverlayScroll.getVisibility() == android.view.View.VISIBLE;
+        boolean keep = game.prefConfig != null && game.prefConfig.keepBitrate;
+        if (status == null || !tellLinkLowered(game.linkLoweredTold, overlayShowing, keep)) return;
         game.linkLoweredTold = true;
         java.util.Locale locale = game.getResources().getConfiguration().locale;
         game.messages.alert(game.getString(R.string.link_notice_keep, status.currentMbps(locale)), Toast.LENGTH_LONG);

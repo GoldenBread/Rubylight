@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="title_lower_bitrate">降低码率</string>
-    <string name="lower_bitrate_pc">由电脑决定（推荐）</string>
+    <string name="lower_bitrate_pc">由电脑决定</string>
     <string name="lower_bitrate_busy">网络繁忙时</string>
     <string name="lower_bitrate_lost">更早降低</string>
     <string name="lower_bitrate_keep">从不：保持我的码率</string>
-    <string name="summary_lower_bitrate">“从不：保持我的码率”可能让画面卡住或破碎，如果连接承载不了该码率。否则，电脑会在丢失无法修复的帧时降低码率，之后再调回；“更早降低”和“网络繁忙时”会更早降低，代价是画面更柔和。</string>
+    <string name="summary_lower_bitrate">如果连接承载不了该码率，“从不：保持我的码率”可能让画面卡住或破碎；连接足够但画面变得模糊时再选它。默认情况下，电脑会在丢失无法修复的帧时降低码率，之后再调回；“更早降低”和“网络繁忙时”会更早降低，代价是画面更柔和。</string>
     <string name="title_back_button">返回键</string>
     <string name="back_button_back">返回</string>
     <string name="back_button_menu">串流菜单</string>

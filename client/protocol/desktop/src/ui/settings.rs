@@ -1138,11 +1138,13 @@ impl Launcher {
                     r
                 });
             }
-            setting_row(ui, s, &mut rows, &["adaptive_bitrate", "client_hint_bitrate", "keep_bitrate"], "Lower bitrate", "Never: keep my bitrate can freeze or break up the picture on a link that cannot carry it. Otherwise the PC lowers the bitrate when frames are lost that it cannot repair and raises it again afterwards; Lower it sooner and When the network is busy lower it earlier, with a softer picture as the cost.", |ui, s| {
+            setting_row(ui, s, &mut rows, &["adaptive_bitrate", "client_hint_bitrate", "keep_bitrate"], "Lower bitrate", "Never: keep my bitrate can freeze or break up the picture on a link that cannot carry it; choose it when the picture turns soft on a link that can. By default the PC lowers the bitrate when frames are lost that it cannot repair and raises it again afterwards; Lower it sooner and When the network is busy lower it earlier, with a softer picture as the cost.", |ui, s| {
                 let current = LowerBitrate::from_saved(s.adaptive_bitrate, s.client_hint_bitrate, s.keep_bitrate);
                 let mut choice = current;
                 let response = Combo::from_id_salt("lower-bitrate").selected_text(tr(lower_bitrate_name(current))).show_ui(ui, |ui| {
-                    for each in LowerBitrate::ALL {
+                    // When the network is busy only while it is stored: Lower it sooner keeps its controller
+                    // for a PC that takes no rate changes.
+                    for each in LowerBitrate::ALL.into_iter().filter(|&each| each != LowerBitrate::WhenBusy || current == LowerBitrate::WhenBusy) {
                         ui.selectable_value(&mut choice, each, tr(lower_bitrate_name(each)));
                     }
                 }).response;
@@ -2459,7 +2461,7 @@ fn controllers_name(choice: Controllers) -> &'static str {
 /// "Lower bitrate" as the list says each choice (English; the caller translates).
 fn lower_bitrate_name(choice: LowerBitrate) -> &'static str {
     match choice {
-        LowerBitrate::Off => en("The PC decides (recommended)"),
+        LowerBitrate::Off => en("The PC decides"),
         LowerBitrate::WhenFramesLost => en("Lower it sooner"),
         LowerBitrate::WhenBusy => en("When the network is busy"),
         LowerBitrate::Keep => en("Never: keep my bitrate"),

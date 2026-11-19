@@ -161,8 +161,14 @@ public class AutoBitrateSettingTest {
             assertFalse(on(AutoBitrateChoice.CODEC_STORE, "a"));
             assertFalse(on(AutoBitrateChoice.PYROWAVE_STORE, "b"));
 
-            // When the network is busy in Settings (the third entry of the list), then off again for one PC from the stream menu.
-            pick(lower, 2);
+            // The list offers When the network is busy only while it is stored: The PC decides, Lower it sooner, Never.
+            assertTrue(lower.getOnPreferenceClickListener().onPreferenceClick(lower));
+            assertEquals(3, ((androidx.appcompat.app.AlertDialog) org.robolectric.shadows.ShadowDialog.getLatestDialog())
+                    .getListView().getAdapter().getCount());
+            ((androidx.appcompat.app.AlertDialog) org.robolectric.shadows.ShadowDialog.getLatestDialog()).dismiss();
+            // A stored When the network is busy, then off again for one PC from the stream menu.
+            prefs().edit().putBoolean(AutoBitrateChoice.SETTINGS_KEY, true)
+                    .putBoolean(PreferenceConfiguration.RATE_CHANGE_BITRATE_PREF_STRING, false).commit();
             assertTrue(prefs().getBoolean(AutoBitrateChoice.SETTINGS_KEY, false));
             assertFalse(prefs().getBoolean(PreferenceConfiguration.RATE_CHANGE_BITRATE_PREF_STRING, true));
             assertTrue(on(AutoBitrateChoice.CODEC_STORE, "a"));
@@ -171,7 +177,7 @@ public class AutoBitrateSettingTest {
             assertFalse(on(AutoBitrateChoice.CODEC_STORE, "a"));
             assertTrue(on(AutoBitrateChoice.CODEC_STORE, "b"));
 
-            // Lower it sooner (the second entry) keeps the busy network's controller for a PC without rate changes.
+            // Lower it sooner (the second entry of four while When the network is busy is stored) keeps the busy network's controller for a PC without rate changes.
             pick(lower, 1);
             assertTrue(prefs().getBoolean(AutoBitrateChoice.SETTINGS_KEY, false));
             assertTrue(prefs().getBoolean(PreferenceConfiguration.RATE_CHANGE_BITRATE_PREF_STRING, false));
@@ -180,7 +186,7 @@ public class AutoBitrateSettingTest {
 
             // Never: keep my bitrate leaves the two switches as they are, wins over them, and every PC follows it.
             AutoBitrateChoice.setForPc(app(), AutoBitrateChoice.CODEC_STORE, "a", true);
-            pick(lower, 3);
+            pick(lower, 2);
             assertTrue(prefs().getBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, false));
             assertTrue(prefs().getBoolean(AutoBitrateChoice.SETTINGS_KEY, false));
             assertTrue(prefs().getBoolean(PreferenceConfiguration.RATE_CHANGE_BITRATE_PREF_STRING, false));

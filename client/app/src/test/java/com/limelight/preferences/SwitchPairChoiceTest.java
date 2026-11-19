@@ -56,6 +56,15 @@ public class SwitchPairChoiceTest {
         assertEquals("an older file without the key", 2, read(SwitchPairChoice.LOWER_BITRATE, true, true));
         // The row lists them as The PC decides, Lower it sooner, When the network is busy, Never.
         assertArrayEquals(new int[] {0, 2, 1, 3}, SwitchPairChoice.LOWER_BITRATE.displayOrder(4));
+        // When the network is busy is listed only while it is the stored choice.
+        android.content.Context context = org.robolectric.RuntimeEnvironment.getApplication();
+        prefs.edit().putBoolean(SwitchPairChoice.LOWER_BITRATE.firstKey, true)
+                .putBoolean(SwitchPairChoice.LOWER_BITRATE.secondKey, false).commit();
+        assertEquals(4, SwitchPairChoice.LOWER_BITRATE.offered(context, prefs));
+        prefs.edit().putBoolean(SwitchPairChoice.LOWER_BITRATE.secondKey, true).commit();
+        assertEquals(3, SwitchPairChoice.LOWER_BITRATE.offered(context, prefs));
+        assertArrayEquals(new int[] {0, 2, 3}, SwitchPairChoice.LOWER_BITRATE.displayOrder(3));
+        prefs.edit().clear().commit();
         // With both on, the stream menu won.
         assertEquals(0, read(SwitchPairChoice.BACK_BUTTON, false, false));
         assertEquals(1, read(SwitchPairChoice.BACK_BUTTON, true, false));
