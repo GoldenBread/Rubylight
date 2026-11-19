@@ -561,9 +561,14 @@ fn an_upgraded_connection_reads_while_a_write_waits_for_the_host() {
         read_head_of(&mut tls);
         tls.write_all(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: test/1\r\n\r\n").unwrap();
         tls.flush().unwrap();
-        // Reads nothing more, so the client's large write fills the buffers and blocks;
-        // then sends while that write waits.
-        std::thread::sleep(Duration::from_millis(300));
+        // Reads nothing more, so the client's large write fills the buffers and blocks; once
+        // that write has started (its bytes arrive), sends while it waits.
+        tls.sock.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let started = std::time::Instant::now();
+        while tls.sock.peek(&mut [0]).unwrap_or(0) == 0 {
+            assert!(started.elapsed() < Duration::from_secs(3), "the client never wrote");
+            std::thread::sleep(Duration::from_millis(5));
+        }
         tls.write_all(b"hello").unwrap();
         tls.flush().unwrap();
         let _ = finished.recv_timeout(Duration::from_secs(10));
@@ -574,7 +579,6 @@ fn an_upgraded_connection_reads_while_a_write_waits_for_the_host() {
     let upgraded = Arc::new(upgraded);
     let writing = upgraded.clone();
     let writer = std::thread::spawn(move || writing.write_all(&vec![7; 64 << 20]));
-    std::thread::sleep(Duration::from_millis(100));
     let reading = upgraded.clone();
     let (got, read) = std::sync::mpsc::channel();
     std::thread::spawn(move || {

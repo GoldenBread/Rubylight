@@ -181,6 +181,9 @@ struct State {
     /// The bytes in `out`: they count against [`MAX_BUFFERED`] until the writer takes them.
     /// Changed only together with `out`, so it never runs below zero.
     out_bytes: u64,
+    /// The read loop waits in [`Shared::room`]: what tests wait for.
+    #[cfg(test)]
+    waiting_for_room: bool,
 }
 
 impl Shared {
@@ -257,7 +260,15 @@ impl Shared {
     /// reading is read no further until it takes some.
     fn room<'a>(&self, mut state: MutexGuard<'a, State>) -> MutexGuard<'a, State> {
         while state.out.len() >= MAX_IN_FLIGHT && !state.closed && state.failure.is_none() {
+            #[cfg(test)]
+            {
+                state.waiting_for_room = true;
+            }
             state = self.drained.wait(state).unwrap_or_else(PoisonError::into_inner);
+        }
+        #[cfg(test)]
+        {
+            state.waiting_for_room = false;
         }
         state
     }

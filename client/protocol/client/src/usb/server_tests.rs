@@ -911,12 +911,12 @@ fn full_queue() -> (Arc<Held>, Driver, Served, Completion) {
     // One more is taken, the next refused: its ENOMEM fills the queue.
     driver.submit(1, wire::DIR_IN, 8, [0; 8], &[], &[]);
     assert!(within(|| device.kept.lock().unwrap().len() == 1));
+    let in_flight = device.kept.lock().unwrap().remove(0);
     driver.submit(1, wire::DIR_IN, 8, [0; 8], &[], &[]);
     // An unlink of a transfer already answered: its answer would go past the queue's room,
-    // so the serve loop waits.
+    // so the serve loop waits. Only that unlink can make it wait: the refusal before it fit.
     driver.unlink(first);
-    std::thread::sleep(Duration::from_millis(200));
-    let in_flight = device.kept.lock().unwrap().remove(0);
+    assert!(within(|| in_flight.shared.state().waiting_for_room), "the serve loop never waited for room");
     (tunnel, driver, served, in_flight)
 }
 
