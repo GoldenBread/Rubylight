@@ -316,6 +316,16 @@ final class GameAdaptation {
         fields.addView(BitrateSlider.create(game, bitrateField.getEditText(), bitrateKbps,
                 () -> applyFromSlider(opened[0])));
         fields.addView(bitrateField);
+        // Keep my bitrate under the bitrate it keeps; it acts at once, without OK.
+        com.google.android.material.materialswitch.MaterialSwitch keep =
+                new com.google.android.material.materialswitch.MaterialSwitch(game);
+        keep.setText(R.string.stream_keep_bitrate);
+        keep.setMinHeight(Math.round(48 * density));
+        keep.setChecked(keepBitrateShown());
+        keep.setOnCheckedChangeListener((view, on) -> {
+            if (game.rateChanges == stream) keepBitrateFromMenu(on);
+        });
+        fields.addView(keep);
         // Automatic quality owns the frame rate while it runs.
         int fpsMillihz = game.reconfigureRequester.fpsMillihz() > 0 ? game.reconfigureRequester.fpsMillihz() : game.streamFps * 1000;
         String fpsText = BigDecimal.valueOf(fpsMillihz, 3).stripTrailingZeros().toPlainString();
@@ -422,6 +432,13 @@ final class GameAdaptation {
         if (answer == StreamRateChanges.Answer.MANUAL && outcome.takesBitrate && result.bitrateKbps > 0) {
             game.sessionManualBitrate = result.bitrateKbps;
         }
+        // The PC stands back for a bitrate the player chose (Session::set_client_bitrate), as for Never's takeover;
+        // Keep my bitrate keeps that one.
+        if (answer == StreamRateChanges.Answer.MANUAL && outcome.takesBitrate && result.bitrateKbps > 0
+                && (result.bitrateStatus == RateChangeResult.STATUS_APPLIED || result.bitrateStatus == RateChangeResult.STATUS_CLAMPED)) {
+            game.playerBitrateKbps = result.bitrateKbps;
+            game.bitrateKept = true;
+        }
         if (result.fpsChanged() && result.fpsMillihz > 0 && result.fpsMillihz != game.reconfigureRequester.fpsMillihz()) {
             game.reconfigureRequester.rateChanged(result.fpsMillihz);
             game.videoOutput.setStreamFrameRate(result.fpsMillihz);
@@ -449,8 +466,13 @@ final class GameAdaptation {
 
     void startStreamBitrate(StreamRateChanges changes) {
         game.rateChanges = changes;
+        game.bitrateKept = false;
+        // After an automatic reconnect the player's own rate is the one this stream started at.
+        game.playerBitrateKbps = game.sessionManualBitrate;
         if (game.prefConfig.keepBitrate) {
             if (changes != null) {
+                // The bitrate dialog's switch shows on from now; it sends nothing more while the takeover waits.
+                game.bitrateKept = true;
                 sendKeepBitrate(changes);
             } else {
                 LimeLog.info("Never: keep my bitrate is chosen, but this PC takes no bitrate changes from the device; " +
@@ -487,6 +509,52 @@ final class GameAdaptation {
     }
 
     /**
+     * What the bitrate dialog's Keep my bitrate shows: the PC keeps this stream's bitrate (after Never's takeover, the
+     * switch or a bitrate the player chose here) and no controller of this device steers it. The dialog exists only
+     * for a stream whose PC took its rate changes.
+     */
+    boolean keepBitrateShown() {
+        return game.rateChanges != null && game.bitrateKept && !game.rateChanges.automaticOn() && !isAdaptiveBitrateEnabled();
+    }
+
+    /**
+     * The bitrate dialog's Keep my bitrate, stored as the performance overlay's switch is (GameOverlays.
+     * togglePerformanceOverlay): the stream's change goes to the main settings through DualScreen.saveSettings, as
+     * choosing Never or The PC decides in Settings stores it, PCs' own choices of the busy controller included. On
+     * sends the bitrate the player last chose in this stream, else the stream's own, as one bitrate change (nothing
+     * when the PC already keeps it) and stops this device's own lowering. Off sends nothing: the PC has no message
+     * that takes the bitrate back, so this stream keeps it and the notice says so.
+     */
+    void keepBitrateFromMenu(boolean on) {
+        StreamRateChanges stream = game.rateChanges;
+        if (stream == null) return;
+        if (on) {
+            boolean steering = stream.automaticOn() || isAdaptiveBitrateEnabled();
+            setRateChangeBitrateEnabled(false);
+            if (isAdaptiveBitrateEnabled()) setAdaptiveBitrateEnabled(false, false);
+            game.qualityAutoBitrate = false;
+            if (steering || !game.bitrateKept) {
+                int kbps = game.playerBitrateKbps > 0 ? game.playerBitrateKbps : game.prefConfig.bitrate;
+                if (game.connected && stream.sendTakeover(kbps, SystemClock.uptimeMillis())) {
+                    LimeLog.info("Keep my bitrate (stream menu): sent " + kbps + " kbps as a bitrate change so the PC stops lowering it");
+                    scheduleRateChangeExpiry();
+                } else {
+                    LimeLog.warning("Keep my bitrate (stream menu): the bitrate change could not be sent");
+                    game.messages.alert(R.string.stream_rate_change_not_sent, Toast.LENGTH_LONG);
+                }
+            }
+            game.bitrateKept = true;
+        } else {
+            game.bitrateKept = false;
+            LimeLog.info("Keep my bitrate turned off in the stream menu: The PC decides from the next stream; this stream keeps its bitrate");
+            game.messages.alert(R.string.stream_keep_bitrate_off, Toast.LENGTH_LONG);
+        }
+        game.prefConfig.keepBitrate = on;
+        DualScreen.saveSettings(game, editor -> AutoBitrateChoice.storeKeepBitrate(editor, on));
+        AutoBitrateChoice.clearPcChoices(game);
+    }
+
+    /**
      * Whether a PC's report that it lowered the bitrate is told to the player now: the first time in the stream, with
      * the performance overlay (which has its own line) not showing, and not with "Never: keep my bitrate".
      */
@@ -499,11 +567,13 @@ final class GameAdaptation {
         // The overlay shows when its view is visible (GameOverlays.togglePerformanceOverlay).
         boolean overlayShowing = game.performanceOverlayScroll != null
                 && game.performanceOverlayScroll.getVisibility() == android.view.View.VISIBLE;
-        boolean keep = game.prefConfig != null && game.prefConfig.keepBitrate;
+        boolean keep = game.bitrateKept || (game.prefConfig != null && game.prefConfig.keepBitrate);
         if (status == null || !tellLinkLowered(game.linkLoweredTold, overlayShowing, keep)) return;
         game.linkLoweredTold = true;
         java.util.Locale locale = game.getResources().getConfiguration().locale;
-        game.messages.alert(game.getString(R.string.link_notice_keep, status.currentMbps(locale)), Toast.LENGTH_LONG);
+        // The stream menu's switch only where it works: on a PC that took this stream's rate changes.
+        int text = game.rateChanges != null ? R.string.link_notice_keep : R.string.link_notice_lowered_only;
+        game.messages.alert(game.getString(text, status.currentMbps(locale)), Toast.LENGTH_LONG);
     }
 
     // Automatic bitrate on a PC without Rubylight's runtime bitrate: a Foundation Sunshine PC runs

@@ -7,7 +7,10 @@
     <string name="overlay_compact_loss">%1$s%% perdita</string>
     <string name="overlay_compact_waiting">In attesa del video</string>
     <string name="link_notice_lowered">Il PC ha ridotto il bitrate a %1$s Mbps: rete</string>
-    <string name="link_notice_keep">Il PC ha ridotto il bitrate a %1$s Mbps. Per evitarlo, scegli «Mai: mantieni il mio bitrate» in Impostazioni, Video, Riduci il bitrate.</string>
+    <string name="link_notice_keep">Il PC ha ridotto il bitrate a %1$s Mbps. Per mantenere il tuo bitrate, apri il menu dello stream e attiva «Mantieni il mio bitrate».</string>
+    <string name="link_notice_lowered_only">Il PC ha ridotto il bitrate a %1$s Mbps a causa della rete.</string>
+    <string name="stream_keep_bitrate">Mantieni il mio bitrate</string>
+    <string name="stream_keep_bitrate_off">Dal prossimo stream decide il PC; questo mantiene il suo bitrate.</string>
     <string name="overlay_health_good">Stream buono</string>
     <string name="overlay_health_fair">Stream in difficoltà</string>
     <string name="overlay_health_poor">Stream scarso</string>

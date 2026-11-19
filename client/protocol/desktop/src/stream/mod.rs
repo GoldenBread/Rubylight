@@ -27,6 +27,7 @@ pub mod overlay;
 mod recovery;
 mod quality;
 mod rate_change;
+pub use rate_change::store_keep;
 pub mod menu_extras;
 pub mod guests;
 mod touch;
@@ -717,6 +718,9 @@ pub struct Streaming {
     link_notice: Option<LinkNotice>,
     /// The stream said once that the PC lowered the bitrate (`notices::link_lowered_toast`).
     link_lowered_told: bool,
+    /// Keep my bitrate as the stream menu last turned it, for the main settings to keep; see
+    /// `take_keep_change`.
+    keep_change: Option<bool>,
     /// The host's latest pipeline frame rates; `None` until it sends them.
     pipeline_rates: Option<PipelineRatesReport>,
     pub exit: Option<Exit>,
@@ -1204,6 +1208,7 @@ impl Streaming {
             hardware: None,
             link_notice: None,
             link_lowered_told: false,
+            keep_change: None,
             pipeline_rates: None,
             // A PC that set up no microphone gives Microphone only nothing to do.
             exit: mic_refused.then(|| Exit::Ended(Some(trf("{} did not accept the microphone", &[&facts_host])))),
@@ -2027,6 +2032,42 @@ impl Streaming {
     /// bitrate.
     pub fn client_hint_active(&self) -> bool {
         self.rate_change.as_ref().is_some_and(|rates| rates.hint_active())
+    }
+
+    /// What the stream menu's Keep my bitrate shows; `None` hides it, on a PC that did not take
+    /// this stream's rate changes. On while the PC keeps the bitrate (after the takeover, the
+    /// switch or a bitrate the player chose in the menu) and no controller of this device steers it.
+    pub fn bitrate_kept(&self) -> Option<bool> {
+        rate_change::keep_switch(self.rate_change.as_ref(), self.adaptive_bitrate)
+    }
+
+    /// Keep my bitrate turned on or off in the stream menu. On sends the bitrate the player last
+    /// chose in this stream, else the stream's own, as one bitrate change (nothing when the PC
+    /// already keeps it) and stops this device's own lowering. Off sends nothing: the PC has no
+    /// message that takes the bitrate back, so the stream keeps it and the notice says the choice
+    /// applies from the next stream. Either is kept as Lower bitrate's choice in the main
+    /// settings, as the overlay's switch is (`take_keep_change`).
+    pub fn set_bitrate_kept(&mut self, keep: bool) {
+        if self.rate_change.is_none() { return; }
+        let now = self.started.elapsed().as_millis() as u64;
+        if keep {
+            let request = self.rate_change.as_mut().and_then(|rates| rates.keep_now(now));
+            if self.adaptive_bitrate { self.enable_adaptive_bitrate(false); }
+            if let Some(request) = request { self.send_rate_change(request); }
+        } else {
+            if let Some(rates) = &mut self.rate_change { rates.release(); }
+            eprintln!("nightjar: keep my bitrate turned off in the stream menu: The PC decides from the next stream; this stream keeps its bitrate");
+            self.show_toast(tr("The PC decides from the next stream; this stream keeps its bitrate."));
+        }
+        self.settings.keep_bitrate = keep;
+        self.keep_change = Some(keep);
+    }
+
+    /// Keep my bitrate as the stream menu last turned it, once: the main settings keep it as
+    /// Lower bitrate's choice. Only that value, since the stream's may be a PC's, game's or
+    /// profile's own (as `take_overlay_change`).
+    pub fn take_keep_change(&mut self) -> Option<bool> {
+        self.keep_change.take()
     }
 
     /// Automatic bitrate, automatic quality or the client-hint controller owns the bitrate.

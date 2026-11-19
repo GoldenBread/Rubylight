@@ -415,6 +415,7 @@ fn shoot(dir: &std::path::Path, name: &str, width: f32, height: f32, ppp: f32, h
             let page = match what {
                 "shortcuts" => crate::stream_menu::Page::Shortcuts,
                 "editor" => crate::stream_menu::Page::Editor(draft.clone()),
+                "quality" => crate::stream_menu::Page::Quality,
                 _ => crate::stream_menu::Page::Grid,
             };
             show(ui.ctx(), tr("Stream menu"), "stream-controls", |ui| {
@@ -434,6 +435,16 @@ fn shoot(dir: &std::path::Path, name: &str, width: f32, height: f32, ppp: f32, h
                         }
                         "editor" => {
                             crate::stream_menu::editor(ui, &mut draft, &mut saved.clone(), false);
+                        }
+                        "quality" => {
+                            // As app/overlay.rs draws the Quality page on a PC that takes rate changes, Keep my bitrate on.
+                            group(ui, |ui| {
+                                let mut kbps = 40_000;
+                                crate::stream::menu_extras::bitrate_slider(ui, &mut kbps, true);
+                                let mut keep = true;
+                                switch(ui, crate::glyphs::Icon::Gauge, tr("Keep my bitrate"), &mut keep);
+                                fold(ui, "rate-change", crate::glyphs::Icon::Gauge, tr("Change bitrate / frame rate"), |_| {});
+                            });
                         }
                         _ => {
                             crate::stream_menu::grid(ui, &layout, &saved, None, n == 0);
@@ -460,7 +471,7 @@ fn sheet_(ui: &mut Ui) {
 }
 
 /// The stream menu's grid, its Shortcuts page, the shortcut editor and the help sheet as they open over a game, normal and high
-/// contrast, and the statistics: `NIGHTJAR_SHOTS=<dir> cargo test -p nightjar-desktop stream_menu_screenshot -- --ignored`.
+/// contrast, the statistics and the Quality page with Keep my bitrate: `NIGHTJAR_SHOTS=<dir> cargo test -p nightjar-desktop stream_menu_screenshot -- --ignored`.
 #[test]
 #[ignore = "writes PNGs; set NIGHTJAR_SHOTS"]
 fn stream_menu_screenshot() {
@@ -474,5 +485,6 @@ fn stream_menu_screenshot() {
         shoot(&dir, &format!("stream-shortcut-editor-{size}"), width, height, ppp, false, "editor");
         shoot(&dir, &format!("stream-menu-{size}-high-contrast"), width, height, ppp, true, "menu");
         shoot(&dir, &format!("stream-stats-{size}"), width, height, ppp, false, "stats");
+        shoot(&dir, &format!("stream-quality-{size}"), width, height, ppp, false, "quality");
     }
 }

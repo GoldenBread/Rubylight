@@ -4,6 +4,7 @@
 //! Time is session-relative milliseconds.
 
 use nightjar_core::http::AppRole;
+use nightjar_policy::choices::LowerBitrate;
 use nightjar_policy::client_hint;
 use nightjar_policy::stats::Stats;
 use rubylight_protocol::rate_change::{Reason, RateChangeRequest, RateChangeResult, Status, RATE_CHANGE_MESSAGE_TYPE};
@@ -80,6 +81,13 @@ pub struct RateChange {
     last_tick_ms: Option<u64>,
     /// "Never: keep my bitrate" is chosen and the takeover has not been sent yet.
     keep_pending: bool,
+    /// The PC keeps this stream's bitrate: the takeover, the menu's Keep my bitrate or a bitrate
+    /// the player chose in the menu went out (any bitrate change makes the PC stand back).
+    kept: bool,
+    /// The bitrate the player last chose in this stream's menu, which Keep my bitrate keeps.
+    chosen_kbps: Option<u32>,
+    /// The stream's bitrate at its start, which Keep my bitrate keeps when none was chosen.
+    configured_kbps: u32,
     bitrate_kbps: u32,
     fps_millihz: u32,
     /// The menu's fields.
@@ -98,6 +106,9 @@ impl RateChange {
             hint: hint.then(|| client_hint::Bitrate::new(bitrate_kbps, limit_kbps, now_ms)),
             last_tick_ms: None,
             keep_pending: false,
+            kept: false,
+            chosen_kbps: None,
+            configured_kbps: bitrate_kbps,
             bitrate_kbps,
             fps_millihz,
             menu_kbps: bitrate_kbps,
@@ -115,9 +126,37 @@ impl RateChange {
     /// client has set). `None` once sent, or when "Never" is not chosen.
     pub fn takeover_request(&mut self, now_ms: u64) -> Option<RateChangeRequest> {
         if !std::mem::take(&mut self.keep_pending) { return None; }
+        self.kept = true;
         let kbps = self.bitrate_kbps;
         eprintln!("nightjar: keep my bitrate: sending the stream's {kbps} kbps as a bitrate change so the PC stops lowering it");
         Some(self.request(Origin::Keep, kbps, 0, now_ms))
+    }
+
+    /// What the stream menu's Keep my bitrate shows: the PC keeps this stream's bitrate (or will,
+    /// once the takeover goes out) and no controller of this device steers it.
+    pub fn kept(&self) -> bool {
+        (self.kept || self.keep_pending) && !self.hint_active()
+    }
+
+    /// The stream menu's Keep my bitrate turned on: the bitrate the player last chose in this
+    /// stream, else the stream's own, as one bitrate change, and this device's own lowering
+    /// stops. `None` when the PC already keeps it, so nothing more goes out.
+    pub fn keep_now(&mut self, now_ms: u64) -> Option<RateChangeRequest> {
+        let steering = self.hint_active();
+        self.hint = None;
+        if !steering && (self.kept || self.keep_pending) { return None; }
+        self.keep_pending = false;
+        self.kept = true;
+        let kbps = self.chosen_kbps.unwrap_or(self.configured_kbps);
+        eprintln!("nightjar: keep my bitrate (stream menu): sending {kbps} kbps as a bitrate change so the PC stops lowering it");
+        Some(self.request(Origin::Keep, kbps, 0, now_ms))
+    }
+
+    /// The stream menu's Keep my bitrate turned off: the switch shows off and nothing is sent.
+    /// The PC has no message that gives it control back, so this stream keeps its bitrate.
+    pub fn release(&mut self) {
+        self.kept = false;
+        self.keep_pending = false;
     }
 
     /// After an automatic reconnect: the client-hint controller returns to the rate the stream
@@ -248,6 +287,9 @@ impl RateChange {
                     // A bitrate set by hand: the controller's range follows it.
                     if let Some(hint) = &mut self.hint { hint.overridden(self.bitrate_kbps, now_ms); }
                     answer.by_hand = true;
+                    // The PC stands back for a bitrate the player chose, as for the takeover.
+                    self.chosen_kbps = Some(self.bitrate_kbps);
+                    self.kept = true;
                 }
                 answer.toast = Some(menu_text(result));
             }
@@ -283,6 +325,19 @@ impl RateChange {
         self.fps_millihz = fps_millihz;
         self.menu_fps = f64::from(fps_millihz) / 1000.0;
     }
+}
+
+/// What the stream menu's Keep my bitrate shows; `None` hides it, on a PC that did not take this
+/// stream's rate changes. Off while this device's busy-network controller steers the bitrate.
+pub fn keep_switch(rates: Option<&RateChange>, adaptive_bitrate: bool) -> Option<bool> {
+    rates.map(|rates| rates.kept() && !adaptive_bitrate)
+}
+
+/// Keep my bitrate as the main settings keep it: Lower bitrate's Never when on, The PC decides
+/// when off, stored as choosing them in Settings stores them.
+pub fn store_keep(settings: &mut crate::config::Settings, keep: bool) {
+    let choice = if keep { LowerBitrate::Keep } else { LowerBitrate::Off };
+    (settings.adaptive_bitrate, settings.client_hint_bitrate, settings.keep_bitrate) = choice.to_saved(settings.adaptive_bitrate, settings.client_hint_bitrate);
 }
 
 fn fps_text(fps_millihz: u32) -> String {
@@ -520,6 +575,59 @@ mod tests {
         let request = clamped.takeover_request(0).unwrap();
         let answer = clamped.result(&result(&request, 20_000, 60_000, Outcome::clamped(Reason::HostLimit), Outcome::UNCHANGED), 100);
         assert_eq!((answer.bitrate_kbps, answer.toast), (Some(20_000), None));
+    }
+
+    #[test]
+    fn keep_my_bitrate_in_the_menu_sends_once_the_bitrate_the_player_chose_or_the_streams() {
+        // Absent on a PC that did not take this stream's rate changes.
+        assert_eq!(keep_switch(None, false), None);
+        // A stream started with Never shows it on before and after the takeover, and turning it on sends nothing more.
+        let mut never = RateChange::new(25_000, 60_000, false, 0, 0);
+        never.keep_bitrate();
+        assert_eq!(keep_switch(Some(&never), false), Some(true));
+        assert_eq!(never.keep_now(500), None, "the takeover is still to go out");
+        assert!(never.takeover_request(1000).is_some());
+        assert_eq!(keep_switch(Some(&never), false), Some(true));
+        assert_eq!((never.keep_now(2000), never.takeover_request(3000)), (None, None), "nothing more");
+        // The PC decides: off until turned on, then exactly one change at the stream's bitrate.
+        let mut rates = RateChange::new(25_000, 60_000, false, 0, 0);
+        assert_eq!(keep_switch(Some(&rates), false), Some(false));
+        let request = rates.keep_now(1000).expect("one change");
+        assert_eq!((request.bitrate_kbps, request.fps_millihz), (25_000, 0), "the stream's bitrate, no rate");
+        assert_eq!(rates.keep_now(2000), None, "once");
+        let answer = rates.result(&result(&request, 25_000, 60_000, Outcome::APPLIED, Outcome::UNCHANGED), 1100);
+        assert_eq!((answer.toast, answer.by_hand), (None, false), "its answer shows nothing");
+        // Off shows off and sends nothing.
+        rates.release();
+        assert_eq!(keep_switch(Some(&rates), false), Some(false));
+        assert_eq!(rates.takeover_request(3000), None);
+        // A bitrate the player chose in the menu already makes the PC stand back: on, and kept at that bitrate.
+        let mut chosen = RateChange::new(25_000, 60_000, false, 0, 0);
+        chosen.menu_kbps = 40_000;
+        let manual = chosen.menu_request(0).unwrap();
+        chosen.result(&result(&manual, 40_000, 60_000, Outcome::APPLIED, Outcome::UNCHANGED), 100);
+        assert_eq!(keep_switch(Some(&chosen), false), Some(true));
+        assert_eq!(chosen.keep_now(150), None, "the PC already keeps it");
+        chosen.release();
+        assert_eq!(chosen.keep_now(200).map(|r| r.bitrate_kbps), Some(40_000), "the player's bitrate, not the stream's");
+        // Lower it sooner steering: off; on stops that controller and sends the stream's own bitrate.
+        let mut hint = RateChange::new(25_000, 60_000, true, 0, 0);
+        assert_eq!(keep_switch(Some(&hint), false), Some(false));
+        assert_eq!(hint.keep_now(1000).map(|r| r.bitrate_kbps), Some(25_000));
+        assert!(!hint.hint_active() && hint.kept());
+        assert!((0..30).all(|s| hint.tick(&stats(s, 10.0)).is_none()), "this device lowers nothing");
+        // The busy-network controller steering: off.
+        assert_eq!(keep_switch(Some(&never), true), Some(false));
+    }
+
+    #[test]
+    fn keep_my_bitrate_is_stored_as_settings_stores_never_and_the_pc_decides() {
+        let mut s = crate::config::Settings { adaptive_bitrate: true, client_hint_bitrate: true, ..Default::default() };
+        store_keep(&mut s, true);
+        assert!(s.keep_bitrate && s.adaptive_bitrate && s.client_hint_bitrate, "Never leaves the pair as it was");
+        assert_eq!(LowerBitrate::from_saved(s.adaptive_bitrate, s.client_hint_bitrate, s.keep_bitrate), LowerBitrate::Keep);
+        store_keep(&mut s, false);
+        assert!(!s.keep_bitrate && !s.adaptive_bitrate && !s.client_hint_bitrate, "the old default");
     }
 
     #[test]

@@ -7,7 +7,10 @@
     <string name="overlay_compact_loss">Perte %1$s %%</string>
     <string name="overlay_compact_waiting">En attente de la vidéo</string>
     <string name="link_notice_lowered">Le PC a réduit le débit à %1$s Mbit/s : réseau</string>
-    <string name="link_notice_keep">Le PC a réduit le débit à %1$s Mbit/s. Pour l’éviter, choisissez « Jamais : garder mon débit » dans Paramètres, Vidéo, Baisser le débit.</string>
+    <string name="link_notice_keep">Le PC a baissé le débit à %1$s Mbit/s. Pour garder votre débit, ouvrez le menu du stream et activez « Garder mon débit ».</string>
+    <string name="link_notice_lowered_only">Le PC a baissé le débit à %1$s Mbit/s à cause du réseau.</string>
+    <string name="stream_keep_bitrate">Garder mon débit</string>
+    <string name="stream_keep_bitrate_off">Le PC décide à partir du prochain stream ; celui-ci garde son débit.</string>
     <string name="overlay_health_good">Stream correct</string>
     <string name="overlay_health_fair">Stream en difficulté</string>
     <string name="overlay_health_poor">Stream médiocre</string>

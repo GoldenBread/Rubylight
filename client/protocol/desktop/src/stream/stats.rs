@@ -22,9 +22,14 @@ fn link_mbps(notice: &LinkNotice) -> String {
 }
 
 /// The in-stream notice, once per stream, that the PC lowered the bitrate: what happened, the
-/// rate, and where the choice is.
-pub(super) fn link_lowered_toast(notice: &LinkNotice) -> String {
-    trf("The PC lowered the bitrate to {} Mbps. To stop that, choose Never: keep my bitrate under Settings, Video, Lower bitrate.", &[&link_mbps(notice)])
+/// rate and, on a PC that takes this stream's rate changes (`can_keep`), the stream menu's switch
+/// that stops it. Elsewhere no remedy would work, so it only says what happened.
+pub(super) fn link_lowered_toast(notice: &LinkNotice, can_keep: bool) -> String {
+    if can_keep {
+        trf("The PC lowered the bitrate to {} Mbps. To keep your bitrate, open the stream menu and turn on Keep my bitrate.", &[&link_mbps(notice)])
+    } else {
+        trf("The PC lowered the bitrate to {} Mbps for the network.", &[&link_mbps(notice)])
+    }
 }
 
 /// Whether a PC's report that it holds the bitrate down is told to the player now: the first
@@ -585,10 +590,13 @@ mod link_lowered_tests {
     }
 
     #[test]
-    fn the_notice_says_what_happened_the_rate_and_where_the_choice_is() {
+    fn the_notice_says_what_happened_the_rate_and_the_switch_only_where_it_works() {
         let notice = LinkNotice { state: LinkState::Limited, reason: rubylight_protocol::control::LinkReason::Network, ceiling_kbps: 50_000, current_kbps: 18_400 };
-        let text = link_lowered_toast(&notice);
-        assert!(text.contains("18 Mbps") && text.contains("Never: keep my bitrate") && text.contains("Settings, Video, Lower bitrate"), "{text}");
+        let text = link_lowered_toast(&notice, true);
+        assert!(text.contains("18 Mbps") && text.contains("stream menu") && text.contains("Keep my bitrate"), "{text}");
+        // A PC that takes no rate changes: no remedy that would not work.
+        let text = link_lowered_toast(&notice, false);
+        assert!(text.contains("18 Mbps") && !text.contains("Keep") && !text.contains("Settings"), "{text}");
     }
 }
 

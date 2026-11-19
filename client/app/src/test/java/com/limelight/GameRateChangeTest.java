@@ -403,13 +403,136 @@ public class GameRateChangeTest {
 
         prefs.enablePerfOverlay = false;
         com.limelight.binding.video.LinkNoticeStatus status = com.limelight.binding.video.LinkNoticeStatus.parse(1, 50_000, 18_400);
+        // A PC that took no rate changes: what happened, and no remedy that would not work.
         game.adaptation.noteLinkLowered(status);
         assertTrue(game.linkLoweredTold);
         String told = ShadowToast.getTextOfLatestToast();
-        assertTrue(told, told.contains("18 Mbps") && told.contains("Never: keep my bitrate"));
+        assertTrue(told, told.contains("18 Mbps") && !told.contains("Keep my bitrate") && !told.contains("Settings"));
         ShadowToast.reset();
         game.adaptation.noteLinkLowered(status);
         assertNull("not again", ShadowToast.getLatestToast());
+
+        // A PC that took them: the stream menu's switch.
+        startStream(recording());
+        game.linkLoweredTold = false;
+        game.adaptation.noteLinkLowered(status);
+        told = ShadowToast.getTextOfLatestToast();
+        assertTrue(told, told.contains("18 Mbps") && told.contains("stream menu") && told.contains("Keep my bitrate"));
+        // Not while the PC keeps this stream's bitrate.
+        ShadowToast.reset();
+        game.linkLoweredTold = false;
+        game.bitrateKept = true;
+        game.adaptation.noteLinkLowered(status);
+        assertNull(ShadowToast.getLatestToast());
+    }
+
+    // The bitrate dialog's Keep my bitrate.
+    private static com.google.android.material.materialswitch.MaterialSwitch keepSwitch(AlertDialog dialog) {
+        List<View> found = new ArrayList<>();
+        collectSwitches(dialog.getWindow().getDecorView(), found);
+        assertEquals(1, found.size());
+        return (com.google.android.material.materialswitch.MaterialSwitch) found.get(0);
+    }
+
+    private static void collectSwitches(View view, List<View> found) {
+        if (view instanceof com.google.android.material.materialswitch.MaterialSwitch) found.add(view);
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) collectSwitches(group.getChildAt(i), found);
+        }
+    }
+
+    private android.content.SharedPreferences stored() {
+        return android.preference.PreferenceManager.getDefaultSharedPreferences(game);
+    }
+
+    @Test
+    public void keepMyBitrateIsAbsentOnAPcThatTookNoRateChanges() {
+        startStream(null);
+        ReflectionHelpers.callInstanceMethod(game.adaptation, "showRateChangeDialog");
+        assertNull("no bitrate dialog, so no switch", ShadowDialog.getLatestDialog());
+        game.adaptation.keepBitrateFromMenu(true);
+        assertTrue(sent.isEmpty());
+        assertFalse(stored().contains(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING));
+        assertFalse(game.adaptation.keepBitrateShown());
+    }
+
+    @Test
+    public void turningKeepMyBitrateOnSendsOneChangeAtTheStreamsBitrateAndStoresNever() {
+        startStream(recording());
+        AlertDialog dialog = openDialog();
+        com.google.android.material.materialswitch.MaterialSwitch keep = keepSwitch(dialog);
+        assertFalse(keep.isChecked());
+        keep.setChecked(true);
+        ShadowLooper.idleMainLooper();
+        assertEquals(1, sent.size());
+        assertEquals("the stream's bitrate", 50_000, sent.get(0)[1]);
+        assertEquals("only the bitrate", 0, sent.get(0)[2]);
+        assertTrue(dialog.isShowing());
+        // Stored as choosing Never in Settings: its own key, the pair left as it was.
+        assertTrue(stored().getBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, false));
+        assertFalse(stored().contains(com.limelight.preferences.AutoBitrateChoice.SETTINGS_KEY));
+        assertTrue(prefs.keepBitrate);
+        assertTrue(PreferenceConfiguration.readPreferences(game).keepBitrate);
+        // Its answer shows nothing, and the switch stays on when the dialog opens again; nothing more goes out.
+        int toasts = ShadowToast.shownToastCount();
+        game.rateChange(new RateChangeResult(sent.get(0)[0], 50_000, 0, STATUS_APPLIED, REASON_NONE, STATUS_UNCHANGED, REASON_NONE));
+        ShadowLooper.idleMainLooper();
+        assertEquals(toasts, ShadowToast.shownToastCount());
+        dialog.dismiss();
+        assertTrue(keepSwitch(openDialog()).isChecked());
+        assertEquals(1, sent.size());
+    }
+
+    @Test
+    public void keepMyBitrateKeepsTheBitrateThePlayerChoseAndShowsOnOnceTheyChoseOne() {
+        startStream(recording());
+        AlertDialog dialog = openDialog();
+        fields(dialog).get(0).setText("30");
+        send(dialog);
+        game.rateChange(new RateChangeResult(sent.get(0)[0], 30_000, 60_000, STATUS_APPLIED, REASON_NONE, STATUS_UNCHANGED, REASON_NONE));
+        ShadowLooper.idleMainLooper();
+        // The chosen bitrate already makes the PC stand back: on, and nothing to send.
+        com.google.android.material.materialswitch.MaterialSwitch keep = keepSwitch(openDialog());
+        assertTrue(keep.isChecked());
+        keep.setChecked(false);
+        keep.setChecked(true);
+        ShadowLooper.idleMainLooper();
+        assertEquals(2, sent.size());
+        assertEquals("the player's bitrate, not the stream's", 30_000, sent.get(1)[1]);
+    }
+
+    @Test
+    public void aStreamStartedWithNeverShowsTheSwitchOnAndSendsNothingMore() {
+        prefs.keepBitrate = true;
+        startStream(recording());
+        assertTrue("on before the takeover", keepSwitch(openDialog()).isChecked());
+        runFor(1);
+        assertEquals(1, sent.size());
+        assertTrue(keepSwitch(openDialog()).isChecked());
+        runFor(5);
+        assertEquals("nothing more", 1, sent.size());
+    }
+
+    @Test
+    public void turningKeepMyBitrateOffStoresThePcDecidesAndSendsNothing() {
+        stored().edit().putBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, true)
+                .putBoolean(com.limelight.preferences.AutoBitrateChoice.SETTINGS_KEY, true).commit();
+        prefs.keepBitrate = true;
+        startStream(recording());
+        runFor(1);
+        assertEquals(1, sent.size());
+        com.google.android.material.materialswitch.MaterialSwitch keep = keepSwitch(openDialog());
+        keep.setChecked(false);
+        ShadowLooper.idleMainLooper();
+        assertEquals("nothing goes out", 1, sent.size());
+        assertFalse(stored().getBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, true));
+        assertFalse(stored().getBoolean(com.limelight.preferences.AutoBitrateChoice.SETTINGS_KEY, true));
+        assertFalse(stored().getBoolean("checkbox_rate_change_bitrate", true));
+        assertFalse(prefs.keepBitrate);
+        assertEquals(game.getString(R.string.stream_keep_bitrate_off), ShadowToast.getTextOfLatestToast());
+        runFor(5);
+        assertEquals(1, sent.size());
     }
 
     @Test

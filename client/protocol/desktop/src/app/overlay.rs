@@ -269,9 +269,15 @@ pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mu
                                     s.set_bitrate();
                                 }
                             }
+                            // Keep my bitrate right under the bitrate slider, where a player who saw the bitrate fall looks.
+                            let kept = s.bitrate_kept();
+                            let mut keep_to = None;
                             if let Some(rates) = s.rate_change.as_mut().filter(|_| controls.rate_change) {
                                 let busy = rates.menu_busy();
                                 let mut apply = stream::menu_extras::bitrate_slider(ui, &mut rates.menu_kbps, !busy);
+                                if let Some(mut keep) = kept {
+                                    if menu_style::switch(ui, Icon::Gauge, tr("Keep my bitrate"), &mut keep).changed() { keep_to = Some(keep); }
+                                }
                                 menu_style::fold(ui, "rate-change", Icon::Gauge, tr("Change bitrate / frame rate"), |ui| {
                                     let busy = rates.menu_busy();
                                     ui.add_enabled_ui(!busy, |ui| {
@@ -285,6 +291,7 @@ pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mu
                                 });
                                 if apply { s.change_rates(); }
                             }
+                            if let Some(keep) = keep_to { s.set_bitrate_kept(keep); }
                             if s.facts.role != nightjar_core::http::AppRole::InputOnly {
                                 menu_style::fold(ui, "stream-health", Icon::Pulse, tr("Why did my stream stutter?"), |ui| {
                                     let (text, offer) = s.health();

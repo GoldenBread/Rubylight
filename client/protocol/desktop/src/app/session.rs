@@ -539,6 +539,18 @@ impl App {
                 }
             }
         }
+        // Keep my bitrate turned on or off in the stream menu: Lower bitrate's choice in the main
+        // settings, stored as Settings stores Never or The PC decides.
+        if let Some(keep) = streaming.take_keep_change() {
+            let s = &mut self.launcher.settings;
+            stream::store_keep(s, keep);
+            if let Err(e) = self.store.save_settings(s) {
+                eprintln!("nightjar: saving settings failed: {e}");
+                if first_save_failure(&mut self.save_failed_told) {
+                    streaming.show_toast(save_failed_text(self.store.dir()));
+                }
+            }
+        }
         // A device ticked or unticked for automatic USB forwarding in the stream controls.
         if let Some(auto) = streaming.usb.as_mut().and_then(crate::usb::Panel::take_auto_change) {
             self.launcher.settings.usb_auto = auto;

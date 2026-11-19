@@ -7,7 +7,10 @@
     <string name="overlay_compact_loss">%1$s%% de perda</string>
     <string name="overlay_compact_waiting">Aguardando vídeo</string>
     <string name="link_notice_lowered">O PC reduziu o bitrate para %1$s Mbps: rede</string>
-    <string name="link_notice_keep">O PC reduziu o bitrate para %1$s Mbps. Para evitar isso, escolha “Nunca: manter minha taxa de bits” em Configurações, Vídeo, Reduzir a taxa de bits.</string>
+    <string name="link_notice_keep">O PC reduziu a taxa de bits para %1$s Mbps. Para manter sua taxa de bits, abra o menu da transmissão e ative “Manter minha taxa de bits”.</string>
+    <string name="link_notice_lowered_only">O PC reduziu a taxa de bits para %1$s Mbps por causa da rede.</string>
+    <string name="stream_keep_bitrate">Manter minha taxa de bits</string>
+    <string name="stream_keep_bitrate_off">O PC decide a partir da próxima transmissão; esta mantém sua taxa de bits.</string>
     <string name="overlay_health_good">Transmissão boa</string>
     <string name="overlay_health_fair">Transmissão instável</string>
     <string name="overlay_health_poor">Transmissão ruim</string>

@@ -1091,6 +1091,30 @@ fn the_controller_buttons_page_has_one_test_switch_and_no_repeated_hints() {
     assert!(f.l.controller_test);
 }
 
+/// Lower bitrate's list open on the Video section, at 1920x1080:
+/// `NIGHTJAR_SHOTS=<dir> cargo test -p nightjar-desktop lower_bitrate_open_screenshot -- --ignored`.
+#[test]
+#[ignore = "writes PNGs; set NIGHTJAR_SHOTS"]
+fn lower_bitrate_open_screenshot() {
+    let Some(dir) = std::env::var_os("NIGHTJAR_SHOTS").map(std::path::PathBuf::from) else { return };
+    std::fs::create_dir_all(&dir).expect("the folder for the screenshots");
+    let mut f = home_with_games(1);
+    f.size = vec2(1920.0, 1080.0);
+    f.shots = true;
+    f.l.logo = None;
+    f.l.go(Screen::Settings);
+    f.l.settings_view.rail_more = true;
+    f.l.settings_view.section = "Video";
+    f.l.settings_view.to_top = true;
+    f.settle();
+    let at = f.placed.iter().find(|(t, ..)| t == "The PC decides").expect("the row's value").1.center();
+    f.click_at(at, egui::PointerButton::Primary);
+    f.settle();
+    assert!(f.placed.iter().any(|(t, ..)| t == "Never: keep my bitrate"), "the list is open");
+    assert!(!f.placed.iter().any(|(t, ..)| t == "When the network is busy"), "only while it is stored");
+    f.shoot(&dir, "settings-lower-bitrate-open-1920x1080");
+}
+
 /// The settings page in every state worth a look, at 1280x800 (150 %) and 1920x1080: every
 /// section with its main rows (`settings-section-N`) and with its fold open (`-more`, `-more-end`),
 /// and Variable refresh rate where the display offers it (`settings-vrr`, `-list`, `-custom`).

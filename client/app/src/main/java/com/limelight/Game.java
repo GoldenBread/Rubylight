@@ -395,6 +395,11 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
     LinkNoticeStatus linkNotice;
     // The stream said once that the PC lowered the bitrate (GameAdaptation.noteLinkLowered).
     boolean linkLoweredTold;
+    // The PC keeps this stream's bitrate: Never's takeover, the bitrate dialog's Keep my bitrate or a bitrate the
+    // player chose in the stream went out (any bitrate change makes it stand back). GameAdaptation.keepBitrateFromMenu.
+    boolean bitrateKept;
+    // The bitrate the player last chose in this stream, which Keep my bitrate keeps; 0 for none.
+    int playerBitrateKbps;
     // The soft keyboard below Android 11, which tells an adjustNothing window nothing of it.
     LegacyKeyboardInsets legacyKeyboard;
     final Handler keyboardPanHandler = new Handler(Looper.getMainLooper());
