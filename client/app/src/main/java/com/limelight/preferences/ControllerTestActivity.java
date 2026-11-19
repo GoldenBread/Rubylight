@@ -173,7 +173,18 @@ public class ControllerTestActivity extends NightjarActivity implements UsbDrive
     protected void onResume() {
         super.onResume();
         resumed = true;
+        // Pausing turned a USB pad's motion reports off.
+        armUsbMotion();
         registerSensors();
+    }
+
+    private void armUsbMotion() {
+        if (usbController == null ||
+                (usbController.getCapabilities() & (MoonBridge.LI_CCAP_ACCEL | MoonBridge.LI_CCAP_GYRO)) == 0) {
+            return;
+        }
+        usbController.setMotionEventState(MoonBridge.LI_MOTION_TYPE_ACCEL, (short) 60);
+        usbController.setMotionEventState(MoonBridge.LI_MOTION_TYPE_GYRO, (short) 60);
     }
 
     @Override
@@ -725,10 +736,7 @@ public class ControllerTestActivity extends NightjarActivity implements UsbDrive
         short caps = controller.getCapabilities();
         hasTouchpad = (caps & MoonBridge.LI_CCAP_TOUCHPAD) != 0;
         hasMotion = (caps & (MoonBridge.LI_CCAP_ACCEL | MoonBridge.LI_CCAP_GYRO)) != 0;
-        if (hasMotion) {
-            controller.setMotionEventState(MoonBridge.LI_MOTION_TYPE_ACCEL, (short) 60);
-            controller.setMotionEventState(MoonBridge.LI_MOTION_TYPE_GYRO, (short) 60);
-        }
+        armUsbMotion();
         // As ControllerHandler's takesDeviceMotion for a USB pad without its own sensors.
         selectDeviceMotion(controller.getVendorId(), controller.getProductId(), null);
         if (resumed) {

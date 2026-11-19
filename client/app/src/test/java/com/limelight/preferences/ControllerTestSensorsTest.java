@@ -35,6 +35,24 @@ public class ControllerTestSensorsTest {
         @Override public void rumbleTriggers(short leftTrigger, short rightTrigger) { }
     }
 
+    /** A USB pad with motion that records the motion report rates it is asked for. */
+    private static final class MotionPad extends AbstractController {
+        final java.util.List<String> motion = new java.util.ArrayList<>();
+        MotionPad() {
+            super(2, null, 0x054c, 0x0ce6);
+            capabilities = (short) (com.limelight.nvstream.jni.MoonBridge.LI_CCAP_ACCEL
+                    | com.limelight.nvstream.jni.MoonBridge.LI_CCAP_GYRO);
+        }
+
+        @Override public boolean start() { return true; }
+        @Override public void stop() { }
+        @Override public void rumble(short lowFreqMotor, short highFreqMotor) { }
+        @Override public void rumbleTriggers(short leftTrigger, short rightTrigger) { }
+        @Override public void setMotionEventState(byte motionType, short reportRateHz) {
+            motion.add(motionType + ":" + reportRateHz);
+        }
+    }
+
     @Test
     public void aRemovedPadLeavesNoMotionSensorListenerOfTheScreen() {
         Context app = RuntimeEnvironment.getApplication();
@@ -54,5 +72,24 @@ public class ControllerTestSensorsTest {
 
         activity.deviceRemoved(pad);
         assertFalse("nothing of the screen keeps listening once the pad is gone", shadow.hasListener(activity));
+    }
+
+    @Test
+    public void aUsbPadsMotionReportsAreAskedForAgainWhenTheScreenIsReopened() {
+        ActivityController<ControllerTestActivity> controller =
+                Robolectric.buildActivity(ControllerTestActivity.class).create().start().resume();
+        ControllerTestActivity activity = controller.get();
+        MotionPad pad = new MotionPad();
+        activity.deviceAdded(pad);
+        int accel = com.limelight.nvstream.jni.MoonBridge.LI_MOTION_TYPE_ACCEL;
+        int gyro = com.limelight.nvstream.jni.MoonBridge.LI_MOTION_TYPE_GYRO;
+        pad.motion.clear();
+
+        controller.pause();
+        assertTrue("pausing turns the reports off", pad.motion.contains(accel + ":0") && pad.motion.contains(gyro + ":0"));
+        pad.motion.clear();
+        controller.resume();
+        assertTrue("resuming asks for them again",
+                pad.motion.contains(accel + ":60") && pad.motion.contains(gyro + ":60"));
     }
 }
