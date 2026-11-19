@@ -1,0 +1,2 @@
+• A custom Snapdragon GPU driver such as Turnip is no longer refused for PyroWave on Adreno 6xx phones. Those GPUs lack 8-bit storage, which PyroWave does not need.
+• On a PC without live frame-rate change, the stream menu's bitrate row shows the current bitrate instead of the frame rate.
