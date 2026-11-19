@@ -772,3 +772,36 @@ fn couch_menu_model_pc_commands_run_by_index_after_a_confirm() {
     let run = Run::new(snapshot());
     assert!(!run.text().iter().any(|line| line.ends_with("Run")));
 }
+
+/// A value too wide for its row is cut, never the menu, and the label keeps its first
+/// characters; a row that fits is drawn as before.
+#[test]
+fn a_wide_value_is_cut_and_the_label_keeps_its_first_characters() {
+    let width = COLUMNS as usize;
+    let mut values: Vec<String> = [32, 34, 40, 26, 28].map(|n| "x".repeat(n)).to_vec();
+    values.push(format!("< {} >", "y".repeat(30)));
+    for value in &values {
+        for (label, start) in [("Label", "Label"), ("Fullscreen optimizations", "Fulls")] {
+            let line = columns(label, value);
+            assert!(line.chars().count() <= width, "{line:?}");
+            assert!(line.starts_with(start), "{line:?}");
+        }
+    }
+    // The value gives way, not the label.
+    let line = columns("Label", &"x".repeat(40));
+    assert_eq!(line, format!("Label {}...", "x".repeat(25)));
+    // Rows that fit are unchanged.
+    assert_eq!(columns("Label", "On"), format!("Label{}On", " ".repeat(27)));
+    assert_eq!(
+        columns("Label", &"x".repeat(26)),
+        format!("Label   {}", "x".repeat(26))
+    );
+    let long = "A label far too long to fit in its row";
+    assert_eq!(columns(long, "Off"), format!("{}... Off", &long[..27]));
+    assert_eq!(columns("", &"x".repeat(34)), "x".repeat(34));
+    // Never wider than asked, even below the width of "...".
+    for width in 0..=3 {
+        assert!(fit("abcdef", width).chars().count() <= width);
+    }
+    assert_eq!(fit("abcdef", 2), "ab");
+}

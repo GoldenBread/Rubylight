@@ -746,26 +746,36 @@ fn shown(s: &Strings, control: &Control) -> String {
     }
 }
 
-/// `text` cut to `width` characters, ending in "..." when cut.
+/// `text` cut to `width` characters, ending in "..." when cut (and too narrow for that, just
+/// cut).
 fn fit(text: &str, width: usize) -> String {
     if text.chars().count() <= width {
         return text.to_owned();
     }
-    let mut cut: String = text.chars().take(width.saturating_sub(3)).collect();
+    if width < 3 {
+        return text.chars().take(width).collect();
+    }
+    let mut cut: String = text.chars().take(width - 3).collect();
     cut.push_str("...");
     cut
 }
 
-/// A row line: the label on the left, the value right-aligned.
+/// The label characters a row keeps beside a value too wide for both.
+const LABEL_KEEPS: usize = 8;
+
+/// A row line: the label on the left, the value right-aligned. A value that would leave the
+/// label fewer than [`LABEL_KEEPS`] characters (or fewer than it has) is cut instead.
 fn columns(label: &str, value: &str) -> String {
     let width = COLUMNS as usize;
-    let value = fit(value, width);
+    let keep = label.chars().count().min(LABEL_KEEPS);
+    let room = if keep == 0 { width } else { width - keep - 1 };
+    let value = fit(value, room);
     let value_len = value.chars().count();
     if value_len == 0 {
         return fit(label, width);
     }
     let label = fit(label, width.saturating_sub(value_len + 1));
-    let gap = width - value_len - label.chars().count();
+    let gap = width.saturating_sub(value_len + label.chars().count());
     format!("{label}{}{value}", " ".repeat(gap))
 }
 
