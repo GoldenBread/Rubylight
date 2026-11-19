@@ -675,7 +675,7 @@ Commands can use `$(SUNSHINE_CLIENT_NAME)`, `$(SUNSHINE_CLIENT_UUID)`, `$(SUNSHI
 | Detached commands | An app's `detached` | With the app, not waited for. | Helper programs that run beside a game. |
 | Webhooks | **Advanced → Webhooks** | Devices pair, apps start and stop, streams begin and end ([Webhooks](webhooks.md)). | Telling another system; a webhook runs nothing on this PC. |
 
-A program that a preparation command, its undo or a PC command's undo starts and leaves running keeps running once the command has ended; a command that is stopped or runs past its time limit is ended together with everything it started.
+A program that a preparation command, its undo or a PC command's undo starts and leaves running keeps running once the command has ended; close it in the undo command if it should end with the stream. A preparation command that fails, and any command that is stopped or runs past its time limit, is ended together with everything it started.
 
 ## Close apps on disconnect
 
