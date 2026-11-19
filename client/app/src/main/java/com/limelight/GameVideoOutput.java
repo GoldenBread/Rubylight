@@ -758,6 +758,8 @@ final class GameVideoOutput {
         game.decoderRenderer.setReconfigureLimitsListener(() -> game.bitrateHandler.post(() -> {
             game.bitrateHandler.removeCallbacks(game.checkReconfigure);
             decoderActions.put("check", this::checkStreamReconfigure);
+            // The new decoder may answer differently: what a menu opened during the next rebuild shows.
+            decoderActions.put("answer", game.adaptation::supportsAdaptiveQuality);
             runWaitingDecoderActions();
         }));
     }
@@ -801,6 +803,8 @@ final class GameVideoOutput {
     }
 
     private void trackReconfigure() {
+        // Every stream: what a menu opened during a rebuild shows, also with automatic quality off.
+        game.adaptation.supportsAdaptiveQuality();
         int[] size = game.decoderRenderer.getStreamSize();
         streamStartedLandscape = size[0] >= size[1];
         int fpsMillihz = game.decoderRenderer.getStreamFrameRateMilliHz();

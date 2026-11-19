@@ -311,6 +311,7 @@ public class ReconfigureLimitsTest {
         Object steps = ReflectionHelpers.getField(renderer, "recoveryCodec");
         java.util.List<String> told = new java.util.concurrent.CopyOnWriteArrayList<>();
         renderer.setReconfigureLimitsListener(() -> told.add("rebuilt"));
+        Object monitor = ReflectionHelpers.getField(renderer, "codecRecoveryMonitor");
         CountDownLatch go = new CountDownLatch(1);
         Thread decoder = new Thread(() -> {
             try {
@@ -318,7 +319,10 @@ public class ReconfigureLimitsTest {
             } catch (InterruptedException e) {
                 return;
             }
-            ReflectionHelpers.callInstanceMethod(steps, "rebuild", ReflectionHelpers.ClassParameter.from(boolean.class, false));
+            // As the decoder does: the rebuild runs under the recovery monitor, then takes the gate.
+            synchronized (monitor) {
+                ReflectionHelpers.callInstanceMethod(steps, "rebuild", ReflectionHelpers.ClassParameter.from(boolean.class, false));
+            }
         });
         decoder.start();
         boolean[] seenInAction = new boolean[2];

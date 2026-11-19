@@ -864,23 +864,32 @@ final class GameAdaptation {
         return AdaptiveQualityController.Mode.parse(chosen != null ? chosen : game.prefConfig.adaptiveQualityMode.preference());
     }
 
-    // What supportsAdaptiveQuality last answered, with no decoder rebuild in progress then.
-    private boolean adaptiveQualityShown;
+    // What supportsAdaptiveQuality last answered, with no decoder rebuild in progress then; null until
+    // it was first asked (at stream start and after each rebuild, inside the decoder's door).
+    private Boolean adaptiveQualityShown;
 
     // For a menu or help text, which cannot wait: during a decoder rebuild, whose limits are cleared
-    // for a moment, what it answered before.
+    // for a moment, what the decoder last answered. A rebuild under way before it ever answered: what
+    // the stream and the PC allow; a choice then waits for the decoder, which says whether it can.
     boolean showsAdaptiveQuality() {
         if (game.decoderRenderer == null) return supportsAdaptiveQuality();
-        game.decoderRenderer.runUnlessRebuilding(this::supportsAdaptiveQuality);
+        if (!game.decoderRenderer.runUnlessRebuilding(this::supportsAdaptiveQuality) && adaptiveQualityShown == null) {
+            return streamAllowsAdaptiveQuality();
+        }
         return game.connected && adaptiveQualityShown;
     }
 
     // Asked only with no rebuild in progress: inside a whenDecoderReady action or showsAdaptiveQuality.
     boolean supportsAdaptiveQuality() {
-        return adaptiveQualityShown = game.connected && game.decoderRenderer != null && game.app != null && game.app.getRole() == NvApp.Role.STREAM &&
+        boolean supported = streamAllowsAdaptiveQuality() && game.decoderRenderer.getReconfigureLimits() != null;
+        adaptiveQualityShown = supported;
+        return supported;
+    }
+
+    private boolean streamAllowsAdaptiveQuality() {
+        return game.connected && game.decoderRenderer != null && game.app != null && game.app.getRole() == NvApp.Role.STREAM &&
                 (game.decoderRenderer.getActiveVideoFormat() & MoonBridge.VIDEO_FORMAT_MASK_PYROWAVE) == 0 &&
-                MoonBridge.hostSupportsControlMessage(MoonBridge.CONTROL_MESSAGE_RECONFIGURE) &&
-                game.decoderRenderer.getReconfigureLimits() != null;
+                MoonBridge.hostSupportsControlMessage(MoonBridge.CONTROL_MESSAGE_RECONFIGURE);
     }
 
     void startAdaptiveQuality() {

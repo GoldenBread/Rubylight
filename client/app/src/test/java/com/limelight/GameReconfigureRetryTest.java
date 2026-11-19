@@ -412,6 +412,43 @@ public class GameReconfigureRetryTest {
                 (boolean) ReflectionHelpers.callInstanceMethod(activity.adaptation, "showsAdaptiveQuality"));
     }
 
+    // A stream started with automatic quality at its default, Off, and no menu opened yet: a menu
+    // opened during a rebuild offers automatic quality; once a rebuild has ended on a decoder that
+    // cannot change size, a menu opened during the next one does not.
+    @Test
+    public void aMenuOpenedDuringARebuildAfterAStartWithOffOffersAutomaticQuality() {
+        Renderer[] renderer = new Renderer[1];
+        Game activity = turnedStream(renderer);
+        hosted(activity);
+        assertEquals(com.limelight.nvstream.AdaptiveQualityController.Mode.OFF,
+                ReflectionHelpers.callInstanceMethod(activity.adaptation, "qualityMode"));
+        ReflectionHelpers.callInstanceMethod(activity.videoOutput, "startReconfigureTracking");
+        activity.videoOutput.whenDecoderReady("start", activity.adaptation::startAdaptiveQuality);
+        ShadowLooper.idleMainLooper(2, TimeUnit.SECONDS);
+        renderer[0].rebuilding = renderer[0].limitsCleared = true;
+        assertTrue((boolean) ReflectionHelpers.callInstanceMethod(activity.adaptation, "showsAdaptiveQuality"));
+
+        // The rebuild moved to a decoder that cannot change size in place.
+        renderer[0].rebuilding = false;
+        ReflectionHelpers.callInstanceMethod(renderer[0], "notifyReconfigureLimits");
+        ShadowLooper.idleMainLooper();
+        renderer[0].rebuilding = true;
+        assertFalse((boolean) ReflectionHelpers.callInstanceMethod(activity.adaptation, "showsAdaptiveQuality"));
+    }
+
+    // A rebuild under way when the stream starts, before the decoder ever answered: the menu offers
+    // automatic quality, as far as the stream and the PC allow it.
+    @Test
+    public void aMenuOpenedDuringARebuildAtStreamStartOffersAutomaticQuality() {
+        Renderer[] renderer = new Renderer[1];
+        Game activity = turnedStream(renderer);
+        hosted(activity);
+        renderer[0].rebuilding = renderer[0].limitsCleared = true;
+        ReflectionHelpers.callInstanceMethod(activity.videoOutput, "startReconfigureTracking");
+        activity.videoOutput.whenDecoderReady("start", activity.adaptation::startAdaptiveQuality);
+        assertTrue((boolean) ReflectionHelpers.callInstanceMethod(activity.adaptation, "showsAdaptiveQuality"));
+    }
+
     @Test
     public void aRequestThatWasNotSentIsTakenBackFromTheDecoder() {
         ReconfigureBridge.accepts = false;
