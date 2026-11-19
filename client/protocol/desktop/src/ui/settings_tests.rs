@@ -2441,7 +2441,16 @@ fn row_counts_at_defaults() {
 }
 
 /// The main settings' rows at their defaults, every fold open, the new "Show debug settings" included.
-const ROWS_AT_DEFAULTS: usize = 99;
+/// Each platform lists only the rows its build can use, so the number is its own: macOS has no
+/// "Group incoming video packets" and none of Linux' renderer, display output, video planes and
+/// GPU power rows; Windows has rows of its own in their place.
+const ROWS_AT_DEFAULTS: usize = if cfg!(windows) {
+    99
+} else if cfg!(target_os = "macos") {
+    95
+} else {
+    100
+};
 
 /// Debug is listed only with "Show debug settings", while one of its settings is changed, while it
 /// is open or while a search runs; its rows keep their values and search finds them.
