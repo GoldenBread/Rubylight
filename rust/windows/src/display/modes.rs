@@ -243,7 +243,7 @@ pub(super) fn fallback_rate(offered_hz: &[u32], refused_mhz: u32) -> Option<u32>
 }
 /// The refresh (millihertz) to ask for again after Windows refused `requested`: the
 /// fallback rate when Windows changed the resolution, or when it kept the resolution at a
-/// slower refresh than that fallback (the 1000 Hz default refused, the display left at
+/// slower refresh than that fallback (a 1000 Hz refresh refused, the display left at
 /// 60 Hz). None when the mode applied, could not be read, or the display already runs at
 /// the fallback or faster.
 pub(super) fn refresh_retry(
@@ -424,7 +424,7 @@ mod tests {
             ),
             Some(240_000)
         );
-        // The 1000 Hz default refused at 4K, the display kept at 60 Hz.
+        // A 1000 Hz refresh refused at 4K, the display kept at 60 Hz.
         assert_eq!(
             refresh_retry(
                 requested,

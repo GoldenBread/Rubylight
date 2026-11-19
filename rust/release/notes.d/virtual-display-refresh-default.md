@@ -1,0 +1,2 @@
+# Virtual display
+- **A virtual display runs at twice the stream's frame rate by default.** A refresh chosen in the console is kept. 1000 Hz remains a choice and spaces a capped game's frames most evenly: on an RX 7900 XT with a game capped at 60 fps, 0.04 % of frame intervals were more than 4 ms off at 1000 Hz, 0.23 % at twice and 2.22 % at four times the stream rate. A device that asks for variable refresh rate still gets 1000 Hz unless the setting is Off, and Off runs the display at the stream's own frame rate.

@@ -388,7 +388,7 @@ impl VirtualDisplay {
                 let error = result.err().or(actual.err()).map(|e| format!("{e:#}"));
                 // A refused refresh must not cost the resolution too (issue #40: 4K at
                 // 1000 Hz for VRR refused, and Windows fell back to 1440p), nor leave the
-                // display slower than a refresh it offers (the 1000 Hz default refused,
+                // display slower than a refresh it offers (a 1000 Hz refresh refused,
                 // Windows keeping 60 Hz). A refresh that falls back that way is the
                 // setting working, not a refused mode: logged as information.
                 let wrong_size =

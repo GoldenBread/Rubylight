@@ -137,13 +137,14 @@ pub enum VirtualRefresh {
     Vrr,
     Disabled,
 }
-/// The setting with Vibepollo's spellings. The default is the fixed 1000 Hz: a game
-/// capped at the stream rate then waits at most 1 ms for a refresh, so its frames keep
-/// the cap's even spacing instead of landing in alternate refresh slots as the cap's
-/// timer drifts against the display's (rust/PERFORMANCE.md, November 16). A display
-/// that refuses 1000 Hz falls back to the fastest refresh it offers below it.
+/// The setting with Vibepollo's spellings. The default, and the fallback for a value it
+/// does not know, is twice the stream rate. The fixed 1000 Hz is offered because a
+/// game capped at the stream rate then waits at most 1 ms for a refresh, so its frames
+/// keep the cap's even spacing instead of landing in alternate refresh slots as the cap's
+/// timer drifts against the display's (rust/PERFORMANCE.md, November 16). A display that
+/// refuses its refresh falls back to the fastest refresh it offers below it.
 pub fn virtual_refresh(config: &Config) -> VirtualRefresh {
-    let value = config.get("virtual_display_refresh", "vrr");
+    let value = config.get("virtual_display_refresh", "legacy");
     match normalize(value).as_str() {
         "" | "legacy" | "2x" | "fixed2x" => VirtualRefresh::Legacy,
         "vrr" | "1000hz" | "1000" | "fixed1000hz" => VirtualRefresh::Vrr,
@@ -153,7 +154,7 @@ pub fn virtual_refresh(config: &Config) -> VirtualRefresh {
         }
         _ => {
             crate::config::invalid("virtual_display_refresh", value);
-            VirtualRefresh::Vrr
+            VirtualRefresh::Legacy
         }
     }
 }

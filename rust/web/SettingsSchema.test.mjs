@@ -241,9 +241,10 @@ test('a saved alias is written back only when the edit means something else', ()
   assert.deepEqual(computeChanges(settings, { amd_vbaq: 'disabled' }, { amd_vbaq: 'true' }), { amd_vbaq: 'disabled' });
   assert.deepEqual(computeChanges(settings, { amd_vbaq: null }, { amd_vbaq: 'true' }), { amd_vbaq: null });
   // An alias of the default is the default.
-  assert.equal(differsFromDefault(settings.get('virtual_display_refresh'), {}, { virtual_display_refresh: 'vrr' }), false);
+  assert.equal(differsFromDefault(settings.get('virtual_display_refresh'), {}, { virtual_display_refresh: 'legacy' }), false);
+  assert.equal(differsFromDefault(settings.get('virtual_display_refresh'), {}, { virtual_display_refresh: '2x' }), false);
   assert.equal(differsFromDefault(settings.get('virtual_display_refresh'), {}, { virtual_display_refresh: 'enabled' }), true);
-  assert.equal(differsFromDefault(settings.get('virtual_display_refresh'), {}, { virtual_display_refresh: '2x' }), true);
+  assert.equal(differsFromDefault(settings.get('virtual_display_refresh'), {}, { virtual_display_refresh: 'vrr' }), true);
   assert.equal(differsFromDefault(settings.get('min_log_level'), {}, { min_log_level: 2 }), false);
   assert.equal(differsFromDefault(vbaq, {}, { amd_vbaq: 'true' }), true);
   // Visibility follows what the host reads.
