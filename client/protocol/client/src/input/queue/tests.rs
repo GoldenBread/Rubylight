@@ -661,6 +661,30 @@ fn a_wheel_turn_smaller_than_a_unit_is_carried_to_the_next() {
     assert_eq!(decode(&out[0].data).unwrap(), Input::Scroll { amount: 120, horizontal: false });
 }
 
+// On a host that takes whole clicks only, the accumulator owns the clicks of a turn whose send
+// failed: the next turn must not send them a second time.
+#[test]
+fn a_failed_wheel_send_does_not_scroll_twice_on_the_next_turn() {
+    let mut q = queue(&gfe());
+    for i in 0..MAX_QUEUED {
+        q.send_mouse_button(1, i % 2 == 0).unwrap();
+    }
+    assert_eq!(q.send_wheel_turn(0.0, 1.5), Err(InputError::QueueFull));
+    let mut out = Vec::new();
+    q.drain(Instant::now(), false, &mut out);
+    out.clear();
+    q.send_wheel_turn(0.0, 0.5).unwrap();
+    q.drain(Instant::now(), false, &mut out);
+    let sent: i32 = out
+        .iter()
+        .map(|p| match decode(&p.data).unwrap() {
+            Input::Scroll { amount, .. } => i32::from(amount),
+            other => panic!("unexpected {other:?}"),
+        })
+        .sum();
+    assert_eq!(sent, 240, "two notches were turned, two clicks go out");
+}
+
 // The vertical axis goes first: a host that refuses horizontal scroll (GFE) must not cost the
 // turn's scroll.
 #[test]

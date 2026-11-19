@@ -745,6 +745,9 @@ impl InputQueue {
             Ok(()) => total - f64::from(whole),
             // The host never takes this axis: nothing would ever carry the fraction.
             Err(InputError::Unsupported) => 0.0,
+            // The accumulator already owns the whole clicks of this axis: keeping them here too
+            // would send them again with the next turn.
+            Err(_) if vertical && self.batched_scroll => total - f64::from(whole),
             Err(_) => total,
         };
         if vertical { self.wheel_units.1 = kept } else { self.wheel_units.0 = kept };
