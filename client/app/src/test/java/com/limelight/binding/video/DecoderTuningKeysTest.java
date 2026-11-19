@@ -45,7 +45,8 @@ public class DecoderTuningKeysTest {
             "vendor.mtk.vdec.output.max.queue.depth", "vendor.mtk.vdec.bq.guard.interval.time",
             "vendor.mtk.vdec.buffer.fetch.timeout.ms", "vendor.mtk.vdec.buffer.fetch.timeout.ms.value",
             "vendor.mtk.vdec.bq.guard.interval.time.value"};
-    // Not sent: the derflacco fork's Artemide_Experimental_Async branch no longer sends them (its 359f83c3, 8dc03f3f).
+    // Not sent: the derflacco fork's Artemide_Experimental_Async branch removed the skip and drop keys (its 359f83c3,
+    // and 8dc03f3f with its boost level 2 block), and pq never existed on that branch.
     private static final String[] MTK_DROPPED_KEYS = {
             "vendor.mtk.vdec.pq", "vendor.mtk.vdec.nvop.skip", "vendor.mtk.vdec.skip.mode",
             "vendor.mtk.vdec.drop.nonref.frame", "vendor.mtk.vdec.frame-drop.policy"};
