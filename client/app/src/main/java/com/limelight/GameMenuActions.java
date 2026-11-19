@@ -96,9 +96,12 @@ final class GameMenuActions {
         return streamMenuSheet != null && streamMenuSheet.sheet().isShowing();
     }
 
-    /** The stream's bitrate as the PC counts it arrived: an open menu's slider shows it. */
-    void showBitrate(int kbps) {
-        if (streamMenuSheet != null) streamMenuSheet.showBitrate(kbps);
+    /**
+     * The stream's bitrate for an open menu's slider: disabled while the PC has not said what it counts it as, usable
+     * at the stream's number once it did (or the wait ended without it).
+     */
+    void showBitrate(int kbps, boolean usable) {
+        if (streamMenuSheet != null) streamMenuSheet.showBitrate(kbps, usable);
     }
 
     /** The controller quit combo: leaves the stream like the menu's Disconnect. */
@@ -297,6 +300,7 @@ final class GameMenuActions {
         options.cover = game.streamConnection.connectingCover();
         options.bitrateKbps = game.currentBitrate == 0 ? game.prefConfig.bitrate : game.currentBitrate;
         options.bitrateChange = game.adaptation::applyBitrateFromMenu;
+        options.bitrateWaiting = game.adaptation.bitrateWaiting();
         options.canSendInput = game.conn.canSendInput();
         options.nativeHostControl = game.conn.hasNativeHostControl();
         options.hostMenu = game.conn.hasNativeCouchMenu();

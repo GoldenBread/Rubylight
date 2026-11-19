@@ -913,37 +913,78 @@ public class GameRateChangeTest {
         assertEquals(OLDER_PC_KBPS, sent.get(0)[1]);
     }
 
+    /** A frame rate is no matter of the bitrate's unit: picked before the answer it goes out at once, the bitrate unchanged. */
     @Test
-    public void aBitratePickedBeforeTheAnswerGoesOutOnceAfterIt() {
+    public void aFrameRatePickedBeforeTheAnswerGoesOutAtOnceAndLeavesTheBitrateAlone() {
         startStreamAsking(recording());
-        assertEquals("the slider keeps the pick", 30_000, game.adaptation.applyBitrateFromMenu(30_000));
-        assertTrue("held until the answer", sent.isEmpty());
+        AlertDialog dialog = openDialog();
+        List<EditText> fields = fields(dialog);
+        assertFalse("the bitrate waits for the PC's answer", fields.get(0).isEnabled());
+        // A bitrate typed anyway is refused by the state, not only by the disabled field.
+        fields.get(0).setText("30");
+        fields.get(1).setText("120");
+        send(dialog);
+        assertEquals(1, sent.size());
+        assertEquals("the bitrate unchanged", 0, sent.get(0)[1]);
+        assertEquals(120_000, sent.get(0)[2]);
         answerQuery(OLDER_PC_KBPS);
-        assertEquals(1, sent.size());
-        assertEquals(30_000, sent.get(0)[1]);
-        runFor(10);
-        assertEquals("once", 1, sent.size());
-
-        // Without an answer it goes out after the timeout.
-        sent.clear();
-        startStreamAsking(recording());
-        game.adaptation.applyBitrateFromMenu(25_000);
-        runFor((int) (StreamRateChanges.ANSWER_MS / 1000));
-        assertEquals(1, sent.size());
-        assertEquals(25_000, sent.get(0)[1]);
+        assertEquals(OLDER_PC_KBPS, (int) ReflectionHelpers.getField(game, "currentBitrate"));
+        assertEquals("nothing more", 1, sent.size());
     }
 
     @Test
-    public void anOpenMenusSliderShowsWhatThePcAnswered() {
+    public void whileTheQueryWaitsTheBitrateCannotChange() {
+        startStreamAsking(recording());
+        assertEquals("the slider snaps back", 50_000, game.adaptation.applyBitrateFromMenu(30_000));
+        assertTrue(sent.isEmpty());
+        // The dialog opened before the answer is usable once it comes, at the PC's number.
+        AlertDialog dialog = openDialog();
+        assertFalse(fields(dialog).get(0).isEnabled());
+        answerQuery(OLDER_PC_KBPS);
+        assertTrue(fields(dialog).get(0).isEnabled());
+        assertEquals("37.488", fields(dialog).get(0).getText().toString());
+        send(dialog);
+        assertTrue("left at the PC's number it is unchanged", sent.isEmpty());
+        assertEquals(30_000, game.adaptation.applyBitrateFromMenu(30_000));
+        assertEquals(30_000, sent.get(0)[1]);
+    }
+
+    @Test
+    public void anOpenMenusSliderWaitsForTheAnswerAndShowsTheStreamsNumber() {
         StreamMenuModel.use(new RustStreamMenuModel());
         try {
+            // A clean answer: usable at the PC's number.
             startStreamAsking(recording());
             game.showStreamMenu();
             Object sheet = ReflectionHelpers.getField(game.menuActions, "streamMenuSheet");
             com.limelight.ui.StepSlider slider = ReflectionHelpers.callInstanceMethod(sheet, "bitrateSlider");
+            assertFalse("disabled while the query waits", slider.isEnabled());
             assertEquals(com.limelight.ui.BitrateSlider.progress(50_000), slider.getPosition());
             answerQuery(OLDER_PC_KBPS);
+            assertTrue(slider.isEnabled());
             assertEquals(com.limelight.ui.BitrateSlider.progress(OLDER_PC_KBPS), slider.getPosition());
+
+            // A reconnect with the menu open: a new wait, disabled again, and no pick left over.
+            ReflectionHelpers.setField(game, "currentBitrate", 50_000);
+            startStreamAsking(recording());
+            assertFalse(slider.isEnabled());
+            assertEquals(com.limelight.ui.BitrateSlider.progress(50_000), slider.getPosition());
+            assertEquals(50_000, game.adaptation.applyBitrateFromMenu(30_000));
+            assertTrue(sent.isEmpty());
+            // An answer that is not used: usable at the stream's own number.
+            game.linkNotice(1, 50_000, 30_000);
+            ShadowLooper.idleMainLooper();
+            answerQuery(30_000);
+            assertTrue(slider.isEnabled());
+            assertEquals(com.limelight.ui.BitrateSlider.progress(50_000), slider.getPosition());
+
+            // No answer: usable after the timeout, at the stream's own number.
+            startStreamAsking(recording());
+            assertFalse(slider.isEnabled());
+            runFor((int) (StreamRateChanges.ANSWER_MS / 1000));
+            assertTrue(slider.isEnabled());
+            assertEquals(com.limelight.ui.BitrateSlider.progress(50_000), slider.getPosition());
+            assertTrue("no pick went out", sent.isEmpty());
         } finally {
             StreamMenuModel.use(null);
         }

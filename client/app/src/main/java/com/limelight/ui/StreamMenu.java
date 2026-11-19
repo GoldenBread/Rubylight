@@ -78,6 +78,8 @@ public final class StreamMenu {
          * when nothing could be sent. With no way to send it the slider is left out.
          */
         public java.util.function.IntUnaryOperator bitrateChange;
+        /** The PC has not said yet what it counts the stream's bitrate as: the slider shows it disabled. */
+        public boolean bitrateWaiting;
         public boolean canSendInput = true;
         public boolean microphoneOffered, microphoneMuted;
         /** The stream has a microphone button (not on a remote monitor), and whether it shows (its setting is on). */
@@ -741,6 +743,7 @@ public final class StreamMenu {
             }, change);
             shown[0] = sheet.addSliderRow(sliders, activity.getString(R.string.stream_bitrate), BitrateSlider.text(activity, o.bitrateKbps), bitrateSlider);
             bitrateShown = shown[0];
+            bitrateSlider.setEnabled(!o.bitrateWaiting);
         }
         LinearLayout group = sheet.addRowGroup();
         String facts = o.connection == null ? null : o.connection.summary(activity);
@@ -766,11 +769,12 @@ public final class StreamMenu {
     }
 
     /**
-     * The stream's bitrate as the PC counts it arrived while the menu is open: the slider and the bitrate row show it,
-     * without sending anything.
+     * The stream's bitrate while the menu is open: the slider and the bitrate row show it, without sending anything,
+     * and the slider is usable or disabled (while the PC has not said what it counts the bitrate as).
      */
-    public void showBitrate(int kbps) {
+    public void showBitrate(int kbps, boolean usable) {
         if (bitrateSlider == null || kbps <= 0) return;
+        bitrateSlider.setEnabled(usable);
         bitrateSlider.setPosition(BitrateSlider.progress(kbps));
         String text = BitrateSlider.text(activity, kbps);
         if (bitrateShown != null) bitrateShown.setText(text);

@@ -254,6 +254,12 @@ final class GameAdaptation {
     // Answers the rate the slider is to show: a rate not sent snaps it back to the one applied.
     int applyBitrateFromMenu(int kbps) {
         if (game.rateChanges != null) {
+            if (askingStream == game.rateChanges) {
+                // Its control is disabled until the PC said what it counts the stream's bitrate as; a settle left
+                // from before a reconnect snaps back.
+                LimeLog.warning("Rate change: " + kbps + " kbps not sent: the PC has not said yet what it counts this stream's bitrate as");
+                return game.currentBitrate == 0 ? game.prefConfig.bitrate : game.currentBitrate;
+            }
             sendRateChange(game.rateChanges, kbps, 0);
             return kbps;
         }
@@ -309,13 +315,28 @@ final class GameAdaptation {
         fields.setOrientation(LinearLayout.VERTICAL);
         fields.setPadding(padding, 0, padding, 0);
         int bitrateKbps = game.currentBitrate == 0 ? game.prefConfig.bitrate : game.currentBitrate;
-        String bitrateText = BigDecimal.valueOf(bitrateKbps, 3).stripTrailingZeros().toPlainString();
+        // The bitrate as it was when the dialog opened, or as the PC's answer set it: a field left at it is unchanged.
+        String[] bitrateText = {BigDecimal.valueOf(bitrateKbps, 3).stripTrailingZeros().toPlainString()};
         com.google.android.material.textfield.TextInputLayout bitrateField = rateChangeField(
-                game.getString(R.string.stream_bitrate), bitrateText, density);
+                game.getString(R.string.stream_bitrate), bitrateText[0], density);
         final AlertDialog[] opened = new AlertDialog[1];
-        fields.addView(BitrateSlider.create(game, bitrateField.getEditText(), bitrateKbps,
-                () -> applyFromSlider(opened[0])));
+        com.limelight.ui.StepSlider bitrateSlider = BitrateSlider.create(game, bitrateField.getEditText(), bitrateKbps,
+                () -> applyFromSlider(opened[0]));
+        fields.addView(bitrateSlider);
         fields.addView(bitrateField);
+        if (askingStream == stream) {
+            // Until the PC said what it counts the stream's bitrate as; the frame rate stays free.
+            bitrateField.setEnabled(false);
+            bitrateSlider.setEnabled(false);
+            rateDialogBitrateKnown = kbps -> {
+                if (opened[0] == null || !opened[0].isShowing() || game.rateChanges != stream) return;
+                bitrateText[0] = BigDecimal.valueOf(kbps, 3).stripTrailingZeros().toPlainString();
+                bitrateField.getEditText().setText(bitrateText[0]);
+                bitrateSlider.setPosition(BitrateSlider.progress(kbps));
+                bitrateField.setEnabled(true);
+                bitrateSlider.setEnabled(true);
+            };
+        }
         // Keep my bitrate under the bitrate it keeps; it acts at once, without OK.
         com.google.android.material.materialswitch.MaterialSwitch keep =
                 new com.google.android.material.materialswitch.MaterialSwitch(game);
@@ -350,7 +371,7 @@ final class GameAdaptation {
             }
             bitrateField.setError(null);
             if (fpsField != null) fpsField.setError(null);
-            int kbps = parseRateChange(bitrateField, bitrateText, 500, StreamConfiguration.MAX_BITRATE_KBPS,
+            int kbps = parseRateChange(bitrateField, bitrateText[0], 500, StreamConfiguration.MAX_BITRATE_KBPS,
                     R.string.stream_bitrate_invalid);
             int millihz = fpsField == null ? 0 : parseRateChange(fpsField, fpsText, 10_000, 500_000,
                     R.string.stream_rate_change_fps_invalid);
@@ -370,13 +391,12 @@ final class GameAdaptation {
             game.messages.alert(R.string.stream_rate_change_stream_ended, Toast.LENGTH_LONG);
             return;
         }
-        if (askingStream == stream) {
-            // Before the PC said what it counts this stream's bitrate as: once after its answer (streamBitrateKnown).
-            menuHeld = true;
-            heldKbps = kbps;
-            heldMillihz = millihz;
-            LimeLog.info("Rate change: " + kbps + " kbps, " + millihz + " mHz go out once the PC answered the bitrate query");
-            return;
+        if (askingStream == stream && kbps != 0) {
+            // The bitrate cannot change before the PC said what it counts the stream's as (its controls are disabled
+            // meanwhile); a frame rate is no matter of that unit and goes out at once.
+            LimeLog.warning("Rate change: " + kbps + " kbps not sent: the PC has not said yet what it counts this stream's bitrate as");
+            if (millihz == 0) return;
+            kbps = 0;
         }
         if (!stream.sendManual(kbps, millihz, SystemClock.uptimeMillis())) {
             LimeLog.warning("Rate change: request not sent");
@@ -503,12 +523,15 @@ final class GameAdaptation {
         game.streamStartBitrateKbps = game.currentBitrate == 0 ? game.prefConfig.bitrate : game.currentBitrate;
         askingStream = null;
         automaticAfterAnswer = false;
-        queryRetried = cutBeforeAnswer = menuHeld = false;
+        queryRetried = cutBeforeAnswer = false;
+        rateDialogBitrateKnown = null;
         streamStartMs = SystemClock.uptimeMillis();
         // Before anything that sets a bitrate: the PC's own count of this stream's bitrate, which Keep my bitrate
         // and automatic bitrate start from (Rubylight 6.0.1 and older count in the encoder's unit, newer PCs in the
         // launch's).
         if (changes != null) askStreamBitrate(changes, true);
+        // A menu left open over a reconnect waits too: its bitrate cannot change until the answer.
+        if (bitrateWaiting()) game.menuActions.showBitrate(game.streamStartBitrateKbps, false);
         // A reconnect is a new session on the PC, whose controllers lower the bitrate again: Never, and a bitrate the
         // player chose before the reconnect, send it again.
         if (game.prefConfig.keepBitrate || (changes != null && game.sessionManualBitrate > 0)) {
@@ -546,9 +569,13 @@ final class GameAdaptation {
     // The query went out only on its second try, or the PC said it lowered the bitrate before its answer: the answer
     // may hold that cut, so it is not used (onRateChange).
     private boolean queryRetried, cutBeforeAnswer;
-    // A bitrate or rate the player chose in the stream menu while the query waited: it goes out once after it.
-    private boolean menuHeld;
-    private int heldKbps, heldMillihz;
+    // An open bitrate dialog whose bitrate waits for the PC's answer: it shows the stream's number and is usable then.
+    private java.util.function.IntConsumer rateDialogBitrateKnown;
+
+    /** The query waits: the stream's bitrate controls are disabled. */
+    boolean bitrateWaiting() {
+        return askingStream != null && askingStream == game.rateChanges;
+    }
 
     // The PC said it lowered the bitrate for the network (0x5538, limited or floor).
     void pcLowered() {
@@ -581,10 +608,14 @@ final class GameAdaptation {
         if (stream == null || askingStream != stream) return;
         askingStream = null;
         if (!game.connected || game.rateChanges != stream) return;
-        if (kbps > 0) {
-            game.streamStartBitrateKbps = kbps;
-            // An open menu's slider showed the setting's number; a pick the player made meanwhile stays on it.
-            if (!menuHeld) game.menuActions.showBitrate(kbps);
+        if (kbps > 0) game.streamStartBitrateKbps = kbps;
+        // The bitrate controls are usable again, at the stream's number: the PC's after its answer, else the one the
+        // stream started with.
+        int shownKbps = game.currentBitrate == 0 ? game.prefConfig.bitrate : game.currentBitrate;
+        game.menuActions.showBitrate(shownKbps, true);
+        if (rateDialogBitrateKnown != null) {
+            rateDialogBitrateKnown.accept(shownKbps);
+            rateDialogBitrateKnown = null;
         }
         if (game.bitrateKept) {
             // Never, a bitrate the player chose before a reconnect, or the switch turned on while the PC was asked.
@@ -594,10 +625,6 @@ final class GameAdaptation {
         if (automaticAfterAnswer) {
             automaticAfterAnswer = false;
             if (!bitrateHeld()) setRateChangeBitrateEnabled(true);
-        }
-        if (menuHeld) {
-            menuHeld = false;
-            sendRateChange(stream, heldKbps, heldMillihz);
         }
     }
 
