@@ -181,7 +181,16 @@ public final class PadLayout {
         // player's other choices and stay as they are, so the editor's buttons do not visibly revert.
         Glyph keptGlyph = glyph;
         PointerMode keptPointerMode = pointerMode;
+        Spec[] keptSteam = new Spec[specs.length];
+        for (Control control : Control.values()) {
+            if (!control.steam) continue;
+            keptSteam[control.ordinal()] = new Spec(control.hiddenByDefault);
+            keptSteam[control.ordinal()].copyFrom(spec(control));
+        }
         reset();
+        for (Control control : Control.values()) {
+            if (control.steam) spec(control).copyFrom(keptSteam[control.ordinal()]);
+        }
         glyph = keptGlyph;
         pointerMode = keptPointerMode;
         if (preset == Preset.DEFAULT) return;

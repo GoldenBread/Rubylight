@@ -321,6 +321,32 @@ public class PadLayoutTest {
         assertEquals("v1", back.serialize());
     }
 
+    @Test public void aPresetLeavesTheSteamControlsAsTheyAre() {
+        PadLayout.Control steam = null;
+        for (PadLayout.Control control : PadLayout.Control.values()) {
+            if (control.steam) { steam = control; break; }
+        }
+        assertNotNull(steam);
+        for (PadLayout.Preset preset : PadLayout.Preset.values()) {
+            PadLayout layout = new PadLayout();
+            layout.spec(steam).cx = 120;
+            layout.spec(steam).cy = 340;
+            layout.setScale(steam, 1.5f);
+            layout.setOpacity(steam, 60);
+            layout.spec(steam).hidden = !layout.spec(steam).defaultHidden;
+            layout.spec(PadLayout.Control.FACE).scale = 1.4f;
+            layout.applyPreset(preset);
+            PadLayout.Spec kept = layout.spec(steam);
+            String name = preset + " " + steam;
+            assertEquals(name, 120f, kept.cx, 1e-3);
+            assertEquals(name, 340f, kept.cy, 1e-3);
+            assertEquals(name, 1.5f, kept.scale, 1e-3);
+            assertEquals(name, 60, kept.opacity);
+            assertEquals(name, !kept.defaultHidden, kept.hidden);
+            assertEquals("the other controls take the preset", 1f, layout.spec(PadLayout.Control.FACE).scale, 1e-3);
+        }
+    }
+
     /** L2: a control preset changes which controls show, not the glyph family or what the pointer touchpad does. */
     @Test public void aPresetKeepsTheGlyphsAndTheTouchpadMode() {
         PadLayout layout = new PadLayout();
