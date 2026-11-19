@@ -587,6 +587,29 @@ fn what_a_finished_preparation_command_started_keeps_running() {
 }
 
 #[test]
+fn what_a_failed_preparation_command_started_is_ended_with_it() {
+    // Only a command that ended with exit code 0 leaves its programs running: a failed one
+    // cancels the launch and its undo is never queued, so nothing else would end the helper.
+    let elevated = butterpollo_windows::process::user_environment().is_err();
+    let f = Fixture::new();
+    let pid = f.host.directory.join("helper.pid");
+    let failing = starts_helper(&pid).strip_suffix('"').unwrap().to_owned() + "; exit 1\"";
+    let app: App = serde_json::from_value(json!({"name":"Helper","prep-cmd":[
+        {"do":failing,"undo":"","elevated":elevated}
+    ]}))
+    .unwrap();
+    let error = launch_with_environment(&f.host, &app, &HashMap::new(), Ok(BTreeMap::new()))
+        .err()
+        .expect("the failed preparation command fails the launch");
+    let helper = Helper::from(&pid);
+    assert!(
+        error.to_string().contains("ended with exit code 1"),
+        "{error:#}"
+    );
+    assert!(helper.ends_within(Duration::from_secs(5)));
+}
+
+#[test]
 fn what_a_finished_undo_command_started_keeps_running() {
     // `undo: start "" app.exe` brings a program back after the stream.
     let elevated = butterpollo_windows::process::user_environment().is_err();

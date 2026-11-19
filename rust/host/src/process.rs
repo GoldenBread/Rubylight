@@ -590,8 +590,8 @@ impl RunningApp {
                 let Some(code) = code else {
                     bail!(LAUNCH_STOPPED);
                 };
-                // Ended by itself: what it started and left running stays (issue 135).
-                child.leave_children_running_or_warn();
+                // Failed: the launch is cancelled and this command's undo is never queued, so what
+                // it started ends with it when `child` drops, like after a stop or a timeout.
                 if code != 0 {
                     return Err(prep_failure(
                         &app.name,
@@ -599,6 +599,9 @@ impl RunningApp {
                         &format!("ended with exit code {code}"),
                     ));
                 }
+                // Ended by itself with exit code 0: what it started and left running stays
+                // (issue 135).
+                child.leave_children_running_or_warn();
             }
             running.undo.push(prep.clone());
         }
