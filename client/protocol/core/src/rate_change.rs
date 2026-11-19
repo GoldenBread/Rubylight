@@ -22,8 +22,9 @@
 //! [query](RateChangeRequest::query) for what the stream runs at. Every host that takes 0x553C
 //! answers it without changing anything (no bitrate, no rate, and the host's controllers stay
 //! in charge): the result's bitrate and rate are the stream's as the host counts them, the
-//! bitrate in the unit the host takes requests in, with the bitrate's status unchanged and the
-//! rate's refused as invalid. Sending that bitrate back leaves the encoder where it is on a
+//! bitrate in the unit the host takes requests in. Its statuses only say nothing changed (the
+//! bitrate unchanged and the rate refused as invalid, or both unchanged when the host could not
+//! load the device's configuration), so a client reads the values alone. Sending that bitrate back leaves the encoder where it is on a
 //! host of either kind, so a client asks first and keeps or steers from the answer.
 //!
 //! Request, little-endian: version u8, reserved u8, reserved u16, serial u32, bitrate_kbps

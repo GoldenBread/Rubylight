@@ -636,11 +636,14 @@ async fn nightjar_changes_the_bitrate_mid_stream() -> Result<()> {
     );
     // The engine's query asks for nothing: the answer names the stream's bitrate in the
     // launch's unit and changes neither the encoder's bitrate nor the host's controllers.
+    // Who owns the bitrate only: whether the client took the adaptive controller over, and
+    // whether the link-rate and congestion controllers still read what was sent (a takeover
+    // stops both); not their budgets, which move on their own.
     let controllers = || {
         (
+            session.adaptive_bitrate.lock().unwrap().snapshot()["owner"] == "client",
             session.link_sent.live(),
             session.transport_sent.live(),
-            session.adaptive_bitrate.lock().unwrap().snapshot(),
         )
     };
     let encoder = session.bitrate.load(Ordering::Acquire);
