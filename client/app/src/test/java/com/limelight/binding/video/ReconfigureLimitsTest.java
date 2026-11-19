@@ -172,6 +172,25 @@ public class ReconfigureLimitsTest {
         }
     }
 
+    @Test
+    public void aRebuildOffersNoSizeChangeUntilItsNewDecoderIsConfigured() {
+        if (renderer.setup(MoonBridge.VIDEO_FORMAT_H265, 1920, 1080, 60) != 0) fail("setup failed");
+        assertNotNull(renderer.getReconfigureLimits());
+        // The rebuild after a codec failure may move to another decoder: while it sets that one
+        // up, the old decoder's limits must not be offered.
+        ObservingCodec.observed = renderer;
+        ObservingCodec.configures = 0;
+        try {
+            Object steps = ReflectionHelpers.getField(renderer, "recoveryCodec");
+            ReflectionHelpers.callInstanceMethod(steps, "rebuild", ReflectionHelpers.ClassParameter.from(boolean.class, false));
+        } finally {
+            ObservingCodec.observed = null;
+        }
+        org.junit.Assert.assertEquals(1, ObservingCodec.configures);
+        assertNull("limits offered during the rebuild", ObservingCodec.seen);
+        assertNotNull("and offered again once it is configured", renderer.getReconfigureLimits());
+    }
+
     /** Records what the UI would read while the renderer configures a decoder. */
     @org.robolectric.annotation.Implements(android.media.MediaCodec.class)
     public static class ObservingCodec extends KeyframeSafetyNetWiringTest.QueueingCodec {

@@ -3473,6 +3473,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         }
 
         @Override public void rebuild(boolean codecFailed) {
+            // It may move to another decoder: no size change is offered until that one is configured.
+            reconfigureLimits = null;
             if (codecFailed) {
                 videoDecoder.release();
                 if (dolbyVisionActive) {
