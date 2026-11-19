@@ -248,6 +248,27 @@ public class ReconfigureLimitsTest {
         org.junit.Assert.assertEquals(2560, (int) ReflectionHelpers.getField(renderer, "expectedWidth"));
     }
 
+    // A rebuild sets the pending state, its successful configure try clears it and tells the
+    // listener once, after the try is complete; a setup or a recovery's configure tells it nothing.
+    @Test
+    public void onlyARebuildsCompletedConfigureTellsTheListener() {
+        java.util.List<Object> told = new java.util.ArrayList<>();
+        renderer.setReconfigureLimitsListener(() -> told.add(ReflectionHelpers.getField(renderer, "activeDecoderName")));
+        if (renderer.setup(MoonBridge.VIDEO_FORMAT_H265, 1920, 1080, 60) != 0) fail("setup failed");
+        Object steps = ReflectionHelpers.getField(renderer, "recoveryCodec");
+        ReflectionHelpers.callInstanceMethod(steps, "configure");
+        org.junit.Assert.assertTrue(told.isEmpty());
+        org.junit.Assert.assertFalse(renderer.reconfigureLimitsPending());
+
+        ReflectionHelpers.setField(renderer, "activeDecoderName", null);
+        ObservingCodec.observed = renderer;
+        ReflectionHelpers.callInstanceMethod(steps, "rebuild", ReflectionHelpers.ClassParameter.from(boolean.class, false));
+        org.junit.Assert.assertTrue("pending while the rebuild configures", ObservingCodec.pendingWhileConfiguring);
+        org.junit.Assert.assertFalse(renderer.reconfigureLimitsPending());
+        org.junit.Assert.assertEquals("told once, after the configure try finished",
+                java.util.Collections.singletonList("c2.acme.hevc.decoder"), told);
+    }
+
     // The PC was never asked (the request could not be sent): the decoder keeps its size and does not restart.
     @Test
     public void aCancelledRequestIsNotApplied() {
@@ -286,6 +307,7 @@ public class ReconfigureLimitsTest {
         static volatile MediaCodecDecoderRenderer observed;
         static volatile int configures;
         static volatile int[] seen;
+        static volatile boolean pendingWhileConfiguring;
         /** For each buffer queued while observing: its flags, and the renderer's decode maximum then. */
         static final java.util.List<Integer> queuedFlags = new java.util.concurrent.CopyOnWriteArrayList<>();
         static final java.util.List<Integer> queuedMaxWidths = new java.util.concurrent.CopyOnWriteArrayList<>();
@@ -295,6 +317,7 @@ public class ReconfigureLimitsTest {
             if (renderer != null) {
                 configures++;
                 seen = renderer.getReconfigureLimits();
+                pendingWhileConfiguring = renderer.reconfigureLimitsPending();
             }
         }
         @Override @org.robolectric.annotation.Implementation

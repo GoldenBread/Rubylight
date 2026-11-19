@@ -1083,8 +1083,6 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     // After every configure (configureAndStartDecoder, which every setup, recovery and rebuild
     // ends with) and at cleanup: what getReconfigureLimits() hands out until the next one.
     private void publishReconfigureLimits() {
-        boolean rebuilt = reconfigureLimitsRebuilding;
-        reconfigureLimitsRebuilding = false;
         MediaCodecInfo.VideoCapabilities caps = reconfigureCapabilities();
         if (caps == null) {
             reconfigureLimits = null;
@@ -1099,8 +1097,6 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         }
         reconfigureLimits = new ReconfigureCaps(
                 new int[] {maxWidth, maxHeight, caps.getWidthAlignment(), caps.getHeightAlignment()}, caps);
-        // A turn or fold the UI could not ask for during the rebuild is asked for now.
-        if (rebuilt) notifyReconfigureLimits();
     }
 
     /**
@@ -2913,6 +2909,12 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             debt.watchDisplay(DecoderQueuePolicy.watchesDisplayQueue(activeDecoderName));
             startLowLatencyRepairs(format, activeDecoderName);
             configured = true;
+            // Only now, with this try complete (a later step failing would clear the limits again):
+            // a turn or fold the UI could not ask for during a rebuild is asked for.
+            if (reconfigureLimitsRebuilding) {
+                reconfigureLimitsRebuilding = false;
+                notifyReconfigureLimits();
+            }
         } catch (IllegalArgumentException e) {
             noteConfigureError(selectedDecoderInfo, format, e);
             if (throwOnCodecError) {
