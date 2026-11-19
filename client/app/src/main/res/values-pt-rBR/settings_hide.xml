@@ -9,4 +9,5 @@
     <string name="tag_unused_no_keyboard">Não usado: nenhum teclado conectado</string>
     <string name="tag_unused_no_fold">Não usado: este dispositivo não dobra e Orientação não está em Girar com o dispositivo</string>
     <string name="tag_unused_chip">Não usado: este dispositivo não tem chip MediaTek nem Exynos</string>
+    <string name="tag_unused_no_touchscreen">Não usado: este dispositivo não tem tela sensível ao toque</string>
 </resources>

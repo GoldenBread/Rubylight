@@ -11,7 +11,7 @@ import java.util.List;
  * {@link AppQuitOnLeave}: under the game's UUID and its numeric ID; a known UUID decides alone.
  */
 public final class AppStreamSettings {
-    private static final String PREFERENCES = "AppStreamSettings";
+    static final String PREFERENCES = "AppStreamSettings";
 
     private AppStreamSettings() {}
 

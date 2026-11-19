@@ -33,10 +33,20 @@ interface SettingDevices {
      */
     boolean tunedChip();
 
+    /**
+     * A touch screen, which the touch modes, the on-screen controller and an external display's trackpad all take
+     * their touches from; it cannot come or go during a stream.
+     */
+    boolean touchscreen();
+
     /** This device as Android reports it now. */
     static SettingDevices of(Context context) {
         Context app = context.getApplicationContext();
         return new SettingDevices() {
+            @Override public boolean touchscreen() {
+                return app.getPackageManager().hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN);
+            }
+
             @Override public boolean touchpad() {
                 return any(app, device -> device.supportsSource(InputDevice.SOURCE_TOUCHPAD));
             }

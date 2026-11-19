@@ -9,4 +9,5 @@
     <string name="tag_unused_no_keyboard">Không dùng: chưa kết nối bàn phím</string>
     <string name="tag_unused_no_fold">Không dùng: thiết bị này không gập được và Hướng màn hình không phải Xoay theo thiết bị</string>
     <string name="tag_unused_chip">Không dùng: thiết bị này không có chip MediaTek hoặc Exynos</string>
+    <string name="tag_unused_no_touchscreen">Không dùng: thiết bị này không có màn hình cảm ứng</string>
 </resources>

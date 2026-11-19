@@ -2417,10 +2417,9 @@ fn the_setup_section_shows_the_simple_layer_and_back_applies_it() {
 }
 
 /// How many rows the main settings show at their defaults with every fold open, per section listed
-/// ("More settings" chosen): the number the settings-simplification work counts.
-/// `cargo test -p nightjar-desktop row_counts_at_defaults -- --ignored --nocapture`.
+/// ("More settings" chosen): the number the settings-simplification work counts, 108 before rows
+/// that can do nothing were left out. `--nocapture` prints them by section.
 #[test]
-#[ignore = "prints the row counts"]
 fn row_counts_at_defaults() {
     let mut f = settings_with(Settings::default());
     f.size = vec2(1280.0, 20000.0);
@@ -2438,6 +2437,47 @@ fn row_counts_at_defaults() {
         println!("{section:18} {rows:3} {:?}", f.l.settings_view.drawn.iter().map(|(id, _)| *id).collect::<Vec<_>>());
     }
     println!("total {total}");
+    assert_eq!(total, ROWS_AT_DEFAULTS, "rows shown at the defaults");
+}
+
+/// The main settings' rows at their defaults, every fold open, the new "Show debug settings" included.
+const ROWS_AT_DEFAULTS: usize = 94;
+
+/// A PC's own upscaler, Automatic quality or vibration makes the main row act for that PC's
+/// streams, so the main settings show it though their own value leaves it nothing to do.
+#[test]
+fn a_row_a_pcs_settings_make_act_stays_on_the_main_settings() {
+    type Change = fn(&mut Settings);
+    let rows: [(&str, &str, &[&str], Change); 4] = [
+        ("Display & image", "Upscaling sharpness", &["upscaling"], |s| s.upscaling = crate::config::Upscaling::Fsr1),
+        ("Video", "Minimum resolution", &["adaptive_quality"], |s| s.adaptive_quality = crate::config::QualityMode::Motion),
+        ("Controls", "Rumble feel", &["disable_rumble"], |s| s.disable_rumble = false),
+        ("Streaming", "Second screen resolution", &["dual_screen"], |s| s.dual_screen = true),
+    ];
+    for (section, label, keys, on) in rows {
+        let base = Settings { upscaling: crate::config::Upscaling::Bilinear, disable_rumble: true, ..Settings::default() };
+        let mut f = settings_with(base.clone());
+        open_folds(&mut f);
+        in_section(&mut f, section);
+        assert!(!shows(&f, label), "{label}: nothing makes it act: {:?}", f.drawn);
+        let mut pc = base.clone();
+        on(&mut pc);
+        let mut layer = crate::config::Overrides::default();
+        layer.capture(&pc, keys);
+        f.hosts.list[0].record.settings = Some(layer);
+        f.settle();
+        assert!(shows(&f, label), "{label}: the PC makes it act: {:?}", f.drawn);
+    }
+    // A PC that sets its own sharpness with its upscaler leaves the main one nothing to do.
+    let base = Settings { upscaling: crate::config::Upscaling::Bilinear, ..Settings::default() };
+    let mut f = settings_with(base.clone());
+    let pc = Settings { upscaling: crate::config::Upscaling::Fsr1, upscale_sharpness: 80, ..base };
+    let mut layer = crate::config::Overrides::default();
+    layer.capture(&pc, &["upscaling", "upscale_sharpness"]);
+    f.hosts.list[0].record.settings = Some(layer);
+    open_folds(&mut f);
+    in_section(&mut f, "Display & image");
+    assert!(!shows(&f, "Upscaling sharpness"), "{:?}", f.drawn);
 }
 /// Debug is listed only with "Show debug settings", while one of its settings is changed, while it
 /// is open or while a search runs; its rows keep their values and search finds them.

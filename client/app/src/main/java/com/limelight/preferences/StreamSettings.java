@@ -1986,13 +1986,11 @@ public class StreamSettings extends NightjarActivity {
                     idle.add(key);
                 }
             }
-            // A switch's own row follows it, and leaves with it when the switch is left out.
-            setShown("list_trackpad_acceleration_curve", prefs.getBoolean(
+            // A switch's own row follows it; it is a row of WHEN_ROWS too, left out with its switch unless it is changed.
+            setShown(SettingRules.ACCELERATION_CURVE, prefs.getBoolean(
                     PreferenceConfiguration.TRACKPAD_ACCELERATION_PREF_STRING,
-                    PreferenceConfiguration.DEFAULT_TRACKPAD_ACCELERATION) &&
-                    !idle.contains(PreferenceConfiguration.TRACKPAD_ACCELERATION_PREF_STRING));
-            setShown("list_trackpad_momentum_glide", prefs.getBoolean("checkbox_trackpad_momentum", false) &&
-                    !idle.contains("checkbox_trackpad_momentum"));
+                    PreferenceConfiguration.DEFAULT_TRACKPAD_ACCELERATION));
+            setShown(SettingRules.MOMENTUM_GLIDE, prefs.getBoolean("checkbox_trackpad_momentum", false));
             setShown(PreferenceConfiguration.CLIENT_ROAMING_PREF_STRING, SettingRules.clientRoamingApplies(prefs));
             setShown(PreferenceConfiguration.RECEIVE_COALESCING_PREF_STRING, SettingRules.receiveCoalescingApplies(prefs));
             setShown(PreferenceConfiguration.AUDIO_PASSTHROUGH_PREF_STRING,
@@ -2692,7 +2690,7 @@ public class StreamSettings extends NightjarActivity {
             UiHelper.showDialog(getActivity(), about);
         }
 
-        static int storedTouchMode(SharedPreferences prefs) {
+        private static int storedTouchMode(SharedPreferences prefs) {
             return TouchMode.resolve(prefs.getString(TouchMode.PREF, null),
                     prefs.getBoolean(TouchMode.TRACKPAD_PREF, true), prefs.getBoolean(TouchMode.NATIVE_TOUCH_PREF, false));
         }

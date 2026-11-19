@@ -15,7 +15,7 @@ import java.util.Map;
  * change there still reaches this set unless it has its own.
  */
 public final class HostStreamProfile {
-    private static final String PREFERENCES = "HostStreamProfiles";
+    static final String PREFERENCES = "HostStreamProfiles";
     // Rubylight accepts up to 2 Gbps at stream setup; PyroWave's clean 4K60 needs about 1.6 Gbps.
     static final int MAX_BITRATE_KBPS = StreamConfiguration.MAX_BITRATE_KBPS;
     static final String FORMAT = "v2";

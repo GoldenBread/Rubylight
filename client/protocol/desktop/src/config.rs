@@ -1560,6 +1560,11 @@ impl Overrides {
 
     pub fn has(&self, keys: &[&str]) -> bool { keys.iter().any(|key| self.0.contains_key(*key)) }
 
+    /// The value this layer holds for a key, or None where it holds none or one this version can't read.
+    pub fn value<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
+        self.0.get(key).and_then(|value| serde_json::from_value(value.clone()).ok())
+    }
+
     pub fn capture(&mut self, settings: &Settings, keys: &[&str]) {
         let values = serde_json::to_value(settings).expect("settings serialize");
         for key in keys { self.0.insert((*key).to_owned(), values[*key].clone()); }

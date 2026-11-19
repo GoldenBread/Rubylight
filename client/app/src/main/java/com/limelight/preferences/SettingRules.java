@@ -419,6 +419,9 @@ final class SettingRules {
     static final String LOCAL_CURSOR_SPEED = "seekbar_local_cursor_speed";
     static final String TRACKPAD_MOMENTUM = "checkbox_trackpad_momentum";
     static final String TRACKPAD_AREA = "list_trackpad_area";
+    /** Acceleration strength and Glide length: shown while their switch is on, and left out with it (whenApplies). */
+    static final String ACCELERATION_CURVE = "list_trackpad_acceleration_curve";
+    static final String MOMENTUM_GLIDE = "list_trackpad_momentum_glide";
     static final String FINGER_TAPS = "checkbox_multi_touch_finger_taps";
     static final String TRACKPAD_SENSITIVITY_X = "seekbar_trackpad_sensitivity_x";
     static final String TRACKPAD_SENSITIVITY_Y = "seekbar_trackpad_sensitivity_y";
@@ -437,26 +440,53 @@ final class SettingRules {
     static final String RUMBLE_FEEL = "list_rumble_feel";
 
     /**
-     * The rows shown only while they can do something: their mode or parent setting is on, or this device has what
-     * they act on (whenApplies). One whose stored value is not its default stays, saying why it does nothing now
-     * (whenReason); search finds the others with that reason, and opening the result shows the row.
+     * The rows shown only while some stream on this device can use them: their parent setting is on (and nothing a
+     * stream does on its own, such as the stream menu, an external display, the second screen or a PC's, game's or
+     * profile's settings, can make them act without it), or this device has what they act on (whenApplies). One whose
+     * stored value is not its default stays, saying why it does nothing now (whenReason); search finds the others with
+     * that reason, and opening the result shows the row. Not here, so always shown: Thermal protection, which a PC's
+     * or one stream's Automatic bitrate lets act (AutoBitrateChoice, GameAdaptation.toggleAdaptiveBitrateFromMenu).
      */
     static final java.util.List<String> WHEN_ROWS = java.util.Arrays.asList(
-            ADAPTIVE_QUALITY_MIN_RESOLUTION, ADAPTIVE_QUALITY_MIN_FPS, PreferenceConfiguration.THERMAL_PROTECTION_PREF_STRING,
-            PreferenceConfiguration.UPSCALING_SHARPNESS_PREF_STRING, RUMBLE_FEEL, VIBRATE_STRENGTH, MOUSE_SPEED, MOUSE_NAV_BUTTONS,
-            TRACKPAD_SPEED, LOCAL_CURSOR_SPEED, PreferenceConfiguration.TRACKPAD_ACCELERATION_PREF_STRING, TRACKPAD_MOMENTUM,
-            TRACKPAD_AREA, FINGER_TAPS, TRACKPAD_SENSITIVITY_X, TRACKPAD_SENSITIVITY_Y, TRACKPAD_SWAP_AXIS, NATIVE_TOUCHPAD,
+            ADAPTIVE_QUALITY_MIN_RESOLUTION, ADAPTIVE_QUALITY_MIN_FPS, PreferenceConfiguration.UPSCALING_SHARPNESS_PREF_STRING, RUMBLE_FEEL, VIBRATE_STRENGTH, MOUSE_SPEED, MOUSE_NAV_BUTTONS,
+            TRACKPAD_SPEED, LOCAL_CURSOR_SPEED, PreferenceConfiguration.TRACKPAD_ACCELERATION_PREF_STRING, ACCELERATION_CURVE,
+            TRACKPAD_MOMENTUM, MOMENTUM_GLIDE, TRACKPAD_AREA, FINGER_TAPS, TRACKPAD_SENSITIVITY_X, TRACKPAD_SENSITIVITY_Y, TRACKPAD_SWAP_AXIS, NATIVE_TOUCHPAD,
             BACK_AS_META, OVERLAY_POSITION, SCREEN2_RESOLUTION, COVERING_DECODER_SIZE, CHIPSET_TUNING, IGDB_SECRET,
             PYROWAVE_PREACQUIRE);
 
-    /** The stored touch mode (TouchMode), with the two switches older versions saved; as StreamSettings reads it. */
-    static int touchMode(SharedPreferences prefs) {
-        return StreamSettings.SettingsFragment.storedTouchMode(prefs);
+    /**
+     * Whether a PC's, game's or profile's own settings hold a value (HostStreamProfile, AppStreamSettings,
+     * StreamProfiles): those streams use it where the main setting doesn't. An unreadable layer counts as none, as
+     * the stream reads it.
+     */
+    static boolean anyLayer(Context context, java.util.function.Predicate<HostStreamProfile> holds) {
+        for (String file : new String[] {HostStreamProfile.PREFERENCES, AppStreamSettings.PREFERENCES, StreamProfiles.PREFERENCES}) {
+            for (java.util.Map.Entry<String, ?> entry : context.getSharedPreferences(file, Context.MODE_PRIVATE).getAll().entrySet()) {
+                if (!(entry.getValue() instanceof String)) continue;
+                if (file.equals(StreamProfiles.PREFERENCES) && !entry.getKey().startsWith(StreamProfiles.VALUES)) continue;
+                try {
+                    if (holds.test(HostStreamProfile.deserialize((String) entry.getValue()))) return true;
+                } catch (RuntimeException ignored) {
+                    // Not a set of values, or one this build can't read.
+                }
+            }
+        }
+        return false;
     }
 
-    /** The modern on-screen controller is shown; its pointer touchpad uses Trackpad speed and acceleration (Game, ModernController). */
-    private static boolean modernOnScreen(SharedPreferences prefs) {
-        return onScreenControlsOn(prefs) && modernControllerApplies(prefs);
+    /** The stream menu's Automatic quality choice a PC keeps (GameAdaptation, "AdaptiveQuality" by PC), other than Off. */
+    private static boolean anyPcQualityChoice(Context context) {
+        for (Object choice : context.getSharedPreferences("AdaptiveQuality", Context.MODE_PRIVATE).getAll().values()) {
+            if (choice instanceof String && !"off".equals(choice)) return true;
+        }
+        return false;
+    }
+
+    /** An upscaler that sharpens: FSR and SGSR (upscalingUsesSharpness). */
+    private static boolean sharpens(com.limelight.binding.video.UpscalingPolicy.Mode mode) {
+        return mode == com.limelight.binding.video.UpscalingPolicy.Mode.FSR1 ||
+                mode == com.limelight.binding.video.UpscalingPolicy.Mode.SGSR1 ||
+                mode == com.limelight.binding.video.UpscalingPolicy.Mode.SGSR2;
     }
 
     /** The IGDB client ID, kept apart from the settings (GameInfo.keyPrefs). */
@@ -467,18 +497,18 @@ final class SettingRules {
 
     /** Whether a row of {@link #WHEN_ROWS} can do something now; true for every other row. */
     static boolean whenApplies(Context context, String key, SharedPreferences prefs, SettingDevices devices) {
-        int touch = touchMode(prefs);
         switch (key) {
             case ADAPTIVE_QUALITY_MIN_RESOLUTION:
             case ADAPTIVE_QUALITY_MIN_FPS:
-                return qualityLimitsApply(prefs);
-            case PreferenceConfiguration.THERMAL_PROTECTION_PREF_STRING:
-                // As its tag: Lower it sooner may still meet a PC that takes no rate changes (unusedReason).
-                return !context.getString(R.string.tag_unused_without_any, context.getString(R.string.title_lower_bitrate),
-                        context.getString(R.string.title_adaptive_quality_setting), context.getString(R.string.title_gpu_max_clocks))
-                        .equals(unusedReason(context, key, prefs));
+                // A PC's own choice from the stream menu (GameAdaptation.showAdaptiveQualityDialog, kept by the PC), and
+                // the second screen's, which it keeps for its own stream, use the main minimums too.
+                return qualityLimitsApply(prefs) || prefs.getBoolean("checkbox_dual_screen", false) ||
+                        anyPcQualityChoice(context);
             case PreferenceConfiguration.UPSCALING_SHARPNESS_PREF_STRING:
-                return upscalingUsesSharpness(prefs);
+                // A PC's, game's or profile's upscaler takes the main sharpness unless it sets its own
+                // (HostStreamProfile.keepOnlyDifferencesFrom keeps the mode and drops an equal sharpness).
+                return upscalingUsesSharpness(prefs) ||
+                        (upscalingApplies(prefs) && anyLayer(context, layer -> sharpens(layer.upscalingMode) && layer.upscalingSharpness == null));
             case RUMBLE_FEEL:
                 // RumblePolicy.allows: Turn off vibration stops every rumble the feel would shape.
                 return !prefs.getBoolean("checkbox_disable_rumble", false);
@@ -490,19 +520,18 @@ final class SettingRules {
             case MOUSE_NAV_BUTTONS:
                 return devices.mouse();
             case TRACKPAD_SPEED:
-                // The screen as a trackpad or with touchpad gestures (GameTouchInput), and the modern controller's pointer touchpad.
-                return touch == com.limelight.binding.input.touch.TouchMode.TRACKPAD ||
-                        touch == com.limelight.binding.input.touch.TouchMode.TOUCHPAD || modernOnScreen(prefs);
             case LOCAL_CURSOR_SPEED:
-                return touch == com.limelight.binding.input.touch.TouchMode.LOCAL_CURSOR;
             case PreferenceConfiguration.TRACKPAD_ACCELERATION_PREF_STRING:
-                return com.limelight.binding.input.touch.TouchMode.isRelative(touch) || modernOnScreen(prefs);
+            case ACCELERATION_CURVE:
             case TRACKPAD_MOMENTUM:
+            case MOMENTUM_GLIDE:
             case TRACKPAD_AREA:
-                // TrackpadPointer's glide and GameTouchInput's area: the modes where a finger moves the pointer.
-                return com.limelight.binding.input.touch.TouchMode.isRelative(touch);
             case FINGER_TAPS:
-                return touch == com.limelight.binding.input.touch.TouchMode.MULTI_TOUCH;
+                // Not by the stored touch mode: an external display makes the screen a trackpad whatever it is
+                // (GameVideoOutput), the stream menu shows the on-screen controller (whose modern style has a pointer
+                // touchpad) without saving it, and the second screen picks its touch mode for its own stream. Only a
+                // device without a touch screen has nothing these act on.
+                return devices.touchscreen();
             case TRACKPAD_SENSITIVITY_X:
             case TRACKPAD_SENSITIVITY_Y:
             case TRACKPAD_SWAP_AXIS:
@@ -511,7 +540,8 @@ final class SettingRules {
             case BACK_AS_META:
                 return devices.keyboard();
             case OVERLAY_POSITION:
-                return overlayOn(prefs);
+                // The second screen's stream menu shows its overlay without saving it (DualScreen.saveSettings).
+                return overlayOn(prefs) || prefs.getBoolean("checkbox_dual_screen", false);
             case SCREEN2_RESOLUTION:
                 return prefs.getBoolean("checkbox_dual_screen", false);
             case COVERING_DECODER_SIZE:
@@ -523,7 +553,8 @@ final class SettingRules {
             case IGDB_SECRET:
                 return igdbClientIdSet(context);
             case PYROWAVE_PREACQUIRE:
-                return pyroWaveChosen(prefs);
+                return pyroWaveChosen(prefs) ||
+                        anyLayer(context, layer -> layer.codec == PreferenceConfiguration.FormatOption.FORCE_PYROWAVE);
             default:
                 return true;
         }
@@ -536,8 +567,6 @@ final class SettingRules {
             case ADAPTIVE_QUALITY_MIN_RESOLUTION:
             case ADAPTIVE_QUALITY_MIN_FPS:
                 return context.getString(R.string.tag_unused_without, context.getString(R.string.title_adaptive_quality_setting));
-            case PreferenceConfiguration.THERMAL_PROTECTION_PREF_STRING:
-                return unusedReason(context, key, prefs);
             case PreferenceConfiguration.UPSCALING_SHARPNESS_PREF_STRING: {
                 int vulkan = vulkanPathTitle(prefs);
                 if (!upscalingApplies(prefs)) return unusedWith(context, vulkan != 0 ? vulkan : R.string.title_vulkan_render);
@@ -557,11 +586,12 @@ final class SettingRules {
             case TRACKPAD_SPEED:
             case LOCAL_CURSOR_SPEED:
             case PreferenceConfiguration.TRACKPAD_ACCELERATION_PREF_STRING:
+            case ACCELERATION_CURVE:
             case TRACKPAD_MOMENTUM:
+            case MOMENTUM_GLIDE:
             case TRACKPAD_AREA:
             case FINGER_TAPS:
-                return context.getString(R.string.tag_unused_with,
-                        context.getResources().getStringArray(R.array.stream_touch_modes)[touchMode(prefs)]);
+                return context.getString(R.string.tag_unused_no_touchscreen);
             case TRACKPAD_SENSITIVITY_X:
             case TRACKPAD_SENSITIVITY_Y:
             case TRACKPAD_SWAP_AXIS:

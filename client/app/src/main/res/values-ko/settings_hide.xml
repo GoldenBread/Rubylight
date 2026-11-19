@@ -9,4 +9,5 @@
     <string name="tag_unused_no_keyboard">사용되지 않음: 연결된 키보드가 없습니다</string>
     <string name="tag_unused_no_fold">사용되지 않음: 이 기기는 접히지 않고 화면 방향이 \'기기에 따라 회전\'이 아닙니다</string>
     <string name="tag_unused_chip">사용되지 않음: 이 기기에는 MediaTek 또는 Exynos 칩이 없습니다</string>
+    <string name="tag_unused_no_touchscreen">사용되지 않음: 이 기기에는 터치스크린이 없습니다</string>
 </resources>

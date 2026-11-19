@@ -905,6 +905,19 @@ impl Launcher {
         // this device was on mobile data or a cap is set (Android's mobileBitrateShown).
         let mut mobile_limit = self.profiles.mobile_limit_kbps;
         let mobile_shown = !layered && (self.network.kind(&self.profiles.home_wifi) == crate::network::Kind::Mobile || mobile_limit > 0);
+        // The PCs', games' and profiles' own settings: on the main settings, a row they make act (an
+        // upscaler that sharpens, Automatic quality, vibration back on) shows though the main value
+        // leaves it nothing to do. A layer's own page shows its values already.
+        let layers: Vec<crate::config::Overrides> = if layered {
+            Vec::new()
+        } else {
+            view.hosts.list.iter()
+                .flat_map(|h| h.record.settings.iter().chain(h.record.app_settings.values()))
+                .chain(self.profiles.entries.iter().map(|p| &p.settings))
+                .cloned()
+                .collect()
+        };
+        let any_layer = |holds: &dyn Fn(&crate::config::Overrides) -> bool| layers.iter().any(holds);
         // Jumbo video packets are shown only where a saved PC offers more than stock packets.
         let jumbo_offered = !layered && view.hosts.list.iter().any(|h| {
             h.info.as_ref().is_some_and(|i| i.capabilities.max_video_packet() > 0)
@@ -1233,7 +1246,8 @@ impl Launcher {
                     }
                 }).response
             });
-            let quality = s.adaptive_quality != crate::config::QualityMode::Off;
+            let quality = s.adaptive_quality != crate::config::QualityMode::Off
+                || any_layer(&|o| o.value::<crate::config::QualityMode>("adaptive_quality").is_some_and(|q| q != crate::config::QualityMode::Off));
             let without_quality = || trf("Not used without {}", &[&tr("Automatic quality")]);
             rows.applies(quality, without_quality);
             setting_row(ui, s, &mut rows, &["quality_min_short_edge"], "Minimum resolution", "The lowest resolution Automatic quality goes to.", |ui, s| {
@@ -1395,7 +1409,11 @@ impl Launcher {
                 }).response
             });
             let upscaler = tr(s.upscaling.label());
-            rows.applies(s.upscaling.is_shader(), || trf("Not used with {}", &[&upscaler]));
+            // A layer's upscaler that sharpens takes this sharpness unless it holds its own.
+            let layer_sharpens = any_layer(&|o| {
+                !o.has(&["upscale_sharpness"]) && o.value::<crate::config::Upscaling>("upscaling").is_some_and(|u| u.is_shader())
+            });
+            rows.applies(s.upscaling.is_shader() || layer_sharpens, || trf("Not used with {}", &[&upscaler]));
             setting_row(ui, s, &mut rows, &["upscale_sharpness"], "Upscaling sharpness", "How much sharpening FSR or SGSR adds. Raise it for soft edges; lower it if edges show halos.", |ui, s| {
                 slider(ui, &mut s.upscale_sharpness, 0..=100, 5.0, percent, |rail| rail, |field| field.suffix("%"))
             });
@@ -1523,7 +1541,8 @@ impl Launcher {
             setting_row(ui, s, &mut rows, &["controller_motion"], "Motion controls", "Sends the controller’s gyro and accelerometer to games, for motion aiming. The PC may then treat it as a PlayStation controller; turn it off if games show the wrong buttons.", |ui, s| toggle(ui, &mut s.controller_motion));
             setting_row(ui, s, &mut rows, &["disable_rumble"], "Turn off vibration", "Stops every vibration a game asks for: rumble, trigger rumble and haptics. Leave it off unless you want no vibration at all.", |ui, s| toggle(ui, &mut s.disable_rumble));
             // Turn off vibration stops every rumble the feel would shape.
-            rows.applies(!s.disable_rumble, || trf("Not used with {}", &[&tr("Turn off vibration")]));
+            rows.applies(!s.disable_rumble || any_layer(&|o| o.value::<bool>("disable_rumble") == Some(false)),
+                || trf("Not used with {}", &[&tr("Turn off vibration")]));
             setting_row(ui, s, &mut rows, &["rumble_feel"], "Rumble feel", "Strong makes weak vibration strong enough for a small motor to show; Subtle caps strong vibration and softens weak. Either one changes the balance of weak and strong rumble the game chose, so leave it on Standard unless vibration is too faint or too harsh.", |ui, s| {
                 Combo::from_id_salt("rumble-feel").selected_text(tr(crate::config::rumble_feel_label(s.rumble_feel))).show_ui(ui, |ui| {
                     for feel in nightjar_policy::rumble::RumbleFeel::ALL {
@@ -1684,7 +1703,8 @@ impl Launcher {
                     }
                 }).response
             });
-            rows.applies(s.overlay, || trf("Not used without {}", &[&tr("Performance overlay")]));
+            rows.applies(s.overlay || any_layer(&|o| o.value::<bool>("overlay") == Some(true)),
+                || trf("Not used without {}", &[&tr("Performance overlay")]));
             setting_row(ui, s, &mut rows, &["overlay_position"], "Overlay position", "The corner the performance overlay sits in.", |ui, s| {
                 Combo::from_id_salt("overlay-position").selected_text(tr(s.overlay_position.label())).show_ui(ui, |ui| {
                     for corner in crate::config::OverlayCorner::ALL {
@@ -1763,7 +1783,8 @@ impl Launcher {
             setting_row(ui, s, &mut rows, &["dual_screen"], "Dual screen mode", "Streams the same game to a second screen too, in a stream of its own; sound and controllers stay with the first. Needs a second screen and PC support.", |ui, s| {
                 toggle(ui, &mut s.dual_screen)
             });
-            rows.applies(s.dual_screen, || trf("Not used without {}", &[&tr("Dual screen mode")]));
+            rows.applies(s.dual_screen || any_layer(&|o| o.value::<bool>("dual_screen") == Some(true)),
+                || trf("Not used without {}", &[&tr("Dual screen mode")]));
             let own_size = tr("Second screen’s own size");
             setting_row(ui, s, &mut rows, &["second_screen_width", "second_screen_height"], "Second screen resolution", "The resolution of the second screen’s stream.", |ui, s| {
                 let shown = if s.second_screen_width == 0 { own_size.to_owned() } else { format!("{}x{}", s.second_screen_width, s.second_screen_height) };
@@ -3379,15 +3400,18 @@ pub(super) fn setting_row(
             })
             || rows.layer.as_ref().is_some_and(|(_, overrides)| !keys.is_empty() && overrides.has(keys)));
     let id = keys.first().copied().or(action).unwrap_or_default();
-    // A row whose control had focus or was dragged last frame stays while it still is, so setting it
-    // back to its default does not take the row from under the slider or the focus.
+    // A row whose own control had focus or was dragged when last drawn stays while that control still
+    // has it, so setting it back to its default does not take the row from under the slider or the focus.
     let kept_id = egui::Id::unique(("setting row in use", id));
+    let in_use_id = ui.ctx().data(|d| d.get_temp::<egui::Id>(kept_id));
     let kept = reason.is_some()
-        && (ui.ctx().dragged_id().is_some() || ui.ctx().memory(|m| m.focused().is_some()))
-        && ui.ctx().data(|d| d.get_temp::<bool>(kept_id).unwrap_or(false));
+        && in_use_id.is_some_and(|c| ui.ctx().dragged_id() == Some(c) || ui.ctx().memory(|m| m.focused() == Some(c)));
     let has_reason = reason.is_some();
     let idle = has_reason && !changed && !kept;
     if !rows.shows(ui, id, label, description, idle) {
+        if in_use_id.is_some() {
+            ui.ctx().data_mut(|d| d.remove::<egui::Id>(kept_id));
+        }
         return None;
     }
     if let Some(reason) = reason.filter(|_| note.is_none()) {
@@ -3473,12 +3497,12 @@ pub(super) fn setting_row(
         response.request_focus();
     }
     if has_reason {
-        let in_use = response.has_focus() || response.dragged() || response.changed();
+        let in_use = response.has_focus() || response.dragged();
         ui.ctx().data_mut(|d| {
             if in_use {
-                d.insert_temp(kept_id, true);
+                d.insert_temp(kept_id, response.id);
             } else {
-                d.remove::<bool>(kept_id);
+                d.remove::<egui::Id>(kept_id);
             }
         });
     }

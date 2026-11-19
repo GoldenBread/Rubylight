@@ -8,7 +8,6 @@ import android.preference.PreferenceManager;
 import android.preference.PreferenceScreen;
 
 import org.junit.After;
-import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
@@ -25,8 +24,9 @@ import static org.robolectric.Shadows.shadowOf;
 
 /**
  * How many rows Settings shows at the defaults with every More row open, per section the list of sections shows: the
- * number the settings-simplification work counts. A touch-screen device with nothing attached that does not fold, on a chip Chipset tuning does not tune. Set
- * NIGHTJAR_ROW_COUNTS to print them.
+ * number the settings-simplification work counts (134 before rows that can do nothing were left out). A touch-screen device
+ * with nothing attached that does not fold, on a chip Chipset tuning does not tune. Set NIGHTJAR_ROW_COUNTS to print them
+ * by section.
  */
 @RunWith(org.robolectric.RobolectricTestRunner.class)
 @Config(sdk = 28, qualifiers = "en", application = Application.class,
@@ -43,9 +43,12 @@ public class SettingsRowCountTest {
         context().getSharedPreferences("SettingsScreenState", Context.MODE_PRIVATE).edit().clear().commit();
     }
 
+    /** Settings' rows at the defaults, every More row open, the new Show debug settings included. */
+    static final int ROWS_AT_DEFAULTS = 110;
+
     @Test
-    public void printRowCounts() {
-        Assume.assumeTrue("prints on request", System.getenv("NIGHTJAR_ROW_COUNTS") != null);
+    public void rowCountsAtTheDefaults() {
+        boolean print = System.getenv("NIGHTJAR_ROW_COUNTS") != null;
         shadowOf(context().getPackageManager()).setSystemFeature(PackageManager.FEATURE_TOUCHSCREEN, true);
         ActivityController<StreamSettings> built = Robolectric.buildActivity(StreamSettings.class);
         built.get().devices = SettingsHideTest.NOTHING_ATTACHED;
@@ -54,7 +57,7 @@ public class SettingsRowCountTest {
             int total = 0;
             for (String section : StreamSettings.RAIL_SECTIONS) {
                 if (!listed(screen, section)) {
-                    System.out.println("ROWS " + section + " not listed");
+                    if (print) System.out.println("ROWS " + section + " not listed");
                     continue;
                 }
                 StreamSettings.SettingsFragment fragment = open(screen, section);
@@ -66,9 +69,10 @@ public class SettingsRowCountTest {
                     }
                 }
                 total += rows.size();
-                System.out.println("ROWS " + section + " " + rows.size() + " " + rows);
+                if (print) System.out.println("ROWS " + section + " " + rows.size() + " " + rows);
             }
-            System.out.println("ROWS total " + total);
+            if (print) System.out.println("ROWS total " + total);
+            org.junit.Assert.assertEquals("rows shown at the defaults", ROWS_AT_DEFAULTS, total);
         }
     }
 

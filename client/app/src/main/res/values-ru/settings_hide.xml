@@ -9,4 +9,5 @@
     <string name="tag_unused_no_keyboard">Не используется: клавиатура не подключена</string>
     <string name="tag_unused_no_fold">Не используется: это устройство не складывается, а «Ориентация» не «Поворачивать с устройством»</string>
     <string name="tag_unused_chip">Не используется: в этом устройстве нет чипа MediaTek или Exynos</string>
+    <string name="tag_unused_no_touchscreen">Не используется: у этого устройства нет сенсорного экрана</string>
 </resources>

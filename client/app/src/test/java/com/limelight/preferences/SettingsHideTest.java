@@ -48,12 +48,13 @@ import static org.robolectric.Shadows.shadowOf;
         shadows = com.limelight.PcViewLifecycleTest.NoNativeMoonBridge.class,
         instrumentedPackages = "com.limelight.nvstream.jni")
 public class SettingsHideTest {
-    /** A handheld with nothing attached, that does not fold, on a chip Chipset tuning leaves alone. */
+    /** A touch-screen handheld with nothing attached, that does not fold, on a chip Chipset tuning leaves alone. */
     static final SettingDevices NOTHING_ATTACHED = new Devices();
 
     /** Device facts a test switches. */
     static final class Devices implements SettingDevices {
-        boolean touchpad, mouse, keyboard, folds, tunedChip;
+        boolean touchpad, mouse, keyboard, folds, tunedChip, touchscreen = true;
+        @Override public boolean touchscreen() { return touchscreen; }
         @Override public boolean touchpad() { return touchpad; }
         @Override public boolean mouse() { return mouse; }
         @Override public boolean keyboard() { return keyboard; }
@@ -85,7 +86,7 @@ public class SettingsHideTest {
         prefs().edit().clear().commit();
         gameInfoKeys().edit().clear().commit();
         context().getSharedPreferences("SettingsScreenState", Context.MODE_PRIVATE).edit().clear().commit();
-        for (String name : new String[] {StreamProfiles.PREFERENCES, "AppStreamSettings", "HostStreamProfiles"}) {
+        for (String name : new String[] {StreamProfiles.PREFERENCES, "AppStreamSettings", "HostStreamProfiles", "AdaptiveQuality"}) {
             context().getSharedPreferences(name, Context.MODE_PRIVATE).edit().clear().commit();
         }
     }
@@ -182,26 +183,41 @@ public class SettingsHideTest {
         }
     }
 
-    /** A row of SettingRules.WHEN_ROWS: its section, what makes it do nothing, what makes it act, and a changed value. */
+    /**
+     * A row of SettingRules.WHEN_ROWS: its section, what makes it do nothing, what makes it act, and a changed value. A
+     * device row's facts come from SettingDevices, whose listener devicesChanged stands in for here
+     * (aMouseAttachedOrRemovedShowsOrHidesItsRowsThroughTheListener runs the real one).
+     */
     private static final class Row {
         final String key, section;
+        final boolean device;
         final BiConsumer<SharedPreferences.Editor, Devices> off, on, changed;
 
         Row(String key, String section, BiConsumer<SharedPreferences.Editor, Devices> off,
                 BiConsumer<SharedPreferences.Editor, Devices> on, BiConsumer<SharedPreferences.Editor, Devices> changed) {
+            this(key, section, false, off, on, changed);
+        }
+
+        Row(String key, String section, boolean device, BiConsumer<SharedPreferences.Editor, Devices> off,
+                BiConsumer<SharedPreferences.Editor, Devices> on, BiConsumer<SharedPreferences.Editor, Devices> changed) {
             this.key = key;
             this.section = section;
+            this.device = device;
             this.off = off;
             this.on = on;
             this.changed = changed;
         }
     }
 
-    private static final BiConsumer<SharedPreferences.Editor, Devices> NOTHING = (e, d) -> { };
+    private static final BiConsumer<SharedPreferences.Editor, Devices> NO_TOUCH_SCREEN = (e, d) -> d.touchscreen = false;
+    private static final BiConsumer<SharedPreferences.Editor, Devices> TOUCH_SCREEN = (e, d) -> d.touchscreen = true;
 
-    private static BiConsumer<SharedPreferences.Editor, Devices> touch(int mode) {
-        return (e, d) -> TouchMode.save(e, mode);
+    /** No touch screen, and a changed value. */
+    private static BiConsumer<SharedPreferences.Editor, Devices> untouchable(BiConsumer<SharedPreferences.Editor, Devices> changed) {
+        return (e, d) -> { d.touchscreen = false; changed.accept(e, d); };
     }
+
+    private static final BiConsumer<SharedPreferences.Editor, Devices> NOTHING = (e, d) -> { };
 
     private static BiConsumer<SharedPreferences.Editor, Devices> on(String key) {
         return (e, d) -> e.putBoolean(key, true);
@@ -220,34 +236,35 @@ public class SettingsHideTest {
                     set("adaptive_quality_min_resolution", "540")),
             new Row("adaptive_quality_min_fps", "video", NOTHING, set("adaptive_quality_mode", "motion"),
                     set("adaptive_quality_min_fps", "60")),
-            new Row(PreferenceConfiguration.THERMAL_PROTECTION_PREF_STRING, "video", NOTHING, set("adaptive_quality_mode", "motion"),
-                    on(PreferenceConfiguration.THERMAL_PROTECTION_PREF_STRING)),
             new Row("upscaling_sharpness", "display", NOTHING, set("upscaling_mode", "fsr1"), number("upscaling_sharpness", 70)),
             new Row("list_rumble_feel", "input", on("checkbox_disable_rumble"), (e, d) -> e.putBoolean("checkbox_disable_rumble", false),
                     (e, d) -> { e.putBoolean("checkbox_disable_rumble", true); e.putString("list_rumble_feel", "strong"); }),
-            new Row("seekbar_mouse_speed", "input", NOTHING, (e, d) -> d.mouse = true, number("seekbar_mouse_speed", 150)),
-            new Row("checkbox_mouse_nav_buttons", "input", NOTHING, (e, d) -> d.mouse = true, on("checkbox_mouse_nav_buttons")),
-            new Row("seekbar_trackpad_speed", "input", touch(TouchMode.DIRECT), touch(TouchMode.TRACKPAD),
-                    (e, d) -> { TouchMode.save(e, TouchMode.DIRECT); e.putInt("seekbar_trackpad_speed", 150); }),
-            new Row("seekbar_local_cursor_speed", "input", NOTHING, touch(TouchMode.LOCAL_CURSOR), number("seekbar_local_cursor_speed", 150)),
-            new Row("checkbox_trackpad_acceleration_v2", "input", touch(TouchMode.DIRECT), touch(TouchMode.LOCAL_CURSOR),
-                    (e, d) -> { TouchMode.save(e, TouchMode.DIRECT); e.putBoolean("checkbox_trackpad_acceleration_v2", false); }),
-            new Row("checkbox_trackpad_momentum", "input", touch(TouchMode.DIRECT), touch(TouchMode.TOUCHPAD),
-                    (e, d) -> { TouchMode.save(e, TouchMode.DIRECT); e.putBoolean("checkbox_trackpad_momentum", true); }),
-            new Row("list_trackpad_area", "input", touch(TouchMode.DIRECT), touch(TouchMode.TRACKPAD),
-                    (e, d) -> { TouchMode.save(e, TouchMode.DIRECT); e.putString("list_trackpad_area", "right"); }),
-            new Row("checkbox_multi_touch_finger_taps", "input", NOTHING, touch(TouchMode.MULTI_TOUCH), on("checkbox_multi_touch_finger_taps")),
-            new Row("seekbar_trackpad_sensitivity_x", "input", NOTHING, (e, d) -> d.touchpad = true, number("seekbar_trackpad_sensitivity_x", 150)),
-            new Row("seekbar_trackpad_sensitivity_y", "input", NOTHING, (e, d) -> d.touchpad = true, number("seekbar_trackpad_sensitivity_y", 150)),
-            new Row("checkbox_trackpad_swap_axis", "input", NOTHING, (e, d) -> d.touchpad = true, on("checkbox_trackpad_swap_axis")),
-            new Row("checkbox_native_touchpad", "input", NOTHING, (e, d) -> d.touchpad = true, on("checkbox_native_touchpad")),
-            new Row("checkbox_back_as_meta", "input", NOTHING, (e, d) -> d.keyboard = true, on("checkbox_back_as_meta")),
+            new Row("seekbar_mouse_speed", "input", true, NOTHING, (e, d) -> d.mouse = true, number("seekbar_mouse_speed", 150)),
+            new Row("checkbox_mouse_nav_buttons", "input", true, NOTHING, (e, d) -> d.mouse = true, on("checkbox_mouse_nav_buttons")),
+            // The touch rows act in any touch mode (an external display, the stream menu, the second screen): only a
+            // device without a touch screen leaves them out.
+            new Row("seekbar_trackpad_speed", "input", true, NO_TOUCH_SCREEN, TOUCH_SCREEN, untouchable(number("seekbar_trackpad_speed", 150))),
+            new Row("seekbar_local_cursor_speed", "input", true, NO_TOUCH_SCREEN, TOUCH_SCREEN, untouchable(number("seekbar_local_cursor_speed", 150))),
+            new Row("checkbox_trackpad_acceleration_v2", "input", true, NO_TOUCH_SCREEN, TOUCH_SCREEN,
+                    untouchable((e, d) -> e.putBoolean("checkbox_trackpad_acceleration_v2", false))),
+            new Row(SettingRules.ACCELERATION_CURVE, "input", true, NO_TOUCH_SCREEN, TOUCH_SCREEN, untouchable(set(SettingRules.ACCELERATION_CURVE, "strong"))),
+            new Row("checkbox_trackpad_momentum", "input", true, NO_TOUCH_SCREEN, TOUCH_SCREEN, untouchable(on("checkbox_trackpad_momentum"))),
+            new Row(SettingRules.MOMENTUM_GLIDE, "input", true, untouchable(on("checkbox_trackpad_momentum")),
+                    (e, d) -> { d.touchscreen = true; e.putBoolean("checkbox_trackpad_momentum", true); },
+                    untouchable((e, d) -> { e.putBoolean("checkbox_trackpad_momentum", true); e.putString(SettingRules.MOMENTUM_GLIDE, "long"); })),
+            new Row("list_trackpad_area", "input", true, NO_TOUCH_SCREEN, TOUCH_SCREEN, untouchable(set("list_trackpad_area", "right"))),
+            new Row("checkbox_multi_touch_finger_taps", "input", true, NO_TOUCH_SCREEN, TOUCH_SCREEN, untouchable(on("checkbox_multi_touch_finger_taps"))),
+            new Row("seekbar_trackpad_sensitivity_x", "input", true, NOTHING, (e, d) -> d.touchpad = true, number("seekbar_trackpad_sensitivity_x", 150)),
+            new Row("seekbar_trackpad_sensitivity_y", "input", true, NOTHING, (e, d) -> d.touchpad = true, number("seekbar_trackpad_sensitivity_y", 150)),
+            new Row("checkbox_trackpad_swap_axis", "input", true, NOTHING, (e, d) -> d.touchpad = true, on("checkbox_trackpad_swap_axis")),
+            new Row("checkbox_native_touchpad", "input", true, NOTHING, (e, d) -> d.touchpad = true, on("checkbox_native_touchpad")),
+            new Row("checkbox_back_as_meta", "input", true, NOTHING, (e, d) -> d.keyboard = true, on("checkbox_back_as_meta")),
             new Row("performance_overlay_position", "streaming", NOTHING, (e, d) -> OverlayChoice.save(e, 1),
                     set("performance_overlay_position", "bottom_right")),
             new Row("list_resolution_screen2", "streaming", NOTHING, on("checkbox_dual_screen"), set("list_resolution_screen2", "1280x720")),
             new Row("checkbox_covering_decoder_size", "streaming", NOTHING, set(com.limelight.ui.StreamOrientation.PREF, "rotate"),
                     on("checkbox_covering_decoder_size")),
-            new Row("checkbox_experimental_chipset_tuning", "advanced", NOTHING, (e, d) -> d.tunedChip = true,
+            new Row("checkbox_experimental_chipset_tuning", "advanced", true, NOTHING, (e, d) -> d.tunedChip = true,
                     on("checkbox_experimental_chipset_tuning")),
             new Row("game_info_igdb_client_secret", "advanced", NOTHING,
                     (e, d) -> gameInfoKeys().edit().putString(com.limelight.console.GameInfo.KEY_IGDB_ID, "id").commit(),
@@ -258,6 +275,7 @@ public class SettingsHideTest {
         prefs().edit().clear().commit();
         gameInfoKeys().edit().clear().commit();
         devices.touchpad = devices.mouse = devices.keyboard = devices.folds = devices.tunedChip = false;
+        devices.touchscreen = true;
         SharedPreferences.Editor editor = prefs().edit();
         state.accept(editor, devices);
         editor.commit();
@@ -283,11 +301,13 @@ public class SettingsHideTest {
                 StreamSettings.SettingsFragment fragment = open(screen, row.section);
                 assertNotNull(row.key, fragment.findPreference(row.key));
                 assertFalse(row.key + " does nothing now", visible(fragment).contains(row.key));
-                // Without leaving the screen: the setting it follows changes, or the device is attached.
+                // The IGDB client ID is set in its own dialog (anIgdbClientIdSetInItsDialogShowsTheSecretAtOnce).
+                if (row.key.equals(SettingRules.IGDB_SECRET)) continue;
+                // Without leaving the screen: the setting it follows changes (its listener), or the device is attached.
                 SharedPreferences.Editor editor = prefs().edit();
                 row.on.accept(editor, devices);
                 editor.commit();
-                fragment.devicesChanged();
+                if (row.device) fragment.devicesChanged();
                 settle(screen);
                 assertTrue(row.key + " acts now", visible(fragment).contains(row.key));
             }
@@ -345,24 +365,166 @@ public class SettingsHideTest {
     }
 
     @Test
-    public void aSwitchsOwnRowLeavesWithTheSwitch() {
+    public void aSwitchsOwnRowLeavesWithTheSwitchUnlessItIsChanged() {
         try (ActivityController<StreamSettings> controller = start()) {
             StreamSettings screen = controller.get();
-            reset((e, d) -> { TouchMode.save(e, TouchMode.TRACKPAD); e.putBoolean("checkbox_trackpad_momentum", true); });
+            // Every touch mode keeps them: Direct is not a reason to leave them out.
+            reset((e, d) -> { TouchMode.save(e, TouchMode.DIRECT); e.putBoolean("checkbox_trackpad_momentum", true); });
             StreamSettings.SettingsFragment fragment = open(screen, "input");
-            assertTrue(visible(fragment).containsAll(Arrays.asList("list_trackpad_acceleration_curve", "list_trackpad_momentum_glide")));
-            // Direct touch: Trackpad acceleration leaves, and its strength with it; the changed Glide after a flick stays.
-            SharedPreferences.Editor editor = prefs().edit();
-            TouchMode.save(editor, TouchMode.DIRECT);
-            editor.commit();
+            assertTrue(visible(fragment).containsAll(Arrays.asList(PreferenceConfiguration.TRACKPAD_ACCELERATION_PREF_STRING,
+                    SettingRules.ACCELERATION_CURVE, "seekbar_trackpad_speed", SettingRules.MOMENTUM_GLIDE)));
+            // No touch screen: Trackpad acceleration leaves, and its strength with it; Glide length, changed, stays though
+            // its switch, also changed, stays too.
+            prefs().edit().putString(SettingRules.MOMENTUM_GLIDE, "long").commit();
+            devices.touchscreen = false;
             fragment.devicesChanged();
             settle(screen);
             List<String> rows = visible(fragment);
             assertFalse(rows.contains(PreferenceConfiguration.TRACKPAD_ACCELERATION_PREF_STRING));
-            assertFalse("no strength without its switch", rows.contains("list_trackpad_acceleration_curve"));
-            assertTrue("changed, so it stays", rows.contains("checkbox_trackpad_momentum"));
-            assertTrue(rows.contains("list_trackpad_momentum_glide"));
+            assertFalse("no strength without its switch", rows.contains(SettingRules.ACCELERATION_CURVE));
+            assertTrue("changed, so it stays", rows.contains(SettingRules.MOMENTUM_GLIDE));
+            assertTrue(String.valueOf(fragment.findPreference(SettingRules.MOMENTUM_GLIDE).getSummary()),
+                    String.valueOf(fragment.findPreference(SettingRules.MOMENTUM_GLIDE).getSummary())
+                            .contains(context().getString(R.string.tag_unused_no_touchscreen)));
+            // A changed strength stays as well, with its reason.
+            prefs().edit().putString(SettingRules.ACCELERATION_CURVE, "strong").commit();
+            settle(screen);
+            assertTrue(visible(fragment).contains(SettingRules.ACCELERATION_CURVE));
         }
+    }
+
+    @Test
+    public void thermalProtectionIsAlwaysShownAndAPcsQualityChoiceKeepsTheMinimums() {
+        try (ActivityController<StreamSettings> controller = start()) {
+            List<String> rows = visible(open(controller.get(), "video"));
+            // A PC's or one stream's Automatic bitrate lets heat act, whatever the main settings say.
+            assertTrue(rows.toString(), rows.contains(PreferenceConfiguration.THERMAL_PROTECTION_PREF_STRING));
+            assertFalse(rows.contains("adaptive_quality_min_resolution"));
+        }
+        // The stream menu's Automatic quality, kept for one PC, uses the main minimums.
+        context().getSharedPreferences("AdaptiveQuality", Context.MODE_PRIVATE).edit().putString("pc", "motion").commit();
+        try (ActivityController<StreamSettings> controller = start()) {
+            List<String> rows = visible(open(controller.get(), "video"));
+            assertTrue(rows.toString(), rows.containsAll(Arrays.asList("adaptive_quality_min_resolution", "adaptive_quality_min_fps")));
+        }
+    }
+
+    @Test
+    public void aPcsGamesOrProfilesOwnValueKeepsTheRowItMakesAct() {
+        prefs().edit().putBoolean(SettingRules.SHOW_DEBUG, true).commit();
+        try (ActivityController<StreamSettings> controller = start()) {
+            StreamSettings screen = controller.get();
+            assertFalse(visible(open(screen, "display")).contains("upscaling_sharpness"));
+            assertFalse(visible(open(screen, "debug")).contains(SettingRules.PYROWAVE_PREACQUIRE));
+            assertFalse(visible(open(screen, "streaming")).contains(SettingRules.OVERLAY_POSITION));
+        }
+        // A game's upscaler that sharpens takes the main sharpness; a PC's PyroWave the main pre-acquire.
+        AppStreamSettings.save(context(), "pc", "game", 7, HostStreamProfile.deserialize("v2;upscaling=FSR1"));
+        context().getSharedPreferences(HostStreamProfile.PREFERENCES, Context.MODE_PRIVATE).edit()
+                .putString("pc", "v2;codec=FORCE_PYROWAVE").commit();
+        // The second screen shows its overlay without saving it.
+        prefs().edit().putBoolean("checkbox_dual_screen", true).commit();
+        try (ActivityController<StreamSettings> controller = start()) {
+            StreamSettings screen = controller.get();
+            assertTrue(visible(open(screen, "display")).contains("upscaling_sharpness"));
+            assertTrue(visible(open(screen, "debug")).contains(SettingRules.PYROWAVE_PREACQUIRE));
+            assertTrue(visible(open(screen, "streaming")).contains(SettingRules.OVERLAY_POSITION));
+        }
+        // A profile that sets its own sharpness with its upscaler leaves the main one nothing to do.
+        AppStreamSettings.save(context(), "pc", "game", 7, HostStreamProfile.deserialize("v2"));
+        StreamProfiles.create(context(), "Sharp", HostStreamProfile.deserialize("v2;upscaling=FSR1;sharpness=80"));
+        try (ActivityController<StreamSettings> controller = start()) {
+            assertFalse(visible(open(controller.get(), "display")).contains("upscaling_sharpness"));
+        }
+    }
+
+    @Test
+    public void aMouseAttachedOrRemovedShowsOrHidesItsRowsThroughTheListener() throws Exception {
+        android.hardware.input.InputManager input =
+                (android.hardware.input.InputManager) context().getSystemService(Context.INPUT_SERVICE);
+        ActivityController<StreamSettings> built = Robolectric.buildActivity(StreamSettings.class);
+        built.get().savedPcReader = task -> { };
+        // The device's own answers (SettingDevices.of), not a stand-in.
+        try (ActivityController<StreamSettings> controller = built.setup()) {
+            StreamSettings screen = controller.get();
+            StreamSettings.SettingsFragment fragment = open(screen, "input");
+            assertFalse(visible(fragment).contains("checkbox_mouse_nav_buttons"));
+            // Android 9 has no InputDevice.Builder: a named device given a mouse's source and an ID.
+            android.view.InputDevice mouse = org.robolectric.shadows.ShadowInputDevice.makeInputDeviceNamed("Mouse");
+            org.robolectric.util.ReflectionHelpers.setField(mouse, "mId", 41);
+            org.robolectric.util.ReflectionHelpers.setField(mouse, "mSources", android.view.InputDevice.SOURCE_MOUSE);
+            shadowOf(input).addInputDevice(mouse);
+            notifyListeners(input, 41, true);
+            settle(screen);
+            assertTrue("attached", visible(fragment).contains("checkbox_mouse_nav_buttons"));
+            removeDevice(input, 41);
+            notifyListeners(input, 41, false);
+            settle(screen);
+            assertFalse("removed", visible(fragment).contains("checkbox_mouse_nav_buttons"));
+            // Paused, the screen no longer listens.
+            controller.pause();
+            assertEquals(0, listeners(input).size());
+        }
+    }
+
+    /** InputManager's registered listeners, as Android calls them when a device comes or goes. */
+    private static List<android.hardware.input.InputManager.InputDeviceListener> listeners(android.hardware.input.InputManager input)
+            throws Exception {
+        java.lang.reflect.Field delegates = android.hardware.input.InputManager.class.getDeclaredField("mInputDeviceListeners");
+        delegates.setAccessible(true);
+        List<android.hardware.input.InputManager.InputDeviceListener> found = new ArrayList<>();
+        for (Object delegate : (List<?>) delegates.get(input)) {
+            java.lang.reflect.Field listener = delegate.getClass().getDeclaredField("mListener");
+            listener.setAccessible(true);
+            found.add((android.hardware.input.InputManager.InputDeviceListener) listener.get(delegate));
+        }
+        return found;
+    }
+
+    private static void notifyListeners(android.hardware.input.InputManager input, int id, boolean added) throws Exception {
+        List<android.hardware.input.InputManager.InputDeviceListener> registered = listeners(input);
+        assertFalse("the screen listens for devices", registered.isEmpty());
+        for (android.hardware.input.InputManager.InputDeviceListener listener : registered) {
+            if (added) listener.onInputDeviceAdded(id);
+            else listener.onInputDeviceRemoved(id);
+        }
+    }
+
+    /** Takes a device out of InputManager's list, as Android does when it is unplugged. */
+    private static void removeDevice(android.hardware.input.InputManager input, int id) throws Exception {
+        java.lang.reflect.Field devices = android.hardware.input.InputManager.class.getDeclaredField("mInputDevices");
+        devices.setAccessible(true);
+        ((android.util.SparseArray<?>) devices.get(input)).remove(id);
+    }
+
+    @Test
+    public void anIgdbClientIdSetInItsDialogShowsTheSecretAtOnce() {
+        try (ActivityController<StreamSettings> controller = start()) {
+            StreamSettings screen = controller.get();
+            StreamSettings.SettingsFragment fragment = open(screen, "advanced");
+            assertFalse(visible(fragment).contains(SettingRules.IGDB_SECRET));
+            Preference id = fragment.findPreference("game_info_igdb_client_id");
+            id.getOnPreferenceClickListener().onPreferenceClick(id);
+            androidx.appcompat.app.AlertDialog dialog =
+                    (androidx.appcompat.app.AlertDialog) org.robolectric.shadows.ShadowDialog.getLatestDialog();
+            android.widget.EditText field = findEditText(dialog.getWindow().getDecorView());
+            field.setText("client");
+            dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick();
+            settle(screen);
+            assertTrue("the secret can act now", visible(fragment).contains(SettingRules.IGDB_SECRET));
+        }
+    }
+
+    private static android.widget.EditText findEditText(android.view.View view) {
+        if (view instanceof android.widget.EditText) return (android.widget.EditText) view;
+        if (view instanceof android.view.ViewGroup) {
+            android.view.ViewGroup group = (android.view.ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                android.widget.EditText found = findEditText(group.getChildAt(i));
+                if (found != null) return found;
+            }
+        }
+        return null;
     }
 
     @Test
