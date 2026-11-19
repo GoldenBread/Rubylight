@@ -6,6 +6,7 @@ use std::{
     fs::{File, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
 
 /// How many bytes the log writes between checks that its path is still there.
@@ -122,6 +123,54 @@ impl RotatingFile {
         }
     }
 }
+/// How often a service log that could not be opened is tried again.
+const LOG_RETRY: Duration = Duration::from_secs(60);
+/// The service's log, `service.log` in `directory`. Opening it never fails: a
+/// log the service cannot use (read-only, a folder in its place, held by a
+/// program without write sharing, a file in place of the folder) must not keep
+/// the service, and with it the host, from starting. Until the log opens, its
+/// lines are dropped, and it is tried again at most every `LOG_RETRY`.
+pub fn service_log(directory: &Path) -> ServiceLog {
+    ServiceLog::new(directory, LOG_RETRY)
+}
+pub struct ServiceLog {
+    directory: PathBuf,
+    file: Option<RotatingFile>,
+    every: Duration,
+    next: Instant,
+}
+impl ServiceLog {
+    fn new(directory: &Path, every: Duration) -> Self {
+        let mut log = Self {
+            directory: directory.to_owned(),
+            file: None,
+            every,
+            next: Instant::now(),
+        };
+        log.try_open();
+        log
+    }
+    fn try_open(&mut self) {
+        self.file = std::fs::create_dir_all(&self.directory)
+            .and_then(|()| RotatingFile::open_default(&self.directory.join("service.log")))
+            .ok();
+        self.next = Instant::now() + self.every;
+    }
+}
+impl Write for ServiceLog {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.file.is_none() && Instant::now() >= self.next {
+            self.try_open();
+        }
+        match &mut self.file {
+            Some(file) => file.write(buf),
+            None => Ok(buf.len()),
+        }
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.as_mut().map_or(Ok(()), Write::flush)
+    }
+}
 fn append(path: &Path) -> io::Result<File> {
     #[cfg(test)]
     if tests::FAIL_OPEN.with(|fail| fail.borrow().as_deref() == Some(path)) {
@@ -203,6 +252,66 @@ mod tests {
             lines(&RotatingFile::rotated(&path, 1)),
             [0, 1, 2].map(|n| format!("{n:039}"))
         );
+    }
+
+    /// The service's log setup, as `main` runs it.
+    fn setup(directory: &Path) -> Box<dyn Write> {
+        Box::new(service_log(directory))
+    }
+
+    /// A `service.log` the service cannot open does not keep it from starting.
+    #[test]
+    fn a_read_only_log_does_not_stop_the_service() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("service.log");
+        std::fs::write(&path, b"").unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&path, permissions.clone()).unwrap();
+        setup(directory.path()).write_all(b"line\n").unwrap();
+        // Writable again only so the temporary folder can be removed.
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        std::fs::set_permissions(&path, permissions).unwrap();
+    }
+
+    #[test]
+    fn a_folder_in_place_of_the_log_does_not_stop_the_service() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::create_dir(directory.path().join("service.log")).unwrap();
+        setup(directory.path()).write_all(b"line\n").unwrap();
+    }
+
+    #[test]
+    fn a_file_in_place_of_the_logs_folder_does_not_stop_the_service() {
+        let directory = tempfile::tempdir().unwrap();
+        let logs = directory.path().join("logs");
+        std::fs::write(&logs, b"").unwrap();
+        setup(&logs).write_all(b"line\n").unwrap();
+    }
+
+    /// A program that holds the log without write sharing does not keep the
+    /// service from starting; once it lets go, the log is opened again.
+    #[cfg(windows)]
+    #[test]
+    fn a_log_held_without_write_sharing_does_not_stop_the_service() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("service.log");
+        std::fs::write(&path, b"").unwrap();
+        // FILE_SHARE_READ only.
+        let reader = OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&path)
+            .unwrap();
+        setup(directory.path()).write_all(b"line\n").unwrap();
+        let mut log = ServiceLog::new(directory.path(), Duration::ZERO);
+        log.write_all(b"dropped\n").unwrap();
+        drop(reader);
+        log.write_all(b"kept\n").unwrap();
+        drop(log);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "kept\n");
     }
 
     fn line(n: usize) -> String {

@@ -1,3 +1,5 @@
 # Windows service
 - **The service starts even when its log cannot be rotated.** A service log that had reached its size limit and could not be moved aside (another program holding it open) used to stop the service from starting; it now keeps writing to the same file, and the older service logs stay as they were instead of being dropped one by one.
 - **The service's log comes back after a rotation that could not reopen it.** When the log had been moved aside but the new file could not be opened, later writes pushed the file being written through the older logs until it was deleted; the next line now opens the log again, and no line is lost.
+- **The service starts and runs without a log file when its log cannot be opened at all.** A read-only `service.log`, a folder in its place, a program holding it without letting others write, or a file in place of the `logs` folder used to stop the service from starting, and with it the host. The service now starts without its log and tries it again every minute.
+- **A service log deleted or moved away while the service runs comes back, and one that cannot be opened again stays within its size limit.**

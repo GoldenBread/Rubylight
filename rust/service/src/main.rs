@@ -68,14 +68,10 @@ fn main() -> anyhow::Result<()> {
             .ok_or_else(|| anyhow::anyhow!("report path required"))?;
         return display_self_test(&report);
     }
-    let directory = installed_profile().join("logs");
-    std::fs::create_dir_all(&directory)?;
     let (writer, _guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
         .buffered_lines_limit(8192)
         .lossy(true)
-        .finish(logfile::RotatingFile::open_default(
-            &directory.join("service.log"),
-        )?);
+        .finish(logfile::service_log(&installed_profile().join("logs")));
     tracing_subscriber::fmt()
         .with_writer(writer)
         .with_ansi(false)
