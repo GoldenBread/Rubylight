@@ -720,6 +720,9 @@ fn picture(config: &Negotiated, phase: u32, scene: Scene) -> (Image, Vec<Vec<u16
         planes[0].push((yuv(*rgb)[0] * peak).round().clamp(0., peak) as u16);
     }
     let divisor = if config.yuv444 { 1 } else { 2 };
+    // PQ 4:2:0 averages its 2x2 block in light and codes the mean, as
+    // `pyroBlock` in color.hlsl does; SDR averages its codes.
+    let filter_in_light = config.hdr && divisor == 2;
     for y in (0..height).step_by(divisor) {
         for x in (0..width).step_by(divisor) {
             let mut rgb = [0.; 3];
@@ -727,9 +730,17 @@ fn picture(config: &Negotiated, phase: u32, scene: Scene) -> (Image, Vec<Vec<u16
                 for dx in 0..divisor {
                     let sample = source[(y as usize + dy) * width as usize + x as usize + dx];
                     for c in 0..3 {
-                        rgb[c] += sample[c] / (divisor * divisor) as f64;
+                        let value = if filter_in_light {
+                            butterpollo_core::image_quality::depq(sample[c])
+                        } else {
+                            sample[c]
+                        };
+                        rgb[c] += value / (divisor * divisor) as f64;
                     }
                 }
+            }
+            if filter_in_light {
+                rgb = rgb.map(butterpollo_core::image_quality::pq);
             }
             let values = yuv(rgb);
             for c in 1..3 {
