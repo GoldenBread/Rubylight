@@ -27,14 +27,27 @@ fn stock() -> &'static Negotiated {
 /// A stream as it launched for a client whose user set `configured` Kbps, with stereo audio
 /// at high quality.
 fn launched(configured: u32, codec: u8) -> Negotiated {
+    launched_under(configured, codec, &Config::default())
+}
+
+/// [`launched`] on a host configured as `config` then.
+fn launched_under(configured: u32, codec: u8, config: &Config) -> Negotiated {
     let mut stream = Negotiated {
         configured_bitrate_kbps: configured,
         codec,
         audio_quality: true,
         ..Negotiated::default()
     };
-    crate::stream_policy::apply(&mut stream, 60_000, &Config::default());
+    crate::stream_policy::apply(&mut stream, 60_000, config);
     stream
+}
+
+fn fec(percentage: u8) -> Config {
+    let mut config = Config::default();
+    config
+        .values
+        .insert("fec_percentage".into(), percentage.to_string());
+    config
 }
 
 fn stream() -> Stream<'static> {
@@ -194,6 +207,36 @@ fn a_bitrate_is_in_the_unit_of_the_launch() {
         decide(&request(7, 20_000, 0), &self::stream(), &config(0)).bitrate_kbps,
         Some(20_000)
     );
+    // The stream keeps the FEC it started with, so its share stays what the launch took,
+    // whatever `fec_percentage` says by now: at 50 % the launch's own number would halve
+    // the picture's bitrate, and at 0 % the stream would send more than was asked for.
+    for now in [fec(50), fec(0), fec(90)] {
+        assert_eq!(
+            decide(&request(8, 20_000, 0), &stream, &now).bitrate_kbps,
+            Some(14_988)
+        );
+    }
+    let half = launched_under(20_000, 0, &fec(50));
+    assert_eq!(half.bitrate_kbps, 8_988);
+    let halves = Stream {
+        launched: &half,
+        ..stream
+    };
+    assert_eq!(
+        decide(&request(9, 20_000, 0), &halves, &config(0)).bitrate_kbps,
+        Some(8_988)
+    );
+    // Above 80 % the launch takes no share off, and neither does a request.
+    let whole = launched_under(20_000, 0, &fec(90));
+    assert_eq!(whole.bitrate_kbps, 18_988);
+    let wholes = Stream {
+        launched: &whole,
+        ..stream
+    };
+    assert_eq!(
+        decide(&request(10, 20_000, 0), &wholes, &fec(20)).bitrate_kbps,
+        Some(18_988)
+    );
 }
 
 /// Every answer names the stream's bitrate in the unit of its requests: the number the
@@ -204,9 +247,41 @@ fn answers_name_the_bitrate_in_the_unit_of_the_launch() {
     let launch = launched(20_000, 0);
     let mut changes = RateChanges::default();
     assert_eq!(changes.client_bitrate_kbps(14_988, &launch), 20_000);
-    // The host's own controllers halved the encoder's bitrate.
-    assert_eq!(changes.client_bitrate_kbps(7_494, &launch), 10_000);
+    // The host's own controllers halved the encoder's bitrate: the number that gives the
+    // encoder as much, so a client that asks for it again leaves the encoder where it is.
+    assert_eq!(changes.client_bitrate_kbps(7_494, &launch), 10_633);
+    for encoder in [
+        1, 288, 500, 2_000, 7_494, 14_987, 14_988, 14_989, 100_000, 398_988,
+    ] {
+        let client = changes.client_bitrate_kbps(encoder, &launch);
+        assert_eq!(
+            crate::stream_policy::runtime_encoder_kbps(&launch, client, &config(0)),
+            encoder,
+            "{client} for {encoder}"
+        );
+        assert!(
+            client == 1
+                || crate::stream_policy::runtime_encoder_kbps(&launch, client - 1, &config(0))
+                    < encoder,
+            "{client} for {encoder} is the lowest"
+        );
+    }
     assert_eq!(changes.client_bitrate_kbps(9_000, stock()), 9_000);
+    // A launch `max_bitrate` capped runs at the cap's bitrate, and says the cap: the
+    // device's own 50 Mbps would stand in its stream menu for a stream at 20.
+    let capped = launched_under(50_000, 0, &config(20_000));
+    assert_eq!(capped.bitrate_kbps, 14_988);
+    assert_eq!(changes.client_bitrate_kbps(14_988, &capped), 20_000);
+    // PyroWave's share is a fixed amount.
+    let wave = launched(100_000, 3);
+    assert_eq!(
+        changes.client_bitrate_kbps(wave.bitrate_kbps, &wave),
+        100_000
+    );
+    assert_eq!(
+        changes.client_bitrate_kbps(wave.bitrate_kbps - 10_000, &wave),
+        90_000
+    );
 
     let mut reconfigure = Reconfiguration::new(mode(1920, 1080, 60));
     let stream = Stream {
@@ -231,7 +306,7 @@ fn answers_name_the_bitrate_in_the_unit_of_the_launch() {
     changes.record(&rate, &mut reconfigure, Instant::now());
     assert_eq!(changes.client_bitrate_kbps(encoder, &launch), 30_000);
     // Another route (the HTTP bitrate change) moved the encoder since.
-    assert_eq!(changes.client_bitrate_kbps(11_494, &launch), 15_000);
+    assert_eq!(changes.client_bitrate_kbps(11_494, &launch), 15_633);
     // On a stock launch the number asked for is the encoder's.
     let mut stock_changes = RateChanges::default();
     let own = decide(&request(3, 12_000, 0), &self::stream(), &config(0));

@@ -163,6 +163,12 @@ pub struct Negotiated {
     pub bitrate_kbps: u32,
     #[serde(default)]
     pub configured_bitrate_kbps: u32,
+    /// The FEC share [`crate::stream_policy::apply`] took off the bitrate the
+    /// client's user set: `fec_percentage` when the stream launched, 0 above
+    /// 80 %. The stream keeps the FEC it started with, so a bitrate asked for
+    /// mid-stream takes this share off too, whatever the setting says by then.
+    #[serde(default = "default_launch_fec")]
+    pub launch_fec: u8,
     #[serde(default)]
     pub csc_mode: u8,
     pub codec: u8,
@@ -234,6 +240,10 @@ pub struct Negotiated {
     #[serde(default)]
     pub audio_codec: u8,
 }
+/// `fec_percentage`'s default.
+fn default_launch_fec() -> u8 {
+    20
+}
 impl Default for Negotiated {
     fn default() -> Self {
         Self {
@@ -245,6 +255,7 @@ impl Default for Negotiated {
             rate_millihz: 0,
             bitrate_kbps: 20000,
             configured_bitrate_kbps: 0,
+            launch_fec: default_launch_fec(),
             csc_mode: 2,
             codec: 0,
             hdr: false,

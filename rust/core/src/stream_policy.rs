@@ -1474,14 +1474,29 @@ pub fn apply(stream: &mut Negotiated, launch_millihz: u32, config: &Config) {
     if limit && (1..=4_000_000).contains(&launch_millihz) {
         stream.rate_millihz = launch_millihz;
     }
-    stream.bitrate_kbps = encoder_bitrate_kbps(stream, config);
+    let fec = config.integer("fec_percentage", 20);
+    stream.launch_fec = if (0..=80).contains(&fec) {
+        fec as u8
+    } else {
+        0
+    };
+    stream.bitrate_kbps = encoder_share_kbps(stream, bitrate_ceiling_kbps(config));
 }
-/// The encoder's bitrate for `stream`, under `max_bitrate`. A client that sent
-/// the bitrate its user set (`configured_bitrate_kbps`) gets that number less
-/// the FEC share (`fec_percentage`), audio and 500 Kbps of overhead, as
-/// Sunshine takes it, so video, parity and audio together stay within it; one
-/// that sent none already took its own share off `bitrate_kbps`.
-pub fn encoder_bitrate_kbps(stream: &Negotiated, config: &Config) -> u32 {
+/// `max_bitrate` in Kbps, or the most a bitrate field holds.
+fn bitrate_ceiling_kbps(config: &Config) -> u64 {
+    match config.integer("max_bitrate", 0) {
+        ceiling if ceiling > 0 => ceiling as u64,
+        _ => NO_BITRATE_CEILING_KBPS,
+    }
+}
+const NO_BITRATE_CEILING_KBPS: u64 = i32::MAX as u64 / 1000;
+/// The encoder's bitrate for `stream`, at most `ceiling` Kbps of what it asks
+/// for. A client that sent the bitrate its user set (`configured_bitrate_kbps`)
+/// gets that number less the FEC share (`launch_fec`), audio and 500 Kbps of
+/// overhead, as Sunshine takes it, so video, parity and audio together stay
+/// within it; one that sent none already took its own share off
+/// `bitrate_kbps`.
+fn encoder_share_kbps(stream: &Negotiated, ceiling: u64) -> u32 {
     let configured = u64::from(stream.configured_bitrate_kbps);
     let requested = if configured > 0 {
         configured
@@ -1493,16 +1508,10 @@ pub fn encoder_bitrate_kbps(stream: &Negotiated, config: &Config) -> u32 {
     // by that factor, which sent two to four times the bitrate the client set:
     // more than an Onn 4K Pro's 100 Mbps port carries. Each frame gets a half
     // or a quarter of Vibepollo's budget instead.
-    let ceiling = config.integer("max_bitrate", 0);
-    let mut budget = requested.min(if ceiling > 0 {
-        ceiling as u64
-    } else {
-        i32::MAX as u64 / 1000
-    });
+    let mut budget = requested.min(ceiling);
     if configured > 0 {
-        let fec = config.integer("fec_percentage", 20);
-        if stream.codec != 3 && (0..=80).contains(&fec) {
-            budget = budget * (100 - fec as u64) / 100;
+        if stream.codec != 3 {
+            budget = budget * (100 - u64::from(stream.launch_fec.min(80))) / 100;
         }
         let audio = u64::from(stream.audio_channels) * if stream.audio_quality { 256 } else { 96 };
         if stream.codec == 3 {
@@ -1519,18 +1528,50 @@ pub fn encoder_bitrate_kbps(stream: &Negotiated, config: &Config) -> u32 {
 }
 /// The encoder's bitrate for a bitrate of `kbps` a client asks for mid-stream
 /// (0x553C), in the unit of its launch: the stream of a client that sent the
-/// bitrate its user set gets what a launch with `kbps` would have
-/// ([`encoder_bitrate_kbps`]), so a number means the same in the client's
-/// settings and in its stream menu. Without that, a request for the launch's
-/// own 20 Mbps raised an encoder running at 14988 Kbps to 20000. A stream
-/// launched without one is asked for the encoder's own bitrate.
+/// bitrate its user set gets what its launch with `kbps` would have had, under
+/// today's `max_bitrate`, so a number means the same in the client's settings
+/// and in its stream menu. Without that, a request for the launch's own
+/// 20 Mbps raised an encoder running at 14988 Kbps to 20000. A stream launched
+/// without one is asked for the encoder's own bitrate.
 pub fn runtime_encoder_kbps(launched: &Negotiated, kbps: u32, config: &Config) -> u32 {
     if launched.configured_bitrate_kbps == 0 {
         return kbps;
     }
     let mut stream = launched.clone();
     stream.configured_bitrate_kbps = kbps;
-    encoder_bitrate_kbps(&stream, config)
+    encoder_share_kbps(&stream, bitrate_ceiling_kbps(config))
+}
+/// [`runtime_encoder_kbps`] the other way: the bitrate in the unit of the
+/// launch that an encoder running at `encoder_kbps` stands for, which is the
+/// lowest that gives the encoder that much, so asking for it again leaves the
+/// encoder where it is. The launch's own number where the encoder still runs
+/// at the launch's bitrate; `max_bitrate` plays no part.
+pub fn runtime_client_kbps(launched: &Negotiated, encoder_kbps: u32) -> u32 {
+    if launched.configured_bitrate_kbps == 0 {
+        return encoder_kbps;
+    }
+    if encoder_share_kbps(launched, NO_BITRATE_CEILING_KBPS) == encoder_kbps {
+        return launched.configured_bitrate_kbps;
+    }
+    let mut stream = launched.clone();
+    let mut reaches = |kbps: u32| {
+        stream.configured_bitrate_kbps = kbps;
+        encoder_share_kbps(&stream, NO_BITRATE_CEILING_KBPS) >= encoder_kbps
+    };
+    // The share never grows a bitrate, and it never falls as the bitrate rises.
+    let (mut low, mut high) = (encoder_kbps.max(1), NO_BITRATE_CEILING_KBPS as u32);
+    if !reaches(high) {
+        return high;
+    }
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if reaches(middle) {
+            high = middle;
+        } else {
+            low = middle + 1;
+        }
+    }
+    low
 }
 /// `dscp_tagging` (default on, as in Sunshine, LizardByte/Sunshine#6067):
 /// off, the host tags neither video nor audio with DSCP and asks Windows for

@@ -220,21 +220,21 @@ pub struct RateChanges {
 
 impl RateChanges {
     /// The stream's bitrate in the unit its client asks in, while the encoder runs at
-    /// `live_kbps`: the number the client asked for last, else the one it launched with,
-    /// scaled when the host or another route has moved the encoder since. A stream launched
-    /// without the bitrate its user set is asked for the encoder's own.
+    /// `live_kbps`: the number the client asked for last while the encoder still runs at
+    /// what that set, else the number that stands for the encoder's bitrate
+    /// ([`crate::stream_policy::runtime_client_kbps`]): the launch's own, or a lower one
+    /// when `max_bitrate` capped the launch or the host or another route has moved the
+    /// encoder since. A stream launched without the bitrate its user set is asked for the
+    /// encoder's own.
     pub fn client_bitrate_kbps(&self, live_kbps: u32, launched: &Negotiated) -> u32 {
-        let (client, encoder) = self
-            .client
-            .unwrap_or((launched.configured_bitrate_kbps, launched.bitrate_kbps));
-        if client == 0 || encoder == 0 {
-            return live_kbps;
+        match self.client {
+            Some((client, encoder))
+                if encoder == live_kbps && launched.configured_bitrate_kbps != 0 =>
+            {
+                client
+            }
+            _ => crate::stream_policy::runtime_client_kbps(launched, live_kbps),
         }
-        if live_kbps == encoder {
-            return client;
-        }
-        (u64::from(client) * u64::from(live_kbps) / u64::from(encoder)).min(u64::from(u32::MAX))
-            as u32
     }
 
     /// Records a decided request, queueing its switch in `reconfigure`. A rate the stream

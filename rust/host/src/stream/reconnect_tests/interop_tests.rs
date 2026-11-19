@@ -562,8 +562,11 @@ fec_max_percentage = 40
 }
 
 /// Nightjar's `rlRateChange=1` adds 0x553C to its stream's DESCRIBE; its requests reach the
-/// host, which caps a bitrate by `max_bitrate` and answers each with its serial. A launch
-/// without it is neither offered 0x553C nor sends a request.
+/// host, which caps a bitrate by `max_bitrate` and answers each with its serial. Nightjar
+/// asks in the unit of its bitrate setting, which its launch carried: the answer names that
+/// number and the encoder gets its share of it, as at launch (80 %, less 512 Kbps of audio
+/// and 500 of overhead). A launch without `rlRateChange` is neither offered 0x553C nor sends
+/// a request.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn nightjar_changes_the_bitrate_mid_stream() -> Result<()> {
     use butterpollo_core::rate_change::{Outcome, RateChangeRequest, RateChangeResult, Reason};
@@ -646,7 +649,8 @@ async fn nightjar_changes_the_bitrate_mid_stream() -> Result<()> {
             fps: Outcome::UNCHANGED,
         })
     );
-    assert_eq!(session.bitrate.load(Ordering::Acquire), 30_000);
+    assert_ne!(session.config.configured_bitrate_kbps, 0);
+    assert_eq!(session.bitrate.load(Ordering::Acquire), 22_988);
     stream.send(ask(2, 12_000))?;
     until("the host's answer", LOADED, || {
         answer(&recorder, 2).is_some()
@@ -657,7 +661,7 @@ async fn nightjar_changes_the_bitrate_mid_stream() -> Result<()> {
         (applied.bitrate, applied.bitrate_kbps),
         (Outcome::APPLIED, 12_000)
     );
-    assert_eq!(session.bitrate.load(Ordering::Acquire), 12_000);
+    assert_eq!(session.bitrate.load(Ordering::Acquire), 8_588);
     stream.stop();
     until("sessions released", LOADED, || {
         h.h.sessions.lock().unwrap().idle()
