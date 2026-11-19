@@ -26,8 +26,11 @@ export const route = $state({ path: location.pathname, search: location.search }
 /** Asked before leaving the page in the app (e.g. unsaved changes). */
 type Guard = (to: string) => boolean | Promise<boolean>;
 let guard: Guard | null = null;
-let restoring = false;
+/** The entry a restoring history.go lands on; its popstate is ours and changes nothing. */
+let restoring: number | null = null;
 let deciding = false;
+
+const indexOf = () => history.state?.rubylightIndex ?? 0;
 
 /** Install a guard; returns a function that removes it. */
 export function guardNavigation(check: Guard): () => void {
@@ -43,30 +46,52 @@ function sync() {
   route.path = location.pathname;
   route.search = location.search;
 }
-window.addEventListener('popstate', async (event) => {
-  const next = (event as PopStateEvent).state?.rubylightIndex ?? 0;
-  if (restoring) {
-    restoring = false;
+/**
+ * Ask the guard about leaving for `to`. A Back or Forward pressed while it is open has already moved
+ * the address, so the answer settles both: leave adopts the address as the page, stay walks the history
+ * back to the page shown. True only when the answer is leave and the address did not move meanwhile.
+ */
+async function ask(to: string, popped: boolean): Promise<boolean> {
+  deciding = true;
+  let leave = false;
+  try {
+    leave = (await guard?.(to)) ?? true;
+  } catch {
+    leave = false;
+  } finally {
+    deciding = false;
+  }
+  const current = indexOf();
+  const moved = current !== index;
+  if (leave && (moved || popped)) {
+    index = current;
+    // Back and forward swap the page at once, with no transition: the browser restores the
+    // scroll position as the entry changes, which a page drawn a frame later would lose.
+    sync();
+    return false;
+  }
+  if (!leave && moved) {
+    restoring = index;
+    history.go(index - current);
+  }
+  return leave;
+}
+
+window.addEventListener('popstate', () => {
+  const at = indexOf();
+  if (restoring !== null) {
+    const expected = restoring;
+    restoring = null;
+    if (at === expected) return;
+  }
+  if (!guard) {
+    index = at;
+    sync();
     return;
   }
-  if (guard) {
-    if (deciding) return;
-    deciding = true;
-    const leave = await guard(location.pathname + location.search);
-    deciding = false;
-    if (!leave) {
-      const current = history.state?.rubylightIndex ?? 0;
-      if (index !== current) {
-        restoring = true;
-        history.go(index - current);
-      }
-      return;
-    }
-  }
-  index = history.state?.rubylightIndex ?? next;
-  // Back and forward swap the page at once, with no transition: the browser restores the
-  // scroll position as the entry changes, which a page drawn a frame later would lose.
-  sync();
+  // The open question settles this move too.
+  if (deciding) return;
+  void ask(location.pathname + location.search, true);
 });
 
 /** The name a game's cover carries while it morphs into the game's page or back (App.svelte styles it). */
@@ -143,12 +168,7 @@ function go(to: string, replace: boolean) {
 export async function mayLeave(to: string): Promise<boolean> {
   if (deciding) return false;
   if (!guard) return true;
-  deciding = true;
-  try {
-    return await guard(to);
-  } finally {
-    deciding = false;
-  }
+  return ask(to, false);
 }
 
 export function navigate(to: string, options: { replace?: boolean; force?: boolean } = {}) {
