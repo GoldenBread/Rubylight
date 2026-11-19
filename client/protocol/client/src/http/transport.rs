@@ -808,7 +808,8 @@ pub(crate) fn upgrade(request: &Request<'_>, cancel: &Cancel, protocol: &str, fi
         let StreamOwned { conn, sock } = stream;
         sock.set_read_timeout(None)?;
         sock.set_write_timeout(None)?;
-        Ok(Ok(Upgraded { socket: sock.try_clone()?, tls: Mutex::new(UpgradedTls { conn, socket: sock, early }) }))
+        Ok(Ok(Upgraded { socket: sock.try_clone()?, writing: Mutex::new(()),
+            tls: Mutex::new(UpgradedTls { conn, socket: sock, early }) }))
     })();
     cancel.unregister(id);
     match result {
@@ -821,10 +822,15 @@ pub(crate) fn upgrade(request: &Request<'_>, cancel: &Cancel, protocol: &str, fi
 const CLOSE_NOTIFY_WAIT: Duration = Duration::from_millis(100);
 
 /// A TLS connection the host switched to another protocol. One thread may read while others
-/// write: a read waits for bytes without holding the TLS state.
+/// write: a read waits for bytes without holding the TLS state, and a write holds it only to
+/// encrypt, never while the socket takes the records.
+///
+/// Lock order: `writing` before `tls`; a read takes `tls` alone.
 pub struct Upgraded {
-    /// Waits for bytes and closes the connection.
+    /// Waits for bytes, takes the encrypted records and closes the connection.
     socket: TcpStream,
+    /// Orders writers, so records reach the socket in the order they were encrypted.
+    writing: Mutex<()>,
     tls: Mutex<UpgradedTls>,
 }
 
@@ -883,20 +889,26 @@ impl Upgraded {
 
     /// Sends `bytes` whole, as one write.
     pub fn write_all(&self, mut bytes: &[u8]) -> std::io::Result<()> {
-        let mut tls = self.tls();
-        let UpgradedTls { conn, socket, .. } = &mut *tls;
+        let _writing = self.writing.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut records = Vec::new();
         while !bytes.is_empty() {
-            // rustls takes as much as its send buffer holds, 64 KiB, and none until it drained.
-            let n = conn.writer().write(bytes)?;
-            if n == 0 && !conn.wants_write() {
-                return Err(ErrorKind::WriteZero.into());
-            }
-            bytes = &bytes[n..];
-            while conn.wants_write() {
-                if conn.write_tls(socket)? == 0 {
+            {
+                // Encrypts under the TLS lock; a blocked socket write below must not hold it,
+                // or the read that would drain the host's side waits behind it.
+                let mut tls = self.tls();
+                let conn = &mut tls.conn;
+                // rustls takes as much as its send buffer holds, 64 KiB, and none until it drained.
+                let n = conn.writer().write(bytes)?;
+                if n == 0 && !conn.wants_write() {
                     return Err(ErrorKind::WriteZero.into());
                 }
+                bytes = &bytes[n..];
+                while conn.wants_write() {
+                    conn.write_tls(&mut records)?;
+                }
             }
+            (&self.socket).write_all(&records)?;
+            records.clear();
         }
         Ok(())
     }
@@ -906,14 +918,20 @@ impl Upgraded {
     /// within [`CLOSE_NOTIFY_WAIT`]: the shutdown wakes it.
     pub fn close(&self) {
         let deadline = std::time::Instant::now() + CLOSE_NOTIFY_WAIT;
-        let tls = loop {
-            match self.tls.try_lock() {
-                Ok(tls) => break Some(tls),
-                Err(std::sync::TryLockError::Poisoned(poisoned)) => break Some(poisoned.into_inner()),
-                Err(std::sync::TryLockError::WouldBlock) if std::time::Instant::now() >= deadline => break None,
-                Err(std::sync::TryLockError::WouldBlock) => std::thread::sleep(Duration::from_millis(1)),
+        fn wait<T>(lock: &Mutex<T>, deadline: std::time::Instant) -> Option<std::sync::MutexGuard<'_, T>> {
+            loop {
+                match lock.try_lock() {
+                    Ok(guard) => break Some(guard),
+                    Err(std::sync::TryLockError::Poisoned(poisoned)) => break Some(poisoned.into_inner()),
+                    Err(std::sync::TryLockError::WouldBlock) if std::time::Instant::now() >= deadline => break None,
+                    Err(std::sync::TryLockError::WouldBlock) => std::thread::sleep(Duration::from_millis(1)),
+                }
             }
-        };
+        }
+        // The close_notify goes after any write's records, never inside them: it waits for
+        // the writers, then for the TLS state.
+        let writing = wait(&self.writing, deadline);
+        let tls = writing.as_ref().and_then(|_| wait(&self.tls, deadline));
         if let Some(mut tls) = tls {
             let UpgradedTls { conn, socket, .. } = &mut *tls;
             conn.send_close_notify();

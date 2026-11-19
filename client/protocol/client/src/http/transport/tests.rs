@@ -554,6 +554,42 @@ fn an_upgraded_connection_carries_writes_larger_than_the_tls_buffer() {
 }
 
 #[test]
+fn an_upgraded_connection_reads_while_a_write_waits_for_the_host() {
+    let host_name = Host::parse("127.0.0.1").unwrap();
+    let (done, finished) = std::sync::mpsc::channel::<()>();
+    let (port, config, server) = tls_host(move |mut tls| {
+        read_head_of(&mut tls);
+        tls.write_all(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: test/1\r\n\r\n").unwrap();
+        tls.flush().unwrap();
+        // Reads nothing more, so the client's large write fills the buffers and blocks;
+        // then sends while that write waits.
+        std::thread::sleep(Duration::from_millis(300));
+        tls.write_all(b"hello").unwrap();
+        tls.flush().unwrap();
+        let _ = finished.recv_timeout(Duration::from_secs(10));
+    });
+    let request = Request { host: &host_name, port, target: "tunnel", tls: Some(config),
+        timeouts: Timeouts { connect: Duration::from_secs(1), read: Some(Duration::from_secs(10)) }, body_limit: 1024 };
+    let Ok(Ok(upgraded)) = upgrade(&request, &Cancel::default(), "test/1", &[]) else { panic!("no upgrade") };
+    let upgraded = Arc::new(upgraded);
+    let writing = upgraded.clone();
+    let writer = std::thread::spawn(move || writing.write_all(&vec![7; 64 << 20]));
+    std::thread::sleep(Duration::from_millis(100));
+    let reading = upgraded.clone();
+    let (got, read) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut bytes = [0; 5];
+        let _ = got.send(reading.read_exact(&mut bytes).map(|()| bytes));
+    });
+    let read = read.recv_timeout(Duration::from_secs(3));
+    upgraded.close();
+    let _ = done.send(());
+    assert!(writer.join().unwrap().is_err(), "the host never read the write");
+    server.join().unwrap();
+    assert_eq!(read.expect("the read waited behind the blocked write").unwrap(), *b"hello");
+}
+
+#[test]
 fn closing_an_upgraded_connection_ends_its_tls_cleanly_and_wakes_a_read() {
     let host_name = Host::parse("127.0.0.1").unwrap();
     let (port, config, server) = tls_host(|mut tls| {
