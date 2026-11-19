@@ -515,6 +515,19 @@ public class GameRateChangeTest {
     }
 
     @Test
+    public void turnedOffBeforeTheStartsTakeoverWentOutNothingIsSent() {
+        prefs.keepBitrate = true;
+        startStream(recording());
+        // Within the first second, before the stream start's delayed takeover runs.
+        keepSwitch(openDialog()).setChecked(false);
+        ShadowLooper.idleMainLooper();
+        runFor(5);
+        assertEquals("the player turned it off first", 0, sent.size());
+        assertFalse(game.adaptation.keepBitrateShown());
+        assertFalse(prefs.keepBitrate);
+    }
+
+    @Test
     public void turningKeepMyBitrateOffStoresThePcDecidesAndSendsNothing() {
         stored().edit().putBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, true)
                 .putBoolean(com.limelight.preferences.AutoBitrateChoice.SETTINGS_KEY, true).commit();

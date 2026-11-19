@@ -508,7 +508,8 @@ final class GameAdaptation {
     // automatic bitrate's first sample is.
     private void sendKeepBitrate(StreamRateChanges stream) {
         game.bitrateHandler.postDelayed(() -> {
-            if (!game.connected || game.rateChanges != stream) return;
+            // Turned off in the stream menu before this ran: nothing goes out, and the switch stays off.
+            if (!game.connected || game.rateChanges != stream || !game.bitrateKept) return;
             int kbps = keepKbps();
             if (stream.sendTakeover(kbps, SystemClock.uptimeMillis())) {
                 LimeLog.info("Keep my bitrate: sent " + kbps + " kbps as a bitrate change so the PC stops lowering it");
