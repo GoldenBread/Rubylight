@@ -1,0 +1,5 @@
+# Host fixes
+- **The console answers without a stutter during game-only audio.** The host looked through the PC's programs once a second to find the game's sound while it held the running game's record, so console and launch requests waited each time; they no longer do.
+- **A capture that missed its turn no longer costs two seconds and a restart of the conversion.** When the GPU colour conversion could not wait for a capture from another graphics adapter, its next picture in that slot waited two seconds and then rebuilt the conversion; it now carries on with the next capture.
+- **The host's bitrate adjustment counts loss right after a keyframe the device asked for, with Slow down after video loss off.** Such a keyframe was taken for one the host made itself, so loss and keyframe requests in the second after it were not counted.
+- **Slice delivery on NVIDIA works for HEVC streams that never split a frame across encoders.** On a GPU with several NVENC engines, slices were turned off whenever split encoding was not set to Off, even where it never engages, such as below 2112 rows with split encoding on Automatic.
