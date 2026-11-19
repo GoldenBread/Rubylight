@@ -109,7 +109,7 @@ pub const GLOBAL: &[Setting] = settings! {
         "wgc_direct_encoder_input", "Pass GPU capture directly to the encoder", Bool;
         "gpu_compute_conversion", "Copy and convert captures on a compute queue", Bool;
         "idd_push_fence_ring", "GPU fence transport for direct driver push (on by default; turn off to use the keyed-mutex ring)", Bool;
-        "compute_queue_realtime", "Run that compute queue at real-time GPU priority", Bool;
+        "compute_queue_realtime", "Can hang the GPU driver: run that compute queue, and PyroWave's encode queue, at real-time GPU priority (an HDR stream on an RX 7900 XT ended in an AMD engine timeout; leave it off)", Bool;
         "wgc_slot_aligned_publish", "Align capture publication to frame slots", Bool;
         "fec_percentage", "Forward error correction (%)", Number;
         "adaptive_fec", "Adapt error correction to reported packet loss", Bool;
