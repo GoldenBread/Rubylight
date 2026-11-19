@@ -957,6 +957,10 @@ impl Process {
             }
             let startup = startup;
             let mut info = PROCESS_INFORMATION::default();
+            // The process is created suspended and assigned to its own job below. When it may
+            // break away from the host's job, it is in no job between creation and that
+            // assignment: a host that dies in that instant leaves a suspended process that never
+            // ran anything, as detached commands always could.
             let flags = CREATE_SUSPENDED
                 | CREATE_UNICODE_ENVIRONMENT
                 | if stdio.is_some() {
@@ -1033,6 +1037,9 @@ impl Process {
                         && e.code()
                             == windows::core::HRESULT::from_win32(ERROR_ACCESS_DENIED.0) =>
                 {
+                    tracing::debug!(
+                        "the job around this host does not allow leaving it: what the command leaves running ends with the host"
+                    );
                     create(PROCESS_CREATION_FLAGS(
                         flags.0 & !CREATE_BREAKAWAY_FROM_JOB.0,
                     ))?;
