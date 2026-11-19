@@ -745,6 +745,12 @@ final class GameVideoOutput {
         if (game.decoderRenderer == null) {
             return;
         }
+        // A turn or fold the decoder could not take while it was rebuilt is asked for once it is
+        // configured again (called on the decoder thread; the check runs on this one).
+        game.decoderRenderer.setReconfigureLimitsListener(() -> game.bitrateHandler.post(() -> {
+            game.bitrateHandler.removeCallbacks(game.checkReconfigure);
+            game.bitrateHandler.post(game.checkReconfigure);
+        }));
         int[] size = game.decoderRenderer.getStreamSize();
         streamStartedLandscape = size[0] >= size[1];
         int fpsMillihz = game.decoderRenderer.getStreamFrameRateMilliHz();
@@ -820,6 +826,11 @@ final class GameVideoOutput {
                 " fps (was " + game.reconfigureRequester.width() + "x" + game.reconfigureRequester.height() + " at " +
                 game.reconfigureRequester.fpsMillihz() / 1000f + " fps)");
         if (!game.decoderRenderer.prepareForReconfigure(request[0], request[1])) {
+            if (game.decoderRenderer.reconfigureLimitsPending()) {
+                // The decoder is being set up again; its listener asks again once it can say.
+                LimeLog.info("Reconfigure: the decoder is being set up again; asking once it is");
+                return false;
+            }
             LimeLog.warning("Reconfigure: the decoder cannot switch to " + request[0] + "x" + request[1] +
                     "; the stream stays as it is");
             if (StreamOrientation.followsRotation(game.streamOrientation, game.hostShapesStream) && !orientationNoticeShown) {

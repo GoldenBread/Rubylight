@@ -280,6 +280,10 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             new java.util.concurrent.atomic.AtomicReference<>();
     // A frame rate the UI set that the codec's format and the upscaler still have to take (applyStreamChanges).
     private final AtomicBoolean pendingFrameRate = new AtomicBoolean();
+    // A rebuild cleared the limits and its configure has not published new ones yet.
+    private volatile boolean reconfigureLimitsRebuilding;
+    // Told on the decoder thread when a rebuild's configure published the limits again.
+    private volatile Runnable reconfigureLimitsListener;
 
     private static final class ReconfigureCaps {
         final int[] limits;
@@ -1055,9 +1059,29 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         return reconfigureLimits;
     }
 
+    /**
+     * Whether the limits are missing only because a rebuild is setting a decoder up again: a size
+     * the decoder refuses now may be taken once {@link #setReconfigureLimitsListener} is told.
+     */
+    public boolean reconfigureLimitsPending() {
+        return reconfigureLimitsRebuilding && decoderFailure == null && !stopping;
+    }
+
+    /** Runs on the decoder thread each time a rebuild's configure has published the limits again; never waits. */
+    public void setReconfigureLimitsListener(Runnable listener) {
+        reconfigureLimitsListener = listener;
+    }
+
+    void notifyReconfigureLimits() {
+        Runnable listener = reconfigureLimitsListener;
+        if (listener != null) listener.run();
+    }
+
     // After every configure (configureAndStartDecoder, which every setup, recovery and rebuild
     // ends with) and at cleanup: what getReconfigureLimits() hands out until the next one.
     private void publishReconfigureLimits() {
+        boolean rebuilt = reconfigureLimitsRebuilding;
+        reconfigureLimitsRebuilding = false;
         MediaCodecInfo.VideoCapabilities caps = reconfigureCapabilities();
         if (caps == null) {
             reconfigureLimits = null;
@@ -1072,6 +1096,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         }
         reconfigureLimits = new ReconfigureCaps(
                 new int[] {maxWidth, maxHeight, caps.getWidthAlignment(), caps.getHeightAlignment()}, caps);
+        // A turn or fold the UI could not ask for during the rebuild is asked for now.
+        if (rebuilt) notifyReconfigureLimits();
     }
 
     /**
@@ -3488,6 +3514,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
         @Override public void rebuild(boolean codecFailed) {
             // It may move to another decoder: no size change is offered until that one is configured.
+            reconfigureLimitsRebuilding = true;
             reconfigureLimits = null;
             if (codecFailed) {
                 videoDecoder.release();

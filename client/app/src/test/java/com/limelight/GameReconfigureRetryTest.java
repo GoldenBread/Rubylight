@@ -61,6 +61,25 @@ public class GameReconfigureRetryTest {
     }
 
     @Test
+    public void aTurnDuringADecoderRebuildIsCarriedOutAfterIt() {
+        Renderer[] renderer = new Renderer[1];
+        Game activity = turnedStream(renderer);
+        renderer[0].rebuilding = true;
+        ReflectionHelpers.callInstanceMethod(activity.videoOutput, "startReconfigureTracking");
+        ShadowLooper.idleMainLooper(2, TimeUnit.SECONDS);
+        assertTrue(ReconfigureBridge.requests.isEmpty());
+        assertFalse("no decoder-limit notice for a decoder being rebuilt",
+                ReflectionHelpers.<Boolean>getField(activity.videoOutput, "orientationNoticeShown"));
+
+        // The rebuild configured its decoder and published what it can take.
+        renderer[0].rebuilding = false;
+        ReflectionHelpers.callInstanceMethod(renderer[0], "notifyReconfigureLimits");
+        ShadowLooper.idleMainLooper(2, TimeUnit.SECONDS);
+        assertEquals(1, ReconfigureBridge.requests.size());
+        assertArrayEquals(new int[] {1920, 1080, 60000}, ReconfigureBridge.requests.get(0));
+    }
+
+    @Test
     public void aRequestThatWasNotSentIsTakenBackFromTheDecoder() {
         ReconfigureBridge.accepts = false;
         Renderer[] renderer = new Renderer[1];
@@ -96,6 +115,10 @@ public class GameReconfigureRetryTest {
             if (rebuilding) return false;
             prepared++;
             return true;
+        }
+
+        @Override public boolean reconfigureLimitsPending() {
+            return rebuilding;
         }
 
         @Override public void cancelReconfigure() {
