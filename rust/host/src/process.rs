@@ -337,6 +337,18 @@ fn inferred_working_dir(command: &str) -> String {
         .map(|parent| parent.to_string_lossy().into_owned())
         .unwrap_or_default()
 }
+/// The processes of this host's user session, among which a running app's
+/// game processes are found. Listing them takes milliseconds: list them
+/// before locking `current_app`, which console and launch requests wait on.
+pub fn session_processes() -> Result<Vec<butterpollo_core::steam::Process>> {
+    let session = butterpollo_windows::process::current_session()?;
+    let mut processes = butterpollo_windows::process::processes()?;
+    // A launcher may report the same executable in several signed-in
+    // sessions. Game ownership never crosses this host's user session.
+    processes
+        .retain(|p| butterpollo_windows::process::process_session(p.pid).ok() == Some(session));
+    Ok(processes)
+}
 fn directory(s: &str) -> Option<&Path> {
     if s.is_empty() {
         None
@@ -362,11 +374,13 @@ impl RunningApp {
     /// Only established launch ownership can choose a game-audio target. In
     /// particular, never capture Steam/Playnite itself or an arbitrary foreground
     /// window when its game process has not been identified.
-    pub fn audio_process(&self) -> Result<butterpollo_windows::process::AudioProcess> {
-        let (owned, processes) = self.game_processes()?;
-        butterpollo_windows::process::AudioProcess::open(butterpollo_core::audio_scope::root(
-            &owned, &processes,
-        )?)
+    /// `processes` is [`session_processes`], listed before the caller locked
+    /// `current_app`.
+    pub fn audio_root(
+        &self,
+        processes: &[butterpollo_core::steam::Process],
+    ) -> Result<butterpollo_core::audio_scope::Identity> {
+        butterpollo_core::audio_scope::root(&self.owned_processes(processes)?, processes)
     }
     /// The verified game processes and every process they started, whose
     /// devices game-only audio sets. None for an app without one (Desktop, a
@@ -414,16 +428,18 @@ impl RunningApp {
     fn game_processes(
         &self,
     ) -> Result<(BTreeMap<u32, u64>, Vec<butterpollo_core::steam::Process>)> {
-        let session = butterpollo_windows::process::current_session()?;
-        let mut processes = butterpollo_windows::process::processes()?;
-        // A launcher may report the same executable in several signed-in
-        // sessions. Game ownership never crosses this host's user session.
-        processes
-            .retain(|p| butterpollo_windows::process::process_session(p.pid).ok() == Some(session));
+        let processes = session_processes()?;
+        Ok((self.owned_processes(&processes)?, processes))
+    }
+    /// The verified game processes (pid → creation time) among `processes`.
+    fn owned_processes(
+        &self,
+        processes: &[butterpollo_core::steam::Process],
+    ) -> Result<BTreeMap<u32, u64>> {
         let owned = if let Some(tracker) = &self.steam {
             tracker.tracked.clone()
         } else if let Some(playnite) = &self.playnite {
-            playnite.audio_processes(&processes)?
+            playnite.audio_processes(processes)?
         } else {
             let ids = self.child.as_ref().context("this app has no owned game process; game-only audio and background streaming are unavailable for Desktop or detached commands")?.process_ids()?;
             processes
@@ -432,7 +448,7 @@ impl RunningApp {
                 .map(|p| (p.pid, p.started))
                 .collect()
         };
-        Ok((owned, processes))
+        Ok(owned)
     }
     pub fn with_environment(app: &App, environment: BTreeMap<String, String>) -> Result<Self> {
         Self::with_environment_cancellable(app, environment, None)

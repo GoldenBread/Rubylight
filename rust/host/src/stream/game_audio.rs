@@ -57,19 +57,12 @@ impl GameAudio {
                         // A co-op player hears its own slot's game instance.
                         let selected = match s.launch.nucleus {
                             Some(seat) => crate::nucleus::audio(&h, seat),
-                            None => h
-                                .current_app
-                                .lock()
-                                .unwrap()
-                                .as_ref()
-                                .filter(|app| {
-                                    app.id == s.launch.app_id
-                                        && Some(&app.generation) == generation.as_ref()
-                                })
-                                .ok_or_else(|| {
-                                    anyhow::anyhow!("this stream has no matching launched game")
-                                })
-                                .and_then(crate::process::RunningApp::audio_process),
+                            None => launched_game(
+                                &h,
+                                s.launch.app_id,
+                                generation.as_ref(),
+                                crate::process::session_processes,
+                            ),
                         }
                         .map_err(|error| format!("{error:#}"));
                         if !s.launch.host_audio {
@@ -146,6 +139,27 @@ impl GameAudio {
             }
         }
     }
+}
+/// The audio process of the game launched as `app_id` in `generation`, among
+/// the processes `list` gives. They are listed before `current_app` is
+/// locked: that takes milliseconds once a second, and console and launch
+/// requests wait on the lock.
+fn launched_game(
+    h: &Shared,
+    app_id: u32,
+    generation: Option<&String>,
+    list: impl FnOnce() -> Result<Vec<butterpollo_core::steam::Process>>,
+) -> Result<AudioProcess> {
+    let processes = list()?;
+    let root = h
+        .current_app
+        .lock()
+        .unwrap()
+        .as_ref()
+        .filter(|app| app.id == app_id && Some(&app.generation) == generation)
+        .ok_or_else(|| anyhow::anyhow!("this stream has no matching launched game"))
+        .and_then(|app| app.audio_root(&processes))?;
+    AudioProcess::open(root)
 }
 /// Every process of the captured tree plays on a virtual sink nobody hears,
 /// so the game's sound reaches only the client (#59): a launcher's game
@@ -377,6 +391,28 @@ mod tests {
             r"E:\Games\LEGO Batman\LEGOBatmanLotDK-Win64-Shipping.exe"
         ));
         assert!(!windows_program(&format!(r"{root}Apps\game.exe")));
+    }
+
+    /// Listing the PC's processes takes milliseconds once a second; console
+    /// and launch requests must not wait for it on `current_app`.
+    #[test]
+    fn the_game_s_processes_are_listed_outside_the_running_app_lock() {
+        let fixture = Fixture::new();
+        let app = fixture.host.apps.read().unwrap()[0].clone();
+        let running =
+            crate::process::RunningApp::with_environment(&app, Default::default()).unwrap();
+        let (id, generation) = (running.id, running.generation.clone());
+        *fixture.host.current_app.lock().unwrap() = Some(running);
+        let mut unlocked = None;
+        let _ = launched_game(&fixture.host, id, Some(&generation), || {
+            unlocked = Some(fixture.host.current_app.try_lock().is_ok());
+            Ok(Vec::new())
+        });
+        assert_eq!(
+            unlocked,
+            Some(true),
+            "the processes were listed while current_app was locked"
+        );
     }
 
     #[test]
