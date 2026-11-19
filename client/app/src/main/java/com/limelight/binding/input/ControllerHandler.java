@@ -276,7 +276,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
         // Initialize the default context for events with no device
         initNoDeviceContext(defaultContext, (short) 0);
-        handheldContext = onscreenOwnPlayerSession ? new InputDeviceContext() : defaultContext;
+        // Controllers set to Off: the built-in pad gets a context of its own too, which never sends
+        // (see sendControllerInputPacket), so it is not the on-screen gamepad's.
+        handheldContext = onscreenOwnPlayerSession || !prefConfig.sendControllers ? new InputDeviceContext() : defaultContext;
         if (handheldContext != defaultContext) initNoDeviceContext(handheldContext, deviceFallbackSlot);
 
         // Get the initially attached set of gamepads. As each gamepad receives
@@ -741,7 +743,8 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             inputContext.emulatingButtonFlags = 0;
             inputContext.pendingExit = false;
         }
-        if (context.assignedControllerNumber && controllerSlotsWithInput.get(context.controllerNumber) != 0) {
+        if (context.assignedControllerNumber && controllerSlotsWithInput.get(context.controllerNumber) != 0 &&
+                (prefConfig.sendControllers || context == defaultContext)) {
             // Bypass fusion while the other contexts sharing this number are being cleared.
             // Only a slot the host has seen input on can hold anything: a neutral report for
             // any other slot makes the host create a default pad there, which then ignores
@@ -969,7 +972,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         // We must do this after clearing the currentControllers entry so this
         // causes the device to be removed on the server PC.
         short activeControllerMask = getActiveControllerMask();
-        if (context.assignedControllerNumber && (controllerSlotsWithInput.get(context.controllerNumber) != 0 ||
+        if (prefConfig.sendControllers && context.assignedControllerNumber && (controllerSlotsWithInput.get(context.controllerNumber) != 0 ||
                 !hasPendingControllerArrival(context.controllerNumber) ||
                 (activeControllerMask & (1 << context.controllerNumber)) == 0)) {
             // A cleared slot can retire a pre-launch prepared pad even before arrival.
@@ -2907,7 +2910,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         }
 
         // A pad pinned as Xbox told the host it has no touchpad
-        if (dropsMotionAndTouchpad(context.buttonMap)) {
+        if (dropsMotionAndTouchpad(context.buttonMap) || !prefConfig.sendControllers) {
             return true;
         }
 
@@ -3616,7 +3619,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
         @Override
         public void onSensorChanged(SensorEvent sensorEvent) {
-            if (closed || stopped || !sensorsEnabled || !inputEnabled) {
+            if (closed || stopped || !sensorsEnabled || !inputEnabled || !prefConfig.sendControllers) {
                 return;
             }
             // Before the duplicate check, which drops the repeated zeros this looks for.
@@ -3682,7 +3685,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             synchronized (motionSendLock) {
                 // Asked again under the lock: the main thread may have ended this pad's motion and
                 // sent its stationary report since the check above, and this sample must not follow it.
-                if (closed || stopped || !sensorsEnabled || !inputEnabled) {
+                if (closed || stopped || !sensorsEnabled || !inputEnabled || !prefConfig.sendControllers) {
                     return;
                 }
                 if (motionType == MoonBridge.LI_MOTION_TYPE_GYRO) {
@@ -4839,7 +4842,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     @Override
     public void reportControllerTouch(int controllerId, byte eventType, int pointerId, float x, float y, float pressure) {
         UsbDeviceContext context = usbDeviceContexts.get(controllerId);
-        if (!stopped && inputEnabled && context != null && context.assignedControllerNumber &&
+        if (!stopped && inputEnabled && prefConfig.sendControllers && context != null && context.assignedControllerNumber &&
                 (context.capabilities() & MoonBridge.LI_CCAP_TOUCHPAD) != 0) {
             conn.sendControllerTouchEvent((byte)context.controllerNumber, eventType, pointerId, x, y, pressure);
         }
@@ -4848,7 +4851,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     @Override
     public void reportControllerMotion(int controllerId, byte motionType, float x, float y, float z) {
         UsbDeviceContext context = usbDeviceContexts.get(controllerId);
-        if (!stopped && inputEnabled && sensorsEnabled && prefConfig.gamepadMotionSensors && context != null &&
+        if (!stopped && inputEnabled && sensorsEnabled && prefConfig.sendControllers && prefConfig.gamepadMotionSensors && context != null &&
                 context.assignedControllerNumber && !dropsMotionAndTouchpad(context.buttonMap)) {
             if (motionType == MoonBridge.LI_MOTION_TYPE_GYRO) {
                 GyroAxisTransformer mapping = GyroDiagnosticOverlay.isFlydigiForced()

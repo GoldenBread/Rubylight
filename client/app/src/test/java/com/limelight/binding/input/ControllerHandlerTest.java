@@ -185,6 +185,67 @@ public class ControllerHandlerTest {
         }
     }
 
+    private static void controllersOffPhysicalInput(boolean onscreen, boolean expectOnscreenSend) {
+        ControllerInputReleaseTest.MenuGame activity = Robolectric.buildActivity(ControllerInputReleaseTest.MenuGame.class).get();
+        final List<String> events = new ArrayList<>();
+        RecordingConnection connection = new RecordingConnection() {
+            @Override public int sendControllerArrivalEvent(byte slot, short mask, byte type, int buttons, short caps) {
+                events.add("arrival"); return 0;
+            }
+            @Override public void sendControllerInput(short number, short mask, int buttons, byte leftTrigger,
+                                                       byte rightTrigger, short leftX, short leftY, short rightX, short rightY) {
+                events.add("input " + number + " " + buttons + " " + leftX);
+            }
+        };
+        PreferenceConfiguration prefs = new PreferenceConfiguration();
+        prefs.sendControllers = false;
+        prefs.onscreenController = onscreen;
+        prefs.backAsGuide = true;
+        prefs.guideMenuHoldMs = 0;
+        ControllerHandler handler = new ControllerHandler(activity, connection, null, prefs) {
+            @Override protected boolean[] findInternalGamepadAndSelect() { return new boolean[] {true, true, true}; }
+        };
+        ControllerHandler.InputDeviceContext context = ReflectionHelpers.getField(handler, "defaultContext");
+        context.assignedControllerNumber = true;
+        context.leftStickXAxis = android.view.MotionEvent.AXIS_X;
+        context.leftStickYAxis = android.view.MotionEvent.AXIS_Y;
+        int keyboard = android.view.InputDevice.SOURCE_KEYBOARD;
+        try {
+            // The built-in pad (device 0): a button, a stick and Back as Guide.
+            assertTrue(handler.handleButtonDown(new KeyEvent(1000, 1000, KeyEvent.ACTION_DOWN,
+                    KeyEvent.KEYCODE_BUTTON_B, 0, 0, 0, 0)));
+            android.view.MotionEvent.PointerProperties[] props = {new android.view.MotionEvent.PointerProperties()};
+            android.view.MotionEvent.PointerCoords[] coords = {new android.view.MotionEvent.PointerCoords()};
+            coords[0].setAxisValue(android.view.MotionEvent.AXIS_X, 1f);
+            android.view.MotionEvent stick = android.view.MotionEvent.obtain(1000, 1000, android.view.MotionEvent.ACTION_MOVE,
+                    1, props, coords, 0, 0, 1f, 1f, 0, 0, android.view.InputDevice.SOURCE_JOYSTICK, 0);
+            handler.handleMotionEvent(stick);
+            assertTrue(handler.handleHandheldBackAsGuide(new KeyEvent(1000, 1000, KeyEvent.ACTION_DOWN,
+                    KeyEvent.KEYCODE_BACK, 0, 0, -1, 0, 0, keyboard)));
+            assertTrue(handler.handleHandheldBackAsGuide(new KeyEvent(1000, 1000, KeyEvent.ACTION_UP,
+                    KeyEvent.KEYCODE_BACK, 0, 0, -1, 0, 0, keyboard)));
+            assertEquals("Nothing a physical control does reaches the PC", new ArrayList<String>(), events);
+
+            if (expectOnscreenSend) {
+                handler.reportOscState(ControllerPacket.A_FLAG, (short) 0, (short) 0, (short) 0, (short) 0, (byte) 0, (byte) 0);
+                assertEquals("Only the on-screen state", java.util.Collections.singletonList(
+                        "input 0 " + ControllerPacket.A_FLAG + " 0"), events);
+            }
+        } finally {
+            handler.destroy();
+        }
+    }
+
+    @Test
+    public void controllersOffKeepsTheBuiltInPadOutOfTheOnscreenGamepadsPacket() {
+        controllersOffPhysicalInput(true, true);
+    }
+
+    @Test
+    public void controllersOffWithNoOnscreenControlsSendsNothingAtAll() {
+        controllersOffPhysicalInput(false, false);
+    }
+
     // #49: a Retroid's built-in pad is listed as external, so a system Back counts as spare whenever a
     // gamepad is attached, unless a built-in pad has no Select of its own and uses that Back as Select.
     @Test
