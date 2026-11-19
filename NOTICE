@@ -226,12 +226,13 @@ Artemide_Experimental_Async: the MediaTek low-latency preset set by decoder name
 MediaTek flags first entered Artemis in alonsojr1980's commits b84a9ec1 and f836c8d6), the
 operating rate without the real-time priority, reference frame invalidation on MediaTek
 and the Tegra keys. The MediaTek key list of Nightjar's preset follows the first configure
-try of that branch at its commit 32e38f0e, after its commits 359f83c3 and 8dc03f3f, with
-boost and clock level 1: it leaves out the ultra-low-latency key, which the fork keeps
-behind a setting, and the real-time priority, and adds Nightjar's own
+try of that branch at its commit 32e38f0e (its commit 359f83c3 removed the four frame skip
+and drop keys), with boost and clock level 1: it leaves out the ultra-low-latency key,
+which the fork keeps behind a setting, and the real-time priority, and adds Nightjar's own
 low-latency.mode.value. The shorter queues on the first configure try are also Moonlight
 V+'s (see below); the full preset's values on the second try (preload 1, 4 ms waits, queue
-depth 3) are those of the fork's earlier MediaTek preset on its branch moonlight-noir.
+depth 3) are those of the branch's own earlier preset (its commit 8dc03f3f); the fork's
+branch moonlight-noir sends the same three values.
 The TV display compatibility dot (client/app/src/main/java/com/limelight/ui/
 CompositorHeartbeat.java, with its test CompositorHeartbeatTest.java) is ported from the
 fork's app/src/main/java/com/limelight/ui/CompositorHeartbeat.java and its test, branch

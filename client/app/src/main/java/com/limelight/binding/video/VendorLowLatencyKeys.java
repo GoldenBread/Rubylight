@@ -106,10 +106,10 @@ final class VendorLowLatencyKeys {
         // output paced by the app, and the ".value" twins of the two waits, which some MediaTek
         // builds read instead of the plain names. The frame skip and drop keys (nvop.skip,
         // skip.mode, drop.nonref.frame, frame-drop.policy) are not sent: that branch removed them
-        // (its 359f83c3, and 8dc03f3f with a block that also set boost level 2). The
-        // picture-quality key pq is not sent either: it never existed on that branch. The values
-        // below (preload 1, depth 3, 4 ms) are those of the fork's earlier MediaTek preset on its
-        // moonlight-noir branch; the fork's first try sends the MEDIATEK_SHORT values.
+        // in its 359f83c3. The picture-quality key pq is not sent either: it never existed on
+        // that branch. The values below (level 1, preload 1, depth 3, 4 ms) are those of the one
+        // preset its 8dc03f3f put in place of a stronger and a milder one; the fork's first try
+        // sends the MEDIATEK_SHORT values.
         Map<String, Integer> mtk = new LinkedHashMap<>();
         for (Map.Entry<String, Integer> entry : known.entrySet()) {
             if (entry.getKey().startsWith("vendor.mtk.")) {

@@ -427,7 +427,7 @@ public class PreferenceConfiguration {
     public boolean frameWarp;
     // Opt-in decoder keys still being measured (docs/devices.md, Candidate per-chip changes)
     public boolean experimentalChipsetTuning;
-    /** A tiny dot over the video changes colour every 100 ms (GameVideoOutput.updateCompositorHeartbeat). Listed on TVs only. */
+    /** A tiny dot over the video changes colour every 100 ms (GameVideoOutput.updateCompositorHeartbeat). Listed on a TV, or while it is on. */
     public boolean tvDisplayCompatibility;
     public boolean bindAllUsb;
     public boolean mouseEmulation;
