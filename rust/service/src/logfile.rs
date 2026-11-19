@@ -14,7 +14,7 @@ pub struct RotatingFile {
     size: u64,
     limit: u64,
     keep: usize,
-    /// The open file was moved to `name.1` and the live path could not be
+    /// The open file was moved to `name.0` and the live path could not be
     /// opened again.
     detached: bool,
 }
@@ -46,8 +46,25 @@ impl RotatingFile {
         PathBuf::from(name)
     }
     fn rotate(&mut self) -> io::Result<()> {
+        // As the host's log (`butterpollo_core::logfile`): the open file moves
+        // first, to `name.0`: when a reader without delete sharing holds it, no
+        // older file has moved or gone yet, so a rotation that fails on every
+        // write costs no history. Windows allows renaming the open file: Rust
+        // opens files shareable for deletion, as do readers that follow the
+        // log. A `name.0` left by a rotation that failed below moves up before
+        // the open file takes its place.
+        let staged = Self::rotated(&self.path, 0);
+        if !staged.exists() {
+            std::fs::rename(&self.path, &staged)?;
+            // Until the live path opens, writes go on into `name.0`, and the
+            // next write tries to open it again.
+            self.detached = true;
+            self.file = append(&self.path)?;
+            self.detached = false;
+            self.size = 0;
+        }
         let _ = std::fs::remove_file(Self::rotated(&self.path, self.keep));
-        for n in (1..self.keep).rev() {
+        for n in (0..self.keep).rev() {
             match std::fs::rename(
                 Self::rotated(&self.path, n),
                 Self::rotated(&self.path, n + 1),
@@ -56,20 +73,11 @@ impl RotatingFile {
                 _ => {}
             }
         }
-        // Windows allows renaming the open file: Rust opens files shareable
-        // for deletion, as do readers that follow the log.
-        std::fs::rename(&self.path, Self::rotated(&self.path, 1))?;
-        // Until the live path opens, writes go on into `name.1`, and the
-        // next write tries to open it again.
-        self.detached = true;
-        self.file = append(&self.path)?;
-        self.detached = false;
-        self.size = 0;
         Ok(())
     }
     /// Opens the live path again after a rotation moved the open file away but
-    /// could not open it. While it still fails, writing goes on into the moved
-    /// file, which no rotation moves meanwhile.
+    /// could not open it; then the moved file takes its place among the older
+    /// ones. While it still fails, writing goes on into the moved file.
     fn reopen(&mut self) {
         let Ok(file) = append(&self.path) else {
             return;
@@ -77,6 +85,11 @@ impl RotatingFile {
         self.size = file.metadata().map_or(0, |m| m.len());
         self.file = file;
         self.detached = false;
+        if Self::rotated(&self.path, 0).exists() {
+            // Moves only the older files: `name.0` is there, so the reopened
+            // file stays the live one.
+            let _ = self.rotate();
+        }
     }
 }
 fn append(path: &Path) -> io::Result<File> {
@@ -172,6 +185,49 @@ mod tests {
         assert_eq!(
             lines(&RotatingFile::rotated(&path, 1)),
             [0, 1, 2].map(|n| format!("{n:039}"))
+        );
+    }
+
+    /// A reader that holds the log without delete sharing blocks the rotation on
+    /// every write; the older files stay as they were and no line is lost.
+    #[cfg(windows)]
+    #[test]
+    fn a_rotation_that_cannot_move_the_open_file_keeps_the_older_files() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("service.log");
+        let mut log = RotatingFile::open(&path, 100, 2).unwrap();
+        let write = |log: &mut RotatingFile, line: usize| {
+            log.write_all(format!("{line:039}\n").as_bytes()).unwrap()
+        };
+        for line in 0..5 {
+            write(&mut log, line);
+        }
+        let older =
+            |path: &Path| [1, 2].map(|n| std::fs::read(RotatingFile::rotated(path, n)).ok());
+        let before = older(&path);
+        assert!(before.iter().all(Option::is_some));
+        // FILE_SHARE_READ | FILE_SHARE_WRITE, without FILE_SHARE_DELETE.
+        let reader = OpenOptions::new()
+            .read(true)
+            .share_mode(3)
+            .open(&path)
+            .unwrap();
+        for line in 5..12 {
+            write(&mut log, line);
+        }
+        assert_eq!(older(&path), before);
+        assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 8);
+        // Once the reader lets go, the next write rotates again.
+        drop(reader);
+        write(&mut log, 12);
+        assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 1);
+        assert_eq!(
+            std::fs::read_to_string(RotatingFile::rotated(&path, 1))
+                .unwrap()
+                .lines()
+                .count(),
+            8
         );
     }
 

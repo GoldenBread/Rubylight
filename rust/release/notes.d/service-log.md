@@ -1,0 +1,3 @@
+# Windows service
+- **The service starts even when its log cannot be rotated.** A service log that had reached its size limit and could not be moved aside (another program holding it open) used to stop the service from starting; it now keeps writing to the same file, and the older service logs stay as they were instead of being dropped one by one.
+- **The service's log comes back after a rotation that could not reopen it.** When the log had been moved aside but the new file could not be opened, later writes pushed the file being written through the older logs until it was deleted; the next line now opens the log again, and no line is lost.
