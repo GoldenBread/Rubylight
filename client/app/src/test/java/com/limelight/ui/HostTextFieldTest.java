@@ -117,6 +117,18 @@ public class HostTextFieldTest {
     }
 
     @Test
+    public void askingForNoCharactersBeforeTheCursorGivesAnEmptyString() {
+        HostTextField field = new HostTextField(TYPE_TEXT, 0);
+        field.commit("abc", sink);
+        assertEquals("", field.textBeforeCursor(0));
+        assertEquals("", field.textBeforeCursor(-1));
+        assertEquals("c", field.textBeforeCursor(1));
+        field.commit("😀", sink);
+        assertEquals("a cut inside an emoji moves past it", "", field.textBeforeCursor(1));
+        assertEquals("😀", field.textBeforeCursor(2));
+    }
+
+    @Test
     public void deletingPastTheTypedTextStillReachesTheHost() {
         HostTextField field = new HostTextField(TYPE_TEXT, 0);
         field.commit("ab", sink);

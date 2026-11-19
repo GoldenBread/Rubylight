@@ -205,7 +205,7 @@ public final class HostTextField {
     public String textBeforeCursor(int length) {
         String all = committed + composing;
         int start = Math.max(0, all.length() - Math.max(length, 0));
-        if (start > 0 && Character.isLowSurrogate(all.charAt(start))) start++;
+        if (start > 0 && start < all.length() && Character.isLowSurrogate(all.charAt(start))) start++;
         return all.substring(start);
     }
 
