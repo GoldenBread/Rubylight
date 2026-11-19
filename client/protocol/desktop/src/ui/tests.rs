@@ -2128,6 +2128,30 @@ fn the_remote_check_runs_shows_its_measurements_and_errors_verbatim() {
     assert!(!shows(&f, "Relay (DERP)"), "the last check's route is gone");
 }
 
+/// With two PCs' pages on the trail (PC 1's details, PC 2's games, PC 2's details), Settings
+/// over the newest keeps PC 2's check and Files page, not PC 1's.
+#[test]
+fn settings_over_the_newest_pc_page_keeps_that_pcs_check_and_files() {
+    let mut f = details(Reach::Online, "MJOLNIR_STATE_FREE", "");
+    let first = f.hosts.list[0].id;
+    let second = first + 1;
+    let probe = FakeProbe::answering(relay_check());
+    f.l.remote.start(second, probe.clone(), "uid".into(), Arc::new(|| {}));
+    let downloads = files::tests::Folder::new("newest-pc");
+    f.l.files.page = Some(files::Page::new(second, files::tests::fake(true, true), files::tests::native_answer().capabilities,
+        Ok(downloads.0.clone()), Arc::new(|| {})));
+    f.l.trail.push((Screen::HostDetails(first), None));
+    f.l.trail.push((Screen::Files(first), None));
+    f.l.trail.push((Screen::Apps(second), None));
+    f.l.trail.push((Screen::HostDetails(second), None));
+    f.l.trail.push((Screen::Files(second), None));
+    f.l.go(Screen::Settings);
+    f.settle();
+    assert_eq!(probe.cancels.load(Ordering::SeqCst), 0, "PC 2's check was cancelled");
+    assert!(f.l.remote.running(), "PC 2's check is gone");
+    assert!(f.l.files.page.as_ref().is_some_and(|page| page.host == second), "PC 2's Files page is gone");
+}
+
 #[test]
 fn cancel_and_leaving_the_page_stop_the_check() {
     let mut f = details(Reach::Online, "MJOLNIR_STATE_FREE", "");

@@ -1167,7 +1167,8 @@ impl Launcher {
         }
         // A check whose page was left is cancelled here. Settings opened over the page does not
         // leave it: Back returns to the page and its check.
-        let page = std::iter::once(&self.screen).chain(self.trail.iter().map(|(screen, _)| screen)).find_map(|screen| match screen {
+        // The newest page is the one Back returns to: the trail ends with the latest.
+        let page = std::iter::once(&self.screen).chain(self.trail.iter().rev().map(|(screen, _)| screen)).find_map(|screen| match screen {
             Screen::HostDetails(id) => Some(*id),
             _ => None,
         });
@@ -1187,7 +1188,7 @@ impl Launcher {
         self.neural.poll(game);
         // Likewise a Files page that was left goes, once its transfers are done and a failure among
         // them has been shown.
-        let files = std::iter::once(&self.screen).chain(self.trail.iter().map(|(screen, _)| screen)).find_map(|screen| match screen {
+        let files = std::iter::once(&self.screen).chain(self.trail.iter().rev().map(|(screen, _)| screen)).find_map(|screen| match screen {
             Screen::Files(id) => Some(*id),
             _ => None,
         });
