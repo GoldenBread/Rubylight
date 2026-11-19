@@ -1366,6 +1366,11 @@ impl Control {
         self.restore.take()
     }
 
+    /// The bitrate from before either limit, while one is in force.
+    pub fn limited_from(&self) -> Option<u32> {
+        self.restore
+    }
+
     /// One 0x5547 payload at host time `now_us`, joined with `ledger`. Returns whether it was
     /// a valid report.
     pub fn on_report(&mut self, ledger: &SendLedger, now_us: u64, payload: &[u8]) -> bool {

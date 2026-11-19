@@ -532,7 +532,7 @@ async fn bitrate(
                 applied,
                 "max_bitrate and the 500 Mbps runtime cap",
             );
-            s.set_client_bitrate(applied);
+            s.set_client_encoder_bitrate(applied);
             count += 1;
             // The card warns about a PyroWave stream below the level where the project's test
             // scenes kept detail at launch; a runtime change sets or clears it the same way.

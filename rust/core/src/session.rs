@@ -131,6 +131,18 @@ impl Stats {
 /// Points a statistical FEC share must fall before the encoder's split
 /// follows it between fences.
 const FEC_SPLIT_HYSTERESIS: u32 = 5;
+/// The host's FEC share inside the bitrate a stream launched with: what
+/// `stream_policy::apply` took off the bitrate the client's user set.
+fn launch_fec_share(stream: &Negotiated) -> u32 {
+    if stream.configured_bitrate_kbps == 0 || stream.codec == 3 {
+        0
+    } else {
+        u32::from(stream.launch_fec.min(80))
+    }
+}
+/// The latched split while host bitrate adaptation budgets FEC itself: the
+/// encoder gets the bitrate as it is.
+const FEC_SPLIT_NONE: u32 = u32::MAX;
 fn fec_split_kbps(budget: u32, fec: u32) -> u32 {
     if budget == 0 {
         return 0;
@@ -196,6 +208,18 @@ pub struct Session<P = (), A = ()> {
     /// share in `fec_split`, latched at the last fence; see [`Self::encoder_bitrate`].
     fec_split_on: AtomicBool,
     fec_split: AtomicU32,
+    /// The host's FEC share that is inside `bitrate`, which the split puts
+    /// back before it takes the client's: the launch's
+    /// ([`launch_fec_share`]) from the start and after a bitrate in the
+    /// launch's unit, 0 after one that is the encoder's own. Written with
+    /// `bitrate` and read with it ([`Self::encoder_bitrate`]).
+    fec_split_launch: AtomicU32,
+    /// The bitrate from before a cut by the link-rate or congestion
+    /// controller, 0 while none is in force. They size a cut as the encoder's
+    /// own rate, the FEC share in use counted as parity
+    /// (`WireBudget::encoder_kbps`): the share comes off this bitrate, not off
+    /// the cut.
+    fec_split_full: AtomicU32,
     /// Capture timing locked to the client's display, from its 0x5530 reports.
     pub phase_sync: std::sync::Mutex<crate::phase_sync::PhaseSync>,
     /// The stream's current mode and the client's 0x5532 requests to change it.
@@ -296,6 +320,7 @@ impl<P, A> Session<P, A> {
     pub fn new(launch: Launch<P, A>, config: Negotiated) -> Arc<Self> {
         let launch_peer = launch.peer.to_canonical();
         let bitrate = config.bitrate_kbps;
+        let launch_share = launch_fec_share(&config);
         let started = Instant::now();
         let picture = (
             u16::try_from(config.width).unwrap_or(u16::MAX),
@@ -335,6 +360,8 @@ impl<P, A> Session<P, A> {
             client_fec_on: AtomicBool::new(false),
             fec_split_on: AtomicBool::new(false),
             fec_split: AtomicU32::new(0),
+            fec_split_launch: AtomicU32::new(launch_share),
+            fec_split_full: AtomicU32::new(0),
             phase_sync: Default::default(),
             reconfigure: std::sync::Mutex::new(reconfigure),
             rate_changes: Default::default(),
@@ -668,31 +695,77 @@ impl<P, A> Session<P, A> {
         usize::from(percent)
     }
     /// The encoder's bitrate for the next frame. With a client-chosen FEC
-    /// share F, `bitrate` is the video budget and the encoder gets
-    /// budget × 100 / (100 + F), so video and parity together fit it. F moves
-    /// at a `fence`, an IDR or a new encoder, and under
-    /// `rlFecPercentage=auto` also after a report (see
+    /// share F, video and parity together fit the video budget: the encoder
+    /// gets budget × 100 / (100 + F). F moves at a `fence`, an IDR or a new
+    /// encoder, and under `rlFecPercentage=auto` also after a report (see
     /// [`Self::follow_fec_report`]): the encoder takes the new rate on the next
     /// frame, without a keyframe. Host bitrate adaptation already budgets FEC:
-    /// while it runs, the encoder gets `bitrate` as it is.
+    /// while it runs, the encoder gets `bitrate` as it is. A cut by the
+    /// link-rate or congestion controller is the encoder's own rate as well,
+    /// its parity already counted: the encoder gets the cut, and never more
+    /// than its share of the bitrate from before it (`fec_split_full`). Split
+    /// again, a cut sized for 50 % parity left a sixth of what the link
+    /// carries unused.
+    ///
+    /// The budget is `bitrate` with the host's own FEC share put back, where
+    /// the launch took one off the bitrate the client's user set
+    /// (`fec_split_launch`): the share comes off once. Taken off twice, a
+    /// client that chose the host's own 20 % got 12490 Kbps of a 20 Mbps
+    /// setting where the host's FEC gives 14988. The encoder never gets more
+    /// than `bitrate`, which pacing and the bitrate controllers take as its
+    /// most: a client share below the host's leaves the rest unused, as the
+    /// host's own adaptive FEC does.
     ///
     /// The split follows Foundation Sunshine's `encoder_bitrate_from_total_bitrate`
     /// in `src/video.cpp` (AlkaidLab/foundation-sunshine 880f1ef, GPL-3).
     pub fn encoder_bitrate(&self, fence: bool) -> u32 {
-        let budget = self.bitrate.load(Ordering::Acquire);
         if !self.fec_split_on.load(Ordering::Acquire) {
-            return budget;
+            return self.bitrate.load(Ordering::Acquire);
         }
         if fence {
             self.fec_split
                 .store(self.fec_split_share(), Ordering::Release);
         }
-        fec_split_kbps(budget, self.fec_split.load(Ordering::Acquire))
+        // A client's bitrate writes both (`take_client_bitrate`). Read again when the share
+        // moved meanwhile: a frame never pairs one bitrate with the other's share.
+        let (bitrate, launch) = loop {
+            let launch = self.fec_split_launch.load(Ordering::Acquire);
+            let bitrate = self.bitrate.load(Ordering::Acquire);
+            if self.fec_split_launch.load(Ordering::Acquire) == launch {
+                break (bitrate, u64::from(launch.min(80)));
+            }
+        };
+        let share = self.fec_split.load(Ordering::Acquire);
+        if share == FEC_SPLIT_NONE {
+            return bitrate;
+        }
+        let full = match self.fec_split_full.load(Ordering::Acquire) {
+            0 => bitrate,
+            full => full,
+        };
+        let budget = (u64::from(full) * 100 / (100 - launch)).min(u64::from(u32::MAX));
+        fec_split_kbps(budget as u32, share).min(full).min(bitrate)
     }
-    /// The FEC share the encoder's budget leaves room for now.
+    /// Writes the bitrate the link-rate or congestion controller wants: their cut, with
+    /// the bitrate from before it as `full`, or that bitrate again (`fec_split_full`). The
+    /// encoder reads the two without the controllers' lock, so they are written in the
+    /// order that gives a frame in between too little, never a bitrate without its split.
+    fn store_limited(&self, current: u32, applied: u32, full: Option<u32>) {
+        if full.is_none() {
+            self.fec_split_full.store(0, Ordering::Release);
+        }
+        if applied != current {
+            self.bitrate.store(applied, Ordering::Release);
+        }
+        if let Some(full) = full {
+            self.fec_split_full.store(full, Ordering::Release);
+        }
+    }
+    /// The FEC share the encoder's budget leaves room for now, or
+    /// [`FEC_SPLIT_NONE`].
     fn fec_split_share(&self) -> u32 {
         if self.adaptive_bitrate.lock().unwrap().active() {
-            0
+            FEC_SPLIT_NONE
         } else {
             self.fec_percent() as u32
         }
@@ -709,7 +782,12 @@ impl<P, A> Session<P, A> {
         }
         let share = self.fec_split_share();
         let latched = self.fec_split.load(Ordering::Acquire);
-        if first || share > latched || latched - share > FEC_SPLIT_HYSTERESIS {
+        if first
+            || share == FEC_SPLIT_NONE
+            || latched == FEC_SPLIT_NONE
+            || share > latched
+            || latched - share > FEC_SPLIT_HYSTERESIS
+        {
             self.fec_split.store(share, Ordering::Release);
         }
     }
@@ -873,7 +951,19 @@ impl<P, A> Session<P, A> {
             self.fec_percent(),
         );
     }
+    /// A bitrate the client set in the terms of its launch (0x553C,
+    /// `stream_policy::runtime_encoder_kbps`): the host's controllers stand
+    /// back for the stream.
     pub fn set_client_bitrate(&self, kbps: u32) {
+        self.take_client_bitrate(kbps, launch_fec_share(&self.config));
+    }
+    /// [`Self::set_client_bitrate`] for a bitrate that is the encoder's own
+    /// (the HTTP bitrate route): no share of the launch's is inside it.
+    pub fn set_client_encoder_bitrate(&self, kbps: u32) {
+        self.take_client_bitrate(kbps, 0);
+    }
+    /// `launch_share` is the FEC share of the launch's that is inside `kbps`.
+    fn take_client_bitrate(&self, kbps: u32, launch_share: u32) {
         let mut controller = self.adaptive_bitrate.lock().unwrap();
         controller.client_takeover();
         self.adaptive_video_pacing_bps.store(0, Ordering::Release);
@@ -886,7 +976,15 @@ impl<P, A> Session<P, A> {
             self.congestion.lock().unwrap().takeover();
             self.transport_sent.disable();
             self.congestion_pacing_bps.store(0, Ordering::Release);
+            // The encoder reads these without the lock. In this order a frame in between
+            // gets too little: never a cut's bitrate unsplit, nor (with its second look at
+            // the share) a bitrate with a share put back that is not inside it.
+            self.fec_split_full.store(0, Ordering::Release);
+            if launch_share == 0 {
+                self.fec_split_launch.store(0, Ordering::Release);
+            }
             self.bitrate.store(kbps, Ordering::Release);
+            self.fec_split_launch.store(launch_share, Ordering::Release);
         }
         self.launch.warnings.clear("host_bitrate_budget");
         self.launch.warnings.clear(LINK_WARNING);
@@ -915,6 +1013,8 @@ impl<P, A> Session<P, A> {
     /// is forgotten, and a client that took the bitrate over keeps it.
     pub fn rebuild_link_rate(&self, stream: &Negotiated, enabled: bool, maximum_kbps: u32) {
         let mut link = self.link_rate.lock().unwrap();
+        // Before the bitrate from before the cut: see `store_limited`.
+        self.fec_split_full.store(0, Ordering::Release);
         if let Some(kbps) = link.restore.take() {
             self.bitrate.store(kbps, Ordering::Release);
         }
@@ -1077,10 +1177,9 @@ impl<P, A> Session<P, A> {
                 None => link.restore.take().unwrap_or(current),
             }
         };
+        let full = link.restore.or(congestion.limited_from());
         drop(congestion);
-        if applied != current {
-            self.bitrate.store(applied, Ordering::Release);
-        }
+        self.store_limited(current, applied, full);
         // Say it once the lock is released: logging and the warning list must
         // not run under it.
         let report = link
@@ -1266,10 +1365,10 @@ impl<P, A> Session<P, A> {
         maximum_kbps: u32,
         shadow: bool,
     ) {
-        let _link = self.link_rate.lock().unwrap();
+        let link = self.link_rate.lock().unwrap();
         let mut congestion = self.congestion.lock().unwrap();
         if let Some(kbps) = congestion.take_restore() {
-            self.bitrate.store(kbps, Ordering::Release);
+            self.store_limited(self.bitrate.load(Ordering::Acquire), kbps, link.restore);
         }
         *congestion = congestion.rebuild(stream, enabled, maximum_kbps, shadow);
         if !congestion.active() {
@@ -1336,9 +1435,7 @@ impl<P, A> Session<P, A> {
             .store(pace.unwrap_or(0), Ordering::Release);
         let current = self.bitrate.load(Ordering::Acquire);
         let applied = congestion.combine(current);
-        if applied != current {
-            self.bitrate.store(applied, Ordering::Release);
-        }
+        self.store_limited(current, applied, link.restore.or(congestion.limited_from()));
         let change = congestion.take_change();
         let shadow = congestion.shadow();
         drop(congestion);

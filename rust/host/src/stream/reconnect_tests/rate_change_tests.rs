@@ -97,12 +97,13 @@ async fn rate_changes_reach_only_a_client_that_launched_asking() -> Result<()> {
 /// encoder gets 15308 Kbps here) asks mid-stream in that unit. Its own number keeps the
 /// encoder where the launch put it, which is what Nightjar's Keep my bitrate sends; a lower
 /// one lowers it; and every answer names the client's number. With a FEC share of the
-/// client's the encoder's part of the budget is smaller, and stays as it was too.
+/// client's above the host's, the encoder's part is smaller (15308 × 100 / 80 × 100 / 150),
+/// and stays as it was too.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_bitrate_is_in_the_unit_of_the_launch() -> Result<()> {
     let h = Harness::new(10_000, 1).await?;
     let sdp = "a=x-nv-vqos[0].bw.maximumBitrateKbps:16000\r\na=x-ml-video.configuredBitrateKbps:20000\r\n";
-    for (fec, started) in [(None, 15_308), (Some("50"), 10_205)] {
+    for (fec, started) in [(None, 15_308), (Some("50"), 12_756)] {
         let mut options = vec![("rlRateChange", "1")];
         options.extend(fec.map(|percent| ("rlFecPercentage", percent)));
         let launch = h.launch_with(0, false, None, &options).await?;

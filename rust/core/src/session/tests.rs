@@ -1576,6 +1576,195 @@ fn a_client_fec_share_splits_the_encoder_budget_at_a_fence_or_a_report() {
     assert_eq!(fec_split_kbps(0, 50), 0);
     assert_eq!(fec_split_kbps(1, 255), 1);
 }
+/// A client that sends the bitrate its user set launches with the host's FEC share already
+/// taken off it (20 Mbps: 14988 Kbps). Its own FEC share then came off that again: the
+/// host's own 20 % chosen by the client gave the picture 12490 Kbps. The share comes off
+/// once: the client's share takes the place of the host's, the picture never gets less than
+/// with the host's own FEC unless the client asks for more parity than the host's share
+/// leaves room for, and never more than the stream's bitrate, which pacing and the bitrate
+/// controllers take as the encoder's most.
+#[test]
+fn a_client_fec_share_comes_off_the_bitrate_its_user_set_once() {
+    use crate::extensions::FecChoice;
+    let launched = |configured: u32| {
+        let mut stream = Negotiated {
+            configured_bitrate_kbps: configured,
+            audio_quality: true,
+            ..Default::default()
+        };
+        crate::stream_policy::apply(&mut stream, 60_000, &crate::config::Config::default());
+        stream
+    };
+    let session = |percent: u8| {
+        let s = Session::new(launch("client-fec", Role::Stream), launched(20_000));
+        assert_eq!(
+            s.configure_fec_choice(FecChoice::Fixed(percent), false, 20, 80),
+            usize::from(percent)
+        );
+        s
+    };
+    assert_eq!(launched(20_000).bitrate_kbps, 14_988);
+    let host = Session::new(launch("host-fec", Role::Stream), launched(20_000));
+    host.configure_fec_choice(FecChoice::Host, false, 20, 80);
+    assert_eq!(host.encoder_bitrate(true), 14_988);
+    for (percent, encoder) in [
+        (0, 14_988),
+        (10, 14_988),
+        (20, 14_988),
+        (25, 14_988),
+        (30, 14_411),
+        (50, 12_490),
+        (80, 10_408),
+    ] {
+        let s = session(percent);
+        assert_eq!(s.encoder_bitrate(true), encoder, "{percent} %");
+        assert_eq!(s.encoder_bitrate(false), encoder, "{percent} %");
+        assert!(
+            u64::from(encoder) * (100 + u64::from(percent)) / 100 + 512 + 500 <= 20_000,
+            "{percent} %: video, parity, audio and overhead fit the bitrate the user set"
+        );
+        assert!(encoder <= s.bitrate.load(Ordering::Acquire));
+    }
+    // A bitrate asked for mid-stream in the launch's unit (0x553C) carries the same share.
+    let s = session(50);
+    let cut = crate::stream_policy::runtime_encoder_kbps(
+        &s.config,
+        18_000,
+        &crate::config::Config::default(),
+    );
+    assert_eq!(cut, 13_388);
+    s.set_client_bitrate(cut);
+    assert_eq!(
+        s.encoder_bitrate(false),
+        11_156,
+        "13388 × 100 / 80 × 100 / 150"
+    );
+    // The HTTP route's bitrate is the encoder's own: nothing was taken off it.
+    s.set_client_encoder_bitrate(12_000);
+    assert_eq!(s.encoder_bitrate(false), 8_000);
+    s.set_client_bitrate(cut);
+    assert_eq!(s.encoder_bitrate(false), 11_156);
+    // Nor is one inside such a bitrate set before the stream's FEC was chosen.
+    let early = Session::new(launch("early-fec", Role::Stream), launched(20_000));
+    early.set_client_encoder_bitrate(12_000);
+    early.configure_fec_choice(FecChoice::Fixed(20), false, 20, 80);
+    assert_eq!(early.encoder_bitrate(true), 10_000);
+    // While host bitrate adaptation budgets FEC itself, the encoder gets the bitrate as it
+    // is; the share is latched again when it stops.
+    s.fec_split.store(FEC_SPLIT_NONE, Ordering::Release);
+    assert_eq!(s.encoder_bitrate(false), cut);
+    s.follow_fec_report(false);
+    assert_eq!(s.encoder_bitrate(false), 11_156);
+    // A launch without the user's bitrate took no share off: the split is as it was.
+    let stock = Session::new(launch("stock-fec", Role::Stream), Negotiated::default());
+    stock.configure_fec_choice(FecChoice::Fixed(50), false, 20, 80);
+    stock.bitrate.store(12_000, Ordering::Release);
+    assert_eq!(stock.encoder_bitrate(true), 8_000);
+    // PyroWave keeps its own protection and bitrate.
+    let mut wave = launched(100_000);
+    wave.codec = 3;
+    let wave = Session::new(launch("wave-fec", Role::Stream), wave);
+    wave.configure_fec_choice(FecChoice::Fixed(50), false, 20, 80);
+    assert_eq!(
+        wave.encoder_bitrate(true),
+        wave.bitrate.load(Ordering::Acquire)
+    );
+}
+/// The link-rate and congestion controllers size a cut as the encoder's own bitrate, the FEC
+/// share in use counted as parity (`WireBudget::encoder_kbps`). Split for the client's share
+/// again, a cut for 50 % parity gave the encoder five sixths of it.
+#[test]
+fn a_controllers_cut_is_not_split_for_the_clients_fec_share_again() {
+    use crate::extensions::FecChoice;
+    let session = |name: &str| {
+        let mut stream = Negotiated {
+            configured_bitrate_kbps: 20_000,
+            audio_quality: true,
+            ..Default::default()
+        };
+        crate::stream_policy::apply(&mut stream, 60_000, &crate::config::Config::default());
+        let s = Session::new(launch(name, Role::Stream), stream);
+        s.configure_fec_choice(FecChoice::Fixed(50), false, 20, 80);
+        assert_eq!(s.bitrate.load(Ordering::Acquire), 14_988);
+        assert_eq!(s.encoder_bitrate(true), 12_490);
+        s
+    };
+    let lossy = |s: &Session| {
+        let end = Instant::now();
+        for frame in 1..=60u32 {
+            let at = end - Duration::from_millis(17 * u64::from(60 - frame));
+            s.record_link_sent_at(frame, 100, 112_600, at);
+        }
+        s.stats.video_frame.store(70, Ordering::Release);
+        lose_frames(s, 50..=54);
+        s.tick_link_rate(end + Duration::from_millis(200), Duration::from_millis(10))
+            .expect("the controller lowers the bitrate")
+    };
+
+    // The link-rate controller on its own.
+    let s = session("cut-link");
+    s.configure_link_rate(true, 0);
+    let (from, cut) = lossy(&s);
+    assert_eq!(from, 14_988);
+    assert!(
+        cut < 12_490,
+        "{cut}: a cut below the encoder's share of 14988"
+    );
+    assert_eq!(s.encoder_bitrate(false), cut, "the cut is the encoder's");
+    assert_eq!(s.encoder_bitrate(true), cut, "at a fence too");
+    // A stream whose mode changed starts from the bitrate from before the cut, split once.
+    s.rebuild_link_rate(&s.config, true, 0);
+    assert_eq!(s.bitrate.load(Ordering::Acquire), 14_988);
+    assert_eq!(s.encoder_bitrate(false), 12_490);
+
+    // A bitrate the client sets ends the cut: it is in the launch's unit, split as one.
+    let s = session("cut-client");
+    s.configure_link_rate(true, 0);
+    let (_, cut) = lossy(&s);
+    assert_eq!(s.encoder_bitrate(false), cut);
+    s.set_client_bitrate(13_388);
+    assert_eq!(s.encoder_bitrate(false), 11_156);
+
+    // Through congestion control, which writes the lower of both controllers' limits.
+    let s = session("cut-congestion");
+    s.configure_link_rate(true, 0);
+    s.configure_congestion(true, 0, false);
+    let now = Instant::now();
+    let tick = |wanted: Option<u32>| {
+        s.congestion.lock().unwrap().link_wanted = wanted;
+        s.tick_congestion(now, Duration::from_millis(10));
+        (s.bitrate.load(Ordering::Acquire), s.encoder_bitrate(false))
+    };
+    assert_eq!(tick(Some(9_000)), (9_000, 9_000));
+    assert_eq!(tick(Some(6_000)), (6_000, 6_000));
+    // A cut above the encoder's share of the bitrate from before it raises nothing: at
+    // 14000 with 50 % parity the stream would send more than at its full bitrate.
+    assert_eq!(tick(Some(14_000)), (14_000, 12_490));
+    assert_eq!(tick(None), (14_988, 12_490));
+    // A rebuilt controller gives the bitrate from before its limit back, split once.
+    assert_eq!(tick(Some(9_000)), (9_000, 9_000));
+    s.rebuild_congestion(&s.config, true, 0, false);
+    assert_eq!(s.bitrate.load(Ordering::Acquire), 14_988);
+    assert_eq!(s.encoder_bitrate(false), 12_490);
+    // So does the link-rate controller's rebuild, which takes congestion control's limit too.
+    assert_eq!(tick(Some(9_000)), (9_000, 9_000));
+    s.rebuild_link_rate(&s.config, true, 0);
+    assert_eq!(s.bitrate.load(Ordering::Acquire), 14_988);
+    assert_eq!(s.encoder_bitrate(false), 12_490);
+
+    // The host's own share was never split: a cut is the encoder's bitrate there as before.
+    let mut stream = Negotiated {
+        configured_bitrate_kbps: 20_000,
+        audio_quality: true,
+        ..Default::default()
+    };
+    crate::stream_policy::apply(&mut stream, 60_000, &crate::config::Config::default());
+    let host = Session::new(launch("cut-host", Role::Stream), stream);
+    host.configure_fec_choice(FecChoice::Host, false, 20, 80);
+    host.configure_link_rate(true, 0);
+    let (_, cut) = lossy(&host);
+    assert_eq!(host.encoder_bitrate(false), cut);
+}
 #[test]
 fn auto_fec_keeps_the_configured_share_for_recovery_frames() {
     use crate::extensions::FecChoice;
