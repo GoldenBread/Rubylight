@@ -3426,6 +3426,27 @@ fn game_page_with_neural(on: bool, state: nightjar_core::http::native_api::radeo
     f
 }
 
+/// Start or the Settings link over a game page keeps its Neural Rendering open, as the PC
+/// checks and Files keep theirs: Back finds the panel as it was left.
+#[test]
+fn settings_opened_over_a_game_page_keeps_its_neural_panel() {
+    let mut f = game_page_with_neural(false, nightjar_core::http::native_api::radeon::ControlState::Configurable, None);
+    let pc = f.hosts.list[0].id;
+    f.l.open_settings();
+    assert_eq!(f.l.screen, Screen::Settings);
+    f.settle();
+    assert!(f.l.neural.state_for(pc, 1000).is_some_and(|open| open.state.is_some()), "Settings closed the panel");
+    let mut commands = Vec::new();
+    f.l.back(&mut commands, true);
+    assert_eq!(f.l.screen, Screen::Game { host: pc, app: 1000 });
+    f.settle();
+    assert!(f.l.neural.state_for(pc, 1000).is_some_and(|open| open.state.is_some()), "Back lost the panel");
+    // Leaving the page still closes it.
+    f.l.back(&mut commands, true);
+    f.settle();
+    assert!(f.l.neural.state_for(pc, 1000).is_none());
+}
+
 /// A window that changes size on a game page moves its moon: no ghost of the old place fades
 /// behind the settings card, at any frame.
 #[test]

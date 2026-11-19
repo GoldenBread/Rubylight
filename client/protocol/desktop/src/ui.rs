@@ -1177,11 +1177,13 @@ impl Launcher {
         if let Some((host, app)) = self.coop.poll(page) {
             commands.push(Command::Launch { host, app, resume: false });
         }
-        // Likewise a game page that was left closes its Neural Rendering.
-        self.neural.poll(match self.screen {
-            Screen::Game { host, app } => Some((host, app)),
+        // Likewise a game page that was left closes its Neural Rendering; Settings opened over it
+        // (Start or the Settings link) keeps the panel as it was.
+        let game = std::iter::once(&self.screen).chain(self.trail.iter().map(|(screen, _)| screen)).find_map(|screen| match screen {
+            Screen::Game { host, app } => Some((*host, *app)),
             _ => None,
         });
+        self.neural.poll(game);
         // Likewise a Files page that was left goes, once its transfers are done and a failure among
         // them has been shown.
         let files = std::iter::once(&self.screen).chain(self.trail.iter().map(|(screen, _)| screen)).find_map(|screen| match screen {
