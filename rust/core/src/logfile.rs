@@ -7,14 +7,18 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// How many bytes the log writes between checks that its path is still there.
+const EXISTS_CHECK: u64 = 1 << 20;
+
 pub struct RotatingFile {
     path: PathBuf,
     file: File,
     size: u64,
     limit: u64,
     keep: usize,
-    /// The open file was moved to `name.0` and the live path could not be
-    /// opened again.
+    /// The open file is no longer at the live path (moved to `name.0` by a
+    /// rotation, or deleted or moved away by another program) and the live
+    /// path could not be opened again yet.
     detached: bool,
 }
 impl RotatingFile {
@@ -53,7 +57,17 @@ impl RotatingFile {
         // moves up before the open file takes its place.
         let staged = Self::rotated(&self.path, 0);
         if !staged.exists() {
-            std::fs::rename(&self.path, &staged)?;
+            match std::fs::rename(&self.path, &staged) {
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                    // Another program deleted or moved the log away: the open
+                    // file is no longer the log. Nothing was moved aside, so
+                    // no older file moves up; the live path opens again.
+                    self.detached = true;
+                    self.reopen();
+                    return Ok(());
+                }
+                result => result?,
+            }
             // Until the live path opens, writes go on into `name.0`, and the
             // next write tries to open it again.
             self.detached = true;
@@ -61,6 +75,10 @@ impl RotatingFile {
             self.detached = false;
             self.size = 0;
         }
+        self.shift()
+    }
+    /// Drops the oldest file and moves `name.<n>` up to `name.<n+1>`.
+    fn shift(&self) -> io::Result<()> {
         let _ = std::fs::remove_file(Self::rotated(&self.path, self.keep));
         for n in (0..self.keep).rev() {
             match std::fs::rename(
@@ -71,6 +89,18 @@ impl RotatingFile {
                 _ => {}
             }
         }
+        Ok(())
+    }
+    /// While the live path cannot be opened, the file being written rolls over
+    /// as the log would: it moves up with the older files and writing goes on
+    /// in a fresh `name.0`, so the files stay within their limit.
+    fn roll_detached(&mut self) -> io::Result<()> {
+        let staged = Self::rotated(&self.path, 0);
+        if staged.exists() {
+            self.shift()?;
+        }
+        self.file = append(&staged)?;
+        self.size = 0;
         Ok(())
     }
     /// Opens the live path again after a rotation moved the open file away but
@@ -92,7 +122,7 @@ impl RotatingFile {
 }
 fn append(path: &Path) -> io::Result<File> {
     #[cfg(test)]
-    if tests::FAIL_OPEN.with(std::cell::Cell::get) {
+    if tests::FAIL_OPEN.with(|fail| fail.borrow().as_deref() == Some(path)) {
         return Err(io::Error::from(io::ErrorKind::PermissionDenied));
     }
     OpenOptions::new().create(true).append(true).open(path)
@@ -101,13 +131,27 @@ impl Write for RotatingFile {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         // If rotation fails (a reader without delete sharing holds the old
         // file), keep writing to the current file rather than lose lines.
+        let full = |log: &Self| log.size > 0 && log.size + buf.len() as u64 > log.limit;
         if self.detached {
             self.reopen();
-        } else if self.size > 0 && self.size + buf.len() as u64 > self.limit {
+            if self.detached && full(self) {
+                let _ = self.roll_detached();
+            }
+        } else if full(self) {
             let _ = self.rotate();
         }
         let written = self.file.write(buf)?;
+        let before = self.size;
         self.size += written as u64;
+        // A log another program deleted or moved away is noticed within
+        // `EXISTS_CHECK` bytes, not only at its size limit: one check per
+        // interval rather than per line. The next write opens it again.
+        if !self.detached
+            && before / EXISTS_CHECK != self.size / EXISTS_CHECK
+            && !self.path.exists()
+        {
+            self.detached = true;
+        }
         Ok(written)
     }
     fn flush(&mut self) -> io::Result<()> {
@@ -119,8 +163,8 @@ impl Write for RotatingFile {
 mod tests {
     use super::*;
     thread_local! {
-        /// Makes opening a log path fail, as a denied or locked path would.
-        pub(super) static FAIL_OPEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        /// Makes opening this path fail, as a denied or locked path would.
+        pub(super) static FAIL_OPEN: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
     }
 
     /// A rotation that moves the open file but cannot open the live path again
@@ -137,9 +181,9 @@ mod tests {
         for line in 0..2 {
             write(&mut log, line);
         }
-        FAIL_OPEN.with(|fail| fail.set(true));
+        FAIL_OPEN.with(|fail| fail.replace(Some(path.clone())));
         write(&mut log, 2);
-        FAIL_OPEN.with(|fail| fail.set(false));
+        FAIL_OPEN.with(|fail| fail.replace(None));
         assert!(!path.exists());
         for line in 3..5 {
             write(&mut log, line);
@@ -157,6 +201,109 @@ mod tests {
             lines(&RotatingFile::rotated(&path, 1)),
             [0, 1, 2].map(|n| format!("{n:039}"))
         );
+    }
+
+    fn line(n: usize) -> String {
+        format!("{n:039}")
+    }
+    fn lines(path: &Path) -> Vec<String> {
+        std::fs::read_to_string(path)
+            .map(|text| text.lines().map(str::to_owned).collect())
+            .unwrap_or_default()
+    }
+
+    /// A log another program deleted or moved away while it was open comes
+    /// back at its size limit, and the older files stay as they were: nothing
+    /// was moved aside, so nothing moves up.
+    #[test]
+    fn a_log_deleted_while_open_comes_back_at_its_size_limit() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("host.log");
+        let mut log = RotatingFile::open(&path, 100, 2).unwrap();
+        for n in 0..4 {
+            log.write_all(format!("{}\n", line(n)).as_bytes()).unwrap();
+        }
+        let older = lines(&RotatingFile::rotated(&path, 1));
+        assert!(!older.is_empty());
+        std::fs::remove_file(&path).unwrap();
+        // 80 bytes in the deleted file: the next line passes the limit.
+        log.write_all(format!("{}\n", line(4)).as_bytes()).unwrap();
+        log.write_all(format!("{}\n", line(5)).as_bytes()).unwrap();
+        drop(log);
+        assert_eq!(lines(&path), [line(4), line(5)]);
+        assert_eq!(lines(&RotatingFile::rotated(&path, 1)), older);
+    }
+
+    /// A deleted log is noticed long before its size limit: within the
+    /// interval at which the log checks that its path is still there.
+    #[test]
+    fn a_log_deleted_while_open_comes_back_before_its_size_limit() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("host.log");
+        let mut log = RotatingFile::open(&path, 1 << 30, 2).unwrap();
+        log.write_all(b"before\n").unwrap();
+        std::fs::remove_file(&path).unwrap();
+        let chunk = vec![b'x'; 4095];
+        for _ in 0..(EXISTS_CHECK / 4096 + 1) {
+            log.write_all(&chunk).unwrap();
+            log.write_all(b"\n").unwrap();
+        }
+        log.write_all(b"after\n").unwrap();
+        drop(log);
+        // What was written after the check is in the log again.
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.ends_with("\nafter\n"));
+        assert!(text.len() < 2 * 4096 + 7, "{} bytes", text.len());
+    }
+
+    /// While the live path cannot be opened for good, writing goes on into
+    /// `name.0`, which rolls over as the log would: the files stay within the
+    /// limit, every kept line is there once and in order, and once the live
+    /// path opens the history moves up as usual.
+    #[test]
+    fn a_log_that_cannot_reopen_stays_within_its_limit() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("host.log");
+        let (limit, keep) = (100, 2);
+        let mut log = RotatingFile::open(&path, limit, keep).unwrap();
+        let write = |log: &mut RotatingFile, n: usize| {
+            log.write_all(format!("{}\n", line(n)).as_bytes()).unwrap()
+        };
+        for n in 0..2 {
+            write(&mut log, n);
+        }
+        FAIL_OPEN.with(|fail| fail.replace(Some(path.clone())));
+        let files = |path: &Path| -> Vec<PathBuf> {
+            (0..=keep)
+                .rev()
+                .map(|n| RotatingFile::rotated(path, n))
+                .collect()
+        };
+        for n in 2..40 {
+            write(&mut log, n);
+            let total: u64 = files(&path)
+                .into_iter()
+                .chain([path.clone()])
+                .filter_map(|file| std::fs::metadata(file).ok())
+                .map(|m| m.len())
+                .sum();
+            // The file being written may pass the limit by the line that
+            // opened it, as a rotation that failed once would.
+            assert!(total <= (keep as u64 + 1) * limit + 40, "{total} bytes");
+            let kept: Vec<String> = files(&path).iter().flat_map(|file| lines(file)).collect();
+            let first = n + 1 - kept.len();
+            assert_eq!(kept, (first..=n).map(line).collect::<Vec<_>>());
+        }
+        FAIL_OPEN.with(|fail| fail.replace(None));
+        write(&mut log, 40);
+        drop(log);
+        assert_eq!(lines(&path), [line(40)]);
+        assert!(!RotatingFile::rotated(&path, 0).exists());
+        let older: Vec<String> = (1..=keep)
+            .rev()
+            .flat_map(|n| lines(&RotatingFile::rotated(&path, n)))
+            .collect();
+        assert_eq!(older.last(), Some(&line(39)));
     }
 
     #[test]
