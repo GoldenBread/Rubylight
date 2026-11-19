@@ -561,9 +561,10 @@ impl KeyframeLoss {
     /// The client asked for a keyframe after losing frames. Returns the reason
     /// when this request slows the stream.
     pub fn requested(&mut self, now: Instant) -> Option<Latched> {
-        if !self.enabled {
-            return None;
-        }
+        // Recorded even when the guard is off: the keyframe that answers the
+        // request is not the host's own (`sending_at`), and
+        // [`KeyframeLoss::network_request`] tells the bitrate controller about
+        // the next request from it.
         let gap = self
             .last_request
             .map(|at| now.saturating_duration_since(at));
@@ -576,14 +577,16 @@ impl KeyframeLoss {
             // The request reacts to the host's change; the next pair of
             // requests, after the window, is the one that can show a loss.
             self.last_request = None;
-            self.ignored = Some(format!(
-                "keyframe request within {} ms of the host's own keyframe {from}",
-                window.as_millis()
-            ));
+            if self.enabled {
+                self.ignored = Some(format!(
+                    "keyframe request within {} ms of the host's own keyframe {from}",
+                    window.as_millis()
+                ));
+            }
             return None;
         }
         self.last_request = Some(now);
-        if !repeated {
+        if !self.enabled || !repeated {
             return None;
         }
         if self.reports_losses {

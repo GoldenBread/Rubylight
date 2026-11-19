@@ -128,6 +128,42 @@ fn disabled_it_never_slows_the_stream() {
     assert_eq!(loss.bps(FAST, SAFE), FAST);
 }
 
+/// The bitrate controller reads [`KeyframeLoss::network_loss`] and
+/// [`KeyframeLoss::network_request`] whether the guard is on or off. A
+/// keyframe the client asked for answers it; it is not the host's own change,
+/// so loss and requests right after it stay evidence. A request from a
+/// decode queue that overflowed behind that keyframe still is not.
+#[test]
+fn a_requested_keyframe_is_not_the_host_s_own_with_the_guard_on_or_off() {
+    for enabled in [false, true] {
+        let mut loss = KeyframeLoss::new(enabled);
+        loss.sending_at(1, true, started_long_ago());
+        let start = Instant::now();
+        for frame in 2..=50 {
+            loss.sending_at(frame, false, start - PERIOD * (51 - frame));
+        }
+        assert!(loss.network_request(start));
+        loss.requested(start);
+        loss.sending_at(51, true, start + PERIOD);
+        loss.sending_at(52, false, start + PERIOD * 2);
+        assert!(
+            loss.network_loss(52, start + Duration::from_millis(100)),
+            "guard {enabled}: a frame lost after the requested keyframe was set aside"
+        );
+        for frame in 53..53 + DECODE_QUEUE {
+            loss.sending_at(frame, false, start + PERIOD * (frame - 50));
+        }
+        assert!(
+            !loss.network_request(start + Duration::from_millis(300)),
+            "guard {enabled}: a decode queue overflow counted as the network"
+        );
+        assert!(
+            loss.network_request(start + Duration::from_millis(600)),
+            "guard {enabled}: a request after the requested keyframe was set aside"
+        );
+    }
+}
+
 /// Two seconds of a 31 Mbps (a 40 Mbps client's) 1440p60 stream through
 /// a 100 Mbps egress with a drop-tail queue of `queue` bytes, behind the
 /// host's 1 Gbps link, as in `network_pacing`'s model. A Moonlight client
