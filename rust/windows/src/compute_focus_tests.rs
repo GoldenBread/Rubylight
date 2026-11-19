@@ -35,7 +35,7 @@ impl Rig {
     }
     /// Convert `image` and wait for it.
     fn convert(&self, converter: &mut Converter, image: &Image) -> Result<ID3D12Resource> {
-        let source = GpuImage::upload(&self.gpu, image)?;
+        let source = GpuImage::upload_settled(&self.gpu, image)?;
         let opened = converter.compute.open(&source.texture)?;
         let converted = converter.convert(&opened, format(image.pixel), None, &source)?;
         converted.wait()?;
@@ -405,7 +405,7 @@ fn latest_map_never_waits_for_an_unfinished_conversion() -> Result<()> {
     let gate = Gate(unsafe { compute.device.CreateFence(0, D3D12_FENCE_FLAG_NONE)? });
     // SAFETY: The gate is on the queue's device.
     unsafe { compute.queue.Wait(&gate.0, 1)? };
-    let source = GpuImage::upload(&rig.gpu, &image)?;
+    let source = GpuImage::upload_settled(&rig.gpu, &image)?;
     let converted = converter.convert(
         &compute.open(&source.texture)?,
         format(image.pixel),
@@ -470,7 +470,7 @@ fn plane_conversions_drop_the_slot_map_they_reuse() -> Result<()> {
     };
     // SAFETY: The test owns this fence on its compute device.
     let fence: ID3D12Fence = unsafe { device.CreateFence(0, D3D12_FENCE_FLAG_NONE)? };
-    let source = GpuImage::upload(&rig.gpu, &image)?;
+    let source = GpuImage::upload_settled(&rig.gpu, &image)?;
     let opened = rig.compute.open(&source.texture)?;
     // Every slot, the focus conversion's included, now holds planes.
     for value in 0..SLOTS as u64 {

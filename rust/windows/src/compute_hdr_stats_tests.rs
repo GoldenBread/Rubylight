@@ -129,7 +129,7 @@ impl Rig {
         converter: &mut Converter,
         image: &Image,
     ) -> Result<(Converted, usize, Arc<AtomicU64>)> {
-        let mut source = GpuImage::upload(&self.gpu, image)?;
+        let mut source = GpuImage::upload_settled(&self.gpu, image)?;
         let readers = Arc::new(AtomicU64::new(0));
         source.ready = Some(Ready {
             fence: self.compute.fence.clone(),
@@ -449,7 +449,7 @@ fn hdr_stats_skip_captures_read_on_another_timeline() -> Result<()> {
     let rig = Rig::new()?;
     let hdr = scrgb(64, 32, |_, _| 5.);
     let mut converter = rig.converter(&hdr)?;
-    let mut source = GpuImage::upload(&rig.gpu, &hdr)?;
+    let mut source = GpuImage::upload_settled(&rig.gpu, &hdr)?;
     // SAFETY: A new fence on the queue's live device.
     let other: ID3D12Fence = unsafe { rig.compute.device.CreateFence(0, D3D12_FENCE_FLAG_NONE)? };
     source.ready = Some(Ready {

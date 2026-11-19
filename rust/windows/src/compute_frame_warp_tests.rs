@@ -152,47 +152,6 @@ fn thumbnail(image: &Image, (width, height): (u32, u32)) -> Vec<u8> {
     luma
 }
 
-/// `image` on the GPU once D3D11 has finished uploading it: the upload has no
-/// fence for the compute queue to wait on, and a large one is still copying
-/// when the passes would read it.
-fn uploaded(gpu: &Device, image: &Image) -> Result<GpuImage> {
-    use windows::Win32::Graphics::Direct3D11::{D3D11_QUERY_DESC, D3D11_QUERY_EVENT};
-    use windows::core::BOOL;
-    let source = GpuImage::upload(gpu, image)?;
-    let desc = D3D11_QUERY_DESC {
-        Query: D3D11_QUERY_EVENT,
-        MiscFlags: 0,
-    };
-    let mut query = None;
-    // SAFETY: `desc` and `query` are live locals; the event query writes one
-    // BOOL into the live local `done`, and only once it has completed.
-    unsafe {
-        gpu.device.CreateQuery(&desc, Some(&mut query))?;
-        let query = query.context("an event query")?;
-        gpu.context.End(&query);
-        gpu.context.Flush();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        loop {
-            let mut done = BOOL(0);
-            let read = gpu.context.GetData(
-                &query,
-                Some((&raw mut done).cast()),
-                std::mem::size_of::<BOOL>() as u32,
-                0,
-            );
-            if read.is_ok() && done.as_bool() {
-                break;
-            }
-            anyhow::ensure!(
-                std::time::Instant::now() < deadline,
-                "the upload did not finish"
-            );
-            std::thread::yield_now();
-        }
-    }
-    Ok(source)
-}
-
 struct Rig {
     _com: ComGuard,
     gpu: Device,
@@ -212,7 +171,7 @@ impl Rig {
         pass: &Pass,
         at: u64,
     ) -> Result<(Vec<ThumbnailReadout>, Option<MaskReadout>)> {
-        let source = uploaded(&self.gpu, image)?;
+        let source = GpuImage::upload_settled(&self.gpu, image)?;
         assert!(self.passes.can_read(&source));
         self.passes
             .submit(&source, pass, at)?
@@ -510,7 +469,7 @@ fn the_passes_finish_within_a_frame() -> Result<()> {
     let mut rig = Rig::new()?;
     for (width, height) in [(1920, 1080), (2560, 1440), (3840, 2160)] {
         let image = grey(width, height, |x, y| ((x * 7 + y * 13) % 251) as u8);
-        let source = uploaded(&rig.gpu, &image)?;
+        let source = GpuImage::upload_settled(&rig.gpu, &image)?;
         let grid = hud_grid(512, (width, height)).context("a grid")?;
         let mut times = Vec::new();
         for n in 0..300u64 {

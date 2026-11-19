@@ -134,7 +134,7 @@ fn verify(
             .flat_map(|format| [1, 2].map(|packing| (format, packing)))
         {
             let image = if hdr { &hdr_image } else { &image };
-            let uploaded = GpuImage::upload(&gpu, image)?;
+            let uploaded = GpuImage::upload_settled(&gpu, image)?;
             eprintln!("Packing v{packing} {width}x{height}, ten_bit={ten_bit}, hdr={hdr}");
             let config = Negotiated {
                 width,

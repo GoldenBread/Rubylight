@@ -21,7 +21,7 @@ fn standard_chroma_is_left_sited_and_pyrowave_remains_center_sited() -> Result<(
         pixel: Pixel::Bgra8,
         captured: Instant::now(),
     };
-    let uploaded = GpuImage::upload(&gpu, &image)?;
+    let uploaded = GpuImage::upload_settled(&gpu, &image)?;
     let config = butterpollo_core::rtsp::Negotiated {
         width: 64,
         height: 64,
@@ -112,7 +112,7 @@ fn sdr_bt2020_gpu_matches_reference_primaries_and_transfer() -> Result<()> {
         // Advanced-color Windows desktops can deliver the same SDR picture
         // as FP16 scRGB, with 100-nit SDR white represented by 1.25.
         for image in [image, make_image(&[linear], 64, 64)] {
-            let uploaded = GpuImage::upload(&gpu, &image)?;
+            let uploaded = GpuImage::upload_settled(&gpu, &image)?;
             for compute in [false, true] {
                 let mut converter = Converter::new(&gpu, &config, (64, 64, image.pixel))?;
                 if !compute {
@@ -134,7 +134,7 @@ fn sdr_bt2020_gpu_matches_reference_primaries_and_transfer() -> Result<()> {
     // Extended scRGB channels may be outside Rec.709 while the color is
     // inside BT.2020. Mapping must happen before clamping the SDR output.
     let image = make_image(&[[-0.125, 1.2, -0.0125]], 64, 64);
-    let uploaded = GpuImage::upload(&gpu, &image)?;
+    let uploaded = GpuImage::upload_settled(&gpu, &image)?;
     let config = butterpollo_core::rtsp::Negotiated {
         width: 64,
         height: 64,
@@ -183,7 +183,7 @@ fn hdr_chroma_is_filtered_in_light_on_every_path() -> Result<()> {
         .map(|x| row[x % row.len()].map(|v: f64| (q::srgb_decode(v / 255.) * 2.5) as f32))
         .collect();
     let image = make_image(&colors, 1, 16);
-    let source = GpuImage::upload(&gpu, &image)?;
+    let source = GpuImage::upload_settled(&gpu, &image)?;
     let picture = q::Picture {
         width: 64,
         height: 16,

@@ -140,8 +140,8 @@ impl Rig {
             captured: Instant::now(),
         };
         Ok(Self {
-            sdr: GpuImage::upload(&gpu, &image(sdr, Pixel::Bgra8, 4))?,
-            hdr: GpuImage::upload(&gpu, &image(hdr, Pixel::RgbaF16, 8))?,
+            sdr: GpuImage::upload_settled(&gpu, &image(sdr, Pixel::Bgra8, 4))?,
+            hdr: GpuImage::upload_settled(&gpu, &image(hdr, Pixel::RgbaF16, 8))?,
             _com,
             gpu,
             compute,

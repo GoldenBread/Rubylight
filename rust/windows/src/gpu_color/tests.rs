@@ -341,14 +341,14 @@ fn compute_conversion_matches_the_graphics_converter() -> Result<()> {
         [0.05, 0.8, 0.3],
         [0.2, 0.3, 4.0],
     ];
-    let hdr_image = GpuImage::upload(&gpu, &make_image(&colors, 16, 40))?;
+    let hdr_image = GpuImage::upload_settled(&gpu, &make_image(&colors, 16, 40))?;
     // Desktop BGRA: a gradient with distinct channels.
     let mut bytes = vec![0u8; 96 * 40 * 4];
     for (index, pixel) in bytes.as_chunks_mut::<4>().0.iter_mut().enumerate() {
         let (x, y) = (index % 96, index / 96);
         *pixel = [(x * 2) as u8, (y * 6) as u8, (255 - x * 2) as u8, 255];
     }
-    let sdr_image = GpuImage::upload(
+    let sdr_image = GpuImage::upload_settled(
         &gpu,
         &Image {
             width: 96,
@@ -873,13 +873,13 @@ fn compute_planes_match_the_pyrowave_graphics_planes() -> Result<()> {
         [0.05, 0.8, 0.3],
         [0.2, 0.3, 4.0],
     ];
-    let hdr_image = GpuImage::upload(&gpu, &make_image(&colors, 16, 40))?;
+    let hdr_image = GpuImage::upload_settled(&gpu, &make_image(&colors, 16, 40))?;
     let mut bytes = vec![0u8; 96 * 40 * 4];
     for (index, pixel) in bytes.as_chunks_mut::<4>().0.iter_mut().enumerate() {
         let (x, y) = (index % 96, index / 96);
         *pixel = [(x * 2) as u8, (y * 6) as u8, (255 - x * 2) as u8, 255];
     }
-    let sdr_image = GpuImage::upload(
+    let sdr_image = GpuImage::upload_settled(
         &gpu,
         &Image {
             width: 96,
@@ -1346,7 +1346,7 @@ fn hdr_full_and_limited_range_match_absolute_pq_on_both_gpu_paths() -> Result<()
     // SDR reference white, 1000-nit highlights and the 10000-nit ceiling.
     let pq = [0., 0.48585677, 0.7518271, 1.];
     let image = make_image(&[[0.; 3], [1.; 3], [12.5; 3], [125.; 3]], 64, 64);
-    let source = GpuImage::upload(&gpu, &image)?;
+    let source = GpuImage::upload_settled(&gpu, &image)?;
     for full in [false, true] {
         let config = butterpollo_core::rtsp::Negotiated {
             width: image.width,
@@ -1467,7 +1467,7 @@ fn gpu_hlg_matches_the_cpu_reference_in_every_converter() -> Result<()> {
         ..Default::default()
     };
     let source = (image.width, image.height, image.pixel);
-    let uploaded = GpuImage::upload(&gpu, &image)?;
+    let uploaded = GpuImage::upload_settled(&gpu, &image)?;
     let mut pixel_passes = Converter::new(&gpu, &config, source)?;
     pixel_passes.compute = None;
     let pixel_passes = readback(&gpu, pixel_passes.convert(&uploaded)?.as_ref())?;
@@ -1528,7 +1528,7 @@ fn pyrowave_planes_hlg_matches_the_cpu_reference() -> Result<()> {
     let compute = crate::compute::Compute::for_device(&gpu.device)?;
     // Grey at 0, 80, 203, 1000 and 2000 nits.
     let colours = [[0.; 3], [1.; 3], [203. / 80.; 3], [12.5; 3], [25.; 3]];
-    let image = GpuImage::upload(&gpu, &make_image(&colours, 64, 64))?;
+    let image = GpuImage::upload_settled(&gpu, &make_image(&colours, 64, 64))?;
     // SAFETY: `compute.device` is a live D3D12 device.
     let fence: ID3D12Fence = unsafe { compute.device.CreateFence(0, D3D12_FENCE_FLAG_NONE)? };
     let width = image.width as usize;

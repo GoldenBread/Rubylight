@@ -264,7 +264,7 @@ fn gpu_downscale_coverage_matches_independent_reference() -> Result<()> {
             for phase in 0..3 {
                 let (image, samples) =
                     pattern(source_width as usize, source_height as usize, phase, hdr);
-                let source = GpuImage::upload(&gpu, &image)?;
+                let source = GpuImage::upload_settled(&gpu, &image)?;
                 // Complete upload before the independently owned D3D12 queue
                 // reads this texture; ordinary capture supplies its own fence.
                 source.readback(&mut None)?;

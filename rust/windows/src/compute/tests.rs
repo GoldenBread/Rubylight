@@ -14,7 +14,7 @@ fn completed_planar_slots_retain_resources_until_their_views_are_replaced() -> R
         yuv444: true,
         ..Default::default()
     };
-    let image = GpuImage::upload(
+    let image = GpuImage::upload_settled(
         &gpu,
         &Image {
             width: 64,
@@ -121,7 +121,7 @@ fn timed_out_converter_retains_capture_until_its_queue_really_finishes() -> Resu
     let compute = Compute::new(luid)?;
     let mut converter = Converter::new(compute.clone(), 4, 4, false)?;
     converter.prepare_yuv()?;
-    let image = GpuImage::upload(
+    let image = GpuImage::upload_settled(
         &gpu,
         &Image {
             width: 4,
@@ -199,8 +199,8 @@ fn timed_out_handoff_keeps_its_copy_executable_after_teardown() -> Result<()> {
         captured: std::time::Instant::now(),
         pixel: Pixel::Bgra8,
     };
-    let source = GpuImage::upload(&gpu, &pixels)?;
-    let mut destination = GpuImage::upload(
+    let source = GpuImage::upload_settled(&gpu, &pixels)?;
+    let mut destination = GpuImage::upload_settled(
         &gpu,
         &Image {
             bytes: vec![0; 64],
@@ -346,7 +346,7 @@ fn unsupported_amf_state_is_rejected_before_recording_conversion() -> Result<()>
     let _com = crate::capture::ComGuard::new()?;
     let gpu = Device::new("")?;
     let compute = Compute::for_device(&gpu.device)?;
-    let image = GpuImage::upload(
+    let image = GpuImage::upload_settled(
         &gpu,
         &Image {
             width: 4,
@@ -507,8 +507,8 @@ fn retired_queue_rejects_conversion_upload_and_capture_before_mutating_resources
         captured: std::time::Instant::now(),
         pixel: Pixel::Bgra8,
     };
-    let image = GpuImage::upload(&gpu, &pixels)?;
-    let destination = GpuImage::upload(&gpu, &pixels)?;
+    let image = GpuImage::upload_settled(&gpu, &pixels)?;
+    let destination = GpuImage::upload_settled(&gpu, &pixels)?;
     let source = compute.open(&image.texture)?;
     let mut handoff = Handoff::new(compute.clone(), &gpu)?;
     let mut returns = Returns::new(compute.clone(), &gpu)?;
@@ -704,8 +704,8 @@ fn capture_ownership_ends_at_conversion_and_handoff_forgets_its_textures() -> Re
         captured: std::time::Instant::now(),
         pixel: Pixel::Bgra8,
     };
-    let source = GpuImage::upload(&gpu, &pixels)?;
-    let mut image = GpuImage::upload(&gpu, &pixels)?;
+    let source = GpuImage::upload_settled(&gpu, &pixels)?;
+    let mut image = GpuImage::upload_settled(&gpu, &pixels)?;
     let mut handoff = Handoff::new(compute.clone(), &gpu)?;
     image.ready = Some(handoff.copy(&image.texture, &source.texture, None)?);
     let mut converter = Converter::new(compute.clone(), 4, 4, false)?;

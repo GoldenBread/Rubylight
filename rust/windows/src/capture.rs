@@ -2012,4 +2012,46 @@ impl Capture {
 }
 
 #[cfg(test)]
+impl GpuImage {
+    /// [`GpuImage::upload`] once D3D11 has finished copying the picture. The
+    /// upload carries no fence for the D3D12 compute queue to wait on, and a
+    /// large picture is still copying when a pass reads it (captures carry
+    /// `ready`, so streams are not affected); a test that opens the texture on
+    /// the compute device uses this.
+    pub(crate) fn upload_settled(gpu: &Device, image: &Image) -> Result<Self> {
+        use windows::core::BOOL;
+        let source = Self::upload(gpu, image)?;
+        let desc = D3D11_QUERY_DESC {
+            Query: D3D11_QUERY_EVENT,
+            MiscFlags: 0,
+        };
+        let mut query = None;
+        // SAFETY: `desc` and `query` are live locals; the event query writes one
+        // BOOL into the live local `done`, and only once it has completed.
+        unsafe {
+            gpu.device.CreateQuery(&desc, Some(&mut query))?;
+            let query = query.context("an event query")?;
+            gpu.context.End(&query);
+            gpu.context.Flush();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let mut done = BOOL(0);
+                let read = gpu.context.GetData(
+                    &query,
+                    Some((&raw mut done).cast()),
+                    std::mem::size_of::<BOOL>() as u32,
+                    0,
+                );
+                if read.is_ok() && done.as_bool() {
+                    break;
+                }
+                ensure!(Instant::now() < deadline, "the upload did not finish");
+                std::thread::yield_now();
+            }
+        }
+        Ok(source)
+    }
+}
+
+#[cfg(test)]
 mod tests;
