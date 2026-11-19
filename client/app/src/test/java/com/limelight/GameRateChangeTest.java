@@ -536,6 +536,119 @@ public class GameRateChangeTest {
     }
 
     @Test
+    public void neverRunsNoBitrateControllerOfNightjarsEvenWhereAPcsStoredChoiceIsBusy() {
+        com.limelight.preferences.AutoBitrateChoice.setForPc(game, com.limelight.preferences.AutoBitrateChoice.CODEC_STORE,
+                "rate-change-pc", true);
+        prefs.keepBitrate = true;
+        startStream(recording());
+        assertFalse(game.adaptation.isAdaptiveBitrateEnabled());
+        assertFalse((boolean) ReflectionHelpers.callInstanceMethod(game.adaptation, "isRateChangeBitrateOn"));
+        assertTrue(keepSwitch(openDialog()).isChecked());
+        // The control case: without Never the PC's stored choice starts the busy-network controller.
+        prefs.keepBitrate = false;
+        startStream(recording());
+        assertTrue(game.adaptation.isAdaptiveBitrateEnabled());
+        // Automatic quality then steps only the resolution and frame rate.
+        assertFalse(GameAdaptation.qualityTakesBitrate(true, true, false, false, 0));
+        assertTrue(GameAdaptation.qualityTakesBitrate(false, true, false, false, 0));
+    }
+
+    @Test
+    public void aTakeoverThePcRefusedOrNeverAnsweredIsNotKept() {
+        prefs.keepBitrate = true;
+        prefs.enablePerfOverlay = false;
+        startStream(recording());
+        runFor(1);
+        assertTrue(game.adaptation.keepBitrateShown());
+        game.rateChange(new RateChangeResult(sent.get(0)[0], 50_000, 0, STATUS_REFUSED, REASON_DISABLED, STATUS_UNCHANGED, REASON_NONE));
+        ShadowLooper.idleMainLooper();
+        assertFalse("refused: the switch shows off", game.adaptation.keepBitrateShown());
+        game.adaptation.noteLinkLowered(com.limelight.binding.video.LinkNoticeStatus.parse(1, 50_000, 18_400));
+        assertNotNull("and the notice may say the PC lowered it", ShadowToast.getLatestToast());
+
+        // No answer in the usual time.
+        sent.clear();
+        startStream(recording());
+        runFor(1);
+        assertTrue(game.adaptation.keepBitrateShown());
+        runFor((int) (StreamRateChanges.ANSWER_MS / 1000) + 1);
+        assertFalse(game.adaptation.keepBitrateShown());
+    }
+
+    @Test
+    public void aReconnectSendsTheTakeoverAgainOnTheNewSession() {
+        // The switch turned on, then the stream reconnects: exactly one takeover on the new session.
+        startStream(recording());
+        keepSwitch(openDialog()).setChecked(true);
+        ShadowLooper.idleMainLooper();
+        assertEquals(1, sent.size());
+        ShadowDialog.reset();
+        sent.clear();
+        startStream(recording());
+        runFor(5);
+        assertEquals(1, sent.size());
+        assertEquals(50_000, sent.get(0)[1]);
+
+        // A bitrate the player chose before the reconnect: sent again at that bitrate.
+        prefs.keepBitrate = false;
+        ReflectionHelpers.setField(game, "sessionManualBitrate", 30_000);
+        ReflectionHelpers.setField(game, "currentBitrate", 30_000);
+        sent.clear();
+        startStream(recording());
+        runFor(5);
+        assertEquals(1, sent.size());
+        assertEquals(30_000, sent.get(0)[1]);
+    }
+
+    @Test
+    public void theSwitchSendsTheBitrateTheStreamStartedWithNotTheSetting() {
+        // A link test before the launch started the stream below the setting.
+        ReflectionHelpers.setField(game, "currentBitrate", 40_000);
+        startStream(recording());
+        keepSwitch(openDialog()).setChecked(true);
+        ShadowLooper.idleMainLooper();
+        assertEquals(40_000, sent.get(0)[1]);
+    }
+
+    @Test
+    public void theSwitchStoresOnlyLowerBitratesKeysAsTheOverlaysSwitchDoes() {
+        com.limelight.preferences.AutoBitrateChoice.setForPc(game, com.limelight.preferences.AutoBitrateChoice.CODEC_STORE,
+                "another-pc", true);
+        startStream(recording());
+        keepSwitch(openDialog()).setChecked(true);
+        ShadowLooper.idleMainLooper();
+        assertTrue("another PC's own choice stays", game.getSharedPreferences(
+                com.limelight.preferences.AutoBitrateChoice.CODEC_STORE, android.content.Context.MODE_PRIVATE).contains("another-pc"));
+        assertTrue(stored().getBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, false));
+    }
+
+    @Test
+    public void onTheSecondScreenTheSwitchHoldsForItsStreamWithoutStoring() {
+        game.setIntent(new Intent().putExtra(Game.EXTRA_PC_UUID, "rate-change-pc").putExtra(DualScreen.EXTRA_SECOND_SCREEN, true));
+        startStream(recording());
+        keepSwitch(openDialog()).setChecked(true);
+        ShadowLooper.idleMainLooper();
+        assertEquals(1, sent.size());
+        assertTrue(prefs.keepBitrate);
+        assertFalse(stored().contains(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING));
+    }
+
+    @Test
+    public void theNoticeStaysQuietWhileTheOverlayShows() {
+        ReflectionHelpers.setField(game, "performanceOverlayScroll", game.findViewById(R.id.performanceOverlayScroll));
+        game.performanceOverlayScroll.setVisibility(View.VISIBLE);
+        game.adaptation.noteLinkLowered(com.limelight.binding.video.LinkNoticeStatus.parse(1, 50_000, 18_400));
+        assertNull(ShadowToast.getLatestToast());
+        assertFalse(game.linkLoweredTold);
+        // The wiring from the PC's report: Game.linkNotice reaches it.
+        game.performanceOverlayScroll.setVisibility(View.GONE);
+        game.linkNotice(1, 50_000, 18_400);
+        ShadowLooper.idleMainLooper();
+        assertTrue(game.linkLoweredTold);
+        assertNotNull(ShadowToast.getLatestToast());
+    }
+
+    @Test
     public void clampedValuesSayWhatLimitsThem() {
         RateChangeResult result = new RateChangeResult(1, 80_000, 90_000, STATUS_CLAMPED, REASON_ENCODER_LIMIT,
                 STATUS_CLAMPED, REASON_HOST_LIMIT);

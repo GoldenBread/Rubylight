@@ -49,7 +49,8 @@ public final class AutoBitrateChoice {
 
     /**
      * The stream menu's Keep my bitrate: Lower bitrate's Never: keep my bitrate when on, The PC decides when off, written
-     * as choosing them in Settings writes them (SwitchPairChoice). The caller clears the PCs' own choices as Settings does.
+     * as choosing them in Settings writes them (SwitchPairChoice). Only these keys: as the performance overlay's switch, it
+     * leaves every other stored value, PCs' own choices included.
      */
     public static void storeKeepBitrate(SharedPreferences.Editor editor, boolean keep) {
         SwitchPairChoice.LOWER_BITRATE.save(editor, keep ? SwitchPairChoice.KEEP : 0);

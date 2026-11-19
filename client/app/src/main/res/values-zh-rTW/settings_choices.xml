@@ -5,7 +5,7 @@
     <string name="lower_bitrate_busy">網路忙碌時</string>
     <string name="lower_bitrate_lost">更早降低</string>
     <string name="lower_bitrate_keep">從不：保持我的位元速率</string>
-    <string name="summary_lower_bitrate">若連線承載不了，「從不：保持我的位元速率」可能讓畫面卡住或破碎；連線足夠但畫面變模糊時再選它。預設情況下，電腦會在遺失無法修復的影格時降低位元速率，之後再調回；「更早降低」和「網路忙碌時」會更早降低，代價是畫面較柔和。</string>
+    <string name="summary_lower_bitrate">若連線承載不了，「從不：保持我的位元速率」可能讓畫面卡住或破碎，且只對接受位元速率變更的電腦有效；連線能承載更多但畫面變模糊時再選它。預設情況下，電腦會在遺失無法修復的影格時降低位元速率，之後再調回；「更早降低」會更早降低，代價是畫面較柔和。</string>
     <string name="title_back_button">返回鍵</string>
     <string name="back_button_back">返回</string>
     <string name="back_button_menu">串流選單</string>

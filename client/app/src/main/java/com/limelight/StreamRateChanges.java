@@ -42,6 +42,8 @@ final class StreamRateChanges {
         MANUAL_NO_ANSWER,
         // Automatic bitrate's request got no answer in ANSWER_MS, so it stopped for this stream.
         AUTOMATIC_NO_ANSWER,
+        // Keep my bitrate's request got no answer in ANSWER_MS: the PC may still lower the bitrate.
+        TAKEOVER_NO_ANSWER,
     }
 
     // What became of one result.
@@ -212,7 +214,9 @@ final class StreamRateChanges {
             int serial = entry.getKey();
             LimeLog.warning("Rate change: serial " + Integer.toUnsignedString(serial) + " got no answer in " +
                     ANSWER_MS + " ms");
-            if (request.manual) {
+            if (request.takeover) {
+                expired.add(Answer.TAKEOVER_NO_ANSWER);
+            } else if (request.manual) {
                 manualOutstanding--;
                 expired.add(Answer.MANUAL_NO_ANSWER);
             } else if (automatic != null && serial == automaticSerial) {

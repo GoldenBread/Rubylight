@@ -1091,6 +1091,46 @@ fn the_controller_buttons_page_has_one_test_switch_and_no_repeated_hints() {
     assert!(f.l.controller_test);
 }
 
+/// Never survives every Recommended choice but Save data, which turns Nightjar's own lowering on;
+/// the page does not show the row.
+#[test]
+fn never_survives_every_recommended_choice_but_save_data() {
+    let display = Display { width: 2560, height: 1440, refresh_hz: 120.0, refresh_reported: true };
+    let caps = simple_caps(&display, false, true);
+    let recommended = simple::recommended(&caps);
+    let mut s = Settings { keep_bitrate: true, ..Settings::default() };
+    for choices in [
+        simple::Choices { smoothness: simple::Smoothness::Smoothest, ..recommended },
+        simple::Choices { hdr: simple::Hdr::Off, ..recommended },
+        simple::Choices { picture: simple::Picture::Auto, ..recommended },
+        simple::Choices { picture: simple::Picture::Best, ..recommended },
+    ].into_iter().enumerate() {
+        simple_apply(&mut s, &display, &caps, choices.1);
+        assert!(s.keep_bitrate, "choice {}", choices.0);
+    }
+    simple_apply(&mut s, &display, &caps, simple::Choices { picture: simple::Picture::SaveData, ..recommended });
+    assert!(!s.keep_bitrate && s.adaptive_bitrate);
+}
+
+/// A PC's, game's or profile's Lower bitrate saved before Never existed holds only its two
+/// switches: over a main Never it reads as its own choice.
+#[test]
+fn a_two_key_override_over_never_reads_as_its_own_choice() {
+    use nightjar_policy::choices::LowerBitrate;
+    let never = Settings { keep_bitrate: true, ..Settings::default() };
+    for (json, choice) in [(r#"{"adaptive_bitrate":true}"#, LowerBitrate::WhenBusy), (r#"{"adaptive_bitrate":false,"client_hint_bitrate":false}"#, LowerBitrate::Off),
+        (r#"{"client_hint_bitrate":true}"#, LowerBitrate::WhenFramesLost)] {
+        let layer: Overrides = serde_json::from_str(json).unwrap();
+        let s = layer.apply(&never);
+        assert_eq!(LowerBitrate::from_saved(s.adaptive_bitrate, s.client_hint_bitrate, s.keep_bitrate), choice, "{json}");
+    }
+    // A layer without the row leaves the main Never; one saved with Never keeps it.
+    let other: Overrides = serde_json::from_str(r#"{"fps":60}"#).unwrap();
+    assert!(other.apply(&never).keep_bitrate);
+    let kept: Overrides = serde_json::from_str(r#"{"adaptive_bitrate":false,"client_hint_bitrate":false,"keep_bitrate":true}"#).unwrap();
+    assert!(kept.apply(&Settings::default()).keep_bitrate);
+}
+
 /// Lower bitrate's list open on the Video section, at 1920x1080:
 /// `NIGHTJAR_SHOTS=<dir> cargo test -p nightjar-desktop lower_bitrate_open_screenshot -- --ignored`.
 #[test]

@@ -1584,7 +1584,7 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("The PC decides", "PC가 결정"),
     ("Lower it sooner", "더 일찍 낮추기"),
     ("Never: keep my bitrate", "안 함: 내 비트레이트 유지"),
-    ("Never: keep my bitrate can freeze or break up the picture on a link that cannot carry it; choose it when the picture turns soft on a link that can. By default the PC lowers the bitrate when frames are lost that it cannot repair and raises it again afterwards; Lower it sooner and When the network is busy lower it earlier, with a softer picture as the cost.", "“안 함: 내 비트레이트 유지”는 연결이 감당하지 못할 때 화면이 멈추거나 깨질 수 있습니다. 감당할 수 있는 연결에서 화면이 흐려질 때 선택하세요. 기본적으로 PC는 복구할 수 없는 프레임이 손실되면 비트레이트를 낮췄다가 이후 다시 올리며, “더 일찍 낮추기”와 “네트워크 혼잡 시”는 더 일찍 낮추는 대신 화질이 부드러워집니다."),
+    ("Never: keep my bitrate can freeze or break up the picture on a link that cannot carry it, and works only with a PC that accepts bitrate changes; choose it when the picture turns soft on a link that can carry more. By default the PC lowers the bitrate when frames are lost that it cannot repair and raises it again afterwards; Lower it sooner lowers it earlier, with a softer picture as the cost.", "“안 함: 내 비트레이트 유지”는 연결이 감당하지 못할 때 화면이 멈추거나 깨질 수 있으며, 비트레이트 변경을 받아들이는 PC에서만 작동합니다. 더 감당할 수 있는 연결에서 화면이 흐려질 때 선택하세요. 기본적으로 PC는 복구할 수 없는 프레임이 손실되면 비트레이트를 낮췄다가 이후 다시 올리며, “더 일찍 낮추기”는 더 일찍 낮추는 대신 화질이 부드러워집니다."),
     ("The PC lowered the bitrate to {} Mbps. To keep your bitrate, open the stream menu and turn on Keep my bitrate.", "PC가 비트레이트를 {} Mbps로 낮췄습니다. 비트레이트를 유지하려면 스트림 메뉴를 열고 “내 비트레이트 유지”를 켜세요."),
     ("The PC lowered the bitrate to {} Mbps for the network.", "PC가 네트워크 때문에 비트레이트를 {} Mbps로 낮췄습니다."),
     ("Keep my bitrate", "내 비트레이트 유지"),

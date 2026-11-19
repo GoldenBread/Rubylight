@@ -1541,6 +1541,11 @@ impl<'de> Deserialize<'de> for Overrides {
         let mut values = serde_json::Map::deserialize(deserializer)?;
         serde_json::from_value::<Settings>(serde_json::Value::Object(values.clone())).map_err(serde::de::Error::custom)?;
         normalize_values(&mut values);
+        // Lower bitrate saved before Never existed holds only its two switches: that choice is the
+        // layer's own, so it does not read as a Never of the settings below.
+        if (values.contains_key("adaptive_bitrate") || values.contains_key("client_hint_bitrate")) && !values.contains_key("keep_bitrate") {
+            values.insert("keep_bitrate".to_owned(), serde_json::Value::Bool(false));
+        }
         Ok(Self(values))
     }
 }

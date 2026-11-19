@@ -27,7 +27,7 @@ pub mod overlay;
 mod recovery;
 mod quality;
 mod rate_change;
-pub use rate_change::store_keep;
+pub use rate_change::{own_lowering_at_start, store_keep};
 pub mod menu_extras;
 pub mod guests;
 mod touch;
@@ -1081,9 +1081,12 @@ impl Streaming {
             },
         };
         let rate_change = facts.rate_change.then(|| {
+            let hint = settings.client_hint_bitrate && !settings.keep_bitrate;
             let mut rates = rate_change::RateChange::new(
-                bitrate_kbps, facts.fps.max(1) as u32 * 1000, settings.client_hint_bitrate && !settings.keep_bitrate, connecting.plan.bitrate_limit_kbps, 0);
-            if settings.keep_bitrate { rates.keep_bitrate(); }
+                bitrate_kbps, facts.fps.max(1) as u32 * 1000, hint, connecting.plan.bitrate_limit_kbps, 0);
+            // A reconnect is a new session on the PC, whose controllers lower the bitrate again: Never,
+            // and a bitrate the player chose before it, are sent once more.
+            if rate_change::takeover_at_start(settings.keep_bitrate, connecting.plan.bitrate_before_manual.is_some(), hint) { rates.keep_bitrate(); }
             // After an automatic reconnect the client-hint controller returns to the rate it had cut to.
             if let Some(kbps) = connecting.plan.resume_bitrate_kbps { rates.resume_hint(kbps); }
             rates
@@ -2060,6 +2063,8 @@ impl Streaming {
             self.show_toast(tr("The PC decides from the next stream; this stream keeps its bitrate."));
         }
         self.settings.keep_bitrate = keep;
+        // A reconnect starts from the plan: it sends the takeover again on the PC's new session.
+        self.plan.settings.keep_bitrate = keep;
         self.keep_change = Some(keep);
     }
 

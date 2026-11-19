@@ -32,6 +32,13 @@ pub(super) fn link_lowered_toast(notice: &LinkNotice, can_keep: bool) -> String 
     }
 }
 
+/// The notice for a PC's report that it holds the bitrate down, when it is to be told now. `kept`
+/// is the stream menu's Keep my bitrate (`None` on a PC that takes no rate changes, where Never
+/// alone keeps it quiet): a takeover the PC refused or never answered no longer counts.
+pub(super) fn link_notice_toast(notice: &LinkNotice, told: bool, overlay_visible: bool, keep_chosen: bool, kept: Option<bool>) -> Option<String> {
+    tell_link_lowered(notice.state, told, overlay_visible, kept.unwrap_or(keep_chosen)).then(|| link_lowered_toast(notice, kept.is_some()))
+}
+
 /// Whether a PC's report that it holds the bitrate down is told to the player now: the first
 /// time in the stream, with the overlay (which has its own line) hidden, and not with "Never".
 pub(super) fn tell_link_lowered(state: LinkState, told: bool, overlay_visible: bool, keep_bitrate: bool) -> bool {
@@ -523,8 +530,9 @@ impl Streaming {
             self.show_toast(toast);
         }
         // "Never: keep my bitrate": once, as soon as video arrives, whatever has focus.
-        if tick.recent_video {
-            if let Some(request) = self.rate_change.as_mut().and_then(|rates| rates.takeover_request(self.started.elapsed().as_millis() as u64)) {
+        {
+            let now = self.started.elapsed().as_millis() as u64;
+            if let Some(request) = self.rate_change.as_mut().and_then(|rates| rates.takeover_on_tick(tick.recent_video, now)) {
                 self.send_rate_change(request);
             }
         }
@@ -587,6 +595,19 @@ mod link_lowered_tests {
         assert!(!tell_link_lowered(LinkState::Limited, true, false, false), "once per stream");
         assert!(!tell_link_lowered(LinkState::Limited, false, true, false), "the overlay has its own line");
         assert!(!tell_link_lowered(LinkState::Limited, false, false, true), "not with Never");
+    }
+
+    #[test]
+    fn the_link_notice_event_shows_the_notice_as_the_switch_and_never_say() {
+        let notice = LinkNotice { state: LinkState::Limited, reason: rubylight_protocol::control::LinkReason::Network, ceiling_kbps: 50_000, current_kbps: 18_400 };
+        // (told, overlay, Never chosen, the switch)
+        assert!(link_notice_toast(&notice, false, false, false, Some(false)).is_some_and(|t| t.contains("Keep my bitrate")));
+        assert!(link_notice_toast(&notice, false, false, true, Some(true)).is_none(), "the PC keeps it");
+        assert!(link_notice_toast(&notice, false, false, true, Some(false)).is_some(), "a refused takeover: Never alone does not keep it quiet");
+        assert!(link_notice_toast(&notice, false, false, true, None).is_none(), "no rate changes: Never keeps it quiet");
+        assert!(link_notice_toast(&notice, false, false, false, None).is_some_and(|t| !t.contains("Keep")));
+        assert!(link_notice_toast(&notice, false, true, false, Some(false)).is_none(), "the overlay shows it");
+        assert!(link_notice_toast(&notice, true, false, false, Some(false)).is_none(), "once");
     }
 
     #[test]

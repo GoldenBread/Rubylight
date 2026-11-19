@@ -1584,7 +1584,7 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("The PC decides", "PC に任せる"),
     ("Lower it sooner", "早めに下げる"),
     ("Never: keep my bitrate", "下げない: ビットレートを維持"),
-    ("Never: keep my bitrate can freeze or break up the picture on a link that cannot carry it; choose it when the picture turns soft on a link that can. By default the PC lowers the bitrate when frames are lost that it cannot repair and raises it again afterwards; Lower it sooner and When the network is busy lower it earlier, with a softer picture as the cost.", "「下げない: ビットレートを維持」にすると、回線がそのビットレートに耐えられない場合に映像が止まったり乱れたりすることがあります。耐えられる回線なのに映像がぼやけるときに選んでください。標準では、PC が修復できないフレーム欠落を検出するとビットレートを下げ、その後に元へ戻します。「早めに下げる」と「ネットワーク混雑時」はより早く下げ、代わりに画質は柔らかくなります。"),
+    ("Never: keep my bitrate can freeze or break up the picture on a link that cannot carry it, and works only with a PC that accepts bitrate changes; choose it when the picture turns soft on a link that can carry more. By default the PC lowers the bitrate when frames are lost that it cannot repair and raises it again afterwards; Lower it sooner lowers it earlier, with a softer picture as the cost.", "「下げない: ビットレートを維持」にすると、回線がそのビットレートに耐えられない場合に映像が止まったり乱れたりすることがあり、ビットレート変更を受け付ける PC でのみ機能します。もっと耐えられる回線なのに映像がぼやけるときに選んでください。標準では、PC が修復できないフレーム欠落を検出するとビットレートを下げ、その後に元へ戻します。「早めに下げる」はより早く下げ、代わりに画質は柔らかくなります。"),
     ("The PC lowered the bitrate to {} Mbps. To keep your bitrate, open the stream menu and turn on Keep my bitrate.", "PC がビットレートを {} Mbps に下げました。ビットレートを維持するには、ストリームメニューを開いて「ビットレートを維持」をオンにしてください。"),
     ("The PC lowered the bitrate to {} Mbps for the network.", "PC がネットワークのためにビットレートを {} Mbps に下げました。"),
     ("Keep my bitrate", "ビットレートを維持"),

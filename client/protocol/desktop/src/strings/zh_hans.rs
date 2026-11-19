@@ -1584,7 +1584,7 @@ sudo sysctl -w net.core.rmem_max={}", "接收缓冲区：系统只分配了所�
     ("The PC decides", "由电脑决定"),
     ("Lower it sooner", "更早降低"),
     ("Never: keep my bitrate", "从不：保持我的码率"),
-    ("Never: keep my bitrate can freeze or break up the picture on a link that cannot carry it; choose it when the picture turns soft on a link that can. By default the PC lowers the bitrate when frames are lost that it cannot repair and raises it again afterwards; Lower it sooner and When the network is busy lower it earlier, with a softer picture as the cost.", "如果连接承载不了该码率，“从不：保持我的码率”可能让画面卡住或破碎；连接足够但画面变得模糊时再选它。默认情况下，电脑会在丢失无法修复的帧时降低码率，之后再调回；“更早降低”和“网络繁忙时”会更早降低，代价是画面更柔和。"),
+    ("Never: keep my bitrate can freeze or break up the picture on a link that cannot carry it, and works only with a PC that accepts bitrate changes; choose it when the picture turns soft on a link that can carry more. By default the PC lowers the bitrate when frames are lost that it cannot repair and raises it again afterwards; Lower it sooner lowers it earlier, with a softer picture as the cost.", "如果连接承载不了该码率，“从不：保持我的码率”可能让画面卡住或破碎，且只对接受码率更改的电脑有效；连接能承载更多但画面变得模糊时再选它。默认情况下，电脑会在丢失无法修复的帧时降低码率，之后再调回；“更早降低”会更早降低，代价是画面更柔和。"),
     ("The PC lowered the bitrate to {} Mbps. To keep your bitrate, open the stream menu and turn on Keep my bitrate.", "电脑已将码率降至 {} Mbps。若要保持你的码率，请打开串流菜单并开启“保持我的码率”。"),
     ("The PC lowered the bitrate to {} Mbps for the network.", "电脑因网络原因已将码率降至 {} Mbps。"),
     ("Keep my bitrate", "保持我的码率"),

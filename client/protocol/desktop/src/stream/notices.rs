@@ -262,10 +262,9 @@ impl Streaming {
                 }
             }
             ControlEvent::LinkNotice(notice) => {
-                let kept = self.settings.keep_bitrate || self.bitrate_kept() == Some(true);
-                if super::stats::tell_link_lowered(notice.state, self.link_lowered_told, self.overlay_visible, kept) {
+                if let Some(toast) = super::stats::link_notice_toast(&notice, self.link_lowered_told, self.overlay_visible, self.settings.keep_bitrate, self.bitrate_kept()) {
                     self.link_lowered_told = true;
-                    self.show_toast(super::stats::link_lowered_toast(&notice, self.rate_change.is_some()));
+                    self.show_toast(toast);
                 }
                 self.link_notice = (notice.state != LinkState::Full).then_some(notice);
             }

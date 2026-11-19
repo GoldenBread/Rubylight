@@ -79,9 +79,10 @@ public class StreamRateChangesTest {
                 RateChangeResult.STATUS_UNCHANGED, RateChangeResult.REASON_NONE), 100);
         assertEquals(StreamRateChanges.Answer.TAKEOVER, outcome.answer);
         assertTrue(outcome.takesBitrate);
-        // Unanswered, it is given up on without a message for the player.
+        // Unanswered, it is given up on: not kept any more, without a message for the player.
         assertTrue(changes.sendTakeover(25_000, 1000));
-        assertTrue(changes.expire(1000 + StreamRateChanges.ANSWER_MS).isEmpty());
+        assertEquals(java.util.EnumSet.of(StreamRateChanges.Answer.TAKEOVER_NO_ANSWER),
+                changes.expire(1000 + StreamRateChanges.ANSWER_MS));
         sendWorks = false;
         assertFalse(changes.sendTakeover(25_000, 0));
     }

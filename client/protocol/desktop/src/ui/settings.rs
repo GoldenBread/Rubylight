@@ -340,7 +340,8 @@ pub(crate) fn simple_apply(s: &mut Settings, display: &Display, caps: &simple::C
     };
     s.adaptive_bitrate = values.adaptive_bitrate;
     s.client_hint_bitrate = false;
-    s.keep_bitrate = false;
+    // Only Save data, which turns Nightjar's own lowering on, clears an earlier Never; the page does not show that row.
+    if values.adaptive_bitrate { s.keep_bitrate = false; }
     s.adaptive_quality = match values.adaptive_quality {
         simple::AdaptiveQuality::Off => crate::config::QualityMode::Off,
         simple::AdaptiveQuality::SavePower => crate::config::QualityMode::Battery,
@@ -1138,7 +1139,7 @@ impl Launcher {
                     r
                 });
             }
-            setting_row(ui, s, &mut rows, &["adaptive_bitrate", "client_hint_bitrate", "keep_bitrate"], "Lower bitrate", "Never: keep my bitrate can freeze or break up the picture on a link that cannot carry it; choose it when the picture turns soft on a link that can. By default the PC lowers the bitrate when frames are lost that it cannot repair and raises it again afterwards; Lower it sooner and When the network is busy lower it earlier, with a softer picture as the cost.", |ui, s| {
+            setting_row(ui, s, &mut rows, &["adaptive_bitrate", "client_hint_bitrate", "keep_bitrate"], "Lower bitrate", "Never: keep my bitrate can freeze or break up the picture on a link that cannot carry it, and works only with a PC that accepts bitrate changes; choose it when the picture turns soft on a link that can carry more. By default the PC lowers the bitrate when frames are lost that it cannot repair and raises it again afterwards; Lower it sooner lowers it earlier, with a softer picture as the cost.", |ui, s| {
                 let current = LowerBitrate::from_saved(s.adaptive_bitrate, s.client_hint_bitrate, s.keep_bitrate);
                 let mut choice = current;
                 let response = Combo::from_id_salt("lower-bitrate").selected_text(tr(lower_bitrate_name(current))).show_ui(ui, |ui| {

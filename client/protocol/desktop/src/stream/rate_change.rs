@@ -127,9 +127,15 @@ impl RateChange {
     pub fn takeover_request(&mut self, now_ms: u64) -> Option<RateChangeRequest> {
         if !std::mem::take(&mut self.keep_pending) { return None; }
         self.kept = true;
-        let kbps = self.bitrate_kbps;
+        let kbps = self.keep_kbps();
         eprintln!("nightjar: keep my bitrate: sending the stream's {kbps} kbps as a bitrate change so the PC stops lowering it");
         Some(self.request(Origin::Keep, kbps, 0, now_ms))
+    }
+
+    /// The stream's tick: the takeover goes out with the first tick that saw video.
+    pub fn takeover_on_tick(&mut self, recent_video: bool, now_ms: u64) -> Option<RateChangeRequest> {
+        if !recent_video { return None; }
+        self.takeover_request(now_ms)
     }
 
     /// What the stream menu's Keep my bitrate shows: the PC keeps this stream's bitrate (or will,
@@ -147,9 +153,15 @@ impl RateChange {
         if !steering && (self.kept || self.keep_pending) { return None; }
         self.keep_pending = false;
         self.kept = true;
-        let kbps = self.chosen_kbps.unwrap_or(self.configured_kbps);
+        let kbps = self.keep_kbps();
         eprintln!("nightjar: keep my bitrate (stream menu): sending {kbps} kbps as a bitrate change so the PC stops lowering it");
         Some(self.request(Origin::Keep, kbps, 0, now_ms))
+    }
+
+    /// The bitrate Keep my bitrate keeps, at the start and from the switch alike: the one the player
+    /// last chose in this stream, else the one the stream started with (negotiated).
+    fn keep_kbps(&self) -> u32 {
+        self.chosen_kbps.unwrap_or(self.configured_kbps)
     }
 
     /// The stream menu's Keep my bitrate turned off: the switch shows off and nothing is sent.
@@ -232,6 +244,7 @@ impl RateChange {
                 }
                 Origin::Keep => {
                     eprintln!("nightjar: keep my bitrate: the PC did not answer; it may still lower the bitrate");
+                    self.kept = false;
                     continue;
                 }
             });
@@ -248,6 +261,7 @@ impl RateChange {
         }
         if origin == Some(Origin::Keep) {
             eprintln!("nightjar: keep my bitrate: the change could not be sent ({error}); the PC may still lower the bitrate");
+            self.kept = false;
             return trf("Could not change the stream: {}", &[error]);
         }
         trf("Could not change the stream: {}", &[error])
@@ -296,6 +310,8 @@ impl RateChange {
             Origin::Keep => {
                 eprintln!("nightjar: keep my bitrate: the PC answered {:?} at {} kbps{}", result.bitrate.status, result.bitrate_kbps,
                     if changed { "; it no longer lowers the bitrate" } else { "; it may still lower the bitrate" });
+                // Refused: the PC still lowers the bitrate, so the switch shows off and the notice may say so.
+                if !changed { self.kept = false; }
             }
             Origin::Hint => {
                 let Some(hint) = &mut self.hint else { return answer };
@@ -325,6 +341,19 @@ impl RateChange {
         self.fps_millihz = fps_millihz;
         self.menu_fps = f64::from(fps_millihz) / 1000.0;
     }
+}
+
+/// Whether the stream starts a bitrate controller of this device (the busy-network one, also for
+/// automatic quality): never under Never or after a bitrate the player chose.
+pub fn own_lowering_at_start(manual_bitrate: bool, keep_bitrate: bool, adaptive_bitrate: bool, automatic_quality: bool) -> bool {
+    !manual_bitrate && !keep_bitrate && (adaptive_bitrate || automatic_quality)
+}
+
+/// Whether a stream sends the takeover once its video runs: Never is chosen, or a reconnect starts
+/// at a bitrate the player chose (the PC's new session would lower it again) with no controller of
+/// this device steering.
+pub fn takeover_at_start(keep_bitrate: bool, player_chose_bitrate: bool, hint: bool) -> bool {
+    keep_bitrate || (player_chose_bitrate && !hint)
 }
 
 /// What the stream menu's Keep my bitrate shows; `None` hides it, on a PC that did not take this
@@ -618,6 +647,42 @@ mod tests {
         assert!((0..30).all(|s| hint.tick(&stats(s, 10.0)).is_none()), "this device lowers nothing");
         // The busy-network controller steering: off.
         assert_eq!(keep_switch(Some(&never), true), Some(false));
+    }
+
+    #[test]
+    fn a_takeover_the_pc_refused_never_answered_or_that_could_not_go_out_is_not_kept() {
+        let mut refused = RateChange::new(25_000, 60_000, false, 0, 0);
+        refused.keep_bitrate();
+        let request = refused.takeover_on_tick(true, 1000).unwrap();
+        refused.result(&result(&request, 25_000, 60_000, Outcome::refused(Reason::Disabled), Outcome::UNCHANGED), 1100);
+        assert_eq!(keep_switch(Some(&refused), false), Some(false));
+        let mut silent = RateChange::new(25_000, 60_000, false, 0, 0);
+        silent.keep_bitrate();
+        silent.takeover_on_tick(true, 1000).unwrap();
+        assert_eq!(silent.expire(1000 + ANSWER_MS), None, "says nothing");
+        assert_eq!(keep_switch(Some(&silent), false), Some(false));
+        let mut unsent = RateChange::new(25_000, 60_000, false, 0, 0);
+        let request = unsent.keep_now(0).unwrap();
+        unsent.send_failed(&request, &"closed");
+        assert!(!unsent.kept());
+    }
+
+    #[test]
+    fn the_takeover_goes_out_with_the_first_tick_that_saw_video_and_the_start_rules_hold() {
+        let mut rates = RateChange::new(25_000, 60_000, false, 0, 0);
+        rates.keep_bitrate();
+        assert_eq!(rates.takeover_on_tick(false, 500), None, "no video yet");
+        assert_eq!(rates.takeover_on_tick(true, 1000).map(|r| r.bitrate_kbps), Some(25_000));
+        assert_eq!(rates.takeover_on_tick(true, 2000), None);
+        // Under Never, or after a bitrate the player chose, the stream starts no controller of its own.
+        assert!(!own_lowering_at_start(false, true, true, true));
+        assert!(!own_lowering_at_start(true, false, true, false));
+        assert!(own_lowering_at_start(false, false, true, false) && own_lowering_at_start(false, false, false, true));
+        // A reconnect sends the takeover again for Never and for a bitrate the player chose.
+        assert!(takeover_at_start(true, false, false));
+        assert!(takeover_at_start(false, true, false));
+        assert!(!takeover_at_start(false, true, true), "Lower it sooner steers it");
+        assert!(!takeover_at_start(false, false, false));
     }
 
     #[test]

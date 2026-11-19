@@ -77,6 +77,10 @@ final class SettingRules {
      */
     static String unusedReason(Context context, String key, SharedPreferences prefs) {
         switch (key) {
+            case AutoBitrateChoice.SETTINGS_KEY:
+                // Never's bitrate change goes out only on the new streaming engine (GameAdaptation.offersRateChange).
+                return SwitchPairChoice.LOWER_BITRATE.read(prefs) == SwitchPairChoice.KEEP && !keepBitrateApplies(prefs)
+                        ? context.getString(R.string.tag_unused_without, context.getString(R.string.title_rust_engine)) : null;
             case "checkbox_texture_view":
                 // PreferenceConfiguration.readPreferences keeps the stream's own surface under these.
                 if (prefs.getBoolean("checkbox_enable_hdr", false)) return unusedWith(context, R.string.title_enable_hdr);
@@ -226,6 +230,11 @@ final class SettingRules {
     /** The lowest resolution and frame rate only matter while automatic quality runs. */
     static boolean qualityLimitsApply(SharedPreferences prefs) {
         return !"off".equals(prefs.getString(ADAPTIVE_QUALITY, "off"));
+    }
+
+    /** Only the new streaming engine sends bitrate changes, so Never: keep my bitrate needs it. */
+    static boolean keepBitrateApplies(SharedPreferences prefs) {
+        return prefs.getBoolean(PreferenceConfiguration.RUST_ENGINE_PREF_STRING, true);
     }
 
     /** Only the new streaming engine roams; the C engine ignores the choice. */

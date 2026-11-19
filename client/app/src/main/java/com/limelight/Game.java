@@ -236,6 +236,11 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
                 LimeLog.warning("Automatic bitrate: the host did not answer a rate change; off for this stream");
                 messages.alert(R.string.stream_rate_change_auto_no_answer, Toast.LENGTH_LONG);
             }
+            if (expired.contains(StreamRateChanges.Answer.TAKEOVER_NO_ANSWER)) {
+                // The PC may still lower the bitrate: the switch shows off and the notice may say so.
+                bitrateKept = false;
+                LimeLog.warning("Keep my bitrate: the PC did not answer the bitrate change; it may still lower the bitrate");
+            }
             if (expired.contains(StreamRateChanges.Answer.MANUAL_NO_ANSWER)) {
                 messages.alert(R.string.stream_rate_change_no_answer, Toast.LENGTH_LONG);
             }
@@ -400,6 +405,8 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
     boolean bitrateKept;
     // The bitrate the player last chose in this stream, which Keep my bitrate keeps; 0 for none.
     int playerBitrateKbps;
+    // The bitrate this stream started with (negotiated), which Keep my bitrate keeps when the player chose none.
+    int streamStartBitrateKbps;
     // The soft keyboard below Android 11, which tells an adjustNothing window nothing of it.
     LegacyKeyboardInsets legacyKeyboard;
     final Handler keyboardPanHandler = new Handler(Looper.getMainLooper());

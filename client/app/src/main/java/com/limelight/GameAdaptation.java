@@ -428,6 +428,11 @@ final class GameAdaptation {
         LimeLog.info("Rate change: " + result + " (" + answer + (outcome.takesBitrate ? ")" : ", older bitrate)"));
         // An answer that came after a later request's keeps that one's bitrate.
         if (outcome.takesBitrate) game.currentBitrate = result.bitrateKbps;
+        if (answer == StreamRateChanges.Answer.TAKEOVER && !takeoverHeld(result.bitrateStatus)) {
+            // A refused takeover: the PC still lowers the bitrate, so the switch shows off and the notice may say so.
+            game.bitrateKept = false;
+            LimeLog.warning("Keep my bitrate: the PC refused the bitrate change (" + result + "); it may still lower the bitrate");
+        }
         // The player's own rate, which an automatic reconnect keeps.
         if (answer == StreamRateChanges.Answer.MANUAL && outcome.takesBitrate && result.bitrateKbps > 0) {
             game.sessionManualBitrate = result.bitrateKbps;
@@ -469,7 +474,10 @@ final class GameAdaptation {
         game.bitrateKept = false;
         // After an automatic reconnect the player's own rate is the one this stream started at.
         game.playerBitrateKbps = game.sessionManualBitrate;
-        if (game.prefConfig.keepBitrate) {
+        game.streamStartBitrateKbps = game.currentBitrate == 0 ? game.prefConfig.bitrate : game.currentBitrate;
+        // A reconnect is a new session on the PC, whose controllers lower the bitrate again: Never, and a bitrate the
+        // player chose before the reconnect, send it again.
+        if (game.prefConfig.keepBitrate || (changes != null && game.sessionManualBitrate > 0)) {
             if (changes != null) {
                 // The bitrate dialog's switch shows on from now; it sends nothing more while the takeover waits.
                 game.bitrateKept = true;
@@ -483,6 +491,9 @@ final class GameAdaptation {
             // An automatic reconnect after the player set a bitrate: it started at that rate, and a manual
             // bitrate keeps automatic bitrate off for the rest of the session.
             LimeLog.info("Automatic bitrate stays off: the player set " + game.sessionManualBitrate + " kbps before the reconnect");
+        } else if (bitrateHeld()) {
+            // Never: no bitrate controller of Nightjar's runs, whatever a PC's own stored choice says.
+            LimeLog.info("Never: keep my bitrate: Nightjar lowers no bitrate in this stream");
         } else if (game.rateChanges != null && game.prefConfig.rateChangeBitrate) {
             setRateChangeBitrateEnabled(true);
         } else if (autoBitrateAtStart()) {
@@ -498,11 +509,12 @@ final class GameAdaptation {
     private void sendKeepBitrate(StreamRateChanges stream) {
         game.bitrateHandler.postDelayed(() -> {
             if (!game.connected || game.rateChanges != stream) return;
-            int kbps = game.currentBitrate == 0 ? game.prefConfig.bitrate : game.currentBitrate;
+            int kbps = keepKbps();
             if (stream.sendTakeover(kbps, SystemClock.uptimeMillis())) {
-                LimeLog.info("Keep my bitrate: sent the stream's " + kbps + " kbps as a bitrate change so the PC stops lowering it");
+                LimeLog.info("Keep my bitrate: sent " + kbps + " kbps as a bitrate change so the PC stops lowering it");
                 scheduleRateChangeExpiry();
             } else {
+                game.bitrateKept = false;
                 LimeLog.warning("Keep my bitrate: the bitrate change could not be sent; the PC may still lower the bitrate");
             }
         }, 1000);
@@ -519,8 +531,9 @@ final class GameAdaptation {
 
     /**
      * The bitrate dialog's Keep my bitrate, stored as the performance overlay's switch is (GameOverlays.
-     * togglePerformanceOverlay): the stream's change goes to the main settings through DualScreen.saveSettings, as
-     * choosing Never or The PC decides in Settings stores it, PCs' own choices of the busy controller included. On
+     * togglePerformanceOverlay): only Lower bitrate's own keys go to the main settings through DualScreen.saveSettings,
+     * as choosing Never or The PC decides in Settings writes them; nothing else stored is touched (a PC's own choice of
+     * the busy controller stays; Never governs over it, bitrateHeld). On
      * sends the bitrate the player last chose in this stream, else the stream's own, as one bitrate change (nothing
      * when the PC already keeps it) and stops this device's own lowering. Off sends nothing: the PC has no message
      * that takes the bitrate back, so this stream keeps it and the notice says so.
@@ -534,24 +547,45 @@ final class GameAdaptation {
             if (isAdaptiveBitrateEnabled()) setAdaptiveBitrateEnabled(false, false);
             game.qualityAutoBitrate = false;
             if (steering || !game.bitrateKept) {
-                int kbps = game.playerBitrateKbps > 0 ? game.playerBitrateKbps : game.prefConfig.bitrate;
+                int kbps = keepKbps();
                 if (game.connected && stream.sendTakeover(kbps, SystemClock.uptimeMillis())) {
                     LimeLog.info("Keep my bitrate (stream menu): sent " + kbps + " kbps as a bitrate change so the PC stops lowering it");
                     scheduleRateChangeExpiry();
+                    game.bitrateKept = true;
                 } else {
                     LimeLog.warning("Keep my bitrate (stream menu): the bitrate change could not be sent");
                     game.messages.alert(R.string.stream_rate_change_not_sent, Toast.LENGTH_LONG);
                 }
             }
-            game.bitrateKept = true;
         } else {
             game.bitrateKept = false;
             LimeLog.info("Keep my bitrate turned off in the stream menu: The PC decides from the next stream; this stream keeps its bitrate");
             game.messages.alert(R.string.stream_keep_bitrate_off, Toast.LENGTH_LONG);
         }
         game.prefConfig.keepBitrate = on;
-        DualScreen.saveSettings(game, editor -> AutoBitrateChoice.storeKeepBitrate(editor, on));
-        AutoBitrateChoice.clearPcChoices(game);
+        if (!DualScreen.saveSettings(game, editor -> AutoBitrateChoice.storeKeepBitrate(editor, on))) {
+            // The second screen keeps its settings as they were at its start; the change holds for its own stream.
+            LimeLog.info("Keep my bitrate: the second screen's stream keeps the choice in memory only");
+        }
+    }
+
+    /** Whether the PC took a takeover's bitrate and so stands back (it does for any bitrate it applied or clamped). */
+    static boolean takeoverHeld(int bitrateStatus) {
+        return bitrateStatus == RateChangeResult.STATUS_APPLIED || bitrateStatus == RateChangeResult.STATUS_CLAMPED;
+    }
+
+    /**
+     * The bitrate Keep my bitrate keeps, at the stream's start and from the switch alike: the one the player last chose
+     * in this stream, else the one the stream started with (negotiated; a link test before the launch may have lowered it).
+     */
+    int keepKbps() {
+        if (game.playerBitrateKbps > 0) return game.playerBitrateKbps;
+        return game.streamStartBitrateKbps > 0 ? game.streamStartBitrateKbps : game.prefConfig.bitrate;
+    }
+
+    /** Never is chosen or the PC keeps this stream's bitrate: no bitrate controller of Nightjar's runs. */
+    boolean bitrateHeld() {
+        return game.bitrateKept || (game.prefConfig != null && game.prefConfig.keepBitrate);
     }
 
     /**
@@ -567,7 +601,9 @@ final class GameAdaptation {
         // The overlay shows when its view is visible (GameOverlays.togglePerformanceOverlay).
         boolean overlayShowing = game.performanceOverlayScroll != null
                 && game.performanceOverlayScroll.getVisibility() == android.view.View.VISIBLE;
-        boolean keep = game.bitrateKept || (game.prefConfig != null && game.prefConfig.keepBitrate);
+        // On a PC that takes rate changes, whether it keeps the bitrate (a refused or unanswered takeover does not); elsewhere
+        // Never alone keeps the notice quiet.
+        boolean keep = game.rateChanges != null ? game.bitrateKept : game.prefConfig != null && game.prefConfig.keepBitrate;
         if (status == null || !tellLinkLowered(game.linkLoweredTold, overlayShowing, keep)) return;
         game.linkLoweredTold = true;
         java.util.Locale locale = game.getResources().getConfiguration().locale;
@@ -729,12 +765,23 @@ final class GameAdaptation {
         if ((!game.adaptiveQuality.current().matches(shown[0], shown[1], game.streamFps) ||
                 game.reconfigureRequester.fpsMillihz() != qualityCeilingFrameRateMilliHz()) &&
                 !applyAdaptiveQuality(game.adaptiveQuality.current(), SystemClock.uptimeMillis())) return;
-        // Automatic quality needs it for this session only; the saved choice stays the user's own.
-        if (supportsAdaptiveBitrate() && !isAdaptiveBitrateEnabled() && !isRateChangeBitrateOn() && game.sessionManualBitrate == 0) {
+        // Automatic quality needs it for this session only; the saved choice stays the user's own. Never keeps the
+        // bitrate: automatic quality then steps only the resolution and frame rate.
+        if (qualityTakesBitrate(bitrateHeld(), supportsAdaptiveBitrate(), isAdaptiveBitrateEnabled(), isRateChangeBitrateOn(),
+                game.sessionManualBitrate)) {
             setAdaptiveBitrateEnabled(true, false);
             game.qualityAutoBitrate = true;
         }
         game.bitrateHandler.postDelayed(game.updateQuality, 1000);
+    }
+
+    /**
+     * Whether automatic quality turns on the busy-network controller for its session: not under Never or while the PC
+     * keeps the bitrate (it then steps only the resolution and frame rate), nor after a bitrate the player set or with
+     * another controller already running.
+     */
+    static boolean qualityTakesBitrate(boolean held, boolean supported, boolean busyOn, boolean hintOn, int manualKbps) {
+        return !held && supported && !busyOn && !hintOn && manualKbps == 0;
     }
 
     boolean applyAdaptiveQuality(AdaptiveQualityController.Target target, long now) {

@@ -149,6 +149,18 @@ public class SimpleProfileTest {
     }
 
     @Test
+    public void neverSurvivesEveryChoiceButSaveData() {
+        prefs.edit().putBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, true).commit();
+        assertTrue(SimpleProfile.apply(context, SimpleProfile.SMOOTHNESS, "smoothest"));
+        assertTrue(SimpleProfile.apply(context, SimpleProfile.HDR, "off"));
+        assertTrue(SimpleProfile.apply(context, SimpleProfile.PICTURE, "auto"));
+        assertTrue(SimpleProfile.apply(context, SimpleProfile.PICTURE, "best"));
+        assertTrue("the page does not show that row", prefs.getBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, false));
+        assertTrue(SimpleProfile.apply(context, SimpleProfile.PICTURE, "save-data"));
+        assertFalse("Save data turns Nightjar's own lowering on", prefs.getBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, true));
+    }
+
+    @Test
     public void aChangedAdvancedSettingReadsAsCustomAndBackRestoresTheProfile() {
         assertTrue(SimpleProfile.applyRecommended(context));
         assertEquals("auto", prefs.getString(SimpleProfile.SMOOTHNESS, null));

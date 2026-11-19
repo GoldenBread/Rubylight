@@ -46,6 +46,17 @@ public class UnusedSettingTagsTest {
     }
 
     @Test
+    public void neverSaysItNeedsTheNewStreamingEngine() {
+        assertNull(reason(AutoBitrateChoice.SETTINGS_KEY));
+        prefs.edit().putBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, true).commit();
+        assertNull("the new engine is on by default", reason(AutoBitrateChoice.SETTINGS_KEY));
+        prefs.edit().putBoolean(PreferenceConfiguration.RUST_ENGINE_PREF_STRING, false).commit();
+        assertEquals("Not used without New streaming engine", reason(AutoBitrateChoice.SETTINGS_KEY));
+        prefs.edit().putBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, false).commit();
+        assertNull("only Never needs it here", reason(AutoBitrateChoice.SETTINGS_KEY));
+    }
+
+    @Test
     public void thermalProtectionNamesTheThreeItActsThrough() {
         assertEquals("Not used without Lower bitrate, Automatic quality or Boost GPU performance for PyroWave",
                 reason(PreferenceConfiguration.THERMAL_PROTECTION_PREF_STRING));

@@ -125,7 +125,7 @@ impl App {
         streaming.watch_microphone_busy(self.waker.clone());
         self.pads.prepare_audio(settings.controllers && settings.controller_audio && streaming.facts.role != nightjar_core::http::AppRole::RemoteMonitor);
         streaming.display_changed(self.renderer);
-        if !manual_bitrate && !settings.keep_bitrate && (settings.adaptive_bitrate || streaming.quality_mode != config::QualityMode::Off) { streaming.enable_adaptive_bitrate(true); }
+        if stream::own_lowering_at_start(manual_bitrate, settings.keep_bitrate, settings.adaptive_bitrate, streaming.quality_mode != config::QualityMode::Off) { streaming.enable_adaptive_bitrate(true); }
         if settings.controllers && streaming.facts.role != nightjar_core::http::AppRole::RemoteMonitor {
             self.pads.set_limit(streaming.facts.controller_limit);
             streaming.session.input(|q| self.pads.announce_all(q));
