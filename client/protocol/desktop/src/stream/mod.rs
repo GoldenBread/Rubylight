@@ -715,6 +715,8 @@ pub struct Streaming {
     hardware: Option<HardwareMetrics>,
     /// What the host last said about holding the bitrate down for the network; `None` while it has not.
     link_notice: Option<LinkNotice>,
+    /// The stream said once that the PC lowered the bitrate (`notices::link_lowered_toast`).
+    link_lowered_told: bool,
     /// The host's latest pipeline frame rates; `None` until it sends them.
     pipeline_rates: Option<PipelineRatesReport>,
     pub exit: Option<Exit>,
@@ -1076,11 +1078,15 @@ impl Streaming {
         };
         let rate_change = facts.rate_change.then(|| {
             let mut rates = rate_change::RateChange::new(
-                bitrate_kbps, facts.fps.max(1) as u32 * 1000, settings.client_hint_bitrate, connecting.plan.bitrate_limit_kbps, 0);
+                bitrate_kbps, facts.fps.max(1) as u32 * 1000, settings.client_hint_bitrate && !settings.keep_bitrate, connecting.plan.bitrate_limit_kbps, 0);
+            if settings.keep_bitrate { rates.keep_bitrate(); }
             // After an automatic reconnect the client-hint controller returns to the rate it had cut to.
             if let Some(kbps) = connecting.plan.resume_bitrate_kbps { rates.resume_hint(kbps); }
             rates
         });
+        if settings.keep_bitrate && rate_change.is_none() {
+            eprintln!("nightjar: Never: keep my bitrate is chosen, but this PC takes no bitrate changes from the device; the stream runs as The PC decides");
+        }
         let backlog = connecting.shared.pacer_backlog.clone();
         // The stream controls read the attachments each time they are drawn.
         let usb_refused = if settings.usb_forwarding { crate::usb::refusal(facts.usb) } else { None };
@@ -1197,6 +1203,7 @@ impl Streaming {
             hardware_poll: HardwarePoll::default(),
             hardware: None,
             link_notice: None,
+            link_lowered_told: false,
             pipeline_rates: None,
             // A PC that set up no microphone gives Microphone only nothing to do.
             exit: mic_refused.then(|| Exit::Ended(Some(trf("{} did not accept the microphone", &[&facts_host])))),
@@ -1513,7 +1520,7 @@ impl Streaming {
                     return;
                 }
             }
-            if !self.adaptive_bitrate && !self.bitrate_busy { self.enable_adaptive_bitrate(true); }
+            if !self.adaptive_bitrate && !self.bitrate_busy && !self.settings.keep_bitrate { self.enable_adaptive_bitrate(true); }
         }
     }
 

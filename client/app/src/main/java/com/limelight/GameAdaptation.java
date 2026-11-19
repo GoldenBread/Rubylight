@@ -1,5 +1,6 @@
 package com.limelight;
 
+import com.limelight.binding.video.LinkNoticeStatus;
 import com.limelight.binding.video.MediaCodecDecoderRenderer;
 import com.limelight.computers.HostNotices;
 import com.limelight.nvstream.NvConnection;
@@ -448,6 +449,14 @@ final class GameAdaptation {
 
     void startStreamBitrate(StreamRateChanges changes) {
         game.rateChanges = changes;
+        if (game.prefConfig.keepBitrate) {
+            if (changes != null) {
+                sendKeepBitrate(changes);
+            } else {
+                LimeLog.info("Never: keep my bitrate is chosen, but this PC takes no bitrate changes from the device; " +
+                        "the stream runs as The PC decides");
+            }
+        }
         if (game.sessionManualBitrate > 0) {
             // An automatic reconnect after the player set a bitrate: it started at that rate, and a manual
             // bitrate keeps automatic bitrate off for the rest of the session.
@@ -459,6 +468,39 @@ final class GameAdaptation {
         } else if (foundationAbrAtStart()) {
             startFoundationAbr();
         }
+    }
+
+    // "Never: keep my bitrate": once the stream runs, its own bitrate goes to the PC as a bitrate change, which makes
+    // the PC's link-rate and congestion controllers stand back for this stream. One second after the start, as the
+    // automatic bitrate's first sample is.
+    private void sendKeepBitrate(StreamRateChanges stream) {
+        game.bitrateHandler.postDelayed(() -> {
+            if (!game.connected || game.rateChanges != stream) return;
+            int kbps = game.currentBitrate == 0 ? game.prefConfig.bitrate : game.currentBitrate;
+            if (stream.sendTakeover(kbps, SystemClock.uptimeMillis())) {
+                LimeLog.info("Keep my bitrate: sent the stream's " + kbps + " kbps as a bitrate change so the PC stops lowering it");
+                scheduleRateChangeExpiry();
+            } else {
+                LimeLog.warning("Keep my bitrate: the bitrate change could not be sent; the PC may still lower the bitrate");
+            }
+        }, 1000);
+    }
+
+    /**
+     * Whether a PC's report that it lowered the bitrate is told to the player now: the first time in the stream, with
+     * the performance overlay (which has its own line) not showing, and not with "Never: keep my bitrate".
+     */
+    static boolean tellLinkLowered(boolean told, boolean overlayShowing, boolean keepBitrate) {
+        return !told && !overlayShowing && !keepBitrate;
+    }
+
+    // The PC reports it holds the bitrate down for the network (a limited or floor notice).
+    void noteLinkLowered(LinkNoticeStatus status) {
+        if (status == null || !tellLinkLowered(game.linkLoweredTold,
+                game.prefConfig.enablePerfOverlay && !game.isHidingOverlays, game.prefConfig.keepBitrate)) return;
+        game.linkLoweredTold = true;
+        java.util.Locale locale = game.getResources().getConfiguration().locale;
+        game.messages.alert(game.getString(R.string.link_notice_keep, status.currentMbps(locale)), Toast.LENGTH_LONG);
     }
 
     // Automatic bitrate on a PC without Rubylight's runtime bitrate: a Foundation Sunshine PC runs

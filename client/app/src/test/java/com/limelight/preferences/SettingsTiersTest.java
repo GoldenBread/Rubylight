@@ -369,7 +369,7 @@ public class SettingsTiersTest {
             StreamSettings screen = controller.get();
             assertNull("the loss-based switch left Debug",
                     SettingsStructureTest.open(screen, "debug").findPreference("checkbox_rate_change_bitrate"));
-            assertArrayEquals(new String[] {"Off", "When the network is busy", "When frames are lost"},
+            assertArrayEquals(new String[] {"The PC decides (recommended)", "When the network is busy", "Lower it sooner", "Never: keep my bitrate"},
                     screen.getResources().getStringArray(R.array.lower_bitrate_names));
             PreferenceScreen results = search(screen, "bitrate").getPreferenceScreen();
             Preference lower = results.findPreference("search_result_" + AutoBitrateChoice.SETTINGS_KEY);

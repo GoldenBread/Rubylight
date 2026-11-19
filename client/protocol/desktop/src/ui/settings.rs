@@ -36,7 +36,7 @@ pub(super) fn rail_folded(section: &str) -> bool {
 /// page draws.
 pub(super) const SECTION_KEYS: [&[&[&str]]; 9] = [
     &[&["simple_smoothness"], &["simple_picture"], &["simple_hdr"]],
-    &[&["width", "height"], &["fps"], &["bitrate_kbps"], &["adaptive_bitrate", "client_hint_bitrate"], &["codec"], &["hdr"],
+    &[&["width", "height"], &["fps"], &["bitrate_kbps"], &["adaptive_bitrate", "client_hint_bitrate", "keep_bitrate"], &["codec"], &["hdr"],
         &["prefer_yuv444", "experimental_packed_444"], &["sdr_10bit"], &["frame_warp"], &["adaptive_quality"], &["quality_min_short_edge"], &["quality_min_fps"],
         &["hdr_desktop_brightness"], &["rtx_hdr"], &["rtx_video"]],
     &[&["window_mode"], &["video_scaling"], &["vrr", "present_at_host_times", "vrr_tear_free"], &["vrr_wait"],
@@ -285,7 +285,7 @@ pub(crate) fn simple_current(s: &Settings, display: &Display, _caps: &simple::Ca
         bitrate_milli,
         codec,
         hdr: s.hdr,
-        adaptive_bitrate: s.adaptive_bitrate || s.client_hint_bitrate,
+        adaptive_bitrate: { let (busy, lost) = LowerBitrate::effective(s.adaptive_bitrate, s.client_hint_bitrate, s.keep_bitrate); busy || lost },
         adaptive_quality: match s.adaptive_quality {
             crate::config::QualityMode::Off => Some(simple::AdaptiveQuality::Off),
             crate::config::QualityMode::Battery => Some(simple::AdaptiveQuality::SavePower),
@@ -340,6 +340,7 @@ pub(crate) fn simple_apply(s: &mut Settings, display: &Display, caps: &simple::C
     };
     s.adaptive_bitrate = values.adaptive_bitrate;
     s.client_hint_bitrate = false;
+    s.keep_bitrate = false;
     s.adaptive_quality = match values.adaptive_quality {
         simple::AdaptiveQuality::Off => crate::config::QualityMode::Off,
         simple::AdaptiveQuality::SavePower => crate::config::QualityMode::Battery,
@@ -1137,8 +1138,8 @@ impl Launcher {
                     r
                 });
             }
-            setting_row(ui, s, &mut rows, &["adaptive_bitrate", "client_hint_bitrate"], "Lower bitrate", "Turns the bitrate down while the connection struggles and back up once it recovers: softer picture, less stutter. Choose one for a busy network; When frames are lost reacts sooner, and both need PC support.", |ui, s| {
-                let current = LowerBitrate::from_saved(s.adaptive_bitrate, s.client_hint_bitrate);
+            setting_row(ui, s, &mut rows, &["adaptive_bitrate", "client_hint_bitrate", "keep_bitrate"], "Lower bitrate", "Never: keep my bitrate can freeze or break up the picture on a link that cannot carry it. Otherwise the PC lowers the bitrate when frames are lost that it cannot repair and raises it again afterwards; Lower it sooner and When the network is busy lower it earlier, with a softer picture as the cost.", |ui, s| {
+                let current = LowerBitrate::from_saved(s.adaptive_bitrate, s.client_hint_bitrate, s.keep_bitrate);
                 let mut choice = current;
                 let response = Combo::from_id_salt("lower-bitrate").selected_text(tr(lower_bitrate_name(current))).show_ui(ui, |ui| {
                     for each in LowerBitrate::ALL {
@@ -1146,7 +1147,7 @@ impl Launcher {
                     }
                 }).response;
                 if choice != current {
-                    (s.adaptive_bitrate, s.client_hint_bitrate) = choice.to_saved();
+                    (s.adaptive_bitrate, s.client_hint_bitrate, s.keep_bitrate) = choice.to_saved(s.adaptive_bitrate, s.client_hint_bitrate);
                 }
                 response
             });
@@ -2458,9 +2459,10 @@ fn controllers_name(choice: Controllers) -> &'static str {
 /// "Lower bitrate" as the list says each choice (English; the caller translates).
 fn lower_bitrate_name(choice: LowerBitrate) -> &'static str {
     match choice {
-        LowerBitrate::Off => en("Off"),
+        LowerBitrate::Off => en("The PC decides (recommended)"),
+        LowerBitrate::WhenFramesLost => en("Lower it sooner"),
         LowerBitrate::WhenBusy => en("When the network is busy"),
-        LowerBitrate::WhenFramesLost => en("When frames are lost"),
+        LowerBitrate::Keep => en("Never: keep my bitrate"),
     }
 }
 
@@ -2858,7 +2860,7 @@ pub(super) fn value_text(key: &str, s: &Settings, display: &Display, style: crat
         "simple_picture" => tr(simple_picture_name(s.simple_picture)).to_owned(),
         "simple_hdr" => tr(simple_hdr_name(simple_effective_hdr(s))).to_owned(),
         "controllers" | "multi_controller" => tr(controllers_name(Controllers::from_saved(s.controllers, s.multi_controller))).to_owned(),
-        "adaptive_bitrate" | "client_hint_bitrate" => tr(lower_bitrate_name(LowerBitrate::from_saved(s.adaptive_bitrate, s.client_hint_bitrate))).to_owned(),
+        "adaptive_bitrate" | "client_hint_bitrate" | "keep_bitrate" => tr(lower_bitrate_name(LowerBitrate::from_saved(s.adaptive_bitrate, s.client_hint_bitrate, s.keep_bitrate))).to_owned(),
         "back_opens_menu" | "back_as_guide" => tr(back_button_name(BackButton::from_saved(s.back_opens_menu, s.back_as_guide))).to_owned(),
         "capture_system_keys" | "system_keys_fullscreen_only" => tr(system_keys_name(SystemKeys::from_saved(s.capture_system_keys, s.system_keys_fullscreen_only))).to_owned(),
         "client_roaming" | "roaming_metered" => tr(roaming_name(Roaming::from_saved(s.client_roaming, s.roaming_metered))).to_owned(),

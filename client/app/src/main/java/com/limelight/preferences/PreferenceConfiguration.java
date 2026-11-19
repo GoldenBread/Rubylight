@@ -55,6 +55,8 @@ public class PreferenceConfiguration {
     static final String MOBILE_BITRATE_PREF_STRING = "list_mobile_bitrate_kbps";
     // Client-hint automatic bitrate over 0x553C rate changes, for a host that offers them.
     static final String RATE_CHANGE_BITRATE_PREF_STRING = "checkbox_rate_change_bitrate";
+    /** "Never: keep my bitrate" of Lower bitrate: while on, the two switches of that row count as off. */
+    public static final String KEEP_BITRATE_PREF_STRING = "keep_bitrate";
     // Removed settings: the slider is the ceiling and the built-in floor is the minimum.
     static final String[] REMOVED_AUTO_BITRATE_LIMIT_PREFS = {"list_auto_bitrate_min_kbps", "list_auto_bitrate_max_kbps"};
     static final String PREFS_VERSION_PREF_STRING = "prefs_version";
@@ -407,6 +409,11 @@ public class PreferenceConfiguration {
      * {@link AutoBitrateChoice#isOn}, which also honours a PC's own choice.
      */
     public boolean autoBitrate;
+    /**
+     * Lower bitrate's "Never: keep my bitrate": the stream sends its own bitrate once as a rate change so the PC stops
+     * lowering it (GameAdaptation.startStreamBitrate), and the switches below read as off.
+     */
+    public boolean keepBitrate;
     /** Automatic bitrate decided on this device and sent as 0x553C rate changes, in place of the one above. */
     public boolean rateChangeBitrate;
     public volatile boolean enablePerfOverlay;
@@ -1777,8 +1784,9 @@ public class PreferenceConfiguration {
         config.qualityMinFps = listChoice(prefs.getString("adaptive_quality_min_fps", "30"), QUALITY_MIN_FPS, 30);
         config.thermalProtection = prefs.getBoolean(THERMAL_PROTECTION_PREF_STRING, false);
         dropAutoBitrateLimits(prefs);
-        config.autoBitrate = prefs.getBoolean(AutoBitrateChoice.SETTINGS_KEY, false);
-        config.rateChangeBitrate = prefs.getBoolean(RATE_CHANGE_BITRATE_PREF_STRING, false);
+        config.keepBitrate = prefs.getBoolean(KEEP_BITRATE_PREF_STRING, false);
+        config.autoBitrate = !config.keepBitrate && prefs.getBoolean(AutoBitrateChoice.SETTINGS_KEY, false);
+        config.rateChangeBitrate = !config.keepBitrate && prefs.getBoolean(RATE_CHANGE_BITRATE_PREF_STRING, false);
         config.enablePerfOverlay = prefs.getBoolean(ENABLE_PERF_OVERLAY_STRING, DEFAULT_ENABLE_PERF_OVERLAY);
         config.overlayPosition = com.limelight.ui.OverlayPlacement.Corner.parse(
                 prefs.getString(OVERLAY_POSITION_PREF_STRING, null)).key;

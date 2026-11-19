@@ -368,6 +368,51 @@ public class GameRateChangeTest {
     }
 
     @Test
+    public void neverKeepMyBitrateSendsTheStreamsBitrateOnceAfterTheStartAndOnlyOnAPcThatTakesRateChanges() {
+        prefs.keepBitrate = true;
+        StreamRateChanges changes = recording();
+        startStream(changes);
+        assertTrue("nothing at the very start", sent.isEmpty());
+        runFor(1);
+        assertEquals(1, sent.size());
+        assertEquals(50_000, sent.get(0)[1]);
+        assertEquals(0, sent.get(0)[2]);
+        assertFalse("no controller of this device runs", changes.automaticOn());
+        runFor(20);
+        assertEquals("once", 1, sent.size());
+
+        // A PC that took no rate changes: nothing is sent and the stream runs as The PC decides.
+        sent.clear();
+        startStream(null);
+        runFor(5);
+        assertTrue(sent.isEmpty());
+
+        // Another choice sends nothing.
+        prefs.keepBitrate = false;
+        startStream(recording());
+        runFor(1);
+        assertTrue(sent.isEmpty());
+    }
+
+    @Test
+    public void thePcLoweringTheBitrateIsToldOncePerStreamNotOverTheOverlayAndNeverWithNever() {
+        assertTrue(GameAdaptation.tellLinkLowered(false, false, false));
+        assertFalse("once per stream", GameAdaptation.tellLinkLowered(true, false, false));
+        assertFalse("the overlay has its own line", GameAdaptation.tellLinkLowered(false, true, false));
+        assertFalse("not with Never", GameAdaptation.tellLinkLowered(false, false, true));
+
+        prefs.enablePerfOverlay = false;
+        com.limelight.binding.video.LinkNoticeStatus status = com.limelight.binding.video.LinkNoticeStatus.parse(1, 50_000, 18_400);
+        game.adaptation.noteLinkLowered(status);
+        assertTrue(game.linkLoweredTold);
+        String told = ShadowToast.getTextOfLatestToast();
+        assertTrue(told, told.contains("18 Mbps") && told.contains("Never: keep my bitrate"));
+        ShadowToast.reset();
+        game.adaptation.noteLinkLowered(status);
+        assertNull("not again", ShadowToast.getLatestToast());
+    }
+
+    @Test
     public void clampedValuesSayWhatLimitsThem() {
         RateChangeResult result = new RateChangeResult(1, 80_000, 90_000, STATUS_CLAMPED, REASON_ENCODER_LIMIT,
                 STATUS_CLAMPED, REASON_HOST_LIMIT);

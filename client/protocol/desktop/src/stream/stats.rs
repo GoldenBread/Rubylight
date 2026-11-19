@@ -12,9 +12,25 @@ pub(super) fn early_line(now: (u64, u64), last: (u64, u64), secs: f64) -> String
 /// The overlay's line while the host holds the bitrate down for the network: whole Mbps from 10,
 /// one decimal below, as Nightjar Android says it.
 pub(super) fn link_notice_line(notice: &LinkNotice) -> String {
+    trf("PC lowered the bitrate to {} Mbps: network", &[&link_mbps(notice)])
+}
+
+/// The notice's rate in Mbps as the overlay says it.
+fn link_mbps(notice: &LinkNotice) -> String {
     let mbps = f64::from(notice.current_kbps) / 1000.0;
-    let mbps = if mbps >= 10.0 { format!("{mbps:.0}") } else { format!("{mbps:.1}") };
-    trf("PC lowered the bitrate to {} Mbps: network", &[&mbps])
+    if mbps >= 10.0 { format!("{mbps:.0}") } else { format!("{mbps:.1}") }
+}
+
+/// The in-stream notice, once per stream, that the PC lowered the bitrate: what happened, the
+/// rate, and where the choice is.
+pub(super) fn link_lowered_toast(notice: &LinkNotice) -> String {
+    trf("The PC lowered the bitrate to {} Mbps. To stop that, choose Never: keep my bitrate under Settings, Video, Lower bitrate.", &[&link_mbps(notice)])
+}
+
+/// Whether a PC's report that it holds the bitrate down is told to the player now: the first
+/// time in the stream, with the overlay (which has its own line) hidden, and not with "Never".
+pub(super) fn tell_link_lowered(state: LinkState, told: bool, overlay_visible: bool, keep_bitrate: bool) -> bool {
+    state != LinkState::Full && !told && !overlay_visible && !keep_bitrate
 }
 
 /// The overlay's host pipeline line: the frames per second each host stage handled over the
@@ -501,6 +517,12 @@ impl Streaming {
         if let Some(toast) = self.rate_change.as_mut().and_then(|rates| rates.expire(self.started.elapsed().as_millis() as u64)) {
             self.show_toast(toast);
         }
+        // "Never: keep my bitrate": once, as soon as video arrives, whatever has focus.
+        if tick.recent_video {
+            if let Some(request) = self.rate_change.as_mut().and_then(|rates| rates.takeover_request(self.started.elapsed().as_millis() as u64)) {
+                self.send_rate_change(request);
+            }
+        }
         if !self.menu_visible && self.focused {
             if let Some(rates) = &mut self.rate_change {
                 // PyroWave also loses records within frames, as for the PC's adaptive bitrate.
@@ -545,6 +567,29 @@ pub(super) fn fell_behind(behind: &mut Behind, skipped: u64, received: u64) -> b
         return true;
     }
     false
+}
+
+#[cfg(test)]
+mod link_lowered_tests {
+    use super::*;
+
+    #[test]
+    fn the_lowered_bitrate_is_told_once_without_the_overlay_and_never_with_never() {
+        // (state, told, overlay, keep)
+        assert!(tell_link_lowered(LinkState::Limited, false, false, false));
+        assert!(tell_link_lowered(LinkState::Floor, false, false, false));
+        assert!(!tell_link_lowered(LinkState::Full, false, false, false), "at the full rate there is nothing to tell");
+        assert!(!tell_link_lowered(LinkState::Limited, true, false, false), "once per stream");
+        assert!(!tell_link_lowered(LinkState::Limited, false, true, false), "the overlay has its own line");
+        assert!(!tell_link_lowered(LinkState::Limited, false, false, true), "not with Never");
+    }
+
+    #[test]
+    fn the_notice_says_what_happened_the_rate_and_where_the_choice_is() {
+        let notice = LinkNotice { state: LinkState::Limited, reason: rubylight_protocol::control::LinkReason::Network, ceiling_kbps: 50_000, current_kbps: 18_400 };
+        let text = link_lowered_toast(&notice);
+        assert!(text.contains("18 Mbps") && text.contains("Never: keep my bitrate") && text.contains("Settings, Video, Lower bitrate"), "{text}");
+    }
 }
 
 #[cfg(test)]

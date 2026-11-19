@@ -69,6 +69,24 @@ public class StreamRateChangesTest {
     }
 
     @Test
+    public void theTakeoverIsOneBitrateChangeThatSaysNothingAndStartsNoController() {
+        assertTrue(changes.sendTakeover(25_000, 0));
+        assertEquals(1, sent.size());
+        assertArrayEquals(new int[] {sent.get(0)[0], 25_000, 0}, sent.get(0));
+        assertFalse(changes.automaticOn());
+        StreamRateChanges.Outcome outcome = changes.onResult(new RateChangeResult(sent.get(0)[0], 25_000, 60_000,
+                RateChangeResult.STATUS_APPLIED, RateChangeResult.REASON_NONE,
+                RateChangeResult.STATUS_UNCHANGED, RateChangeResult.REASON_NONE), 100);
+        assertEquals(StreamRateChanges.Answer.TAKEOVER, outcome.answer);
+        assertTrue(outcome.takesBitrate);
+        // Unanswered, it is given up on without a message for the player.
+        assertTrue(changes.sendTakeover(25_000, 1000));
+        assertTrue(changes.expire(1000 + StreamRateChanges.ANSWER_MS).isEmpty());
+        sendWorks = false;
+        assertFalse(changes.sendTakeover(25_000, 0));
+    }
+
+    @Test
     public void aRequestThatCouldNotBeSentIsNotWaitedFor() {
         sendWorks = false;
         assertFalse(changes.sendManual(30_000, 0, 0));

@@ -393,6 +393,8 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
     View performanceOverlayScroll;
     // What the host last said about holding the bitrate down for the network; null when it has not.
     LinkNoticeStatus linkNotice;
+    // The stream said once that the PC lowered the bitrate (GameAdaptation.noteLinkLowered).
+    boolean linkLoweredTold;
     // The soft keyboard below Android 11, which tells an adjustNothing window nothing of it.
     LegacyKeyboardInsets legacyKeyboard;
     final Handler keyboardPanHandler = new Handler(Looper.getMainLooper());
@@ -1634,6 +1636,7 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         LinkNoticeStatus status = LinkNoticeStatus.parse(state, ceilingKbps, currentKbps);
         runOnUiThread(() -> {
             linkNotice = status;
+            adaptation.noteLinkLowered(status);
             if (performanceOverlayView != null) overlays.updatePerformanceOverlay();
         });
     }

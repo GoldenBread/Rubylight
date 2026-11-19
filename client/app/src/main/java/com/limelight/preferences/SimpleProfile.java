@@ -299,6 +299,8 @@ public final class SimpleProfile {
                 .putBoolean(PreferenceConfiguration.ENABLE_HDR_PREF_STRING,
                         hdrSwitch != null ? hdrSwitch : values.hdr)
                 .putBoolean(AutoBitrateChoice.SETTINGS_KEY, values.adaptiveBitrate)
+                // Save data is never overridden by an old "Never: keep my bitrate".
+                .putBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, false)
                 .putString("adaptive_quality_mode", "save-power".equals(values.adaptiveQuality) ? "battery" : "off");
         if (values.realVrr != null) editor.putBoolean(PreferenceConfiguration.REAL_VRR_PREF_STRING, values.realVrr);
         if (values.latencySwitches) {
@@ -377,7 +379,8 @@ public final class SimpleProfile {
                 prefs.getBoolean("checkbox_reduce_refresh_rate", false),
                 prefs.getBoolean(PreferenceConfiguration.CONTENT_RATE_FRAME_RATE_PREF_STRING, false),
                 bitrateMilli, codec, hdr,
-                prefs.getBoolean(AutoBitrateChoice.SETTINGS_KEY, false), quality,
+                SwitchPairChoice.LOWER_BITRATE.read(prefs) != SwitchPairChoice.KEEP
+                        && prefs.getBoolean(AutoBitrateChoice.SETTINGS_KEY, false), quality,
                 read(prefs, SMOOTHNESS), read(prefs, PICTURE), read(prefs, HDR));
     }
 

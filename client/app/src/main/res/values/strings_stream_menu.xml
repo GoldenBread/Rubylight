@@ -8,6 +8,7 @@
     <string name="overlay_compact_loss">%1$s%% loss</string>
     <string name="overlay_compact_waiting">Waiting for video</string>
     <string name="link_notice_lowered">PC lowered the bitrate to %1$s Mbps: network</string>
+    <string name="link_notice_keep">The PC lowered the bitrate to %1$s Mbps. To stop that, choose Never: keep my bitrate under Settings, Video, Lower bitrate.</string>
     <string name="overlay_health_good">Stream good</string>
     <string name="overlay_health_fair">Stream struggling</string>
     <string name="overlay_health_poor">Stream poor</string>

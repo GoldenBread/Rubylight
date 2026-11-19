@@ -36,6 +36,8 @@ final class StreamRateChanges {
         STALE,
         // No request of this stream has the serial.
         UNKNOWN,
+        // The one request of "Never: keep my bitrate" ran; it says nothing to the player.
+        TAKEOVER,
         // A request from the menu got no answer in ANSWER_MS: say so.
         MANUAL_NO_ANSWER,
         // Automatic bitrate's request got no answer in ANSWER_MS, so it stopped for this stream.
@@ -58,12 +60,19 @@ final class StreamRateChanges {
 
     private static final class Request {
         final boolean manual;
+        // "Never: keep my bitrate": the stream's own bitrate, sent once so the PC stops lowering it.
+        final boolean takeover;
         final long sentMs;
         // This stream's requests in the order they went out.
         final long order;
 
         Request(boolean manual, long sentMs, long order) {
+            this(manual, false, sentMs, order);
+        }
+
+        Request(boolean manual, boolean takeover, long sentMs, long order) {
             this.manual = manual;
+            this.takeover = takeover;
             this.sentMs = sentMs;
             this.order = order;
         }
@@ -97,6 +106,15 @@ final class StreamRateChanges {
         if (!sender.send(serial, bitrateKbps, fpsMillihz)) return false;
         outstanding.put(serial, new Request(true, nowMs, ++lastOrder));
         manualOutstanding++;
+        return true;
+    }
+
+    // "Never: keep my bitrate": the stream's own bitrate as a bitrate change, so the PC's controllers stand
+    // back for this stream. False when it could not be sent.
+    boolean sendTakeover(int bitrateKbps, long nowMs) {
+        int serial = nextSerial();
+        if (!sender.send(serial, bitrateKbps, 0)) return false;
+        outstanding.put(serial, new Request(false, true, nowMs, ++lastOrder));
         return true;
     }
 
@@ -150,6 +168,7 @@ final class StreamRateChanges {
         if (request == null) return new Outcome(Answer.UNKNOWN, false);
         boolean takesBitrate = result.bitrateKbps > 0 && request.order > bitrateOrder;
         if (takesBitrate) bitrateOrder = request.order;
+        if (request.takeover) return new Outcome(Answer.TAKEOVER, takesBitrate);
         if (request.manual) {
             manualOutstanding--;
             if (automatic != null && takesBitrate && result.bitrateChanged()) {

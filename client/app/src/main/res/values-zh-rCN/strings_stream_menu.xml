@@ -7,6 +7,7 @@
     <string name="overlay_compact_loss">丢包 %1$s%%</string>
     <string name="overlay_compact_waiting">正在等待视频</string>
     <string name="link_notice_lowered">电脑已将码率降至 %1$s Mbps：网络</string>
+    <string name="link_notice_keep">电脑已将码率降至 %1$s Mbps。要停止这种情况，请在“设置”“视频”“降低码率”中选择“从不：保持我的码率”。</string>
     <string name="overlay_health_good">串流良好</string>
     <string name="overlay_health_fair">串流不稳定</string>
     <string name="overlay_health_poor">串流较差</string>

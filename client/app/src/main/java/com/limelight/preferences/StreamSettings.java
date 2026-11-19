@@ -926,6 +926,7 @@ public class StreamSettings extends NightjarActivity {
                 .remove(PreferenceConfiguration.SYSTEM_KEYS_FULLSCREEN_ONLY_PREF_STRING)
                 .remove(PreferenceConfiguration.ROAMING_METERED_PREF_STRING)
                 .remove(PreferenceConfiguration.RATE_CHANGE_BITRATE_PREF_STRING)
+                .remove(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING)
                 .remove(PreferenceConfiguration.BITRATE_USER_SET_PREF_STRING)
                 .remove(PreferenceConfiguration.BITRATE_PREF_OLD_STRING)
                 .remove(PreferenceConfiguration.PREFS_VERSION_PREF_STRING)
@@ -1996,9 +1997,7 @@ public class StreamSettings extends NightjarActivity {
                 } else if (SwitchPairChoice.forKey(pref.getKey()) != null) {
                     SwitchPairChoice pair = SwitchPairChoice.forKey(pref.getKey());
                     int choice = pair.read(prefs);
-                    // Lower bitrate's Off says, under its title as the switch did, that the PC adapts it then.
-                    value = pair == SwitchPairChoice.LOWER_BITRATE && choice == 0 ? getString(R.string.summary_off_auto_bitrate) :
-                            getResources().getStringArray(pair.names)[choice];
+                    value = getResources().getStringArray(pair.names)[choice];
                 } else if (CONTROLLERS_KEY.equals(pref.getKey())) {
                     value = getResources().getStringArray(R.array.controllers_names)[ControllersChoice.read(prefs)];
                 } else if (MOUSE_MODE_KEY.equals(pref.getKey())) {
@@ -2710,11 +2709,17 @@ public class StreamSettings extends NightjarActivity {
                 if (row == null) continue;
                 row.setOnPreferenceClickListener(preference -> {
                     SharedPreferences prefs = getPreferenceManager().getSharedPreferences();
-                    CharSequence[] names = java.util.Arrays.copyOf(getResources().getTextArray(pair.names),
-                            pair.offered(getActivity(), prefs));
-                    showChoices(pair.title, names, pair.read(prefs), pair.help, which -> {
+                    CharSequence[] all = getResources().getTextArray(pair.names);
+                    int[] order = pair.displayOrder(pair.offered(getActivity(), prefs));
+                    CharSequence[] names = new CharSequence[order.length];
+                    int current = 0;
+                    for (int i = 0; i < order.length; i++) {
+                        names[i] = all[order[i]];
+                        if (order[i] == pair.read(prefs)) current = i;
+                    }
+                    showChoices(pair.title, names, current, pair.help, which -> {
                         SharedPreferences.Editor editor = prefs.edit();
-                        pair.save(editor, which);
+                        pair.save(editor, order[which]);
                         editor.apply();
                         // Every PC follows the choice again, including PCs that chose otherwise in the stream menu.
                         if (pair == SwitchPairChoice.LOWER_BITRATE) AutoBitrateChoice.clearPcChoices(getActivity());

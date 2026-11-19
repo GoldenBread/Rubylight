@@ -79,7 +79,7 @@ public class AutoBitrateSettingTest {
             Preference lower = video.findPreference(AutoBitrateChoice.SETTINGS_KEY);
             assertNotNull(lower);
             assertEquals(app().getString(R.string.title_lower_bitrate), lower.getTitle().toString());
-            assertEquals(app().getString(R.string.summary_off_auto_bitrate), String.valueOf(lower.getSummary()));
+            assertEquals(app().getString(R.string.lower_bitrate_pc), String.valueOf(lower.getSummary()));
             Preference slider = video.findPreference("seekbar_bitrate_kbps");
             PreferenceGroup group = (PreferenceGroup) video.getPreferenceScreen().getPreference(0);
             int at = -1;
@@ -161,8 +161,8 @@ public class AutoBitrateSettingTest {
             assertFalse(on(AutoBitrateChoice.CODEC_STORE, "a"));
             assertFalse(on(AutoBitrateChoice.PYROWAVE_STORE, "b"));
 
-            // When the network is busy in Settings, then off again for one PC from the stream menu.
-            pick(lower, 1);
+            // When the network is busy in Settings (the third entry of the list), then off again for one PC from the stream menu.
+            pick(lower, 2);
             assertTrue(prefs().getBoolean(AutoBitrateChoice.SETTINGS_KEY, false));
             assertFalse(prefs().getBoolean(PreferenceConfiguration.RATE_CHANGE_BITRATE_PREF_STRING, true));
             assertTrue(on(AutoBitrateChoice.CODEC_STORE, "a"));
@@ -171,11 +171,31 @@ public class AutoBitrateSettingTest {
             assertFalse(on(AutoBitrateChoice.CODEC_STORE, "a"));
             assertTrue(on(AutoBitrateChoice.CODEC_STORE, "b"));
 
-            // When frames are lost keeps the busy network's controller for a PC without rate changes.
-            pick(lower, 2);
+            // Lower it sooner (the second entry) keeps the busy network's controller for a PC without rate changes.
+            pick(lower, 1);
             assertTrue(prefs().getBoolean(AutoBitrateChoice.SETTINGS_KEY, false));
             assertTrue(prefs().getBoolean(PreferenceConfiguration.RATE_CHANGE_BITRATE_PREF_STRING, false));
+            assertFalse(prefs().getBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, true));
             assertEquals(app().getString(R.string.lower_bitrate_lost), String.valueOf(lower.getSummary()));
+
+            // Never: keep my bitrate leaves the two switches as they are, wins over them, and every PC follows it.
+            AutoBitrateChoice.setForPc(app(), AutoBitrateChoice.CODEC_STORE, "a", true);
+            pick(lower, 3);
+            assertTrue(prefs().getBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, false));
+            assertTrue(prefs().getBoolean(AutoBitrateChoice.SETTINGS_KEY, false));
+            assertTrue(prefs().getBoolean(PreferenceConfiguration.RATE_CHANGE_BITRATE_PREF_STRING, false));
+            assertEquals(app().getString(R.string.lower_bitrate_keep), String.valueOf(lower.getSummary()));
+            assertFalse(on(AutoBitrateChoice.CODEC_STORE, "a"));
+            PreferenceConfiguration config = PreferenceConfiguration.readPreferences(app());
+            assertTrue(config.keepBitrate);
+            assertFalse(config.autoBitrate);
+            assertFalse(config.rateChangeBitrate);
+
+            // Any other choice writes the pair as before and clears it.
+            pick(lower, 0);
+            assertFalse(prefs().getBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, true));
+            assertFalse(prefs().getBoolean(AutoBitrateChoice.SETTINGS_KEY, true));
+            assertFalse(prefs().getBoolean(PreferenceConfiguration.RATE_CHANGE_BITRATE_PREF_STRING, true));
         }
     }
 

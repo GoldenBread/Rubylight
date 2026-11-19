@@ -1525,10 +1525,21 @@ fn paired_switches_read_as_one_choice() {
     assert_eq!(value("{}", "client_roaming"), "Except mobile data");
     assert_eq!(value(r#"{"roaming_metered":true}"#, "roaming_metered"), "Any network");
     assert_eq!(value(r#"{"client_roaming":false,"roaming_metered":true}"#, "client_roaming"), "Off");
-    assert_eq!(value("{}", "adaptive_bitrate"), "Off");
+    assert_eq!(value("{}", "adaptive_bitrate"), "The PC decides (recommended)");
     assert_eq!(value(r#"{"adaptive_bitrate":true}"#, "adaptive_bitrate"), "When the network is busy");
-    assert_eq!(value(r#"{"client_hint_bitrate":true}"#, "adaptive_bitrate"), "When frames are lost");
-    assert_eq!(value(r#"{"adaptive_bitrate":true,"client_hint_bitrate":true}"#, "client_hint_bitrate"), "When frames are lost");
+    assert_eq!(value(r#"{"adaptive_bitrate":true,"client_hint_bitrate":true}"#, "client_hint_bitrate"), "Lower it sooner");
+    assert_eq!(value(r#"{"client_hint_bitrate":true}"#, "adaptive_bitrate"), "Lower it sooner");
+    // "Never" wins over the stored pair, and the row reads the same from any of its keys.
+    assert_eq!(value(r#"{"keep_bitrate":true}"#, "adaptive_bitrate"), "Never: keep my bitrate");
+    assert_eq!(value(r#"{"keep_bitrate":true,"client_hint_bitrate":true,"adaptive_bitrate":true}"#, "keep_bitrate"), "Never: keep my bitrate");
+    // A PC's own value carries the key like the pair.
+    let mut own_rate = Overrides::default();
+    own_rate.capture(&Settings { keep_bitrate: true, ..Settings::default() }, &["adaptive_bitrate", "client_hint_bitrate", "keep_bitrate"]);
+    assert!(own_rate.apply(&Settings::default()).keep_bitrate, "Never for this PC over the main setting");
+    let json = serde_json::to_string(&own_rate).unwrap();
+    assert!(serde_json::from_str::<Overrides>(&json).unwrap().apply(&Settings::default()).keep_bitrate);
+    // An older file without the key reads as off.
+    assert!(!serde_json::from_str::<Settings>(r#"{"adaptive_bitrate":true,"client_hint_bitrate":true}"#).unwrap().keep_bitrate);
 
     // A PC's own value keeps both switches of its choice, so the layer reads whole.
     let mut own = Overrides::default();
@@ -2217,9 +2228,11 @@ fn the_simple_layer_writes_and_reads_the_settings_it_stands_for() {
     // One changed advanced setting reads as Custom.
     s.frame_pacing = FramePacing::CapFps;
     assert!(simple_state(&s, &display, &caps, true).1);
-    // Save data lowers the bitrate and lets it fall when the link struggles.
+    // Save data lowers the bitrate and lets it fall when the link struggles, whatever "Never" was.
+    s.keep_bitrate = true;
     simple_apply(&mut s, &display, &caps, simple::Choices { picture: simple::Picture::SaveData, ..recommended });
     assert!(s.adaptive_bitrate && s.adaptive_quality == crate::config::QualityMode::Battery);
+    assert!(!s.keep_bitrate, "Save data is never overridden by an old Never");
     assert!(s.bitrate_kbps > 0 && s.bitrate_kbps < stream_mode(&Settings::default(), display).3);
     let (choices, custom) = simple_state(&s, &display, &caps, true);
     assert!(!custom && choices.picture == simple::Picture::SaveData);

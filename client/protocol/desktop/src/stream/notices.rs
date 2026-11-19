@@ -262,6 +262,10 @@ impl Streaming {
                 }
             }
             ControlEvent::LinkNotice(notice) => {
+                if super::stats::tell_link_lowered(notice.state, self.link_lowered_told, self.overlay_visible, self.settings.keep_bitrate) {
+                    self.link_lowered_told = true;
+                    self.show_toast(super::stats::link_lowered_toast(&notice));
+                }
                 self.link_notice = (notice.state != LinkState::Full).then_some(notice);
             }
             ControlEvent::PipelineRates(report) => self.pipeline_rates = Some(report),

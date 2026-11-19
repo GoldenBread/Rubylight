@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="title_lower_bitrate">Bitrate senken</string>
+    <string name="lower_bitrate_pc">Der PC entscheidet (empfohlen)</string>
     <string name="lower_bitrate_busy">Bei ausgelastetem Netzwerk</string>
-    <string name="lower_bitrate_lost">Bei Bildverlust</string>
-    <string name="summary_lower_bitrate">Senkt die Bitrate, solange die Verbindung nicht mithält, und hebt sie wieder an, sobald sie sich erholt: weicheres Bild, weniger Ruckeln. Wähle eine Option bei ausgelastetem Netzwerk; „Bei Bildverlust“ reagiert früher, und beide brauchen Unterstützung durch den PC.</string>
+    <string name="lower_bitrate_lost">Früher senken</string>
+    <string name="lower_bitrate_keep">Nie: meine Bitrate behalten</string>
+    <string name="summary_lower_bitrate">„Nie: meine Bitrate behalten“ kann das Bild einfrieren oder zerfallen lassen, wenn die Verbindung die Bitrate nicht tragen kann. Sonst senkt der PC die Bitrate, wenn Bilder verloren gehen, die er nicht reparieren kann, und hebt sie danach wieder an; „Früher senken“ und „Bei ausgelastetem Netzwerk“ senken sie früher, auf Kosten eines weicheren Bildes.</string>
     <string name="title_back_button">Zurücktaste</string>
     <string name="back_button_back">Zurück</string>
     <string name="back_button_menu">Stream-Menü</string>

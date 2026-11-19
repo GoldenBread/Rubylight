@@ -7,6 +7,7 @@
     <string name="overlay_compact_loss">%1$s%% Verlust</string>
     <string name="overlay_compact_waiting">Warte auf Video</string>
     <string name="link_notice_lowered">PC hat die Bitrate auf %1$s Mbit/s gesenkt: Netzwerk</string>
+    <string name="link_notice_keep">Der PC hat die Bitrate auf %1$s Mbit/s gesenkt. Um das zu verhindern, wähle unter Einstellungen, Video, Bitrate senken die Option „Nie: meine Bitrate behalten“.</string>
     <string name="overlay_health_good">Stream läuft gut</string>
     <string name="overlay_health_fair">Stream hakt</string>
     <string name="overlay_health_poor">Stream läuft schlecht</string>

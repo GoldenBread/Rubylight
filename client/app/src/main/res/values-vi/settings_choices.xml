@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="title_lower_bitrate">Giảm tốc độ bit</string>
+    <string name="lower_bitrate_pc">PC quyết định (khuyên dùng)</string>
     <string name="lower_bitrate_busy">Khi mạng bận</string>
-    <string name="lower_bitrate_lost">Khi mất khung hình</string>
-    <string name="summary_lower_bitrate">Giảm tốc độ bit khi kết nối gặp khó và tăng lại khi kết nối hồi phục: hình mềm hơn, ít giật hơn. Chọn một tùy chọn khi mạng bận; “Khi mất khung hình” phản ứng sớm hơn, và cả hai đều cần PC hỗ trợ.</string>
+    <string name="lower_bitrate_lost">Giảm sớm hơn</string>
+    <string name="lower_bitrate_keep">Không bao giờ: giữ tốc độ bit của tôi</string>
+    <string name="summary_lower_bitrate">“Không bao giờ: giữ tốc độ bit của tôi” có thể làm hình đứng hoặc vỡ trên kết nối không tải nổi. Nếu không, PC giảm tốc độ bit khi mất những khung hình mà nó không thể phục hồi rồi tăng lại sau đó; “Giảm sớm hơn” và “Khi mạng bận” giảm sớm hơn, đổi lại hình mềm hơn.</string>
     <string name="title_back_button">Nút Quay lại</string>
     <string name="back_button_back">Quay lại</string>
     <string name="back_button_menu">Menu stream</string>

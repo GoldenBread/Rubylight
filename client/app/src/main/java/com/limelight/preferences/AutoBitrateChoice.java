@@ -26,12 +26,18 @@ public final class AutoBitrateChoice {
         if (pcUuid != null && saved.contains(pcUuid)) {
             return saved.getBoolean(pcUuid, false);
         }
-        return PreferenceManager.getDefaultSharedPreferences(context).getBoolean(SETTINGS_KEY, false);
+        return byDefault(context);
+    }
+
+    /** The Settings switch, which reads as off while "Never: keep my bitrate" is chosen. */
+    private static boolean byDefault(Context context) {
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
+        return !prefs.getBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, false) && prefs.getBoolean(SETTINGS_KEY, false);
     }
 
     /** The stream menu's toggle: this PC only. Only a choice that differs from the Settings switch is kept. */
     public static void setForPc(Context context, String store, String pcUuid, boolean on) {
-        boolean byDefault = PreferenceManager.getDefaultSharedPreferences(context).getBoolean(SETTINGS_KEY, false);
+        boolean byDefault = byDefault(context);
         SharedPreferences.Editor edit = context.getSharedPreferences(store, Context.MODE_PRIVATE).edit();
         if (on == byDefault) {
             edit.remove(pcUuid);

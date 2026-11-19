@@ -373,6 +373,10 @@ pub struct Settings {
     /// Steers the bitrate from this client's loss over mid-stream rate changes (0x553C), on a
     /// PC that takes them, in place of `adaptive_bitrate`. Off by default.
     pub client_hint_bitrate: bool,
+    /// "Never: keep my bitrate": while set, `adaptive_bitrate` and `client_hint_bitrate` count as
+    /// off for the stream (they stay stored), and a PC that takes rate changes is told once to
+    /// hold the stream's own bitrate. Off by default; an older file without it reads as off.
+    pub keep_bitrate: bool,
     pub adaptive_quality: QualityMode,
     pub quality_min_short_edge: u32,
     pub quality_min_fps: u32,
@@ -1159,6 +1163,7 @@ impl Default for Settings {
             bitrate_kbps: 0,
             adaptive_bitrate: false,
             client_hint_bitrate: false,
+            keep_bitrate: false,
             adaptive_quality: QualityMode::Off,
             quality_min_short_edge: 720,
             quality_min_fps: 30,

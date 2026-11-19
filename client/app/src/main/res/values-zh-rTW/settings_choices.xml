@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="title_lower_bitrate">降低位元速率</string>
+    <string name="lower_bitrate_pc">由電腦決定（建議）</string>
     <string name="lower_bitrate_busy">網路忙碌時</string>
-    <string name="lower_bitrate_lost">遺失影格時</string>
-    <string name="summary_lower_bitrate">連線跟不上時降低位元速率，恢復後再調回：畫面較柔和，卡頓較少。網路忙碌時選擇其中一項；「遺失影格時」反應更快，兩者都需要電腦支援。</string>
+    <string name="lower_bitrate_lost">更早降低</string>
+    <string name="lower_bitrate_keep">從不：保持我的位元速率</string>
+    <string name="summary_lower_bitrate">若連線承載不了，「從不：保持我的位元速率」可能讓畫面卡住或破碎。否則，電腦會在遺失無法修復的影格時降低位元速率，之後再調回；「更早降低」和「網路忙碌時」會更早降低，代價是畫面較柔和。</string>
     <string name="title_back_button">返回鍵</string>
     <string name="back_button_back">返回</string>
     <string name="back_button_menu">串流選單</string>

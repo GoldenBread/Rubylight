@@ -696,6 +696,7 @@ final class GameConnection {
     // back at the requested rate. The C engine does not support it.
     private void requestLinkNotice() {
         game.linkNotice = null;
+        game.linkLoweredTold = false;
         if (game.conn == null || !MoonBridge.hostSupportsControlMessage(MoonBridge.CONTROL_MESSAGE_LINK_NOTICE)) {
             return;
         }

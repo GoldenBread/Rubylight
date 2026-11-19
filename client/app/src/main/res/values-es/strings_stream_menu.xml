@@ -7,6 +7,7 @@
     <string name="overlay_compact_loss">%1$s %% pérdida</string>
     <string name="overlay_compact_waiting">Esperando vídeo</string>
     <string name="link_notice_lowered">El PC bajó la tasa de bits a %1$s Mbps: red</string>
+    <string name="link_notice_keep">El PC bajó la tasa de bits a %1$s Mbps. Para evitarlo, elige «Nunca: mantener mi tasa de bits» en Ajustes, Vídeo, Bajar la tasa de bits.</string>
     <string name="overlay_health_good">Transmisión buena</string>
     <string name="overlay_health_fair">Transmisión inestable</string>
     <string name="overlay_health_poor">Transmisión mala</string>

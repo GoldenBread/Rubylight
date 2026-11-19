@@ -97,7 +97,8 @@ public class SettingsKeysTest {
             "checkbox_virtual_display", // Display arrangement's Virtual display choice (DisplayArrangementChoice)
             "checkbox_content_rate_frame_rate", // Lower refresh rate's "On, matched to the game" (LowerRefreshChoice)
             // The second switch of each row that was two (SwitchPairChoice).
-            "checkbox_rate_change_bitrate", "checkbox_back_opens_menu", "checkbox_back_as_guide",
+            "checkbox_rate_change_bitrate", "keep_bitrate", // Lower bitrate's Never, keep my bitrate (SwitchPairChoice)
+            "checkbox_back_opens_menu", "checkbox_back_as_guide",
             "checkbox_system_keys_fullscreen_only", "checkbox_roaming_metered",
             com.limelight.console.HomeSettings.PREF_KEY)); // When Nightjar opens
     // Stored settings that are read outside PreferenceConfiguration.
@@ -338,6 +339,7 @@ public class SettingsKeysTest {
         reads.put("checkbox_thermal_protection", new Read(false, true, c -> c.thermalProtection));
         reads.put(AutoBitrateChoice.SETTINGS_KEY, new Read(false, true, c -> c.autoBitrate));
         reads.put("checkbox_rate_change_bitrate", new Read(false, true, c -> c.rateChangeBitrate));
+        reads.put("keep_bitrate", new Read(false, true, c -> c.keepBitrate));
         reads.put("checkbox_enable_hdr", new Read(false, true, c -> c.enableHdr));
         reads.put("checkbox_enable_sdr_10bit", new Read(false, true, c -> c.enableSdr10Bit));
         reads.put("checkbox_vrr", new Read(false, true, c -> c.vrr));

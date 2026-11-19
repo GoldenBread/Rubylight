@@ -53,6 +53,8 @@ pub fn menu_controls(runtime_bitrate: bool, reconfigure: bool, rate_change: bool
 enum Origin {
     Menu,
     Hint,
+    /// "Never: keep my bitrate": the stream's own bitrate, sent once so the PC stops lowering it.
+    Keep,
 }
 
 /// What a result changed, for the stream to follow.
@@ -76,6 +78,8 @@ pub struct RateChange {
     bitrate_serial: u32,
     hint: Option<client_hint::Bitrate>,
     last_tick_ms: Option<u64>,
+    /// "Never: keep my bitrate" is chosen and the takeover has not been sent yet.
+    keep_pending: bool,
     bitrate_kbps: u32,
     fps_millihz: u32,
     /// The menu's fields.
@@ -93,11 +97,27 @@ impl RateChange {
             bitrate_serial: 0,
             hint: hint.then(|| client_hint::Bitrate::new(bitrate_kbps, limit_kbps, now_ms)),
             last_tick_ms: None,
+            keep_pending: false,
             bitrate_kbps,
             fps_millihz,
             menu_kbps: bitrate_kbps,
             menu_fps: f64::from(fps_millihz) / 1000.0,
         }
+    }
+
+    /// "Never: keep my bitrate": [`Self::takeover_request`] sends the stream's bitrate once.
+    pub fn keep_bitrate(&mut self) {
+        self.keep_pending = true;
+    }
+
+    /// The one request that makes the PC's link-rate and congestion controllers stand back for
+    /// this stream: the stream's own bitrate as a bitrate change (the PC stops lowering what a
+    /// client has set). `None` once sent, or when "Never" is not chosen.
+    pub fn takeover_request(&mut self, now_ms: u64) -> Option<RateChangeRequest> {
+        if !std::mem::take(&mut self.keep_pending) { return None; }
+        let kbps = self.bitrate_kbps;
+        eprintln!("nightjar: keep my bitrate: sending the stream's {kbps} kbps as a bitrate change so the PC stops lowering it");
+        Some(self.request(Origin::Keep, kbps, 0, now_ms))
     }
 
     /// After an automatic reconnect: the client-hint controller returns to the rate the stream
@@ -171,6 +191,10 @@ impl RateChange {
                     if let Some(hint) = &mut self.hint { hint.refused(); }
                     trf("Loss-based bitrate stopped: {}", &[&tr("the PC did not answer")])
                 }
+                Origin::Keep => {
+                    eprintln!("nightjar: keep my bitrate: the PC did not answer; it may still lower the bitrate");
+                    continue;
+                }
             });
         }
         toast
@@ -182,6 +206,10 @@ impl RateChange {
         if origin == Some(Origin::Hint) {
             if let Some(hint) = &mut self.hint { hint.refused(); }
             return trf("Loss-based bitrate stopped: {}", &[error]);
+        }
+        if origin == Some(Origin::Keep) {
+            eprintln!("nightjar: keep my bitrate: the change could not be sent ({error}); the PC may still lower the bitrate");
+            return trf("Could not change the stream: {}", &[error]);
         }
         trf("Could not change the stream: {}", &[error])
     }
@@ -222,6 +250,10 @@ impl RateChange {
                     answer.by_hand = true;
                 }
                 answer.toast = Some(menu_text(result));
+            }
+            Origin::Keep => {
+                eprintln!("nightjar: keep my bitrate: the PC answered {:?} at {} kbps{}", result.bitrate.status, result.bitrate_kbps,
+                    if changed { "; it no longer lowers the bitrate" } else { "; it may still lower the bitrate" });
             }
             Origin::Hint => {
                 let Some(hint) = &mut self.hint else { return answer };
@@ -467,6 +499,27 @@ mod tests {
         assert_eq!((before.serial, after.serial), (u32::MAX, 1));
         assert_eq!(rates.result(&result(&before, 30_000, 60_000, Outcome::APPLIED, Outcome::UNCHANGED), 100).bitrate_kbps, Some(30_000));
         assert_eq!(rates.result(&result(&after, 40_000, 60_000, Outcome::APPLIED, Outcome::UNCHANGED), 200).bitrate_kbps, Some(40_000));
+    }
+
+    #[test]
+    fn never_keep_my_bitrate_sends_the_streams_bitrate_once_and_only_when_chosen() {
+        let mut plain = RateChange::new(25_000, 60_000, false, 0, 0);
+        assert_eq!(plain.takeover_request(1000), None, "another choice sends nothing");
+        let mut rates = RateChange::new(25_000, 60_000, false, 0, 0);
+        rates.keep_bitrate();
+        let request = rates.takeover_request(1000).expect("the takeover");
+        assert_eq!((request.bitrate_kbps, request.fps_millihz), (25_000, 0), "the configured bitrate, no rate");
+        assert_eq!(rates.takeover_request(2000), None, "once");
+        assert!((0..30).all(|s| rates.tick(&stats(s, 10.0)).is_none()), "no controller of its own runs");
+        // The PC's answer is followed and shows nothing.
+        let answer = rates.result(&result(&request, 25_000, 60_000, Outcome::APPLIED, Outcome::UNCHANGED), 1100);
+        assert_eq!((answer.bitrate_kbps, answer.toast, answer.by_hand), (Some(25_000), None, false));
+        // A PC that clamped it: the stream follows the PC's rate.
+        let mut clamped = RateChange::new(25_000, 60_000, false, 0, 0);
+        clamped.keep_bitrate();
+        let request = clamped.takeover_request(0).unwrap();
+        let answer = clamped.result(&result(&request, 20_000, 60_000, Outcome::clamped(Reason::HostLimit), Outcome::UNCHANGED), 100);
+        assert_eq!((answer.bitrate_kbps, answer.toast), (Some(20_000), None));
     }
 
     #[test]
