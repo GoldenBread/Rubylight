@@ -43,6 +43,8 @@ public class MediaCodecFramePacingTest {
             ReflectionHelpers.setField(renderer, "configuredFormat", format);
             renderer.setStreamFrameRateMilliHz(59_950);
             assertEquals(59_950, renderer.getStreamFrameRateMilliHz());
+            // The codec's format takes it on the input thread, before its next frame.
+            ReflectionHelpers.callInstanceMethod(renderer, "applyStreamChanges");
             assertEquals(60, format.getInteger(MediaFormat.KEY_FRAME_RATE));
             assertEquals(generation + 1, renderer.takeDecodeTiming(60).generation);
             renderer.setStreamFrameRateMilliHz(59_950);
