@@ -914,7 +914,7 @@ pub fn is_starred(source: &Source<'_>, game: &Game, favourites: &[Favourite]) ->
 pub fn favourite_games(sources: &[Source<'_>], favourites: &[Favourite]) -> Vec<Starred> {
     let mut out: Vec<Starred> = Vec::new();
     for star in favourites {
-        let Some(source) = sources.iter().find(|s| !s.unique_id.is_empty() && s.unique_id == star.host) else { continue };
+        let Some(source) = sources.iter().find(|s| !s.unique_id.is_empty() && s.unique_id == star.host && s.paired) else { continue };
         let (app_id, title) = match source.library {
             Some(library) => {
                 let found = library.games.iter().filter(|g| installed(g)).find(|g| {

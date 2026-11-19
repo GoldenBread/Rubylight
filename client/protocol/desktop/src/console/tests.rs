@@ -816,6 +816,18 @@ fn a_hidden_favourite_comes_back_and_a_pc_without_a_library_shows_the_saved_titl
 }
 
 #[test]
+fn a_star_of_a_pc_that_is_no_longer_paired_is_not_offered_but_an_offline_paired_pc_keeps_it() {
+    let stars = [star("uid-a", "", DESKTOP, "Desktop")];
+    let mut unpaired = source(1, "Desk", true, None, None);
+    unpaired.unique_id = "uid-a";
+    unpaired.paired = false;
+    assert!(favourite_games(&[unpaired], &stars).is_empty(), "a card that cannot start");
+    let mut away = source(1, "Desk", false, None, None);
+    away.unique_id = "uid-a";
+    assert_eq!(favourite_games(&[away], &stars).len(), 1, "a paired PC that is away keeps its star");
+}
+
+#[test]
 fn the_running_app_is_checked_again_before_it_is_closed() {
     assert_eq!(recheck_running(Some(11), Some(11)), Running::Same);
     assert_eq!(recheck_running(Some(11), None), Running::Gone);
