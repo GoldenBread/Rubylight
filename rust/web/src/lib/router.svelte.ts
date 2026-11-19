@@ -46,12 +46,15 @@ function sync() {
   route.path = location.pathname;
   route.search = location.search;
 }
+/** The guard's answer; `moved` is a leave whose page a Back or Forward has already chosen. */
+type Answer = 'leave' | 'stay' | 'moved';
+
 /**
  * Ask the guard about leaving for `to`. A Back or Forward pressed while it is open has already moved
- * the address, so the answer settles both: leave adopts the address as the page, stay walks the history
- * back to the page shown. True only when the answer is leave and the address did not move meanwhile.
+ * the address, so the answer settles both: leave adopts the address as the page (`moved`), stay walks
+ * the history back to the page shown.
  */
-async function ask(to: string, popped: boolean): Promise<boolean> {
+async function ask(to: string, popped: boolean): Promise<Answer> {
   deciding = true;
   let leave = false;
   try {
@@ -68,13 +71,13 @@ async function ask(to: string, popped: boolean): Promise<boolean> {
     // Back and forward swap the page at once, with no transition: the browser restores the
     // scroll position as the entry changes, which a page drawn a frame later would lose.
     sync();
-    return false;
+    return 'moved';
   }
   if (!leave && moved) {
     restoring = index;
     history.go(index - current);
   }
-  return leave;
+  return leave ? 'leave' : 'stay';
 }
 
 window.addEventListener('popstate', () => {
@@ -164,11 +167,14 @@ function go(to: string, replace: boolean) {
   else transition(from, location.pathname, show);
 }
 
-/** Check the current draft before an action that leaves the page, such as signing out. */
+/**
+ * Check the current draft before an action that leaves the page, such as signing out. A Back pressed
+ * while the question is open does not call the action off: the answer was to leave.
+ */
 export async function mayLeave(to: string): Promise<boolean> {
   if (deciding) return false;
   if (!guard) return true;
-  return ask(to, false);
+  return (await ask(to, false)) !== 'stay';
 }
 
 export function navigate(to: string, options: { replace?: boolean; force?: boolean } = {}) {
@@ -178,8 +184,10 @@ export function navigate(to: string, options: { replace?: boolean; force?: boole
     go(to, options.replace ?? false);
     return;
   }
-  void mayLeave(to).then((leave) => {
-    if (leave) go(to, options.replace ?? false);
+  if (deciding) return;
+  // After a Back during the question the page is the one the Back chose, not the link's.
+  void ask(to, false).then((answer) => {
+    if (answer === 'leave') go(to, options.replace ?? false);
   });
 }
 

@@ -187,6 +187,25 @@ test('Back pressed while a link opened the dialog: leave follows the Back, not t
   assert.deepEqual(b.entries(), ['/a', '/b', '/c']);
 });
 
+test('Back pressed while signing out opened the dialog: leave still signs out, stay does not', async () => {
+  for (const leave of [true, false]) {
+    const b = await browser(['/a', '/b', '/c'], 2);
+    const d = dialog(b.router);
+    const signOut = b.router.mayLeave('/login');
+    await wait();
+    b.back();
+    b.deliver();
+    await wait();
+    assert.deepEqual(d.asked, ['/login']);
+    await d.answer(leave);
+    await b.flush();
+    assert.equal(await signOut, leave, 'the action follows the answer, whatever Back did meanwhile');
+    assert.equal(b.shown(), leave ? '/b' : '/c');
+    inStep(b);
+    assert.deepEqual(b.entries(), ['/a', '/b', '/c']);
+  }
+});
+
 test('a guard that fails counts as stay and does not block the next Back', async () => {
   const b = await browser(['/a', '/b', '/c'], 2);
   let calls = 0;
