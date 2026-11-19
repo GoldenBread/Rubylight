@@ -100,10 +100,14 @@ final class VendorLowLatencyKeys {
         tegra.put("vendor.nvidia.disable-output-reorder", 1);
         TEGRA = Collections.unmodifiableMap(tegra);
 
-        // The MediaTek preset of Artemis (ClassicOldSong) with the keys of the derflacco
-        // moonlight-noir fork (GPL-3.0): mild boost, light prebuffering, short queues, output
-        // paced by the app. The picture-quality and frame skip or drop keys (pq, nvop.skip,
-        // skip.mode, drop.nonref.frame, frame-drop.policy) are not sent: the fork removed them.
+        // The MediaTek preset of Artemis (ClassicOldSong) with the key list of the derflacco
+        // fork's Artemide_Experimental_Async branch at 32e38f0e (GPL-3.0, whose "Artemide"
+        // releases are built from it): mild boost and clock level 1, queues, waits, preload,
+        // output paced by the app, and the ".value" twins of the two waits, which some MediaTek
+        // builds read instead of the plain names. The picture-quality and frame skip or drop keys
+        // (pq, nvop.skip, skip.mode, drop.nonref.frame, frame-drop.policy) are not sent: that
+        // branch removed them (its 359f83c3 and 8dc03f3f). The values below are the full preset's
+        // own (preload 1, depth 3, 4 ms); the fork's first try sends the MEDIATEK_SHORT values.
         Map<String, Integer> mtk = new LinkedHashMap<>();
         for (Map.Entry<String, Integer> entry : known.entrySet()) {
             if (entry.getKey().startsWith("vendor.mtk.")) {
@@ -113,7 +117,9 @@ final class VendorLowLatencyKeys {
         MEDIATEK_AV1 = Collections.unmodifiableMap(new LinkedHashMap<>(mtk));
         mtk.put("vendor.mtk.vdec.preload.frame.count", 1);
         mtk.put("vendor.mtk.vdec.buffer.fetch.timeout.ms", 4);
+        mtk.put("vendor.mtk.vdec.buffer.fetch.timeout.ms.value", 4);
         mtk.put("vendor.mtk.vdec.bq.guard.interval.time", 4);
+        mtk.put("vendor.mtk.vdec.bq.guard.interval.time.value", 4);
         mtk.put("vendor.mtk.vdec.input.max.queue.depth", 3);
         mtk.put("vendor.mtk.vdec.output.max.queue.depth", 3);
         MEDIATEK = Collections.unmodifiableMap(mtk);
@@ -126,7 +132,9 @@ final class VendorLowLatencyKeys {
         Map<String, Integer> mtkShort = new LinkedHashMap<>(mtk);
         mtkShort.put("vendor.mtk.vdec.preload.frame.count", 0);
         mtkShort.put("vendor.mtk.vdec.buffer.fetch.timeout.ms", 2);
+        mtkShort.put("vendor.mtk.vdec.buffer.fetch.timeout.ms.value", 2);
         mtkShort.put("vendor.mtk.vdec.bq.guard.interval.time", 2);
+        mtkShort.put("vendor.mtk.vdec.bq.guard.interval.time.value", 2);
         mtkShort.put("vendor.mtk.vdec.input.max.queue.depth", 2);
         mtkShort.put("vendor.mtk.vdec.output.max.queue.depth", 2);
         MEDIATEK_SHORT = Collections.unmodifiableMap(mtkShort);

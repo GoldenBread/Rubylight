@@ -42,8 +42,10 @@ public class DecoderTuningKeysTest {
             "vendor.mtk.vdec.low-latency.mode", "vendor.mtk.vdec.cpu.boost.mode", "vendor.mtk.vdec.cpu.boost.mode.value",
             "vendor.mtk.vdec.dvfs.mode", "vendor.mtk.vdec.dvfs.level", "vendor.mtk.vdec.disable-idle",
             "vendor.mtk.vdec.vsync.adjust.enable", "vendor.mtk.vdec.preload.frame.count", "vendor.mtk.vdec.input.max.queue.depth",
-            "vendor.mtk.vdec.output.max.queue.depth", "vendor.mtk.vdec.bq.guard.interval.time"};
-    // Dropped from the preset to match the derflacco fork, which stopped sending them.
+            "vendor.mtk.vdec.output.max.queue.depth", "vendor.mtk.vdec.bq.guard.interval.time",
+            "vendor.mtk.vdec.buffer.fetch.timeout.ms", "vendor.mtk.vdec.buffer.fetch.timeout.ms.value",
+            "vendor.mtk.vdec.bq.guard.interval.time.value"};
+    // Not sent: the derflacco fork's Artemide_Experimental_Async branch no longer sends them (its 359f83c3, 8dc03f3f).
     private static final String[] MTK_DROPPED_KEYS = {
             "vendor.mtk.vdec.pq", "vendor.mtk.vdec.nvop.skip", "vendor.mtk.vdec.skip.mode",
             "vendor.mtk.vdec.drop.nonref.frame", "vendor.mtk.vdec.frame-drop.policy"};
@@ -106,7 +108,19 @@ public class DecoderTuningKeysTest {
                 assertEquals(level, Integer.valueOf(1), preset.get(level));
             }
         }
-        assertEquals(13, VendorLowLatencyKeys.MEDIATEK.size());
+        // Some MediaTek builds read only the ".value" names of the wait keys: each twin carries the value of
+        // its plain name in the same map, so the shorter first try sends 2 and the full preset 4.
+        for (Map<String, Integer> preset : Arrays.asList(VendorLowLatencyKeys.MEDIATEK, VendorLowLatencyKeys.MEDIATEK_SHORT)) {
+            for (String twin : new String[] {"vendor.mtk.vdec.buffer.fetch.timeout.ms", "vendor.mtk.vdec.bq.guard.interval.time"}) {
+                assertNotNull(twin + ".value", preset.get(twin + ".value"));
+                assertEquals(twin + ".value", preset.get(twin), preset.get(twin + ".value"));
+            }
+        }
+        assertEquals(Integer.valueOf(4), VendorLowLatencyKeys.MEDIATEK.get("vendor.mtk.vdec.buffer.fetch.timeout.ms.value"));
+        assertEquals(Integer.valueOf(2), VendorLowLatencyKeys.MEDIATEK_SHORT.get("vendor.mtk.vdec.bq.guard.interval.time.value"));
+        assertFalse(VendorLowLatencyKeys.MEDIATEK_AV1.containsKey("vendor.mtk.vdec.buffer.fetch.timeout.ms.value"));
+        assertFalse(VendorLowLatencyKeys.MEDIATEK.containsKey("vendor.mtk.vdec.ultra-low-latency"));
+        assertEquals(15, VendorLowLatencyKeys.MEDIATEK.size());
         assertEquals(8, VendorLowLatencyKeys.MEDIATEK_AV1.size());
     }
 
@@ -210,7 +224,8 @@ public class DecoderTuningKeysTest {
         }
         assertEquals(new java.util.TreeSet<>(Arrays.asList("vendor.mtk.vdec.input.max.queue.depth",
                 "vendor.mtk.vdec.output.max.queue.depth", "vendor.mtk.vdec.buffer.fetch.timeout.ms",
-                "vendor.mtk.vdec.bq.guard.interval.time", "vendor.mtk.vdec.preload.frame.count")), differing);
+                "vendor.mtk.vdec.bq.guard.interval.time", "vendor.mtk.vdec.buffer.fetch.timeout.ms.value",
+                "vendor.mtk.vdec.bq.guard.interval.time.value", "vendor.mtk.vdec.preload.frame.count")), differing);
 
         // A MediaTek decoder whose try 0 failed gets the whole full preset on try 1.
         for (String name : new String[] {"c2.mtk.hevc.decoder", "OMX.MTK.VIDEO.DECODER.HEVC"}) {
@@ -245,7 +260,8 @@ public class DecoderTuningKeysTest {
             }
             assertAbsent(name, format, "vendor.mtk.vdec.preload.frame.count", "vendor.mtk.vdec.buffer.fetch.timeout.ms",
                     "vendor.mtk.vdec.bq.guard.interval.time", "vendor.mtk.vdec.input.max.queue.depth",
-                    "vendor.mtk.vdec.output.max.queue.depth");
+                    "vendor.mtk.vdec.output.max.queue.depth", "vendor.mtk.vdec.buffer.fetch.timeout.ms.value",
+                    "vendor.mtk.vdec.bq.guard.interval.time.value");
             assertAbsent(name, format, MTK_DROPPED_KEYS);
         }
         // H.264 and HEVC keep the queue keys.
