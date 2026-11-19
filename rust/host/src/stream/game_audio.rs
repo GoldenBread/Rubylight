@@ -141,23 +141,36 @@ impl GameAudio {
     }
 }
 /// The audio process of the game launched as `app_id` in `generation`, among
-/// the processes `list` gives. They are listed before `current_app` is
-/// locked: that takes milliseconds once a second, and console and launch
-/// requests wait on the lock.
+/// the processes `list` gives. They are listed only while that game runs,
+/// and outside `current_app`'s lock: that takes milliseconds once a second,
+/// and console and launch requests wait on the lock. The generation tells a
+/// replacement started in between.
 fn launched_game(
     h: &Shared,
     app_id: u32,
     generation: Option<&String>,
     list: impl FnOnce() -> Result<Vec<butterpollo_core::steam::Process>>,
 ) -> Result<AudioProcess> {
+    let launched =
+        |app: &&crate::process::RunningApp| app.id == app_id && Some(&app.generation) == generation;
+    let missing = || anyhow::anyhow!("this stream has no matching launched game");
+    if h.current_app
+        .lock()
+        .unwrap()
+        .as_ref()
+        .filter(launched)
+        .is_none()
+    {
+        return Err(missing());
+    }
     let processes = list()?;
     let root = h
         .current_app
         .lock()
         .unwrap()
         .as_ref()
-        .filter(|app| app.id == app_id && Some(&app.generation) == generation)
-        .ok_or_else(|| anyhow::anyhow!("this stream has no matching launched game"))
+        .filter(launched)
+        .ok_or_else(missing)
         .and_then(|app| app.audio_root(&processes))?;
     AudioProcess::open(root)
 }
@@ -412,6 +425,19 @@ mod tests {
             unlocked,
             Some(true),
             "the processes were listed while current_app was locked"
+        );
+        // Nothing to list for once the game ended or another took its place.
+        let mut listed = false;
+        let error = launched_game(&fixture.host, id, Some(&"replaced".to_owned()), || {
+            listed = true;
+            anyhow::bail!("listing failed")
+        })
+        .err()
+        .unwrap();
+        assert!(!listed, "the processes were listed for no matching game");
+        assert_eq!(
+            format!("{error:#}"),
+            "this stream has no matching launched game"
         );
     }
 
