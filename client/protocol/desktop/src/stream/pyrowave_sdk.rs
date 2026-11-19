@@ -78,8 +78,9 @@ pub type RawImage = *mut c_void;
 pub type PyroResult = i32;
 
 pub const SUCCESS: PyroResult = 0;
-/// `VK_QUEUE_GLOBAL_PRIORITY_MEDIUM`, the normal default.
-const PRIORITY_MEDIUM: i32 = 512;
+/// `VK_QUEUE_GLOBAL_PRIORITY_HIGH` (MEDIUM, 256, is Vulkan's default): the priority the decoder
+/// has always asked for and was measured at.
+const PRIORITY_HIGH: i32 = 512;
 /// `VK_QUEUE_FAMILY_IGNORED`: acquiring from it discards the image's content (a decode overwrites it).
 const QUEUE_FAMILY_IGNORED: u32 = u32::MAX;
 /// `VK_QUEUE_FAMILY_EXTERNAL`: the planes are handed back to D3D11.
@@ -489,7 +490,7 @@ impl GpuDecoder {
         // SAFETY: `luid` and the out-pointers outlive each call, and `s` owns every handle made so
         // Drop releases them on any early return.
         unsafe {
-            let result = (s.api.create_device_by_compat)(0, 0, ptr::null(), ptr::null(), &luid, PRIORITY_MEDIUM, &mut s.device);
+            let result = (s.api.create_device_by_compat)(0, 0, ptr::null(), ptr::null(), &luid, PRIORITY_HIGH, &mut s.device);
             if result != SUCCESS {
                 let why = diagnose_vulkan(&luid);
                 return Err(format!("no PyroWave Vulkan device for the display adapter (PyroWave error {result}, {}): {why}", result_name(result)));

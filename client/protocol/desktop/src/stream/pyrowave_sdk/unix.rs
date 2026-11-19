@@ -343,7 +343,7 @@ impl GpuDecoder {
         // SAFETY: The out-pointers outlive each call, and `s` owns every handle made so Drop
         // releases them on any early return.
         unsafe {
-            let result = (s.api.create_device_by_compat)(0, 0, ptr::null(), ptr::null(), ptr::null(), PRIORITY_MEDIUM, &mut s.device);
+            let result = (s.api.create_device_by_compat)(0, 0, ptr::null(), ptr::null(), ptr::null(), PRIORITY_HIGH, &mut s.device);
             if result != SUCCESS {
                 return Err(format!("no PyroWave Vulkan device (PyroWave error {result}, {}): {}", result_name(result), diagnose_vulkan()));
             }

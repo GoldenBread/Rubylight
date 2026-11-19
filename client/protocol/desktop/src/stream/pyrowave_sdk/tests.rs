@@ -1280,3 +1280,9 @@ fn decode_timing_at_1080p_1440p_and_4k() {
         );
     }
 }
+
+#[test]
+fn the_device_is_asked_for_the_queue_priority_its_name_says() {
+    // The decoder was run and measured at Vulkan's HIGH global queue priority; the name says so.
+    assert_eq!(PRIORITY_HIGH, ash::vk::QueueGlobalPriorityKHR::HIGH.as_raw());
+}
