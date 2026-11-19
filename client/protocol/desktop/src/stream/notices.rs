@@ -95,7 +95,7 @@ impl Streaming {
                     self.bitrate_busy = false;
                     match result {
                         Ok((ceiling, current)) => {
-                            self.facts.bitrate_kbps = current as i32;
+                            self.facts.bitrate_kbps = i32::try_from(current).unwrap_or(i32::MAX);
                             self.bitrate_kbps = current;
                             if let Some(rates) = &mut self.rate_change { rates.bitrate_set(current, self.started.elapsed().as_millis() as u64); }
                             self.bitrate_policy = Some(bitrate::Bitrate::new(self.facts.format, ceiling, current, self.facts.fps.max(1) as u32,
@@ -116,7 +116,7 @@ impl Streaming {
                                 self.started.elapsed().as_millis() as u64);
                             eprintln!("nightjar: the PC's automatic bitrate is on: {} kbps, at most {} kbps",
                                 abr.current_kbps, configured.max_bitrate);
-                            self.facts.bitrate_kbps = abr.current_kbps as i32;
+                            self.facts.bitrate_kbps = i32::try_from(abr.current_kbps).unwrap_or(i32::MAX);
                             self.bitrate_kbps = abr.current_kbps;
                             self.host_abr = Some(abr);
                             self.adaptive_bitrate = true;
@@ -128,7 +128,7 @@ impl Streaming {
                 Notice::HostAbrAction(action) => {
                     if let Some(kbps) = self.host_abr.as_mut().and_then(|abr| abr.answered(action.as_ref())) {
                         if let Some(action) = &action { eprintln!("nightjar: the PC set {kbps} kbps: {}", action.reason); }
-                        self.facts.bitrate_kbps = kbps as i32;
+                        self.facts.bitrate_kbps = i32::try_from(kbps).unwrap_or(i32::MAX);
                         self.bitrate_kbps = kbps;
                     }
                 }
@@ -136,7 +136,7 @@ impl Streaming {
                     self.bitrate_busy = false;
                     match result {
                         Ok(kbps) => {
-                            self.facts.bitrate_kbps = kbps as i32;
+                            self.facts.bitrate_kbps = i32::try_from(kbps).unwrap_or(i32::MAX);
                             self.bitrate_kbps = kbps;
                             if let Some(rates) = &mut self.rate_change { rates.bitrate_set(kbps, self.started.elapsed().as_millis() as u64); }
                             if let Some(policy) = &mut self.bitrate_policy {
@@ -159,7 +159,7 @@ impl Streaming {
                     self.bitrate_busy = false;
                     let (kbps, toast) = doctor::finished(&mut self.doctor.trial, outcome);
                     if let Some(kbps) = kbps.filter(|kbps| *kbps > 0) {
-                        self.facts.bitrate_kbps = kbps as i32;
+                        self.facts.bitrate_kbps = i32::try_from(kbps).unwrap_or(i32::MAX);
                         self.bitrate_kbps = kbps;
                         if let Some(rates) = &mut self.rate_change { rates.bitrate_set(kbps, self.started.elapsed().as_millis() as u64); }
                     }

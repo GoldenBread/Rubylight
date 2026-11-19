@@ -589,7 +589,11 @@ fn run(
                     // Refused as Linux refuses a submit it has no memory for. Queued under
                     // the lock, like every completion.
                     let first = !std::mem::replace(&mut state.refused, true);
-                    let (count, buffered) = (state.pending.len(), state.buffered);
+                    // What the limits above counted: answers waiting for the tunnel too.
+                    let (count, buffered) = (
+                        state.pending.len() + state.out.len(),
+                        state.buffered + state.out_bytes,
+                    );
                     let answer = ret_submit(&asked, Reply::failed(wire::ENOMEM))
                         .map_err(ServeError::Device)?;
                     let state = shared.room(state);

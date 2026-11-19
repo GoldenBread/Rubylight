@@ -2016,7 +2016,7 @@ impl Streaming {
         let Some(rates) = &mut self.rate_change else { return };
         let answer = rates.result(result, self.started.elapsed().as_millis() as u64);
         if let Some(kbps) = answer.bitrate_kbps {
-            self.facts.bitrate_kbps = kbps as i32;
+            self.facts.bitrate_kbps = i32::try_from(kbps).unwrap_or(i32::MAX);
             self.bitrate_kbps = kbps;
             let now = self.started.elapsed().as_millis() as u64;
             if let Some(policy) = &mut self.bitrate_policy { policy.applied(kbps, kbps, now); }
