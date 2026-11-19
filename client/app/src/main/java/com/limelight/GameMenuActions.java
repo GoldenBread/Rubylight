@@ -339,7 +339,7 @@ final class GameMenuActions {
         options.zoomEnabled = game.desktopGestures != null && game.desktopGestures.enabled();
         options.pictureInPicture = game.videoOutput.canEnterPictureInPicture();
         options.externalDisplays = game.videoOutput.hasPresentationDisplays();
-        options.automaticQuality = game.adaptation.supportsAdaptiveQuality();
+        options.automaticQuality = game.adaptation.showsAdaptiveQuality();
         options.automaticBitrateOn = game.adaptation.isAdaptiveBitrateEnabled() || game.adaptation.isRateChangeBitrateOn();
         options.rateChange = game.rateChanges != null;
         options.rateChangeBitrate = game.rateChanges != null && game.prefConfig.rateChangeBitrate;

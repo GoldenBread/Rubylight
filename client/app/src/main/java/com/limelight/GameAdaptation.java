@@ -864,8 +864,20 @@ final class GameAdaptation {
         return AdaptiveQualityController.Mode.parse(chosen != null ? chosen : game.prefConfig.adaptiveQualityMode.preference());
     }
 
+    // What supportsAdaptiveQuality last answered, with no decoder rebuild in progress then.
+    private boolean adaptiveQualityShown;
+
+    // For a menu or help text, which cannot wait: during a decoder rebuild, whose limits are cleared
+    // for a moment, what it answered before.
+    boolean showsAdaptiveQuality() {
+        if (game.decoderRenderer == null) return supportsAdaptiveQuality();
+        game.decoderRenderer.runUnlessRebuilding(this::supportsAdaptiveQuality);
+        return game.connected && adaptiveQualityShown;
+    }
+
+    // Asked only with no rebuild in progress: inside a whenDecoderReady action or showsAdaptiveQuality.
     boolean supportsAdaptiveQuality() {
-        return game.connected && game.decoderRenderer != null && game.app != null && game.app.getRole() == NvApp.Role.STREAM &&
+        return adaptiveQualityShown = game.connected && game.decoderRenderer != null && game.app != null && game.app.getRole() == NvApp.Role.STREAM &&
                 (game.decoderRenderer.getActiveVideoFormat() & MoonBridge.VIDEO_FORMAT_MASK_PYROWAVE) == 0 &&
                 MoonBridge.hostSupportsControlMessage(MoonBridge.CONTROL_MESSAGE_RECONFIGURE) &&
                 game.decoderRenderer.getReconfigureLimits() != null;
@@ -873,9 +885,8 @@ final class GameAdaptation {
 
     void startAdaptiveQuality() {
         game.bitrateHandler.removeCallbacks(game.updateQuality);
+        game.videoOutput.dropDecoderAction("tick");
         game.adaptiveQuality = null;
-        waitingQualityStep = null;
-        waitingCeilingReturn = false;
         game.pendingQualityTarget = null;
         game.qualityStatus = null;
         if (game.decoderRenderer != null) game.decoderRenderer.resetDecodeTiming();
@@ -904,8 +915,7 @@ final class GameAdaptation {
         int[] shown = game.decoderRenderer.getStreamSize();
         if ((!game.adaptiveQuality.current().matches(shown[0], shown[1], game.streamFps) ||
                 game.reconfigureRequester.fpsMillihz() != qualityCeilingFrameRateMilliHz()) &&
-                applyAdaptiveQuality(game.adaptiveQuality.current(), SystemClock.uptimeMillis()) ==
-                        GameVideoOutput.Reconfigure.REFUSED) return;
+                !applyAdaptiveQuality(game.adaptiveQuality.current(), SystemClock.uptimeMillis())) return;
         // Automatic quality needs it for this session only; the saved choice stays the user's own. Never keeps the
         // bitrate: automatic quality then steps only the resolution and frame rate.
         if (qualityTakesBitrate(bitrateHeld(), supportsAdaptiveBitrate(), isAdaptiveBitrateEnabled(), isRateChangeBitrateOn(),
@@ -925,10 +935,7 @@ final class GameAdaptation {
         return !held && supported && !busyOn && !hintOn && manualKbps == 0;
     }
 
-    // A step that waited for a decoder being set up again; offered again until it is sent or refused.
-    AdaptiveQualityController.Target waitingQualityStep;
-
-    GameVideoOutput.Reconfigure applyAdaptiveQuality(AdaptiveQualityController.Target target, long now) {
+    boolean applyAdaptiveQuality(AdaptiveQualityController.Target target, long now) {
         return applyAdaptiveQuality(target, now, qualityCeilingFrameRateMilliHz());
     }
 
@@ -936,57 +943,35 @@ final class GameAdaptation {
         return game.qualityMaxFrameRateMilliHz > 0 ? game.qualityMaxFrameRateMilliHz : game.qualityMaxFps * 1000;
     }
 
-    GameVideoOutput.Reconfigure applyAdaptiveQuality(AdaptiveQualityController.Target target, long now, int ceilingMilliHz) {
+    boolean applyAdaptiveQuality(AdaptiveQualityController.Target target, long now, int ceilingMilliHz) {
         int[] request = target.request();
         if (target.fps == Math.round(ceilingMilliHz / 1000f)) request[2] = ceilingMilliHz;
-        GameVideoOutput.Reconfigure sent = game.videoOutput.requestStreamReconfigure(request);
-        // A decoder being set up again (after a failure) takes no size yet: the next tick, or the
-        // check once it is set up, offers this step again.
-        waitingQualityStep = sent == GameVideoOutput.Reconfigure.PENDING ? target : null;
-        if (sent == GameVideoOutput.Reconfigure.PENDING) return sent;
-        if (sent != GameVideoOutput.Reconfigure.SENT) {
+        if (!game.videoOutput.requestStreamReconfigure(request)) {
             stopAdaptiveQualityWithError();
-            return sent;
+            return false;
         }
         game.healthOriginalBitrate = game.healthTrialBitrate = 0;
         game.adaptiveQuality.applied(target, now);
         game.pendingQualityTarget = target;
         game.qualityRequestSentAt = now;
-        return sent;
+        return true;
     }
 
-    // A return to the ceiling (automatic quality turned Off) that waited for a decoder being set up again.
-    boolean waitingCeilingReturn;
-
-    // The player's choice in the quality dialog: Off returns the stream to its ceiling, also when the
-    // decoder is being set up again then (it is asked for after that).
+    // The player's choice in the quality dialog, now or once a decoder rebuild is done: Off returns the
+    // stream to its ceiling.
     void applyQualityChoice() {
+        game.videoOutput.whenDecoderReady("choice", this::takeQualityChoice);
+    }
+
+    private void takeQualityChoice() {
         startAdaptiveQuality();
-        if (qualityMode() == AdaptiveQualityController.Mode.OFF && (supportsAdaptiveQuality() ||
-                (game.decoderRenderer != null && game.decoderRenderer.reconfigureLimitsPending()))) {
-            returnToCeiling();
+        if (qualityMode() == AdaptiveQualityController.Mode.OFF && supportsAdaptiveQuality()) {
+            game.videoOutput.requestStreamReconfigure(new int[] {game.qualityMaxWidth, game.qualityMaxHeight, qualityCeilingFrameRateMilliHz()});
         }
-    }
-
-    private void returnToCeiling() {
-        waitingCeilingReturn = game.videoOutput.requestStreamReconfigure(new int[] {game.qualityMaxWidth,
-                game.qualityMaxHeight, qualityCeilingFrameRateMilliHz()}) == GameVideoOutput.Reconfigure.PENDING;
-    }
-
-    // Once the decoder is set up again: the ceiling as it is now, unless the stream is there already.
-    void retryCeilingReturn() {
-        if (!waitingCeilingReturn) return;
-        waitingCeilingReturn = false;
-        if (game.adaptiveQuality != null ||
-                (game.reconfigureRequester.width() == game.qualityMaxWidth && game.reconfigureRequester.height() == game.qualityMaxHeight &&
-                        game.reconfigureRequester.fpsMillihz() == qualityCeilingFrameRateMilliHz())) return;
-        returnToCeiling();
     }
 
     void stopAdaptiveQualityWithError() {
         game.adaptiveQuality = null;
-        waitingQualityStep = null;
-        waitingCeilingReturn = false;
         game.pendingQualityTarget = null;
         game.bitrateHandler.removeCallbacks(game.updateQuality);
         releaseQualityAutoBitrate();
@@ -1019,7 +1004,7 @@ final class GameAdaptation {
                 .setNeutralButton(R.string.quality_about, (dialog, which) ->
                         game.menuActions.showStreamDialog(new NavigationDialogBuilder(game).setTitle(R.string.title_adaptive_quality)
                                 .setMessage(game.getString(R.string.quality_stream_help) + "\n\n" +
-                                        game.getString(supportsAdaptiveQuality() ? R.string.summary_adaptive_quality : R.string.quality_unavailable))
+                                        game.getString(showsAdaptiveQuality() ? R.string.summary_adaptive_quality : R.string.quality_unavailable))
                                 .setPositiveButton(android.R.string.ok, null).create()))
                 .setNegativeButton(android.R.string.cancel, null).create());
     }

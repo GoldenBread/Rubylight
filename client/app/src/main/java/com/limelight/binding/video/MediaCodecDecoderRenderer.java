@@ -282,6 +282,9 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private final AtomicBoolean pendingFrameRate = new AtomicBoolean();
     // A rebuild cleared the limits and its configure has not published new ones yet.
     private volatile boolean reconfigureLimitsRebuilding;
+    // Held while a rebuild starts or ends (reconfigureLimitsRebuilding flips) and while a UI action runs
+    // (runUnlessRebuilding). A decoder thread takes it under codecRecoveryMonitor; the UI never takes that.
+    private final Object reconfigureGate = new Object();
     // Told on the decoder thread when a rebuild's configure published the limits again.
     private volatile Runnable reconfigureLimitsListener;
 
@@ -1068,6 +1071,36 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      */
     public boolean reconfigureLimitsPending() {
         return reconfigureLimitsRebuilding && decoderFailure == null && !stopping;
+    }
+
+    /**
+     * Runs the action on the calling thread unless a rebuild is setting a decoder up again; no rebuild
+     * starts or ends while it runs. False when it did not run. The action must never take
+     * codecRecoveryMonitor: a rebuild holds it while it waits here.
+     */
+    public boolean runUnlessRebuilding(Runnable action) {
+        synchronized (reconfigureGate) {
+            if (reconfigureLimitsPending()) return false;
+            action.run();
+            return true;
+        }
+    }
+
+    // A rebuild begins (it may move to another decoder): no size change is offered until that one is configured.
+    void startRebuild() {
+        synchronized (reconfigureGate) {
+            reconfigureLimitsRebuilding = true;
+            reconfigureLimits = null;
+        }
+    }
+
+    // A configure completed with its limits published; true when it ended a rebuild.
+    boolean endRebuild() {
+        synchronized (reconfigureGate) {
+            boolean rebuilt = reconfigureLimitsRebuilding;
+            reconfigureLimitsRebuilding = false;
+            return rebuilt;
+        }
     }
 
     /** Runs on the decoder thread each time a rebuild's configure has published the limits again; never waits. */
@@ -2911,10 +2944,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             configured = true;
             // Only now, with this try complete (a later step failing would clear the limits again):
             // a turn or fold the UI could not ask for during a rebuild is asked for.
-            if (reconfigureLimitsRebuilding) {
-                reconfigureLimitsRebuilding = false;
-                notifyReconfigureLimits();
-            }
+            if (endRebuild()) notifyReconfigureLimits();
         } catch (IllegalArgumentException e) {
             noteConfigureError(selectedDecoderInfo, format, e);
             if (throwOnCodecError) {
@@ -3525,8 +3555,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
         @Override public void rebuild(boolean codecFailed) {
             // It may move to another decoder: no size change is offered until that one is configured.
-            reconfigureLimitsRebuilding = true;
-            reconfigureLimits = null;
+            startRebuild();
             if (codecFailed) {
                 videoDecoder.release();
                 if (dolbyVisionActive) {

@@ -67,6 +67,9 @@ final class GameVideoOutput {
     private String launchPanel;
 
     private boolean orientationNoticeShown;
+    // UI actions that read the decoder's limits or ask for a size and met a decoder rebuild, in the
+    // order they were asked for; one per key, a newer one taking the older one's place.
+    private final java.util.LinkedHashMap<String, Runnable> decoderActions = new java.util.LinkedHashMap<>();
     private String displaySignature = "";
     private int lastPaneWidth, lastPaneHeight;
 
@@ -745,14 +748,59 @@ final class GameVideoOutput {
         if (game.decoderRenderer == null) {
             return;
         }
-        // A turn or fold the decoder could not take while it was rebuilt is asked for once it is
-        // configured again (called on the decoder thread; the check runs on this one).
+        listenForRebuilds();
+        whenDecoderReady("track", this::trackReconfigure);
+    }
+
+    // A rebuild's decoder is configured (told on the decoder thread): what waited for it runs on this
+    // one, in order, then the usual check, asked for once.
+    void listenForRebuilds() {
         game.decoderRenderer.setReconfigureLimitsListener(() -> game.bitrateHandler.post(() -> {
             game.bitrateHandler.removeCallbacks(game.checkReconfigure);
-            checkStreamReconfigure();
-            // After the check, which may have restored the size itself (native resolution, a turn).
-            game.adaptation.retryCeilingReturn();
+            decoderActions.put("check", this::checkStreamReconfigure);
+            runWaitingDecoderActions();
         }));
+    }
+
+    // A UI action that reads the decoder's limits or asks for a size, on the main looper: it runs now,
+    // or, while a rebuild sets the decoder up again, once that is done, after those asked for before it.
+    // Never nested: code inside an action calls the plain methods.
+    void whenDecoderReady(String key, Runnable action) {
+        if (game.decoderRenderer == null) {
+            action.run();
+            return;
+        }
+        if (runWaitingDecoderActions() && game.decoderRenderer.runUnlessRebuilding(action)) return;
+        // Once the stream stopped nothing is kept for later.
+        if (game.connected && !game.isFinishing()) decoderActions.put(key, action);
+    }
+
+    void dropDecoderAction(String key) {
+        decoderActions.remove(key);
+    }
+
+    // The stream stopped: nothing that waited runs.
+    void clearDecoderActions() {
+        decoderActions.clear();
+    }
+
+    // True when nothing waits any more; once the stream stopped, nothing that waited runs.
+    private boolean runWaitingDecoderActions() {
+        while (!decoderActions.isEmpty()) {
+            if (!game.connected || game.isFinishing() || game.decoderRenderer == null) {
+                decoderActions.clear();
+                return true;
+            }
+            java.util.Map.Entry<String, Runnable> first = decoderActions.entrySet().iterator().next();
+            String key = first.getKey();
+            Runnable action = first.getValue();
+            if (!game.decoderRenderer.runUnlessRebuilding(action)) return false;
+            if (decoderActions.get(key) == action) decoderActions.remove(key);
+        }
+        return true;
+    }
+
+    private void trackReconfigure() {
         int[] size = game.decoderRenderer.getStreamSize();
         streamStartedLandscape = size[0] >= size[1];
         int fpsMillihz = game.decoderRenderer.getStreamFrameRateMilliHz();
@@ -804,9 +852,7 @@ final class GameVideoOutput {
             // needs to reach the host when the current level uses the ceiling's rate.
             if (target == null && game.adaptiveQuality.current().fps == Math.round(offered[2] / 1000f) &&
                     game.reconfigureRequester.fpsMillihz() != offered[2]) target = game.adaptiveQuality.current();
-            // A step that waited for the decoder (the ladder was resized for it already) is asked for now.
-            if (target == null) target = game.adaptation.waitingQualityStep;
-            if (target == null || game.adaptation.applyAdaptiveQuality(target, now, offered[2]) == Reconfigure.SENT) {
+            if (target == null || game.adaptation.applyAdaptiveQuality(target, now, offered[2])) {
                 game.qualityMaxWidth = offered[0]; game.qualityMaxHeight = offered[1]; game.qualityMaxFps = Math.round(offered[2] / 1000f);
                 game.qualityMaxFrameRateMilliHz = offered[2];
                 game.streamPanelHz = game.panelMaxRefreshRate;
@@ -817,7 +863,7 @@ final class GameVideoOutput {
         if (request == null) {
             return;
         }
-        if (requestStreamReconfigure(request) == Reconfigure.SENT) {
+        if (requestStreamReconfigure(request)) {
             // This is the new ceiling even if automatic quality is enabled later.
             game.qualityMaxWidth = request[0]; game.qualityMaxHeight = request[1]; game.qualityMaxFps = Math.round(request[2] / 1000f);
             game.qualityMaxFrameRateMilliHz = request[2];
@@ -825,18 +871,14 @@ final class GameVideoOutput {
         }
     }
 
-    /** What became of a reconfigure request: sent to the PC, waiting for a decoder being set up again, or refused. */
-    enum Reconfigure { SENT, PENDING, REFUSED }
-
-    Reconfigure requestStreamReconfigure(int[] request) {
+    boolean requestStreamReconfigure(int[] request) {
         LimeLog.info("Reconfigure: asking for " + request[0] + "x" + request[1] + " at " + request[2] / 1000f +
                 " fps (was " + game.reconfigureRequester.width() + "x" + game.reconfigureRequester.height() + " at " +
                 game.reconfigureRequester.fpsMillihz() / 1000f + " fps)");
         if (!game.decoderRenderer.prepareForReconfigure(request[0], request[1])) {
             if (game.decoderRenderer.reconfigureLimitsPending()) {
-                // The decoder is being set up again; its listener asks again once it can say.
-                LimeLog.info("Reconfigure: the decoder is being set up again; asking once it is");
-                return Reconfigure.PENDING;
+                // Actions run through whenDecoderReady, which no rebuild starts or ends during.
+                LimeLog.warning("Reconfigure: asked while the decoder is being set up again");
             }
             LimeLog.warning("Reconfigure: the decoder cannot switch to " + request[0] + "x" + request[1] +
                     "; the stream stays as it is");
@@ -844,19 +886,19 @@ final class GameVideoOutput {
                 orientationNoticeShown = true;
                 game.messages.alert(R.string.stream_orientation_decoder_limit, Toast.LENGTH_LONG);
             }
-            return Reconfigure.REFUSED;
+            return false;
         }
         if (!MoonBridge.requestReconfigure(request[0], request[1], request[2])) {
             LimeLog.warning("Reconfigure: request not sent");
             // No IDR at that size comes: the decoder keeps its size and does not restart for it.
             game.decoderRenderer.cancelReconfigure();
-            return Reconfigure.REFUSED;
+            return false;
         }
         boolean fpsChanged = request[2] != game.reconfigureRequester.fpsMillihz();
         game.reconfigureRequester.sent(request);
         game.decoderRenderer.resetDecodeTiming();
         if (fpsChanged) setStreamFrameRate(request[2]);
-        return Reconfigure.SENT;
+        return true;
     }
 
     // The stream runs at this rate now: a reconfigure asked for it, or a 0x553C rate change ran.

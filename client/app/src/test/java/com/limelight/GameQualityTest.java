@@ -43,8 +43,7 @@ public class GameQualityTest {
         requester.start(1920, 1080, 119880, 1920, 1080, 119880);
         for (boolean accepted : new boolean[] {false, true}) {
             QualityBridge.send = accepted;
-            assertEquals(accepted ? GameVideoOutput.Reconfigure.SENT : GameVideoOutput.Reconfigure.REFUSED,
-                    ReflectionHelpers.callInstanceMethod(game.videoOutput, "requestStreamReconfigure",
+            assertEquals(accepted, (boolean) ReflectionHelpers.callInstanceMethod(game.videoOutput, "requestStreamReconfigure",
                     ReflectionHelpers.ClassParameter.from(int[].class, new int[] {1920, 1080, 59940})));
             assertEquals(accepted ? 59940 : 119880, renderer.getStreamFrameRateMilliHz());
             assertEquals(accepted ? 59940 : 119880, requester.fpsMillihz());
@@ -288,7 +287,7 @@ public class GameQualityTest {
         AdaptiveQualityController.Target target = pressuredTarget(quality, now);
         ReflectionHelpers.setField(game, "panelMaxRefreshRate", 60f);
         try {
-            assertEquals(GameVideoOutput.Reconfigure.SENT, ReflectionHelpers.callInstanceMethod(game.adaptation, "applyAdaptiveQuality",
+            assertTrue(ReflectionHelpers.callInstanceMethod(game.adaptation, "applyAdaptiveQuality",
                     ReflectionHelpers.ClassParameter.from(AdaptiveQualityController.Target.class, target),
                     ReflectionHelpers.ClassParameter.from(long.class, now + 3000)));
             assertEquals(90, (int) ReflectionHelpers.getField(game, "streamFps"));
@@ -316,7 +315,7 @@ public class GameQualityTest {
             for (int i = 1; i <= 2; i++) {
                 long now = SystemClock.uptimeMillis() + i * 20000L;
                 AdaptiveQualityController.Target target = pressuredTarget(quality, now);
-                assertEquals(GameVideoOutput.Reconfigure.SENT, ReflectionHelpers.callInstanceMethod(game.adaptation, "applyAdaptiveQuality",
+                assertTrue(ReflectionHelpers.callInstanceMethod(game.adaptation, "applyAdaptiveQuality",
                         ReflectionHelpers.ClassParameter.from(AdaptiveQualityController.Target.class, target),
                         ReflectionHelpers.ClassParameter.from(long.class, now + 3000)));
                 clearPendingQualityTarget(game);

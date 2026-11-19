@@ -88,6 +88,7 @@ public class ReconfigureLimitsTest {
         texture.release();
         ObservingCodec.info = previousInfo;
         ObservingCodec.observed = null;
+        ObservingCodec.duringConfigure = null;
         ObservingCodec.queuedFlags.clear();
         ObservingCodec.queuedMaxWidths.clear();
         MediaCodecHelper.forgetCodecList();
@@ -301,6 +302,55 @@ public class ReconfigureLimitsTest {
         assertNotNull("and offered again once it is configured", renderer.getReconfigureLimits());
     }
 
+    // Test 7: no rebuild starts or ends while a UI action runs through runUnlessRebuilding. A rebuild
+    // that begins on its own thread during an action is marked only once the action has ended, and an
+    // action asked for while a rebuild is under way does not run in between its start and its end.
+    @Test
+    public void noRebuildStartsOrEndsWhileAnActionRuns() throws Exception {
+        if (renderer.setup(MoonBridge.VIDEO_FORMAT_H265, 1920, 1080, 60) != 0) fail("setup failed");
+        Object steps = ReflectionHelpers.getField(renderer, "recoveryCodec");
+        java.util.List<String> told = new java.util.concurrent.CopyOnWriteArrayList<>();
+        renderer.setReconfigureLimitsListener(() -> told.add("rebuilt"));
+        CountDownLatch go = new CountDownLatch(1);
+        Thread decoder = new Thread(() -> {
+            try {
+                go.await();
+            } catch (InterruptedException e) {
+                return;
+            }
+            ReflectionHelpers.callInstanceMethod(steps, "rebuild", ReflectionHelpers.ClassParameter.from(boolean.class, false));
+        });
+        decoder.start();
+        boolean[] seenInAction = new boolean[2];
+        org.junit.Assert.assertTrue(renderer.runUnlessRebuilding(() -> {
+            go.countDown();
+            // Released from inside the action: the rebuild waits at the gate until the action ends.
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (decoder.getState() != Thread.State.BLOCKED && decoder.isAlive() && System.nanoTime() < deadline) {
+                Thread.yield();
+            }
+            seenInAction[0] = decoder.getState() == Thread.State.BLOCKED;
+            seenInAction[1] = renderer.reconfigureLimitsPending() || renderer.getReconfigureLimits() == null;
+        }));
+        decoder.join(TimeUnit.SECONDS.toMillis(5));
+        org.junit.Assert.assertFalse(decoder.isAlive());
+        org.junit.Assert.assertTrue("the rebuild waited for the action", seenInAction[0]);
+        org.junit.Assert.assertFalse("no rebuild marked while the action ran", seenInAction[1]);
+        org.junit.Assert.assertEquals(java.util.Collections.singletonList("rebuilt"), told);
+
+        // During a rebuild's configure (its start marked, its end not yet) an action is refused, and
+        // runs once the rebuild is over.
+        boolean[] ranDuring = {false};
+        boolean[] answered = {true};
+        ObservingCodec.duringConfigure = () -> answered[0] = renderer.runUnlessRebuilding(() -> ranDuring[0] = true);
+        ReflectionHelpers.callInstanceMethod(steps, "rebuild", ReflectionHelpers.ClassParameter.from(boolean.class, false));
+        ObservingCodec.duringConfigure = null;
+        org.junit.Assert.assertFalse(answered[0]);
+        org.junit.Assert.assertFalse(ranDuring[0]);
+        org.junit.Assert.assertTrue(renderer.runUnlessRebuilding(() -> ranDuring[0] = true));
+        org.junit.Assert.assertTrue(ranDuring[0]);
+    }
+
     /** Records what the UI would read while the renderer configures a decoder. */
     @org.robolectric.annotation.Implements(android.media.MediaCodec.class)
     public static class ObservingCodec extends KeyframeSafetyNetWiringTest.QueueingCodec {
@@ -308,6 +358,7 @@ public class ReconfigureLimitsTest {
         static volatile int configures;
         static volatile int[] seen;
         static volatile boolean pendingWhileConfiguring;
+        static volatile Runnable duringConfigure;
         /** For each buffer queued while observing: its flags, and the renderer's decode maximum then. */
         static final java.util.List<Integer> queuedFlags = new java.util.concurrent.CopyOnWriteArrayList<>();
         static final java.util.List<Integer> queuedMaxWidths = new java.util.concurrent.CopyOnWriteArrayList<>();
@@ -319,6 +370,8 @@ public class ReconfigureLimitsTest {
                 seen = renderer.getReconfigureLimits();
                 pendingWhileConfiguring = renderer.reconfigureLimitsPending();
             }
+            Runnable during = duringConfigure;
+            if (during != null) during.run();
         }
         @Override @org.robolectric.annotation.Implementation
         public void queueInputBuffer(int index, int offset, int size, long timeUs, int flags) {

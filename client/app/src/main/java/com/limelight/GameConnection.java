@@ -893,6 +893,7 @@ final class GameConnection {
         game.rateChanges = null;
         game.bitrateHandler.removeCallbacks(game.checkReconfigure);
         game.bitrateHandler.removeCallbacks(game.updateQuality);
+        game.videoOutput.clearDecoderActions();
         game.adaptiveQuality = null;
         game.pendingQualityTarget = null;
         game.adaptiveBitrate = null;
@@ -1487,7 +1488,7 @@ final class GameConnection {
                 game.currentBitrate = game.app.isSmallStreamInputOnly() ? game.prefConfig.bitrate : game.conn.getStartBitrateKbps();
                 game.overlays.notePyroWaveFallback();
                 game.adaptation.startStreamBitrate();
-                game.adaptation.startAdaptiveQuality();
+                game.videoOutput.whenDecoderReady("start", game.adaptation::startAdaptiveQuality);
                 game.videoOutput.updatePipAutoEnter();
 
                 if (!game.conn.getHostDetails().hasPermission(ComputerDetails.PERMISSION_INPUT)) {

@@ -255,7 +255,7 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
     };
     java.util.concurrent.ExecutorService streamHealthThread;
 
-    final Runnable updateQuality = new Runnable() {
+    private final Runnable qualityTick = new Runnable() {
         @Override public void run() {
             if (!connected || adaptiveQuality == null || isFinishing()) return;
             long now = SystemClock.uptimeMillis();
@@ -274,19 +274,20 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
                 }
             } else {
                 long rtt = MoonBridge.getEstimatedRttInfo();
-                AdaptiveQualityController.Target target = adaptation.waitingQualityStep != null ?
-                        adaptation.waitingQualityStep : adaptiveQuality.sample(now,
+                AdaptiveQualityController.Target target = adaptiveQuality.sample(now,
                         decoderRenderer.hasRecentVideoFrames(now), poorConnection,
                         decoderRenderer.getNetworkFrameLossPercent(), decoderRenderer.getDecodeTimeMs(),
                         rtt == -1 ? -1 : (float) (rtt & 0xffffffffL), decoderRenderer.getQueueDelayMs(),
                         adaptation.adaptationThermalLevel(),
                         adaptiveBitrate != null && adaptiveBitrate.hasRoomBeforeQualityReduction(),
                         decoderRenderer.takeDecodeTiming(streamFps));
-                if (target != null && adaptation.applyAdaptiveQuality(target, now) == GameVideoOutput.Reconfigure.REFUSED) return;
+                if (target != null && !adaptation.applyAdaptiveQuality(target, now)) return;
             }
-            bitrateHandler.postDelayed(this, 1000);
+            bitrateHandler.postDelayed(updateQuality, 1000);
         }
     };
+    // The quality tick, whole, through the decoder's door: ticks pause while a rebuild sets the decoder up again.
+    final Runnable updateQuality = () -> videoOutput.whenDecoderReady("tick", qualityTick);
 
     final Runnable updateBitrate = new Runnable() {
         @Override
@@ -345,7 +346,7 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
     boolean hostShapesStream;
     int lastWindowOrientation = Configuration.ORIENTATION_UNDEFINED;
     final StreamReconfigureRequester reconfigureRequester = new StreamReconfigureRequester();
-    final Runnable checkReconfigure = videoOutput::checkStreamReconfigure;
+    final Runnable checkReconfigure = () -> videoOutput.whenDecoderReady("check", videoOutput::checkStreamReconfigure);
     final android.hardware.display.DisplayManager.DisplayListener inputDisplayListener =
             new android.hardware.display.DisplayManager.DisplayListener() {
                 @Override public void onDisplayAdded(int displayId) {}
