@@ -208,6 +208,28 @@ public class BackdropViewTest {
     }
 
     @Test
+    public void aBakeForAnEarlierGameDoesNotLandOnceTheShownGameIsSelectedAgain() {
+        Bitmap coverA = cover();
+        backdrop.focus("a", coverA, false);
+        pass(1000);
+        Bitmap shown = ((BitmapDrawable) back().getDrawable()).getBitmap();
+        assertEquals(1, backdrop.changeCount());
+
+        java.util.List<Runnable> bakes = new java.util.ArrayList<>();
+        backdrop.setWorker(bakes::add);
+        backdrop.focus("b", cover(), false);
+        pass(1000);
+        assertEquals("b is being baked", 1, bakes.size());
+        backdrop.focus("a", coverA, false);
+        pass(1000);
+
+        for (Runnable bake : bakes) bake.run();
+        pass(1000);
+        assertEquals("b's bake landed late", 1, backdrop.changeCount());
+        assertSame(shown, ((BitmapDrawable) back().getDrawable()).getBitmap());
+    }
+
+    @Test
     public void aSinglePressChangesItAfterTheShortSettle() {
         backdrop.focus("a", cover(), false);
         pass(BackdropView.SETTLE_MS - 10);

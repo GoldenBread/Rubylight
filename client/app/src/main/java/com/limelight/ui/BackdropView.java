@@ -294,9 +294,10 @@ public class BackdropView extends FrameLayout {
             return;
         }
         String key = cacheKey(wantedKey, wantedCover);
+        // Every call invalidates what is in flight, also when the wanted game is the one already shown.
+        int id = ++request;
         if (key.equals(shownKey)) return;
         Baked cached = cache.get(key);
-        int id = ++request;
         int w = getWidth();
         int h = getHeight();
         if (cached != null && cached.forWidth == w && cached.forHeight == h) {
