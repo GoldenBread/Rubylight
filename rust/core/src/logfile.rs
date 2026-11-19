@@ -5,7 +5,13 @@ use std::{
     fs::{File, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
+
+/// How long the log writes between timed checks that its path is still there
+/// and tries of dropped lines, besides the checks every `EXISTS_CHECK` and
+/// `RETRY_DROPPED` bytes: a quiet log takes long to write 1 MiB.
+const CHECK_EVERY: Duration = Duration::from_secs(10);
 
 /// How many bytes the log writes between checks that its path is still there.
 const EXISTS_CHECK: u64 = 1 << 20;
@@ -40,6 +46,10 @@ pub struct RotatingFile {
     dropped: u64,
     /// `check` asked for dropped lines to be tried again on the next write.
     retry: bool,
+    /// `CHECK_EVERY`; tests set it to zero.
+    every: Duration,
+    /// When the last timed check ran.
+    checked: Instant,
     /// How often the backstop cut the file being written back.
     #[cfg(test)]
     backstops: u32,
@@ -63,6 +73,8 @@ impl RotatingFile {
             dropping: false,
             dropped: 0,
             retry: false,
+            every: CHECK_EVERY,
+            checked: Instant::now(),
             #[cfg(test)]
             backstops: 0,
         };
@@ -178,11 +190,9 @@ impl RotatingFile {
             let _ = self.rotate();
         }
     }
-    /// Checks now, rather than after `EXISTS_CHECK` bytes, that the log's path
-    /// is still there, and lets dropped lines be tried again on the next
-    /// write rather than after `RETRY_DROPPED` bytes: for a caller that writes
-    /// too little for those intervals to come round, on a clock of its own.
-    pub fn check(&mut self) {
+    /// Checks, every `CHECK_EVERY` of writing, that the log's path is still
+    /// there and lets dropped lines be tried again with this line.
+    fn check(&mut self) {
         if !self.detached && !self.path.exists() {
             self.detached = true;
             self.orphan = true;
@@ -225,6 +235,13 @@ impl Write for RotatingFile {
         // If rotation fails (a reader without delete sharing holds the old
         // file), keep writing to the current file rather than lose lines.
         let length = buf.len() as u64;
+        // A monotonic clock read per line (no system call on Windows); the
+        // check itself, one stat, runs at most every `CHECK_EVERY`.
+        let now = Instant::now();
+        if now.duration_since(self.checked) >= self.every {
+            self.checked = now;
+            self.check();
+        }
         if self.dropping && !std::mem::take(&mut self.retry) {
             // Lines are dropped (see below) until about 1 MiB more would have
             // been written, or `check` asks for a try.
@@ -781,6 +798,42 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             format!("{}\nafter\n", CUT_NOTE.replace("{}", "250"))
         );
+    }
+
+    /// A quiet log deleted while open comes back with the first line written
+    /// once the check interval has passed, without 1 MiB of lines.
+    #[test]
+    fn a_quiet_log_deleted_while_open_comes_back_after_the_check_interval() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("host.log");
+        let mut log = RotatingFile::open(&path, 1 << 30, KEEP).unwrap();
+        log.every = Duration::ZERO;
+        log.write_all(b"before\n").unwrap();
+        std::fs::remove_file(&path).unwrap();
+        log.write_all(b"after\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "after\n");
+    }
+
+    /// Dropped lines are tried again once the check interval has passed, not
+    /// only after 1 MiB of them.
+    #[test]
+    fn dropped_lines_are_tried_again_after_the_check_interval() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("host.log");
+        let mut log = RotatingFile::open(&path, LIMIT, KEEP).unwrap();
+        log.every = Duration::ZERO;
+        for n in 0..2 {
+            write_line(&mut log, n);
+        }
+        FAIL_OPEN.with(|fail| fail.replace(vec![path.clone(), RotatingFile::rotated(&path, 0)]));
+        FAIL_TRUNCATE.with(|fail| fail.set(true));
+        for n in 2..10 {
+            write_line(&mut log, n);
+        }
+        FAIL_OPEN.with(|fail| fail.replace(Vec::new()));
+        FAIL_TRUNCATE.with(|fail| fail.set(false));
+        write_line(&mut log, 10);
+        assert_eq!(lines(&path).last(), Some(&line(10)));
     }
 
     /// A log deleted before its size limit, whose path cannot be opened again
