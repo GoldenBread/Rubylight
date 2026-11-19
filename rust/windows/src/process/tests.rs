@@ -1313,9 +1313,9 @@ fn leave_a_program_running_inside_a_parent_job() {
 fn what_a_command_leaves_running_outlives_the_hosts_own_job() {
     use std::io::{BufRead, Write};
     use std::os::windows::io::AsRawHandle;
+    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
     // SAFETY: a null job asks about this process's own job; `limits` is a writable local of the
     // size passed.
-    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
     let in_job = unsafe {
         QueryInformationJobObject(
             None,
