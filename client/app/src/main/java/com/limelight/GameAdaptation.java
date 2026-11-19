@@ -875,6 +875,7 @@ final class GameAdaptation {
         game.bitrateHandler.removeCallbacks(game.updateQuality);
         game.adaptiveQuality = null;
         waitingQualityStep = null;
+        waitingCeilingReturn = false;
         game.pendingQualityTarget = null;
         game.qualityStatus = null;
         if (game.decoderRenderer != null) game.decoderRenderer.resetDecodeTiming();
@@ -954,9 +955,38 @@ final class GameAdaptation {
         return sent;
     }
 
+    // A return to the ceiling (automatic quality turned Off) that waited for a decoder being set up again.
+    boolean waitingCeilingReturn;
+
+    // The player's choice in the quality dialog: Off returns the stream to its ceiling, also when the
+    // decoder is being set up again then (it is asked for after that).
+    void applyQualityChoice() {
+        startAdaptiveQuality();
+        if (qualityMode() == AdaptiveQualityController.Mode.OFF && (supportsAdaptiveQuality() ||
+                (game.decoderRenderer != null && game.decoderRenderer.reconfigureLimitsPending()))) {
+            returnToCeiling();
+        }
+    }
+
+    private void returnToCeiling() {
+        waitingCeilingReturn = game.videoOutput.requestStreamReconfigure(new int[] {game.qualityMaxWidth,
+                game.qualityMaxHeight, qualityCeilingFrameRateMilliHz()}) == GameVideoOutput.Reconfigure.PENDING;
+    }
+
+    // Once the decoder is set up again: the ceiling as it is now, unless the stream is there already.
+    void retryCeilingReturn() {
+        if (!waitingCeilingReturn) return;
+        waitingCeilingReturn = false;
+        if (game.adaptiveQuality != null ||
+                (game.reconfigureRequester.width() == game.qualityMaxWidth && game.reconfigureRequester.height() == game.qualityMaxHeight &&
+                        game.reconfigureRequester.fpsMillihz() == qualityCeilingFrameRateMilliHz())) return;
+        returnToCeiling();
+    }
+
     void stopAdaptiveQualityWithError() {
         game.adaptiveQuality = null;
         waitingQualityStep = null;
+        waitingCeilingReturn = false;
         game.pendingQualityTarget = null;
         game.bitrateHandler.removeCallbacks(game.updateQuality);
         releaseQualityAutoBitrate();
@@ -984,10 +1014,7 @@ final class GameAdaptation {
                         qualityChoice = choice;
                     }
                     dialog.dismiss();
-                    startAdaptiveQuality();
-                    if (qualityMode() == AdaptiveQualityController.Mode.OFF && supportsAdaptiveQuality()) {
-                        game.videoOutput.requestStreamReconfigure(new int[] {game.qualityMaxWidth, game.qualityMaxHeight, qualityCeilingFrameRateMilliHz()});
-                    }
+                    applyQualityChoice();
                 })
                 .setNeutralButton(R.string.quality_about, (dialog, which) ->
                         game.menuActions.showStreamDialog(new NavigationDialogBuilder(game).setTitle(R.string.title_adaptive_quality)

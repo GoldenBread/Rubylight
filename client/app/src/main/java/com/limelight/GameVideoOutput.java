@@ -749,7 +749,9 @@ final class GameVideoOutput {
         // configured again (called on the decoder thread; the check runs on this one).
         game.decoderRenderer.setReconfigureLimitsListener(() -> game.bitrateHandler.post(() -> {
             game.bitrateHandler.removeCallbacks(game.checkReconfigure);
-            game.bitrateHandler.post(game.checkReconfigure);
+            checkStreamReconfigure();
+            // After the check, which may have restored the size itself (native resolution, a turn).
+            game.adaptation.retryCeilingReturn();
         }));
         int[] size = game.decoderRenderer.getStreamSize();
         streamStartedLandscape = size[0] >= size[1];

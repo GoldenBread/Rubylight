@@ -148,6 +148,41 @@ public class GameReconfigureRetryTest {
         assertSame(step, quality.current());
     }
 
+    // Automatic quality one step down on a plain stream (no native resolution, no rotation, a fixed
+    // frame rate); the player turns it Off while the decoder is rebuilt: the stream returns to its
+    // ceiling once the rebuild is over, asked for once.
+    @Test
+    public void turningAutomaticQualityOffDuringARebuildReturnsToTheCeilingAfterIt() {
+        Renderer[] renderer = new Renderer[1];
+        Game activity = turnedStream(renderer);
+        ReflectionHelpers.setField(activity, "streamOrientation", StreamOrientation.LANDSCAPE);
+        renderer[0].size = new int[] {1280, 720};
+        ReflectionHelpers.callInstanceMethod(activity.videoOutput, "startReconfigureTracking");
+        ShadowLooper.idleMainLooper(2, TimeUnit.SECONDS);
+        assertTrue(ReconfigureBridge.requests.isEmpty());
+        ReflectionHelpers.setField(activity, "qualityMaxWidth", 1920);
+        ReflectionHelpers.setField(activity, "qualityMaxHeight", 1080);
+        ReflectionHelpers.setField(activity, "qualityMaxFrameRateMilliHz", 60000);
+        ReflectionHelpers.setField(activity, "adaptiveQuality", new com.limelight.nvstream.AdaptiveQualityController(
+                com.limelight.nvstream.AdaptiveQualityController.Mode.DETAIL, 1920, 1080, 60, 360, 30, 2, 2, 0));
+        ReflectionHelpers.<PreferenceConfiguration>getField(activity, "prefConfig").adaptiveQualityMode =
+                com.limelight.nvstream.AdaptiveQualityController.Mode.OFF;
+        renderer[0].rebuilding = renderer[0].limitsCleared = true;
+        ReflectionHelpers.callInstanceMethod(activity.adaptation, "applyQualityChoice");
+        ShadowLooper.idleMainLooper(2, TimeUnit.SECONDS);
+        assertTrue(ReconfigureBridge.requests.isEmpty());
+
+        renderer[0].rebuilding = renderer[0].limitsCleared = false;
+        ReflectionHelpers.callInstanceMethod(renderer[0], "notifyReconfigureLimits");
+        ShadowLooper.idleMainLooper(2, TimeUnit.SECONDS);
+        assertEquals(1, ReconfigureBridge.requests.size());
+        assertArrayEquals(new int[] {1920, 1080, 60000}, ReconfigureBridge.requests.get(0));
+        // A second rebuild asks for nothing more.
+        ReflectionHelpers.callInstanceMethod(renderer[0], "notifyReconfigureLimits");
+        ShadowLooper.idleMainLooper(2, TimeUnit.SECONDS);
+        assertEquals(1, ReconfigureBridge.requests.size());
+    }
+
     @Test
     public void aRequestThatWasNotSentIsTakenBackFromTheDecoder() {
         ReconfigureBridge.accepts = false;
@@ -161,7 +196,8 @@ public class GameReconfigureRetryTest {
 
     private static class Renderer extends MediaCodecDecoderRenderer {
         private final int width, height;
-        volatile boolean rebuilding;
+        int[] size;
+        volatile boolean rebuilding, limitsCleared;
         int prepared, cancelled;
 
         Renderer(Game activity, PreferenceConfiguration prefs, int width, int height) {
@@ -172,7 +208,7 @@ public class GameReconfigureRetryTest {
         }
 
         @Override public int[] getStreamSize() {
-            return new int[] {width, height};
+            return size != null ? size : new int[] {width, height};
         }
 
         @Override public boolean hasRecentVideoFrames(long nowMs) {
@@ -181,7 +217,7 @@ public class GameReconfigureRetryTest {
 
         // Read just before the rebuild cleared them: the size check passes, the decoder then refuses.
         @Override public int[] getReconfigureLimits() {
-            return new int[] {4096, 4096, 2, 2};
+            return limitsCleared ? null : new int[] {4096, 4096, 2, 2};
         }
 
         @Override public boolean prepareForReconfigure(int width, int height) {
