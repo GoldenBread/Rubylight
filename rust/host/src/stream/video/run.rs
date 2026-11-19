@@ -1023,6 +1023,7 @@ impl SessionThread<'_> {
                                 link_current_kbps=link["current_kbps"].as_u64().unwrap_or(0),
                                 link_delivered_kbps=link["delivered_kbps"].as_u64().unwrap_or(0),
                                 link_steps_down=link["steps_down"].as_u64().unwrap_or(0),
+                                link_held_cuts=link["held_cuts"].as_u64().unwrap_or(0),
                                 link_probes=link["probes"].as_u64().unwrap_or(0),
                                 link_failed_probes=link["failed_probes"].as_u64().unwrap_or(0),
                                 link_rtt_ms=link["rtt_ms"].as_u64().unwrap_or(0),

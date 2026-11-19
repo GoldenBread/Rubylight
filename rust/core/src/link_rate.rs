@@ -50,6 +50,13 @@
 //! moves no learned ceiling. Refusals that come with client loss or a queue
 //! (a switch pausing the host's adapter behind a full uplink) are the path's.
 //!
+//! A still or calm picture needs a fraction of the stream's bitrate, and loss
+//! during it is not the rate's doing: a cut that would land at or above what
+//! the stream sent, in the largest frame around the loss too, is held back and
+//! only remembered ([`HELD_FOR`]), so the bitrate is whole when the picture moves
+//! again, and loss that goes on still reaches the cut that lowers what is
+//! sent.
+//!
 //! Inactive (`State::Off`) when disabled in the configuration and once the
 //! client sets the bitrate itself.
 //!
@@ -198,6 +205,30 @@ pub const MIN_CUT_PERCENT: u64 = 50;
 /// A further cut within [`EVIDENCE_WINDOW`] of the last one is not held to
 /// that limit, only to this many wire bits per second.
 pub const REPEAT_CUT_FLOOR_BPS: u64 = 1_000_000;
+/// A still or calm picture needs a fraction of its bitrate, so the rate is not
+/// what the path failed to carry, and a cut would only meet the picture when
+/// it moves again (after three frames lost to one Wi-Fi gap in a menu, half
+/// the bitrate and a climb of 12 % a step). A cut that would land at or above
+/// what the stream sent, on average and in the largest frame the loss can have
+/// come from ([`LARGE_FRAME_LEAD`]), is held: not applied, only remembered for
+/// this long as the rate the next cut starts from. Loss that goes on halves
+/// that rate with each round of evidence until a cut lowers what is sent, and
+/// that one is made; from there cuts go as deep as they did. What a held cut
+/// leaves as it was: the pace and the size limit of the keyframe that repairs
+/// the loss, which a made cut would have halved. That keyframe does not count
+/// as the large frame, rebuilt by error correction or not yet reported,
+/// unless it is lost too: with that report in before the cut is weighed the
+/// cut is made; later it is behind the fence the hold sets, and keyframes
+/// that fail after the fence are lost frames like any other, large ones, so
+/// the cut is made then. Not held: with a queue standing in the path, the
+/// PC's own refused sends, a failed pacing latch, a failing probe step, and
+/// PyroWave, whose pictures shrink with every cut.
+pub const HELD_FOR: Duration = Duration::from_secs(10);
+/// How many frames before the first one with loss evidence may be the large
+/// frame the loss came from: a frame of several times the usual size takes
+/// that many frame times to leave a link at the stream's rate, and the frames
+/// behind it are dropped from the queue it filled.
+const LARGE_FRAME_LEAD: u32 = 6;
 /// Target after a cut when the loss share is unknown (E4 alone).
 pub const UNKNOWN_SHARE_PERCENT: u64 = 70;
 /// After a change, evidence from frames sent within this long is ignored so
@@ -646,6 +677,10 @@ pub struct LinkRate {
     change: Option<Change>,
     steps_down: u32,
     last_cut: Option<Instant>,
+    /// Where the cuts held back since the stream last sent more would have
+    /// left the rate, and when the last of them was held (see [`HELD_FOR`]).
+    held: Option<(u64, Instant)>,
+    held_cuts: u32,
     probes: u32,
     failed_probes: u32,
 }
@@ -755,6 +790,8 @@ impl LinkRate {
             change: None,
             steps_down: 0,
             last_cut: None,
+            held: None,
+            held_cuts: 0,
             probes: 0,
             failed_probes: 0,
         }
@@ -1589,6 +1626,36 @@ impl LinkRate {
         ))
     }
 
+    /// The largest frame the loss can have come from, as the wire rate of a
+    /// stream of such frames: a keyframe or a scene cut among small frames may
+    /// be what the path lost to, and a lower bitrate makes those smaller. That
+    /// is a frame between the first and the last with loss evidence, or one of
+    /// the [`LARGE_FRAME_LEAD`] before the first. Frames after the last do not
+    /// count: the keyframe that repairs a loss is sent because of it, and it
+    /// is in the window by the time the cut is weighed. Rebuilt by error
+    /// correction it is no loss evidence (`on_status`, while the RTT is flat);
+    /// lost too, it is the last such frame and counts. Without a frame to
+    /// place the loss at, every frame of the window counts.
+    fn largest_frame_bps(&self, now: Instant, period: Duration) -> Option<u64> {
+        let e = &self.events;
+        let bytes = self
+            .ring
+            .iter()
+            .filter(|s| {
+                s.at.is_some_and(|at| {
+                    now.saturating_duration_since(at) < EVIDENCE_WINDOW
+                        && self.fence.is_none_or(|f| f.admits(Some(s.frame), at))
+                }) && e.first_loss.is_none_or(|first| {
+                    s.frame.wrapping_sub(first.wrapping_sub(LARGE_FRAME_LEAD)) < 1 << 31
+                }) && e
+                    .last_loss
+                    .is_none_or(|last| last.wrapping_sub(s.frame) < 1 << 31)
+            })
+            .map(|s| u64::from(s.bytes))
+            .max()?;
+        Some((bytes as f64 * 8. / period.as_secs_f64().max(1e-6)) as u64)
+    }
+
     fn floor_total(&self, fec: usize, period: Duration) -> u64 {
         self.budget().total_bps(self.floor_kbps, fec, period)
     }
@@ -1791,16 +1858,39 @@ impl LinkRate {
             self.set_fence(now);
             return;
         }
+        // What the stream sent, audio included, on average and in the largest
+        // frame the loss can have come from: a cut that lands at or above
+        // both is held, not made (see [`HELD_FOR`]).
+        let offered = estimate.and_then(|(sent, _)| {
+            let largest = self.largest_frame_bps(now, period)?;
+            Some(sent.max(largest) + budget.audio_bps)
+        });
+        // PyroWave fills a share of its budget whatever the picture, so any
+        // cut lowers what it sends.
+        let holdable = budget.pyrowave_records.is_none()
+            && !host_only
+            && !why.latch_failed
+            && !self.rtt_elevated();
+        // The cuts held back lately count as made: this one starts from where
+        // they would have left the rate, unless the stream has sent more
+        // than that since.
+        let held = self.held.filter(|(level, at)| {
+            holdable
+                && now.saturating_duration_since(*at) < HELD_FOR
+                && offered.is_some_and(|offered| offered <= *level)
+        });
+        let from = held.map_or(cur, |(level, _)| level.min(cur));
         // The first cut of an episode goes down by at most half; one right
         // after it means the estimate was too high, so it may go to the
-        // delivered rate.
+        // delivered rate. A held cut lowered nothing, so loss after it says
+        // nothing about the estimate: the next goes down by half again.
         let repeat = self
             .last_cut
             .is_some_and(|at| now.saturating_duration_since(at) < EVIDENCE_WINDOW);
         let lowest = if repeat {
             REPEAT_CUT_FLOOR_BPS
         } else {
-            cur * MIN_CUT_PERCENT / 100
+            from * MIN_CUT_PERCENT / 100
         };
         let estimate = estimate.filter(|_| why.share_known);
         // A queue standing at a rate the stream climbed to after an earlier
@@ -1827,12 +1917,12 @@ impl LinkRate {
                 } else {
                     UNKNOWN_SHARE_PERCENT
                 };
-                cur * percent / 100
+                from * percent / 100
             }
         }
         .clamp(
-            lowest.min(cur * MAX_CUT_PERCENT / 100),
-            cur * MAX_CUT_PERCENT / 100,
+            lowest.min(from * MAX_CUT_PERCENT / 100),
+            from * MAX_CUT_PERCENT / 100,
         );
         // A cut never lands above a learned ceiling: the path's edge is below
         // that, and holding over it only fills the queue again. A host-side
@@ -1842,15 +1932,24 @@ impl LinkRate {
             _ => target,
         };
         let target = target.max(floor);
+        if holdable && offered.is_some_and(|offered| target >= offered) {
+            // The picture needs less than the cut would leave it, frame by
+            // frame: nothing is cut or learned.
+            self.held = Some((target, now));
+            self.held_cuts += 1;
+            self.set_fence(now);
+            return;
+        }
+        self.held = None;
         // The rate the stream now holds, after the floor had its say, is the
         // learned ceiling: loss and queue cuts lower it, nothing else does.
         if !host_only {
-            self.learn(target, cur, now, false);
+            self.learn(target, from, now, false);
         }
         let knee = self
             .bad
-            .is_some_and(|bad| cur * 100 >= bad * KNEE_CUT_PERCENT);
-        self.bad = Some(self.bad.map_or(cur, |bad| bad.min(cur)));
+            .is_some_and(|bad| from * 100 >= bad * KNEE_CUT_PERCENT);
+        self.bad = Some(self.bad.map_or(from, |bad| bad.min(from)));
         self.confirmed = None;
         self.current = target;
         self.good = target;
@@ -2250,6 +2349,7 @@ impl LinkRate {
             "host_limited": self.host_limited(now),
             "encoder_floor_kbps": self.encoder_floor.map_or(0, |floor| self.kbps_of(floor)),
             "steps_down": self.steps_down,
+            "held_cuts": self.held_cuts,
             "probes": self.probes,
             "failed_probes": self.failed_probes,
             "rebuilt_blocks": self.rebuilt_blocks,
