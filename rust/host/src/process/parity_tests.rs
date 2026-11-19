@@ -401,16 +401,30 @@ fn a_stopped_launch_ends_its_running_preparation_command_and_undoes_the_finished
     let command = |name: &str| format!("echo {name}>>\"{}\"", trace.display());
     let app: App = serde_json::from_value(json!({"name":"Commands","prep-cmd":[
         {"do":command("first"),"undo":command("undo-first"),"elevated":elevated},
-        {"do":"ping -n 60 127.0.0.1 >nul","undo":command("must-not-run"),"elevated":elevated},
+        {"do":format!("{}& ping -n 60 127.0.0.1 >nul", command("second")),"undo":command("must-not-run"),"elevated":elevated},
         {"do":command("must-not-run"),"undo":"","elevated":elevated}
     ]}))
     .unwrap();
     // The launch names itself, as `/launch` does under the launch lock; Quit then stops it.
     let started = f.host.launch_started("device");
     let cancel = f.host.launch_cancellation().unwrap();
-    let stopper = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(500));
-        cancel.cancel().unwrap();
+    // Stopped while the second command runs, so the first has finished
+    // however slowly `cmd` starts under load.
+    let stopper = std::thread::spawn({
+        let trace = trace.clone();
+        move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(30);
+            while !std::fs::read_to_string(&trace)
+                .is_ok_and(|written| written.lines().any(|line| line == "second"))
+            {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the second preparation command did not start within 30 s"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            cancel.cancel().unwrap();
+        }
     });
     let begun = std::time::Instant::now();
     let error = launch_with_environment(&f.host, &app, &HashMap::new(), Ok(BTreeMap::new()))
@@ -419,14 +433,14 @@ fn a_stopped_launch_ends_its_running_preparation_command_and_undoes_the_finished
     stopper.join().unwrap();
     assert_eq!(error.to_string(), LAUNCH_STOPPED);
     // Not the 60 s of the command, nor its 120 s limit.
-    assert!(begun.elapsed() < Duration::from_secs(20));
+    assert!(begun.elapsed() < Duration::from_secs(45));
     assert!(f.host.launch_stopped());
     assert_eq!(
         std::fs::read_to_string(&trace)
             .unwrap()
             .lines()
             .collect::<Vec<_>>(),
-        ["first", "undo-first"]
+        ["first", "second", "undo-first"]
     );
     drop(started);
     assert!(f.host.launch_cancellation().is_none());
