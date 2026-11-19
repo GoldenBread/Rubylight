@@ -437,29 +437,40 @@ public class MicOnlyService extends Service {
     // Wi-Fi at full power and the CPU awake while the screen is off. The low-latency lock works only with the
     // screen on and the app in front, so the high-performance one holds Wi-Fi up the rest of the time.
     private void acquireLocks() {
+        // Each lock on its own: one the device refuses never costs the others. A field holds a lock only once
+        // it is acquired, so releaseLocks never releases one that is not held.
+        WifiManager wifi = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        if (wifi != null) {
+            wifiLock = acquired(wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+                    BuildConfig.BRAND_NAME + " Microphone only"));
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                lowLatencyLock = acquired(wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY,
+                        BuildConfig.BRAND_NAME + " Microphone only low latency"));
+            }
+        }
+        PowerManager power = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        if (power != null) {
+            PowerManager.WakeLock lock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,
+                    BuildConfig.BRAND_NAME + ":MicrophoneOnly");
+            lock.setReferenceCounted(false);
+            try {
+                lock.acquire();
+                wakeLock = lock;
+            } catch (SecurityException e) {
+                LimeLog.warning("Microphone only: a lock was refused: " + e);
+            }
+        }
+    }
+
+    /** {@code lock} once acquired, or null when the device refuses it (some Samsung devices do, as for streams). */
+    private static WifiManager.WifiLock acquired(WifiManager.WifiLock lock) {
+        lock.setReferenceCounted(false);
         try {
-            WifiManager wifi = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-            if (wifi != null) {
-                wifiLock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF,
-                        BuildConfig.BRAND_NAME + " Microphone only");
-                wifiLock.setReferenceCounted(false);
-                wifiLock.acquire();
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    lowLatencyLock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY,
-                            BuildConfig.BRAND_NAME + " Microphone only low latency");
-                    lowLatencyLock.setReferenceCounted(false);
-                    lowLatencyLock.acquire();
-                }
-            }
-            PowerManager power = (PowerManager) getSystemService(Context.POWER_SERVICE);
-            if (power != null) {
-                wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, BuildConfig.BRAND_NAME + ":MicrophoneOnly");
-                wakeLock.setReferenceCounted(false);
-                wakeLock.acquire();
-            }
+            lock.acquire();
+            return lock;
         } catch (SecurityException e) {
-            // Some Samsung devices refuse WifiLock.acquire() despite WAKE_LOCK, as for streams.
             LimeLog.warning("Microphone only: a lock was refused: " + e);
+            return null;
         }
     }
 
