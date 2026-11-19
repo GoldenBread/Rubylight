@@ -611,6 +611,34 @@ fn an_apps_window_frame_choice_reaches_the_stream() {
     let config = effective_config(&f.host, &coop).unwrap();
     assert_eq!(config.get(butterpollo_core::app_window::FRAME, ""), "");
 }
+/// Every capture method that captures whole displays, AMD Direct Capture among them, gives way
+/// to WGC for a stream of the app's window, with a warning, instead of failing to open.
+#[test]
+fn an_app_window_stream_captures_with_wgc_whatever_whole_display_method_is_set() {
+    use crate::state::test_support::Fixture;
+    use serde_json::json;
+    let f = Fixture::new();
+    f.host.apps.write().unwrap()[0]
+        .extra
+        .insert("capture-window".into(), json!("window"));
+    for (method, name) in [
+        ("ddx", "Desktop Duplication"),
+        ("dxgi", "Desktop Duplication"),
+        ("idd-push", "direct driver push"),
+        ("amd", "AMD Direct Capture"),
+    ] {
+        *f.host.config.write().unwrap() = Config::parse(&format!("capture = {method}")).unwrap();
+        let launch = f.launch(f.client(u32::MAX), Role::Stream);
+        let config = effective_config(&f.host, &launch).unwrap();
+        assert_eq!(config.get("capture", ""), "wgc", "{method}");
+        let warnings = launch.warnings.snapshot();
+        let warning = warnings
+            .iter()
+            .find(|w| w.code == "capture_app_window_method")
+            .unwrap_or_else(|| panic!("no warning for {method}"));
+        assert!(warning.message.contains(name), "{}", warning.message);
+    }
+}
 #[test]
 fn an_apps_block_for_the_device_wins_over_the_app_the_device_and_the_host() {
     use crate::state::test_support::Fixture;

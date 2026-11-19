@@ -226,6 +226,7 @@ fn app_window_capture(config: &mut Config, warnings: &butterpollo_core::session:
     let name = match method.as_str() {
         "ddx" | "dxgi" => "Desktop Duplication",
         "idd-push" => "direct driver push",
+        "amd" => "AMD Direct Capture",
         _ => {
             warnings.clear(APP_WINDOW_METHOD);
             return;
