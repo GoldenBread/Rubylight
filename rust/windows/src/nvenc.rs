@@ -1000,10 +1000,20 @@ impl Session {
         } else if split == 0 && self.stream.slices > 1 {
             split_reason = "client_slices";
         }
-        // HEVC split encoding and subframe readback exclude each other. On a
-        // GPU with several NVENC engines split encoding keeps the frame budget
-        // (`frame_budget`), so it is kept.
-        let splits = self.stream.codec == 1 && split != SPLIT_DISABLED && engines > 1;
+        // HEVC split encoding and subframe readback exclude each other. Where
+        // split encoding engages it keeps the frame budget (`frame_budget`),
+        // so it is kept; where it would not, slices leave as they finish.
+        let splits = butterpollo_core::nvenc::SplitContext {
+            codec: self.stream.codec,
+            api: self.api,
+            engines,
+            weighted,
+            subframe: false,
+            slices: self.stream.slices,
+            mode: split,
+            height: self.stream.height,
+        }
+        .excludes_subframe(tuning.preset, tuning.frame_budget_guard);
         self.subframe = readback && !splits && self.d3d12.is_none();
         // A D3D12 session reports no subframe readback at all, so the reason
         // is the conversion, not the driver.

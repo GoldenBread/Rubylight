@@ -304,6 +304,22 @@ impl SplitContext {
                 _ => false,
             }
     }
+    /// Whether HEVC split encoding keeps slice delivery off: they exclude
+    /// each other (`NV_ENC_INITIALIZE_PARAMS::splitEncodeMode`, "not
+    /// supported if ... subframe mode"), and split wins where it would
+    /// engage without subframe readback at `preset` or at a faster one the
+    /// frame budget guard (`guard`) may choose.
+    pub fn excludes_subframe(&self, preset: usize, guard: bool) -> bool {
+        // The guard picks from P1 to `preset`, and a split that engages at a
+        // preset engages at every faster one.
+        let fastest = if guard { 1 } else { preset.clamp(1, 7) };
+        self.codec == 1
+            && Self {
+                subframe: false,
+                ..*self
+            }
+            .engages(fastest)
+    }
 }
 
 #[derive(Clone, Debug)]

@@ -3167,9 +3167,20 @@ fn without_subframe_readback_slice_delivery_stays_off_and_events_stay() -> Resul
     };
     reset();
     state(|d| d.engines = 2);
-    let encoder = session_with(&hevc, ApiVersion(13, 0), "video_slice_delivery = 2\n")?;
+    let encoder = session_with(
+        &hevc,
+        ApiVersion(13, 0),
+        "video_slice_delivery = 2\nnvenc_split_encode = forced\n",
+    )?;
     assert!(!encoder.subframe);
-    assert_eq!(initialized().0.splitEncodeMode(), 0);
+    assert_eq!(initialized().0.splitEncodeMode(), 1);
+    drop(encoder);
+    // `auto` below the implicit split height never splits: slices leave.
+    reset();
+    state(|d| d.engines = 2);
+    let encoder = session_with(&hevc, ApiVersion(13, 0), "video_slice_delivery = 2\n")?;
+    assert!(encoder.subframe);
+    assert_eq!(initialized().0.splitEncodeMode(), SPLIT_DISABLED);
     drop(encoder);
     reset();
     state(|d| d.engines = 2);

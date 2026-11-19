@@ -237,6 +237,57 @@ fn split_frame_engages_only_where_the_driver_can_use_it() {
     assert!(!context(1, 2160, false, 2).engages(1));
     assert!(!context(SPLIT_DISABLED, 2160, false, 1).engages(1));
 }
+/// Slice delivery gives way only to a split encode that happens: not to
+/// `auto` below the implicit split height, HEVC weighted prediction, an old
+/// API or client slices, which never split.
+#[test]
+fn slice_delivery_gives_way_only_to_a_split_that_engages() {
+    let api = ApiVersion(13, 0);
+    let context = |codec: u8, mode: u32, height: u32| SplitContext {
+        codec,
+        api,
+        engines: 2,
+        weighted: false,
+        subframe: true,
+        slices: 1,
+        mode,
+        height,
+    };
+    // Forced split engages at every preset.
+    assert!(context(1, 1, 1080).excludes_subframe(7, false));
+    // Implicit split at 2160 rows engages at P1-P4: at P5 only once the
+    // guard may lower the preset.
+    assert!(context(1, 0, 2160).excludes_subframe(4, false));
+    assert!(!context(1, 0, 2160).excludes_subframe(5, false));
+    assert!(context(1, 0, 2160).excludes_subframe(5, true));
+    // Below the implicit height `auto` never splits.
+    assert!(!context(1, 0, 1440).excludes_subframe(1, true));
+    assert!(!context(1, SPLIT_DISABLED, 2160).excludes_subframe(1, true));
+    // H.264 never splits; HEVC weighted prediction, API 12.1, one engine
+    // and client slices keep the driver from splitting.
+    assert!(!context(0, 1, 2160).excludes_subframe(1, true));
+    let never = [
+        SplitContext {
+            weighted: true,
+            ..context(1, 1, 2160)
+        },
+        SplitContext {
+            api: ApiVersion(12, 1),
+            ..context(1, 1, 2160)
+        },
+        SplitContext {
+            engines: 1,
+            ..context(1, 1, 2160)
+        },
+        SplitContext {
+            slices: 4,
+            ..context(1, 1, 2160)
+        },
+    ];
+    for split in never {
+        assert!(!split.excludes_subframe(1, true), "{split:?}");
+    }
+}
 #[test]
 fn the_frame_budget_guard_lowers_slow_presets_only_when_they_miss_the_budget() {
     // 4K120 on one engine: 8.3 MPix in 5.4 ms leaves only P1, and even
