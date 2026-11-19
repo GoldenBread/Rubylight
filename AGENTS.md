@@ -21,7 +21,7 @@ Studying the code, learning from the architecture, and writing your own independ
 Rubylight is the Windows Rust host; Nightjar is the host-neutral client in `client/` (see [client/AGENTS.md](client/AGENTS.md)).
 
 - Use the [code map](docs/code-map.md) (Nightjar: [client/docs/code-map.md](client/docs/code-map.md)) instead of searching the tree, and read only your part of it: the "Where to start" row for the area, the checklist for the kind of change (a setting, a control message, a capability, an API route) and "The narrowest test". `python tools/code_map.py index <folder>` lists a folder's files and what each owns, `with <file>` what changes with a file, `hot <folder>` where bugs were fixed; `check` verifies the maps, so correct them in the change that moves code.
-- Search these, never read them whole: `rust/PERFORMANCE.md` (840 KB; its `## <date>: <subject>` headings are the index), `rust/RELEASE_NOTES.md` (480 KB), `docs/configuration.md` (250 KB; search the setting's key) and [the status table](docs/status.md) (90 KB; search the slice id or feature, and keep its row current in the change that alters it).
+- Search these, never read them whole: `rust/PERFORMANCE.md` (over 800 KB; its `## <date>: <subject>` headings are the index), `rust/RELEASE_NOTES.md` (over 500 KB), `docs/configuration.md` (over 250 KB; search the setting's key) and [the status table](docs/status.md) (over 100 KB; search the slice id or feature, and keep its row current in the change that alters it).
 - Guides, when the task needs one: [builds](docs/building.md), [Rust workspace](rust/README.md), [architecture](docs/architecture.md), [release and hardware testing](rust/release/README.md).
 
 ### Layout and compatibility
