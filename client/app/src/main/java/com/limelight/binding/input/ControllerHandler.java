@@ -710,8 +710,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
     private void releaseUsbInput(UsbDeviceContext context) {
         releaseInput(context);
-        // A pad whose capabilities have not reached the host yet has nothing to release there.
-        if (!context.assignedControllerNumber || context.arrivalPending) {
+        // A pad whose capabilities have not reached the host yet has nothing to release there,
+        // nor has any physical pad with Controllers Off.
+        if (!prefConfig.sendControllers || !context.assignedControllerNumber || context.arrivalPending) {
             return;
         }
         if ((context.capabilities() & MoonBridge.LI_CCAP_TOUCHPAD) != 0) {
@@ -4906,7 +4907,8 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                     capture.stick(context.id, 0f, 0f);
                 }
             }
-            if (context.assignedControllerNumber && (context.capabilities() & MoonBridge.LI_CCAP_TOUCHPAD) != 0) {
+            if (prefConfig.sendControllers && context.assignedControllerNumber &&
+                    (context.capabilities() & MoonBridge.LI_CCAP_TOUCHPAD) != 0) {
                 conn.sendControllerTouchEvent((byte)context.controllerNumber, MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL,
                         0, 0, 0, 0);
             }

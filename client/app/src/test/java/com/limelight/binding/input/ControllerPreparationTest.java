@@ -341,6 +341,31 @@ public class ControllerPreparationTest {
         }
     }
 
+    @Test public void controllersOffSendsNoReleaseForAUsbPad() {
+        try (ActivityController<Activity> activity = Robolectric.buildActivity(Activity.class).create()) {
+            for (boolean send : new boolean[] {true, false}) {
+                PreferenceConfiguration prefs = new PreferenceConfiguration();
+                prefs.multiController = true;
+                prefs.gamepadMotionSensors = true;
+                prefs.sendControllers = send;
+                Connection connection = new Connection(73);
+                ControllerHandler handler = new ControllerHandler(activity.get(), connection, null, prefs);
+                try {
+                    Pad pad = new Pad(42, (short) (MoonBridge.LI_CCAP_TOUCHPAD | MoonBridge.LI_CCAP_GYRO));
+                    handler.deviceAdded(pad);
+                    handler.prepareControllersForLaunch();
+                    java.util.Map<Integer, ControllerHandler.UsbDeviceContext> usb =
+                            ReflectionHelpers.getField(handler, "usbDeviceContexts");
+                    ReflectionHelpers.setField(usb.get(42), "arrivalPending", false);
+                    handler.releaseInput();
+                    handler.deviceRemoved(pad);
+                    assertEquals("touch releases with Controllers " + send, send ? 2 : 0, connection.touches);
+                    assertEquals("gyro at rest with Controllers " + send, send ? 1 : 0, connection.motions);
+                } finally { handler.destroy(); }
+            }
+        }
+    }
+
     @Test public void controllersOffAnnouncesNoPadAttachedMidStreamAndSendsNoBatteryOrPadMouse() {
         try (ActivityController<Activity> activity = Robolectric.buildActivity(Activity.class).create()) {
             for (boolean send : new boolean[] {true, false}) {
