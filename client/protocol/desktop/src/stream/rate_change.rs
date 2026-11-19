@@ -96,6 +96,10 @@ pub struct RateChange {
     /// The query could not be sent at the start: when it goes once more.
     query_again_at: Option<u64>,
     query_retried: bool,
+    /// The PC said it lowered the bitrate before the answer came ([`Self::pc_lowered`]).
+    cut_before_answer: bool,
+    /// The menu's bitrate and rate the player chose while the query waited.
+    menu_held: Option<(u32, f64)>,
     /// The client-hint controller's cap and the cut a reconnect returns it to, for its start from
     /// the PC's answer.
     limit_kbps: u32,
@@ -124,6 +128,8 @@ impl RateChange {
             asking: false,
             query_again_at: None,
             query_retried: false,
+            cut_before_answer: false,
+            menu_held: None,
             limit_kbps,
             resume_kbps: None,
             bitrate_kbps,
@@ -166,6 +172,29 @@ impl RateChange {
             eprintln!("nightjar: rate change: the bitrate query could not be sent ({error}); the stream goes on from {} kbps", self.configured_kbps);
             self.asking = false;
         }
+    }
+
+    /// The PC said it lowered the bitrate for the network (a 0x5538 notice, limited or floor):
+    /// an answer to the query that comes after it may hold that cut, so it is not used.
+    pub fn pc_lowered(&mut self) {
+        if self.asking { self.cut_before_answer = true; }
+    }
+
+    /// The menu's bitrate or rate while the query waits: held, so the request goes out once after
+    /// the answer or its timeout ([`Self::held_menu_request`]). False when nothing waits.
+    pub fn hold_menu(&mut self) -> bool {
+        if !self.asking { return false; }
+        eprintln!("nightjar: rate change: the menu's change goes out once the PC answered the bitrate query");
+        self.menu_held = Some((self.menu_kbps, self.menu_fps));
+        true
+    }
+
+    /// The menu's held change, once the query no longer waits.
+    pub fn held_menu_request(&mut self, now_ms: u64) -> Option<Result<RateChangeRequest, String>> {
+        if self.asking { return None; }
+        let (kbps, fps) = self.menu_held.take()?;
+        (self.menu_kbps, self.menu_fps) = (kbps, fps);
+        Some(self.menu_request(now_ms))
     }
 
     /// The query once more, a second after it could not be sent.
@@ -347,6 +376,15 @@ impl RateChange {
             eprintln!("nightjar: rate change result for serial {} that is not pending, ignored", result.serial);
             return Answer::default();
         };
+        if origin == Origin::Query && (self.query_retried || self.cut_before_answer) {
+            // Video ran before the PC handled it (a retried query), or the PC said it lowered the
+            // bitrate first: the answer may be a cut, which would be kept for the whole stream.
+            eprintln!("nightjar: rate change: the PC's answer to the bitrate query ({} kbps) may hold a cut it made {}; the stream goes on from {} kbps",
+                result.bitrate_kbps, if self.cut_before_answer { "before it" } else { "while the query waited to go out" }, self.configured_kbps);
+            self.asking = false;
+            self.query_again_at = None;
+            return Answer::default();
+        }
         let mut answer = Answer::default();
         let before_kbps = self.bitrate_kbps;
         // The host answers a request with a rate once its switch ran, with the bitrate it set
@@ -401,6 +439,8 @@ impl RateChange {
                 }
                 // It changed nothing: the stream follows only a count that differs from its own.
                 if answer.bitrate_kbps == Some(before_kbps) { answer.bitrate_kbps = None; }
+                // A pick the player made meanwhile stays in the menu; it goes out next (held_menu_request).
+                if let Some((kbps, fps)) = self.menu_held { (self.menu_kbps, self.menu_fps) = (kbps, fps); }
             }
             Origin::Hint => {
                 let Some(hint) = &mut self.hint else { return answer };
@@ -856,8 +896,10 @@ mod tests {
         let again = rates.query_again(1000).expect("once more");
         assert_eq!((again.bitrate_kbps, again.fps_millihz), (0, 0));
         assert_eq!(rates.query_again(2000), None);
-        rates.result(&answered(&again, 14_988), 1100);
-        assert_eq!(rates.takeover_on_tick(true, 2000).map(|r| r.bitrate_kbps), Some(14_988));
+        // Video ran meanwhile, so a cut by the PC may be in the answer: not kept, the stream's own goes out.
+        assert_eq!(rates.result(&answered(&again, 14_988), 1100), Answer::default());
+        assert_eq!(rates.menu_kbps, 20_000);
+        assert_eq!(rates.takeover_on_tick(true, 2000).map(|r| r.bitrate_kbps), Some(20_000));
 
         // Twice unsent: the stream goes on from its own bitrate, as before the query.
         let mut unsent = RateChange::new(20_000, 60_000, false, 0, 0);
@@ -868,6 +910,56 @@ mod tests {
         unsent.query_unsent(&again, &"closed", 1000);
         assert_eq!(unsent.query_again(5000), None);
         assert_eq!(unsent.takeover_on_tick(true, 1000).map(|r| r.bitrate_kbps), Some(20_000));
+    }
+
+    #[test]
+    fn a_cut_the_pc_made_before_the_answer_is_not_kept() {
+        let mut rates = RateChange::new(20_000, 60_000, false, 0, 0);
+        rates.keep_bitrate();
+        let query = rates.query_request(0);
+        // The PC's link-rate controller lowered the bitrate before it handled the query: its answer is the cut.
+        rates.pc_lowered();
+        assert_eq!(rates.result(&answered(&query, 12_000), 100), Answer::default());
+        assert_eq!(rates.menu_kbps, 20_000);
+        assert_eq!(rates.takeover_on_tick(true, 1000).map(|r| r.bitrate_kbps), Some(20_000), "the stream's own, as before the query");
+
+        let mut hint = RateChange::new(20_000, 60_000, true, 0, 0);
+        let query = hint.query_request(0);
+        hint.pc_lowered();
+        hint.result(&answered(&query, 12_000), 100);
+        assert_eq!(hint.tick(&stats(4, 10.0)).map(|r| r.bitrate_kbps), Some(14_000), "from the stream's own");
+
+        // After the answer a cut changes nothing of it.
+        let mut later = RateChange::new(20_000, 60_000, false, 0, 0);
+        later.keep_bitrate();
+        let query = later.query_request(0);
+        later.result(&answered(&query, 14_988), 100);
+        later.pc_lowered();
+        assert_eq!(later.takeover_on_tick(true, 1000).map(|r| r.bitrate_kbps), Some(14_988));
+    }
+
+    #[test]
+    fn a_bitrate_picked_before_the_answer_goes_out_once_after_it() {
+        let mut rates = RateChange::new(20_000, 60_000, false, 0, 0);
+        let query = rates.query_request(0);
+        rates.menu_kbps = 30_000;
+        assert!(rates.hold_menu(), "held until the answer");
+        assert_eq!(rates.held_menu_request(200), None, "still waiting");
+        rates.result(&answered(&query, 14_988), 300);
+        assert_eq!(rates.menu_kbps, 30_000, "the menu keeps the pick");
+        let request = rates.held_menu_request(400).expect("the pick").unwrap();
+        assert_eq!((request.bitrate_kbps, request.fps_millihz), (30_000, 0));
+        assert_eq!(rates.held_menu_request(500), None, "once");
+
+        // Without an answer it goes out after the timeout.
+        let mut silent = RateChange::new(20_000, 60_000, false, 0, 0);
+        silent.query_request(0);
+        silent.menu_kbps = 25_000;
+        assert!(silent.hold_menu());
+        silent.expire(ANSWER_MS);
+        assert_eq!(silent.held_menu_request(ANSWER_MS).map(|r| r.map(|r| r.bitrate_kbps)), Some(Ok(25_000)));
+        // Once answered, nothing is held.
+        assert!(!silent.hold_menu());
     }
 
     #[test]
