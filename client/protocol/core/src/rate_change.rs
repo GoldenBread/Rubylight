@@ -8,6 +8,12 @@
 //! it, or did not. The host clamps either to what the device and the encoder allow, and says
 //! so per field.
 //!
+//! A bitrate is in the unit of the launch, in both directions. A client that sent the bitrate
+//! its user set (`x-ml-video.configuredBitrateKbps`) asks for one in that unit and the
+//! encoder gets what a launch with it would have, less the share for error correction, audio
+//! and overhead; a client that sent none asks for the encoder's own. Rubylight 6.0.1 and
+//! older took every number as the encoder's own.
+//!
 //! So results can come out of request order: one for a rate carries the bitrate the host set
 //! when the request came, and a bitrate-only request sent after it is answered first. A client
 //! takes a result's bitrate only when no result for a later serial came before it.

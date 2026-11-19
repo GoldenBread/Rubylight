@@ -1002,7 +1002,13 @@ impl Media {
                                 let mut reconfigure = s.reconfigure.lock().unwrap();
                                 let requested = reconfigure.requested();
                                 let current = reconfigure.current().fps_millihz;
-                                let bitrate_kbps = s.bitrate.load(Ordering::Acquire);
+                                // In the client's unit, as its request is: the bitrate its
+                                // user set, where the launch carried one.
+                                let bitrate_kbps =
+                                    s.rate_changes.lock().unwrap().client_bitrate_kbps(
+                                        s.bitrate.load(Ordering::Acquire),
+                                        &s.config,
+                                    );
                                 let decision = match config {
                                     Ok(config) => {
                                         let enabled = config.boolean("stream_reconfigure", true);
@@ -1012,6 +1018,7 @@ impl Media {
                                             .map_or(0, |rate| rate.load(Ordering::Acquire));
                                         let stream = rate_change::Stream {
                                             bitrate_kbps,
+                                            launched: &s.config,
                                             fps_millihz: current,
                                             requested,
                                             fps_ceiling_millihz: rate_change::fps_ceiling_millihz(
@@ -1045,14 +1052,16 @@ impl Media {
                                 );
                                 drop(reconfigure);
                                 // Set before the answer goes out, later in this loop.
-                                if let Some(applied) = decision.bitrate_kbps {
+                                if let Some(encoder_kbps) = decision.bitrate_kbps {
+                                    // Asked and applied in the client's unit: the encoder's
+                                    // share of it is no cap.
                                     butterpollo_core::stream_policy::report_bitrate(
                                         &s.launch.warnings,
                                         request.bitrate_kbps,
-                                        applied,
+                                        decision.result.bitrate_kbps,
                                         "max_bitrate and the 500 Mbps runtime cap",
                                     );
-                                    s.set_client_bitrate(applied);
+                                    s.set_client_bitrate(encoder_kbps);
                                 }
                                 let result = decision.result;
                                 tracing::info!(
@@ -1061,6 +1070,7 @@ impl Media {
                                     bitrate_kbps = request.bitrate_kbps,
                                     fps_millihz = request.fps_millihz,
                                     applied_kbps = result.bitrate_kbps,
+                                    encoder_kbps = ?decision.bitrate_kbps,
                                     switch_to = ?decision.switch_to.map(|mode| mode.to_string()),
                                     bitrate = ?result.bitrate,
                                     fps = ?result.fps,

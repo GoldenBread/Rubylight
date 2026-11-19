@@ -18,9 +18,29 @@ fn config(max_bitrate: i64) -> Config {
     config
 }
 
-fn stream() -> Stream {
+/// A launch that carried no bitrate its user set: a request's is the encoder's own.
+fn stock() -> &'static Negotiated {
+    static STOCK: std::sync::OnceLock<Negotiated> = std::sync::OnceLock::new();
+    STOCK.get_or_init(Negotiated::default)
+}
+
+/// A stream as it launched for a client whose user set `configured` Kbps, with stereo audio
+/// at high quality.
+fn launched(configured: u32, codec: u8) -> Negotiated {
+    let mut stream = Negotiated {
+        configured_bitrate_kbps: configured,
+        codec,
+        audio_quality: true,
+        ..Negotiated::default()
+    };
+    crate::stream_policy::apply(&mut stream, 60_000, &Config::default());
+    stream
+}
+
+fn stream() -> Stream<'static> {
     Stream {
         bitrate_kbps: 20_000,
+        launched: stock(),
         fps_millihz: 60_000,
         requested: mode(1920, 1080, 60),
         fps_ceiling_millihz: 144_000,
@@ -111,6 +131,112 @@ fn bitrates_are_capped_by_the_device_and_the_runtime_cap() {
     let low = decide(&request(4, 500, 0), &stream(), &config(50_000));
     assert_eq!(low.bitrate_kbps, Some(500));
     assert_eq!(low.result.bitrate, Outcome::APPLIED);
+}
+
+/// Nightjar sends the bitrate its user set at launch, and asks for one mid-stream in the
+/// same unit: its stream menu, its automatic bitrate and Keep my bitrate all start from the
+/// launch's number. The encoder gets what a launch with the number would have, so the
+/// launch's own number keeps it where it runs. Taken as the encoder's own, 20 Mbps raised an
+/// encoder running at 14988 Kbps by a third, and an automatic cut of a tenth raised it too.
+#[test]
+fn a_bitrate_is_in_the_unit_of_the_launch() {
+    let launch = launched(20_000, 0);
+    assert_eq!(
+        launch.bitrate_kbps, 14_988,
+        "80 %, less 512 Kbps of audio and 500 of overhead"
+    );
+    let stream = Stream {
+        launched: &launch,
+        ..stream()
+    };
+    let kept = decide(&request(1, 20_000, 0), &stream, &config(0));
+    assert_eq!(kept.bitrate_kbps, Some(14_988));
+    assert_eq!(
+        (kept.result.bitrate_kbps, kept.result.bitrate),
+        (20_000, Outcome::APPLIED)
+    );
+    let cut = decide(&request(2, 18_000, 0), &stream, &config(0));
+    assert_eq!(cut.bitrate_kbps, Some(13_388));
+    assert_eq!(
+        (cut.result.bitrate_kbps, cut.result.bitrate),
+        (18_000, Outcome::APPLIED)
+    );
+    for kbps in [2_000, 10_000, 50_000, 400_000] {
+        assert_eq!(
+            decide(&request(3, kbps, 0), &stream, &config(0)).bitrate_kbps,
+            Some(launched(kbps, 0).bitrate_kbps),
+            "{kbps}"
+        );
+    }
+    // The device's cap is on the client's number, as at launch, and the answer says it.
+    let capped = decide(&request(4, 20_000, 0), &stream, &config(15_000));
+    assert_eq!(
+        (capped.result.bitrate_kbps, capped.result.bitrate),
+        (15_000, Outcome::clamped(Reason::HostLimit))
+    );
+    assert_eq!(capped.bitrate_kbps, Some(10_988));
+    // PyroWave's number is its whole wire budget: audio with its parity and control come off.
+    let wave = launched(100_000, 3);
+    let waves = Stream {
+        launched: &wave,
+        ..stream
+    };
+    assert_eq!(
+        decide(&request(5, 100_000, 0), &waves, &config(0)).bitrate_kbps,
+        Some(wave.bitrate_kbps)
+    );
+    assert_eq!(
+        decide(&request(6, 150_000, 0), &waves, &config(0)).bitrate_kbps,
+        Some(launched(150_000, 3).bitrate_kbps)
+    );
+    // A launch without the user's number is asked for the encoder's own.
+    assert_eq!(
+        decide(&request(7, 20_000, 0), &self::stream(), &config(0)).bitrate_kbps,
+        Some(20_000)
+    );
+}
+
+/// Every answer names the stream's bitrate in the unit of its requests: the number the
+/// client asked for last, else the one it launched with, however the encoder's share of it
+/// is worked out. Android takes the bitrate of an answer to a rate alone as the stream's.
+#[test]
+fn answers_name_the_bitrate_in_the_unit_of_the_launch() {
+    let launch = launched(20_000, 0);
+    let mut changes = RateChanges::default();
+    assert_eq!(changes.client_bitrate_kbps(14_988, &launch), 20_000);
+    // The host's own controllers halved the encoder's bitrate.
+    assert_eq!(changes.client_bitrate_kbps(7_494, &launch), 10_000);
+    assert_eq!(changes.client_bitrate_kbps(9_000, stock()), 9_000);
+
+    let mut reconfigure = Reconfiguration::new(mode(1920, 1080, 60));
+    let stream = Stream {
+        launched: &launch,
+        ..stream()
+    };
+    let raised = decide(&request(1, 30_000, 0), &stream, &config(0));
+    changes.record(&raised, &mut reconfigure, Instant::now());
+    let encoder = raised.bitrate_kbps.unwrap();
+    assert_eq!(encoder, 22_988);
+    assert_eq!(changes.client_bitrate_kbps(encoder, &launch), 30_000);
+    // A rate alone, and a request the host cannot decide, answer with it.
+    let stream = Stream {
+        bitrate_kbps: changes.client_bitrate_kbps(encoder, &launch),
+        ..stream
+    };
+    let rate = decide(&request(2, 0, 30), &stream, &config(0));
+    assert_eq!(
+        (rate.bitrate_kbps, rate.result.bitrate_kbps),
+        (None, 30_000)
+    );
+    changes.record(&rate, &mut reconfigure, Instant::now());
+    assert_eq!(changes.client_bitrate_kbps(encoder, &launch), 30_000);
+    // Another route (the HTTP bitrate change) moved the encoder since.
+    assert_eq!(changes.client_bitrate_kbps(11_494, &launch), 15_000);
+    // On a stock launch the number asked for is the encoder's.
+    let mut stock_changes = RateChanges::default();
+    let own = decide(&request(3, 12_000, 0), &self::stream(), &config(0));
+    stock_changes.record(&own, &mut reconfigure, Instant::now());
+    assert_eq!(stock_changes.client_bitrate_kbps(12_000, stock()), 12_000);
 }
 
 #[test]

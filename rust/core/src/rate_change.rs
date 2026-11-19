@@ -3,7 +3,11 @@
 //!
 //! The control thread decides each request with [`decide`]. A bitrate is capped by the
 //! device's `max_bitrate` and the runtime cap ([`crate::stream_policy::runtime_bitrate_kbps`])
-//! and reaches the encoder on its next frame, which AMF takes without a keyframe. A rate is
+//! and reaches the encoder on its next frame, which AMF takes without a keyframe. It is in
+//! the unit of the launch: for a client that sent the bitrate its user set, the encoder gets
+//! what a launch with that number would have
+//! ([`crate::stream_policy::runtime_encoder_kbps`]), and every answer names the stream's
+//! bitrate in that unit ([`RateChanges::client_bitrate_kbps`]). A rate is
 //! capped by the encoder's measured throughput at the stream's size and becomes a mode
 //! switch in [`crate::reconfigure::Reconfiguration`], applied by the session loop like a
 //! 0x5532 request. [`RateChanges`] holds a switching rate's answer until the session loop
@@ -16,6 +20,7 @@ use anyhow::{Result, bail};
 
 use crate::config::Config;
 use crate::reconfigure::{self, Mode, Reconfiguration};
+use crate::rtsp::Negotiated;
 
 pub use rubylight_protocol::rate_change::{
     LAUNCH_PARAMETER, MAX_FPS_MILLIHZ, MIN_FPS_MILLIHZ, Outcome, RATE_CHANGE_MESSAGE_TYPE,
@@ -57,9 +62,13 @@ pub fn fps_ceiling_millihz(
 
 /// The stream a request is decided against.
 #[derive(Clone, Copy, Debug)]
-pub struct Stream {
-    /// The encoder's bitrate the client or host set last.
+pub struct Stream<'a> {
+    /// The stream's bitrate in the unit its client asks in
+    /// ([`RateChanges::client_bitrate_kbps`]).
     pub bitrate_kbps: u32,
+    /// The stream as it launched, which says what a bitrate its client asks for is
+    /// ([`crate::stream_policy::runtime_encoder_kbps`]).
+    pub launched: &'a Negotiated,
     /// The rate the stream runs at, or is switching to ([`Reconfiguration::current`]).
     pub fps_millihz: u32,
     /// The mode it switches to next: the latest one requested, else the current one
@@ -74,7 +83,8 @@ pub struct Stream {
 /// What the control thread does with one request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Decision {
-    /// The bitrate to set now.
+    /// The encoder's bitrate to set now. The answer's is the one the client asked for, as
+    /// the host caps it.
     pub bitrate_kbps: Option<u32>,
     /// The mode to run at, the requested size at the asked rate, when the rate is to
     /// change; [`RateChanges::record`] queues the switch to it.
@@ -86,7 +96,7 @@ pub struct Decision {
 
 /// Decides `request` for `stream` under `config`, the device's effective configuration.
 /// An invalid request changes nothing.
-pub fn decide(request: &RateChangeRequest, stream: &Stream, config: &Config) -> Decision {
+pub fn decide(request: &RateChangeRequest, stream: &Stream<'_>, config: &Config) -> Decision {
     let mut result = RateChangeResult {
         serial: request.serial,
         bitrate_kbps: stream.bitrate_kbps,
@@ -121,7 +131,11 @@ pub fn decide(request: &RateChangeRequest, stream: &Stream, config: &Config) -> 
             Outcome::APPLIED
         };
         result.bitrate_kbps = applied;
-        bitrate_kbps = Some(applied);
+        bitrate_kbps = Some(crate::stream_policy::runtime_encoder_kbps(
+            stream.launched,
+            applied,
+            config,
+        ));
     }
     let mut switch_to = None;
     if request.fps_millihz != 0 {
@@ -199,14 +213,38 @@ pub struct RateChanges {
     queued: Option<Pending>,
     switching: Option<Pending>,
     answers: VecDeque<RateChangeResult>,
+    /// The last bitrate a request set: what the client asked for, as capped, and the
+    /// encoder's bitrate for it.
+    client: Option<(u32, u32)>,
 }
 
 impl RateChanges {
+    /// The stream's bitrate in the unit its client asks in, while the encoder runs at
+    /// `live_kbps`: the number the client asked for last, else the one it launched with,
+    /// scaled when the host or another route has moved the encoder since. A stream launched
+    /// without the bitrate its user set is asked for the encoder's own.
+    pub fn client_bitrate_kbps(&self, live_kbps: u32, launched: &Negotiated) -> u32 {
+        let (client, encoder) = self
+            .client
+            .unwrap_or((launched.configured_bitrate_kbps, launched.bitrate_kbps));
+        if client == 0 || encoder == 0 {
+            return live_kbps;
+        }
+        if live_kbps == encoder {
+            return client;
+        }
+        (u64::from(client) * u64::from(live_kbps) / u64::from(encoder)).min(u64::from(u32::MAX))
+            as u32
+    }
+
     /// Records a decided request, queueing its switch in `reconfigure`. A rate the stream
     /// will run at replaces one still queued, which is answered as superseded; a bitrate
     /// alone, or a refused or invalid rate, leaves it queued.
     pub fn record(&mut self, decision: &Decision, reconfigure: &mut Reconfiguration, now: Instant) {
         let mut result = decision.result;
+        if let Some(encoder) = decision.bitrate_kbps {
+            self.client = Some((result.bitrate_kbps, encoder));
+        }
         let Some(mode) = decision.switch_to else {
             self.answers.push_back(result);
             return;

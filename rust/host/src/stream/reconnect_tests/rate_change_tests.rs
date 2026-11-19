@@ -93,6 +93,55 @@ async fn rate_changes_reach_only_a_client_that_launched_asking() -> Result<()> {
     h.finish().await
 }
 
+/// A client that launched with the bitrate its user set (Nightjar: 20 Mbps, of which the
+/// encoder gets 15308 Kbps here) asks mid-stream in that unit. Its own number keeps the
+/// encoder where the launch put it, which is what Nightjar's Keep my bitrate sends; a lower
+/// one lowers it; and every answer names the client's number. With a FEC share of the
+/// client's the encoder's part of the budget is smaller, and stays as it was too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_bitrate_is_in_the_unit_of_the_launch() -> Result<()> {
+    let h = Harness::new(10_000, 1).await?;
+    let sdp = "a=x-nv-vqos[0].bw.maximumBitrateKbps:16000\r\na=x-ml-video.configuredBitrateKbps:20000\r\n";
+    for (fec, started) in [(None, 15_308), (Some("50"), 10_205)] {
+        let mut options = vec![("rlRateChange", "1")];
+        options.extend(fec.map(|percent| ("rlFecPercentage", percent)));
+        let launch = h.launch_with(0, false, None, &options).await?;
+        let (session, client) = h.play_announcing(&launch, 0, sdp).await?;
+        assert_eq!(session.bitrate.load(Ordering::Acquire), 15_308, "{fec:?}");
+        assert_eq!(session.encoder_bitrate(true), started, "{fec:?}");
+
+        client.send_control(RATE_CHANGE_MESSAGE_TYPE, &ask(1, 20_000, 0));
+        let kept = answer(&client, 1).await;
+        assert_eq!(
+            (kept.bitrate, kept.bitrate_kbps),
+            (Outcome::APPLIED, 20_000),
+            "{fec:?}"
+        );
+        assert_eq!(session.encoder_bitrate(true), started, "{fec:?}");
+
+        client.send_control(RATE_CHANGE_MESSAGE_TYPE, &ask(2, 18_000, 0));
+        let cut = answer(&client, 2).await;
+        assert_eq!(
+            (cut.bitrate, cut.bitrate_kbps),
+            (Outcome::APPLIED, 18_000),
+            "{fec:?}"
+        );
+        assert_eq!(session.bitrate.load(Ordering::Acquire), 13_708, "{fec:?}");
+        assert!(session.encoder_bitrate(true) < started, "{fec:?}");
+
+        // An answer that sets no bitrate names the stream's in the same unit.
+        client.send_control(RATE_CHANGE_MESSAGE_TYPE, &ask(3, 0, 0));
+        let invalid = answer(&client, 3).await;
+        assert_eq!(
+            (invalid.bitrate, invalid.bitrate_kbps),
+            (Outcome::UNCHANGED, 18_000),
+            "{fec:?}"
+        );
+        h.end(&session, client).await?;
+    }
+    h.finish().await
+}
+
 /// The device's `max_bitrate` caps a bitrate, which applies at once; a rate is capped by the
 /// throughput the encoder allows and queued as a switch, which a later request supersedes;
 /// nonsense and a host with switching off are refused, and the stream keeps its values.

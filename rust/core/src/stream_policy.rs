@@ -1474,6 +1474,14 @@ pub fn apply(stream: &mut Negotiated, launch_millihz: u32, config: &Config) {
     if limit && (1..=4_000_000).contains(&launch_millihz) {
         stream.rate_millihz = launch_millihz;
     }
+    stream.bitrate_kbps = encoder_bitrate_kbps(stream, config);
+}
+/// The encoder's bitrate for `stream`, under `max_bitrate`. A client that sent
+/// the bitrate its user set (`configured_bitrate_kbps`) gets that number less
+/// the FEC share (`fec_percentage`), audio and 500 Kbps of overhead, as
+/// Sunshine takes it, so video, parity and audio together stay within it; one
+/// that sent none already took its own share off `bitrate_kbps`.
+pub fn encoder_bitrate_kbps(stream: &Negotiated, config: &Config) -> u32 {
     let configured = u64::from(stream.configured_bitrate_kbps);
     let requested = if configured > 0 {
         configured
@@ -1507,7 +1515,22 @@ pub fn apply(stream: &mut Negotiated, launch_millihz: u32, config: &Config) {
             budget -= 500.min(budget / 10);
         }
     }
-    stream.bitrate_kbps = budget.clamp(1, 2_000_000) as u32;
+    budget.clamp(1, 2_000_000) as u32
+}
+/// The encoder's bitrate for a bitrate of `kbps` a client asks for mid-stream
+/// (0x553C), in the unit of its launch: the stream of a client that sent the
+/// bitrate its user set gets what a launch with `kbps` would have
+/// ([`encoder_bitrate_kbps`]), so a number means the same in the client's
+/// settings and in its stream menu. Without that, a request for the launch's
+/// own 20 Mbps raised an encoder running at 14988 Kbps to 20000. A stream
+/// launched without one is asked for the encoder's own bitrate.
+pub fn runtime_encoder_kbps(launched: &Negotiated, kbps: u32, config: &Config) -> u32 {
+    if launched.configured_bitrate_kbps == 0 {
+        return kbps;
+    }
+    let mut stream = launched.clone();
+    stream.configured_bitrate_kbps = kbps;
+    encoder_bitrate_kbps(&stream, config)
 }
 /// `dscp_tagging` (default on, as in Sunshine, LizardByte/Sunshine#6067):
 /// off, the host tags neither video nor audio with DSCP and asks Windows for
