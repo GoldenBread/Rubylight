@@ -764,7 +764,19 @@ impl Process {
         elevated: bool,
         extras: &BTreeMap<String, String>,
     ) -> Result<Self> {
-        Self::shell_inner(command, directory, elevated, extras, false)
+        Self::shell_inner(command, directory, elevated, extras, false, false)
+    }
+    /// [`Self::shell`] for a command that may leave programs running once it has ended
+    /// ([`Self::leave_children_running`]): like a detached command it is created outside the
+    /// host's own job where Windows lets it leave, so what it leaves outlives the host, while its
+    /// own job still ends it and everything it started when it is stopped or the host dies first.
+    pub fn shell_leaving_children(
+        command: &str,
+        directory: Option<&Path>,
+        elevated: bool,
+        extras: &BTreeMap<String, String>,
+    ) -> Result<Self> {
+        Self::shell_inner(command, directory, elevated, extras, false, true)
     }
     pub fn shell_detached(
         command: &str,
@@ -772,7 +784,7 @@ impl Process {
         elevated: bool,
         extras: &BTreeMap<String, String>,
     ) -> Result<()> {
-        Self::shell_inner(command, directory, elevated, extras, true)?;
+        Self::shell_inner(command, directory, elevated, extras, true, true)?;
         Ok(())
     }
     fn shell_inner(
@@ -781,6 +793,7 @@ impl Process {
         elevated: bool,
         extras: &BTreeMap<String, String>,
         detached: bool,
+        breakaway: bool,
     ) -> Result<Self> {
         if command.contains('\0') {
             bail!("shell command contains NUL");
@@ -792,7 +805,7 @@ impl Process {
         .join("cmd.exe");
         let command = shell_command(command);
         let line = format!("{} /D /S /C \"{command}\"", quote(executable.as_os_str())?);
-        Self::spawn_command(
+        Self::spawn_command_with(
             &executable,
             &line,
             directory,
@@ -800,6 +813,8 @@ impl Process {
             extras,
             true,
             detached,
+            breakaway,
+            None,
         )
     }
     /// Start `program` as `target` (inside the usual job, so it dies with the owner) with its
@@ -825,6 +840,7 @@ impl Process {
             &BTreeMap::new(),
             true,
             false,
+            false,
             Some([raw(&stdin_read), raw(&stdout_write), raw(&stderr_write)]),
         )?;
         // The child holds its ends now; the parent's copies would keep the pipes open forever.
@@ -847,11 +863,12 @@ impl Process {
         detached: bool,
     ) -> Result<Self> {
         Self::spawn_command_with(
-            program, line, directory, target, extras, hidden, detached, None,
+            program, line, directory, target, extras, hidden, detached, detached, None,
         )
     }
     /// `stdio` is the child's (stdin, stdout, stderr), inheritable handles that only the child
-    /// inherits.
+    /// inherits. A `detached` process's job has no kill-on-close; one that may `breakaway` is
+    /// created outside the host's own job, or inside it where Windows refuses.
     #[allow(clippy::too_many_arguments)]
     fn spawn_command_with(
         program: &Path,
@@ -861,6 +878,7 @@ impl Process {
         extras: &BTreeMap<String, String>,
         hidden: bool,
         detached: bool,
+        breakaway: bool,
         stdio: Option<[HANDLE; 3]>,
     ) -> Result<Self> {
         let token = target_token(&target)?;
@@ -946,7 +964,7 @@ impl Process {
                 } else {
                     PROCESS_CREATION_FLAGS(0)
                 }
-                | if detached {
+                | if breakaway {
                     CREATE_BREAKAWAY_FROM_JOB
                 } else {
                     PROCESS_CREATION_FLAGS(0)
@@ -1011,7 +1029,7 @@ impl Process {
             let inheritable = stdio.map(InheritableHandles::new).transpose()?;
             match create(flags) {
                 Err(e)
-                    if detached
+                    if breakaway
                         && e.code()
                             == windows::core::HRESULT::from_win32(ERROR_ACCESS_DENIED.0) =>
                 {

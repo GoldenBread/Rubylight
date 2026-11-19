@@ -301,8 +301,8 @@ pub struct RunningApp {
     playnite_fullscreen: bool,
     /// Lossless Scaling for the game.
     lossless: Option<crate::lossless::Session>,
-    /// Whether the app starts a program, and when it was launched (100 ns
-    /// since 1601, as process creation times).
+    /// Whether the app starts a program, and when its own command started, after the
+    /// preparation commands (100 ns since 1601, as process creation times).
     launches: bool,
     launched_at: u64,
     /// Fullscreen games on the stream's display that another program, such
@@ -569,7 +569,7 @@ impl RunningApp {
                 bail!(LAUNCH_STOPPED);
             }
             if !prep.r#do.is_empty() {
-                let child = Process::shell(
+                let child = Process::shell_leaving_children(
                     &prep.r#do,
                     directory(&running.working),
                     prep.elevated,
@@ -605,6 +605,9 @@ impl RunningApp {
         if stopped() {
             bail!(LAUNCH_STOPPED);
         }
+        // A program the preparation commands left running is never taken for a game another
+        // program started.
+        running.launched_at = butterpollo_windows::process::now();
         let imported = app
             .extra
             .get("launcher-launch")
@@ -808,7 +811,7 @@ impl RunningApp {
             };
             match expand(&command.undo, &self.environment)
                 .and_then(|undo| {
-                    Process::shell(
+                    Process::shell_leaving_children(
                         &undo,
                         directory(&self.working),
                         command.elevated,
@@ -828,7 +831,7 @@ impl RunningApp {
         }
         for prep in self.undo.drain(..).rev() {
             if !prep.undo.is_empty() {
-                match Process::shell(
+                match Process::shell_leaving_children(
                     &prep.undo,
                     directory(&self.working),
                     prep.elevated,

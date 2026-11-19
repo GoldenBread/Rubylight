@@ -1240,7 +1240,12 @@ impl LeftRunning {
         assert_eq!(ids.len(), 1, "{ids:?}");
         // SAFETY: OpenProcess has no memory preconditions and the returned handle is owned once.
         Self(owned(unsafe {
-            OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, false, ids[0]).unwrap()
+            OpenProcess(
+                PROCESS_SYNCHRONIZE | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
+                false,
+                ids[0],
+            )
+            .unwrap()
         }))
     }
     /// Whether it ended within `timeout`.
@@ -1274,6 +1279,123 @@ fn a_command_that_ended_by_itself_leaves_what_it_started_running() {
     let helper = LeftRunning::of(&process);
     process.leave_children_running().unwrap();
     drop(process);
+    assert!(!helper.ends_within(Duration::from_secs(2)));
+}
+/// Run by [`what_a_command_leaves_running_outlives_the_hosts_own_job`] in a copy of this test
+/// program that sits in a kill-on-close job, as the service's host does: starts a command that
+/// leaves a program running, and prints that program's pid and creation time.
+#[test]
+#[ignore = "run inside a parent job by what_a_command_leaves_running_outlives_the_hosts_own_job"]
+fn leave_a_program_running_inside_a_parent_job() {
+    if std::env::var_os("RUBYLIGHT_TEST_IN_PARENT_JOB").is_none() {
+        return;
+    }
+    // The parent puts this process in its job before it says go.
+    let mut go = String::new();
+    std::io::stdin().read_line(&mut go).unwrap();
+    let process = Process::shell_leaving_children(
+        "start \"\" /b ping -n 60 127.0.0.1 >nul",
+        None,
+        target_token(&Target::User { elevated: true }).is_ok(),
+        &BTreeMap::new(),
+    )
+    .unwrap();
+    let helper = LeftRunning::of(&process);
+    process.leave_children_running().unwrap();
+    drop(process);
+    // SAFETY: the handle is open.
+    let pid = unsafe { GetProcessId(raw(&helper.0)) };
+    println!("HELPER {pid} {}", created_at(raw(&helper.0)));
+    // The parent ends it from here on.
+    std::mem::forget(helper);
+}
+#[test]
+fn what_a_command_leaves_running_outlives_the_hosts_own_job() {
+    use std::io::{BufRead, Write};
+    use std::os::windows::io::AsRawHandle;
+    // SAFETY: a null job asks about this process's own job; `limits` is a writable local of the
+    // size passed.
+    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    let in_job = unsafe {
+        QueryInformationJobObject(
+            None,
+            JobObjectExtendedLimitInformation,
+            (&mut limits as *mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+            size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            None,
+        )
+    }
+    .is_ok();
+    if in_job && (limits.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_BREAKAWAY_OK).0 == 0 {
+        // The job this test runs in forbids leaving it, so nothing started here can.
+        eprintln!("skipped: this test runs in a job that forbids breakaway");
+        return;
+    }
+    // The service's job for the host: its processes end when it closes, and may leave it.
+    // SAFETY: the limits are a live local of the size passed, and the new handle is owned once.
+    let parent = unsafe {
+        let job = owned(CreateJobObjectW(None, PCWSTR::null()).unwrap());
+        let limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+            BasicLimitInformation: JOBOBJECT_BASIC_LIMIT_INFORMATION {
+                LimitFlags: JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        SetInformationJobObject(
+            raw(&job),
+            JobObjectExtendedLimitInformation,
+            (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+            size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        )
+        .unwrap();
+        job
+    };
+    let mut host = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "--ignored",
+            "--nocapture",
+            "--test-threads=1",
+            "process::tests::leave_a_program_running_inside_a_parent_job",
+        ])
+        .env("RUBYLIGHT_TEST_IN_PARENT_JOB", "1")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // SAFETY: both handles are open for the call.
+    let assigned = unsafe { AssignProcessToJobObject(raw(&parent), HANDLE(host.as_raw_handle())) };
+    if let Err(error) = assigned {
+        let _ = host.kill();
+        let _ = host.wait();
+        panic!("cannot put the test host in its job: {error}");
+    }
+    writeln!(host.stdin.take().unwrap(), "go").unwrap();
+    let mut found = None;
+    for line in std::io::BufReader::new(host.stdout.take().unwrap()).lines() {
+        let line = line.unwrap();
+        // libtest may print the test's name before it on the same line.
+        if let Some((_, rest)) = line.split_once("HELPER ") {
+            let (pid, created) = rest.split_once(' ').unwrap();
+            found = Some((pid.parse::<u32>().unwrap(), created.parse::<u64>().unwrap()));
+        }
+    }
+    assert!(host.wait().unwrap().success());
+    let (pid, created) = found.expect("the test host named no program");
+    // SAFETY: OpenProcess has no memory preconditions and the returned handle is owned once. The
+    // parent job is still open, so the program cannot have ended and given away its pid.
+    let helper = LeftRunning(owned(unsafe {
+        OpenProcess(
+            PROCESS_SYNCHRONIZE | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
+            false,
+            pid,
+        )
+        .unwrap()
+    }));
+    assert_eq!(created_at(raw(&helper.0)), created);
+    // The host exits: its job closes.
+    drop(parent);
     assert!(!helper.ends_within(Duration::from_secs(2)));
 }
 #[test]

@@ -414,6 +414,7 @@ fn a_stopped_launch_ends_its_running_preparation_command_and_undoes_the_finished
     // however slowly `cmd` starts under load.
     let stopper = std::thread::spawn({
         let trace = trace.clone();
+        let pid = pid.clone();
         move || {
             let deadline = std::time::Instant::now() + Duration::from_secs(30);
             while !std::fs::read_to_string(&trace)
@@ -425,16 +426,19 @@ fn a_stopped_launch_ends_its_running_preparation_command_and_undoes_the_finished
                 );
                 std::thread::sleep(Duration::from_millis(20));
             }
+            // The pid file is complete before `second` is written, and the helper runs.
+            let helper = Helper::from(&pid);
+            assert!(!helper.ends_within(Duration::ZERO));
             let cancelled = std::time::Instant::now();
             cancel.cancel().unwrap();
-            cancelled
+            (cancelled, helper)
         }
     });
     let error = launch_with_environment(&f.host, &app, &HashMap::new(), Ok(BTreeMap::new()))
         .err()
         .unwrap();
     let ended = std::time::Instant::now();
-    let cancelled = stopper.join().unwrap();
+    let (cancelled, helper) = stopper.join().unwrap();
     assert_eq!(error.to_string(), LAUNCH_STOPPED);
     // The launch ends soon after the stop: not the 60 s of the command, nor
     // its 120 s limit.
@@ -447,41 +451,69 @@ fn a_stopped_launch_ends_its_running_preparation_command_and_undoes_the_finished
             .collect::<Vec<_>>(),
         ["first", "second", "undo-first"]
     );
-    assert!(Helper::from(&pid).ends_within(Duration::from_secs(10)));
+    assert!(helper.ends_within(Duration::from_secs(10)));
     drop(started);
     assert!(f.host.launch_cancellation().is_none());
     assert!(!f.host.launch_stopped());
 }
 
 /// A command that starts a hidden `ping` (a helper that outlives the command), writes its pid
-/// to `pid` and exits 0.
+/// and creation time (100 ns since 1601) to `pid` and exits 0.
 fn starts_helper(pid: &std::path::Path) -> String {
     format!(
-        "powershell -NoProfile -NonInteractive -Command \"(Start-Process -FilePath ping.exe -ArgumentList '-n','60','127.0.0.1' -WindowStyle Hidden -PassThru).Id | Set-Content -Encoding ascii -LiteralPath '{}'\"",
+        "powershell -NoProfile -NonInteractive -Command \"$p = Start-Process -FilePath ping.exe -ArgumentList '-n','60','127.0.0.1' -WindowStyle Hidden -PassThru; '{{0}} {{1}}' -f $p.Id, $p.StartTime.ToFileTimeUtc() | Set-Content -Encoding ascii -LiteralPath '{}'\"",
         pid.display()
     )
 }
-/// The helper whose pid `starts_helper` wrote, ended when the test is done whatever its outcome.
-struct Helper(Option<windows::Win32::Foundation::HANDLE>);
+/// The helper `starts_helper` started, ended when the test is done whatever its outcome. It is
+/// opened by its pid and creation time together, so a process that was given the pid after the
+/// helper ended is never taken for it, nor ended.
+struct Helper {
+    handle: Option<windows::Win32::Foundation::HANDLE>,
+    created: u64,
+}
+// SAFETY: a process handle may be used and closed from any thread.
+unsafe impl Send for Helper {}
 impl Helper {
     fn from(pid: &std::path::Path) -> Self {
-        use windows::Win32::System::Threading::{
-            OpenProcess, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+        use windows::Win32::{
+            Foundation::{CloseHandle, FILETIME},
+            System::Threading::{
+                GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+                PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+            },
         };
-        let pid: u32 = std::fs::read_to_string(pid)
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
-        // SAFETY: OpenProcess has no memory preconditions; the handle is closed in drop. It fails
-        // when the helper has already ended.
-        Self(unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, false, pid) }.ok())
+        let written = std::fs::read_to_string(pid).unwrap();
+        let (pid, created) = written.trim().split_once(' ').unwrap();
+        let (pid, created): (u32, u64) = (pid.parse().unwrap(), created.parse().unwrap());
+        let access = PROCESS_SYNCHRONIZE | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION;
+        // SAFETY: OpenProcess has no memory preconditions; the handle is closed here when it
+        // names another process, otherwise in drop. It fails when the helper has already ended
+        // and nothing holds its pid.
+        let handle = unsafe { OpenProcess(access, false, pid) }
+            .ok()
+            .filter(|&handle| {
+                let mut times = [FILETIME::default(); 4];
+                let [start, exit, kernel, user] = &mut times;
+                // SAFETY: the handle is open and each out-pointer is a local FILETIME.
+                let read = unsafe { GetProcessTimes(handle, start, exit, kernel, user) };
+                let same = read.is_ok()
+                    && (u64::from(times[0].dwHighDateTime) << 32
+                        | u64::from(times[0].dwLowDateTime))
+                        == created;
+                if !same {
+                    // SAFETY: the handle is open and closed once, here.
+                    let _ = unsafe { CloseHandle(handle) };
+                }
+                same
+            });
+        Self { handle, created }
     }
     /// Whether it ended (or was already gone) within `timeout`.
     fn ends_within(&self, timeout: Duration) -> bool {
         use windows::Win32::{Foundation::WAIT_OBJECT_0, System::Threading::WaitForSingleObject};
         // SAFETY: the handle is open until drop.
-        self.0.is_none_or(|handle| unsafe {
+        self.handle.is_none_or(|handle| unsafe {
             WaitForSingleObject(handle, timeout.as_millis() as u32) == WAIT_OBJECT_0
         })
     }
@@ -492,7 +524,7 @@ impl Drop for Helper {
             Foundation::CloseHandle,
             System::Threading::{TerminateProcess, WaitForSingleObject},
         };
-        if let Some(handle) = self.0.take() {
+        if let Some(handle) = self.handle.take() {
             // SAFETY: the handle was opened with PROCESS_TERMINATE and is closed once, here.
             unsafe {
                 let _ = TerminateProcess(handle, 1);
@@ -503,6 +535,38 @@ impl Drop for Helper {
     }
 }
 
+#[test]
+fn a_program_a_preparation_command_left_running_is_never_taken_for_the_game() {
+    // The helper is a fullscreen window on the stream's display, created after the launch
+    // began but before the app's own command: it is not a game another program started.
+    use butterpollo_core::steam::Process;
+    let elevated = butterpollo_windows::process::user_environment().is_err();
+    let f = Fixture::new();
+    let pid = f.host.directory.join("helper.pid");
+    let app: App = serde_json::from_value(json!({"name":"Helper","prep-cmd":[
+        {"do":starts_helper(&pid),"undo":"","elevated":elevated}
+    ]}))
+    .unwrap();
+    let mut running =
+        launch_with_environment(&f.host, &app, &HashMap::new(), Ok(BTreeMap::new())).unwrap();
+    let helper = Helper::from(&pid);
+    assert!(!helper.ends_within(Duration::ZERO));
+    running.launches = true;
+    let check = running.observe_foreground(99_999, "PING.EXE").unwrap();
+    let created = helper.created;
+    let verdict = check.run_with(
+        |_| created,
+        || {
+            Ok(vec![Process {
+                pid: 99_999,
+                parent: 99_998,
+                started: created,
+                name: "PING.EXE".into(),
+            }])
+        },
+    );
+    assert_eq!(verdict, ForegroundVerdict::NotForeign);
+}
 #[test]
 fn what_a_finished_preparation_command_started_keeps_running() {
     // Issue 135: a boot-screen helper the preparation command started must still run when the
