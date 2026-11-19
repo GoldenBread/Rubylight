@@ -1,3 +1,5 @@
 # Logs and capture
 - **The host's log comes back after a rotation that could not reopen it.** When the log had been moved aside but the new file could not be opened, writing went on in the moved file and the log itself stayed missing; the next line now opens it again. No line is lost.
-- **Real-time GPU priority for the compute queue also applies to Windows Graphics Capture.** With capture through its helper process, the `compute_queue_realtime` setting did nothing; it now applies there as it does elsewhere. Nothing changes while it is off.
+- **A host log deleted or moved away while the host runs comes back.** Writing used to go on into the deleted file until the host restarted; the log now opens again within about 1 MiB of logging, or at once when it reaches its size limit.
+- **A host log that cannot be opened again stays within its size limit.** While its file cannot be opened, logging goes on in the older files, which roll over as the log does instead of one of them growing without bound.
+- **The `compute_queue_realtime` setting now reaches the Windows Graphics Capture helper.** With capture through its helper process the setting did nothing; the helper is now told and asks for the same real-time GPU priority. Nothing changes while it is off.
