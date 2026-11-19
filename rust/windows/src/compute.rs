@@ -215,6 +215,22 @@ unsafe impl Send for Compute {}
 // SAFETY: `&self` methods call only free-threaded D3D12 methods and change state only through the
 // mutexes and the atomic.
 unsafe impl Sync for Compute {}
+/// Submit a slot's recorded list with `execute` once `ordered` says the queue
+/// waits for its inputs, and keep the slot's `fence` for its list. When the
+/// ordering failed nothing reaches the queue, and the slot keeps the finished
+/// fence of its last conversion: `u64::MAX` there would make its next use
+/// wait two seconds for a value nothing signals and mark the queue stuck. A
+/// failed submission may have reached the queue, so the slot stays in flight.
+fn submit_slot(
+    fence: &mut u64,
+    ordered: Result<()>,
+    execute: impl FnOnce() -> Result<u64>,
+) -> Result<u64> {
+    ordered?;
+    *fence = u64::MAX;
+    *fence = execute()?;
+    Ok(*fence)
+}
 fn completed_value(value: u64) -> Result<u64> {
     // D3D12 signals UINT64_MAX on device removal, including shared fences.
     if value == u64::MAX {
@@ -1366,15 +1382,16 @@ impl Converter {
         self.slots[slot].capture = Some(image.clone());
         self.slots[slot].outputs.clear();
         self.slots[slot].waits = ready.map(|ready| ready.fence.clone()).into_iter().collect();
-        self.slots[slot].fence = u64::MAX;
         // The capture's copy into `source` may still be waiting for DWM.
-        self.compute.ensure_active()?;
-        self.wait_capture(ready)?;
-        let fence = self
+        let ordered = self
             .compute
-            .execute(&self.slots[slot].list)
-            .inspect_err(|_| self.compute.retire())?;
-        self.slots[slot].fence = fence;
+            .ensure_active()
+            .and_then(|()| self.wait_capture(ready));
+        let Slot { fence, list, .. } = &mut self.slots[slot];
+        let compute = &self.compute;
+        let fence = submit_slot(fence, ordered, || {
+            compute.execute(list).inspect_err(|_| compute.retire())
+        })?;
         if let Some(menu) = &menu {
             self.menu_submitted(menu, fence);
         }
@@ -1453,7 +1470,6 @@ impl Converter {
             .into_iter()
             .chain(std::iter::once(target.fence.clone()))
             .collect();
-        self.slots[slot].fence = u64::MAX;
         // The planes carry no map, so the slot's old one must not look like theirs.
         if let Some(focus) = self.focus.as_deref_mut() {
             focus.written[slot] = false;
@@ -1541,15 +1557,21 @@ impl Converter {
             drop_barriers(&mut barriers);
             list.Close()?;
         }
-        self.compute.ensure_active()?;
-        self.wait_capture(ready)?;
-        // SAFETY: `target.fence` is opened on this queue's device and outlives the call.
-        unsafe { self.compute.queue.Wait(&target.fence, target.after) }
-            .inspect_err(|_| self.compute.retire())?;
-        self.slots[slot].fence = self
+        let ordered = self
             .compute
-            .execute(&self.slots[slot].list)
-            .inspect_err(|_| self.compute.retire())?;
+            .ensure_active()
+            .and_then(|()| self.wait_capture(ready))
+            .and_then(|()| {
+                // SAFETY: `target.fence` is opened on this queue's device and outlives the call.
+                unsafe { self.compute.queue.Wait(&target.fence, target.after) }
+                    .inspect_err(|_| self.compute.retire())
+                    .map_err(Into::into)
+            });
+        let Slot { fence, list, .. } = &mut self.slots[slot];
+        let compute = &self.compute;
+        submit_slot(fence, ordered, || {
+            compute.execute(list).inspect_err(|_| compute.retire())
+        })?;
         if let Some(menu) = &menu {
             self.menu_submitted(menu, self.slots[slot].fence);
         }

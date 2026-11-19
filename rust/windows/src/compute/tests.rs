@@ -406,6 +406,28 @@ fn unsupported_amf_state_is_rejected_before_recording_conversion() -> Result<()>
     Ok(())
 }
 
+/// A conversion whose wait for the capture failed (a stale cross-device
+/// ready) never reached the queue: its slot keeps the finished fence of its
+/// last conversion, so its next use does not wait two seconds for a value
+/// nothing signals and mark the queue stuck. A failed submission may have
+/// reached the queue, so that slot stays in flight.
+#[test]
+fn a_slot_whose_conversion_never_reached_the_queue_keeps_its_finished_fence() {
+    let mut fence = 7;
+    let failed = submit_slot(
+        &mut fence,
+        Err(anyhow::anyhow!("the capture's ready fence timed out")),
+        || panic!("submitted after a failed wait"),
+    );
+    assert!(failed.is_err());
+    assert_eq!(fence, 7, "the slot waits for a conversion never submitted");
+    assert!(submit_slot(&mut fence, Ok(()), || anyhow::bail!("signal failed")).is_err());
+    assert_eq!(fence, u64::MAX);
+    let mut fence = 7;
+    assert_eq!(submit_slot(&mut fence, Ok(()), || Ok(9)).unwrap(), 9);
+    assert_eq!(fence, 9);
+}
+
 #[test]
 fn failed_shared_texture_ordering_never_releases_or_reuses_the_slot() {
     use std::{cell::RefCell, sync::atomic::AtomicBool};
