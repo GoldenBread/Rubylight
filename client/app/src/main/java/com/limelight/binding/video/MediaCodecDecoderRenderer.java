@@ -1166,6 +1166,11 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         return true;
     }
 
+    /** The UI could not send the size it prepared for: the decoder keeps its size. Never waits. */
+    public void cancelReconfigure() {
+        pendingResize.set(null);
+    }
+
     // On the input thread before each frame: the size and frame rate the UI asked for, under the
     // monitor that a recovery holds while it touches the codec.
     private void applyStreamChanges() {

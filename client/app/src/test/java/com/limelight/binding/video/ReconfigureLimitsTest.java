@@ -225,6 +225,19 @@ public class ReconfigureLimitsTest {
         org.junit.Assert.assertEquals(1920, (int) ReflectionHelpers.getField(renderer, "expectedWidth"));
     }
 
+    // The PC was never asked (the request could not be sent): the decoder keeps its size and does not restart.
+    @Test
+    public void aCancelledRequestIsNotApplied() {
+        if (renderer.setup(MoonBridge.VIDEO_FORMAT_H265, 1920, 1080, 60) != 0) fail("setup failed");
+        org.junit.Assert.assertTrue(renderer.prepareForReconfigure(2560, 1440));
+        ReflectionHelpers.callInstanceMethod(renderer, "cancelReconfigure");
+        quiesceRenderThreads();
+        org.junit.Assert.assertEquals(MoonBridge.DR_OK, submit(1, MoonBridge.BUFFER_TYPE_PICDATA));
+        org.junit.Assert.assertEquals(1920, (int) ReflectionHelpers.getField(renderer, "maxDecodeWidth"));
+        org.junit.Assert.assertEquals(1920, (int) ReflectionHelpers.getField(renderer, "expectedWidth"));
+        org.junit.Assert.assertFalse(ReflectionHelpers.<Boolean>getField(renderer, "reconfigureRequested"));
+    }
+
     @Test
     public void aRebuildOffersNoSizeChangeUntilItsNewDecoderIsConfigured() {
         if (renderer.setup(MoonBridge.VIDEO_FORMAT_H265, 1920, 1080, 60) != 0) fail("setup failed");

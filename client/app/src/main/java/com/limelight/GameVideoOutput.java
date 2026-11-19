@@ -830,6 +830,8 @@ final class GameVideoOutput {
         }
         if (!MoonBridge.requestReconfigure(request[0], request[1], request[2])) {
             LimeLog.warning("Reconfigure: request not sent");
+            // No IDR at that size comes: the decoder keeps its size and does not restart for it.
+            game.decoderRenderer.cancelReconfigure();
             return false;
         }
         boolean fpsChanged = request[2] != game.reconfigureRequester.fpsMillihz();
