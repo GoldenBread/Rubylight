@@ -238,18 +238,24 @@ mod windows_impl {
     /// `probe` for settings screens: runs once per renderer device on a thread of its own (it loads
     /// the AMF runtime) and is remembered. None while it runs; Some(None) when nothing is offered.
     pub fn settings_probe(device: *mut c_void) -> Option<Option<Capability>> {
-        struct Raw(*mut c_void);
-        // SAFETY: D3D11 devices are free-threaded and the renderer outlives the probe thread's use.
-        unsafe impl Send for Raw {}
+        struct Owned(ID3D11Device);
+        // SAFETY: D3D11 devices are free-threaded, and the probe thread holds its own reference,
+        // so the renderer releasing its device cannot free it under the probe.
+        unsafe impl Send for Owned {}
         if device.is_null() { return Some(None); }
         let mut state = probe_state().lock().unwrap_or_else(|e| e.into_inner());
         if let Some((_, done)) = state.iter().find(|(key, _)| *key == device as usize) { return *done; }
+        // SAFETY: A live device pointer from the renderer, borrowed only for this clone, which
+        // takes a reference of the probe thread's own: a device the renderer drops while the
+        // probe runs stays alive until the probe is done with it.
+        let Some(owned) = (unsafe { ID3D11Device::from_raw_borrowed(&device) }).cloned() else { return Some(None); };
         state.push((device as usize, None));
-        let raw = Raw(device);
+        let key = device as usize;
+        let raw = Owned(owned);
         std::thread::spawn(move || {
             let raw = raw;
-            let result = probe(raw.0).unwrap_or_else(|e| { eprintln!("nightjar: AI enhancement probe: {e}"); None });
-            remember(raw.0 as usize, result);
+            let result = probe(raw.0.as_raw()).unwrap_or_else(|e| { eprintln!("nightjar: AI enhancement probe: {e}"); None });
+            remember(key, result);
         });
         None
     }
