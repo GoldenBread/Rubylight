@@ -1087,6 +1087,8 @@ impl Streaming {
             // A reconnect is a new session on the PC, whose controllers lower the bitrate again: Never,
             // and a bitrate the player chose before it, are sent once more.
             if rate_change::takeover_at_start(settings.keep_bitrate, connecting.plan.bitrate_before_manual.is_some(), hint) { rates.keep_bitrate(); }
+            // The player's bitrate came from this PC's answers: Keep my bitrate keeps it, whatever the query answers.
+            if connecting.plan.bitrate_before_manual.is_some() { rates.chosen_before(bitrate_kbps); }
             // After an automatic reconnect the client-hint controller returns to the rate it had cut to.
             if let Some(kbps) = connecting.plan.resume_bitrate_kbps { rates.resume_hint(kbps); }
             rates
@@ -1319,6 +1321,8 @@ impl Streaming {
             drawn_history: 0,
         };
         streaming.report_keyboard_layout();
+        // Before anything that sets a bitrate: what the PC counts this stream's bitrate as.
+        if let Some(request) = streaming.rate_change.as_mut().map(|rates| rates.query_request(0)) { streaming.send_rate_query(request); }
         streaming.start_clipboard_sync();
         if quality_failed {
             streaming.show_toast(tr("Automatic quality stopped: the stream reported no size or frame rate."));
@@ -1996,6 +2000,15 @@ impl Streaming {
         if let Err(error) = self.session.send(ClientMessage::RateChange(request)) {
             let toast = self.rate_change.as_mut().expect("rate changes offered").send_failed(&request, &error);
             self.show_toast(toast);
+        }
+    }
+
+    /// The query for the stream's bitrate as the PC counts it; one that could not go out goes
+    /// once more a second later (`RateChange::query_again`), quietly.
+    pub(super) fn send_rate_query(&mut self, request: RateChangeRequest) {
+        if let Err(error) = self.session.send(ClientMessage::RateChange(request)) {
+            let now = self.started.elapsed().as_millis() as u64;
+            if let Some(rates) = &mut self.rate_change { rates.query_unsent(&request, &error, now); }
         }
     }
 

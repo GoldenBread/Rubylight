@@ -526,6 +526,9 @@ impl Streaming {
                 }
             }
         }
+        if let Some(request) = self.rate_change.as_mut().and_then(|rates| rates.query_again(self.started.elapsed().as_millis() as u64)) {
+            self.send_rate_query(request);
+        }
         if let Some(toast) = self.rate_change.as_mut().and_then(|rates| rates.expire(self.started.elapsed().as_millis() as u64)) {
             self.show_toast(toast);
         }

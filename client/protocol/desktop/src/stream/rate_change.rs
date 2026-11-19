@@ -56,6 +56,8 @@ enum Origin {
     Hint,
     /// "Never: keep my bitrate": the stream's own bitrate, sent once so the PC stops lowering it.
     Keep,
+    /// The query for the stream's bitrate as the PC counts it ([`RateChange::query_request`]).
+    Query,
 }
 
 /// What a result changed, for the stream to follow.
@@ -86,8 +88,18 @@ pub struct RateChange {
     kept: bool,
     /// The bitrate the player last chose in this stream's menu, which Keep my bitrate keeps.
     chosen_kbps: Option<u32>,
-    /// The stream's bitrate at its start, which Keep my bitrate keeps when none was chosen.
+    /// The stream's bitrate at its start, which Keep my bitrate keeps when none was chosen: the
+    /// PC's answer to the query once it came.
     configured_kbps: u32,
+    /// The query is out and unanswered: the takeover and the client-hint controller wait for it.
+    asking: bool,
+    /// The query could not be sent at the start: when it goes once more.
+    query_again_at: Option<u64>,
+    query_retried: bool,
+    /// The client-hint controller's cap and the cut a reconnect returns it to, for its start from
+    /// the PC's answer.
+    limit_kbps: u32,
+    resume_kbps: Option<u32>,
     bitrate_kbps: u32,
     fps_millihz: u32,
     /// The menu's fields.
@@ -109,6 +121,11 @@ impl RateChange {
             kept: false,
             chosen_kbps: None,
             configured_kbps: bitrate_kbps,
+            asking: false,
+            query_again_at: None,
+            query_retried: false,
+            limit_kbps,
+            resume_kbps: None,
             bitrate_kbps,
             fps_millihz,
             menu_kbps: bitrate_kbps,
@@ -121,11 +138,49 @@ impl RateChange {
         self.keep_pending = true;
     }
 
+    /// A reconnect after the player chose a bitrate in the menu: Keep my bitrate keeps that one,
+    /// which came from this PC's own answers, whatever the query answers.
+    pub fn chosen_before(&mut self, kbps: u32) {
+        self.chosen_kbps = Some(kbps);
+    }
+
+    /// The query (bitrate and rate 0), at the stream's start before anything that sets a
+    /// bitrate: every PC that takes 0x553C answers it without changing anything, with the
+    /// stream's bitrate as it counts it (Rubylight 6.0.1 and older in the encoder's unit, newer
+    /// ones in the launch's). Keep my bitrate and the client-hint controller wait for the answer
+    /// and start from it; without one in [`ANSWER_MS`] they go on as before.
+    pub fn query_request(&mut self, now_ms: u64) -> RateChangeRequest {
+        self.asking = true;
+        eprintln!("nightjar: rate change: asking the PC what it counts this stream's bitrate as");
+        self.request(Origin::Query, 0, 0, now_ms)
+    }
+
+    /// The query could not be sent: once more a second later ([`Self::query_again`]), then the
+    /// stream goes on without it. Quietly, as the stream did before it asked.
+    pub fn query_unsent(&mut self, request: &RateChangeRequest, error: &dyn std::fmt::Display, now_ms: u64) {
+        self.take(request.serial);
+        if !std::mem::replace(&mut self.query_retried, true) {
+            eprintln!("nightjar: rate change: the bitrate query could not be sent yet ({error}); trying again in a second");
+            self.query_again_at = Some(now_ms + TICK_MS);
+        } else {
+            eprintln!("nightjar: rate change: the bitrate query could not be sent ({error}); the stream goes on from {} kbps", self.configured_kbps);
+            self.asking = false;
+        }
+    }
+
+    /// The query once more, a second after it could not be sent.
+    pub fn query_again(&mut self, now_ms: u64) -> Option<RateChangeRequest> {
+        if !self.query_again_at.is_some_and(|at| now_ms >= at) { return None; }
+        self.query_again_at = None;
+        Some(self.request(Origin::Query, 0, 0, now_ms))
+    }
+
     /// The one request that makes the PC's link-rate and congestion controllers stand back for
     /// this stream: the stream's own bitrate as a bitrate change (the PC stops lowering what a
-    /// client has set). `None` once sent, or when "Never" is not chosen.
+    /// client has set). `None` once sent, while the query waits for its answer, or when "Never"
+    /// is not chosen.
     pub fn takeover_request(&mut self, now_ms: u64) -> Option<RateChangeRequest> {
-        if !std::mem::take(&mut self.keep_pending) { return None; }
+        if self.asking || !std::mem::take(&mut self.keep_pending) { return None; }
         self.kept = true;
         let kbps = self.keep_kbps();
         eprintln!("nightjar: keep my bitrate: sending the stream's {kbps} kbps as a bitrate change so the PC stops lowering it");
@@ -151,6 +206,12 @@ impl RateChange {
         let steering = self.hint_active();
         self.hint = None;
         if !steering && (self.kept || self.keep_pending) { return None; }
+        if self.asking {
+            // From the stream's bitrate as the PC counts it: the takeover goes out after its answer.
+            eprintln!("nightjar: keep my bitrate (stream menu): goes out once the PC answered the bitrate query");
+            self.keep_pending = true;
+            return None;
+        }
         self.keep_pending = false;
         self.kept = true;
         let kbps = self.keep_kbps();
@@ -174,6 +235,7 @@ impl RateChange {
     /// After an automatic reconnect: the client-hint controller returns to the rate the stream
     /// before had cut to.
     pub fn resume_hint(&mut self, kbps: u32) {
+        self.resume_kbps = Some(kbps);
         if let Some(hint) = &mut self.hint { hint.resume_from(kbps); }
     }
 
@@ -216,8 +278,9 @@ impl RateChange {
 
     /// Once a second during the stream: the controller's request, if it wants a change.
     pub fn tick(&mut self, stats: &Stats) -> Option<RateChangeRequest> {
-        // A change by hand goes first: the controller's would supersede it.
-        if self.menu_busy() {
+        // A change by hand goes first: the controller's would supersede it. Nor before the PC's
+        // answer to the query: the controller starts from it.
+        if self.menu_busy() || self.asking {
             return None;
         }
         let hint = self.hint.as_mut()?;
@@ -245,6 +308,12 @@ impl RateChange {
                 Origin::Keep => {
                     eprintln!("nightjar: keep my bitrate: the PC did not answer; it may still lower the bitrate");
                     self.kept = false;
+                    continue;
+                }
+                Origin::Query => {
+                    // Quietly, as before the query: the takeover and the controller start from the stream's own.
+                    eprintln!("nightjar: rate change: the PC did not answer the bitrate query; the stream goes on from {} kbps", self.configured_kbps);
+                    self.asking = false;
                     continue;
                 }
             });
@@ -279,6 +348,7 @@ impl RateChange {
             return Answer::default();
         };
         let mut answer = Answer::default();
+        let before_kbps = self.bitrate_kbps;
         // The host answers a request with a rate once its switch ran, with the bitrate it set
         // then, so a bitrate-only request sent after it is answered first: an older result keeps
         // the newer bitrate.
@@ -312,6 +382,25 @@ impl RateChange {
                     if changed { "; it no longer lowers the bitrate" } else { "; it may still lower the bitrate" });
                 // Refused: the PC still lowers the bitrate, so the switch shows off and the notice may say so.
                 if !changed { self.kept = false; }
+            }
+            Origin::Query => {
+                self.asking = false;
+                self.query_again_at = None;
+                if result.bitrate_kbps > 0 {
+                    eprintln!("nightjar: rate change: the PC counts this stream's bitrate as {} kbps; keep my bitrate and the client-hint controller start from it", result.bitrate_kbps);
+                    self.configured_kbps = result.bitrate_kbps;
+                    // Unless a change by hand was answered first: the controller follows that one.
+                    if answer.bitrate_kbps.is_some() {
+                        if let Some(hint) = &mut self.hint {
+                            *hint = client_hint::Bitrate::new(result.bitrate_kbps, self.limit_kbps, now_ms);
+                            if let Some(kbps) = self.resume_kbps { hint.resume_from(kbps); }
+                        }
+                    }
+                } else {
+                    eprintln!("nightjar: rate change: the PC's answer to the bitrate query named no bitrate; the stream goes on from {} kbps", self.configured_kbps);
+                }
+                // It changed nothing: the stream follows only a count that differs from its own.
+                if answer.bitrate_kbps == Some(before_kbps) { answer.bitrate_kbps = None; }
             }
             Origin::Hint => {
                 let Some(hint) = &mut self.hint else { return answer };
@@ -683,6 +772,124 @@ mod tests {
         assert!(takeover_at_start(false, true, false));
         assert!(!takeover_at_start(false, true, true), "Lower it sooner steers it");
         assert!(!takeover_at_start(false, false, false));
+    }
+
+    /// The PC's answer to the query: the stream's bitrate as it counts it, nothing changed. Rubylight
+    /// 6.0.1 counts a stream launched at 20000 as its encoder's 14988, newer PCs as 20000.
+    fn answered(request: &RateChangeRequest, kbps: u32) -> RateChangeResult {
+        result(request, kbps, 60_000, Outcome::UNCHANGED, Outcome::refused(Reason::Invalid))
+    }
+
+    #[test]
+    fn on_an_older_pc_keep_my_bitrate_and_the_menu_start_from_what_it_answered() {
+        let mut rates = RateChange::new(20_000, 60_000, false, 0, 0);
+        rates.keep_bitrate();
+        let query = rates.query_request(0);
+        assert_eq!((query.bitrate_kbps, query.fps_millihz), (0, 0), "asks for nothing");
+        assert_eq!(rates.takeover_on_tick(true, 1000), None, "nothing sets a bitrate before the answer");
+        assert_eq!(keep_switch(Some(&rates), false), Some(true));
+        let answer = rates.result(&answered(&query, 14_988), 1100);
+        assert_eq!((answer.toast, answer.by_hand, answer.fps_millihz), (None, false, None), "says nothing");
+        assert_eq!(answer.bitrate_kbps, Some(14_988), "the stream follows the PC's count");
+        assert_eq!(rates.menu_kbps, 14_988, "the menu's field");
+        let keep = rates.takeover_on_tick(true, 2000).expect("the takeover");
+        assert_eq!((keep.bitrate_kbps, keep.fps_millihz), (14_988, 0), "not 20000, which would raise the encoder");
+        assert_eq!(rates.takeover_on_tick(true, 3000), None, "once");
+        // A PC's answer to the query is never a takeover's: the switch stays on.
+        assert_eq!(keep_switch(Some(&rates), false), Some(true));
+    }
+
+    #[test]
+    fn on_an_older_pc_the_client_hint_controller_starts_from_what_it_answered() {
+        let mut rates = RateChange::new(20_000, 60_000, true, 0, 0);
+        let query = rates.query_request(0);
+        assert!((0..10).all(|s| rates.tick(&stats(s, 10.0)).is_none()), "nothing before the answer");
+        assert!(rates.hint_active(), "it owns the bitrate meanwhile, so the PC's adaptive bitrate stays off");
+        rates.result(&answered(&query, 14_988), 10_000);
+        let cut = (11..20).find_map(|s| rates.tick(&stats(s, 10.0))).expect("a cut");
+        assert!(cut.bitrate_kbps < 14_988, "{}", cut.bitrate_kbps);
+    }
+
+    #[test]
+    fn on_a_newer_pc_the_answer_is_the_streams_own_bitrate_and_everything_is_as_before() {
+        let mut rates = RateChange::new(20_000, 60_000, true, 0, 0);
+        let query = rates.query_request(0);
+        let answer = rates.result(&answered(&query, 20_000), 100);
+        assert_eq!(answer, Answer::default(), "nothing to follow");
+        assert_eq!(rates.tick(&stats(2, 10.0)), None, "the start delay");
+        assert_eq!(rates.tick(&stats(4, 10.0)).map(|r| r.bitrate_kbps), Some(14_000));
+        let mut kept = RateChange::new(20_000, 60_000, false, 0, 0);
+        kept.keep_bitrate();
+        let query = kept.query_request(0);
+        kept.result(&answered(&query, 20_000), 100);
+        assert_eq!(kept.takeover_on_tick(true, 1000).map(|r| r.bitrate_kbps), Some(20_000));
+    }
+
+    #[test]
+    fn with_no_answer_the_stream_goes_on_as_before_once_and_a_late_answer_changes_nothing() {
+        let mut rates = RateChange::new(20_000, 60_000, false, 0, 0);
+        rates.keep_bitrate();
+        let query = rates.query_request(0);
+        assert_eq!(rates.takeover_on_tick(true, 4000), None);
+        assert_eq!(rates.expire(ANSWER_MS - 1), None);
+        assert_eq!(rates.expire(ANSWER_MS), None, "quietly");
+        assert_eq!(rates.takeover_on_tick(true, ANSWER_MS).map(|r| r.bitrate_kbps), Some(20_000), "the stream's own");
+        assert_eq!(rates.result(&answered(&query, 14_988), ANSWER_MS + 100), Answer::default(), "too late");
+        assert_eq!(rates.menu_kbps, 20_000);
+        assert_eq!(rates.takeover_on_tick(true, ANSWER_MS + 1000), None, "once");
+
+        let mut hint = RateChange::new(20_000, 60_000, true, 0, 0);
+        hint.query_request(0);
+        assert!((0..5).all(|s| hint.tick(&stats(s, 10.0)).is_none()));
+        assert_eq!(hint.expire(ANSWER_MS), None);
+        assert_eq!(hint.tick(&stats(5, 10.0)).map(|r| r.bitrate_kbps), Some(14_000), "from the stream's own");
+    }
+
+    #[test]
+    fn a_query_that_cannot_be_sent_yet_goes_once_more_a_second_later() {
+        let mut rates = RateChange::new(20_000, 60_000, false, 0, 0);
+        rates.keep_bitrate();
+        let query = rates.query_request(0);
+        rates.query_unsent(&query, &"not yet", 0);
+        assert_eq!(rates.query_again(500), None);
+        assert_eq!(rates.takeover_on_tick(true, 500), None, "still waits for it");
+        let again = rates.query_again(1000).expect("once more");
+        assert_eq!((again.bitrate_kbps, again.fps_millihz), (0, 0));
+        assert_eq!(rates.query_again(2000), None);
+        rates.result(&answered(&again, 14_988), 1100);
+        assert_eq!(rates.takeover_on_tick(true, 2000).map(|r| r.bitrate_kbps), Some(14_988));
+
+        // Twice unsent: the stream goes on from its own bitrate, as before the query.
+        let mut unsent = RateChange::new(20_000, 60_000, false, 0, 0);
+        unsent.keep_bitrate();
+        let query = unsent.query_request(0);
+        unsent.query_unsent(&query, &"closed", 0);
+        let again = unsent.query_again(1000).unwrap();
+        unsent.query_unsent(&again, &"closed", 1000);
+        assert_eq!(unsent.query_again(5000), None);
+        assert_eq!(unsent.takeover_on_tick(true, 1000).map(|r| r.bitrate_kbps), Some(20_000));
+    }
+
+    #[test]
+    fn a_reconnect_after_the_player_chose_a_bitrate_sends_that_bitrate_whatever_the_pc_answers() {
+        // The player's 30000 came from this PC's own answers, so it is in the PC's unit already.
+        let mut rates = RateChange::new(30_000, 60_000, false, 0, 0);
+        rates.chosen_before(30_000);
+        rates.keep_bitrate();
+        let query = rates.query_request(0);
+        rates.result(&answered(&query, 22_488), 100);
+        assert_eq!(rates.takeover_on_tick(true, 1000).map(|r| r.bitrate_kbps), Some(30_000));
+    }
+
+    #[test]
+    fn keep_my_bitrate_turned_on_before_the_answer_sends_what_the_pc_answered() {
+        let mut rates = RateChange::new(20_000, 60_000, true, 0, 0);
+        let query = rates.query_request(0);
+        assert_eq!(rates.keep_now(500), None, "nothing before the answer");
+        assert!(rates.kept() && !rates.hint_active());
+        rates.result(&answered(&query, 14_988), 600);
+        assert_eq!(rates.takeover_on_tick(true, 1000).map(|r| r.bitrate_kbps), Some(14_988));
+        assert!((0..30).all(|s| rates.tick(&stats(s, 10.0)).is_none()), "this device lowers nothing");
     }
 
     #[test]
