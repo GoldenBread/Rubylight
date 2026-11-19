@@ -320,6 +320,27 @@ public class ControllerPreparationTest {
         }
     }
 
+    @Test public void controllersOffWithTheOnscreenControlsOffAnnouncesNoOnscreenGamepad() {
+        try (ActivityController<Activity> activity = Robolectric.buildActivity(Activity.class).create()) {
+            addInputDevice(activity.get(), 2, true, JOYPAD);
+            for (boolean steam : new boolean[] {false, true}) {
+                PreferenceConfiguration prefs = new PreferenceConfiguration();
+                prefs.multiController = true;
+                prefs.onscreenController = false;
+                prefs.showTouchpadButton = !steam;
+                prefs.oscSteamControls = steam;
+                prefs.sendControllers = false;
+                Connection connection = new Connection(73);
+                ControllerHandler handler = new ControllerHandler(activity.get(), connection, null, prefs);
+                try {
+                    assertEquals("Steam controls " + steam, "", handler.prepareControllersForLaunch());
+                    handler.resendControllerArrivals();
+                    assertEquals("Steam controls " + steam, 0, connection.arrivals);
+                } finally { handler.destroy(); }
+            }
+        }
+    }
+
     @Test public void controllersOffAnnouncesNoPadAttachedMidStreamAndSendsNoBatteryOrPadMouse() {
         try (ActivityController<Activity> activity = Robolectric.buildActivity(Activity.class).create()) {
             for (boolean send : new boolean[] {true, false}) {
@@ -1390,6 +1411,13 @@ public class ControllerPreparationTest {
         int batteries, mouseMoves;
         @Override public void sendControllerBatteryEvent(byte slot, byte state, byte percentage) { batteries++; }
         @Override public void sendMouseMove(short deltaX, short deltaY) { mouseMoves++; }
+        int touches, motions;
+        @Override public int sendControllerTouchEvent(byte slot, byte type, int pointer, float x, float y, float pressure) {
+            touches++; return 0;
+        }
+        @Override public int sendControllerMotionEvent(byte slot, byte type, float x, float y, float z) {
+            motions++; return 0;
+        }
     }
     private static class Pad extends AbstractController {
         int audioBindings, audioPackets, headphonePackets, waveforms;

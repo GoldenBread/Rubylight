@@ -1925,8 +1925,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     private boolean announcesOnscreenPad() {
         if (onscreenOwnPlayerSession) return true;
         if (!showsTouchpadButton() && !steamControlsSession) return false;
-        // With Controllers Off no physical pad reaches the PC, so none holds player 1 there.
-        if (!prefConfig.sendControllers) return true;
+        // With Controllers Off no physical pad reaches the PC, so none holds player 1 there; only
+        // on-screen controls that are on send anything.
+        if (!prefConfig.sendControllers) return prefConfig.onscreenController || layoutGamepadUsed;
         for (InputDeviceContext context : inputDeviceContexts.values()) {
             if (context.assignedControllerNumber && context.controllerNumber == 0) return false;
         }
