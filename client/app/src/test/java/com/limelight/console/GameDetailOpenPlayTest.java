@@ -143,6 +143,29 @@ public class GameDetailOpenPlayTest {
         assertTrue("in time", done.getAsBoolean());
     }
 
+    /**
+     * Until every read the page handed its worker thread is over and what it found is posted. Waiting moves no clock.
+     *
+     * <p>Under Robolectric each frame moves the clock 15 ms on, inside whichever idle draws it, and the page's
+     * animations ask for frames for a while once a read's answer is drawn. A read still running during a {@link #pass}
+     * lands at a point of it set by real time, and its frames push the clock past where the test meant to stop:
+     * a countdown then ended inside a pass meant to stop 1 ms short of it, or its ticks fell later than the test
+     * allowed for. Tests that time something against the countdown let the read land first.
+     */
+    private void readsDone() throws Exception {
+        // One task at a time: once this one runs, the ones before it are over.
+        ReflectionHelpers.<java.util.concurrent.ExecutorService>getField(screen, "worker").submit(() -> { })
+                .get(5, TimeUnit.SECONDS);
+        pass(20);
+    }
+
+    /** The page's first read of the PC, due 250 ms after it opens, landed. */
+    private void loaded() throws Exception {
+        pass(300);
+        readsDone();
+        assertTrue("read", ReflectionHelpers.<Boolean>getField(screen, "modelLive"));
+    }
+
     private static AlertDialog shown() {
         Dialog dialog = ShadowDialog.getLatestDialog();
         assertTrue("a dialog is up", dialog != null && dialog.isShowing());
@@ -156,7 +179,8 @@ public class GameDetailOpenPlayTest {
         assertEquals("Starting on Tower in 3", ((TextView) dialog.findViewById(android.R.id.message)).getText().toString());
         assertTrue("Cancel takes the first press", dialog.getButton(AlertDialog.BUTTON_NEGATIVE).isFocused());
         assertTrue("also straight after a touch", dialog.getButton(AlertDialog.BUTTON_NEGATIVE).isFocusableInTouchMode());
-        pass(1200);
+        loaded();
+        pass(ReflectionHelpers.<Long>getField(screen, "countdownEnd") - android.os.SystemClock.elapsedRealtime() - 1500);
         assertEquals("Starting on Tower in 2", ((TextView) dialog.findViewById(android.R.id.message)).getText().toString());
     }
 
@@ -190,10 +214,8 @@ public class GameDetailOpenPlayTest {
     @Test
     public void anOnlinePcStartsTheGameWithTheGuardArmedUntilTheStreamClearsIt() throws Exception {
         open(true, null, null);
-        // The poll's reply comes from the transport's own thread: read the countdown's end only once it runs,
-        // as aNetworkThatComesBackGivesThePcAPollAndThenTheFullCountdown does.
-        await(() -> ((TextView) shown().findViewById(android.R.id.message)).getText().toString()
-                .startsWith("Starting on Tower in"));
+        assertEquals("Starting on Tower in 3", ((TextView) shown().findViewById(android.R.id.message)).getText().toString());
+        loaded();
         long end = ReflectionHelpers.<Long>getField(screen, "countdownEnd");
         pass(end - android.os.SystemClock.elapsedRealtime() - 1);
         // This page's own starts: the shared list also takes a late start of a page an earlier test left.
@@ -334,7 +356,7 @@ public class GameDetailOpenPlayTest {
     @Test
     public void aPollsRedrawOfWhatThePageHasIsNotEnoughToAct() throws Exception {
         open(true, null, null);
-        await(() -> ReflectionHelpers.<Boolean>getField(screen, "modelLive"));
+        loaded();
         // What a poll's reload does: the saved page again, without a read of the PC.
         ReflectionHelpers.setField(screen, "modelLive", false);
         int reads = rig.transport.calls.size();
@@ -499,16 +521,16 @@ public class GameDetailOpenPlayTest {
         android.net.NetworkInfo network = connectivity.getActiveNetworkInfo();
         shadowOf(connectivity).setActiveNetworkInfo(null);
         open(true, null, null);
+        loaded();
         pass(30_000);
         shadowOf(connectivity).setActiveNetworkInfo(network);
-        pass(5_000);
+        // The network is seen within a check and read again 250 ms later: that read lands before the clock goes on.
+        pass(1_000);
+        readsDone();
+        pass(4_000);
         assertEquals(context.getString(R.string.open_play_waiting_network),
                 ((TextView) shown().findViewById(android.R.id.message)).getText().toString());
         pass(1_500);
-        // The poll's reply comes from the transport's own thread, which a loaded CI runner can
-        // hold past the 1.5 s: wait for the countdown, then it must start in full.
-        await(() -> ((TextView) shown().findViewById(android.R.id.message)).getText().toString()
-                .startsWith("Starting on Tower in"));
         assertEquals("Starting on Tower in 3", ((TextView) shown().findViewById(android.R.id.message)).getText().toString());
         assertFalse(OpenPlay.armed(context));
         pass(3100);
@@ -522,10 +544,7 @@ public class GameDetailOpenPlayTest {
         android.net.NetworkInfo network = connectivity.getActiveNetworkInfo();
         shadowOf(connectivity).setActiveNetworkInfo(null);
         open(true, null, null);
-        await(() -> {
-            pass(100);
-            return ReflectionHelpers.<Boolean>getField(screen, "modelLive");
-        });
+        loaded();
         rig.transport.reply("tower", "session", ok(NativeApiFixtures.session("streaming", "other_device", ZELDA_APP, "[]")));
         shadowOf(connectivity).setActiveNetworkInfo(network);
         Dialog waiting = shown();
@@ -633,7 +652,7 @@ public class GameDetailOpenPlayTest {
     @Test
     public void aGameAnotherDeviceStartedDuringTheCountdownStopsTheStart() throws Exception {
         open(true, null, null);
-        await(() -> ReflectionHelpers.<Boolean>getField(screen, "modelLive"));
+        loaded();
         Dialog countdown = shown();
         // The page read the PC as free; the other device starts after that read, and no poll comes before the end.
         rig.transport.reply("tower", "session", ok(NativeApiFixtures.session("streaming", "other_device", ZELDA_APP, "[]")));
@@ -663,6 +682,8 @@ public class GameDetailOpenPlayTest {
     public void aSessionThatNeverReadsFailsAtTheLimitWithTheGuardArmed() throws Exception {
         sessionThere = SESSION_FAILS;
         open(true, null, null);
+        // The limit names what the reads said: without one landed, it would say the list never came.
+        loaded();
         Dialog countdown = shown();
         pass(3100);
         await(() -> {
@@ -726,10 +747,7 @@ public class GameDetailOpenPlayTest {
     /** To just before the countdown's end on a page read while the PC was away, then the PC comes back. */
     private Dialog pcBackAsTheCountdownEnds() throws Exception {
         open(false, null, null);
-        await(() -> {
-            pass(100);
-            return ReflectionHelpers.<Boolean>getField(screen, "modelLive");
-        });
+        loaded();
         Dialog countdown = shown();
         pass(ReflectionHelpers.<Long>getField(screen, "countdownEnd") - android.os.SystemClock.elapsedRealtime() - 100);
         feed.update(nativeHost("tower", "Tower", true));
