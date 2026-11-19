@@ -80,6 +80,10 @@ These choices are assumptions, not NVIDIA measurements:
 - The D3D12 session, its fences and its READBACK output have not run on NVIDIA hardware. Failures demote to the D3D11 graphics queue, now stickily for NVENC.
 - Spatial AQ and quarter-res two-pass are kept in every preset because NVIDIA recommends them for CBR and low-latency streaming; their NVIDIA encode-time cost is not measured here.
 
+## Checking NVIDIA code
+
+No NVIDIA GPU runs our tests, so NVIDIA code is checked against the vendor's headers and samples and never reported as run on hardware. Check every foreign declaration's parameters and the order of calls, as author and again in review, and give the reviewer the headers' path: NVENC's are vendored (`rust/THIRD_PARTY.md`); the RTX Video SDK is `rtx-video-sdk-1.1.0` in the dependencies folder after `rust\build.ps1 -Nvidia`. NVAPI has no headers here; a report says which calls rest on other hosts' code alone.
+
 ## Not run on NVIDIA hardware
 
 The rows above pass the fake-driver tests. These behaviours follow NVIDIA's headers and other hosts' code and have not yet run on an NVIDIA GPU:

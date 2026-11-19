@@ -93,6 +93,8 @@ Each list names every home of one kind of change. `python tools/code_map.py with
 7. `docs/configuration.md`: the topic section and the key table. No test checks this one.
 8. A note in `rust/release/notes.d/`.
 
+A setting's visible text says, in this order, what the user gets, what it costs (delay, picture quality, network, load, or what stops working) and when to change it ("Leave it on unless ..."); a value that can break streaming says so first. Facts from the code, the docs or our measurements only. Well-known terms (VRR, HDR, bitrate, HEVC) stay as they are, a lesser-known one gets a few words of explanation, and source-level internals belong in the console's details.
+
 Saving goes through [`save_setting`](../rust/host/src/web/config.rs), which validates with `check_saved` before the atomic write.
 
 ### A control message
