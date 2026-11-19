@@ -234,9 +234,12 @@ public class GameDetailOpenPlayTest {
         open(true, null, null);
         loaded();
         long end = ReflectionHelpers.<Long>getField(screen, "countdownEnd");
-        // The main thread busy for 150 ms, as a slow frame or a pause of the collector: every tick after it runs later.
+        // The main thread busy for a while, as a slow frame or a pause of the collector: every tick after it runs later.
+        // The span is chosen so that ticks re-posted 100 ms after a late one would pass the end by 50 ms, whatever the
+        // phase of the ticks is by now.
+        final long busy = 100 + Math.floorMod(end - android.os.SystemClock.elapsedRealtime() - 50, 100);
         new android.os.Handler(Looper.getMainLooper()).post(() ->
-                org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(150)));
+                org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(busy)));
         pass(end - android.os.SystemClock.elapsedRealtime() - 1);
         assertFalse("not before the end", OpenPlay.armed(context));
         pass(1);
