@@ -309,7 +309,14 @@ impl SplitContext {
     /// supported if ... subframe mode"), and split wins where it would
     /// engage without subframe readback at `preset` or at a faster one the
     /// frame budget guard (`guard`) may choose.
+    ///
+    /// Before API 12.2 the session never writes `splitEncodeMode`, so what
+    /// the driver does by default is unknown: there any split setting but
+    /// disabled on several engines keeps slices off, as it always did.
     pub fn excludes_subframe(&self, preset: usize, guard: bool) -> bool {
+        if !self.api.modern_depth() {
+            return self.codec == 1 && self.mode != SPLIT_DISABLED && self.engines > 1;
+        }
         // The guard picks from P1 to `preset`, and a split that engages at a
         // preset engages at every faster one.
         let fastest = if guard { 1 } else { preset.clamp(1, 7) };

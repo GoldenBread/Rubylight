@@ -3191,6 +3191,20 @@ fn without_subframe_readback_slice_delivery_stays_off_and_events_stay() -> Resul
     )?;
     assert!(encoder.subframe);
     drop(encoder);
+    // API 12.1 has no `splitEncodeMode` written by the session, so the
+    // driver's default applies: slices stay off for `auto` as before, and
+    // only disabled split encoding sends them.
+    for (setting, subframe) in [("", false), ("nvenc_split_encode = disabled\n", true)] {
+        reset();
+        state(|d| d.engines = 2);
+        let encoder = session_with(
+            &hevc,
+            ApiVersion(12, 1),
+            &format!("video_slice_delivery = 2\n{setting}"),
+        )?;
+        assert_eq!(encoder.subframe, subframe, "API 12.1 {setting:?}");
+        drop(encoder);
+    }
     reset();
     state(|d| d.engines = 2);
     let encoder = session_with(

@@ -263,16 +263,12 @@ fn slice_delivery_gives_way_only_to_a_split_that_engages() {
     // Below the implicit height `auto` never splits.
     assert!(!context(1, 0, 1440).excludes_subframe(1, true));
     assert!(!context(1, SPLIT_DISABLED, 2160).excludes_subframe(1, true));
-    // H.264 never splits; HEVC weighted prediction, API 12.1, one engine
-    // and client slices keep the driver from splitting.
+    // H.264 never splits; HEVC weighted prediction, one engine and client
+    // slices keep the driver from splitting.
     assert!(!context(0, 1, 2160).excludes_subframe(1, true));
     let never = [
         SplitContext {
             weighted: true,
-            ..context(1, 1, 2160)
-        },
-        SplitContext {
-            api: ApiVersion(12, 1),
             ..context(1, 1, 2160)
         },
         SplitContext {
@@ -286,6 +282,25 @@ fn slice_delivery_gives_way_only_to_a_split_that_engages() {
     ];
     for split in never {
         assert!(!split.excludes_subframe(1, true), "{split:?}");
+    }
+    // Before API 12.2 the session never writes `splitEncodeMode`, so the
+    // driver's own default applies: slices stay off for every split setting
+    // but disabled on several engines, as they always were there.
+    for api in [ApiVersion(12, 1), ApiVersion(12, 0), ApiVersion(11, 1)] {
+        let old = |mode: u32| SplitContext {
+            api,
+            ..context(1, mode, 1080)
+        };
+        assert!(old(0).excludes_subframe(7, false), "{api:?}");
+        assert!(old(1).excludes_subframe(7, false), "{api:?}");
+        assert!(!old(SPLIT_DISABLED).excludes_subframe(1, true), "{api:?}");
+        assert!(
+            !SplitContext {
+                engines: 1,
+                ..old(0)
+            }
+            .excludes_subframe(1, true)
+        );
     }
 }
 #[test]
