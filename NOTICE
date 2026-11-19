@@ -215,6 +215,20 @@ TrackpadContext.java): tap to click, two-finger scroll, tap-and-drag and flick
 momentum are ported from Artemis (https://github.com/ClassicOldSong/moonlight-android)
 by ClassicOldSong, GPL-3.0, by Umberto Marotta (nightjar#91).
 
+Artemis and the derflacco fork (decoder setup and MediaTek keys)
+
+Nightjar's decoder low-latency setup (client/app/src/main/java/com/limelight/binding/
+video/MediaCodecHelper.java) and its vendor key tables (VendorLowLatencyKeys.java) follow
+Artemis (https://github.com/ClassicOldSong/moonlight-android) by ClassicOldSong and
+contributors, GPL-3.0, and derflacco's fork of it (https://github.com/derflacco/
+moonlight-android, branch moonlight-noir, released as "Artemide"), GPL-3.0: the MediaTek
+low-latency preset set by decoder name (the MediaTek flags first entered Artemis in
+alonsojr1980's commits b84a9ec1 and f836c8d6), the operating rate without the real-time
+priority, reference frame invalidation on MediaTek and the Tegra keys.
+The MediaTek key list and its boost and clock level 1 are the fork's at its commit
+32e38f0e (after its commits ab772215, 359f83c3 and 8dc03f3f); the shorter queues on the
+first configure try are Moonlight V+'s (see below).
+
 jvanderv42's Nightjar fork (gyroscope mapping)
 
 Nightjar's per-controller gyroscope mapping, the Flydigi Apex 4 and Vader 4 Pro preset
