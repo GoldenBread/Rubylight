@@ -272,6 +272,98 @@ public class ControllerPreparationTest {
         }
     }
 
+    private static String launchWithPhysicalPads(Activity activity, PreferenceConfiguration prefs) {
+        Connection connection = new Connection(73);
+        ControllerHandler handler = new ControllerHandler(activity, connection, null, prefs);
+        try {
+            handler.deviceAdded(new Pad(42, (short) 0));
+            return handler.prepareControllersForLaunch();
+        } finally { handler.destroy(); }
+    }
+
+    @Test public void controllersOffLaunchAnnouncesNoPhysicalPad() {
+        try (ActivityController<Activity> activity = Robolectric.buildActivity(Activity.class).create()) {
+            addInputDevice(activity.get(), 2, true, JOYPAD);
+            addInputDevice(activity.get(), 8, false, JOYPAD);
+            PreferenceConfiguration prefs = new PreferenceConfiguration();
+            prefs.multiController = true;
+            // On: the external, built-in and USB pads are announced, as before.
+            String on = launchWithPhysicalPads(activity.get(), prefs);
+            assertEquals(on, 2, on.split(",").length);
+            assertTrue(on, on.startsWith("0:") && on.contains(",1:"));
+            // Off: none of them.
+            prefs.sendControllers = false;
+            assertEquals("", launchWithPhysicalPads(activity.get(), prefs));
+        }
+    }
+
+    @Test public void controllersOffLaunchStillAnnouncesTheOnscreenGamepad() {
+        try (ActivityController<Activity> activity = Robolectric.buildActivity(Activity.class).create()) {
+            addInputDevice(activity.get(), 2, true, JOYPAD);
+            PreferenceConfiguration prefs = new PreferenceConfiguration();
+            prefs.multiController = true;
+            prefs.onscreenController = true;
+            prefs.showTouchpadButton = true;
+            String onscreen = "0:" + MoonBridge.LI_CTYPE_PS + ":0:" + ControllerHandler.ONSCREEN_PAD_BUTTONS;
+            // On: the pad in player 1's slot keeps its type and the on-screen gamepad stays quiet.
+            String on = launchWithPhysicalPads(activity.get(), prefs);
+            assertTrue(on, on.startsWith("0:" + MoonBridge.LI_CTYPE_XBOX + ":"));
+            // Off: only the on-screen gamepad, which the physical pads no longer push aside.
+            prefs.sendControllers = false;
+            assertEquals(onscreen, launchWithPhysicalPads(activity.get(), prefs));
+            // Off, with the on-screen gamepad as its own player: still only it.
+            PreferenceConfiguration own = onscreenOwnPlayerPrefs(activity.get());
+            own.sendControllers = false;
+            String ownList = launchWithPhysicalPads(activity.get(), own);
+            assertEquals(ownList, 1, ownList.split(",").length);
+            assertTrue(ownList, ownList.startsWith("0:"));
+        }
+    }
+
+    @Test public void controllersOffAnnouncesNoPadAttachedMidStreamAndSendsNoBatteryOrPadMouse() {
+        try (ActivityController<Activity> activity = Robolectric.buildActivity(Activity.class).create()) {
+            for (boolean send : new boolean[] {true, false}) {
+                int first = send ? 2 : 12, midStream = first + 1;
+                addInputDevice(activity.get(), first, true, JOYPAD);
+                PreferenceConfiguration prefs = new PreferenceConfiguration();
+                prefs.multiController = true;
+                prefs.sendControllers = send;
+                Connection connection = new Connection(73);
+                ControllerHandler handler = new ControllerHandler(activity.get(), connection, null, prefs);
+                try {
+                    handler.prepareControllersForLaunch();
+                    handler.resendControllerArrivals();
+                    int atStart = connection.arrivals;
+                    assertEquals("arrivals at start with Controllers " + send, send, atStart > 0);
+                    // Attached mid-stream: an Android pad and a USB pad.
+                    addInputDevice(activity.get(), midStream, true, JOYPAD);
+                    handler.onInputDeviceAdded(midStream);
+                    handler.deviceAdded(new Pad(42, (short) 0));
+                    assertEquals("mid-stream arrivals with Controllers " + send, send, connection.arrivals > atStart);
+
+                    handler.reportControllerBattery(42, MoonBridge.LI_BATTERY_STATE_DISCHARGING, (byte) 50);
+                    ControllerHandler.InputDeviceContext pad = contexts(handler).get(midStream);
+                    Object reading = ReflectionHelpers.callConstructor(
+                            Class.forName(ControllerHandler.class.getName() + "$BatteryReading"),
+                            ReflectionHelpers.ClassParameter.from(int.class, android.hardware.BatteryState.STATUS_DISCHARGING),
+                            ReflectionHelpers.ClassParameter.from(float.class, 0.5f));
+                    ReflectionHelpers.callInstanceMethod(handler, "sendControllerBatteryPacket",
+                            ReflectionHelpers.ClassParameter.from(ControllerHandler.InputDeviceContext.class, pad),
+                            ReflectionHelpers.ClassParameter.from(reading.getClass(), reading));
+                    assertEquals("battery events with Controllers " + send, send ? 2 : 0, connection.batteries);
+
+                    pad.mouseEmulationActive = true;
+                    pad.leftStickX = 32000;
+                    pad.mouseEmulationRunnable.run();
+                    pad.mouseEmulationActive = false;
+                    assertEquals("pad mouse moves with Controllers " + send, send ? 1 : 0, connection.mouseMoves);
+                } catch (ClassNotFoundException e) {
+                    throw new AssertionError(e);
+                } finally { handler.destroy(); }
+            }
+        }
+    }
+
     @Test public void onscreenOwnPlayerAnnouncesTheTouchpadPadItsButtonNeeds() {
         try (ActivityController<Activity> activity = Robolectric.buildActivity(Activity.class).create()) {
             addInputDevice(activity.get(), 2, true, JOYPAD);
@@ -1295,6 +1387,9 @@ public class ControllerPreparationTest {
                                                  byte rightTrigger, short leftX, short leftY, short rightX, short rightY) {
             inputs++; activeMask = mask; events.add("input " + slot + " " + buttons);
         }
+        int batteries, mouseMoves;
+        @Override public void sendControllerBatteryEvent(byte slot, byte state, byte percentage) { batteries++; }
+        @Override public void sendMouseMove(short deltaX, short deltaY) { mouseMoves++; }
     }
     private static class Pad extends AbstractController {
         int audioBindings, audioPackets, headphonePackets, waveforms;

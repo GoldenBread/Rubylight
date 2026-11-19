@@ -1925,6 +1925,8 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     private boolean announcesOnscreenPad() {
         if (onscreenOwnPlayerSession) return true;
         if (!showsTouchpadButton() && !steamControlsSession) return false;
+        // With Controllers Off no physical pad reaches the PC, so none holds player 1 there.
+        if (!prefConfig.sendControllers) return true;
         for (InputDeviceContext context : inputDeviceContexts.values()) {
             if (context.assignedControllerNumber && context.controllerNumber == 0) return false;
         }
@@ -2201,6 +2203,8 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
     @SuppressLint("InlinedApi")
     private void sendControllerBatteryPacket(InputDeviceContext context, BatteryReading battery) {
+        // Controllers Off: the PC has no pad for it.
+        if (!prefConfig.sendControllers) return;
         int currentBatteryStatus = battery.status;
         float currentBatteryCapacity = battery.capacity;
 
@@ -3383,7 +3387,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             if (stopped || !conn.canSendControllerInput()) return "";
             prepareInputDevices();
             String[] controllers = new String[MAX_GAMEPADS];
-            for (InputDeviceContext context : inputDeviceContexts.values()) {
+            // Controllers Off: no physical pad is announced, so the PC makes no pad that never sends.
+            boolean physical = prefConfig.sendControllers;
+            for (InputDeviceContext context : physical ? inputDeviceContexts.values() : Collections.<InputDeviceContext>emptyList()) {
                 // Built-in controls share player 1 with an external pad; the external pad's type wins.
                 if (context.assignedControllerNumber &&
                         (context.external || controllers[context.controllerNumber] == null)) {
@@ -3393,7 +3399,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             }
             for (UsbDeviceContext context : usbDeviceContexts.values()) {
                 assignControllerNumberIfNeeded(context);
-                if (!context.assignedControllerNumber) continue;
+                if (!physical || !context.assignedControllerNumber) continue;
                 short caps = context.capabilities();
                 if (!prefConfig.gamepadMotionSensors) caps &= ~(MoonBridge.LI_CCAP_ACCEL | MoonBridge.LI_CCAP_GYRO);
                 controllers[context.controllerNumber] = launchController(context.controllerNumber,
@@ -4874,7 +4880,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     @Override
     public void reportControllerBattery(int controllerId, byte state, byte percentage) {
         UsbDeviceContext context = usbDeviceContexts.get(controllerId);
-        if (!stopped && context != null && context.assignedControllerNumber) {
+        if (!stopped && prefConfig.sendControllers && context != null && context.assignedControllerNumber) {
             conn.sendControllerBatteryEvent((byte)context.controllerNumber, state, percentage);
         }
     }
@@ -4980,6 +4986,10 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             @Override
             public void run() {
                 if (!mouseEmulationActive) {
+                    return;
+                }
+                // Controllers Off: a physical pad sends nothing, its mouse included (the on-screen gamepad still does).
+                if (!prefConfig.sendControllers && GenericControllerContext.this != defaultContext) {
                     return;
                 }
 
