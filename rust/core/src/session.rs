@@ -190,6 +190,9 @@ pub struct Session<P = (), A = ()> {
     /// a latch that slows it may be the whole fix (see `LinkRate::on_latch`).
     pace_was_fast: AtomicBool,
     pub adaptive_video_pacing_bps: AtomicU64,
+    /// The link-rate controller's learned ceiling in wire bits per second,
+    /// cached for the sender thread; see [`crate::link_rate::LinkRate::learned_bps`].
+    link_rate_ceiling_bps: AtomicU64,
     pub automatic_pacing: std::sync::Mutex<crate::adaptive_pacing::AdaptivePacing>,
     /// Whether `automatic_pacing` is enabled, set with it at stream start.
     automatic_pacing_on: AtomicBool,
@@ -350,6 +353,7 @@ impl<P, A> Session<P, A> {
             congestion_pacing_bps: AtomicU64::new(0),
             pace_was_fast: AtomicBool::new(false),
             adaptive_video_pacing_bps: AtomicU64::new(0),
+            link_rate_ceiling_bps: AtomicU64::new(0),
             automatic_pacing: Default::default(),
             automatic_pacing_on: AtomicBool::new(false),
             keyframe_loss: Default::default(),
@@ -1010,6 +1014,27 @@ impl<P, A> Session<P, A> {
     pub fn configure_link_rate(&self, enabled: bool, maximum_kbps: u32) {
         self.rebuild_link_rate(&self.config, enabled, maximum_kbps);
     }
+    /// The link-rate controller's learned ceiling in wire bits per second, 0
+    /// while the path has shown no edge; cached so the sender thread reads it
+    /// without the controller's lock.
+    pub fn link_rate_ceiling_bps(&self) -> u64 {
+        self.link_rate_ceiling_bps.load(Ordering::Acquire)
+    }
+    /// Seed a resumed stream's link-rate controller with the ceiling its path
+    /// learned before, so the pacer starts there instead of at the opening
+    /// pace. A later cut or retry still moves it exactly as it does today.
+    pub fn seed_link_rate_ceiling(&self, learned_bps: u64) {
+        if learned_bps == 0 || !self.link_sent.live() {
+            return;
+        }
+        self.link_rate
+            .lock()
+            .unwrap()
+            .rate
+            .seed_learned(learned_bps, Instant::now());
+        self.link_rate_ceiling_bps
+            .store(learned_bps, Ordering::Release);
+    }
     /// A controller for a stream whose mode changed (0x5532). A bitrate it had
     /// lowered goes back to the requested one; what it learned about the link
     /// is forgotten, and a client that took the bitrate over keeps it.
@@ -1034,6 +1059,7 @@ impl<P, A> Session<P, A> {
         self.link_sent
             .set_live(rate.state() != crate::link_rate::State::Off);
         *link = crate::link_control::LinkControl::new(rate, self.link_sent.head());
+        self.link_rate_ceiling_bps.store(0, Ordering::Release);
         drop(link);
         self.launch.warnings.clear(LINK_WARNING);
         self.link_notices
@@ -1163,6 +1189,8 @@ impl<P, A> Session<P, A> {
         let target = link
             .rate
             .tick(now, rtt, self.fec_percent(), period, current, busy);
+        self.link_rate_ceiling_bps
+            .store(link.rate.learned_bps(), Ordering::Release);
         let mut congestion = self.congestion.lock().unwrap();
         let applied = if congestion.active() {
             // Congestion control writes the bitrate: the lower of both limits.

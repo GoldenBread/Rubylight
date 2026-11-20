@@ -165,6 +165,19 @@ impl Drop for Guard {
         if self.session.roams() > 0 {
             return;
         }
+        // The learned link ceiling is kept on its own, so a resume over the
+        // same path seeds its pacer even when the loss was not "sustained".
+        let learned_bps = self.session.link_rate.lock().unwrap().rate.learned_bps();
+        if learned_bps > 0 {
+            self.host.link_ceilings.lock().unwrap().insert(
+                (
+                    token.client.uuid.clone(),
+                    token.scope.address,
+                    token.scope.interface,
+                ),
+                learned_bps,
+            );
+        }
         // A start-up latch that lifted is not remembered, but it is not a
         // clean probe either.
         let observed = self.session.keyframe_loss_sustained_at();
@@ -266,6 +279,15 @@ impl Host {
         }
         if probe_revision.is_some() {
             tracing::info!(client = %client.name, %address, interface, "testing the fast video pacing rate after a remembered session");
+        }
+        // A resume over the same path seeds the pacer with the ceiling the path
+        // already paid for with loss; a different route or client finds none.
+        if let Some(learned_bps) = self.link_ceilings.lock().unwrap().get(&(
+            client.uuid.clone(),
+            scope.address,
+            scope.interface,
+        )) {
+            session.seed_link_rate_ceiling(*learned_bps);
         }
         session.configure_remembered_keyframe_loss(true, remembered);
         guard.token = Some(Token {

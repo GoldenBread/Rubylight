@@ -1,0 +1,2 @@
+# Pacing at the start of a stream
+- **Fewer dropped frames right after connecting or reconnecting.** A stream now starts sending at about twice the bitrate instead of bursting at the network link's full speed, and a reconnect over the same path remembers the rate that path already proved it could carry, so the first seconds no longer overshoot and drop frames while the link's real speed is learned again.
