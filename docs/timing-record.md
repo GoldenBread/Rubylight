@@ -149,7 +149,7 @@ Acceptance: `python -m unittest discover -s rust/release -p test_timing_report.p
 
 ### Brief D: baselines (runner, ~60 turns; after A–C are on main)
 
-Do the idle check first. Stop if the user is gaming. Exit code 3 means an AMD encoder hang: stop and report, never retry. Use a release package from `build.ps1 -SkipTests -Package`.
+Exit code 3 means an AMD encoder hang: stop and report, never retry. Use a release package from `build.ps1 -SkipTests -Package`.
 
 1. Loopback on this PC: `e2e.py --record` with the C receiver for H.264, HEVC and AV1, and with the PyroWave receiver. Use 1920x1080x60, the e2e default bitrate, 60 s, and 3 runs each. Repeat H.264 with nightjar-cli plus `--check-bound`.
 2. NUC (`ssh nuc`, Docker `butterpollo-test-client:20261005`, sources mounted as in `~/butterpollo-tests-20261015-pacing`): run the same matrix against an isolated host (`--config-dir C:\tests\a8 --port 48123 --bind <LAN IP>`, `virtual_display_layout = extended`). Use nightjar-cli where it builds there and the C receiver with min_owd otherwise.

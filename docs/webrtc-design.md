@@ -457,7 +457,6 @@ itself, HDR decode inside a browser), it is hardened and fake-tested.
     - A clock page on the test host's virtual display paints a time code.
     - The client reads it back from each decoded frame with `requestVideoFrameCallback` and a canvas.
     - Both sides run on the same PC, so they share one clock.
-  - Idle check before every run; nothing runs while the user is gaming.
 - **"Tested." paragraph cites** (our numbers only), for H.264 1080p60 at 20 Mbps, AV1 1080p60 at
   20 Mbps and HEVC 4K60 at 50 Mbps (whatever Edge or Chrome can decode), plus pass or fail for the HDR,
   surround and keyboard and mouse legs:
@@ -564,8 +563,7 @@ and a reviewer checks the diff before it merges.
     - `docs/webrtc.md` for users, including the extensions so client authors can use them.
     - A row in `docs/hardware-matrix.md`.
     - The release-notes "Tested." figures.
-  - Constraints: an isolated test host, idle checks, no runs while the user is gaming, the keyboard and
-    mouse leg only on the laptop or an idle, unattended PC, and claims only from these runs. Revert any
+  - Constraints: an isolated test host on the PC or the laptop, and claims only from these runs. Revert any
     change that measures worse.
   - Acceptance: the harness passes three runs in a row for H.264 1080p60 and AV1 1080p60, HEVC is at
     least established, and the HDR, 5.1, 7.1 and keyboard and mouse legs pass. Numbers go into

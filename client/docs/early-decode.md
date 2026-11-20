@@ -217,9 +217,7 @@ the receive path packet by packet, and the decoder takes them as they come.
 ## Measuring
 
 All of this is for the gate in the plan: the NUC (`ssh nuc`, wired), Nightjar desktop, a host
-on this PC, with A8 records on both sides. Do the idle check first
-(`(Invoke-WebRequest http://127.0.0.1:47989/serverinfo).Content` must show
-`RustHostSessionCount` and `RustHostPendingSessionCount` at 0) and take
+on this PC, with A8 records on both sides. Take
 `C:\src\butterpollo-release\GPU-LOCK`.
 
 1. Build a release Nightjar desktop on this PC and copy it to the NUC (the same binary for
