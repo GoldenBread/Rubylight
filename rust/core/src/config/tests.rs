@@ -665,6 +665,11 @@ fn keyframe_loss_pacing_is_on_unless_a_manual_limit_or_adaptation_owns_pacing() 
 fn link_rate_adaptation_is_on_unless_disabled() {
     for (text, enabled) in [
         ("", true),
+        ("bitrate_adaptation=on", true),
+        ("bitrate_adaptation=delay", true),
+        ("bitrate_adaptation=off", false),
+        ("bitrate_adaptation=\"off\"", false),
+        ("bitrate_adaptation=invalid", true),
         ("link_rate_adaptation=true", true),
         ("link_rate_adaptation=invalid", true),
         ("link_rate_adaptation=false", false),
@@ -680,7 +685,8 @@ fn link_rate_adaptation_is_on_unless_disabled() {
         let config = super::Config::parse(text).unwrap();
         assert_eq!(config.link_rate_adaptation(), enabled, "{text}");
     }
-    assert!(super::override_allowed("link_rate_adaptation"));
+    assert!(super::override_allowed("bitrate_adaptation"));
+    assert!(!super::override_allowed("link_rate_adaptation"));
 }
 
 /// Video FEC stays at `fec_percentage` unless the user asks for the decay: no run measured
@@ -709,11 +715,88 @@ fn congestion_control_is_off_unless_set() {
         ("congestion_control=false", false),
         ("congestion_control=true\nhost_adaptive_bitrate=true", true),
         ("congestion_control=true\nlink_rate_adaptation=false", true),
+        ("bitrate_adaptation=delay", true),
+        ("bitrate_adaptation=on", false),
+        ("bitrate_adaptation=off", false),
+        // A value saved under the current name wins over the switches.
+        ("bitrate_adaptation=on\ncongestion_control=true", false),
     ] {
         let config = super::Config::parse(text).unwrap();
         assert_eq!(config.congestion_control(), enabled, "{text}");
     }
-    assert!(super::override_allowed("congestion_control"));
+    assert!(!super::override_allowed("congestion_control"));
+}
+
+/// The two bitrate switches fold into Adaptive bitrate once, from what the
+/// configuration file, a console save or an app's or device's overrides
+/// held: congestion control on is `delay`, link-rate adaptation off alone is
+/// `off`, the rest `on`; the switches are then gone.
+#[test]
+fn the_bitrate_switches_fold_into_adaptive_bitrate() {
+    use super::{BitrateAdaptation as A, Config, folded_bitrate_adaptation as fold};
+    assert_eq!(fold(None, None), None);
+    for (link, congestion, folded) in [
+        (Some("true"), None, "on"),
+        (Some("false"), None, "off"),
+        (Some("invalid"), None, "on"),
+        (None, Some("false"), "on"),
+        (None, Some("true"), "delay"),
+        (Some("true"), Some("false"), "on"),
+        (Some("true"), Some("true"), "delay"),
+        (Some("false"), Some("false"), "off"),
+        (Some("false"), Some("true"), "delay"),
+        (Some("\"false\""), Some("\"no\""), "off"),
+    ] {
+        assert_eq!(fold(link, congestion), Some(folded), "{link:?} {congestion:?}");
+    }
+    // The configuration file.
+    for (text, expected) in [
+        ("", A::On),
+        ("link_rate_adaptation=false", A::Off),
+        ("link_rate_adaptation=false\ncongestion_control=false", A::Off),
+        ("congestion_control=true", A::Delay),
+        ("link_rate_adaptation=false\ncongestion_control=true", A::Delay),
+        ("link_rate_adaptation=true\ncongestion_control=false", A::On),
+        ("bitrate_adaptation=off\nlink_rate_adaptation=true", A::Off),
+    ] {
+        let config = Config::parse(text).unwrap();
+        assert_eq!(config.bitrate_adaptation(), expected, "{text}");
+        assert!(!config.text().contains("link_rate_adaptation"), "{text}");
+        assert!(!config.text().contains("congestion_control"), "{text}");
+    }
+    // A save sent with the earlier names.
+    let mut config = Config::default();
+    let sent = serde_json::json!({"link_rate_adaptation": false});
+    config.update(sent.as_object().unwrap()).unwrap();
+    assert_eq!(config.bitrate_adaptation(), A::Off);
+    assert!(!config.text().contains("link_rate_adaptation"));
+    let sent = serde_json::json!({"congestion_control": "true", "link_rate_adaptation": true});
+    config.update(sent.as_object().unwrap()).unwrap();
+    assert_eq!(config.bitrate_adaptation(), A::Delay);
+    let sent = serde_json::json!({"congestion_control": true, "bitrate_adaptation": "off"});
+    config.update(sent.as_object().unwrap()).unwrap();
+    assert_eq!(config.bitrate_adaptation(), A::Off);
+    // An app's or device's overrides.
+    for (layer, expected) in [
+        (serde_json::json!({"link_rate_adaptation": false}), Some("off")),
+        (serde_json::json!({"link_rate_adaptation": "false", "congestion_control": "false"}), Some("off")),
+        (serde_json::json!({"congestion_control": true}), Some("delay")),
+        (serde_json::json!({"link_rate_adaptation": true}), Some("on")),
+        (serde_json::json!({"congestion_control": true, "bitrate_adaptation": "on"}), Some("on")),
+        (serde_json::json!({"fec_percentage": 20}), None),
+    ] {
+        let mut layer = layer.as_object().unwrap().clone();
+        super::migrate_overrides(&mut layer);
+        assert_eq!(
+            layer.get("bitrate_adaptation").and_then(serde_json::Value::as_str),
+            expected,
+            "{layer:?}"
+        );
+        assert!(!layer.contains_key("link_rate_adaptation"));
+        assert!(!layer.contains_key("congestion_control"));
+    }
+    assert!(super::retired_name("link_rate_adaptation"));
+    assert!(super::retired_name("congestion_control"));
 }
 
 #[test]

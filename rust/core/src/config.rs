@@ -21,7 +21,7 @@ pub use folders::{SharedFolderConfig, valid_folder_id, valid_folder_root};
 pub use overrides::override_allowed;
 use retired::retirement;
 pub use retired::{
-    FOLDED_KEYS, HDR_OPTION, HDR_REQUEST, REMOVED_APP_KEYS, REMOVED_KEYS, REMOVED_PREFIXES,
+    BITRATE_ADAPTATION, FOLDED_KEYS, fold_bitrate_adaptation, folded_bitrate_adaptation, HDR_OPTION, HDR_REQUEST, REMOVED_APP_KEYS, REMOVED_KEYS, REMOVED_PREFIXES,
     RENAMED_APP_SWITCHES, RENAMED_KEYS, RETIRED_SETTINGS, RETIRED_VALUES, Retired, RetiredSetting,
     SPLIT_KEYS, current_name, folded_hdr, folded_in_layer, migrate_app, migrate_overrides, removed,
     replace_retired, replacement, retired_name, retired_warning,
@@ -31,6 +31,17 @@ pub use values::{
     fallback, invalid, number_text, parse_boolean, parse_integer, parse_time_of_day, refused,
 };
 use values::{first_report, unquote};
+
+/// Adaptive bitrate ([`Config::bitrate_adaptation`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BitrateAdaptation {
+    /// The stream keeps the bitrate it was set to.
+    Off,
+    /// Lowered on loss error correction cannot repair, then raised again.
+    On,
+    /// As `On`, and also lowered as network delay builds (congestion control).
+    Delay,
+}
 
 pub const HARDWARE_METRICS: &[&str] = &[
     "cpu_usage_percent",
@@ -182,6 +193,16 @@ impl Config {
         {
             self.values.insert(HDR_OPTION.to_owned(), folded.to_owned());
         }
+        // The two bitrate switches fold into Adaptive bitrate; a value
+        // already saved under it wins.
+        let link = self.values.remove(retired::LINK_RATE);
+        let congestion = self.values.remove(retired::CONGESTION);
+        if let Some(folded) = folded_bitrate_adaptation(link.as_deref(), congestion.as_deref())
+            && !self.values.contains_key(BITRATE_ADAPTATION)
+        {
+            self.values
+                .insert(BITRATE_ADAPTATION.to_owned(), folded.to_owned());
+        }
     }
     pub fn load(path: &Path) -> Result<Self> {
         Ok(Self::load_retiring(path)?.0)
@@ -273,10 +294,25 @@ impl Config {
             && self.integer("pacing_max_bitrate_kbps", 0) <= 0
             && !self.pacing_controller_chosen(codec, client_wireless)
     }
-    /// Lower the encoder bitrate when the link cannot carry the stream (on by
-    /// default).
+    /// Adaptive bitrate: `off`, `on` (the default: lower the bitrate on loss
+    /// error correction cannot repair) or `delay` (also from rising network
+    /// delay). An unknown value is reported and reads as `on`.
+    pub fn bitrate_adaptation(&self) -> BitrateAdaptation {
+        let value = self.get(BITRATE_ADAPTATION, "on");
+        match unquote(value.trim()).to_ascii_lowercase().as_str() {
+            "off" => BitrateAdaptation::Off,
+            "on" => BitrateAdaptation::On,
+            "delay" => BitrateAdaptation::Delay,
+            _ => {
+                invalid(BITRATE_ADAPTATION, value);
+                BitrateAdaptation::On
+            }
+        }
+    }
+    /// Lower the encoder bitrate when the link cannot carry the stream:
+    /// Adaptive bitrate on, or on with network delay.
     pub fn link_rate_adaptation(&self) -> bool {
-        self.boolean("link_rate_adaptation", true)
+        self.bitrate_adaptation() != BitrateAdaptation::Off
     }
     /// Let video FEC fall below `fec_percentage` while the client reports a clean link (off by
     /// default). The encoder's bitrate does not grow with the parity saved, so all it buys is
@@ -285,10 +321,10 @@ impl Config {
     pub fn adaptive_fec(&self) -> bool {
         self.boolean("adaptive_fec", false)
     }
-    /// Packet-level congestion control from the client's arrival feedback (off until the A/B
-    /// decides).
+    /// Packet-level congestion control from the client's arrival feedback: Adaptive bitrate's
+    /// `delay` (not the default until the A/B decides).
     pub fn congestion_control(&self) -> bool {
-        self.boolean("congestion_control", false)
+        self.bitrate_adaptation() == BitrateAdaptation::Delay
     }
     /// An integer setting; Vibepollo also writes quoted (`"756"`) and
     /// hexadecimal (`0x2a`) values.
@@ -741,6 +777,9 @@ impl Config {
                 object.insert(HDR_OPTION.to_owned(), folded.into());
             }
         }
+        // The two bitrate switches, as an earlier console or an API caller
+        // sends them, fold into Adaptive bitrate unless that is sent too.
+        fold_bitrate_adaptation(&mut object);
         object.retain(|key, _| !removed(key));
         let object = &object;
         let mut next = self.clone();

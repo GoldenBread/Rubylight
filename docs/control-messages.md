@@ -192,7 +192,7 @@ current sessions. A client should send its current encoder bitrate once when
 starting its own controller; no lease renewal is needed. New sessions reset
 ownership.
 
-By default (`link_rate_adaptation`, [configuration](configuration.md#lower-bitrate-when-the-link-cannot-carry-it)) the host also lowers the bitrate when the network cannot carry the stream. It reads the same validated `0x5502` reports (frames the client could not rebuild, and the share of packets reported missing), and the standard `0x0200` periodic pings (8-byte payload beginning with little-endian 4) for freshness. The keyframe request `0x0302` and reference invalidation count as network evidence only from a client that sends no `0x5502` at all, and only when the host or the client's decode queue did not cause them. A `/bitrate` request from the client turns it off for that session.
+By default (`bitrate_adaptation`, [configuration](configuration.md#lower-bitrate-when-the-link-cannot-carry-it)) the host also lowers the bitrate when the network cannot carry the stream. It reads the same validated `0x5502` reports (frames the client could not rebuild, and the share of packets reported missing), and the standard `0x0200` periodic pings (8-byte payload beginning with little-endian 4) for freshness. The keyframe request `0x0302` and reference invalidation count as network evidence only from a client that sends no `0x5502` at all, and only when the host or the client's decode queue did not cause them. A `/bitrate` request from the client turns it off for that session.
 
 ## 3.0 extensions
 
@@ -218,7 +218,7 @@ The second line appears only when the host offers something, and stock clients i
 | `0x5544` | Frame Warp model | `frame_warp::Model` | host to client | with `0x5543` | `FrameWarpVersion` |
 | `0x5545` | Frame Warp tags | `frame_warp::Tags` | host to client | with `0x5543` | `FrameWarpVersion` |
 | `0x5546` | Frame Warp HUD mask | `frame_warp::Mask` | host to client | with `0x5543` | `FrameWarpVersion` |
-| `0x5547` | Transport feedback | `transport_feedback::TransportFeedback` | client to host | while `congestion_control` is on (off by default) | none |
+| `0x5547` | Transport feedback | `transport_feedback::TransportFeedback` | client to host | while `bitrate_adaptation` is `delay` (not the default) | none |
 
 `0x5508` (clipboard sync, above) goes on the same second line. `0x5542` is reserved. `0x5506`-`0x5510` belong to other clients and hosts: Rubylight takes `0x5508` with Moonlight V+'s frame unchanged and defines nothing else there. Nightjar sends `0x5510` (FEC summary, Moonlight V+'s format) only to a host whose `DESCRIBE` has `x-ss-video[0].fecControlVersion`, which Rubylight does not send.
 

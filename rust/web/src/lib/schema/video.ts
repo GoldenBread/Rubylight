@@ -697,29 +697,23 @@ const video: Setting[] = [
     advanced: true,
   },
   {
-    key: 'link_rate_adaptation',
-    label: 'Lower the bitrate when the link cannot carry it',
+    key: 'bitrate_adaptation',
+    label: 'Adaptive bitrate',
     description:
-      'Cuts the picture bitrate when the network loses more than error correction can repair, then probes back up. Does nothing on a healthy link.',
+      'Lowers the picture bitrate when the network cannot carry it, then raises it again; does nothing on a healthy link. Off keeps the bitrate you set, so a weak link freezes or breaks up the picture instead.',
     details:
-      'Acts on three unrecoverable frames in two seconds, 5% of packets reported missing for two half-second windows, three frames lost on send, or three network keyframe requests from a client that sends no error-correction status. Each cut aims at 85% of what the link delivered, then this PC probes back up in small steps and returns to the requested bitrate after ten clean seconds. Reports for frames sent before a cut took effect are ignored. On PyroWave, client-loss cuts stop at its test-scene detail level. Send losses on this PC can cut a stream below that level, down to half its bitrate ceiling (at least 1 Mbps). A device that sets its own bitrate takes over bitrate control.',
+      'On acts on three unrecoverable frames in two seconds, 5% of packets reported missing for two half-second windows, three frames lost on send, or three network keyframe requests from a client that sends no error-correction status. Each cut aims at 85% of what the link delivered, then this PC probes back up in small steps and returns to the requested bitrate after ten clean seconds. Reports for frames sent before a cut took effect are ignored. On PyroWave, client-loss cuts stop at its test-scene detail level. Send losses on this PC can cut a stream below that level, down to half its bitrate ceiling (at least 1 Mbps). On, and react to network delay also lowers the bitrate before packets are lost, for a device that reports when each video packet arrived, such as Nightjar: when packets take longer and longer to arrive, a queue is building on the way, so this PC lowers the bitrate to just under what arrived and paces video at the rate of the slowest link, then climbs back to the requested bitrate when the delay settles. The lower of both cuts applies. Reconnect after choosing it. A device that sets its own bitrate takes over bitrate control.',
     category: 'video',
     group: 'Bitrate and network',
-    control: { kind: 'toggle' },
-    default: true,
-    advanced: true,
-  },
-  {
-    key: 'congestion_control',
-    label: 'Adapt to network congestion',
-    description:
-      'Lowers the bitrate and paces video as network delay builds, before packets are lost, then raises it. Try it on busy Wi-Fi with a device that reports packet arrivals, like Nightjar.',
-    details:
-      'A device that sets its own bitrate takes over bitrate control. Works together with Lower the bitrate when the link cannot carry it: the lower of both applies. Reconnect after saving. The device reports when each video packet arrived. When packets take longer and longer to arrive, a queue is building on the way, so this PC lowers the bitrate to just under what arrived and paces video at the rate of the slowest link; loss past what error correction repairs lowers it as well. When the delay settles, the bitrate climbs back to the requested one.',
-    category: 'video',
-    group: 'Bitrate and network',
-    control: { kind: 'toggle' },
-    default: false,
+    control: {
+      kind: 'select',
+      options: [
+        { value: 'off', label: 'Off' },
+        { value: 'on', label: 'On' },
+        { value: 'delay', label: 'On, and react to network delay' },
+      ],
+    },
+    default: 'on',
     advanced: true,
   },
 ];

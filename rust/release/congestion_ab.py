@@ -1,5 +1,5 @@
 """Congestion control A/B: reads the legs of a run and applies the decision rule for turning
-`congestion_control` on by default.
+`bitrate_adaptation = delay` the default.
 
 A leg is one 30-60 s stream in its own directory:
 
@@ -15,7 +15,7 @@ The arm comes from the host log: `cc_shadow=true` is the baseline (today's contr
 congestion controller only measuring, so the queueing delay of the baseline is known too),
 `cc_state=off` a baseline without measurement, any other state the treatment (`on`). Run the
 baseline with `BUTTERPOLLO_CONGESTION_SHADOW=1` on the isolated test host, the treatment with
-`congestion_control = true`, alternating legs (baseline, on, baseline, on, ...), at least two each.
+`bitrate_adaptation = delay`, alternating legs (baseline, on, baseline, on, ...), at least two each.
 
 The rule, per device: turn it on only if the treatment's mean latency p50 and p95 are lower than the
 baseline's by more than the leg-to-leg spread (the larger arm's max - min), its frame rate is not

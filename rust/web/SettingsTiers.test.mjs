@@ -89,7 +89,7 @@ test('every setting but the Debug switches and launcher options shows in its top
   // Former expert settings sit in their own group with the others.
   const picture = layoutOf('picture');
   assert.ok(picture.groups.find((group) => group.name === 'AMD AMF').settings.some((setting) => setting.key === 'amd_preanalysis'));
-  assert.ok(picture.groups.find((group) => group.name === 'Bitrate and network').settings.some((setting) => setting.key === 'congestion_control'));
+  assert.ok(picture.groups.find((group) => group.name === 'Bitrate and network').settings.some((setting) => setting.key === 'bitrate_adaptation'));
   assert.ok(layoutOf('pc').groups.find((group) => group.name === 'Tray').settings.some((setting) => setting.key === 'hide_tray_controls'));
   const advanced = layoutOf('advanced');
   assert.equal('expertGroups' in advanced, false);
@@ -177,7 +177,7 @@ test('the page decides "changed" with askedFor: stored values, unsaved edits, an
   const page = await readFile(new URL('./src/pages/Settings.svelte', import.meta.url), 'utf8');
   assert.match(page, /askedFor\(setting, edits, config, pending\)/);
   const asked = (stored, edits = {}, pending = new Set()) => (setting) => askedFor(setting, edits, stored, pending);
-  const stored = { congestion_control: 'enabled', frame_warp: 'disabled' };
+  const stored = { bitrate_adaptation: 'delay', frame_warp: 'disabled' };
   const advanced = layoutOf('advanced', { changed: asked(stored) });
   assert.ok(keysOf(advanced.groups).includes('frame_warp'));
   const picture = layoutOf('picture', { changed: asked(stored) });

@@ -464,12 +464,12 @@ test('the troubleshooting fold counts customized and unsaved settings and opens 
 test('bitrate and pacing controllers say which one wins', () => {
   // The finer points live behind More; descriptions are capped at two short sentences.
   const says = (key, pattern) => assert.match(settings.get(key).details, pattern, key);
-  says('link_rate_adaptation', /A device that sets its own bitrate takes over/);
+  says('bitrate_adaptation', /A device that sets its own bitrate takes over/);
   says('pacing_max_bitrate_kbps', /turns off Adaptive packet pacing and Slow down after video loss/);
   says('host_adaptive_pacing', /A manual pacing rate turns it off/);
   says('keyframe_loss_pacing', /A manual pacing rate or Adaptive packet pacing turns it off/);
   // The retired host bitrate controller no longer switches the others off.
-  for (const key of ['host_adaptive_pacing', 'wireless_adaptive_pacing', 'keyframe_loss_pacing', 'link_rate_adaptation', 'congestion_control']) {
+  for (const key of ['host_adaptive_pacing', 'wireless_adaptive_pacing', 'keyframe_loss_pacing', 'bitrate_adaptation']) {
     const setting = settings.get(key);
     assert.doesNotMatch(`${setting.details} ${setting.inactiveHint ?? ''}`, /Adapt bitrate on this PC/, key);
     assert.equal(setting.visibleWhen?.({ host_adaptive_bitrate: true }) ?? true, true, key);

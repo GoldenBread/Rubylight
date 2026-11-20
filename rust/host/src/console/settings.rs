@@ -121,8 +121,7 @@ pub const GLOBAL: &[Setting] = settings! {
         "host_adaptive_pacing", "Adaptive packet pacing (off by default, including PyroWave; slower startup and loss-sensitive probes without changing picture bitrate or FPS; disabled by a manual pacing limit or host bitrate adaptation; reconnect after saving)", Bool;
         "wireless_adaptive_pacing", "Adaptive packet pacing for Wi-Fi clients (on by default; a client that reports a Wi-Fi or cellular route, such as Nightjar, gets adaptive packet pacing on H.264, HEVC and AV1: it starts at twice the encoder bitrate, speeds up in small steps while the link stays clean, up to the route limit, and backs off on loss; PyroWave keeps its own pacing; disabled by a manual pacing limit (which sets the rate) or host bitrate adaptation, and then H.264, HEVC and AV1 for such a client use the Wi-Fi route pacing policy from the first frame; reconnect after saving)", Bool;
         "keyframe_loss_pacing", "Slow down after video loss (on by default; after a lost keyframe or three distinct unrecoverable frames within two seconds, video is paced at twice the bitrate, with room for error correction, for the rest of the stream (a lost first keyframe alone, or loss only the host saw while sending in a stream that has not slowed down before, is lifted after 10 clean seconds; a client that reports its own losses is not slowed by asking twice for a keyframe); disabled by a manual pacing limit or the adaptive options)", Bool;
-        "link_rate_adaptation", "Lower the bitrate when the link cannot carry it (on by default; cuts the picture bitrate on loss that error correction cannot repair, then probes back up; off while Host adaptive bitrate is on or the client sets the bitrate)", Bool;
-        "congestion_control", "Adapt to network congestion from packet arrival times (off by default; for clients that report packet arrivals, such as Nightjar: lowers the bitrate and paces video at the bottleneck's rate as queueing delay builds, before packets are lost, then raises it again; works with Lower the bitrate when the link cannot carry it, the lower of both applies; off while Host adaptive bitrate is on or the client sets the bitrate; reconnect after saving)", Bool;
+        "bitrate_adaptation", "Adaptive bitrate (on by default: lowers the picture bitrate on loss that error correction cannot repair, then raises it again; on, and react to network delay also lowers it as delay builds, for devices that report packet arrivals such as Nightjar, reconnect after saving; off keeps the bitrate you set, so a weak link freezes or breaks up the picture; a device that sets its own bitrate takes over)", Choice(&["off","on","delay"]);
     ]
     "AMD encoding" => [
         "amd_usage", "AMF usage", Choice(&["auto","transcoding","ultralowlatency","lowlatency","webcam","high_quality","lowlatency_high_quality"]);
@@ -361,6 +360,8 @@ pub fn render(prefix: &str, schema: &[Setting], values: &Value) -> String {
                             "disabled" if setting.key == "dd_hdr_option" => "Don't change HDR",
                             "none" if setting.key == "amd_av1_latency_mode" => "Driver default",
                             "off" if setting.key == "encoder_focus" => "Off",
+                            "off" if setting.key == "bitrate_adaptation" => "Off",
+                            "on" if setting.key == "bitrate_adaptation" => "On",
                             "static" if setting.key == "encoder_focus" => "Still areas",
                             "centre" if setting.key == "encoder_focus" => "Still areas and centre",
                             "true" | "enabled" => "On",
@@ -456,6 +457,7 @@ pub fn render(prefix: &str, schema: &[Setting], values: &Value) -> String {
                             "per_client" => "One for each device",
                             "shared" => "One shared by all devices",
                             "game-provided" => "Provided by the game",
+                            "delay" if setting.key == "bitrate_adaptation" => "On, and react to network delay",
                             _ if setting.key == "locale" => i18n::language_name(choice),
                             _ => choice,
                         },

@@ -165,8 +165,60 @@ pub const HDR_OPTION: &str = "dd_hdr_option";
 /// of its own depends on the layers below, so it stays as saved and folds
 /// when the host applies that layer over them (`Config::update`).
 pub const HDR_REQUEST: &str = "dd_hdr_request_override";
-/// Settings folded into another one (see [`HDR_REQUEST`]).
-pub const FOLDED_KEYS: &[&str] = &[HDR_REQUEST];
+/// Adaptive bitrate (`off`, `on`, `delay`), which holds what two switches
+/// held before: Lower the bitrate when the link cannot carry it and Adapt to
+/// network congestion.
+pub const BITRATE_ADAPTATION: &str = "bitrate_adaptation";
+/// The two switches folded into [`BITRATE_ADAPTATION`]: link-rate
+/// adaptation (on by default) and congestion control (off by default).
+pub const LINK_RATE: &str = "link_rate_adaptation";
+pub const CONGESTION: &str = "congestion_control";
+/// Settings folded into another one (see [`HDR_REQUEST`],
+/// [`BITRATE_ADAPTATION`]).
+pub const FOLDED_KEYS: &[&str] = &[HDR_REQUEST, LINK_RATE, CONGESTION];
+/// Adaptive bitrate for the two switches saved in one layer, each `None`
+/// when that layer does not hold it (its earlier default then counts):
+/// congestion control on is `delay`, as it ran together with link-rate
+/// adaptation; link-rate adaptation off on its own is `off`; anything else
+/// `on`. `None` when the layer holds neither. An unreadable value counts as
+/// its default, as the host read it.
+pub fn folded_bitrate_adaptation(link: Option<&str>, congestion: Option<&str>) -> Option<&'static str> {
+    if link.is_none() && congestion.is_none() {
+        return None;
+    }
+    let read = |value: Option<&str>, default: bool| {
+        value
+            .and_then(super::parse_boolean)
+            .unwrap_or(default)
+    };
+    Some(if read(congestion, false) {
+        "delay"
+    } else if !read(link, true) {
+        "off"
+    } else {
+        "on"
+    })
+}
+/// [`folded_bitrate_adaptation`] over a JSON layer: removes both switches
+/// and, unless the layer already holds Adaptive bitrate, sets it. Returns
+/// whether anything changed.
+pub fn fold_bitrate_adaptation(layer: &mut serde_json::Map<String, serde_json::Value>) -> bool {
+    let text = |value: serde_json::Value| match value {
+        serde_json::Value::String(text) => Some(text),
+        serde_json::Value::Null => None,
+        other => Some(other.to_string()),
+    };
+    let link = layer.remove(LINK_RATE);
+    let congestion = layer.remove(CONGESTION);
+    let changed = link.is_some() || congestion.is_some();
+    let (link, congestion) = (link.and_then(text), congestion.and_then(text));
+    if let Some(folded) = folded_bitrate_adaptation(link.as_deref(), congestion.as_deref())
+        && !layer.contains_key(BITRATE_ADAPTATION)
+    {
+        layer.insert(BITRATE_ADAPTATION.to_owned(), folded.into());
+    }
+    changed
+}
 /// Whether `key` is a name the host no longer reads: a removed setting, or
 /// one folded into another. Neither name is used again.
 pub fn retired_name(key: &str) -> bool {
@@ -201,7 +253,8 @@ pub fn folded_in_layer(option: &str, request: &str) -> Option<&'static str> {
 /// block's, a paired device's `config_overrides`) to the names and values the
 /// host reads now: a renamed setting takes its current name (a value already
 /// under that name wins), a removed one goes, the HDR request folds into the
-/// layer's own Display HDR ([`HDR_REQUEST`] says when it stays) and retired
+/// layer's own Display HDR ([`HDR_REQUEST`] says when it stays), the two
+/// bitrate switches fold into its Adaptive bitrate and retired
 /// values take their replacements. Returns whether anything changed.
 pub fn migrate_overrides(overrides: &mut serde_json::Map<String, serde_json::Value>) -> bool {
     let mut changed = false;
@@ -227,6 +280,7 @@ pub fn migrate_overrides(overrides: &mut serde_json::Map<String, serde_json::Val
             overrides.insert(HDR_OPTION.to_owned(), folded.into());
         }
     }
+    changed |= fold_bitrate_adaptation(overrides);
     let before = overrides.len();
     overrides.retain(|key, _| !removed(key));
     changed |= overrides.len() != before;
