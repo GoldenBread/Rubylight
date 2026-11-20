@@ -362,6 +362,18 @@ private:
 
     // Recent ready costs (addReadyCost())
     std::deque<int64_t> readyCosts_;
+
+    // Scratch for the per-frame medians and percentiles, so the decode/present thread does not
+    // allocate per frame; each is assigned into before use. Mutable for the const queries.
+    std::vector<int64_t> deltaScratch_;
+    mutable std::vector<double> spacingScratch_;
+    mutable std::vector<int64_t> costScratch_;
+
+public:
+    // Capacity of the scratch vectors, for the test that they stop growing after warm-up
+    size_t scratchCapacityForTest() const {
+        return deltaScratch_.capacity() + spacingScratch_.capacity() + costScratch_.capacity();
+    }
 };
 
 }  // namespace vkr

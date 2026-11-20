@@ -266,6 +266,42 @@ void testJitterSkipsNothing() {
     }
 }
 
+// The per-frame medians and percentiles go through the pacer's own scratch vectors, which stop
+// growing once the sample windows are full.
+void testScratchStopsGrowingAfterWarmUp() {
+    const int64_t periodNs = 8'333'333;
+    FramePacer pacer(PacingMode::HostTimed, 60, periodNs, JitterBuffer::Balanced);
+    size_t warmCapacity = 0;
+    std::deque<FrameTiming> queue;
+    for (int v = 0; v < 6000; v++) {
+        const int64_t vsyncNs = kStartNs + v * periodNs;
+        if (v % 2 == 0) {
+            FrameTiming timing;
+            timing.hostPtsNs = (v / 2) * 2 * periodNs;
+            timing.arrivalNs = vsyncNs - kMs;
+            pacer.onFrameArrived(timing);
+            FrameTiming partial = timing;
+            int64_t offsetNs = 0;
+            pacer.addReadyCost(2 * kMs + (v % 7) * 100'000);
+            pacer.partialDeadlineOffsetNs(partial, &offsetNs);
+            queue.push_back(timing);
+        }
+        const std::vector<FrameTiming> waiting(queue.begin(), queue.end());
+        const int choice = pacer.onVsync(vsyncNs, waiting.data(), waiting.size());
+        if (choice >= 0) {
+            queue.erase(queue.begin(), queue.begin() + choice + 1);
+        }
+        while (queue.size() > pacer.maxQueued()) {
+            queue.pop_front();
+        }
+        if (v == 3000) {
+            warmCapacity = pacer.scratchCapacityForTest();
+        }
+    }
+    assert(warmCapacity > 0);
+    assert(pacer.scratchCapacityForTest() == warmCapacity);
+}
+
 }  // namespace
 
 int main() {
@@ -277,5 +313,6 @@ int main() {
     testMuchFasterHostSkipsNothing();
     testStalledFramesWaitNoLongerThanTwoVsyncs();
     testJitterSkipsNothing();
+    testScratchStopsGrowingAfterWarmUp();
     return 0;
 }

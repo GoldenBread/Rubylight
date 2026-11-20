@@ -409,7 +409,8 @@ void FramePacer::updateSlot(const FrameTiming& frame) {
         // The mean spacing, since a fixed refresh host display shows frames at uneven
         // spacings around it (a 71.82 fps game on a 165 Hz display alternates two and three
         // refreshes). Gaps from a host hitch are left out.
-        std::vector<int64_t> sorted(ptsDeltas_.begin(), ptsDeltas_.end());
+        std::vector<int64_t>& sorted = deltaScratch_;
+        sorted.assign(ptsDeltas_.begin(), ptsDeltas_.end());
         std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
         const int64_t median = sorted[sorted.size() / 2];
         int64_t sum = 0;
@@ -453,8 +454,8 @@ bool FramePacer::fitPhase(size_t from, PhaseFit* out) const {
     }
     const PhaseSample& first = phaseSamples_[from];
     double sx = 0, sy = 0, sxx = 0, sxy = 0;
-    std::vector<double> spacings;
-    spacings.reserve(phaseSamples_.size() - from);
+    std::vector<double>& spacings = spacingScratch_;
+    spacings.clear();
     const PhaseSample* previous = nullptr;
     for (size_t i = from; i < phaseSamples_.size(); i++) {
         const PhaseSample& s = phaseSamples_[i];
@@ -1140,7 +1141,8 @@ bool FramePacer::partialDeadlineOffsetNs(const FrameTiming& frame, int64_t* offs
         return false;
     }
 
-    std::vector<int64_t> costs(readyCosts_.begin(), readyCosts_.end());
+    std::vector<int64_t>& costs = costScratch_;
+    costs.assign(readyCosts_.begin(), readyCosts_.end());
     const auto percentile = costs.begin() + (costs.size() - 1) * kPartialReadyPercentile / 100;
     std::nth_element(costs.begin(), percentile, costs.end());
 
