@@ -2803,15 +2803,18 @@ fn each_pictures_parameters_are_reset_not_left_from_the_frame_before() -> Result
     encoder.poll()?;
     state(|d| assert_eq!(d.maps, [None, Some(vec![-3, 3]), None]));
     state(|d| {
-        let as_bytes = |p: &NV_ENC_PIC_PARAMS| {
-            // SAFETY: The parameters are plain old data; the bytes are only compared.
+        // Field by field: the struct has padding (after pictureType, for
+        // one) that a copy need not preserve and a literal leaves undefined.
+        // Each field is plain old data without padding of its own.
+        fn as_bytes<T>(field: &T) -> &[u8] {
+            // SAFETY: The field is plain old data; the bytes are only compared.
             unsafe {
                 std::slice::from_raw_parts(
-                    (p as *const NV_ENC_PIC_PARAMS).cast::<u8>(),
-                    std::mem::size_of::<NV_ENC_PIC_PARAMS>(),
+                    (field as *const T).cast::<u8>(),
+                    std::mem::size_of::<T>(),
                 )
             }
-        };
+        }
         for (frame, p) in d.pictures.iter().enumerate() {
             // What one submission may set; everything else must be exactly
             // the zeroed block the session opened with, not what the frame
@@ -2842,7 +2845,49 @@ fn each_pictures_parameters_are_reset_not_left_from_the_frame_before() -> Result
                 expected.qpDeltaMap = p.qpDeltaMap;
                 expected.qpDeltaMapSize = 2;
             }
-            assert_eq!(as_bytes(p), as_bytes(&expected), "picture {frame}");
+            macro_rules! same {
+                ($($field:ident),* $(,)?) => {$(
+                    assert_eq!(
+                        as_bytes(&p.$field),
+                        as_bytes(&expected.$field),
+                        "picture {frame}: {}",
+                        stringify!($field)
+                    );
+                )*};
+            }
+            same!(
+                version,
+                inputWidth,
+                inputHeight,
+                inputPitch,
+                encodePicFlags,
+                frameIdx,
+                inputTimeStamp,
+                inputDuration,
+                inputBuffer,
+                outputBitstream,
+                completionEvent,
+                bufferFmt,
+                pictureStruct,
+                pictureType,
+                codecPicParams,
+                meHintCountsPerBlock,
+                meExternalHints,
+                reserved2,
+                reserved5,
+                qpDeltaMap,
+                qpDeltaMapSize,
+                reservedBitFields,
+                meHintRefPicDist,
+                reserved4,
+                alphaBuffer,
+                meExternalSbHints,
+                meSbHintsCount,
+                stateBufferIdx,
+                outputReconBuffer,
+                reserved3,
+                reserved6,
+            );
         }
     });
     drop(encoder);
