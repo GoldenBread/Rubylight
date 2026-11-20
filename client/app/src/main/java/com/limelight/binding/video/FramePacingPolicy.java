@@ -108,19 +108,17 @@ public final class FramePacingPolicy {
      * The frame rate Balanced with FPS limit asks the PC for, or LIMIT_ABOVE_SCREEN or LIMIT_BOGUS_SCREEN
      * where Balanced takes over. Like Smoothest video it shows every frame in turn, so a stream as fast
      * as the screen would fill the display's queue: it is capped one below the refresh (59 fps at 60 Hz).
-     * screenHz is the lower of the screen's rate when the stream starts and the rate of the mode the
-     * stream asks for (GameVideoOutput.prepareDisplayForRendering); askedHz is that mode's rate where the
-     * screen can reach it (limitRefreshHz). A stream at the screen's rate that asks for a whole multiple
-     * of it is not capped: 60 fps toward 120 Hz from a screen still at 60 would otherwise run 59 fps on
-     * 120 Hz, which shows two frames a second for three refreshes. From Moonlight Android's Game.onCreate
-     * (GPL-3.0, Cameron Gutman and contributors).
+     * refreshHz is the rate of the mode the stream asks for where the screen can reach it
+     * (limitRefreshHz), not the rate an adaptive screen rests at when the stream starts: judged at 60 Hz,
+     * 60 fps bound for 120 Hz would run 59 fps there, which shows two frames a second for three
+     * refreshes, and 120 fps would go to Balanced. From Moonlight Android's Game.onCreate (GPL-3.0,
+     * Cameron Gutman and contributors).
      */
-    public static int limitedFrameRate(int fps, float screenHz, float askedHz) {
-        int screen = Math.round(screenHz);
+    public static int limitedFrameRate(int fps, float refreshHz) {
+        int screen = Math.round(refreshHz);
         if (fps < screen) return fps;
         if (fps > screen + 3) return LIMIT_ABOVE_SCREEN;
         if (screen <= 49) return LIMIT_BOGUS_SCREEN;
-        if (fps == screen && fps < Math.round(askedHz)) return fps;
         return screen - 1;
     }
 

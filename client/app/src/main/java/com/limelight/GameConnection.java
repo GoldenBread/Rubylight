@@ -509,12 +509,11 @@ final class GameConnection {
         // desired FPS setting here in accordance with the active display refresh rate, judged
         // against the mode the stream asks for as well, unless the screen may stay below it
         // (FramePacingPolicy.limitRefreshHz, limitedFrameRate).
-        int roundedRefreshRate = Math.round(displayRefreshRate);
         int chosenFrameRate = game.prefConfig.fps;
         if (game.prefConfig.framePacing == PreferenceConfiguration.FRAME_PACING_CAP_FPS) {
             float limitHz = FramePacingPolicy.limitRefreshHz(game.desiredRefreshRate, displayRefreshRate,
                     RefreshSwitchMonitor.conditions(game));
-            int limited = FramePacingPolicy.limitedFrameRate(game.prefConfig.fps, displayRefreshRate, limitHz);
+            int limited = FramePacingPolicy.limitedFrameRate(game.prefConfig.fps, limitHz);
             if (limited == FramePacingPolicy.LIMIT_ABOVE_SCREEN) {
                 // Use frame drops when rendering above the screen frame rate
                 game.prefConfig.framePacing = PreferenceConfiguration.FRAME_PACING_BALANCED;
@@ -522,7 +521,7 @@ final class GameConnection {
             } else if (limited == FramePacingPolicy.LIMIT_BOGUS_SCREEN) {
                 // Let's avoid clearly bogus refresh rates and fall back to legacy rendering
                 game.prefConfig.framePacing = PreferenceConfiguration.FRAME_PACING_BALANCED;
-                LimeLog.info("Bogus refresh rate: " + roundedRefreshRate);
+                LimeLog.info("Bogus refresh rate: " + Math.round(limitHz));
             } else if (limited != chosenFrameRate) {
                 chosenFrameRate = limited;
                 LimeLog.info("Adjusting FPS target for screen to " + chosenFrameRate);

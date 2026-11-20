@@ -11,6 +11,7 @@ import com.limelight.binding.video.DisplayFrameRatePolicy;
 import com.limelight.binding.video.FramePacingPolicy;
 import com.limelight.binding.video.MediaCodecDecoderRenderer;
 import com.limelight.binding.video.MediaCodecHelper;
+import com.limelight.binding.video.RefreshSwitchDiagnosis;
 import com.limelight.binding.video.RefreshSwitchMonitorTest;
 import com.limelight.nvstream.AdaptiveBitrateController;
 import com.limelight.nvstream.jni.MoonBridge;
@@ -333,17 +334,17 @@ public class GameFrameRateTest {
                 boolean limit = pacing == PreferenceConfiguration.FRAME_PACING_CAP_FPS;
                 float[] top = startStream(pacing, false, 120f, 60f, 120f);
                 assertArrayEquals(name, new float[] {120f, 120f, 120f}, top, 0f);
-                if (limit) assertEquals(60, FramePacingPolicy.limitedFrameRate(60, top[2], top[0]));
+                if (limit) assertEquals(60, limited(60, top));
 
                 // Still at 60 when the stream starts: the stream asks for 120 all the same.
                 float[] rising = startStream(pacing, false, 60f, 60f, 120f);
                 assertArrayEquals(name, new float[] {120f, 120f, 60f}, rising, 0f);
-                if (limit) assertEquals(60, FramePacingPolicy.limitedFrameRate(60, rising[2], rising[0]));
+                if (limit) assertEquals(60, limited(60, rising));
 
                 // Lower refresh rate: the lowest multiple, and the stream's own rate as the vote.
                 float[] lowered = startStream(pacing, true, 120f, 60f, 120f);
                 assertArrayEquals(name, new float[] {60f, 60f, 60f}, lowered, 0f);
-                if (limit) assertEquals(59, FramePacingPolicy.limitedFrameRate(60, lowered[2], lowered[0]));
+                if (limit) assertEquals(59, limited(60, lowered));
 
                 // 90 Hz would judder at 60 fps: 60 Hz without the opt-in.
                 float[] judder = startStream(pacing, false, 90f, 60f, 90f);
@@ -441,6 +442,12 @@ public class GameFrameRateTest {
             surface.release();
             texture.release();
         }
+    }
+
+    /** Balanced with FPS limit's frame rate for a stream start from startStream, with nothing holding the screen. */
+    private static int limited(int fps, float[] start) {
+        return FramePacingPolicy.limitedFrameRate(fps,
+                FramePacingPolicy.limitRefreshHz(start[0], start[2], RefreshSwitchDiagnosis.Conditions.NONE));
     }
 
     /** A stream view whose buffers prepareDisplayForRendering can size, and that reads the default display. */
