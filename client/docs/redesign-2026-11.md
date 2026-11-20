@@ -70,7 +70,7 @@ The second level already exists inside every section: its main rows show, "More 
 | Recover interrupted streams | Streaming (main) | Streaming (fold) | Always right; the row exists for diagnosis |
 | Presets | Overview row | Video, as its first row | They set Video's three values; on desktop they already sit there |
 
-Removal: the client rule is that a setting goes only when it never has an effect. An audit of every row against the code that reads it has not been made; 6.0.0 removes none.
+Removal: the client rule was that a setting goes only when it never has an effect; since 2026-11-20 it is fewer settings (client/AGENTS.md). An audit of every row against the code that reads it has not been made; 6.0.0 removes none.
 
 ## Visual language
 
