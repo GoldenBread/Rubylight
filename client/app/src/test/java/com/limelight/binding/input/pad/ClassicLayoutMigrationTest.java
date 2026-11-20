@@ -203,7 +203,7 @@ public class ClassicLayoutMigrationTest {
         // left and X from the top.
         retire("classic", true);
         ClassicLayoutMigration.carryOverOnce(context, store, true);
-        assertSwappedDefaults(shared());
+        assertSwappedDefaults();
         assertFalse(store.contains(ClassicLayoutMigration.CLASSIC_STYLE));
 
         // An install that never stored a style had Classic, the default: the same.
@@ -211,13 +211,13 @@ public class ClassicLayoutMigrationTest {
         retire(null, true);
         assertTrue(store.getBoolean(ClassicLayoutMigration.CLASSIC_STYLE, false));
         ClassicLayoutMigration.carryOverOnce(context, store, true);
-        assertSwappedDefaults(shared());
+        assertSwappedDefaults();
 
         // The setting as it was when the classic controller went away decides, not a later change.
         store.edit().clear().commit();
         retire(null, true);
         ClassicLayoutMigration.carryOverOnce(context, store, false);
-        assertSwappedDefaults(shared());
+        assertSwappedDefaults();
     }
 
     @Test public void aFreshInstallKeepsThePlainDefaults() {
@@ -239,15 +239,54 @@ public class ClassicLayoutMigrationTest {
         assertTrue(store.getBoolean(ClassicLayoutMigration.STYLE_RETIRED, false));
     }
 
-    private void assertSwappedDefaults(PadLayout layout) {
+    /**
+     * Each orientation's layout for all games has the face cluster split where that orientation's defaults put it,
+     * swapped: in landscape on this 1600x720 screen, in portrait on 720x1600.
+     */
+    private void assertSwappedDefaults() {
+        assertFalse("nothing for both orientations under the shared key", store.contains(PadLayoutKeys.legacyKey(null)));
+        assertSwappedDefaults(PadLayout.parse(store.getString(PadLayoutKeys.key(true, null), null)), WIDTH, HEIGHT);
+        assertSwappedDefaults(PadLayout.parse(store.getString(PadLayoutKeys.key(false, null), null)), HEIGHT, WIDTH);
+    }
+
+    private static void assertSwappedDefaults(PadLayout layout, float width, float height) {
         assertTrue(layout.isSplit(PadLayout.Control.FACE));
         PadLayout plain = new PadLayout();
-        plain.split(PadLayout.Control.FACE, WIDTH, HEIGHT, DENSITY);
-        assertBox("bottom sends B", box(plain, PadLayout.Control.A), box(layout, PadLayout.Control.B));
-        assertBox("right sends A", box(plain, PadLayout.Control.B), box(layout, PadLayout.Control.A));
-        assertBox("left sends Y", box(plain, PadLayout.Control.X), box(layout, PadLayout.Control.Y));
-        assertBox("top sends X", box(plain, PadLayout.Control.Y), box(layout, PadLayout.Control.X));
+        plain.split(PadLayout.Control.FACE, width, height, DENSITY);
+        String where = width > height ? "landscape: " : "portrait: ";
+        assertBox(where + "bottom sends B", box(plain, PadLayout.Control.A, width, height),
+                box(layout, PadLayout.Control.B, width, height));
+        assertBox(where + "right sends A", box(plain, PadLayout.Control.B, width, height),
+                box(layout, PadLayout.Control.A, width, height));
+        assertBox(where + "left sends Y", box(plain, PadLayout.Control.X, width, height),
+                box(layout, PadLayout.Control.Y, width, height));
+        assertBox(where + "top sends X", box(plain, PadLayout.Control.Y, width, height),
+                box(layout, PadLayout.Control.X, width, height));
         assertEquals(PadLayout.Glyph.XBOX, layout.glyph());
+    }
+
+    @Test public void eachOrientationGetsTheSwappedDefaultsOfItsOwnPlaces() {
+        retire("classic", true);
+        ClassicLayoutMigration.carryOverOnce(context, store, true);
+        // In portrait the cluster stands elsewhere than the landscape fractions would put it.
+        PadLayout portrait = PadLayout.parse(store.getString(PadLayoutKeys.key(false, null), null));
+        PadLayout plain = new PadLayout();
+        plain.split(PadLayout.Control.FACE, HEIGHT, WIDTH, DENSITY);
+        assertBox("portrait: bottom sends B", box(plain, PadLayout.Control.A, HEIGHT, WIDTH),
+                box(portrait, PadLayout.Control.B, HEIGHT, WIDTH));
+        PadLayout landscapeOnly = new PadLayout();
+        landscapeOnly.split(PadLayout.Control.FACE, WIDTH, HEIGHT, DENSITY);
+        PadLayout.Spec landscapeA = landscapeOnly.spec(PadLayout.Control.A), portraitB = portrait.spec(PadLayout.Control.B);
+        assertTrue("portrait has its own places",
+                Math.abs(landscapeA.cx - portraitB.cx) > .01f || Math.abs(landscapeA.cy - portraitB.cy) > .01f);
+
+        // An orientation with a layout of this controller's own keeps it; the other gets the swapped defaults.
+        String mine = "v1|FACE,0.5000,0.8000,1.000,100,0";
+        store.edit().clear().putString(PadLayoutKeys.key(false, null), mine).commit();
+        retire("classic", true);
+        ClassicLayoutMigration.carryOverOnce(context, store, true);
+        assertEquals(mine, store.getString(PadLayoutKeys.key(false, null), null));
+        assertSwappedDefaults(PadLayout.parse(store.getString(PadLayoutKeys.key(true, null), null)), WIDTH, HEIGHT);
     }
 
     @Test public void theNintendoLayoutLeavesTheDefaultsOfEveryoneElseAlone() {
@@ -336,7 +375,11 @@ public class ClassicLayoutMigrationTest {
     }
 
     private static float[] box(PadLayout layout, PadLayout.Control control) {
-        return layout.bounds(control, WIDTH, HEIGHT, DENSITY, new float[4]);
+        return box(layout, control, WIDTH, HEIGHT);
+    }
+
+    private static float[] box(PadLayout layout, PadLayout.Control control, float width, float height) {
+        return layout.bounds(control, width, height, DENSITY, new float[4]);
     }
 
     private static void assertBox(String what, float[] expected, float[] actual) {

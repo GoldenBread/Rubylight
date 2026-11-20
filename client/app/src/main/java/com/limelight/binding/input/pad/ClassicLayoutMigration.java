@@ -114,10 +114,16 @@ public final class ClassicLayoutMigration {
             // same dimensions, because the shared key it is stored under is used in both orientations.
             PadLayout migrated = migrate(boxes, longSide, shortSide, metrics.density, swapFaces);
             if (!migrated.isDefault()) edit.putString(shared, migrated.serialize());
-        } else if (classicStyle && swapFaces) {
+        } else if (classicStyle && swapFaces && shortSide > 0) {
             // The classic controller followed the Nintendo button layout on screen even before it was arranged: its
-            // own defaults put B at the bottom. This controller never did, so only a classic player gets it.
-            edit.putString(shared, swappedDefaults(longSide, shortSide, metrics.density).serialize());
+            // own defaults put B at the bottom. This controller never did, so only a classic player gets it. Each
+            // orientation has default places of its own, so each gets its layout, where it has none of its own.
+            if (!ownLandscape) {
+                edit.putString(landscapeKey, swappedDefaults(longSide, shortSide, metrics.density).serialize());
+            }
+            if (!ownPortrait) {
+                edit.putString(portraitKey, swappedDefaults(shortSide, longSide, metrics.density).serialize());
+            }
         }
         edit.apply();
     }
