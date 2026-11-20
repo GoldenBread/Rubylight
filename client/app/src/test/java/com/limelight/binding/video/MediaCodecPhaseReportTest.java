@@ -362,6 +362,8 @@ public class MediaCodecPhaseReportTest {
                 null, activity.getWindowManager().getDefaultDisplay());
         // The stream setup copies the preference.
         ReflectionHelpers.setField(renderer, "hostFrameTimes", hostFrameTimes);
+        // The stream setup reads whether the host takes the phase lock; reports are skipped without it.
+        ReflectionHelpers.setField(renderer, "hostPhaseLock", true);
         return renderer;
     }
 

@@ -187,7 +187,10 @@ public class MediaCodecArrTimingTest {
         prefs.vrr = vrr;
         prefs.videoFormat = PreferenceConfiguration.FormatOption.AUTO;
         prefs.upscalingMode = UpscalingPolicy.Mode.OFF;
-        return new MediaCodecDecoderRenderer(activity, prefs, null, 0, false, false, "", null, display);
+        MediaCodecDecoderRenderer renderer = new MediaCodecDecoderRenderer(activity, prefs, null, 0, false, false, "", null, display);
+        // The stream setup reads whether the host takes the phase lock; reports are skipped without it.
+        ReflectionHelpers.setField(renderer, "hostPhaseLock", true);
+        return renderer;
     }
 
     private static void samplePhase(MediaCodecDecoderRenderer renderer) {
