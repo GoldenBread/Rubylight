@@ -15,6 +15,7 @@
   import PrepCommands from './PrepCommands.svelte';
   import MenuCommands from './MenuCommands.svelte';
   import VideoSettings from './VideoSettings.svelte';
+  import CouchSettings from './CouchSettings.svelte';
   import LosslessSettings from './LosslessSettings.svelte';
   import RadeonSettings from './RadeonSettings.svelte';
   import RtxSettings from './RtxSettings.svelte';
@@ -392,6 +393,10 @@
 
     <Panel collapsible title="Video and input">
       <VideoSettings {draft} />
+    </Panel>
+
+    <Panel collapsible title="Sound and couch menu" description="Night mode, headphone surround and the couch menu for this app, in place of the host's.">
+      <CouchSettings {draft} />
     </Panel>
 
     <Panel collapsible title="Graphics driver" description="Driver settings for this game, applied when it starts and put back when the session ends.">

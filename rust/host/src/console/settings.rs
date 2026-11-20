@@ -287,6 +287,16 @@ pub const APP: &[Setting] = settings! {
         "frame-generation-mode", "Frame generation", Choice(&["none","game-provided"]);
         "gen1-framegen-fix", "Legacy frame generation capture fix (only while Frame generation is Use default)", Bool;
     ]
+    "App sound and couch menu" => [
+        "audio-night-mode", "Night mode (empty uses the host's)", Bool;
+        "audio-headphone-surround", "Headphone surround (empty uses the host's)", Bool;
+        "couch-menu", "Couch menu (empty uses the host's)", Bool;
+        "couch-menu-open-with", "Open the couch menu with (controller, keyboard, touch; empty uses the host's)", Text;
+        "couch-menu-controller-chord", "Couch menu controller chord (empty uses the host's)", Text;
+        "couch-menu-hold-ms", "Couch menu controller chord hold (milliseconds, 300 to 3000)", Number;
+        "couch-menu-corner-hold-ms", "Couch menu corner hold (milliseconds, 500 to 3000)", Number;
+        "couch-menu-keyboard-chord", "Couch menu keyboard chord (ctrl+alt+backspace, ctrl+alt+home, ctrl+alt+end or ctrl+alt+insert)", Text;
+    ]
 };
 pub const CLIENT: &[Setting] = settings! {
     "Device preferences" => [
@@ -472,9 +482,6 @@ pub fn render(prefix: &str, schema: &[Setting], values: &Value) -> String {
                             }
                             "disconnect" if setting.key == "remove_remote_monitor" => {
                                 "As soon as the device disconnects"
-                            }
-                            "delay" if setting.key == "bitrate_adaptation" => {
-                                "On, and react to network delay"
                             }
                             _ if setting.key == "locale" => i18n::language_name(choice),
                             _ => choice,

@@ -138,6 +138,10 @@ export interface Draft {
   audio: Record<AudioOverride, '' | 'on' | 'off'>;
   /** Those overrides exactly as stored, sent back while their choice is untouched. */
   stored_audio: Partial<Record<AudioOverride, unknown>>;
+  /** The device's couch menu overrides as the controls show them; empty follows the host. */
+  couch: Record<CouchOverride, string>;
+  /** Those overrides exactly as stored, sent back while their control is untouched. */
+  stored_couch: Partial<Record<CouchOverride, unknown>>;
   /** The device's other config overrides, kept and sent back untouched. */
   other_overrides: Record<string, unknown>;
   /** Lets the device change Radeon settings and close games; off unless granted here. */
@@ -229,6 +233,56 @@ function shownAudio(value: unknown): '' | 'on' | 'off' {
   return on === null ? '' : on ? 'on' : 'off';
 }
 
+/** The couch menu options a device sets for itself, in its config overrides (`override_allowed` in overrides.rs). */
+export const COUCH_OVERRIDES = [
+  'couch_menu',
+  'couch_menu_open_with',
+  'couch_menu_controller_chord',
+  'couch_menu_hold_ms',
+  'couch_menu_corner_hold_ms',
+  'couch_menu_keyboard_chord',
+] as const;
+export type CouchOverride = (typeof COUCH_OVERRIDES)[number];
+
+/** The hold times the host accepts, in milliseconds, as the host settings state them. */
+export const COUCH_HOLD_RANGE = { couch_menu_hold_ms: [300, 3000], couch_menu_corner_hold_ms: [500, 3000] } as const;
+
+function couchControl(key: CouchOverride) {
+  const control = basicSettings.find((setting) => setting.key === key)?.control;
+  if (!control) throw new Error(`${key} is not a setting`);
+  return control;
+}
+
+/** The keyboard chords the host offers. */
+const keyboardChord = couchControl('couch_menu_keyboard_chord');
+if (keyboardChord.kind !== 'select') throw new Error('couch_menu_keyboard_chord is not a select setting');
+export const COUCH_KEYBOARD_CHORDS = keyboardChord.options.map(({ value, label }) => ({ value, label }));
+
+/** Every non-empty combination of the ways to open the menu, in the host's order, as the select offers them. */
+const openWith = couchControl('couch_menu_open_with');
+if (openWith.kind !== 'flags') throw new Error('couch_menu_open_with is not a flags setting');
+export const COUCH_OPEN_WITH_OPTIONS: { value: string; label: string }[] = Array.from(
+  { length: 2 ** openWith.options.length - 1 },
+  (_, index) => {
+    const picked = openWith.options.filter((_option, bit) => ((index + 1) >> bit) & 1);
+    return { value: picked.map((option) => option.value).join(','), label: picked.map((option) => option.label).join(' and ') };
+  },
+);
+
+/** Whether a hold time is empty (the host's) or a whole number of milliseconds in the host's range. */
+export function validCouchHold(key: keyof typeof COUCH_HOLD_RANGE, value: string): boolean {
+  if (value.trim() === '') return true;
+  const [min, max] = COUCH_HOLD_RANGE[key];
+  return /^\d{1,4}$/.test(value.trim()) && Number(value) >= min && Number(value) <= max;
+}
+
+/** A stored couch menu override as its control shows it: the menu switch as on or off, the rest as written. */
+function shownCouch(key: CouchOverride, value: unknown): string {
+  if (key === 'couch_menu') return shownAudio(value);
+  if (value === undefined || value === null) return '';
+  return typeof value === 'string' ? value.trim() : String(value);
+}
+
 /** A stored display override as its select shows it: a number as written, a choice in lower case. */
 function shownDisplay(value: unknown): string {
   return typeof value === 'number' ? String(value) : text(value).toLowerCase();
@@ -298,6 +352,12 @@ export function toDraft(client: Client): Draft {
       delete other[key];
     }
   }
+  const storedCouch: Partial<Record<CouchOverride, unknown>> = {};
+  for (const key of COUCH_OVERRIDES) {
+    // A null is no value: sent back, it would delete the host's own for this device's streams.
+    if (other[key] != null) storedCouch[key] = other[key];
+    delete other[key];
+  }
   const storedGamepad = other.gamepad;
   delete other.gamepad;
   // A null is no value: sent back, it would delete the host's own for this device's streams.
@@ -341,6 +401,11 @@ export function toDraft(client: Client): Draft {
       '' | 'on' | 'off'
     >,
     stored_audio: storedAudio,
+    couch: Object.fromEntries(COUCH_OVERRIDES.map((key) => [key, shownCouch(key, storedCouch[key])])) as Record<
+      CouchOverride,
+      string
+    >,
+    stored_couch: storedCouch,
     other_overrides: other,
     // As the host reads it: only true and "true" are on, so 1 and "yes" stay off.
     host_control: client.host_control === true || client.host_control === 'true',
@@ -414,6 +479,18 @@ function overrides(draft: Draft): Record<string, unknown> | null {
       audio[key] = value === 'on';
     }
   }
+  const couch: Record<string, unknown> = {};
+  for (const key of COUCH_OVERRIDES) {
+    const value = draft.couch[key].trim();
+    if (key in draft.stored_couch && shownCouch(key, draft.stored_couch[key]) === draft.couch[key]) {
+      couch[key] = draft.stored_couch[key];
+    } else if (value !== '') {
+      if (key === 'couch_menu') couch[key] = value === 'on';
+      else if (key === 'couch_menu_hold_ms' || key === 'couch_menu_corner_hold_ms') {
+        if (validCouchHold(key, value)) couch[key] = Number(value);
+      } else couch[key] = value;
+    }
+  }
   const gamepadUntouched = draft.stored_gamepad !== undefined && shownGamepad(draft.stored_gamepad) === draft.gamepad;
   const gamepad = gamepadUntouched ? { gamepad: draft.stored_gamepad } : draft.gamepad ? { gamepad: draft.gamepad } : {};
   const ltrUntouched = draft.stored_ltr_frames !== undefined && shownLtrFrames(draft.stored_ltr_frames) === draft.ltr_frames;
@@ -425,8 +502,7 @@ function overrides(draft: Draft): Record<string, unknown> | null {
     : draft.release_delay.trim() && validReleaseDelay(draft.release_delay)
       ? { absolute_left_release_delay: Number(draft.release_delay) }
       : {};
-  const next = { ...draft.other_overrides, ...display, ...gamepad, ...ltr, ...delay, ...preset };
-  const next = { ...draft.other_overrides, ...display, ...audio, ...gamepad, ...ltr, ...preset };
+  const next = { ...draft.other_overrides, ...display, ...audio, ...couch, ...gamepad, ...ltr, ...delay, ...preset };
   return Object.keys(next).length > 0 ? next : null;
 }
 

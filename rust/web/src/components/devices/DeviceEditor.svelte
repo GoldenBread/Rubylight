@@ -11,9 +11,12 @@
   import { failed, notify } from '../../lib/feedback.svelte';
   import {
     changes,
+    COUCH_KEYBOARD_CHORDS,
+    COUCH_OPEN_WITH_OPTIONS,
     DISPLAY_OVERRIDE_OPTIONS,
     GAMEPAD_OPTIONS,
     LTR_FRAME_OPTIONS,
+    validCouchHold,
     validReleaseDelay,
     PERMISSION_GROUPS,
     learnedLayoutLabel,
@@ -207,6 +210,21 @@
   const gamepadUnknown = $derived(draft.gamepad !== '' && !GAMEPAD_OPTIONS.some((option) => option.value === draft.gamepad));
   let controllerOpen = $state(untrack(() => gamepadUnknown));
   let soundOpen = $state(untrack(() => Object.values(draft.audio).some((value) => value !== '')));
+  const openWithUnknown = $derived(
+    draft.couch.couch_menu_open_with !== '' &&
+      !COUCH_OPEN_WITH_OPTIONS.some((option) => option.value === draft.couch.couch_menu_open_with),
+  );
+  const chordUnknown = $derived(
+    draft.couch.couch_menu_keyboard_chord !== '' &&
+      !COUCH_KEYBOARD_CHORDS.some((option) => option.value === draft.couch.couch_menu_keyboard_chord),
+  );
+  const holdInvalid = $derived(!validCouchHold('couch_menu_hold_ms', draft.couch.couch_menu_hold_ms));
+  const cornerInvalid = $derived(!validCouchHold('couch_menu_corner_hold_ms', draft.couch.couch_menu_corner_hold_ms));
+  const couchInvalid = $derived(openWithUnknown || chordUnknown || holdInvalid || cornerInvalid);
+  let couchOpen = $state(untrack(() => Object.values(draft.couch).some((value) => value !== '')));
+  $effect(() => {
+    if (couchInvalid) couchOpen = true;
+  });
   const ltrUnknown = $derived(draft.ltr_frames !== '' && !LTR_FRAME_OPTIONS.some((option) => option.value === draft.ltr_frames));
   let encoderOpen = $state(untrack(() => ltrUnknown));
   const delayInvalid = $derived(!validReleaseDelay(draft.release_delay));
@@ -233,7 +251,7 @@
 
   async function save(event: SubmitEvent) {
     event.preventDefault();
-    if (!changed || nameMissing || modeInvalid || delayInvalid || saving || disabled) return;
+    if (!changed || nameMissing || modeInvalid || delayInvalid || couchInvalid || saving || disabled) return;
     saving = true;
     // Edits made while the request is out stay unsaved.
     const submitted = $state.snapshot(draft);
@@ -531,6 +549,102 @@
           <option value="">Use the host setting</option>
           <option value="on">On</option>
           <option value="off">Off</option>
+        </select>
+      </Field>
+    </div>
+  </section>
+  </details>
+
+  <details class="override" bind:open={couchOpen}><summary>Couch menu</summary>
+  <section>
+    <div class="form-grid">
+      <Field
+        label="Couch menu"
+        id="{uid}-couch"
+        hint="The menu the PC draws over this device's stream, in place of Couch menu in Settings. Choose Off for a device whose games use the buttons that open it."
+      >
+        <select id="{uid}-couch" class="select" bind:value={draft.couch.couch_menu}>
+          <option value="">Use the host setting</option>
+          <option value="on">On</option>
+          <option value="off">Off</option>
+        </select>
+      </Field>
+      <Field
+        label="Open the couch menu with"
+        id="{uid}-couch-open"
+        hint="The ways to open it on this device, in place of the host's. Leave it on Use the host setting unless this device needs its own."
+        error={openWithUnknown ? `“${draft.couch.couch_menu_open_with}” is not a choice, so the host ignores it. Choose one.` : undefined}
+      >
+        <select id="{uid}-couch-open" class="select" bind:value={draft.couch.couch_menu_open_with}>
+          <option value="">Use the host setting</option>
+          {#if openWithUnknown}
+            <option value={draft.couch.couch_menu_open_with}>{draft.couch.couch_menu_open_with} (not a choice)</option>
+          {/if}
+          {#each COUCH_OPEN_WITH_OPTIONS as option (option.value)}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </select>
+      </Field>
+      <Field
+        label="Controller chord"
+        id="{uid}-couch-chord"
+        hint="The buttons held together on one controller, joined with +, such as l3+r3 or select. Leave it empty to use the host's."
+      >
+        <input
+          id="{uid}-couch-chord"
+          class="input mono"
+          type="text"
+          placeholder="l3+r3"
+          autocomplete="off"
+          bind:value={draft.couch.couch_menu_controller_chord}
+        />
+      </Field>
+      <Field
+        label="Controller chord hold"
+        id="{uid}-couch-hold"
+        hint="How long the chord is held before the menu opens, 300 to 3000 ms. Leave it empty to use the host's 1000."
+        error={holdInvalid ? 'Enter a whole number from 300 to 3000, or leave it empty.' : undefined}
+      >
+        <input
+          id="{uid}-couch-hold"
+          class="input num"
+          type="text"
+          inputmode="numeric"
+          placeholder="1000"
+          aria-invalid={holdInvalid ? 'true' : undefined}
+          bind:value={draft.couch.couch_menu_hold_ms}
+        />
+      </Field>
+      <Field
+        label="Corner hold"
+        id="{uid}-couch-corner"
+        hint="How long a touch, pen or mouse button holds the top-left corner before the menu opens, 500 to 3000 ms. Leave it empty to use the host's 1500."
+        error={cornerInvalid ? 'Enter a whole number from 500 to 3000, or leave it empty.' : undefined}
+      >
+        <input
+          id="{uid}-couch-corner"
+          class="input num"
+          type="text"
+          inputmode="numeric"
+          placeholder="1500"
+          aria-invalid={cornerInvalid ? 'true' : undefined}
+          bind:value={draft.couch.couch_menu_corner_hold_ms}
+        />
+      </Field>
+      <Field
+        label="Keyboard chord"
+        id="{uid}-couch-keys"
+        hint="The keys that open the menu from this device's keyboard, in place of the host's."
+        error={chordUnknown ? `“${draft.couch.couch_menu_keyboard_chord}” is not a choice, so the host ignores it. Choose one.` : undefined}
+      >
+        <select id="{uid}-couch-keys" class="select" bind:value={draft.couch.couch_menu_keyboard_chord}>
+          <option value="">Use the host setting</option>
+          {#if chordUnknown}
+            <option value={draft.couch.couch_menu_keyboard_chord}>{draft.couch.couch_menu_keyboard_chord} (not a choice)</option>
+          {/if}
+          {#each COUCH_KEYBOARD_CHORDS as option (option.value)}
+            <option value={option.value}>{option.label}</option>
+          {/each}
         </select>
       </Field>
     </div>

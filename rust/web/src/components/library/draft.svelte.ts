@@ -56,12 +56,17 @@ export type TristateKey =
   | 'prefer-10bit-sdr'
   | 'terminate-on-pause'
   | 'lossless-scaling-legacy-auto-detect'
-  | 'rtx-video';
+  | 'rtx-video'
+  | 'audio-night-mode'
+  | 'audio-headphone-surround'
+  | 'couch-menu';
 
 /** Whole numbers and the range the host accepts. A missing key uses the host's value. */
 export const NUMBERS: Record<string, { min: number; max?: number }> = {
   'exit-timeout': { min: 0, max: 300 },
   'absolute-left-release-delay': { min: 0, max: 1000 },
+  'couch-menu-hold-ms': { min: 300, max: 3000 },
+  'couch-menu-corner-hold-ms': { min: 500, max: 3000 },
   'scale-factor': { min: 1 },
   'lossless-scaling-target-fps': { min: 1, max: 480 },
   'lossless-scaling-rtss-limit': { min: 1, max: 480 },
@@ -75,6 +80,8 @@ export const NUMBERS: Record<string, { min: number; max?: number }> = {
 export type NumberKey =
   | 'exit-timeout'
   | 'absolute-left-release-delay'
+  | 'couch-menu-hold-ms'
+  | 'couch-menu-corner-hold-ms'
   | 'scale-factor'
   | 'lossless-scaling-target-fps'
   | 'lossless-scaling-rtss-limit'
@@ -93,6 +100,9 @@ export type TextKey =
   | 'dd-configuration-option'
   | 'frame-generation-mode'
   | 'gamepad'
+  | 'couch-menu-open-with'
+  | 'couch-menu-controller-chord'
+  | 'couch-menu-keyboard-chord'
   | 'radeon-profile'
   | 'lossless-scaling-profile'
   | 'capture-window'

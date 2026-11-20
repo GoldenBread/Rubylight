@@ -93,6 +93,25 @@ pub(crate) fn effective_config(h: &Shared, launch: &Launch) -> Result<Config> {
             // How long a touch or pen tap holds its left-button release back
             // (the host's `absolute_left_release_delay`).
             ("absolute-left-release-delay", "absolute_left_release_delay"),
+            // Night mode, headphone surround and the couch menu for this app
+            // (the console's Sound and couch menu panel).
+            ("audio-night-mode", "audio_night_mode"),
+            ("audio-headphone-surround", "audio_headphone_surround"),
+            ("couch-menu", "couch_menu"),
+            ("couch-menu-open-with", "couch_menu_open_with"),
+            (
+                "couch-menu-controller-chord",
+                "couch_menu_controller_chord",
+            ),
+            ("couch-menu-hold-ms", "couch_menu_hold_ms"),
+            (
+                "couch-menu-corner-hold-ms",
+                "couch_menu_corner_hold_ms",
+            ),
+            (
+                "couch-menu-keyboard-chord",
+                "couch_menu_keyboard_chord",
+            ),
             // Saved by Vibepollo and earlier Rubylight apps for RTX HDR;
             // the peak is still what a virtual display reports.
             ("rtx-hdr-peak-brightness", "hdr_peak_brightness"),

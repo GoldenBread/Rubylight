@@ -7,7 +7,11 @@ globalThis.window = new EventTarget();
 const server = await createTestServer({ configFile: false });
 const { schema } = await server.ssrLoadModule('/src/lib/settings-schema.ts');
 const { patchValue, normalise, describeDefault } = await server.ssrLoadModule('/src/components/settings/values.ts');
-const { toDraft, changes } = await server.ssrLoadModule('/src/components/devices/device.ts');
+const { toDraft, changes, validCouchHold, COUCH_OPEN_WITH_OPTIONS } = await server.ssrLoadModule('/src/components/devices/device.ts');
+const { render } = await server.ssrLoadModule('svelte/server');
+const DeviceEditor = (await server.ssrLoadModule('/src/components/devices/DeviceEditor.svelte')).default;
+const CouchSettings = (await server.ssrLoadModule('/src/components/library/CouchSettings.svelte')).default;
+const { AppDraft } = await server.ssrLoadModule('/src/components/library/draft.svelte.ts');
 const shipped = new Map(schema.settings.map(setting => [setting.key, setting]));
 const client = extra => ({ uuid: 'u', name: 'TV', perm: 0x071f1f00, enabled: true, connected: false, ...extra });
 
@@ -52,4 +56,71 @@ test('a device sets night mode and headphone surround beside its other overrides
   assert.deepEqual(changes(stored, { ...stored, name: 'Cube' }), { name: 'Cube' });
   assert.deepEqual(changes(stored, { ...stored, audio: { ...stored.audio, audio_headphone_surround: '' } }),
     { config_overrides: null });
+});
+
+test('a device sets the couch menu beside its other overrides', () => {
+  const before = toDraft(client({ config_overrides: { max_bitrate: 20000 } }));
+  assert.deepEqual(Object.values(before.couch), ['', '', '', '', '', '']);
+  const set = { couch_menu: 'off', couch_menu_open_with: 'keyboard,touch', couch_menu_controller_chord: ' select ',
+    couch_menu_hold_ms: '1200', couch_menu_corner_hold_ms: '2000', couch_menu_keyboard_chord: 'ctrl+alt+home' };
+  assert.deepEqual(changes(before, { ...before, couch: set }), {
+    config_overrides: { max_bitrate: 20000, couch_menu: false, couch_menu_open_with: 'keyboard,touch',
+      couch_menu_controller_chord: 'select', couch_menu_hold_ms: 1200, couch_menu_corner_hold_ms: 2000,
+      couch_menu_keyboard_chord: 'ctrl+alt+home' },
+  });
+  const stored = toDraft(client({ config_overrides: { couch_menu: 'false', couch_menu_hold_ms: 1500 } }));
+  assert.equal(stored.couch.couch_menu, 'off');
+  assert.equal(stored.couch.couch_menu_hold_ms, '1500');
+  assert.deepEqual(Object.keys(stored.other_overrides), []);
+  // Untouched, they go back as stored; emptied, they leave.
+  assert.deepEqual(changes(stored, { ...stored, name: 'Cube' }), { name: 'Cube' });
+  assert.deepEqual(changes(stored, { ...stored, couch: { ...stored.couch, couch_menu: '', couch_menu_hold_ms: '' } }),
+    { config_overrides: null });
+});
+
+test('a couch menu hold is empty or a whole number inside the host range', () => {
+  for (const value of ['', '300', '3000']) assert.equal(validCouchHold('couch_menu_hold_ms', value), true, value);
+  for (const value of ['299', '3001', '1.5', 'soon']) assert.equal(validCouchHold('couch_menu_hold_ms', value), false, value);
+  assert.equal(validCouchHold('couch_menu_corner_hold_ms', '400'), false);
+  assert.equal(validCouchHold('couch_menu_corner_hold_ms', '500'), true);
+  assert.equal(COUCH_OPEN_WITH_OPTIONS.length, 7);
+  assert.equal(COUCH_OPEN_WITH_OPTIONS.at(-1).value, 'controller,keyboard,touch');
+});
+
+test('the device editor has Sound and Couch menu groups that open on a saved value', () => {
+  const body = extra => render(DeviceEditor, { props: { client: client(extra), sleepUnavailable: null } }).body;
+  const section = (html, name) => new RegExp(`<details class="override[^>]*><summary[^>]*>${name}<`).exec(html)[0];
+  for (const label of ['Night mode', 'Headphone surround', 'Open the couch menu with', 'Controller chord hold', 'Corner hold', 'Keyboard chord']) {
+    assert.match(body({}), new RegExp(label), label);
+  }
+  assert.doesNotMatch(section(body({}), 'Couch menu'), /\sopen/);
+  assert.match(section(body({ config_overrides: { couch_menu: false } }), 'Couch menu'), /\sopen/);
+  assert.doesNotMatch(section(body({ config_overrides: { couch_menu: false } }), 'Sound'), /\sopen/);
+  assert.match(section(body({ config_overrides: { audio_night_mode: true } }), 'Sound'), /\sopen/);
+  assert.match(section(body({ config_overrides: { couch_menu_hold_ms: 'soon' } }), 'Couch menu'), /\sopen/);
+});
+
+test('an app sets night mode, headphone surround and the couch menu for itself', () => {
+  const app = extra => ({ name: 'Game', cmd: 'game.exe', 'working-dir': '', 'prep-cmd': [], uuid: 'a', ...extra });
+  const draft = new AppDraft(app({}));
+  const html = render(CouchSettings, { props: { draft } }).body;
+  for (const label of ['Night mode', 'Headphone surround', 'Couch menu', 'Open the couch menu with', 'Controller chord',
+    'Controller chord hold', 'Corner hold', 'Keyboard chord']) {
+    assert.match(html, new RegExp(label), label);
+  }
+  draft.setTristate('audio-night-mode', 'on');
+  draft.setTristate('couch-menu', 'off');
+  draft.setText('couch-menu-open-with', 'keyboard');
+  draft.setText('couch-menu-keyboard-chord', 'ctrl+alt+end');
+  draft.setNumber('couch-menu-hold-ms', 800);
+  assert.equal(draft.invalid, true);
+  draft.setNumber('couch-menu-hold-ms', 1200);
+  assert.equal(draft.invalid, false);
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(draft.record()).filter(([key]) => key.startsWith('couch-') || key.startsWith('audio-'))),
+    { 'audio-night-mode': true, 'couch-menu': false, 'couch-menu-open-with': 'keyboard',
+      'couch-menu-keyboard-chord': 'ctrl+alt+end', 'couch-menu-hold-ms': 1200 },
+  );
+  draft.setTristate('audio-night-mode', '');
+  assert.ok(!('audio-night-mode' in draft.record()));
 });
