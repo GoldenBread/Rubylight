@@ -424,7 +424,18 @@ fn per_connection(error: &std::io::Error) -> bool {
         ConnectionReset | ConnectionAborted | ConnectionRefused | Interrupted | WouldBlock
     )
 }
-pub struct Discovery(ServiceDaemon);
+/// How often mdns-sd re-reads this PC's interfaces on its own: a fallback for the interface
+/// change notification below, which has them re-read within a second of a change instead, and
+/// covers a notification that could not be registered or missed one.
+const DISCOVERY_FALLBACK: u32 = 300;
+/// How soon after a change the notification has mdns-sd re-read the interfaces.
+const DISCOVERY_SOON: u32 = 1;
+pub struct Discovery {
+    /// Windows' interface change notification: `None` when Windows refused it, and the daemon's
+    /// own interval is the fallback. Dropped before the daemon, so it wakes nothing shut down.
+    watch: Option<butterpollo_windows::net::InterfaceChanges>,
+    daemon: ServiceDaemon,
+}
 impl Discovery {
     pub fn start(config: &Config, bind: IpAddr) -> Result<Option<Self>> {
         if !config.boolean("enable_discovery", true) || bind.is_loopback() {
@@ -432,7 +443,7 @@ impl Discovery {
         }
         let daemon = ServiceDaemon::new()?;
         let result = (|| -> Result<()> {
-            daemon.set_ip_check_interval(30)?;
+            daemon.set_ip_check_interval(DISCOVERY_FALLBACK)?;
             daemon.disable_interface(IfKind::LoopbackV4)?;
             daemon.disable_interface(IfKind::LoopbackV6)?;
             if bind.is_ipv4() {
@@ -475,12 +486,36 @@ impl Discovery {
             let _ = daemon.shutdown();
             return Err(error);
         }
-        Ok(Some(Self(daemon)))
+        // Windows tells the daemon when an interface changed, and the daemon re-reads them
+        // within a second of that; the interval set above stays only the fallback. A refused
+        // registration leaves the fallback alone, five minutes instead of thirty seconds.
+        let watch = butterpollo_windows::net::InterfaceChanges::register(
+            {
+                let daemon = daemon.clone();
+                move || {
+                    let _ = daemon.set_ip_check_interval(DISCOVERY_SOON);
+                }
+            },
+            {
+                let daemon = daemon.clone();
+                move || {
+                    let _ = daemon.set_ip_check_interval(DISCOVERY_FALLBACK);
+                }
+            },
+        );
+        if watch.is_none() {
+            tracing::warn!(
+                "interface change notifications are unavailable; Moonlight discovery re-reads the interfaces every five minutes instead"
+            );
+        }
+        Ok(Some(Self { watch, daemon }))
     }
 }
 impl Drop for Discovery {
     fn drop(&mut self) {
-        let _ = self.0.shutdown();
+        // The notification first, so its watcher sends a shut-down daemon nothing.
+        self.watch = None;
+        let _ = self.daemon.shutdown();
     }
 }
 

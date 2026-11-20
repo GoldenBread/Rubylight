@@ -1494,3 +1494,27 @@ fn lan_interfaces_read_this_pcs_adapters() {
             .collect::<Vec<_>>()
     );
 }
+#[test]
+fn interface_change_notifications_arrive_and_end_with_the_registration() {
+    use std::sync::{Arc, atomic::AtomicUsize};
+    let arrived = Arc::new(AtomicUsize::new(0));
+    let seen = arrived.clone();
+    // The initial notification reports every interface this PC has, so at least one arrives
+    // without an interface actually changing.
+    let changes = InterfaceChanges::register_initial(
+        move || {
+            seen.fetch_add(1, Ordering::Relaxed);
+        },
+        || {},
+    )
+    .expect("Windows refused NotifyIpInterfaceChange");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while arrived.load(Ordering::Relaxed) == 0 && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(
+        arrived.load(Ordering::Relaxed) >= 1,
+        "no interface reported"
+    );
+    drop(changes);
+}
