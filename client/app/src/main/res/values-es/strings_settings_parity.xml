@@ -35,7 +35,7 @@
     <string name="sharp_color_hdr_dropped">Esta transmisión está en SDR: en este PC, HDR no está disponible con el texto en color más nítido.</string>
     <string name="hint_show_onscreen_controls">Un mando táctil dibujado sobre la transmisión, para jugar sin un mando físico. Tapa parte de la imagen; baja Opacidad para ver más del juego.</string>
     <string name="hint_mouse_speed">La velocidad a la que un ratón físico mueve el puntero del PC. Los modos táctiles tienen sus propios ajustes de velocidad.</string>
-    <string name="hint_trackpad_speed">Velocidad del puntero en el modo táctil Trackpad.</string>
+    <string name="hint_trackpad_speed">Cuánto mueve el puntero un deslizamiento en los modos táctiles Trackpad y en el panel táctil en pantalla, y cuánto gira la cámara en el modo Cámara de ese panel. Más alto es más rápido pero apunta con menos precisión; conviene cambiarlo si el puntero o la cámara van demasiado lentos o rápidos.</string>
     <string name="hint_local_cursor_speed">Velocidad del puntero en el modo táctil Cursor local. Con el valor predeterminado, el puntero se mueve lo mismo que tu dedo.</string>
     <string name="hint_trackpad_acceleration_curve">Cuánto más lejos llegan los deslizamientos rápidos.</string>
     <string name="hint_trackpad_momentum_glide">Cuánto se desliza el puntero.</string>

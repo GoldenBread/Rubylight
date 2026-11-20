@@ -44,4 +44,22 @@
     <string name="pad_right_trackpad">오른쪽 트랙패드</string>
     <string name="pad_left_grip">왼쪽 그립</string>
     <string name="pad_right_grip">오른쪽 그립</string>
+    <string name="pad_touchpad_mouse_summary">포인터를 움직입니다</string>
+    <string name="pad_touchpad_camera_summary">시점을 돌립니다</string>
+    <string name="pad_touchpad_chip_mouse">마우스</string>
+    <string name="pad_touchpad_chip_camera">카메라</string>
+    <string name="pad_edit_hint_camera">카메라: 스와이프하면 오른쪽 스틱이 움직이고, 빠르게 스와이프할수록 더 많이 돕니다.</string>
+    <string name="pad_edit_move_panel">패널 이동</string>
+    <string name="pad_edit_split">분리</string>
+    <string name="pad_edit_join">합치기</string>
+    <string name="pad_edit_add">추가</string>
+    <string name="pad_edit_add_control">%1$s 추가</string>
+    <string name="pad_edit_group_gamepad">게임패드</string>
+    <string name="pad_edit_group_keyboard_mouse">키보드 및 마우스</string>
+    <string name="pad_edit_group_extras">기타</string>
+    <string name="pad_face_button">%1$s 버튼</string>
+    <string name="pad_dpad_up">방향키 위</string>
+    <string name="pad_dpad_down">방향키 아래</string>
+    <string name="pad_dpad_left">방향키 왼쪽</string>
+    <string name="pad_dpad_right">방향키 오른쪽</string>
 </resources>

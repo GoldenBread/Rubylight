@@ -35,7 +35,7 @@
     <string name="sharp_color_hdr_dropped">Ten strumień jest w SDR: na tym komputerze HDR nie działa razem z ostrzejszym kolorowym tekstem.</string>
     <string name="hint_show_onscreen_controls">Dotykowy gamepad rysowany nad strumieniem, do grania bez fizycznego kontrolera. Zasłania część obrazu; zmniejsz „Nieprzezroczystość”, aby widzieć więcej gry.</string>
     <string name="hint_mouse_speed">Jak szybko fizyczna mysz porusza wskaźnikiem komputera. Tryby dotyku mają własne ustawienia szybkości.</string>
-    <string name="hint_trackpad_speed">Szybkość wskaźnika w trybie dotyku „Touchpad”.</string>
+    <string name="hint_trackpad_speed">O ile przesunięcie palcem przesuwa wskaźnik w trybach dotyku „Touchpad” i na touchpadzie ekranowym oraz o ile obraca kamerę w trybie Kamera tego touchpada. Wyższa wartość jest szybsza, ale mniej precyzyjna; zmień ją, gdy wskaźnik lub kamera działa za wolno albo za szybko.</string>
     <string name="hint_local_cursor_speed">Szybkość wskaźnika w trybie dotyku „Kursor lokalny”. Przy wartości domyślnej wskaźnik przesuwa się tak daleko jak palec.</string>
     <string name="hint_trackpad_acceleration_curve">O ile dalej sięgają szybkie przesunięcia.</string>
     <string name="hint_trackpad_momentum_glide">Jak daleko ślizga się wskaźnik.</string>

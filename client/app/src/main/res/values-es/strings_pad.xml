@@ -44,4 +44,22 @@
     <string name="pad_right_trackpad">Trackpad derecho</string>
     <string name="pad_left_grip">Agarre izquierdo</string>
     <string name="pad_right_grip">Agarre derecho</string>
+    <string name="pad_touchpad_mouse_summary">Mueve el puntero</string>
+    <string name="pad_touchpad_camera_summary">Gira la vista</string>
+    <string name="pad_touchpad_chip_mouse">RATÓN</string>
+    <string name="pad_touchpad_chip_camera">CÁM</string>
+    <string name="pad_edit_hint_camera">Cámara: los deslizamientos mueven el stick derecho; cuanto más rápido, más gira.</string>
+    <string name="pad_edit_move_panel">Mover panel</string>
+    <string name="pad_edit_split">Dividir</string>
+    <string name="pad_edit_join">Unir</string>
+    <string name="pad_edit_add">Añadir</string>
+    <string name="pad_edit_add_control">Añadir %1$s</string>
+    <string name="pad_edit_group_gamepad">Mando</string>
+    <string name="pad_edit_group_keyboard_mouse">Teclado y ratón</string>
+    <string name="pad_edit_group_extras">Extras</string>
+    <string name="pad_face_button">Botón %1$s</string>
+    <string name="pad_dpad_up">Cruceta arriba</string>
+    <string name="pad_dpad_down">Cruceta abajo</string>
+    <string name="pad_dpad_left">Cruceta izquierda</string>
+    <string name="pad_dpad_right">Cruceta derecha</string>
 </resources>

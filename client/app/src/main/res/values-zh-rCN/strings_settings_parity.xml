@@ -35,7 +35,7 @@
     <string name="sharp_color_hdr_dropped">此串流为 SDR：在这台电脑上，HDR 无法与“更清晰的彩色文字”同时使用。</string>
     <string name="hint_show_onscreen_controls">覆盖在串流画面上的触控手柄，没有实体手柄也能玩。它会遮住部分画面；调低“不透明度”可看到更多游戏画面。</string>
     <string name="hint_mouse_speed">实体鼠标移动电脑指针的速度。各触控模式有各自的速度设置。</string>
-    <string name="hint_trackpad_speed">“触控板”触控模式下的指针速度。</string>
+    <string name="hint_trackpad_speed">在“触控板”触控模式和屏幕触控板上，滑动一次指针移动多远；在该触控板的“相机”模式下，则是相机转动多远。数值越高越快，但瞄准更不精细；指针或相机觉得太慢或太快时可调整。</string>
     <string name="hint_local_cursor_speed">“本地光标”触控模式下的指针速度。默认值下，指针移动的距离与手指相同。</string>
     <string name="hint_trackpad_acceleration_curve">快速滑动时指针额外移动的距离。</string>
     <string name="hint_trackpad_momentum_glide">指针滑行的距离。</string>

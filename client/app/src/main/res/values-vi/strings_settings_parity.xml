@@ -35,7 +35,7 @@
     <string name="sharp_color_hdr_dropped">Stream này ở SDR: trên PC này, HDR không dùng được cùng chữ màu sắc nét hơn.</string>
     <string name="hint_show_onscreen_controls">Tay cầm cảm ứng vẽ đè lên stream, để chơi mà không cần tay cầm vật lý. Nó che một phần hình ảnh; giảm “Độ mờ đục” để thấy trò chơi nhiều hơn.</string>
     <string name="hint_mouse_speed">Tốc độ chuột vật lý di chuyển con trỏ của PC. Các chế độ cảm ứng có cài đặt tốc độ riêng.</string>
-    <string name="hint_trackpad_speed">Tốc độ con trỏ ở chế độ cảm ứng Bàn di chuột.</string>
+    <string name="hint_trackpad_speed">Một lần vuốt di chuyển con trỏ bao xa ở các chế độ cảm ứng Bàn di chuột và trên bàn di chuột trên màn hình, và xoay camera bao xa ở chế độ Camera của bàn di chuột đó. Càng cao càng nhanh nhưng ngắm kém chính xác; hãy đổi khi con trỏ hoặc camera quá chậm hoặc quá nhanh.</string>
     <string name="hint_local_cursor_speed">Tốc độ con trỏ ở chế độ cảm ứng “Con trỏ cục bộ”. Ở mức mặc định, con trỏ đi xa đúng bằng ngón tay bạn.</string>
     <string name="hint_trackpad_acceleration_curve">Mức vuốt nhanh đưa con trỏ đi xa hơn.</string>
     <string name="hint_trackpad_momentum_glide">Quãng đường con trỏ trượt tiếp.</string>

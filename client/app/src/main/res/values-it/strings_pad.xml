@@ -44,4 +44,22 @@
     <string name="pad_right_trackpad">Trackpad destro</string>
     <string name="pad_left_grip">Impugnatura sinistra</string>
     <string name="pad_right_grip">Impugnatura destra</string>
+    <string name="pad_touchpad_mouse_summary">Muove il puntatore</string>
+    <string name="pad_touchpad_camera_summary">Ruota la visuale</string>
+    <string name="pad_touchpad_chip_mouse">MOUSE</string>
+    <string name="pad_touchpad_chip_camera">CAM</string>
+    <string name="pad_edit_hint_camera">Fotocamera: gli scorrimenti muovono lo stick destro, più sono veloci più si gira.</string>
+    <string name="pad_edit_move_panel">Sposta pannello</string>
+    <string name="pad_edit_split">Dividi</string>
+    <string name="pad_edit_join">Unisci</string>
+    <string name="pad_edit_add">Aggiungi</string>
+    <string name="pad_edit_add_control">Aggiungi %1$s</string>
+    <string name="pad_edit_group_gamepad">Gamepad</string>
+    <string name="pad_edit_group_keyboard_mouse">Tastiera e mouse</string>
+    <string name="pad_edit_group_extras">Extra</string>
+    <string name="pad_face_button">Pulsante %1$s</string>
+    <string name="pad_dpad_up">Croce direzionale su</string>
+    <string name="pad_dpad_down">Croce direzionale giù</string>
+    <string name="pad_dpad_left">Croce direzionale sinistra</string>
+    <string name="pad_dpad_right">Croce direzionale destra</string>
 </resources>

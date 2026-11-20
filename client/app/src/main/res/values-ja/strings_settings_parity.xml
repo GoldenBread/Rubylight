@@ -35,7 +35,7 @@
     <string name="sharp_color_hdr_dropped">このストリームは SDR です。この PC では「色付き文字をくっきり表示」と HDR を同時に使用できません。</string>
     <string name="hint_show_onscreen_controls">ストリームの上に表示されるタッチ式のゲームパッドで、物理コントローラなしでプレイできます。映像の一部が隠れるので、ゲームをもっと見たい場合は「不透明度」を下げてください。</string>
     <string name="hint_mouse_speed">物理マウスで PC のポインタが動く速さです。タッチモードには、それぞれ専用の速度設定があります。</string>
-    <string name="hint_trackpad_speed">タッチモード「トラックパッド」でのポインタの速度です。</string>
+    <string name="hint_trackpad_speed">タッチモード「トラックパッド」と画面上のタッチパッドで、スワイプ1回でポインターがどれだけ動くか、またそのタッチパッドのカメラモードでカメラがどれだけ回るかです。高いほど速くなりますが細かく狙えません。ポインターやカメラが遅すぎる、または速すぎると感じたときに変更します。</string>
     <string name="hint_local_cursor_speed">タッチモード「ローカルカーソル」でのポインタの速度です。デフォルトでは、ポインタは指と同じ距離だけ動きます。</string>
     <string name="hint_trackpad_acceleration_curve">速くスワイプしたときにポインタがより遠くまで動く度合いです。</string>
     <string name="hint_trackpad_momentum_glide">ポインタが慣性で進む距離です。</string>

@@ -44,4 +44,22 @@
     <string name="pad_right_trackpad">右觸控板</string>
     <string name="pad_left_grip">左握把</string>
     <string name="pad_right_grip">右握把</string>
+    <string name="pad_touchpad_mouse_summary">移動指標</string>
+    <string name="pad_touchpad_camera_summary">轉動視角</string>
+    <string name="pad_touchpad_chip_mouse">滑鼠</string>
+    <string name="pad_touchpad_chip_camera">相機</string>
+    <string name="pad_edit_hint_camera">相機：滑動會推動右搖桿，滑得越快轉得越遠。</string>
+    <string name="pad_edit_move_panel">移動面板</string>
+    <string name="pad_edit_split">拆分</string>
+    <string name="pad_edit_join">合併</string>
+    <string name="pad_edit_add">新增</string>
+    <string name="pad_edit_add_control">新增%1$s</string>
+    <string name="pad_edit_group_gamepad">手把</string>
+    <string name="pad_edit_group_keyboard_mouse">鍵盤和滑鼠</string>
+    <string name="pad_edit_group_extras">其他</string>
+    <string name="pad_face_button">%1$s 按鈕</string>
+    <string name="pad_dpad_up">方向鍵上</string>
+    <string name="pad_dpad_down">方向鍵下</string>
+    <string name="pad_dpad_left">方向鍵左</string>
+    <string name="pad_dpad_right">方向鍵右</string>
 </resources>

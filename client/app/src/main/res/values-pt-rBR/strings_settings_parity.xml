@@ -35,7 +35,7 @@
     <string name="sharp_color_hdr_dropped">Esta transmissão está em SDR: neste PC, o HDR não está disponível com o texto colorido mais nítido.</string>
     <string name="hint_show_onscreen_controls">Um controle de toque desenhado sobre a transmissão, para jogar sem um controle físico. Cobre parte da imagem; reduza Opacidade para ver mais do jogo.</string>
     <string name="hint_mouse_speed">A velocidade com que um mouse físico move o ponteiro do PC. Os modos de toque têm suas próprias configurações de velocidade.</string>
-    <string name="hint_trackpad_speed">Velocidade do ponteiro no modo de toque Trackpad.</string>
+    <string name="hint_trackpad_speed">Quanto um deslize move o ponteiro nos modos de toque Trackpad e no touchpad da tela, e quanto gira a câmera no modo Câmera desse touchpad. Mais alto é mais rápido, mas mira com menos precisão; altere se o ponteiro ou a câmera parecer lento ou rápido demais.</string>
     <string name="hint_local_cursor_speed">Velocidade do ponteiro no modo de toque Cursor local. No padrão, o ponteiro se move a mesma distância que seu dedo.</string>
     <string name="hint_trackpad_acceleration_curve">Quanto mais longe vão os deslizes rápidos.</string>
     <string name="hint_trackpad_momentum_glide">Quanto o ponteiro desliza.</string>

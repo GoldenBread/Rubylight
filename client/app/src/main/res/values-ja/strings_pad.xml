@@ -44,4 +44,22 @@
     <string name="pad_right_trackpad">右トラックパッド</string>
     <string name="pad_left_grip">左グリップ</string>
     <string name="pad_right_grip">右グリップ</string>
+    <string name="pad_touchpad_mouse_summary">ポインターを動かします</string>
+    <string name="pad_touchpad_camera_summary">視点を回します</string>
+    <string name="pad_touchpad_chip_mouse">マウス</string>
+    <string name="pad_touchpad_chip_camera">カメラ</string>
+    <string name="pad_edit_hint_camera">カメラ：スワイプで右スティックを動かし、速くスワイプするほど大きく回ります。</string>
+    <string name="pad_edit_move_panel">パネルを移動</string>
+    <string name="pad_edit_split">分割</string>
+    <string name="pad_edit_join">結合</string>
+    <string name="pad_edit_add">追加</string>
+    <string name="pad_edit_add_control">%1$sを追加</string>
+    <string name="pad_edit_group_gamepad">ゲームパッド</string>
+    <string name="pad_edit_group_keyboard_mouse">キーボードとマウス</string>
+    <string name="pad_edit_group_extras">その他</string>
+    <string name="pad_face_button">%1$sボタン</string>
+    <string name="pad_dpad_up">十字キー 上</string>
+    <string name="pad_dpad_down">十字キー 下</string>
+    <string name="pad_dpad_left">十字キー 左</string>
+    <string name="pad_dpad_right">十字キー 右</string>
 </resources>

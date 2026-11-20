@@ -35,7 +35,7 @@
     <string name="sharp_color_hdr_dropped">Questo stream è in SDR: l’HDR non è disponibile con il testo colorato più nitido su questo PC.</string>
     <string name="hint_show_onscreen_controls">Un gamepad touch disegnato sopra lo stream, per giocare senza un controller fisico. Copre parte dell’immagine; abbassa Opacità per vedere di più il gioco.</string>
     <string name="hint_mouse_speed">Quanto velocemente un mouse fisico muove il puntatore del PC. Le modalità touch hanno le proprie impostazioni di velocità.</string>
-    <string name="hint_trackpad_speed">Velocità del puntatore nella modalità touch Trackpad.</string>
+    <string name="hint_trackpad_speed">Di quanto un movimento del dito sposta il puntatore nelle modalità touch Trackpad e sul touchpad su schermo, e di quanto ruota la visuale nella modalità Fotocamera di quel touchpad. Più alto è più veloce ma meno preciso; conviene cambiarlo se puntatore o visuale sono troppo lenti o troppo veloci.</string>
     <string name="hint_local_cursor_speed">Velocità del puntatore nella modalità touch Cursore locale. Con il valore predefinito il puntatore si sposta quanto il dito.</string>
     <string name="hint_trackpad_acceleration_curve">Quanto più lontano arrivano gli scorrimenti rapidi.</string>
     <string name="hint_trackpad_momentum_glide">Quanto scivola il puntatore.</string>

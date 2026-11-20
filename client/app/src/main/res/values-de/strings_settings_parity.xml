@@ -35,7 +35,7 @@
     <string name="sharp_color_hdr_dropped">Dieser Stream läuft in SDR: HDR ist auf diesem PC nicht zusammen mit schärferem farbigem Text verfügbar.</string>
     <string name="hint_show_onscreen_controls">Ein Touch-Gamepad über dem Stream, zum Spielen ohne physischen Controller. Es verdeckt einen Teil des Bildes; senke „Deckkraft“, um mehr vom Spiel zu sehen.</string>
     <string name="hint_mouse_speed">Wie schnell eine physische Maus den Zeiger des PCs bewegt. Die Touch-Modi haben eigene Tempo-Einstellungen.</string>
-    <string name="hint_trackpad_speed">Zeigertempo im Touch-Modus „Trackpad“.</string>
+    <string name="hint_trackpad_speed">Wie weit ein Wischen den Zeiger in den Touch-Modi „Trackpad“ und auf dem Bildschirm-Touchpad bewegt und wie weit es im Kamera-Modus dieses Touchpads die Kamera dreht. Höher ist schneller, zielt aber ungenauer; ändern, wenn Zeiger oder Kamera zu langsam oder zu schnell wirken.</string>
     <string name="hint_local_cursor_speed">Zeigertempo im Touch-Modus „Lokaler Mauszeiger“. Beim Standardwert bewegt sich der Zeiger so weit wie dein Finger.</string>
     <string name="hint_trackpad_acceleration_curve">Wie viel weiter schnelle Wischbewegungen reichen.</string>
     <string name="hint_trackpad_momentum_glide">Wie weit der Zeiger nachgleitet.</string>

@@ -44,4 +44,22 @@
     <string name="pad_right_trackpad">Prawy gładzik</string>
     <string name="pad_left_grip">Lewy uchwyt</string>
     <string name="pad_right_grip">Prawy uchwyt</string>
+    <string name="pad_touchpad_mouse_summary">Porusza wskaźnik</string>
+    <string name="pad_touchpad_camera_summary">Obraca widok</string>
+    <string name="pad_touchpad_chip_mouse">MYSZ</string>
+    <string name="pad_touchpad_chip_camera">KAM</string>
+    <string name="pad_edit_hint_camera">Kamera: przesunięcia palcem ruszają prawą gałką, szybsze obracają dalej.</string>
+    <string name="pad_edit_move_panel">Przesuń panel</string>
+    <string name="pad_edit_split">Podziel</string>
+    <string name="pad_edit_join">Połącz</string>
+    <string name="pad_edit_add">Dodaj</string>
+    <string name="pad_edit_add_control">Dodaj: %1$s</string>
+    <string name="pad_edit_group_gamepad">Pad</string>
+    <string name="pad_edit_group_keyboard_mouse">Klawiatura i mysz</string>
+    <string name="pad_edit_group_extras">Dodatki</string>
+    <string name="pad_face_button">Przycisk %1$s</string>
+    <string name="pad_dpad_up">Krzyżak w górę</string>
+    <string name="pad_dpad_down">Krzyżak w dół</string>
+    <string name="pad_dpad_left">Krzyżak w lewo</string>
+    <string name="pad_dpad_right">Krzyżak w prawo</string>
 </resources>

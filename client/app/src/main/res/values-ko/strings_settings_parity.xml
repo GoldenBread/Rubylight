@@ -35,7 +35,7 @@
     <string name="sharp_color_hdr_dropped">이 스트림은 SDR입니다. 이 PC에서는 더 선명한 컬러 텍스트와 HDR을 함께 사용할 수 없습니다.</string>
     <string name="hint_show_onscreen_controls">스트림 위에 표시되는 터치 게임패드로, 실제 컨트롤러 없이 플레이할 수 있습니다. 화면 일부를 가리므로, 게임을 더 많이 보려면 ‘불투명도’를 낮추세요.</string>
     <string name="hint_mouse_speed">실제 마우스가 PC의 포인터를 움직이는 속도입니다. 터치 모드에는 각각의 속도 설정이 따로 있습니다.</string>
-    <string name="hint_trackpad_speed">트랙패드 터치 모드의 포인터 속도입니다.</string>
+    <string name="hint_trackpad_speed">트랙패드 터치 모드와 화면 터치패드에서 스와이프 한 번에 포인터가 움직이는 거리, 그리고 그 터치패드의 카메라 모드에서 카메라가 도는 정도입니다. 높을수록 빠르지만 세밀하게 조준하기 어렵습니다. 포인터나 카메라가 너무 느리거나 빠르게 느껴질 때 바꾸세요.</string>
     <string name="hint_local_cursor_speed">‘로컬 커서’ 터치 모드의 포인터 속도입니다. 기본값에서는 포인터가 손가락이 움직인 만큼 움직입니다.</string>
     <string name="hint_trackpad_acceleration_curve">빠르게 스와이프할 때 포인터가 더 멀리 가는 정도입니다.</string>
     <string name="hint_trackpad_momentum_glide">포인터가 미끄러지는 거리입니다.</string>

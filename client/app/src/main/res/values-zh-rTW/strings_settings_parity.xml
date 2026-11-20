@@ -35,7 +35,7 @@
     <string name="sharp_color_hdr_dropped">此串流為 SDR：在這台電腦上，HDR 無法與「更清晰的彩色文字」同時使用。</string>
     <string name="hint_show_onscreen_controls">覆蓋在串流畫面上的觸控控制器，沒有實體控制器也能玩。它會遮住部分畫面；調低「不透明度」可看到更多遊戲畫面。</string>
     <string name="hint_mouse_speed">實體滑鼠移動電腦指標的速度。各觸控模式有各自的速度設定。</string>
-    <string name="hint_trackpad_speed">「觸控板」觸控模式下的指標速度。</string>
+    <string name="hint_trackpad_speed">在「觸控板」觸控模式和螢幕觸控板上，滑動一次指標移動多遠；在該觸控板的「相機」模式下，則是相機轉動多遠。數值越高越快，但瞄準較不精細；指標或相機覺得太慢或太快時可調整。</string>
     <string name="hint_local_cursor_speed">「本機游標」觸控模式下的指標速度。使用預設值時，指標移動的距離與手指相同。</string>
     <string name="hint_trackpad_acceleration_curve">快速滑動時指標額外移動的距離。</string>
     <string name="hint_trackpad_momentum_glide">指標滑行的距離。</string>

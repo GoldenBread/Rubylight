@@ -35,7 +35,7 @@
     <string name="sharp_color_hdr_dropped">Bu yayın SDR’de: bu bilgisayarda daha net renkli metinle HDR kullanılamıyor.</string>
     <string name="hint_show_onscreen_controls">Fiziksel kumanda olmadan oynamak için yayının üzerine çizilen dokunmatik bir oyun kumandası. Görüntünün bir kısmını kapatır; oyunu daha çok görmek için “Opaklık” değerini düşürün.</string>
     <string name="hint_mouse_speed">Fiziksel bir farenin bilgisayarın imlecini ne kadar hızlı hareket ettirdiği. Dokunma modlarının kendi hız ayarları vardır.</string>
-    <string name="hint_trackpad_speed">Trackpad dokunma modunda imleç hızı.</string>
+    <string name="hint_trackpad_speed">Bir kaydırmanın Trackpad dokunma modlarında ve ekrandaki dokunmatik yüzeyde imleci ne kadar oynattığı, o yüzeyin Kamera modunda ise kamerayı ne kadar döndürdüğü. Yükseldikçe hızlanır ama hassas nişan alınamaz; imleç veya kamera çok yavaş ya da çok hızlı geliyorsa değiştirin.</string>
     <string name="hint_local_cursor_speed">“Yerel imleç” dokunma modunda imleç hızı. Varsayılan değerde imleç parmağınız kadar yol alır.</string>
     <string name="hint_trackpad_acceleration_curve">Hızlı kaydırmaların ne kadar daha uzağa gittiği.</string>
     <string name="hint_trackpad_momentum_glide">İmlecin ne kadar uzağa süzüldüğü.</string>

@@ -44,4 +44,22 @@
     <string name="pad_right_trackpad">Bàn di chuột phải</string>
     <string name="pad_left_grip">Tay cầm trái</string>
     <string name="pad_right_grip">Tay cầm phải</string>
+    <string name="pad_touchpad_mouse_summary">Di chuyển con trỏ</string>
+    <string name="pad_touchpad_camera_summary">Xoay góc nhìn</string>
+    <string name="pad_touchpad_chip_mouse">CHUỘT</string>
+    <string name="pad_touchpad_chip_camera">CAM</string>
+    <string name="pad_edit_hint_camera">Camera: vuốt sẽ di chuyển cần analog phải, vuốt nhanh hơn thì xoay xa hơn.</string>
+    <string name="pad_edit_move_panel">Di chuyển bảng</string>
+    <string name="pad_edit_split">Tách</string>
+    <string name="pad_edit_join">Gộp</string>
+    <string name="pad_edit_add">Thêm</string>
+    <string name="pad_edit_add_control">Thêm %1$s</string>
+    <string name="pad_edit_group_gamepad">Tay cầm</string>
+    <string name="pad_edit_group_keyboard_mouse">Bàn phím và chuột</string>
+    <string name="pad_edit_group_extras">Bổ sung</string>
+    <string name="pad_face_button">Nút %1$s</string>
+    <string name="pad_dpad_up">D-pad lên</string>
+    <string name="pad_dpad_down">D-pad xuống</string>
+    <string name="pad_dpad_left">D-pad trái</string>
+    <string name="pad_dpad_right">D-pad phải</string>
 </resources>

@@ -44,4 +44,22 @@
     <string name="pad_right_trackpad">Правий трекпад</string>
     <string name="pad_left_grip">Ліве руків’я</string>
     <string name="pad_right_grip">Праве руків’я</string>
+    <string name="pad_touchpad_mouse_summary">Рухає вказівник</string>
+    <string name="pad_touchpad_camera_summary">Повертає огляд</string>
+    <string name="pad_touchpad_chip_mouse">МИША</string>
+    <string name="pad_touchpad_chip_camera">КАМ</string>
+    <string name="pad_edit_hint_camera">Камера: свайпи рухають правий стік, що швидший свайп, то більший поворот.</string>
+    <string name="pad_edit_move_panel">Перемістити панель</string>
+    <string name="pad_edit_split">Розділити</string>
+    <string name="pad_edit_join">Об’єднати</string>
+    <string name="pad_edit_add">Додати</string>
+    <string name="pad_edit_add_control">Додати: %1$s</string>
+    <string name="pad_edit_group_gamepad">Геймпад</string>
+    <string name="pad_edit_group_keyboard_mouse">Клавіатура та миша</string>
+    <string name="pad_edit_group_extras">Додатково</string>
+    <string name="pad_face_button">Кнопка %1$s</string>
+    <string name="pad_dpad_up">Хрестовина вгору</string>
+    <string name="pad_dpad_down">Хрестовина вниз</string>
+    <string name="pad_dpad_left">Хрестовина вліво</string>
+    <string name="pad_dpad_right">Хрестовина вправо</string>
 </resources>

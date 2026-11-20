@@ -44,4 +44,22 @@
     <string name="pad_right_trackpad">Pavé tactile droit</string>
     <string name="pad_left_grip">Poignée gauche</string>
     <string name="pad_right_grip">Poignée droite</string>
+    <string name="pad_touchpad_mouse_summary">Déplace le pointeur</string>
+    <string name="pad_touchpad_camera_summary">Fait tourner la vue</string>
+    <string name="pad_touchpad_chip_mouse">SOURIS</string>
+    <string name="pad_touchpad_chip_camera">CAM</string>
+    <string name="pad_edit_hint_camera">Caméra : les glissements déplacent le stick droit, plus ils sont rapides, plus la vue tourne.</string>
+    <string name="pad_edit_move_panel">Déplacer le panneau</string>
+    <string name="pad_edit_split">Séparer</string>
+    <string name="pad_edit_join">Réunir</string>
+    <string name="pad_edit_add">Ajouter</string>
+    <string name="pad_edit_add_control">Ajouter %1$s</string>
+    <string name="pad_edit_group_gamepad">Manette</string>
+    <string name="pad_edit_group_keyboard_mouse">Clavier et souris</string>
+    <string name="pad_edit_group_extras">Extras</string>
+    <string name="pad_face_button">Bouton %1$s</string>
+    <string name="pad_dpad_up">Croix directionnelle haut</string>
+    <string name="pad_dpad_down">Croix directionnelle bas</string>
+    <string name="pad_dpad_left">Croix directionnelle gauche</string>
+    <string name="pad_dpad_right">Croix directionnelle droite</string>
 </resources>

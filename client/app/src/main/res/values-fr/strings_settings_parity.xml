@@ -35,7 +35,7 @@
     <string name="sharp_color_hdr_dropped">Ce stream est en SDR : le HDR n’est pas disponible avec le texte en couleur plus net sur ce PC.</string>
     <string name="hint_show_onscreen_controls">Une manette tactile dessinée au-dessus du stream, pour jouer sans manette physique. Elle couvre une partie de l’image ; baissez « Opacité » pour voir davantage le jeu.</string>
     <string name="hint_mouse_speed">La vitesse à laquelle une souris physique déplace le pointeur du PC. Les modes tactiles ont leurs propres réglages de vitesse.</string>
-    <string name="hint_trackpad_speed">La vitesse du pointeur dans le mode tactile Pavé tactile.</string>
+    <string name="hint_trackpad_speed">De combien un glissement déplace le pointeur dans les modes tactiles Pavé tactile et sur le pavé tactile à l’écran, et de combien il fait tourner la caméra dans le mode Caméra de ce pavé. Plus c’est haut, plus c’est rapide mais moins précis ; à modifier si le pointeur ou la caméra semble trop lent ou trop rapide.</string>
     <string name="hint_local_cursor_speed">La vitesse du pointeur dans le mode tactile « Curseur local ». À la valeur par défaut, le pointeur parcourt la même distance que votre doigt.</string>
     <string name="hint_trackpad_acceleration_curve">La distance supplémentaire parcourue par les balayages rapides.</string>
     <string name="hint_trackpad_momentum_glide">Jusqu’où le pointeur continue de glisser.</string>
