@@ -71,6 +71,7 @@ pub const GLOBAL: &[Setting] = settings! {
         "dd_disconnect_behavior", "When a device disconnects (restore: after the delay; keep_while_paused: keep its display while paused)", Choice(&["restore","keep_while_paused"]);
         "dd_config_revert_delay", "Display restore delay (milliseconds)", Number;
         "dd_paused_virtual_display_timeout_secs", "Paused display timeout (seconds; 0 keeps it)", Number;
+        "dd_hold_layout_while_paused", "Keep monitors off while paused", Bool;
         "dd_always_restore_from_golden", "Always restore the saved display layout", Bool;
         "dd_activate_virtual_display", "Activate virtual display", Bool;
         "dd_virtual_display_scale", "Virtual display scale (%)", Number;

@@ -211,7 +211,6 @@ pub const FOLDED_KEYS: &[&str] = &[
     REMOTE_STREAM_END,
     REMOTE_CLIENT_DISCONNECT,
     DD_REVERT_ON_DISCONNECT,
-    DD_HOLD_LAYOUT,
 ];
 
 /// When a remote monitor is removed from Windows (`never`, `stream_end`,
@@ -396,34 +395,26 @@ pub fn fold_pyrowave_fec(layer: &mut serde_json::Map<String, serde_json::Value>)
 }
 /// What happens to a device's display when it disconnects (`restore`, after
 /// the restore delay, or `keep_while_paused`, until the paused-display
-/// timeout), which holds what Restore displays on disconnect and Keep
-/// monitors off while paused held before.
+/// timeout), which holds what Restore displays on disconnect held before.
+/// Keep monitors off while paused (`dd_hold_layout_while_paused`) stays its
+/// own setting: it decides whether an exclusive layout may keep its
+/// monitors off, so no old combination changes.
 pub const DD_DISCONNECT_BEHAVIOR: &str = "dd_disconnect_behavior";
-/// The two settings folded into [`DD_DISCONNECT_BEHAVIOR`].
+/// The setting folded into [`DD_DISCONNECT_BEHAVIOR`].
 pub const DD_REVERT_ON_DISCONNECT: &str = "dd_config_revert_on_disconnect";
-pub const DD_HOLD_LAYOUT: &str = "dd_hold_layout_while_paused";
-/// The disconnect behavior for the two settings saved in one layer, each
-/// `None` when that layer does not hold it: restoring turned off is
-/// `keep_while_paused`; else `restore` (keeping monitors off alone changed
-/// nothing without it). `None` when the layer holds neither. An unreadable
-/// value counts as its default.
-pub fn folded_disconnect_behavior(
-    revert_on_disconnect: Option<&str>,
-    hold_layout: Option<&str>,
-) -> Option<&'static str> {
-    if revert_on_disconnect.is_none() && hold_layout.is_none() {
-        return None;
-    }
-    let revert = revert_on_disconnect
-        .and_then(super::parse_boolean)
-        .unwrap_or(true);
-    Some(if revert {
+/// The disconnect behavior for Restore displays on disconnect as saved in
+/// one layer: off is `keep_while_paused`, anything else `restore`. `None`
+/// when the layer does not hold it. An unreadable value counts as its
+/// default (on).
+pub fn folded_disconnect_behavior(revert_on_disconnect: Option<&str>) -> Option<&'static str> {
+    let revert = revert_on_disconnect?;
+    Some(if super::parse_boolean(revert).unwrap_or(true) {
         "restore"
     } else {
         "keep_while_paused"
     })
 }
-/// [`folded_disconnect_behavior`] over a JSON layer: removes both settings
+/// [`folded_disconnect_behavior`] over a JSON layer: removes the setting
 /// and, unless the layer already holds the disconnect behavior, sets it.
 /// Returns whether anything changed.
 pub fn fold_disconnect_behavior(layer: &mut serde_json::Map<String, serde_json::Value>) -> bool {
@@ -432,16 +423,15 @@ pub fn fold_disconnect_behavior(layer: &mut serde_json::Map<String, serde_json::
         serde_json::Value::Null => None,
         other => Some(other.to_string()),
     };
-    let revert = layer.remove(DD_REVERT_ON_DISCONNECT);
-    let hold = layer.remove(DD_HOLD_LAYOUT);
-    let changed = revert.is_some() || hold.is_some();
-    let (revert, hold) = (revert.and_then(text), hold.and_then(text));
-    if let Some(folded) = folded_disconnect_behavior(revert.as_deref(), hold.as_deref())
+    let Some(revert) = layer.remove(DD_REVERT_ON_DISCONNECT) else {
+        return false;
+    };
+    if let Some(folded) = folded_disconnect_behavior(text(revert).as_deref())
         && !layer.contains_key(DD_DISCONNECT_BEHAVIOR)
     {
         layer.insert(DD_DISCONNECT_BEHAVIOR.to_owned(), folded.into());
     }
-    changed
+    true
 }
 /// Whether `key` is a name the host no longer reads: a removed setting, or
 /// one folded into another. Neither name is used again.

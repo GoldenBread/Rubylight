@@ -59,6 +59,7 @@ pub fn override_allowed(key: &str) -> bool {
         "dd_hdr_option",
         "dd_config_revert_delay",
         "dd_disconnect_behavior",
+        "dd_hold_layout_while_paused",
         "dd_paused_virtual_display_timeout_secs",
         "dd_always_restore_from_golden",
         "dd_snapshot_exclude_devices",

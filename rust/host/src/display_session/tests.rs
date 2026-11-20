@@ -615,7 +615,7 @@ fn a_resume_after_a_display_left_repairs_before_it_records_the_layout() {
     let mut watch = LayoutWatch::default();
     // Nothing left during the pause.
     assert_eq!(chosen(departure_unsettled(4, 4, &watch)), "reapply");
-    // A display left during it: without `keep_while_paused` the heartbeat
+    // A display left during it: without `dd_hold_layout_while_paused` the heartbeat
     // never looked, and what is on now is what Windows recalled.
     assert_eq!(chosen(departure_unsettled(3, 4, &watch)), "repair");
     // It left just before the pause: seen, its repair still to come.
@@ -1262,7 +1262,7 @@ fn a_window_stream_is_not_kept_for_a_reconnect_and_a_display_stream_is() {
 
 #[test]
 fn only_an_opted_in_exclusive_layout_is_held_while_paused() {
-    let on = Config::parse("dd_disconnect_behavior=keep_while_paused").unwrap();
+    let on = Config::parse("dd_hold_layout_while_paused=true").unwrap();
     // Issue #56: off by default, so a paused stream leaves Win+P alone.
     assert!(!holds_layout_while_paused(&Config::default(), true));
     assert!(holds_layout_while_paused(&on, true));

@@ -37,7 +37,7 @@ test('disconnect behavior defaults to restore and the paused timeout shows when 
   assert.equal(settings.get('dd_disconnect_behavior').default, 'restore');
   assert.equal(settings.get('dd_config_revert_delay').visibleWhen, undefined);
   assert.equal(settings.get('dd_config_revert_on_disconnect'), undefined);
-  assert.equal(settings.get('dd_hold_layout_while_paused'), undefined);
+  assert.equal(settings.get('dd_hold_layout_while_paused').default, false);
   const retention = settings.get('dd_paused_virtual_display_timeout_secs');
   assert.equal(retention.visibleWhen({}), false);
   assert.equal(retention.visibleWhen({ dd_disconnect_behavior: 'keep_while_paused' }), true);
@@ -1152,7 +1152,7 @@ test('a row that does nothing in the current setup says why', () => {
   // Read whatever the host's own value of what they seem to depend on: Check now and Install now read
   // pre-releases with checks off, a device or app can choose the exclusive layout, and the Radeon and
   // NVIDIA settings read the card's name beside its device ID.
-  for (const key of ['notify_pre_releases', 'adapter_name']) {
+  for (const key of ['notify_pre_releases', 'dd_hold_layout_while_paused', 'adapter_name']) {
     assert.equal(settings.get(key).visibleWhen, undefined, key);
   }
   // RTX HDR reads the peak brightness too, so it is not tied to the virtual display's Windows.

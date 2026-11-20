@@ -279,7 +279,7 @@ export const settings: Setting[] = [
     description:
       'Put your displays back after the restore delay, or keep the stream’s display while its game runs so the device can reconnect. Leave it on Restore unless you reconnect often.',
     details:
-      'Restore puts your displays back as they were once the restore delay has passed, even while the game keeps running. Keep while paused leaves the stream’s display and layout in place for the time set under Keep a disconnected display for; with an exclusive layout your monitors stay off that long, Win+P cannot bring them back, and only a Restore hotkey can.',
+      'Restore puts your displays back as they were once the restore delay has passed, even while the game keeps running. Keep while paused leaves the stream’s display and layout in place for the time set under Keep a disconnected display for; an exclusive layout still restores after the delay unless Keep monitors off while paused is on.',
     category: 'display',
     group: 'After a stream',
     control: {
@@ -296,6 +296,7 @@ export const settings: Setting[] = [
     label: 'Restore delay',
     description:
       'How long the stream’s display and layout are kept after a device disconnects, so a quick reconnect finds them in place. With an exclusive layout your monitors stay off that long.',
+    details: 'Also applies to exclusive layouts under Keep while paused, unless Keep monitors off while paused is on. A custom delay is in milliseconds.',
     category: 'display',
     group: 'After a stream',
     control: {
@@ -312,14 +313,13 @@ export const settings: Setting[] = [
       ],
     },
     default: 3000,
-    details: 'Used when a device disconnect restores the displays. A custom delay is in milliseconds.',
   },
   {
     key: 'dd_paused_virtual_display_timeout_secs',
     label: 'Keep a disconnected display for',
     description:
       'With Keep while paused: how long a disconnected device’s display stays on the desktop while its app runs, ready for a reconnect. Then the displays are put back.',
-    details: 'An exclusive layout keeps its monitors off that long. A custom time is in seconds.',
+    details: 'Unless Keep monitors off while paused is on, exclusive layouts use the restore delay instead, so the physical monitors become usable again. A custom time is in seconds.',
     category: 'display',
     group: 'After a stream',
     control: {
@@ -338,6 +338,18 @@ export const settings: Setting[] = [
     default: 7200,
     inactiveHint: "Choose Keep while paused under When a device disconnects to keep a disconnected display available for reconnection.",
     visibleWhen: (values) => text(values, 'dd_disconnect_behavior', 'restore') === 'keep_while_paused',
+  },
+  {
+    key: 'dd_hold_layout_while_paused',
+    label: 'Keep monitors off while paused',
+    description:
+      'With an exclusive layout, your monitors stay off while a device is away; Win+P cannot bring them back, only a Restore hotkey. Turn it on if a waking monitor pulls the game onto it.',
+    details:
+      'The monitors stay off until the device returns or its display is no longer kept: after the restore delay, or with Keep while paused chosen under When a device disconnects, after Keep a disconnected display for. For monitors that wake up or re-announce themselves over HDMI and pull the game onto them. While it holds, Win+P cannot bring a monitor back; the restore hotkey still can, once one is set.',
+    category: 'display',
+    group: 'After a stream',
+    control: { kind: 'toggle' },
+    default: false,
   },
   {
     key: 'dd_always_restore_from_golden',
