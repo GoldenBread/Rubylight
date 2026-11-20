@@ -9,4 +9,10 @@ A fragment is a list of user-facing bullets in the style of `RELEASE_NOTES.md`: 
 - **Sharper text where you look.** ... Measured on the RX 7900 XT: ...
 ```
 
+A merged pull request from a contributor (anyone but RamazanKara) always gets a fragment, written when the pull request is merged, whose bullet ends with the contributor's credit in bold: their name, GitHub login and the pull request.
+
+```markdown
+- **Dual screen.** ... Thanks to **Umberto Marotta** (@umbertomarotta, #75).
+```
+
 At release time `python rust/release/bump.py X.Y.Z` moves every fragment, in file name order, under `## Unreleased` and from there into `## New in X.Y.Z`, then deletes the fragments. `python rust/release/fragments.py` does the first step alone (to collect them between releases). This README stays.
