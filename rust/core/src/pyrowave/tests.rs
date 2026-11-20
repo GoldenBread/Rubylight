@@ -444,7 +444,9 @@ fn detail_fec_matches_pre_pipeline_decisions() {
             _ => (0, 0),
         };
         assert_eq!(
-            controller.observe(&raw, start + elapsed, 800_000).unwrap(),
+            controller
+                .observe(&raw, None, start + elapsed, 800_000)
+                .unwrap(),
             expected,
             "frame {i}"
         );
@@ -458,7 +460,7 @@ fn low_cadence_static_detail_gets_parity_and_motion_disables_it() {
     let mut decision = (0, 0);
     for i in 0..20 {
         decision = controller
-            .observe(&same, start + Duration::from_millis(i * 20), 800000)
+            .observe(&same, None, start + Duration::from_millis(i * 20), 800000)
             .unwrap();
     }
     assert_eq!(decision.0, 50);
@@ -467,6 +469,7 @@ fn low_cadence_static_detail_gets_parity_and_motion_disables_it() {
         controller
             .observe(
                 &frame(&[(0, 20), (30, 24)]),
+                None,
                 start + Duration::from_millis(400),
                 800000
             )

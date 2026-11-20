@@ -307,9 +307,14 @@ impl Sender {
                         / u64::from(current.config.bitrate_kbps.max(1))).min(2_000_000) as u32
                 } else { bitrate };
                 let now = Instant::now();
+                // The framing pass kept the frame's records for the observer.
+                let records = frame
+                    .framing
+                    .as_ref()
+                    .and_then(|framing| framing.codec_records());
                 let Some((detail_percentage, wire_budget)) = (if current.config.pyrowave_records && critical_percentage > 0 {
                     // The codec's own records: framing only orders and pads them.
-                    dropped.prepared(controller.observe(&frame.bytes, now, kbps), frame.wire_len(), now, &current.launch.warnings)
+                    dropped.prepared(controller.observe(&frame.bytes, records, now, kbps), frame.wire_len(), now, &current.launch.warnings)
                 } else { Some((0, 0)) }) else { continue };
                 let wire_frame = packetizer.frame;
                 // Frame Warp tags the frame by the number the client decodes it as.

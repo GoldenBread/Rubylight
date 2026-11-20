@@ -2,7 +2,7 @@
 use anyhow::{Context, Result, bail};
 use std::{
     collections::{HashMap, VecDeque},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, PoisonError},
     time::{Duration, Instant},
 };
 mod framing;
@@ -24,6 +24,9 @@ trait Sink {
     fn copy(&mut self, bitstream: &[u8], offset: usize, len: usize);
     /// A padding record of `bytes`, at least eight and a multiple of four.
     fn pad(&mut self, bytes: usize);
+    /// The coarse records are placed; `end` is where they end on the wire. A
+    /// sink that keeps the picture's layout notes it; the byte sink has none.
+    fn coarse_done(&mut self, _end: usize) {}
 }
 impl Sink for Vec<u8> {
     fn written(&self) -> usize {
@@ -277,17 +280,66 @@ pub fn container(bitstream: &[u8], packets: &[(usize, usize)]) -> Result<Vec<u8>
     }
     Ok(out)
 }
-#[derive(Clone, Copy)]
-struct Record {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Record {
     offset: usize,
     size: usize,
     index: u32,
 }
-fn records(frame: &[u8]) -> Result<Vec<Record>> {
+/// Record lists kept for the next frames: a 4K picture has tens of thousands
+/// of records, a list of about a megabyte that would otherwise be allocated
+/// and faulted in anew by every parse of every frame. The framing keeps its
+/// piece lists the same way (`framing::SPARE`).
+static RECORDS: Mutex<Vec<Vec<Record>>> = Mutex::new(Vec::new());
+/// One list being parsed, one being framed, one being sent, and spare.
+const KEPT: usize = 8;
+/// A parsed record list, handed back to [`RECORDS`] when it drops.
+struct Records(Vec<Record>);
+impl Records {
+    /// An empty list from the pool, or a fresh one when the pool is empty.
+    fn spare() -> Self {
+        Self(
+            RECORDS
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .pop()
+                .unwrap_or_default(),
+        )
+    }
+    /// The list as a plain buffer its keeper owns, out of the pool until it
+    /// drops.
+    fn into_inner(mut self) -> Vec<Record> {
+        std::mem::take(&mut self.0)
+    }
+}
+impl Drop for Records {
+    fn drop(&mut self) {
+        if self.0.capacity() == 0 {
+            return;
+        }
+        self.0.clear();
+        let mut spare = RECORDS.lock().unwrap_or_else(PoisonError::into_inner);
+        if spare.len() < KEPT {
+            spare.push(std::mem::take(&mut self.0));
+        }
+    }
+}
+impl std::ops::Deref for Records {
+    type Target = [Record];
+    fn deref(&self) -> &[Record] {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for Records {
+    fn deref_mut(&mut self) -> &mut [Record] {
+        &mut self.0
+    }
+}
+fn records(frame: &[u8]) -> Result<Records> {
     records_in(&mut Payload::Bytes(frame).reader())
 }
 /// [`records`] of a contiguous or a framed picture.
-fn records_in(frame: &mut framing::Reader) -> Result<Vec<Record>> {
+fn records_in(frame: &mut framing::Reader) -> Result<Records> {
     let len = frame.len();
     if len < 8
         || !len.is_multiple_of(4)
@@ -298,7 +350,7 @@ fn records_in(frame: &mut framing::Reader) -> Result<Vec<Record>> {
         bail!("invalid PyroWave sequence header");
     }
     let sequence = (frame.word(0) >> 28) & 7;
-    let mut records = Vec::new();
+    let mut records = Records::spare();
     let mut offset = 8;
     while offset < len {
         if len - offset < 8 {
@@ -320,7 +372,7 @@ fn records_in(frame: &mut framing::Reader) -> Result<Vec<Record>> {
             bail!("invalid PyroWave block record");
         }
         if !padding {
-            records.push(Record {
+            records.0.push(Record {
                 offset,
                 size,
                 index: frame.word(offset + 4) >> 8,
@@ -500,14 +552,15 @@ pub fn record_frame_into(
     frame_into(&mut out, bitstream, payload, limit, rows)?;
     Ok(out)
 }
-/// The record framing of `bitstream` into `out`, as bytes or as pieces.
+/// The record framing of `bitstream` into `out`, as bytes or as pieces, and
+/// the records it was framed from.
 fn frame_into<S: Sink>(
     out: &mut S,
     bitstream: &[u8],
     payload: usize,
     limit: usize,
     rows: bool,
-) -> Result<()> {
+) -> Result<Records> {
     let all = records(bitstream)?;
     if bitstream.len() > limit {
         bail!("PyroWave frame exceeds transport capacity");
@@ -523,46 +576,52 @@ fn frame_into<S: Sink>(
     out.copy(bitstream, 0, 8);
     for required in [true, false] {
         if let Some(steps) = steps.as_ref().filter(|_| !required) {
-            let mut class: Vec<Record> =
-                all.iter().filter(|r| r.index >= coarse).copied().collect();
+            let mut class = Records::spare();
+            class
+                .0
+                .extend(all.iter().filter(|r| r.index >= coarse).copied());
             let step = |r: &Record| {
                 steps
                     .get(r.index as usize)
                     .copied()
                     .context("PyroWave block index exceeds the picture")
             };
-            for r in &class {
+            for r in class.iter() {
                 step(r)?;
             }
             class.sort_by_key(|r| (steps[r.index as usize], r.index));
             // A record over a packet goes out once every ordinary record ranked before it has; the
             // ones ranked after it may still fill the packet it leaves open.
-            let (mut ordinary, mut bigs) = (Vec::new(), Vec::new());
-            for r in class {
+            let (mut ordinary, mut bigs) = (Records::spare(), Vec::new());
+            for r in class.iter() {
+                let r = *r;
                 if r.size > payload - 8 {
                     bigs.push((ordinary.len(), r));
                 } else {
-                    ordinary.push(r);
+                    ordinary.0.push(r);
                 }
             }
             first_fit(out, bitstream, &ordinary, &bigs, payload);
             continue;
         }
-        let mut ordinary = Vec::new();
+        let mut ordinary = Records::spare();
         for r in all.iter().filter(|r| (r.index < coarse) == required) {
             if r.size > payload - 8 {
                 big(out, bitstream, r, payload);
             } else {
-                ordinary.push(*r);
+                ordinary.0.push(*r);
             }
         }
         first_fit(out, bitstream, &ordinary, &[], payload);
+        if required {
+            out.coarse_done(out.written());
+        }
     }
     if out.written() > limit {
         out.clear();
         out.copy(bitstream, 0, bitstream.len());
     }
-    Ok(())
+    Ok(all)
 }
 fn big(out: &mut impl Sink, bitstream: &[u8], r: &Record, payload: usize) {
     let room = payload - (out.written() + 8) % payload;
@@ -625,6 +684,7 @@ fn first_fit(
         big(out, bitstream, r, payload);
     }
 }
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layout {
     pub critical_shards: usize,
     pub starts: Vec<bool>,
@@ -646,7 +706,7 @@ pub fn layout<'a>(frame: impl Into<Payload<'a>>, payload: usize) -> Result<Layou
     let coarse = coarse_count(words.word(0));
     let mut fine_seen = false;
     let mut critical = 8;
-    for r in &all {
+    for r in all.iter() {
         if r.index < coarse {
             if fine_seen {
                 return Ok(layout);
@@ -868,7 +928,13 @@ impl DetailFec {
             blocks: HashMap::new(),
         }
     }
-    pub fn observe(&mut self, frame: &[u8], now: Instant, kbps: u32) -> Result<(usize, usize)> {
+    pub fn observe(
+        &mut self,
+        frame: &[u8],
+        records: Option<&[Record]>,
+        now: Instant,
+        kbps: u32,
+    ) -> Result<(usize, usize)> {
         let elapsed = self
             .previous
             .replace(now)
@@ -880,10 +946,19 @@ impl DetailFec {
             self.interval = elapsed;
             return Ok((0, 0));
         }
-        let records = records(frame)?;
+        // The codec's own records when the packetizer has them from the
+        // framing pass; a picture that arrives without its framing is parsed.
+        let parsed;
+        let records: &[Record] = match records {
+            Some(records) => records,
+            None => {
+                parsed = records(frame)?;
+                &parsed
+            }
+        };
         let mut next = HashMap::with_capacity(records.len());
         let (mut total, mut unchanged) = (0, 0);
-        for r in records {
+        for r in records.iter() {
             let hash = record_hash(&frame[r.offset..r.offset + r.size]);
             if self.blocks.get(&r.index) == Some(&(hash, r.size)) {
                 unchanged += r.size;

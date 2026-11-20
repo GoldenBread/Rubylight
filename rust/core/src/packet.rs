@@ -401,13 +401,17 @@ impl VideoPacketizer {
         }
         let total = payload.len() + 8;
         let total_shards = total.div_ceil(slice);
-        let layout = pyrowave
-            .as_ref()
-            .filter(|p| p.records)
-            .map(|_| {
-                crate::pyrowave::layout(payload, crate::pyrowave::aligned_payload(self.packet_size))
-            })
-            .transpose()?;
+        let aligned = crate::pyrowave::aligned_payload(self.packet_size);
+        // A framed picture carries the layout its framing pass computed; one
+        // that arrives as plain bytes is parsed.
+        let layout = match payload.stored_layout(aligned) {
+            Some(stored) if pyrowave.as_ref().is_some_and(|p| p.records) => Some(stored.clone()),
+            _ => pyrowave
+                .as_ref()
+                .filter(|p| p.records)
+                .map(|_| crate::pyrowave::layout(payload, aligned))
+                .transpose()?,
+        };
         let critical = layout.as_ref().map_or(0, |l| l.critical_shards);
         let minimum = if pyrowave.is_some() {
             self.min_fec.max(2)

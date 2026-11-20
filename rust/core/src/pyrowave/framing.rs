@@ -7,7 +7,7 @@
 //! [`Framing::records`] and [`Framing::container`] run the same framing as
 //! [`super::record_frame_with`] and [`super::container`]; their bytes on the
 //! wire are the same (`framing_tests`).
-use super::{PADDING, Sink};
+use super::{Layout, PADDING, Record, Records, Sink};
 use anyhow::{Result, bail, ensure};
 use std::sync::{Mutex, PoisonError};
 
@@ -70,10 +70,25 @@ pub struct Framing {
     len: usize,
     /// The end of the furthest bitstream bytes a piece takes.
     extent: usize,
+    /// The records of the bitstream, kept from the framing pass: the
+    /// detail-FEC observer reads them instead of parsing the frame again.
+    records: Option<Vec<Record>>,
+    /// The packet payload the framing was built for.
+    packet: usize,
+    /// Where the coarse records end on the wire, marked by the framing pass.
+    coarse: Option<usize>,
+    /// Where the framed writes start packets, marked as they are written.
+    starts: Vec<bool>,
+    /// The layout the framing pass left: where records start packets and how
+    /// far the coarse records reach.
+    layout: Option<Layout>,
 }
 
 impl Drop for Framing {
     fn drop(&mut self) {
+        if let Some(records) = self.records.take() {
+            drop(Records(records));
+        }
         let mut pieces = std::mem::take(&mut self.pieces);
         if pieces.capacity() == 0 {
             return;
@@ -97,14 +112,74 @@ impl Framing {
             pieces,
             len: 0,
             extent: 0,
+            records: None,
+            packet: 0,
+            coarse: None,
+            starts: Vec::new(),
+            layout: None,
         }
     }
 
     /// [`super::record_frame_with`] as pieces of `bitstream`.
     pub fn records(bitstream: &[u8], payload: usize, limit: usize, rows: bool) -> Result<Self> {
         let mut out = Self::new();
-        super::frame_into(&mut out, bitstream, payload, limit, rows)?;
+        out.packet = payload;
+        let all = super::frame_into(&mut out, bitstream, payload, limit, rows)?;
+        out.records = Some(all.into_inner());
+        out.finish(bitstream);
         Ok(out)
+    }
+
+    /// The layout the framing pass wrote: the packet starts it marked and the
+    /// end it reported for the coarse records. A picture that goes out whole
+    /// keeps none; its bytes are parsed where a layout is needed.
+    fn finish(&mut self, bitstream: &[u8]) {
+        let (coarse, packet) = (self.coarse, self.packet);
+        self.layout = match coarse {
+            Some(coarse) if packet > 0 && !self.is_whole(bitstream) => {
+                let mut starts = std::mem::take(&mut self.starts);
+                starts.resize((self.len + 8).div_ceil(packet), false);
+                Some(Layout {
+                    critical_shards: (coarse + 8).div_ceil(packet),
+                    starts,
+                })
+            }
+            _ => {
+                self.starts.clear();
+                None
+            }
+        };
+    }
+
+    /// A record or a padding record starts at `self.len`, where the next write
+    /// lands: note when it starts a packet, as the layout's walk over the
+    /// framed bytes would.
+    fn mark(&mut self) {
+        let at = self.len;
+        if self.packet == 0 || !(at == 0 || (at + 8).is_multiple_of(self.packet)) {
+            return;
+        }
+        let index = (at + 8) / self.packet;
+        if self.starts.len() <= index {
+            self.starts.resize(index + 1, false);
+        }
+        self.starts[index] = true;
+    }
+
+    /// The records of the bitstream the pieces were framed from, kept from the
+    /// framing pass.
+    pub fn codec_records(&self) -> Option<&[Record]> {
+        self.records.as_deref()
+    }
+
+    /// The layout the framing pass left, when `payload` is the packet payload
+    /// the picture was framed for.
+    pub fn layout(&self, payload: usize) -> Option<&Layout> {
+        if payload == self.packet {
+            self.layout.as_ref()
+        } else {
+            None
+        }
     }
 
     /// [`super::container`] as pieces of `bitstream`: the packet count, then
@@ -187,16 +262,23 @@ impl Sink for Framing {
         self.pieces.clear();
         self.len = 0;
         self.extent = 0;
+        self.starts.clear();
+        self.coarse = None;
     }
     fn reserve(&mut self, _bytes: usize) {}
     fn copy(&mut self, bitstream: &[u8], offset: usize, len: usize) {
         debug_assert!(offset + len <= bitstream.len());
         self.extent = self.extent.max(offset + len);
+        self.mark();
         self.push(len, Source::Raw(offset));
     }
     fn pad(&mut self, bytes: usize) {
         debug_assert!(bytes >= 8 && bytes.is_multiple_of(4));
+        self.mark();
         self.push(bytes, Source::Padding);
+    }
+    fn coarse_done(&mut self, end: usize) {
+        self.coarse = Some(end);
     }
 }
 
@@ -295,6 +377,15 @@ impl<'a> Payload<'a> {
         let mut out = vec![0; self.len()];
         self.copy_to(0, &mut out);
         out
+    }
+
+    /// The layout the framing was built with, when `payload` is the one it was
+    /// framed for; a picture as plain bytes keeps none.
+    pub fn stored_layout(&self, payload: usize) -> Option<&'a Layout> {
+        match self {
+            Self::Bytes(_) => None,
+            Self::Framed(framed) => framed.framing.layout(payload),
+        }
     }
 
     pub(super) fn reader(self) -> Reader<'a> {

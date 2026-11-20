@@ -363,3 +363,50 @@ fn a_framing_dropped_and_built_again_frames_the_same() {
         assert!(Payload::from(again.view(&frame).unwrap()).to_vec() == expected);
     }
 }
+
+/// The layout a framing carries is the one parsing its framed bytes gives: the
+/// packet starts marked while it was written and the coarse end the framing
+/// pass reported decide as the layout's walk does. A picture that goes out
+/// whole keeps none, and is parsed where a layout is needed.
+#[test]
+fn the_framing_carries_the_layout_a_parse_of_it_gives() {
+    for &(w, h, c, seed, big) in &FIXTURES {
+        let frame = synthetic(w, h, c, seed, big);
+        for (payload, limit, rows, _) in framings(&frame) {
+            let framing = Framing::records(&frame, payload, limit, rows).unwrap();
+            let parsed = layout(framing.view(&frame).unwrap(), payload).unwrap();
+            match framing.layout(payload) {
+                Some(stored) => assert_eq!(
+                    (stored.critical_shards, &stored.starts[..]),
+                    (parsed.critical_shards, &parsed.starts[..]),
+                    "{w}x{h} payload {payload} rows {rows}"
+                ),
+                None => assert!(
+                    framing.is_whole(&frame) || payload == 0,
+                    "{w}x{h} payload {payload} rows {rows}: a framed picture without its layout"
+                ),
+            }
+        }
+    }
+}
+
+/// The records a framing carries are the ones parsing its bitstream gives:
+/// the detail-FEC observer reads them instead of parsing the frame again.
+#[test]
+fn the_framing_carries_the_bitstreams_records() {
+    for &(w, h, c, seed, big) in &FIXTURES {
+        let frame = synthetic(w, h, c, seed, big);
+        for rows in [false, true] {
+            let framing = Framing::records(
+                &frame,
+                aligned_payload(1392),
+                max_frame_bytes(1392, true),
+                rows,
+            )
+            .unwrap();
+            let stored = framing.codec_records().unwrap();
+            let parsed = records(&frame).unwrap();
+            assert_eq!(stored, &parsed[..], "{w}x{h} rows {rows}");
+        }
+    }
+}

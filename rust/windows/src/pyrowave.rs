@@ -1274,11 +1274,16 @@ impl Encoder {
             let chosen = if framing.len() <= budget {
                 Some(framing)
             } else {
-                let layout = pyrowave::layout(framing.view(&bytes)?, payload)?;
+                // The framing pass left the layout; a picture that goes out
+                // whole is parsed.
+                let critical_shards = match framing.layout(payload) {
+                    Some(stored) => stored.critical_shards,
+                    None => pyrowave::layout(framing.view(&bytes)?, payload)?.critical_shards,
+                };
                 let minimum = self.config.min_fec.max(pyrowave::MIN_PARITY_SHARDS);
                 let packets = (framing.len() + 8).div_ceil(self.config.packet_size - 16)
                     + pyrowave::critical_parity_bound(
-                        layout.critical_shards,
+                        critical_shards,
                         self.critical_fec_percentage as usize,
                         minimum,
                     );

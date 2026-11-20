@@ -747,7 +747,7 @@ fn malformed_frame_after_a_late_interval_is_dropped_by_detail_planning() {
     let malformed = [0; 64];
     assert_eq!(
         dropped.prepared(
-            controller.observe(&malformed, now, 100_000),
+            controller.observe(&malformed, None, now, 100_000),
             64,
             now,
             &warnings
@@ -759,7 +759,7 @@ fn malformed_frame_after_a_late_interval_is_dropped_by_detail_planning() {
     assert!(
         dropped
             .prepared(
-                controller.observe(&malformed, late, 100_000),
+                controller.observe(&malformed, None, late, 100_000),
                 64,
                 late,
                 &warnings
