@@ -329,7 +329,7 @@ public class GameLifecycleTest {
                         ReflectionHelpers.ClassParameter.from(boolean.class, false),
                         ReflectionHelpers.ClassParameter.from(boolean.class, false));
                 android.preference.PreferenceManager.getDefaultSharedPreferences(activity).edit().clear().commit();
-                activity.getSharedPreferences(store, Context.MODE_PRIVATE).edit().clear().commit();
+                activity.getSharedPreferences(com.limelight.preferences.AutoBitrateChoice.PC_STORE, Context.MODE_PRIVATE).edit().clear().commit();
             }
         }
     }

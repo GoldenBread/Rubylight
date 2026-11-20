@@ -250,7 +250,7 @@ public class ModernSteamControlsTest {
         right.up(1, 400);
         assertEquals(SteamControls.RIGHT_PAD_CLICK_FLAG, last());
         ShadowLooper.idleMainLooper(PadControlView.PAD_CLICK_HOLD_MS, TimeUnit.MILLISECONDS);
-        assertEquals(SteamControls.RIGHT_PAD_CLICK_FLAG, buttons.get(buttons.size() - 2));
+        assertEquals(SteamControls.RIGHT_PAD_CLICK_FLAG, (int) buttons.get(buttons.size() - 2));
         assertEquals(0, last());
         assertEquals(MoonBridge.LI_TOUCH_EVENT_UP, touches.get(touches.size() - 1)[0]);
 
