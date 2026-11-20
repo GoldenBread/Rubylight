@@ -33,12 +33,14 @@ test('AMF frame caps distinguish automatic, driver default and saved fixed limit
   assert.equal(differsFromDefault(setting, {}, { amd_max_frame_size: 'auto' }), false);
 });
 
-test('disconnect restoration defaults on and the exclusive-layout delay stays available', () => {
-  assert.equal(settings.get('dd_config_revert_on_disconnect').default, true);
+test('disconnect behavior defaults to restore and the paused timeout shows when keeping', () => {
+  assert.equal(settings.get('dd_disconnect_behavior').default, 'restore');
   assert.equal(settings.get('dd_config_revert_delay').visibleWhen, undefined);
+  assert.equal(settings.get('dd_config_revert_on_disconnect'), undefined);
+  assert.equal(settings.get('dd_hold_layout_while_paused'), undefined);
   const retention = settings.get('dd_paused_virtual_display_timeout_secs');
   assert.equal(retention.visibleWhen({}), false);
-  assert.equal(retention.visibleWhen({ dd_config_revert_on_disconnect: false }), true);
+  assert.equal(retention.visibleWhen({ dd_disconnect_behavior: 'keep_while_paused' }), true);
 });
 
 test('one error correction percentage serves every codec', () => {
@@ -1150,7 +1152,7 @@ test('a row that does nothing in the current setup says why', () => {
   // Read whatever the host's own value of what they seem to depend on: Check now and Install now read
   // pre-releases with checks off, a device or app can choose the exclusive layout, and the Radeon and
   // NVIDIA settings read the card's name beside its device ID.
-  for (const key of ['notify_pre_releases', 'dd_hold_layout_while_paused', 'adapter_name']) {
+  for (const key of ['notify_pre_releases', 'adapter_name']) {
     assert.equal(settings.get(key).visibleWhen, undefined, key);
   }
   // RTX HDR reads the peak brightness too, so it is not tied to the virtual display's Windows.

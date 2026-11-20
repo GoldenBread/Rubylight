@@ -21,7 +21,7 @@ pub use folders::{SharedFolderConfig, valid_folder_id, valid_folder_root};
 pub use overrides::override_allowed;
 use retired::retirement;
 pub use retired::{
-    BITRATE_ADAPTATION, FOLDED_KEYS, fold_bitrate_adaptation, folded_bitrate_adaptation, fold_packet_pacing, fold_pyrowave_fec, folded_packet_pacing, HDR_OPTION, HDR_REQUEST, HOST_PACING, LINK_RATE, PACKET_PACING, PACING_RATE, REMOVED_APP_KEYS, REMOVED_KEYS, REMOVED_PREFIXES, fold_remove_remote_monitor, folded_remove_remote_monitor, REMOTE_CLIENT_DISCONNECT, REMOTE_STREAM_END, REMOVE_REMOTE_MONITOR,
+    BITRATE_ADAPTATION, FOLDED_KEYS, fold_bitrate_adaptation, folded_bitrate_adaptation, fold_packet_pacing, fold_pyrowave_fec, folded_packet_pacing, HDR_OPTION, HDR_REQUEST, HOST_PACING, LINK_RATE, PACKET_PACING, PACING_RATE, REMOVED_APP_KEYS, REMOVED_KEYS, REMOVED_PREFIXES, fold_remove_remote_monitor, folded_remove_remote_monitor, REMOTE_CLIENT_DISCONNECT, REMOTE_STREAM_END, REMOVE_REMOTE_MONITOR, DD_DISCONNECT_BEHAVIOR, DD_HOLD_LAYOUT, DD_REVERT_ON_DISCONNECT, fold_disconnect_behavior, folded_disconnect_behavior,
     RENAMED_APP_SWITCHES, RENAMED_KEYS, RETIRED_SETTINGS, RETIRED_VALUES, Retired, RetiredSetting,
     SPLIT_KEYS, WIRELESS_PACING, current_name, folded_hdr, folded_in_layer, migrate_app,
     migrate_overrides, removed, replace_retired, replacement, retired_name, retired_warning,
@@ -262,6 +262,16 @@ impl Config {
             self.values
                 .insert(REMOVE_REMOTE_MONITOR.to_owned(), folded.to_owned());
         }
+        // Restore displays on disconnect and Keep monitors off while paused
+        // fold into the disconnect behavior; a value already saved wins.
+        let revert = self.values.remove(DD_REVERT_ON_DISCONNECT);
+        let hold = self.values.remove(DD_HOLD_LAYOUT);
+        if let Some(folded) = folded_disconnect_behavior(revert.as_deref(), hold.as_deref())
+            && !self.values.contains_key(DD_DISCONNECT_BEHAVIOR)
+        {
+            self.values
+                .insert(DD_DISCONNECT_BEHAVIOR.to_owned(), folded.to_owned());
+        }
     }
     pub fn load(path: &Path) -> Result<Self> {
         Ok(Self::load_retiring(path)?.0)
@@ -310,15 +320,19 @@ impl Config {
     pub fn hardware_metrics(&self) -> bool {
         self.boolean("hardware_metrics", true)
     }
-    /// How long a disconnected stream may keep its display. Exclusive layouts
-    /// must release even when an older profile disables restoration: otherwise
-    /// the local user's physical displays can remain off for hours. Keeping the
-    /// monitors off while paused (`dd_hold_layout_while_paused`, which no older
-    /// profile carries) is the user's choice to keep them off: such a layout keeps
-    /// its display as long as an ordinary one would (issue #92).
-    pub fn display_disconnect_delay(&self, exclusive: bool) -> Option<std::time::Duration> {
-        let forced = exclusive && !self.boolean("dd_hold_layout_while_paused", false);
-        if forced || self.boolean("dd_config_revert_on_disconnect", true) {
+    /// Whether a disconnected device's display is kept while its app runs
+    /// (`dd_disconnect_behavior=keep_while_paused`) instead of restored after
+    /// the restore delay (`restore`, the default). An unknown value reads as
+    /// `restore`.
+    pub fn keeps_display_while_paused(&self) -> bool {
+        unquote(self.get(DD_DISCONNECT_BEHAVIOR, "restore").trim()).eq_ignore_ascii_case("keep_while_paused")
+    }
+    /// How long a disconnected stream may keep its display: the restore
+    /// delay, or with `keep_while_paused` the paused-display timeout (none
+    /// for 0). Keeping is the user's choice, so an exclusive layout keeps
+    /// its monitors off that long too (issue #92); the timeout ends it.
+    pub fn display_disconnect_delay(&self, _exclusive: bool) -> Option<std::time::Duration> {
+        if !self.keeps_display_while_paused() {
             Some(std::time::Duration::from_millis(
                 self.integer("dd_config_revert_delay", 3000).max(0) as u64,
             ))
@@ -886,6 +900,8 @@ impl Config {
         // caller sends them, fold into Remove remote monitor unless that is
         // sent too.
         fold_remove_remote_monitor(&mut object);
+        // Likewise the two disconnect settings fold into the disconnect behavior.
+        fold_disconnect_behavior(&mut object);
         object.retain(|key, _| !removed(key));
         let object = &object;
         let mut next = self.clone();

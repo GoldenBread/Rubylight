@@ -1487,7 +1487,7 @@ pub struct Prepared {
     /// primary): a successful restore clears the start's display_layout warning.
     start_primary_mismatch: bool,
     /// Keep switching the physical monitors of an exclusive layout off while
-    /// the stream is paused (`dd_hold_layout_while_paused`).
+    /// the stream is paused (`dd_disconnect_behavior=keep_while_paused`).
     hold_layout_while_paused: bool,
     mode_report: ModeReport,
     recovery_scale: i64,

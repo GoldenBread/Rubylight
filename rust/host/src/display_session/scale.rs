@@ -92,9 +92,10 @@ pub(super) fn fit_client_scale(chosen: i64, largest: Result<u32>) -> (i64, Optio
 
 /// Whether a paused stream keeps its layout's physical monitors off. Only an
 /// exclusive layout switches them off, and only on request: by default a paused
-/// stream leaves local display changes alone.
+/// stream leaves local display changes alone (kept while paused is the
+/// disconnect behavior that asks for it).
 pub(super) fn holds_layout_while_paused(config: &Config, exclusive: bool) -> bool {
-    exclusive && config.boolean("dd_hold_layout_while_paused", false)
+    exclusive && config.keeps_display_while_paused()
 }
 
 /// Puts the configured virtual display scale on `output`, whichever display it is: a stream's

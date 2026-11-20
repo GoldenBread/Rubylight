@@ -629,43 +629,49 @@ fn a_wireless_client_gets_adaptive_pacing_on_h26x_and_av1_unless_something_owns_
 }
 
 #[test]
-fn disconnected_displays_restore_by_default_and_exclusive_layouts_cannot_be_retained() {
+fn disconnected_displays_restore_by_default_and_are_kept_only_when_chosen() {
     use std::time::Duration;
     for (text, ordinary, exclusive) in [
         ("", Some(3000), Some(3000)),
+        ("dd_disconnect_behavior=restore", Some(3000), Some(3000)),
+        ("dd_disconnect_behavior=invalid", Some(3000), Some(3000)),
         (
-            "dd_config_revert_on_disconnect=false",
+            "dd_disconnect_behavior=keep_while_paused",
             Some(7_200_000),
-            Some(3000),
+            Some(7_200_000),
         ),
         (
-            "dd_config_revert_on_disconnect=false\ndd_paused_virtual_display_timeout_secs=0",
+            "dd_disconnect_behavior=keep_while_paused
+dd_paused_virtual_display_timeout_secs=0",
             None,
-            Some(3000),
+            None,
         ),
         (
-            "dd_config_revert_on_disconnect=false\ndd_paused_virtual_display_timeout_secs=20\ndd_config_revert_delay=500",
+            "dd_disconnect_behavior=keep_while_paused
+dd_paused_virtual_display_timeout_secs=20
+dd_config_revert_delay=500",
             Some(20_000),
-            Some(500),
+            Some(20_000),
         ),
         ("dd_config_revert_delay=0", Some(0), Some(0)),
         ("dd_config_revert_delay=-1", Some(0), Some(0)),
-        // Issue #92: keeping the monitors off while paused is the user's choice, which
-        // no older profile carries, so the exclusive layout keeps its display as chosen.
-        (
-            "dd_hold_layout_while_paused=true\ndd_config_revert_on_disconnect=false\ndd_paused_virtual_display_timeout_secs=0",
-            None,
-            None,
-        ),
-        (
-            "dd_hold_layout_while_paused=true\ndd_config_revert_on_disconnect=false\ndd_paused_virtual_display_timeout_secs=60",
-            Some(60_000),
-            Some(60_000),
-        ),
-        // Restoring on disconnect still ends it after the restore delay.
+        // The two earlier settings fold in: turning restoring off keeps the display.
+        ("dd_config_revert_on_disconnect=false", Some(7_200_000), Some(7_200_000)),
+        ("dd_config_revert_on_disconnect=true", Some(3000), Some(3000)),
+        ("dd_config_revert_on_disconnect=invalid", Some(3000), Some(3000)),
+        // Keeping monitors off while paused changed nothing while restoring.
         ("dd_hold_layout_while_paused=true", Some(3000), Some(3000)),
         (
-            "dd_config_revert_on_disconnect=invalid",
+            "dd_hold_layout_while_paused=true
+dd_config_revert_on_disconnect=false
+dd_paused_virtual_display_timeout_secs=60",
+            Some(60_000),
+            Some(60_000),
+        ),
+        // A value saved under the new name wins.
+        (
+            "dd_disconnect_behavior=restore
+dd_config_revert_on_disconnect=false",
             Some(3000),
             Some(3000),
         ),
@@ -2270,4 +2276,42 @@ remote_monitor_disconnect_on_client_disconnect=true", R::StreamEnd),
     assert_eq!(config.remove_remote_monitor(), R::StreamEnd);
     assert!(super::retired_name("remote_monitor_disconnect_on_stream_end"));
     assert!(super::retired_name("remote_monitor_disconnect_on_client_disconnect"));
+}
+
+#[test]
+fn the_disconnect_settings_fold_in_every_layer() {
+    use super::folded_disconnect_behavior as fold;
+    assert_eq!(fold(None, None), None);
+    assert_eq!(fold(Some("false"), None), Some("keep_while_paused"));
+    assert_eq!(fold(Some("false"), Some("true")), Some("keep_while_paused"));
+    assert_eq!(fold(Some("true"), Some("true")), Some("restore"));
+    assert_eq!(fold(None, Some("true")), Some("restore"));
+    let mut config = super::Config::default();
+    let sent = serde_json::json!({"dd_config_revert_on_disconnect": false});
+    config.update(sent.as_object().unwrap()).unwrap();
+    assert!(config.keeps_display_while_paused());
+    assert!(!config.text().contains("dd_config_revert_on_disconnect"));
+    for (layer, expected) in [
+        (serde_json::json!({"dd_config_revert_on_disconnect": "false"}), Some("keep_while_paused")),
+        (serde_json::json!({"dd_hold_layout_while_paused": true}), Some("restore")),
+        (
+            serde_json::json!({"dd_config_revert_on_disconnect": false, "dd_disconnect_behavior": "restore"}),
+            Some("restore"),
+        ),
+        (serde_json::json!({"fec_percentage": 20}), None),
+    ] {
+        let mut layer = layer.as_object().unwrap().clone();
+        super::migrate_overrides(&mut layer);
+        assert_eq!(
+            layer.get("dd_disconnect_behavior").and_then(serde_json::Value::as_str),
+            expected,
+            "{layer:?}"
+        );
+        assert!(!layer.contains_key("dd_config_revert_on_disconnect"));
+        assert!(!layer.contains_key("dd_hold_layout_while_paused"));
+    }
+    assert!(super::retired_name("dd_config_revert_on_disconnect"));
+    assert!(super::retired_name("dd_hold_layout_while_paused"));
+    assert!(super::override_allowed("dd_disconnect_behavior"));
+    assert!(!super::override_allowed("dd_hold_layout_while_paused"));
 }

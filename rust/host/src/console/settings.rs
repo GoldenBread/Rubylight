@@ -68,10 +68,9 @@ pub const GLOBAL: &[Setting] = settings! {
         "hdr_dynamic_metadata", "HDR10+ and HDR Vivid dynamic metadata", Bool;
         "hdr_dolby_vision", "Dolby Vision 8.1, 8.4 and 10.1 for devices that ask", Bool;
         "hdr_hlg", "HLG for devices that ask", Bool;
-        "dd_config_revert_on_disconnect", "Restore displays when the stream disconnects", Bool;
+        "dd_disconnect_behavior", "When a device disconnects (restore: after the delay; keep_while_paused: keep its display while paused)", Choice(&["restore","keep_while_paused"]);
         "dd_config_revert_delay", "Display restore delay (milliseconds)", Number;
         "dd_paused_virtual_display_timeout_secs", "Paused display timeout (seconds; 0 keeps it)", Number;
-        "dd_hold_layout_while_paused", "Keep monitors off while paused", Bool;
         "dd_always_restore_from_golden", "Always restore the saved display layout", Bool;
         "dd_activate_virtual_display", "Activate virtual display", Bool;
         "dd_virtual_display_scale", "Virtual display scale (%)", Number;
@@ -453,6 +452,8 @@ pub fn render(prefix: &str, schema: &[Setting], values: &Value) -> String {
                             "shared" => "One shared by all devices",
                             "game-provided" => "Provided by the game",
                             "delay" if setting.key == "bitrate_adaptation" => "On, and react to network delay",
+                            "restore" if setting.key == "dd_disconnect_behavior" => "Restore after the delay",
+                            "keep_while_paused" => "Keep while paused",
                             "never" if setting.key == "remove_remote_monitor" => "Never",
                             "stream_end" if setting.key == "remove_remote_monitor" => "When its stream ends",
                             "disconnect" if setting.key == "remove_remote_monitor" => "As soon as the device disconnects",

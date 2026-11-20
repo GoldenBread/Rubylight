@@ -564,7 +564,7 @@ async fn a_stream_that_arrives_after_the_press_expired_still_releases_the_displa
         .write()
         .unwrap()
         .values
-        .insert("dd_config_revert_on_disconnect".into(), "false".into());
+        .insert("dd_disconnect_behavior".into(), "keep_while_paused".into());
     let (tv, tv_connection) = device(&s, "tv", "TV", ALL);
     press(&s, &tv_connection).await.session();
     s.host()
@@ -591,7 +591,7 @@ async fn a_stream_that_arrives_after_the_press_expired_still_releases_the_displa
         .write()
         .unwrap()
         .values
-        .insert("dd_config_revert_on_disconnect".into(), "false".into());
+        .insert("dd_disconnect_behavior".into(), "keep_while_paused".into());
     let (tv, tv_connection) = device(&s, "tv", "TV", ALL);
     press(&s, &tv_connection).await.session();
     s.host()
@@ -650,8 +650,8 @@ async fn the_note_of_a_move_that_happened_ends_with_its_game() {
 async fn the_window_after_a_failed_press_is_a_minute_whatever_the_display_grace_says() {
     for (revert, timeout) in [
         (None, None),
-        (Some("false"), None),
-        (Some("false"), Some("0")),
+        (Some("keep_while_paused"), None),
+        (Some("keep_while_paused"), Some("0")),
     ] {
         let s = Setup::new();
         let _phone = s.streaming();
@@ -660,7 +660,7 @@ async fn the_window_after_a_failed_press_is_a_minute_whatever_the_display_grace_
             if let Some(revert) = revert {
                 config
                     .values
-                    .insert("dd_config_revert_on_disconnect".into(), revert.into());
+                    .insert("dd_disconnect_behavior".into(), revert.into());
             }
             if let Some(timeout) = timeout {
                 config.values.insert(
@@ -1114,7 +1114,7 @@ async fn pressed_with_kept_display() -> (Setup, Client) {
         .write()
         .unwrap()
         .values
-        .insert("dd_config_revert_on_disconnect".into(), "false".into());
+        .insert("dd_disconnect_behavior".into(), "keep_while_paused".into());
     let (tv, tv_connection) = device(&s, "tv", "TV", ALL);
     press(&s, &tv_connection).await.session();
     s.host()
