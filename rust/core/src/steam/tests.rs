@@ -671,7 +671,7 @@ fn a_library_folder_that_appears_later_is_listed_with_the_vdf_unchanged() {
     )
     .unwrap();
     let roots = [steam.path().to_path_buf()];
-    assert_eq!(libraries(&roots), [apps.clone()]);
+    assert_eq!(libraries(&roots), std::slice::from_ref(&apps));
     // The drive appears; the file is not rewritten.
     std::fs::create_dir_all(missing.join("steamapps")).unwrap();
     assert_eq!(libraries(&roots), [apps, missing.join("steamapps")]);

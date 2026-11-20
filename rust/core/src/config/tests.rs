@@ -1756,7 +1756,7 @@ fn the_launchers_sync_options_fold_into_the_shared_library_sync_ones() {
     let one = Config::parse("gog_auto_sync = false\n").unwrap();
     assert!(!one.values.contains_key("library_auto_sync"));
     assert_eq!(one.get("gog_auto_sync", ""), "false");
-    assert_eq!(one.boolean("library_auto_sync", true), true);
+    assert!(one.boolean("library_auto_sync", true));
     assert_eq!(Config::parse(&one.text()).unwrap().values, one.values);
     // The recent-games options fold over the launchers that keep a play
     // history, and a value already saved under the shared name wins.
@@ -1764,7 +1764,7 @@ fn the_launchers_sync_options_fold_into_the_shared_library_sync_ones() {
         "battlenet_sync_all_installed = false\nbattlenet_recent_games = 3\nlibrary_recent_max_age_days = 0\nsteam_recent_max_age_days = 30\nplaynite_recent_max_age_days = 30\n",
     )
     .unwrap();
-    assert_eq!(mixed.boolean("library_sync_all_installed", true), true);
+    assert!(mixed.boolean("library_sync_all_installed", true));
     assert_eq!(mixed.get("battlenet_sync_all_installed", ""), "false");
     assert_eq!(mixed.integer("library_recent_games", 0), 10);
     assert_eq!(mixed.integer("library_recent_max_age_days", 0), 0);

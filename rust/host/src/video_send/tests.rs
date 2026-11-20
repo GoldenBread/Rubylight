@@ -2215,7 +2215,7 @@ fn a_whole_frame_sent_block_by_block_arrives_whole_and_is_timed_once() {
     let mut config = fixture.host.config.read().unwrap().clone();
     config
         .values
-        .insert("pacing_max_bitrate_kbps".into(), "100000".into());
+        .insert("packet_pacing".into(), "100000".into());
     let sender = Sender::new(
         Arc::new(ReplySocket::bind("127.0.0.1:0").unwrap()),
         session.clone(),
