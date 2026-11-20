@@ -175,6 +175,18 @@ pub fn pinned(adapters: &[(u32, u64)], display_vendor: Option<u32>) -> Option<us
     best
 }
 
+/// The adapter that probes the encoders when no display gives one, by index
+/// among `adapters` (PCI vendor, dedicated video memory): the one a stream
+/// with no GPU chosen pins to ([`pinned`] with no display), so the codecs the
+/// host reports are those of the GPU that encodes. Otherwise, as on a PC whose
+/// adapters are all one vendor's, AMD first, then NVIDIA ([`preferred`]).
+pub fn headless(adapters: &[(u32, u64)]) -> usize {
+    pinned(adapters, None).unwrap_or_else(|| {
+        let vendors: Vec<u32> = adapters.iter().map(|(vendor, _)| *vendor).collect();
+        preferred(&vendors)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -389,6 +401,25 @@ mod tests {
         let text = check_adapter(&intel(), &[]).unwrap_err().to_string();
         assert!(text.contains("only Intel(R) UHD Graphics 770."), "{text}");
         assert!(text.contains(LEGACY_RELEASE), "{text}");
+    }
+
+    #[test]
+    fn the_probe_without_a_display_takes_the_gpu_a_stream_pins() {
+        let (nvidia, amd) = (NVIDIA_VENDOR, AMD_VENDOR);
+        // Issue 134: an AMD iGPU listed before an RTX 5090. The stream encodes
+        // on the NVIDIA card, so the probe must not take the first AMD one.
+        let hybrid = [(amd, 512 << 20), (nvidia, 32 * GB)];
+        assert_eq!(headless(&hybrid), 1);
+        assert_eq!(Some(headless(&hybrid)), pinned(&hybrid, None));
+        // A bigger Radeon beside a small NVIDIA card stays the Radeon.
+        assert_eq!(headless(&[(nvidia, 4 * GB), (amd, 16 * GB)]), 1);
+        // An Intel GPU first: the encoding one.
+        assert_eq!(headless(&[(INTEL, 0), (nvidia, 8 * GB)]), 1);
+        // Nothing pinned: AMD first, then NVIDIA, else the first adapter.
+        assert_eq!(headless(&[(amd, GB), (amd, 12 * GB)]), 0);
+        assert_eq!(headless(&[(nvidia, GB), (nvidia, 12 * GB)]), 0);
+        assert_eq!(headless(&[(INTEL, GB)]), 0);
+        assert_eq!(headless(&[]), 0);
     }
 
     #[test]

@@ -742,6 +742,28 @@ fn a_stream_pins_to_the_amd_gpu_when_the_pc_has_another_vendors_too() {
     assert_eq!(pinned_choice(&nvidia, None, "", ""), none());
 }
 #[test]
+fn the_probe_without_a_display_opens_the_gpu_the_stream_pins() {
+    // Issue 134: Automatic, no display, an AMD iGPU listed before an RTX 5090.
+    let [igpu, _] = hybrid_gpus();
+    let nvidia = Gpu {
+        name: "NVIDIA GeForce RTX 5090".into(),
+        vendor: 0x10de,
+        dedicated_memory: 32 << 30,
+        device: 0,
+        luid: (1, 0),
+        pnp_id: None,
+    };
+    let gpus = [igpu, nvidia];
+    let adapters: Vec<(u32, u64)> = gpus
+        .iter()
+        .map(|gpu| (gpu.vendor, gpu.dedicated_memory))
+        .collect();
+    let probed = &gpus[encoder_gpu::headless(&adapters)];
+    assert_eq!(probed.name, "NVIDIA GeForce RTX 5090");
+    assert_eq!(pinned_choice(&gpus, None, "", "").0, probed.name);
+    assert_eq!(headless_gpu(&gpus).unwrap().name, probed.name);
+}
+#[test]
 fn a_stream_pins_to_the_biggest_radeon_and_leaves_a_display_already_on_one() {
     // Two Radeons (the 680M iGPU and a 12 GB RX 6850M XT) beside an NVIDIA GPU.
     let [igpu, dgpu] = hybrid_gpus();

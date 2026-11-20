@@ -686,9 +686,10 @@ impl Device {
             Self::create(&adapter, output, display)
         }
     }
-    /// A device on the configured GPU, or the first hardware GPU, when no
-    /// monitor is connected: the host can still probe its encoders, as
-    /// Vibepollo does on headless hosts.
+    /// A device on the configured GPU, or with none chosen the one a stream
+    /// would encode on ([`encoder_gpu::headless`]), when no monitor gives one:
+    /// the host can still probe its encoders, as Vibepollo does on headless
+    /// hosts, and reports the codecs of the GPU that encodes.
     fn without_display(adapter_name: &str, pnp_id: &str) -> Result<Self> {
         // SAFETY: The factory and adapters are live COM objects returned by these calls, and
         // GetDesc1 returns an owned struct.
@@ -711,7 +712,12 @@ impl Device {
                 {
                     continue;
                 }
-                candidates.push((index, adapter, desc.VendorId, description));
+                candidates.push((
+                    index,
+                    adapter,
+                    (desc.VendorId, desc.DedicatedVideoMemory as u64),
+                    description,
+                ));
             }
             if candidates.is_empty() {
                 if !adapter_name.is_empty() || !pnp_id.is_empty() {
@@ -719,12 +725,13 @@ impl Device {
                 }
                 bail!("{}", encoder_gpu::Refusal::NoGpu);
             }
-            // An AMD, else an NVIDIA adapter encodes: take it first when no
-            // GPU is chosen. Neither leaves the first one, which the encoder
-            // refuses.
-            let vendors: Vec<u32> = candidates.iter().map(|c| c.2).collect();
+            // With no GPU chosen, the adapter a stream pins to (on a PC that
+            // mixes vendors the AMD or NVIDIA one with the most video memory),
+            // else AMD first, then NVIDIA. Neither leaves the first one, which
+            // the encoder refuses.
+            let adapters: Vec<(u32, u64)> = candidates.iter().map(|c| c.2).collect();
             let (index, adapter, _, description) =
-                candidates.remove(encoder_gpu::preferred(&vendors));
+                candidates.remove(encoder_gpu::headless(&adapters));
             let display = Display {
                 device_id: String::new(),
                 display_name: String::new(),
