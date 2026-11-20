@@ -160,8 +160,22 @@ pub fn gcm_open(key: &[u8; 16], nonce: &[u8], tag: &[u8], data: &[u8]) -> Result
     GcmKey::new(key, nonce.len())?.open(nonce, tag, data)
 }
 pub fn cbc_seal(key: &[u8; 16], iv: &[u8; 16], data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    cbc_seal_into(key, iv, data, &mut out);
+    out
+}
+/// [`cbc_seal`] into `out`, overwritten, whose room the caller keeps between packets.
+pub fn cbc_seal_into(key: &[u8; 16], iv: &[u8; 16], data: &[u8], out: &mut Vec<u8>) {
     use aes::cipher::{BlockEncryptMut, KeyIvInit, block_padding::Pkcs7};
-    cbc::Encryptor::<Aes128>::new(key.into(), iv.into()).encrypt_padded_vec_mut::<Pkcs7>(data)
+    // Whole 16-byte blocks, one more for a length that is already a multiple:
+    // the size encrypt_padded_vec_mut allocates for the same bytes.
+    out.clear();
+    out.resize((data.len() | 15) + 1, 0);
+    let written = cbc::Encryptor::<Aes128>::new(key.into(), iv.into())
+        .encrypt_padded_b2b_mut::<Pkcs7>(data, out)
+        .expect("the buffer holds the padded data");
+    let len = written.len();
+    out.truncate(len);
 }
 pub fn cbc_open(key: &[u8; 16], iv: &[u8; 16], data: &[u8]) -> Result<Vec<u8>> {
     use aes::cipher::{BlockDecryptMut, KeyIvInit, block_padding::Pkcs7};

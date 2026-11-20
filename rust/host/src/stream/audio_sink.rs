@@ -474,6 +474,9 @@ pub(super) struct GameStreamAudio<'a> {
     qos: Tagged,
     use_qos: bool,
     peer: Option<SocketAddr>,
+    /// The last call's packets, handed back to the packetizer next call: no
+    /// packet of a stream allocates its own buffer.
+    packets: Vec<Vec<u8>>,
 }
 
 impl<'a> GameStreamAudio<'a> {
@@ -492,6 +495,7 @@ impl<'a> GameStreamAudio<'a> {
             qos: Tagged::default(),
             use_qos,
             peer: None,
+            packets: Vec::new(),
         }
     }
 }
@@ -510,9 +514,10 @@ impl AudioSink for GameStreamAudio<'_> {
             return Ok(1);
         };
         let mut unsent = 0;
-        for packet in self.packetizer.encode(opus)? {
-            // A lost audio packet is concealed by the client; only a broken socket stops the audio.
-            if !butterpollo_windows::net::send_datagram(self.socket, &packet, peer)? {
+        self.packetizer.encode_into(opus, &mut self.packets)?;
+        // A lost audio packet is concealed by the client; only a broken socket stops the audio.
+        for packet in &self.packets {
+            if !butterpollo_windows::net::send_datagram(self.socket, packet, peer)? {
                 unsent += 1;
             }
         }
@@ -530,11 +535,10 @@ impl AudioSink for GameStreamAudio<'_> {
         };
         let mut unsent = 0;
         for (index, part) in parts.iter().enumerate() {
-            for packet in self
-                .packetizer
-                .encode_part(part, index + 1 == parts.len())?
-            {
-                if !butterpollo_windows::net::send_datagram(self.socket, &packet, peer)? {
+            self.packetizer
+                .encode_part_into(part, index + 1 == parts.len(), &mut self.packets)?;
+            for packet in &self.packets {
+                if !butterpollo_windows::net::send_datagram(self.socket, packet, peer)? {
                     unsent += 1;
                 }
             }

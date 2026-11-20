@@ -1081,6 +1081,32 @@ fn audio_frame_pieces_share_a_timestamp_and_fec_names_the_block_start() {
     assert_eq!(ac3.timestamp, 64);
 }
 
+#[test]
+fn audio_packets_reused_across_calls_are_the_allocated_ones_byte_for_byte() {
+    // The sender keeps one output and hands it back; the packetizer pools the
+    // buffers. Over three FEC blocks of varying sizes, the wire bytes must be
+    // the fresh buffers', packet by packet.
+    for encrypted in [false, true] {
+        let mut fresh = AudioPacketizer::new(*b"0123456789abcdef", 9, encrypted, 5);
+        let mut pooled = AudioPacketizer::new(*b"0123456789abcdef", 9, encrypted, 5);
+        let mut kept = Vec::new();
+        let mut parity = 0;
+        for size in 1..13u8 {
+            let opus: Vec<u8> = (0..usize::from(size) * 23 % 251 + 1)
+                .map(|i| (i.wrapping_mul(31) ^ size) as u8)
+                .collect();
+            let want = fresh.encode(&opus).unwrap();
+            pooled.encode_into(&opus, &mut kept).unwrap();
+            parity += kept.iter().filter(|p| p[1] == 127).count();
+            assert_eq!(kept, want, "packet {size}, encrypted={encrypted}");
+        }
+        // Twelve packets made three FEC blocks, each with two parity packets.
+        assert_eq!(parity, 6);
+        assert_eq!(pooled.sequence, fresh.sequence);
+        assert_eq!(pooled.timestamp, fresh.timestamp);
+    }
+}
+
 /// `gf2p8affineqb` as Intel defines it: output bit `i` is the parity of the
 /// input byte and the matrix's byte `7 - i`.
 fn affine(matrix: u64, value: u8) -> u8 {
