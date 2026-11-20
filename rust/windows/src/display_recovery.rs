@@ -16,6 +16,12 @@ struct Entry {
     mode: Option<(Mode, Mode)>,
     #[serde(default)]
     mode_rate: Option<(Mode, Mode)>,
+    /// The recorded `mode_rate` applied value is the mode requested before the
+    /// apply, not the one the display actually took. Recovery restores the
+    /// original regardless for such an entry: after a crash it cannot tell
+    /// which mode actually landed.
+    #[serde(default)]
+    mode_rate_requested: bool,
     hdr: Option<(bool, bool)>,
     #[serde(default)]
     position: Option<(
@@ -59,6 +65,7 @@ impl Entry {
             hdr: self.hdr,
             mode: self.mode,
             mode_rate: self.mode_rate,
+            mode_rate_requested: self.mode_rate_requested,
             position: self.position,
             external: self.external,
             audio: self.audio,
@@ -356,7 +363,21 @@ pub fn mode_rate(id: &str, output: &str, before: Mode, applied: Mode) -> Result<
         e.mode_rate = Some((
             e.mode_rate.map_or(before, |(original, _)| original),
             applied,
-        ))
+        ));
+        e.mode_rate_requested = false;
+    })
+}
+/// Journal the mode a stream is about to apply, before the apply. A crash
+/// after this but before the mode the display actually took is recorded
+/// leaves this requested value behind; recovery restores the original then
+/// rather than requiring an exact match, which it cannot.
+pub fn mode_rate_requested(id: &str, output: &str, before: Mode, requested: Mode) -> Result<()> {
+    change(id, output, |e| {
+        e.mode_rate = Some((
+            e.mode_rate.map_or(before, |(original, _)| original),
+            requested,
+        ));
+        e.mode_rate_requested = true;
     })
 }
 pub fn hdr(id: &str, output: &str, before: bool, applied: bool) -> Result<()> {
@@ -495,6 +516,7 @@ pub(crate) fn release_in(path: &Path, id: &str) -> Result<()> {
     if let Some(entry) = journal.entries.get_mut(id) {
         entry.mode = None;
         entry.mode_rate = None;
+        entry.mode_rate_requested = false;
         entry.hdr = None;
         entry.rotation = None;
         entry.scale = None;
@@ -709,14 +731,22 @@ fn recover(path: &Path) -> Result<()> {
                     (|| {
                         let current = crate::display::mode(&m.display_name)?;
                         let rate = crate::display::Topology::query()?.refresh(id)?;
-                        if (current.dmPelsWidth, current.dmPelsHeight, rate.0) == applied {
-                            crate::display::Topology::set_mode_rate(
-                                id,
-                                previous.0,
-                                previous.1,
-                                butterpollo_core::framegen::Rate(previous.2),
-                            )?;
+                        let now = (current.dmPelsWidth, current.dmPelsHeight, rate.0);
+                        // A stream that ended cleanly recorded the mode the
+                        // display actually took, so it is put back only while
+                        // the display still has it: a change the user made
+                        // since stays. After a crash the recorded mode may be
+                        // the one requested before the apply, so the original
+                        // comes back whatever the display shows now.
+                        if !restore_mode_needed(entry.mode_rate_requested, now, applied) {
+                            return Ok(());
                         }
+                        crate::display::Topology::set_mode_rate(
+                            id,
+                            previous.0,
+                            previous.1,
+                            butterpollo_core::framegen::Rate(previous.2),
+                        )?;
                         Ok(())
                     })(),
                 ),
@@ -857,6 +887,15 @@ pub fn wait_and_recover(pid: u32, directory: &Path) -> Result<()> {
 /// (a game's own HDR switch, or the user's) already holds the useful state.
 fn restore_hdr_needed(current: bool, applied: bool) -> bool {
     current == applied
+}
+/// Whether the mode a stream left on a display is put back. `requested`: the
+/// journal recorded the mode requested before the apply, not the one that
+/// landed. A clean end records the mode the display actually took, so it is
+/// put back only while the display still has it; a crashed stream's entry may
+/// hold the requested mode while the display landed on another one, and its
+/// original comes back regardless.
+fn restore_mode_needed(requested: bool, current: Mode, applied: Mode) -> bool {
+    requested || current == applied
 }
 
 #[cfg(test)]

@@ -865,7 +865,7 @@ impl Guard {
                     }
                 } else {
                     let original = pending.mode.map_or(current, |(original, _)| original);
-                    crate::display_recovery::mode_rate(
+                    crate::display_recovery::mode_rate_requested(
                         &guard.identity,
                         &guard.output,
                         current,

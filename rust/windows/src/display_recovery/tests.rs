@@ -9,6 +9,55 @@ fn hdr_is_restored_only_while_the_display_has_the_applied_value() {
 }
 
 #[test]
+fn a_crashed_streams_mode_is_restored_even_when_the_requested_mode_did_not_land() {
+    let requested = (1920, 1080, 120000);
+    // A TV can take the resolution and keep its old rate.
+    let partial = (1920, 1080, 60000);
+    // A clean end records the mode the display actually took: it is put back
+    // only while the display still has it, and a change the user made since
+    // stays.
+    assert!(restore_mode_needed(false, partial, partial));
+    assert!(!restore_mode_needed(false, requested, partial));
+    // A crash can leave the requested mode recorded while the display landed
+    // on another one: the original still comes back.
+    assert!(restore_mode_needed(true, partial, requested));
+    assert!(restore_mode_needed(true, requested, requested));
+}
+
+#[test]
+fn a_requested_mode_entry_keeps_its_marker_until_released() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("display-recovery.json");
+    std::fs::write(
+        &path,
+        serde_json::to_vec(&serde_json::json!({
+            "pid": 0,
+            "started": 0,
+            "entries": {"tv": {
+                "output": r"\\.\DISPLAY2",
+                "mode": null,
+                "hdr": null,
+                "mode_rate": [[3840, 2160, 60000], [1920, 1080, 120000]],
+                "mode_rate_requested": true,
+            }},
+        }))?,
+    )?;
+    // The marker survives the read so recovery restores unconditionally, and
+    // a journal from before the marker existed reads as an actual mode.
+    let journal: Journal = serde_json::from_slice(&std::fs::read(&path)?)?;
+    assert!(journal.entries["tv"].mode_rate_requested);
+    let older: Entry = serde_json::from_str(
+        r#"{"output":"","mode":null,"hdr":null,"mode_rate":[[3840,2160,60000],[1920,1080,120000]]}"#,
+    )?;
+    assert!(!older.mode_rate_requested);
+    // A clean end clears the mode and its marker together.
+    release_in(&path, "tv")?;
+    let journal: Journal = serde_json::from_slice(&std::fs::read(&path)?)?;
+    assert!(journal.entries.is_empty());
+    Ok(())
+}
+
+#[test]
 fn the_next_arrangement_adopts_the_original_layout_after_a_failed_restore() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("display-recovery.json");

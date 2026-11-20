@@ -1,0 +1,2 @@
+# Displays after a crash
+- **A TV stuck at the wrong resolution or refresh after a crash is now put back.** When the host died between asking a display for a new mode and recording the mode it actually took, the TV could keep a half-applied mode (the new resolution at the old refresh) until it was changed by hand. Recovery now recognises that the stream never finished and restores the mode it had before, while a mode you changed yourself after a stream is still left alone.
