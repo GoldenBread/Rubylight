@@ -1565,6 +1565,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             LimeLog.info("Using Vulkan renderer; the screen " + (vulkanPresentReports ?
                     "reports when frames are shown" : "does not report when frames are shown"));
             renderer.setVsyncOffset(outputDisplay.getAppVsyncOffsetNanos());
+            renderer.setAdaptiveRefresh(holdsNothingForVrr());
             // A 10-bit stream starts in HDR10 before the PC's HDR report arrives, as the decoder is
             // configured (assumesHdr), so the report doesn't recreate the swapchain a second in.
             if (currentHdrMode != null ? currentHdrMode : assumesHdr()) {
@@ -4568,6 +4569,15 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         return prefs.vrr || arr;
     }
 
+    /** vrrForHolds for the screen now, as the Vulkan renderer's pacer takes it (VulkanRendererBridge.setAdaptiveRefresh). */
+    private boolean holdsNothingForVrr() {
+        boolean arr;
+        synchronized (vsyncMonitor) {
+            arr = adaptiveInUse();
+        }
+        return vrrForHolds(arr);
+    }
+
     /**
      * When a frame released at releaseNs is to be shown: at once, or with fractional V-Sync at the
      * refresh its turn comes (FramePacingPolicy.heldTargetNs), stamped half a refresh ahead of it
@@ -6042,6 +6052,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             }
             // The display mode can change mid-stream
             vulkan.setVsyncOffset(outputDisplay.getAppVsyncOffsetNanos());
+            vulkan.setAdaptiveRefresh(holdsNothingForVrr());
         }
         decodeTimeMs = frameLatencyStats.takeDecodeTimeMs();
         boolean pyroWave = (videoFormat & MoonBridge.VIDEO_FORMAT_MASK_PYROWAVE) != 0;

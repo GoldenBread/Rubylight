@@ -25,8 +25,10 @@ struct Run {
     int overflowed = 0;
 };
 
-Run run(PacingMode mode, int fps, int64_t periodNs, const std::vector<int64_t>& arrivalsNs, int vsyncs) {
+Run run(PacingMode mode, int fps, int64_t periodNs, const std::vector<int64_t>& arrivalsNs, int vsyncs,
+        bool adaptive = false) {
     FramePacer pacer(mode, fps, periodNs, JitterBuffer::Balanced);
+    pacer.setAdaptiveRefresh(adaptive);
     std::deque<FrameTiming> queue;
     Run out;
     size_t next = 0;
@@ -90,6 +92,9 @@ void testOtherRefreshesShowAFrameEachVsync() {
         // At a whole multiple they go up a turn apart, and the second, more than a stream frame old at
         // its turn with the third behind it, is skipped.
         assert(run(mode, 60, 8'333'333, burst, 5).shown == "#.#..");
+        // With VRR chosen or a screen that sets its own refresh nothing waits for a turn, as in MediaCodec.
+        assert(run(mode, 60, 8'333'333, burst, 5, true).shown == "###..");
+        assert(run(mode, 60, 8'333'333, bunched(2, 8'333'333, 4), 8, true).shown == "##..##..");
     }
 }
 

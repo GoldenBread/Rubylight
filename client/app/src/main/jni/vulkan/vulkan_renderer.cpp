@@ -1135,6 +1135,11 @@ void VulkanRenderer::setJitterBuffer(JitterBuffer jitterBuffer) {
     trace_.jitterBuffer(jitterBuffer);
 }
 
+void VulkanRenderer::setAdaptiveRefresh(bool adaptive) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pacer_.setAdaptiveRefresh(adaptive);
+}
+
 std::string VulkanRenderer::rendererText() {
     std::lock_guard<std::mutex> lock(mutex_);
 

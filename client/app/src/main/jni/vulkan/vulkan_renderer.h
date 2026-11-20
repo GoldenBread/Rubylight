@@ -118,6 +118,10 @@ public:
     // Switches the jitter buffer preset for the rest of the stream
     void setJitterBuffer(JitterBuffer jitterBuffer);
 
+    // VRR is chosen or the screen sets its own refresh: the pacer holds no frame for its turn
+    // (FramePacer::setAdaptiveRefresh)
+    void setAdaptiveRefresh(bool adaptive);
+
     // How long after the display's vsync Choreographer's frame times are (Display's app vsync
     // offset), which a front buffer has to allow for to know when the scan starts
     void setVsyncOffsetNs(int64_t offsetNs) { vsyncOffsetNs_ = offsetNs; }

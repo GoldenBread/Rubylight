@@ -304,8 +304,9 @@ void FramePacer::trackVsync(int64_t vsyncNs) {
 }
 
 int FramePacer::heldVsyncs() const {
-    // FramePacingPolicy.refreshesPerFrame's rule: a whole multiple to within half a hertz per multiple
-    if (periodNs_ <= 0 || streamIntervalNs_ <= 0) {
+    // FramePacingPolicy.refreshesPerFrame's rule: a whole multiple to within half a hertz per multiple,
+    // and nothing held where the screen refreshes when a frame comes or VRR is chosen
+    if (adaptiveRefresh_ || periodNs_ <= 0 || streamIntervalNs_ <= 0) {
         return 1;
     }
     const double refreshHz = 1e9 / static_cast<double>(periodNs_);

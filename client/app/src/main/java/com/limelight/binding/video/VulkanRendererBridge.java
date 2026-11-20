@@ -190,6 +190,21 @@ public class VulkanRendererBridge {
     }
 
     /**
+     * Whether VRR is chosen or the screen sets its own refresh (MediaCodecDecoderRenderer.vrrForHolds): then
+     * Smoothest and FPS-capped pacing hold no frame for its turn, as MediaCodec holds none there.
+     */
+    public void setAdaptiveRefresh(boolean adaptive) {
+        if (!gate.enter()) return;
+        try {
+            if (handle != 0) {
+                nativeSetAdaptiveRefresh(handle, adaptive);
+            }
+        } finally {
+            gate.exit();
+        }
+    }
+
+    /**
      * How long after the display's vsync Choreographer's frame times are
      * ({@link android.view.Display#getAppVsyncOffsetNanos()}), which changes with the display mode
      */
@@ -432,6 +447,7 @@ public class VulkanRendererBridge {
     private static native void nativeNoteHdr10Plus(long handle, long hostPtsUs, byte[] t35);
     private static native int nativeHdr10PlusState(long handle);
     private static native void nativeSetJitterBuffer(long handle, int jitterBuffer);
+    private static native void nativeSetAdaptiveRefresh(long handle, boolean adaptive);
     private static native void nativeSetVsyncOffset(long handle, long offsetNs);
     private static native int nativeTakePresentedFrames(long handle);
     private static native boolean nativeIsFrontBufferUnavailable(long handle);

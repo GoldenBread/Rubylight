@@ -199,6 +199,10 @@ public:
     // differently (updatePhase()), so locking starts over, as when the cadence changes.
     void setJitterBuffer(JitterBuffer jitterBuffer);
 
+    // VRR is chosen or the screen sets its own refresh (MediaCodecDecoderRenderer.vrrForHolds):
+    // nothing is held for its turn there (heldVsyncs())
+    void setAdaptiveRefresh(bool adaptive) { adaptiveRefresh_ = adaptive; }
+
     // With frames presented ahead, how long before its vsync a frame must be due for that vsync
     // (PresentScheduler::guardNs()). Frames due later go to the next vsync.
     void setPresentGuardNs(int64_t guardNs) { presentGuardNs_ = guardNs; }
@@ -291,7 +295,7 @@ private:
     int64_t slotPeriodNs() const { return slotVsyncs_ * periodNs_; }
     // The vsyncs each frame stays on a refresh 2 to 4 times the stream's rate (2 for 60 fps on
     // 120 Hz), else 1, by the rule of FramePacingPolicy.refreshesPerFrame (Java), which holds
-    // MediaCodec's Smoothest and FPS-capped frames for their turn there too
+    // MediaCodec's Smoothest and FPS-capped frames for their turn there too; 1 with adaptive refresh
     int heldVsyncs() const;
     static constexpr int kMaxHeldVsyncs = 4;
     // The most delay the current preset's buffer may hold (kLowestLatencyCapSlots)
@@ -299,6 +303,7 @@ private:
 
     PacingMode mode_;
     int64_t streamIntervalNs_;
+    bool adaptiveRefresh_ = false;
 
     // The vsync period, measured from vsync times once there are enough of them. The phase
     // lock needs it exact: Android may report 144 Hz for a panel that runs at 143.64 Hz.

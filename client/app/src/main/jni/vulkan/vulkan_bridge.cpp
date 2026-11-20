@@ -122,6 +122,15 @@ Java_com_limelight_binding_video_VulkanRendererBridge_nativeSetJitterBuffer(JNIE
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_com_limelight_binding_video_VulkanRendererBridge_nativeSetAdaptiveRefresh(JNIEnv*, jclass, jlong handle,
+                                                                             jboolean adaptive) {
+    VulkanRenderer* renderer = fromHandle(handle);
+    if (renderer) {
+        renderer->setAdaptiveRefresh(adaptive);
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_com_limelight_binding_video_VulkanRendererBridge_nativeSetVsyncOffset(JNIEnv*, jclass, jlong handle,
                                                                           jlong offsetNs) {
     VulkanRenderer* renderer = fromHandle(handle);
