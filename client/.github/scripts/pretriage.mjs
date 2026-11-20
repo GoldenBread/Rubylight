@@ -653,7 +653,7 @@ function evidenceList(answer) {
 }
 
 // Renders the model's fields under fixed headings, so every comment has the same shape.
-function renderComment(answer, isPr, prNumber) {
+function renderComment(answer, isPr, prNumber, work = []) {
   if (typeof answer.kind !== "string") return neutralize(answer.comment); // older answer shape
   const kind = kindOf(answer);
   if (kind === "spam") return "";
@@ -663,7 +663,11 @@ function renderComment(answer, isPr, prNumber) {
   if (/^(high|medium|low)$/i.test(answer.confidence || "")) meta.push(`confidence ${answer.confidence.toLowerCase()}`);
   const duplicate = Number.isInteger(answer.duplicate_of) && answer.duplicate_of > 0 ? `Looks like a duplicate of #${answer.duplicate_of}.` : "";
   const evidence = evidenceList(answer);
-  const fix = [neutralize(answer.fix), prNumber ? `Draft pull request with this fix: #${prNumber}` : ""].filter(Boolean).join("\n\n");
+  const fix = [
+    neutralize(answer.fix),
+    work.length ? `Already being worked on:\n${work.map((line) => `- ${line}`).join("\n")}` : "",
+    prNumber ? `Draft pull request with this fix: #${prNumber}` : "",
+  ].filter(Boolean).join("\n\n");
   const parts = isPr
     ? [section("Summary", answer.analysis), section("Issues", evidence), section("Suggested changes", answer.fix), section("Verify", answer.unknown)]
     : [
@@ -754,6 +758,41 @@ async function openPr(number, answer, files) {
   }
 }
 
+// Work already under way on an issue: commits on the default branch since it was opened, and
+// commits or names of other branches, that mention it, plus open pull requests that reference it.
+// Read with the workflow's read-only token. One Markdown line each; empty when there is none.
+async function workInProgress(number) {
+  const mentions = (text) => new RegExp(`#${number}(?!\\d)`).test(text || "");
+  // A branch named for the issue: "129-hdr", "fix/129", "wip/issue-129-x", "pretriage/issue-129-…".
+  const named = (name) => new RegExp(`(^|/)((issue|issues|gh|fix|bug)[-_]?)?${number}($|[-_/])`, "i").test(name);
+  const subject = (commit) => neutralize(commit.commit.message.split("\n")[0]).slice(0, 120);
+  const found = [];
+  const issue = await gh(`/repos/${REPO}/issues/${number}`);
+  const main = (await gh(`/repos/${REPO}`)).default_branch;
+  const recent = await gh(`/repos/${REPO}/commits?sha=${encodeURIComponent(main)}&since=${issue.created_at}&per_page=100`);
+  for (const commit of recent.filter((c) => mentions(c.commit.message)).slice(0, 3)) found.push(`${commit.sha} on \`${main}\`: ${subject(commit)}`);
+  const branches = [];
+  for (let page = 1; page <= 3; page++) {
+    const batch = await gh(`/repos/${REPO}/branches?per_page=100&page=${page}`);
+    branches.push(...batch);
+    if (batch.length < 100) break;
+  }
+  for (const branch of branches.filter((b) => b.name !== main).slice(0, 40)) {
+    const compare = await gh(`/repos/${REPO}/compare/${encodeURIComponent(main)}...${encodeURIComponent(branch.name)}`).catch(() => null);
+    if (!compare?.ahead_by) continue;
+    const hit = [...compare.commits].reverse().find((c) => mentions(c.commit.message));
+    const name = branch.name.replace(/`/g, "");
+    if (hit) found.push(`${hit.sha} on branch \`${name}\`: ${subject(hit)}`);
+    else if (named(branch.name)) found.push(`branch \`${name}\` (${compare.ahead_by} commits ahead, newest ${branch.commit.sha})`);
+  }
+  const timeline = await gh(`/repos/${REPO}/issues/${number}/timeline?per_page=100`).catch(() => []);
+  for (const event of timeline) {
+    const source = event.event === "cross-referenced" ? event.source?.issue : null;
+    if (source?.pull_request && source.state === "open" && source.repository?.full_name === REPO) found.push(`pull request #${source.number}`);
+  }
+  return [...new Set(found)].slice(0, 5);
+}
+
 async function post() {
   const number = Number(env.NUMBER);
   const answer = parseAnswer(fs.readFileSync(path.join(WORK, "answer.txt"), "utf8"));
@@ -764,9 +803,20 @@ async function post() {
   const dropped = answer.labels.filter((label) => !allowed.has(String(label)));
   if (dropped.length) console.log(`Ignoring labels outside the allowed set: ${dropped.join(", ")}`);
 
+  // Work already under way is pointed at, and then no pull request is opened.
+  let work = [];
+  if (!isPr && ["bug", "enhancement"].includes(kindOf(answer))) {
+    try {
+      work = await workInProgress(number);
+      if (work.length) console.log(`Already being worked on:\n${work.join("\n")}`);
+    } catch (error) {
+      console.log(`Could not look for work in progress: ${error.message}`);
+    }
+  }
+
   // A draft pull request only for a high-confidence bug whose edits all check out.
   let prNumber = 0;
-  if (!isPr && kindOf(answer) === "bug" && String(answer.confidence).toLowerCase() === "high" && answer.pr) {
+  if (!isPr && !work.length && kindOf(answer) === "bug" && String(answer.confidence).toLowerCase() === "high" && answer.pr) {
     try {
       const files = prFiles(answer.pr);
       if (files && env.DRY_RUN === "true") console.log(`DRY RUN: would open a draft pull request changing ${[...files.keys()].join(", ")}`);
@@ -777,7 +827,7 @@ async function post() {
     }
   }
 
-  const comment = renderComment(answer, isPr, prNumber);
+  const comment = renderComment(answer, isPr, prNumber, work);
   if (comment.length > COMMENT_OUT_MAX_CHARS) throw new Error(`comment too long (${comment.length} chars)`);
   const body = comment ? `${MARKER}\n${comment}\n\n---\n<sub>Automated pre-triage: a first look, which can be wrong.</sub>` : "";
 

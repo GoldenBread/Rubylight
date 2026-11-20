@@ -149,6 +149,7 @@ jobs:
       - if: steps.gather.outputs.skip == 'false'
         run: node .github/scripts/pretriage.mjs post
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           GH_APP_TOKEN: ${{ steps.app.outputs.token }}
           GH_APP_PR_TOKEN: ${{ steps.app_pr.outputs.token }}
           NUMBER: ${{ steps.gather.outputs.number }}
