@@ -215,6 +215,24 @@ public class FramePacingPolicyTest {
         assertTrue(paces(120_000, (long) (1e9 / 0.0f)));
     }
 
+    @Test public void theFpsLimitCapsOnlyAStreamThatMeetsTheRefreshItRunsAt() {
+        // Twice the frame rate: each frame stays two refreshes, and nothing caps the stream.
+        assertEquals(60, FramePacingPolicy.limitedFrameRate(60, 120f, 120f));
+        assertEquals(30, FramePacingPolicy.limitedFrameRate(30, 60f, 60f));
+        // A screen still at 60 when the stream starts, asked for 120 (no Lower refresh rate): no 59 on 120.
+        assertEquals(60, FramePacingPolicy.limitedFrameRate(60, 60f, 120f));
+        assertEquals(60, FramePacingPolicy.limitedFrameRate(60, 60.00001f, 119.88f));
+        // The stream's rate is the screen's: one below it, so the display's queue cannot fill.
+        assertEquals("60 Hz for 60 fps on a 60 or 60/90 screen", 59, FramePacingPolicy.limitedFrameRate(60, 60f, 60f));
+        assertEquals(119, FramePacingPolicy.limitedFrameRate(120, 120f, 120f));
+        assertEquals(89, FramePacingPolicy.limitedFrameRate(90, 90f, 90f));
+        assertEquals("up to 3 fps above the screen", 59, FramePacingPolicy.limitedFrameRate(62, 60f, 120f));
+        // Faster than the screen it starts at: Balanced drops the surplus, as before.
+        assertEquals(FramePacingPolicy.LIMIT_ABOVE_SCREEN, FramePacingPolicy.limitedFrameRate(120, 60f, 120f));
+        assertEquals(FramePacingPolicy.LIMIT_ABOVE_SCREEN, FramePacingPolicy.limitedFrameRate(64, 60f, 60f));
+        assertEquals(FramePacingPolicy.LIMIT_BOGUS_SCREEN, FramePacingPolicy.limitedFrameRate(48, 48f, 96f));
+    }
+
     @Test public void balancedKeepsTheVsyncQueueWithoutPhaseLockOrWithLateFramesKept() {
         long hz60 = 1_000_000_000L / 60;
         assertTrue("another Moonlight host keeps its queue",

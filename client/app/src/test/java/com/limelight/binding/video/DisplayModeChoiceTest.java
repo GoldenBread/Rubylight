@@ -36,6 +36,16 @@ public class DisplayModeChoiceTest {
     public void reduceRefreshRateTakesTheLowestMultiple() {
         assertEquals(60f, refresh(120f, at(1920, 1080, 120f, 60f), 60, true), 0f);
         assertEquals("the frame rate's own mode stays once found", 60f, refresh(60f, at(1920, 1080, 60f, 120f), 60, true), 0f);
+        assertEquals("60 Hz listed first", 60f, refresh(120f, at(1920, 1080, 60f, 120f), 60, true), 0f);
+    }
+
+    /** Lower refresh rate off, whatever the frame pacing (GameVideoOutput.mayReduceRefreshRate). */
+    @Test
+    public void withoutLowerRefreshRateAWholeMultipleKeepsTheTopRate() {
+        assertEquals("60 fps on a 60/120 Hz screen at 120", 120f, refresh(120f, at(1920, 1080, 60f, 120f), 60, false), 0f);
+        assertEquals("30 fps on it", 120f, refresh(120f, at(1920, 1080, 60f, 120f), 30, false), 0f);
+        assertEquals("the top rate would judder: 60 fps on a 60/90 Hz screen", 60f,
+                refresh(90f, at(1920, 1080, 60f, 90f), 60, false), 0f);
     }
 
     @Test

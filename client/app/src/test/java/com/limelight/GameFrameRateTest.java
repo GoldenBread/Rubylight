@@ -3,15 +3,19 @@ package com.limelight;
 import android.app.Application;
 import android.graphics.SurfaceTexture;
 import android.media.MediaFormat;
+import android.view.Display;
 import android.view.Surface;
+import android.view.SurfaceHolder;
 
 import com.limelight.binding.video.DisplayFrameRatePolicy;
+import com.limelight.binding.video.FramePacingPolicy;
 import com.limelight.binding.video.MediaCodecDecoderRenderer;
 import com.limelight.binding.video.MediaCodecHelper;
 import com.limelight.binding.video.RefreshSwitchMonitorTest;
 import com.limelight.nvstream.AdaptiveBitrateController;
 import com.limelight.nvstream.jni.MoonBridge;
 import com.limelight.preferences.PreferenceConfiguration;
+import com.limelight.ui.StreamView;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -22,6 +26,7 @@ import org.robolectric.annotation.Implementation;
 import org.robolectric.annotation.Implements;
 import org.robolectric.shadow.api.Shadow;
 import org.robolectric.shadows.ShadowSurface;
+import org.robolectric.shadows.ShadowSurfaceView;
 import org.robolectric.shadows.ShadowSystemClock;
 import org.robolectric.util.ReflectionHelpers;
 
@@ -239,6 +244,15 @@ public class GameFrameRateTest {
     @Test
     @Config(sdk = 34, shadows = {FrameRateSurface.class, RefreshSwitchMonitorTest.FakePanel.class})
     public void vrrContentVoteLowersOnlyForJudderOrWithTheOptIn() {
+        // VRR streams use Lowest latency (PreferenceConfiguration), but the two pacings that once
+        // counted as the opt-in (GameVideoOutput.mayReduceRefreshRate) must not lower the vote either.
+        for (int pacing : new int[] {PreferenceConfiguration.FRAME_PACING_MIN_LATENCY,
+                PreferenceConfiguration.FRAME_PACING_MAX_SMOOTHNESS, PreferenceConfiguration.FRAME_PACING_CAP_FPS}) {
+            vrrContentVoteLowersOnlyForJudderOrWithTheOptIn(pacing);
+        }
+    }
+
+    private void vrrContentVoteLowersOnlyForJudderOrWithTheOptIn(int pacing) {
         // A 60/90/120 phone at 120, VRR without ARR, a host that sends frame times.
         RefreshSwitchMonitorTest.FakePanel.set(RefreshSwitchMonitorTest.mode(3, 120f, 60f, 90f),
                 RefreshSwitchMonitorTest.mode(1, 60f, 90f, 120f), RefreshSwitchMonitorTest.mode(2, 90f, 60f, 120f),
@@ -247,6 +261,7 @@ public class GameFrameRateTest {
         PreferenceConfiguration prefs = new PreferenceConfiguration();
         prefs.videoFormat = PreferenceConfiguration.FormatOption.AUTO;
         prefs.vrr = true;
+        prefs.framePacing = pacing;
         prefs.fps = 120;
         ReflectionHelpers.setStaticField(MediaCodecHelper.class, "initialized", true);
         ReconfigurableRenderer renderer = new ReconfigurableRenderer(activity, prefs);
@@ -299,6 +314,143 @@ public class GameFrameRateTest {
             surface.release();
             texture.release();
         }
+    }
+
+    /**
+     * The reported defect: Smoothest video and Balanced with FPS limit at 60 fps took 60 Hz on a 60/120 Hz
+     * screen set to 120. Only Lower refresh rate takes a lower whole multiple; without it every pacing
+     * keeps 120 Hz and votes it, and the FPS limit leaves 60 fps even where the screen still shows 60 when
+     * the stream starts. A top rate that would judder still gives way: 60 fps on a 60/90 Hz screen.
+     */
+    @Test
+    @Config(sdk = {30, 34}, shadows = {FrameRateSurface.class, RefreshSwitchMonitorTest.FakePanel.class})
+    public void onlyLowerRefreshRateLowersTheRefreshForAWholeMultiple() {
+        int[] pacings = {PreferenceConfiguration.FRAME_PACING_MAX_SMOOTHNESS, PreferenceConfiguration.FRAME_PACING_CAP_FPS,
+                PreferenceConfiguration.FRAME_PACING_MIN_LATENCY, PreferenceConfiguration.FRAME_PACING_BALANCED};
+        try {
+            for (int pacing : pacings) {
+                String name = "pacing " + pacing;
+                boolean limit = pacing == PreferenceConfiguration.FRAME_PACING_CAP_FPS;
+                float[] top = startStream(pacing, false, 120f, 60f, 120f);
+                assertArrayEquals(name, new float[] {120f, 120f, 120f}, top, 0f);
+                if (limit) assertEquals(60, FramePacingPolicy.limitedFrameRate(60, top[2], top[0]));
+
+                // Still at 60 when the stream starts: the stream asks for 120 all the same.
+                float[] rising = startStream(pacing, false, 60f, 60f, 120f);
+                assertArrayEquals(name, new float[] {120f, 120f, 60f}, rising, 0f);
+                if (limit) assertEquals(60, FramePacingPolicy.limitedFrameRate(60, rising[2], rising[0]));
+
+                // Lower refresh rate: the lowest multiple, and the stream's own rate as the vote.
+                float[] lowered = startStream(pacing, true, 120f, 60f, 120f);
+                assertArrayEquals(name, new float[] {60f, 60f, 60f}, lowered, 0f);
+                if (limit) assertEquals(59, FramePacingPolicy.limitedFrameRate(60, lowered[2], lowered[0]));
+
+                // 90 Hz would judder at 60 fps: 60 Hz without the opt-in.
+                float[] judder = startStream(pacing, false, 90f, 60f, 90f);
+                assertArrayEquals(name, new float[] {60f, 60f, 60f}, judder, 0f);
+            }
+        } finally {
+            RefreshSwitchMonitorTest.FakePanel.clear();
+        }
+    }
+
+    /**
+     * Without Lower refresh rate the content rate vote stays at the base vote: a 60 fps game in a 120 fps
+     * stream keeps a 60/120 Hz screen at 120 in Smoothest video and Balanced with FPS limit too. The app
+     * makes no content vote there (it needs the opt-in or VRR, PreferenceConfiguration); this pins the
+     * pacings that once counted as the opt-in.
+     */
+    @Test
+    @Config(sdk = 34, shadows = {FrameRateSurface.class, RefreshSwitchMonitorTest.FakePanel.class})
+    public void withoutTheOptInTheContentVoteStaysAtTheBaseVote() {
+        for (int pacing : new int[] {PreferenceConfiguration.FRAME_PACING_MAX_SMOOTHNESS,
+                PreferenceConfiguration.FRAME_PACING_CAP_FPS}) {
+            RefreshSwitchMonitorTest.FakePanel.set(RefreshSwitchMonitorTest.mode(2, 120f, 60f),
+                    RefreshSwitchMonitorTest.mode(1, 60f, 120f), RefreshSwitchMonitorTest.mode(2, 120f, 60f));
+            Game activity = Robolectric.buildActivity(Game.class).get();
+            PreferenceConfiguration prefs = new PreferenceConfiguration();
+            prefs.videoFormat = PreferenceConfiguration.FormatOption.AUTO;
+            prefs.width = 1920;
+            prefs.height = 1080;
+            prefs.fps = 120;
+            prefs.framePacing = pacing;
+            prefs.contentRateFrameRate = true;
+            ReflectionHelpers.setStaticField(MediaCodecHelper.class, "initialized", true);
+            ReconfigurableRenderer renderer = new ReconfigurableRenderer(activity, prefs);
+            ReflectionHelpers.setField(activity, "prefConfig", prefs);
+            ReflectionHelpers.setField(activity, "decoderRenderer", renderer);
+            ReflectionHelpers.setField(activity, "panelMaxRefreshRate", 120f);
+            giveStreamView(activity);
+            ReflectionHelpers.callInstanceMethod(activity.videoOutput, "prepareDisplayForRendering");
+            SurfaceTexture texture = new SurfaceTexture(0);
+            Surface surface = new Surface(texture);
+            try {
+                FrameRateSurface vote = Shadow.extract(surface);
+                ReflectionHelpers.setField(activity, "videoSurface", surface);
+                ReflectionHelpers.setField(activity, "surfaceCreated", true);
+                vote(activity, surface);
+                assertEquals(120f, vote.frameRate, 0);
+                renderer.contentMilliHz = 60_000;
+                ReflectionHelpers.callInstanceMethod(activity.videoOutput, "voteContentRate");
+                assertEquals("pacing " + pacing, 120f, vote.frameRate, 0);
+
+                // With the opt-in the vote follows the game down to 60.
+                prefs.reduceRefreshRate = true;
+                vote(activity, surface);
+                ShadowSystemClock.advanceBy(Duration.ofSeconds(3));
+                ReflectionHelpers.callInstanceMethod(activity.videoOutput, "voteContentRate");
+                assertEquals("pacing " + pacing, 60f, vote.frameRate, 0);
+            } finally {
+                RefreshSwitchMonitorTest.FakePanel.clear();
+                surface.release();
+                texture.release();
+            }
+        }
+    }
+
+    /**
+     * prepareDisplayForRendering, then the base surface vote, for a 60 fps 1080p stream on a screen now at
+     * nowHz whose modes, all of one size, refresh at ratesHz. Returns the refresh of the mode chosen
+     * (desiredRefreshRate), the vote, and the refresh GameConnection judges Balanced with FPS limit by.
+     */
+    private static float[] startStream(int pacing, boolean lowerRefresh, float nowHz, float... ratesHz) {
+        Display.Mode[] modes = new Display.Mode[ratesHz.length];
+        Display.Mode now = null;
+        for (int i = 0; i < ratesHz.length; i++) {
+            modes[i] = RefreshSwitchMonitorTest.mode(i + 1, ratesHz[i]);
+            if (ratesHz[i] == nowHz) now = modes[i];
+        }
+        RefreshSwitchMonitorTest.FakePanel.set(now, modes);
+        Game activity = Robolectric.buildActivity(Game.class).get();
+        PreferenceConfiguration prefs = new PreferenceConfiguration();
+        prefs.width = 1920;
+        prefs.height = 1080;
+        prefs.fps = 60;
+        prefs.framePacing = pacing;
+        prefs.reduceRefreshRate = lowerRefresh;
+        ReflectionHelpers.setField(activity, "prefConfig", prefs);
+        giveStreamView(activity);
+        float judged = ReflectionHelpers.callInstanceMethod(activity.videoOutput, "prepareDisplayForRendering");
+        SurfaceTexture texture = new SurfaceTexture(0);
+        Surface surface = new Surface(texture);
+        try {
+            FrameRateSurface vote = Shadow.extract(surface);
+            vote(activity, surface);
+            return new float[] {(float) ReflectionHelpers.getField(activity, "desiredRefreshRate"), vote.frameRate, judged};
+        } finally {
+            surface.release();
+            texture.release();
+        }
+    }
+
+    /** A stream view whose buffers prepareDisplayForRendering can size, and that reads the default display. */
+    private static void giveStreamView(Game activity) {
+        SurfaceHolder holder = new ShadowSurfaceView.FakeSurfaceHolder();
+        StreamView view = new StreamView(activity) {
+            @Override public SurfaceHolder getHolder() { return holder; }
+        };
+        ReflectionHelpers.setField(activity, "streamView", view);
+        ReflectionHelpers.setField(activity, "renderView", view);
     }
 
     private static void vote(Game activity, Surface surface) {

@@ -605,10 +605,17 @@ final class GameVideoOutput {
         if (root != null) ViewCompat.requestApplyInsets(root);
     }
 
+    /**
+     * Whether the stream may take the lowest refresh that fits its frame rate instead of the top whole
+     * multiple (60 Hz instead of 120 for 60 fps) and vote its own rate: Lower refresh rate alone, whose
+     * Off keeps the top rate. Moonlight let its FPS-capped and smoothest pacings lower it too; those
+     * pacings show every frame, each for two refreshes at twice the frame rate. The display mode
+     * choice, the surface votes and, through the chosen mode, Balanced with FPS limit's cap
+     * (FramePacingPolicy.limitedFrameRate) follow this. A top rate that would judder still gives way
+     * without it (60 Hz for 60 fps on a 90 Hz screen, DisplayModeChoice).
+     */
     private boolean mayReduceRefreshRate() {
-        return game.prefConfig.framePacing == PreferenceConfiguration.FRAME_PACING_CAP_FPS ||
-                game.prefConfig.framePacing == PreferenceConfiguration.FRAME_PACING_MAX_SMOOTHNESS ||
-                game.prefConfig.reduceRefreshRate;
+        return game.prefConfig.reduceRefreshRate;
     }
 
     float prepareDisplayForRendering() {

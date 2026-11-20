@@ -13,6 +13,7 @@ import com.limelight.binding.video.DecoderSetupFailure;
 import com.limelight.binding.video.PackedFallback;
 import com.limelight.binding.video.DiscardingDecoderRenderer;
 import com.limelight.binding.video.DisplayCapsReporter;
+import com.limelight.binding.video.FramePacingPolicy;
 import com.limelight.binding.video.HdrPolicy;
 import com.limelight.binding.video.MediaCodecDecoderRenderer;
 import com.limelight.binding.video.MediaCodecHelper;
@@ -504,24 +505,24 @@ final class GameConnection {
         LimeLog.info("Display refresh rate: "+displayRefreshRate);
 
         // If the user requested frame pacing using a capped FPS, we will need to change our
-        // desired FPS setting here in accordance with the active display refresh rate.
+        // desired FPS setting here in accordance with the active display refresh rate, judged
+        // against the mode the stream asks for as well (FramePacingPolicy.limitedFrameRate).
         int roundedRefreshRate = Math.round(displayRefreshRate);
         int chosenFrameRate = game.prefConfig.fps;
         if (game.prefConfig.framePacing == PreferenceConfiguration.FRAME_PACING_CAP_FPS) {
-            if (game.prefConfig.fps >= roundedRefreshRate) {
-                if (game.prefConfig.fps > roundedRefreshRate + 3) {
-                    // Use frame drops when rendering above the screen frame rate
-                    game.prefConfig.framePacing = PreferenceConfiguration.FRAME_PACING_BALANCED;
-                    LimeLog.info("Using drop mode for FPS > Hz");
-                } else if (roundedRefreshRate <= 49) {
-                    // Let's avoid clearly bogus refresh rates and fall back to legacy rendering
-                    game.prefConfig.framePacing = PreferenceConfiguration.FRAME_PACING_BALANCED;
-                    LimeLog.info("Bogus refresh rate: " + roundedRefreshRate);
-                }
-                else {
-                    chosenFrameRate = roundedRefreshRate - 1;
-                    LimeLog.info("Adjusting FPS target for screen to " + chosenFrameRate);
-                }
+            int limited = FramePacingPolicy.limitedFrameRate(game.prefConfig.fps, displayRefreshRate,
+                    game.desiredRefreshRate);
+            if (limited == FramePacingPolicy.LIMIT_ABOVE_SCREEN) {
+                // Use frame drops when rendering above the screen frame rate
+                game.prefConfig.framePacing = PreferenceConfiguration.FRAME_PACING_BALANCED;
+                LimeLog.info("Using drop mode for FPS > Hz");
+            } else if (limited == FramePacingPolicy.LIMIT_BOGUS_SCREEN) {
+                // Let's avoid clearly bogus refresh rates and fall back to legacy rendering
+                game.prefConfig.framePacing = PreferenceConfiguration.FRAME_PACING_BALANCED;
+                LimeLog.info("Bogus refresh rate: " + roundedRefreshRate);
+            } else if (limited != chosenFrameRate) {
+                chosenFrameRate = limited;
+                LimeLog.info("Adjusting FPS target for screen to " + chosenFrameRate);
             }
         }
 

@@ -222,5 +222,12 @@ public class RefreshSwitchMonitorTest {
             return active != null ? supported.toArray(new Display.Mode[0]) :
                     Shadow.directlyOn(display, Display.class, "getSupportedModes");
         }
+
+        /** The active mode's rate, as Android gives it without a frame rate override. */
+        @Implementation protected float getRefreshRate() {
+            if (active != null) return active.getRefreshRate();
+            Float real = Shadow.directlyOn(display, Display.class, "getRefreshRate");
+            return real;
+        }
     }
 }

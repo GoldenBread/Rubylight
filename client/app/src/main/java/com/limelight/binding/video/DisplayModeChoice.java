@@ -5,10 +5,12 @@ package com.limelight.binding.video;
  * apart from Android's Display so the Settings screen names the same mode's refresh (SettingRules'
  * fractional V-Sync row) and tests run without a screen. Without VRR it takes the highest refresh that
  * is a whole multiple of the frame rate, even below the current one (60 Hz for 60 fps on a 90 Hz
- * screen), or the lowest such with "Reduce refresh rate"; the resolution stays unless the stream needs
+ * screen), or the lowest such with Lower refresh rate; the frame pacing never changes it (120 Hz for
+ * 60 fps on a 60/120 Hz screen in every pacing). The resolution stays unless the stream needs
  * otherwise. With VRR the top rate among the modes that keep the whole stream. The choice is Moonlight
  * Android's (Game.prepareDisplayForRendering, GPL-3.0, Cameron Gutman and contributors), moved here
- * unchanged from GameVideoOutput.
+ * unchanged from GameVideoOutput; Moonlight also asked it for the lowest multiple with its FPS-capped
+ * and smoothest pacings.
  */
 public final class DisplayModeChoice {
     private DisplayModeChoice() { }
@@ -38,8 +40,9 @@ public final class DisplayModeChoice {
 
     /**
      * The index in {@code candidates} (the screen's supported modes, in Android's order) of the mode the
-     * stream takes, or -1 to keep {@code current}. {@code mayReduceRefreshRate} is "Reduce refresh rate",
-     * FPS-capped or Smoothest pacing (GameVideoOutput.mayReduceRefreshRate).
+     * stream takes, or -1 to keep {@code current}. {@code mayReduceRefreshRate} is Lower refresh rate
+     * alone (GameVideoOutput.mayReduceRefreshRate); the Settings screen passes false, where that setting
+     * is off.
      */
     public static int choose(Mode current, Mode[] candidates, int streamWidth, int streamHeight, int fps,
                              boolean vrr, boolean nativeResolutionStream, boolean mayReduceRefreshRate) {

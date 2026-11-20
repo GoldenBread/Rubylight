@@ -85,6 +85,31 @@ public final class FramePacingPolicy {
         return 1_000_000_000_000L / fpsMilliHz;
     }
 
+    /** limitedFrameRate: the stream is over 3 fps faster than the screen, so Balanced drops the surplus. */
+    public static final int LIMIT_ABOVE_SCREEN = -1;
+    /** limitedFrameRate: a refresh of 49 Hz or less is taken as bogus, and Balanced shows the stream. */
+    public static final int LIMIT_BOGUS_SCREEN = -2;
+
+    /**
+     * The frame rate Balanced with FPS limit asks the PC for, or LIMIT_ABOVE_SCREEN or LIMIT_BOGUS_SCREEN
+     * where Balanced takes over. Like Smoothest video it shows every frame in turn, so a stream as fast
+     * as the screen would fill the display's queue: it is capped one below the refresh (59 fps at 60 Hz).
+     * screenHz is the lower of the screen's rate when the stream starts and askedHz, the rate of the mode
+     * the stream asks for (GameVideoOutput.prepareDisplayForRendering). A stream at the screen's rate
+     * that asks for a whole multiple of it is not capped: 60 fps toward 120 Hz from a screen still at 60
+     * would otherwise run 59 fps on 120 Hz, which shows two frames a second for three refreshes. A screen
+     * held at 60 Hz (battery saver, the user's own limit) then shows the stream uncapped, as Smoothest
+     * video does. From Moonlight Android's Game.onCreate (GPL-3.0, Cameron Gutman and contributors).
+     */
+    public static int limitedFrameRate(int fps, float screenHz, float askedHz) {
+        int screen = Math.round(screenHz);
+        if (fps < screen) return fps;
+        if (fps > screen + 3) return LIMIT_ABOVE_SCREEN;
+        if (screen <= 49) return LIMIT_BOGUS_SCREEN;
+        if (fps == screen && fps < Math.round(askedHz)) return fps;
+        return screen - 1;
+    }
+
     static int negotiatedFrameRateMilliHz(int requestedMilliHz, int negotiatedFps) {
         return requestedMilliHz >= 1000 && requestedMilliHz <= 1_000_000 &&
                 (requestedMilliHz + 500) / 1000 == negotiatedFps ? requestedMilliHz : negotiatedFps * 1000;
