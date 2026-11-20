@@ -393,6 +393,11 @@ class Execution(unittest.TestCase):
             self.assertNotIn('--tests', command)
             self.assertEqual(command[-2:], [dev.GRADLE_TASK, dev.GRADLE_LINT_TASK])
             self.assertLessEqual(len(dev.subprocess.list2cmdline(command)), dev.CMD_LINE_LIMIT)
+        # gradlew.bat puts the JDK and the JVM options before the arguments on its own cmd line: they count too.
+        few = many[:40]
+        self.assertIn('--tests', dev.gradle_command(ROOT, few))
+        with mock.patch.dict(os.environ, {'GRADLE_OPTS': '-Dx=' + 'y' * 6000}):
+            self.assertNotIn('--tests', dev.gradle_command(ROOT, few))
 
     def test_an_app_class_list_too_long_for_cmd_runs_the_whole_suite(self):
         many = [f'com.limelight.binding.video.MediaCodecSomethingLongerTest{i}' for i in range(170)]

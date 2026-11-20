@@ -431,8 +431,12 @@ def client_env(target):
     return env
 
 
-# cmd takes at most 8191 characters on its command line ("Die Befehlszeile ist zu lang" with 170 test classes).
-CMD_LINE_LIMIT = 8000
+# cmd takes at most 8191 characters on a command line ("Die Befehlszeile ist zu lang" with 170 test classes), and
+# gradlew.bat hands the arguments on in a longer line: the JDK, JAVA_OPTS and GRADLE_OPTS come first.
+CMD_LINE_LIMIT = 8191
+# What else gradlew.bat's java line adds (java.exe, its default JVM options, the wrapper jar under the checkout, the
+# main class) beyond the line here: about 140 characters, with room to spare.
+GRADLEW_OVERHEAD = 400
 
 
 def gradle_command(root, items):
@@ -442,7 +446,9 @@ def gradle_command(root, items):
     # doesn't look in its working folder for a bare gradlew.bat.
     command = ['cmd', '/c', str(root / 'client' / 'gradlew.bat'), '--no-daemon', '--max-workers=2', GRADLE_TASK]
     filters = [a for t in items for a in ('--tests', t)]
-    if filters and len(subprocess.list2cmdline(command + filters)) <= CMD_LINE_LIMIT:
+    budget = CMD_LINE_LIMIT - GRADLEW_OVERHEAD - sum(len(os.environ.get(name, ''))
+                                                     for name in ('JAVA_HOME', 'JAVA_OPTS', 'GRADLE_OPTS'))
+    if filters and len(subprocess.list2cmdline(command + filters)) <= budget:
         return command + filters
     return command + [GRADLE_LINT_TASK]
 
