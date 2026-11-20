@@ -163,7 +163,7 @@ Gate runs, release build, A8 records (`BUTTERPOLLO_TIMING_RECORD`, `rust/release
 `rust/release/timing_report.py`), A/B with `off` vs `4`, same seed, at least 3000 frames each:
 
 1. Loopback C receiver (`rust/tests/moonlight_client.c` via `e2e.py`): 4K60 HEVC 80 Mbps and H.264, 0% and 1% loss.
-2. Paced Wi-Fi emulation on loopback: `pacing_max_bitrate_kbps=160000`.
+2. Paced Wi-Fi emulation on loopback: `packet_pacing=160000`.
 3. NUC over Ethernet (`ssh nuc`), then a phone on Wi-Fi with Nightjar and stock Moonlight (user runs the phone).
 
 Pass: median `end_to_end` (picture age) improves by at least 1 ms in run 2 and run 3's Wi-Fi case; at 1% loss the
