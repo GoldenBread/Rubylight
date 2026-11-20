@@ -337,6 +337,42 @@ public class GameStreamMenuTest {
     }
 
     // The chosen item runs once the menu is gone and the stream has focus: give it that focus.
+    /**
+     * Issue 142: the menu takes the system keyboard away while it is open, so its Keyboard tile (Y) read it as closed
+     * and opened it again. The tile closes a keyboard that was open when the menu opened.
+     */
+    @Test
+    public void theKeyboardTileClosesASystemKeyboardThatWasOpenWhenTheMenuOpened() {
+        java.util.List<int[]> keys = new java.util.ArrayList<>();
+        Game game = streamingGame(Game.class, "rubylight-serverinfo.xml", keys);
+        ReflectionHelpers.setField(game, "keyboardTranslator", new com.limelight.binding.input.KeyboardTranslator());
+        ReflectionHelpers.setField(game, "inputCaptureProvider", new com.limelight.binding.input.capture.InputCaptureProvider() { });
+        com.limelight.ui.StreamView stream = game.findViewById(R.id.surfaceView);
+        ReflectionHelpers.setField(game, "streamView", stream);
+        com.limelight.ui.LegacyKeyboardInsets legacy = new com.limelight.ui.LegacyKeyboardInsets(game,
+                game.findViewById(android.R.id.content), (visible, bottom) -> { });
+        ReflectionHelpers.setField(game, "legacyKeyboard", legacy);
+        android.view.inputmethod.InputMethodManager input = (android.view.inputmethod.InputMethodManager)
+                game.getSystemService(android.content.Context.INPUT_METHOD_SERVICE);
+        stream.requestFocus();
+        input.showSoftInput(stream, 0);
+        ReflectionHelpers.setField(legacy, "visible", true);
+
+        StreamMenu menu = open(game);
+        // The menu window has the focus: the keyboard is gone until the stream has it again.
+        ReflectionHelpers.setField(legacy, "visible", false);
+        assertTrue("Y runs the Keyboard tile", menu.hotkey(android.view.KeyEvent.KEYCODE_BUTTON_Y));
+        assertFalse(menu.sheet().isShowing());
+        runMenuAction(game);
+        assertFalse("The tile closed the keyboard", org.robolectric.Shadows.shadowOf(input).isSoftInputVisible());
+
+        // With the keyboard closed as the menu opens, the same tile opens it.
+        menu = open(game);
+        assertTrue(menu.hotkey(android.view.KeyEvent.KEYCODE_BUTTON_Y));
+        runMenuAction(game);
+        assertTrue(org.robolectric.Shadows.shadowOf(input).isSoftInputVisible());
+    }
+
     private static void runMenuAction(Game game) {
         idle();
         WindowFocusActionQueue queue = ReflectionHelpers.getField(game, "windowFocusActions");

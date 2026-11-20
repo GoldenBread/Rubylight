@@ -46,6 +46,8 @@ final class GameMenuActions {
 
     // The sectioned stream menu while it is open; streamMenu is its sheet or a dialog it opened.
     private com.limelight.ui.StreamMenu streamMenuSheet;
+    // Whether the system keyboard was open as the stream menu opened.
+    private boolean systemKeyboardAtMenu;
 
     // A failed request may still have ended the session: the host can drop the stream before the
     // request fails, and the lost transport then takes up to its 10 s timeout to report. The
@@ -134,6 +136,8 @@ final class GameMenuActions {
             return;
         }
         game.restoreInputAfterMenu = game.grabbedInput;
+        // The menu takes the system keyboard away for as long as it is open; its Keyboard tile then closes it.
+        systemKeyboardAtMenu = game.keyboardInput.isSystemKeyboardVisible();
         // Whoever opens the menu knows how; the first-stream hint has done its job.
         game.overlays.dismissStreamMenuHint(true);
         // The audio switches show the host's state as it is now, so they appear once it answers.
@@ -375,8 +379,16 @@ final class GameMenuActions {
         Runnable action = null;
         ComputerDetails details = game.conn.getHostDetails();
         switch (item) {
-            case PC_KEYBOARD: action = game.keyboardInput::togglePcKeyboard; break;
-            case KEYBOARD: action = game::toggleKeyboard; break;
+            case PC_KEYBOARD: {
+                boolean open = systemKeyboardAtMenu;
+                action = () -> game.keyboardInput.togglePcKeyboard(open);
+                break;
+            }
+            case KEYBOARD: {
+                boolean open = systemKeyboardAtMenu;
+                action = () -> game.keyboardInput.toggleKeyboard(open);
+                break;
+            }
             case TOUCH_MODE: action = game.touchInput::showTouchModeDialog; break;
             case MOUSE_CURSOR: action = game.touchInput::toggleCursorVisibility; break;
             case CONTROLLER_MOUSE: action = () -> { if (game.controllerHandler != null) game.controllerHandler.toggleMouseEmulationFromMenu(); }; break;

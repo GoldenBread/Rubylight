@@ -6,7 +6,8 @@ package com.limelight.binding.input.keyboard;
  *
  * <p>Controller mapping: the D-pad or left stick moves the selection, A presses the selected key
  * (hold to repeat), B closes the keyboard, X is Backspace, Y is Space, Start is Enter, and LB and RB
- * arm, lock and release Shift and Ctrl like tapping those keys. A remote uses the D-pad and OK.
+ * arm, lock and release Shift and Ctrl like tapping those keys. A remote uses the D-pad and OK. Up from
+ * the top row selects the header's close button, where A or OK closes the keyboard and Down goes back.
  */
 public final class PcKeyboardController {
     public enum Pad { UP, DOWN, LEFT, RIGHT, A, B, X, Y, LB, RB, START }
@@ -28,6 +29,8 @@ public final class PcKeyboardController {
     private Runnable onReleased;
     private KeyboardFocus focus;
     private boolean focusVisible = true;
+    // The header's close button holds the selection instead of a key.
+    private boolean closeSelected;
     private final boolean[] padDown = new boolean[Pad.values().length];
     private KeyboardFocus.Direction padDirection, stickDirection, activeDirection;
     private long nextNavigate;
@@ -55,6 +58,11 @@ public final class PcKeyboardController {
         return focusVisible;
     }
 
+    /** Whether a controller or remote selected the close button above the keys. */
+    public boolean isCloseSelected() {
+        return closeSelected;
+    }
+
     /** Switch layouts; whatever was held is released first because its key no longer exists. */
     public void setLayout(PcKeyboardLayout newLayout) {
         if (newLayout == layout) return;
@@ -73,7 +81,7 @@ public final class PcKeyboardController {
         engine.tick(now);
         if (activeDirection != null && now >= nextNavigate) {
             nextNavigate = now + NAVIGATE_REPEAT_MS;
-            focus.move(activeDirection);
+            navigate(activeDirection);
             host.changed();
         }
     }
@@ -82,6 +90,7 @@ public final class PcKeyboardController {
 
     public void touchDown(PcKey key, int pointerId, long now) {
         focusVisible = false;
+        closeSelected = false;
         // The selection follows the finger, so a pad press right after touch acts from that key.
         focus.focus(key.id);
         engine.press(key, pointerId, now);
@@ -104,6 +113,10 @@ public final class PcKeyboardController {
             case LEFT: padDirection(KeyboardFocus.Direction.LEFT, down, now); break;
             case RIGHT: padDirection(KeyboardFocus.Direction.RIGHT, down, now); break;
             case A:
+                if (down && closeSelected) {
+                    host.close();
+                    return;
+                }
                 if (down) {
                     focusVisible = true;
                     engine.press(focus.focused(), Pad.A, now);
@@ -176,6 +189,7 @@ public final class PcKeyboardController {
         padDirection = null;
         stickDirection = null;
         activeDirection = null;
+        closeSelected = false;
         host.changed();
         if (onReleased != null) onReleased.run();
     }
@@ -203,7 +217,18 @@ public final class PcKeyboardController {
         nextNavigate = now + NAVIGATE_DELAY_MS;
         // Touch hid the selection; the first pad press shows it and still acts.
         focusVisible = true;
-        focus.move(wanted);
+        navigate(wanted);
         host.changed();
+    }
+
+    // Up from the top row reaches the close button, Down from it the key it came from; left and right stay on it.
+    private void navigate(KeyboardFocus.Direction direction) {
+        if (closeSelected) {
+            if (direction == KeyboardFocus.Direction.DOWN) closeSelected = false;
+        } else if (direction == KeyboardFocus.Direction.UP && focus.row() == 0) {
+            closeSelected = true;
+        } else {
+            focus.move(direction);
+        }
     }
 }

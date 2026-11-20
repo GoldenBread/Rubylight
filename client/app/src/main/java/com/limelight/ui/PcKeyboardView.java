@@ -145,7 +145,8 @@ public final class PcKeyboardView extends View {
         stroke.setStrokeWidth(ring);
         boolean shift = controller.engine().modifiers().isActive(PcModifier.SHIFT);
         boolean altGr = controller.engine().modifiers().isActive(PcModifier.ALTGR);
-        PcKey focused = controller.isFocusVisible() ? controller.focus().focused() : null;
+        // The header's close button draws its own ring while it holds the selection.
+        PcKey focused = controller.isFocusVisible() && !controller.isCloseSelected() ? controller.focus().focused() : null;
 
         List<List<PcKey>> rows = layout.rows();
         for (int row = 0; row < rows.size(); row++) {

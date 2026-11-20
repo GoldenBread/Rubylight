@@ -151,16 +151,16 @@ public class GameRemoteControlTest {
             assertEquals(0, game.menus);
             prefs.backOpensMenu = true;
             assertTrue(game.handleKeyDown(event(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, pad.getId(), InputDevice.SOURCE_GAMEPAD)));
-            assertEquals(0, game.menus);
+            assertEquals(0, game.backs);
             assertTrue(game.handleKeyUp(event(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK, pad.getId(), InputDevice.SOURCE_GAMEPAD)));
-            assertEquals(1, game.menus);
+            assertEquals(1, game.backs);
             assertEquals(2, controller.events);
             for (int key : new int[] {KeyEvent.KEYCODE_BUTTON_SELECT, KeyEvent.KEYCODE_BUTTON_START}) {
                 assertTrue(game.handleKeyDown(event(KeyEvent.ACTION_DOWN, key, pad.getId(), InputDevice.SOURCE_GAMEPAD)));
                 assertTrue(game.handleKeyUp(event(KeyEvent.ACTION_UP, key, pad.getId(), InputDevice.SOURCE_GAMEPAD)));
             }
             assertEquals(6, controller.events);
-            assertEquals(1, game.menus);
+            assertEquals(1, game.backs);
         } finally {
             controller.destroy();
         }
@@ -212,7 +212,7 @@ public class GameRemoteControlTest {
         prefs.backOpensMenu = true;
         assertTrue(game.handleKeyDown(event(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, keyboard.getId(), InputDevice.SOURCE_KEYBOARD)));
         assertTrue(game.handleKeyUp(event(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK, keyboard.getId(), InputDevice.SOURCE_KEYBOARD)));
-        assertEquals(1, game.menus);
+        assertEquals(1, game.backs);
         prefs.backOpensMenu = false;
 
         prefs.captureSystemKeys = false;

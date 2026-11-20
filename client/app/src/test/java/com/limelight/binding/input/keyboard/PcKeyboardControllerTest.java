@@ -189,4 +189,57 @@ public class PcKeyboardControllerTest {
         controller.tick(10_000);
         assertEquals(before, focused());
     }
+
+    private void press(Pad button, long now) {
+        controller.pad(button, true, now);
+        controller.pad(button, false, now + 10);
+    }
+
+    /** A remote has no B: Up from the top row selects the close button, and OK there closes the keyboard. */
+    @Test
+    public void upFromTheTopRowSelectsTheCloseButtonAndOkClosesTheKeyboard() {
+        controller.focus().focus("F5");
+        press(Pad.UP, 0);
+        assertTrue(controller.isCloseSelected());
+        assertEquals("The key stays behind it", "F5", focused());
+        // Left, right and more Up stay on it, also held past the repeat delay.
+        press(Pad.LEFT, 100);
+        press(Pad.RIGHT, 200);
+        controller.pad(Pad.UP, true, 300);
+        controller.tick(300 + NAVIGATE_DELAY_MS + NAVIGATE_REPEAT_MS);
+        controller.pad(Pad.UP, false, 1000);
+        assertTrue(controller.isCloseSelected());
+        assertEquals("F5", focused());
+        // Down goes back to the key it came from.
+        press(Pad.DOWN, 1100);
+        assertFalse(controller.isCloseSelected());
+        assertEquals("F5", focused());
+        press(Pad.UP, 1200);
+        assertEquals(0, closed);
+        controller.pad(Pad.A, true, 1300);
+        assertEquals(1, closed);
+        assertTrue("OK on the close button types nothing", events.isEmpty());
+        controller.pad(Pad.A, false, 1310);
+        assertTrue(events.isEmpty());
+    }
+
+    @Test
+    public void closingOrTouchingLeavesTheCloseButton() {
+        controller.focus().focus("Esc");
+        press(Pad.UP, 0);
+        assertTrue(controller.isCloseSelected());
+        controller.release();
+        assertFalse("The keyboard opens on a key again", controller.isCloseSelected());
+        press(Pad.UP, 100);
+        assertTrue(controller.isCloseSelected());
+        controller.touchDown(controller.layout().key("Q"), 1, 200);
+        controller.touchUp(1);
+        assertFalse(controller.isCloseSelected());
+        assertEquals(java.util.Arrays.asList("51+", "51-"), events);
+        // A then presses the touched key, not the close button.
+        controller.pad(Pad.A, true, 300);
+        assertEquals(0, closed);
+        assertEquals("51+", events.get(events.size() - 1));
+        controller.pad(Pad.A, false, 310);
+    }
 }

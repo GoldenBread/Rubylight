@@ -112,7 +112,7 @@ The option is off by default to preserve existing controller mappings. When enab
 
 In the PC list, library, settings and stream menus, use the **D-pad** to move focus, **Select/OK** to activate the highlighted item and **Back** to return. On a selected PC or game, the remote's **Menu** button opens its actions. Long-pressing Select also opens the card's actions.
 
-During a stream, **Back** and **Menu** open Nightjar's stream menu. They stay local to Nightjar, so a Fire TV remote cannot accidentally send gamepad Start/Select to the PC or lose the way out of the stream. In the open menu, D-pad/Select navigate its controls and Back returns to the preceding page or closes it.
+During a stream, **Back** and **Menu** open Nightjar's stream menu. While the PC keyboard or the system keyboard is open, Back closes it instead. They stay local to Nightjar, so a Fire TV remote cannot accidentally send gamepad Start/Select to the PC or lose the way out of the stream. In the open menu, D-pad/Select navigate its controls and Back returns to the preceding page or closes it.
 
 With the menu closed and input captured, the remote's **D-pad** sends PC arrow keys and **Select** sends Enter. The host must allow keyboard input for that device. A TV remote provides basic keyboard navigation; use a controller or mouse for games or desktop actions that need those inputs. Connected gamepads retain their controller mapping, including the Start button and menu shortcut. Home, voice search and other system-reserved buttons follow the TV's behavior.
 
@@ -197,9 +197,9 @@ While the keyboard is open, controllers and TV remotes steer it and the game get
 
 | Control | Action |
 | --- | --- |
-| D-pad or left stick | Move focus between keys (the focused key has a white outline). Holding repeats the move. |
-| A (OK on a TV remote, Select) | Press the focused key. Hold to repeat. Modifier keys arm, lock and release. |
-| B (or the controller's own Back) | Close the keyboard. |
+| D-pad or left stick | Move focus between keys (the focused key has a white outline). Holding repeats the move. Up from the top row moves focus to the close button in the header; Down returns to the keys. |
+| A (OK on a TV remote, Select) | Press the focused key. Hold to repeat. Modifier keys arm, lock and release. On the close button, close the keyboard. |
+| B (or the controller's own Back, or Back on a TV remote) | Close the keyboard. |
 | X | Backspace |
 | Y | Space |
 | LB / RB | Toggle Shift / Ctrl |

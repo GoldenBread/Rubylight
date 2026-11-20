@@ -1147,13 +1147,19 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         onBack(backByController);
     }
 
-    /** Back: leaves the layout editor or the PC keyboard, else opens the menu, focused when a controller or remote sent it. */
+    /**
+     * Back: leaves the layout editor, the PC keyboard or the system keyboard, else opens the menu, focused when a
+     * controller or remote sent it.
+     */
     void onBack(boolean byController) {
         if (modernController != null && modernController.isEditing()) {
             // Back leaves the layout editor without keeping its changes, as Cancel does.
             modernController.finishEditing(false);
         } else if (connected && keyboardInput.isPcKeyboardVisible()) {
             keyboardInput.hidePcKeyboard();
+        } else if (connected && keyboardInput.isSystemKeyboardVisible()) {
+            // A touch Back goes to the keyboard itself; a remote's Back reaches the stream first and comes here.
+            keyboardInput.closeSystemKeyboard();
         } else if (connected) {
             if (byController) showStreamMenuFromController();
             else showStreamMenu();

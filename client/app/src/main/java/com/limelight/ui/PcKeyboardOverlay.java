@@ -3,6 +3,7 @@ package com.limelight.ui;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.ImageButton;
@@ -19,11 +20,15 @@ import java.util.Locale;
 /**
  * The full PC keyboard over the bottom of the stream: a thin header with the layout name and a close
  * button, then the keys. Touch, controller and remote all drive the same {@link PcKeyboardController}.
+ * A controller or remote reaches the close button through that selection (Up from the top row), not
+ * through Android's view focus, which stays on the stream so that their keys keep coming here.
  */
 public final class PcKeyboardOverlay extends LinearLayout {
     private final PcKeyboardController controller;
     private final PcKeyboardView keys;
     private final TextView layoutName;
+    private final ImageButton closeButton;
+    private final GradientDrawable closeRing;
     private final int sizePercent;
 
     public PcKeyboardOverlay(Context context, String layoutPreference, int sizePercent, int opacityPercent,
@@ -46,7 +51,10 @@ public final class PcKeyboardOverlay extends LinearLayout {
         controller = new PcKeyboardController(PcKeyboardLayout.resolve(layoutPreference, Locale.getDefault()), output,
                 new PcKeyboardController.Host() {
                     @Override public void close() { close.run(); }
-                    @Override public void changed() { if (view[0] != null) view[0].changed(); }
+                    @Override public void changed() {
+                        if (view[0] != null) view[0].changed();
+                        showCloseSelection();
+                    }
                 });
         keys = new PcKeyboardView(context, controller);
         view[0] = keys;
@@ -77,7 +85,7 @@ public final class PcKeyboardOverlay extends LinearLayout {
         View spacer = new View(context);
         header.addView(spacer, new LayoutParams(0, 1, 1f));
 
-        ImageButton closeButton = new ImageButton(context);
+        closeButton = new ImageButton(context);
         closeButton.setImageResource(R.drawable.ic_close);
         closeButton.setColorFilter(Color.WHITE);
         closeButton.setBackground(null);
@@ -86,6 +94,10 @@ public final class PcKeyboardOverlay extends LinearLayout {
         closeButton.setOnClickListener(v -> close.run());
         int button = Math.round(36 * density);
         header.addView(closeButton, new LayoutParams(button, button));
+        // The keys' focus ring, round around the X while a controller or remote has it selected.
+        closeRing = new GradientDrawable();
+        closeRing.setShape(GradientDrawable.OVAL);
+        closeRing.setStroke(Math.max(2, Math.round(2 * density)), keys.focusRing(false));
 
         addView(header, new LayoutParams(LayoutParams.MATCH_PARENT, Math.round(34 * density)));
         addView(keys, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
@@ -104,6 +116,18 @@ public final class PcKeyboardOverlay extends LinearLayout {
     public void releaseInputs() {
         controller.release();
         keys.changed();
+    }
+
+    private void showCloseSelection() {
+        // The controller is built before the button exists.
+        if (closeButton == null) return;
+        boolean selected = controller.isFocusVisible() && controller.isCloseSelected();
+        closeButton.setBackground(selected ? closeRing : null);
+    }
+
+    /** Whether the close button shows the controller's or remote's selection. */
+    boolean closeShownSelected() {
+        return closeButton.getBackground() == closeRing;
     }
 
     private void cycleLayout() {

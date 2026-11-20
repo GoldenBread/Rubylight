@@ -112,7 +112,8 @@ final class GameKeyboardInput {
                 config.hardKeyboardHidden == Configuration.HARDKEYBOARDHIDDEN_NO;
     }
 
-    private boolean isSystemKeyboardVisible() {
+    boolean isSystemKeyboardVisible() {
+        if (game.streamView == null) return false;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             WindowInsets insets = game.streamView.getRootWindowInsets();
             return insets != null && insets.isVisible(WindowInsets.Type.ime());
@@ -504,7 +505,8 @@ final class GameKeyboardInput {
         // A handheld's dedicated Back can share its gamepad device. Reserve that physical key
         // before controller remapping, while keeping Select/Start and keyboard Windows-key mode.
         if (physicalKeyCode(event) != KeyEvent.KEYCODE_BACK) return false;
-        if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) game.showStreamMenuFromController();
+        // Back as everywhere else: an open system keyboard (or the layout editor) goes first, then the menu.
+        if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) game.onBack(true);
         return true;
     }
 
@@ -684,18 +686,21 @@ final class GameKeyboardInput {
     }
 
     void toggleKeyboard() {
+        toggleKeyboard(false);
+    }
+
+    /**
+     * Opens or closes the system keyboard. {@code openBeforeMenu}: it was open when the stream menu running this
+     * opened. The menu took the window's focus and the keyboard with it, and Android brings the keyboard back only
+     * once the menu is gone, so asking now would open it again instead of closing it.
+     */
+    void toggleKeyboard(boolean openBeforeMenu) {
         if (!game.foreground || !game.connected || game.isFinishing() || game.streamMenu != null || !game.conn.canSendInput()) {
             return;
         }
         LimeLog.info("Toggling keyboard overlay");
-        boolean visible;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            WindowInsets insets = game.streamView.getRootWindowInsets();
-            visible = insets != null && insets.isVisible(WindowInsets.Type.ime());
-        } else {
-            WindowInsetsCompat insets = ViewCompat.getRootWindowInsets(game.streamView);
-            visible = insets != null && insets.isVisible(WindowInsetsCompat.Type.ime());
-        }
+        // Below Android 11 the window's own insets never show the keyboard (adjustNothing); the legacy probe does.
+        boolean visible = openBeforeMenu || isSystemKeyboardVisible();
         if (!visible) {
             hideKeyboardOverlay();
             hidePcKeyboard();
@@ -719,6 +724,11 @@ final class GameKeyboardInput {
     }
 
     void togglePcKeyboard() {
+        togglePcKeyboard(false);
+    }
+
+    /** {@code systemKeyboardBeforeMenu}: as for {@link #toggleKeyboard(boolean)}, the system keyboard may not be back yet. */
+    void togglePcKeyboard(boolean systemKeyboardBeforeMenu) {
         if (!game.foreground || !game.connected || game.isFinishing() || game.streamMenu != null || !game.conn.canSendInput()) {
             return;
         }
@@ -728,7 +738,8 @@ final class GameKeyboardInput {
         }
         // One keyboard at a time: the extra-keys panel and the system keyboard make room.
         hideKeyboardOverlay();
-        hideSystemKeyboard();
+        if (systemKeyboardBeforeMenu) closeSystemKeyboard();
+        else hideSystemKeyboard();
         if (game.pcKeyboard == null) {
             game.pcKeyboard = new PcKeyboardOverlay(game, game.prefConfig.pcKeyboardLayout, game.prefConfig.pcKeyboardSize,
                     game.prefConfig.pcKeyboardOpacity, this::sendPcKeyboardKey, this::hidePcKeyboard);
@@ -804,6 +815,20 @@ final class GameKeyboardInput {
     private void sendPcKeyboardKey(int vk, boolean down, byte modifiers) {
         if (!game.connected || game.conn == null || !game.conn.canSendInput()) return;
         sendKeyboardInput((short) (0x8000 | vk), down ? KeyboardPacket.KEY_DOWN : KeyboardPacket.KEY_UP, modifiers, (byte) 0);
+    }
+
+    /**
+     * Back closes the system keyboard. The stream view takes every key before the keyboard can, so a remote's Back
+     * never reaches it: it opened the menu instead, and the keyboard came back each time the menu closed.
+     */
+    void closeSystemKeyboard() {
+        LimeLog.info("Closing the soft keyboard");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            game.getWindow().getInsetsController().hide(WindowInsets.Type.ime());
+        } else {
+            InputMethodManager inputManager = (InputMethodManager) game.getSystemService(Context.INPUT_METHOD_SERVICE);
+            inputManager.hideSoftInputFromWindow(game.streamView.getWindowToken(), 0);
+        }
     }
 
     private void hideSystemKeyboard() {
