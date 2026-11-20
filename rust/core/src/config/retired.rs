@@ -124,10 +124,31 @@ pub const LIBRARY_SYNC_OPTIONS: &[(&str, &str, &[&str])] = &[
 /// one every launcher agrees on; while they differ it is the default, and a
 /// launcher whose value differs keeps its own key, which the sync still reads
 /// as an override. A value already saved under the shared name wins, and a
-/// launcher's key equal to the shared value goes. Returns whether anything
-/// changed.
-pub fn fold_library_sync(values: &mut BTreeMap<String, String>) -> bool {
+/// launcher's key equal to the shared value goes. A profile an earlier
+/// release wrote before the options were split (`old_file`,
+/// [`holds_retired_settings`]) kept one `library_auto_sync` and
+/// `library_autosync_remove_uninstalled` for the launcher sync and the game
+/// folders but never for Steam or Playnite, which kept syncing: with one off,
+/// they keep their own key at the default they read. Returns whether
+/// anything changed.
+pub fn fold_library_sync(values: &mut BTreeMap<String, String>, old_file: bool) -> bool {
     let mut changed = false;
+    if old_file {
+        for &(option, default, _) in LIBRARY_SYNC_OPTIONS {
+            let off = values
+                .get(&format!("library_{option}"))
+                .and_then(|value| super::parse_boolean(value))
+                == Some(false);
+            if off && matches!(option, "auto_sync" | "autosync_remove_uninstalled") {
+                for prefix in ["steam", "playnite"] {
+                    values
+                        .entry(format!("{prefix}_{option}"))
+                        .or_insert_with(|| default.to_owned());
+                    changed = true;
+                }
+            }
+        }
+    }
     for &(option, default, prefixes) in LIBRARY_SYNC_OPTIONS {
         let shared = format!("library_{option}");
         let keys: Vec<(String, String)> = prefixes
@@ -275,148 +296,294 @@ pub const REMOVE_REMOTE_MONITOR: &str = "remove_remote_monitor";
 /// The two switches folded into [`REMOVE_REMOTE_MONITOR`].
 pub const REMOTE_STREAM_END: &str = "remote_monitor_disconnect_on_stream_end";
 pub const REMOTE_CLIENT_DISCONNECT: &str = "remote_monitor_disconnect_on_client_disconnect";
+/// A switch's value in a JSON layer as text: a string as it is, anything but
+/// null as its JSON, null (or nothing) as not saved.
+fn layer_text(layer: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<String> {
+    match layer.get(key) {
+        Some(serde_json::Value::String(text)) => Some(text.clone()),
+        Some(serde_json::Value::Null) | None => None,
+        Some(other) => Some(other.to_string()),
+    }
+}
 /// Removing a remote monitor for the two switches saved in one layer, each
-/// `None` when that layer does not hold it (its earlier default then
-/// counts): disconnect on the client's disconnect is `disconnect`; else
-/// removing at the stream's end is `stream_end`; else `never`. `None` when
-/// the layer holds neither. An unreadable value counts as its default, as
-/// the host read it.
-pub fn folded_remove_remote_monitor(
+/// `None` when that layer does not hold it (its earlier default, or the value
+/// of the layers `below`, then counts): disconnect on the client's disconnect
+/// is `disconnect`; else removing at the stream's end is `stream_end`; else
+/// `never`. `None` when the layer holds neither. An unreadable value counts as
+/// its default, as the host read it. `below` is Remove remote monitor as the
+/// layers below hold it; `None` for the configuration file, which has none.
+pub fn folded_remove_remote_monitor_below(
     stream_end: Option<&str>,
     client_disconnect: Option<&str>,
+    below: Option<&str>,
 ) -> Option<&'static str> {
     if stream_end.is_none() && client_disconnect.is_none() {
         return None;
     }
-    let read = |value: Option<&str>| value.and_then(super::parse_boolean).unwrap_or(false);
-    Some(if read(client_disconnect) {
+    let below = below.map(|below| unquote(below.trim()));
+    let read = |value: Option<&str>, default: bool| {
+        value.and_then(super::parse_boolean).unwrap_or(default)
+    };
+    Some(if read(client_disconnect, below == Some("disconnect")) {
         "disconnect"
-    } else if read(stream_end) {
+    } else if read(
+        stream_end,
+        matches!(below, Some("stream_end" | "disconnect")),
+    ) {
         "stream_end"
     } else {
         "never"
     })
 }
-/// [`folded_remove_remote_monitor`] over a JSON layer: removes both switches
-/// and, unless the layer already holds Remove remote monitor, sets it.
-/// Returns whether anything changed.
-pub fn fold_remove_remote_monitor(layer: &mut serde_json::Map<String, serde_json::Value>) -> bool {
-    let text = |value: serde_json::Value| match value {
-        serde_json::Value::String(text) => Some(text),
-        serde_json::Value::Null => None,
-        other => Some(other.to_string()),
-    };
-    let stream_end = layer.remove(REMOTE_STREAM_END);
-    let client_disconnect = layer.remove(REMOTE_CLIENT_DISCONNECT);
-    let changed = stream_end.is_some() || client_disconnect.is_some();
-    let (stream_end, client_disconnect) =
-        (stream_end.and_then(text), client_disconnect.and_then(text));
-    if let Some(folded) =
-        folded_remove_remote_monitor(stream_end.as_deref(), client_disconnect.as_deref())
-        && !layer.contains_key(REMOVE_REMOTE_MONITOR)
+/// [`folded_remove_remote_monitor_below`] without layers below.
+pub fn folded_remove_remote_monitor(
+    stream_end: Option<&str>,
+    client_disconnect: Option<&str>,
+) -> Option<&'static str> {
+    folded_remove_remote_monitor_below(stream_end, client_disconnect, None)
+}
+fn fold_remote_monitor_layer(
+    layer: &mut serde_json::Map<String, serde_json::Value>,
+    below: Option<&str>,
+) -> bool {
+    if !layer.contains_key(REMOTE_STREAM_END) && !layer.contains_key(REMOTE_CLIENT_DISCONNECT) {
+        return false;
+    }
+    let stream_end = layer_text(layer, REMOTE_STREAM_END);
+    let client_disconnect = layer_text(layer, REMOTE_CLIENT_DISCONNECT);
+    // The client's disconnect on decides alone, and so do both switches
+    // saved; otherwise the missing one comes from the layers below.
+    let decided = layer.contains_key(REMOVE_REMOTE_MONITOR)
+        || client_disconnect.as_deref().and_then(super::parse_boolean) == Some(true)
+        || (layer.contains_key(REMOTE_STREAM_END) && layer.contains_key(REMOTE_CLIENT_DISCONNECT));
+    if below.is_none() && !decided {
+        return false;
+    }
+    layer.remove(REMOTE_STREAM_END);
+    layer.remove(REMOTE_CLIENT_DISCONNECT);
+    if !layer.contains_key(REMOVE_REMOTE_MONITOR)
+        && let Some(folded) = folded_remove_remote_monitor_below(
+            stream_end.as_deref(),
+            client_disconnect.as_deref(),
+            below,
+        )
     {
         layer.insert(REMOVE_REMOTE_MONITOR.to_owned(), folded.into());
     }
-    changed
+    true
+}
+/// [`folded_remove_remote_monitor_below`] over a JSON layer, with the Remove
+/// remote monitor the layers `below` hold: removes both switches and, unless
+/// the layer already holds Remove remote monitor, sets it. Returns whether
+/// anything changed.
+pub fn fold_remove_remote_monitor(
+    layer: &mut serde_json::Map<String, serde_json::Value>,
+    below: &str,
+) -> bool {
+    fold_remote_monitor_layer(layer, Some(below))
+}
+/// [`fold_remove_remote_monitor`] at migration, where the layers below are
+/// not known: only a layer whose switches decide it alone folds; one holding
+/// a single switch that does not stays as saved and folds when the host
+/// applies it over the layers below (`Config::fold_layer`).
+pub fn fold_remove_remote_monitor_decided(
+    layer: &mut serde_json::Map<String, serde_json::Value>,
+) -> bool {
+    fold_remote_monitor_layer(layer, None)
 }
 /// Adaptive bitrate for the two switches saved in one layer, each `None`
-/// when that layer does not hold it (its earlier default then counts):
-/// congestion control on is `delay`, as it ran together with link-rate
-/// adaptation; link-rate adaptation off on its own is `off`; anything else
-/// `on`. `None` when the layer holds neither. An unreadable value counts as
-/// its default, as the host read it.
-pub fn folded_bitrate_adaptation(
+/// when that layer does not hold it (its earlier default, or the value of the
+/// layers `below`, then counts): congestion control on is `delay`, as it ran
+/// together with link-rate adaptation; link-rate adaptation off on its own is
+/// `off`; anything else `on`. `None` when the layer holds neither. An
+/// unreadable value counts as its default, as the host read it. `below` is
+/// Adaptive bitrate as the layers below hold it; `None` for the configuration
+/// file, which has none.
+pub fn folded_bitrate_adaptation_below(
     link: Option<&str>,
     congestion: Option<&str>,
+    below: Option<&str>,
 ) -> Option<&'static str> {
     if link.is_none() && congestion.is_none() {
         return None;
     }
+    let below = below.map(|below| unquote(below.trim()));
     let read = |value: Option<&str>, default: bool| {
         value.and_then(super::parse_boolean).unwrap_or(default)
     };
-    Some(if read(congestion, false) {
+    Some(if read(congestion, below == Some("delay")) {
         "delay"
-    } else if !read(link, true) {
+    } else if !read(link, below != Some("off")) {
         "off"
     } else {
         "on"
     })
 }
-/// [`folded_bitrate_adaptation`] over a JSON layer: removes both switches
-/// and, unless the layer already holds Adaptive bitrate, sets it. Returns
-/// whether anything changed.
-pub fn fold_bitrate_adaptation(layer: &mut serde_json::Map<String, serde_json::Value>) -> bool {
-    let text = |value: serde_json::Value| match value {
-        serde_json::Value::String(text) => Some(text),
-        serde_json::Value::Null => None,
-        other => Some(other.to_string()),
-    };
-    let link = layer.remove(LINK_RATE);
-    let congestion = layer.remove(CONGESTION);
-    let changed = link.is_some() || congestion.is_some();
-    let (link, congestion) = (link.and_then(text), congestion.and_then(text));
-    if let Some(folded) = folded_bitrate_adaptation(link.as_deref(), congestion.as_deref())
-        && !layer.contains_key(BITRATE_ADAPTATION)
+/// [`folded_bitrate_adaptation_below`] without layers below.
+pub fn folded_bitrate_adaptation(
+    link: Option<&str>,
+    congestion: Option<&str>,
+) -> Option<&'static str> {
+    folded_bitrate_adaptation_below(link, congestion, None)
+}
+fn fold_bitrate_layer(
+    layer: &mut serde_json::Map<String, serde_json::Value>,
+    below: Option<&str>,
+) -> bool {
+    if !layer.contains_key(LINK_RATE) && !layer.contains_key(CONGESTION) {
+        return false;
+    }
+    let link = layer_text(layer, LINK_RATE);
+    let congestion = layer_text(layer, CONGESTION);
+    // Congestion control on is `delay` whatever the link-rate switch says,
+    // and both switches saved decide too; otherwise the missing one comes
+    // from the layers below.
+    let decided = layer.contains_key(BITRATE_ADAPTATION)
+        || congestion.as_deref().and_then(super::parse_boolean) == Some(true)
+        || (layer.contains_key(LINK_RATE) && layer.contains_key(CONGESTION));
+    if below.is_none() && !decided {
+        return false;
+    }
+    layer.remove(LINK_RATE);
+    layer.remove(CONGESTION);
+    if !layer.contains_key(BITRATE_ADAPTATION)
+        && let Some(folded) =
+            folded_bitrate_adaptation_below(link.as_deref(), congestion.as_deref(), below)
     {
         layer.insert(BITRATE_ADAPTATION.to_owned(), folded.into());
     }
-    changed
+    true
+}
+/// [`folded_bitrate_adaptation_below`] over a JSON layer, with the Adaptive
+/// bitrate the layers `below` hold: removes both switches and, unless the
+/// layer already holds Adaptive bitrate, sets it. Returns whether anything
+/// changed.
+pub fn fold_bitrate_adaptation(
+    layer: &mut serde_json::Map<String, serde_json::Value>,
+    below: &str,
+) -> bool {
+    fold_bitrate_layer(layer, Some(below))
+}
+/// [`fold_bitrate_adaptation`] at migration, where the layers below are not
+/// known: only a layer whose switches decide it alone folds; one holding a
+/// single switch that does not stays as saved and folds when the host applies
+/// it over the layers below (`Config::fold_layer`).
+pub fn fold_bitrate_adaptation_decided(
+    layer: &mut serde_json::Map<String, serde_json::Value>,
+) -> bool {
+    fold_bitrate_layer(layer, None)
 }
 /// Packet pacing for the retired pacing settings saved in one layer, each
-/// `None` when that layer does not hold it (its earlier default then
-/// counts): a positive rate is the fixed rate; adaptive pacing for every
-/// client and codec (`host_adaptive_pacing`) is `always`; adaptive pacing
-/// switched off for wireless clients (`wireless_adaptive_pacing=false`)
-/// alone is `off`; anything else is `auto`, the default (`None`). An
-/// unreadable value counts as its default, as the host read it.
+/// `None` when that layer does not hold it (its earlier default, or what the
+/// layers `below` hold, then counts): a positive rate is the fixed rate;
+/// adaptive pacing for every client and codec (`host_adaptive_pacing`) is
+/// `always`; adaptive pacing switched off for wireless clients
+/// (`wireless_adaptive_pacing=false`) alone is `off`; anything else is
+/// `auto`, the default (`None`). An unreadable value counts as its default,
+/// as the host read it. `below` is Packet pacing as the layers below hold it;
+/// `None` for the configuration file, which has none.
+pub fn folded_packet_pacing_below(
+    rate: Option<&str>,
+    host: Option<&str>,
+    wireless: Option<&str>,
+    below: Option<&str>,
+) -> Option<String> {
+    if rate.is_none() && host.is_none() && wireless.is_none() {
+        return None;
+    }
+    let below = below.map(|below| unquote(below.trim()));
+    let read = |value: Option<&str>, default: bool| {
+        value.and_then(super::parse_boolean).unwrap_or(default)
+    };
+    let positive = |value: &str| super::parse_integer(value).is_some_and(|rate| rate > 0);
+    // A rate the layer does not hold is the one below it, which owns pacing.
+    let rate = match rate {
+        Some(rate) => positive(rate).then_some(rate),
+        None => below.filter(|below| positive(*below)),
+    };
+    if let Some(rate) = rate {
+        return Some(rate.to_owned());
+    }
+    if read(host, below == Some("always")) {
+        return Some("always".to_owned());
+    }
+    if !read(wireless, below != Some("off")) {
+        return Some("off".to_owned());
+    }
+    None
+}
+/// [`folded_packet_pacing_below`] without layers below.
 pub fn folded_packet_pacing(
     rate: Option<&str>,
     host: Option<&str>,
     wireless: Option<&str>,
 ) -> Option<String> {
-    if rate.is_none() && host.is_none() && wireless.is_none() {
-        return None;
-    }
-    if rate.and_then(super::parse_integer).unwrap_or(0) > 0 {
-        return Some(rate.unwrap().to_owned());
-    }
-    let read = |value: Option<&str>, default: bool| {
-        value.and_then(super::parse_boolean).unwrap_or(default)
-    };
-    if read(host, false) {
-        return Some("always".to_owned());
-    }
-    if !read(wireless, true) {
-        return Some("off".to_owned());
-    }
-    None
+    folded_packet_pacing_below(rate, host, wireless, None)
 }
-/// [`folded_packet_pacing`] over a JSON layer: removes the pacing rate and
-/// the two switches and, unless the layer already holds Packet pacing,
-/// sets it. Returns whether anything changed.
-pub fn fold_packet_pacing(layer: &mut serde_json::Map<String, serde_json::Value>) -> bool {
-    let text = |value: serde_json::Value| match value {
-        serde_json::Value::String(text) => Some(text),
-        serde_json::Value::Null => None,
-        other => Some(other.to_string()),
-    };
-    let rate = layer.remove(PACING_RATE);
-    let host = layer.remove(HOST_PACING);
-    let wireless = layer.remove(WIRELESS_PACING);
-    let changed = rate.is_some() || host.is_some() || wireless.is_some();
-    let (rate, host, wireless) = (
-        rate.and_then(text),
-        host.and_then(text),
-        wireless.and_then(text),
-    );
-    if let Some(folded) =
-        folded_packet_pacing(rate.as_deref(), host.as_deref(), wireless.as_deref())
-        && !layer.contains_key(PACKET_PACING)
+fn fold_pacing_layer(
+    layer: &mut serde_json::Map<String, serde_json::Value>,
+    below: Option<&str>,
+) -> bool {
+    if ![PACING_RATE, HOST_PACING, WIRELESS_PACING]
+        .iter()
+        .any(|key| layer.contains_key(*key))
     {
-        layer.insert(PACKET_PACING.to_owned(), folded.into());
+        return false;
     }
-    changed
+    let rate = layer_text(layer, PACING_RATE);
+    let host = layer_text(layer, HOST_PACING);
+    let wireless = layer_text(layer, WIRELESS_PACING);
+    // A rate, or adaptive pacing for everything, decides whatever the layers
+    // below hold; so do both adaptive switches saved together. Otherwise the
+    // layers below fill in what is missing.
+    let decided = layer.contains_key(PACKET_PACING)
+        || rate
+            .as_deref()
+            .and_then(super::parse_integer)
+            .is_some_and(|rate| rate > 0)
+        || host.as_deref().and_then(super::parse_boolean) == Some(true)
+        || (layer.contains_key(HOST_PACING) && layer.contains_key(WIRELESS_PACING));
+    if below.is_none() && !decided {
+        return false;
+    }
+    layer.remove(PACING_RATE);
+    layer.remove(HOST_PACING);
+    layer.remove(WIRELESS_PACING);
+    if !layer.contains_key(PACKET_PACING) {
+        match folded_packet_pacing_below(
+            rate.as_deref(),
+            host.as_deref(),
+            wireless.as_deref(),
+            below,
+        ) {
+            Some(folded) => {
+                layer.insert(PACKET_PACING.to_owned(), folded.into());
+            }
+            // Auto, over a layer below that holds something else.
+            None if below.is_some_and(|below| unquote(below.trim()) != "auto") => {
+                layer.insert(PACKET_PACING.to_owned(), "auto".into());
+            }
+            None => {}
+        }
+    }
+    true
+}
+/// [`folded_packet_pacing_below`] over a JSON layer, with the Packet pacing
+/// the layers `below` hold: removes the pacing rate and the two switches and,
+/// unless the layer already holds Packet pacing, sets it. Returns whether
+/// anything changed.
+pub fn fold_packet_pacing(
+    layer: &mut serde_json::Map<String, serde_json::Value>,
+    below: &str,
+) -> bool {
+    fold_pacing_layer(layer, Some(below))
+}
+/// [`fold_packet_pacing`] at migration, where the layers below are not known:
+/// only a layer whose settings decide it alone folds; one that does not stays
+/// as saved and folds when the host applies it over the layers below
+/// (`Config::fold_layer`).
+pub fn fold_packet_pacing_decided(layer: &mut serde_json::Map<String, serde_json::Value>) -> bool {
+    fold_pacing_layer(layer, None)
 }
 /// The PyroWave error-correction share. PyroWave follows Error correction
 /// (`fec_percentage`) like every codec; only a value that differs from it
@@ -505,9 +672,11 @@ pub fn min_qp_switch_on(value: &str) -> bool {
 }
 /// The minimum QPs of a layer holding the retired Minimum quantizer switch.
 /// On keeps each saved QP and writes the old default where the layer (or
-/// `held`, what the configuration already holds) has none; off leaves each QP
-/// out, or with `reset` sets it to null to clear a stored one. A layer
-/// without the switch stays as saved. Returns whether anything changed.
+/// `held`, what the configuration already holds) has none. Off writes 0 for
+/// each codec, which is off now, so the layer still overrides a host that has
+/// the switch on; with `reset` it writes null instead, to clear a QP the
+/// configuration stores. A layer without the switch stays as saved. Returns
+/// whether anything changed.
 pub fn fold_min_qp(
     layer: &mut serde_json::Map<String, serde_json::Value>,
     held: impl Fn(&str) -> bool,
@@ -529,7 +698,40 @@ pub fn fold_min_qp(
         } else if reset {
             layer.insert(key.to_owned(), serde_json::Value::Null);
         } else {
-            layer.remove(key);
+            layer.insert(key.to_owned(), 0.into());
+        }
+    }
+    true
+}
+/// Whether a configuration file was written by an earlier release: it holds a
+/// setting this release folded into another or renamed (which includes the
+/// Minimum quantizer switch). Check it before the file's settings move.
+pub fn holds_retired_settings(values: &BTreeMap<String, String>) -> bool {
+    values.keys().any(|key| {
+        FOLDED_KEYS.contains(&key.as_str()) || RENAMED_KEYS.iter().any(|(old, _)| old == key)
+    })
+}
+/// The minimum QPs of a configuration file ([`fold_min_qp`] over its
+/// settings). The switch decides when the file saved it: on keeps each saved
+/// QP and writes the old default for a codec with none, off drops them, as 0
+/// is off. A file without the switch counts it as off, its earlier default,
+/// when `old_file` says an earlier release wrote it
+/// ([`holds_retired_settings`]): the QPs it saved never applied, so they
+/// drop. A file of this release ignores the switch it does not have, and
+/// keeps each QP, which applies on its own. Returns whether anything changed.
+pub fn fold_min_qp_values(values: &mut BTreeMap<String, String>, old_file: bool) -> bool {
+    let on = match values.remove(MIN_QP_SWITCH) {
+        Some(switch) => min_qp_switch_on(&switch),
+        None if old_file => false,
+        None => return false,
+    };
+    for &(key, default) in MIN_QP {
+        if on {
+            values
+                .entry(key.to_owned())
+                .or_insert_with(|| default.to_string());
+        } else {
+            values.remove(key);
         }
     }
     true
@@ -627,16 +829,25 @@ pub fn folded_in_layer(option: &str, request: &str) -> Option<&'static str> {
 }
 /// Bring one layer of overrides (an app's `config-overrides`, a device
 /// block's, a paired device's `config_overrides`) to the names and values the
-/// host reads now: a renamed setting takes its current name (a value already
-/// under that name wins), a removed one goes, the HDR request folds into the
-/// layer's own Display HDR ([`HDR_REQUEST`] says when it stays), the two
-/// bitrate switches fold into its Adaptive bitrate, the pacing rate and
-/// adaptive pacing switches fold into its Packet pacing and retired
-/// bitrate switches fold into its Adaptive bitrate, the remote monitor's two
-/// switches fold into its Remove remote monitor and retired
-/// bitrate switches fold into its Adaptive bitrate, the Minimum quantizer
-/// switch into its minimum QPs and retired
-/// values take their replacements. Returns whether anything changed.
+/// host reads now:
+///
+/// - a renamed setting takes its current name (a value already under that
+///   name wins) and a removed one goes;
+/// - the HDR request folds into the layer's own Display HDR ([`HDR_REQUEST`]
+///   says when it stays as saved);
+/// - the two bitrate switches fold into its Adaptive bitrate, the pacing rate
+///   and the two adaptive pacing switches into its Packet pacing, and the
+///   remote monitor's two switches into its Remove remote monitor, each only
+///   where the layer's own switches decide the result; a layer holding some
+///   of them stays as saved, because the others come from the layers below,
+///   and folds when the host applies it over them (`Config::fold_layer`);
+/// - a PyroWave share equal to the layer's Error correction goes;
+/// - Restore displays on disconnect folds into its disconnect behavior;
+/// - the Minimum quantizer switch folds into its minimum QPs, off as 0 for
+///   each codec so the layer still overrides the host's;
+/// - a retired value takes its replacement.
+///
+/// Returns whether anything changed.
 pub fn migrate_overrides(overrides: &mut serde_json::Map<String, serde_json::Value>) -> bool {
     let mut changed = false;
     for &(old, new) in RENAMED_KEYS {
@@ -661,10 +872,10 @@ pub fn migrate_overrides(overrides: &mut serde_json::Map<String, serde_json::Val
             overrides.insert(HDR_OPTION.to_owned(), folded.into());
         }
     }
-    changed |= fold_bitrate_adaptation(overrides);
-    changed |= fold_packet_pacing(overrides);
+    changed |= fold_bitrate_adaptation_decided(overrides);
+    changed |= fold_packet_pacing_decided(overrides);
     changed |= fold_pyrowave_fec(overrides);
-    changed |= fold_remove_remote_monitor(overrides);
+    changed |= fold_remove_remote_monitor_decided(overrides);
     changed |= fold_disconnect_behavior(overrides);
     changed |= fold_min_qp(overrides, |_| false, false);
     let before = overrides.len();

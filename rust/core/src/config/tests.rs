@@ -811,7 +811,8 @@ host_adaptive_pacing=true",
             assert!(!config.text().contains(key), "{text}");
         }
     }
-    // An app's or device's overrides.
+    // An app's or device's overrides fold at migration where their own
+    // settings decide the result.
     for (layer, expected) in [
         (
             serde_json::json!({"pacing_max_bitrate_kbps": 80000}),
@@ -822,14 +823,17 @@ host_adaptive_pacing=true",
             Some("always"),
         ),
         (
-            serde_json::json!({"wireless_adaptive_pacing": "false"}),
+            serde_json::json!({"host_adaptive_pacing": false, "wireless_adaptive_pacing": "false"}),
             Some("off"),
+        ),
+        (
+            serde_json::json!({"host_adaptive_pacing": false, "wireless_adaptive_pacing": true}),
+            None,
         ),
         (
             serde_json::json!({"host_adaptive_pacing": true, "packet_pacing": "off"}),
             Some("off"),
         ),
-        (serde_json::json!({"wireless_adaptive_pacing": true}), None),
         (serde_json::json!({"fec_percentage": 20}), None),
     ] {
         let mut layer = layer.as_object().unwrap().clone();
@@ -842,6 +846,86 @@ host_adaptive_pacing=true",
         assert!(!layer.contains_key("host_adaptive_pacing"));
         assert!(!layer.contains_key("wireless_adaptive_pacing"));
         assert!(!layer.contains_key("pacing_max_bitrate_kbps"));
+    }
+}
+
+/// A layer holding only some of the pacing switches keeps the old combined
+/// behaviour: it stays as saved at migration and folds over the layers below
+/// when it is applied.
+#[test]
+fn a_layer_with_some_pacing_switches_folds_over_the_layers_below() {
+    use super::{Config, migrate_overrides};
+    // (what the host holds, the layer, Packet pacing the layer applies)
+    for (host, layer, expected) in [
+        // Adaptive pacing on for everyone: a device's wireless switch off
+        // does not turn it off, as before.
+        (
+            "host_adaptive_pacing=true",
+            serde_json::json!({"wireless_adaptive_pacing": false}),
+            "always",
+        ),
+        (
+            "",
+            serde_json::json!({"wireless_adaptive_pacing": false}),
+            "off",
+        ),
+        (
+            "wireless_adaptive_pacing=false",
+            serde_json::json!({"wireless_adaptive_pacing": true}),
+            "auto",
+        ),
+        (
+            "wireless_adaptive_pacing=false",
+            serde_json::json!({"host_adaptive_pacing": true}),
+            "always",
+        ),
+        (
+            "host_adaptive_pacing=true",
+            serde_json::json!({"host_adaptive_pacing": false}),
+            "auto",
+        ),
+        (
+            "pacing_max_bitrate_kbps=90000",
+            serde_json::json!({"wireless_adaptive_pacing": false}),
+            "90000",
+        ),
+        (
+            "pacing_max_bitrate_kbps=90000",
+            serde_json::json!({"pacing_max_bitrate_kbps": 0}),
+            "auto",
+        ),
+        (
+            "host_adaptive_pacing=true",
+            serde_json::json!({"pacing_max_bitrate_kbps": 60000}),
+            "60000",
+        ),
+    ] {
+        let layer = layer.as_object().unwrap().clone();
+        let mut migrated = layer.clone();
+        // Only a rate, or adaptive pacing on, decides alone at migration.
+        migrate_overrides(&mut migrated);
+        let decided = layer
+            .get("pacing_max_bitrate_kbps")
+            .is_some_and(|rate| rate.as_i64() > Some(0))
+            || layer.get("host_adaptive_pacing") == Some(&serde_json::json!(true));
+        assert_eq!(migrated == layer, !decided, "{layer:?}");
+        let config = Config::parse(host).unwrap();
+        let mut folded = migrated.clone();
+        config.fold_layer(&mut folded);
+        assert_eq!(
+            folded.get("packet_pacing").and_then(|v| v.as_str()),
+            Some(expected),
+            "{host:?} {layer:?}"
+        );
+        assert_eq!(folded.len(), 1, "{folded:?}");
+        // Applied as the host does: the layer's setting over the host's.
+        let mut applied = config.clone();
+        applied.update(&migrated).unwrap();
+        assert_eq!(
+            applied.get("packet_pacing", "auto"),
+            expected,
+            "{host:?} {layer:?}"
+        );
     }
 }
 
@@ -904,12 +988,9 @@ fn the_bitrate_switches_fold_into_adaptive_bitrate() {
     let sent = serde_json::json!({"congestion_control": true, "bitrate_adaptation": "off"});
     config.update(sent.as_object().unwrap()).unwrap();
     assert_eq!(config.bitrate_adaptation(), A::Off);
-    // An app's or device's overrides.
+    // An app's or device's overrides fold at migration where their own
+    // switches decide the result.
     for (layer, expected) in [
-        (
-            serde_json::json!({"link_rate_adaptation": false}),
-            Some("off"),
-        ),
         (
             serde_json::json!({"link_rate_adaptation": "false", "congestion_control": "false"}),
             Some("off"),
@@ -919,7 +1000,7 @@ fn the_bitrate_switches_fold_into_adaptive_bitrate() {
             Some("delay"),
         ),
         (
-            serde_json::json!({"link_rate_adaptation": true}),
+            serde_json::json!({"link_rate_adaptation": true, "congestion_control": false}),
             Some("on"),
         ),
         (
@@ -942,6 +1023,71 @@ fn the_bitrate_switches_fold_into_adaptive_bitrate() {
     }
     assert!(super::retired_name("link_rate_adaptation"));
     assert!(super::retired_name("congestion_control"));
+}
+
+/// A layer holding only one of the bitrate switches keeps the old combined
+/// behaviour: it stays as saved at migration and folds over the layers below
+/// when it is applied.
+#[test]
+fn a_layer_with_one_bitrate_switch_folds_over_the_layers_below() {
+    use super::{Config, migrate_overrides};
+    // (what the host holds, the layer, Adaptive bitrate the layer applies)
+    for (host, layer, expected) in [
+        // Congestion control on at the host: a device turning link-rate
+        // adaptation on gets the delay controller, as before.
+        (
+            "congestion_control=true",
+            serde_json::json!({"link_rate_adaptation": true}),
+            "delay",
+        ),
+        (
+            "congestion_control=true",
+            serde_json::json!({"link_rate_adaptation": false}),
+            "delay",
+        ),
+        (
+            "",
+            serde_json::json!({"link_rate_adaptation": false}),
+            "off",
+        ),
+        ("", serde_json::json!({"link_rate_adaptation": true}), "on"),
+        (
+            "link_rate_adaptation=false",
+            serde_json::json!({"link_rate_adaptation": true}),
+            "on",
+        ),
+        (
+            "link_rate_adaptation=false",
+            serde_json::json!({"congestion_control": false}),
+            "off",
+        ),
+        (
+            "congestion_control=true",
+            serde_json::json!({"congestion_control": false}),
+            "on",
+        ),
+    ] {
+        let layer = layer.as_object().unwrap().clone();
+        let mut migrated = layer.clone();
+        assert!(!migrate_overrides(&mut migrated), "{layer:?}");
+        assert_eq!(migrated, layer, "stays as saved: {layer:?}");
+        let config = Config::parse(host).unwrap();
+        let mut folded = migrated.clone();
+        config.fold_layer(&mut folded);
+        assert_eq!(
+            folded.get("bitrate_adaptation").and_then(|v| v.as_str()),
+            Some(expected),
+            "{host:?} {layer:?}"
+        );
+        assert_eq!(folded.len(), 1, "{folded:?}");
+        let mut applied = config.clone();
+        applied.update(&migrated).unwrap();
+        assert_eq!(
+            applied.get("bitrate_adaptation", "on"),
+            expected,
+            "{host:?} {layer:?}"
+        );
+    }
 }
 
 #[test]
@@ -1766,10 +1912,39 @@ fn the_launchers_sync_options_fold_into_the_shared_library_sync_ones() {
     .unwrap();
     assert!(mixed.boolean("library_sync_all_installed", true));
     assert_eq!(mixed.get("battlenet_sync_all_installed", ""), "false");
-    assert_eq!(mixed.integer("library_recent_games", 0), 10);
+    // Launchers disagreeing leave the shared value at its default, which is
+    // not written; the one that differs keeps its own.
+    assert!(!mixed.values.contains_key("library_recent_games"));
+    assert_eq!(mixed.integer("library_recent_games", 10), 10);
+    assert_eq!(mixed.integer("battlenet_recent_games", 0), 3);
     assert_eq!(mixed.integer("library_recent_max_age_days", 0), 0);
     assert_eq!(mixed.integer("steam_recent_max_age_days", 0), 30);
     assert_eq!(mixed.integer("playnite_recent_max_age_days", 0), 30);
+    // A profile from before the options were split: its shared switches never
+    // covered Steam or Playnite, which kept syncing, so they keep their own.
+    let before_split = Config::parse(
+        "library_auto_sync = false\nlibrary_autosync_remove_uninstalled = false\nauto_update = false\n",
+    )
+    .unwrap();
+    for option in ["auto_sync", "autosync_remove_uninstalled"] {
+        assert_eq!(before_split.get(&format!("library_{option}"), ""), "false");
+        for prefix in ["steam", "playnite"] {
+            assert_eq!(
+                before_split.get(&format!("{prefix}_{option}"), ""),
+                "true",
+                "{prefix}_{option}"
+            );
+        }
+        assert!(!before_split.values.contains_key(&format!("epic_{option}")));
+    }
+    assert_eq!(
+        Config::parse(&before_split.text()).unwrap().values,
+        before_split.values
+    );
+    // This release's own file, with the shared switch off, turns them all off.
+    let current = Config::parse("library_auto_sync = false\n").unwrap();
+    assert!(!current.values.contains_key("steam_auto_sync"));
+    assert!(!current.boolean("library_auto_sync", true));
 }
 #[test]
 fn saving_the_shared_library_sync_setting_redecides_every_launcher() {
@@ -2376,12 +2551,108 @@ remote_monitor_disconnect_on_client_disconnect=true",
     let sent = serde_json::json!({"remote_monitor_disconnect_on_stream_end": true});
     config.update(sent.as_object().unwrap()).unwrap();
     assert_eq!(config.remove_remote_monitor(), R::StreamEnd);
+    // The stream's end removes the monitor for the end and for disconnect,
+    // as both earlier switches on did.
+    for (text, at_end) in [
+        ("", false),
+        ("remove_remote_monitor=stream_end", true),
+        ("remove_remote_monitor=disconnect", true),
+        (
+            "remote_monitor_disconnect_on_stream_end=true
+remote_monitor_disconnect_on_client_disconnect=true",
+            true,
+        ),
+        ("remote_monitor_disconnect_on_client_disconnect=true", true),
+    ] {
+        assert_eq!(
+            Config::parse(text)
+                .unwrap()
+                .removes_remote_monitor_at_stream_end(),
+            at_end,
+            "{text}"
+        );
+    }
     assert!(super::retired_name(
         "remote_monitor_disconnect_on_stream_end"
     ));
     assert!(super::retired_name(
         "remote_monitor_disconnect_on_client_disconnect"
     ));
+    // An app's or device's overrides fold at migration where their own
+    // switches decide the result: the client's disconnect on, or both saved.
+    for (layer, expected) in [
+        (
+            serde_json::json!({"remote_monitor_disconnect_on_client_disconnect": true}),
+            Some("disconnect"),
+        ),
+        (
+            serde_json::json!({"remote_monitor_disconnect_on_stream_end": true, "remote_monitor_disconnect_on_client_disconnect": false}),
+            Some("stream_end"),
+        ),
+        (
+            serde_json::json!({"remote_monitor_disconnect_on_stream_end": false, "remote_monitor_disconnect_on_client_disconnect": false}),
+            Some("never"),
+        ),
+        (
+            serde_json::json!({"remote_monitor_disconnect_on_stream_end": true, "remove_remote_monitor": "never"}),
+            Some("never"),
+        ),
+        (serde_json::json!({"fec_percentage": 20}), None),
+    ] {
+        let mut layer = layer.as_object().unwrap().clone();
+        super::migrate_overrides(&mut layer);
+        assert_eq!(
+            layer
+                .get("remove_remote_monitor")
+                .and_then(serde_json::Value::as_str),
+            expected,
+            "{layer:?}"
+        );
+        assert!(!layer.contains_key("remote_monitor_disconnect_on_stream_end"));
+        assert!(!layer.contains_key("remote_monitor_disconnect_on_client_disconnect"));
+    }
+    // One that does not decide alone stays as saved and folds over the layers
+    // below when it is applied.
+    for (host, layer, expected) in [
+        (
+            "",
+            serde_json::json!({"remote_monitor_disconnect_on_stream_end": true}),
+            "stream_end",
+        ),
+        (
+            "remote_monitor_disconnect_on_client_disconnect=true",
+            serde_json::json!({"remote_monitor_disconnect_on_stream_end": false}),
+            "disconnect",
+        ),
+        (
+            "remote_monitor_disconnect_on_stream_end=true",
+            serde_json::json!({"remote_monitor_disconnect_on_client_disconnect": false}),
+            "stream_end",
+        ),
+        (
+            "remote_monitor_disconnect_on_stream_end=true",
+            serde_json::json!({"remote_monitor_disconnect_on_stream_end": false}),
+            "never",
+        ),
+        (
+            "remote_monitor_disconnect_on_stream_end=true
+remote_monitor_disconnect_on_client_disconnect=true",
+            serde_json::json!({"remote_monitor_disconnect_on_client_disconnect": false}),
+            "stream_end",
+        ),
+    ] {
+        let layer = layer.as_object().unwrap().clone();
+        let mut migrated = layer.clone();
+        assert!(!super::migrate_overrides(&mut migrated), "{layer:?}");
+        assert_eq!(migrated, layer);
+        let mut applied = Config::parse(host).unwrap();
+        applied.update(&migrated).unwrap();
+        assert_eq!(
+            applied.get("remove_remote_monitor", "never"),
+            expected,
+            "{host:?} {layer:?}"
+        );
+    }
 }
 
 // Every earlier combination of Restore displays on disconnect and Keep monitors
@@ -2534,7 +2805,11 @@ fn the_update_switches_fold_into_updates() {
 
 /// The Minimum quantizer switch folds into the minimum QPs: a switch that
 /// was on keeps each saved value (the old default where none was saved), one
-/// that was off leaves them out, so nothing turns on that was not on.
+/// that was off (or, in a file an earlier release wrote, was not saved: off
+/// was its default) leaves them out, so nothing turns on that was not on.
+/// An earlier file is told by holding any setting this release folded or
+/// renamed; a file without one cannot be told from this release's own, whose
+/// minimum QPs apply on their own.
 #[test]
 fn the_minimum_quantizer_switch_folds_into_the_minimum_qps() {
     use super::Config;
@@ -2556,7 +2831,23 @@ fn the_minimum_quantizer_switch_folds_into_the_minimum_qps() {
             23,
             51,
         ),
+        // This release's own file: a QP applies without a switch.
         ("nvenc_min_qp_h264=25", 25, 0, 0),
+        // An earlier file with no switch saved had it off.
+        ("link_rate_adaptation=true\nnvenc_min_qp_h264=25", 0, 0, 0),
+        (
+            "auto_update=false\nnvenc_min_qp_hevc=30\nnvenc_min_qp_av1=40",
+            0,
+            0,
+            0,
+        ),
+        // With the switch saved, it decides whatever else the file holds.
+        (
+            "link_rate_adaptation=true\nnvenc_enable_min_qp=true\nnvenc_min_qp_h264=25",
+            25,
+            23,
+            23,
+        ),
     ] {
         let config = Config::parse(text).unwrap();
         assert_eq!(
@@ -2580,9 +2871,15 @@ fn the_minimum_quantizer_switch_folds_into_the_minimum_qps() {
     assert_eq!(qp(&config, "nvenc_min_qp_hevc"), 23);
     // An app's or device's overrides.
     for (layer, expected) in [
+        // Off is 0 for each codec, not nothing: it overrides a host that has
+        // the QPs on.
         (
             serde_json::json!({"nvenc_enable_min_qp": false, "nvenc_min_qp_h264": 30}),
-            serde_json::json!({}),
+            serde_json::json!({"nvenc_min_qp_h264": 0, "nvenc_min_qp_hevc": 0, "nvenc_min_qp_av1": 0}),
+        ),
+        (
+            serde_json::json!({"nvenc_enable_min_qp": "false"}),
+            serde_json::json!({"nvenc_min_qp_h264": 0, "nvenc_min_qp_hevc": 0, "nvenc_min_qp_av1": 0}),
         ),
         (
             serde_json::json!({"nvenc_enable_min_qp": "true", "nvenc_min_qp_h264": 30}),
@@ -2598,6 +2895,30 @@ fn the_minimum_quantizer_switch_folds_into_the_minimum_qps() {
         assert_eq!(serde_json::Value::Object(layer), expected);
     }
     assert!(super::retired_name("nvenc_enable_min_qp"));
+    // A device with the switch off under a host with it on applies 0.
+    let host = Config::parse(
+        "nvenc_enable_min_qp=true
+nvenc_min_qp_h264=21",
+    )
+    .unwrap();
+    assert_eq!(qp(&host, "nvenc_min_qp_h264"), 21);
+    let mut layer = serde_json::json!({"nvenc_enable_min_qp": false})
+        .as_object()
+        .unwrap()
+        .clone();
+    super::migrate_overrides(&mut layer);
+    let mut stream = host.clone();
+    stream.update(&layer).unwrap();
+    assert_eq!(
+        [
+            qp(&stream, "nvenc_min_qp_h264"),
+            qp(&stream, "nvenc_min_qp_hevc"),
+            qp(&stream, "nvenc_min_qp_av1")
+        ],
+        [0, 0, 0]
+    );
+    // The host's own are untouched.
+    assert_eq!(qp(&host, "nvenc_min_qp_hevc"), 23);
 }
 
 /// The retired compute-queue, AMF queue and AMF low-latency settings are

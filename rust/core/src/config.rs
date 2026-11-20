@@ -26,12 +26,15 @@ pub use retired::{
     PACING_RATE, PACKET_PACING, REMOTE_CLIENT_DISCONNECT, REMOTE_STREAM_END, REMOVE_REMOTE_MONITOR,
     REMOVED_APP_KEYS, REMOVED_KEYS, REMOVED_PREFIXES, RENAMED_APP_SWITCHES, RENAMED_KEYS,
     RETIRED_SETTINGS, RETIRED_VALUES, Retired, RetiredSetting, UPDATE_CHECK_INTERVAL, UPDATES,
-    WIRELESS_PACING, current_name, fold_bitrate_adaptation, fold_disconnect_behavior,
-    fold_library_sync, fold_min_qp, fold_packet_pacing, fold_pyrowave_fec,
-    fold_remove_remote_monitor, fold_updates, folded_bitrate_adaptation,
-    folded_disconnect_behavior, folded_hdr, folded_in_layer, folded_packet_pacing,
-    folded_remove_remote_monitor, folded_updates, migrate_app, migrate_overrides, min_qp_switch_on,
-    removed, replace_retired, replacement, retired_name, retired_warning,
+    WIRELESS_PACING, current_name, fold_bitrate_adaptation, fold_bitrate_adaptation_decided,
+    fold_disconnect_behavior, fold_library_sync, fold_min_qp, fold_min_qp_values,
+    fold_packet_pacing, fold_packet_pacing_decided, fold_pyrowave_fec, fold_remove_remote_monitor,
+    fold_remove_remote_monitor_decided, fold_updates, folded_bitrate_adaptation,
+    folded_bitrate_adaptation_below, folded_disconnect_behavior, folded_hdr, folded_in_layer,
+    folded_packet_pacing, folded_packet_pacing_below, folded_remove_remote_monitor,
+    folded_remove_remote_monitor_below, folded_updates, holds_retired_settings, migrate_app,
+    migrate_overrides, min_qp_switch_on, removed, replace_retired, replacement, retired_name,
+    retired_warning,
 };
 use text::{bracket_depth, decode, strip_comment};
 pub use values::{
@@ -216,6 +219,8 @@ impl Config {
     /// until the console next saves, which writes every setting under the
     /// name it is held under here.
     fn rename_keys(&mut self) {
+        // Whether an earlier release wrote this file, before its old names go.
+        let old_file = holds_retired_settings(&self.values);
         for &(old, new) in RENAMED_KEYS {
             if let Some(value) = self.values.remove(old)
                 && !self.values.contains_key(new)
@@ -225,7 +230,7 @@ impl Config {
         }
         // Each launcher's sync options fold into the shared Library sync
         // settings; a launcher that differs keeps its key as an override.
-        fold_library_sync(&mut self.values);
+        fold_library_sync(&mut self.values, old_file);
         if let Some(request) = self.values.remove(HDR_REQUEST)
             && let Some(folded) = folded_in_layer(
                 self.values.get(HDR_OPTION).map_or("auto", String::as_str),
@@ -297,19 +302,9 @@ impl Config {
                 .or_insert_with(|| folded.to_owned());
         }
         // The Minimum quantizer switch folds into the minimum QPs: on keeps
-        // them (the old defaults where none is saved), off clears them.
-        if let Some(switch) = self.values.remove(MIN_QP_SWITCH) {
-            let on = min_qp_switch_on(&switch);
-            for &(key, default) in MIN_QP {
-                if on {
-                    self.values
-                        .entry(key.to_owned())
-                        .or_insert_with(|| default.to_string());
-                } else {
-                    self.values.remove(key);
-                }
-            }
-        }
+        // them (the old defaults where none is saved), off clears them. An
+        // earlier file without the switch had it off.
+        fold_min_qp_values(&mut self.values, old_file);
     }
     pub fn load(path: &Path) -> Result<Self> {
         Ok(Self::load_retiring(path)?.0)
@@ -363,8 +358,15 @@ impl Config {
     /// the restore delay (`restore`, the default). An unknown value reads as
     /// `restore`.
     pub fn keeps_display_while_paused(&self) -> bool {
-        unquote(self.get(DD_DISCONNECT_BEHAVIOR, "restore").trim())
-            .eq_ignore_ascii_case("keep_while_paused")
+        let value = self.get(DD_DISCONNECT_BEHAVIOR, "restore");
+        match unquote(value.trim()).to_ascii_lowercase().as_str() {
+            "keep_while_paused" => true,
+            "restore" => false,
+            _ => {
+                invalid(DD_DISCONNECT_BEHAVIOR, value);
+                false
+            }
+        }
     }
     /// How long a disconnected stream may keep its display. Exclusive layouts
     /// must release even when an older profile disables restoration: otherwise
@@ -408,9 +410,6 @@ impl Config {
             },
         }
     }
-    /// A fixed packet pacing rate in kbps, `None` without one. Packet pacing
-    /// `always` keeps the adaptive controller on all codecs, `auto` for
-    /// wireless clients on H.264, HEVC and AV1, as the earlier switches did.
     /// When a remote monitor is removed from Windows: `never` (the default,
     /// kept for the device to resume where it was), `stream_end` or
     /// `disconnect`. An unknown value is reported and reads as `never`.
@@ -426,13 +425,17 @@ impl Config {
             }
         }
     }
-    /// Experimental packet-rate adaptation is explicitly enabled per stream.
-    /// Manual pacing owns its own limit;
-    /// Both conventional and PyroWave streams use the loss controller when
-    /// `host_adaptive_pacing` is set. A client that reports a Wi-Fi or cellular
-    /// route (`client_wireless`) gets it by default on H.264, HEVC and AV1
-    /// (codec 0-2), unless `wireless_adaptive_pacing` is off; PyroWave keeps its
-    /// calibrated-pace policy.
+    /// Whether a remote monitor is removed when its stream ends: for
+    /// `stream_end`, and for `disconnect`, which removes it then and when the
+    /// device disconnects (both earlier switches on removed it at both).
+    pub fn removes_remote_monitor_at_stream_end(&self) -> bool {
+        self.remove_remote_monitor() != RemoveRemoteMonitor::Never
+    }
+    /// Whether the stream's packet pacing adapts to the link, by Packet
+    /// pacing: `always` for every client on every codec (codec 0-3, PyroWave
+    /// included), `auto` for a client that reports a Wi-Fi or cellular route
+    /// (`client_wireless`) on H.264, HEVC and AV1 (codec 0-2) while PyroWave
+    /// keeps its calibrated-pace policy, and never for `off` or a fixed rate.
     pub fn adaptive_packet_pacing(&self, codec: u8, client_wireless: bool) -> bool {
         match self.packet_pacing() {
             PacketPacing::Always => codec <= 3,
@@ -911,6 +914,20 @@ impl Config {
                 .collect(),
         )
     }
+    /// Fold the retired switches of a layer of settings (an app's or a
+    /// device's overrides, or an earlier console's save) over what this
+    /// configuration holds, which is the layers below it: a switch the layer
+    /// does not hold keeps what the layers below gave, as the earlier
+    /// switches combined. Adaptive bitrate from link-rate adaptation and
+    /// congestion control, Packet pacing from the pacing rate and the two
+    /// adaptive pacing switches, Remove remote monitor from the two remote
+    /// monitor switches ([`migrate_overrides`] leaves a layer that cannot be
+    /// folded alone as saved for this).
+    pub fn fold_layer(&self, layer: &mut serde_json::Map<String, serde_json::Value>) {
+        fold_bitrate_adaptation(layer, self.get(BITRATE_ADAPTATION, "on"));
+        fold_packet_pacing(layer, self.get(PACKET_PACING, "auto"));
+        fold_remove_remote_monitor(layer, self.get(REMOVE_REMOTE_MONITOR, "never"));
+    }
     pub fn update(&mut self, object: &serde_json::Map<String, serde_json::Value>) -> Result<()> {
         // A setting sent under an earlier name is saved under its current
         // one, unless that is sent too.
@@ -947,16 +964,10 @@ impl Config {
                 object.insert(HDR_OPTION.to_owned(), folded.into());
             }
         }
-        // The two bitrate switches, as an earlier console or an API caller
-        // sends them, fold into Adaptive bitrate unless that is sent too.
-        fold_bitrate_adaptation(&mut object);
-        // The pacing rate and the two adaptive pacing switches fold into
-        // Packet pacing unless that is sent too.
-        fold_packet_pacing(&mut object);
-        // The remote monitor's two switches, as an earlier console or an API
-        // caller sends them, fold into Remove remote monitor unless that is
-        // sent too.
-        fold_remove_remote_monitor(&mut object);
+        // The bitrate, pacing and remote monitor switches, as an earlier
+        // console or an API caller sends them, fold into Adaptive bitrate,
+        // Packet pacing and Remove remote monitor unless those are sent too.
+        self.fold_layer(&mut object);
         // Likewise the two disconnect settings fold into the disconnect behavior.
         fold_disconnect_behavior(&mut object);
         fold_min_qp(&mut object, |key| self.values.contains_key(key), true);

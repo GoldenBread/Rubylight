@@ -344,10 +344,12 @@ mod tests {
     ];
 
     /// Each setting's key and default in extensions.ts, with LF or CRLF line
-    /// ends (CI checks the repository out with CRLF).
+    /// ends (CI checks the repository out with CRLF). A key is the one that
+    /// starts its line: a select's `fixed: { ..., key: '...' }` names another
+    /// setting, which has its own entry.
     fn schema_settings(schema: &str) -> Vec<(&str, &str)> {
         let mut listed = Vec::new();
-        for entry in schema.split("key: '").skip(1) {
+        for entry in schema.split("\n    key: '").skip(1) {
             let key = &entry[..entry.find('\'').unwrap()];
             let default = entry
                 .split("\n    default: ")

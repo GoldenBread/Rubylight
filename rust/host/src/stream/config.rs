@@ -99,19 +99,10 @@ pub(crate) fn effective_config(h: &Shared, launch: &Launch) -> Result<Config> {
             ("audio-headphone-surround", "audio_headphone_surround"),
             ("couch-menu", "couch_menu"),
             ("couch-menu-open-with", "couch_menu_open_with"),
-            (
-                "couch-menu-controller-chord",
-                "couch_menu_controller_chord",
-            ),
+            ("couch-menu-controller-chord", "couch_menu_controller_chord"),
             ("couch-menu-hold-ms", "couch_menu_hold_ms"),
-            (
-                "couch-menu-corner-hold-ms",
-                "couch_menu_corner_hold_ms",
-            ),
-            (
-                "couch-menu-keyboard-chord",
-                "couch_menu_keyboard_chord",
-            ),
+            ("couch-menu-corner-hold-ms", "couch_menu_corner_hold_ms"),
+            ("couch-menu-keyboard-chord", "couch_menu_keyboard_chord"),
             // Saved by Vibepollo and earlier Rubylight apps for RTX HDR;
             // the peak is still what a virtual display reports.
             ("rtx-hdr-peak-brightness", "hdr_peak_brightness"),
@@ -281,6 +272,9 @@ pub(super) fn apply_overrides(
     // read under their current names and values.
     let mut layer = overrides.clone();
     butterpollo_core::config::migrate_overrides(&mut layer);
+    // The retired bitrate, pacing and remote monitor switches the layer still
+    // holds alone fold over the layers below, as the earlier switches combined.
+    config.fold_layer(&mut layer);
     let overrides: serde_json::Map<String, serde_json::Value> = layer
         .iter()
         .filter(|(_, v)| v.as_str() != Some(""))

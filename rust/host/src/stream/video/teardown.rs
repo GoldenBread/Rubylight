@@ -104,8 +104,7 @@ impl SessionThread<'_> {
             && h.config
                 .read()
                 .unwrap()
-                .remove_remote_monitor()
-                == butterpollo_core::config::RemoveRemoteMonitor::StreamEnd
+                .removes_remote_monitor_at_stream_end()
         {
             crate::remote_display::disconnect(&h, Some(&s.launch.client.uuid));
         }
