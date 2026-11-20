@@ -63,7 +63,9 @@ public class SteamControlsTest {
         assertEquals(ControllerPacket.PADDLE1_FLAG | ControllerPacket.PADDLE2_FLAG |
                 ControllerPacket.PADDLE3_FLAG | ControllerPacket.PADDLE4_FLAG, SteamControls.BUTTONS);
 
-        assertEquals(MoonBridge.LI_CCAP_TOUCHPAD | 0x200 | 0x400, SteamControls.CAPABILITIES);
+        assertEquals(0x200 | 0x400, SteamControls.CAPABILITIES);
+        // Not a touchpad: PCs that choose a pad by it would make player 1 a PlayStation controller.
+        assertEquals(0, SteamControls.CAPABILITIES & MoonBridge.LI_CCAP_TOUCHPAD);
         // Not one touchpad per pad: touchpad 0's halves are the pads.
         assertEquals(0, SteamControls.CAPABILITIES & MoonBridge.LI_CCAP_DUAL_TOUCHPAD);
         // Not SC26 buttons: those make every pad and trigger click explicit, which the controls cannot send.

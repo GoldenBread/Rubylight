@@ -169,6 +169,57 @@ fn a_steam_deck_with_its_sensors_gets_a_dualsense_and_without_them_an_xbox_pad()
         Some(VHF_DS4)
     );
 }
+/// On-screen Steam Controller controls (grip and stick touch; older Nightjar versions added a
+/// touchpad, 0x608) never make player 1 a DualSense through that touchpad under Automatic: it
+/// has none of their back buttons or grips, and Xbox-only games would lose the controller.
+#[test]
+fn on_screen_steam_controls_never_pick_a_dualsense_by_their_touchpad() {
+    let policy = Policy::resolve(&Config::default()).unwrap();
+    let vhf = (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) | (1 << 6) | (1 << 8);
+    for kind in [0, 1] {
+        for caps in [0x608, 0x600, 0x208, 0x408, 0x200, 0x400] {
+            assert_eq!(
+                policy.controller_profile(0, kind, caps, vhf),
+                Some(VHF_XBOX_SERIES),
+                "kind {kind}, capabilities {caps:#x}"
+            );
+            assert!(steam_controls(kind, caps));
+        }
+        // Motion still selects a DualSense: a pad sharing player 1 keeps its gyro.
+        for caps in [0x630, 0x638] {
+            assert_eq!(
+                policy.controller_profile(0, kind, caps, vhf),
+                Some(VHF_DUALSENSE)
+            );
+        }
+        // A touchpad without them is a DualSense, as before.
+        assert_eq!(
+            policy.controller_profile(0, kind, 8, vhf),
+            Some(VHF_DUALSENSE)
+        );
+        assert!(!steam_controls(kind, 0x138));
+    }
+    // PlayStation, Nintendo and Steam controllers keep their pads.
+    assert_eq!(
+        policy.controller_profile(0, 2, 0x608, vhf),
+        Some(VHF_DUALSENSE)
+    );
+    assert_eq!(
+        policy.controller_profile(0, 3, 0x608, vhf),
+        Some(VHF_SWITCH)
+    );
+    assert_eq!(
+        policy.controller_profile(0, CTYPE_STEAM, 0x608, vhf),
+        Some(VHF_DUALSENSE)
+    );
+    for kind in [2, 3, CTYPE_STEAM] {
+        assert!(!steam_controls(kind, 0x608));
+    }
+    // A type chosen by name is kept.
+    for named in [VHF_DUALSENSE, VHF_DS4, VHF_STEAM_CONTROLLER] {
+        assert_eq!(policy.controller_profile(named, 1, 0x608, vhf), Some(named));
+    }
+}
 #[test]
 fn the_steam_controller_and_a_switch2_pro_carry_their_back_grips() {
     let all = PADDLES.iter().fold(0, |mask, flag| mask | flag);

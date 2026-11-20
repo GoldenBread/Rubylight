@@ -209,7 +209,7 @@
     <string name="title_show_touchpad_button">Показувати кнопку тачпада</string>
     <string name="summary_show_touchpad_button">Додає кнопку, що натискає тачпад контролера PlayStation. Гравець 1 тоді підключається до ПК як контролер PlayStation; вмикайте, лише якщо грі потрібне це натискання.</string>
     <string name="title_osc_steam_controls">Керування Steam Controller</string>
-    <string name="summary_osc_steam_controls">Додає екранні сенсорні панелі, задні кнопки (L4, R4, L5, R5) і дотик до руків’їв. Лише для ПК з типом контролера Steam Controller; з «Автоматично» він може вибрати контролер PlayStation.</string>
+    <string name="summary_osc_steam_controls">Додає екранні сенсорні панелі, задні кнопки (L4, R4, L5, R5) і дотик до руків’їв. Потрібен ПК, який перетворює їх на Steam Controller, наприклад ПК з типом контролера Steam Controller; на інших ПК вони нічого не роблять, а решта контролера працює як звичайно.</string>
     <string name="title_reset_osc">Скинути розкладку елементів</string>
     <string name="dialog_title_reset_osc">Скинути розкладку</string>
     <string name="dialog_text_reset_osc">Повернути всім екранним кнопкам стандартний розмір і положення? Розкладки, збережені для окремих ігор, теж буде скинуто.</string>

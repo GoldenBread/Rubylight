@@ -209,7 +209,7 @@
     <string name="title_show_touchpad_button">Mostrar botón Touchpad</string>
     <string name="summary_show_touchpad_button">Añade un botón que hace clic en el panel táctil de un mando de PlayStation. El jugador 1 se conecta entonces al PC como mando de PlayStation; déjalo desactivado salvo que un juego necesite ese clic.</string>
     <string name="title_osc_steam_controls">Controles de Steam Controller</string>
-    <string name="summary_osc_steam_controls">Añade trackpads en pantalla, botones traseros (L4, R4, L5, R5) y toque de agarre. Solo para un PC cuyo tipo de mando es Steam Controller; en Automático puede elegir un mando de PlayStation.</string>
+    <string name="summary_osc_steam_controls">Añade trackpads en pantalla, botones traseros (L4, R4, L5, R5) y toque de agarre. Necesitan un PC que los convierta en un Steam Controller, por ejemplo uno cuyo tipo de mando sea Steam Controller; en otros PC no hacen nada y el resto del mando funciona como siempre.</string>
     <string name="title_reset_osc">Restablecer diseño de controles</string>
     <string name="dialog_title_reset_osc">Restablecer diseño</string>
     <string name="dialog_text_reset_osc">¿Devolver todos los botones en pantalla a su tamaño y posición predeterminados? También se restablecen los diseños guardados para un juego concreto.</string>

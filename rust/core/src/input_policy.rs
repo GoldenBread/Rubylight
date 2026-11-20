@@ -374,11 +374,17 @@ impl Policy {
         } else if kind == 3 {
             VHF_SWITCH
         } else if (self.motion_as_ds4 && capabilities & 0x30 != 0)
-            || (self.touchpad_as_ds4 && capabilities & 8 != 0)
+            || (self.touchpad_as_ds4
+                && capabilities & 8 != 0
+                && !steam_controls(kind, capabilities))
         {
             // As in Vibepollo, a controller of any other type with motion
             // sensors or a touchpad becomes a DualSense, an Xbox-type one too
-            // (a Steam Deck), so its gyro and touchpad keep working.
+            // (a Steam Deck), so its gyro and touchpad keep working. A touchpad
+            // that comes with on-screen Steam Controller controls does not: a
+            // DualSense has none of their back buttons or grips, and a game
+            // that reads only Xbox controllers would lose player 1. Motion
+            // still does, since a pad sharing player 1 with them keeps its gyro.
             VHF_DUALSENSE
         } else {
             0
@@ -395,6 +401,15 @@ impl Policy {
             .into_iter()
             .find(|p| *p != 0 && available & (1 << (p - 1)) != 0)
     }
+}
+
+/// Whether an arrival carries on-screen Steam Controller controls (Nightjar's): grip or stick
+/// touch on a controller that is no PlayStation, Nintendo or Steam controller itself. They join
+/// player 1, so a physical pad sharing that slot carries them too.
+pub fn steam_controls(kind: u8, capabilities: u16) -> bool {
+    use rubylight_protocol::steam_controller::{LI_CCAP_GRIP_SENSE, LI_CCAP_STICK_TOUCH};
+    !matches!(kind, 2 | 3 | CTYPE_STEAM)
+        && capabilities & (LI_CCAP_GRIP_SENSE | LI_CCAP_STICK_TOUCH) != 0
 }
 
 /// Whether a controller becomes a Switch 2 Pro Controller over usbip-win2:

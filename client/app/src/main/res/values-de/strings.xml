@@ -209,7 +209,7 @@
     <string name="title_show_touchpad_button">Touchpad-Taste anzeigen</string>
     <string name="summary_show_touchpad_button">Fügt eine Taste hinzu, die das Touchpad eines PlayStation-Controllers klickt. Spieler 1 verbindet sich dann als PlayStation-Controller mit dem PC; lass es aus, wenn kein Spiel diesen Klick braucht.</string>
     <string name="title_osc_steam_controls">Steam-Controller-Tasten</string>
-    <string name="summary_osc_steam_controls">Fügt den Bildschirmtasten Trackpads, die Rücktasten (L4, R4, L5, R5) und Griffberührung hinzu. Nur für einen PC mit dem Controllertyp Steam Controller; bei „Automatisch“ wählt er eventuell einen PlayStation-Controller.</string>
+    <string name="summary_osc_steam_controls">Fügt den Bildschirmtasten Trackpads, die Rücktasten (L4, R4, L5, R5) und Griffberührung hinzu. Sie brauchen einen PC, der aus ihnen einen Steam Controller macht, zum Beispiel einen mit dem Controllertyp Steam Controller; an anderen PCs tun sie nichts, und der übrige Controller funktioniert wie gewohnt.</string>
     <string name="title_reset_osc">Tastenlayout zurücksetzen</string>
     <string name="dialog_title_reset_osc">Layout zurücksetzen</string>
     <string name="dialog_text_reset_osc">Alle Bildschirmtasten auf Standardgröße und -position zurücksetzen? Das setzt auch die Layouts zurück, die für einzelne Spiele gespeichert sind.</string>

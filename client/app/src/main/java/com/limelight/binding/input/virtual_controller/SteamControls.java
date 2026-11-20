@@ -1,7 +1,6 @@
 package com.limelight.binding.input.virtual_controller;
 
 import com.limelight.nvstream.input.ControllerPacket;
-import com.limelight.nvstream.jni.MoonBridge;
 
 /**
  * The on-screen controls a Steam Controller (2026) has and a phone's pad lacks: two trackpads,
@@ -35,12 +34,14 @@ public final class SteamControls {
     public static final int BUTTONS = R4_FLAG | L4_FLAG | R5_FLAG | L5_FLAG;
 
     /**
-     * The capabilities the controls add to their pad's arrival. Not the independent pad and
-     * trigger clicks (SC26 buttons): those would make every click explicit, which these controls
-     * cannot send.
+     * The capabilities the controls add to their pad's arrival. Not the touchpad: PCs that choose
+     * a controller by its touchpad would make player 1 a PlayStation controller, which has none of
+     * the back buttons or grips and which games that read only Xbox controllers cannot see. A PC
+     * that makes the pad a Steam Controller takes the trackpads' touches without it. Not the
+     * independent pad and trigger clicks (SC26 buttons) either: those would make every click
+     * explicit, which these controls cannot send.
      */
-    public static final short CAPABILITIES =
-            (short) (MoonBridge.LI_CCAP_TOUCHPAD | LI_CCAP_GRIP_SENSE | LI_CCAP_STICK_TOUCH);
+    public static final short CAPABILITIES = (short) (LI_CCAP_GRIP_SENSE | LI_CCAP_STICK_TOUCH);
 
     public static final int LEFT_PAD = 0, RIGHT_PAD = 1;
 

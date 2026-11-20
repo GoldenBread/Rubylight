@@ -250,7 +250,7 @@
     <string name="title_show_touchpad_button">Show Touchpad button</string>
     <string name="summary_show_touchpad_button">Adds a button that clicks a PlayStation controller’s touchpad. Player 1 then connects to the PC as a PlayStation controller; leave it off unless a game needs that click.</string>
     <string name="title_osc_steam_controls">Steam Controller controls</string>
-    <string name="summary_osc_steam_controls">Adds on-screen trackpads, back buttons (L4, R4, L5, R5) and grip touch. Only for a PC whose controller type is the Steam Controller; with the PC’s Automatic type, the trackpads can make it pick a PlayStation controller.</string>
+    <string name="summary_osc_steam_controls">Adds on-screen trackpads, back buttons (L4, R4, L5, R5) and grip touch. They need a PC that turns them into a Steam Controller, for example one whose controller type is Steam Controller; on other PCs they do nothing, and the rest of the controller works as usual.</string>
     <string name="title_reset_osc">Reset controls layout</string>
     <string name="dialog_title_reset_osc">Reset layout</string>
     <string name="dialog_text_reset_osc">Put every on-screen button back to its default size and position? This also resets the layouts kept for one game.</string>

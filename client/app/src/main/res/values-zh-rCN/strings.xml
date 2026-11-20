@@ -209,7 +209,7 @@
     <string name="title_show_touchpad_button">显示触控板按钮</string>
     <string name="summary_show_touchpad_button">添加一个用于按下 PlayStation 手柄触控板的按钮。玩家 1 会因此以 PlayStation 手柄的身份连接到电脑；除非游戏需要这个按键，否则请保持关闭。</string>
     <string name="title_osc_steam_controls">Steam Controller 控件</string>
-    <string name="summary_osc_steam_controls">为屏幕控件添加触控板、背键（L4、R4、L5、R5）和握把触摸。仅适用于手柄类型为 Steam Controller 的电脑；设为“自动”时，电脑可能选用 PlayStation 手柄。</string>
+    <string name="summary_osc_steam_controls">为屏幕控件添加触控板、背键（L4、R4、L5、R5）和握把触摸。需要电脑将它们变成 Steam Controller，例如手柄类型设为 Steam Controller 的电脑；在其他电脑上它们不起作用，手柄的其余部分照常工作。</string>
     <string name="title_reset_osc">重置控制按钮布局</string>
     <string name="dialog_title_reset_osc">重置布局</string>
     <string name="dialog_text_reset_osc">要将所有屏幕按钮恢复为默认大小和位置吗？为单个游戏保存的布局也会一并重置。</string>

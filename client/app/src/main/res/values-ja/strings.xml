@@ -209,7 +209,7 @@
     <string name="title_show_touchpad_button">タッチパッドボタンを表示</string>
     <string name="summary_show_touchpad_button">PlayStation コントローラのタッチパッドをクリックするボタンを追加します。オンにすると、プレイヤー 1 は PlayStation コントローラとして PC に接続されます。ゲームでこのクリックが必要な場合以外は、オフのままにしてください。</string>
     <string name="title_osc_steam_controls">Steam Controller の操作</string>
-    <string name="summary_osc_steam_controls">画面上にトラックパッド、背面ボタン（L4、R4、L5、R5）、グリップのタッチを追加します。PC 側のコントローラの種類が Steam Controller の場合にのみ使ってください。「自動」では PlayStation コントローラが選ばれることがあります。</string>
+    <string name="summary_osc_steam_controls">画面上にトラックパッド、背面ボタン（L4、R4、L5、R5）、グリップのタッチを追加します。これらを Steam Controller にする PC（たとえばコントローラの種類が Steam Controller の PC）が必要で、ほかの PC では何もせず、コントローラのほかの部分はいつもどおり動作します。</string>
     <string name="title_reset_osc">コントロールのレイアウトをリセット</string>
     <string name="dialog_title_reset_osc">レイアウトをリセット</string>
     <string name="dialog_text_reset_osc">すべてのオンスクリーン ボタンをデフォルトのサイズと位置に戻しますか？ゲームごとに保存したレイアウトもリセットされます。</string>

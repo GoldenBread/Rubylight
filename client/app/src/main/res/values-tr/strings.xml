@@ -209,7 +209,7 @@
     <string name="title_show_touchpad_button">Dokunmatik yüzey düğmesini göster</string>
     <string name="summary_show_touchpad_button">PlayStation kumandasının dokunmatik yüzeyine tıklayan bir düğme ekler. 1. oyuncu bu durumda bilgisayara PlayStation kumandası olarak bağlanır; bir oyun bu tıklamayı gerektirmiyorsa kapalı bırakın.</string>
     <string name="title_osc_steam_controls">Steam Controller kontrolleri</string>
-    <string name="summary_osc_steam_controls">Ekran kontrollerine dokunmatik yüzeyler, arka düğmeler (L4, R4, L5, R5) ve tutamak dokunuşu ekler. Yalnızca kumanda türü Steam Controller olan bilgisayarlar içindir; “Otomatik” seçiliyken bilgisayar PlayStation kumandası seçebilir.</string>
+    <string name="summary_osc_steam_controls">Ekran kontrollerine dokunmatik yüzeyler, arka düğmeler (L4, R4, L5, R5) ve tutamak dokunuşu ekler. Bunları Steam Controller yapan bir bilgisayar gerekir, örneğin kumanda türü Steam Controller olan bir bilgisayar; diğer bilgisayarlarda hiçbir şey yapmazlar ve kumandanın geri kalanı her zamanki gibi çalışır.</string>
     <string name="title_reset_osc">Kontrol düzenini sıfırla</string>
     <string name="dialog_title_reset_osc">Düzeni sıfırla</string>
     <string name="dialog_text_reset_osc">Tüm ekran düğmeleri varsayılan boyut ve konumlarına döndürülsün mü? Bu, tek bir oyun için saklanan düzenleri de sıfırlar.</string>

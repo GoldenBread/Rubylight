@@ -209,7 +209,7 @@
     <string name="title_show_touchpad_button">터치패드 버튼 표시</string>
     <string name="summary_show_touchpad_button">PlayStation 컨트롤러의 터치패드를 클릭하는 버튼을 추가합니다. 켜면 플레이어 1이 PlayStation 컨트롤러로 PC에 연결됩니다. 게임에 이 클릭이 필요한 경우가 아니면 꺼 두세요.</string>
     <string name="title_osc_steam_controls">Steam Controller 조작</string>
-    <string name="summary_osc_steam_controls">화면에 트랙패드, 뒷면 버튼(L4, R4, L5, R5), 그립 터치를 추가합니다. PC의 컨트롤러 종류가 Steam Controller일 때만 사용하세요. ‘자동’에서는 PlayStation 컨트롤러가 선택될 수 있습니다.</string>
+    <string name="summary_osc_steam_controls">화면에 트랙패드, 뒷면 버튼(L4, R4, L5, R5), 그립 터치를 추가합니다. 이를 Steam Controller로 만들어 주는 PC(예: 컨트롤러 종류가 Steam Controller인 PC)가 필요하며, 다른 PC에서는 아무 동작도 하지 않고 컨트롤러의 나머지는 평소처럼 작동합니다.</string>
     <string name="title_reset_osc">컨트롤 레이아웃 초기화</string>
     <string name="dialog_title_reset_osc">레이아웃 초기화</string>
     <string name="dialog_text_reset_osc">모든 화면 버튼을 기본 크기와 위치로 되돌릴까요? 게임별로 저장한 레이아웃도 초기화됩니다.</string>

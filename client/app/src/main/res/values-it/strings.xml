@@ -209,7 +209,7 @@
     <string name="title_show_touchpad_button">Mostra pulsante Touchpad</string>
     <string name="summary_show_touchpad_button">Aggiunge un pulsante che fa clic sul touchpad di un controller PlayStation. Il giocatore 1 si collega quindi al PC come controller PlayStation; lascialo disattivato se nessun gioco richiede quel clic.</string>
     <string name="title_osc_steam_controls">Controlli Steam Controller</string>
-    <string name="summary_osc_steam_controls">Aggiunge a schermo i trackpad, i tasti posteriori (L4, R4, L5, R5) e il tocco delle impugnature. Solo per un PC il cui tipo di controller è Steam Controller; con Automatico potrebbe scegliere un controller PlayStation.</string>
+    <string name="summary_osc_steam_controls">Aggiunge a schermo i trackpad, i tasti posteriori (L4, R4, L5, R5) e il tocco delle impugnature. Serve un PC che li trasformi in uno Steam Controller, ad esempio uno il cui tipo di controller è Steam Controller; sugli altri PC non fanno nulla e il resto del controller funziona come sempre.</string>
     <string name="title_reset_osc">Ripristina layout dei controlli</string>
     <string name="dialog_title_reset_osc">Ripristina layout</string>
     <string name="dialog_text_reset_osc">Riportare ogni pulsante a schermo alle dimensioni e alla posizione predefinite? Vengono ripristinati anche i layout salvati per un singolo gioco.</string>

@@ -27,8 +27,9 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 /**
- * The on-screen Steam Controller controls join a phone's pad: player 1 arrives with their
- * touchpad, grip and stick touch and back buttons, and their input merges with the pad's.
+ * The on-screen Steam Controller controls join a phone's pad: player 1 arrives with their grip
+ * and stick touch and back buttons, and their input, trackpad touches included, merges with the
+ * pad's.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 29, application = Application.class,
@@ -92,6 +93,9 @@ public class SteamControlsArrivalTest {
     public void thePadSharingPlayerOneArrivesWithTheControlsAndMergesTheirInput() {
         Connection connection = arrive(true);
         assertEquals(SteamControls.CAPABILITIES, connection.arrivalCaps & SteamControls.CAPABILITIES);
+        // No touchpad of the controls' own, which would make a PC pick a PlayStation controller;
+        // their trackpad touches are sent all the same (arrive checks one).
+        assertEquals(0, connection.arrivalCaps & MoonBridge.LI_CCAP_TOUCHPAD);
         assertEquals(ControllerPacket.A_FLAG | ControllerPacket.B_FLAG | SteamControls.BUTTONS, connection.arrivalButtons);
     }
 
