@@ -302,6 +302,23 @@ void testScratchStopsGrowingAfterWarmUp() {
     assert(pacer.scratchCapacityForTest() == warmCapacity);
 }
 
+// The period is refitted every few vsyncs, and at once when a callback comes off its place.
+void testPeriodFitFollowsTheVsyncsWithGatedRefits() {
+    const int64_t trueNs = 8'341'675;
+    FramePacer pacer(PacingMode::Smoothness, 60, 8'333'333, JitterBuffer::Balanced);
+    for (int v = 0; v < 600; v++) {
+        pacer.onVsync(kStartNs + v * trueNs, nullptr, 0);
+    }
+    assert(std::llabs(pacer.vsyncPeriodNs() - trueNs) < 2'000);
+    // A callback gap of three vsyncs leaves the index counting them
+    int64_t at = kStartNs + 600 * trueNs;
+    for (int v = 0; v < 100; v++) {
+        at += (v == 50 ? 3 : 1) * trueNs;
+        pacer.onVsync(at, nullptr, 0);
+    }
+    assert(std::llabs(pacer.vsyncPeriodNs() - trueNs) < 2'000);
+}
+
 }  // namespace
 
 int main() {
@@ -314,5 +331,6 @@ int main() {
     testStalledFramesWaitNoLongerThanTwoVsyncs();
     testJitterSkipsNothing();
     testScratchStopsGrowingAfterWarmUp();
+    testPeriodFitFollowsTheVsyncsWithGatedRefits();
     return 0;
 }

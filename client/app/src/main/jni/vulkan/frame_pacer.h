@@ -282,6 +282,7 @@ private:
     // commit the frame to yet
     int64_t frameVsyncNs(const FrameTiming& frame, bool committable) const;
     void trackVsync(int64_t vsyncNs);
+    size_t vsyncsSinceFit_ = 0;  // vsyncs tracked since the period was last fitted
     void updateSlot(const FrameTiming& frame);
     struct PhaseFit {
         double interval = 0;  // The game's frame interval

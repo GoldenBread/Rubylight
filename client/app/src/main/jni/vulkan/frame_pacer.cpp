@@ -36,6 +36,10 @@ namespace {
     // Vsyncs the period is measured over
     constexpr size_t kVsyncWindow = 480;
     constexpr size_t kMinVsyncsForPeriod = 60;
+    // The period is refitted this often at most, unless a vsync comes off its place. One new
+    // sample in the window moves the fit by little, and the renderer refines the period on every
+    // callback in between.
+    constexpr size_t kRefitEveryVsyncs = 8;
 
     double wrapCycles(double x) {
         x -= std::floor(x);
@@ -271,6 +275,10 @@ void FramePacer::trackVsync(int64_t vsyncNs) {
         // Count the vsyncs since the last callback, including any whose callbacks we missed
         vsyncIndex_ += std::max<int64_t>(1, (vsyncNs - lastVsyncNs_ + periodNs_ / 2) / periodNs_);
     }
+    // A callback that missed vsyncs or came well off the period starts a refit now
+    const int64_t sinceLastNs = vsyncNs - lastVsyncNs_;
+    const bool offPlace = lastVsyncNs_ != 0 && periodNs_ > 0 &&
+                          std::llabs(sinceLastNs - periodNs_) * 4 > periodNs_;
     lastVsyncNs_ = vsyncNs;
 
     vsyncs_.push_back({vsyncIndex_, vsyncNs});
@@ -280,6 +288,10 @@ void FramePacer::trackVsync(int64_t vsyncNs) {
     if (vsyncs_.size() < kMinVsyncsForPeriod) {
         return;
     }
+    if (!offPlace && ++vsyncsSinceFit_ < kRefitEveryVsyncs) {
+        return;
+    }
+    vsyncsSinceFit_ = 0;
 
     // Least squares fit of vsync time against vsync index
     const VsyncSample& first = vsyncs_.front();

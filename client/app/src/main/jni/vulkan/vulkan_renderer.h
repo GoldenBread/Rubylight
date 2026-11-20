@@ -288,6 +288,7 @@ private:
     // Queues a decoded frame for the pacer, from the thread that decoded it
     void enqueueFrame(FramePtr frame);
     void wake(uint32_t flags);
+    bool canParkVsync();
 
     // showVsyncNs is the vsync the frame is shown for (the current one if 0); ahead marks a
     // frame presented as it arrived rather than at its vsync
@@ -481,6 +482,8 @@ private:
     int64_t lastNewFrameNs_ = 0;
     int64_t lastPresentNs_ = 0;
     static constexpr int64_t kKeepAliveAfterNs = 50'000'000;
+    // Presents still unreported this long after the last one are left to the next report
+    static constexpr int64_t kParkAfterPresentNs = 100'000'000;
     void keepAlive();
 
     // Frame Warp (docs/frame-warp.md): each picture is drawn by video_warp.frag, shifted by the
@@ -546,6 +549,8 @@ private:
     int wakeFd_ = -1;
     std::atomic<uint32_t> wakeFlags_ {0};
     std::atomic<bool> quit_ {false};
+    // No vsync callback is posted while the render thread has nothing to do (canParkVsync())
+    std::atomic<bool> vsyncParked_ {false};
     bool stopped_ = false;
     // Failed renders in a row, and whether the renderer gave up (see fatal())
     std::atomic<int> failures_ {0};

@@ -139,6 +139,7 @@ namespace {
     constexpr uint32_t kWakeFrame = 1;
     constexpr uint32_t kWakeHdr = 2;
     constexpr uint32_t kWakeQuit = 4;
+    constexpr uint32_t kWakeVsync = 8;
 
     constexpr int kLooperIdWake = 1;
     constexpr int kLooperIdAlignedTimer = 2;
@@ -1322,6 +1323,9 @@ void VulkanRenderer::enqueueFrame(FramePtr frame) {
     else if (presentOnArrival_) {
         wake(kWakeFrame);
     }
+    if (vsyncParked_.load()) {
+        wake(kWakeVsync);
+    }
     // Frames in `dropped` are released here, outside the lock
 }
 
@@ -1397,6 +1401,9 @@ void VulkanRenderer::onWake() {
     const uint32_t flags = wakeFlags_.exchange(0);
     if (quit_ || (flags & kWakeQuit)) {
         return;
+    }
+    if (vsyncParked_.exchange(false)) {
+        ndk_->AChoreographer_postFrameCallback64(choreographer_, &VulkanRenderer::onVsyncThunk, this);
     }
     std::lock_guard<std::mutex> renderLock(renderMutex_);
 
@@ -1630,7 +1637,32 @@ void VulkanRenderer::onVsync(int64_t frameTimeNanos) {
     }
     collectPresentTimings();
 
+    if (canParkVsync()) {
+        // Nothing to show or report: no vsync callback until a frame arrives (enqueueFrame()) or
+        // something else wakes the thread (onWake())
+        vsyncParked_.store(true);
+        // A frame that came in between the check and the flag found it unset
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (pending_.empty()) {
+            return;
+        }
+        vsyncParked_.store(false);
+    }
     ndk_->AChoreographer_postFrameCallback64(choreographer_, &VulkanRenderer::onVsyncThunk, this);
+}
+
+// Whether the vsync callbacks can stop until the next frame arrives: no frame waiting, no present
+// still to be reported, and none of the work that runs at every vsync (keep-alive, frame warp,
+// aligned draws, a swapchain to rebuild).
+bool VulkanRenderer::canParkVsync() {
+    if (keepAliveNs_ > 0 || warpApi_ || swapchainDirty_ || !alignedDraws_.empty() || quit_) {
+        return false;
+    }
+    if (!pendingPresents_.empty() && nowNs() - lastPresentNs_ < kParkAfterPresentNs) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    return pending_.empty();
 }
 
 // While the host sends nothing (a game paused, or its desktop with the frame rate allowed to drop
