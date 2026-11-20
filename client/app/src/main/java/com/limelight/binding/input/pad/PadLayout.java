@@ -652,6 +652,14 @@ public final class PadLayout {
      * fits. A side the surface has no room for around the middle narrows to fit; where that would go below the size
      * the members' buttons need, the cluster is the square that size gives.
      */
+    /**
+     * Whether a face pair half {@code spread} apart sets its side: in its order, at least three quarters as far apart
+     * as Split spreads members of their size ({@code least}), and not exactly that far, which only Split gives.
+     */
+    private static boolean drawn(float spread, float least) {
+        return !Float.isNaN(spread) && spread >= .75f * least && Math.abs(spread - least) > 1.5f;
+    }
+
     /** How much larger than the members' a joined cluster's buttons may be drawn. */
     private static final float MAX_JOINED_GROWTH = 1.5f;
 
@@ -676,9 +684,9 @@ public final class PadLayout {
         // Places: 0 bottom, 1 right, 2 left, 3 top. Each pair's half spacing, NaN without both.
         float spreadX = places[1] != null && places[2] != null ? (centerX(places[1]) - centerX(places[2])) / 2 : Float.NaN;
         float spreadY = places[0] != null && places[3] != null ? (centerY(places[0]) - centerY(places[3])) / 2 : Float.NaN;
-        // Closer than Split spreads them, heaped or mirrored, a pair tells nothing a cluster could draw.
-        boolean drawnX = !Float.isNaN(spreadX) && spreadX > least + 1.5f;
-        boolean drawnY = !Float.isNaN(spreadY) && spreadY > least + 1.5f;
+        // Heaped or mirrored, a pair tells nothing a cluster could draw; a little closer than Split spreads them, it
+        // still does.
+        boolean drawnX = drawn(spreadX, least), drawnY = drawn(spreadY, least);
         float w = Math.max(shorter, drawnX ? spreadX / reach : fitting(now[2], shorter, least / reach));
         float h = Math.max(shorter, drawnY ? spreadY / reach : fitting(now[3], shorter, least / reach));
         // Members spread far apart would give buttons far larger than theirs: the square their size gives instead,

@@ -927,6 +927,23 @@ public class PadLayoutTest {
         }
     }
 
+    @Test public void aPairALittleCloserThanSplitSpreadsItStillSetsItsSide() {
+        float width = 2400, height = 1080, button = 150, least = button + 2, half = .97f * least;
+        PadLayout layout = faceMembersInTheMiddle(button);
+        // A bottom, B right, X left, Y top, each pair 0.97 of the way Split spreads members this size.
+        float[][] centers = {{1200, 540 + half}, {1200 + half, 540}, {1200 - half, 540}, {1200, 540 - half}};
+        for (int i = 0; i < centers.length; i++) {
+            layout.moveTo(MEMBERS_OF_FACE[i], centers[i][0], centers[i][1], width, height, DENSITY);
+        }
+        layout.join(PadLayout.Control.FACE, width, height, DENSITY);
+        float[] face = layout.bounds(PadLayout.Control.FACE, width, height, DENSITY, new float[4]);
+        float reach = .28f;
+        assertEquals("the width from B and X", 2 * half / (2 * reach), face[2], 1);
+        assertEquals("the height from A and Y", 2 * half / (2 * reach), face[3], 1);
+        assertEquals("B drawn where it stood", 1200 + half, face[0] + .78f * face[2], 2);
+        assertEquals("A drawn where it stood", 540 + half, face[1] + .78f * face[3], 2);
+    }
+
     @Test public void heapedMirroredOrFarApartMembersJoinButtonsOfTheirSize() {
         float width = 2400, height = 1080, touch = 48 * DENSITY;
         float[][][] arrangements = {
