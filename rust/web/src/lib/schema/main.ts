@@ -69,7 +69,7 @@ export const ALWAYS_ON: readonly string[] = [
   'packed_444', 'pyrowave',
   'hdr_dolby_vision', 'hdr_hlg',
   'wgc_pacing_smoothing', 'stream_reconfigure', 'frame_warp',
-  'wireless_adaptive_pacing', 'keyframe_loss_pacing',
+  'keyframe_loss_pacing',
   'nvenc_frame_budget_guard', 'nvenc_realtime_hags',
 ];
 /**

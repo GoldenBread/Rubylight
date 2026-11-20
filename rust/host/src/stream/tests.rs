@@ -548,7 +548,7 @@ fn app_overrides_win_over_device_and_host_without_changing_saved_configuration()
     let mut client = f.client(u32::MAX);
     client.extra.insert(
             "config_overrides".into(),
-            json!({"max_bitrate":20000,"capture":"wgc","port":50000,"keyboard":false,"host_adaptive_pacing":true}),
+            json!({"max_bitrate":20000,"capture":"wgc","port":50000,"keyboard":false,"packet_pacing":"always"}),
         );
     let launch = f.launch(client, Role::Stream);
     let device = effective_config(&f.host, &launch).unwrap();
@@ -566,7 +566,7 @@ fn app_overrides_win_over_device_and_host_without_changing_saved_configuration()
     assert_eq!(device.integer("port", 0), 47989);
     f.host.apps.write().unwrap()[0].extra.insert(
             "config-overrides".into(),
-            json!({"max_bitrate":30000,"capture":"","port":51000,"keyboard":true,"host_adaptive_pacing":false}),
+            json!({"max_bitrate":30000,"capture":"","port":51000,"keyboard":true,"packet_pacing":"off"}),
         );
     let app = effective_config(&f.host, &launch).unwrap();
     assert_eq!(app.integer("max_bitrate", 0), 30000);
@@ -580,8 +580,8 @@ fn app_overrides_win_over_device_and_host_without_changing_saved_configuration()
         20000
     );
     assert_eq!(
-        launch.client.extra["config_overrides"]["host_adaptive_pacing"],
-        true
+        launch.client.extra["config_overrides"]["packet_pacing"],
+        "always"
     );
     assert_eq!(
         f.host.apps.read().unwrap()[0].extra["config-overrides"]["port"],

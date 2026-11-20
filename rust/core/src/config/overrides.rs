@@ -76,8 +76,7 @@ pub fn override_allowed(key: &str) -> bool {
         // Codec and capture
         "fec_percentage",
         "adaptive_fec",
-        "host_adaptive_pacing",
-        "wireless_adaptive_pacing",
+        "packet_pacing",
         "keyframe_loss_pacing",
         "bitrate_adaptation",
         "video_max_batch_size_kb",

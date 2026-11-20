@@ -346,7 +346,7 @@ fn pace(current: &Session, config: &Config, kbps: u32, wire_frame: u32, route: L
         current.stream_mode().period(),
     );
     let base = network_pacing::pyrowave_route_rate_bps(
-        config.integer("pacing_max_bitrate_kbps", 0),
+        config.manual_pacing_kbps().unwrap_or(0),
         kbps,
         route.bps,
         network_pacing::route_is_wireless(

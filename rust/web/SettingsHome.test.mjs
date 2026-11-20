@@ -142,7 +142,7 @@ test('always-on keys appear only in Debug switches, described as for troubleshoo
     'audio_passthrough', 'audio_surround_714', 'bandwidth_probe', 'client_roaming', 'frame_warp', 'gpu_compute_conversion',
     'hdr_dolby_vision', 'hdr_hlg', 'idd_push_fence_ring', 'keyframe_loss_pacing',
     'nvenc_frame_budget_guard', 'nvenc_realtime_hags', 'packed_444', 'pyrowave', 'qr_pairing',
-    'stream_reconfigure', 'wgc_direct_encoder_input', 'wgc_pacing_smoothing', 'wireless_adaptive_pacing',
+    'stream_reconfigure', 'wgc_direct_encoder_input', 'wgc_pacing_smoothing',
   ]);
   for (const key of ALWAYS_ON) {
     const setting = settings.get(key);

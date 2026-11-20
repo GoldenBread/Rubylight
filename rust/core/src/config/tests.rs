@@ -439,37 +439,46 @@ port = 47989
     );
 }
 #[test]
-fn packet_pacing_requires_opt_in_and_yields_to_manual_bitrate_and_codec_policies() {
+fn packet_pacing_reads_automatic_always_off_and_a_fixed_rate() {
+    use super::PacketPacing as P;
+    for (text, expected) in [
+        ("", P::Auto),
+        ("packet_pacing=auto", P::Auto),
+        ("packet_pacing=AUTO", P::Auto),
+        ("packet_pacing=always", P::Always),
+        ("packet_pacing=off", P::Off),
+        ("packet_pacing=1", P::Fixed(1)),
+        ("packet_pacing=80000", P::Fixed(80000)),
+        ("packet_pacing=0x1388", P::Fixed(5000)),
+        // The earlier pacing limit read 0 and negative rates as no rate.
+        ("packet_pacing=0", P::Auto),
+        ("packet_pacing=-1", P::Auto),
+        ("packet_pacing=invalid", P::Auto),
+    ] {
+        let config = super::Config::parse(text).unwrap();
+        assert_eq!(config.packet_pacing(), expected, "{text}");
+    }
+    assert_eq!(super::Config::default().manual_pacing_kbps(), None);
+    assert_eq!(
+        super::Config::parse("packet_pacing=80000")
+            .unwrap()
+            .manual_pacing_kbps(),
+        Some(80000)
+    );
+    assert!(super::override_allowed("packet_pacing"));
+    assert!(!super::override_allowed("host_adaptive_pacing"));
+    assert!(!super::override_allowed("wireless_adaptive_pacing"));
+    assert!(!super::override_allowed("pacing_max_bitrate_kbps"));
+}
+
+#[test]
+fn packet_pacing_picks_the_adaptive_controller_like_the_retired_switches_did() {
     let cases = [
         ("", [false, false, false, false]),
-        ("host_adaptive_pacing=false", [false, false, false, false]),
-        ("host_adaptive_pacing=invalid", [false, false, false, false]),
-        ("host_adaptive_pacing=true", [true, true, true, true]),
-        (
-            "host_adaptive_pacing=true\npacing_max_bitrate_kbps=0",
-            [true, true, true, true],
-        ),
-        (
-            "host_adaptive_pacing=true\npacing_max_bitrate_kbps=-1",
-            [true, true, true, true],
-        ),
-        (
-            "host_adaptive_pacing=true\npacing_max_bitrate_kbps=1",
-            [false, false, false, false],
-        ),
-        (
-            "host_adaptive_pacing=true\npacing_max_bitrate_kbps=80000",
-            [false, false, false, false],
-        ),
-        // A saved retired host bitrate controller changes nothing.
-        (
-            "host_adaptive_pacing=true\nhost_adaptive_bitrate=true",
-            [true, true, true, true],
-        ),
-        (
-            "host_adaptive_pacing=true\nhost_adaptive_bitrate=false",
-            [true, true, true, true],
-        ),
+        ("packet_pacing=auto", [false, false, false, false]),
+        ("packet_pacing=always", [true, true, true, true]),
+        ("packet_pacing=off", [false, false, false, false]),
+        ("packet_pacing=80000", [false, false, false, false]),
     ];
     for (text, expected) in cases {
         let config = super::Config::parse(text).unwrap();
@@ -494,51 +503,44 @@ fn a_wireless_client_gets_adaptive_pacing_on_h26x_and_av1_unless_something_owns_
     let cases = [
         ("", on, [false, false, false, true], off, [true; 4]),
         (
-            "wireless_adaptive_pacing=true",
+            "packet_pacing=auto",
             on,
             [false, false, false, true],
             off,
             [true; 4],
         ),
         (
-            "wireless_adaptive_pacing=invalid",
+            "packet_pacing=invalid",
             on,
             [false, false, false, true],
             off,
             [true; 4],
         ),
         (
-            "wireless_adaptive_pacing=false",
+            "packet_pacing=off",
             off,
             [true; 4],
             off,
             [true; 4],
         ),
-        // The host option still turns it on for everything, wired or wireless.
+        // Always still turns it on for everything, wired or wireless.
         (
-            "host_adaptive_pacing=true",
+            "packet_pacing=always",
             all,
             [false; 4],
             all,
             [false; 4],
         ),
+        // A fixed rate owns pacing.
         (
-            "host_adaptive_pacing=true\nwireless_adaptive_pacing=false",
-            all,
-            [false; 4],
-            all,
-            [false; 4],
-        ),
-        // A manual limit owns pacing.
-        (
-            "pacing_max_bitrate_kbps=80000",
+            "packet_pacing=80000",
             off,
             [false; 4],
             off,
             [false; 4],
         ),
         (
-            "pacing_max_bitrate_kbps=0",
+            "packet_pacing=0",
             on,
             [false, false, false, true],
             off,
@@ -583,7 +585,6 @@ fn a_wireless_client_gets_adaptive_pacing_on_h26x_and_av1_unless_something_owns_
     let default = super::Config::default();
     assert!(!default.adaptive_packet_pacing(3, true));
     assert!(default.keyframe_loss_pacing(3, true));
-    assert!(super::override_allowed("wireless_adaptive_pacing"));
 }
 
 #[test]
@@ -643,15 +644,17 @@ fn disconnected_displays_restore_by_default_and_exclusive_layouts_cannot_be_reta
 }
 
 #[test]
-fn keyframe_loss_pacing_is_on_unless_a_manual_limit_or_adaptation_owns_pacing() {
+fn keyframe_loss_pacing_is_on_unless_a_fixed_rate_or_adaptation_owns_pacing() {
     for (text, enabled) in [
         ("", true),
         ("keyframe_loss_pacing=true", true),
         ("keyframe_loss_pacing=invalid", true),
         ("keyframe_loss_pacing=false", false),
-        ("pacing_max_bitrate_kbps=0", true),
-        ("pacing_max_bitrate_kbps=80000", false),
-        ("host_adaptive_pacing=true", false),
+        ("packet_pacing=0", true),
+        ("packet_pacing=auto", true),
+        ("packet_pacing=off", true),
+        ("packet_pacing=80000", false),
+        ("packet_pacing=always", false),
         // The retired host bitrate controller no longer turns it off.
         ("host_adaptive_bitrate=true", true),
     ] {
@@ -727,6 +730,62 @@ fn congestion_control_is_off_unless_set() {
     assert!(!super::override_allowed("congestion_control"));
 }
 
+/// The pacing rate and the two adaptive pacing switches fold into Packet
+/// pacing: a positive rate is the rate, adaptive pacing for everything is
+/// `always`, wireless pacing off alone is `off`, the rest the default.
+#[test]
+fn the_pacing_settings_fold_into_packet_pacing() {
+    use super::{Config, PacketPacing as P, folded_packet_pacing as fold, migrate_overrides};
+    assert_eq!(fold(None, None, None), None);
+    for (rate, host, wireless, folded) in [
+        (Some("80000"), None, None, Some("80000")),
+        (Some("80000"), Some("true"), Some("false"), Some("80000")),
+        (Some("0"), None, None, None),
+        (Some("-1"), Some("true"), None, Some("always")),
+        (None, Some("true"), None, Some("always")),
+        (None, Some("true"), Some("false"), Some("always")),
+        (None, Some("false"), Some("false"), Some("off")),
+        (None, None, Some("false"), Some("off")),
+        (None, None, Some("true"), None),
+        (None, Some("false"), None, None),
+        (None, Some("invalid"), Some("invalid"), None),
+    ] {
+        assert_eq!(fold(rate, host, wireless).as_deref(), folded, "{rate:?} {host:?} {wireless:?}");
+    }
+    for (text, expected) in [
+        ("", P::Auto),
+        ("pacing_max_bitrate_kbps=120000", P::Fixed(120000)),
+        ("host_adaptive_pacing=true", P::Always),
+        ("wireless_adaptive_pacing=false", P::Off),
+        ("host_adaptive_pacing=true
+pacing_max_bitrate_kbps=80000", P::Fixed(80000)),
+        ("packet_pacing=off
+host_adaptive_pacing=true", P::Off),
+    ] {
+        let config = Config::parse(text).unwrap();
+        assert_eq!(config.packet_pacing(), expected, "{text}");
+        for key in ["pacing_max_bitrate_kbps", "host_adaptive_pacing", "wireless_adaptive_pacing"] {
+            assert!(!config.text().contains(key), "{text}");
+        }
+    }
+    // An app's or device's overrides.
+    for (layer, expected) in [
+        (serde_json::json!({"pacing_max_bitrate_kbps": 80000}), Some("80000")),
+        (serde_json::json!({"host_adaptive_pacing": true}), Some("always")),
+        (serde_json::json!({"wireless_adaptive_pacing": "false"}), Some("off")),
+        (serde_json::json!({"host_adaptive_pacing": true, "packet_pacing": "off"}), Some("off")),
+        (serde_json::json!({"wireless_adaptive_pacing": true}), None),
+        (serde_json::json!({"fec_percentage": 20}), None),
+    ] {
+        let mut layer = layer.as_object().unwrap().clone();
+        migrate_overrides(&mut layer);
+        assert_eq!(layer.get("packet_pacing").and_then(|v| v.as_str()), expected, "{layer:?}");
+        assert!(!layer.contains_key("host_adaptive_pacing"));
+        assert!(!layer.contains_key("wireless_adaptive_pacing"));
+        assert!(!layer.contains_key("pacing_max_bitrate_kbps"));
+    }
+}
+
 /// The two bitrate switches fold into Adaptive bitrate once, from what the
 /// configuration file, a console save or an app's or device's overrides
 /// held: congestion control on is `delay`, link-rate adaptation off alone is
@@ -800,28 +859,32 @@ fn the_bitrate_switches_fold_into_adaptive_bitrate() {
 }
 
 #[test]
-fn resetting_packet_pacing_opt_in_restores_the_disabled_default() {
+fn resetting_packet_pacing_restores_the_default() {
     let mut config = super::Config::default();
     assert!(!config.adaptive_packet_pacing(0, false));
     for reset in [serde_json::Value::Null, serde_json::json!("")] {
         config
-            .update(
-                serde_json::json!({"host_adaptive_pacing": true})
-                    .as_object()
-                    .unwrap(),
-            )
+            .update(serde_json::json!({"packet_pacing": "always"}).as_object().unwrap())
             .unwrap();
         assert!(config.adaptive_packet_pacing(0, false));
         config
-            .update(
-                serde_json::json!({"host_adaptive_pacing": reset})
-                    .as_object()
-                    .unwrap(),
-            )
+            .update(serde_json::json!({"packet_pacing": reset}).as_object().unwrap())
             .unwrap();
         assert!(!config.adaptive_packet_pacing(0, false));
-        assert!(!config.values.contains_key("host_adaptive_pacing"));
+        assert!(!config.values.contains_key("packet_pacing"));
     }
+    // The earlier names fold into Packet pacing when an older console or a
+    // script sends them.
+    config
+        .update(
+            serde_json::json!({"host_adaptive_pacing": true})
+                .as_object()
+                .unwrap(),
+        )
+        .unwrap();
+    assert!(config.adaptive_packet_pacing(0, false));
+    assert_eq!(config.get("packet_pacing", ""), "always");
+    assert!(!config.values.contains_key("host_adaptive_pacing"));
 }
 
 #[test]

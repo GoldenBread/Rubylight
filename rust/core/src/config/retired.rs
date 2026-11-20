@@ -173,9 +173,27 @@ pub const BITRATE_ADAPTATION: &str = "bitrate_adaptation";
 /// adaptation (on by default) and congestion control (off by default).
 pub const LINK_RATE: &str = "link_rate_adaptation";
 pub const CONGESTION: &str = "congestion_control";
+/// Packet pacing (`auto`, `always`, `off`, or a fixed rate in kbps), which
+/// holds what the pacing rate and the two adaptive pacing switches held
+/// before.
+pub const PACKET_PACING: &str = "packet_pacing";
+/// The pacing rate and the two adaptive pacing switches folded into
+/// [`PACKET_PACING`]: a manual rate in kbps (0 unset), adaptive pacing for
+/// every client and codec (off by default) and adaptive pacing for clients
+/// that report a wireless route on H.264, HEVC and AV1 (on by default).
+pub const PACING_RATE: &str = "pacing_max_bitrate_kbps";
+pub const HOST_PACING: &str = "host_adaptive_pacing";
+pub const WIRELESS_PACING: &str = "wireless_adaptive_pacing";
 /// Settings folded into another one (see [`HDR_REQUEST`],
-/// [`BITRATE_ADAPTATION`]).
-pub const FOLDED_KEYS: &[&str] = &[HDR_REQUEST, LINK_RATE, CONGESTION];
+/// [`BITRATE_ADAPTATION`], [`PACKET_PACING`]).
+pub const FOLDED_KEYS: &[&str] = &[
+    HDR_REQUEST,
+    LINK_RATE,
+    CONGESTION,
+    PACING_RATE,
+    HOST_PACING,
+    WIRELESS_PACING,
+];
 /// Adaptive bitrate for the two switches saved in one layer, each `None`
 /// when that layer does not hold it (its earlier default then counts):
 /// congestion control on is `delay`, as it ran together with link-rate
@@ -219,6 +237,61 @@ pub fn fold_bitrate_adaptation(layer: &mut serde_json::Map<String, serde_json::V
     }
     changed
 }
+/// Packet pacing for the retired pacing settings saved in one layer, each
+/// `None` when that layer does not hold it (its earlier default then
+/// counts): a positive rate is the fixed rate; adaptive pacing for every
+/// client and codec (`host_adaptive_pacing`) is `always`; adaptive pacing
+/// switched off for wireless clients (`wireless_adaptive_pacing=false`)
+/// alone is `off`; anything else is `auto`, the default (`None`). An
+/// unreadable value counts as its default, as the host read it.
+pub fn folded_packet_pacing(
+    rate: Option<&str>,
+    host: Option<&str>,
+    wireless: Option<&str>,
+) -> Option<String> {
+    if rate.is_none() && host.is_none() && wireless.is_none() {
+        return None;
+    }
+    if rate.and_then(super::parse_integer).unwrap_or(0) > 0 {
+        return Some(rate.unwrap().to_owned());
+    }
+    let read = |value: Option<&str>, default: bool| {
+        value.and_then(super::parse_boolean).unwrap_or(default)
+    };
+    if read(host, false) {
+        return Some("always".to_owned());
+    }
+    if !read(wireless, true) {
+        return Some("off".to_owned());
+    }
+    None
+}
+/// [`folded_packet_pacing`] over a JSON layer: removes the pacing rate and
+/// the two switches and, unless the layer already holds Packet pacing,
+/// sets it. Returns whether anything changed.
+pub fn fold_packet_pacing(layer: &mut serde_json::Map<String, serde_json::Value>) -> bool {
+    let text = |value: serde_json::Value| match value {
+        serde_json::Value::String(text) => Some(text),
+        serde_json::Value::Null => None,
+        other => Some(other.to_string()),
+    };
+    let rate = layer.remove(PACING_RATE);
+    let host = layer.remove(HOST_PACING);
+    let wireless = layer.remove(WIRELESS_PACING);
+    let changed = rate.is_some() || host.is_some() || wireless.is_some();
+    let (rate, host, wireless) = (
+        rate.and_then(text),
+        host.and_then(text),
+        wireless.and_then(text),
+    );
+    if let Some(folded) =
+        folded_packet_pacing(rate.as_deref(), host.as_deref(), wireless.as_deref())
+        && !layer.contains_key(PACKET_PACING)
+    {
+        layer.insert(PACKET_PACING.to_owned(), folded.into());
+    }
+    changed
+}
 /// Whether `key` is a name the host no longer reads: a removed setting, or
 /// one folded into another. Neither name is used again.
 pub fn retired_name(key: &str) -> bool {
@@ -254,7 +327,8 @@ pub fn folded_in_layer(option: &str, request: &str) -> Option<&'static str> {
 /// host reads now: a renamed setting takes its current name (a value already
 /// under that name wins), a removed one goes, the HDR request folds into the
 /// layer's own Display HDR ([`HDR_REQUEST`] says when it stays), the two
-/// bitrate switches fold into its Adaptive bitrate and retired
+/// bitrate switches fold into its Adaptive bitrate, the pacing rate and
+/// adaptive pacing switches fold into its Packet pacing and retired
 /// values take their replacements. Returns whether anything changed.
 pub fn migrate_overrides(overrides: &mut serde_json::Map<String, serde_json::Value>) -> bool {
     let mut changed = false;
@@ -281,6 +355,7 @@ pub fn migrate_overrides(overrides: &mut serde_json::Map<String, serde_json::Val
         }
     }
     changed |= fold_bitrate_adaptation(overrides);
+    changed |= fold_packet_pacing(overrides);
     let before = overrides.len();
     overrides.retain(|key, _| !removed(key));
     changed |= overrides.len() != before;

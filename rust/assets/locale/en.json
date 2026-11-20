@@ -859,7 +859,7 @@
     "hide_tray_controls": "Hide tray controls",
     "keep_sink_default": "Keep audio sink as default",
     "limit_framerate": "Limit frame rate",
-    "pacing_max_bitrate_kbps": "Pacing maximum bitrate (Kbps)",
+    "packet_pacing": "Packet pacing",
     "packetsize": "Network packet size"
   },
   "index": {

@@ -22,10 +22,10 @@ test('the stored preset is read as the host reads it, in any spelling', () => {
 });
 
 test('choosing a preset keeps the device other overrides', () => {
-  const before = toDraft(client({ config_overrides: { max_bitrate: 20000, host_adaptive_pacing: 'enabled' } }));
+  const before = toDraft(client({ config_overrides: { max_bitrate: 20000, packet_pacing: 'always' } }));
   const after = { ...before, stream_preset: 'lowest_latency' };
   assert.deepEqual(changes(before, after), {
-    config_overrides: { max_bitrate: 20000, host_adaptive_pacing: 'enabled', stream_preset: 'lowest_latency' },
+    config_overrides: { max_bitrate: 20000, packet_pacing: 'always', stream_preset: 'lowest_latency' },
   });
 });
 

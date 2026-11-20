@@ -219,7 +219,7 @@ impl Transport<'_> {
                 &s.launch.warnings,
                 bps,
                 needed,
-                c.integer("pacing_max_bitrate_kbps", 0),
+                c.manual_pacing_kbps().unwrap_or(0),
             );
             if self.reported_pacing != Some(bps) {
                 tracing::info!(
@@ -228,7 +228,7 @@ impl Transport<'_> {
                     link_bps = route.bps,
                     client_link_mbps,
                     client_wireless = s.config.client_wireless,
-                    configured_kbps = c.integer("pacing_max_bitrate_kbps", 0),
+                    configured_kbps = c.manual_pacing_kbps().unwrap_or(0),
                     "network pacing selected"
                 );
                 self.reported_pacing = Some(bps);

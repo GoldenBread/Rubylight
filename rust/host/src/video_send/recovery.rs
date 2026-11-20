@@ -84,7 +84,7 @@ fn select(
     // The client's own port, when it says so (Nightjar, for wired links).
     let client_link = u64::from(session.client_link_mbps()) * 1_000_000;
     let base = network_pacing::rate_bps_following_client(
-        config.integer("pacing_max_bitrate_kbps", 0),
+        config.manual_pacing_kbps().unwrap_or(0),
         bitrate,
         route.bps,
         network_pacing::route_is_wireless(
@@ -163,7 +163,7 @@ pub(crate) fn report(session: &Session, config: &Config, frame: RecoveryFrame) {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
     let pacing_reason = session.keyframe_loss_reason().unwrap_or_else(|| {
-        if config.integer("pacing_max_bitrate_kbps", 0) > 0 {
+        if config.manual_pacing_kbps().is_some() {
             "configured pacing limit"
         } else if config
             .adaptive_packet_pacing(session.config.codec, session.config.client_wireless)

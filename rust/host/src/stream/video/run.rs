@@ -613,9 +613,9 @@ impl SessionThread<'_> {
                 inline_paced |= butterpollo_core::network_pacing::paced(bps, needed);
                 if Instant::now() >= pacing_report_due {
                     pacing_report_due = Instant::now() + Duration::from_secs(2);
-                    butterpollo_core::network_pacing::report_rate(&s.launch.warnings, bps, needed, c.integer("pacing_max_bitrate_kbps", 0));
+                    butterpollo_core::network_pacing::report_rate(&s.launch.warnings, bps, needed, c.manual_pacing_kbps().unwrap_or(0));
                     if reported_pacing != Some(bps) {
-                        tracing::info!(pacing_bps=bps, wire_budget_bps=needed, link_bps=route.bps, client_link_mbps=s.client_link_mbps(), client_wireless=s.config.client_wireless, configured_kbps=c.integer("pacing_max_bitrate_kbps", 0), "network pacing selected");
+                        tracing::info!(pacing_bps=bps, wire_budget_bps=needed, link_bps=route.bps, client_link_mbps=s.client_link_mbps(), client_wireless=s.config.client_wireless, configured_kbps=c.manual_pacing_kbps().unwrap_or(0), "network pacing selected");
                         reported_pacing = Some(bps);
                     }
                 }

@@ -1,0 +1,1 @@
+- **One Packet pacing setting replaces three.** Pacing rate, Adaptive packet pacing and Adaptive packet pacing for Wi-Fi clients are now Packet pacing: Automatic (the default, as before), Always adaptive, Off, or a fixed rate in Kbps. Your saved choices carry over.

@@ -639,46 +639,24 @@ const video: Setting[] = [
     default: 64,
   },
   {
-    key: 'pacing_max_bitrate_kbps',
-    label: 'Pacing rate',
+    key: 'packet_pacing',
+    label: 'Packet pacing',
     description:
-      'A fixed limit, in Kbps, on how fast video packets are sent; the bitrate stays. Leave it at 0 (automatic) unless a known slow link drops bursts: a value turns off adaptive pacing.',
+      'How fast video packets go out. Automatic starts adaptively for a device that reports a Wi-Fi or cellular route and paces the rest to the route; a fixed rate suits a known link that drops bursts.',
     details:
-      'A value here turns off Adaptive packet pacing and Slow down after video loss. Reconnect after saving. 120000 means 120 Mbps. Positive values are hard limits for PyroWave; conventional codecs retain a 1.1-times-bitrate floor. Automatic pacing lets conventional codecs send up to 800 Mbps on wired routes, or twice the bitrate with FEC headroom when this PC is on Wi-Fi. PyroWave starts unmeasured paths near the stream budget and respects the client’s calibrated pace.',
+      'Automatic (the default) gives a device that reports a Wi-Fi or cellular route, such as Nightjar, adaptive pacing on H.264, HEVC and AV1: it starts at twice the encoder bitrate, probes up in small steps while the link stays clean, up to the route limit, and backs off on loss. Always gives every stream, PyroWave included, that controller from the first frame; it adds delay when a stream starts, and probing can still lose packets. Off keeps the route policy for every stream, and Slow down after video loss still applies. A fixed rate in Kbps (120000 means 120 Mbps) takes over pacing and turns the adaptive pacing and Slow down after video loss off; PyroWave treats it as a hard limit, while conventional codecs keep a 1.1-times-bitrate floor and 80% of a known Ethernet link. Reconnect after saving.',
     category: 'video',
     group: 'Bitrate and network',
-    control: { kind: 'number', min: 0, step: 1, unit: 'Kbps' },
-    default: 0,
-    advanced: true,
-  },
-  {
-    key: 'host_adaptive_pacing',
-    label: 'Adaptive packet pacing',
-    description:
-      'Sends video packets slowly at first, then faster, and backs off when the device reports loss. It adds delay when a stream starts; turn it on only for a link that loses bursts.',
-    details:
-      'A manual pacing rate turns it off, and while it is on, Slow down after video loss stays off. Adds startup delay without changing picture bitrate or FPS; probing can still lose packets. Off by default, including for PyroWave. Changes apply on the next connection.',
-    category: 'video',
-    group: 'Bitrate and network',
-    control: { kind: 'toggle' },
-    default: false,
-    inactiveHint: "A Pacing rate is set, which turns adaptive pacing off. Set the Pacing rate to 0 to use this setting.",
-    visibleWhen: (values) => Number(values.pacing_max_bitrate_kbps ?? 0) <= 0,
-    advanced: true,
-  },
-  {
-    key: 'wireless_adaptive_pacing',
-    label: 'Adaptive packet pacing for Wi-Fi clients',
-    description:
-      'Paces video adaptively from the first frame, not after the first lost frames, for a client that reports Wi-Fi or cellular. Leave it on: streams lost fewer frames on weak Wi-Fi.',
-    details:
-      'Applies to H.264, HEVC and AV1 for clients that report a wireless route, such as Nightjar. Starts at twice the encoder bitrate, probes up in small steps while the link stays clean, up to the route limit, and backs off on loss, without changing picture bitrate or FPS. Slow down after video loss does not run on such a stream. PyroWave keeps its own pacing. Changes apply on the next connection. A manual pacing rate turns it off. With this setting off, H.264, HEVC and AV1 are still paced with the Wi-Fi route policy (twice the encoder bitrate, no probing) from the first frame; a manual pacing rate always wins. With an RX 7900 XT host and a Ryzen 7 8845HS laptop on a weak 2.4 GHz Wi-Fi link, it cut unrecoverable frames from 61 to 15.7 per 90-second stream; on a clean 5 GHz link it changed nothing.',
-    category: 'video',
-    group: 'Bitrate and network',
-    control: { kind: 'toggle' },
-    default: true,
-    inactiveHint: "A Pacing rate is set, which turns adaptive pacing off. Set the Pacing rate to 0 to use this setting.",
-    visibleWhen: (values) => Number(values.pacing_max_bitrate_kbps ?? 0) <= 0,
+    control: {
+      kind: 'text',
+      placeholder: '120000',
+      presets: [
+        { value: 'auto', label: 'Automatic (adaptive for Wi-Fi devices)' },
+        { value: 'always', label: 'Always adaptive' },
+        { value: 'off', label: 'Off' },
+      ],
+    },
+    default: 'auto',
     advanced: true,
   },
   {
@@ -687,13 +665,17 @@ const video: Setting[] = [
     description:
       'After a lost keyframe (a full picture the stream restarts from) or repeated lost frames, spaces packets more evenly for the rest of the stream; the bitrate stays. Leave it on.',
     details:
-      'A manual pacing rate or Adaptive packet pacing turns it off. It also stays off on a stream that Adaptive packet pacing for Wi-Fi clients paces. Activates after a keyframe the client could not rebuild, a repeated request for the keyframe it was just sent (only from clients that do not report their own losses; a decoder that asks twice is not network loss), or three distinct unrecoverable frames within two seconds. Changes Rubylight makes itself (Alt+Tab, a bitrate change, a restarted capture or encoder) do not count. Frames this PC could not send whole, such as when the network send buffer fills at a high pacing rate, do: three within two seconds, or one keyframe; when only this PC saw that loss, it is lifted after 10 clean seconds, unless the stream already slowed down once (an earlier lift, or a remembered route), and it is never remembered. Loss the client reported is remembered for this device, address and network adapter for 24 hours, with a fast-rate retry every second eligible reconnect; a lost first keyframe alone is lifted after 10 clean seconds and not remembered. Reset remembered routes in Devices. Paces at twice the encoder bitrate, with room for error correction. Isolated ordinary-frame losses and fully repaired frames keep the fast rate.',
+      'A fixed Packet pacing rate or the adaptive controller (Packet pacing Always, or Automatic on a device that reports Wi-Fi or cellular) turns it off. Activates after a keyframe the client could not rebuild, a repeated request for the keyframe it was just sent (only from clients that do not report their own losses; a decoder that asks twice is not network loss), or three distinct unrecoverable frames within two seconds. Changes Rubylight makes itself (Alt+Tab, a bitrate change, a restarted capture or encoder) do not count. Frames this PC could not send whole, such as when the network send buffer fills at a high pacing rate, do: three within two seconds, or one keyframe; when only this PC saw that loss, it is lifted after 10 clean seconds, unless the stream already slowed down once (an earlier lift, or a remembered route), and it is never remembered. Loss the client reported is remembered for this device, address and network adapter for 24 hours, with a fast-rate retry every second eligible reconnect; a lost first keyframe alone is lifted after 10 clean seconds and not remembered. Reset remembered routes in Devices. Paces at twice the encoder bitrate, with room for error correction. Isolated ordinary-frame losses and fully repaired frames keep the fast rate.',
     category: 'video',
     group: 'Bitrate and network',
     control: { kind: 'toggle' },
     default: true,
-    inactiveHint: "Adaptive packet pacing is on, or a Pacing rate is set, and each one keeps this off. Change them to use this setting.",
-    visibleWhen: (values) => !flag(values, 'host_adaptive_pacing', false) && Number(values.pacing_max_bitrate_kbps ?? 0) <= 0,
+    inactiveHint:
+      'A fixed Packet pacing rate is set, or the adaptive controller owns pacing (Packet pacing Always, or Automatic on a device that reports Wi-Fi or cellular), and each one keeps this off. Change Packet pacing to use this setting.',
+    visibleWhen: (values) => {
+      const pacing = read(values, 'packet_pacing', 'auto');
+      return pacing !== 'always' && !(pacing !== 'off' && Number(pacing) > 0);
+    },
     advanced: true,
   },
   {

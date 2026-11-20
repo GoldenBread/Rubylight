@@ -465,11 +465,10 @@ test('bitrate and pacing controllers say which one wins', () => {
   // The finer points live behind More; descriptions are capped at two short sentences.
   const says = (key, pattern) => assert.match(settings.get(key).details, pattern, key);
   says('bitrate_adaptation', /A device that sets its own bitrate takes over/);
-  says('pacing_max_bitrate_kbps', /turns off Adaptive packet pacing and Slow down after video loss/);
-  says('host_adaptive_pacing', /A manual pacing rate turns it off/);
-  says('keyframe_loss_pacing', /A manual pacing rate or Adaptive packet pacing turns it off/);
+  says('packet_pacing', /turns the adaptive pacing and Slow down after video loss off/);
+  says('keyframe_loss_pacing', /A fixed Packet pacing rate or the adaptive controller/);
   // The retired host bitrate controller no longer switches the others off.
-  for (const key of ['host_adaptive_pacing', 'wireless_adaptive_pacing', 'keyframe_loss_pacing', 'bitrate_adaptation']) {
+  for (const key of ['packet_pacing', 'keyframe_loss_pacing', 'bitrate_adaptation']) {
     const setting = settings.get(key);
     assert.doesNotMatch(`${setting.details} ${setting.inactiveHint ?? ''}`, /Adapt bitrate on this PC/, key);
     assert.equal(setting.visibleWhen?.({ host_adaptive_bitrate: true }) ?? true, true, key);
@@ -1124,9 +1123,8 @@ test('a row that does nothing in the current setup says why', () => {
     ['auto_capture_sink', { virtual_sink: 'Speakers' }, {}],
     ['frame_limiter_enable', { frame_limiter_provider: 'none' }, {}],
     ['frame_limiter_fps_limit', { frame_limiter_provider: 'disabled' }, {}],
-    ['host_adaptive_pacing', { pacing_max_bitrate_kbps: 50000 }, {}],
-    ['wireless_adaptive_pacing', { pacing_max_bitrate_kbps: 50000 }, {}],
-    ['keyframe_loss_pacing', { host_adaptive_pacing: true }, {}],
+    ['keyframe_loss_pacing', { packet_pacing: 'always' }, {}],
+    ['keyframe_loss_pacing', { packet_pacing: '50000' }, {}],
     ['playnite_sync_categories', { playnite_enabled: true, playnite_auto_sync: true, playnite_sync_all_installed: true },
       { playnite_enabled: true, playnite_auto_sync: true, playnite_sync_all_installed: false }],
     ['playnite_sync_plugins', { playnite_enabled: true, playnite_auto_sync: true },

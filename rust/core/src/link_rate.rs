@@ -21,7 +21,7 @@
 //! packets for the whole stream. Its rate control holds every picture to one
 //! frame's budget, so a cut shrinks every picture; the pace shrinks with it only
 //! where it follows the stream's demand, not a client pace hint,
-//! `pacing_max_bitrate_kbps` or a wired client link. With record framing only a
+//! a fixed `packet_pacing` rate or a wired client link. With record framing only a
 //! lost coarse block loses the frame ([`LinkRate::frame_lost`]). PyroWave stops
 //! at its test-scene detail level, and its keyframe requests are no evidence:
 //! every picture is intra, so the session passes none of them on, and a

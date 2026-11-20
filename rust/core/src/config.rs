@@ -21,10 +21,12 @@ pub use folders::{SharedFolderConfig, valid_folder_id, valid_folder_root};
 pub use overrides::override_allowed;
 use retired::retirement;
 pub use retired::{
-    BITRATE_ADAPTATION, FOLDED_KEYS, fold_bitrate_adaptation, folded_bitrate_adaptation, HDR_OPTION, HDR_REQUEST, REMOVED_APP_KEYS, REMOVED_KEYS, REMOVED_PREFIXES,
+    BITRATE_ADAPTATION, FOLDED_KEYS, fold_bitrate_adaptation, folded_bitrate_adaptation,
+    fold_packet_pacing, folded_packet_pacing, HDR_OPTION, HDR_REQUEST, HOST_PACING, LINK_RATE,
+    PACKET_PACING, PACING_RATE, REMOVED_APP_KEYS, REMOVED_KEYS, REMOVED_PREFIXES,
     RENAMED_APP_SWITCHES, RENAMED_KEYS, RETIRED_SETTINGS, RETIRED_VALUES, Retired, RetiredSetting,
-    SPLIT_KEYS, current_name, folded_hdr, folded_in_layer, migrate_app, migrate_overrides, removed,
-    replace_retired, replacement, retired_name, retired_warning,
+    SPLIT_KEYS, WIRELESS_PACING, current_name, folded_hdr, folded_in_layer, migrate_app,
+    migrate_overrides, removed, replace_retired, replacement, retired_name, retired_warning,
 };
 use text::{bracket_depth, decode, strip_comment};
 pub use values::{
@@ -41,6 +43,20 @@ pub enum BitrateAdaptation {
     On,
     /// As `On`, and also lowered as network delay builds (congestion control).
     Delay,
+}
+
+/// Packet pacing ([`Config::packet_pacing`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PacketPacing {
+    /// Adaptive pacing for clients that report a Wi-Fi or cellular route on
+    /// H.264, HEVC and AV1; every other stream keeps the route policy.
+    Auto,
+    /// Adaptive pacing for every client and codec, PyroWave included.
+    Always,
+    /// No adaptive pacing; the loss latch may still pace after video loss.
+    Off,
+    /// A fixed send rate in kbps that takes over pacing.
+    Fixed(i64),
 }
 
 pub const HARDWARE_METRICS: &[&str] = &[
@@ -203,6 +219,16 @@ impl Config {
             self.values
                 .insert(BITRATE_ADAPTATION.to_owned(), folded.to_owned());
         }
+        // The pacing rate and the two adaptive pacing switches fold into
+        // Packet pacing; a value already saved under it wins.
+        let rate = self.values.remove(retired::PACING_RATE);
+        let host = self.values.remove(retired::HOST_PACING);
+        let wireless = self.values.remove(retired::WIRELESS_PACING);
+        if let Some(folded) = folded_packet_pacing(rate.as_deref(), host.as_deref(), wireless.as_deref())
+            && !self.values.contains_key(PACKET_PACING)
+        {
+            self.values.insert(PACKET_PACING.to_owned(), folded);
+        }
     }
     pub fn load(path: &Path) -> Result<Self> {
         Ok(Self::load_retiring(path)?.0)
@@ -270,29 +296,55 @@ impl Config {
             (seconds != 0).then(|| std::time::Duration::from_secs(seconds as u64))
         }
     }
-    /// Experimental packet-rate adaptation is explicitly enabled per stream.
-    /// Manual pacing owns its own limit;
-    /// Both conventional and PyroWave streams use the loss controller when
-    /// `host_adaptive_pacing` is set. A client that reports a Wi-Fi or cellular
-    /// route (`client_wireless`) gets it by default on H.264, HEVC and AV1
-    /// (codec 0-2), unless `wireless_adaptive_pacing` is off; PyroWave keeps its
-    /// calibrated-pace policy.
-    pub fn adaptive_packet_pacing(&self, codec: u8, client_wireless: bool) -> bool {
-        self.pacing_controller_chosen(codec, client_wireless)
-            && self.integer("pacing_max_bitrate_kbps", 0) <= 0
-            && codec <= 3
+    /// Packet pacing: `auto` (the default: adaptive pacing for a client that
+    /// reports a Wi-Fi or cellular route on H.264, HEVC and AV1), `always`
+    /// (every client and codec, PyroWave included), `off`, or a fixed rate
+    /// in kbps. An unreadable value is reported and reads as `auto`; a rate
+    /// of 0 or below is no rate, as the earlier pacing limit read it.
+    pub fn packet_pacing(&self) -> PacketPacing {
+        let value = self.get(PACKET_PACING, "auto");
+        match unquote(value.trim()).to_ascii_lowercase().as_str() {
+            "auto" => PacketPacing::Auto,
+            "always" => PacketPacing::Always,
+            "off" => PacketPacing::Off,
+            _ => match parse_integer(value) {
+                Some(rate) if rate > 0 => PacketPacing::Fixed(rate),
+                // A rate of 0 or below is no rate, as the earlier pacing
+                // limit read it.
+                Some(_) => PacketPacing::Auto,
+                None => {
+                    invalid(PACKET_PACING, value);
+                    PacketPacing::Auto
+                }
+            },
+        }
     }
-    fn pacing_controller_chosen(&self, codec: u8, client_wireless: bool) -> bool {
-        self.boolean("host_adaptive_pacing", false)
-            || (client_wireless && codec <= 2 && self.boolean("wireless_adaptive_pacing", true))
+    /// A fixed packet pacing rate in kbps, `None` without one. Packet pacing
+    /// `always` keeps the adaptive controller on all codecs, `auto` for
+    /// wireless clients on H.264, HEVC and AV1, as the earlier switches did.
+    pub fn adaptive_packet_pacing(&self, codec: u8, client_wireless: bool) -> bool {
+        match self.packet_pacing() {
+            PacketPacing::Always => codec <= 3,
+            PacketPacing::Auto => client_wireless && codec <= 2,
+            PacketPacing::Off | PacketPacing::Fixed(_) => false,
+        }
+    }
+    /// The fixed packet pacing rate in kbps, `None` when Packet pacing is
+    /// not a positive rate. A fixed rate owns pacing: adaptive pacing and
+    /// the loss latch both stay off.
+    pub fn manual_pacing_kbps(&self) -> Option<i64> {
+        match self.packet_pacing() {
+            PacketPacing::Fixed(rate) => Some(rate),
+            _ => None,
+        }
     }
     /// Pace like Wi-Fi after a lost keyframe or repeated frame loss (on by default). A
-    /// manual pacing limit keeps its own policy, and so does a stream the
+    /// manual pacing rate keeps its own policy, and so does a stream the
     /// adaptive pacing controller owns.
     pub fn keyframe_loss_pacing(&self, codec: u8, client_wireless: bool) -> bool {
         self.boolean("keyframe_loss_pacing", true)
-            && self.integer("pacing_max_bitrate_kbps", 0) <= 0
-            && !self.pacing_controller_chosen(codec, client_wireless)
+            && self.manual_pacing_kbps().is_none()
+            && !self.adaptive_packet_pacing(codec, client_wireless)
     }
     /// Adaptive bitrate: `off`, `on` (the default: lower the bitrate on loss
     /// error correction cannot repair) or `delay` (also from rising network
@@ -780,6 +832,9 @@ impl Config {
         // The two bitrate switches, as an earlier console or an API caller
         // sends them, fold into Adaptive bitrate unless that is sent too.
         fold_bitrate_adaptation(&mut object);
+        // The pacing rate and the two adaptive pacing switches fold into
+        // Packet pacing unless that is sent too.
+        fold_packet_pacing(&mut object);
         object.retain(|key, _| !removed(key));
         let object = &object;
         let mut next = self.clone();

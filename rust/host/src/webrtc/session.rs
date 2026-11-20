@@ -1202,7 +1202,7 @@ fn start_live(
     let (configured_kbps, paced, loss_permille) = {
         let config = h.config.read().unwrap();
         (
-            config.integer("pacing_max_bitrate_kbps", 0),
+            config.manual_pacing_kbps().unwrap_or(0),
             config.webrtc_pacing(),
             config.webrtc_loss_permille(),
         )
