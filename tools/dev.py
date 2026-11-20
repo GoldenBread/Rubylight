@@ -431,6 +431,22 @@ def client_env(target):
     return env
 
 
+# cmd takes at most 8191 characters on its command line ("Die Befehlszeile ist zu lang" with 170 test classes).
+CMD_LINE_LIMIT = 8000
+
+
+def gradle_command(root, items):
+    """The app tests for these classes, or the whole suite when there are none or their filters do not fit
+    on cmd's command line. The whole suite lints too, as CI does: a NewApi error once passed here and failed CI."""
+    # By its full path: with NoDefaultCurrentDirectoryInExePath set, cmd
+    # doesn't look in its working folder for a bare gradlew.bat.
+    command = ['cmd', '/c', str(root / 'client' / 'gradlew.bat'), '--no-daemon', '--max-workers=2', GRADLE_TASK]
+    filters = [a for t in items for a in ('--tests', t)]
+    if filters and len(subprocess.list2cmdline(command + filters)) <= CMD_LINE_LIMIT:
+        return command + filters
+    return command + [GRADLE_LINT_TASK]
+
+
 def run(command, log, cwd, env=None, shell=False):
     with open(log, 'a', encoding='utf-8', errors='replace') as f:
         f.write(f'\n== {command if isinstance(command, str) else " ".join(map(str, command))}\n')
@@ -556,13 +572,10 @@ def execute(check, root, log, target, fresh_dependencies=False):
         env = {k: v for k, v in os.environ.items() if k.upper() != 'CARGO_TARGET_DIR'}
         # Its Rust engine builds beside the Cargo stages: at most a stage's share of the CPU.
         env['CARGO_BUILD_JOBS'] = str(build_lock.CARGO_STAGE_THREADS)
-        filters = [a for t in check.items for a in ('--tests', t)]
-        # By its full path: with NoDefaultCurrentDirectoryInExePath set, cmd
-        # doesn't look in its working folder for a bare gradlew.bat.
-        # A full run lints too, as CI does: a NewApi error once passed here and failed CI.
-        lint = [] if filters else [GRADLE_LINT_TASK]
-        return run(['cmd', '/c', str(root / 'client' / 'gradlew.bat'), '--no-daemon', '--max-workers=2', GRADLE_TASK, *lint, *filters],
-                   log, root / 'client', env) == 0
+        command = gradle_command(root, check.items)
+        if check.items and '--tests' not in command:
+            print(f'app: {len(check.items)} test classes do not fit on a cmd command line: the whole suite runs')
+        return run(command, log, root / 'client', env) == 0
     if check.kind == 'web':
         web = root / 'rust/web'
         if not web_dependencies(web, log, fresh_dependencies):

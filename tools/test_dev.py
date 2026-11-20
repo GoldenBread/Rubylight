@@ -382,6 +382,27 @@ class Execution(unittest.TestCase):
                     self.assertFalse(dev.web_dependencies(web, web / 'log', refresh=True))
                 self.assertFalse((web / 'node_modules/.rubylight-dependencies.json').exists())
 
+    def test_app_tests_run_by_class_while_their_filters_fit_on_a_cmd_command_line(self):
+        command = dev.gradle_command(ROOT, ['com.limelight.GameQualityTest'])
+        self.assertEqual(command[-2:], ['--tests', 'com.limelight.GameQualityTest'])
+        self.assertNotIn(dev.GRADLE_LINT_TASK, command)
+        # 170 classes once made cmd refuse the line ("Die Befehlszeile ist zu lang"): the whole suite runs, linted.
+        many = [f'com.limelight.binding.video.MediaCodecSomethingLongerTest{i}' for i in range(170)]
+        for items in (many, []):
+            command = dev.gradle_command(ROOT, items)
+            self.assertNotIn('--tests', command)
+            self.assertEqual(command[-2:], [dev.GRADLE_TASK, dev.GRADLE_LINT_TASK])
+            self.assertLessEqual(len(dev.subprocess.list2cmdline(command)), dev.CMD_LINE_LIMIT)
+
+    def test_an_app_class_list_too_long_for_cmd_runs_the_whole_suite(self):
+        many = [f'com.limelight.binding.video.MediaCodecSomethingLongerTest{i}' for i in range(170)]
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(dev, 'run', return_value=0) as run, \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertTrue(dev.execute(dev.Check('app', 'gradle', many), ROOT,
+                                        pathlib.Path(directory) / 'check.log', pathlib.Path(directory)))
+        self.assertNotIn('--tests', run.call_args.args[0])
+        self.assertIn('the whole suite runs', out.getvalue())
+
 
 if __name__ == '__main__':
     unittest.main()
