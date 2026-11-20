@@ -1286,10 +1286,7 @@ impl Media {
                     // Present-to-sent reports for a client that asked (0x5536).
                     // Unreliable: a lost one costs the client those samples only.
                     if s.host_timings.queued() {
-                        loop {
-                            let Some(report) = s.host_timings.take_report() else {
-                                break;
-                            };
+                        while let Some(report) = s.host_timings.take_report() {
                             if let Ok(message) = p.encrypt(
                                 &s,
                                 butterpollo_core::host_timing::HOST_TIMING_MESSAGE_TYPE,
@@ -1419,10 +1416,7 @@ impl Media {
                     }
                     // Rate change answers (0x553C), reliable and in order.
                     if s.rate_changes.queued() {
-                        loop {
-                            let Some(result) = s.rate_changes.take() else {
-                                break;
-                            };
+                        while let Some(result) = s.rate_changes.take() {
                             match p.encrypt(
                                 &s,
                                 butterpollo_core::rate_change::RATE_CHANGE_MESSAGE_TYPE,

@@ -117,7 +117,7 @@ fn a_pacing_snapshot_reads_what_the_frame_rates_come_from() -> Result<()> {
     let pacing = latest.pacing_snapshot();
     // The identity-checked answer stays its own read, beside the snapshot.
     assert_eq!(latest.extends_capture(&focus), Some(false));
-    assert_eq!(pacing.extends_picture, false);
+    assert!(!pacing.extends_picture);
     // The published picture is the latest one, and every rate read 16 ms.
     let frame = Duration::from_millis(16);
     assert_eq!(pacing.picture_start, Some(ms(640)));
@@ -131,7 +131,7 @@ fn a_pacing_snapshot_reads_what_the_frame_rates_come_from() -> Result<()> {
     let other = Arc::new(41u8);
     latest.publish_focus(other.clone(), ms(648), Some(false))?;
     let pacing = latest.pacing_snapshot();
-    assert_eq!(pacing.extends_picture, true);
+    assert!(pacing.extends_picture);
     assert_eq!(latest.extends_capture(&other), Some(true));
     assert_eq!(latest.extends_capture(&focus), None);
     Ok(())

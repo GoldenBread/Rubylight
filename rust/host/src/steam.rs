@@ -16,6 +16,11 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
+/// A file's parse, keyed by path, with the size and time it was read at.
+type StampCache<T> = Mutex<HashMap<PathBuf, ((u64, SystemTime), T)>>;
+/// A folder's listing, keyed by path, with the time it was read at.
+type TimeCache<T> = Mutex<HashMap<PathBuf, (SystemTime, T)>>;
+
 pub struct Outcome {
     pub changed: bool,
     pub games: usize,
@@ -309,8 +314,7 @@ fn fingerprint(settings: &Settings, roots: &[PathBuf]) -> u64 {
 /// was read. The file is parsed again only when that moved, which happens when a library folder
 /// comes or goes. Only the paths are cached: whether a folder is there is checked on every call,
 /// as a drive can appear after the file was read. A read that fails is not cached.
-static VDF_LIBRARIES: LazyLock<Mutex<HashMap<PathBuf, ((u64, SystemTime), Vec<String>)>>> =
-    LazyLock::new(Default::default);
+static VDF_LIBRARIES: LazyLock<StampCache<Vec<String>>> = LazyLock::new(Default::default);
 fn vdf_libraries(apps: &Path) -> Vec<PathBuf> {
     let file = apps.join("libraryfolders.vdf");
     let stamp = std::fs::metadata(&file)
@@ -365,8 +369,7 @@ fn existing_libraries(paths: &[String]) -> Vec<PathBuf> {
 /// The user folders a Steam root's `userdata` holds, with the folder's time they were read.
 /// The folder's time moves when a user folder comes or goes, so they are read again only then.
 /// A folder whose time cannot be read is not cached.
-static USERS: LazyLock<Mutex<HashMap<PathBuf, (SystemTime, Vec<PathBuf>)>>> =
-    LazyLock::new(Default::default);
+static USERS: LazyLock<TimeCache<Vec<PathBuf>>> = LazyLock::new(Default::default);
 fn users_of(userdata: &Path) -> Vec<PathBuf> {
     let Some(modified) = std::fs::metadata(userdata)
         .ok()
@@ -397,8 +400,7 @@ fn user_paths(userdata: &Path) -> Option<Vec<PathBuf>> {
 /// are read again only when that moved, which happens when a manifest appears, is renamed or
 /// goes; their sizes and times, which the fingerprint stamps itself, are unaffected. A folder
 /// whose time cannot be read is not cached.
-static MANIFESTS: LazyLock<Mutex<HashMap<PathBuf, (SystemTime, Vec<PathBuf>)>>> =
-    LazyLock::new(Default::default);
+static MANIFESTS: LazyLock<TimeCache<Vec<PathBuf>>> = LazyLock::new(Default::default);
 fn manifests_of(library: &Path) -> Vec<PathBuf> {
     let Some(modified) = std::fs::metadata(library)
         .ok()
