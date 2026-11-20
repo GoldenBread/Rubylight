@@ -80,6 +80,19 @@ static void testSmoothModesKeepAStreamFrameOfJitter() {
     balanced.observeVsync(epoch);
     assert(balanced.plan(1'000'000, epoch + ms).targetNs == epoch + 10 * ms);
 
+    // At a refresh that is no whole multiple of the stream's rate a stream frame would add more
+    // delay than it buys: a refresh, as before (40 fps on 100 Hz, 10 fps on 60 Hz).
+    Timing between;
+    between.configure(Timing::Mode::Smoothness, 10 * ms);
+    between.setStreamInterval(25 * ms);
+    between.observeVsync(epoch);
+    assert(between.plan(1'000'000, epoch + ms).targetNs == epoch + 20 * ms);
+    Timing tenFps;
+    tenFps.configure(Timing::Mode::CapFps, 16'666'667);
+    tenFps.setStreamInterval(100 * ms);
+    tenFps.observeVsync(epoch);
+    assert(tenFps.plan(1'000'000, epoch + ms).targetNs == epoch + 33'333'334);
+
     // An interval no stream has keeps a refresh, as before one was given.
     Timing unknown;
     unknown.configure(Timing::Mode::Smoothness, 10 * ms);

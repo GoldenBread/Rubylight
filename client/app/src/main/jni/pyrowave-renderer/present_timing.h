@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -40,8 +41,9 @@ public:
         clearTimeline();
     }
 
-    // The stream's frame interval: Smoothest video and Balanced with FPS limit keep a frame of
-    // jitter in hand (cushionNs). Unknown (0) keeps a refresh.
+    // The stream's frame interval: on a screen at 2 to 4 times the stream's rate Smoothest video
+    // and Balanced with FPS limit keep a stream frame of jitter in hand (cushionNs). Unknown (0)
+    // keeps a refresh.
     void setStreamInterval(int64_t streamIntervalNs) {
         streamIntervalNs_ = validPeriod(streamIntervalNs) ? streamIntervalNs : 0;
     }
@@ -224,13 +226,26 @@ private:
     int64_t maximumLeadNs() const { return std::min<int64_t>(periodNs_ * 2, 50'000'000); }
     int64_t pauseGapNs() const { return std::max<int64_t>(100'000'000, periodNs_ * 3); }
     int64_t maximumAheadNs() const { return std::max<int64_t>({periodNs_ * 4, cushionNs() * 4, 50'000'000}); }
-    // Smoothest video and Balanced with FPS limit plan each frame a stream frame past the lead, so
-    // a frame up to that late still makes its refresh on any screen, as on one at the stream's rate,
-    // where that is a refresh. One refresh would keep only half a frame at 60 fps on 120 Hz.
-    // Balanced keeps none.
+    // Smoothest video and Balanced with FPS limit plan each frame a refresh past the lead, and on a
+    // screen at 2 to 4 times the stream's rate the refreshes a frame stays there, a stream frame: a
+    // frame up to that late still makes its refresh, as on a screen at the stream's rate, where a
+    // refresh is a frame. One refresh would keep only half a frame at 60 fps on 120 Hz. At any other
+    // rate a stream frame adds more delay than it buys (25 ms more at 24 fps on 60 Hz), and a
+    // 10 fps stream would wait 100 ms. Balanced keeps none.
     int64_t cushionNs() const {
         if (mode_ != Mode::Smoothness && mode_ != Mode::CapFps) return 0;
-        return std::max(periodNs_, streamIntervalNs_);
+        return periodNs_ * heldRefreshes();
+    }
+    // FramePacingPolicy.refreshesPerFrame's rule: the multiple the refresh is of the stream's rate,
+    // 2 to 4 to within half a hertz per multiple, else 1 (also without a stream interval)
+    int heldRefreshes() const {
+        if (streamIntervalNs_ <= 0) return 1;
+        const double refreshHz = 1e9 / double(periodNs_);
+        const double fps = 1e9 / double(streamIntervalNs_);
+        for (int k = 2; k <= 4; ++k) {
+            if (std::fabs(refreshHz - fps * k) <= 0.5 * k) return k;
+        }
+        return 1;
     }
     int64_t nextVsync(int64_t timeNs) const {
         if (phaseNs_ == 0) return timeNs;
