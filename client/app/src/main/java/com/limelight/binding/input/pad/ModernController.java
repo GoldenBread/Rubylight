@@ -381,8 +381,10 @@ public final class ModernController {
 
     /** Forgets every saved modern layout, for all games and for each game; Reset means default, not the old classic layout. */
     public static void clearLayouts(Context context) {
+        // The carry-over stays done, and the retired style stays read, so a reset means the defaults.
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear()
-                .putBoolean("classic-migrated", true).apply();
+                .putBoolean(ClassicLayoutMigration.MIGRATED, true)
+                .putBoolean(ClassicLayoutMigration.STYLE_RETIRED, true).apply();
     }
 
     /**

@@ -115,7 +115,7 @@ public class ClassicLayoutMigrationTest {
 
     @Test public void aPlayerWhoPickedThisControllerOrResetTheLayoutGetsNothingClassic() {
         classic.edit().putString("13", RIGHT_STICK).commit();
-        ClassicLayoutMigration.skip(context);
+        ClassicLayoutMigration.retireStyle(context, true, false);
         ClassicLayoutMigration.carryOverOnce(context, store, false);
         assertFalse(store.contains(PadLayoutKeys.legacyKey(null)));
 
@@ -142,8 +142,15 @@ public class ClassicLayoutMigrationTest {
     private static final String EARLIER = "v1|RIGHT_STICK,0.1000,0.5000,1.000,100,0";
 
     private void retire(String style) {
-        android.preference.PreferenceManager.getDefaultSharedPreferences(context).edit()
-                .putString("list_osc_style", style).commit();
+        retire(style, false);
+    }
+
+    /** The first reading of the settings by this version, with this stored style (null for none) and Nintendo layout. */
+    private void retire(String style, boolean flip) {
+        SharedPreferences.Editor edit = android.preference.PreferenceManager.getDefaultSharedPreferences(context).edit()
+                .clear().putBoolean("checkbox_flip_face_buttons", flip);
+        if (style != null) edit.putString("list_osc_style", style);
+        edit.commit();
         PreferenceConfiguration.readPreferences(context);
     }
 
@@ -194,9 +201,45 @@ public class ClassicLayoutMigrationTest {
     @Test public void aClassicPlayerWithTheNintendoLayoutKeepsBAtTheBottomOfTheDefaults() {
         // Nothing classic was arranged: the classic defaults sent B from the bottom, A from the right, Y from the
         // left and X from the top.
-        retire("classic");
+        retire("classic", true);
         ClassicLayoutMigration.carryOverOnce(context, store, true);
-        PadLayout layout = shared();
+        assertSwappedDefaults(shared());
+        assertFalse(store.contains(ClassicLayoutMigration.CLASSIC_STYLE));
+
+        // An install that never stored a style had Classic, the default: the same.
+        store.edit().clear().commit();
+        retire(null, true);
+        assertTrue(store.getBoolean(ClassicLayoutMigration.CLASSIC_STYLE, false));
+        ClassicLayoutMigration.carryOverOnce(context, store, true);
+        assertSwappedDefaults(shared());
+
+        // The setting as it was when the classic controller went away decides, not a later change.
+        store.edit().clear().commit();
+        retire(null, true);
+        ClassicLayoutMigration.carryOverOnce(context, store, false);
+        assertSwappedDefaults(shared());
+    }
+
+    @Test public void aFreshInstallKeepsThePlainDefaults() {
+        // Its first reading of the settings comes before anyone can turn the Nintendo layout on.
+        retire(null, false);
+        assertTrue(store.getBoolean(ClassicLayoutMigration.STYLE_RETIRED, false));
+        // Turned on later, it is read again but decides nothing more.
+        android.preference.PreferenceManager.getDefaultSharedPreferences(context).edit()
+                .putBoolean("checkbox_flip_face_buttons", true).commit();
+        PreferenceConfiguration.readPreferences(context);
+        ClassicLayoutMigration.carryOverOnce(context, store, true);
+        assertFalse(store.contains(PadLayoutKeys.legacyKey(null)));
+        assertTrue(store.getBoolean(ClassicLayoutMigration.MIGRATED, false));
+
+        // A reset of the layouts keeps the style read, so the defaults stay plain.
+        ModernController.clearLayouts(context);
+        PreferenceConfiguration.readPreferences(context);
+        assertFalse(store.contains(ClassicLayoutMigration.CLASSIC_STYLE));
+        assertTrue(store.getBoolean(ClassicLayoutMigration.STYLE_RETIRED, false));
+    }
+
+    private void assertSwappedDefaults(PadLayout layout) {
         assertTrue(layout.isSplit(PadLayout.Control.FACE));
         PadLayout plain = new PadLayout();
         plain.split(PadLayout.Control.FACE, WIDTH, HEIGHT, DENSITY);
@@ -205,27 +248,22 @@ public class ClassicLayoutMigrationTest {
         assertBox("left sends Y", box(plain, PadLayout.Control.X), box(layout, PadLayout.Control.Y));
         assertBox("top sends X", box(plain, PadLayout.Control.Y), box(layout, PadLayout.Control.X));
         assertEquals(PadLayout.Glyph.XBOX, layout.glyph());
-        assertFalse(store.contains(ClassicLayoutMigration.CLASSIC_STYLE));
     }
 
     @Test public void theNintendoLayoutLeavesTheDefaultsOfEveryoneElseAlone() {
         // A player who had picked this controller: it never swapped its buttons on screen.
-        retire("modern");
-        ClassicLayoutMigration.carryOverOnce(context, store, true);
-        assertFalse(store.contains(PadLayoutKeys.legacyKey(null)));
-        // No stored style, as on a fresh install: nothing tells a classic player, so the defaults stay.
-        store.edit().clear().commit();
+        retire("modern", true);
         ClassicLayoutMigration.carryOverOnce(context, store, true);
         assertFalse(store.contains(PadLayoutKeys.legacyKey(null)));
         // A classic player without the setting keeps the plain defaults.
         store.edit().clear().commit();
-        retire("classic");
+        retire("classic", false);
         ClassicLayoutMigration.carryOverOnce(context, store, false);
         assertFalse(store.contains(PadLayoutKeys.legacyKey(null)));
     }
 
     @Test public void aMigratedNintendoDefaultSendsBFromTheBottom() {
-        retire("classic");
+        retire("classic", true);
         PreferenceConfiguration prefs = new PreferenceConfiguration();
         prefs.flipFaceButtons = true;
         ModernController controller = controller(frame(), prefs);

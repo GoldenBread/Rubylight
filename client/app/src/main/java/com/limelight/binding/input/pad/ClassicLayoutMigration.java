@@ -36,6 +36,13 @@ public final class ClassicLayoutMigration {
      * over once more even when an earlier carry-over set {@link #MIGRATED}. Cleared by that carry-over.
      */
     static final String CLASSIC_STYLE = "classic-style";
+    /** The Nintendo button layout setting when the style was retired, which the classic controller then followed. */
+    static final String CLASSIC_FLIP = "classic-flip";
+    /**
+     * Set once the retired Controller style has been read, at the first reading of the settings by this version, so
+     * the decision is taken once; {@link ModernController#clearLayouts} keeps it.
+     */
+    static final String STYLE_RETIRED = "style-retired";
 
     // The classic controller's element ids (its VirtualControllerElement.EID_*), as its preferences stored them.
     private static final int DPAD = 1, LT = 2, RT = 3, LB = 4, RB = 5, A = 6, B = 7, X = 8, Y = 9,
@@ -73,7 +80,10 @@ public final class ClassicLayoutMigration {
     static void carryOverOnce(Context context, SharedPreferences store, boolean swapFaces) {
         boolean earlier = store.getBoolean(MIGRATED, false), classicStyle = store.getBoolean(CLASSIC_STYLE, false);
         if (earlier && !classicStyle) return;
-        SharedPreferences.Editor edit = store.edit().putBoolean(MIGRATED, true).remove(CLASSIC_STYLE);
+        // A classic player's face buttons followed the setting as it was when the classic controller went away.
+        if (classicStyle) swapFaces = store.getBoolean(CLASSIC_FLIP, swapFaces);
+        SharedPreferences.Editor edit = store.edit().putBoolean(MIGRATED, true).remove(CLASSIC_STYLE)
+                .remove(CLASSIC_FLIP);
         String shared = PadLayoutKeys.legacyKey(null);
         // The older shared key is both orientations' fallback (PadLayoutKeys); it reaches a player only in an
         // orientation without a shared layout of its own. Since this controller saves per orientation, only a
@@ -121,21 +131,27 @@ public final class ClassicLayoutMigration {
     }
 
     /**
-     * The retired Controller style was the classic controller: its layout is the one in use, so it is carried over
-     * when the controller is next built, replacing what an earlier carry-over left.
+     * Takes the retired Controller style into account once, at the first reading of the settings by this version.
+     * A player who had picked this controller keeps the layouts they have, or its defaults, rather than an older
+     * classic one: the carry-over is marked done without it. Any other player used the classic controller, which was
+     * also the style of an install that never stored one: their classic layout is carried over when the controller
+     * is next built, replacing what an earlier carry-over left, with the face buttons as the Nintendo button layout
+     * set them now. A fresh install reads its settings before anyone can turn that setting on, so it keeps this
+     * controller's plain defaults.
+     *
+     * @param modern whether the stored style was this controller
+     * @param flip the Nintendo button layout setting now
      */
-    public static void classicStyle(Context context) {
-        context.getSharedPreferences(ModernController.PREFS, Context.MODE_PRIVATE).edit()
-                .putBoolean(CLASSIC_STYLE, true).apply();
-    }
-
-    /**
-     * Marks the carry-over done without it: a player who had picked this controller as their Controller style keeps
-     * the layouts they have, or its defaults, rather than an older classic one.
-     */
-    public static void skip(Context context) {
-        context.getSharedPreferences(ModernController.PREFS, Context.MODE_PRIVATE).edit()
-                .putBoolean(MIGRATED, true).apply();
+    public static void retireStyle(Context context, boolean modern, boolean flip) {
+        SharedPreferences store = context.getSharedPreferences(ModernController.PREFS, Context.MODE_PRIVATE);
+        if (store.getBoolean(STYLE_RETIRED, false)) return;
+        SharedPreferences.Editor edit = store.edit().putBoolean(STYLE_RETIRED, true);
+        if (modern) {
+            edit.putBoolean(MIGRATED, true);
+        } else {
+            edit.putBoolean(CLASSIC_STYLE, true).putBoolean(CLASSIC_FLIP, flip);
+        }
+        edit.apply();
     }
 
     /**
