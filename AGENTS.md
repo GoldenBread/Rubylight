@@ -47,12 +47,8 @@ Rubylight is the Windows Rust host; Nightjar is the host-neutral client in `clie
 - Release notes go in `rust/release/notes.d` or `client/notes.d`, in English ([release guide](rust/release/README.md)). Tag or publish only when requested, from the exact SHA whose main CI passed; never move a published tag or delete a release without explicit authorization.
 - Nightjar's public home stays `RamazanKara/nightjar`. After main CI passes, mirror client changes with `tools\mirror-nightjar.ps1 -DryRun`, then without `-DryRun` (fast-forward only; never a full split or force-push). Pull mirror-side changes first with `git subtree pull --prefix client https://github.com/RamazanKara/nightjar main`.
 
-### Hardware safety
+### Hardware
 
-- Before installing or restarting the host or starting a stream, check `http://127.0.0.1:47989/serverinfo`: RustHostSessionCount and RustHostPendingSessionCount must be zero (a lingering session in state `SUNSHINE_SERVER_FREE` with `currentgame` 0 is not a stream). Never interrupt a stream.
-- Restart, install drivers or change displays/controllers only when the host is idle and work can resume, and check the user is idle before showing test patterns: `python rust/release/user_idle.py` (Windows' own idle time is no measure). Never upgrade Windows as part of a task.
-- Real-device streams use an isolated test host (own profile, port and `audio_sink_capture_only = true`), never the installed host, whose exclusive virtual-display layout blanks the user's monitors. Tests use isolated config directories and ports; keep virtual displays and display reconfiguration off unless required. Driver/virtual-display tests need SYSTEM: follow the release guide and `rust/release/elevated.ps1`.
-- App smoke tests redirect user data to a temp folder (`NIGHTJAR_CONFIG_DIR` for desktop Nightjar, plus `APPDATA`/`HOME`); never move or rename real app data. Use real paths where MSIX virtualizes `%LOCALAPPDATA%`.
+- Device streams and tests use an isolated test host (own profile, config directory, port and `audio_sink_capture_only = true`), not the installed host.
 - Exit code 3 from `e2e.py` or `check.ps1` means an AMD encoder hang: stop and investigate; never retry blindly.
-- Desktop Nightjar test builds launch from fixed firewall-approved folders via `tools\nightjar-test-client.ps1 -From <zip|exe> [-Slot a|b]`; only the user answers firewall prompts.
-- Host log: `C:\ProgramData\Butterpollo\config\logs\butterpollo.log`. Read test `result.json` and stream-timing summaries.
+- Host log: `C:\ProgramData\Butterpollo\config\logs\butterpollo.log`.
