@@ -39,12 +39,21 @@ pub struct Session {
     /// while the copy may still read it.
     held: *mut AMFSurface,
     pub(crate) owned: GpuPool,
+    /// The driver's surfaces this session copied from, with their
+    /// descriptions: a texture's description never changes, and holding a
+    /// reference pins each surface, so its address cannot be reused by
+    /// another texture while the entry lives. Each frame reads its
+    /// description from here instead of calling GetDesc on the surface.
+    descs: Vec<(ID3D11Texture2D, D3D11_TEXTURE2D_DESC)>,
     staging: Option<ID3D11Texture2D>,
     /// The last picture's present index and flip time.
     pub last: Option<Presented>,
     /// Presents the capture skipped (`FrameIndex` gaps).
     pub skipped: u64,
 }
+/// How many surface descriptions the session remembers. The oldest is
+/// forgotten when more arrive.
+const DESC_CACHE: usize = 8;
 // SAFETY: The AMF objects are used only through `&mut self` on the capture thread; the D3D11
 // device is multithread-protected (`Device::create`).
 unsafe impl Send for Session {}
@@ -170,6 +179,7 @@ impl Session {
                 component: ptr::null_mut(),
                 held: ptr::null_mut(),
                 owned: GpuPool::default(),
+                descs: Vec::new(),
                 staging: None,
                 last: None,
                 skipped: 0,
@@ -292,8 +302,22 @@ impl Session {
             let raw = ((*(*plane).pVtbl).GetNative.unwrap())(plane);
             let texture = ID3D11Texture2D::from_raw_borrowed(&raw)
                 .context("AMD Direct Capture surface has no D3D11 texture")?;
-            let mut desc = D3D11_TEXTURE2D_DESC::default();
-            texture.GetDesc(&mut desc);
+            let desc = match self
+                .descs
+                .iter()
+                .find(|(surface, _)| surface.as_raw() == raw)
+            {
+                Some((_, desc)) => *desc,
+                None => {
+                    let mut desc = D3D11_TEXTURE2D_DESC::default();
+                    texture.GetDesc(&mut desc);
+                    if self.descs.len() >= DESC_CACHE {
+                        self.descs.remove(0);
+                    }
+                    self.descs.push((texture.clone(), desc));
+                    desc
+                }
+            };
             if desc.ArraySize != 1 {
                 bail!(
                     "AMD Direct Capture returned a texture array ({} slices), which the stream cannot read",
