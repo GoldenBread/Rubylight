@@ -219,6 +219,15 @@ public class ModernSteamControlsTest {
         assertFalse(right.state().pressed);
     }
 
+    /** The events with each run of one repeated event kept once. */
+    private static java.util.List<String> withoutRepeats(java.util.List<String> events) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (String e : events) {
+            if (out.isEmpty() || !out.get(out.size() - 1).equals(e)) out.add(e);
+        }
+        return out;
+    }
+
     /**
      * A tap on a trackpad presses and releases the pad's own click button, by the pointer touchpad's
      * tap thresholds: short, and the finger stayed near where it landed. A drag or a lingering finger
@@ -239,8 +248,9 @@ public class ModernSteamControlsTest {
         assertEquals("The press goes out with the touch still down",
                 java.util.Arrays.asList("b" + SteamControls.LEFT_PAD_CLICK_FLAG), events);
         ShadowLooper.idleMainLooper(PadControlView.PAD_CLICK_HOLD_MS, TimeUnit.MILLISECONDS);
+        // A resend during the hold repeats the held state, which is the same press, not a second one.
         assertEquals(java.util.Arrays.asList("b" + SteamControls.LEFT_PAD_CLICK_FLAG, "b0",
-                "t" + MoonBridge.LI_TOUCH_EVENT_UP), events);
+                "t" + MoonBridge.LI_TOUCH_EVENT_UP), withoutRepeats(events));
         assertEquals(MoonBridge.LI_TOUCH_EVENT_UP, touches.get(touches.size() - 1)[0]);
         assertEquals(0, last());
 

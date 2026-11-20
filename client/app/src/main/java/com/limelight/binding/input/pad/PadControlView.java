@@ -81,11 +81,10 @@ final class PadControlView extends View {
     private static final int CAMERA_TICK_MS = 16;
     /**
      * How long a tapped trackpad's click is held, finger still on the pad, before it releases and the
-     * touch ends: under the classic controller's 25 ms first resend, so one report carries the
-     * press alone (the release restarts the resends, so a resend never repeats the press). The OSC
-     * has no other tap or hold constant to reuse.
+     * touch ends: a little over the classic controller's 25 ms first resend, so one report carries
+     * the press alone. The OSC has no other tap or hold constant to reuse.
      */
-    static final long PAD_CLICK_HOLD_MS = 20;
+    static final long PAD_CLICK_HOLD_MS = 40;
     private long pointerTickNs;
     private float pointerTravel;
     private final float[] pointerLastX = new float[2], pointerLastY = new float[2];
