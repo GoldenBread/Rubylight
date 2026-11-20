@@ -1151,6 +1151,8 @@ fn strip_shown(claims: &[(f64, f64)], frames: &[f64], long: f64) -> (usize, usiz
     }
     (skipped, longs, longest)
 }
+/// A desktop's name and how the host configures the pacer for it.
+type Desktop = (&'static str, fn(Pacer) -> Pacer);
 fn fixed_desktop(pacer: Pacer) -> Pacer {
     pacer.with_source_phase(true).with_spacing(0.75)
 }
@@ -1165,8 +1167,7 @@ fn a_window_repainting_in_bursts_in_front_does_not_hold_the_picture_behind_it() 
     // apart, and 290 to 1450 frames left out in 76 s). A window repainting
     // in bursts shorter than 500 ms now paces the strip as it did without
     // focus labels.
-    let desktops: [(&str, fn(Pacer) -> Pacer); 2] =
-        [("fixed", fixed_desktop), ("vrr", vrr_desktop)];
+    let desktops: [Desktop; 2] = [("fixed", fixed_desktop), ("vrr", vrr_desktop)];
     for (desktop, configure) in desktops {
         for (burst, gap) in [(2, 12.), (3, 16.), (5, 16.), (8, 16.), (12, 30.)] {
             let (mut labelled, mut unlabelled) = ((0, 0), (0, 0));
