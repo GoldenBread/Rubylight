@@ -1009,7 +1009,10 @@ impl Duplication {
             && self
                 .last_desktop
                 .as_ref()
-                .is_some_and(|image| std::sync::Arc::strong_count(&image.texture) == 2)
+                .is_some_and(|image| {
+                    std::sync::Arc::strong_count(image) == 1
+                        && std::sync::Arc::strong_count(&image.texture) == 2
+                })
         {
             // The cache can be the last reader of a snapshot. Let that slot
             // return before deciding whether a new desktop can be acquired.
@@ -1030,6 +1033,9 @@ impl Duplication {
         };
         let shown = self.cursor.shown();
         let desktop_updated = info.LastPresentTime != 0;
+        // The picture is a fresh copy, and so the new cache, unless a
+        // pointer-only update re-publishes the cached desktop.
+        let fresh = desktop_updated || self.last_desktop.is_none();
         let result: Result<_> = (|| {
             self.cursor.update(&self.gpu, &self.duplicate, &info)?;
             // A pointer-only update while the pointer stays hidden (mouse-look
@@ -1068,7 +1074,7 @@ impl Duplication {
         // picture, not a clone of it made each frame.
         Ok(result?.map(|image| {
             let image = std::sync::Arc::new(image);
-            if desktop_updated {
+            if fresh {
                 self.last_desktop = Some(image.clone());
             }
             image
